@@ -37,6 +37,7 @@ from nexus.services.contributor_taxonomy import (
     build_observation,
 )
 from nexus.services.native_agent_contract import METADATA_ENRICHMENT_MAX_INPUT_BYTES
+from nexus.services.reader_publication import replace_reader_document_title
 
 logger = get_logger(__name__)
 
@@ -671,7 +672,24 @@ def validate_structured_enrichment(payload: object) -> MetadataEnrichmentOutput 
 # ---------------------------------------------------------------------------
 
 
-def merge_enrichment(media: Media, enrichment: MetadataEnrichmentOutput) -> MetadataMergeResult:
+def _replace_media_title(db: Session, media: Media, title: str) -> None:
+    """Write the enriched title through the owner of that field.
+
+    The title of a published PDF, EPUB, or web article is reader-visible canonical
+    content: it is captured in the package projection and hashed into the offline
+    package. Replacing it there is a publication, so `reader_publication` performs
+    the write and bumps the generation. Every other media title is this merge's own
+    write.
+    """
+    if not replace_reader_document_title(db, media=media, title=title):
+        media.title = title
+
+
+def merge_enrichment(
+    db: Session,
+    media: Media,
+    enrichment: MetadataEnrichmentOutput,
+) -> MetadataMergeResult:
     """Merge accepted native-agent enrichment into media.
 
     The output model is the single owner of every value bound: each present
@@ -682,7 +700,7 @@ def merge_enrichment(media: Media, enrichment: MetadataEnrichmentOutput) -> Meta
     author_observation: ContributorObservationBatch = NOT_OBSERVED
 
     if enrichment.title is not None:
-        media.title = enrichment.title
+        _replace_media_title(db, media, enrichment.title)
         accepted_fields.append("title")
 
     if enrichment.authors is not None:

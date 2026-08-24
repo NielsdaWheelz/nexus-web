@@ -40,7 +40,6 @@ import java.util.concurrent.Executor
 import java.util.concurrent.TimeUnit
 
 internal val OFFLINE_PREFLIGHT_DEADLINE: Duration = Duration.ofSeconds(30)
-internal const val OFFLINE_STORAGE_RESERVE_BYTES: Long = 512L * 1024L * 1024L
 private const val MAX_REDIRECTS = 5
 private const val LOG_TAG = "NexusOfflineMedia"
 
@@ -77,11 +76,6 @@ internal fun removeCachedResource(cache: Cache, key: String) {
     }
 }
 
-internal fun preservesStorageReserve(availableBytes: Long, nextBytes: Long): Boolean {
-    return nextBytes >= 0 &&
-        nextBytes <= Long.MAX_VALUE - OFFLINE_STORAGE_RESERVE_BYTES &&
-        availableBytes >= nextBytes + OFFLINE_STORAGE_RESERVE_BYTES
-}
 
 internal class PreflightCancellation {
     private val canceled = AtomicBoolean(false)
@@ -374,7 +368,7 @@ internal class SafeHttpClient(
         )
 
         internal fun hasSpaceFor(filesDir: File, representationBytes: Long): Boolean {
-            return preservesStorageReserve(
+            return StorageAdmissionPolicy.preservesReserve(
                 StatFs(filesDir.absolutePath).availableBytes,
                 representationBytes,
             )
@@ -499,7 +493,7 @@ private class ReserveGuardDataSink(
 
     private fun requireReserve(nextWriteBytes: Long) {
         val availableBytes = StatFs(filesDir.absolutePath).availableBytes
-        if (!preservesStorageReserve(availableBytes, nextWriteBytes)) {
+        if (!StorageAdmissionPolicy.preservesReserve(availableBytes, nextWriteBytes)) {
             throw StorageReserveException()
         }
     }

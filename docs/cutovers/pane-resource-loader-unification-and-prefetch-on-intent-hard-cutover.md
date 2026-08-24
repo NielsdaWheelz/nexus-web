@@ -43,7 +43,7 @@ It is nonetheless a real trap, because of a property of the seed path worth stat
 
 > **A server seed that under-loads is not self-healing.** When the server seeds `{ fragments: [] }`, `useResource` starts `ready` and **skips the client's first fetch** (consume-once, `useResource.ts:104`). So the client `load`'s gate never runs on a server-seeded first paint — the seed's gate is authoritative. If a sixth, fragment-rendering kind were added and added only to the client denylist, the allowlist seed would paint it empty with **no client recovery**.
 
-Unifying the loader removes the trap by construction: one gate governs seed, mount, and prefetch, so they cannot disagree per kind. The **canonical predicate is the allowlist** — only `TranscriptContentPanel` (podcast/video) consumes the `fragments` array as first-paint content; epub→`/sections`, pdf→binary, web_article→its own deferred `webFragmentsResource` (`shouldLoadWebArticleFragments`) all render from dedicated loaders, so seeding fragments for any other kind is a fetch with no consumer.
+Unifying the loader removes the trap by construction: one gate governs seed, mount, and prefetch, so they cannot disagree per kind. The **canonical predicate is the allowlist** — only `TranscriptContentPanel` (podcast/video) consumes the `fragments` array as first-paint content; epub→`/sections`, pdf→binary, and web_article→the `DocumentReaderSession` text source all render from dedicated reader-owned loaders, so seeding fragments for any other kind is a fetch with no consumer.
 
 (Two lesser duplications the unification also erases: author's `Array.isArray(works) ? works : []` guard is written inline server-side *and* inside `fetchContributorWorks`; `notes` tolerates a missing `pages` array server-side (`?? []`) but `fetchNotePages` throws client-side.)
 
@@ -82,7 +82,7 @@ Unifying the loader removes the trap by construction: one gate governs seed, mou
 - **C6** — Prefetch never changes correctness, only latency. Removing every `warmPaneOnIntent` call leaves behaviour identical (each pane still client-fetches on mount).
 - **C7** — Bounded: prefetch entries are tracked in an LRU of size `PREFETCH_CACHE_LIMIT` (16); exceeding it aborts (if pending) and evicts the oldest *prefetch* entry. Server seeds are not LRU-evicted (claimed on first paint).
 - **C8** — The loader registry and its bodies import **no transport** (`callFastAPI`/`apiFetch`) and no client-only or server-only module; they are pure composition over `ResourceDescriptor` + pure normalizers. Transport lives only in the two fetcher modules (R5).
-- **C9** — Because the gate is shared (C2), a server seed cannot under-load relative to the client for any kind. **Adding any future fragment-rendering media kind requires (a) adding it to the allowlist gate and (b) giving it a dedicated empty-seed recovery loader (the `web_article`/`shouldLoadWebArticleFragments` pattern).** Encoded as a comment on the gate + a guard test.
+- **C9** — Because the gate is shared (C2), a server seed cannot under-load relative to the client for any kind. **Adding any future fragment-rendering media kind requires adding it to the allowlist gate and routing its first-paint document through the shared reader composition/source.** Encoded as a comment on the gate + a guard test.
 
 ---
 

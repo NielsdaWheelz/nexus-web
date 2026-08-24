@@ -15,11 +15,9 @@ from sqlalchemy.orm import Session
 
 from nexus.db.retries import retry_read_committed
 from nexus.db.session import transaction
-from nexus.errors import ApiErrorCode
 from nexus.ids import new_uuid7
 from nexus.jobs.queue import (
     JobExecutionContext,
-    JobRow,
     enqueue_unique_job,
     lock_and_renew_running_job_claim,
 )
@@ -343,56 +341,6 @@ def run_backfill_step(
             }
 
     return retry_read_committed(db, "podcast_backfill_step", apply)
-
-
-def dead_letter_backfill(db: Session, job: JobRow) -> None:
-    """Stamp Failed only while a dead job still names the current live fence."""
-    try:
-        backfill_id, expected_step_no, expected_digest = _decode_payload(job.payload)
-    except (KeyError, TypeError, ValueError):
-        return
-    row = (
-        db.execute(
-            text(
-                """
-            SELECT step_no, cursor, completed_at, source_limited_at, failed_at
-            FROM podcast_subscription_backfills
-            WHERE id = :backfill_id
-            FOR UPDATE
-            """
-            ),
-            {"backfill_id": backfill_id},
-        )
-        .mappings()
-        .first()
-    )
-    if row is None or int(row["step_no"]) != expected_step_no:
-        return
-    if cursor_digest(_coerce_cursor(row["cursor"])) != expected_digest:
-        return
-    if any(row[field] is not None for field in ("completed_at", "source_limited_at", "failed_at")):
-        return
-    db.execute(
-        text(
-            """
-            UPDATE podcast_subscription_backfills
-            SET
-                failed_at = now(),
-                error_code = :error_code,
-                error_detail = :error_detail,
-                updated_at = now()
-            WHERE id = :backfill_id
-            """
-        ),
-        {
-            "backfill_id": backfill_id,
-            "error_code": str(job.error_code or ApiErrorCode.E_INTERNAL.value)[:100],
-            "error_detail": (
-                f"Podcast backfill exhausted retries; job={job.id}; "
-                f"classification={str(job.error_code or ApiErrorCode.E_INTERNAL.value)[:100]}"
-            )[:_ERROR_DETAIL_MAX_LENGTH],
-        },
-    )
 
 
 def _decode_payload(payload: Mapping[str, Any]) -> tuple[UUID, int, str]:

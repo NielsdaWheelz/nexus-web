@@ -1,0 +1,12 @@
+diff --git a/apps/web/src/components/nexus/MediaActivityPage.tsx b/apps/web/src/components/nexus/MediaActivityPage.tsx
+--- a/apps/web/src/components/nexus/MediaActivityPage.tsx
++++ b/apps/web/src/components/nexus/MediaActivityPage.tsx
+@@ -369,7 +369,7 @@ function UploadSessionRow({
+           {failure === null ? null : <span role="alert">{failure}</span>}
+         </div>
+         <div className={styles.actions}>
+-          {item.capabilities.canRetryUpload ? (
++          {false ? (
+             <>
+               <input
+                 ref={inputRef}

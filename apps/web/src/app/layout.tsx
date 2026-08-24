@@ -1,4 +1,4 @@
-import { EB_Garamond, IM_Fell_English, Inter, JetBrains_Mono, UnifrakturMaguntia } from "next/font/google";
+import localFont from "next/font/local";
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import "pdfjs-dist/web/pdf_viewer.css";
@@ -38,14 +38,14 @@ export const viewport: Viewport = {
   ],
 };
 
-// Inter is the body/LCP font on every route, so it is the one font we preload
-// (next/font preloads by default). EB Garamond / IM Fell / Unifraktur back the
-// oracle pane theme (--font-oracle-*). preload:false keeps the @font-face CSS
-// and font variables in the global sheet without emitting <link rel="preload">
-// on non-oracle routes — font files only download when the oracle pane renders.
-const inter = Inter({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
+// Fonts are immutable local build inputs: production builds, the hosted app,
+// and the packaged reader never depend on a third-party font CDN. Inter is the
+// body/LCP font on every route, so it is the one font we preload. The other
+// faces remain demand-loaded through their CSS variables.
+const inter = localFont({
+  src: "./fonts/inter-latin.woff2",
+  weight: "100 900",
+  style: "normal",
   display: "swap",
   variable: "--font-inter",
 });
@@ -54,35 +54,55 @@ const inter = Inter({
 // is used app-wide but is never the first-paint/LCP text on any route, so we
 // opt it out of preload: preloading it competes with Inter for early bandwidth
 // without speeding up any initial render.
-const jetbrainsMono = JetBrains_Mono({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
+const jetbrainsMono = localFont({
+  src: "./fonts/jetbrains-mono-latin.woff2",
+  weight: "400 800",
+  style: "normal",
   display: "swap",
   preload: false,
   variable: "--font-jetbrains-mono",
 });
 
-const ebGaramond = EB_Garamond({
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
-  style: ["normal", "italic"],
+const ebGaramond = localFont({
+  src: [
+    {
+      path: "./fonts/eb-garamond-normal-latin.woff2",
+      weight: "400 800",
+      style: "normal",
+    },
+    {
+      path: "./fonts/eb-garamond-italic-latin.woff2",
+      weight: "400 800",
+      style: "italic",
+    },
+  ],
   display: "swap",
   preload: false,
   variable: "--font-eb-garamond",
 });
 
-const imFellEnglish = IM_Fell_English({
-  subsets: ["latin"],
-  weight: ["400"],
-  style: ["normal", "italic"],
+const imFellEnglish = localFont({
+  src: [
+    {
+      path: "./fonts/im-fell-english-normal-latin.woff2",
+      weight: "400",
+      style: "normal",
+    },
+    {
+      path: "./fonts/im-fell-english-italic-latin.woff2",
+      weight: "400",
+      style: "italic",
+    },
+  ],
   display: "swap",
   preload: false,
   variable: "--font-im-fell",
 });
 
-const unifrakturMaguntia = UnifrakturMaguntia({
-  subsets: ["latin"],
-  weight: ["400"],
+const unifrakturMaguntia = localFont({
+  src: "./fonts/unifraktur-maguntia-latin.woff2",
+  weight: "400",
+  style: "normal",
   display: "swap",
   preload: false,
   variable: "--font-unifraktur",

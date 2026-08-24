@@ -4,7 +4,7 @@ All API errors are defined here with their corresponding HTTP status codes.
 """
 
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 _ERROR_DETAIL_MAX_CHARS = 1000
 
@@ -34,6 +34,7 @@ class ApiErrorCode(str, Enum):
 
     # Billing availability errors (503)
     E_BILLING_DISABLED = "E_BILLING_DISABLED"
+    E_DOSSIER_WEB_RESEARCH_NOT_CONFIGURED = "E_DOSSIER_WEB_RESEARCH_NOT_CONFIGURED"
 
     # Not found errors (404)
     E_NOT_FOUND = "E_NOT_FOUND"
@@ -45,6 +46,7 @@ class ApiErrorCode(str, Enum):
     E_INVITE_NOT_FOUND = "E_INVITE_NOT_FOUND"
     E_DOSSIER_NOT_FOUND = "E_DOSSIER_NOT_FOUND"
     E_DOSSIER_REVISION_NOT_FOUND = "E_DOSSIER_REVISION_NOT_FOUND"
+    E_UPLOAD_SESSION_NOT_FOUND = "E_UPLOAD_SESSION_NOT_FOUND"
 
     # Validation errors (400)
     E_INVALID_REQUEST = "E_INVALID_REQUEST"
@@ -56,6 +58,7 @@ class ApiErrorCode(str, Enum):
     E_ACTIVITY_EXPIRED = "E_ACTIVITY_EXPIRED"
     E_INVALID_FILE_TYPE = "E_INVALID_FILE_TYPE"
     E_STORAGE_MISSING = "E_STORAGE_MISSING"
+    E_SOURCE_INTEGRITY = "E_SOURCE_INTEGRITY"
     E_INVALID_CURSOR = "E_INVALID_CURSOR"
     E_INVALID_BROWSE_QUERY = "E_INVALID_BROWSE_QUERY"
     E_INVALID_DISCOVERY_TARGET = "E_INVALID_DISCOVERY_TARGET"
@@ -76,8 +79,11 @@ class ApiErrorCode(str, Enum):
     E_BRANCH_HAS_ACTIVE_RUN = "E_BRANCH_HAS_ACTIVE_RUN"
     E_NOTE_CONFLICT = "E_NOTE_CONFLICT"
     E_RESOURCE_CONFLICT = "E_RESOURCE_CONFLICT"
-    E_UPLOAD_CONFLICT = "E_UPLOAD_CONFLICT"
     E_READER_STATE_CONFLICT = "E_READER_STATE_CONFLICT"
+    E_READER_CONTENT_CHANGED = "E_READER_CONTENT_CHANGED"
+    E_READER_PUBLICATION_BUSY = "E_READER_PUBLICATION_BUSY"
+    E_OFFLINE_READING_PACKAGE_TIMEOUT = "E_OFFLINE_READING_PACKAGE_TIMEOUT"
+    E_OFFLINE_READING_PACKAGE_BUSY = "E_OFFLINE_READING_PACKAGE_BUSY"  # 503 retryable capacity
     E_ACTIVITY_CAPTURE_CONFLICT = "E_ACTIVITY_CAPTURE_CONFLICT"
     E_MEDIA_LAST_REFERENCE = "E_MEDIA_LAST_REFERENCE"
     E_DOSSIER_GENERATION_IN_PROGRESS = "E_DOSSIER_GENERATION_IN_PROGRESS"
@@ -85,9 +91,15 @@ class ApiErrorCode(str, Enum):
     E_DOSSIER_ALREADY_EXISTS = "E_DOSSIER_ALREADY_EXISTS"
     E_COLLECTION_CHANGED = "E_COLLECTION_CHANGED"
     E_SELECTION_CHANGED = "E_SELECTION_CHANGED"
+    E_TOOL_PROJECTION_RELOAD_REQUIRED = "E_TOOL_PROJECTION_RELOAD_REQUIRED"
     E_PODCAST_REPLACES_EPISODES = "E_PODCAST_REPLACES_EPISODES"
     E_PODCAST_EPISODE_IDENTITY_CONFLICT = "E_PODCAST_EPISODE_IDENTITY_CONFLICT"
     E_PODCAST_SUBSCRIPTION_REQUIRED = "E_PODCAST_SUBSCRIPTION_REQUIRED"
+    E_IDEMPOTENCY_CONFLICT = "E_IDEMPOTENCY_CONFLICT"
+    E_UPLOAD_GENERATION_STALE = "E_UPLOAD_GENERATION_STALE"
+    E_UPLOAD_ALREADY_PUBLISHED = "E_UPLOAD_ALREADY_PUBLISHED"
+    E_UPLOAD_VERIFICATION_IN_PROGRESS = "E_UPLOAD_VERIFICATION_IN_PROGRESS"
+    E_UPLOAD_INTENT_MISMATCH = "E_UPLOAD_INTENT_MISMATCH"
 
     # Highlight errors (400/409)
     E_HIGHLIGHT_INVALID_RANGE = "E_HIGHLIGHT_INVALID_RANGE"  # 400
@@ -168,6 +180,7 @@ class ApiErrorCode(str, Enum):
 
     # PDF errors (422)
     E_PDF_PASSWORD_REQUIRED = "E_PDF_PASSWORD_REQUIRED"  # 422
+    E_RESOURCE_LIMIT = "E_RESOURCE_LIMIT"  # 422
 
     # Author errors (422)
     E_AUTHOR_ALREADY_LISTED = "E_AUTHOR_ALREADY_LISTED"  # 422 - duplicate canonical contributor
@@ -231,6 +244,7 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_CONVERSATION_SHARE_DEFAULT_LIBRARY_FORBIDDEN: 403,
     ApiErrorCode.E_BILLING_REQUIRED: 402,
     ApiErrorCode.E_BILLING_DISABLED: 503,
+    ApiErrorCode.E_DOSSIER_WEB_RESEARCH_NOT_CONFIGURED: 503,
     # Not found errors
     ApiErrorCode.E_NOT_FOUND: 404,
     ApiErrorCode.E_LIBRARY_NOT_FOUND: 404,
@@ -241,6 +255,7 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_INVITE_NOT_FOUND: 404,
     ApiErrorCode.E_DOSSIER_NOT_FOUND: 404,
     ApiErrorCode.E_DOSSIER_REVISION_NOT_FOUND: 404,
+    ApiErrorCode.E_UPLOAD_SESSION_NOT_FOUND: 404,
     # Validation errors
     ApiErrorCode.E_INVALID_REQUEST: 400,
     ApiErrorCode.E_NAME_INVALID: 400,
@@ -251,6 +266,7 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_ACTIVITY_EXPIRED: 400,
     ApiErrorCode.E_INVALID_FILE_TYPE: 400,
     ApiErrorCode.E_STORAGE_MISSING: 400,
+    ApiErrorCode.E_SOURCE_INTEGRITY: 400,
     ApiErrorCode.E_INVALID_CURSOR: 400,
     ApiErrorCode.E_INVALID_BROWSE_QUERY: 400,
     ApiErrorCode.E_INVALID_DISCOVERY_TARGET: 400,
@@ -270,8 +286,11 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_BRANCH_HAS_ACTIVE_RUN: 409,
     ApiErrorCode.E_NOTE_CONFLICT: 409,
     ApiErrorCode.E_RESOURCE_CONFLICT: 409,
-    ApiErrorCode.E_UPLOAD_CONFLICT: 409,
     ApiErrorCode.E_READER_STATE_CONFLICT: 409,
+    ApiErrorCode.E_READER_CONTENT_CHANGED: 409,
+    ApiErrorCode.E_READER_PUBLICATION_BUSY: 409,
+    ApiErrorCode.E_OFFLINE_READING_PACKAGE_TIMEOUT: 504,
+    ApiErrorCode.E_OFFLINE_READING_PACKAGE_BUSY: 503,
     ApiErrorCode.E_ACTIVITY_CAPTURE_CONFLICT: 409,
     ApiErrorCode.E_MEDIA_LAST_REFERENCE: 409,
     ApiErrorCode.E_DOSSIER_GENERATION_IN_PROGRESS: 409,
@@ -279,9 +298,15 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_DOSSIER_ALREADY_EXISTS: 409,
     ApiErrorCode.E_COLLECTION_CHANGED: 409,
     ApiErrorCode.E_SELECTION_CHANGED: 409,
+    ApiErrorCode.E_TOOL_PROJECTION_RELOAD_REQUIRED: 409,
     ApiErrorCode.E_PODCAST_REPLACES_EPISODES: 409,
     ApiErrorCode.E_PODCAST_EPISODE_IDENTITY_CONFLICT: 409,
     ApiErrorCode.E_PODCAST_SUBSCRIPTION_REQUIRED: 409,
+    ApiErrorCode.E_IDEMPOTENCY_CONFLICT: 409,
+    ApiErrorCode.E_UPLOAD_GENERATION_STALE: 409,
+    ApiErrorCode.E_UPLOAD_ALREADY_PUBLISHED: 409,
+    ApiErrorCode.E_UPLOAD_VERIFICATION_IN_PROGRESS: 409,
+    ApiErrorCode.E_UPLOAD_INTENT_MISMATCH: 409,
     # Highlight errors
     ApiErrorCode.E_HIGHLIGHT_INVALID_RANGE: 400,
     ApiErrorCode.E_HIGHLIGHT_CONFLICT: 409,
@@ -347,6 +372,7 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE: 409,
     # PDF errors
     ApiErrorCode.E_PDF_PASSWORD_REQUIRED: 422,
+    ApiErrorCode.E_RESOURCE_LIMIT: 422,
     # Author errors
     ApiErrorCode.E_AUTHOR_ALREADY_LISTED: 422,
     ApiErrorCode.E_AUTHOR_NOT_SELECTABLE: 422,
@@ -444,6 +470,22 @@ class ForbiddenError(ApiError):
 
     def __init__(self, code: ApiErrorCode = ApiErrorCode.E_FORBIDDEN, message: str = "Forbidden"):
         super().__init__(code, message)
+
+
+type ResourceFailureDimension = Literal["Memory", "Time", "Structure", "Output"]
+"""Safe public dimension of an ``E_RESOURCE_LIMIT`` failure; raw parser text stays operator-only."""
+
+
+class ResourceLimitError(ApiError):
+    """A declared parser or runtime budget breach carrying its safe dimension.
+
+    This is the single typed carrier the background child boundary projects into
+    the ``ModeledFailure`` result; untyped exception attributes are never read.
+    """
+
+    def __init__(self, message: str, *, dimension: ResourceFailureDimension) -> None:
+        super().__init__(ApiErrorCode.E_RESOURCE_LIMIT, message)
+        self.dimension: ResourceFailureDimension = dimension
 
 
 class ConflictError(ApiError):

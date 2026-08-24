@@ -89,12 +89,12 @@ _CODEX_IMAGE_ENVIRONMENT = [
     "GPG_KEY=fake-gpg-key",
     "LANG=C.UTF-8",
     "NODE_ENV=production",
-    "NODE_INGEST_SCRIPT=/app/node/ingest/ingest.mjs",
     "PATH=/app/.venv/bin:/usr/local/bin:/usr/bin:/bin",
     "PYTHONPATH=/app",
     "PYTHON_SHA256=" + "f" * 64,
     "PYTHON_VERSION=3.12.13",
 ]
+_PLAYER_PROTOCOL_CORPUS = b'{"fixture":"android-player-protocol"}\n'
 
 
 def _codex_host_privilege_config() -> dict[str, object]:
@@ -198,6 +198,7 @@ def _write_bundle(root: Path, source_sha: str, manifest: dict[str, object]) -> t
         "release.py": b"# immutable release controller\n",
         "python/nexus/__init__.py": b"",
         "python/nexus/release_artifact.py": b"# immutable artifact decoder\n",
+        "testdata/android/player-protocol.json": _PLAYER_PROTOCOL_CORPUS,
     }
     paths: list[Path] = []
     for relative, data in files.items():
@@ -319,7 +320,21 @@ class _PublicTLSProxy(socketserver.ThreadingTCPServer):
             str(state["oracle_digest"]) if candidate_active else str(state["current_oracle_digest"])
         )
         if host == "web.example.test" and path == "/version":
-            return 200, {"source_sha": served_source_sha}, headers
+            player_protocol = {
+                "version": 2,
+                "contract_sha256": (
+                    str(state["candidate_player_protocol_sha256"])
+                    if candidate_active
+                    else str(state["current_player_protocol_sha256"])
+                ),
+            }
+            if state["public_web_mode"] == "different-player-protocol":
+                player_protocol["contract_sha256"] = "a" * 64
+            return (
+                200,
+                {"source_sha": served_source_sha, "player_protocol": player_protocol},
+                headers,
+            )
         if host == "api.example.test" and path == "/readyz":
             return 200, {"data": {"status": "ready"}}, headers
         if host != "api.example.test" or path != "/version":
@@ -712,7 +727,14 @@ class HostReleaseHarness:
                 "oracle_digest": str(candidate["expected_oracle_manifest_digest"]),
                 "current_oracle_digest": str(current_candidate["expected_oracle_manifest_digest"]),
                 "candidate_active": False,
+                "candidate_player_protocol_sha256": hashlib.sha256(
+                    _PLAYER_PROTOCOL_CORPUS
+                ).hexdigest(),
+                "current_player_protocol_sha256": hashlib.sha256(
+                    _PLAYER_PROTOCOL_CORPUS
+                ).hexdigest(),
                 "public_api_mode": "valid",
+                "public_web_mode": "valid",
                 "public_requests": [],
                 "resource_mutations": [],
                 "return_interrupt_fired": False,

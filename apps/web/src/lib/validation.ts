@@ -65,6 +65,13 @@ export function expectString(raw: unknown, name: string): string {
   return raw;
 }
 
+/** The one decoder for a wire string whose contract forbids the empty value. */
+export function expectNonemptyString(raw: unknown, name: string): string {
+  const value = expectString(raw, name);
+  if (value.length === 0) throw new TypeError(`${name} must not be empty`);
+  return value;
+}
+
 const ISO_INSTANT_RE =
   /^(\d{4}-\d{2}-\d{2})T(\d{2}):\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 

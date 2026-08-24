@@ -1,5 +1,6 @@
 import type { APIResponse, Page } from "playwright/test";
 import { uniqueCanonicalReaderEpub } from "../corpus";
+import { uploadDocument } from "../documentUploadFixture";
 import {
   expect,
   gotoWithStrictCsp,
@@ -56,44 +57,15 @@ async function uploadReadableEpub(page: Page, userId: string): Promise<string> {
   const api = pageRequest(page, webOrigin);
   const objects = pageRequest(page, minioOrigin);
   const epub = uniqueCanonicalReaderEpub(userId);
-  const initialized = await readJson<{
-    data: { media_id: string; upload_url: string | null };
-  }>(
-    await api.post("/api/media/upload/init", {
-      headers: {
-        origin: webOrigin,
-        "Idempotency-Key": `durable-consumption-activity-${userId}`,
-      },
-      data: {
-        kind: "epub",
-        filename: "canonical-durable-consumption-activity.epub",
-        content_type: "application/epub+zip",
-        size_bytes: epub.byteLength,
-        library_ids: [],
-      },
-    }),
-    "Consumption journey EPUB acceptance",
-  );
-  const mediaId = initialized.data.media_id;
-  expect(
-    initialized.data.upload_url,
-    `Fresh Consumption journey upload ${mediaId} omitted its object target.`,
-  ).not.toBeNull();
-  const uploaded = await objects.put(initialized.data.upload_url!, {
-    headers: { "Content-Type": "application/epub+zip" },
-    data: epub,
+  const published = await uploadDocument({
+    api,
+    objects,
+    payload: epub,
+    kind: "Epub",
+    filename: "canonical-durable-consumption-activity.epub",
+    idempotencyKey: `durable-consumption-activity-${userId}`,
   });
-  expect(
-    uploaded.ok(),
-    `Consumption journey object upload ${mediaId} failed with ${uploaded.status()}.`,
-  ).toBeTruthy();
-  await readJson(
-    await api.post(`/api/media/${mediaId}/ingest`, {
-      headers: { origin: webOrigin },
-      data: { library_ids: [] },
-    }),
-    `Consumption journey EPUB confirmation for ${mediaId}`,
-  );
+  const mediaId = published.mediaId;
   await expect
     .poll(
       async () => {

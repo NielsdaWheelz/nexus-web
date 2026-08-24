@@ -31,11 +31,16 @@ from collections.abc import Sequence
 from typing import Literal, cast
 from uuid import UUID
 
-from sqlalchemy import text
+from llm_tools import ToolEffect
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import ChatRun
+from nexus.db.models import ChatRun, MessageToolCall
 from nexus.logging import get_logger
+from nexus.schemas.conversation import (
+    chat_run_event_payload_json,
+    tool_projection_from_persisted_record,
+)
 from nexus.schemas.llm import (
     BudgetExceededChatFailure,
     CancelledChatFailure,
@@ -49,7 +54,7 @@ from nexus.schemas.llm import (
     StreamInterruptedChatFailure,
     TimeoutChatFailure,
 )
-from nexus.services.agent_tools.writes import WRITE_TOOL_NAMES
+from nexus.services.chat_run_tools import decode_persisted_tool_record
 from nexus.services.llm_profiles import profile as lookup_profile
 from nexus.services.llm_profiles import reasoning_level as lookup_reasoning_level
 
@@ -338,30 +343,26 @@ def compute_has_write_tool_attempt(db: Session, run: ChatRun) -> bool:
     counts only committed, non-reverted rows for the per-run write cap — §10
     disqualifies rerun on any attempt at all, reverted or not.
 
-    Reuses the write-tool owner's closed name set rather than duplicating it.
+    Event projection carries the declaration-owned effect, so no tool-id set is
+    needed here.
     """
-    return bool(
-        db.execute(
-            text("""
-                SELECT EXISTS (
-                    SELECT 1 FROM message_tool_calls
-                    WHERE assistant_message_id = :assistant_message_id
-                      AND scope = 'assistant_write'
-                )
-                OR EXISTS (
-                    SELECT 1 FROM chat_run_events
-                    WHERE run_id = :run_id
-                      AND event_type IN ('tool_call_start', 'tool_call_done')
-                      AND payload ->> 'tool_name' = ANY(:tool_names)
-                )
-            """),
-            {
-                "assistant_message_id": run.assistant_message_id,
-                "run_id": run.id,
-                "tool_names": list(WRITE_TOOL_NAMES),
-            },
-        ).scalar_one()
+    row_attempt = bool(_message_write_attempt_assistant_ids(db, [run.assistant_message_id]))
+    event_rows = db.execute(
+        text(
+            """
+            SELECT event_type, payload
+            FROM chat_run_events
+            WHERE run_id = :run_id
+              AND event_type IN ('tool_call_start', 'tool_call_done')
+            """
+        ),
+        {"run_id": run.id},
+    ).mappings()
+    event_attempt = any(
+        chat_run_event_payload_json(row["event_type"], row["payload"])["effect"] == "Write"
+        for row in event_rows
     )
+    return row_attempt or event_attempt
 
 
 def write_tool_attempt_run_ids(db: Session, runs: Sequence[ChatRun]) -> set[UUID]:
@@ -375,38 +376,47 @@ def write_tool_attempt_run_ids(db: Session, runs: Sequence[ChatRun]) -> set[UUID
         return set()
     run_ids = [run.id for run in runs]
     assistant_message_ids = [run.assistant_message_id for run in runs]
-    message_ids_with_attempts = set(
-        db.scalars(
-            text(
-                """
-                SELECT DISTINCT assistant_message_id
-                FROM message_tool_calls
-                WHERE assistant_message_id = ANY(:assistant_message_ids)
-                  AND scope = 'assistant_write'
-                """
-            ),
-            {"assistant_message_ids": assistant_message_ids},
-        )
-    )
-    event_run_ids = set(
-        db.scalars(
-            text(
-                """
-                SELECT DISTINCT run_id
-                FROM chat_run_events
-                WHERE run_id = ANY(:run_ids)
-                  AND event_type IN ('tool_call_start', 'tool_call_done')
-                  AND payload ->> 'tool_name' = ANY(:tool_names)
-                """
-            ),
-            {"run_ids": run_ids, "tool_names": list(WRITE_TOOL_NAMES)},
-        )
-    )
+    message_ids_with_attempts = _message_write_attempt_assistant_ids(db, assistant_message_ids)
+    event_run_ids: set[UUID] = set()
+    event_rows = db.execute(
+        text(
+            """
+            SELECT run_id, event_type, payload
+            FROM chat_run_events
+            WHERE run_id = ANY(:run_ids)
+              AND event_type IN ('tool_call_start', 'tool_call_done')
+            """
+        ),
+        {"run_ids": run_ids},
+    ).mappings()
+    for row in event_rows:
+        payload = chat_run_event_payload_json(row["event_type"], row["payload"])
+        if payload["effect"] == "Write":
+            event_run_ids.add(row["run_id"])
     return {
         run.id
         for run in runs
         if run.id in event_run_ids or run.assistant_message_id in message_ids_with_attempts
     }
+
+
+def _message_write_attempt_assistant_ids(
+    db: Session, assistant_message_ids: Sequence[UUID]
+) -> set[UUID]:
+    """Decode every bounded candidate row before declaration effect is authority."""
+
+    rows = db.scalars(
+        select(MessageToolCall).where(
+            MessageToolCall.assistant_message_id.in_(assistant_message_ids)
+        )
+    ).all()
+    result: set[UUID] = set()
+    for row in rows:
+        record = decode_persisted_tool_record(row)
+        projection = tool_projection_from_persisted_record(record)
+        if projection.effect is ToolEffect.Write:
+            result.add(row.assistant_message_id)
+    return result
 
 
 def compute_terminal_attempts(db: Session, run: ChatRun) -> int | None:

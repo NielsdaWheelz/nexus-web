@@ -11,13 +11,22 @@ import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from tempfile import gettempdir
 from types import ModuleType
+from uuid import uuid4
 
 import pytest
 from apps.codex_agent import capacity_canary
 from apps.codex_agent.capacity_canary import check
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
+_LINUX_SUN_PATH_BYTES = 108
+
+
+def _short_socket_path() -> Path:
+    socket_path = Path(gettempdir()) / f"nexus-capacity-canary-{uuid4().hex[:16]}.sock"
+    assert len(str(socket_path).encode("utf-8")) < _LINUX_SUN_PATH_BYTES
+    return socket_path
 
 
 @contextmanager
@@ -88,6 +97,7 @@ def _empty_success_terminal_host(socket_path: Path) -> Iterator[None]:
             server.shutdown()
             thread.join(timeout=5)
             server.server_close()
+            socket_path.unlink(missing_ok=True)
 
 
 @contextmanager
@@ -143,12 +153,13 @@ def _faulting_turn_host(socket_path: Path, *, mode: str) -> Iterator[None]:
             server.shutdown()
             thread.join(timeout=5)
             server.server_close()
+            socket_path.unlink(missing_ok=True)
 
 
-def test_capacity_canary_rejects_succeeded_terminal_without_metadata_object(tmp_path: Path) -> None:
+def test_capacity_canary_rejects_succeeded_terminal_without_metadata_object() -> None:
     """Risk: qualification promotes a host whose successful turns cannot publish metadata."""
 
-    socket_path = tmp_path / "capacity-canary.sock"
+    socket_path = _short_socket_path()
     with _empty_success_terminal_host(socket_path):
         result, exit_code = asyncio.run(check(socket_path))
 
@@ -183,10 +194,10 @@ def test_capacity_canary_authors_preaccept_unavailable_as_retriable_transport(
     }
 
 
-def test_capacity_canary_authors_postaccept_loss_as_retriable_transport(tmp_path: Path) -> None:
+def test_capacity_canary_authors_postaccept_loss_as_retriable_transport() -> None:
     """Risk: an ambiguous accepted turn is mislabeled as a measured capacity breach."""
 
-    socket_path = tmp_path / "ambiguous-capacity-canary.sock"
+    socket_path = _short_socket_path()
     with _faulting_turn_host(socket_path, mode="transport_ambiguous"):
         result, exit_code = asyncio.run(check(socket_path))
 
@@ -200,12 +211,11 @@ def test_capacity_canary_authors_postaccept_loss_as_retriable_transport(tmp_path
 
 @pytest.mark.parametrize("mode", ["request_rejected", "protocol_defect"])
 def test_capacity_canary_keeps_authored_or_protocol_defects_as_failed_breach(
-    tmp_path: Path,
     mode: str,
 ) -> None:
     """Risk: a rejected command or malformed host protocol is made silently retriable."""
 
-    socket_path = tmp_path / f"{mode}-capacity-canary.sock"
+    socket_path = _short_socket_path()
     with _faulting_turn_host(socket_path, mode=mode):
         result, exit_code = asyncio.run(check(socket_path))
 

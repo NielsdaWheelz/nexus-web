@@ -124,6 +124,14 @@ PR sensitivity MUST NOT dispatch paid hosted providers or require a physical
 device. The local executor/parser proof is sensitivity-gated in PR; the hosted
 or device boundary runs only in its named protected capability.
 
+Sensitivity resolves one owner deterministically, so the registry admits at most
+one priority node per proof owner path, and `testdata/faults/manifest.json`
+admits at most one fault per proof. A fault MUST name the registered canonical
+node of its owner; a fault naming any other node of the same file can never be
+resolved and is dead evidence. `policy` rejects all three shapes
+(`proof-canonical-node`, `fault-proof-owner`, `fault-canonical-proof`) instead
+of letting the workflow abort without a verdict.
+
 The final work report for a defect or replacement MUST state how sensitivity was
 demonstrated. “Test passes” is insufficient.
 
@@ -394,11 +402,15 @@ one workflow.
 
 Before launching Node/browser/build/Gradle or other heavy proof, the controller
 acquires the single-heavy-operation lock and waits at most 30 seconds for
-kernel-reported `MemAvailable` to reach 2,048 MiB. This bounded admission wait
-only resamples host state; it never launches or reruns proof and is not an
-automatic retry. Unknown memory is immediately `not_run`; expiry below the
-floor is `not_run` before launch and reports the latest observed value. This is
-a conservative host-safety admission floor, not a proof-size or performance
+kernel-reported available memory to reach 2,048 MiB: Linux `MemAvailable`, or
+Darwin free plus file-backed pages while the kernel VM pressure state is normal.
+The Darwin estimate does not add speculative pages because they are already
+included in the file-backed owner, and excludes anonymous inactive, purgeable,
+and compressed pages. This bounded admission wait only resamples host state; it
+never launches or reruns proof and is not an automatic retry. Unknown memory or
+non-normal Darwin pressure is immediately `not_run`; expiry below the floor is
+`not_run` before launch and reports the latest observed value. This is a
+conservative host-safety admission floor, not a proof-size or performance
 target. Change it only from recorded memory evidence on the 8 GiB reference
 host.
 
@@ -416,7 +428,7 @@ adapter. The Makefile deliberately has no test/check/verify aliases.
 | `./scripts/test full` | complete deterministic local portfolio |
 | `./scripts/test nightly` | `full` plus randomized/property audit, one hosted canary, and Android device proof |
 | `./scripts/test codex-nightly` | one bounded subscription-authenticated Codex metadata canary on the dedicated runner |
-| `./scripts/test release` | `full` plus bounded provider certification, signed Android release proof, and exact staged artifacts |
+| `./scripts/test release` | `full` plus bounded provider certification, Android device proof, signed Android release proof, and exact staged artifacts |
 | `./scripts/test doctor` | local tool, dependency, browser, SDK, service, port, and template readiness; protected-workflow inputs only when that lane is explicitly enabled |
 | `./scripts/test android-visual --sha HEAD_SHA --path /OWNED_PATH [--device primary]` | explicit opt-in physical-device authenticated WebView visual check of the current non-`main` worktree; never included in `changed`/`confidence`/`pr`/`full`/`nightly`/`release` |
 | `./scripts/test prove --proof PROOF --against base:REF\|fault:FAULT_ID` | exact demonstrated-red then green sensitivity evidence |
@@ -429,7 +441,7 @@ The command table above, CI routes, and deferred-owner map are explicit,
 policy-checked projections that MUST change with it; they are not generated
 from the registry.
 
-<!-- nexus-test-routing-sha256: 4980bf99bca66fd56cce384cc79547e3baab82688711268c48cf9b511c7ccb00 -->
+<!-- nexus-test-routing-sha256: a181c221374d178dc15e014116adb3ee04b8d84c56a4ff2e49f1003f4d6a1caf -->
 
 When changed-file routing names a capability later than the invoked workflow,
 the controller MUST retain it in evidence with its exact `deferred_to` owner and
@@ -447,6 +459,8 @@ physical-device boundaries are excluded. The owning `full`, `nightly`, or
 | Real PostgreSQL/API/service | `python/tests/service/` |
 | Migration graph and convergence | `python/tests/migrations/` |
 | Pinned portable LLM tools | `python/tests/llm_tools_contract/` |
+| Node accepted-URL ingest egress | `node/ingest/test/*.test.mjs` |
+| Release artifact/image binding | `python/tests/release_artifact/` |
 | Deterministic LLM semantics | `python/tests/evals/` |
 | Property/random-order audit | `python/tests/audit/` |
 | Paid hosted proof | `python/tests/hosted/nightly/` and `python/tests/hosted/release/` |
@@ -461,16 +475,17 @@ conventions do. Ordinary Python proof is socket-denied, including spawned
 Python workers through `sitecustomize`; only `tests/hosted/` with the
 controller's explicit socket flag may contact external providers. Browser
 component globals guard `fetch`, `EventSource`, and `WebSocket`; Playwright
-allows only controller-recorded loopback origins. No test may supply product or
-production resource endpoints.
+allows only controller-recorded loopback origins. Node ingest proof runs through
+the controller's `node-network-guard.mjs` and admits only loopback destinations.
+No test may supply product or production resource endpoints.
 
 ### Focused changed-proof commands
 
 Use `./scripts/test changed <repository-relative path or exact
 runner-qualified node>` for the supported inner loop. Direct pytest, Vitest,
-Playwright, or Gradle invocation is allowed for exact debugging (`--lf`, watch,
-`--headed`, `--debug`) only; checked-in configuration and network policy still
-apply. A direct invocation is not a workflow verdict.
+Node, Playwright, or Gradle invocation is allowed for exact debugging (`--lf`,
+watch, `--headed`, `--debug`) only; checked-in configuration and network policy
+still apply. A direct invocation is not a workflow verdict.
 
 ## 9. Current fixture and corpus contract
 
@@ -514,6 +529,12 @@ data and demonstrates that foreign or unrecorded resources survive.
 - `test_user`: unique user/default library inside the rollback transaction.
 - `authenticated_client`: the real FastAPI app and authorization stack paired
   with `db_session`; only external token verification is a controlled fake.
+
+The offline-reading proxy seam additionally uses pinned Caddy `v2.11.4` and a
+Uvicorn/FastAPI origin fixture as two recovery-ledger-owned processes. It loads
+the production Caddyfile with only controller-owned loopback site/upstream
+endpoints substituted and the local admin endpoint disabled; this is
+process/config evidence, not a BFF-process claim.
 
 Use ORM-backed factories or owner APIs so fixture shape follows production
 models. Use a small local builder for unreachable states, and independently
@@ -698,6 +719,33 @@ Android instrumentation covers native ownership: App Links, auth handoff,
 Credential Manager, WebView bridge, cookies, file chooser, share intents, Media
 Session, background audio, offline behavior, and signing. Do not duplicate web
 behavior.
+
+The `android-device` capability accepts exactly one authorized device attested
+from `adb devices -l` — a locally started emulator, or a device carrying adb's
+`usb:` topology fact — and binds Gradle to its serial. A wireless adb transport
+cannot satisfy it. `nightly` uses the hosted emulator; `release` runs on the
+protected USB runner and requires the wired handset there. The debug sweep
+excludes the signed-promotion annotation, whose scenarios only the signed lane
+can stage. `android-release` is the signed physical-device lane: it builds the
+candidate, refuses an emulated endpoint by reading the device's qemu build
+properties back, tests the older signed baseline, and installs the candidate in
+place on that same USB device. Missing physical-device/operator evidence is
+`not_run` and blocks the fail-closed workflow; emulator instrumentation cannot
+substitute for physical force-stop/reboot/offline evidence.
+
+Signed-release evidence and its immutable artifact manifest retain the exact
+direct API origin embedded in the APK. Physical offline-reading promotion must
+compare that origin with the real mint response's `package_base_url` and fail
+closed on drift; native exact-origin enforcement is not relaxed.
+
+The signed physical promotion controller is staged: it must acquire against the
+strictly older installed baseline before candidate installation, own and attest
+force-stop/reboot/first-unlock/airplane before the cold-offline phase, and only
+then install the candidate in place for V1 reopen/progress/purge/update. A
+missing executable staged owner is `not_run`; a controller topology test is not
+physical promotion evidence. Retained release evidence records only facts the
+controller read back from the device — the qemu build properties and each
+phase's `airplane_mode_on` value — never an assumed constant.
 
 Extension proof covers MV3 runtime, permissions, bearer scope, content capture,
 and handoff boundaries. Reuse the canonical content corpus.

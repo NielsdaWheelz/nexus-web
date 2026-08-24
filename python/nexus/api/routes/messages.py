@@ -14,6 +14,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
+from nexus.api.deps import require_tool_projection_revision
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.responses import ok, ok_page
@@ -22,7 +23,10 @@ from nexus.services import conversations as conversations_service
 router = APIRouter(tags=["messages"])
 
 
-@router.get("/conversations/{conversation_id}/messages")
+@router.get(
+    "/conversations/{conversation_id}/messages",
+    dependencies=[Depends(require_tool_projection_revision)],
+)
 def list_messages(
     conversation_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],

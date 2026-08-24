@@ -36,7 +36,7 @@ def _save_state(path: Path, state: dict[str, Any]) -> None:
 
 def _candidate(state: dict[str, Any]) -> dict[str, object]:
     candidate: dict[str, object] = {
-        "expected_database_revision": "0215",
+        "expected_database_revision": "0216",
         "expected_oracle_manifest_digest": "sha256:" + "c" * 64,
         "images": {
             "api": "ghcr.io/nielsdawheelz/nexus-api@sha256:" + "a" * 64,
@@ -85,6 +85,9 @@ def _copy_bundle(state: dict[str, Any], destination: Path) -> None:
         "release.py": repo_root / "deploy/hetzner/release.py",
         "python/nexus/__init__.py": repo_root / "python/nexus/__init__.py",
         "python/nexus/release_artifact.py": (repo_root / "python/nexus/release_artifact.py"),
+        "testdata/android/player-protocol.json": (
+            repo_root / "testdata/android/player-protocol.json"
+        ),
     }
     for relative, source in sources.items():
         target = destination / relative

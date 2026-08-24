@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import cast
@@ -13,8 +14,44 @@ def test_ci_setup_installs_every_platform_static_tool() -> None:
         encoding="utf-8",
     )
 
-    assert "sudo apt-get install --yes --no-install-recommends cloud-init shellcheck" in setup
+    assert "for tool in cloud-init shellcheck; do" in setup
+    assert 'sudo apt-get install --yes --no-install-recommends "${missing[@]}"' in setup
     assert "docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f" in setup
+    assert "github.com/caddyserver/caddy/v2/cmd/caddy@v2.11.4" in setup
+    assert 'go version -m "$caddy_bin"' in setup
+    assert "github.com/caddyserver/caddy/v2\\tv2.11.4\\t" in setup
+    assert '"$caddy_bin" version >/dev/null' in setup
+
+
+def test_ci_setup_survives_a_persistent_self_hosted_workspace() -> None:
+    """Setup must never crash before the control plane can report a verdict.
+
+    The protected release job runs on a persistent self-hosted host: its
+    `_work` tree, and therefore the sibling external-suite checkouts, survives
+    between runs, and passwordless `sudo` and a container runtime are not
+    guaranteed. A setup step that aborts produces no evidence at all, which is
+    strictly worse than the fail-closed `not_run` the control plane would emit.
+    """
+    setup = (REPO_ROOT / ".github/actions/setup-test/action.yml").read_text(
+        encoding="utf-8",
+    )
+
+    assert 'test ! -e "$checkout"' not in setup, (
+        "the provider-runtime checkout still requires a pristine workspace and "
+        "fails on every run after the first on a persistent runner"
+    )
+    assert 'case "$(basename "$checkout")" in' in setup
+    assert "llm-calling|llm-tools)" in setup
+    assert 'rm -rf "$checkout"' in setup
+    assert 'test "$(git -C "$checkout" rev-parse HEAD)" = "$revision"' in setup
+
+    assert "if ! sudo -n true >/dev/null 2>&1; then" in setup
+    for step in setup.split("\n    - name: ")[1:]:
+        if "sudo " in step:
+            assert "if ! sudo -n true >/dev/null 2>&1; then" in step, (
+                f"setup step uses sudo without the passwordless guard: {step.splitlines()[0]}"
+            )
+    assert "steps.container.outputs.docker == 'true'" in setup
 
 
 def test_deploy_is_one_exact_immutable_staged_release_path() -> None:
@@ -88,6 +125,24 @@ def test_config_publication_is_explicit_fresh_and_python_owned() -> None:
     assert "sudo install" not in script
     assert "NEXUS_REMOTE_ENV_FILE" not in script
     assert "NEXUS_ENV_FILE" not in script
+
+
+def test_worker_ingest_egress_owner_is_baked_and_cannot_be_reconfigured_by_env() -> None:
+    dockerfile = (REPO_ROOT / "docker/Dockerfile.backend").read_text(encoding="utf-8")
+    dockerignore = (REPO_ROOT / ".dockerignore").read_text(encoding="utf-8")
+    worker_env = (REPO_ROOT / "deploy/env/env-prod-worker.example").read_text(encoding="utf-8")
+    publisher = (REPO_ROOT / "deploy/hetzner/release.py").read_text(encoding="utf-8")
+    validator = (REPO_ROOT / "deploy/hetzner/sync-env.sh").read_text(encoding="utf-8")
+
+    assert (
+        "COPY node/ingest/accepted_url_egress.mjs ./node/ingest/accepted_url_egress.mjs"
+        in dockerfile
+    )
+    assert "ENV NODE_INGEST_SCRIPT=" not in dockerfile
+    assert "!node/ingest/accepted_url_egress.mjs" in dockerignore
+    assert "NODE_INGEST_SCRIPT" not in worker_env
+    assert '"NODE_INGEST_SCRIPT",' not in publisher
+    assert "reject_node_ingest_script" in validator
 
 
 def test_vercel_config_rejects_cross_file_duplicates_before_provider_mutation(
@@ -266,6 +321,25 @@ def test_production_compose_is_topology_only_and_app_activation_is_narrow() -> N
     ):
         assert activation_contract in controller
     assert 'arguments=("stop", "--timeout", "30", "worker-background")' in controller
+
+
+def test_background_worker_can_start_before_api_readiness() -> None:
+    compose = (REPO_ROOT / "deploy/hetzner/docker-compose.yml").read_text(encoding="utf-8")
+    interactive_start = compose.index("  worker-interactive:\n")
+    background_start = compose.index("  worker-background:\n")
+    migration_start = compose.index("  migration:\n")
+
+    interactive = compose[interactive_start:background_start]
+    background = compose[background_start:migration_start]
+
+    # The background lane owns reconciliation freshness, so API readiness may
+    # depend on it. Its only startup prerequisite is the durable queue owner.
+    assert "      postgres:\n        condition: service_healthy\n" in background
+    assert "      api:\n" not in background
+
+    # The interactive lane does not produce reconciliation freshness and can
+    # remain sequenced behind the ready API without creating a dependency cycle.
+    assert "      api:\n        condition: service_healthy\n" in interactive
 
 
 def test_production_compose_declares_the_exact_resource_envelope() -> None:
@@ -455,8 +529,11 @@ def test_codex_host_stop_grace_is_the_host_owned_shutdown_budget() -> None:
     start = compose.index("\n  nexus-codex-agent-host:\n")
     block = compose[start : compose.index("\n  migration:\n")]
     assert f"stop_grace_period: {CODEX_AGENT_HOST_STOP_GRACE_SECONDS}s" in block
-    assert compose.count("stop_grace_period:") == 1, (
-        "only the Codex host publishes a stop budget; writers keep Docker's default"
+    worker_start = compose.index("\n  worker-background:\n")
+    worker_block = compose[worker_start : compose.index("\n  nexus-codex-agent-host:\n")]
+    assert "stop_grace_period: 30s" in worker_block
+    assert compose.count("stop_grace_period:") == 2, (
+        "only the Codex host and child-supervising background worker own stop budgets"
     )
 
     controller = (REPO_ROOT / "deploy/hetzner/release.py").read_text(encoding="utf-8")
@@ -467,11 +544,47 @@ def test_codex_host_stop_grace_is_the_host_owned_shutdown_budget() -> None:
     assert "str(_CODEX_AGENT_STOP_GRACE_SECONDS),\n" in controller
 
 
-def test_caddy_runtime_logs_redact_the_internal_trust_header() -> None:
+def test_caddy_runtime_logs_redact_sensitive_request_headers() -> None:
     caddyfile = (REPO_ROOT / "deploy/hetzner/Caddyfile").read_text(encoding="utf-8")
 
     assert "log default" in caddyfile
+    assert "request>headers>Authorization delete" in caddyfile
+    assert "request>headers>Cookie delete" in caddyfile
     assert "request>headers>X-Nexus-Internal delete" in caddyfile
+
+
+def test_caddy_offline_package_lane_matches_only_one_canonical_uuid_path() -> None:
+    """The unencoded long-timeout proxy exemption is exact, not a prefix grant."""
+    caddyfile = (REPO_ROOT / "deploy/hetzner/Caddyfile").read_text(encoding="utf-8")
+    matcher = re.search(
+        r"^\s*@offline_reading_package path_regexp (\S+)\s*$",
+        caddyfile,
+        flags=re.MULTILINE,
+    )
+    assert matcher is not None, "offline package Caddy route must use one exact path_regexp"
+    path_pattern = re.compile(matcher.group(1))
+
+    cases = {
+        "/offline-reading/packages/11111111-1111-4111-8111-111111111111": True,
+        "/offline-reading/packages/11111111-1111-4111-8111-111111111111/extra": False,
+        "/offline-reading/packages/not-a-uuid": False,
+        "/offline-reading/packages/11111111-1111-4111-8111-11111111111A": False,
+        "/offline-reading/packages": False,
+    }
+    assert {path: path_pattern.fullmatch(path) is not None for path in cases} == cases, (
+        f"Caddy offline package matcher drifted: {matcher.group(1)!r}"
+    )
+
+    package_handle_start = caddyfile.index("handle @offline_reading_package")
+    fallback_handle_start = caddyfile.index("\n\t\thandle {", package_handle_start)
+    package_handle = caddyfile[package_handle_start:fallback_handle_start]
+    fallback_handle = caddyfile[fallback_handle_start:]
+    assert "encode " not in package_handle
+    assert "dial_timeout 20s" in package_handle
+    assert "response_header_timeout 660s" in package_handle
+    assert "read_timeout 3600s" in package_handle
+    assert "write_timeout 3600s" in package_handle
+    assert "encode zstd gzip" in fallback_handle
 
 
 def test_permanent_resource_sharing_firewall_has_no_cutover_mode() -> None:

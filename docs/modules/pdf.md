@@ -56,3 +56,20 @@ PDF reader apparatus is intentionally conservative.
 - Future scholarly, legal-footnote, or literary-annotation PDF support must be
   explicit adapter work with its own diagnostics, confidence contract, and
   fixtures.
+
+## Bounded Parse
+
+`pdf_ingest.py` decodes one PyMuPDF `rawdict` per page and derives every page
+view — plain text, blocks, lines, and the text clipped to a native link
+rectangle — from that single representation, releasing it before advancing.
+Marker text for a native citation link is the characters inside the link
+rectangle, which is the geometry persisted beside it; a page whose text
+representation cannot be decoded contributes no text but still records its own
+height, so page-indexed lookups stay aligned.
+
+A breach of a declared budget is terminal `E_RESOURCE_LIMIT` carrying a safe
+dimension: page, block, link, and line counts describe the document's shape
+(`Structure`), while extracted text and the retained apparatus index describe
+produced output (`Output`). A stored object that does not match the media
+source's persisted digest is terminal `E_SOURCE_INTEGRITY`, refused before the
+document is opened.

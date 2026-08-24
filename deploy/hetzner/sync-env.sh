@@ -261,6 +261,14 @@ reject_legacy_runtime_keys() {
   done
 }
 
+reject_node_ingest_script() {
+  local file="$1"
+
+  if env_value "NODE_INGEST_SCRIPT" "$file" >/dev/null; then
+    die "NODE_INGEST_SCRIPT is image-owned and must not be present in production runtime env"
+  fi
+}
+
 reject_codex_host_runtime_keys() {
   local file="$1"
   local key value
@@ -396,6 +404,7 @@ require_cloudflare_r2_s3_api_origin "$tmp_file"
 require_digest_image POSTGRES_IMAGE "$tmp_file"
 require_digest_image CADDY_IMAGE "$tmp_file"
 reject_legacy_runtime_keys "$tmp_file"
+reject_node_ingest_script "$tmp_file"
 reject_codex_host_runtime_keys "$tmp_file"
 reject_removed_x_env_keys "$tmp_file"
 reject_removed_llm_env_keys "$tmp_file"

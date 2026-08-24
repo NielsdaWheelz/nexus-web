@@ -12,7 +12,9 @@ import {
   type PauseShorteningMode,
 } from "@/lib/player/pauseShortening";
 import {
+  decodePodcastBackfillState,
   decodePodcastSyncStatus,
+  type PodcastBackfillState,
   type PodcastSyncStatus,
 } from "@/lib/podcasts/types";
 import {
@@ -22,13 +24,6 @@ import {
   expectNullableString,
   expectString,
 } from "@/lib/validation";
-
-type PodcastBackfillState =
-  | "Pending"
-  | "Running"
-  | "Complete"
-  | "SourceLimited"
-  | "Failed";
 
 type PodcastSubscriptionSettingsBackfill = {
   id: string;
@@ -96,23 +91,6 @@ async function publishInstall(
   await Promise.all(
     [...listeners].map((listener) => listener(install)),
   );
-}
-
-function decodeBackfillState(
-  raw: unknown,
-  context: string,
-): PodcastBackfillState {
-  const state = expectString(raw, context);
-  if (
-    state !== "Pending" &&
-    state !== "Running" &&
-    state !== "Complete" &&
-    state !== "SourceLimited" &&
-    state !== "Failed"
-  ) {
-    throw new TypeError(`${context} is invalid`);
-  }
-  return state;
 }
 
 function decodePodcastSubscriptionSettingsResponse(
@@ -187,7 +165,7 @@ function decodePodcastSubscriptionSettingsResponse(
     updated_at: expectString(data.updated_at, "updated_at"),
     backfill: {
       id: expectString(backfill.id, "backfill.id"),
-      state: decodeBackfillState(backfill.state, "backfill.state"),
+      state: decodePodcastBackfillState(backfill.state, "backfill.state"),
       processedCount: expectNonnegativeInteger(
         backfill.processedCount,
         "backfill.processedCount",

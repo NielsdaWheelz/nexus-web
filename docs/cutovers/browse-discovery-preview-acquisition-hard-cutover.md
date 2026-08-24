@@ -446,6 +446,30 @@ POST /podcasts/subscriptions/{podcastId}/backfill/retry
 Idempotency-Key: <clientMutationId>
 ```
 
+Subscription lifecycle observation uses the existing direct, token-authenticated
+SSE plane:
+
+```http
+GET /stream/podcast-subscriptions/{podcastId}/events
+Authorization: Bearer <stream-token>
+
+event: state | done
+data: {
+  podcastId,
+  syncStatus: "Pending" | "Running" | "Complete" | "SourceLimited" | "Failed",
+  backfill: {
+    id,
+    state: "Pending" | "Running" | "Complete" | "SourceLimited" | "Failed",
+    processedCount,
+    addedCount
+  }
+}
+```
+
+`done` is valid only when both status machines are terminal. The outward
+Podcast ID is not listener identity: the route resolves and rechecks the
+viewer-owned subscription UUID before LISTEN and on every snapshot read.
+
 - Episode Add and Subscribe re-resolve provider truth server-side; client
   metadata is never a write payload. Relationship removal resolves only
   canonical local identity and current authorization.
@@ -472,6 +496,12 @@ Idempotency-Key: <clientMutationId>
 - Subscribe returns canonical href, idempotency outcome, per-destination
   outcome, `Subscribed | AlreadySubscribed | DestinationsAdded`, collection
   revisions, and backfill state.
+- The canonical detail pane observes the active subscription epoch through the
+  owner-checked subscription-lifecycle snapshot stream. Changed committed live
+  sync or backfill snapshots feed a serialized latest-state detail/episode
+  revalidation drain; the stream is terminal only when both owners are terminal. This closes the
+  commit-before-worker race, including a feed episode that is globally reused
+  but newly filed for this viewer, without polling or a synthetic Refresh run.
 - Unsubscribe returns
   `Unsubscribed { removedPlacementCount, retainedSharedCount } |
   AlreadyUnsubscribed`.

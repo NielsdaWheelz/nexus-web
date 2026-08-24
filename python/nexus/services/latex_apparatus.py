@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from nexus.config import get_settings
+from nexus.errors import ResourceFailureDimension
 from nexus.services.parser_temp import nested_utf8_byte_length
 from nexus.text import normalize_whitespace
 
@@ -30,10 +31,23 @@ LATEX_APPARATUS_MAX_RETAINED_UTF8_BYTES = 8 * 1024 * 1024
 
 
 class LatexSourceArchiveUnsafe(ValueError):
-    def __init__(self, reason: str, message: str, *, resource_limit: bool = False):
+    """A source archive was refused before extraction.
+
+    ``resource_limit_dimension`` is present only when the refusal is a declared
+    budget breach; the site that detects the breach names its safe dimension so
+    the lifecycle can project ``E_RESOURCE_LIMIT`` without re-deriving it.
+    """
+
+    def __init__(
+        self,
+        reason: str,
+        message: str,
+        *,
+        resource_limit_dimension: ResourceFailureDimension | None = None,
+    ):
         super().__init__(message)
         self.reason = reason
-        self.resource_limit = resource_limit
+        self.resource_limit_dimension = resource_limit_dimension
 
 
 @dataclass(frozen=True)
@@ -315,7 +329,8 @@ def _retain_latex_output_bytes(budget: _LatexOutputBudget, value: object) -> Non
 
 
 def _latex_resource_limit(reason: str, message: str) -> LatexSourceArchiveUnsafe:
-    return LatexSourceArchiveUnsafe(reason, message, resource_limit=True)
+    """Apparatus item/edge/retained-text caps bound the output this extraction emits."""
+    return LatexSourceArchiveUnsafe(reason, message, resource_limit_dimension="Output")
 
 
 def _source_archive_text_files(
@@ -336,7 +351,7 @@ def _source_archive_text_files(
                 raise LatexSourceArchiveUnsafe(
                     "too_many_entries",
                     f"Source archive has more than {cfg.max_entries} entries",
-                    resource_limit=True,
+                    resource_limit_dimension="Structure",
                 )
             name = _safe_source_archive_name(member.name)
             if name in seen_names:
@@ -360,7 +375,7 @@ def _source_archive_text_files(
                         f"Entry '{name}' uncompressed size {member.size} exceeds limit "
                         f"{cfg.max_single_entry_uncompressed_bytes}"
                     ),
-                    resource_limit=True,
+                    resource_limit_dimension="Output",
                 )
             total_uncompressed += int(member.size)
             if total_uncompressed > cfg.max_total_uncompressed_bytes:
@@ -370,7 +385,7 @@ def _source_archive_text_files(
                         f"Total uncompressed source archive size {total_uncompressed} "
                         f"exceeds limit {cfg.max_total_uncompressed_bytes}"
                     ),
-                    resource_limit=True,
+                    resource_limit_dimension="Output",
                 )
 
             if member.size > _MAX_SOURCE_FILE_BYTES:
@@ -460,7 +475,7 @@ def _check_source_archive_compression_ratio(
         raise LatexSourceArchiveUnsafe(
             "compression_ratio_too_high",
             (f"Source archive compression ratio {ratio:.1f} exceeds limit {max_compression_ratio}"),
-            resource_limit=True,
+            resource_limit_dimension="Output",
         )
 
 

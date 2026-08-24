@@ -9,7 +9,11 @@ import {
   type Dispatch,
   type SetStateAction,
 } from "react";
-import { apiFetch } from "@/lib/api/client";
+import {
+  apiFetch,
+  isToolProjectionReloadRequired,
+  type ApiError,
+} from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   toChatSSEEvent,
@@ -91,6 +95,7 @@ export function useChatRunTail({
   onRunDone,
   onConversationAvailable,
   onContextRefAdded,
+  onProjectionReloadRequired,
   shouldStartRun,
   shouldApplyRun,
 }: {
@@ -103,6 +108,7 @@ export function useChatRunTail({
   onRunDone?: (runId: string, status: TerminalRunStatus) => void;
   onConversationAvailable?: (conversationId: string, runId: string) => void;
   onContextRefAdded?: (data: SSEContextRefAddedEvent["data"]) => void;
+  onProjectionReloadRequired?: (error: ApiError) => void;
   shouldStartRun?: (ctx: RunVisibilityContext) => boolean;
   shouldApplyRun?: (ctx: RunVisibilityContext) => boolean;
 }) {
@@ -118,6 +124,15 @@ export function useChatRunTail({
   // creates the instance exactly once and React guarantees it persists for the
   // component's lifetime (unlike `useMemo`, which may be discarded).
   const [streamCtx] = useState(() => new PerRunStreamContext());
+
+  const reportProjectionReload = useCallback(
+    (error: unknown): boolean => {
+      if (!isToolProjectionReloadRequired(error)) return false;
+      onProjectionReloadRequired?.(error);
+      return true;
+    },
+    [onProjectionReloadRequired],
+  );
 
   const {
     handleMetaReceived,
@@ -225,11 +240,12 @@ export function useChatRunTail({
           method: "POST",
         });
       } catch (err) {
+        if (reportProjectionReload(err)) return;
         if (handleUnauthenticatedApiError(err)) return;
         console.error("Failed to cancel chat run:", err);
       }
     },
-    [activeRunId],
+    [activeRunId, reportProjectionReload],
   );
 
   useEffect(() => {
@@ -377,6 +393,10 @@ export function useChatRunTail({
           }
           return response.data;
         } catch (err) {
+          if (reportProjectionReload(err)) {
+            finishRun();
+            return null;
+          }
           if (handleUnauthenticatedApiError(err)) return null;
           console.error("Failed to reconcile chat run:", err);
           return null;
@@ -475,6 +495,10 @@ export function useChatRunTail({
             },
             onError: (err) => {
               if (streamCtx.isSuperseded(runId, token) || finished) return;
+              if (reportProjectionReload(err)) {
+                finishRun();
+                return;
+              }
               // Auto-reconnect budget exhausted (or a fatal stream error).
               // Reconcile one last time — the run may have completed in the DB
               // exactly as the stream died, in which case reconcile() folds the
@@ -518,6 +542,10 @@ export function useChatRunTail({
           // First-token mint failed. 401 hands off to the auth boundary; anything
           // else mirrors onError — the run may already be terminal in the DB, so
           // reconcile once and only surface the interruption if it did not finish.
+          if (reportProjectionReload(err)) {
+            finishRun();
+            return;
+          }
           if (handleUnauthenticatedApiError(err)) return;
           console.error("Failed to open chat run stream:", err);
           const persisted = await reconcile();
@@ -562,6 +590,7 @@ export function useChatRunTail({
       onConversationAvailable,
       onRunDone,
       onRunFinished,
+      reportProjectionReload,
     ],
   );
 
@@ -578,11 +607,12 @@ export function useChatRunTail({
         );
         await tailChatRun(decodeChatRunData(response.data));
       } catch (err) {
+        if (reportProjectionReload(err)) return;
         if (handleUnauthenticatedApiError(err)) return;
         console.error("Failed to reconnect chat run:", err);
       }
     },
-    [lostConnections, clearLostConnection, tailChatRun],
+    [lostConnections, clearLostConnection, reportProjectionReload, tailChatRun],
   );
 
   return {

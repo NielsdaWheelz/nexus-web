@@ -78,6 +78,12 @@ export type ResourceActionCapability =
       readonly href: string;
     }
   | {
+      readonly kind: "OfflineReading";
+      readonly availability: ServerActionAvailability;
+      readonly requestedTitle: string;
+      readonly mediaKind: "web_article" | "epub" | "pdf";
+    }
+  | {
       readonly kind: "Playback";
       readonly availability: ServerActionAvailability;
       readonly playerDescriptor: PlayerDescriptor;
@@ -202,6 +208,27 @@ function decodeResourceActionCapability(
   const record = expectRecord(raw, name);
   const kind = expectString(record.kind, `${name}.kind`);
   switch (kind) {
+    case "OfflineReading": {
+      expectExactRecord(record, ["kind", "availability", "requestedTitle", "mediaKind"], name);
+      const requestedTitle = expectString(record.requestedTitle, `${name}.requestedTitle`);
+      if (
+        Array.from(requestedTitle).length < 1 ||
+        Array.from(requestedTitle).length > 512 ||
+        requestedTitle.trim().length === 0
+      ) {
+        throw new TypeError(`${name}.requestedTitle must be bounded`);
+      }
+      return {
+        kind,
+        availability: decodeServerActionAvailability(record.availability, `${name}.availability`),
+        requestedTitle,
+        mediaKind: expectOneOf(
+          record.mediaKind,
+          ["web_article", "epub", "pdf"] as const,
+          `${name}.mediaKind`,
+        ),
+      };
+    }
     case "OpenSource": {
       expectExactRecord(record, ["kind", "availability", "href"], name);
       return {

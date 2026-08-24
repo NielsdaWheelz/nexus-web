@@ -6,7 +6,7 @@ from typing import Any, assert_never
 from uuid import UUID
 
 import httpx
-from llm_tools import BraveSearchProvider, WebSearchProvider
+from llm_tools import WebSearchProvider
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -25,6 +25,7 @@ from nexus.services.chat_runs import (
     execute_chat_run,
 )
 from nexus.services.llm_execution import ExecutionRuntime, ProviderRetryMode
+from nexus.services.tool_runtime.composition import compose_configured_web_search_provider
 from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
 
 logger = get_logger(__name__)
@@ -47,10 +48,8 @@ def chat_run(run_id: str, *, context: JobExecutionContext) -> dict[str, Any]:
         job = get_job(db, context.job_id)
         if job is None or str(job.payload.get("run_id")) != run_id:
             raise AssertionError("claimed chat job does not match its run payload")
-        web_search_provider: WebSearchProvider | None = (
-            BraveSearchProvider(client, api_key=settings.brave_search_api_key)
-            if settings.brave_search_api_key
-            else None
+        web_search_provider: WebSearchProvider | None = compose_configured_web_search_provider(
+            client, settings=settings
         )
         return await execute_chat_run(
             db,

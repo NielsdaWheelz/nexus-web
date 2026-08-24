@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthDependencyError } from "@/lib/auth/session-response";
 import { AUTH_ENDED_FEEDBACK_COOKIE } from "@/lib/auth/messages";
 import {
+  proxyOfflineReaderProgressToFastAPIWithDeps,
   proxyExtensionToFastAPI,
   proxyToFastAPIWithDeps,
 } from "./proxy";
@@ -114,6 +115,56 @@ describe("BFF response streaming", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     process.env = { ...originalEnvironment };
+  });
+
+  it("forwards offline reader attestation only through its narrow route policy", async () => {
+    const accountId = "11111111-1111-4111-8111-111111111111";
+    let ordinaryExpectedAccount: string | null = null;
+    const ordinary = await proxyToFastAPIWithDeps(
+      new Request("http://localhost:3000/api/media/one/reader-state", {
+        headers: { "X-Nexus-Expected-Account-Id": accountId },
+      }),
+      "/media/one/reader-state",
+      authenticatedDeps(async (_input, init) => {
+        ordinaryExpectedAccount = new Headers(init?.headers).get(
+          "x-nexus-expected-account-id",
+        );
+        return new Response('{"data":{}}', {
+          headers: {
+            "content-type": "application/json",
+            "nexus-account-id": accountId,
+            "nexus-reader-generation": "7",
+          },
+        });
+      }),
+    );
+
+    let offlineExpectedAccount: string | null = null;
+    const offline = await proxyOfflineReaderProgressToFastAPIWithDeps(
+      new Request("http://localhost:3000/api/media/one/offline-reader-state", {
+        headers: { "X-Nexus-Expected-Account-Id": accountId },
+      }),
+      "/media/one/offline-reader-state",
+      authenticatedDeps(async (_input, init) => {
+        offlineExpectedAccount = new Headers(init?.headers).get(
+          "x-nexus-expected-account-id",
+        );
+        return new Response('{"data":{}}', {
+          headers: {
+            "content-type": "application/json",
+            "nexus-account-id": accountId,
+            "nexus-reader-generation": "7",
+          },
+        });
+      }),
+    );
+
+    expect(ordinaryExpectedAccount).toBeNull();
+    expect(ordinary.headers.get("nexus-account-id")).toBeNull();
+    expect(ordinary.headers.get("nexus-reader-generation")).toBeNull();
+    expect(offlineExpectedAccount).toBe(accountId);
+    expect(offline.headers.get("nexus-account-id")).toBe(accountId);
+    expect(offline.headers.get("nexus-reader-generation")).toBe("7");
   });
 
   it("returns an authenticated response without consuming its exact upstream body", async () => {

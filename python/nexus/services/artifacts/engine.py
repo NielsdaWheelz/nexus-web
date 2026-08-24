@@ -29,6 +29,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, assert_never, cast
 from uuid import UUID, uuid4
 
+from llm_tools import ReplayPolicy as PortableReplayPolicy
+from llm_tools import ToolId
 from provider_runtime import (
     CallOutcome as ProviderCallOutcome,
 )
@@ -80,7 +82,11 @@ from nexus.services.artifacts.bindings._shared import (
     document_repair_user_content,
 )
 from nexus.services.artifacts.bindings.base import DossierInputTooLarge, MaterializedDossier
-from nexus.services.artifacts.coordination import DossierBuildRuntime, DossierResearchPending
+from nexus.services.artifacts.coordination import (
+    DossierBuildRuntime,
+    DossierResearchPending,
+    ResearchLeaseLost,
+)
 from nexus.services.artifacts.definition import DOSSIER_DEFINITION
 from nexus.services.artifacts.document_html import (
     DocumentHtmlError,
@@ -118,7 +124,7 @@ from nexus.services.artifacts.idea_seeds import (
     register_idea_seed,
 )
 from nexus.services.artifacts.manifests import InputManifestV1
-from nexus.services.artifacts.research import ResearchInputsChanged, ResearchLeaseLost
+from nexus.services.artifacts.research import ResearchInputsChanged
 from nexus.services.artifacts.subject_policy import (
     SUBJECT_POLICIES,
     ResolvedSubject,
@@ -148,6 +154,8 @@ from nexus.services.structured_synthesis import (
     decode_structured_synthesis,
     outcome_failure_facts,
 )
+from nexus.services.tool_runtime.composition import compose_product_tool_runtime
+from nexus.services.tool_runtime.execution import reconcile_uncertain_tool_completion
 
 logger = get_logger(__name__)
 
@@ -181,6 +189,14 @@ _MAX_INSTRUCTION_CHARS = 4000
 # The one provider step per build (single synthesis over the reduced inputs, B4).
 _STEP_PATH = "synthesis"
 _IDEA_RESOLUTION_STEP_PATH = "idea-resolution"
+_WEB_SEARCH_STEP_PATHS = frozenset(
+    {
+        "research/web-search/0",
+        "research/web-search/1",
+        "research/web-search/2",
+    }
+)
+_WEB_SEARCH_TOOL_ID = ToolId("web.search")
 _VISIBLE_SYNTHESIS_FIELD = "content_html"
 _CANCEL_POLL_INTERVAL_SECONDS = 0.25
 _MANIFEST_ADAPTER: TypeAdapter[InputManifestV1] = TypeAdapter(InputManifestV1)
@@ -279,49 +295,107 @@ def reconcile_uncertain_build(
         payload = dict(row["payload"])
         if str(payload.get("build_id")) != str(build_id):
             raise AssertionError("dead dossier job payload identity changed")
-        raw_states = dict(payload.get("coordination") or {})
-        raw_state = raw_states.get(_STEP_PATH)
-        if raw_state is None:
+        states = step_journal.decode_step_states(payload)
+        uncertain_states = [
+            (path, state)
+            for path, state in states.items()
+            if state.dispatch_phase is step_journal.Uncertain
+        ]
+        if not uncertain_states:
             raise InvalidRequestError(
                 ApiErrorCode.E_INVALID_REQUEST,
                 "Build has no uncertain provider step to reconcile",
             )
-        state = step_journal.StepReplayState.model_validate(raw_state)
-        if state.dispatch_phase is not step_journal.Uncertain:
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                "Build provider step is not uncertain",
-            )
-        if state.generation_id != step_journal.stable_generation_id(build_id, _STEP_PATH):
+        if len(uncertain_states) != 1:
+            raise AssertionError("Dossier build has multiple uncertain provider steps")
+        step_path, state = uncertain_states[0]
+        is_tool_execution = isinstance(state.tool_execution, Present)
+        if step_path == _STEP_PATH:
+            if is_tool_execution:
+                raise AssertionError("uncertain Dossier synthesis contains tool metadata")
+        elif step_path in _WEB_SEARCH_STEP_PATHS:
+            if not is_tool_execution:
+                raise AssertionError("uncertain Dossier Web position lacks bound tool metadata")
+        else:
+            raise AssertionError(f"unknown uncertain Dossier step {step_path!r}")
+        if state.generation_id != step_journal.stable_generation_id(build_id, step_path):
             raise AssertionError("dead dossier replay generation identity changed")
         if not isinstance(state.request_fingerprint, Present):
             raise AssertionError("uncertain dossier step has no request fingerprint")
         if isinstance(state.terminal_result, Present):
             raise AssertionError("uncertain dossier step already has a terminal result")
+        tool_operation = None
+        if is_tool_execution:
+            assert isinstance(state.tool_execution, Present)
+            identity = state.tool_execution.value.identity
+            tool_operation = compose_product_tool_runtime(None).operations["idea_dossier_research"]
+            web_search_binding = tool_operation.plan.catalog_view.binding(_WEB_SEARCH_TOOL_ID)
+            if (
+                identity.tool_id != str(_WEB_SEARCH_TOOL_ID)
+                or identity.tool_contract_revision != web_search_binding.spec.tool_contract_revision
+                or identity.policy_revision != web_search_binding.policy_revision
+                or identity.plan_revision != tool_operation.plan.plan_revision
+                or identity.replay_policy is not step_journal.ReplayPolicy.BilledOnce
+                or web_search_binding.replay_policy is not PortableReplayPolicy.BilledOnce
+            ):
+                raise AssertionError(
+                    "uncertain Dossier tool metadata differs from frozen web.search authority"
+                )
         if isinstance(resolution, step_journal.AttachReconciledResult):
-            normalized = binding.schema.model_validate_json(resolution.terminal_result)
-            next_state = state.model_copy(
-                update={
-                    "dispatch_phase": step_journal.Completed,
-                    "terminal_result": present(
-                        _SynthesisAccepted(
-                            envelope_json=normalized.model_dump_json()
-                        ).model_dump_json()
-                    ),
-                }
-            )
+            if tool_operation is not None:
+                if not isinstance(resolution.tool_settlement, Present):
+                    raise InvalidRequestError(
+                        ApiErrorCode.E_INVALID_REQUEST,
+                        "Recovered Web search usage requires an executor settlement",
+                    )
+                try:
+                    next_state = reconcile_uncertain_tool_completion(
+                        operation=tool_operation,
+                        state=state,
+                        raw_result=resolution.terminal_result,
+                        settlement=resolution.tool_settlement.value,
+                    )
+                except ValueError as exc:
+                    raise InvalidRequestError(
+                        ApiErrorCode.E_INVALID_REQUEST,
+                        "Recovered Web search result or settlement is invalid",
+                    ) from exc
+            else:
+                if isinstance(resolution.tool_settlement, Present):
+                    raise InvalidRequestError(
+                        ApiErrorCode.E_INVALID_REQUEST,
+                        "Synthesis reconciliation cannot include a tool settlement",
+                    )
+                normalized = binding.schema.model_validate_json(resolution.terminal_result)
+                next_state = state.model_copy(
+                    update={
+                        "dispatch_phase": step_journal.Completed,
+                        "terminal_result": present(
+                            _SynthesisAccepted(
+                                envelope_json=normalized.model_dump_json()
+                            ).model_dump_json()
+                        ),
+                    }
+                )
         elif isinstance(resolution, step_journal.ProveNotDispatched):
-            next_state = state.model_copy(
-                update={
-                    "dispatch_phase": step_journal.Prepared,
-                    "terminal_result": absent(),
-                }
-            )
+            updates: dict[str, object] = {
+                "dispatch_phase": step_journal.Prepared,
+                "terminal_result": absent(),
+            }
+            if tool_operation is not None:
+                assert isinstance(state.tool_execution, Present)
+                updates["tool_execution"] = present(
+                    state.tool_execution.value.model_copy(update={"dispatch_claim": absent()})
+                )
+            next_state = state.model_copy(update=updates)
         else:
             assert_never(resolution)
+        next_state = step_journal.StepReplayState.model_validate(
+            next_state.model_dump(mode="python")
+        )
         payload = step_journal.payload_with_step_state(
             payload,
-            step_path=_STEP_PATH,
+            step_path=step_path,
             state=next_state,
         )
         db.execute(

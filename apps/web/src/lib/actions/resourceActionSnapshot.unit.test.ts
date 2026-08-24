@@ -266,6 +266,31 @@ describe("decodeResourceActionSnapshotResolveResponse", () => {
     ).toThrow(TypeError);
   });
 
+  it("strictly decodes server-owned offline-reading kind and visible title", () => {
+    const [snapshot] = decodeResourceActionSnapshotResolveResponse(validRaw([{
+      kind: "OfflineReading",
+      availability: AVAILABLE,
+      mediaKind: "web_article",
+      requestedTitle: "Signal on the Train",
+    }]));
+    expect(snapshot.capabilities[0]).toEqual({
+      kind: "OfflineReading",
+      availability: AVAILABLE,
+      mediaKind: "web_article",
+      requestedTitle: "Signal on the Train",
+    });
+    for (const mutation of [
+      { mediaKind: "audio", requestedTitle: "Signal" },
+      { mediaKind: "pdf", requestedTitle: "   " },
+    ]) {
+      expect(() => decodeResourceActionSnapshotResolveResponse(validRaw([{
+        kind: "OfflineReading",
+        availability: AVAILABLE,
+        ...mutation,
+      }]))).toThrow(TypeError);
+    }
+  });
+
   it("decodes only an explicit unrouteable, capability-free missing snapshot", () => {
     const raw = validRaw([]);
     raw.snapshots[0].missing = true;

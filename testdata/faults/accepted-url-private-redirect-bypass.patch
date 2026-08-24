@@ -1,0 +1,11 @@
+diff --git a/node/ingest/accepted_url_egress.mjs b/node/ingest/accepted_url_egress.mjs
+--- a/node/ingest/accepted_url_egress.mjs
++++ b/node/ingest/accepted_url_egress.mjs
+@@ -35,7 +35,6 @@ const DENIED_IPV4 = new BlockList();
+     ['0.0.0.0', 8],
+     ['10.0.0.0', 8],
+     ['100.64.0.0', 10],
+-    ['127.0.0.0', 8],
+     ['169.254.0.0', 16],
+     ['172.16.0.0', 12],
+     ['168.63.129.16', 32],

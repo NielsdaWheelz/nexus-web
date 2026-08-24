@@ -8,7 +8,11 @@ from typing import Any
 
 import pytest
 
-from nexus_test_control.model import PRIORITY_RISK_FLOOR, TEST_ROUTING_SHA256
+from nexus_test_control.model import (
+    PRIORITY_RISK_FLOOR,
+    TEST_ROUTING_SHA256,
+    PriorityRiskId,
+)
 from nexus_test_control.policy import (
     corpus_manifest_schema_violations,
     corpus_violations,
@@ -20,6 +24,7 @@ from nexus_test_control.policy import (
     repository_violations,
     resource_capability_projection_violations,
 )
+from nexus_test_control.sensitivity import SensitivityError, declared_fault_for_proof
 
 REPO_ROOT = Path(__file__).parents[4]
 
@@ -219,6 +224,7 @@ def _minimal_repository(root: Path) -> None:
         root,
         ".github/workflows/nightly.yml",
         'NEXUS_HOSTED_CANARY: "1"\n'
+        "runs-on: ubuntu-latest\n"
         "uses: reactivecircus/android-emulator-runner@example\n"
         "          api-level: 36\n"
         "          system-image-api-level: 36-ext19\n"
@@ -239,8 +245,8 @@ def _minimal_repository(root: Path) -> None:
         root,
         ".github/workflows/release.yml",
         'NEXUS_PROVIDER_CERTIFICATION: "1"\n'
-        "uses: reactivecircus/android-emulator-runner@example\n"
-        "script: ./scripts/test release\n",
+        "runs-on: [self-hosted, linux, x64, nexus-android-usb]\n"
+        "run: ./scripts/test release\n",
     )
     _write(
         root,
@@ -386,9 +392,11 @@ def test_repository_guard_rejects_legacy_test_routes_in_unlisted_active_docs(
         ("api-level: 36", "api-level: 35"),
         ("system-image-api-level: 36-ext19", "system-image-api-level: 35"),
         ("channel: canary", "channel: stable"),
+        ("runs-on: ubuntu-latest", "runs-on: [self-hosted, linux, x64, nexus-android-usb]"),
+        ("script: ./scripts/test nightly", "script: ./scripts/test confidence"),
     ],
 )
-def test_repository_guard_rejects_nightly_without_modern_system_webview_route(
+def test_repository_guard_rejects_nightly_without_its_hosted_emulator_route(
     tmp_path: Path, current: str, stale: str
 ) -> None:
     _minimal_repository(tmp_path)
@@ -629,9 +637,108 @@ def test_priority_floor_and_journey_inventory_are_complete() -> None:
     assert not proof_contract_violations(REPO_ROOT)
 
 
+def test_android_player_protocol_skew_is_a_typed_priority_risk() -> None:
+    assert PriorityRiskId.ANDROID_PLAYER_PROTOCOL_SKEW.value == "android-player-protocol-skew"
+
+
+def test_android_player_protocol_corpus_has_canonical_repository_bytes() -> None:
+    raw = (REPO_ROOT / "testdata/android/player-protocol.json").read_bytes()
+
+    def unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        value: dict[str, object] = {}
+        for key, item in pairs:
+            assert key not in value, f"duplicate Android player corpus key: {key}"
+            value[key] = item
+        return value
+
+    assert raw.decode("utf-8").encode("utf-8") == raw
+    assert not raw.startswith(b"\xef\xbb\xbf")
+    assert b"\r" not in raw
+    assert raw.endswith(b"\n")
+    assert not raw.endswith(b"\n\n")
+    corpus = json.loads(raw, object_pairs_hook=unique_object)
+    assert set(corpus) == {
+        "version",
+        "inventory",
+        "commands",
+        "snapshots",
+        "replies",
+        "rejections",
+        "events",
+        "nestedVariants",
+    }
+    inventory = corpus["inventory"]
+    assert isinstance(inventory, dict)
+    assert set(inventory) == {
+        "commands",
+        "replies",
+        "events",
+        "snapshots",
+        "rejectionCodes",
+        "presence",
+        "origins",
+        "playbackRateStates",
+        "playbackRateSources",
+        "playbackPhases",
+        "persistence",
+        "persistenceSuspensions",
+        "pauseShorteningModes",
+        "pauseShorteningProvenance",
+        "activityCapture",
+        "activityCaptureBlocks",
+        "activitySync",
+    }
+    nested_variants = corpus["nestedVariants"]
+    assert isinstance(nested_variants, dict)
+    assert set(nested_variants) == {
+        "activityCapture",
+        "activitySync",
+        "origins",
+        "persistence",
+        "playbackRateSources",
+        "playbackPhases",
+        "pauseShorteningModes",
+        "pauseShorteningProvenance",
+        "presence",
+    }
+    assert corpus["version"] == 2
+    token = "$PROTOCOL_CONTRACT_SHA256"
+    envelope_count = 0
+    for collection in ("commands", "replies", "rejections", "events"):
+        for envelope in corpus[collection]:
+            assert envelope["protocolVersion"] == 2
+            assert envelope["protocolContractSha256"] == token
+            envelope_count += 1
+    assert raw.decode("utf-8").count(token) == envelope_count
+
+
 def test_populated_proof_inventory_has_valid_paths_and_owners(tmp_path: Path) -> None:
     _complete_proof_repository(tmp_path)
     assert not proof_contract_violations(tmp_path)
+
+
+def test_proof_contract_rejects_different_nodes_from_one_file_across_priority_risks(
+    tmp_path: Path,
+) -> None:
+    manifest = _complete_proof_repository(tmp_path)
+    proof_path = "python/tests/kernel/test_split_priority_owner.py"
+    _write(
+        tmp_path,
+        proof_path,
+        "def test_first_owner():\n    assert 1 == 1\n\n"
+        "def test_second_owner():\n    assert 2 == 2\n",
+    )
+    manifest["priority_risks"][0]["proofs"] = [f"pytest:{proof_path}::test_first_owner"]
+    manifest["priority_risks"][1]["proofs"] = [f"pytest:{proof_path}::test_second_owner"]
+    _dump(tmp_path, "testdata/proofs.json", manifest)
+
+    violations = proof_contract_violations(tmp_path)
+    assert any(
+        violation.rule == "proof-unique-owner"
+        and violation.path == f"testdata/proofs.json#{manifest['priority_risks'][1]['id']}"
+        and proof_path in violation.message
+        for violation in violations
+    ), violations
 
 
 def test_proof_schema_rejects_risk_floor_deletion(tmp_path: Path) -> None:
@@ -951,6 +1058,29 @@ def test_fault_guard_allows_declared_product_owner(
     assert not fault_manifest_violations(tmp_path)
 
 
+def test_fault_guard_allows_node_ingest_product_modules_but_not_tests(
+    tmp_path: Path,
+) -> None:
+    manifest = _fault_repository(tmp_path)
+    patch_path = tmp_path / "testdata/faults/example.patch"
+
+    production_patch = (
+        b"diff --git a/node/ingest/accepted_url_egress.mjs b/node/ingest/accepted_url_egress.mjs\n"
+    )
+    patch_path.write_bytes(production_patch)
+    manifest["faults"][0]["sha256"] = hashlib.sha256(production_patch).hexdigest()
+    _dump(tmp_path, "testdata/faults/manifest.json", manifest)
+
+    assert not fault_manifest_violations(tmp_path)
+
+    test_patch = b"diff --git a/node/ingest/test/accepted_url_egress.test.mjs b/node/ingest/test/accepted_url_egress.test.mjs\n"
+    patch_path.write_bytes(test_patch)
+    manifest["faults"][0]["sha256"] = hashlib.sha256(test_patch).hexdigest()
+    _dump(tmp_path, "testdata/faults/manifest.json", manifest)
+
+    assert "fault-product-only" in _rules(fault_manifest_violations(tmp_path))
+
+
 @pytest.mark.parametrize(
     "owner",
     ("deploy/hetzner/deploy.sh", "deploy/hetzner/docker-compose.yml"),
@@ -1006,6 +1136,62 @@ def test_fault_guard_rejects_each_violation(tmp_path: Path, mutation: str, rule:
         manifest["faults"][0]["sha256"] = hashlib.sha256(patch).hexdigest()
     _dump(tmp_path, "testdata/faults/manifest.json", manifest)
     assert rule in _rules(fault_manifest_violations(tmp_path))
+
+
+def test_fault_guard_rejects_two_faults_claiming_one_proof(tmp_path: Path) -> None:
+    """Two faults for one proof make the sensitivity owner unresolvable.
+
+    `declared_fault_for_proof` refuses to guess and raises before any workflow
+    can produce evidence, so the ambiguity must surface as a policy verdict.
+    """
+    manifest = _fault_repository(tmp_path)
+    original = manifest["faults"][0]
+    manifest["faults"].append({**original, "id": "example-fault-twin"})
+    _dump(tmp_path, "testdata/faults/manifest.json", manifest)
+
+    assert "fault-proof-owner" in _rules(fault_manifest_violations(tmp_path))
+    with pytest.raises(SensitivityError) as unresolvable:
+        declared_fault_for_proof(tmp_path, original["proofs"][0])
+    assert "fault-proof-owner" in str(unresolvable.value)
+
+
+def test_fault_guard_rejects_a_proof_that_is_not_its_owner_canonical_node(
+    tmp_path: Path,
+) -> None:
+    """A fault may only claim the node the registry resolves for that owner.
+
+    `canonical_proof` rewrites every request on a registered owner to that
+    owner's one priority node, so a fault naming any other node of the same
+    file silently becomes unresolvable instead of demonstrating red.
+    """
+    manifest = _complete_proof_repository(tmp_path)
+    risk = next(item for item in manifest["priority_risks"] if item["id"] == "reading-progress")
+    canonical = next(proof for proof in risk["proofs"] if proof.startswith("pytest:"))
+    owner_path = canonical.partition(":")[2].split("::", 1)[0]
+    patch = b"diff --git a/python/nexus/owner.py b/python/nexus/owner.py\n"
+    _write(tmp_path, "testdata/faults/example.patch", patch.decode())
+    _dump(
+        tmp_path,
+        "testdata/faults/manifest.json",
+        {
+            "version": 1,
+            "faults": [
+                {
+                    "id": "example-fault",
+                    "patch": "testdata/faults/example.patch",
+                    "sha256": hashlib.sha256(patch).hexdigest(),
+                    "proofs": [f"pytest:{owner_path}::test_some_other_scenario"],
+                    "expected_failure": "expected value differs",
+                }
+            ],
+        },
+    )
+
+    rules = _rules(fault_manifest_violations(tmp_path))
+
+    assert "fault-canonical-proof" in rules
+    with pytest.raises(SensitivityError):
+        declared_fault_for_proof(tmp_path, canonical)
 
 
 _RESOURCE_CAPABILITY_GENERATOR = "python/scripts/generate_resource_capabilities.py"

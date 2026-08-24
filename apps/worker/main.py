@@ -14,32 +14,84 @@ from apps.worker.health import (
     WorkerHeartbeatPublisher,
     WorkerLane,
 )
+from sqlalchemy.orm import Session, sessionmaker
 
-from nexus.config import get_settings
-from nexus.db.session import get_session_factory
+from nexus.config import (
+    BACKGROUND_WORKER_MEMORY_LIMIT_BYTES,
+    Environment,
+    Settings,
+    get_settings,
+)
+from nexus.db.engine import get_engine
 from nexus.job_topology import (
     BACKGROUND_WORKER_JOB_KINDS,
     INTERACTIVE_WORKER_JOB_KINDS,
     MAINTENANCE_JOB_KINDS,
     PRODUCTION_ENABLED_JOB_KINDS,
 )
-from nexus.jobs.queue import parser_operation_has_live_job
+from nexus.jobs.process_executor import (
+    BackgroundProcessExecutor,
+    BackgroundProcessProtocolDefect,
+    ParserTempPruned,
+    ValidatedCgroup,
+)
 from nexus.jobs.registry import get_default_registry, get_task_contract_digest
 from nexus.jobs.worker import JobWorker
 from nexus.logging import configure_logging, get_logger
 from nexus.runtime_health import get_runtime_identity, is_database_ready
-from nexus.services.llm_profiles import validate_profiles
-from nexus.services.parser_temp import prune_stale_parser_temp
-from nexus.services.rate_limit import RateLimiter, set_rate_limiter
 
 logger = get_logger(__name__)
+
+
+def _get_worker_session_factory() -> sessionmaker[Session]:
+    """Build the worker factory without importing the FastAPI request seam."""
+    return sessionmaker(
+        bind=get_engine(),
+        autocommit=False,
+        autoflush=False,
+        expire_on_commit=False,
+    )
+
+
+def _worker_readiness_check(
+    *,
+    lane: WorkerLane,
+    settings: Settings,
+    expected_database_revision: str,
+) -> bool:
+    """Verify the lane-owned runtime contract before publishing progress."""
+    if lane == "background":
+        try:
+            ValidatedCgroup.for_current_process(
+                settings.background_process_cgroup_root,
+                expected_memory_limit_bytes=BACKGROUND_WORKER_MEMORY_LIMIT_BYTES,
+            )
+        except BackgroundProcessProtocolDefect:
+            return False
+    reconciler_max_age_seconds = (
+        2 * int(settings.ingest_reconcile_schedule_seconds)
+        if settings.nexus_env in (Environment.STAGING, Environment.PROD)
+        else None
+    )
+    return is_database_ready(
+        database_url=settings.database_url,
+        expected_revision=expected_database_revision,
+        reconciler_max_age_seconds=reconciler_max_age_seconds,
+    )
 
 
 def _worker_id() -> str:
     return f"{socket.gethostname()}:{os.getpid()}"
 
 
-def _register_signal_handlers(stop_event: threading.Event) -> None:
+def register_shutdown_signal_handlers(stop_event: threading.Event) -> None:
+    """Bind SIGINT/SIGTERM to the worker's one cooperative shutdown signal.
+
+    The worker loop observes this event between jobs and the process executor
+    observes it while a child is running, so a redeploy terminates the child,
+    releases its claim and Heavy capacity, and exits inside the stop grace period.
+    """
+
     def _handle_signal(signum: int, _frame: object) -> None:
         logger.info("postgres_worker_shutdown_signal", signal=signum)
         stop_event.set()
@@ -48,9 +100,17 @@ def _register_signal_handlers(stop_event: threading.Event) -> None:
     signal.signal(signal.SIGTERM, _handle_signal)
 
 
-def create_worker(*, successful_cycle_callback: Callable[[], None] | None = None) -> JobWorker:
+def create_worker(
+    *,
+    stop_event: threading.Event | None = None,
+    successful_cycle_callback: Callable[[], None] | None = None,
+) -> JobWorker:
+    # The entrypoint binds SIGINT/SIGTERM to its own event before construction
+    # and passes it; a caller that never drives cooperative shutdown (a topology
+    # inspection) gets a private event so it need not fabricate one.
+    if stop_event is None:
+        stop_event = threading.Event()
     settings = get_settings()
-    validate_profiles()
     registry = get_default_registry()
     if settings.worker_lane == "interactive":
         allowed_kinds = INTERACTIVE_WORKER_JOB_KINDS
@@ -81,17 +141,32 @@ def create_worker(*, successful_cycle_callback: Callable[[], None] | None = None
     if unknown_kinds:
         raise RuntimeError(f"Unknown worker job kinds: {', '.join(sorted(unknown_kinds))}")
 
-    session_factory = get_session_factory()
-    # Install the process-global rate limiter at startup (same construction as
-    # the API lifespan in nexus/app.py) so the first job of any kind — not just
-    # chat — has a working limiter instead of failing E_RATE_LIMITER_UNAVAILABLE.
-    set_rate_limiter(
-        RateLimiter(
-            session_factory=session_factory,
-            rpm_limit=settings.rate_limit_rpm,
-            concurrent_limit=settings.rate_limit_concurrent,
+    session_factory = _get_worker_session_factory()
+    process_executor: BackgroundProcessExecutor | None = None
+    if settings.worker_lane == "background":
+        process_executor = BackgroundProcessExecutor(
+            cgroup=ValidatedCgroup.for_current_process(
+                settings.background_process_cgroup_root,
+                expected_memory_limit_bytes=BACKGROUND_WORKER_MEMORY_LIMIT_BYTES,
+            ),
+            result_max_bytes=settings.background_process_result_max_bytes,
+            term_grace_seconds=settings.background_process_term_grace_seconds,
+            child_oom_score_adj=settings.background_process_oom_score_adj,
+            parser_temp_root=settings.parser_temp_root,
         )
-    )
+    else:
+        # Interactive and explicitly gated maintenance handlers remain in-process.
+        from nexus.services.llm_profiles import validate_profiles
+        from nexus.services.rate_limit import RateLimiter, set_rate_limiter
+
+        validate_profiles()
+        set_rate_limiter(
+            RateLimiter(
+                session_factory=session_factory,
+                rpm_limit=settings.rate_limit_rpm,
+                concurrent_limit=settings.rate_limit_concurrent,
+            )
+        )
     return JobWorker(
         session_factory=session_factory,
         worker_id=_worker_id(),
@@ -110,13 +185,15 @@ def create_worker(*, successful_cycle_callback: Callable[[], None] | None = None
             if successful_cycle_callback is not None
             else None
         ),
+        process_executor=process_executor,
+        stop_event=stop_event,
     )
 
 
 def main() -> None:
     configure_logging()
     stop_event = threading.Event()
-    _register_signal_handlers(stop_event)
+    register_shutdown_signal_handlers(stop_event)
 
     settings = get_settings()
     identity = get_runtime_identity()
@@ -133,29 +210,38 @@ def main() -> None:
             expected_database_revision=identity.expected_database_revision,
             expected_oracle_manifest_digest=identity.expected_oracle_manifest_digest,
             task_contract_digest=get_task_contract_digest(),
-            readiness_check=lambda: is_database_ready(
-                database_url=settings.database_url,
-                expected_revision=identity.expected_database_revision,
+            readiness_check=lambda: _worker_readiness_check(
+                lane=lane,
+                settings=settings,
+                expected_database_revision=identity.expected_database_revision,
             ),
         )
         if publisher is not None:
             publisher.clear()
 
     worker = create_worker(
-        successful_cycle_callback=publisher.publish if publisher is not None else None
+        stop_event=stop_event,
+        successful_cycle_callback=publisher.publish if publisher is not None else None,
     )
     if settings.worker_lane == "background":
-        with worker.session_factory() as db:
-            removed_parser_temp_directories = prune_stale_parser_temp(
-                settings.parser_temp_root,
-                operation_is_live=lambda operation_id: parser_operation_has_live_job(
-                    db, operation_id=operation_id
-                ),
-            )
-        logger.info(
-            "parser_temp_startup_pruned",
-            removed_directories=removed_parser_temp_directories,
+        process_executor = worker.process_executor
+        if process_executor is None:
+            # justify-defect: create_worker always equips the background lane.
+            raise AssertionError("background worker has no child process executor")
+        prune = process_executor.prune_stale_parser_temp(
+            settings.parser_temp_root,
+            worker_id=worker.worker_id,
+            shutdown=stop_event,
+            failure_backoff_seconds=settings.worker_db_failure_backoff_seconds,
+            failure_backoff_max_seconds=settings.worker_db_failure_backoff_max_seconds,
         )
+        if isinstance(prune, ParserTempPruned):
+            logger.info(
+                "parser_temp_startup_pruned",
+                removed_directories=prune.removed_directories,
+            )
+        else:
+            logger.info("parser_temp_startup_prune_interrupted", worker_id=worker.worker_id)
     logger.info(
         "postgres_worker_started",
         worker_id=worker.worker_id,
@@ -165,7 +251,7 @@ def main() -> None:
         allowed_job_kinds=list(worker.allowed_kinds or ()),
     )
     try:
-        worker.run_forever(stop_event=stop_event)
+        worker.run_forever()
     finally:
         if publisher is not None:
             publisher.clear()

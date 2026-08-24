@@ -3,18 +3,19 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any
+from typing import Any, Literal, cast
 
 from nexus.config import get_settings
+from nexus.jobs.dead_letter_projections import DeadLetterProjection
 from nexus.jobs.queue import (
     JobExecutionContext,
     JobResourceClass,
-    JobRow,
     RescheduleRequested,
 )
 from nexus.services.podcasts.types import (
@@ -22,11 +23,10 @@ from nexus.services.podcasts.types import (
     PODCAST_SYNC_JOB_LEASE_SECONDS,
 )
 
-if TYPE_CHECKING:
-    from sqlalchemy.orm import Session
-
 JobHandler = Callable[..., Mapping[str, Any] | RescheduleRequested | None]
-JobDeadLetterHandler = Callable[["Session", JobRow], None]
+type ResourceFailureProjection = Literal["Job", "SourceAttemptMedia"]
+type ChildRuntime = Literal["Base", "Llm"]
+type ChildExitCleanup = Literal["None", "SourceAttemptParserTemp"]
 
 
 @dataclass(frozen=True)
@@ -34,14 +34,19 @@ class JobDefinition:
     """Canonical policy for one background job kind."""
 
     kind: str
-    handler: JobHandler
+    handler_path: str
     resource_class: JobResourceClass
     max_attempts: int = 3
     retry_delays_seconds: tuple[int, ...] = (60, 300, 900)
     lease_seconds: int = 300
     periodic_interval_seconds: int | None = None
+    periodic_priority: int = 100
     failed_result_statuses: tuple[str, ...] = ()
-    dead_letter_handler: JobDeadLetterHandler | None = None
+    dead_letter_projection: DeadLetterProjection = "None"
+    wall_timeout_seconds: float = 900.0
+    resource_failure_projection: ResourceFailureProjection = "Job"
+    child_runtime: ChildRuntime = "Base"
+    child_exit_cleanup: ChildExitCleanup = "None"
     # Dead rows of this kind are never deleted by prune_terminal_jobs (e.g. media
     # teardown/storage cleanup jobs, where a dead row must stay
     # operator-discoverable; requeue_dead_job is their repair transition).
@@ -51,6 +56,21 @@ class JobDefinition:
 def get_default_registry() -> dict[str, JobDefinition]:
     """Return the canonical runtime registry for all durable job kinds."""
     return _build_default_registry()
+
+
+def resolve_job_handler(path: str) -> JobHandler:
+    """Import one declaratively named handler only at its execution boundary."""
+    return cast(JobHandler, _resolve_callable(path))
+
+
+def _resolve_callable(path: str) -> Callable[..., Any]:
+    module_name, separator, attribute_name = path.partition(":")
+    if not separator or not module_name or not attribute_name or ":" in attribute_name:
+        raise ValueError(f"Job handler path is malformed: {path!r}")
+    value = getattr(importlib.import_module(module_name), attribute_name, None)
+    if not callable(value):
+        raise ValueError(f"Job handler path is not callable: {path!r}")
+    return value
 
 
 @lru_cache(maxsize=1)
@@ -64,6 +84,12 @@ def get_task_contract_digest() -> str:
             "retry_delays_seconds": list(definition.retry_delays_seconds),
             "lease_seconds": definition.lease_seconds,
             "resource_class": definition.resource_class,
+            "handler_path": definition.handler_path,
+            "wall_timeout_seconds": definition.wall_timeout_seconds,
+            "resource_failure_projection": definition.resource_failure_projection,
+            "child_runtime": definition.child_runtime,
+            "periodic_priority": definition.periodic_priority,
+            "child_exit_cleanup": definition.child_exit_cleanup,
         }
         for definition in sorted(definitions.values(), key=lambda item: item.kind)
     ]
@@ -95,16 +121,19 @@ def _build_default_registry() -> dict[str, JobDefinition]:
     return {
         "ingest_media_source": JobDefinition(
             kind="ingest_media_source",
-            handler=_run_ingest_media_source,
+            handler_path="nexus.jobs.registry:_run_ingest_media_source",
             resource_class="Heavy",
             max_attempts=3,
             retry_delays_seconds=(60, 300),
             lease_seconds=300,
+            wall_timeout_seconds=settings.background_process_wall_timeout_seconds,
+            resource_failure_projection="SourceAttemptMedia",
+            child_exit_cleanup="SourceAttemptParserTemp",
             never_prune_dead=True,
         ),
         "media_content_reindex_job": JobDefinition(
             kind="media_content_reindex_job",
-            handler=_run_media_content_reindex,
+            handler_path="nexus.jobs.registry:_run_media_content_reindex",
             resource_class="Heavy",
             max_attempts=3,
             retry_delays_seconds=(60, 300),
@@ -113,21 +142,22 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         ),
         "enrich_metadata": JobDefinition(
             kind="enrich_metadata",
-            handler=_run_enrich_metadata,
+            handler_path="nexus.jobs.registry:_run_enrich_metadata",
             resource_class="Heavy",
             max_attempts=2,
             retry_delays_seconds=(0,),
             lease_seconds=300,
+            child_runtime="Llm",
             never_prune_dead=True,
         ),
         "chat_run": JobDefinition(
             kind="chat_run",
-            handler=_run_chat_run,
+            handler_path="nexus.jobs.registry:_run_chat_run",
             resource_class="Light",
             max_attempts=3,
             retry_delays_seconds=(30, 120, 300),
             lease_seconds=900,
-            dead_letter_handler=_dead_letter_chat_run,
+            dead_letter_projection="ChatRun",
             never_prune_dead=True,
         ),
         # Universal dossier generation (resource-inspector-and-universal-dossiers
@@ -140,37 +170,37 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         # the job dead-letters into the Suspended advisory instead of retrying.
         "dossier_build": JobDefinition(
             kind="dossier_build",
-            handler=_run_dossier_build,
+            handler_path="nexus.jobs.registry:_run_dossier_build",
             resource_class="Light",
             max_attempts=3,
             retry_delays_seconds=(30, 120, 300),
             lease_seconds=900,
-            dead_letter_handler=_dead_letter_dossier_build,
+            dead_letter_projection="DossierBuild",
             never_prune_dead=True,
         ),
         "podcast_sync_subscription_job": JobDefinition(
             kind="podcast_sync_subscription_job",
-            handler=_run_podcast_sync_subscription,
+            handler_path="nexus.jobs.registry:_run_podcast_sync_subscription",
             resource_class="Light",
             max_attempts=3,
             retry_delays_seconds=(60, 300, 900),
             lease_seconds=PODCAST_SYNC_JOB_LEASE_SECONDS,
-            dead_letter_handler=_dead_letter_podcast_sync_subscription,
+            dead_letter_projection="PodcastSubscriptionSync",
         ),
         "podcast_backfill_subscription": JobDefinition(
             kind="podcast_backfill_subscription",
-            handler=_run_podcast_backfill_subscription,
+            handler_path="nexus.jobs.registry:_run_podcast_backfill_subscription",
             resource_class="Light",
             max_attempts=3,
             retry_delays_seconds=(60, 300, 900),
             lease_seconds=900,
             failed_result_statuses=("failed",),
-            dead_letter_handler=_dead_letter_podcast_backfill,
+            dead_letter_projection="PodcastBackfill",
             never_prune_dead=True,
         ),
         "podcast_reindex_semantic_job": JobDefinition(
             kind="podcast_reindex_semantic_job",
-            handler=_run_podcast_reindex_semantic,
+            handler_path="nexus.jobs.registry:_run_podcast_reindex_semantic",
             resource_class="Light",
             max_attempts=3,
             retry_delays_seconds=(60, 300),
@@ -179,16 +209,16 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         ),
         "note_reindex_job": JobDefinition(
             kind="note_reindex_job",
-            handler=_run_note_reindex,
+            handler_path="nexus.jobs.registry:_run_note_reindex",
             resource_class="Light",
             max_attempts=3,
             retry_delays_seconds=(60, 300, 900),
             lease_seconds=900,
-            dead_letter_handler=_dead_letter_note_reindex,
+            dead_letter_projection="NoteContentIndex",
         ),
         "podcast_refresh_due_job": JobDefinition(
             kind="podcast_refresh_due_job",
-            handler=_run_podcast_refresh_due,
+            handler_path="nexus.jobs.registry:_run_podcast_refresh_due",
             resource_class="Light",
             max_attempts=1,
             retry_delays_seconds=(0,),
@@ -197,7 +227,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         ),
         "podcast_refresh_run_prune_job": JobDefinition(
             kind="podcast_refresh_run_prune_job",
-            handler=_run_podcast_refresh_run_prune,
+            handler_path="nexus.jobs.registry:_run_podcast_refresh_run_prune",
             resource_class="Light",
             max_attempts=1,
             retry_delays_seconds=(0,),
@@ -206,7 +236,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         ),
         "reconcile_stale_ingest_media_job": JobDefinition(
             kind="reconcile_stale_ingest_media_job",
-            handler=_run_reconcile_stale_ingest_media,
+            handler_path="nexus.jobs.registry:_run_reconcile_stale_ingest_media",
             resource_class="Light",
             max_attempts=1,
             retry_delays_seconds=(0,),
@@ -216,10 +246,11 @@ def _build_default_registry() -> dict[str, JobDefinition]:
                 if settings.ingest_reconcile_schedule_seconds > 0
                 else None
             ),
+            periodic_priority=-1000,
         ),
         "sync_gutenberg_catalog_job": JobDefinition(
             kind="sync_gutenberg_catalog_job",
-            handler=_run_sync_gutenberg_catalog,
+            handler_path="nexus.jobs.registry:_run_sync_gutenberg_catalog",
             resource_class="Light",
             max_attempts=1,
             retry_delays_seconds=(0,),
@@ -232,7 +263,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         ),
         "prune_background_jobs_job": JobDefinition(
             kind="prune_background_jobs_job",
-            handler=_run_prune_background_jobs,
+            handler_path="nexus.jobs.registry:_run_prune_background_jobs",
             resource_class="Light",
             max_attempts=1,
             retry_delays_seconds=(0,),
@@ -245,7 +276,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         ),
         "purge_expired_auth_handoff_codes": JobDefinition(
             kind="purge_expired_auth_handoff_codes",
-            handler=_run_purge_expired_auth_handoff_codes,
+            handler_path="nexus.jobs.registry:_run_purge_expired_auth_handoff_codes",
             resource_class="Light",
             max_attempts=1,
             retry_delays_seconds=(0,),
@@ -254,7 +285,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         ),
         "oracle_reading_generate": JobDefinition(
             kind="oracle_reading_generate",
-            handler=_run_oracle_reading_generate,
+            handler_path="nexus.jobs.registry:_run_oracle_reading_generate",
             resource_class="Light",
             max_attempts=1,
             retry_delays_seconds=(0,),
@@ -262,7 +293,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         ),
         "media_unit_build": JobDefinition(
             kind="media_unit_build",
-            handler=_run_media_unit_build,
+            handler_path="nexus.jobs.registry:_run_media_unit_build",
             resource_class="Light",
             max_attempts=3,
             retry_delays_seconds=(60, 300, 900),
@@ -270,19 +301,21 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             # Provider replay state lives in the job payload. Dead uncertain
             # transitions stay operator-discoverable.
             never_prune_dead=True,
+            child_runtime="Llm",
         ),
         "synapse_scan": JobDefinition(
             kind="synapse_scan",
-            handler=_run_synapse_scan,
+            handler_path="nexus.jobs.registry:_run_synapse_scan",
             resource_class="Light",
             max_attempts=3,
             retry_delays_seconds=(60, 300, 900),
             lease_seconds=300,
             failed_result_statuses=("failed",),
+            child_runtime="Llm",
         ),
         "dawn_write_job": JobDefinition(
             kind="dawn_write_job",
-            handler=_run_dawn_write_sweep,
+            handler_path="nexus.jobs.registry:_run_dawn_write_sweep",
             resource_class="Light",
             max_attempts=1,
             retry_delays_seconds=(0,),
@@ -292,10 +325,11 @@ def _build_default_registry() -> dict[str, JobDefinition]:
                 if settings.dawn_write_schedule_seconds > 0
                 else None
             ),
+            child_runtime="Llm",
         ),
         "atlas_project_job": JobDefinition(
             kind="atlas_project_job",
-            handler=_run_atlas_project,
+            handler_path="nexus.jobs.registry:_run_atlas_project",
             resource_class="Light",
             max_attempts=3,
             retry_delays_seconds=(120, 600, 1800),
@@ -312,19 +346,19 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         # row is still live.
         "media_teardown": JobDefinition(
             kind="media_teardown",
-            handler=_run_media_teardown,
+            handler_path="nexus.jobs.registry:_run_media_teardown",
             resource_class="Light",
             max_attempts=5,
             retry_delays_seconds=(60, 300, 900, 3600, 21600),
             lease_seconds=300,
-            dead_letter_handler=_dead_letter_media_teardown,
+            dead_letter_projection="MediaTeardownIntent",
             never_prune_dead=True,
         ),
         # Durable final-sweep reservation for in-process object writes (spec §3.1).
         # Dead rows stay unpruned; only Retained|Deleted success is prunable.
         "storage_object_cleanup": JobDefinition(
             kind="storage_object_cleanup",
-            handler=_run_storage_object_cleanup,
+            handler_path="nexus.jobs.registry:_run_storage_object_cleanup",
             resource_class="Light",
             max_attempts=5,
             retry_delays_seconds=(60, 300, 900, 3600, 21600),
@@ -335,7 +369,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         # mechanism. Dead runs stay unpruned for requeue_dead_job repair.
         "storage_orphan_sweep": JobDefinition(
             kind="storage_orphan_sweep",
-            handler=_run_storage_orphan_sweep,
+            handler_path="nexus.jobs.registry:_run_storage_orphan_sweep",
             resource_class="Light",
             max_attempts=3,
             retry_delays_seconds=(300, 900, 3600),
@@ -388,24 +422,12 @@ def _run_chat_run(
     return chat_run(run_id=str(payload["run_id"]), context=context)
 
 
-def _dead_letter_chat_run(db: Session, job: JobRow) -> None:
-    from nexus.tasks.chat_run import record_dead_lettered_chat_run
-
-    record_dead_lettered_chat_run(db, job)
-
-
 def _run_dossier_build(
     *, payload: Mapping[str, Any], context: JobExecutionContext
 ) -> Mapping[str, Any] | RescheduleRequested | None:
     from nexus.tasks.artifacts import dossier_build
 
     return dossier_build(payload=payload, context=context)
-
-
-def _dead_letter_dossier_build(db: Session, job: JobRow) -> None:
-    from nexus.tasks.artifacts import dead_letter_dossier_build
-
-    dead_letter_dossier_build(db, job)
 
 
 def _run_podcast_sync_subscription(
@@ -416,24 +438,12 @@ def _run_podcast_sync_subscription(
     return podcast_sync_subscription_job(payload=payload, context=context)
 
 
-def _dead_letter_podcast_sync_subscription(db: Session, job: JobRow) -> None:
-    from nexus.services.podcasts.sync import dead_letter_podcast_subscription_sync
-
-    dead_letter_podcast_subscription_sync(db, job)
-
-
 def _run_podcast_backfill_subscription(
     *, payload: Mapping[str, Any], context: JobExecutionContext
 ) -> Mapping[str, Any] | None:
     from nexus.tasks.podcast_backfill_subscription import podcast_backfill_subscription
 
     return podcast_backfill_subscription(payload=payload, context=context)
-
-
-def _dead_letter_podcast_backfill(db: Session, job: JobRow) -> None:
-    from nexus.tasks.podcast_backfill_subscription import dead_letter_podcast_backfill
-
-    dead_letter_podcast_backfill(db, job)
 
 
 def _run_podcast_reindex_semantic(
@@ -459,32 +469,6 @@ def _run_note_reindex(
         note_block_id=str(payload["note_block_id"]),
         reason=str(payload.get("reason", "note_edit")),
         request_id=_optional_str(payload.get("request_id")),
-    )
-
-
-def _dead_letter_note_reindex(db: Session, job: JobRow) -> None:
-    """Mark the note's content index failed once reindex retries are exhausted.
-
-    Runs inside the worker's dead-letter transaction (no commit here). Skips a
-    malformed note_block_id payload (the only non-retryable failure) so it cannot raise.
-    """
-    from uuid import UUID
-
-    from nexus.errors import ApiErrorCode
-    from nexus.services.content_indexing import IndexOwner, mark_content_index_failed
-
-    note_block_id = job.payload.get("note_block_id")
-    if not note_block_id:
-        return
-    try:
-        owner_id = UUID(str(note_block_id))
-    except (TypeError, ValueError):
-        return
-    mark_content_index_failed(
-        db,
-        owner=IndexOwner("note_block", owner_id),
-        failure_code=ApiErrorCode.E_INTERNAL.value,
-        failure_message=(job.last_error or "Note reindex exhausted retries.")[:1000],
     )
 
 
@@ -597,12 +581,6 @@ def _run_media_teardown(
     from nexus.tasks.media_teardown import media_teardown
 
     return media_teardown(payload=payload, context=context)
-
-
-def _dead_letter_media_teardown(db: Session, job: JobRow) -> None:
-    from nexus.tasks.media_teardown import dead_letter_media_teardown
-
-    dead_letter_media_teardown(db, job)
 
 
 def _run_storage_object_cleanup(

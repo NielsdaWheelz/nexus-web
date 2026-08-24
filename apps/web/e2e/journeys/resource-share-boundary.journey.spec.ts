@@ -15,6 +15,10 @@ test("a link grant exposes only its read-only resource and does not mint an acco
   journeyUser,
 }) => {
   await signIn(page, journeyUser);
+  // A Heavy ingest job now runs in a fresh child process, so on a constrained CI
+  // runner a document’s ingest/index pipeline (plus the fresh-database maintenance
+  // backlog) needs materially more wall time than the pre-cutover in-process worker.
+  test.setTimeout(300_000);
   const api = pageRequest(page, webOrigin);
   const mediaId = await captureCanonicalArticle(page, "shared-source");
   await expect
@@ -32,7 +36,7 @@ test("a link grant exposes only its read-only resource and does not mint an acco
       },
       {
         message: `Expected media ${mediaId} to become publicly projectable before link creation.`,
-        timeout: 25_000,
+        timeout: 90_000,
       },
     )
     .toBe("ready_for_reading:ready");

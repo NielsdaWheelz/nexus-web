@@ -188,6 +188,7 @@ class HostOracleReconcileHarness:
         caddy_path = root / "etc/nexus/Caddyfile"
         caddy_path.write_text("test-caddy\n", encoding="utf-8")
         caddy_path.chmod(0o444)
+        player_protocol_corpus = (repo_root / "testdata/android/player-protocol.json").read_bytes()
 
         bundle = root / "opt/nexus/releases" / source_sha
         for relative, data in {
@@ -199,6 +200,7 @@ class HostOracleReconcileHarness:
             "release.py": b"# immutable release controller\n",
             "python/nexus/__init__.py": b"",
             "python/nexus/release_artifact.py": b"# immutable artifact decoder\n",
+            "testdata/android/player-protocol.json": player_protocol_corpus,
         }.items():
             path = bundle / relative
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -221,6 +223,7 @@ class HostOracleReconcileHarness:
             "python/nexus/release_artifact.py": (
                 repo_root / "python/nexus/release_artifact.py"
             ).read_bytes(),
+            "testdata/android/player-protocol.json": player_protocol_corpus,
         }.items():
             path = repair_bundle / relative
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -982,7 +985,19 @@ class _FakeOpener:
         state = _load_state(self._state_path)
         url = str(request.full_url)
         if url == "https://web.example.test/version":
-            payload: object = {"source_sha": state["source_sha"]}
+            player_protocol_corpus = (
+                Path(state["root"])
+                / "opt/nexus/releases"
+                / str(state["source_sha"])
+                / "testdata/android/player-protocol.json"
+            ).read_bytes()
+            payload: object = {
+                "source_sha": state["source_sha"],
+                "player_protocol": {
+                    "version": 2,
+                    "contract_sha256": hashlib.sha256(player_protocol_corpus).hexdigest(),
+                },
+            }
         elif url == "https://api.example.test/version":
             payload = {
                 "data": {

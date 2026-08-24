@@ -4,20 +4,19 @@ from collections.abc import Callable
 from typing import Literal
 from uuid import UUID
 
-from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.db.models import (
-    EpubFragmentSource,
-    EpubNavLocation,
-    EpubResource,
-    EpubTocNode,
-    Fragment,
-    FragmentBlock,
     Media,
     ProcessingStatus,
 )
-from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.errors import (
+    ApiError,
+    ApiErrorCode,
+    InvalidRequestError,
+    NotFoundError,
+    ResourceLimitError,
+)
 from nexus.logging import get_logger
 from nexus.services.collection_revisions import (
     CollectionFamily,
@@ -32,6 +31,12 @@ from nexus.services.epub_ingest import (
 )
 from nexus.services.epub_metadata import build_epub_author_observation, persist_epub_metadata
 from nexus.services.media_author_observation_seam import attach_author_observation
+from nexus.services.reader_publication import (
+    ReaderPublicationSourceFile,
+    replace_reader_publication,
+    superseded_reader_source_paths,
+    unpublished_reader_source_paths,
+)
 from nexus.storage.client import get_storage_client
 
 logger = get_logger(__name__)
@@ -40,23 +45,19 @@ _MAX_ERROR_MSG_LEN = 1000
 _EPUB_AUTHOR_SOURCE = "epub_opf"
 
 
-def confirm_ingest_for_viewer(
-    db: Session,
-    viewer_id: UUID,
-    media_id: UUID,
-    library_ids: list[UUID],
-    *,
-    request_id: str | None = None,
-) -> dict:
-    from nexus.services.media_source_ingest import confirm_uploaded_source
-
-    return confirm_uploaded_source(
-        db=db,
-        viewer_id=viewer_id,
-        media_id=media_id,
-        library_ids=library_ids,
-        request_id=request_id,
+def _extraction_api_error(plan: EpubExtractionError) -> ApiError:
+    message = (plan.error_message or "EPUB extraction failed")[:_MAX_ERROR_MSG_LEN]
+    code = _source_api_error_code(plan.error_code)
+    if plan.resource_limit_dimension is None:
+        return ApiError(code, message)
+    # justify-service-invariant-check: the parser result pairs a free-form code
+    # string with an optional dimension, so only this projection can state that
+    # a dimension means the declared resource-limit code.
+    assert code is ApiErrorCode.E_RESOURCE_LIMIT, (
+        f"EPUB extraction reported dimension {plan.resource_limit_dimension} "
+        f"with error code {code.value}"
     )
+    return ResourceLimitError(message, dimension=plan.resource_limit_dimension)
 
 
 def retry_epub_ingest_for_viewer(
@@ -83,6 +84,7 @@ def prepare_epub_source(
     attempt_id: UUID,
     storage_path: str,
     source_size_bytes: int,
+    expected_source_sha256: str,
     record_progress: Callable[[int, int, Literal["Page", "Chapter"]], None],
 ) -> EpubExtractionPlan:
     """Acquire and parse one EPUB into an immutable publication plan."""
@@ -92,14 +94,12 @@ def prepare_epub_source(
         attempt_id=attempt_id,
         storage_path=storage_path,
         source_size_bytes=source_size_bytes,
+        expected_source_sha256=expected_source_sha256,
         storage_client=get_storage_client(),
         record_progress=record_progress,
     )
     if isinstance(plan, EpubExtractionError):
-        raise ApiError(
-            _source_api_error_code(plan.error_code),
-            (plan.error_message or "EPUB extraction failed")[:_MAX_ERROR_MSG_LEN],
-        )
+        raise _extraction_api_error(plan)
     return plan
 
 
@@ -108,79 +108,72 @@ def publish_epub_source(
     *,
     media_id: UUID,
     plan: EpubExtractionPlan,
+    source_file: ReaderPublicationSourceFile | None = None,
 ) -> tuple[dict[str, object], list[str]]:
-    """Publish a prepared EPUB plan in the caller's fenced transaction."""
+    """Publish a prepared EPUB plan in the caller's fenced transaction.
+
+    ``source_file`` is the newly prepared source object this publication makes
+    reader-visible; the publication owner installs that pointer under its lock.
+    Returns the response and the storage paths the caller deletes only after its
+    transaction commits: either the rejected prepared source, or the source and
+    assets this successful publication superseded.
+    """
     media = db.get(Media, media_id)
     if media is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     if media.kind != "epub":
         raise InvalidRequestError(ApiErrorCode.E_INVALID_KIND, "Source file must be EPUB.")
     if media.processing_status != ProcessingStatus.extracting:
-        return {"status": "skipped", "reason": "not_extracting"}, []
-
-    result, old_storage_paths = publish_epub_extraction_plan(
+        # Nothing is published, so the prepared object never becomes reader-visible
+        # and the current pointer and generation both stand.
+        return {
+            "status": "skipped",
+            "reason": "not_extracting",
+        }, unpublished_reader_source_paths(db, media_id=media_id, source_file=source_file)
+    superseded_source_paths = superseded_reader_source_paths(
         db,
         media_id=media_id,
-        plan=plan,
+        source_file=source_file,
     )
-    assert isinstance(result, EpubExtractionResult)
-    persist_epub_metadata(db, media, result)
-    bump_all_collection_families(
+
+    def replace_projection(locked_media: Media) -> tuple[dict[str, object], list[str]]:
+        result, old_storage_paths = publish_epub_extraction_plan(
+            db,
+            media_id=media_id,
+            plan=plan,
+        )
+        assert isinstance(result, EpubExtractionResult)
+        persist_epub_metadata(db, locked_media, result)
+        bump_all_collection_families(
+            db,
+            families=(
+                CollectionFamily.AuthorWorks,
+                CollectionFamily.LibraryEntries,
+            ),
+        )
+        db.flush()
+        response: dict[str, object] = {
+            "status": "success",
+            "chapter_count": result.chapter_count,
+            "toc_node_count": result.toc_node_count,
+            "asset_count": result.asset_count,
+            "title": result.title,
+            "metadata_enrichment": True,
+        }
+        observation, truncated = build_epub_author_observation(result)
+        if truncated:
+            logger.info("epub_author_truncation", media_id=str(media_id), truncated=truncated)
+        attach_author_observation(response, observation=observation, source=_EPUB_AUTHOR_SOURCE)
+        return response, old_storage_paths
+
+    response, old_storage_paths = replace_reader_publication(
         db,
-        families=(
-            CollectionFamily.AuthorWorks,
-            CollectionFamily.LibraryEntries,
-        ),
+        media_id=media_id,
+        expected_kind="epub",
+        replace_projection=replace_projection,
+        source_file=source_file,
     )
-    db.flush()
-    response: dict[str, object] = {
-        "status": "success",
-        "chapter_count": result.chapter_count,
-        "toc_node_count": result.toc_node_count,
-        "asset_count": result.asset_count,
-        "title": result.title,
-        "metadata_enrichment": True,
-    }
-    observation, truncated = build_epub_author_observation(result)
-    if truncated:
-        logger.info("epub_author_truncation", media_id=str(media_id), truncated=truncated)
-    attach_author_observation(response, observation=observation, source=_EPUB_AUTHOR_SOURCE)
-    return response, old_storage_paths
-
-
-def delete_extraction_artifacts(db: Session, media_id: UUID) -> list[str]:
-    """Delete rewriteable EPUB extraction artifacts for a media row.
-
-    Apparatus remains until extraction reconciles it by stable key.
-    """
-    storage_paths = (
-        db.execute(select(EpubResource.storage_path).where(EpubResource.media_id == media_id))
-        .scalars()
-        .all()
-    )
-
-    db.execute(delete(EpubResource).where(EpubResource.media_id == media_id))
-    db.execute(delete(EpubFragmentSource).where(EpubFragmentSource.media_id == media_id))
-    db.execute(delete(EpubNavLocation).where(EpubNavLocation.media_id == media_id))
-    db.execute(delete(EpubTocNode).where(EpubTocNode.media_id == media_id))
-
-    fragment_ids = (
-        db.execute(select(Fragment.id).where(Fragment.media_id == media_id)).scalars().all()
-    )
-
-    if fragment_ids:
-        db.execute(delete(FragmentBlock).where(FragmentBlock.fragment_id.in_(fragment_ids)))
-
-    # Highlights are authored user data and are NOT deleted here: refresh
-    # publishes new fragments, then authored selectors (Highlights, passage
-    # anchors) resolve against the new current content (spec "Highlight
-    # Durability", Invariant 9). Fragment deletion only invalidates the
-    # highlight_fragment_anchors locator cache (fragment_id FK is non-cascading,
-    # non-owning); the Highlight root survives and is resolved via LEFT JOIN
-    # + quote re-resolution.
-    db.execute(delete(Fragment).where(Fragment.media_id == media_id))
-    db.flush()
-    return list(storage_paths)
+    return response, superseded_source_paths + old_storage_paths
 
 
 def _source_api_error_code(error_code: str | None) -> ApiErrorCode:

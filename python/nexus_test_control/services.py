@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import ctypes
 import errno
 import fcntl
 import ipaddress
 import json
+import mmap
 import os
 import re
 import secrets
@@ -12,6 +14,7 @@ import signal
 import socket
 import ssl
 import subprocess
+import sys
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -33,6 +36,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 from psycopg import sql
 
+from nexus.config import BACKGROUND_WORKER_MEMORY_LIMIT_BYTES
 from nexus.release_artifact import (
     BackendArtifactDefect,
     build_runtime_identity,
@@ -101,6 +105,8 @@ TEST_EXTENSION_ID = "pfcfdmanlahjkanalhpnfjflgaaahgib"
 SUPABASE_EXCLUDED_SERVICES = (
     "realtime,storage-api,imgproxy,studio,edge-runtime,logflare,vector,postgres-meta,postgrest"
 )
+CADDY_VERSION = "v2.11.4"
+_CADDY_MODULE_BUILD_PIN = f"github.com/caddyserver/caddy/v2\t{CADDY_VERSION}".encode()
 
 _PORT_DEFAULTS = (
     15432,
@@ -118,6 +124,9 @@ _PORT_DEFAULTS = (
 _EPHEMERAL_PORT_RANGE_PATH = Path("/proc/sys/net/ipv4/ip_local_port_range")
 _CONSERVATIVE_EPHEMERAL_PORT_RANGE = (32768, 65535)
 _SUPABASE_DIAGNOSTIC_TAIL_CHARS = 8192
+_DARWIN_PROCESS_BSD_INFO = 3
+_DARWIN_LIBPROC = "/usr/lib/libproc.dylib"
+_DARWIN_LSOF = "/usr/sbin/lsof"
 _SAFE_CHILD_ENV = ("HOME", "LANG", "LC_ALL", "PATH", "TMPDIR", "TZ", "UV_CACHE_DIR")
 _STATUS_KEYS = frozenset(
     {"API_URL", "ANON_KEY", "PUBLISHABLE_KEY", "SECRET_KEY", "SERVICE_ROLE_KEY"}
@@ -136,6 +145,7 @@ _CALLER_RESOURCE_ENV = frozenset(
         "DATABASE_URL_TEST_MIGRATIONS",
         "NEXT_PUBLIC_SUPABASE_URL",
         "NEXUS_TEST_PROCESS_OWNER",
+        "NEXUS_TEST_PROCESS_OWNER_FD",
         "NEXUS_TEST_STATIC_DNS",
         "NEXUS_TEST_TLS_CA_CERT",
         "NODE_OPTIONS",
@@ -207,6 +217,45 @@ class StartedProcess:
     run_id: str
     owner_token: str = field(repr=False)
     log_path: str
+
+
+@dataclass(frozen=True, slots=True)
+class _ProcessIdentity:
+    uid: int
+    process_group_id: int
+    start_token: str
+
+
+class _DarwinProcessInfo(ctypes.Structure):
+    _fields_ = (
+        ("flags", ctypes.c_uint32),
+        ("status", ctypes.c_uint32),
+        ("exit_status", ctypes.c_uint32),
+        ("process_id", ctypes.c_uint32),
+        ("parent_process_id", ctypes.c_uint32),
+        ("uid", ctypes.c_uint32),
+        ("gid", ctypes.c_uint32),
+        ("real_uid", ctypes.c_uint32),
+        ("real_gid", ctypes.c_uint32),
+        ("saved_uid", ctypes.c_uint32),
+        ("saved_gid", ctypes.c_uint32),
+        ("reserved", ctypes.c_uint32),
+        ("command", ctypes.c_char * 16),
+        ("name", ctypes.c_char * 32),
+        ("file_count", ctypes.c_uint32),
+        ("process_group_id", ctypes.c_uint32),
+        ("job_control_count", ctypes.c_uint32),
+        ("controlling_device", ctypes.c_uint32),
+        ("terminal_process_group_id", ctypes.c_uint32),
+        ("nice", ctypes.c_int32),
+        ("start_seconds", ctypes.c_uint64),
+        ("start_microseconds", ctypes.c_uint64),
+    )
+
+
+def required_platform_process_tools() -> tuple[Path, ...]:
+    """Return fixed host tools required by the platform process owner."""
+    return (Path(_DARWIN_LSOF),) if sys.platform == "darwin" else ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -408,6 +457,83 @@ def authorized_device_serials(
         for line in listed.stdout.splitlines()[1:]
         if line.endswith("\tdevice")
     )
+
+
+def _long_device_inventory(
+    adb: Path, environment: Mapping[str, str], cwd: Path
+) -> tuple[tuple[str, ...], ...] | None:
+    """The one `adb devices -l` parse: the fields of each authorized row."""
+    try:
+        listed = run_command(
+            (str(adb), "devices", "-l"),
+            cwd=cwd,
+            env=android_tool_environment(environment),
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    if listed.returncode != 0:
+        return None
+    rows: list[tuple[str, ...]] = []
+    for line in listed.stdout.splitlines()[1:]:
+        fields = tuple(line.split())
+        if len(fields) < 2 or fields[1] != "device":
+            continue
+        rows.append(fields)
+    return tuple(rows)
+
+
+def _is_usb_physical_row(fields: Sequence[str]) -> bool:
+    if fields[0].startswith("emulator-"):
+        return False
+    return any(field.startswith("usb:") and len(field) > 4 for field in fields[2:])
+
+
+def authorized_usb_physical_device(
+    adb: Path, environment: Mapping[str, str], cwd: Path
+) -> tuple[str | None, str]:
+    """Attest the one USB-backed physical device used by protected device proof.
+
+    Emulators and wireless adb transports remain distinct lanes and cannot
+    satisfy this boundary. Other authorized transports may coexist, but exactly
+    one physical row must carry adb's ``usb:`` topology fact.
+    """
+    rows = _long_device_inventory(adb, environment, cwd)
+    if rows is None:
+        return None, "Android USB device inventory could not be read"
+    candidates = [fields[0] for fields in rows if _is_usb_physical_row(fields)]
+    if not candidates:
+        return None, "no authorized USB-backed physical Android device is attached"
+    if len(candidates) != 1:
+        return None, "Android device proof requires exactly one USB-backed physical device"
+    return candidates[0], ""
+
+
+def authorized_instrumentation_device(
+    adb: Path, environment: Mapping[str, str], cwd: Path
+) -> tuple[str | None, str]:
+    """Attest the one device the ordinary `android-device` capability may drive.
+
+    Hosted nightly infrastructure supplies a locally started emulator; the
+    protected lab supplies a USB-wired handset. Either is an owned, physically
+    reachable transport whose serial the controller can bind. A wireless adb
+    transport is neither: it names a host and port the controller does not own,
+    so it can never satisfy this capability.
+    """
+    rows = _long_device_inventory(adb, environment, cwd)
+    if rows is None:
+        return None, "Android device inventory could not be read"
+    candidates = [
+        fields[0]
+        for fields in rows
+        if fields[0].startswith("emulator-") or _is_usb_physical_row(fields)
+    ]
+    if not candidates:
+        return None, "no authorized local emulator or USB-backed Android device is attached"
+    if len(candidates) != 1:
+        return None, "Android device proof requires exactly one local emulator or USB device"
+    return candidates[0], ""
 
 
 def test_environment(caller_environment: Mapping[str, str]) -> dict[str, str]:
@@ -792,6 +918,92 @@ def grant_scenario_ai_entitlement(
         engine.dispose()
 
 
+# The background worker lane's readiness contract is a real cgroup v2 memory limit
+# with `memory.oom.group=0` (document-import-reliability-hard-cutover.md §7), and
+# §10 requires the proof lane to actually be cgroup-capable. A rootless systemd user
+# manager is what delegates one, so its absence is a host-provisioning fault with one
+# exact repair. CI provisions it in `.github/actions/setup-test`, which fails with
+# this same text, and `./scripts/test doctor` reports it before any proof runs.
+CGROUP_DELEGATE_DIAGNOSTIC = (
+    "The background worker proof requires a rootless systemd user manager that "
+    "delegates a cgroup v2 memory controller. Provision it with: "
+    'sudo loginctl enable-linger "$(id -un)"; '
+    "export XDG_RUNTIME_DIR=/run/user/$(id -u) "
+    "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus; "
+    "then confirm that "
+    f"`systemd-run --user --scope -p MemoryMax={BACKGROUND_WORKER_MEMORY_LIMIT_BYTES} true` "
+    "succeeds and that the scope cgroup exposes memory.max and memory.oom.group."
+)
+_CGROUP_DELEGATE_PROBE_TIMEOUT_SECONDS = 30.0
+_CGROUP_DELEGATE_PROBE_SCRIPT = f"""
+set -eu
+cgroup="/sys/fs/cgroup$(sed -n 's/^0:://p' /proc/self/cgroup)"
+test "$(cat "$cgroup/memory.max")" = "{BACKGROUND_WORKER_MEMORY_LIMIT_BYTES}"
+test "$(cat "$cgroup/memory.oom.group")" = "0"
+grep -qw memory "$cgroup/cgroup.controllers"
+"""
+
+
+def user_systemd_environment() -> dict[str, str]:
+    """Address the caller's own rootless systemd user manager."""
+    user_runtime_directory = f"/run/user/{os.getuid()}"
+    return {
+        "XDG_RUNTIME_DIR": user_runtime_directory,
+        "DBUS_SESSION_BUS_ADDRESS": f"unix:path={user_runtime_directory}/bus",
+    }
+
+
+def _require_cgroup_delegate() -> str:
+    """Return the systemd-run path, or refuse with the one shared diagnostic."""
+    systemd_run = shutil.which("systemd-run")
+    if systemd_run is None or not Path(f"/run/user/{os.getuid()}/bus").is_socket():
+        raise RuntimeContractError(CGROUP_DELEGATE_DIAGNOSTIC)
+    return systemd_run
+
+
+def cgroup_delegate_failure() -> str | None:
+    """Probe the real delegate and return the shared diagnostic when it is unusable.
+
+    This runs the exact `systemd-run --user --scope` shape the background worker lane
+    launches with and reads the resulting cgroup, so a manager that exists but cannot
+    delegate the memory controller is reported before any proof depends on it.
+    """
+    try:
+        systemd_run = _require_cgroup_delegate()
+    except RuntimeContractError:
+        return CGROUP_DELEGATE_DIAGNOSTIC
+    try:
+        probe = subprocess.run(
+            (
+                systemd_run,
+                "--user",
+                "--scope",
+                "--quiet",
+                "--collect",
+                f"--unit=nexus-cgroup-delegate-{uuid4().hex[:16]}",
+                "-p",
+                f"MemoryMax={BACKGROUND_WORKER_MEMORY_LIMIT_BYTES}",
+                "-p",
+                "MemorySwapMax=0",
+                "-p",
+                "OOMPolicy=continue",
+                "/bin/sh",
+                "-c",
+                _CGROUP_DELEGATE_PROBE_SCRIPT,
+            ),
+            env={**os.environ, **user_systemd_environment()},
+            capture_output=True,
+            text=True,
+            timeout=_CGROUP_DELEGATE_PROBE_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return CGROUP_DELEGATE_DIAGNOSTIC
+    if probe.returncode != 0:
+        return CGROUP_DELEGATE_DIAGNOSTIC
+    return None
+
+
 def start_python_process(
     repo_root: Path,
     environment: Mapping[str, str],
@@ -846,6 +1058,22 @@ def start_python_process(
             "-m",
             "apps.worker.main",
         )
+        if role == "worker-background":
+            systemd_run = _require_cgroup_delegate()
+            command = (
+                systemd_run,
+                "--user",
+                "--scope",
+                "--quiet",
+                "--collect",
+                "-p",
+                f"MemoryMax={BACKGROUND_WORKER_MEMORY_LIMIT_BYTES}",
+                "-p",
+                "MemorySwapMax=0",
+                "-p",
+                "OOMPolicy=continue",
+                *command,
+            )
     else:
         raise RuntimeContractError(f"Python process role is not owned: {role}")
     process_environment = {
@@ -860,6 +1088,7 @@ def start_python_process(
         "PODCAST_INDEX_BASE_URL": f"http://127.0.0.1:{runtime.ports.external}",
         "PYTHONPATH": f"{root / 'python' / 'tests' / 'testkit'}:{root / 'python'}:{root}",
         **({"WORKER_LANE": role.removeprefix("worker-")} if role.startswith("worker-") else {}),
+        **(user_systemd_environment() if role == "worker-background" else {}),
         **(overrides or {}),
     }
     return _start_owned_process(
@@ -1055,6 +1284,203 @@ def start_web_process(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class OfflineReadingCaddyPorts:
+    """Run-scoped controller-owned loopback ports for the Caddy seam proof.
+
+    The seam proof never binds the runtime's fixed api/web ports: those are
+    owned by the real API and web processes, which other capabilities in the
+    same selection may start concurrently.
+    """
+
+    origin: int
+    site: int
+
+
+_OFFLINE_READING_CADDY_PREFERRED_PORTS = (18300, 18560)
+
+
+def _offline_reading_caddy_output_root(root: Path, run_id: str) -> Path:
+    return root / "test-results" / "runs" / run_id / "offline-reading-caddy"
+
+
+def _offline_reading_caddy_ports_path(root: Path, run_id: str) -> Path:
+    return _offline_reading_caddy_output_root(root, run_id) / "ports.json"
+
+
+def _read_offline_reading_caddy_ports(path: Path) -> OfflineReadingCaddyPorts:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise RuntimeContractError("offline-reading Caddy ports file is unreadable") from error
+    if not isinstance(payload, dict) or set(payload) != {"origin", "site"}:
+        raise RuntimeContractError("offline-reading Caddy ports file has an invalid shape")
+    origin, site = payload["origin"], payload["site"]
+    if not all(
+        isinstance(port, int) and not isinstance(port, bool) and 1 <= port <= 65535
+        for port in (origin, site)
+    ):
+        raise RuntimeContractError("offline-reading Caddy ports are outside TCP port bounds")
+    if origin == site:
+        raise RuntimeContractError("offline-reading Caddy ports must be distinct")
+    return OfflineReadingCaddyPorts(origin=origin, site=site)
+
+
+def _ensure_offline_reading_caddy_ports(root: Path, run_id: str) -> OfflineReadingCaddyPorts:
+    path = _offline_reading_caddy_ports_path(root, run_id)
+    with _port_allocation_lock():
+        if path.exists():
+            return _read_offline_reading_caddy_ports(path)
+        reserved = set(read_runtime(root).ports.as_dict().values())
+        ephemeral_port_range = _local_ephemeral_port_range()
+        chosen: list[int] = []
+        for preferred in _OFFLINE_READING_CADDY_PREFERRED_PORTS:
+            for port in _candidate_ports(preferred, ephemeral_port_range):
+                if port not in reserved and port not in chosen and _port_available(port):
+                    chosen.append(port)
+                    break
+            else:
+                raise RuntimeContractError(
+                    f"no controller-owned loopback port is available from {preferred}"
+                )
+        ports = OfflineReadingCaddyPorts(origin=chosen[0], site=chosen[1])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"origin": ports.origin, "site": ports.site}), encoding="utf-8")
+        return ports
+
+
+def offline_reading_caddy_ports(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    run_id: str,
+) -> OfflineReadingCaddyPorts:
+    """Read the run's allocated Caddy seam ports; the origin process allocates them."""
+    require_test_environment(environment)
+    root = canonical_repo_root(repo_root)
+    require_run_id(run_id)
+    path = _offline_reading_caddy_ports_path(root, run_id)
+    if not path.exists():
+        raise RuntimeContractError("offline-reading Caddy ports are not allocated for this run")
+    return _read_offline_reading_caddy_ports(path)
+
+
+def start_offline_reading_caddy_origin_process(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    run_id: str,
+) -> StartedProcess:
+    """Start the ledger-owned FastAPI origin used only by the Caddy seam proof."""
+    require_test_environment(environment)
+    root = canonical_repo_root(repo_root)
+    require_run_id(run_id)
+    read_ledger(root, run_id)
+    ports = _ensure_offline_reading_caddy_ports(root, run_id)
+    _require_loopback_port_available(ports.origin, "offline-caddy-origin")
+    python = root / "python/.venv/bin/python"
+    if not python.is_file():
+        raise RuntimeContractError("offline-reading Caddy origin requires the locked Python env")
+    output_root = _offline_reading_caddy_output_root(root, run_id)
+    output_root.mkdir(parents=True, exist_ok=True)
+    audit_path = output_root / "origin-audit.jsonl"
+    if audit_path.exists():
+        raise RuntimeContractError("offline-reading Caddy origin audit already exists")
+    audit_path.touch(exist_ok=False)
+    command = (
+        str(python),
+        str((root / "python/tests/testkit/offline_reading_caddy_origin.py").resolve(strict=True)),
+        "--port",
+        str(ports.origin),
+        "--audit",
+        str(audit_path),
+    )
+    return _start_owned_process(
+        root,
+        environment,
+        run_id,
+        "offline-caddy-origin",
+        command,
+        cwd=root,
+        process_environment={
+            "NEXUS_ENV": "test",
+            "NEXUS_TEST_DENY_EXTERNAL_NETWORK": "1",
+            "NEXUS_TEST_RUN_ID": run_id,
+            "PYTHONPATH": (f"{root / 'python/tests/testkit'}:{root / 'python'}:{root}"),
+        },
+    )
+
+
+def start_caddy_process(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    run_id: str,
+) -> StartedProcess:
+    """Run the production Caddyfile with only test-owned endpoint substitutions."""
+    require_test_environment(environment)
+    root = canonical_repo_root(repo_root)
+    require_run_id(run_id)
+    read_ledger(root, run_id)
+    ports_path = _offline_reading_caddy_ports_path(root, run_id)
+    if not ports_path.exists():
+        raise RuntimeContractError("offline-reading Caddy requires its origin to start first")
+    ports = _read_offline_reading_caddy_ports(ports_path)
+    _require_loopback_port_available(ports.site, "offline-caddy")
+    executable_name = shutil.which("caddy", path=environment.get("PATH"))
+    if executable_name is None:
+        raise RuntimeContractError(f"Caddy {CADDY_VERSION} is required by this proof")
+    executable = Path(executable_name).resolve(strict=True)
+    if not executable.is_file():
+        raise RuntimeContractError("resolved Caddy executable is not a file")
+    with (
+        executable.open("rb") as binary,
+        mmap.mmap(binary.fileno(), 0, access=mmap.ACCESS_READ) as build,
+    ):
+        if build.find(_CADDY_MODULE_BUILD_PIN) < 0:
+            raise RuntimeContractError(f"Caddy executable is not pinned to {CADDY_VERSION}")
+
+    production = (root / "deploy/hetzner/Caddyfile").read_text(encoding="utf-8")
+    if not production.startswith("{\n") or production.count("reverse_proxy api:8000") != 2:
+        raise RuntimeContractError("production Caddyfile no longer has the exact proxy shape")
+    rendered = production.replace("{\n", "{\n\tadmin off\n", 1).replace(
+        "reverse_proxy api:8000",
+        f"reverse_proxy 127.0.0.1:{ports.origin}",
+    )
+    site_block = "{$CADDY_SITE} {\n"
+    if rendered.count(site_block) != 1:
+        raise RuntimeContractError("production Caddyfile no longer has one site block")
+    rendered = rendered.replace(site_block, site_block + "\tbind 127.0.0.1\n", 1)
+    output_root = _offline_reading_caddy_output_root(root, run_id)
+    output_root.mkdir(parents=True, exist_ok=True)
+    config_path = output_root / "Caddyfile"
+    if config_path.exists():
+        raise RuntimeContractError("offline-reading Caddy config already exists")
+    config_path.write_text(rendered, encoding="utf-8")
+    caddy_home = output_root / "home"
+    command = (
+        str(executable),
+        "run",
+        "--config",
+        str(config_path),
+        "--adapter",
+        "caddyfile",
+    )
+    return _start_owned_process(
+        root,
+        environment,
+        run_id,
+        "offline-caddy",
+        command,
+        cwd=root,
+        process_environment={
+            "CADDY_ACME_EMAIL": "nexus-test@example.invalid",
+            "CADDY_SITE": f"http://127.0.0.1:{ports.site}",
+            "NEXUS_ENV": "test",
+            "NEXUS_TEST_RUN_ID": run_id,
+            "XDG_CONFIG_HOME": str(caddy_home / ".config"),
+            "XDG_DATA_HOME": str(caddy_home / ".local/share"),
+        },
+    )
+
+
 def wait_process_ready(
     repo_root: Path,
     environment: Mapping[str, str],
@@ -1085,6 +1511,39 @@ def wait_process_ready(
         raise RuntimeContractError("TLS CA is only valid for provider readiness")
     else:
         verify = True
+    _wait_owned_process_url_ready(root, process, url, port, verify, timeout_seconds)
+
+
+def wait_offline_reading_caddy_ready(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    process: StartedProcess,
+    path: str,
+    *,
+    timeout_seconds: float = 30,
+) -> None:
+    """Wait for a Caddy seam proof process at its run-allocated loopback port."""
+    require_test_environment(environment)
+    if not path.startswith("/") or "//" in path:
+        raise RuntimeContractError("process readiness path must be absolute and normalized")
+    root = canonical_repo_root(repo_root)
+    ports = offline_reading_caddy_ports(root, environment, process.run_id)
+    port = {"offline-caddy-origin": ports.origin, "offline-caddy": ports.site}.get(process.role)
+    if port is None:
+        raise RuntimeContractError("only Caddy seam proof processes have run-allocated ports")
+    _wait_owned_process_url_ready(
+        root, process, f"http://127.0.0.1:{port}{path}", port, True, timeout_seconds
+    )
+
+
+def _wait_owned_process_url_ready(
+    root: Path,
+    process: StartedProcess,
+    url: str,
+    port: int,
+    verify: ssl.SSLContext | bool,
+    timeout_seconds: float,
+) -> None:
     deadline = time.monotonic() + timeout_seconds
     identity_deadline = min(deadline, time.monotonic() + 2)
     with httpx.Client(
@@ -1095,6 +1554,7 @@ def wait_process_ready(
     ) as client:
         while time.monotonic() < deadline:
             if not _owned_process_identity_matches(
+                root,
                 process.process_group_id,
                 process.process_start_token,
                 process.run_id,
@@ -1119,6 +1579,7 @@ def wait_process_ready(
                     response.status_code == 200
                     and _process_group_owns_listener(process.process_group_id, port)
                     and _owned_process_identity_matches(
+                        root,
                         process.process_group_id,
                         process.process_start_token,
                         process.run_id,
@@ -1160,7 +1621,20 @@ def _start_owned_process(
     blocked_signals = {signal.SIGINT, signal.SIGTERM}
     previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, blocked_signals)
     process: subprocess.Popen[str] | None = None
+    owner_descriptor: int | None = None
+    owner_marker: Path | None = None
     try:
+        inherited_descriptors: tuple[int, ...] = ()
+        if sys.platform == "darwin":
+            owner_marker = _process_owner_marker(root, run_id, owner_token)
+            owner_marker.parent.mkdir(parents=True, exist_ok=True)
+            owner_descriptor = os.open(
+                owner_marker,
+                os.O_CREAT | os.O_EXCL | os.O_RDONLY,
+                0o600,
+            )
+            inherited_descriptors = (owner_descriptor,)
+            child_environment["NEXUS_TEST_PROCESS_OWNER_FD"] = str(owner_descriptor)
         with log_path.open("w", encoding="utf-8") as log:
             process = subprocess.Popen(
                 unblock_and_exec_command(command),
@@ -1171,6 +1645,7 @@ def _start_owned_process(
                 stderr=subprocess.STDOUT,
                 text=True,
                 start_new_session=True,
+                pass_fds=inherited_descriptors,
             )
         start_token = _process_start_token(process.pid)
         record_created(
@@ -1187,8 +1662,16 @@ def _start_owned_process(
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
+        if owner_marker is not None:
+            owner_marker.unlink(missing_ok=True)
+            try:
+                owner_marker.parent.rmdir()
+            except OSError:
+                pass
         raise
     finally:
+        if owner_descriptor is not None:
+            os.close(owner_descriptor)
         signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
     return StartedProcess(
         role=role,
@@ -1225,6 +1708,7 @@ def clean_run(
                     process_start_token = candidate.process_start_token
                     if process_group_id is None:
                         recovered = _recover_planned_process_group(
+                            root,
                             candidate.external_id,
                             run_id,
                         )
@@ -1232,11 +1716,13 @@ def clean_run(
                             process_group_id, process_start_token = recovered
                     if process_group_id is not None:
                         _stop_process_group(
+                            root,
                             process_group_id,
                             process_start_token,
                             run_id,
                             candidate.external_id,
                         )
+                    _remove_process_owner_marker(root, run_id, candidate.external_id)
                 elif resource.kind is ResourceKind.TEMPLATE_BUILD:
                     if candidate.external_id is None:
                         raise RuntimeContractError("template build lacks its lifecycle fingerprint")
@@ -1814,23 +2300,52 @@ def _delete_extension_profile(repo_root: Path, identity: str) -> None:
 
 
 def _stop_process_group(
+    repo_root: Path,
     process_group_id: int,
     process_start_token: str | None,
     run_id: str,
     owner_token: str,
 ) -> None:
-    process_root = Path("/proc") / str(process_group_id)
-    if not process_root.exists():
+    owned_groups = _owned_process_group_map(repo_root, run_id, owner_token)
+    try:
+        os.killpg(process_group_id, 0)
+        recorded_group_alive = True
+    except ProcessLookupError:
+        recorded_group_alive = False
+    except PermissionError as exc:
+        raise RuntimeContractError("owned process group could not be verified") from exc
+    if not recorded_group_alive:
+        if process_group_id in owned_groups:
+            raise RuntimeContractError(
+                "owned process identity identifies a group the kernel cannot signal"
+            )
+        # The recorded worker group is already gone; reap any bounded child group
+        # it may have left behind (parent-death teardown races the ledger cleanup).
+        for group_id in sorted(owned_groups):
+            _terminate_process_group(group_id)
         return
-    if process_start_token is None:
-        raise RuntimeContractError("owned process lacks its immutable runtime identity")
-    if not _owned_process_identity_matches(
-        process_group_id,
-        process_start_token,
-        run_id,
-        owner_token,
-    ):
+    if process_group_id not in owned_groups:
         raise RuntimeContractError("process group no longer belongs to the exact test run")
+    if process_start_token is not None:
+        try:
+            leader_identity = _read_process_identity(process_group_id)
+        except (FileNotFoundError, ProcessLookupError):
+            leader_identity = None
+        except (OSError, RuntimeContractError) as exc:
+            raise RuntimeContractError("owned process identity could not be read") from exc
+        if leader_identity is not None and (
+            leader_identity.uid != os.getuid()
+            or leader_identity.process_group_id != process_group_id
+            or leader_identity.start_token != process_start_token
+        ):
+            raise RuntimeContractError("process group no longer belongs to the exact test run")
+    # Terminate the recorded worker group and every bounded execution child it
+    # forked into its own session; all carry this run's one secret owner token.
+    for group_id in sorted(owned_groups):
+        _terminate_process_group(group_id)
+
+
+def _terminate_process_group(process_group_id: int) -> None:
     try:
         os.killpg(process_group_id, signal.SIGTERM)
     except ProcessLookupError:
@@ -1845,8 +2360,19 @@ def _stop_process_group(
             os.killpg(process_group_id, 0)
         except ProcessLookupError:
             return
+        except PermissionError:
+            if sys.platform == "darwin":
+                return
+            raise
         time.sleep(0.05)
-    os.killpg(process_group_id, signal.SIGKILL)
+    try:
+        os.killpg(process_group_id, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    except PermissionError:
+        if sys.platform == "darwin":
+            return
+        raise
     try:
         os.waitpid(process_group_id, 0)
     except ChildProcessError:
@@ -1854,77 +2380,59 @@ def _stop_process_group(
 
 
 def _recover_planned_process_group(
+    repo_root: Path,
     owner_token: str,
     run_id: str,
-) -> tuple[int, str] | None:
+) -> tuple[int, str | None] | None:
     if not re.fullmatch(r"[0-9a-f]{32}", owner_token):
         raise RuntimeContractError("planned process lacks its exact ownership contract")
-    expected_owner = f"NEXUS_TEST_PROCESS_OWNER={owner_token}".encode()
-    expected_run = f"NEXUS_TEST_RUN_ID={run_id}".encode()
-    matches: list[tuple[int, str]] = []
-    for process_root in Path("/proc").iterdir():
-        if not process_root.name.isdecimal():
-            continue
-        try:
-            if process_root.stat().st_uid != os.getuid():
-                continue
-            environment = (process_root / "environ").read_bytes().split(b"\0")
-            if expected_owner not in environment or expected_run not in environment:
-                continue
-            process_id = int(process_root.name)
-            if os.getpgid(process_id) != process_id:
-                raise RuntimeContractError(
-                    "planned process token no longer identifies its exact process group"
-                )
-            start_token = _process_start_token(process_id)
-        except (FileNotFoundError, PermissionError, ProcessLookupError):
-            continue
-        except (OSError, UnicodeDecodeError, ValueError) as exc:
-            raise RuntimeContractError("planned process identity could not be read") from exc
-        matches.append((process_id, start_token))
-    if len(matches) > 1:
-        raise RuntimeContractError("planned process token identifies multiple process groups")
-    return matches[0] if matches else None
+    owned_groups = _owned_process_group_map(repo_root, run_id, owner_token)
+    if not owned_groups:
+        return None
+    # `_stop_process_group` reaps every group in the tree, so recovery only needs
+    # one representative: prefer a group whose leader carries the token.
+    for group_id in sorted(owned_groups):
+        if owned_groups[group_id] is not None:
+            return group_id, owned_groups[group_id]
+    representative = min(owned_groups)
+    return representative, owned_groups[representative]
 
 
 def _owned_process_identity_matches(
+    repo_root: Path,
     process_group_id: int,
     process_start_token: str,
     run_id: str,
     owner_token: str,
 ) -> bool:
-    process_root = Path("/proc") / str(process_group_id)
     try:
-        if (
-            process_root.stat().st_uid != os.getuid()
-            or os.getpgid(process_group_id) != process_group_id
-        ):
+        identity = _read_process_identity(process_group_id)
+        if identity.uid != os.getuid() or identity.process_group_id != process_group_id:
             return False
-        stat = (process_root / "stat").read_text(encoding="utf-8")
-        actual_start_token = stat[stat.rindex(")") + 2 :].split()[19]
-        process_environment = (process_root / "environ").read_bytes().split(b"\0")
-    except (OSError, ProcessLookupError, ValueError, IndexError):
+        if identity.start_token != process_start_token:
+            return False
+        if sys.platform == "darwin":
+            marker = _process_owner_marker(repo_root, run_id, owner_token)
+            return process_group_id in _darwin_owner_marker_holders(marker)
+        process_environment = _linux_process_environment(process_group_id)
+    except (OSError, ProcessLookupError, RuntimeContractError):
         return False
     return (
-        actual_start_token == process_start_token
-        and f"NEXUS_TEST_RUN_ID={run_id}".encode() in process_environment
+        f"NEXUS_TEST_RUN_ID={run_id}".encode() in process_environment
         and f"NEXUS_TEST_PROCESS_OWNER={owner_token}".encode() in process_environment
     )
 
 
 def _process_birth_identity_matches(process_group_id: int, process_start_token: str) -> bool:
-    process_root = Path("/proc") / str(process_group_id)
     try:
-        if (
-            process_root.stat().st_uid != os.getuid()
-            or os.getpgid(process_group_id) != process_group_id
-        ):
-            return False
-        stat = (process_root / "stat").read_text(encoding="utf-8")
-        actual_start_token = stat[stat.rindex(")") + 2 :].split()[19]
-    except (OSError, ProcessLookupError, ValueError, IndexError):
+        identity = _read_process_identity(process_group_id)
+    except (OSError, ProcessLookupError, RuntimeContractError):
         return False
-    return actual_start_token == process_start_token
+    return (
+        identity.uid == os.getuid()
+        and identity.process_group_id == process_group_id
+        and identity.start_token == process_start_token
+    )
 
 
 def _startup_identity_pending(*, birth_matches: bool, now: float, deadline: float) -> bool:
@@ -1932,6 +2440,21 @@ def _startup_identity_pending(*, birth_matches: bool, now: float, deadline: floa
 
 
 def _process_group_owns_listener(process_group_id: int, port: int) -> bool:
+    if sys.platform == "darwin":
+        try:
+            process_ids = _darwin_lsof_process_ids(("-a", f"-iTCP:{port}", "-sTCP:LISTEN"))
+        except RuntimeContractError:
+            return False
+        for process_id in process_ids:
+            try:
+                identity = _read_process_identity(process_id)
+            except (OSError, ProcessLookupError, RuntimeContractError):
+                continue
+            if identity.uid == os.getuid() and identity.process_group_id == process_group_id:
+                return True
+        return False
+    if sys.platform != "linux":
+        return False
     listener_inodes: set[str] = set()
     try:
         rows = Path("/proc/net/tcp").read_text(encoding="ascii").splitlines()[1:]
@@ -1974,15 +2497,220 @@ def _require_loopback_port_available(port: int, role: str) -> None:
 
 
 def _process_start_token(process_id: int) -> str:
+    if sys.platform not in {"darwin", "linux"}:
+        raise RuntimeContractError("owned process identity requires Linux or Darwin")
     deadline = time.monotonic() + 2
-    path = Path("/proc") / str(process_id) / "stat"
     while time.monotonic() < deadline:
         try:
-            stat = path.read_text(encoding="utf-8")
-            return stat[stat.rindex(")") + 2 :].split()[19]
-        except (OSError, UnicodeDecodeError, ValueError, IndexError):
+            return _read_process_identity(process_id).start_token
+        except (OSError, ProcessLookupError, RuntimeContractError):
             time.sleep(0.01)
     raise RuntimeContractError("started process birth identity could not be read")
+
+
+def _read_process_identity(process_id: int) -> _ProcessIdentity:
+    if sys.platform == "darwin":
+        library = ctypes.CDLL(_DARWIN_LIBPROC, use_errno=True)
+        proc_pidinfo = library.proc_pidinfo
+        proc_pidinfo.argtypes = (
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_uint64,
+            ctypes.c_void_p,
+            ctypes.c_int,
+        )
+        proc_pidinfo.restype = ctypes.c_int
+        process_info = _DarwinProcessInfo()
+        ctypes.set_errno(0)
+        size = proc_pidinfo(
+            process_id,
+            _DARWIN_PROCESS_BSD_INFO,
+            0,
+            ctypes.byref(process_info),
+            ctypes.sizeof(process_info),
+        )
+        if size == 0:
+            error_number = ctypes.get_errno()
+            if error_number in {0, errno.ENOENT, errno.ESRCH}:
+                raise ProcessLookupError(process_id)
+            raise OSError(error_number, os.strerror(error_number))
+        if size != ctypes.sizeof(process_info) or process_info.process_id != process_id:
+            raise RuntimeContractError("Darwin process identity was incomplete")
+        start_token = str(process_info.start_seconds * 1_000_000 + process_info.start_microseconds)
+        if start_token == "0":
+            raise RuntimeContractError("Darwin process birth identity was unavailable")
+        return _ProcessIdentity(
+            uid=process_info.uid,
+            process_group_id=process_info.process_group_id,
+            start_token=start_token,
+        )
+    if sys.platform == "linux":
+        process_root = Path("/proc") / str(process_id)
+        process_uid = process_root.stat().st_uid
+        process_group_id = os.getpgid(process_id)
+        try:
+            stat = (process_root / "stat").read_text(encoding="utf-8")
+            start_token = stat[stat.rindex(")") + 2 :].split()[19]
+        except (UnicodeDecodeError, ValueError, IndexError) as exc:
+            raise RuntimeContractError("Linux process identity was malformed") from exc
+        if not start_token.isdecimal():
+            raise RuntimeContractError("Linux process birth identity was malformed")
+        return _ProcessIdentity(process_uid, process_group_id, start_token)
+    raise RuntimeContractError("owned process identity requires Linux or Darwin")
+
+
+def _linux_process_environment(process_id: int) -> tuple[bytes, ...]:
+    if sys.platform != "linux":
+        raise RuntimeContractError("Linux process environment was requested on another platform")
+    return tuple((Path("/proc") / str(process_id) / "environ").read_bytes().split(b"\0"))
+
+
+def _linux_owner_token_identities(
+    run_id: str,
+    owner_token: str,
+) -> list[tuple[int, _ProcessIdentity]]:
+    """Every live process whose environment carries this run's exact owner token."""
+    require_run_id(run_id)
+    if not re.fullmatch(r"[0-9a-f]{32}", owner_token):
+        raise RuntimeContractError("Linux process owner requires an exact owner token")
+    expected_owner = f"NEXUS_TEST_PROCESS_OWNER={owner_token}".encode()
+    expected_run = f"NEXUS_TEST_RUN_ID={run_id}".encode()
+    holder_identities: list[tuple[int, _ProcessIdentity]] = []
+    try:
+        process_roots = tuple(Path("/proc").iterdir())
+    except OSError as exc:
+        raise RuntimeContractError("Linux process table could not be read") from exc
+    for process_root in process_roots:
+        if not process_root.name.isdecimal():
+            continue
+        process_id = int(process_root.name)
+        try:
+            if process_root.stat().st_uid != os.getuid():
+                continue
+            environment = _linux_process_environment(process_id)
+            if expected_owner not in environment or expected_run not in environment:
+                continue
+            identity = _read_process_identity(process_id)
+        except (FileNotFoundError, PermissionError, ProcessLookupError):
+            continue
+        except (OSError, RuntimeContractError) as exc:
+            raise RuntimeContractError("owned Linux process identity could not be read") from exc
+        if identity.uid != os.getuid():
+            raise RuntimeContractError("owned Linux process identity changed during cleanup")
+        holder_identities.append((process_id, identity))
+    return holder_identities
+
+
+def _owned_process_group_map(
+    repo_root: Path,
+    run_id: str,
+    owner_token: str,
+) -> dict[int, str | None]:
+    """The process groups that make up one owned process's tree.
+
+    An owned worker forks bounded execution children into their own sessions --
+    the containment design under proof here -- so a single owner token, a
+    per-launch secret, legitimately spans the worker's group and one group per
+    live child. Every carrier holds that secret, so each group is definitively
+    owned by this run and must be reaped. The value is the group leader's start
+    token when the leader itself carries the token, else ``None``.
+    """
+    if sys.platform == "darwin":
+        holders = _darwin_owner_marker_identities(repo_root, run_id, owner_token)
+    elif sys.platform == "linux":
+        holders = _linux_owner_token_identities(run_id, owner_token)
+    else:
+        raise RuntimeContractError("owned process cleanup requires Linux or Darwin")
+    groups: dict[int, str | None] = {}
+    for process_id, identity in holders:
+        process_group_id = identity.process_group_id
+        if process_group_id <= 1:
+            raise RuntimeContractError("owned process token identifies an unsafe group")
+        if process_id == process_group_id:
+            groups[process_group_id] = identity.start_token
+        else:
+            groups.setdefault(process_group_id, None)
+    return groups
+
+
+def _process_owner_marker(repo_root: Path, run_id: str, owner_token: str) -> Path:
+    require_run_id(run_id)
+    if not re.fullmatch(r"[0-9a-f]{32}", owner_token):
+        raise RuntimeContractError("process owner marker requires an exact owner token")
+    return runtime_state_dir(repo_root) / "runs" / run_id / "process-owners" / owner_token
+
+
+def _remove_process_owner_marker(repo_root: Path, run_id: str, owner_token: str) -> None:
+    if sys.platform != "darwin":
+        return
+    marker = _process_owner_marker(repo_root, run_id, owner_token)
+    marker.unlink(missing_ok=True)
+    try:
+        marker.parent.rmdir()
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        if exc.errno != errno.ENOTEMPTY:
+            raise RuntimeContractError(
+                "process owner marker directory could not be removed"
+            ) from exc
+
+
+def _darwin_owner_marker_identities(
+    repo_root: Path,
+    run_id: str,
+    owner_token: str,
+) -> list[tuple[int, _ProcessIdentity]]:
+    """Every live process holding this run's inherited owner-marker descriptor."""
+    marker = _process_owner_marker(repo_root, run_id, owner_token)
+    if not marker.is_file():
+        return []
+    holder_ids = _darwin_owner_marker_holders(marker)
+    if not holder_ids:
+        return []
+    holder_identities: list[tuple[int, _ProcessIdentity]] = []
+    for process_id in holder_ids:
+        try:
+            identity = _read_process_identity(process_id)
+        except ProcessLookupError:
+            continue
+        except (OSError, RuntimeContractError) as exc:
+            raise RuntimeContractError("owned Darwin process identity could not be read") from exc
+        if identity.uid != os.getuid():
+            raise RuntimeContractError("owned Darwin process marker has a foreign holder")
+        holder_identities.append((process_id, identity))
+    if not holder_identities and _darwin_owner_marker_holders(marker):
+        raise RuntimeContractError("owned Darwin process marker holders changed during cleanup")
+    return holder_identities
+
+
+def _darwin_owner_marker_holders(marker: Path) -> tuple[int, ...]:
+    try:
+        resolved_marker = marker.resolve(strict=True).as_posix()
+    except OSError as exc:
+        raise RuntimeContractError("Darwin process owner marker could not be inspected") from exc
+    return _darwin_lsof_process_ids(("--", resolved_marker))
+
+
+def _darwin_lsof_process_ids(selection: tuple[str, ...]) -> tuple[int, ...]:
+    try:
+        result = subprocess.run(
+            (_DARWIN_LSOF, "-nP", "-t", *selection),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=1,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeContractError("Darwin process ownership could not be inspected") from exc
+    if result.returncode == 1 and not result.stdout.strip():
+        return ()
+    if result.returncode != 0:
+        raise RuntimeContractError("Darwin process ownership inspection failed")
+    rows = result.stdout.splitlines()
+    if not rows or any(not row.isdecimal() for row in rows):
+        raise RuntimeContractError("Darwin process ownership output was malformed")
+    return tuple(dict.fromkeys(int(row) for row in rows))
 
 
 def _child_environment(environment: Mapping[str, str]) -> dict[str, str]:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
@@ -63,6 +64,7 @@ def _seed_pdf(
                 storage_path=storage_path,
                 content_type="application/pdf",
                 size_bytes=len(payload),
+                source_sha256=hashlib.sha256(payload).hexdigest(),
             ),
         ]
     )

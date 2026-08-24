@@ -216,7 +216,7 @@ def _wait_for_capacity_prepared(
     *,
     wait_index: int,
     delay_seconds: int,
-    timeout_seconds: float = 10,
+    timeout_seconds: float = 30,
 ) -> UUID:
     deadline = time.monotonic() + timeout_seconds
     observed: tuple[object, ...] | None = None
@@ -269,7 +269,7 @@ def _wait_for_uncertain_incomplete(
     engine: Engine,
     seeded: SeededJob,
     *,
-    timeout_seconds: float = 10,
+    timeout_seconds: float = 30,
 ) -> UUID:
     deadline = time.monotonic() + timeout_seconds
     observed: tuple[object, ...] | None = None

@@ -228,6 +228,13 @@ class DossierIdeaUnresolved(ApiError):
         super().__init__(ApiErrorCode.E_DOSSIER_IDEA_UNRESOLVED, message)
 
 
+class WebResearchNotConfigured(ApiError):
+    """Idea Dossier admission requires configured Web research authority."""
+
+    def __init__(self, message: str = "Dossier Web research is not configured") -> None:
+        super().__init__(ApiErrorCode.E_DOSSIER_WEB_RESEARCH_NOT_CONFIGURED, message)
+
+
 class BuildNotActive(ConflictError):
     """Public cancel of an already-succeeded/failed/cancelled build (A9)."""
 

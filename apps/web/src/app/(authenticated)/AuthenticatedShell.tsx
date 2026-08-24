@@ -8,9 +8,11 @@ import GlobalPlayerSurfaces from "@/components/player/GlobalPlayerSurfaces";
 import LecternMutationNotice from "@/components/LecternMutationNotice";
 import { WebVitalsReporter } from "@/components/workspace/WebVitalsReporter";
 import LocalVaultAutoSync from "./LocalVaultAutoSync";
+import DownloadsSurface from "@/components/offlineMedia/DownloadsSurface";
 import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 import { OfflineMediaProvider } from "@/lib/offlineMedia/OfflineMediaProvider";
+import { OfflineReadingProvider } from "@/lib/offlineReading/OfflineReadingProvider";
 import { MediaActivityProvider } from "@/lib/media/MediaActivityProvider";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { CompletionUndoFeedbackOwner } from "@/lib/lectern/useCompletionUndo";
@@ -139,7 +141,14 @@ function AuthenticatedWorkspace({
                 <CompletionUndoFeedbackOwner />
                 <LibraryPlacementControllerProvider>
                   <ShareControllerProvider>
+                    <OfflineReadingProvider accountId={accountId}>
                     <OfflineMediaProvider accountId={accountId}>
+                      {/* One Downloads surface above both offline
+                          capabilities: it renders whenever audio or reading is
+                          Ready, so a device that only connected one of them
+                          still has somewhere to see, retry and remove its
+                          downloads. */}
+                      <DownloadsSurface />
                       {/* The resource-action runtime reads Lectern, offline
                           media, share, library-placement, resource overlays,
                           workspace, and feedback from these ancestors and owns
@@ -173,6 +182,7 @@ function AuthenticatedWorkspace({
                         </GlobalPlayerProvider>
                       </ResourceOverlaysProvider>
                     </OfflineMediaProvider>
+                    </OfflineReadingProvider>
                   </ShareControllerProvider>
                 </LibraryPlacementControllerProvider>
               </LecternProvider>

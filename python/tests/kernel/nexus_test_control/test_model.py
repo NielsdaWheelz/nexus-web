@@ -30,7 +30,9 @@ def test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr() -> Non
         "durable-job-replay",
         "native-agent-host",
         "database-object-convergence",
+        "document-import-reliability",
         "llm-tool-safety",
+        "android-player-protocol-skew",
         "immutable-production-release",
         "production-runtime-health",
         "oracle-publication",
@@ -51,6 +53,12 @@ def test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr() -> Non
         requirement.capability
         for requirement in WORKFLOW_REGISTRY[Workflow.CODEX_NIGHTLY].requirements
     ) == (Capability.CODEX_HOSTED,)
+
+    release_capabilities = {
+        requirement.capability for requirement in WORKFLOW_REGISTRY[Workflow.RELEASE].requirements
+    }
+    assert Capability.ANDROID_DEVICE in release_capabilities
+    assert Capability.ANDROID_RELEASE in release_capabilities
 
 
 def test_confidence_keeps_real_stack_affected_and_skips_build_and_journeys() -> None:

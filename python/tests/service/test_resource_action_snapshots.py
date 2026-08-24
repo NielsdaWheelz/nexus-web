@@ -11,6 +11,7 @@ subscriptions), then the snapshot is asserted to reflect it.
 
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -100,6 +101,7 @@ _BASELINE_CAPABILITY_ORACLE: dict[ResourceScheme, frozenset[str]] = {
             "Consumption",
             "LecternMembership",
             "LibraryPlacement",
+            "OfflineReading",
         }
     ),
     "library": frozenset(
@@ -577,8 +579,12 @@ def test_seeded_media_reports_core_media_lectern_and_placement_kinds(engine: Eng
         "LibraryPlacement",
     } <= kinds
 
-    # A web article is not an offline-audio target, is not an episode, and has no
-    # engagement to reset yet.
+    # A web article is an offline-reading target, not an offline-audio target or
+    # episode, and has no engagement to reset yet.
+    assert "OfflineReading" in kinds
+    offline_reading = _capability(snapshot, "OfflineReading")
+    assert offline_reading.media_kind == "web_article"
+    assert offline_reading.requested_title == "Snapshot proof article"
     assert {"OfflineAudio", "EpisodeConsumption", "ResetProgress"}.isdisjoint(kinds)
 
     assert _capability(snapshot, "OpenSource").href == "https://example.invalid/article"
@@ -630,7 +636,28 @@ def test_document_media_subtypes_publish_their_exact_action_families(
         "LibraryPlacement",
         "RemoveMedia",
     } <= kinds
-    assert {"EpisodeConsumption", "OfflineAudio", "Playback", "PlayNext"}.isdisjoint(kinds)
+    assert ("OfflineReading" in kinds) is (
+        kind in (MediaKind.web_article, MediaKind.epub, MediaKind.pdf)
+    )
+    if kind in (MediaKind.web_article, MediaKind.epub, MediaKind.pdf):
+        offline_reading = _capability(snapshot, "OfflineReading")
+        assert offline_reading.media_kind == kind.value
+        assert offline_reading.requested_title == f"Snapshot proof {kind.value}"
+        with Session(engine) as db:
+            stored = db.get(Media, media_id)
+            assert stored is not None
+            stored.processing_status = ProcessingStatus.extracting
+            db.commit()
+        not_ready = _resolve(
+            engine,
+            viewer_id,
+            [ResourceRef(scheme="media", id=media_id)],
+        ).snapshots[0]
+        assert "OfflineReading" not in _kinds(not_ready)
+    absent = {"EpisodeConsumption", "OfflineAudio", "Playback", "PlayNext"}
+    if kind == MediaKind.video:
+        absent.add("OfflineReading")
+    assert absent.isdisjoint(kinds)
     assert ("Transcript" in kinds) is has_transcript
 
 
@@ -792,6 +819,7 @@ def test_file_backed_media_reports_original_download_capability(engine: Engine) 
                 storage_path=f"test/{media_id}.pdf",
                 content_type="application/pdf",
                 size_bytes=1024,
+                source_sha256=hashlib.sha256(b"\0" * 1024).hexdigest(),
             )
         )
         ensure_media_in_default_library(db, viewer_id, media_id)

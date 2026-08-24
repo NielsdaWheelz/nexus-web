@@ -5,6 +5,13 @@
 Implemented in `/home/niels/src/personal/nexus-web-current-only` on 2026-06-05.
 This document records the target contract and acceptance checklist.
 
+**Uploaded-file clauses superseded by
+`document-import-reliability-hard-cutover.md` (IMPLEMENTED):** upload sessions
+now own pre-publication intent, `media_files.source_sha256` is required source
+provenance, and `python/nexus/services/media_upload_sessions.py` is the sole
+uploaded-file acceptance owner. Historical owner/file lists below record this
+cutover's original implementation rather than the current upload contract.
+
 **Superseded by `universal-link-authoring-hard-cutover.md` (IMPLEMENTED):**
 current-only destructive replacement remains authoritative for readable
 artifacts, transcripts, search/evidence projections, and Oracle/notes. It is

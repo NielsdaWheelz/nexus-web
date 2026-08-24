@@ -1,16 +1,20 @@
 "use client";
 
-import { type MouseEvent, type ReactNode } from "react";
+import { useState, type MouseEvent, type ReactNode } from "react";
 import { Download, ListTodo, LogOut } from "lucide-react";
 import Link from "next/link";
 import ActionMenu from "@/components/ui/ActionMenu";
+import { requestDownloadsOpen } from "@/components/offlineMedia/downloadsSurfaceIngress";
 import { useMediaActivity } from "@/lib/media/MediaActivityProvider";
 import { requestNexusOpen } from "@/lib/nexus/events";
 import { useOfflineMediaCapability } from "@/lib/offlineMedia/OfflineMediaProvider";
+import { useOfflineReadingCapability } from "@/lib/offlineReading/OfflineReadingProvider";
+import { useAndroidShell } from "@/lib/renderEnvironment/provider";
 import type { AppNavActivationResult } from "@/lib/panes/targetLinkActivation";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { AccountNavigation, NavItem } from "./navModel";
 import styles from "./AppNav.module.css";
+import { accountSignOutOwner } from "./accountSignOut";
 
 export default function AccountMenu({
   account,
@@ -35,6 +39,11 @@ export default function AccountMenu({
   const SettingsIcon = settings.icon;
   const { snapshot } = useMediaActivity();
   const offlineMedia = useOfflineMediaCapability();
+  const offlineReading = useOfflineReadingCapability();
+  const androidShell = useAndroidShell();
+  const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
+  const signOutOwner = accountSignOutOwner(androidShell, offlineReading.kind);
   const importCount = snapshot
     ? snapshot.needsAttentionCount + snapshot.activeCount
     : 0;
@@ -81,7 +90,9 @@ export default function AccountMenu({
       ),
     },
   ];
-  if (offlineMedia.kind === "Ready") {
+  // The single Downloads surface lists both capabilities, so its entry point
+  // appears whenever either one is connected.
+  if (offlineMedia.kind === "Ready" || offlineReading.kind === "Ready") {
     options.push({
       kind: "custom",
       id: "downloads",
@@ -93,7 +104,7 @@ export default function AccountMenu({
           className={styles.menuItem}
           onClick={() => {
             closeMenu();
-            offlineMedia.controller.openDownloads();
+            requestDownloadsOpen();
           }}
         >
           <Download size={16} aria-hidden="true" />
@@ -130,7 +141,26 @@ export default function AccountMenu({
       id: "signout",
       label: "Sign Out",
       separatorBefore: true,
-      render: () => (
+      render: ({ closeMenuWithoutFocus }) => signOutOwner === "Native" && offlineReading.kind === "Ready" ? (
+        <button
+          type="button"
+          role="menuitem"
+          className={`${styles.menuItem} ${styles.menuItemDanger}`}
+          disabled={signingOut}
+          onClick={() => {
+            closeMenuWithoutFocus();
+            setSigningOut(true);
+            setSignOutError(null);
+            void offlineReading.controller.logoutAndPurge().catch(() => {
+              setSigningOut(false);
+              setSignOutError("Sign out could not safely remove offline data. Try again.");
+            });
+          }}
+        >
+          <LogOut size={16} aria-hidden="true" />
+          Sign Out
+        </button>
+      ) : signOutOwner === "WebPost" ? (
         <form action="/auth/signout" method="post" className={styles.menuForm}>
           <button
             type="submit"
@@ -141,10 +171,21 @@ export default function AccountMenu({
             Sign Out
           </button>
         </form>
+      ) : (
+        <button
+          type="button"
+          role="menuitem"
+          className={`${styles.menuItem} ${styles.menuItemDanger}`}
+          disabled
+        >
+          <LogOut size={16} aria-hidden="true" />
+          Sign Out temporarily unavailable
+        </button>
       ),
     },
   );
   return (
+    <>
     <ActionMenu
       className={styles.account}
       label={
@@ -162,5 +203,7 @@ export default function AccountMenu({
       }}
       options={options}
     />
+    {signOutError === null ? null : <p role="alert">{signOutError}</p>}
+    </>
   );
 }

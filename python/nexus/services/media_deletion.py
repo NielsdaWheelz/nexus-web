@@ -370,15 +370,6 @@ def delete_duplicate_document_media(
     return _claim_document_media_teardown(db, loser_media_id)
 
 
-def delete_abandoned_document_media(db: Session, media_id: UUID) -> list[str]:
-    """Claim an abandoned document row (never became readable) for teardown.
-
-    Same claim doorway as :func:`delete_duplicate_document_media`; returns an empty path
-    list because the ``media_teardown`` job owns storage deletion.
-    """
-    return _claim_document_media_teardown(db, media_id)
-
-
 def _claim_document_media_teardown(db: Session, media_id: UUID) -> list[str]:
     media = db.execute(
         text("SELECT kind FROM media WHERE id = :media_id FOR UPDATE"),
@@ -466,6 +457,8 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
     its deletion transaction, and by library teardown. Returns ``None`` (deleting
     nothing) when the media is missing, non-document, or still referenced.
     """
+    from nexus.services import media_upload_sessions
+
     media = db.execute(
         text("SELECT kind FROM media WHERE id = :media_id FOR UPDATE"),
         {"media_id": media_id},
@@ -678,6 +671,10 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
         text("UPDATE external_provider_events SET media_id = NULL WHERE media_id = :media_id"),
         {"media_id": media_id},
     )
+    media_upload_sessions.delete_published_media_support_in_current_transaction(
+        db,
+        media_id=media_id,
+    )
     db.execute(
         text("DELETE FROM media_source_attempts WHERE media_id = :media_id"),
         {"media_id": media_id},
@@ -695,6 +692,9 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
         text("DELETE FROM media_teardown_intents WHERE media_id = :media_id"),
         {"media_id": media_id},
     )
+    from nexus.services.reader_publication import delete_reader_publication
+
+    delete_reader_publication(db, media_id=media_id)
     db.execute(text("DELETE FROM media WHERE id = :media_id"), {"media_id": media_id})
     return storage_paths
 

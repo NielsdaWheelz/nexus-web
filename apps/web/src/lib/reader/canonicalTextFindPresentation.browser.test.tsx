@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import "@/app/globals.css";
-import readerStyles from "@/app/(authenticated)/media/[id]/page.module.css";
+import readerStyles from "@/components/reader/textDocumentReader.module.css";
 import { buildCanonicalCursor } from "@/lib/highlights/canonicalCursor";
 import {
   createPaneFindResultKey,

@@ -2,6 +2,16 @@
   "version": 1,
   "artifacts": [
     {
+      "path": "testdata/android/player-protocol.json",
+      "sha256": "f164f64512425ca32ce5ffaacefd6ca6dd2d14a9daedcf2e1e51f3ebd8d8af1e",
+      "source": "repo-authored: canonical Android player protocol v2 cases",
+      "license": "Repository-owned test data; retained as the cross-language player protocol and release-identity oracle",
+      "purpose": [
+        "Cross-language Android player command, reply, event, snapshot, rejection, and nested-variant conformance",
+        "Byte-exact player protocol identity for web, signed Android, and production release proof"
+      ]
+    },
+    {
       "path": "testdata/consumption/canonical_word_policy.json",
       "sha256": "f4fafd95b12bcc1e135e2975bf95011d04dbea2a39485b6b2fc29c4aa7322113",
       "source": "repo-authored: canonical consumption word-policy cases",
@@ -119,6 +129,18 @@
       "license": "NASA public web content with no copyright asserted unless noted; retained as a pinned provider-response fixture",
       "purpose": [
         "Deterministic podcast episode-list response"
+      ]
+    },
+    {
+      "path": "testdata/offline-reading-contract-v1.json",
+      "sha256": "2c64ccf586dbfe85480623e9a3a6b4c9edd4d10cc5d0aba1140e68a4ec97968b",
+      "source": "repo-authored: independently reviewed Android offline-reading V1 contract cases",
+      "license": "Repository-owned test data; retained as the cross-language offline-reading package and reader-content oracle",
+      "purpose": [
+        "Cross-language V1 package manifest, member integrity, revision-key, and ZIP conformance",
+        "Transfer conformance: accepted response headers plus encoding, redirect, length, package-origin, account, and generation faults",
+        "Canonical PDF, EPUB with declared local asset, and text-only web-article reader contracts",
+        "Offline-reading product copy: explicit downloaded-copy and web-image-omission disclosures"
       ]
     }
   ]

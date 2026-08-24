@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import zipfile
 from uuid import uuid4
@@ -132,6 +133,7 @@ def test_epub_ingest_repairs_structural_anchors_without_reordering_intervals(
                 storage_path=storage_path,
                 content_type="application/epub+zip",
                 size_bytes=len(payload),
+                source_sha256=hashlib.sha256(payload).hexdigest(),
             )
         )
         db.commit()
@@ -144,6 +146,7 @@ def test_epub_ingest_repairs_structural_anchors_without_reordering_intervals(
             attempt_id=uuid4(),
             storage_path=storage_path,
             source_size_bytes=len(payload),
+            expected_source_sha256=hashlib.sha256(payload).hexdigest(),
             storage_client=storage,
             record_progress=lambda _completed, _total, _unit: None,
         )

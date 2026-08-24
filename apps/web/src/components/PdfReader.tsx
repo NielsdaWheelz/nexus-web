@@ -7,14 +7,13 @@ import {
   useRef,
   useState,
   type MutableRefObject,
+  type Ref,
   type ReactNode,
 } from "react";
 import {
-  apiFetch,
   isApiError,
   isSameSystemApiDefect,
 } from "@/lib/api/client";
-import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { mediaErrorMessage } from "@/lib/media/mediaErrorMessage";
 import type { PdfReaderResumeState } from "@/lib/reader/types";
 import type {
@@ -22,13 +21,12 @@ import type {
   ReaderSemanticViewport,
 } from "@/lib/reader/readerDocumentPosition";
 import { useReaderPulseHighlight } from "@/lib/reader/pulseEvent";
-import {
-  useMobileChromeReaderScrollport,
-  useMobileChromeVisibleLocks,
-} from "@/lib/workspace/mobileChrome";
-import { useReaderScrollPositioner } from "@/lib/reader/paneScroll";
+import type { ReaderScrollPositioner } from "@/lib/reader/paneScroll";
 import { composeRefs } from "@/lib/ui/composeRefs";
 import {
+  PDF_CMAP_URL,
+  PDF_STANDARD_FONT_URL,
+  PDF_WASM_URL,
   PDF_WORKER_SRC,
   getPdfSelection,
   loadPdfJs,
@@ -69,46 +67,14 @@ import {
 } from "@/lib/highlights/pdfPageViewport";
 import { clamp } from "@/lib/clamp";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
-import { useResource } from "@/lib/api/useResource";
-import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { isPositiveFinite } from "@/lib/validation";
+import type { ResolvedPdfDocument } from "@/lib/reader/ReaderDocumentSource";
+import type { ReaderResource } from "@/lib/reader/DocumentReaderSession";
+import type {
+  PdfHighlightOut,
+  PdfReaderDecorations,
+} from "@/lib/reader/ReaderDecorations";
 import styles from "./PdfReader.module.css";
-
-interface PdfFileAccessResponse {
-  data: {
-    url: string;
-    expires_at: string;
-  };
-}
-
-interface SignedUrlAccess {
-  url: string;
-  expiresAtMs: number | null;
-}
-
-export interface PdfHighlightOut {
-  id: string;
-  anchor: {
-    type: "pdf_page_geometry";
-    media_id: string;
-    page_number: number;
-    quads: PdfHighlightQuad[];
-  };
-  color: HighlightColor;
-  exact: string;
-  prefix: string;
-  suffix: string;
-  created_at: string;
-  updated_at: string;
-  author_user_id: string;
-  is_owner: boolean;
-  linked_conversations?: { conversation_id: string; title: string }[];
-  linked_note_blocks?: {
-    note_block_id: string;
-    body_pm_json?: Record<string, unknown>;
-    body_text: string;
-  }[];
-}
 
 export interface PdfHighlightNavigationRequest {
   highlightId: string;
@@ -160,17 +126,6 @@ export interface PdfReaderControlActions {
   captureResumeState: () => PdfReaderResumeState | null;
 }
 
-interface PdfHighlightListResponse {
-  data: {
-    page_number: number;
-    highlights: PdfHighlightOut[];
-  };
-}
-
-interface PdfHighlightCreateResponse {
-  data: PdfHighlightOut;
-}
-
 interface OpenedPdfDocument {
   doc: PdfDocumentLike;
   loadingTask: PdfDocumentLoadingTaskLike;
@@ -180,15 +135,45 @@ export interface PdfReaderIntrinsicWidthState {
   maxRenderedPageWidthPx: number | null;
 }
 
+export type PdfReaderVisibleLockReason = "pdf-selection" | "reader-restore";
+
+export interface PdfReaderResourceState {
+  pageNumber: number;
+  numPages: number;
+  loading: boolean;
+  error: string | null;
+}
+
+export interface PdfReaderResources {
+  signedUrl: ReaderResource<ResolvedPdfDocument>;
+  pageHighlights: ReaderResource<PdfHighlightOut[]>;
+  requestSignedUrlRefresh: (targetPage: number) => void;
+}
+
+export type PdfReaderDecorationWrites = Pick<
+  PdfReaderDecorations,
+  "createHighlight" | "updateHighlight"
+>;
+
 interface PdfReaderProps {
   mediaId: string;
+  resources: PdfReaderResources;
+  decorations: PdfReaderDecorationWrites;
+  isMobile: boolean;
   mobileChromeEnabled: boolean;
+  additionalViewportRef?: Ref<HTMLDivElement>;
+  acquireMobileChromeVisibleLock: (
+    reason: PdfReaderVisibleLockReason,
+  ) => () => void;
+  scrollPositioner: ReaderScrollPositioner;
+  handleAuthenticationError: (error: unknown) => boolean;
   beforeContent?: ReactNode;
   /** The scrolling, focusable PDF viewport. */
   viewportRef?: MutableRefObject<HTMLDivElement | null>;
   /** The inner `.pdfViewer` content surface. */
   contentRef?: MutableRefObject<HTMLDivElement | null>;
   onControlsStateChange?: (state: PdfReaderControlsState) => void;
+  onResourceStateChange?: (state: PdfReaderResourceState) => void;
   onControlsReady?: (actions: PdfReaderControlActions | null) => void;
   onIntrinsicWidthChange?: (state: PdfReaderIntrinsicWidthState) => void;
   focusedHighlightId?: string | null;
@@ -519,43 +504,6 @@ function pdfReaderErrorMessage(error: unknown): string {
   }
 }
 
-function signedUrlAccessFromResponse(
-  response: PdfFileAccessResponse,
-): SignedUrlAccess {
-  const expiresAtMs = Date.parse(response.data.expires_at);
-  return {
-    url: response.data.url,
-    expiresAtMs: Number.isFinite(expiresAtMs) ? expiresAtMs : null,
-  };
-}
-
-async function loadSignedUrlAccess(
-  mediaId: string,
-  signal: AbortSignal,
-): Promise<SignedUrlAccess> {
-  return signedUrlAccessFromResponse(
-    await apiFetch<PdfFileAccessResponse>(`/api/media/${mediaId}/file`, {
-      signal,
-    }),
-  );
-}
-
-async function loadPageHighlights(
-  mediaId: string,
-  targetPage: number,
-  signal: AbortSignal,
-): Promise<PdfHighlightOut[]> {
-  const response = await apiFetch<PdfHighlightListResponse>(
-    `/api/media/${mediaId}/pdf-highlights?page_number=${targetPage}&mine_only=false`,
-    { signal },
-  );
-  return response.data.highlights.filter(
-    (highlight) =>
-      highlight.anchor.type === "pdf_page_geometry" &&
-      highlight.anchor.page_number === targetPage,
-  );
-}
-
 function upsertCommittedPageHighlight(
   highlights: PdfHighlightOut[],
   committed: PdfHighlightOut,
@@ -785,11 +733,19 @@ function applyViewerPageNumber(
 
 export default function PdfReader({
   mediaId,
+  resources,
+  decorations,
+  isMobile,
   mobileChromeEnabled,
+  additionalViewportRef,
+  acquireMobileChromeVisibleLock,
+  scrollPositioner: readerScrollPositioner,
+  handleAuthenticationError,
   beforeContent,
   viewportRef,
   contentRef,
   onControlsStateChange,
+  onResourceStateChange,
   onControlsReady,
   onIntrinsicWidthChange,
   focusedHighlightId = null,
@@ -814,14 +770,6 @@ export default function PdfReader({
   onSemanticViewportChange,
   onFindRuntimeReady,
 }: PdfReaderProps) {
-  const isMobile = useIsMobileViewport();
-  const mobileChromeVisibleLocks = useMobileChromeVisibleLocks();
-  const readerScrollPositioner = useReaderScrollPositioner();
-  const mobileChromeScrollportRef =
-    useMobileChromeReaderScrollport<HTMLDivElement>({
-      sourceKey: mediaId,
-      enabled: mobileChromeEnabled,
-    });
   const isMobileRef = useRef(isMobile);
   const initialMobileFitDoneRef = useRef(false);
   const startPageNumberRef = useRef(startPageNumber);
@@ -865,9 +813,6 @@ export default function PdfReader({
   const [serverPageHighlights, setServerPageHighlights] = useState<
     PdfHighlightOut[]
   >([]);
-  const [signedUrlRefreshToken, setSignedUrlRefreshToken] = useState(0);
-  const [localHighlightRefreshToken, setLocalHighlightRefreshToken] =
-    useState(0);
   const [pulsingHighlightId, setPulsingHighlightId] = useState<string | null>(
     null,
   );
@@ -940,17 +885,9 @@ export default function PdfReader({
   const latestSemanticViewportRef = useRef<ReaderSemanticViewport | null>(null);
   const readerRestoreSettledRef = useRef(false);
 
-  const signedUrlResource = useResource<SignedUrlAccess>({
-    cacheKey: `${mediaId}:${signedUrlRefreshToken}`,
-    load: (signal) => loadSignedUrlAccess(mediaId, signal),
-  });
-  const pageHighlightsResource = useResource<PdfHighlightOut[]>({
-    cacheKey:
-      documentRef.current && numPages > 0 && !loading && error === null
-        ? `${mediaId}:${pageNumber}:${highlightRefreshToken}:${localHighlightRefreshToken}`
-        : null,
-    load: (signal) => loadPageHighlights(mediaId, pageNumber, signal),
-  });
+  const signedUrlResource = resources.signedUrl;
+  const pageHighlightsResource = resources.pageHighlights;
+  const requestSignedUrlRefresh = resources.requestSignedUrlRefresh;
   const pageHighlights = useMemo(() => {
     let projected = serverPageHighlights.filter(
       (highlight) =>
@@ -982,6 +919,10 @@ export default function PdfReader({
   useEffect(() => {
     onPageHighlightsChangeRef.current?.(pageNumber, pageHighlights);
   }, [pageHighlights, pageNumber]);
+
+  useEffect(() => {
+    onResourceStateChange?.({ pageNumber, numPages, loading, error });
+  }, [error, loading, numPages, onResourceStateChange, pageNumber]);
 
   useEffect(() => {
     return () => {
@@ -1026,8 +967,10 @@ export default function PdfReader({
   );
   const viewerViewportRef = useMemo(
     () =>
-      composeRefs<HTMLDivElement>(setViewportNode, mobileChromeScrollportRef),
-    [mobileChromeScrollportRef, setViewportNode],
+      additionalViewportRef
+        ? composeRefs<HTMLDivElement>(setViewportNode, additionalViewportRef)
+        : setViewportNode,
+    [additionalViewportRef, setViewportNode],
   );
 
   const publishIntrinsicWidth = useCallback((widthPx: number | null) => {
@@ -1054,18 +997,18 @@ export default function PdfReader({
     if (!mobileChromeEnabled || selection === null) {
       return;
     }
-    return mobileChromeVisibleLocks.acquire("pdf-selection");
-  }, [mobileChromeEnabled, mobileChromeVisibleLocks, selection]);
+    return acquireMobileChromeVisibleLock("pdf-selection");
+  }, [acquireMobileChromeVisibleLock, mobileChromeEnabled, selection]);
 
   useEffect(() => {
     if (!mobileChromeEnabled || error !== null || readerRestoreSettled) {
       return;
     }
-    return mobileChromeVisibleLocks.acquire("reader-restore");
+    return acquireMobileChromeVisibleLock("reader-restore");
   }, [
+    acquireMobileChromeVisibleLock,
     error,
     mobileChromeEnabled,
-    mobileChromeVisibleLocks,
     readerRestoreSettled,
   ]);
 
@@ -1891,6 +1834,10 @@ export default function PdfReader({
         disableRange: false,
         disableStream: false,
         disableAutoFetch: true,
+        cMapUrl: PDF_CMAP_URL,
+        cMapPacked: true,
+        standardFontDataUrl: PDF_STANDARD_FONT_URL,
+        wasmUrl: PDF_WASM_URL,
       });
       const doc = await task.promise;
       return { doc, loadingTask: task };
@@ -2323,9 +2270,9 @@ export default function PdfReader({
       recoveryTargetPageRef.current = targetPage;
       setRecovering(true);
       setError(null);
-      setSignedUrlRefreshToken((value) => value + 1);
+      requestSignedUrlRefresh(targetPage);
     },
-    [],
+    [requestSignedUrlRefresh],
   );
 
   useEffect(() => {
@@ -2561,16 +2508,10 @@ export default function PdfReader({
       try {
         let createdHighlight: PdfHighlightOut | null = null;
         if (editingHighlightId) {
-          await apiFetch(`/api/highlights/${editingHighlightId}`, {
-            method: "PATCH",
-            body: JSON.stringify({
-              exact,
-              anchor: {
-                type: "pdf_page_geometry",
-                page_number: activeSelection.pageNumber,
-                quads,
-              },
-            }),
+          await decorations.updateHighlight(editingHighlightId, {
+            exact,
+            pageNumber: activeSelection.pageNumber,
+            quads,
           });
           const existingHighlight = pageHighlights.find(
             (highlight) => highlight.id === editingHighlightId,
@@ -2588,19 +2529,12 @@ export default function PdfReader({
               }
             : null;
         } else {
-          const response = await apiFetch<PdfHighlightCreateResponse>(
-            `/api/media/${mediaId}/pdf-highlights`,
-            {
-              method: "POST",
-              body: JSON.stringify({
-                page_number: activeSelection.pageNumber,
-                quads,
-                exact,
-                color,
-              }),
-            },
-          );
-          createdHighlight = response.data;
+          createdHighlight = await decorations.createHighlight({
+            pageNumber: activeSelection.pageNumber,
+            quads,
+            exact,
+            color,
+          });
         }
 
         if (
@@ -2623,12 +2557,11 @@ export default function PdfReader({
             );
           });
         }
-        setLocalHighlightRefreshToken((value) => value + 1);
         onHighlightsMutated?.();
         clearSelection();
         return createdHighlight;
       } catch (err) {
-        if (handleUnauthenticatedApiError(err)) return null;
+        if (handleAuthenticationError(err)) return null;
         reportSelectionError(err);
         return null;
       } finally {
@@ -2640,7 +2573,9 @@ export default function PdfReader({
       buildAreaSelectionQuads,
       buildSelectionQuads,
       clearSelection,
+      decorations,
       editingHighlightId,
+      handleAuthenticationError,
       highlightRefreshToken,
       mediaId,
       pageHighlights,
@@ -3067,7 +3002,7 @@ export default function PdfReader({
     let active = true;
 
     if (signedUrlResource.status === "error") {
-      if (handleUnauthenticatedApiError(signedUrlResource.error)) {
+      if (handleAuthenticationError(signedUrlResource.error)) {
         setLoading(false);
         return;
       }
@@ -3102,7 +3037,7 @@ export default function PdfReader({
       } catch (err) {
         if (active && runId === runRef.current) {
           onFindRuntimeReadyRef.current?.(null);
-          if (!handleUnauthenticatedApiError(err)) reportReaderError(err);
+          if (!handleAuthenticationError(err)) reportReaderError(err);
         }
       } finally {
         if (active && runId === runRef.current) {
@@ -3120,6 +3055,7 @@ export default function PdfReader({
     };
   }, [
     attachDocumentToViewer,
+    handleAuthenticationError,
     openDocument,
     replaceDocument,
     reportReaderError,
@@ -3135,7 +3071,7 @@ export default function PdfReader({
       return;
     }
     if (pageHighlightsResource.status === "error") {
-      if (!handleUnauthenticatedApiError(pageHighlightsResource.error)) {
+      if (!handleAuthenticationError(pageHighlightsResource.error)) {
         reportSelectionError(pageHighlightsResource.error);
       }
       return;
@@ -3163,6 +3099,7 @@ export default function PdfReader({
     );
   }, [
     highlightRefreshToken,
+    handleAuthenticationError,
     mediaId,
     pageHighlightsResource,
     pageNumber,
@@ -3670,6 +3607,16 @@ export default function PdfReader({
           role="alert"
         >
           {error}
+          {signedUrlResource.status === "error" &&
+          signedUrlResource.retry !== undefined ? (
+            <button
+              type="button"
+              className={styles.errorRetry}
+              onClick={signedUrlResource.retry}
+            >
+              Retry
+            </button>
+          ) : null}
         </div>
       ) : (
         <div className={styles.canvasWrap}>

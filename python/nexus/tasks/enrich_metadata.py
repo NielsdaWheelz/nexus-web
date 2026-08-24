@@ -1073,7 +1073,7 @@ def _publish_completed_transaction(
             ),
         )
 
-    merge_result = merge_enrichment(media, completed.enrichment)
+    merge_result = merge_enrichment(db, media, completed.enrichment)
     if not merge_result.accepted_fields:
         code = ApiErrorCode.E_METADATA_NO_FIELDS.value
         detail = "native agent returned no applicable metadata fields"

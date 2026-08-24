@@ -11,6 +11,12 @@ import type { ReaderSelectionOut } from "@/lib/conversations/readerSelection";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import type { Presence } from "@/lib/api/presence";
 import type { DurableExecution } from "@/lib/api/executionAdvisory";
+import type {
+  ToolEffect,
+  ToolErrorType,
+  ToolRecordKind,
+  ToolResultKind,
+} from "@/lib/conversations/toolContractProjection";
 
 export interface ConversationSummary {
   id: string;
@@ -222,9 +228,14 @@ export interface MessageToolCall {
   conversation_id?: string;
   user_message_id?: string;
   assistant_message_id?: string;
-  tool_name: string;
+  record_kind: ToolRecordKind;
+  canonical_tool_id: string | null;
+  provider_wire_name: string | null;
+  effect: ToolEffect | null;
+  result_kind: ToolResultKind;
+  activity_label: string;
+  error_type: ToolErrorType | null;
   tool_call_index: number;
-  query_hash?: string | null;
   scope?: string;
   requested_types?: string[];
   result_refs: Array<Record<string, unknown>>;
@@ -234,7 +245,6 @@ export interface MessageToolCall {
   result_count?: number;
   selected_count?: number;
   status: ChatToolStatus;
-  error_code?: string | null;
   input_preview?: string;
   // Undo lifecycle for assistant write tool calls; set once reverted (amanuensis).
   reverted_at?: string | null;

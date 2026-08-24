@@ -43,6 +43,7 @@ from nexus.services.reader_apparatus import (
     replace_media_apparatus,
     source_fingerprint,
 )
+from nexus.services.reader_publication import replace_reader_publication
 from nexus.services.source_publication import (
     SourcePublicationFence,
     run_source_publication_phase,
@@ -397,88 +398,25 @@ def _refresh_x_author_thread_media_for_viewer(
                     )
                 durable_quote_ids[quoted_id] = quote_media.id
 
-            rendered_fragments = render_author_thread_fragment_html(snapshot)
-            prepared_fragments = [
-                _build_x_fragment(
-                    media_id=media.id,
-                    idx=idx,
-                    html=rendered.html,
-                    base_url=rendered.post.permalink,
-                    created_at=now,
-                    quote_occurrences=rendered.quote_occurrences,
-                )
-                for idx, rendered in enumerate(rendered_fragments)
-            ]
-            fragments = [prepared.fragment for prepared in prepared_fragments]
-            if not "\n\n".join(fragment.canonical_text for fragment in fragments).strip():
-                raise InvalidRequestError(
-                    ApiErrorCode.E_INVALID_REQUEST,
-                    "X thread has no readable text",
-                )
-            delete_web_article_artifacts(
-                db,
-                media_id=media.id,
-                include_content_index=False,
-            )
-            media.title = thread_title(snapshot)[:255]
-            media.canonical_url = None
-            media.canonical_source_url = snapshot.canonical_url
-            media.provider = "x"
-            media.provider_id = provider_id
-            media.publisher = "X"
-            media.description = thread_description(snapshot)
-            for prepared_fragment in prepared_fragments:
-                db.add(prepared_fragment.fragment)
-            db.flush()
-            for prepared_fragment in prepared_fragments:
-                insert_fragment_blocks(
+            def replace_thread_projection(locked_media: Media) -> None:
+                _replace_x_thread_snapshot_projection(
                     db,
-                    prepared_fragment.fragment.id,
-                    prepared_fragment.fragment_blocks,
+                    viewer_id=viewer_id,
+                    media=locked_media,
+                    snapshot=snapshot,
+                    now=now,
+                    provider_id=provider_id,
+                    source_attempt_id=source_attempt_id,
+                    request_id=request_id,
+                    durable_quote_ids=durable_quote_ids,
+                    locked_existing_quote_ids=locked_existing_quote_ids,
                 )
-            replace_document_embed_artifact(
-                db,
-                owner_user_id=media.created_by_user_id or viewer_id,
-                media_id=media.id,
-                source_attempt_id=source_attempt_id,
-                occurrences=[
-                    _document_embed_occurrence(
-                        prepared=occurrence,
-                        fragment_id=prepared.fragment.id,
-                        target_media_ids=durable_quote_ids,
-                    )
-                    for prepared in prepared_fragments
-                    for occurrence in prepared.quote_occurrences
-                ],
-                extraction_error_code=None,
-                extraction_error_message=None,
-                request_id=request_id,
-                locked_existing_target_media_ids=frozenset(locked_existing_quote_ids),
-            )
-            replace_media_apparatus(
+
+            replace_reader_publication(
                 db,
                 media_id=media.id,
-                media_kind="web_article",
-                source_fingerprint_value=source_fingerprint(
-                    "x_thread",
-                    snapshot.canonical_url,
-                    "\n\n".join(fragment.html_sanitized for fragment in fragments),
-                    "\n\n".join(fragment.canonical_text for fragment in fragments),
-                ),
-                items=[
-                    item
-                    for prepared in prepared_fragments
-                    for item in attach_fragment_locators(
-                        media_id=media.id,
-                        fragment_id=prepared.fragment.id,
-                        media_kind="web_article",
-                        canonical_text=prepared.fragment.canonical_text,
-                        items=prepared.apparatus_items,
-                    )
-                ],
-                edges=[
-                    edge for prepared in prepared_fragments for edge in prepared.apparatus_edges
-                ],
+                expected_kind="web_article",
+                replace_projection=replace_thread_projection,
             )
             _record_x_provider_success(
                 db,
@@ -745,6 +683,123 @@ def _require_x_quote_source_identity(
 
 
 def _replace_x_post_snapshot_artifacts(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media: Media,
+    snapshot: XSinglePostSnapshot,
+    now: datetime,
+) -> None:
+    replace_reader_publication(
+        db,
+        media_id=media.id,
+        expected_kind="web_article",
+        replace_projection=lambda locked_media: _replace_x_post_snapshot_projection(
+            db,
+            viewer_id=viewer_id,
+            media=locked_media,
+            snapshot=snapshot,
+            now=now,
+        ),
+    )
+
+
+def _replace_x_thread_snapshot_projection(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media: Media,
+    snapshot: XAuthorThreadSnapshot,
+    now: datetime,
+    provider_id: str,
+    source_attempt_id: UUID,
+    request_id: str | None,
+    durable_quote_ids: dict[str, UUID],
+    locked_existing_quote_ids: set[UUID],
+) -> None:
+    prepared_fragments = [
+        _build_x_fragment(
+            media_id=media.id,
+            idx=idx,
+            html=rendered.html,
+            base_url=rendered.post.permalink,
+            created_at=now,
+            quote_occurrences=rendered.quote_occurrences,
+        )
+        for idx, rendered in enumerate(render_author_thread_fragment_html(snapshot))
+    ]
+    fragments = [prepared.fragment for prepared in prepared_fragments]
+    if not "\n\n".join(fragment.canonical_text for fragment in fragments).strip():
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "X thread has no readable text",
+        )
+    delete_web_article_artifacts(
+        db,
+        media_id=media.id,
+        include_content_index=False,
+    )
+    media.title = thread_title(snapshot)[:255]
+    media.canonical_url = None
+    media.canonical_source_url = snapshot.canonical_url
+    media.provider = "x"
+    media.provider_id = provider_id
+    media.publisher = "X"
+    media.description = thread_description(snapshot)
+    for prepared_fragment in prepared_fragments:
+        db.add(prepared_fragment.fragment)
+    db.flush()
+    for prepared_fragment in prepared_fragments:
+        insert_fragment_blocks(
+            db,
+            prepared_fragment.fragment.id,
+            prepared_fragment.fragment_blocks,
+        )
+    replace_document_embed_artifact(
+        db,
+        owner_user_id=media.created_by_user_id or viewer_id,
+        media_id=media.id,
+        source_attempt_id=source_attempt_id,
+        occurrences=[
+            _document_embed_occurrence(
+                prepared=occurrence,
+                fragment_id=prepared.fragment.id,
+                target_media_ids=durable_quote_ids,
+            )
+            for prepared in prepared_fragments
+            for occurrence in prepared.quote_occurrences
+        ],
+        extraction_error_code=None,
+        extraction_error_message=None,
+        request_id=request_id,
+        locked_existing_target_media_ids=frozenset(locked_existing_quote_ids),
+    )
+    replace_media_apparatus(
+        db,
+        media_id=media.id,
+        media_kind="web_article",
+        source_fingerprint_value=source_fingerprint(
+            "x_thread",
+            snapshot.canonical_url,
+            "\n\n".join(fragment.html_sanitized for fragment in fragments),
+            "\n\n".join(fragment.canonical_text for fragment in fragments),
+        ),
+        items=[
+            item
+            for prepared in prepared_fragments
+            for item in attach_fragment_locators(
+                media_id=media.id,
+                fragment_id=prepared.fragment.id,
+                media_kind="web_article",
+                canonical_text=prepared.fragment.canonical_text,
+                items=prepared.apparatus_items,
+            )
+        ],
+        edges=[edge for prepared in prepared_fragments for edge in prepared.apparatus_edges],
+    )
+
+
+def _replace_x_post_snapshot_projection(
     db: Session,
     *,
     viewer_id: UUID,

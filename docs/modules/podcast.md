@@ -183,6 +183,18 @@ retries stamp the current fence Failed and retain the dead job for operator
 repair; the idempotent Retry command replaces only that failed fence. Live sync
 continues while backfill is running, source-limited, or failed.
 
+The active Podcast detail pane converges those independent workers through
+`/stream/podcast-subscriptions/{podcast_id}/events`. PostgreSQL triggers on the
+subscription and backfill publish only the subscription epoch UUID to
+`podcast_subscription_events`; the stream resolves viewer + Podcast to that
+epoch, rechecks the same owner and epoch on every fresh snapshot, and closes
+only when both live sync and backfill are terminal. The web compares the initial
+snapshot to its installed detail, serializes changed-snapshot revalidations, and
+aborts observation on pane deactivation or unmount. Replacing a subscription
+epoch closes the old listener without emitting the replacement and reconnects
+the direct stream against the new epoch. It does not poll, start a manual
+refresh run, or treat a globally reused episode as new ingest.
+
 ## Transcription
 
 Add, Subscribe, live sync, and backfill store RSS sidecar references but never

@@ -7,6 +7,7 @@ identities are the only admitted release inputs.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -14,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from nexus.release_artifact import (
+    AndroidPlayerProtocolIdentity,
     BackendArtifactDefect,
     CandidateImages,
     CandidateManifest,
@@ -59,6 +61,40 @@ def test_runtime_identity_is_closed_canonical_and_duplicate_intolerant(tmp_path:
     )
     with pytest.raises(BackendArtifactDefect, match="duplicate"):
         load_runtime_identity(path)
+
+
+def test_android_player_protocol_identity_is_the_raw_corpus_digest_and_admits_only_exact_v2(
+    tmp_path: Path,
+) -> None:
+    corpus = REPO_ROOT / "testdata/android/player-protocol.json"
+    identity = AndroidPlayerProtocolIdentity.of_corpus(corpus)
+
+    assert identity == AndroidPlayerProtocolIdentity(
+        version=2,
+        contract_sha256=hashlib.sha256(corpus.read_bytes()).hexdigest(),
+    )
+    assert AndroidPlayerProtocolIdentity.from_json(identity.as_json()) == identity
+    reserialized = tmp_path / "player-protocol.json"
+    reserialized.write_text(
+        json.dumps(json.loads(corpus.read_text(encoding="utf-8")), indent=1),
+        encoding="utf-8",
+    )
+    assert AndroidPlayerProtocolIdentity.of_corpus(reserialized) != identity
+
+    for malformed in (
+        {"version": 1, "contract_sha256": "a" * 64},
+        {"version": 2.0, "contract_sha256": "a" * 64},
+        {"version": True, "contract_sha256": "a" * 64},
+        {"version": 2, "contract_sha256": "A" * 64},
+        {"version": 2, "contract_sha256": "a" * 63},
+        {"version": 2},
+        {"version": 2, "contract_sha256": "a" * 64, "extra": 1},
+        ["2", "a" * 64],
+    ):
+        with pytest.raises(BackendArtifactDefect):
+            AndroidPlayerProtocolIdentity.from_json(malformed)
+    with pytest.raises(BackendArtifactDefect):
+        AndroidPlayerProtocolIdentity.of_corpus(tmp_path / "absent.json")
 
 
 def test_candidate_manifest_binds_source_ci_and_matching_image_identities(
@@ -288,6 +324,7 @@ def test_backend_publisher_is_exact_main_source_ci_and_builds_each_target_once()
         "deploy/hetzner/prove-codex-capacity.sh",
         "python/nexus/__init__.py",
         "python/nexus/release_artifact.py",
+        "testdata/android/player-protocol.json",
     ):
         assert bundled in workflow
 

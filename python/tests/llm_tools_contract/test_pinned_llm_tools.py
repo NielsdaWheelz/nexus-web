@@ -11,7 +11,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-LLM_TOOLS_SHA = "667e5121268189d6fe1202c244d5ce64e8b096d1"
+LLM_TOOLS_SHA = "8df458a199703120005296ae12f997b39d208fed"
 
 
 def _provider_runtime_sha() -> str:
@@ -115,6 +115,7 @@ def test_exact_pins_round_trip_one_canonical_native_tool(
 
     async def brave_fixture(request: httpx.Request) -> httpx.Response:
         assert request.url.params["q"] == "x"
+        assert request.url.params["count"] == "20"
         return httpx.Response(
             200,
             headers={"x-request-id": "nexus-pin-proof"},
@@ -144,7 +145,7 @@ def test_exact_pins_round_trip_one_canonical_native_tool(
                     kind=BrowseKind.WebArticle,
                     source=BrowseSource.Brave,
                     sort=None,
-                    limit=1,
+                    limit=20,
                     cursor=None,
                 ),
             )

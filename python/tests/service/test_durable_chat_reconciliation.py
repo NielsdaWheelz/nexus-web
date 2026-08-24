@@ -10,7 +10,6 @@ from sqlalchemy import Engine, text
 from sqlalchemy.orm import Session
 
 from nexus.jobs.queue import JobExecutionContext, claim_job, fail_job
-from nexus.schemas.presence import absent
 from nexus.services.chat_run_steps import (
     ChatStepRuntime,
     ProveNotDispatched,
@@ -54,7 +53,6 @@ def test_uncertain_chat_dispatch_suspends_then_reconciles_the_same_job(
                 resource_class="Light",
             ),
             llm_runtime=ScriptedRuntime(),
-            web_search_provider=absent(),
         )
         steps.prepare(path, "reviewed-intent-fingerprint")
         steps.mark_uncertain(path)
@@ -98,7 +96,6 @@ def test_uncertain_chat_dispatch_suspends_then_reconciles_the_same_job(
                     resource_class="Light",
                 ),
                 llm_runtime=ScriptedRuntime(),
-                web_search_provider=absent(),
             )
             with pytest.raises(UncertainChatStep):
                 retry_steps.read(path, ReplayPolicy.BilledOnce)

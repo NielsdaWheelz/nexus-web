@@ -16,7 +16,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowUp, RotateCcw, Square } from "lucide-react";
-import { apiFetch, isApiError, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
+import {
+  apiFetch,
+  isApiError,
+  isSameSystemApiDefect,
+  isToolProjectionReloadRequired,
+  type ApiError,
+} from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
 import { absent, type Presence } from "@/lib/api/presence";
@@ -41,6 +47,7 @@ import BranchComposerHeader from "@/components/chat/BranchComposerHeader";
 import ChatProfilePicker from "@/components/chat/ChatProfilePicker";
 import { useChatProfiles } from "@/components/chat/useChatProfiles";
 import QuotedPassageCard from "@/components/chat/QuotedPassageCard";
+import ToolProjectionReloadNotice from "@/components/chat/ToolProjectionReloadNotice";
 import { useChatDraft, type ChatSendCommand } from "@/components/chat/useChatDraft";
 import Button from "@/components/ui/Button";
 import Textarea from "@/components/ui/Textarea";
@@ -105,6 +112,8 @@ interface ChatComposerProps {
   activeRunId?: string | null;
   /** Backend cancel action for the active run. */
   onCancelRun?: () => Promise<void> | void;
+  /** Conversation-owned stale contract state from reads, tails, or mutations. */
+  projectionReloadRequestId?: string | null;
 }
 
 function sendCapabilityMessage(capability: ChatSendCapability): string {
@@ -178,11 +187,14 @@ export default function ChatComposer({
   sendCapability,
   activeRunId = null,
   onCancelRun,
+  projectionReloadRequestId: inheritedProjectionReloadRequestId = null,
 }: ChatComposerProps) {
   const [sending, setSending] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(null);
+  const [localProjectionReloadRequestId, setLocalProjectionReloadRequestId] =
+    useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
   const restoreFocusAfterSendRef = useRef(false);
@@ -303,6 +315,11 @@ export default function ChatComposer({
           // The request may have reached the service despite the missing
           // response: lock the exact command for replay without mutation.
           requireReconcile();
+          return;
+        }
+        if (isToolProjectionReloadRequired(err)) {
+          clearOperation();
+          setLocalProjectionReloadRequestId(err.requestId ?? "");
           return;
         }
         // Every remaining outcome is a definite rejection: it consumes the
@@ -438,6 +455,10 @@ export default function ChatComposer({
       await onCancelRun();
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
+      if (isToolProjectionReloadRequired(err)) {
+        setLocalProjectionReloadRequestId(err.requestId ?? "");
+        return;
+      }
       if (!isApiError(err) || isSameSystemApiDefect(err)) {
         setAsyncDefect({ error: err });
         return;
@@ -490,13 +511,17 @@ export default function ChatComposer({
 
   // While reconciling, the composer is a LOCKED replay panel: text/profile/quote
   // stay visible but immutable, and the only action is "Retry send".
-  const composerDisabled = sending || reconciling;
+  const projectionReloadRequestId =
+    localProjectionReloadRequestId ?? inheritedProjectionReloadRequestId;
+  const projectionReloadRequired = projectionReloadRequestId !== null;
+  const composerDisabled = sending || reconciling || projectionReloadRequired;
   const sendDisabled =
     sending ||
     sendCapability.kind !== "Available" ||
     !effectiveProfileSelection ||
     !content.trim() ||
-    pendingBlocksSend;
+    pendingBlocksSend ||
+    projectionReloadRequired;
 
   if (asyncDefect !== null) throw asyncDefect.error;
 
@@ -509,6 +534,13 @@ export default function ChatComposer({
         {error ? (
           <div className={styles.composerError}>
             <FeedbackNotice content={error} announcement="Assertive" />
+          </div>
+        ) : null}
+        {projectionReloadRequired ? (
+          <div className={styles.composerError}>
+            <ToolProjectionReloadNotice
+              requestId={projectionReloadRequestId || undefined}
+            />
           </div>
         ) : null}
         {reconciling && (

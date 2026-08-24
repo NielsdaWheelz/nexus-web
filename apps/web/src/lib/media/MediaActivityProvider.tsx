@@ -25,6 +25,10 @@ import {
   type MediaRepairScope,
 } from "@/lib/media/activityClient";
 import {
+  removeUploadSession as removeUploadSessionRequest,
+  retryUploadSession as retryUploadSessionRequest,
+} from "@/lib/media/ingestionClient";
+import {
   mediaActivityPollingExpired,
   mediaActivityPollingSchedule,
   type MediaActivityPollingSchedule,
@@ -50,6 +54,8 @@ interface MediaActivityContextValue {
   endActivityOpening(): void;
   refreshActivity(): Promise<void>;
   repairActivity(mediaId: string, scope: MediaRepairScope): Promise<void>;
+  retryUploadSession(sessionHandle: string, file: File): Promise<void>;
+  removeUploadSession(sessionHandle: string): Promise<void>;
 }
 
 interface PollingWindow {
@@ -209,6 +215,32 @@ export function MediaActivityProvider({ children }: { children: ReactNode }) {
     [handleUnauthenticated, refreshActivity],
   );
 
+  const retryUploadSession = useCallback(
+    async (sessionHandle: string, file: File): Promise<void> => {
+      try {
+        await retryUploadSessionRequest(sessionHandle, file);
+      } catch (error) {
+        if (handleUnauthenticated(error)) return;
+        throw error;
+      }
+      await (inFlightRef.current ?? refreshActivity());
+    },
+    [handleUnauthenticated, refreshActivity],
+  );
+
+  const removeUploadSession = useCallback(
+    async (sessionHandle: string): Promise<void> => {
+      try {
+        await removeUploadSessionRequest(sessionHandle);
+      } catch (error) {
+        if (handleUnauthenticated(error)) return;
+        throw error;
+      }
+      await (inFlightRef.current ?? refreshActivity());
+    },
+    [handleUnauthenticated, refreshActivity],
+  );
+
   const beginActivityOpening = useCallback(() => {
     setActivityOpen(true);
     void invalidateActivity();
@@ -324,6 +356,8 @@ export function MediaActivityProvider({ children }: { children: ReactNode }) {
         endActivityOpening,
         refreshActivity,
         repairActivity,
+        retryUploadSession,
+        removeUploadSession,
       }}
     >
       {children}

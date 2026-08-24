@@ -18,6 +18,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
 
+from nexus.api.deps import require_tool_projection_revision
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.responses import ok
@@ -27,7 +28,10 @@ from nexus.services import conversation_branches as conversation_branches_servic
 router = APIRouter(tags=["conversation-branches"])
 
 
-@router.get("/conversations/{conversation_id}/tree")
+@router.get(
+    "/conversations/{conversation_id}/tree",
+    dependencies=[Depends(require_tool_projection_revision)],
+)
 def get_conversation_tree(
     conversation_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
@@ -41,7 +45,10 @@ def get_conversation_tree(
     return ok(result)
 
 
-@router.post("/conversations/{conversation_id}/active-path")
+@router.post(
+    "/conversations/{conversation_id}/active-path",
+    dependencies=[Depends(require_tool_projection_revision)],
+)
 def set_conversation_active_path(
     conversation_id: UUID,
     body: SetActivePathRequest,
