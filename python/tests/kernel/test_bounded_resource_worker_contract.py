@@ -24,7 +24,7 @@ from nexus.jobs.process_executor import (
     _encode_handler_result,
     _encode_request,
 )
-from nexus.jobs.queue import JobExecutionContext, RescheduleRequested
+from nexus.jobs.queue import JobExecutionContext, RescheduleRequested, ScheduleAfter, ScheduleAt
 from nexus.jobs.registry import get_default_registry, get_task_contract_digest
 
 
@@ -108,9 +108,11 @@ def test_worker_topology_and_task_digest_cover_resource_class(
 
         monkeypatch.setenv("PARSER_TEMP_ROOT", "relative/parser-temp")
         with pytest.raises(ValueError, match="PARSER_TEMP_ROOT must be an absolute path"):
-            Settings()
+            Settings(database_url="postgresql+psycopg://127.0.0.1:54320/nexus")
         monkeypatch.setenv("PARSER_TEMP_ROOT", "/tmp/nexus-test-parser-temp")
-        assert Settings().parser_temp_root == Path("/tmp/nexus-test-parser-temp")
+        assert Settings(
+            database_url="postgresql+psycopg://127.0.0.1:54320/nexus"
+        ).parser_temp_root == Path("/tmp/nexus-test-parser-temp")
 
         monkeypatch.setenv("NEXUS_ENV", "prod")
         monkeypatch.setenv("INGEST_RECONCILE_SCHEDULE_SECONDS", "0")
@@ -118,7 +120,7 @@ def test_worker_topology_and_task_digest_cover_resource_class(
             ValueError,
             match="INGEST_RECONCILE_SCHEDULE_SECONDS must be > 0 in staging and prod",
         ):
-            Settings()
+            Settings(database_url="postgresql+psycopg://127.0.0.1:54320/nexus")
     finally:
         # The synthetic environment is monkeypatched away at teardown; the cache
         # it poisoned would otherwise outlive this test in the same process.
@@ -133,11 +135,11 @@ def test_worker_topology_and_task_digest_cover_resource_class(
         b'{"version":2,"kind":"Succeeded","payload":{},"extra":null}',
         b'{"version":2,"kind":"ModeledFailure","error_code":"E_RESOURCE_LIMIT",'
         b'"message":"bounded","resource_dimension":null}',
-        b'{"version":2,"kind":"Reschedule","available_at":null,"delay_seconds":null,'
-        b'"payload":{"kind":"Absent"}}',
-        b'{"version":2,"kind":"Reschedule","available_at":"2026-08-17T12:00:00+00:00",'
-        b'"delay_seconds":30,"payload":{"kind":"Absent"}}',
-        b'{"version":2,"kind":"Reschedule","available_at":null,"delay_seconds":true,'
+        b'{"version":2,"kind":"Reschedule","schedule":null,"payload":{"kind":"Absent"}}',
+        b'{"version":2,"kind":"Reschedule","schedule":{"kind":"At"},"payload":{"kind":"Absent"}}',
+        b'{"version":2,"kind":"Reschedule","schedule":{"kind":"At",'
+        b'"instant":"2026-08-17T12:00:00"},"payload":{"kind":"Absent"}}',
+        b'{"version":2,"kind":"Reschedule","schedule":{"kind":"After","seconds":true},'
         b'"payload":{"kind":"Absent"}}',
     ),
 )
@@ -169,14 +171,16 @@ def test_background_child_reschedule_protocol_preserves_exact_schedule_form() ->
     absolute = datetime(2026, 8, 17, 12, tzinfo=UTC)
     cases = (
         (
-            RescheduleRequested(available_at=absolute),
-            ChildReschedule(available_at=absolute, delay_seconds=None, payload=None),
+            RescheduleRequested(schedule=ScheduleAt(absolute)),
+            ChildReschedule(schedule=ScheduleAt(absolute), payload=None),
         ),
         (
-            RescheduleRequested(delay_seconds=30, payload={"capacity_wait_index": 1}),
+            RescheduleRequested(
+                schedule=ScheduleAfter(30),
+                payload={"capacity_wait_index": 1},
+            ),
             ChildReschedule(
-                available_at=None,
-                delay_seconds=30,
+                schedule=ScheduleAfter(30),
                 payload={"capacity_wait_index": 1},
             ),
         ),

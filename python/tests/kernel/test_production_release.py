@@ -4,13 +4,17 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
+import shutil
 import signal
 import stat
 import subprocess
 import sys
+import threading
 from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
+from typing import Any, cast
 
 import pytest
 
@@ -18,6 +22,7 @@ from nexus.release_artifact import CandidateImages, build_runtime_identity
 from tests.testkit.host_release import (
     CURRENT_SHA,
     HostReleaseHarness,
+    write_codex_capacity_qualification,
 )
 
 REPO_ROOT = Path(__file__).parents[3]
@@ -116,6 +121,88 @@ def _host_harness(tmp_path: Path) -> HostReleaseHarness:
     )
 
 
+def test_host_release_privileged_python_cannot_write_checkout_bytecode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Risk: a privileged controller leaves root-owned bytecode in a test checkout."""
+
+    class PublicProxy:
+        server_address = ("127.0.0.1", 43123)
+
+    fake_bin = tmp_path / "fake-bin"
+    state_path = tmp_path / "fake-docker-state.json"
+    tls_certificate = tmp_path / "public.crt"
+    harness = HostReleaseHarness(
+        root=tmp_path,
+        repo_root=REPO_ROOT,
+        source_sha=SOURCE_SHA,
+        state_path=state_path,
+        attempt_path=tmp_path / "release-attempt.json",
+        fake_bin=fake_bin,
+        # justify-type-assertion: the command boundary reads only the proxy address;
+        # this proof exercises no server lifecycle.
+        public_proxy=cast(Any, PublicProxy()),
+        public_proxy_thread=threading.Thread(),
+        tls_certificate=tls_certificate,
+    )
+    captured: dict[str, object] = {}
+
+    def capture_run(
+        command: tuple[str, ...],
+        **options: object,
+    ) -> subprocess.CompletedProcess[str]:
+        captured.update(command=command, **options)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(subprocess, "run", capture_run)
+
+    completed = harness.run_qualify_codex_capacity()
+
+    environment = {
+        "HTTPS_PROXY": "http://127.0.0.1:43123",
+        "NO_PROXY": "",
+        "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+        "PYTHONPATH": f"{REPO_ROOT / 'python'}{os.pathsep}{os.environ.get('PYTHONPATH', '')}",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "SSL_CERT_FILE": str(tls_certificate),
+        "https_proxy": "http://127.0.0.1:43123",
+        "no_proxy": "",
+        "NEXUS_FAKE_DOCKER_STATE": str(state_path),
+        "NEXUS_FAKE_RELEASE_ATTEMPT": str(
+            tmp_path / "var/lib/nexus/releases/attempts" / f"{SOURCE_SHA}.json"
+        ),
+        "NEXUS_FAKE_REPO_ROOT": str(REPO_ROOT),
+        "NEXUS_FAKE_TEST_GID": str(os.getgid()),
+    }
+    driver = (
+        sys.executable,
+        "-B",
+        str(REPO_ROOT / "python/tests/testkit/host_release.py"),
+        "qualify-codex-capacity",
+        str(REPO_ROOT / "deploy/hetzner/release.py"),
+        str(tmp_path),
+        SOURCE_SHA,
+    )
+    expected_command = (
+        "sudo",
+        "--non-interactive",
+        "env",
+        *(f"{key}={value}" for key, value in environment.items()),
+        *driver,
+    )
+    assert completed.args == expected_command
+    assert captured == {
+        "command": expected_command,
+        "env": None,
+        "check": False,
+        "capture_output": True,
+        "text": True,
+        "timeout": 30,
+    }
+
+
 def test_codex_host_is_required_only_after_its_immutable_schema_cutover() -> None:
     """Risk: a legacy predecessor is rejected for a host it never shipped."""
 
@@ -180,6 +267,11 @@ def test_existing_vps_capacity_qualification_writes_exact_immutable_candidate_ev
     assert payload["source_sha"] == SOURCE_SHA
     assert payload["worker_image_id"] == "sha256:" + "9" * 64
     assert payload["cgroup_memory_max"] == 384 * 1024 * 1024
+    assert payload["cgroup_memory_peak"] == 64 * 1024 * 1024
+    assert re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z",
+        payload["measured_at"],
+    ), "capacity evidence must record when the host was measured"
     assert [turn["phase"] for turn in payload["turns"]] == ["cold", "warm_1", "warm_2"]
     assert payload["services"] == [
         "postgres",
@@ -193,16 +285,353 @@ def test_existing_vps_capacity_qualification_writes_exact_immutable_candidate_ev
         command[:5] == ["compose", "run", "--rm", "--no-deps", "--user"]
         for command in state["commands"]
     )
+    host_container_id = str(state["containers"]["nexus-codex-agent-host"]["id"])
+    assert not any(
+        command[:2] == ["exec", host_container_id] and command[2:3] == ["sh"]
+        for command in state["commands"]
+    ), "the sampler must never exec into the cgroup it measures"
     assert state["service_mutations"] == [
         {"operation": "up", "services": ["nexus-codex-agent-host"]},
         {"operation": "stop", "services": ["nexus-codex-agent-host"]},
-    ]
+    ], "qualification may start and stop only its isolated Codex host"
+
+    # A fresh pass is final for its validity window: a rerun refuses to
+    # remeasure over it instead of silently replacing the record.
+    rerun = harness.run_qualify_codex_capacity()
+    assert rerun.returncode != 0
+    assert "Codex capacity qualification evidence already exists" in rerun.stderr
+    assert json.loads(evidence.read_text(encoding="utf-8")) == payload
 
 
-def test_capacity_qualification_cleanup_failure_cannot_authorize_promotion(
+@pytest.mark.parametrize(
+    ("admission_kind", "expected_error"),
+    (
+        ("plain_unmounted", "Codex credential state storage is not the dedicated encrypted mount"),
+        ("wrong_mapper", "Codex credential state storage is not the dedicated encrypted mount"),
+        ("luks1", "Codex credential state storage is not the dedicated encrypted mount"),
+        (
+            "wrong_mount_flags",
+            "Codex credential state storage is not the dedicated encrypted mount",
+        ),
+        (
+            "wrong_mount_source",
+            "Codex credential state storage is not the dedicated encrypted mount",
+        ),
+        (
+            "undersized_container",
+            "Codex credential state storage is not the dedicated encrypted mount",
+        ),
+        ("forbidden_key", "Codex credential state storage is not the dedicated encrypted mount"),
+        ("crypttab_entry", "Codex credential state storage is not the dedicated encrypted mount"),
+        ("boot_guard_disabled", "Codex credential state boot guard differs from release contract"),
+        ("boot_guard_tampered", "Codex credential state boot guard differs from release contract"),
+    ),
+)
+def test_codex_capacity_requires_exact_encrypted_state_before_starting_runtime(
+    host_release_harness: HostReleaseHarness,
+    admission_kind: str,
+    expected_error: str,
+) -> None:
+    """Risk: credentials start without the exact storage or locked-boot admission."""
+
+    harness = host_release_harness
+    evidence = harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json"
+    evidence.unlink()
+    if admission_kind == "undersized_container":
+        subprocess.run(
+            (
+                "sudo",
+                "--non-interactive",
+                "truncate",
+                "--size",
+                "256M",
+                str(harness.root / "var/lib/nexus/codex-state.luks"),
+            ),
+            check=True,
+        )
+    elif admission_kind == "forbidden_key":
+        key = harness.root / "var/lib/nexus/codex-state.key"
+        subprocess.run(
+            ("sudo", "--non-interactive", "touch", str(key)),
+            check=True,
+        )
+    elif admission_kind == "crypttab_entry":
+        crypttab = harness.root / "etc/crypttab"
+        subprocess.run(
+            (
+                "sudo",
+                "--non-interactive",
+                "sh",
+                "-c",
+                'printf "%s\\n" "nexus-codex-state /var/lib/nexus/codex-state.luks none luks" > "$1"',
+                "nexus-test-crypttab",
+                str(crypttab),
+            ),
+            check=True,
+        )
+    elif admission_kind == "boot_guard_disabled":
+        harness.update_state(codex_state_boot_guard_enabled=False)
+    elif admission_kind == "boot_guard_tampered":
+        subprocess.run(
+            (
+                "sudo",
+                "--non-interactive",
+                "chmod",
+                "0700",
+                str(harness.root / "usr/local/sbin/nexus-codex-state-boot-guard"),
+            ),
+            check=True,
+        )
+    if admission_kind not in {"boot_guard_disabled", "boot_guard_tampered"}:
+        harness.update_state(codex_state_storage_kind=admission_kind)
+
+    refused = harness.run_qualify_codex_capacity()
+
+    assert refused.returncode != 0, "unencrypted Codex state reached runtime admission"
+    assert expected_error in refused.stderr
+    assert not evidence.exists()
+    state = harness.state()
+    assert state["service_mutations"] == []
+
+
+def test_codex_boot_guard_install_is_exact_candidate_bound_and_public(
     host_release_harness: HostReleaseHarness,
 ) -> None:
-    """Risk: immutable passing evidence survives a failed ephemeral-client cleanup."""
+    """Risk: an unbound/private setup seam can overwrite the locked-boot guard."""
+
+    harness = host_release_harness
+    guard = harness.root / "usr/local/sbin/nexus-codex-state-boot-guard"
+    subprocess.run(
+        ("sudo", "--non-interactive", "chmod", "0700", str(guard)),
+        check=True,
+    )
+    harness.update_state(codex_state_boot_guard_enabled=False)
+
+    refused = harness.run_install_codex_state_boot_guard(source_sha=CURRENT_SHA)
+
+    assert refused.returncode != 0
+    assert "candidate has no Codex agent host" in refused.stderr
+    assert guard.stat().st_mode & 0o777 == 0o700
+    assert harness.state()["codex_state_boot_guard_enabled"] is False
+
+    installed = harness.run_install_codex_state_boot_guard()
+
+    assert installed.returncode == 0, installed.stderr
+    assert json.loads(installed.stdout) == {
+        "schema_version": "nexus-codex-state-boot-guard.v1",
+        "source_sha": SOURCE_SHA,
+        "status": "installed",
+    }
+    assert guard.stat().st_uid == 0
+    assert guard.stat().st_gid == 0
+    assert guard.stat().st_mode & 0o777 == 0o755
+    assert harness.state()["codex_state_boot_guard_enabled"] is True
+
+
+@pytest.mark.parametrize("operation", ("qualification", "apply", "resume"))
+@pytest.mark.parametrize("guard_fault", ("disabled", "tampered"))
+def test_codex_boot_guard_rejects_every_host_start_owner_before_service_mutation(
+    host_release_harness: HostReleaseHarness,
+    operation: str,
+    guard_fault: str,
+) -> None:
+    """Risk: an owner repairs or bypasses a disabled/tampered locked-boot guard."""
+
+    harness = host_release_harness
+    if operation == "qualification":
+        (harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json").unlink()
+    elif operation == "resume":
+        applied = harness.run_apply()
+        assert applied.returncode == 0, applied.stderr
+        finalized = harness.run_finalize()
+        assert finalized.returncode == 0, finalized.stderr
+        state = harness.state()
+        containers = state["containers"]
+        assert isinstance(containers, dict)
+        host = containers["nexus-codex-agent-host"]
+        assert isinstance(host, dict)
+        host["running"] = False
+        harness.update_state(
+            commands=[],
+            containers=containers,
+            public_requests=[],
+            resource_mutations=[],
+            service_mutations=[],
+        )
+
+    if guard_fault == "disabled":
+        harness.update_state(codex_state_boot_guard_enabled=False)
+    else:
+        subprocess.run(
+            (
+                "sudo",
+                "--non-interactive",
+                "chmod",
+                "0700",
+                str(harness.root / "usr/local/sbin/nexus-codex-state-boot-guard"),
+            ),
+            check=True,
+        )
+
+    refused = (
+        harness.run_qualify_codex_capacity()
+        if operation == "qualification"
+        else harness.run_apply()
+        if operation == "apply"
+        else harness.run_resume_codex_agent_host()
+    )
+
+    assert refused.returncode != 0
+    assert "Codex credential state boot guard differs from release contract" in refused.stderr
+    state = harness.state()
+    assert state["service_mutations"] == []
+
+
+def test_codex_state_requires_recovery_headroom_before_starting_runtime(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: auth/session state fills completely and cannot refresh or recover safely."""
+
+    harness = host_release_harness
+    evidence = harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json"
+    evidence.unlink()
+    harness.update_state(codex_state_free_bytes=128 * 1024 * 1024 - 1)
+
+    refused = harness.run_qualify_codex_capacity()
+
+    assert refused.returncode != 0
+    assert "Codex credential state has less than 128 MiB free" in refused.stderr
+    assert not evidence.exists()
+    assert harness.state()["service_mutations"] == []
+
+
+def test_codex_capacity_uses_container_native_caddy_health_when_docker_health_is_absent(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: the fake supplies Docker health that the deployed Caddy does not expose."""
+
+    harness = host_release_harness
+    evidence = harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json"
+    evidence.unlink()
+    harness.update_state(caddy_docker_health_present=False)
+
+    qualified = harness.run_qualify_codex_capacity()
+
+    assert qualified.returncode == 0, qualified.stderr
+    state = harness.state()
+    assert any(
+        command[-8:]
+        == [
+            "exec",
+            "-T",
+            "caddy",
+            "wget",
+            "-q",
+            "-O",
+            "/dev/null",
+            "http://127.0.0.1:2019/config/",
+        ]
+        for command in state["commands"]
+    ), "qualification must execute the canonical probe inside the live Caddy container"
+
+
+def test_release_rechecks_caddy_before_any_candidate_or_writer_mutation(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: a stale capacity pass lets a dead predecessor proxy cross commitment."""
+
+    harness = host_release_harness
+    evidence = harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json"
+    original_evidence = evidence.read_bytes()
+    harness.update_state(caddy_health_probe_failure=True)
+
+    refused = harness.run_apply()
+
+    assert refused.returncode != 0
+    assert "Caddy is not ready before release mutation" in refused.stderr
+    assert harness.state()["service_mutations"] == []
+    assert not harness.attempt_path.exists()
+    assert evidence.read_bytes() == original_evidence
+
+
+def test_prepared_release_replay_rechecks_caddy_before_any_further_mutation(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: a replay trusts an earlier proxy observation after Prepared commits."""
+
+    release = _release_module()
+    harness = host_release_harness
+    evidence = harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json"
+    original_evidence = evidence.read_bytes()
+    interrupted = harness.run_apply(interrupt_phase="Prepared")
+    assert interrupted.returncode == -signal.SIGKILL, interrupted.stderr
+    before = harness.state()
+    attempt = _stored_attempt(release, harness.root)
+    assert attempt is not None
+    assert attempt.phase is release.ReleasePhase.Prepared
+    harness.update_state(caddy_health_probe_failure=True)
+
+    refused = harness.run_apply()
+
+    assert refused.returncode != 0
+    assert "Caddy is not ready before release mutation" in refused.stderr
+    after = harness.state()
+    assert after["resource_mutations"] == before["resource_mutations"]
+    assert after["service_mutations"] == before["service_mutations"]
+    assert after["backup_dump_count"] == before["backup_dump_count"]
+    assert after["migration_count"] == before["migration_count"]
+    persisted = _stored_attempt(release, harness.root)
+    assert persisted is not None
+    assert persisted.phase is release.ReleasePhase.Prepared
+    assert evidence.read_bytes() == original_evidence
+
+
+@pytest.mark.parametrize(
+    "service",
+    (
+        "postgres",
+        "caddy",
+        "api",
+        "worker-interactive",
+        "worker-background",
+    ),
+)
+def test_codex_capacity_service_readiness_failure_follows_ownership(
+    host_release_harness: HostReleaseHarness,
+    service: str,
+) -> None:
+    """Risk: a predecessor service outage permanently poisons a new candidate SHA."""
+
+    harness = host_release_harness
+    evidence = harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json"
+    evidence.unlink()
+    if service == "caddy":
+        harness.update_state(
+            caddy_docker_health_present=False,
+            caddy_health_probe_failure=True,
+        )
+    else:
+        state = harness.state()
+        containers = state["containers"]
+        assert isinstance(containers, dict)
+        container = containers[service]
+        assert isinstance(container, dict)
+        container["health_status_override"] = "unhealthy"
+        harness.update_state(containers=containers)
+
+    refused = harness.run_qualify_codex_capacity()
+
+    assert refused.returncode != 0
+    assert not evidence.exists(), (
+        f"unchanged {service} readiness is retriable operational state, "
+        "not immutable candidate evidence"
+    )
+
+
+def test_capacity_cleanup_failure_writes_no_evidence_and_the_canary_is_reclaimed(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: a transient cleanup failure permanently disqualifies a healthy candidate."""
 
     harness = host_release_harness
     evidence = harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json"
@@ -212,10 +641,10 @@ def test_capacity_qualification_cleanup_failure_cannot_authorize_promotion(
     refused = harness.run_qualify_codex_capacity()
 
     assert refused.returncode != 0
-    if evidence.exists():
-        payload = json.loads(evidence.read_text(encoding="utf-8"))
-        assert payload["status"] == "failed"
-        assert payload["turns"] == []
+    assert "Codex capacity cleanup failed" in refused.stderr
+    assert not evidence.exists(), (
+        "a cleanup failure measured no breach and must not write blocking evidence"
+    )
     state = harness.state()
     assert "capacity_canary" in state
     assert state["service_mutations"] == [
@@ -223,23 +652,504 @@ def test_capacity_qualification_cleanup_failure_cannot_authorize_promotion(
         {"operation": "stop", "services": ["nexus-codex-agent-host"]},
     ]
 
+    # The same unchanged candidate stays qualifiable: the retry reclaims the
+    # leftover labeled canary and completes with passing evidence.
+    harness.update_state(codex_capacity_canary_removal_failure=False)
+    requalified = harness.run_qualify_codex_capacity()
+    assert requalified.returncode == 0, requalified.stderr
+    assert json.loads(evidence.read_text(encoding="utf-8"))["status"] == "passed"
 
-def test_capacity_qualification_rejects_a_credentialed_or_networked_client_container(
+
+def test_capacity_qualification_refuses_a_foreign_container_holding_the_canary_name(
     host_release_harness: HostReleaseHarness,
 ) -> None:
-    """Risk: the qualification client becomes a second Codex credential or egress owner."""
+    """Risk: the fixed canary name alone authorizes removing someone else's container."""
 
     harness = host_release_harness
     evidence = harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json"
     evidence.unlink()
-    harness.update_state(codex_capacity_canary_isolation_drift="credential_mount_and_network_peer")
+    harness.update_state(
+        capacity_canary={
+            "id": "b" * 64,
+            "name": f"nexus-codex-capacity-{SOURCE_SHA}",
+            "label": "f" * 40,
+            "running": True,
+        }
+    )
 
     refused = harness.run_qualify_codex_capacity()
 
     assert refused.returncode != 0
-    assert "Codex capacity canary isolation" in refused.stderr
+    assert "Codex capacity canary name is held by a foreign container" in refused.stderr
+    assert not evidence.exists()
+    state = harness.state()
+    assert state["capacity_canary"]["id"] == "b" * 64, "the foreign container must never be removed"
+
+
+def test_capacity_cleanup_preserves_foreign_canary_created_during_run_name_race(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: cleanup deletes a foreign container that wins the check/run name race."""
+
+    harness = host_release_harness
+    evidence = harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json"
+    evidence.unlink()
+    harness.update_state(codex_capacity_canary_run_name_race=True)
+
+    refused = harness.run_qualify_codex_capacity()
+
+    assert refused.returncode != 0
+    assert not evidence.exists(), "a failed Docker run must not produce qualification evidence"
+    state = harness.state()
+    foreign = state.get("capacity_canary")
+    foreign_id = "d" * 64
+    foreign_name = f"nexus-codex-capacity-{SOURCE_SHA}"
+    assert foreign == {
+        "id": foreign_id,
+        "name": foreign_name,
+        "label": "f" * 40,
+        "running": True,
+    }, "cleanup must preserve the foreign container that appeared during Docker run"
+    assert not any(
+        command[:2] == ["rm", "--force"] and command[-1] in {foreign_id, foreign_name}
+        for command in state["commands"]
+    ), "cleanup must not attempt removal until exact ownership is revalidated"
+
+
+@pytest.mark.parametrize(
+    ("status", "message"),
+    [
+        ("passed", "Codex capacity qualification evidence already exists"),
+        ("failed", "Codex capacity qualification failed evidence is immutable"),
+    ],
+    ids=("fresh-passing", "failed"),
+)
+def test_decisive_capacity_evidence_blocks_before_host_or_canary_start(
+    host_release_harness: HostReleaseHarness,
+    status: str,
+    message: str,
+) -> None:
+    """Risk: a decided candidate still incurs a provider turn and mutates host runtime."""
+
+    harness = host_release_harness
+    if status == "failed":
+        write_codex_capacity_qualification(
+            harness.root,
+            source_sha=SOURCE_SHA,
+            worker_image_id="sha256:" + "9" * 64,
+            status="failed",
+        )
+
+    refused = harness.run_qualify_codex_capacity()
+
+    assert refused.returncode != 0
+    assert message in refused.stderr
+    state = harness.state()
+    assert state["service_mutations"] == [], "decided evidence must block before host start"
+    assert not any(command[:3] == ["run", "--detach", "--name"] for command in state["commands"]), (
+        "decided evidence must block before canary creation"
+    )
+    assert not any(command[:2] == ["exec", "c" * 64] for command in state["commands"]), (
+        "decided evidence must block before a subscription-authenticated canary turn"
+    )
+
+
+def test_invalid_expired_capacity_evidence_blocks_before_host_or_canary_start(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: expiry launders malformed or foreign evidence into permission to dispatch."""
+
+    harness = host_release_harness
+    write_codex_capacity_qualification(
+        harness.root,
+        source_sha=SOURCE_SHA,
+        worker_image_id="sha256:" + "e" * 64,
+        measured_at="2026-01-01T00:00:00Z",
+    )
+
+    refused = harness.run_qualify_codex_capacity()
+
+    assert refused.returncode != 0
+    assert "Codex capacity qualification differs from candidate" in refused.stderr
+    state = harness.state()
+    assert state["service_mutations"] == [], "invalid expired evidence must block before host start"
+    assert not any(command[:3] == ["run", "--detach", "--name"] for command in state["commands"]), (
+        "only fully validated expired passing evidence may authorize canary creation"
+    )
+
+
+_HOST_CGROUP_RELATIVE = f"sys/fs/cgroup/system.slice/docker-{'a' * 64}.scope"
+_LOW_HEADROOM_MEMINFO = "MemTotal: 4194304 kB\nMemAvailable: 102400 kB\nSwapTotal: 1048576 kB\n"
+_FULL_PRESSURE = (
+    "some avg10=0.00 avg60=0.00 avg300=0.00 total=1\n"
+    "full avg10=0.01 avg60=0.00 avg300=0.00 total=1\n"
+)
+
+
+def _restore_healthy_capacity_host(harness: HostReleaseHarness) -> None:
+    """Return the fake host and every breach knob to the healthy baseline."""
+
+    (harness.root / "proc/meminfo").write_text(
+        "MemTotal: 4194304 kB\nMemAvailable: 524288 kB\nSwapTotal: 1048576 kB\n",
+        encoding="ascii",
+    )
+    (harness.root / "proc/pressure/memory").write_text(
+        "some avg10=0.00 avg60=0.00 avg300=0.00 total=1\n"
+        "full avg10=0.00 avg60=0.00 avg300=0.00 total=1\n",
+        encoding="ascii",
+    )
+    host_cgroup = harness.root / _HOST_CGROUP_RELATIVE
+    (host_cgroup / "memory.max").write_text("402653184\n", encoding="ascii")
+    (host_cgroup / "memory.current").write_text("33554432\n", encoding="ascii")
+    (host_cgroup / "memory.peak").write_text("67108864\n", encoding="ascii")
+    (host_cgroup / "memory.events").write_text(
+        "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n",
+        encoding="ascii",
+    )
+    containers = harness.state()["containers"]
+    containers["worker-background"].pop("health_status_override", None)
+    containers["nexus-codex-agent-host"]["running"] = True
+    containers["nexus-codex-agent-host"]["oom_killed"] = False
+    harness.update_state(
+        containers=containers,
+        codex_capacity_canary_status="passed",
+        codex_capacity_canary_delay_seconds=0.0,
+        codex_capacity_during_canary_host_writes={},
+        codex_capacity_canary_isolation_drift=None,
+        codex_capacity_host_exit_during_canary=None,
+    )
+
+
+@pytest.mark.parametrize(
+    ("scenario", "message"),
+    [
+        ("cgroup-peak", "Codex capacity qualification cgroup envelope differs"),
+        ("cgroup-current", "Codex capacity cgroup counters exceed memory.max"),
+        ("host-headroom", "Codex capacity qualification headroom is below 256 MiB"),
+        ("sampler-observed-pressure", "Codex capacity qualification memory pressure"),
+        ("oom-kill-delta", "Codex capacity qualification cgroup envelope differs"),
+        ("canary-reported-failure", "Codex capacity canary failed"),
+        ("client-isolation", "Codex capacity canary isolation"),
+    ],
+)
+def test_each_enumerated_capacity_breach_writes_immutable_failed_evidence(
+    host_release_harness: HostReleaseHarness,
+    scenario: str,
+    message: str,
+) -> None:
+    """Risk: a §11 breach class blocks once but never writes its immutable record."""
+
+    harness = host_release_harness
+    evidence = harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json"
+    evidence.unlink()
+    host_cgroup = harness.root / _HOST_CGROUP_RELATIVE
+    if scenario == "cgroup-peak":
+        (host_cgroup / "memory.peak").write_text(f"{336 * 1024 * 1024}\n", encoding="ascii")
+    elif scenario == "cgroup-current":
+        (host_cgroup / "memory.current").write_text(f"{384 * 1024 * 1024 + 1}\n", encoding="ascii")
+    elif scenario == "host-headroom":
+        harness.update_state(
+            codex_capacity_during_canary_host_writes={"proc/meminfo": _LOW_HEADROOM_MEMINFO}
+        )
+    elif scenario == "sampler-observed-pressure":
+        # The canary exec outlives one sampler interval so the background
+        # sampler itself observes the mutated pressure during the turns.
+        harness.update_state(
+            codex_capacity_during_canary_host_writes={"proc/pressure/memory": _FULL_PRESSURE},
+            codex_capacity_canary_delay_seconds=2.5,
+        )
+    elif scenario == "oom-kill-delta":
+        harness.update_state(
+            codex_capacity_during_canary_host_writes={
+                f"{_HOST_CGROUP_RELATIVE}/memory.events": (
+                    "low 0\nhigh 0\nmax 0\noom 1\noom_kill 1\noom_group_kill 0\n"
+                )
+            }
+        )
+    elif scenario == "canary-reported-failure":
+        harness.update_state(codex_capacity_canary_status="failed")
+    else:
+        harness.update_state(
+            codex_capacity_canary_isolation_drift="credential_mount_and_network_peer"
+        )
+
+    refused = harness.run_qualify_codex_capacity()
+
+    assert refused.returncode != 0
+    assert message in refused.stderr
+    metadata = evidence.stat()
+    assert metadata.st_uid == 0 and metadata.st_mode & 0o777 == 0o444
     payload = json.loads(evidence.read_text(encoding="utf-8"))
     assert payload["status"] == "failed"
+    assert payload["turns"] == []
+
+    # A measured breach is immutable: promotion stays blocked, and even after
+    # the host is repaired to a fully healthy envelope a rerun refuses to
+    # launder the failed record into a fresh pass.
+    blocked = harness.run_apply()
+    assert blocked.returncode != 0
+    assert "Codex capacity qualification" in blocked.stderr
+    _restore_healthy_capacity_host(harness)
+    rerun = harness.run_qualify_codex_capacity()
+    assert rerun.returncode != 0
+    assert "Codex capacity qualification failed evidence is immutable" in rerun.stderr
+    assert json.loads(evidence.read_text(encoding="utf-8")) == payload
+
+
+@pytest.mark.parametrize(
+    ("canary_status", "message"),
+    [
+        # Parse-first classification: a canary killed before stating its
+        # contract leaves empty/unparseable stdout, whatever code it died with.
+        ("crashed", "Codex capacity canary did not state its contract"),
+        # A complete authored contract statement whose process was then killed
+        # carries an exit code outside the contract table; only that shape may
+        # be classified as "did not reach a terminal".
+        ("killed_after_printing", "Codex capacity canary did not reach a terminal"),
+    ],
+    ids=("crash-empty-stdout", "killed-after-printing"),
+)
+def test_transient_canary_crash_writes_no_evidence_and_stays_requalifiable(
+    host_release_harness: HostReleaseHarness,
+    canary_status: str,
+    message: str,
+) -> None:
+    """Risk: a canary that died before its contract exits disqualifies the SHA forever."""
+
+    harness = host_release_harness
+    evidence = harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json"
+    evidence.unlink()
+    harness.update_state(codex_capacity_canary_status=canary_status)
+
+    failed = harness.run_qualify_codex_capacity()
+
+    assert failed.returncode != 0
+    assert message in failed.stderr
+    assert not evidence.exists(), (
+        "a crashed canary measured nothing and must not write blocking evidence"
+    )
+
+    harness.update_state(codex_capacity_canary_status="passed")
+    requalified = harness.run_qualify_codex_capacity()
+    assert requalified.returncode == 0, requalified.stderr
+    assert json.loads(evidence.read_text(encoding="utf-8"))["status"] == "passed"
+
+
+@pytest.mark.parametrize(
+    ("canary_status", "message"),
+    [
+        ("transport_unavailable", "Codex capacity qualification is transport_retriable"),
+        ("transport_ambiguous", "Codex capacity qualification is transport_retriable"),
+        ("not_run", "Codex capacity qualification is not_run"),
+        ("provider_blocked", "Codex capacity qualification is provider_blocked"),
+    ],
+    ids=(
+        "preaccept-unavailable",
+        "postaccept-ambiguous",
+        "preaccept-capacity-refusal",
+        "auth-or-quota-blocked",
+    ),
+)
+def test_retriable_canary_terminals_write_no_evidence_and_allow_retry(
+    host_release_harness: HostReleaseHarness,
+    canary_status: str,
+    message: str,
+) -> None:
+    """Risk: a transport, admission, or account terminal permanently disqualifies the SHA.
+
+    §11: `not_run`, `provider_blocked`, and `transport_retriable` write no
+    evidence, and the unchanged SHA may be repeated once the pressure, account,
+    or transport fault is resolved.
+    """
+
+    harness = host_release_harness
+    evidence = harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json"
+    evidence.unlink()
+    harness.update_state(codex_capacity_canary_status=canary_status)
+
+    failed = harness.run_qualify_codex_capacity()
+
+    assert failed.returncode != 0
+    assert message in failed.stderr
+    assert not evidence.exists(), (
+        "a retriable transport terminal measured no breach and must not write evidence"
+    )
+
+    harness.update_state(codex_capacity_canary_status="passed")
+    requalified = harness.run_qualify_codex_capacity()
+    assert requalified.returncode == 0, requalified.stderr
+    assert json.loads(evidence.read_text(encoding="utf-8"))["status"] == "passed"
+
+
+@pytest.mark.parametrize(
+    ("canary_status", "scenario", "message"),
+    [
+        (
+            "transport_ambiguous",
+            "cgroup-peak",
+            "Codex capacity qualification cgroup envelope differs",
+        ),
+        (
+            "transport_unavailable",
+            "oom-kill-delta",
+            "Codex capacity qualification cgroup envelope differs",
+        ),
+        (
+            "not_run",
+            "sampler-observed-pressure",
+            "Codex capacity qualification memory pressure",
+        ),
+        (
+            "provider_blocked",
+            "host-oom-killed",
+            "Codex agent host was OOM-killed during capacity qualification",
+        ),
+    ],
+    ids=(
+        "postaccept-loss-hides-peak",
+        "preaccept-loss-hides-oom",
+        "not-run-hides-pressure",
+        "provider-blocked-hides-host-death",
+    ),
+)
+def test_measured_breach_outranks_a_retriable_canary_terminal(
+    host_release_harness: HostReleaseHarness,
+    canary_status: str,
+    scenario: str,
+    message: str,
+) -> None:
+    """Risk: the canary's own retriable terminal discards the controller's measurement.
+
+    §11: a cgroup peak, OOM, or PSI breach writes failed evidence whatever else
+    happened in the run; a transport loss, a refused admission, or a blocked
+    provider must not launder the envelope the controller itself observed into
+    an evidence-free rerun that eventually passes on a quieter host.
+    """
+
+    harness = host_release_harness
+    evidence = harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json"
+    evidence.unlink()
+    host_cgroup = harness.root / _HOST_CGROUP_RELATIVE
+    if scenario == "cgroup-peak":
+        (host_cgroup / "memory.peak").write_text(f"{336 * 1024 * 1024}\n", encoding="ascii")
+    elif scenario == "oom-kill-delta":
+        harness.update_state(
+            codex_capacity_during_canary_host_writes={
+                f"{_HOST_CGROUP_RELATIVE}/memory.events": (
+                    "low 0\nhigh 0\nmax 0\noom 1\noom_kill 1\noom_group_kill 0\n"
+                )
+            }
+        )
+    elif scenario == "sampler-observed-pressure":
+        harness.update_state(
+            codex_capacity_during_canary_host_writes={"proc/pressure/memory": _FULL_PRESSURE},
+            codex_capacity_canary_delay_seconds=2.5,
+        )
+    else:
+        harness.update_state(codex_capacity_host_exit_during_canary="oom_killed")
+    harness.update_state(codex_capacity_canary_status=canary_status)
+
+    refused = harness.run_qualify_codex_capacity()
+
+    assert refused.returncode != 0
+    assert message in refused.stderr
+    assert f"Codex capacity qualification is {canary_status}" not in refused.stderr
+    payload = json.loads(evidence.read_text(encoding="utf-8"))
+    assert payload["status"] == "failed"
+    metadata = evidence.stat()
+    assert metadata.st_uid == 0 and metadata.st_mode & 0o777 == 0o444
+
+    _restore_healthy_capacity_host(harness)
+    rerun = harness.run_qualify_codex_capacity()
+    assert rerun.returncode != 0
+    assert "Codex capacity qualification failed evidence is immutable" in rerun.stderr
+
+
+def test_unrecordable_breach_is_a_defect_not_a_retriable_run(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: a measured breach whose immutable record cannot be written degrades to a
+    retriable failure, leaving the disqualified SHA free to pass on a quieter rerun."""
+
+    harness = host_release_harness
+    evidence_dir = harness.root / "var/lib/nexus/releases/codex-capacity"
+    shutil.rmtree(evidence_dir)
+    # The evidence owner's directory is now a file: admission sees no evidence,
+    # and the breach record cannot be created.
+    evidence_dir.write_text("", encoding="ascii")
+    (harness.root / _HOST_CGROUP_RELATIVE / "memory.peak").write_text(
+        f"{336 * 1024 * 1024}\n", encoding="ascii"
+    )
+
+    refused = harness.run_qualify_codex_capacity()
+
+    assert refused.returncode != 0
+    assert "Codex capacity breach could not be recorded as immutable evidence" in refused.stderr
+    assert "unrecorded Codex capacity breach" in refused.stderr
+    assert "cgroup envelope differs" in refused.stderr
+    assert "Codex capacity qualification is transport_retriable" not in refused.stderr
+    assert evidence_dir.is_file()
+
+    evidence_dir.unlink()
+    evidence_dir.mkdir()
+
+
+def test_host_that_exits_without_an_oom_kill_during_qualification_stays_requalifiable(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: a host lost to anything but its own envelope disqualifies the SHA forever."""
+
+    harness = host_release_harness
+    evidence = harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json"
+    evidence.unlink()
+    harness.update_state(
+        codex_capacity_canary_status="transport_ambiguous",
+        codex_capacity_host_exit_during_canary="exited",
+    )
+
+    failed = harness.run_qualify_codex_capacity()
+
+    assert failed.returncode != 0
+    assert "Codex agent host exited during capacity qualification" in failed.stderr
+    assert not evidence.exists(), "a host exit without an OOM kill measured no breach"
+
+    _restore_healthy_capacity_host(harness)
+    requalified = harness.run_qualify_codex_capacity()
+    assert requalified.returncode == 0, requalified.stderr
+    assert json.loads(evidence.read_text(encoding="utf-8"))["status"] == "passed"
+
+
+def test_stale_capacity_evidence_cannot_authorize_the_first_0216_promotion(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: a weeks-old measurement authorizes promotion onto a drifted host."""
+
+    harness = host_release_harness
+    write_codex_capacity_qualification(
+        harness.root,
+        source_sha=SOURCE_SHA,
+        worker_image_id="sha256:" + "9" * 64,
+        measured_at="2026-01-01T00:00:00Z",
+    )
+
+    blocked = harness.run_apply()
+
+    assert blocked.returncode != 0
+    assert "Codex capacity qualification is stale" in blocked.stderr
+    state = harness.state()
+    assert state["resource_mutations"] == []
+    assert state["service_mutations"] == []
+
+    # Expiry is a block, not a breach: the unchanged SHA earns a fresh
+    # measurement in place of the expired pass, and promotion then proceeds.
+    evidence = harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json"
+    requalified = harness.run_qualify_codex_capacity()
+    assert requalified.returncode == 0, requalified.stderr
+    payload = json.loads(evidence.read_text(encoding="utf-8"))
+    assert payload["status"] == "passed"
+    assert payload["measured_at"] != "2026-01-01T00:00:00Z"
+    applied = harness.run_apply()
+    assert applied.returncode == 0, applied.stderr
 
 
 def test_existing_vps_capacity_startup_failure_is_retriable_without_failed_evidence(
@@ -368,14 +1278,16 @@ def test_host_apply_uses_verified_backup_and_migration_then_activates_only_apps(
             "operation": "stop",
             "services": ["worker-interactive", "api"],
         },
+        # The Codex host starts and passes its health wait before any writer,
+        # so the background lane can never claim a metadata job into the
+        # terminal host-unavailable outcome during activation.
         {
             "operation": "up",
-            "services": [
-                "api",
-                "worker-interactive",
-                "worker-background",
-                "nexus-codex-agent-host",
-            ],
+            "services": ["nexus-codex-agent-host"],
+        },
+        {
+            "operation": "up",
+            "services": ["api", "worker-interactive", "worker-background"],
         },
     ]
     assert not any("apps.worker.health" in " ".join(command) for command in state["commands"]), (
@@ -560,12 +1472,21 @@ def test_host_apply_converges_predecessor_resource_limits_before_stopping_a_writ
 ) -> None:
     harness = host_release_harness
     containers = harness.state()["containers"]
-    for container in containers.values():
-        container["host_config"] = {
-            "Memory": 0,
-            "MemoryReservation": 0,
-            "PidsLimit": 0,
-        }
+    for service in (
+        "postgres",
+        "caddy",
+        "api",
+        "worker-interactive",
+        "worker-background",
+    ):
+        containers[service]["host_config"].update(
+            {
+                "Memory": 0,
+                "MemoryReservation": 0,
+                "MemorySwap": 0,
+                "PidsLimit": 0,
+            }
+        )
     harness.update_state(containers=containers)
 
     completed = harness.run_apply()
@@ -583,6 +1504,26 @@ def test_host_apply_converges_predecessor_resource_limits_before_stopping_a_writ
         {"operation": "stop", "services": ["worker-background"]},
         {"operation": "stop", "services": ["worker-interactive", "api"]},
     ]
+
+
+def test_host_apply_reconstructs_codex_host_no_restart_privilege_contract(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: fake Compose preserves stale host privilege state instead of recreating it."""
+
+    harness = host_release_harness
+    containers = harness.state()["containers"]
+    containers["nexus-codex-agent-host"]["host_config"] = {}
+    harness.update_state(containers=containers)
+
+    completed = harness.run_apply()
+
+    assert completed.returncode == 0, completed.stderr
+    codex_host = harness.state()["containers"]["nexus-codex-agent-host"]
+    assert codex_host["host_config"]["RestartPolicy"] == {
+        "MaximumRetryCount": 0,
+        "Name": "no",
+    }
 
 
 def test_host_apply_converges_memoryswap_only_drift(
@@ -977,6 +1918,11 @@ def test_host_apply_rejects_a_runtime_identical_but_different_activated_image(
         ("security", "Codex agent host privilege isolation differs"),
         ("systempaths_missing", "Codex agent host privilege isolation differs"),
         ("systempaths_mutated", "Codex agent host privilege isolation differs"),
+        ("nanocpus", "Codex agent host privilege isolation differs"),
+        ("masked_paths", "Codex agent host privilege isolation differs"),
+        ("readonly_paths", "Codex agent host privilege isolation differs"),
+        ("tmpfs", "Codex agent host privilege isolation differs"),
+        ("ulimits", "Codex agent host privilege isolation differs"),
         ("network", "Codex agent host network isolation differs"),
         ("network_peer", "Codex agent host network peer isolation differs"),
     ],
@@ -994,6 +1940,71 @@ def test_host_apply_rejects_codex_host_outer_sandbox_or_network_drift(
 
     assert failed.returncode != 0
     assert message in failed.stderr
+    attempt = _stored_attempt(release, harness.root)
+    assert attempt is not None
+    assert attempt.phase is release.ReleasePhase.ForwardFixRequired
+
+
+def test_host_apply_execs_the_codex_sandbox_and_health_probes_inside_the_host(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: the host-prove path silently stops running its in-container probes.
+
+    The compose source text no longer names these probes anywhere the deploy
+    tests grep, so the only proof they run is the fake Docker's recorded argv.
+    """
+
+    harness = host_release_harness
+
+    completed = harness.run_apply()
+
+    assert completed.returncode == 0, completed.stderr
+    commands = [" ".join(command) for command in harness.state()["commands"]]
+    sandbox_probes = [
+        index
+        for index, command in enumerate(commands)
+        if command.startswith("compose")
+        and command.endswith(
+            "exec -T nexus-codex-agent-host python -m apps.codex_agent.sandbox_health"
+        )
+    ]
+    health_probes = [
+        index
+        for index, command in enumerate(commands)
+        if command.startswith("compose")
+        and command.endswith("exec -T nexus-codex-agent-host python -m apps.codex_agent.health")
+    ]
+    assert len(sandbox_probes) == 1, commands
+    assert len(health_probes) == 1, commands
+    assert sandbox_probes[0] < health_probes[0], (
+        "the kernel-boundary sandbox probe must run before the readiness probe"
+    )
+
+
+def test_host_apply_rejects_wrong_codex_host_health_identity(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: a host that reports a foreign auth identity is promoted as ready."""
+
+    release = _release_module()
+    harness = host_release_harness
+    harness.update_state(
+        codex_agent_host_health_output_override=json.dumps(
+            {
+                "auth_profile": "codex-team",
+                "backend": "codex",
+                "schema_version": "nexus-agent-health.v1",
+                "status": "ready",
+                "transport": "sdk",
+            },
+            sort_keys=True,
+        )
+    )
+
+    failed = harness.run_apply()
+
+    assert failed.returncode != 0
+    assert "Codex agent host is not ready with exact auth contract" in failed.stderr
     attempt = _stored_attempt(release, harness.root)
     assert attempt is not None
     assert attempt.phase is release.ReleasePhase.ForwardFixRequired
@@ -1114,6 +2125,238 @@ def test_host_finalize_proves_public_tls_and_publishes_record_and_current(
             ("api.example.test", "/readyz"),
         )
     ]
+
+
+def test_current_release_resumes_only_the_codex_host_and_rejects_live_bind_drift(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: reboot recovery bypasses the release owner or starts on plaintext state."""
+
+    harness = host_release_harness
+    applied = harness.run_apply()
+    assert applied.returncode == 0, applied.stderr
+    finalized = harness.run_finalize()
+    assert finalized.returncode == 0, finalized.stderr
+
+    state = harness.state()
+    containers = state["containers"]
+    assert isinstance(containers, dict)
+    host = containers["nexus-codex-agent-host"]
+    assert isinstance(host, dict)
+    host["running"] = False
+    harness.update_state(
+        commands=[],
+        containers=containers,
+        public_requests=[],
+        service_mutations=[],
+    )
+
+    resumed = harness.run_resume_codex_agent_host()
+
+    assert resumed.returncode == 0, resumed.stderr
+    assert json.loads(resumed.stdout) == {
+        "schema_version": "nexus-codex-agent-host-resume.v1",
+        "source_sha": SOURCE_SHA,
+        "status": "ready",
+    }
+    state = harness.state()
+    assert state["service_mutations"] == [
+        {"operation": "up", "services": ["nexus-codex-agent-host"]}
+    ]
+    assert state["public_requests"] == [
+        {"host": host, "path": path}
+        for host, path in (
+            ("web.example.test", "/version"),
+            ("api.example.test", "/version"),
+            ("api.example.test", "/readyz"),
+        )
+    ]
+
+    state = harness.state()
+    containers = state["containers"]
+    assert isinstance(containers, dict)
+    host_container = containers["nexus-codex-agent-host"]
+    assert isinstance(host_container, dict)
+    host_container["running"] = False
+    harness.update_state(
+        codex_state_live_bind_kind="wrong_source",
+        commands=[],
+        containers=containers,
+        public_requests=[],
+        service_mutations=[],
+    )
+
+    refused = harness.run_resume_codex_agent_host()
+
+    assert refused.returncode != 0
+    assert "Codex agent host mounts differ from isolated contract" in refused.stderr
+    state = harness.state()
+    assert state["service_mutations"] == [
+        {"operation": "up", "services": ["nexus-codex-agent-host"]},
+        {"operation": "stop", "services": ["nexus-codex-agent-host"]},
+    ]
+    containers = state["containers"]
+    assert isinstance(containers, dict)
+    stopped_host = containers["nexus-codex-agent-host"]
+    assert isinstance(stopped_host, dict)
+    assert stopped_host["running"] is False
+
+
+def test_resume_codex_agent_host_rejects_noncurrent_and_running_state(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: reboot recovery operates a foreign release or an already-live host."""
+
+    harness = host_release_harness
+    applied = harness.run_apply()
+    assert applied.returncode == 0, applied.stderr
+    finalized = harness.run_finalize()
+    assert finalized.returncode == 0, finalized.stderr
+    harness.update_state(public_requests=[], service_mutations=[])
+
+    noncurrent = harness.run_resume_codex_agent_host(source_sha=CURRENT_SHA)
+
+    assert noncurrent.returncode != 0
+    assert noncurrent.stdout == ""
+    assert f"release {CURRENT_SHA} is not current" in noncurrent.stderr
+    assert harness.state()["service_mutations"] == []
+
+    running = harness.run_resume_codex_agent_host()
+
+    assert running.returncode != 0
+    assert running.stdout == ""
+    assert "Codex agent host is not stopped" in running.stderr
+    assert harness.state()["service_mutations"] == []
+
+
+def test_resume_codex_agent_host_refuses_while_another_release_attempt_is_nonterminal(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: reboot recovery starts predecessor code underneath a committed release.
+
+    The immutable-release contract serializes every host mutator on durable
+    nonterminal attempt state. A successor apply interrupted after its data
+    mutation boundary leaves the current record non-authoritative; resuming the
+    current host then would run predecessor code, which the protocol forbids.
+    """
+
+    release = _release_module()
+    harness = host_release_harness
+    applied = harness.run_apply()
+    assert applied.returncode == 0, applied.stderr
+    finalized = harness.run_finalize()
+    assert finalized.returncode == 0, finalized.stderr
+    # A successor apply that died after crossing its data-mutation boundary:
+    # the durable attempt record is what every later mutator must honour.
+    store = release.ReleaseStore(release.ReleasePaths.under(harness.root))
+    successor = _prepared(release, NEXT_SHA, predecessor_sha=SOURCE_SHA)
+    store.create_attempt(successor)
+    successor = successor.advance(release.ReleasePhase.WritersStopped, now="2026-08-06T12:01:00Z")
+    store.replace_attempt(successor)
+    successor = successor.with_backup(
+        path="/var/backups/nexus/2.dump",
+        sha256="8" * 64,
+        byte_count=42,
+        database_identity="nexus-prod",
+        starting_revision="0216",
+        now="2026-08-06T12:02:00Z",
+    )
+    store.replace_attempt(successor)
+    successor = successor.advance(
+        release.ReleasePhase.DataMutationStarted, now="2026-08-06T12:03:00Z"
+    )
+    store.replace_attempt(successor)
+    state = harness.state()
+    containers = state["containers"]
+    assert isinstance(containers, dict)
+    host = containers["nexus-codex-agent-host"]
+    assert isinstance(host, dict)
+    host["running"] = False
+    harness.update_state(containers=containers, public_requests=[], service_mutations=[])
+
+    refused = harness.run_resume_codex_agent_host()
+
+    assert refused.returncode != 0
+    assert refused.stdout == ""
+    assert f"release {NEXT_SHA} is still DataMutationStarted" in refused.stderr
+    assert harness.state()["service_mutations"] == []
+    assert harness.state()["containers"]["nexus-codex-agent-host"]["running"] is False
+
+
+def test_resume_codex_agent_host_startup_failure_stops_without_a_receipt(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: a failed Compose wait leaves an unaudited authenticated host running."""
+
+    harness = host_release_harness
+    applied = harness.run_apply()
+    assert applied.returncode == 0, applied.stderr
+    finalized = harness.run_finalize()
+    assert finalized.returncode == 0, finalized.stderr
+    state = harness.state()
+    containers = state["containers"]
+    assert isinstance(containers, dict)
+    host = containers["nexus-codex-agent-host"]
+    assert isinstance(host, dict)
+    host["running"] = False
+    harness.update_state(
+        codex_host_startup_failure=True,
+        containers=containers,
+        public_requests=[],
+        service_mutations=[],
+    )
+
+    refused = harness.run_resume_codex_agent_host()
+
+    assert refused.returncode != 0
+    assert refused.stdout == ""
+    assert harness.state()["service_mutations"] == [
+        {"operation": "up", "services": ["nexus-codex-agent-host"]},
+        {"operation": "stop", "services": ["nexus-codex-agent-host"]},
+    ]
+    stopped = harness.state()["containers"]["nexus-codex-agent-host"]
+    assert isinstance(stopped, dict)
+    assert stopped["running"] is False
+
+
+def test_resume_codex_agent_host_rejects_every_malformed_direct_bind_and_stops(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: Docker's live bind drifts from the immutable direct-bind declaration."""
+
+    harness = host_release_harness
+    applied = harness.run_apply()
+    assert applied.returncode == 0, applied.stderr
+    finalized = harness.run_finalize()
+    assert finalized.returncode == 0, finalized.stderr
+
+    for live_kind in ("wrong_source", "wrong_type", "readonly", "shared_propagation"):
+        state = harness.state()
+        containers = state["containers"]
+        assert isinstance(containers, dict)
+        host = containers["nexus-codex-agent-host"]
+        assert isinstance(host, dict)
+        host["running"] = False
+        harness.update_state(
+            codex_state_live_bind_kind=live_kind,
+            containers=containers,
+            public_requests=[],
+            service_mutations=[],
+        )
+
+        refused = harness.run_resume_codex_agent_host()
+
+        assert refused.returncode != 0, live_kind
+        assert refused.stdout == "", live_kind
+        assert "Codex agent host mounts differ from isolated contract" in refused.stderr, live_kind
+        state = harness.state()
+        assert state["service_mutations"] == [
+            {"operation": "up", "services": ["nexus-codex-agent-host"]},
+            {"operation": "stop", "services": ["nexus-codex-agent-host"]},
+        ], live_kind
+        stopped = state["containers"]["nexus-codex-agent-host"]
+        assert isinstance(stopped, dict)
+        assert stopped["running"] is False, live_kind
 
 
 def test_host_finalize_rejects_a_public_player_protocol_mismatch(

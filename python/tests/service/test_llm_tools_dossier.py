@@ -730,7 +730,7 @@ def test_dossier_freezes_host_plan_and_does_not_automatically_reissue_uncertain_
                 job_id=replay.job_id,
                 worker_id=replay_context.worker_id,
                 attempt_no=replay_context.attempt_no,
-                available_at=pending.available_at,
+                schedule=pending.schedule,
                 payload=pending.payload,
             )
             db.commit()

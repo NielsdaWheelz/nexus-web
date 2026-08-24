@@ -28,13 +28,30 @@ from nexus.services.native_agent_contract import (
     NativeAgentCommand,
 )
 
-METADATA_ENRICHMENT_TRANSPORT_DEADLINE_SECONDS = 150.0
 _MODEL = "gpt-5.6-luna"
 _REASONING = "low"
 _AUTH_PROFILE = "codex-personal"
 _TURN_TIMEOUT_SECONDS = 120.0
 _OUTPUT_NAME = "media_metadata_enrichment"
 _FACTS_WORKING_DIRECTORY = Path("/var/empty/nexus-codex")
+
+# The host bounds every phase of an accepted turn so the worker's transport deadline is a
+# proven upper bound rather than a guess: a session open costs at most three sequential
+# 30-second SDK operation bounds (client open, credential verify, thread start), the turn
+# costs its catalog timeout, and a runtime close costs at most two drain-plus-settle
+# rounds and the interruption calls between them. The transport deadline is that worst
+# case plus one fixed margin for frame serialization and the socket round trip, so a turn
+# that spends its whole budget still yields the distinct `turn_timeout` terminal instead
+# of an ambiguous post-acceptance transport loss.
+METADATA_ENRICHMENT_SESSION_OPEN_DEADLINE_SECONDS = 90.0
+METADATA_ENRICHMENT_RUNTIME_CLOSE_DEADLINE_SECONDS = 30.0
+_TRANSPORT_MARGIN_SECONDS = 15.0
+METADATA_ENRICHMENT_TRANSPORT_DEADLINE_SECONDS = (
+    METADATA_ENRICHMENT_SESSION_OPEN_DEADLINE_SECONDS
+    + _TURN_TIMEOUT_SECONDS
+    + METADATA_ENRICHMENT_RUNTIME_CLOSE_DEADLINE_SECONDS
+    + _TRANSPORT_MARGIN_SECONDS
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,7 +74,6 @@ class NativeAgentOperationFacts:
 class ResolvedNativeAgentOperation:
     session: AgentSessionRequest
     turn: TurnRequest
-    facts: NativeAgentOperationFacts
 
 
 def build_metadata_enrichment_command(*, request_id: UUID, input: str) -> NativeAgentCommand:
@@ -128,23 +144,18 @@ def resolve_native_agent_operation(
     working_directory: Path,
 ) -> ResolvedNativeAgentOperation:
     if command.operation.revision != METADATA_ENRICHMENT_OPERATION_REVISION:
+        # justify-defect: a validated command cannot carry an uncatalogued revision.
         raise AssertionError("validated metadata operation revision drifted")
     system_prompt, output_schema = metadata_enrichment_agent_definition()
-    session = _metadata_enrichment_session(
-        system_prompt=system_prompt,
-        output_schema=output_schema,
-        working_directory=working_directory,
-    )
     return ResolvedNativeAgentOperation(
-        session=session,
+        session=_metadata_enrichment_session(
+            system_prompt=system_prompt,
+            output_schema=output_schema,
+            working_directory=working_directory,
+        ),
         turn=TurnRequest(
             input=(TextContent(command.operation.input),),
             timeout_seconds=_TURN_TIMEOUT_SECONDS,
-        ),
-        facts=_operation_facts(
-            system_prompt=system_prompt,
-            output_schema=output_schema,
-            session=session,
         ),
     )
 
@@ -181,6 +192,7 @@ def _policy_fingerprint(session: AgentSessionRequest) -> str:
     policy = session.policy
     native = session.native
     if not isinstance(native, CodexNativeOptions):
+        # justify-defect: the catalog builds the only session, always with Codex options.
         raise AssertionError("metadata operation must resolve Codex native options")
     return _fingerprint(
         {
@@ -216,6 +228,8 @@ def _fingerprint(value: object) -> str:
 
 __all__ = [
     "METADATA_ENRICHMENT_OPERATION_REVISION",
+    "METADATA_ENRICHMENT_RUNTIME_CLOSE_DEADLINE_SECONDS",
+    "METADATA_ENRICHMENT_SESSION_OPEN_DEADLINE_SECONDS",
     "METADATA_ENRICHMENT_TRANSPORT_DEADLINE_SECONDS",
     "NativeAgentOperationFacts",
     "ResolvedNativeAgentOperation",

@@ -473,6 +473,31 @@ def test_durable_metadata_sources_route_all_high_risk_boundary_proofs() -> None:
             "pytest:python/tests/service/test_heavy_job_capacity.py",
             "pytest:python/tests/service/test_metadata_content_contract.py::"
             "test_metadata_contract_exposes_quality_bounds_and_all_media_kind_targets",
+            "pytest:python/tests/service/test_metadata_prompt_framing.py",
+            "pytest:python/tests/service/test_metadata_prompt_framing.py::"
+            "test_metadata_prompt_preserves_envelope_and_delimiter_at_utf8_input_ceiling",
+        }
+    )
+
+
+def test_unreachable_state_testkit_routes_to_the_durable_replay_proofs() -> None:
+    """Risk: edits to the raw-SQL unreachable-state owner run no durability proof."""
+
+    selections = select_changed(
+        (ChangedPath(GitChangeKind.MODIFIED, "python/tests/testkit/unreachable_state.py"),),
+        load_selection_index(REPO_ROOT),
+    )
+    proofs = {
+        selection.proof
+        for selection in selections
+        if selection.reason is SelectionReason.PRIORITY_RISK
+    }
+
+    assert proofs.issuperset(
+        {
+            "pytest:python/tests/service/test_codex_metadata_enrichment.py",
+            "pytest:python/tests/service/test_durable_job_replay.py",
+            "pytest:python/tests/service/test_heavy_job_capacity.py",
         }
     )
 
@@ -487,6 +512,14 @@ def test_durable_metadata_sources_route_all_high_risk_boundary_proofs() -> None:
         (
             "deploy/hetzner/prove-codex-capacity.sh",
             "pytest:python/tests/kernel/test_production_release.py",
+        ),
+        (
+            "docs/cutovers/codex-personal-metadata-hard-cutover.md",
+            "pytest:python/tests/kernel/test_production_delivery_contract.py",
+        ),
+        (
+            "docs/runbooks/codex-personal-agent-host.md",
+            "pytest:python/tests/kernel/test_production_delivery_contract.py",
         ),
     ],
 )
@@ -509,8 +542,14 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
     ("path", "expected_capabilities", "expected_proofs"),
     [
         (
+            # The release controller mirrors the canary's public exit/phase
+            # contract, so release.py is owned by native-agent-host as well as
+            # immutable-production-release: its changes must route to the
+            # mirror conformance proof and the host proofs beside the release
+            # harness proofs.
             "deploy/hetzner/release.py",
             {
+                Capability.CODEX_HOSTED,
                 Capability.ANDROID_HOST,
                 Capability.COMPONENT,
                 Capability.JOURNEYS_ALL,
@@ -525,6 +564,11 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "gradle:apps/android/app/src/test/java/app/nexus/android/offline/readingweb/OfflineReadingRequestRouterTest.kt",
                 "gradle:apps/android/app/src/test/java/app/nexus/android/playback/PlayerProtocolTest.kt",
                 "playwright:apps/web/e2e/journeys/auth-session.journey.spec.ts",
+                "pytest:python/tests/hosted/nightly/test_codex_personal_metadata.py",
+                "pytest:python/tests/kernel/nexus_test_control/test_android_device_method_scope.py::test_exact_android_device_proof_uses_one_instrumentation_method",
+                "pytest:python/tests/kernel/nexus_test_control/test_hosted_canary_semantics.py::test_hosted_canary_parser_rejects_green_cost_evidence_without_safe_semantics",
+                "pytest:python/tests/kernel/nexus_test_control/test_provider_runtime_pin.py::test_provider_runtime_is_materialized_from_the_pin_without_retargeting_source",
+                "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape",
                 "pytest:python/tests/kernel/test_android_player_protocol_release_gate.py",
                 "pytest:python/tests/llm_tools_contract/test_pinned_llm_tools.py::"
                 "test_exact_pins_round_trip_one_canonical_native_tool",
@@ -534,12 +578,21 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr",
                 "pytest:python/tests/kernel/nexus_test_control/test_policy.py",
                 "pytest:python/tests/kernel/test_backend_artifact.py",
+                "pytest:python/tests/kernel/test_codex_hosted_canary_content_privacy.py::test_hosted_canary_rendered_failure_drops_provider_sentinels",
+                "pytest:python/tests/kernel/test_codex_nightly_workflow_artifact_contract.py::test_codex_nightly_stages_only_one_run_bound_bounded_json_artifact",
+                "pytest:python/tests/kernel/test_native_agent_contract.py",
                 "pytest:python/tests/kernel/test_ci_pr_recovery.py",
                 "pytest:python/tests/kernel/test_successor_release_contract.py",
                 "pytest:python/tests/kernel/test_production_delivery_contract.py",
                 "pytest:python/tests/kernel/test_production_deploy_behavior.py",
                 "pytest:python/tests/kernel/test_production_release.py",
+                "pytest:python/tests/kernel/test_production_release.py::test_codex_capacity_requires_exact_encrypted_state_before_starting_runtime",
                 "pytest:python/tests/kernel/test_release_bundle_fetch.py",
+                "pytest:python/tests/service/test_codex_agent_content_privacy.py::test_provider_diagnostic_content_neither_crosses_the_host_nor_reaches_persistence",
+                "pytest:python/tests/service/test_codex_agent_host.py",
+                "pytest:python/tests/service/test_codex_agent_host.py::test_host_refuses_non_admissible_capacity_before_runtime_construction",
+                "pytest:python/tests/service/test_codex_capacity_canary_contract.py",
+                "pytest:python/tests/service/test_codex_capacity_canary_contract.py::test_capacity_canary_rejects_succeeded_terminal_without_metadata_object",
                 "pytest:python/tests/release_artifact/"
                 "test_node_ingest_image_binding.py::"
                 "test_worker_launches_only_the_image_baked_hardened_ingest_entrypoint",
@@ -662,6 +715,8 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "test_worker_launches_only_the_image_baked_hardened_ingest_entrypoint",
                 "pytest:python/tests/service/test_codex_agent_content_privacy.py::test_provider_diagnostic_content_neither_crosses_the_host_nor_reaches_persistence",
                 "pytest:python/tests/service/test_codex_agent_host.py",
+                "pytest:python/tests/service/test_codex_agent_host.py::test_host_refuses_non_admissible_capacity_before_runtime_construction",
+                "pytest:python/tests/service/test_codex_capacity_canary_contract.py",
                 "pytest:python/tests/service/test_codex_capacity_canary_contract.py::test_capacity_canary_rejects_succeeded_terminal_without_metadata_object",
                 "pytest:python/tests/hosted/nightly/test_codex_personal_metadata.py",
                 "pytest:python/tests/service/test_llm_tool_projection_protocol.py::"

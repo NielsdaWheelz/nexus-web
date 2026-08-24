@@ -8,7 +8,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from datetime import datetime
-from typing import Any
+from typing import Any, assert_never
 from uuid import UUID
 
 import psycopg
@@ -33,9 +33,10 @@ from nexus.jobs.process_executor import (
 from nexus.jobs.queue import (
     HEAVY_CAPACITY_OCCUPIED_SQL,
     JobExecutionContext,
-    JobResourceClass,
     JobRow,
     RescheduleRequested,
+    ScheduleAfter,
+    ScheduleAt,
     claim_job,
     claim_next_job,
     complete_job,
@@ -193,15 +194,17 @@ class JobWorker:
                 db.commit()
             return True
 
-        with self.session_factory() as db:
-            still_owned = heartbeat_job(
-                db,
-                job_id=claimed.id,
-                worker_id=self.worker_id,
-                lease_seconds=definition.lease_seconds,
-                resource_class=definition.resource_class,
-            )
-            db.commit()
+        context = JobExecutionContext(
+            job_id=claimed.id,
+            worker_id=self.worker_id,
+            attempt_no=claimed.attempts,
+            resource_class=definition.resource_class,
+        )
+        still_owned = heartbeat_job(
+            session_factory=self.session_factory,
+            context=context,
+            lease_seconds=definition.lease_seconds,
+        )
         if not still_owned:
             logger.warning(
                 "worker_job_start_rejected_lost_ownership",
@@ -215,19 +218,12 @@ class JobWorker:
 
         claim_lost = threading.Event()
         stop_event, heartbeat_thread = self._start_heartbeat_thread(
-            job_id=claimed.id,
+            context=context,
             lease_seconds=definition.lease_seconds,
-            resource_class=definition.resource_class,
             claim_lost=claim_lost,
         )
 
         try:
-            context = JobExecutionContext(
-                job_id=claimed.id,
-                worker_id=self.worker_id,
-                attempt_no=claimed.attempts,
-                resource_class=definition.resource_class,
-            )
             # A fresh child exists to contain Heavy extraction and to host the Llm
             # runtime the lean supervisor deliberately does not import; a Light,
             # Base-runtime maintenance job needs neither, so it runs in-process as
@@ -323,8 +319,7 @@ class JobWorker:
                     )
                 if isinstance(child_result, ChildReschedule):
                     handler_result = RescheduleRequested(
-                        available_at=child_result.available_at,
-                        delay_seconds=child_result.delay_seconds,
+                        schedule=child_result.schedule,
                         payload=child_result.payload,
                     )
                 elif isinstance(child_result, ChildSucceeded):
@@ -340,23 +335,24 @@ class JobWorker:
                         job_id=claimed.id,
                         worker_id=self.worker_id,
                         attempt_no=claimed.attempts,
-                        available_at=handler_result.available_at,
-                        delay_seconds=handler_result.delay_seconds,
+                        schedule=handler_result.schedule,
                         payload=handler_result.payload,
                     )
                     db.commit()
                 if rescheduled:
+                    match handler_result.schedule:
+                        case ScheduleAt(instant=instant):
+                            schedule_fact = {"available_at": instant.isoformat()}
+                        case ScheduleAfter(seconds=seconds):
+                            schedule_fact = {"delay_seconds": seconds}
+                        case _ as unreachable:
+                            assert_never(unreachable)
                     logger.info(
                         "worker_job_rescheduled",
                         worker_id=self.worker_id,
                         job_id=str(claimed.id),
                         kind=claimed.kind,
-                        available_at=(
-                            handler_result.available_at.isoformat()
-                            if handler_result.available_at is not None
-                            else None
-                        ),
-                        delay_seconds=handler_result.delay_seconds,
+                        **schedule_fact,
                     )
                 else:
                     logger.warning(
@@ -497,7 +493,7 @@ class JobWorker:
                 job_id=claimed.id,
                 worker_id=self.worker_id,
                 attempt_no=claimed.attempts,
-                delay_seconds=0,
+                schedule=ScheduleAfter(0),
             )
             db.commit()
         if released:
@@ -915,9 +911,8 @@ class JobWorker:
     def _start_heartbeat_thread(
         self,
         *,
-        job_id: UUID,
+        context: JobExecutionContext,
         lease_seconds: int,
-        resource_class: JobResourceClass,
         claim_lost: threading.Event,
     ) -> tuple[threading.Event, threading.Thread]:
         stop_event = threading.Event()
@@ -928,34 +923,32 @@ class JobWorker:
         def _loop() -> None:
             while not stop_event.wait(heartbeat_every):
                 try:
-                    with self.session_factory() as db:
-                        updated = heartbeat_job(
-                            db,
-                            job_id=job_id,
+                    updated = heartbeat_job(
+                        session_factory=self.session_factory,
+                        context=context,
+                        lease_seconds=lease_seconds,
+                    )
+                    if not updated:
+                        logger.warning(
+                            "worker_heartbeat_lost_ownership",
                             worker_id=self.worker_id,
-                            lease_seconds=lease_seconds,
-                            resource_class=resource_class,
+                            job_id=str(context.job_id),
                         )
-                        db.commit()
-                        if not updated:
-                            # Our claim is gone: the child must stop burning the
-                            # bounded container on work we no longer own.
-                            logger.warning(
-                                "worker_heartbeat_lost_ownership",
-                                worker_id=self.worker_id,
-                                job_id=str(job_id),
-                            )
-                            claim_lost.set()
-                            return
-                        self._advance_successful_cycle()
+                        claim_lost.set()
+                        return
+                    self._advance_successful_cycle()
                 except SQLAlchemyError:
                     logger.exception(
                         "worker_heartbeat_failed",
                         worker_id=self.worker_id,
-                        job_id=str(job_id),
+                        job_id=str(context.job_id),
                     )
 
-        thread = threading.Thread(target=_loop, daemon=True, name=f"job-heartbeat-{job_id}")
+        thread = threading.Thread(
+            target=_loop,
+            daemon=True,
+            name=f"job-heartbeat-{context.job_id}",
+        )
         thread.start()
         return stop_event, thread
 

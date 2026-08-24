@@ -10,7 +10,7 @@ from uuid import UUID, uuid4
 
 import uvicorn
 from apps.codex_agent.capacity import CapacityPaths
-from apps.codex_agent.host import create_codex_agent_app
+from apps.codex_agent.host import RuntimeVersions, create_codex_agent_app
 from provider_runtime import Absent
 from provider_runtime.agent_runtime import (
     AgentFailure,
@@ -82,6 +82,7 @@ def _run_host(
     app = create_codex_agent_app(
         runtime_factory=runtime_factory,
         working_directory=Path(working_directory),
+        versions=RuntimeVersions(sdk="0.144.4", runtime="0.144.4"),
         capacity_paths=paths,
     )
     server = uvicorn.Server(
@@ -100,7 +101,8 @@ def _run_host(
 def _start_host(
     tmp_path: Path,
 ) -> tuple[Path, multiprocessing.Process, multiprocessing.connection.Connection]:
-    socket_path = _REPO_ROOT / f".content-privacy-{uuid4().hex[:12]}.sock"
+    socket_path = tmp_path / "content-privacy.sock"
+    assert len(str(socket_path).encode("utf-8")) < 108, "UDS path must fit sun_path"
     capacity_root = tmp_path / "capacity"
     capacity_root.mkdir()
     (capacity_root / "meminfo").write_text("MemAvailable: 700000 kB\n", encoding="ascii")
@@ -210,3 +212,9 @@ def test_provider_diagnostic_content_neither_crosses_the_host_nor_reaches_persis
     assert all(_DIAGNOSTIC_CONTENT not in str(value) for value in retained), (
         "provider diagnostic content crossed a retention boundary"
     )
+    # The host still owes its caller a diagnosable failure: it emits exactly its
+    # own bounded phase diagnostic, never the upstream provider text.
+    assert observed.diagnostics == (
+        "codex agent host turn_stream: provider terminal failed: backend_failed",
+    )
+    assert observed.final_text == ""

@@ -1,0 +1,11 @@
+diff --git a/migrations/alembic/versions/0216_codex_personal_metadata.py b/migrations/alembic/versions/0216_codex_personal_metadata.py
+--- a/migrations/alembic/versions/0216_codex_personal_metadata.py
++++ b/migrations/alembic/versions/0216_codex_personal_metadata.py
+@@ -69,6 +69,6 @@ def upgrade() -> None:
+     op.execute(
+         "UPDATE background_jobs "
+         "SET payload = jsonb_set(payload, '{capacity_wait_index}', '0'::jsonb, true), "
+-        "max_attempts = 2 "
++        "max_attempts = 1 "
+         "WHERE kind = 'enrich_metadata'"
+     )

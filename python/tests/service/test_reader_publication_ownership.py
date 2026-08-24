@@ -25,7 +25,7 @@ from nexus.ops.reader_publication_preflight import (
 )
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.media_deletion import delete_document_media_if_unreferenced
-from nexus.services.metadata_enrichment import merge_enrichment
+from nexus.services.metadata_enrichment import MetadataEnrichmentOutput, merge_enrichment
 from nexus.services.pdf_ingest import PdfExtractionPlan, build_pdf_extraction_plan
 from nexus.services.pdf_lifecycle import publish_pdf_source
 from nexus.services.reader_publication import (
@@ -174,7 +174,18 @@ def test_enriched_title_of_a_published_document_advances_its_generation(
     with Session(engine) as db:
         document = db.get(Media, document_id)
         assert document is not None
-        merged = merge_enrichment(db, document, {"title": "The Canonical Work"})
+        merged = merge_enrichment(
+            db,
+            document,
+            MetadataEnrichmentOutput(
+                title="The Canonical Work",
+                authors=None,
+                publisher=None,
+                description=None,
+                published_date=None,
+                language=None,
+            ),
+        )
         db.commit()
 
     assert merged.accepted_fields == ("title",)
@@ -188,7 +199,18 @@ def test_enriched_title_of_a_published_document_advances_its_generation(
     with Session(engine) as db:
         video = db.get(Media, video_id)
         assert video is not None
-        assert merge_enrichment(db, video, {"title": "Clip title"}).accepted_fields == ("title",)
+        assert merge_enrichment(
+            db,
+            video,
+            MetadataEnrichmentOutput(
+                title="Clip title",
+                authors=None,
+                publisher=None,
+                description=None,
+                published_date=None,
+                language=None,
+            ),
+        ).accepted_fields == ("title",)
         db.commit()
     with Session(engine) as oracle:
         video = oracle.get(Media, video_id)

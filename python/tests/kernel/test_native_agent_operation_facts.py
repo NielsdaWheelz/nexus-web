@@ -13,6 +13,9 @@ from provider_runtime.agent_runtime import CodexNativeOptions
 from nexus.services import native_agent_contract
 from nexus.services.native_agent_operations import (
     METADATA_ENRICHMENT_OPERATION_REVISION,
+    METADATA_ENRICHMENT_RUNTIME_CLOSE_DEADLINE_SECONDS,
+    METADATA_ENRICHMENT_SESSION_OPEN_DEADLINE_SECONDS,
+    METADATA_ENRICHMENT_TRANSPORT_DEADLINE_SECONDS,
     build_metadata_enrichment_command,
     metadata_enrichment_operation_facts,
     resolve_native_agent_operation,
@@ -87,7 +90,9 @@ def test_policy_fingerprint_is_the_resolved_session_policy_facts() -> None:
                 "builtin_tools": native.builtin_tools,
                 "web_search": native.web_search,
             },
-            "transport_deadline_seconds": resolved.facts.transport_deadline_seconds,
+            "transport_deadline_seconds": (
+                metadata_enrichment_operation_facts().transport_deadline_seconds
+            ),
         }
     )
     assert metadata_enrichment_operation_facts().policy_fingerprint == expected
@@ -99,4 +104,38 @@ def test_policy_fingerprint_is_the_resolved_session_policy_facts() -> None:
     assert not any(
         isinstance(node, ast.FunctionDef) and node.name == "_policy_payload"
         for node in ast.walk(operations_tree)
+    )
+
+
+def test_transport_deadline_strictly_bounds_every_accepted_host_phase() -> None:
+    """Risk: a full-budget turn expires the client deadline into an ambiguous loss.
+
+    This structural pin is the single owner of the open/turn/close budget
+    arithmetic. A behavioral proof of the host's open/close deadlines would
+    need either real 90s/30s waits or monkeypatched host constants, and the
+    owned-module policy forbids patching `apps.codex_agent` exactly because a
+    lab-scaled host is not the host §11 pins to a real UDS process; the host's
+    TimeoutError-to-terminal mapping is typed and total in `_run_turn`, so the
+    budget relation proved here is the load-bearing fact.
+    """
+
+    facts = metadata_enrichment_operation_facts()
+    resolved = resolve_native_agent_operation(
+        build_metadata_enrichment_command(
+            request_id=UUID("755a2de9-2bdc-5c57-a6a0-17a2407f14bb"),
+            input="bounded metadata input",
+        ),
+        working_directory=Path("/var/empty/nexus-codex"),
+    )
+    assert resolved.turn.timeout_seconds == facts.timeout_seconds
+    assert facts.transport_deadline_seconds == METADATA_ENRICHMENT_TRANSPORT_DEADLINE_SECONDS
+    accepted_worst_case = (
+        METADATA_ENRICHMENT_SESSION_OPEN_DEADLINE_SECONDS
+        + facts.timeout_seconds
+        + METADATA_ENRICHMENT_RUNTIME_CLOSE_DEADLINE_SECONDS
+    )
+    assert facts.transport_deadline_seconds > accepted_worst_case, (
+        "transport deadline must strictly exceed the host's bounded open, turn, and "
+        f"close phases; deadline={facts.transport_deadline_seconds}, "
+        f"worst_case={accepted_worst_case}"
     )

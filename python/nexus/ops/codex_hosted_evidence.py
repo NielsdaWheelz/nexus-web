@@ -33,6 +33,10 @@ def _validated_evidence_bytes(path: Path, *, run_id: str) -> bytes | None:
             encoded.decode("utf-8"),
             object_pairs_hook=_unique_object,
         )
+    # justify-ignore-error: an unreadable (OSError), undecodable
+    # (UnicodeDecodeError), or malformed (ValueError, including the
+    # duplicate-key hook) artifact is exactly the invalid-evidence outcome
+    # this validator exists to report as None.
     except (OSError, UnicodeDecodeError, ValueError):
         return None
     return encoded if _evidence_has_closed_shape(evidence, run_id=run_id) else None
@@ -144,7 +148,10 @@ def _main() -> int:
         return 2
     try:
         _stage(Path(arguments[1]), Path(arguments[2]))
-    except Exception:
+    # justify-ignore-error: the CLI contract is a silent nonzero exit; invalid
+    # evidence or paths (ValueError) and filesystem failure (OSError) are the
+    # only failures staging raises, and both leave the destination untouched.
+    except (OSError, ValueError):
         return 1
     return 0
 

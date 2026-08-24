@@ -53,6 +53,37 @@ def _rules(violations: tuple[Any, ...]) -> set[str]:
             "monkeypatch.setattr(owner, 'read', lambda: None)\n",
             "python-owned-monkeypatch",
         ),
+        (
+            "from apps.codex_agent import host\nmonkeypatch.setattr(host, 'DEADLINE', 0.2)\n",
+            "python-owned-monkeypatch",
+        ),
+        (
+            "from apps import codex_agent\n"
+            "monkeypatch.setattr(codex_agent.host, 'DEADLINE', 0.2)\n",
+            "python-owned-monkeypatch",
+        ),
+        (
+            "import apps\nmonkeypatch.setattr(apps.codex_agent.host, 'DEADLINE', 0.2)\n",
+            "python-owned-monkeypatch",
+        ),
+        (
+            "import apps.codex_agent.host\n"
+            "monkeypatch.setattr(apps.codex_agent.host, 'DEADLINE', 0.2)\n",
+            "python-owned-monkeypatch",
+        ),
+        (
+            "import apps.codex_agent.host as h\nmonkeypatch.setattr(h, 'DEADLINE', 0.2)\n",
+            "python-owned-monkeypatch",
+        ),
+        (
+            "from apps.codex_agent.host import create_codex_agent_app as build\n"
+            "monkeypatch.setattr(build, '__defaults__', ())\n",
+            "python-owned-monkeypatch",
+        ),
+        (
+            "monkeypatch.setattr('apps.codex_agent.host.DEADLINE', 0.2)\n",
+            "python-owned-monkeypatch",
+        ),
         ("import time\ntime.sleep(1)\n", "python-sleep"),
         ("import pytest\n@pytest.mark.skip\ndef test_case(): pass\n", "python-skip"),
         ("import pytest as pt\n@pt.mark.skip\ndef test_case(): pass\n", "python-skip"),
@@ -90,10 +121,21 @@ def test_python_ast_guard_rejects_invalid_source() -> None:
 
 def test_python_ast_guard_allows_external_boundary_patch_and_owned_exceptions() -> None:
     external_patch = "import httpx\nmonkeypatch.setattr(httpx, 'get', lambda: None)\n"
+    # `apps` is owned only through `apps.codex_agent`; the worker entrypoint
+    # harness is the sanctioned residue outside the gate.
+    sibling_package_patch = (
+        "import apps\nmonkeypatch.setattr(apps.worker.health, 'PROBE', lambda: None)\n"
+    )
+    lookalike_patch = (
+        "import apps.codex_agent_tools as t\nmonkeypatch.setattr(t, 'X', 1)\n"
+        "monkeypatch.setattr('apps.codex_agentry.host.X', 1)\n"
+    )
     hosted_socket = "from pytest_socket import enable_socket\nenable_socket()\n"
     query_oracle = "from sqlalchemy import text\ntext('SELECT 1')\n"
     migration_sql = "from sqlalchemy import text\ntext('INSERT INTO users DEFAULT VALUES')\n"
     assert not python_ast_violations("python/tests/kernel/test_ok.py", external_patch)
+    assert not python_ast_violations("python/tests/kernel/test_ok.py", sibling_package_patch)
+    assert not python_ast_violations("python/tests/kernel/test_ok.py", lookalike_patch)
     assert not python_ast_violations("python/tests/service/test_query_oracle.py", query_oracle)
     assert not python_ast_violations("python/tests/hosted/test_provider.py", hosted_socket)
     assert not python_ast_violations("python/tests/migrations/test_head.py", migration_sql)
@@ -744,24 +786,20 @@ def test_proof_contract_rejects_a_nonexistent_exact_node(tmp_path: Path) -> None
     assert "proof-node" in _rules(proof_contract_violations(tmp_path))
 
 
-def test_proof_contract_rejects_two_priority_nodes_for_one_proof_owner(tmp_path: Path) -> None:
-    """One proof owner has one canonical node, or sensitivity cannot resolve it.
-
-    A changed test file selects its file-level proof; `canonical_proof` maps that
-    path to the single registered node and raises when two exist, which aborts
-    the whole workflow instead of reporting a verdict.
-    """
+def test_proof_contract_rejects_multiple_exact_sensitivity_owners_per_file(
+    tmp_path: Path,
+) -> None:
     manifest = _complete_proof_repository(tmp_path)
-    risk, exact = next(
-        (risk, proof)
-        for risk in manifest["priority_risks"]
-        for proof in risk["proofs"]
-        if "::" in proof
+    native_agent_host = next(
+        risk for risk in manifest["priority_risks"] if risk["id"] == "native-agent-host"
     )
-    risk["proofs"].append(exact.split("::", 1)[0])
+    native_agent_host["proofs"].append(
+        "pytest:python/tests/service/test_codex_capacity_canary_contract.py::"
+        "test_release_controller_mirrors_the_canary_exit_and_phase_contract"
+    )
     _dump(tmp_path, "testdata/proofs.json", manifest)
 
-    assert "proof-canonical-node" in _rules(proof_contract_violations(tmp_path))
+    assert "proof-sensitivity-owner" in _rules(proof_contract_violations(tmp_path))
 
 
 def test_proof_contract_rejects_declared_capability_without_a_proof_owner(
@@ -999,19 +1037,15 @@ def test_fault_guard_allows_the_exact_controller_execution_owner(
     assert not fault_manifest_violations(tmp_path)
 
 
-def test_fault_guard_allows_the_production_release_controller(tmp_path: Path) -> None:
-    manifest = _fault_repository(tmp_path)
-    patch = b"diff --git a/deploy/hetzner/release.py b/deploy/hetzner/release.py\n"
-    path = tmp_path / "testdata/faults/example.patch"
-    path.write_bytes(patch)
-    manifest["faults"][0]["sha256"] = hashlib.sha256(patch).hexdigest()
-    _dump(tmp_path, "testdata/faults/manifest.json", manifest)
-
-    assert not fault_manifest_violations(tmp_path)
-
-
-@pytest.mark.parametrize("owner", ("apps/api/main.py", "apps/codex_agent/host.py"))
-def test_fault_guard_allows_declared_python_app_product_owner(
+@pytest.mark.parametrize(
+    "owner",
+    (
+        "apps/api/main.py",
+        "apps/codex_agent/host.py",
+        "deploy/hetzner/release.py",
+    ),
+)
+def test_fault_guard_allows_declared_product_owner(
     tmp_path: Path,
     owner: str,
 ) -> None:
@@ -1045,6 +1079,25 @@ def test_fault_guard_allows_node_ingest_product_modules_but_not_tests(
     _dump(tmp_path, "testdata/faults/manifest.json", manifest)
 
     assert "fault-product-only" in _rules(fault_manifest_violations(tmp_path))
+
+
+@pytest.mark.parametrize(
+    "owner",
+    ("deploy/hetzner/deploy.sh", "deploy/hetzner/docker-compose.yml"),
+)
+def test_fault_guard_keeps_deployment_fault_authority_on_the_release_controller(
+    tmp_path: Path,
+    owner: str,
+) -> None:
+    manifest = _fault_repository(tmp_path)
+    patch = f"diff --git a/{owner} b/{owner}\n".encode()
+    (tmp_path / "testdata/faults/example.patch").write_bytes(patch)
+    manifest["faults"][0]["sha256"] = hashlib.sha256(patch).hexdigest()
+    _dump(tmp_path, "testdata/faults/manifest.json", manifest)
+
+    assert any(
+        violation.rule == "fault-product-only" for violation in fault_manifest_violations(tmp_path)
+    )
 
 
 @pytest.mark.parametrize(

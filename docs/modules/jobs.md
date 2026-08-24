@@ -22,7 +22,10 @@ the thin task wrappers under `python/nexus/tasks/`, and
 Each single-process worker lane (`apps/worker/main.py` → `jobs/worker.py`) runs
 a job loop and a scheduler loop. Each claimed job is leased, dispatched to its
 registered handler under a heartbeat thread that renews the lease, and committed
-with a terminal/retry transition. Claim is atomic (`FOR UPDATE SKIP LOCKED`), so
+with a terminal/retry transition. A Heavy heartbeat locks the exact job before
+its capacity holder and renews both to one expiry in a queue-owned transaction;
+every terminal or retry transition follows that same job-before-capacity order.
+Claim is atomic (`FOR UPDATE SKIP LOCKED`), so
 the worker is horizontally scalable even though one instance is
 single-concurrency. The worker installs the process-global rate limiter at
 startup (see [llms.md](llms.md)) so the first job of any kind has a working
@@ -154,10 +157,11 @@ Production deploys exactly `worker-interactive` and `worker-background`; there
 is no undifferentiated `worker` service.
 
 Every registry definition owns one closed `Light | Heavy` resource class, and
-that class is part of the task-contract digest. `ingest_media_source` and
-`media_content_reindex_job` are Heavy; all other kinds are Light. Queue-owned
-capacity admission permits one Heavy running attempt globally while leaving
-eligible Light work claimable. Domain handlers never touch capacity state.
+that class is part of the task-contract digest. `ingest_media_source`,
+`media_content_reindex_job`, and `enrich_metadata` are Heavy; all other kinds
+are Light. Queue-owned capacity admission permits one Heavy running attempt
+globally while leaving eligible Light work claimable. Domain handlers never
+touch capacity state.
 
 Normal workers require `WORKER_LANE=interactive|background`; they never accept
 a raw allowlist. A bounded maintenance process requires

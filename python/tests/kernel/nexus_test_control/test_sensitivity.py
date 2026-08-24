@@ -153,6 +153,51 @@ def test_priority_manifest_canonicalizes_a_file_level_proof(tmp_path: Path) -> N
     assert canonical_proof(tmp_path, f"pytest:{path}") == exact
 
 
+def test_priority_manifest_admits_a_whole_file_route_beside_one_exact_node(
+    tmp_path: Path,
+) -> None:
+    """Risk: adding a whole-file selection route makes the fault-bound node ambiguous."""
+
+    path = "python/tests/service/test_owner.py"
+    exact = f"pytest:{path}::test_exact_owner"
+    manifest = {
+        "version": 1,
+        "priority_risks": [{"proofs": [f"pytest:{path}", exact]}],
+        "journeys": [],
+    }
+    target = tmp_path / "testdata/proofs.json"
+    target.parent.mkdir(parents=True)
+    target.write_text(json.dumps(manifest))
+
+    assert canonical_proof(tmp_path, f"pytest:{path}") == exact
+    assert canonical_proof(tmp_path, exact) == exact
+
+    manifest["priority_risks"] = [{"proofs": [exact, f"pytest:{path}::test_second_owner"]}]
+    target.write_text(json.dumps(manifest))
+    with pytest.raises(SensitivityError, match="multiple priority nodes"):
+        canonical_proof(tmp_path, f"pytest:{path}")
+
+
+def test_explicit_exact_proof_is_never_redirected_to_another_priority_node(
+    tmp_path: Path,
+) -> None:
+    """Risk: focused sensitivity runs a different node from the requested proof."""
+
+    path = "python/tests/service/test_owner.py"
+    priority = f"pytest:{path}::test_priority_owner"
+    requested = f"pytest:{path}::test_prompt_boundary"
+    manifest = {
+        "version": 1,
+        "priority_risks": [{"proofs": [priority]}],
+        "journeys": [],
+    }
+    target = tmp_path / "testdata/proofs.json"
+    target.parent.mkdir(parents=True)
+    target.write_text(json.dumps(manifest))
+
+    assert canonical_proof(tmp_path, requested) == requested
+
+
 def test_base_sensitivity_runs_the_overlaid_proof_red_then_current_green(
     tmp_path: Path,
 ) -> None:

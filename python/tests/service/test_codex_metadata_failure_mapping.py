@@ -5,11 +5,11 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import AgentTurn, Media
 from nexus.errors import ApiErrorCode
-from tests.service.test_codex_metadata_enrichment import (
-    _audit_requests,
-    _host,
-    _seed_media_job,
-    _start_worker,
+from tests.testkit.codex_metadata import (
+    audit_requests,
+    scripted_codex_host,
+    seed_media_job,
+    start_worker,
 )
 from tests.testkit.worker import controller_run, kill_and_forget_process, wait_for_job
 
@@ -17,16 +17,16 @@ from tests.testkit.worker import controller_run, kill_and_forget_process, wait_f
 def test_native_timeout_persists_as_a_distinct_metadata_failure(engine: Engine) -> None:
     """Risk: a typed native failure is collapsed into a generic runtime outcome."""
     run = controller_run()
-    seeded = _seed_media_job(engine)
+    seeded = seed_media_job(engine)
 
-    with _host(run, "timeout") as host:
-        worker = _start_worker(run, host.socket_path)
+    with scripted_codex_host(run, "timeout") as host:
+        worker = start_worker(run, host.socket_path)
         try:
             terminal = wait_for_job(engine, seeded.job_id, status="succeeded", attempts=1)
         finally:
             kill_and_forget_process(worker)
 
-        assert len(_audit_requests(host.audit_path)) == 1
+        assert len(audit_requests(host.audit_path)) == 1
 
     expected_code = ApiErrorCode.E_METADATA_AGENT_TIMEOUT.value
     assert terminal[4] == {
@@ -49,3 +49,6 @@ def test_native_timeout_persists_as_a_distinct_metadata_failure(engine: Engine) 
     assert turn is not None
     assert turn.outcome == "failed"
     assert turn.error_code == "turn_timeout"
+    assert turn.error_detail == (
+        "codex agent host turn_stream: provider terminal failed: turn_timeout"
+    )

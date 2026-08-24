@@ -10,9 +10,7 @@ from nexus.db.models import Media, ProcessingStatus
 from nexus.errors import ApiErrorCode, ConflictError, ForbiddenError, NotFoundError
 from nexus.jobs.queue import lock_jobs_for_payload
 from nexus.services.durable_step_journal import Uncertain, decode_step_states
-from nexus.services.metadata_dispatch import enqueue_metadata_enrichment
-
-_STEP_PATH = "codex/metadata"
+from nexus.services.metadata_dispatch import METADATA_STEP_PATH, enqueue_metadata_enrichment
 
 
 def retry_metadata_for_viewer(
@@ -50,7 +48,7 @@ def retry_metadata_for_viewer(
         expected_payload_match={"media_id": str(media_id)},
     )
     if any(
-        (state := decode_step_states(job.payload).get(_STEP_PATH)) is not None
+        (state := decode_step_states(job.payload).get(METADATA_STEP_PATH)) is not None
         and state.dispatch_phase is Uncertain
         for job in jobs
     ):

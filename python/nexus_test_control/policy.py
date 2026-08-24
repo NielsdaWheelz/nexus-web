@@ -23,7 +23,36 @@ class PolicyViolation:
 
 
 _BUILTIN_PYTEST_MARKS = frozenset({"filterwarnings", "parametrize", "usefixtures"})
-_OWNED_MODULE_PREFIXES = ("nexus", "nexus_test_control")
+# First-party behavior proofs may not monkeypatch. `apps.codex_agent` is listed
+# explicitly: the private host boundary is pinned to real UDS processes, so its
+# constants and helpers must never be patched into a laboratory shape. The one
+# remaining `apps.worker` entrypoint harness (test_runtime_health.py) predates
+# this gate and is the only sanctioned residue outside it.
+_OWNED_MODULE_PREFIXES = ("nexus", "nexus_test_control", "apps.codex_agent")
+
+
+def _owned_module(name: str) -> bool:
+    """Decide ownership on package boundaries, never on a raw string prefix."""
+    return any(name == prefix or name.startswith(prefix + ".") for prefix in _OWNED_MODULE_PREFIXES)
+
+
+def _owned_reach(name: str) -> tuple[str, ...] | None:
+    """Return the attribute chain through which a bound module reaches owned code.
+
+    ``()`` means the binding itself is owned; ``("codex_agent",)`` means a
+    binding of ``apps`` reaches owned code only through that attribute; ``None``
+    means no owned module lies at or under the binding.
+    """
+    if _owned_module(name):
+        return ()
+    chains = [
+        tuple(prefix.removeprefix(name + ".").split("."))
+        for prefix in _OWNED_MODULE_PREFIXES
+        if prefix.startswith(name + ".")
+    ]
+    return min(chains, key=len) if chains else None
+
+
 _RAW_SQL_SETUP = re.compile(r"^\s*(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE)\b", re.I)
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
@@ -91,6 +120,7 @@ _PRODUCT_SOURCE_ROOTS: tuple[tuple[str, frozenset[str]], ...] = (
     ("node/ingest", frozenset({".mjs"})),
     ("migrations/alembic", frozenset({".py"})),
 )
+_PRODUCT_SOURCE_FILES = frozenset({"deploy/hetzner/release.py"})
 _RETIRED_PRODUCT_TEST_SEAMS = (
     "REAL_MEDIA_PROVIDER_FIXTURES",
     "REAL_MEDIA_FIXTURE_DIR",
@@ -374,7 +404,8 @@ def python_ast_violations(path: str, source: str) -> tuple[PolicyViolation, ...]
         return (PolicyViolation("python-syntax", path, error.msg, error.lineno),)
 
     violations: list[PolicyViolation] = []
-    owned_aliases: set[str] = set()
+    # Local binding -> attribute chain that reaches owned code from it.
+    owned_aliases: dict[str, tuple[str, ...]] = {}
     sleep_modules = {"asyncio", "time", "anyio", "trio"}
     sleep_aliases: set[str] = set()
     skip_aliases: set[str] = set()
@@ -405,8 +436,17 @@ def python_ast_violations(path: str, source: str) -> tuple[PolicyViolation, ...]
                     pytest_aliases.add(alias.asname or alias.name)
                 if alias.name == "unittest":
                     unittest_aliases.add(alias.asname or alias.name)
-                if alias.name.startswith(_OWNED_MODULE_PREFIXES):
-                    owned_aliases.add(alias.asname or alias.name.split(".", 1)[0])
+                if alias.asname is not None:
+                    reach = _owned_reach(alias.name)
+                    if reach is not None:
+                        owned_aliases[alias.asname] = reach
+                else:
+                    # `import a.b.c` binds only `a`; every owned module at or under
+                    # any imported prefix is reachable through that root binding.
+                    root = alias.name.split(".", 1)[0]
+                    reach = _owned_reach(root)
+                    if reach is not None:
+                        owned_aliases[root] = min((reach, owned_aliases.get(root, reach)), key=len)
                 if alias.name in sleep_modules:
                     sleep_modules.add(alias.asname or alias.name)
         elif isinstance(node, ast.ImportFrom):
@@ -419,8 +459,10 @@ def python_ast_violations(path: str, source: str) -> tuple[PolicyViolation, ...]
                         "python-internal-mock", path, "unittest.mock is forbidden", node.lineno
                     )
                 )
-            if module.startswith(_OWNED_MODULE_PREFIXES):
-                owned_aliases.update(alias.asname or alias.name for alias in node.names)
+            for alias in node.names:
+                reach = _owned_reach(f"{module}.{alias.name}" if module else alias.name)
+                if reach is not None:
+                    owned_aliases[alias.asname or alias.name] = reach
             if module in {"asyncio", "time", "anyio", "trio"}:
                 sleep_aliases.update(
                     alias.asname or alias.name for alias in node.names if alias.name == "sleep"
@@ -569,9 +611,12 @@ def python_ast_violations(path: str, source: str) -> tuple[PolicyViolation, ...]
             target = node.args[0]
             target_parts = _attribute_parts(target)
             string_target = target.value if isinstance(target, ast.Constant) else None
-            if (target_parts and target_parts[0] in owned_aliases) or (
-                isinstance(string_target, str) and string_target.startswith(_OWNED_MODULE_PREFIXES)
-            ):
+            if (
+                target_parts
+                and target_parts[0] in owned_aliases
+                and tuple(target_parts[1 : 1 + len(owned_aliases[target_parts[0]])])
+                == owned_aliases[target_parts[0]]
+            ) or (isinstance(string_target, str) and _owned_module(string_target)):
                 violations.append(
                     PolicyViolation(
                         "python-owned-monkeypatch",
@@ -1169,7 +1214,7 @@ def proof_contract_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
             )
         )
     proof_file_owners: dict[str, str] = {}
-    canonical_nodes: dict[str, str] = {}
+    exact_nodes_by_path: dict[str, str] = {}
     for risk in data["priority_risks"]:
         location = f"testdata/proofs.json#{risk['id']}"
         if not risk["proofs"]:
@@ -1206,20 +1251,19 @@ def proof_contract_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                             f"physical proof file is already owned by {previous}: {proof_file}",
                         )
                     )
-                # A changed test file selects its file-level proof, and
-                # sensitivity resolves that path to one canonical node. Two
-                # registered nodes for one file make that resolution ambiguous
-                # and abort the run, so the registry admits exactly one node
-                # per proof file.
-                registered = canonical_nodes.setdefault(proof_file, proof)
-                if registered != proof:
-                    violations.append(
-                        PolicyViolation(
-                            "proof-canonical-node",
-                            location,
-                            f"proof owner already has the canonical node {registered}: {proof}",
+                # A whole-file proof may coexist with one fault-bound exact
+                # node. Sensitivity maps the file route to that node; a second
+                # exact node would make the mapping ambiguous.
+                if "::" in proof.partition(":")[2]:
+                    registered = exact_nodes_by_path.setdefault(proof_file, proof)
+                    if registered != proof:
+                        violations.append(
+                            PolicyViolation(
+                                "proof-sensitivity-owner",
+                                location,
+                                f"proof path has multiple exact priority nodes: {proof_file}",
+                            )
                         )
-                    )
         declared_capabilities = set(risk["capabilities"])
         direct_capabilities = declared_capabilities.intersection(
             capability.value for capability in PRIORITY_RISK_DIRECT_CAPABILITY_OWNERS
@@ -1751,7 +1795,7 @@ def _fault_changed_paths(patch: str) -> tuple[str, ...]:
 
 
 def _is_product_path(path: str) -> bool:
-    product = any(
+    product = path in _PRODUCT_SOURCE_FILES or any(
         (path == source_root or path.startswith(f"{source_root}/"))
         and Path(path).suffix in suffixes
         for source_root, suffixes in _PRODUCT_SOURCE_ROOTS

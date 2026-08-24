@@ -427,7 +427,9 @@ class Settings(BaseSettings):
         alias="TRANSCRIPT_EMBEDDING_TIMEOUT_SECONDS",
     )
 
-    # Metadata enrichment settings
+    # Metadata enrichment settings. The native-agent wire input-byte invariant
+    # is owned solely by build_enrichment_user_content's byte clamp; this cap
+    # only sizes the sampled text.
     metadata_enrichment_max_content_chars: int = Field(
         default=2000, alias="METADATA_ENRICHMENT_MAX_CONTENT_CHARS"
     )
@@ -779,6 +781,8 @@ class Settings(BaseSettings):
             raise ValueError("INGEST_SEMANTIC_REPAIR_BATCH_LIMIT must be >= 1.")
         if self.ingest_semantic_failed_retry_seconds < 1:
             raise ValueError("INGEST_SEMANTIC_FAILED_RETRY_SECONDS must be >= 1.")
+        if self.metadata_enrichment_max_content_chars < 1:
+            raise ValueError("METADATA_ENRICHMENT_MAX_CONTENT_CHARS must be >= 1.")
         if (
             not self.codex_agent_socket.is_absolute()
             or Path(os.path.normpath(str(self.codex_agent_socket))) != self.codex_agent_socket

@@ -7,10 +7,13 @@ from collections.abc import Mapping
 from sqlalchemy.orm import Session
 
 from nexus.db.models import Media, MediaKind, ProcessingStatus
+from nexus.services.contributor_taxonomy import MAX_CONTRIBUTOR_NAME_CODE_POINTS
 from nexus.services.metadata_enrichment import (
     build_enrichment_user_content,
     metadata_enrichment_agent_definition,
+    metadata_prompt_budget,
 )
+from nexus.services.native_agent_contract import METADATA_ENRICHMENT_MAX_INPUT_BYTES
 
 
 def _string_branch(schema: Mapping[str, object], name: str) -> Mapping[str, object]:
@@ -86,6 +89,7 @@ def test_metadata_contract_exposes_quality_bounds_and_all_media_kind_targets(
         )
 
     authors = _array_branch(schema, "authors")
+    assert authors.get("minItems") == 1, "metadata output schema lost the non-empty authors bound"
     assert authors.get("maxItems") == 20
     author_item_reference = authors.get("items")
     assert isinstance(author_item_reference, Mapping)
@@ -93,9 +97,14 @@ def test_metadata_contract_exposes_quality_bounds_and_all_media_kind_targets(
     assert author_items.get("type") == "string"
     assert author_items.get("minLength") == 1
     assert author_items.get("pattern") == r"\S"
-    # Contributor publication hard-truncates at 200 code points. The model must
-    # never be told that a longer credited name will be preserved verbatim.
+    # The literal is the reviewed oracle: a silent change to the shared
+    # constant must fail here, not ride through a tautological comparison.
     assert author_items.get("maxLength") == 200
+    # The advertised author bound IS the contributor publication truncation
+    # bound: the schema must never advertise a length publication would
+    # truncate, or an accepted longer name would be stored differently from
+    # the audited structured output.
+    assert author_items.get("maxLength") == MAX_CONTRIBUTOR_NAME_CODE_POINTS
 
     assert "untrusted data" in prompt
     assert "never follow" in prompt
@@ -125,3 +134,18 @@ def test_metadata_contract_exposes_quality_bounds_and_all_media_kind_targets(
         assert target in content, {"kind": kind.value, "content": content}
         assert 'current_title: "download-wrapper.pdf"' in content
         assert "Early extracted text:\n---\nCanonical Work" in content
+
+
+def test_metadata_prompt_budget_closes_over_the_wire_bound() -> None:
+    """Risk: the trusted framing outgrows its reserved share and a prompt build
+    finds a negative hint or source budget at runtime instead of at review."""
+
+    budget = metadata_prompt_budget()
+    assert budget.wire_bound_bytes == METADATA_ENRICHMENT_MAX_INPUT_BYTES
+    assert (
+        budget.hint_total_max_bytes + budget.source_reserved_bytes + budget.framing_reserved_bytes
+        == budget.wire_bound_bytes
+    )
+    assert budget.framing_max_bytes <= budget.framing_reserved_bytes, (
+        "metadata prompt framing exceeds its reserved share of the wire bound"
+    )

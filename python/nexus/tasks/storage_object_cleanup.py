@@ -36,6 +36,7 @@ from nexus.errors import ApiErrorCode, ConflictError, NotFoundError
 from nexus.jobs.queue import (
     JobExecutionContext,
     RescheduleRequested,
+    ScheduleAt,
     enqueue_job,
     find_nonterminal_jobs_for_payload,
     get_job,
@@ -529,9 +530,9 @@ def _resolve_armed(
     if decision == _DELETE_REQUIRED:
         return _perform_delete(db, context, storage_path, base_payload)
     if decision == "retained-window":
-        return RescheduleRequested(available_at=delete_not_before)
+        return RescheduleRequested(schedule=ScheduleAt(delete_not_before))
     # Live intent: wait for teardown to delete the media or void the intent.
-    return RescheduleRequested(available_at=_now_utc(db) + timedelta(seconds=poll_seconds))
+    return RescheduleRequested(schedule=ScheduleAt(_now_utc(db) + timedelta(seconds=poll_seconds)))
 
 
 def _perform_delete(

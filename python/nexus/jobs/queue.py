@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, assert_never
 from uuid import UUID
 
 from sqlalchemy import text
@@ -113,6 +113,29 @@ class JobExecutionContext:
 
 
 @dataclass(frozen=True)
+class ScheduleAt:
+    """Run the rescheduled attempt at one owned absolute instant."""
+
+    instant: datetime
+
+
+@dataclass(frozen=True)
+class ScheduleAfter:
+    """Run the rescheduled attempt after a delay measured on the database clock."""
+
+    seconds: int
+
+    def __post_init__(self) -> None:
+        # justify-service-invariant-check: a non-negative integer is not
+        # expressible in the type system.
+        if self.seconds < 0:
+            raise ValueError("ScheduleAfter.seconds must be non-negative")
+
+
+type RescheduleSchedule = ScheduleAt | ScheduleAfter
+
+
+@dataclass(frozen=True)
 class RescheduleRequested:
     """Sentinel handler return value requesting a self-reschedule.
 
@@ -125,19 +148,8 @@ class RescheduleRequested:
     this marker is the one supported mechanism.
     """
 
-    available_at: datetime | None = None
+    schedule: RescheduleSchedule
     payload: Mapping[str, Any] | None = None
-    delay_seconds: int | None = None
-
-    def __post_init__(self) -> None:
-        if (self.available_at is None) == (self.delay_seconds is None):
-            raise ValueError(
-                "RescheduleRequested requires exactly one of available_at or delay_seconds"
-            )
-        if self.delay_seconds is not None and (
-            type(self.delay_seconds) is not int or self.delay_seconds < 0
-        ):
-            raise ValueError("RescheduleRequested.delay_seconds must be a non-negative integer")
 
 
 # The single definition of "the Heavy lease is occupied", for queue-owned SQL that
@@ -839,93 +851,100 @@ def promote_unclaimed_job(
 
 
 def heartbeat_job(
-    db: Session,
     *,
-    job_id: UUID,
-    worker_id: str,
+    session_factory: Callable[[], Session],
+    context: JobExecutionContext,
     lease_seconds: int,
-    resource_class: JobResourceClass,
 ) -> bool:
-    """Atomically extend one running job and its matching Heavy capacity lease.
+    """Atomically extend one exact running attempt and its Heavy capacity lease.
 
-    Every running-job transition locks the exact job before its Heavy capacity
-    holder. Light work uses only an unlocked verification read, so a Light
-    heartbeat never contends for the Heavy row.
+    This operation owns its Session so it cannot commit a caller's unrelated
+    state. It follows the queue-wide job-before-capacity lock order: a heartbeat
+    waiting behind publication holds no global capacity lock, while a completed
+    Heavy renewal publishes one identical expiry for the job and its holder.
+    Light work only performs an unlocked capacity verification read.
     """
-    job = (
-        db.execute(
-            text(
-                """
-                SELECT attempts
-                FROM background_jobs
-                WHERE id = :job_id
-                  AND status = 'running'
-                  AND claimed_by = :worker_id
-                  AND lease_expires_at > clock_timestamp()
-                FOR UPDATE
-                """
-            ),
-            {"job_id": job_id, "worker_id": worker_id},
+    with session_factory() as db, db.begin():
+        job = (
+            db.execute(
+                text(
+                    """
+                    SELECT attempts
+                    FROM background_jobs
+                    WHERE id = :job_id
+                      AND status = 'running'
+                      AND claimed_by = :worker_id
+                      AND attempts = :attempt_no
+                      AND lease_expires_at > clock_timestamp()
+                    FOR UPDATE
+                    """
+                ),
+                {
+                    "job_id": context.job_id,
+                    "worker_id": context.worker_id,
+                    "attempt_no": context.attempt_no,
+                },
+            )
+            .mappings()
+            .first()
         )
-        .mappings()
-        .first()
-    )
-    if job is None:
-        return False
-    capacity = (
-        _lock_heavy_capacity_for_job(db, job_id)
-        if resource_class == "Heavy"
-        else _read_heavy_capacity(db)
-    )
-    if capacity is None:
-        return False
-    if not _capacity_matches_running_job(
-        capacity,
-        job_id=job_id,
-        worker_id=worker_id,
-        attempt_no=int(job["attempts"]),
-        resource_class=resource_class,
-    ):
-        return False
-    renewed = db.execute(
-        text(
-            """
-            UPDATE background_jobs
-            SET lease_expires_at =
-                    clock_timestamp()
-                    + (CAST(:lease_seconds AS integer) * interval '1 second'),
-                updated_at = clock_timestamp()
-            WHERE id = :job_id
-            RETURNING lease_expires_at
-            """
-        ),
-        {"job_id": job_id, "lease_seconds": max(int(lease_seconds), 1)},
-    ).scalar_one()
-    if resource_class == "Heavy":
-        updated = db.execute(
+        if job is None:
+            return False
+        capacity = (
+            _lock_heavy_capacity_for_job(db, context.job_id)
+            if context.resource_class == "Heavy"
+            else _read_heavy_capacity(db)
+        )
+        if capacity is None or not _capacity_matches_running_job(
+            capacity,
+            job_id=context.job_id,
+            worker_id=context.worker_id,
+            attempt_no=context.attempt_no,
+            resource_class=context.resource_class,
+        ):
+            return False
+        renewed = db.execute(
             text(
                 """
-                UPDATE background_job_capacity_leases
-                SET lease_expires_at = :lease_expires_at,
+                UPDATE background_jobs
+                SET lease_expires_at =
+                        clock_timestamp()
+                        + (CAST(:lease_seconds AS integer) * interval '1 second'),
                     updated_at = clock_timestamp()
-                WHERE resource_class = 'Heavy'
-                  AND job_id = :job_id
-                  AND worker_id = :worker_id
-                  AND attempt_no = :attempt_no
-                RETURNING resource_class
+                WHERE id = :job_id
+                RETURNING lease_expires_at
                 """
             ),
             {
-                "job_id": job_id,
-                "worker_id": worker_id,
-                "attempt_no": int(job["attempts"]),
-                "lease_expires_at": renewed,
+                "job_id": context.job_id,
+                "lease_seconds": max(int(lease_seconds), 1),
             },
-        ).first()
-        # justify-defect: Heavy heartbeat holds the exact job and capacity rows
-        # from verification through renewal, so the holder cannot move.
-        if updated is None:
-            raise AssertionError("Heavy capacity holder changed while locked")
+        ).scalar_one()
+        if context.resource_class == "Heavy":
+            updated = db.execute(
+                text(
+                    """
+                    UPDATE background_job_capacity_leases
+                    SET lease_expires_at = :lease_expires_at,
+                        updated_at = clock_timestamp()
+                    WHERE resource_class = 'Heavy'
+                      AND job_id = :job_id
+                      AND worker_id = :worker_id
+                      AND attempt_no = :attempt_no
+                    RETURNING resource_class
+                    """
+                ),
+                {
+                    "job_id": context.job_id,
+                    "worker_id": context.worker_id,
+                    "attempt_no": context.attempt_no,
+                    "lease_expires_at": renewed,
+                },
+            ).first()
+            # justify-defect: this transaction holds both the exact job and its
+            # capacity row, so the verified holder cannot move underneath it.
+            if updated is None:
+                raise AssertionError("Heavy capacity holder changed while locked")
     return True
 
 
@@ -1218,17 +1237,16 @@ def reschedule_running_job(
     job_id: UUID,
     worker_id: str,
     attempt_no: int,
-    available_at: datetime | None = None,
-    delay_seconds: int | None = None,
+    schedule: RescheduleSchedule,
     payload: Mapping[str, Any] | None = None,
 ) -> bool:
     """Self-reschedule a running job back to pending without burning its retry budget.
 
     CAS-fenced exactly like update_running_job_payload (exact running attempt,
     claimant, and unexpired lease). Sets status='pending', optionally a new
-    payload, and clears the claim/lease. Absolute schedules preserve their owned
-    instant; relative schedules are computed from PostgreSQL ``now()`` in the
-    same statement that records ``updated_at``.
+    payload, and clears the claim/lease. `ScheduleAt` preserves its owned
+    instant; `ScheduleAfter` is computed from PostgreSQL ``now()`` in the same
+    statement that records ``updated_at``.
 
     attempts is compensated (attempts - 1, floored at 0) to undo the +1 that
     claim_next_job already applied when this attempt started, so time spent
@@ -1237,12 +1255,13 @@ def reschedule_running_job(
     request this by returning that marker, and the worker -- not the handler
     -- calls this function and skips complete_job/fail_job for that attempt.
     """
-    if (available_at is None) == (delay_seconds is None):
-        raise ValueError(
-            "reschedule_running_job requires exactly one of available_at or delay_seconds"
-        )
-    if delay_seconds is not None and (type(delay_seconds) is not int or delay_seconds < 0):
-        raise ValueError("delay_seconds must be a non-negative integer")
+    match schedule:
+        case ScheduleAt(instant=instant):
+            available_at, delay_seconds = instant, None
+        case ScheduleAfter(seconds=seconds):
+            available_at, delay_seconds = None, seconds
+        case _ as unreachable:
+            assert_never(unreachable)
 
     owned = db.execute(
         text(

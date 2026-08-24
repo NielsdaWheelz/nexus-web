@@ -472,6 +472,12 @@ def declared_fault_for_proof(repo_root: Path, proof: str) -> str | None:
 
 
 def canonical_proof(repo_root: Path, proof: str) -> str:
+    # An explicit node is already the caller's exact proof identity. Never
+    # redirect it to a different priority node merely because both live in the
+    # same file. Whole-file selections alone need a canonical sensitivity
+    # owner.
+    if "::" in proof.partition(":")[2]:
+        return proof
     path = _proof_path(proof)
     manifest_path = repo_root / "testdata/proofs.json"
     if not manifest_path.is_file():
@@ -483,9 +489,13 @@ def canonical_proof(repo_root: Path, proof: str) -> str:
         for candidate in risk.get("proofs", [])
         if _proof_path(candidate) == path
     }
-    if len(candidates) > 1:
+    # A proof file may be declared both as a whole-file priority route and as
+    # one node-qualified canonical entry (the fault-bound node). The exact node
+    # is the sensitivity owner; only competing exact nodes are ambiguous.
+    exact = {candidate for candidate in candidates if "::" in candidate.partition(":")[2]}
+    if len(exact) > 1:
         raise SensitivityError(f"proof owner has multiple priority nodes: {path}")
-    return next(iter(candidates), proof)
+    return next(iter(exact or candidates), proof)
 
 
 @contextmanager

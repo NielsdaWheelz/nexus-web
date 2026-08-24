@@ -200,6 +200,11 @@ The v1 operation catalog contains exactly one entry:
 | queue resource class | `Heavy` |
 | host memory | 128 MiB reservation; 384 MiB memory hard limit; cgroup swap disabled |
 
+`PermissionPolicy.allowed_tools=("*",)` remains the SDK's outer policy sentinel;
+it does not grant a Codex tool. `CodexNativeOptions(builtin_tools="disabled")`
+is the native capability boundary, and any residual tool or permission event
+still fails closed.
+
 Confinement comes from disabled built-in tools, the empty container, read-only
 filesystem, disabled tool network, denied approvals, absent mounts, and absent
 credentials. Any residual `AgentToolUse` or `AgentPermissionRequest` event is a
@@ -243,6 +248,14 @@ status, typed failure, final text, structured output, session ref, usage,
 bounded redacted diagnostics, SDK version, and bundled Codex runtime version.
 The worker requires exactly one terminal. HTTP validation errors occur before
 session open; loss after request acceptance is ambiguous.
+
+The contract owns the stream bounds the worker enforces: at most 1,024 frames,
+256 KiB per frame, and 1 MiB per stream. The host authors every stream inside
+them by construction — consecutive text deltas coalesce into bounded runs and
+repeated native event types collapse into one frame — and a turn that would
+still overrun them ends with the typed `output_limit_exceeded` terminal. The
+worker's identical check can therefore fire only on a host defect, never turn a
+completed, billed turn into an uncertain job.
 
 This is API-shaped for composability, not OpenAI-compatible. Later operations
 add tagged command variants; they do not add optional fields to the metadata
@@ -325,8 +338,8 @@ Host requirements:
 
 - dedicated non-root uid; `cap_drop: ALL`; `no-new-privileges`; read-only root;
   bounded tmpfs, memory, CPU, PIDs, output, and timeout;
-- persistent `0700` state volume mounted only by the host; shared run directory
-  contains only the `0660` Unix socket;
+- persistent `0700` state filesystem directly bind-mounted only by the host;
+  shared run directory contains only the `0660` Unix socket;
 - no Nexus `env_file`, database URL, provider keys, object-store keys, Docker
   socket, source/library mounts, or host home;
 - a fixed empty cwd and no caller-selected paths;
@@ -340,10 +353,18 @@ Host requirements:
 - the host uses a dedicated internet-egress bridge with no database or
   application-service peers, and release inspects the bridge's exact live
   membership rather than trusting only the host container's network name;
-- VM storage/backups are encrypted; ordinary backup excludes `auth.json` and
-  re-enrollment is the recovery path;
+- production credential state is a dedicated LUKS2 container; the
+  release-owned PostgreSQL backup neither mounts nor reads it, provider
+  snapshots may contain only its ciphertext, and every other backup or unlock
+  secret remains explicit operator evidence; re-enrollment is the recovery
+  path;
+- the sole turn slot is held through runtime close even when the requesting
+  worker disconnects after acceptance: the turn is interrupted, its runtime
+  closed, and only then may another turn be admitted;
 - graceful shutdown interrupts the active turn and reaps descendants before the
-  container exits.
+  container exits; the deployment, the release controller's host stop, and the
+  live-container inspection all grant the host's published 45-second stop
+  budget (request drain, runtime close, exit margin).
 
 Enrollment is an explicit operator handoff: provision the empty volume, run the
 documented device-login command against the exact host profile directory, verify
@@ -438,14 +459,21 @@ green, then refactored without weakening the oracle. Use `./scripts/test` only.
 | Ownership boundary | One focused proof | Oracle |
 |---|---|---|
 | command/event algebra | `python/tests/kernel/test_native_agent_contract.py` | strict tagged round trip; unknown/drifted values rejected |
-| agent host process | `python/tests/service/test_codex_agent_host.py` | real UDS process + upstream `ScriptedAgentRuntime`; insufficient/busy capacity returns exact 503 before runtime construction; admitted turn preserves policy, grammar, cleanup |
+| agent host process | `python/tests/service/test_codex_agent_host.py` | real UDS process + upstream `ScriptedAgentRuntime`; insufficient/busy capacity returns exact 503 before runtime construction; admitted turn preserves policy, grammar, cleanup; a disconnected consumer holds the slot through runtime close; per-delta native streams stay within the frame bound |
 | queue capacity | `python/tests/service/test_heavy_job_capacity.py` | real PostgreSQL workers cannot claim metadata while parser/reindex holds Heavy; metadata becomes claimable after release |
 | storage migration | `python/tests/migrations/test_codex_personal_metadata.py` | real PostgreSQL upgrade/convergence; legacy metadata calls absent; shape preserved |
 | metadata durable job | `python/tests/service/test_codex_metadata_enrichment.py` | real PostgreSQL + real worker process + test-owned protocol-valid UDS host; capacity refusal restores Prepared, preserves attempt and incomplete ledger, then one accepted success; existing replay and quota cases remain |
 | accepted transport loss | `python/tests/service/test_codex_metadata_transport_durability.py` | real worker observes HTTP acceptance followed by disconnect; ledger stays incomplete and replay stays suspended |
 | live subscription wire | `python/tests/hosted/nightly/test_codex_personal_metadata.py` | one bounded real Luna structured turn from a dedicated test profile; ChatGPT auth, usage, versions, no tools |
 | deployment wiring | existing production deploy behavior/journey owner | measured 1,900 MiB fixture passes; low headroom/PSI blocks before mutation; exact cgroup/image/isolation/health/rollback |
-| existing-VPS qualification | `deploy/hetzner/prove-codex-capacity.sh <source-sha>` and immutable JSON evidence | exact image/profile/384 MiB cgroup; one cold plus two warm turns; peak/headroom/PSI/OOM/service-health assertions; no prose or credential evidence |
+| existing-VPS qualification | `deploy/hetzner/prove-codex-capacity.sh <source-sha>` and immutable JSON evidence | exact image/profile/384 MiB cgroup; one cold plus two warm turns; peak/headroom/PSI/OOM assertions plus evidence-free predecessor-health admission; no prose or credential evidence |
+
+The hosted runner is a credential boundary, not merely a label. Do not register
+it directly to a public repository. Use a private repository, a separate private
+orchestrator, or an organization runner group restricted to this exact workflow
+on `main`. The runner has no unrelated credentials, production reachability,
+Docker authority, or general job-time `sudo`; OS packages and AppArmor are
+pre-provisioned outside the workflow.
 
 The local fake runs behind the production UDS client boundary; product code has
 no fixture mode. Do not mock PostgreSQL, the queue, the worker, or the metadata
@@ -464,25 +492,36 @@ The existing-VPS qualification runs only after operator enrollment and before
 the first 0216 promotion. It sends three bounded synthetic metadata commands
 through the real UDS host without database or application credentials. Its
 run-bound evidence contains only source SHA, worker digest, SDK/runtime
-versions, cgroup limit/current/peak, minimum host available memory, maximum PSI,
-OOM counter deltas, terminal status/usage presence, tool-event count, and named
-service health. The command, not the operator, validates every §8 threshold,
-three successful structured turns, zero tool/permission events, zero new OOM
-events, and healthy PostgreSQL, API, Caddy, and workers.
+versions, a `measured_at` timestamp, cgroup limit/current/peak, minimum host
+available memory, maximum PSI, OOM counter deltas, terminal status/usage
+presence, tool-event count, and named service health. The command, not the
+operator, validates every §8 threshold, three successful structured turns,
+zero tool/permission events, zero new OOM events, and healthy PostgreSQL, API,
+Caddy, and workers.
 
 The command deletes neither application data nor Codex state and never records
 prompt, output, auth, or raw SDK frames. A failed or stale proof cannot authorize
 promotion. It asks the immutable release controller to write root-owned `0444`
 evidence at `/var/lib/nexus/releases/codex-capacity/<source-sha>.json`; the first
-0216 promotion refuses absent, malformed, stale, or wrong-image evidence. The
-command cleans only its named ephemeral canary container and socket.
+0216 promotion refuses absent, malformed, stale (`measured_at` older than 72
+hours), or wrong-image evidence. The command cleans only its named ephemeral
+canary container and socket.
 
 Insufficient pre-admission headroom produces `not_run`; auth or quota
-unavailability produces `provider_blocked`. Neither writes qualifying evidence,
-and the unchanged SHA may be repeated only after natural pressure recovery or
-documented re-enrollment/quota recovery. A cgroup peak, OOM, PSI,
-service-health, policy, protocol, or structured-output breach writes failed
-evidence and blocks this cutover; rerunning cannot replace it.
+unavailability produces `provider_blocked`; pre-accept unavailability or
+accepted transport loss produces `transport_retriable`. None writes qualifying
+evidence, and the unchanged SHA may be repeated only after the corresponding
+pressure, account, or transport fault is resolved. The controller's own
+measurements classify before the canary terminal: a cgroup peak, OOM kill, or
+host headroom/PSI breach sampled while the host ran writes failed evidence
+whatever the canary went on to report, and a host the kernel OOM-killed during
+the turns is that breach even though its cgroup is gone. A breach whose
+immutable record cannot be written is a defect of the run, never a retriable
+result. PostgreSQL, Caddy, API, and
+worker health are observations of the unchanged predecessor: unhealthy state
+blocks measurement without evidence and remains retriable for the same SHA. A
+cgroup peak, OOM, PSI, host-policy, protocol, or structured-output breach writes
+failed evidence and blocks this cutover; rerunning cannot replace it.
 
 Register `durable-codex-host-capacity-admission-bypass`, which changes only the
 host admission result from refused to admitted. Bind it to the exact real-UDS
@@ -548,6 +587,7 @@ state. Nothing in metadata v1 pre-decides those product semantics.
 Authoritative references:
 
 - [`docs/modules/llms.md`](../modules/llms.md)
+- [`docs/runbooks/codex-personal-agent-host.md`](../runbooks/codex-personal-agent-host.md)
 - [`llm-calling/docs/agent-runtime.md`](../../../llm-calling/docs/agent-runtime.md)
 - [Official Codex SDK](https://learn.chatgpt.com/docs/codex-sdk)
 - [Official Codex authentication](https://learn.chatgpt.com/docs/auth)
