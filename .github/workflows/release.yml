@@ -16,6 +16,21 @@ on:
         description: Monotonically increasing positive Android version code.
         required: true
         type: number
+      bootstrap_no_device:
+        description: >-
+          Skip the signed-physical device stages. Only for the bootstrap
+          release, while no published release carries offline reading;
+          requires previous_version_code.
+        required: false
+        default: false
+        type: boolean
+      previous_version_code:
+        description: >-
+          Published stable Android version code the bootstrap release
+          supersedes (used only with bootstrap_no_device).
+        required: false
+        default: 0
+        type: number
 
 concurrency:
   group: release-${{ inputs.tag }}
@@ -26,8 +41,11 @@ permissions:
 
 jobs:
   release:
-    runs-on: [self-hosted, linux, x64, nexus-android-usb]
-    timeout-minutes: 150
+    # The signed release runs on the protected lab runner with the dedicated
+    # USB handset. The explicit bootstrap release is the one exception: no
+    # handset exists anywhere, so it runs hosted and boots its own emulator.
+    runs-on: ${{ inputs.bootstrap_no_device && 'ubuntu-latest' || fromJSON('["self-hosted", "linux", "x64", "nexus-android-usb"]') }}
+    timeout-minutes: 360
     environment: android-release
     env:
       ANDROID_RELEASE_TAG: ${{ inputs.tag }}
@@ -47,6 +65,8 @@ jobs:
       NEXUS_ANDROID_RELEASE_PROMOTION_EPUB_MEDIA_ID: ${{ vars.NEXUS_ANDROID_RELEASE_PROMOTION_EPUB_MEDIA_ID }}
       NEXUS_ANDROID_RELEASE_PROMOTION_ARTICLE_MEDIA_ID: ${{ vars.NEXUS_ANDROID_RELEASE_PROMOTION_ARTICLE_MEDIA_ID }}
       NEXUS_ANDROID_VERSION_CODE: ${{ inputs.version_code }}
+      NEXUS_ANDROID_RELEASE_BOOTSTRAP_NO_DEVICE: ${{ inputs.bootstrap_no_device }}
+      NEXUS_ANDROID_PREVIOUS_VERSION_CODE: ${{ inputs.previous_version_code }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -85,6 +105,41 @@ jobs:
           llm-tools: "true"
           provider-runtime: "true"
 
+      - name: Boot the bootstrap emulator
+        if: inputs.bootstrap_no_device
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          avdmanager="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
+          adb="$ANDROID_HOME/platform-tools/adb"
+          yes | "$sdkmanager" --licenses >/dev/null || true
+          "$sdkmanager" --install \
+            "platform-tools" \
+            "emulator" \
+            "system-images;android-36;google_apis;x86_64" >/dev/null
+          echo no | "$avdmanager" create avd \
+            --name nexus-bootstrap \
+            --package "system-images;android-36;google_apis;x86_64" \
+            --force >/dev/null
+          nohup "$ANDROID_HOME/emulator/emulator" -avd nexus-bootstrap \
+            -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim \
+            -no-snapshot -camera-back none -camera-front none \
+            >"$RUNNER_TEMP/emulator.log" 2>&1 &
+          "$adb" wait-for-device
+          for _ in $(seq 1 120); do
+            if [ "$("$adb" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; then
+              break
+            fi
+            sleep 5
+          done
+          test "$("$adb" shell getprop sys.boot_completed | tr -d '\r')" = "1"
+          "$adb" shell input keyevent 82
+          "$adb" devices -l
+
       - name: Decode release keystore
         env:
           NEXUS_ANDROID_RELEASE_KEYSTORE_BASE64: ${{ secrets.NEXUS_ANDROID_RELEASE_KEYSTORE_BASE64 }}
@@ -104,6 +159,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          notes="Signed Nexus Android APK. Provider certification, signature verification, staged real-API offline-reading acquisition on the older USB baseline, reboot/airplane-mode cold shelf, in-place V1 reopen/progress/purge, local App Link routing, and native auth handoff passed before this draft was created."
+          if [ "$NEXUS_ANDROID_RELEASE_BOOTSTRAP_NO_DEVICE" = "true" ]; then
+            notes="Signed Nexus Android APK. Provider certification, signature verification, the manifest/player-protocol contract, the pinned API origin, and the Android device suite passed before this draft was created. The signed-physical USB baseline stages were explicitly skipped (bootstrap_no_device): no published release carries offline reading, so no in-the-wild offline state exists for them to protect. The operator device smoke follows the production deploy."
+          fi
           upload_args=()
           if gh release view "$ANDROID_RELEASE_TAG" >/dev/null 2>&1; then
             if [ "$(gh release view "$ANDROID_RELEASE_TAG" --json isDraft --jq .isDraft)" = "true" ]; then
@@ -117,7 +176,7 @@ jobs:
               --verify-tag \
               --draft \
               --title "$ANDROID_RELEASE_TAG" \
-              --notes "Signed Nexus Android APK. Provider certification, signature verification, staged real-API offline-reading acquisition on the older USB baseline, reboot/airplane-mode cold shelf, in-place V1 reopen/progress/purge, local App Link routing, and native auth handoff passed before this draft was created."
+              --notes "$notes"
           fi
           release_dirs=(test-results/runs/*/release)
           if [ "${#release_dirs[@]}" -ne 1 ] || [ ! -d "${release_dirs[0]}" ]; then

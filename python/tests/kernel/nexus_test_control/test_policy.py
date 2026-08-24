@@ -245,7 +245,8 @@ def _minimal_repository(root: Path) -> None:
         root,
         ".github/workflows/release.yml",
         'NEXUS_PROVIDER_CERTIFICATION: "1"\n'
-        "runs-on: [self-hosted, linux, x64, nexus-android-usb]\n"
+        "runs-on: ${{ inputs.bootstrap_no_device && 'ubuntu-latest' || "
+        'fromJSON(\'["self-hosted", "linux", "x64", "nexus-android-usb"]\') }}\n'
         "run: ./scripts/test release\n",
     )
     _write(

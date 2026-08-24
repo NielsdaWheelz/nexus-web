@@ -4086,6 +4086,21 @@ def _run_android_host(
         )
 
 
+def _android_device_requires_physical(
+    context: CapabilityContext, environment: Mapping[str, str]
+) -> bool:
+    """The release workflow's device proof binds the dedicated USB handset.
+
+    The explicit bootstrap release is the one exception: it has no handset
+    anywhere, so its hosted runner boots the same emulator every non-release
+    workflow already uses, and the retained android-release evidence names the
+    signed-physical stages it skipped.
+    """
+    if context.workflow is not Workflow.RELEASE:
+        return False
+    return environment.get("NEXUS_ANDROID_RELEASE_BOOTSTRAP_NO_DEVICE") != "true"
+
+
 def _run_android_device(
     context: CapabilityContext, environment: Mapping[str, str]
 ) -> CapabilityResult:
@@ -4103,7 +4118,7 @@ def _run_android_device(
     serial, device_detail = _android_device_target(
         android_root,
         environment,
-        require_physical=context.workflow is Workflow.RELEASE,
+        require_physical=_android_device_requires_physical(context, environment),
     )
     if serial is None:
         return _not_run(Capability.ANDROID_DEVICE, device_detail)
@@ -4163,7 +4178,7 @@ def _run_android_device_exact(
     serial, device_detail = _android_device_target(
         android_root,
         environment,
-        require_physical=context.workflow is Workflow.RELEASE,
+        require_physical=_android_device_requires_physical(context, environment),
     )
     if serial is None:
         return _not_run(Capability.ANDROID_DEVICE, device_detail)
@@ -4209,10 +4224,13 @@ class _AndroidReleaseInputs:
     version_code: int
     previous_version_code: int
     version_name: str
-    serial: str
+    # None only in the explicit bootstrap mode: the controller measured no
+    # device, and the retained evidence must record that instead of a serial.
+    serial: str | None
     adb: Path
     apksigner: Path
     apkanalyzer: Path
+    bootstrap: bool = False
 
 
 # package, versionCode, versionName, App-Link host, targetSdkVersion, player
@@ -4413,7 +4431,8 @@ def _run_android_release(
         ":app:assembleRelease",
         ":app:assembleReleaseAndroidTest",
     )
-    child_environment["ANDROID_SERIAL"] = inputs.serial
+    if inputs.serial is not None:
+        child_environment["ANDROID_SERIAL"] = inputs.serial
     with _gradle_lock(context.repo_root):
         # The candidate is built and authenticated before touching the baseline,
         # but it is not installed until after the rebooted offline phase.
@@ -4476,6 +4495,67 @@ def _run_android_release(
                 capability,
                 started,
                 "signed release APK API origin differs from the protected deployment origin",
+            )
+        if inputs.bootstrap:
+            sha256 = _sha256_file(apk)
+            evidence_relative = (
+                Path("test-results/runs") / execution.run_id / "android-release.json"
+            )
+            evidence_path = context.repo_root / evidence_relative
+            evidence_path.parent.mkdir(parents=True, exist_ok=True)
+            evidence_path.write_text(
+                json.dumps(
+                    {
+                        "version": 2,
+                        "run_id": execution.run_id,
+                        "git_sha": inputs.git_sha,
+                        "tag": inputs.tag,
+                        "apk_path": apk.relative_to(context.repo_root).as_posix(),
+                        "apk_sha256": sha256,
+                        "apk_size": apk.stat().st_size,
+                        "package": "app.nexus.android",
+                        "version_code": inputs.version_code,
+                        "previous_version_code": inputs.previous_version_code,
+                        "version_name": inputs.version_name,
+                        "signer_sha256": inputs.certificate_sha256,
+                        # The controller measured no device in this mode; the
+                        # retained evidence says so instead of implying one.
+                        "physical_device": None,
+                        "bootstrap": {
+                            "no_device": True,
+                            "previous_version_code_source": ("operator_attested_published_stable"),
+                            "skipped_stages": {
+                                "baseline_acquisition": list(baseline_targets),
+                                "cold_offline": list(offline_targets),
+                                "candidate_update": list(candidate_targets),
+                            },
+                        },
+                        "instrumentation_proofs": [],
+                        "instrumentation_stages": {},
+                        "app_link_host": inputs.owned_host,
+                        "api_origin": embedded_api_origin,
+                        "api_origin_source": "signed_apk_build_config",
+                        "target_sdk": _ANDROID_TARGET_SDK,
+                        "network_phases": {},
+                        "player_protocol": player_protocol.as_json(),
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            duration_ms = (time.monotonic_ns() - started) // 1_000_000
+            return CapabilityResult(
+                CapabilityEvidence(
+                    capability,
+                    RunStatus.PASS,
+                    duration_ms,
+                    0,
+                    artifacts=(evidence_relative.as_posix(),),
+                ),
+                "signed build, manifest/protocol contract, and pinned API origin verified; "
+                "signed-physical device stages explicitly skipped by the bootstrap release",
             )
         # `adb devices -l` proves a USB topology, not that the endpoint is real
         # hardware. Read the emulator build properties back from the device so
@@ -5095,6 +5175,43 @@ def _android_release_inputs(
     if tools is None:
         return _not_run(capability, "Android release SDK tools are absent")
     adb, apksigner, apkanalyzer = tools
+    if environment.get("NEXUS_ANDROID_RELEASE_BOOTSTRAP_NO_DEVICE") == "true":
+        # Explicit bootstrap mode: no published release carries offline reading,
+        # so no in-the-wild offline state exists for the signed-physical stages
+        # to protect. The operator attests the published stable version code
+        # because there is no installed baseline for the controller to measure.
+        raw_previous_version_code = environment.get("NEXUS_ANDROID_PREVIOUS_VERSION_CODE", "")
+        try:
+            previous_version_code = int(raw_previous_version_code)
+        except ValueError:
+            previous_version_code = 0
+        if previous_version_code < 1:
+            return _fail(
+                capability,
+                "Android bootstrap release requires the published stable version code",
+            )
+        if previous_version_code >= version_code:
+            return _fail(
+                capability,
+                "Android release version code must be greater than the published stable baseline",
+            )
+        return _AndroidReleaseInputs(
+            tag,
+            head_sha,
+            base_url,
+            api_origin,
+            owned_host,
+            certificate,
+            keystore,
+            version_code,
+            previous_version_code,
+            version_name,
+            None,
+            adb,
+            apksigner,
+            apkanalyzer,
+            bootstrap=True,
+        )
     serial, device_error = authorized_usb_physical_device(adb, environment, repo_root)
     if serial is None:
         status = RunStatus.FAIL if device_error.startswith("unsafe") else RunStatus.NOT_RUN

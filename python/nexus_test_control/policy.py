@@ -216,7 +216,11 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     ".github/workflows/release.yml": (
         (
             'NEXUS_PROVIDER_CERTIFICATION: "1"',
-            "runs-on: [self-hosted, linux, x64, nexus-android-usb]",
+            # The signed release binds the protected USB lab runner; the
+            # explicit bootstrap_no_device dispatch is the one hosted
+            # exception because no handset exists anywhere yet.
+            "runs-on: ${{ inputs.bootstrap_no_device && 'ubuntu-latest' || "
+            'fromJSON(\'["self-hosted", "linux", "x64", "nexus-android-usb"]\') }}',
             "run: ./scripts/test release",
         ),
         ("make test", "reactivecircus/android-emulator-runner@"),

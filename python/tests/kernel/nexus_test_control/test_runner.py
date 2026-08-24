@@ -1734,6 +1734,50 @@ def test_android_release_control_owns_physical_device_and_exact_signed_methods(
     _assert_release_artifact_retains_pinned_api_origin(tmp_path, sdk)
 
 
+def test_android_device_accepts_the_emulator_only_for_the_bootstrap_release(
+    tmp_path: Path,
+) -> None:
+    """Without a handset anywhere, the bootstrap release still runs the device
+    suite — on the emulator every non-release workflow already uses."""
+    android_root = tmp_path / "apps/android"
+    sdk = tmp_path / "android-sdk"
+    sdk.mkdir()
+    _write(
+        android_root / "app/src/androidTest/java/app/nexus/android/DeviceTest.kt",
+        "package app.nexus.android\nclass DeviceTest\n",
+    )
+    _stub_tools(tmp_path, "java")
+    _write_executable(
+        sdk / "platform-tools/adb",
+        stdout=(
+            "List of devices attached\nemulator-5554 device product:sdk model:sdk transport_id:1\n"
+        ),
+    )
+    _write_executable(android_root / "gradlew")
+    environment = {
+        **_tool_environment(tmp_path),
+        "ANDROID_HOME": str(sdk),
+        "NEXUS_ANDROID_RELEASE_BOOTSTRAP_NO_DEVICE": "true",
+    }
+
+    result = run_capability(
+        CapabilityContext(tmp_path, Workflow.RELEASE, ()),
+        Capability.ANDROID_DEVICE,
+        environment,
+    )
+
+    assert result.evidence.status is RunStatus.PASS, result.detail
+    gradle = [command for command in _commands(tmp_path) if command["tool"] == "gradlew"]
+    assert len(gradle) == 1
+    assert gradle[0]["argv"] == [
+        "--no-daemon",
+        ":app:connectedDebugAndroidTest",
+        "-Pandroid.testInstrumentationRunnerArguments.notAnnotation="
+        "app.nexus.android.offline.reading.SignedPromotion",
+    ]
+    assert gradle[0]["android_serial"] == "emulator-5554"
+
+
 @pytest.mark.parametrize(
     ("inventory", "expected_serial", "expected_detail"),
     [
@@ -2412,6 +2456,242 @@ def test_android_release_refuses_an_emulated_device_that_passes_usb_topology(
     assert result.detail == (
         "signed release proof requires physical hardware, not an emulated device"
     )
+
+
+@pytest.mark.parametrize(
+    ("previous_version_code", "expected_detail"),
+    [
+        pytest.param(
+            "16",
+            None,
+            id="published-stable-code",
+        ),
+        pytest.param(
+            "",
+            "Android bootstrap release requires the published stable version code",
+            id="absent",
+        ),
+        pytest.param(
+            "0",
+            "Android bootstrap release requires the published stable version code",
+            id="zero",
+        ),
+        pytest.param(
+            "sixteen",
+            "Android bootstrap release requires the published stable version code",
+            id="non-integer",
+        ),
+        pytest.param(
+            "17",
+            "Android release version code must be greater than the published stable baseline",
+            id="not-monotonic",
+        ),
+    ],
+)
+def test_android_release_bootstrap_inputs_attest_no_device_and_require_published_code(
+    tmp_path: Path,
+    previous_version_code: str,
+    expected_detail: str | None,
+) -> None:
+    """Bootstrap mode replaces the measured installed baseline with an explicit
+    operator attestation and must never touch a device inventory."""
+    sdk = tmp_path / "android-sdk"
+    _write_executable(sdk / "platform-tools/adb", stdout="List of devices attached")
+    _write_executable(sdk / "build-tools/35.0.0/apksigner")
+    _write_executable(sdk / "cmdline-tools/latest/bin/apkanalyzer")
+    keystore = tmp_path / "release.jks"
+    keystore.write_bytes(b"keystore")
+    keystore.chmod(0o600)
+    environment = {
+        **_stub_tools(tmp_path, git_stdout="a" * 40),
+        "ANDROID_HOME": str(sdk),
+        "ANDROID_RELEASE_TAG": "android-v0.2.14",
+        "NEXUS_ANDROID_RELEASE_BASE_URL": "https://nexus.nielseriknandal.com",
+        "NEXUS_ANDROID_RELEASE_OWNED_HOST": "nexus.nielseriknandal.com",
+        "NEXUS_ANDROID_RELEASE_API_ORIGIN": "https://api.nexus.nielseriknandal.com",
+        "NEXUS_ANDROID_RELEASE_CERT_SHA256": "a" * 64,
+        "NEXUS_ANDROID_RELEASE_STORE_FILE": str(keystore),
+        "NEXUS_ANDROID_RELEASE_STORE_PASSWORD": "test-password",
+        "NEXUS_ANDROID_RELEASE_KEY_ALIAS": "test-key",
+        "NEXUS_ANDROID_RELEASE_KEY_PASSWORD": "test-password",
+        "NEXUS_ANDROID_VERSION_CODE": "17",
+        "NEXUS_ANDROID_VERSION_NAME": "0.2.14",
+        "NEXUS_GOOGLE_WEB_CLIENT_ID": "test-client",
+        "NEXUS_ANDROID_RELEASE_BOOTSTRAP_NO_DEVICE": "true",
+        "NEXUS_ANDROID_PREVIOUS_VERSION_CODE": previous_version_code,
+    }
+
+    inputs = runner._android_release_inputs(tmp_path, environment)
+
+    if expected_detail is None:
+        assert isinstance(inputs, runner._AndroidReleaseInputs)
+        assert inputs.bootstrap is True
+        assert inputs.serial is None
+        assert inputs.previous_version_code == 16
+    else:
+        assert isinstance(inputs, CapabilityResult)
+        assert inputs.evidence.status is RunStatus.FAIL
+        assert inputs.detail == expected_detail
+    adb_calls = [record for record in _commands(tmp_path) if record["tool"] == "adb"]
+    assert adb_calls == [], "bootstrap inputs must not attest or read any device"
+
+
+def test_android_release_bootstrap_skips_device_stages_and_records_explicit_evidence(
+    tmp_path: Path,
+) -> None:
+    """The bootstrap release verifies everything a device does not own — build,
+    signature, manifest/protocol contract, pinned API origin — and its retained
+    evidence must state the skipped stages instead of implying a handset ran."""
+    android_root = tmp_path / "apps/android"
+    _write(
+        android_root / "app/src/androidTest/java/app/nexus/android/offline/reading/"
+        "OfflineReadingSignedPhysicalPromotionTest.kt",
+        "package app.nexus.android.offline.reading\n"
+        "class OfflineReadingSignedPhysicalPromotionTest {\n"
+        " fun acquiresAllFormatsAndPersistsPendingProgressOnBaseline() {}\n"
+        " fun opensShelfAfterForceStopRebootAndAirplaneMode() {}\n"
+        " fun opensV1AfterUpdateThenPurgesOfflineState() {}\n"
+        "}\n",
+    )
+    _write(
+        android_root / "app/src/androidTest/java/app/nexus/android/NativeAuthHandoffTest.kt",
+        "package app.nexus.android\nclass NativeAuthHandoffTest {\n"
+        " fun nativeAuthStartCarriesTheExactHandoffContractToTheOwnedOrigin() {}\n}\n",
+    )
+    _write(
+        android_root / "app/src/androidTest/java/app/nexus/android/offline/reading/"
+        "OfflineReadingDeviceLifecycleTest.kt",
+        "package app.nexus.android.offline.reading\nclass OfflineReadingDeviceLifecycleTest {\n"
+        " fun sqliteFilesSealRecreateLeaseRemovalAndAccountPurge() {}\n}\n",
+    )
+    apk = android_root / "app/build/outputs/apk/release/app-release.apk"
+    test_apk = (
+        android_root / "app/build/outputs/apk/androidTest/release/app-release-androidTest.apk"
+    )
+    _write(tmp_path / "testdata/android/player-protocol.json", '{"version": 2}\n')
+    player_protocol = runner._android_player_protocol_identity(tmp_path)
+    inputs = runner._AndroidReleaseInputs(
+        "android-v2.1",
+        "a" * 40,
+        "https://nexus.nielseriknandal.com",
+        "https://api.nielseriknandal.com",
+        "nexus.nielseriknandal.com",
+        "a" * 64,
+        tmp_path / "release.jks",
+        42,
+        41,
+        "2.1",
+        None,
+        tmp_path / "adb",
+        tmp_path / "apksigner",
+        tmp_path / "apkanalyzer",
+        bootstrap=True,
+    )
+    commands: list[tuple[str, ...]] = []
+
+    def command(
+        argv: tuple[str, ...], _cwd: Path, environment: Mapping[str, str]
+    ) -> subprocess.CompletedProcess[str]:
+        commands.append(argv)
+        assert "ANDROID_SERIAL" not in environment, "bootstrap must not bind a device serial"
+        if argv[0] == "./gradlew":
+            apk.parent.mkdir(parents=True, exist_ok=True)
+            apk.write_bytes(b"signed candidate")
+            test_apk.parent.mkdir(parents=True, exist_ok=True)
+            test_apk.write_bytes(b"candidate test")
+        stdout = ""
+        if argv and argv[0] == str(inputs.apksigner):
+            stdout = "Signer #1 certificate SHA-256 digest: " + ":".join(["aa"] * 32)
+        return subprocess.CompletedProcess(argv, 0, stdout, "")
+
+    operations = runner._AndroidReleaseOperations(
+        inputs=lambda *_: inputs,
+        command=command,
+        manifest_facts=lambda _: (
+            "app.nexus.android",
+            "42",
+            "2.1",
+            "nexus.nielseriknandal.com",
+            "36",
+            str(player_protocol.version),
+            player_protocol.contract_sha256,
+        ),
+        read_apk_api_origin=lambda *_: inputs.api_origin,
+        installed_version_code=lambda *_: pytest.fail(
+            "bootstrap must never read an installed baseline"
+        ),
+    )
+    environment = {
+        **_android_release_environment(inputs),
+        "NEXUS_ANDROID_RELEASE_BOOTSTRAP_NO_DEVICE": "true",
+        "NEXUS_ANDROID_PREVIOUS_VERSION_CODE": "41",
+    }
+    context = CapabilityContext(tmp_path, Workflow.RELEASE, ())
+    execution = runner._WorkflowExecution(
+        context, {}, include_migration_database=False, run_id="0123456789abcdef"
+    )
+
+    result = runner._run_android_release(
+        context,
+        environment,
+        execution,
+        operations=operations,
+    )
+
+    assert result.evidence.status is RunStatus.PASS
+    assert result.detail == (
+        "signed build, manifest/protocol contract, and pinned API origin verified; "
+        "signed-physical device stages explicitly skipped by the bootstrap release"
+    )
+    device_tokens = (
+        "install",
+        "instrument",
+        "reboot",
+        "wait-for-device",
+        "getprop",
+        "resolve-activity",
+        "airplane-mode",
+        "force-stop",
+    )
+    device_commands = [argv for argv in commands if any(token in argv for token in device_tokens)]
+    assert device_commands == [], f"bootstrap ran device commands: {device_commands!r}"
+    assert any(argv[0] == "./gradlew" for argv in commands)
+    signer_runs = [argv for argv in commands if argv[0] == str(inputs.apksigner)]
+    assert len(signer_runs) == 1, "bootstrap verifies the signature exactly once"
+
+    evidence = json.loads(
+        (tmp_path / "test-results/runs/0123456789abcdef/android-release.json").read_text()
+    )
+    assert evidence["physical_device"] is None
+    stage_targets = {
+        "baseline_acquisition": [
+            "app.nexus.android.offline.reading.OfflineReadingSignedPhysicalPromotionTest#"
+            "acquiresAllFormatsAndPersistsPendingProgressOnBaseline",
+        ],
+        "cold_offline": [
+            "app.nexus.android.offline.reading.OfflineReadingSignedPhysicalPromotionTest#"
+            "opensShelfAfterForceStopRebootAndAirplaneMode",
+        ],
+        "candidate_update": [
+            "app.nexus.android.NativeAuthHandoffTest#"
+            "nativeAuthStartCarriesTheExactHandoffContractToTheOwnedOrigin",
+            "app.nexus.android.offline.reading.OfflineReadingDeviceLifecycleTest#"
+            "sqliteFilesSealRecreateLeaseRemovalAndAccountPurge",
+            "app.nexus.android.offline.reading.OfflineReadingSignedPhysicalPromotionTest#"
+            "opensV1AfterUpdateThenPurgesOfflineState",
+        ],
+    }
+    assert evidence["bootstrap"] == {
+        "no_device": True,
+        "previous_version_code_source": "operator_attested_published_stable",
+        "skipped_stages": stage_targets,
+    }
+    assert evidence["instrumentation_proofs"] == []
+    assert evidence["instrumentation_stages"] == {}
+    assert evidence["network_phases"] == {}
+    assert "resolved_activity" not in evidence
+    assert evidence["previous_version_code"] == 41
+    assert evidence["player_protocol"] == player_protocol.as_json()
 
 
 def _assert_release_artifact_retains_pinned_api_origin(tmp_path: Path, sdk: Path) -> None:
