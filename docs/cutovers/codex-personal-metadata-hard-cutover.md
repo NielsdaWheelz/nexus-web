@@ -249,6 +249,14 @@ bounded redacted diagnostics, SDK version, and bundled Codex runtime version.
 The worker requires exactly one terminal. HTTP validation errors occur before
 session open; loss after request acceptance is ambiguous.
 
+The contract owns the stream bounds the worker enforces: at most 1,024 frames,
+256 KiB per frame, and 1 MiB per stream. The host authors every stream inside
+them by construction — consecutive text deltas coalesce into bounded runs and
+repeated native event types collapse into one frame — and a turn that would
+still overrun them ends with the typed `output_limit_exceeded` terminal. The
+worker's identical check can therefore fire only on a host defect, never turn a
+completed, billed turn into an uncertain job.
+
 This is API-shaped for composability, not OpenAI-compatible. Later operations
 add tagged command variants; they do not add optional fields to the metadata
 variant or weaken its policy.
@@ -350,8 +358,13 @@ Host requirements:
   snapshots may contain only its ciphertext, and every other backup or unlock
   secret remains explicit operator evidence; re-enrollment is the recovery
   path;
+- the sole turn slot is held through runtime close even when the requesting
+  worker disconnects after acceptance: the turn is interrupted, its runtime
+  closed, and only then may another turn be admitted;
 - graceful shutdown interrupts the active turn and reaps descendants before the
-  container exits.
+  container exits; the deployment, the release controller's host stop, and the
+  live-container inspection all grant the host's published 45-second stop
+  budget (request drain, runtime close, exit margin).
 
 Enrollment is an explicit operator handoff: provision the empty volume, run the
 documented device-login command against the exact host profile directory, verify
@@ -446,7 +459,7 @@ green, then refactored without weakening the oracle. Use `./scripts/test` only.
 | Ownership boundary | One focused proof | Oracle |
 |---|---|---|
 | command/event algebra | `python/tests/kernel/test_native_agent_contract.py` | strict tagged round trip; unknown/drifted values rejected |
-| agent host process | `python/tests/service/test_codex_agent_host.py` | real UDS process + upstream `ScriptedAgentRuntime`; insufficient/busy capacity returns exact 503 before runtime construction; admitted turn preserves policy, grammar, cleanup |
+| agent host process | `python/tests/service/test_codex_agent_host.py` | real UDS process + upstream `ScriptedAgentRuntime`; insufficient/busy capacity returns exact 503 before runtime construction; admitted turn preserves policy, grammar, cleanup; a disconnected consumer holds the slot through runtime close; per-delta native streams stay within the frame bound |
 | queue capacity | `python/tests/service/test_heavy_job_capacity.py` | real PostgreSQL workers cannot claim metadata while parser/reindex holds Heavy; metadata becomes claimable after release |
 | storage migration | `python/tests/migrations/test_codex_personal_metadata.py` | real PostgreSQL upgrade/convergence; legacy metadata calls absent; shape preserved |
 | metadata durable job | `python/tests/service/test_codex_metadata_enrichment.py` | real PostgreSQL + real worker process + test-owned protocol-valid UDS host; capacity refusal restores Prepared, preserves attempt and incomplete ledger, then one accepted success; existing replay and quota cases remain |
@@ -498,7 +511,13 @@ Insufficient pre-admission headroom produces `not_run`; auth or quota
 unavailability produces `provider_blocked`; pre-accept unavailability or
 accepted transport loss produces `transport_retriable`. None writes qualifying
 evidence, and the unchanged SHA may be repeated only after the corresponding
-pressure, account, or transport fault is resolved. PostgreSQL, Caddy, API, and
+pressure, account, or transport fault is resolved. The controller's own
+measurements classify before the canary terminal: a cgroup peak, OOM kill, or
+host headroom/PSI breach sampled while the host ran writes failed evidence
+whatever the canary went on to report, and a host the kernel OOM-killed during
+the turns is that breach even though its cgroup is gone. A breach whose
+immutable record cannot be written is a defect of the run, never a retriable
+result. PostgreSQL, Caddy, API, and
 worker health are observations of the unchanged predecessor: unhealthy state
 blocks measurement without evidence and remains retriable for the same SHA. A
 cgroup peak, OOM, PSI, host-policy, protocol, or structured-output breach writes

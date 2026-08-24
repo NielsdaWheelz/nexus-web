@@ -541,9 +541,12 @@ let one expired ChatGPT credential stop every background job on the box. Do not
 restore `service_healthy`.
 
 The accepted consequence is that an unhealthy host degrades metadata alone. The
-host probes ChatGPT authentication before it binds its socket, so an expired or
-revoked credential leaves the container starting and restarting without ever
-becoming healthy. While that lasts:
+host probes ChatGPT authentication before it binds its socket, and Compose never
+restarts it (`restart: "no"`, because the encrypted credential filesystem must
+never be reopened unattended), so an expired or revoked credential makes the
+host exit once and stay `Exited`; the release controller's
+`resume-codex-agent-host` is the only supported way to start it again. While
+the host is down:
 
 - metadata enrichment turns take the spec's terminal
   `E_METADATA_AGENT_HOST_UNAVAILABLE` (or `E_METADATA_AGENT_AUTH_UNAVAILABLE`
@@ -553,12 +556,18 @@ becoming healthy. While that lasts:
 - every other background job continues normally, and the interactive lane, API,
   and Caddy are untouched.
 
-Confirm the shape of the incident before touching anything else, then follow
-**Re-enrollment**:
+Confirm the shape of the incident before touching anything else. A plain
+`docker compose ps` omits exited containers, so list all of them and read the
+exit cause from the host's own redacted log:
 
 ```sh
-docker compose --project-name nexus ps nexus-codex-agent-host
+docker compose --project-name nexus ps --all nexus-codex-agent-host
+docker compose --project-name nexus logs --tail 50 nexus-codex-agent-host
 ```
+
+An `Exited` host whose log ends in an auth rejection needs **Re-enrollment**; an
+`Exited` host whose log reports absent state storage needs the interactive LUKS
+unlock and `resume-codex-agent-host` sequence under **First enrollment**.
 
 ## Re-enrollment
 

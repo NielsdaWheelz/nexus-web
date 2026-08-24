@@ -22,7 +22,11 @@ the thin task wrappers under `python/nexus/tasks/`, and
 Each single-process worker lane (`apps/worker/main.py` → `jobs/worker.py`) runs
 a job loop and a scheduler loop. Each claimed job is leased, dispatched to its
 registered handler under a heartbeat thread that renews the lease, and committed
-with a terminal/retry transition. Claim is atomic (`FOR UPDATE SKIP LOCKED`), so
+with a terminal/retry transition. A Heavy heartbeat renews the job row first and
+then binds the global Heavy capacity holder to that committed lease in a second
+owned transaction, so the capacity lease never outlives its holder's own lease
+and a crash between the two can only leave capacity behind, never ahead. Claim
+is atomic (`FOR UPDATE SKIP LOCKED`), so
 the worker is horizontally scalable even though one instance is
 single-concurrency. The worker installs the process-global rate limiter at
 startup (see [llms.md](llms.md)) so the first job of any kind has a working
