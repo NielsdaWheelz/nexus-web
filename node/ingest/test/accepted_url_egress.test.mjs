@@ -189,9 +189,9 @@ async function fetchAcceptedHtml({
     });
 }
 
-function assertFailure(result, failure) {
-    assert.equal(result.tag, 'Failure');
-    assert.deepEqual(result.failure, failure);
+function assertFailure(result, failure, message) {
+    assert.equal(result.tag, 'Failure', message);
+    assert.deepEqual(result.failure, failure, message);
 }
 
 function assertSuccess(result, finalUrl) {
@@ -236,7 +236,7 @@ function assertUnsafeBeforeRequest(result, requestCount) {
     assert.equal(
         result.tag,
         'Failure',
-        `expected UnsafeDestination before any request; CLI returned ${result.tag}, server_requests=${requestCount}`,
+        `private loopback destination crossed accepted URL egress before rejection; CLI returned ${result.tag}, server_requests=${requestCount}`,
     );
     assert.deepEqual(result.failure, { tag: 'UnsafeDestination' });
     assert.equal(requestCount, 0);
@@ -285,7 +285,11 @@ test('public redirect to a private destination sends zero private requests', asy
             resolver,
             connector,
         });
-        assertFailure(result, { tag: 'UnsafeDestination' });
+        assertFailure(
+            result,
+            { tag: 'UnsafeDestination' },
+            'private loopback destination crossed accepted URL egress before rejection',
+        );
         assert.equal(publicRequests, 1);
         assert.equal(privateRequests, 0);
         assert.equal(connector.requestCalls.length, 1);
@@ -318,7 +322,13 @@ test('one private or special DNS answer rejects the entire answer set before con
                 resolver,
                 connector,
             });
-            assertFailure(result, { tag: 'UnsafeDestination' });
+            assertFailure(
+                result,
+                { tag: 'UnsafeDestination' },
+                unsafeAddress === '127.0.0.1'
+                    ? 'private loopback destination crossed accepted URL egress before rejection'
+                    : undefined,
+            );
             assert.equal(connector.connectCalls.length, 0);
             assert.equal(connector.requestCalls.length, 0);
         });

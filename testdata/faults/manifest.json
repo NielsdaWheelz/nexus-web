@@ -900,7 +900,7 @@
       "proofs": [
         "node-test:node/ingest/test/accepted_url_egress.test.mjs"
       ],
-      "expected_failure": "expected UnsafeDestination before any request; CLI returned Success"
+      "expected_failure": "private loopback destination crossed accepted URL egress before rejection"
     },
     {
       "id": "document-media-offline-reading-readiness-gate-bypass",
