@@ -10,6 +10,9 @@ import httpx
 from pydantic import ValidationError
 
 from nexus.services.native_agent_contract import (
+    NATIVE_AGENT_MAX_FRAME_BYTES,
+    NATIVE_AGENT_MAX_FRAMES,
+    NATIVE_AGENT_MAX_STREAM_BYTES,
     NativeAgentCapacityRejection,
     NativeAgentCommand,
     NativeAgentFrame,
@@ -23,10 +26,10 @@ from nexus.services.native_agent_operations import (
 )
 
 _HOST_AUTHORITY = "http://nexus-codex"
-_MAX_FRAME_BYTES = 256 * 1024
-_MAX_STREAM_BYTES = 1024 * 1024
+_MAX_FRAME_BYTES = NATIVE_AGENT_MAX_FRAME_BYTES
+_MAX_STREAM_BYTES = NATIVE_AGENT_MAX_STREAM_BYTES
 _MAX_HEALTH_BYTES = 4 * 1024
-_MAX_FRAMES = 1_024
+_MAX_FRAMES = NATIVE_AGENT_MAX_FRAMES
 _REQUEST_DEADLINE_SECONDS = METADATA_ENRICHMENT_TRANSPORT_DEADLINE_SECONDS
 _HEALTH_DEADLINE_SECONDS = 5.0
 

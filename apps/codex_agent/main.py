@@ -12,7 +12,13 @@ from pathlib import Path
 import uvicorn
 from apps.codex_agent import sandbox_health
 from apps.codex_agent.auth_environment import reject_api_key_auth
-from apps.codex_agent.host import create_codex_agent_app, resolve_runtime_versions
+from apps.codex_agent.host import (
+    CODEX_AGENT_HOST_REQUEST_DRAIN_SECONDS,
+    CODEX_AGENT_HOST_TEARDOWN_DEADLINE_SECONDS,
+    create_codex_agent_app,
+    resolve_runtime_versions,
+    turn_lifecycle,
+)
 from apps.codex_agent.path_environment import required_absolute_path
 from provider_runtime.agent_runtime import (
     AgentRuntime,
@@ -58,13 +64,17 @@ async def run() -> None:
                 app,
                 log_level="info",
                 lifespan="off",
-                timeout_graceful_shutdown=10,
+                timeout_graceful_shutdown=int(CODEX_AGENT_HOST_REQUEST_DRAIN_SECONDS),
             )
         )
         await server.serve(sockets=[listener])
     finally:
         listener.close()
         _unlink_owned_socket(socket_path, owned_identity)
+        # The server has stopped listening and cancelled any in-flight request; the
+        # admitted turn it interrupted is still closing its runtime. Reap it here so the
+        # native process tree never outlives this container's graceful stop.
+        await turn_lifecycle(app).drain(CODEX_AGENT_HOST_TEARDOWN_DEADLINE_SECONDS)
 
 
 async def _probe_chatgpt_auth(state_root: Path) -> None:

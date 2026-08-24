@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from uuid import UUID
 
 import pytest
@@ -11,6 +12,7 @@ from nexus.services.native_agent_contract import (
     METADATA_ENRICHMENT_MAX_INPUT_BYTES,
     NativeAgentCapacityRejection,
     NativeAgentFrame,
+    NativeAgentHealth,
     NativeAgentTerminal,
 )
 from nexus.services.native_agent_operations import (
@@ -214,3 +216,47 @@ def test_capacity_rejection_is_one_exact_closed_pre_accept_shape() -> None:
     ):
         with pytest.raises(ValidationError):
             NativeAgentCapacityRejection.model_validate(drift)
+
+
+def test_wire_decoders_require_every_tag_the_exact_body_names() -> None:
+    """Risk: constructor defaults let a decoded body omit its schema or kind tag.
+
+    §6 recognizes capacity only on the exact body; a `{}` that decodes to the
+    rejection, or a command, frame, or health body without its tag, would be
+    accepted as the closed shape it never stated.
+    """
+
+    for body in (
+        "{}",
+        '{"kind":"capacity_unavailable"}',
+        '{"schema_version":"nexus-agent-rejection.v1"}',
+    ):
+        with pytest.raises(ValidationError, match="wire tags are required"):
+            NativeAgentCapacityRejection.model_validate_json(body)
+    with pytest.raises(ValidationError, match="wire tags are required"):
+        NativeAgentHealth.model_validate_json('{"status":"ready"}')
+
+    command = build_metadata_enrichment_command(request_id=REQUEST_ID, input="bounded input")
+    untagged_command = command.model_dump(mode="json")
+    del untagged_command["schema_version"]
+    with pytest.raises(ValidationError, match="wire tags are required"):
+        type(command).model_validate_json(json.dumps(untagged_command))
+    untagged_operation = command.model_dump(mode="json")
+    del untagged_operation["operation"]["kind"]
+    with pytest.raises(ValidationError):
+        type(command).model_validate_json(json.dumps(untagged_operation))
+
+    frame = {
+        "request_id": str(REQUEST_ID),
+        "sequence": 0,
+        "event": _successful_terminal(),
+    }
+    with pytest.raises(ValidationError, match="wire tags are required"):
+        NativeAgentFrame.model_validate_json(json.dumps(frame))
+    frame["schema_version"] = "nexus-agent-event.v1"
+    del frame["event"]["kind"]
+    with pytest.raises(ValidationError):
+        NativeAgentFrame.model_validate_json(json.dumps(frame))
+
+    # In-process authors still spell only the fields that vary.
+    assert NativeAgentCapacityRejection().kind == "capacity_unavailable"

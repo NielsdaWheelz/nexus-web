@@ -6,7 +6,7 @@ Unix socket, but it is not an OpenAI API compatibility surface.
 
 from __future__ import annotations
 
-from typing import Annotated, Final, Literal, Self
+from typing import Annotated, Final, Literal, Self, get_origin
 from uuid import UUID
 
 from pydantic import (
@@ -15,14 +15,23 @@ from pydantic import (
     Field,
     JsonValue,
     StringConstraints,
+    ValidationInfo,
     model_validator,
 )
+from pydantic_core import PydanticUndefined
 
 NATIVE_AGENT_COMMAND_SCHEMA_VERSION = "nexus-agent-command.v1"
 NATIVE_AGENT_EVENT_SCHEMA_VERSION = "nexus-agent-event.v1"
 NATIVE_AGENT_HEALTH_SCHEMA_VERSION = "nexus-agent-health.v1"
 NATIVE_AGENT_REJECTION_SCHEMA_VERSION = "nexus-agent-rejection.v1"
 METADATA_ENRICHMENT_MAX_INPUT_BYTES: Final = 32_768
+# Response-stream bounds, owned here so the host that authors frames and the worker
+# that decodes them cannot disagree. The host builds every stream inside them by
+# construction and ends a turn that would overrun them with a typed terminal; the
+# worker's identical check can therefore fire only on a genuine host defect.
+NATIVE_AGENT_MAX_FRAME_BYTES: Final = 256 * 1024
+NATIVE_AGENT_MAX_STREAM_BYTES: Final = 1024 * 1024
+NATIVE_AGENT_MAX_FRAMES: Final = 1_024
 
 type MetadataEnrichmentRevision = Literal["metadata-enrichment.2026-08-12.4"]
 
@@ -55,6 +64,29 @@ type NativeAgentFailureKind = Literal[
 
 class _WireModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _require_wire_tags(cls, data: object, info: ValidationInfo) -> object:
+        """Require every tag literal on the wire, whatever default construction supplies.
+
+        `schema_version` and `kind` default so in-process authors never spell them, but
+        a decoded body that omits one is not the exact closed shape the contract names:
+        the pre-accept 503 is recognized only on its exact body, and a frame or command
+        without its tag is rejected rather than assumed.
+        """
+
+        if info.mode == "json" and isinstance(data, dict):
+            missing = [
+                name
+                for name, field in cls.model_fields.items()
+                if field.default is not PydanticUndefined
+                and get_origin(field.annotation) is Literal
+                and name not in data
+            ]
+            if missing:
+                raise ValueError(f"wire tags are required: {', '.join(missing)}")
+        return data
 
 
 class MetadataEnrichmentOperation(_WireModel):
@@ -226,6 +258,9 @@ __all__ = [
     "METADATA_ENRICHMENT_MAX_INPUT_BYTES",
     "METADATA_ENRICHMENT_OPERATION_REVISION",
     "NATIVE_AGENT_COMMAND_SCHEMA_VERSION",
+    "NATIVE_AGENT_MAX_FRAME_BYTES",
+    "NATIVE_AGENT_MAX_FRAMES",
+    "NATIVE_AGENT_MAX_STREAM_BYTES",
     "NATIVE_AGENT_EVENT_SCHEMA_VERSION",
     "NATIVE_AGENT_HEALTH_SCHEMA_VERSION",
     "NATIVE_AGENT_REJECTION_SCHEMA_VERSION",
