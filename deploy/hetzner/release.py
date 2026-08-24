@@ -78,6 +78,15 @@ _CODEX_AGENT_SECURITY_OPTIONS = {
     "seccomp=unconfined",
     "systempaths=unconfined",
 }
+# The host's published graceful-stop budget (apps/codex_agent/host.py): request drain,
+# interrupted-turn runtime close, and exit margin. Every stop of the host grants it.
+_CODEX_AGENT_STOP_GRACE_SECONDS = 45
+# The host's only writable scratch and its process resource ceilings, exactly as
+# Compose declares them; a live container that differs is not the proven host.
+_CODEX_AGENT_TMPFS = {"/tmp": "rw,noexec,nosuid,nodev,size=16m"}
+_CODEX_AGENT_ULIMITS = frozenset(
+    {("core", 0, 0), ("fsize", 1_048_576, 1_048_576), ("nofile", 64, 64)}
+)
 _CODEX_AGENT_RUNTIME_ENVIRONMENT = {
     "NEXUS_CODEX_STATE_ROOT_BASE": "/var/lib/nexus-codex",
     "NEXUS_CODEX_WORKING_DIRECTORY": "/var/empty/nexus-codex",
@@ -2197,6 +2206,28 @@ def _stdout(command: tuple[str, ...], *, environment: dict[str, str] | None = No
         return result.stdout.decode("utf-8").strip()
     except UnicodeDecodeError as exc:
         raise ReleaseDefect(f"{command[0]} returned non-UTF-8 output") from exc
+
+
+def _ulimit_set(value: object) -> frozenset[tuple[str, int, int]] | None:
+    """Read Docker's `HostConfig.Ulimits` as the exact (name, soft, hard) set, or None."""
+
+    if not isinstance(value, list):
+        return None
+    limits: set[tuple[str, int, int]] = set()
+    for item in value:
+        if not isinstance(item, dict):
+            return None
+        name, soft, hard = item.get("Name"), item.get("Soft"), item.get("Hard")
+        if (
+            not isinstance(name, str)
+            or isinstance(soft, bool)
+            or isinstance(hard, bool)
+            or not isinstance(soft, int)
+            or not isinstance(hard, int)
+        ):
+            return None
+        limits.add((name, soft, hard))
+    return frozenset(limits)
 
 
 def _inspect_one(container_id: str, label: str) -> dict[str, Any]:
@@ -4375,6 +4406,7 @@ class HostRelease:
         if (
             config.get("User") != "10001:10001"
             or config.get("WorkingDir") != "/var/empty/nexus-codex"
+            or config.get("StopTimeout") != _CODEX_AGENT_STOP_GRACE_SECONDS
             or host_config.get("ReadonlyRootfs") is not True
             or host_config.get("CapDrop") != ["ALL"]
             or host_config.get("NanoCpus") != 1_000_000_000
@@ -4382,6 +4414,8 @@ class HostRelease:
             or host_config.get("MaskedPaths") != []
             or host_config.get("ReadonlyPaths") != []
             or host_config.get("RestartPolicy") != {"MaximumRetryCount": 0, "Name": "no"}
+            or host_config.get("Tmpfs") != _CODEX_AGENT_TMPFS
+            or _ulimit_set(host_config.get("Ulimits")) != _CODEX_AGENT_ULIMITS
         ):
             raise PermanentReleaseFailure("Codex agent host privilege isolation differs")
         self._validate_codex_agent_host_mounts(inspected)
@@ -4662,6 +4696,33 @@ class HostRelease:
         ):
             raise ReleaseDefect("Codex capacity container cgroup evidence is malformed")
         return self.paths.cgroup_root / unified[0].removeprefix("/")
+
+    def _classify_codex_host_cgroup_loss(
+        self, container_id: str, cause: ReleaseBlocked
+    ) -> ReleaseBlocked | CodexCapacityBreach | ExternalCommandFailed:
+        """Decide what an unreadable host cgroup counter measured.
+
+        A container that is still running lost nothing: the read fault is the
+        transient it looks like. A container the kernel OOM-killed measured the
+        exact §8 breach the proof exists to catch — its cgroup is simply gone —
+        and any other exit means the measured host died without a verdict, which
+        is retriable and never evidence.
+        """
+
+        try:
+            state = _mapping(
+                _inspect_one(container_id, "Codex capacity host inspect").get("State"),
+                "Codex capacity host state",
+            )
+        except (ReleaseDefect, ExternalCommandFailed):
+            return cause
+        if state.get("Running") is True:
+            return cause
+        if state.get("OOMKilled") is True:
+            return CodexCapacityBreach(
+                "Codex agent host was OOM-killed during capacity qualification"
+            )
+        return ExternalCommandFailed("Codex agent host exited during capacity qualification")
 
     def _codex_capacity_cgroup_metrics(self, cgroup: Path) -> tuple[int, int, int, int]:
         values: dict[str, int] = {}
@@ -5103,8 +5164,13 @@ class HostRelease:
                     bundle=bundle,
                     candidate=candidate,
                     config_path=config_path,
-                    arguments=("stop", "--timeout", "30", _CODEX_AGENT_HOST),
-                    timeout_seconds=45,
+                    arguments=(
+                        "stop",
+                        "--timeout",
+                        str(_CODEX_AGENT_STOP_GRACE_SECONDS),
+                        _CODEX_AGENT_HOST,
+                    ),
+                    timeout_seconds=_CODEX_AGENT_STOP_GRACE_SECONDS + 15,
                 )
             except BaseException as exc:
                 failures.append(exc)
@@ -5297,12 +5363,15 @@ class HostRelease:
             sampler_stop = threading.Event()
 
             def sample_once() -> None:
-                sampled.append(
-                    (
-                        self._qualification_host_sample(),
-                        self._codex_capacity_cgroup_metrics(host_cgroup),
-                    )
-                )
+                host_sample = self._qualification_host_sample()
+                try:
+                    cgroup_metrics = self._codex_capacity_cgroup_metrics(host_cgroup)
+                except ReleaseBlocked as exc:
+                    # The kernel removes a cgroup with its container, so an
+                    # unreadable counter may be the measured host dying under
+                    # the envelope rather than a transient read fault.
+                    raise self._classify_codex_host_cgroup_loss(host_container_id, exc) from exc
+                sampled.append((host_sample, cgroup_metrics))
 
             sample_once()
             self._require_qualification_host_sample(sampled[-1][0], initial=True)
@@ -5348,6 +5417,23 @@ class HostRelease:
                 raise ExternalCommandFailed("Codex capacity sampler did not stop")
             if sample_failure:
                 raise ReleaseDefect("Codex capacity sampler failed") from sample_failure[0]
+            # The controller's own measurements classify first, whatever the
+            # canary went on to say: a cgroup peak above the 320 MiB margin, a
+            # changed memory.max, an OOM kill, or host headroom/pressure outside
+            # the envelope while the host ran is the §8 breach §11 enumerates,
+            # and a canary that then lost its transport or was refused
+            # admission must not downgrade it to a retriable, evidence-free run.
+            sample_once()
+            for sample, _ in sampled:
+                self._require_qualification_host_sample(sample, initial=False)
+            metrics = tuple(item[1] for item in sampled)
+            initial_metrics, final_metrics = metrics[0], metrics[-1]
+            if (
+                any(metric[0] != _RESOURCE_LIMITS[_CODEX_AGENT_HOST][1] for metric in metrics)
+                or max(metric[2] for metric in metrics) > 320 * 1024 * 1024
+                or final_metrics[3] - initial_metrics[3] != 0
+            ):
+                raise CodexCapacityBreach("Codex capacity qualification cgroup envelope differs")
             # Classify by evidence first, never by the exit code alone. Only
             # stdout that parses as the canary's own contract statement is a
             # measurement this run may permanently disqualify a SHA with. A
@@ -5355,7 +5441,7 @@ class HostRelease:
             # leaves stdout that is empty or unparseable; it observed nothing
             # about the measured envelope, whatever it exited with. A real
             # envelope breach is the sampler's or the assembled evidence's to
-            # state, and the sampler is already checked above.
+            # state, and the envelope is already checked above.
             try:
                 canary = _closed_mapping(
                     _read_json_output(result.stdout, "Codex capacity canary"),
@@ -5384,17 +5470,6 @@ class HostRelease:
                 raise ReleaseBlocked(f"Codex capacity qualification is {status}")
             if status != "passed":
                 raise CodexCapacityBreach("Codex capacity canary failed")
-            sample_once()
-            for sample, _ in sampled:
-                self._require_qualification_host_sample(sample, initial=False)
-            metrics = tuple(item[1] for item in sampled)
-            initial_metrics, final_metrics = metrics[0], metrics[-1]
-            if (
-                any(metric[0] != _RESOURCE_LIMITS[_CODEX_AGENT_HOST][1] for metric in metrics)
-                or max(metric[2] for metric in metrics) > 320 * 1024 * 1024
-                or final_metrics[3] - initial_metrics[3] != 0
-            ):
-                raise CodexCapacityBreach("Codex capacity qualification cgroup envelope differs")
             services = self._require_codex_capacity_service_health(
                 bundle=bundle,
                 candidate=candidate,
@@ -5432,6 +5507,23 @@ class HostRelease:
             # startup block above.
             proof_error = exc
 
+        if proof_error is not None and write_failure_evidence:
+            # The immutable failed record is the run's product: local durable
+            # state lands before the external teardown, and a record that could
+            # not be written is a defect of its own -- never a breach quietly
+            # demoted to a retriable note that leaves the SHA re-qualifiable.
+            try:
+                self._write_codex_capacity_failure(
+                    source_sha=source_sha,
+                    worker_image_id=worker_image_id,
+                )
+            except BaseException as evidence_error:
+                unrecorded = ReleaseDefect(
+                    "Codex capacity breach could not be recorded as immutable evidence"
+                )
+                unrecorded.add_note(f"unrecorded Codex capacity breach: {proof_error}")
+                unrecorded.__cause__ = evidence_error
+                proof_error = unrecorded
         cleanup_failures = self._cleanup_codex_capacity_runtime(
             bundle=bundle,
             candidate=candidate,
@@ -5447,16 +5539,6 @@ class HostRelease:
             for cleanup_failure in cleanup_failures:
                 proof_error.add_note(f"Codex capacity cleanup also failed: {cleanup_failure}")
         if proof_error is not None:
-            if write_failure_evidence:
-                try:
-                    self._write_codex_capacity_failure(
-                        source_sha=source_sha,
-                        worker_image_id=worker_image_id,
-                    )
-                except BaseException as evidence_error:
-                    proof_error.add_note(
-                        f"Codex capacity failure evidence could not be written: {evidence_error}"
-                    )
             raise proof_error
         if evidence is None:
             raise ReleaseDefect("Codex capacity qualification produced no evidence")
@@ -6176,6 +6258,14 @@ class HostRelease:
         record = self.store.require_current_record()
         if record.source_sha != source_sha:
             raise ReleaseBlocked(f"release {source_sha} is not current")
+        # The same durable gate every host mutator takes: another SHA's
+        # nonterminal attempt, or a forward-fix pointer that deliberately
+        # stopped the writers, means the current record is not the runtime
+        # authority and predecessor code must not be started underneath it.
+        self.store.assert_candidate_admissible(source_sha)
+        forward_fix = self.store.forward_fix_sha()
+        if forward_fix is not None:
+            raise ReleaseBlocked(f"release {forward_fix} awaits a forward fix")
         attempt = self.store.load_attempt(source_sha)
         if attempt is None or attempt.phase is not ReleasePhase.Succeeded:
             raise ReleaseDefect("current release is not a complete immutable publication")
@@ -6931,13 +7021,9 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(
-    argv: list[str] | None = None,
-    *,
-    paths: ReleasePaths | None = None,
-) -> int:
+def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    paths = ReleasePaths() if paths is None else paths
+    paths = ReleasePaths()
     if args.command == "validate-candidate":
         candidate = load_candidate_manifest(args.manifest)
         sys.stdout.buffer.write(_canonical_json({"source_sha": candidate.source_sha}))

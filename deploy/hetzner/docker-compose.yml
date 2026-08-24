@@ -178,7 +178,9 @@ services:
     networks:
       - codex_egress
     init: true
-    stop_grace_period: 15s
+    # Host-owned shutdown budget: the request drain, the interrupted turn's runtime
+    # close deadline, and an exit margin. See apps/codex_agent/host.py.
+    stop_grace_period: 45s
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=16m
     ulimits:

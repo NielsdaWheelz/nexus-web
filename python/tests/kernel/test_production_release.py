@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import signal
 import stat
 import subprocess
@@ -794,6 +795,7 @@ def _restore_healthy_capacity_host(harness: HostReleaseHarness) -> None:
         encoding="ascii",
     )
     host_cgroup = harness.root / _HOST_CGROUP_RELATIVE
+    (host_cgroup / "memory.max").write_text("402653184\n", encoding="ascii")
     (host_cgroup / "memory.current").write_text("33554432\n", encoding="ascii")
     (host_cgroup / "memory.peak").write_text("67108864\n", encoding="ascii")
     (host_cgroup / "memory.events").write_text(
@@ -802,12 +804,15 @@ def _restore_healthy_capacity_host(harness: HostReleaseHarness) -> None:
     )
     containers = harness.state()["containers"]
     containers["worker-background"].pop("health_status_override", None)
+    containers["nexus-codex-agent-host"]["running"] = True
+    containers["nexus-codex-agent-host"]["oom_killed"] = False
     harness.update_state(
         containers=containers,
         codex_capacity_canary_status="passed",
         codex_capacity_canary_delay_seconds=0.0,
         codex_capacity_during_canary_host_writes={},
         codex_capacity_canary_isolation_drift=None,
+        codex_capacity_host_exit_during_canary=None,
     )
 
 
@@ -927,15 +932,31 @@ def test_transient_canary_crash_writes_no_evidence_and_stays_requalifiable(
 
 
 @pytest.mark.parametrize(
-    "canary_status",
-    ["transport_unavailable", "transport_ambiguous"],
-    ids=("preaccept-unavailable", "postaccept-ambiguous"),
+    ("canary_status", "message"),
+    [
+        ("transport_unavailable", "Codex capacity qualification is transport_retriable"),
+        ("transport_ambiguous", "Codex capacity qualification is transport_retriable"),
+        ("not_run", "Codex capacity qualification is not_run"),
+        ("provider_blocked", "Codex capacity qualification is provider_blocked"),
+    ],
+    ids=(
+        "preaccept-unavailable",
+        "postaccept-ambiguous",
+        "preaccept-capacity-refusal",
+        "auth-or-quota-blocked",
+    ),
 )
-def test_transport_retriable_canary_terminal_writes_no_evidence_and_allows_retry(
+def test_retriable_canary_terminals_write_no_evidence_and_allow_retry(
     host_release_harness: HostReleaseHarness,
     canary_status: str,
+    message: str,
 ) -> None:
-    """Risk: a transport failure permanently disqualifies the unchanged candidate SHA."""
+    """Risk: a transport, admission, or account terminal permanently disqualifies the SHA.
+
+    §11: `not_run`, `provider_blocked`, and `transport_retriable` write no
+    evidence, and the unchanged SHA may be repeated once the pressure, account,
+    or transport fault is resolved.
+    """
 
     harness = host_release_harness
     evidence = harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json"
@@ -945,12 +966,150 @@ def test_transport_retriable_canary_terminal_writes_no_evidence_and_allows_retry
     failed = harness.run_qualify_codex_capacity()
 
     assert failed.returncode != 0
-    assert "Codex capacity qualification is transport_retriable" in failed.stderr
+    assert message in failed.stderr
     assert not evidence.exists(), (
         "a retriable transport terminal measured no breach and must not write evidence"
     )
 
     harness.update_state(codex_capacity_canary_status="passed")
+    requalified = harness.run_qualify_codex_capacity()
+    assert requalified.returncode == 0, requalified.stderr
+    assert json.loads(evidence.read_text(encoding="utf-8"))["status"] == "passed"
+
+
+@pytest.mark.parametrize(
+    ("canary_status", "scenario", "message"),
+    [
+        (
+            "transport_ambiguous",
+            "cgroup-peak",
+            "Codex capacity qualification cgroup envelope differs",
+        ),
+        (
+            "transport_unavailable",
+            "oom-kill-delta",
+            "Codex capacity qualification cgroup envelope differs",
+        ),
+        (
+            "not_run",
+            "sampler-observed-pressure",
+            "Codex capacity qualification memory pressure",
+        ),
+        (
+            "provider_blocked",
+            "host-oom-killed",
+            "Codex agent host was OOM-killed during capacity qualification",
+        ),
+    ],
+    ids=(
+        "postaccept-loss-hides-peak",
+        "preaccept-loss-hides-oom",
+        "not-run-hides-pressure",
+        "provider-blocked-hides-host-death",
+    ),
+)
+def test_measured_breach_outranks_a_retriable_canary_terminal(
+    host_release_harness: HostReleaseHarness,
+    canary_status: str,
+    scenario: str,
+    message: str,
+) -> None:
+    """Risk: the canary's own retriable terminal discards the controller's measurement.
+
+    §11: a cgroup peak, OOM, or PSI breach writes failed evidence whatever else
+    happened in the run; a transport loss, a refused admission, or a blocked
+    provider must not launder the envelope the controller itself observed into
+    an evidence-free rerun that eventually passes on a quieter host.
+    """
+
+    harness = host_release_harness
+    evidence = harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json"
+    evidence.unlink()
+    host_cgroup = harness.root / _HOST_CGROUP_RELATIVE
+    if scenario == "cgroup-peak":
+        (host_cgroup / "memory.peak").write_text(f"{336 * 1024 * 1024}\n", encoding="ascii")
+    elif scenario == "oom-kill-delta":
+        harness.update_state(
+            codex_capacity_during_canary_host_writes={
+                f"{_HOST_CGROUP_RELATIVE}/memory.events": (
+                    "low 0\nhigh 0\nmax 0\noom 1\noom_kill 1\noom_group_kill 0\n"
+                )
+            }
+        )
+    elif scenario == "sampler-observed-pressure":
+        harness.update_state(
+            codex_capacity_during_canary_host_writes={"proc/pressure/memory": _FULL_PRESSURE},
+            codex_capacity_canary_delay_seconds=2.5,
+        )
+    else:
+        harness.update_state(codex_capacity_host_exit_during_canary="oom_killed")
+    harness.update_state(codex_capacity_canary_status=canary_status)
+
+    refused = harness.run_qualify_codex_capacity()
+
+    assert refused.returncode != 0
+    assert message in refused.stderr
+    assert f"Codex capacity qualification is {canary_status}" not in refused.stderr
+    payload = json.loads(evidence.read_text(encoding="utf-8"))
+    assert payload["status"] == "failed"
+    metadata = evidence.stat()
+    assert metadata.st_uid == 0 and metadata.st_mode & 0o777 == 0o444
+
+    _restore_healthy_capacity_host(harness)
+    rerun = harness.run_qualify_codex_capacity()
+    assert rerun.returncode != 0
+    assert "Codex capacity qualification failed evidence is immutable" in rerun.stderr
+
+
+def test_unrecordable_breach_is_a_defect_not_a_retriable_run(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: a measured breach whose immutable record cannot be written degrades to a
+    retriable failure, leaving the disqualified SHA free to pass on a quieter rerun."""
+
+    harness = host_release_harness
+    evidence_dir = harness.root / "var/lib/nexus/releases/codex-capacity"
+    shutil.rmtree(evidence_dir)
+    # The evidence owner's directory is now a file: admission sees no evidence,
+    # and the breach record cannot be created.
+    evidence_dir.write_text("", encoding="ascii")
+    (harness.root / _HOST_CGROUP_RELATIVE / "memory.peak").write_text(
+        f"{336 * 1024 * 1024}\n", encoding="ascii"
+    )
+
+    refused = harness.run_qualify_codex_capacity()
+
+    assert refused.returncode != 0
+    assert "Codex capacity breach could not be recorded as immutable evidence" in refused.stderr
+    assert "unrecorded Codex capacity breach" in refused.stderr
+    assert "cgroup envelope differs" in refused.stderr
+    assert "Codex capacity qualification is transport_retriable" not in refused.stderr
+    assert evidence_dir.is_file()
+
+    evidence_dir.unlink()
+    evidence_dir.mkdir()
+
+
+def test_host_that_exits_without_an_oom_kill_during_qualification_stays_requalifiable(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: a host lost to anything but its own envelope disqualifies the SHA forever."""
+
+    harness = host_release_harness
+    evidence = harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json"
+    evidence.unlink()
+    harness.update_state(
+        codex_capacity_canary_status="transport_ambiguous",
+        codex_capacity_host_exit_during_canary="exited",
+    )
+
+    failed = harness.run_qualify_codex_capacity()
+
+    assert failed.returncode != 0
+    assert "Codex agent host exited during capacity qualification" in failed.stderr
+    assert not evidence.exists(), "a host exit without an OOM kill measured no breach"
+
+    _restore_healthy_capacity_host(harness)
     requalified = harness.run_qualify_codex_capacity()
     assert requalified.returncode == 0, requalified.stderr
     assert json.loads(evidence.read_text(encoding="utf-8"))["status"] == "passed"
@@ -1755,6 +1914,8 @@ def test_host_apply_rejects_a_runtime_identical_but_different_activated_image(
         ("nanocpus", "Codex agent host privilege isolation differs"),
         ("masked_paths", "Codex agent host privilege isolation differs"),
         ("readonly_paths", "Codex agent host privilege isolation differs"),
+        ("tmpfs", "Codex agent host privilege isolation differs"),
+        ("ulimits", "Codex agent host privilege isolation differs"),
         ("network", "Codex agent host network isolation differs"),
         ("network_peer", "Codex agent host network peer isolation differs"),
     ],
@@ -2059,6 +2220,60 @@ def test_resume_codex_agent_host_rejects_noncurrent_and_running_state(
     assert running.stdout == ""
     assert "Codex agent host is not stopped" in running.stderr
     assert harness.state()["service_mutations"] == []
+
+
+def test_resume_codex_agent_host_refuses_while_another_release_attempt_is_nonterminal(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: reboot recovery starts predecessor code underneath a committed release.
+
+    The immutable-release contract serializes every host mutator on durable
+    nonterminal attempt state. A successor apply interrupted after its data
+    mutation boundary leaves the current record non-authoritative; resuming the
+    current host then would run predecessor code, which the protocol forbids.
+    """
+
+    release = _release_module()
+    harness = host_release_harness
+    applied = harness.run_apply()
+    assert applied.returncode == 0, applied.stderr
+    finalized = harness.run_finalize()
+    assert finalized.returncode == 0, finalized.stderr
+    # A successor apply that died after crossing its data-mutation boundary:
+    # the durable attempt record is what every later mutator must honour.
+    store = release.ReleaseStore(release.ReleasePaths.under(harness.root))
+    successor = _prepared(release, NEXT_SHA, predecessor_sha=SOURCE_SHA)
+    store.create_attempt(successor)
+    successor = successor.advance(release.ReleasePhase.WritersStopped, now="2026-08-06T12:01:00Z")
+    store.replace_attempt(successor)
+    successor = successor.with_backup(
+        path="/var/backups/nexus/2.dump",
+        sha256="8" * 64,
+        byte_count=42,
+        database_identity="nexus-prod",
+        starting_revision="0216",
+        now="2026-08-06T12:02:00Z",
+    )
+    store.replace_attempt(successor)
+    successor = successor.advance(
+        release.ReleasePhase.DataMutationStarted, now="2026-08-06T12:03:00Z"
+    )
+    store.replace_attempt(successor)
+    state = harness.state()
+    containers = state["containers"]
+    assert isinstance(containers, dict)
+    host = containers["nexus-codex-agent-host"]
+    assert isinstance(host, dict)
+    host["running"] = False
+    harness.update_state(containers=containers, public_requests=[], service_mutations=[])
+
+    refused = harness.run_resume_codex_agent_host()
+
+    assert refused.returncode != 0
+    assert refused.stdout == ""
+    assert f"release {NEXT_SHA} is still DataMutationStarted" in refused.stderr
+    assert harness.state()["service_mutations"] == []
+    assert harness.state()["containers"]["nexus-codex-agent-host"]["running"] is False
 
 
 def test_resume_codex_agent_host_startup_failure_stops_without_a_receipt(

@@ -380,8 +380,11 @@ def test_codex_production_boundary_declares_real_caddy_health_and_encrypted_stat
     assert "CI fakes do not satisfy this live acceptance procedure." in runbook
     assert "systemctl show docker.service --property=After --property=Requires" in runbook
     assert "less than 128 MiB free" in runbook
-    assert "Logical backups exclude the entire mounted state filesystem" not in runbook
-    assert "passphrase must never be stored on the VPS" not in runbook
+    # The runbook's incident diagnostics must see a host that Compose never
+    # restarts: an exited container is invisible to a plain `ps`.
+    assert "docker compose --project-name nexus ps --all nexus-codex-agent-host" in runbook
+    assert "docker compose --project-name nexus logs --tail 50 nexus-codex-agent-host" in runbook
+    assert "`resume-codex-agent-host` is the only supported way to start it again" in runbook
 
 
 def test_the_declared_envelope_fits_the_committed_host_with_its_reserve() -> None:
@@ -426,6 +429,42 @@ def test_the_declared_envelope_fits_the_committed_host_with_its_reserve() -> Non
         assert f"mem_limit: {hard // (1024 * 1024)}m" in block
         assert f"memswap_limit: {hard // (1024 * 1024)}m" in block
         assert f"pids_limit: {pids}" in block
+
+
+def test_codex_host_stop_grace_is_the_host_owned_shutdown_budget() -> None:
+    """Every stop of the Codex host must grant the budget the host itself publishes.
+
+    The host drains an in-flight request, then closes the interrupted turn's
+    runtime — which interrupts the native turn and reaps its process tree —
+    before exiting. A deployment or release stop that SIGKILLs earlier than that
+    budget orphans the descendants the close is reaping, so Compose's
+    `stop_grace_period`, the release controller's explicit host stop, and the
+    live-container inspection all bind to the one host-owned constant.
+    """
+    from apps.codex_agent.host import (
+        CODEX_AGENT_HOST_REQUEST_DRAIN_SECONDS,
+        CODEX_AGENT_HOST_STOP_GRACE_SECONDS,
+        CODEX_AGENT_HOST_TEARDOWN_DEADLINE_SECONDS,
+    )
+
+    assert CODEX_AGENT_HOST_STOP_GRACE_SECONDS > (
+        CODEX_AGENT_HOST_REQUEST_DRAIN_SECONDS + CODEX_AGENT_HOST_TEARDOWN_DEADLINE_SECONDS
+    ), "the stop grace must outlast request drain plus runtime close"
+
+    compose = (REPO_ROOT / "deploy/hetzner/docker-compose.yml").read_text(encoding="utf-8")
+    start = compose.index("\n  nexus-codex-agent-host:\n")
+    block = compose[start : compose.index("\n  migration:\n")]
+    assert f"stop_grace_period: {CODEX_AGENT_HOST_STOP_GRACE_SECONDS}s" in block
+    assert compose.count("stop_grace_period:") == 1, (
+        "only the Codex host publishes a stop budget; writers keep Docker's default"
+    )
+
+    controller = (REPO_ROOT / "deploy/hetzner/release.py").read_text(encoding="utf-8")
+    assert (
+        f"_CODEX_AGENT_STOP_GRACE_SECONDS = {CODEX_AGENT_HOST_STOP_GRACE_SECONDS}\n" in controller
+    )
+    assert 'config.get("StopTimeout") != _CODEX_AGENT_STOP_GRACE_SECONDS' in controller
+    assert "str(_CODEX_AGENT_STOP_GRACE_SECONDS),\n" in controller
 
 
 def test_caddy_runtime_logs_redact_the_internal_trust_header() -> None:

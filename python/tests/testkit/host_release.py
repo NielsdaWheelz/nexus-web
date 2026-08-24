@@ -45,6 +45,13 @@ CURRENT_SHA = "a" * 40
 CURRENT_DEPLOYMENT_ID = "dpl_Current123"
 _PUBLIC_HOSTS = frozenset({"api.example.test:443", "web.example.test:443"})
 _CODEX_HOST_PID = 4242
+_CODEX_CAPACITY_CANARY_EXIT_CODES = {
+    "not_run": 20,
+    "provider_blocked": 21,
+    "failed": 22,
+    "transport_retriable": 23,
+}
+_CODEX_HOST_CGROUP_RELATIVE = f"system.slice/docker-{'a' * 64}.scope"
 _CODEX_CAPACITY_CANARY_LABEL = "nexus.release.codex-capacity-canary"
 _CODEX_STATE_BOOT_GUARD = b"""#!/bin/sh
 set -eu
@@ -103,6 +110,12 @@ def _codex_host_privilege_config() -> dict[str, object]:
             "seccomp=unconfined",
             "apparmor=nexus-codex-agent-host",
             "systempaths=unconfined",
+        ],
+        "Tmpfs": {"/tmp": "rw,noexec,nosuid,nodev,size=16m"},
+        "Ulimits": [
+            {"Name": "core", "Soft": 0, "Hard": 0},
+            {"Name": "fsize", "Soft": 1_048_576, "Hard": 1_048_576},
+            {"Name": "nofile", "Soft": 64, "Hard": 64},
         ],
     }
 
@@ -527,11 +540,10 @@ class HostReleaseHarness:
         # The capacity sampler reads the measured container's cgroup from the
         # host side (never `docker exec` into the measured cgroup): resolve the
         # fake host process's cgroup exactly the way the controller does.
-        host_cgroup_relative = f"system.slice/docker-{'a' * 64}.scope"
         host_proc = root / "proc" / str(_CODEX_HOST_PID)
         host_proc.mkdir(parents=True)
-        (host_proc / "cgroup").write_text(f"0::/{host_cgroup_relative}\n", encoding="ascii")
-        host_cgroup = root / "sys/fs/cgroup" / host_cgroup_relative
+        (host_proc / "cgroup").write_text(f"0::/{_CODEX_HOST_CGROUP_RELATIVE}\n", encoding="ascii")
+        host_cgroup = root / "sys/fs/cgroup" / _CODEX_HOST_CGROUP_RELATIVE
         host_cgroup.mkdir(parents=True)
         (host_cgroup / "memory.max").write_text("402653184\n", encoding="ascii")
         (host_cgroup / "memory.current").write_text("33554432\n", encoding="ascii")
@@ -605,7 +617,11 @@ class HostReleaseHarness:
                         "com.docker.compose.service": service,
                     },
                     **(
-                        {"User": "10001:10001", "WorkingDir": "/var/empty/nexus-codex"}
+                        {
+                            "User": "10001:10001",
+                            "WorkingDir": "/var/empty/nexus-codex",
+                            "StopTimeout": 45,
+                        }
                         if service == "nexus-codex-agent-host"
                         else {}
                     ),
@@ -662,6 +678,9 @@ class HostReleaseHarness:
                 "codex_capacity_canary_status": "passed",
                 "codex_capacity_canary_delay_seconds": 0.0,
                 "codex_capacity_during_canary_host_writes": {},
+                # None, "oom_killed", or "exited": the measured host container
+                # leaves during the canary turns and its cgroup vanishes with it.
+                "codex_capacity_host_exit_during_canary": None,
                 "codex_state_storage_kind": "encrypted",
                 "codex_state_free_bytes": 512 * 1024 * 1024,
                 "codex_state_live_bind_kind": "exact",
@@ -1289,6 +1308,20 @@ def _write_json(value: object) -> None:
     sys.stdout.buffer.write(_canonical_json(value))
 
 
+def _stop_timeout_matches(operation: list[str]) -> bool:
+    """Accept only the exact stop budget each service contract publishes.
+
+    Application writers stop within 30 seconds; the Codex host alone is granted its
+    45-second graceful-stop budget (request drain, runtime close, exit margin), and a
+    stop that mixes the host into a writer stop or grants it any other budget is not
+    the release contract.
+    """
+    timeout, services = operation[2], operation[3:]
+    if services == ["nexus-codex-agent-host"]:
+        return timeout == "45"
+    return timeout == "30" and "nexus-codex-agent-host" not in services
+
+
 def _handle_compose(state: dict[str, Any], operation: list[str]) -> None:
     if operation == ["config", "--quiet"]:
         return
@@ -1301,7 +1334,7 @@ def _handle_compose(state: dict[str, Any], operation: list[str]) -> None:
         service = operation[2]
         sys.stdout.write(str(state["containers"][service]["id"]) + "\n")
         return
-    if operation[:3] == ["stop", "--timeout", "30"]:
+    if operation[:2] == ["stop", "--timeout"] and _stop_timeout_matches(operation):
         services = operation[3:]
         for service in services:
             if service not in state["missing_services"]:
@@ -1365,6 +1398,13 @@ def _handle_compose(state: dict[str, Any], operation: list[str]) -> None:
                     container["host_config"]["MaskedPaths"] = ["/proc/kcore"]
                 if state["codex_host_isolation_drift"] == "readonly_paths":
                     container["host_config"]["ReadonlyPaths"] = ["/proc/sys"]
+                if state["codex_host_isolation_drift"] == "tmpfs":
+                    container["host_config"]["Tmpfs"] = {"/tmp": "rw,nosuid,nodev,size=64m"}
+                if state["codex_host_isolation_drift"] == "ulimits":
+                    container["host_config"]["Ulimits"] = [
+                        {"Name": "core", "Soft": 0, "Hard": 0},
+                        {"Name": "fsize", "Soft": 1_048_576, "Hard": 1_048_576},
+                    ]
             if service == "api":
                 container["image_id"] = state["activation_api_image_id"]
                 container["config"]["Image"] = state["candidate_api_image"]
@@ -1806,6 +1846,17 @@ def fake_docker_main() -> int:
                 os.chmod(staged, original.st_mode & 0o7777)
                 os.chown(staged, original.st_uid, original.st_gid)
                 os.replace(staged, target)
+            host_exit = state["codex_capacity_host_exit_during_canary"]
+            if host_exit is not None:
+                # The kernel removes a dead container's cgroup; the controller's
+                # counters disappear and only `docker inspect` can say why.
+                host = state["containers"]["nexus-codex-agent-host"]
+                host["running"] = False
+                host["oom_killed"] = host_exit == "oom_killed"
+                _save_state(state_path, state)
+                cgroup = root / "sys/fs/cgroup" / _CODEX_HOST_CGROUP_RELATIVE
+                for counter in ("memory.max", "memory.current", "memory.peak", "memory.events"):
+                    (cgroup / counter).unlink()
             delay_seconds = float(state["codex_capacity_canary_delay_seconds"])
             if delay_seconds:
                 # justify-polling: the canary is the timed subject under
@@ -1847,7 +1898,7 @@ def fake_docker_main() -> int:
                             ("cold", "warm_1", "warm_2")
                             if authored_status == "passed"
                             else ()
-                            if authored_status == "transport_retriable"
+                            if authored_status in {"transport_retriable", "not_run"}
                             else ("cold",)
                         )
                     ],
@@ -1859,16 +1910,12 @@ def fake_docker_main() -> int:
                 # must classify as retriable, never as evidence.
                 _save_state(state_path, state)
                 return 137
-            if status == "failed":
-                # The canary's public contract terminal for a stated failure
-                # (apps.codex_agent.capacity_canary.EXIT_CODES["failed"]),
-                # deliberately outside 1 and 128..255 so a crash can never
-                # impersonate it.
+            if authored_status != "passed":
+                # The canary's public contract terminals
+                # (apps.codex_agent.capacity_canary.EXIT_CODES), deliberately
+                # outside 1 and 128..255 so a crash can never impersonate one.
                 _save_state(state_path, state)
-                return 22
-            if authored_status == "transport_retriable":
-                _save_state(state_path, state)
-                return 23
+                return _CODEX_CAPACITY_CANARY_EXIT_CODES[authored_status]
         else:
             raise AssertionError(f"unsupported fake capacity canary command: {command!r}")
     elif arguments[0] == "inspect":
@@ -2262,20 +2309,20 @@ def resume_codex_agent_host_main(arguments: list[str]) -> int:
     _drop_to_test_group()
     release_path, root, source_sha = arguments
     release = _load_release(Path(release_path), "nexus_host_release_resume_codex_driver")
-    return release.main(
-        ["resume-codex-agent-host", "--source-sha", source_sha],
-        paths=release.ReleasePaths.under(Path(root)),
-    )
+    host = release.HostRelease(release.ReleasePaths.under(Path(root)))
+    receipt = host.resume_codex_agent_host(source_sha)
+    sys.stdout.buffer.write(_canonical_json(receipt))
+    return 0
 
 
 def install_codex_state_boot_guard_main(arguments: list[str]) -> int:
     _drop_to_test_group()
     release_path, root, source_sha = arguments
     release = _load_release(Path(release_path), "nexus_host_release_install_codex_guard_driver")
-    return release.main(
-        ["install-codex-state-boot-guard", "--source-sha", source_sha],
-        paths=release.ReleasePaths.under(Path(root)),
-    )
+    host = release.HostRelease(release.ReleasePaths.under(Path(root)))
+    receipt = host.install_codex_state_boot_guard(source_sha)
+    sys.stdout.buffer.write(_canonical_json(receipt))
+    return 0
 
 
 def fail_bound_frontend_main(arguments: list[str]) -> int:
