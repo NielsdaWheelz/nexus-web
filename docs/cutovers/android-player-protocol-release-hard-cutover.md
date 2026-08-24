@@ -275,6 +275,18 @@ the production controller remain the owners.
 Do not publish v2 web first, dual-serve v1/v2, temporarily relax decoders, or
 retain a switch after release.
 
+Bootstrap exception, this release only: no published release carries offline
+reading, so no in-the-wild offline state exists for the signed-physical USB
+stages to protect, and the pre-v2 production API cannot serve the baseline
+acquisition they require. Step 2 may therefore run with the explicit
+`bootstrap_no_device` dispatch input, which skips exactly those stages, records
+`physical_device: null` plus the skipped stage list in the retained evidence,
+and takes the superseded stable version code as an operator attestation.
+Signature, manifest/protocol contract, pinned API origin, provider
+certification, and the Android device suite still gate the release. The step-5
+operator smoke remains mandatory, and every later release must run the full
+signed-physical stages against the then-real baseline.
+
 ## Implementation boundaries
 
 Lanes are sequential at their declared handoff and otherwise non-overlapping.

@@ -16,6 +16,21 @@ on:
         description: Monotonically increasing positive Android version code.
         required: true
         type: number
+      bootstrap_no_device:
+        description: >-
+          Skip the signed-physical device stages. Only for the bootstrap
+          release, while no published release carries offline reading;
+          requires previous_version_code.
+        required: false
+        default: false
+        type: boolean
+      previous_version_code:
+        description: >-
+          Published stable Android version code the bootstrap release
+          supersedes (used only with bootstrap_no_device).
+        required: false
+        default: 0
+        type: number
 
 concurrency:
   group: release-${{ inputs.tag }}
@@ -47,6 +62,8 @@ jobs:
       NEXUS_ANDROID_RELEASE_PROMOTION_EPUB_MEDIA_ID: ${{ vars.NEXUS_ANDROID_RELEASE_PROMOTION_EPUB_MEDIA_ID }}
       NEXUS_ANDROID_RELEASE_PROMOTION_ARTICLE_MEDIA_ID: ${{ vars.NEXUS_ANDROID_RELEASE_PROMOTION_ARTICLE_MEDIA_ID }}
       NEXUS_ANDROID_VERSION_CODE: ${{ inputs.version_code }}
+      NEXUS_ANDROID_RELEASE_BOOTSTRAP_NO_DEVICE: ${{ inputs.bootstrap_no_device }}
+      NEXUS_ANDROID_PREVIOUS_VERSION_CODE: ${{ inputs.previous_version_code }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -104,6 +121,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          notes="Signed Nexus Android APK. Provider certification, signature verification, staged real-API offline-reading acquisition on the older USB baseline, reboot/airplane-mode cold shelf, in-place V1 reopen/progress/purge, local App Link routing, and native auth handoff passed before this draft was created."
+          if [ "$NEXUS_ANDROID_RELEASE_BOOTSTRAP_NO_DEVICE" = "true" ]; then
+            notes="Signed Nexus Android APK. Provider certification, signature verification, the manifest/player-protocol contract, the pinned API origin, and the Android device suite passed before this draft was created. The signed-physical USB baseline stages were explicitly skipped (bootstrap_no_device): no published release carries offline reading, so no in-the-wild offline state exists for them to protect. The operator device smoke follows the production deploy."
+          fi
           upload_args=()
           if gh release view "$ANDROID_RELEASE_TAG" >/dev/null 2>&1; then
             if [ "$(gh release view "$ANDROID_RELEASE_TAG" --json isDraft --jq .isDraft)" = "true" ]; then
@@ -117,7 +138,7 @@ jobs:
               --verify-tag \
               --draft \
               --title "$ANDROID_RELEASE_TAG" \
-              --notes "Signed Nexus Android APK. Provider certification, signature verification, staged real-API offline-reading acquisition on the older USB baseline, reboot/airplane-mode cold shelf, in-place V1 reopen/progress/purge, local App Link routing, and native auth handoff passed before this draft was created."
+              --notes "$notes"
           fi
           release_dirs=(test-results/runs/*/release)
           if [ "${#release_dirs[@]}" -ne 1 ] || [ ! -d "${release_dirs[0]}" ]; then
