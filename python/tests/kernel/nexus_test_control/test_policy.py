@@ -52,6 +52,33 @@ def _rules(violations: tuple[Any, ...]) -> set[str]:
             "from apps.codex_agent import host\nmonkeypatch.setattr(host, 'DEADLINE', 0.2)\n",
             "python-owned-monkeypatch",
         ),
+        (
+            "from apps import codex_agent\n"
+            "monkeypatch.setattr(codex_agent.host, 'DEADLINE', 0.2)\n",
+            "python-owned-monkeypatch",
+        ),
+        (
+            "import apps\nmonkeypatch.setattr(apps.codex_agent.host, 'DEADLINE', 0.2)\n",
+            "python-owned-monkeypatch",
+        ),
+        (
+            "import apps.codex_agent.host\n"
+            "monkeypatch.setattr(apps.codex_agent.host, 'DEADLINE', 0.2)\n",
+            "python-owned-monkeypatch",
+        ),
+        (
+            "import apps.codex_agent.host as h\nmonkeypatch.setattr(h, 'DEADLINE', 0.2)\n",
+            "python-owned-monkeypatch",
+        ),
+        (
+            "from apps.codex_agent.host import create_codex_agent_app as build\n"
+            "monkeypatch.setattr(build, '__defaults__', ())\n",
+            "python-owned-monkeypatch",
+        ),
+        (
+            "monkeypatch.setattr('apps.codex_agent.host.DEADLINE', 0.2)\n",
+            "python-owned-monkeypatch",
+        ),
         ("import time\ntime.sleep(1)\n", "python-sleep"),
         ("import pytest\n@pytest.mark.skip\ndef test_case(): pass\n", "python-skip"),
         ("import pytest as pt\n@pt.mark.skip\ndef test_case(): pass\n", "python-skip"),
@@ -89,10 +116,21 @@ def test_python_ast_guard_rejects_invalid_source() -> None:
 
 def test_python_ast_guard_allows_external_boundary_patch_and_owned_exceptions() -> None:
     external_patch = "import httpx\nmonkeypatch.setattr(httpx, 'get', lambda: None)\n"
+    # `apps` is owned only through `apps.codex_agent`; the worker entrypoint
+    # harness is the sanctioned residue outside the gate.
+    sibling_package_patch = (
+        "import apps\nmonkeypatch.setattr(apps.worker.health, 'PROBE', lambda: None)\n"
+    )
+    lookalike_patch = (
+        "import apps.codex_agent_tools as t\nmonkeypatch.setattr(t, 'X', 1)\n"
+        "monkeypatch.setattr('apps.codex_agentry.host.X', 1)\n"
+    )
     hosted_socket = "from pytest_socket import enable_socket\nenable_socket()\n"
     query_oracle = "from sqlalchemy import text\ntext('SELECT 1')\n"
     migration_sql = "from sqlalchemy import text\ntext('INSERT INTO users DEFAULT VALUES')\n"
     assert not python_ast_violations("python/tests/kernel/test_ok.py", external_patch)
+    assert not python_ast_violations("python/tests/kernel/test_ok.py", sibling_package_patch)
+    assert not python_ast_violations("python/tests/kernel/test_ok.py", lookalike_patch)
     assert not python_ast_violations("python/tests/service/test_query_oracle.py", query_oracle)
     assert not python_ast_violations("python/tests/hosted/test_provider.py", hosted_socket)
     assert not python_ast_violations("python/tests/migrations/test_head.py", migration_sql)

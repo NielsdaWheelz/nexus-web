@@ -29,6 +29,30 @@ _BUILTIN_PYTEST_MARKS = frozenset({"filterwarnings", "parametrize", "usefixtures
 # remaining `apps.worker` entrypoint harness (test_runtime_health.py) predates
 # this gate and is the only sanctioned residue outside it.
 _OWNED_MODULE_PREFIXES = ("nexus", "nexus_test_control", "apps.codex_agent")
+
+
+def _owned_module(name: str) -> bool:
+    """Decide ownership on package boundaries, never on a raw string prefix."""
+    return any(name == prefix or name.startswith(prefix + ".") for prefix in _OWNED_MODULE_PREFIXES)
+
+
+def _owned_reach(name: str) -> tuple[str, ...] | None:
+    """Return the attribute chain through which a bound module reaches owned code.
+
+    ``()`` means the binding itself is owned; ``("codex_agent",)`` means a
+    binding of ``apps`` reaches owned code only through that attribute; ``None``
+    means no owned module lies at or under the binding.
+    """
+    if _owned_module(name):
+        return ()
+    chains = [
+        tuple(prefix.removeprefix(name + ".").split("."))
+        for prefix in _OWNED_MODULE_PREFIXES
+        if prefix.startswith(name + ".")
+    ]
+    return min(chains, key=len) if chains else None
+
+
 _RAW_SQL_SETUP = re.compile(r"^\s*(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE)\b", re.I)
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
@@ -363,7 +387,8 @@ def python_ast_violations(path: str, source: str) -> tuple[PolicyViolation, ...]
         return (PolicyViolation("python-syntax", path, error.msg, error.lineno),)
 
     violations: list[PolicyViolation] = []
-    owned_aliases: set[str] = set()
+    # Local binding -> attribute chain that reaches owned code from it.
+    owned_aliases: dict[str, tuple[str, ...]] = {}
     sleep_modules = {"asyncio", "time", "anyio", "trio"}
     sleep_aliases: set[str] = set()
     skip_aliases: set[str] = set()
@@ -394,8 +419,17 @@ def python_ast_violations(path: str, source: str) -> tuple[PolicyViolation, ...]
                     pytest_aliases.add(alias.asname or alias.name)
                 if alias.name == "unittest":
                     unittest_aliases.add(alias.asname or alias.name)
-                if alias.name.startswith(_OWNED_MODULE_PREFIXES):
-                    owned_aliases.add(alias.asname or alias.name.split(".", 1)[0])
+                if alias.asname is not None:
+                    reach = _owned_reach(alias.name)
+                    if reach is not None:
+                        owned_aliases[alias.asname] = reach
+                else:
+                    # `import a.b.c` binds only `a`; every owned module at or under
+                    # any imported prefix is reachable through that root binding.
+                    root = alias.name.split(".", 1)[0]
+                    reach = _owned_reach(root)
+                    if reach is not None:
+                        owned_aliases[root] = min((reach, owned_aliases.get(root, reach)), key=len)
                 if alias.name in sleep_modules:
                     sleep_modules.add(alias.asname or alias.name)
         elif isinstance(node, ast.ImportFrom):
@@ -408,8 +442,10 @@ def python_ast_violations(path: str, source: str) -> tuple[PolicyViolation, ...]
                         "python-internal-mock", path, "unittest.mock is forbidden", node.lineno
                     )
                 )
-            if module.startswith(_OWNED_MODULE_PREFIXES):
-                owned_aliases.update(alias.asname or alias.name for alias in node.names)
+            for alias in node.names:
+                reach = _owned_reach(f"{module}.{alias.name}" if module else alias.name)
+                if reach is not None:
+                    owned_aliases[alias.asname or alias.name] = reach
             if module in {"asyncio", "time", "anyio", "trio"}:
                 sleep_aliases.update(
                     alias.asname or alias.name for alias in node.names if alias.name == "sleep"
@@ -558,9 +594,12 @@ def python_ast_violations(path: str, source: str) -> tuple[PolicyViolation, ...]
             target = node.args[0]
             target_parts = _attribute_parts(target)
             string_target = target.value if isinstance(target, ast.Constant) else None
-            if (target_parts and target_parts[0] in owned_aliases) or (
-                isinstance(string_target, str) and string_target.startswith(_OWNED_MODULE_PREFIXES)
-            ):
+            if (
+                target_parts
+                and target_parts[0] in owned_aliases
+                and tuple(target_parts[1 : 1 + len(owned_aliases[target_parts[0]])])
+                == owned_aliases[target_parts[0]]
+            ) or (isinstance(string_target, str) and _owned_module(string_target)):
                 violations.append(
                     PolicyViolation(
                         "python-owned-monkeypatch",

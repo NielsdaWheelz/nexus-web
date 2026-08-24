@@ -7,6 +7,4 @@ import os
 
 def reject_api_key_auth() -> None:
     if "OPENAI_API_KEY" in os.environ:
-        raise RuntimeError(
-            "OPENAI_API_KEY must not be inherited by a Codex subscription process"
-        )
+        raise RuntimeError("OPENAI_API_KEY must not be inherited by a Codex subscription process")
