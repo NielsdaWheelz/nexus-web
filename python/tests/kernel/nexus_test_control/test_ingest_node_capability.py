@@ -58,7 +58,7 @@ def test_ingest_node_test_paths_defer_to_full_run_behind_loopback_guard_and_requ
     assert inherited_node_options.startswith("NODE_OPTIONS=--import=")
     assert inherited_node_options.endswith("python/tests/testkit/node-network-guard.mjs")
     assert "--inspect" not in inherited_node_options
-    assert command == f"ARGV=--test --test-concurrency=1 {path}"
+    assert command == f"ARGV=--test --test-reporter=tap --test-concurrency=1 {path}"
 
     doctor_root = tmp_path / "doctor-nexus"
     _doctor_fixture(doctor_root, tools)

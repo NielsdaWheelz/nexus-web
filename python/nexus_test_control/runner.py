@@ -3954,6 +3954,7 @@ def _run_ingest_node(
                     guard_import,
                     "node",
                     "--test",
+                    "--test-reporter=tap",
                     "--test-concurrency=1",
                     *targets,
                 ),
