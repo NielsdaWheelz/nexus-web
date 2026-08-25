@@ -14,7 +14,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.logging import get_logger
 from nexus.schemas.search import (
     SearchPageInfo,
@@ -38,7 +38,7 @@ from nexus.services.search.results import _SearchScore
 from nexus.services.search.retrievers.content_chunks import (
     resolve_content_chunk_search_result,
 )
-from nexus.services.search.retrievers.contributors import _search_contributors
+from nexus.services.search.retrievers.contributors import resolve_contributor_search_result
 from nexus.services.search.retrievers.conversations import (
     ConversationSearchResultType,
     resolve_conversation_search_result,
@@ -205,26 +205,16 @@ def get_search_result(
         )
 
     if result_type == "contributor":
-        # Durable-ref re-resolution (chat citation chip refresh): use BROAD
-        # visibility so a contributor reachable only via a viewer-owned graph edge
-        # (zero visible credits) still re-materializes instead of dropping (M2).
-        matches = _search_contributors(
+        return _result_to_out(
             db,
             viewer_id,
-            "",
-            False,
-            "all",
-            None,
-            [_uuid_from_search_id(result_id)],
-            [],
-            [],
-            1,
-            broad_visibility=True,
+            resolve_contributor_search_result(
+                db,
+                viewer_id=viewer_id,
+                result_id=_uuid_from_search_id(result_id),
+                score=score,
+            ),
         )
-        if not matches:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
-        matches[0].score = score
-        return _result_to_out(db, viewer_id, matches[0])
 
     if result_type == "content_chunk":
         return _result_to_out(
