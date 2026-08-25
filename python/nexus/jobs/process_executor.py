@@ -723,11 +723,11 @@ def _initialize_child_runtime(runtime: Literal["Base", "Llm"]) -> None:
         return
     from nexus.config import get_settings
     from nexus.db.session import get_session_factory
-    from nexus.services.llm_profiles import validate_profiles
+    from nexus.services.generation_policy import validate_policy
     from nexus.services.rate_limit import RateLimiter, set_rate_limiter
 
     settings = get_settings()
-    validate_profiles()
+    validate_policy()
     set_rate_limiter(
         RateLimiter(
             session_factory=get_session_factory(),

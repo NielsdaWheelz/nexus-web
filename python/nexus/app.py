@@ -30,13 +30,11 @@ Actual execution order per request:
 8. StreamCORSMiddleware when configured (stream route CORS)
 9. RequestIDMiddleware (logs, sets response header)
 
-LLM client lifecycle:
+Outbound client lifecycle:
 - httpx.AsyncClient is created at startup, stored in app.state, and shared by
-  the web-search provider and request-scoped Learn resolver runtime; background
-  LLM runtimes remain task-owned by tasks/llm_task.py
-- validate_profiles() runs at startup to fail fast on any drift between the
-  product profile portfolio and the provider_runtime catalog (mirrors the
-  worker-startup call)
+  the Brave-backed Nexus tool runtime. Generation uses the private Codex UDS.
+- validate_policy() runs at startup to fail fast on drift in the fixed Codex
+  plans, operation catalog, bounds, or eval pin (mirrors worker startup).
 - Client is closed gracefully at shutdown
 """
 
@@ -77,7 +75,7 @@ from nexus.responses import (
 )
 from nexus.runtime_health import get_runtime_identity
 from nexus.services.bootstrap import ensure_user_and_default_library
-from nexus.services.llm_profiles import validate_profiles
+from nexus.services.generation_policy import validate_policy
 from nexus.services.tool_runtime.composition import (
     compose_configured_web_search_provider,
     compose_product_tool_runtime,
@@ -175,10 +173,8 @@ async def lifespan(app: FastAPI):
     """Manage application lifecycle resources.
 
     Lifecycle behavior:
-    - Fails fast on any drift between the product LLM profile portfolio and
-      the provider_runtime catalog (validate_profiles); config.py's
-      validate_required_settings already enforces the platform keys and the
-      Fable retention assertion at Settings construction
+    - Fails fast on any drift in the fixed Codex generation policy; config.py
+      separately enforces retained non-generation service credentials
     - Creates shared httpx.AsyncClient for connection pooling (web search)
     - Cleans up on shutdown
     """
@@ -186,7 +182,7 @@ async def lifespan(app: FastAPI):
     get_runtime_identity()
     get_task_contract_digest()
 
-    validate_profiles()
+    validate_policy()
 
     # Create shared HTTP client for outbound calls (web search).
     app.state.httpx_client = httpx.AsyncClient(
