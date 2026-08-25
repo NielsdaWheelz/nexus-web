@@ -773,7 +773,9 @@ typed terminal publication path.
   - source acceptance, attempts, retry, refresh, job payload construction,
     canonical duplicate resolution orchestration;
   - one detached source-adapter dispatch phase, separate from fenced
-    supersession, failure, authorship, and terminal publication.
+    supersession, failure, authorship, and terminal publication;
+  - one immutable terminal-publication phase owning the final fenced Media,
+    attempt, content-index, semantic-index, and document-embed mutations.
 - `python/nexus/services/media_source_types.py`
   - canonical source-attempt type constants and policy sets used by dispatch,
     retryability, failure-stage, and cleanup rules.
