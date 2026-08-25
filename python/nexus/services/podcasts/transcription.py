@@ -552,81 +552,15 @@ def request_media_transcript_for_viewer(
         else max(0, int(monthly_limit_minutes) - int(usage_snapshot_after["total"]))
     )
 
-    existing_job_id = db.scalar(
-        text("SELECT media_id FROM podcast_transcription_jobs WHERE media_id = :media_id"),
-        {"media_id": media_id},
+    _reset_podcast_transcription_job_for_source_attempt(
+        db,
+        media_id=media_id,
+        requested_by_user_id=viewer_id,
+        request_reason=normalized_reason,
+        reserved_minutes=required_minutes,
+        reservation_usage_date=usage_date,
+        now=now,
     )
-    if existing_job_id is None:
-        db.execute(
-            text(
-                """
-                INSERT INTO podcast_transcription_jobs (
-                    media_id,
-                    requested_by_user_id,
-                    request_reason,
-                    reserved_minutes,
-                    reservation_usage_date,
-                    status,
-                    error_code,
-                    attempts,
-                    started_at,
-                    completed_at,
-                    created_at,
-                    updated_at
-                )
-                VALUES (
-                    :media_id,
-                    :requested_by_user_id,
-                    :request_reason,
-                    :reserved_minutes,
-                    :reservation_usage_date,
-                    'pending',
-                    NULL,
-                    0,
-                    NULL,
-                    NULL,
-                    :created_at,
-                    :updated_at
-                )
-                """
-            ),
-            {
-                "media_id": media_id,
-                "requested_by_user_id": viewer_id,
-                "request_reason": normalized_reason,
-                "reserved_minutes": required_minutes,
-                "reservation_usage_date": usage_date,
-                "created_at": now,
-                "updated_at": now,
-            },
-        )
-    else:
-        db.execute(
-            text(
-                """
-                UPDATE podcast_transcription_jobs
-                SET
-                    requested_by_user_id = :requested_by_user_id,
-                    request_reason = :request_reason,
-                    reserved_minutes = :reserved_minutes,
-                    reservation_usage_date = :reservation_usage_date,
-                    status = 'pending',
-                    error_code = NULL,
-                    started_at = NULL,
-                    completed_at = NULL,
-                    updated_at = :updated_at
-                WHERE media_id = :media_id
-                """
-            ),
-            {
-                "media_id": media_id,
-                "requested_by_user_id": viewer_id,
-                "request_reason": normalized_reason,
-                "reserved_minutes": required_minutes,
-                "reservation_usage_date": usage_date,
-                "updated_at": now,
-            },
-        )
 
     set_media_transcript_state(
         db,
