@@ -9,7 +9,7 @@ contract (gates, pagination, ``SearchResultOut`` projection) and
 from __future__ import annotations
 
 import time
-from typing import Literal, cast
+from typing import cast
 from uuid import UUID
 
 from sqlalchemy import text
@@ -19,7 +19,6 @@ from nexus.auth.permissions import (
     highlight_visibility_sql,
     visible_conversation_ids_cte_sql,
     visible_media_ids_cte_sql,
-    visible_podcast_ids_cte_sql,
 )
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
@@ -51,13 +50,10 @@ from nexus.services.search.projection import (
 from nexus.services.search.query import SearchQuery
 from nexus.services.search.results import (
     _build_search_source,
-    _parse_contributor_credits,
     _RankedContentChunkResult,
     _RankedEvidenceSpanResult,
     _RankedFragmentResult,
     _RankedHighlightResult,
-    _RankedMediaResult,
-    _RankedPodcastResult,
     _RankedReaderApparatusItemResult,
     _RankedWebResult,
     _SearchScore,
@@ -67,6 +63,11 @@ from nexus.services.search.retrievers.contributors import _search_contributors
 from nexus.services.search.retrievers.conversations import (
     ConversationSearchResultType,
     resolve_conversation_search_result,
+)
+from nexus.services.search.retrievers.media import (
+    MEDIA_SEARCH_RESULT_TYPES,
+    MediaSearchResultType,
+    resolve_media_search_result,
 )
 from nexus.services.search.retrievers.notes import (
     NotesSearchResultType,
@@ -203,79 +204,15 @@ def get_search_result(
 
     score = _SearchScore(raw=1.0, weighted=1.0, normalized=1.0)
 
-    if result_type in {"media", "episode", "video"}:
-        media_id = _uuid_from_search_id(result_id)
-        kind_filter = ""
-        if result_type == "media":
-            kind_filter = "AND m.kind NOT IN ('podcast_episode', 'video')"
-        elif result_type == "episode":
-            kind_filter = "AND m.kind = 'podcast_episode'"
-        else:
-            kind_filter = "AND m.kind = 'video'"
-        row = db.execute(
-            text(
-                f"""
-                WITH
-                    visible_media AS ({visible_media_ids_cte_sql()}),
-                    media_contributor_credits AS ({contributor_credits_rollup_cte_sql("media_id")})
-                SELECT m.id, m.title, m.kind, m.published_date, mcc.contributor_credits
-                FROM media m
-                JOIN visible_media vm ON vm.media_id = m.id
-                LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
-                WHERE m.id = :id
-                {kind_filter}
-                """
-            ),
-            {"viewer_id": viewer_id, "id": media_id},
-        ).first()
-        if row is None:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
-        media_result_type: Literal["media", "episode", "video"] = (
-            "episode"
-            if result_type == "episode"
-            else "video"
-            if result_type == "video"
-            else "media"
-        )
+    if result_type in MEDIA_SEARCH_RESULT_TYPES:
         return _result_to_out(
             db,
             viewer_id,
-            _RankedMediaResult(
-                id=row[0],
-                snippet=_truncate_snippet(str(row[1])),
-                source=_build_search_source(row[0], row[2], row[1], row[4], row[3]),
-                score=score,
-                result_type=media_result_type,
-            ),
-        )
-
-    if result_type == "podcast":
-        podcast_id = _uuid_from_search_id(result_id)
-        row = db.execute(
-            text(
-                f"""
-                WITH
-                    visible_podcasts AS ({visible_podcast_ids_cte_sql()}),
-                    podcast_contributor_credits AS ({contributor_credits_rollup_cte_sql("podcast_id")})
-                SELECT p.id, p.title, pcc.contributor_credits
-                FROM podcasts p
-                JOIN visible_podcasts vp ON vp.podcast_id = p.id
-                LEFT JOIN podcast_contributor_credits pcc ON pcc.podcast_id = p.id
-                WHERE p.id = :id
-                """
-            ),
-            {"viewer_id": viewer_id, "id": podcast_id},
-        ).first()
-        if row is None:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
-        return _result_to_out(
-            db,
-            viewer_id,
-            _RankedPodcastResult(
-                id=row[0],
-                title=row[1],
-                contributors=_parse_contributor_credits(row[2]),
-                snippet=_truncate_snippet(str(row[1])),
+            resolve_media_search_result(
+                db,
+                viewer_id=viewer_id,
+                result_type=cast(MediaSearchResultType, result_type),
+                result_id=_uuid_from_search_id(result_id),
                 score=score,
             ),
         )
