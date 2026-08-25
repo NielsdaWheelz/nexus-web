@@ -796,10 +796,12 @@ identity or highlight-note origin from result type or URL.
 
 `schemas/search_types.py` is the sole authority for public search-result
 discriminants. The public response union, retrieval contexts, and durable
-retrieval-result references must cover every discriminant. Conversation Dossier
-(`artifact`) rematerialization belongs to the conversations retriever: it masks
-foreign subjects as not found and returns only the viewer-owned Dossier's current
-revision, while the result identity remains the Conversation subject.
+retrieval-result references must cover every discriminant. The conversations
+retriever owns both candidate retrieval and durable rematerialization for
+Conversation, Message, and Conversation Dossier (`artifact`) results under one
+visibility contract. It excludes pending Messages; Dossier rematerialization is
+owner-only, masks foreign subjects as not found, and returns the current revision
+while keeping the Conversation subject as result identity.
 
 - **Indexing** (`services/content_indexing.py`, `semantic_chunks.py`): text-bearing
   media flows `fragment → content_blocks → chunks → embeddings`; note bodies
