@@ -1943,6 +1943,7 @@ export default function MediaPaneBody() {
     highlights,
     status: textHighlightStatus,
     error: textHighlightError,
+    initialLoading: textHighlightInitialLoading,
     retry: retryTextHighlights,
     reload: reloadTextHighlights,
     beginMutation: beginTextHighlightMutation,
@@ -3723,7 +3724,7 @@ export default function MediaPaneBody() {
   useLayoutEffect(() => {
     const content = contentRef.current;
     const viewport = textViewportRef.current;
-    if (!activeContent || !content) {
+    if (textHighlightInitialLoading || !activeContent || !content) {
       cursorRef.current = null;
       setIsMismatchDisabled(false);
       webFindRenderedStateRef.current = null;
@@ -3771,6 +3772,7 @@ export default function MediaPaneBody() {
     isEpub,
     renderedEpubSection,
     readerLayoutReady,
+    textHighlightInitialLoading,
   ]);
 
   useEffect(() => {
@@ -4295,7 +4297,7 @@ export default function MediaPaneBody() {
   }, [isPdf, refreshRetainedSelection]);
 
   useRetainedReaderSelectionGeometry({
-    enabled: !isPdf,
+    enabled: !isPdf && !textHighlightInitialLoading,
     sourceKey: activeContent?.fragmentId ?? null,
     viewportRef: textViewportRef,
     contentRef,
@@ -5052,6 +5054,9 @@ export default function MediaPaneBody() {
     ) {
       return { status: "loading" as const, message: "Loading section..." };
     }
+    if (textHighlightInitialLoading) {
+      return { status: "loading" as const, message: "Loading highlights…" };
+    }
     return {
       status: "ready" as const,
       renderedHtml: activeContent?.htmlSanitized ?? "",
@@ -5074,6 +5079,9 @@ export default function MediaPaneBody() {
         status: "empty" as const,
         message: "No content available for this media.",
       };
+    }
+    if (textHighlightInitialLoading) {
+      return { status: "loading" as const, message: "Loading highlights…" };
     }
     return {
       status: "ready" as const,
@@ -7832,6 +7840,10 @@ export default function MediaPaneBody() {
     />
   ) : readerProgress.status === "load_failed" ? (
     readerProgressLoadFailed
+  ) : textHighlightInitialLoading ? (
+    <div className={styles.mobileDocumentState}>
+      <PaneLoadingState label="Loading highlights…" announcement="Polite" />
+    </div>
   ) : (
     <TranscriptContentPanel
       mediaId={media.id}

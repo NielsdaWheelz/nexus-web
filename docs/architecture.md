@@ -1149,7 +1149,10 @@ mutation projection and authoritative reconciliation with one latest-wins
 generation, and routes expected failures to Retry while same-system response
 defects throw to the render boundary. Highlight HTTP responses are strictly
 decoded once by `lib/highlights/highlightContract.ts`; route components do not
-own fallback envelopes, raw retry timers, or parallel reload paths.
+own fallback envelopes, raw retry timers, or parallel reload paths. Selectable
+canonical text mounts after the first active highlight projection settles, so
+persisted decoration cannot replace a live selection; subsequent refreshes keep
+settled content mounted.
 
 **Source-authored apparatus** (`services/reader_apparatus.py`): web article,
 EPUB, and PDF ingest paths persist document-authored notes, endnotes,

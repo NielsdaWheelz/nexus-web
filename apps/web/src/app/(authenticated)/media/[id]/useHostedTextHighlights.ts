@@ -23,6 +23,7 @@ interface ProjectionState {
   readonly highlights: Highlight[];
   readonly status: HostedTextHighlightStatus;
   readonly error: ApiError | null;
+  readonly settled: boolean;
 }
 
 interface TextHighlightMutationSession {
@@ -34,6 +35,7 @@ interface HostedTextHighlights {
   readonly highlights: Highlight[];
   readonly status: HostedTextHighlightStatus;
   readonly error: ApiError | null;
+  readonly initialLoading: boolean;
   readonly retry: () => void;
   readonly reload: () => void;
   readonly beginMutation: () => TextHighlightMutationSession | null;
@@ -50,7 +52,7 @@ function emptyProjection(
   key: string | null,
   status: HostedTextHighlightStatus,
 ): ProjectionState {
-  return { key, highlights: [], status, error: null };
+  return { key, highlights: [], status, error: null, settled: false };
 }
 
 /**
@@ -109,6 +111,7 @@ export function useHostedTextHighlights({
         highlights: current.key === key ? current.highlights : [],
         status: "loading",
         error: null,
+        settled: current.key === key && current.settled,
       }));
 
       try {
@@ -123,7 +126,13 @@ export function useHostedTextHighlights({
         ) {
           return null;
         }
-        setState({ key, highlights, status: "ready", error: null });
+        setState({
+          key,
+          highlights,
+          status: "ready",
+          error: null,
+          settled: true,
+        });
         return highlights;
       } catch (error) {
         if (
@@ -144,6 +153,7 @@ export function useHostedTextHighlights({
           highlights: current.key === key ? current.highlights : [],
           status: "error",
           error,
+          settled: true,
         }));
         return null;
       }
@@ -185,8 +195,11 @@ export function useHostedTextHighlights({
     const generation = ++generationRef.current;
     setState((current) =>
       current.key === currentKey
-        ? { ...current, status: "ready", error: null }
-        : emptyProjection(currentKey, "ready"),
+        ? { ...current, status: "ready", error: null, settled: true }
+        : {
+            ...emptyProjection(currentKey, "ready"),
+            settled: true,
+          },
     );
     return { key: currentKey, generation };
   }, []);
@@ -204,6 +217,7 @@ export function useHostedTextHighlights({
           highlights: transform(current.highlights),
           status: "ready",
           error: null,
+          settled: true,
         };
       });
       return true;
@@ -226,6 +240,7 @@ export function useHostedTextHighlights({
     highlights: current.highlights,
     status: current.status,
     error: current.error,
+    initialLoading: current.status === "loading" && !current.settled,
     retry,
     reload: retry,
     beginMutation,

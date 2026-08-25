@@ -69,7 +69,9 @@ describe("hosted text-highlight projection", () => {
       useHostedTextHighlights({ mediaId: "media-1", fragmentId: "fragment-a" }),
     );
 
+    expect(result.current.initialLoading).toBe(true);
     await waitFor(() => expect(result.current.status).toBe("ready"));
+    expect(result.current.initialLoading).toBe(false);
     expect(result.current.highlights).toEqual([]);
     expect(fetch).toHaveBeenCalledTimes(1);
   });

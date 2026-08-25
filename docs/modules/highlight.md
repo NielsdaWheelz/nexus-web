@@ -115,8 +115,11 @@ mutation projection and reconciliation. An empty highlight list is a complete,
 successful response and is never retried. Expected request failures become a
 visible Retry obligation, authentication failures go to the authentication
 boundary, and malformed same-system responses go to the render defect
-boundary. `MediaPaneBody` composes these owners; it does not run a parallel
-timer, request-version counter, or direct fragment-highlight reload path.
+boundary. The reader publishes selectable canonical text only after the first
+active projection settles, so persisted decoration cannot replace a live DOM
+selection; later refreshes keep the settled content mounted. `MediaPaneBody`
+composes these owners; it does not run a parallel timer, request-version
+counter, or direct fragment-highlight reload path.
 
 `lib/highlights/highlightContract.ts` is the browser's strict decoder for the
 standalone highlight response wires. The transport accepts the canonical
