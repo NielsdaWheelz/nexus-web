@@ -17,7 +17,6 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import (
     visible_conversation_ids_cte_sql,
-    visible_media_ids_cte_sql,
 )
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
@@ -40,8 +39,6 @@ from nexus.services.search.kinds import KIND_TO_RESULT_TYPES
 from nexus.services.search.projection import _result_to_out, _truncate_snippet
 from nexus.services.search.query import SearchQuery
 from nexus.services.search.results import (
-    _build_search_source,
-    _RankedReaderApparatusItemResult,
     _RankedWebResult,
     _SearchScore,
     _web_result_ref_json,
@@ -68,8 +65,10 @@ from nexus.services.search.retrievers.notes import (
     NotesSearchResultType,
     resolve_notes_search_result,
 )
+from nexus.services.search.retrievers.reader_apparatus import (
+    resolve_reader_apparatus_search_result,
+)
 from nexus.services.search.scope import authorize_scope
-from nexus.services.search.sql import contributor_credits_rollup_cte_sql
 from nexus.services.search.telemetry import _log_search
 
 logger = get_logger(__name__)
@@ -298,48 +297,13 @@ def get_search_result(
         )
 
     if result_type == "reader_apparatus_item":
-        item_id = _uuid_from_search_id(result_id)
-        row = db.execute(
-            text(
-                f"""
-                WITH
-                    visible_media AS ({visible_media_ids_cte_sql()}),
-                    media_contributor_credits AS ({contributor_credits_rollup_cte_sql("media_id")})
-                SELECT
-                    rai.id,
-                    rai.kind,
-                    rai.label,
-                    rai.body_text,
-                    rai.locator,
-                    rai.media_id,
-                    m.kind,
-                    m.title,
-                    m.published_date,
-                    mcc.contributor_credits
-                FROM reader_apparatus_items rai
-                JOIN reader_apparatus_states ras ON ras.id = rai.state_id
-                JOIN media m ON m.id = rai.media_id
-                JOIN visible_media vm ON vm.media_id = rai.media_id
-                LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
-                WHERE rai.id = :id
-                  AND ras.status IN ('ready', 'partial')
-                  AND rai.locator IS NOT NULL
-                  AND rai.locator_status != 'missing'
-                """
-            ),
-            {"viewer_id": viewer_id, "id": item_id},
-        ).first()
-        if row is None:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
         return _result_to_out(
             db,
             viewer_id,
-            _RankedReaderApparatusItemResult(
-                id=row[0],
-                snippet=_truncate_snippet(str(row[3] or row[2] or row[1] or "")),
-                apparatus_kind=str(row[1]),
-                locator=dict(row[4]),
-                source=_build_search_source(row[5], row[6], row[7], row[9], row[8]),
+            resolve_reader_apparatus_search_result(
+                db,
+                viewer_id=viewer_id,
+                result_id=_uuid_from_search_id(result_id),
                 score=score,
             ),
         )
