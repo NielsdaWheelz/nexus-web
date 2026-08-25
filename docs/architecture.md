@@ -1512,6 +1512,13 @@ its immutable audit fact; it does not materialize transcript work state or bump
 collection revisions. Repeated ready or inflight admission is likewise an
 audit-only idempotent fact; Podcast collection revisions advance only when the
 request changes viewer-visible transcript work state.
+The request path reads its media/job/transcript inputs once through the typed
+`_TranscriptRequestMedia` snapshot. Publisher-sidecar forecast and admission
+then live in `_request_rss_podcast_transcript`: they reserve zero generated
+minutes and create one durable transcript source attempt. That source-attempt
+owner publishes the all-viewer media-fact revision exactly once; the outer
+transcript controller does not publish a second revision for the same accepted
+attempt.
 
 The canonical Podcast detail pane observes those two independent owners through
 one viewer-owned subscription-lifecycle snapshot stream. Transactional triggers
