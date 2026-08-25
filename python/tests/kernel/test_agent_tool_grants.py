@@ -56,9 +56,10 @@ def test_grant_is_strict_hs256_bearer_and_does_not_leak_secret() -> None:
     assert "token" not in claims.model_dump(mode="json")
 
     assert MAX_AGENT_TOOL_GRANT_TTL_SECONDS == max(
-        generation_policy.chat_policy(profile).transport_deadline_seconds
+        generation_policy.chat_policy(profile).turn_timeout_seconds
         for profile in generation_policy.CHAT_PROFILES
     )
+    assert MAX_AGENT_TOOL_GRANT_TTL_SECONDS == 900
     with pytest.raises(ValueError, match=str(MAX_AGENT_TOOL_GRANT_TTL_SECONDS)):
         issue_agent_tool_grant(
             claims.model_copy(update={"exp": claims.iat + MAX_AGENT_TOOL_GRANT_TTL_SECONDS + 1}),

@@ -1,0 +1,28 @@
+diff --git a/python/nexus/services/agent_tools_mcp.py b/python/nexus/services/agent_tools_mcp.py
+--- a/python/nexus/services/agent_tools_mcp.py
++++ b/python/nexus/services/agent_tools_mcp.py
+@@ -991,7 +991,6 @@ class AgentToolAuthority:
+                       AND status = 'running'
+                       AND claimed_by = :worker_id
+                       AND attempts = :attempt_no
+-                      AND lease_expires_at > clock_timestamp()
+                     FOR UPDATE
+                     """
+                 ),
+@@ -1036,13 +1035,14 @@ class AgentToolAuthority:
+         entry["result"] = receipt_json
+         entry["next_citation_ordinal"] = receipt.next_citation_ordinal
+         payload["_agent_tool_calls"] = journal
+-        if not update_running_job_payload(
++        updated = update_running_job_payload(
+             db,
+             job_id=self.job_id,
+             worker_id=self.worker_id,
+             attempt_no=self.attempt_no,
+             payload=payload,
+-        ):
++        )
++        if not updated and job_row is None:
+             raise _PolicyViolation(self.generation_id)
+
+     async def reject_unknown(

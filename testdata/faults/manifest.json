@@ -363,6 +363,15 @@
       "expected_failure": "DID NOT RAISE"
     },
     {
+      "id": "agent-tool-receipt-lease-fence-bypass",
+      "patch": "testdata/faults/agent-tool-receipt-lease-fence-bypass.patch",
+      "sha256": "3f3ae2fef4df85c61014a75af391249685e9e292985474a2e00d340b5abafc02",
+      "proofs": [
+        "pytest:python/tests/service/test_agent_tools_mcp.py"
+      ],
+      "expected_failure": "lost job lease still authorized an MCP receipt"
+    },
+    {
       "id": "llm-write-tool-authorization-bypass",
       "patch": "testdata/faults/llm-write-tool-authorization-bypass.patch",
       "sha256": "01076def187ee90f4766051bb316f4d824ac46b45f67fed2dbbb5ffe7683a827",
@@ -397,15 +406,6 @@
         "pytest:python/tests/service/test_llm_tools_reads.py::test_nexus_reads_are_scoped_citable_and_closed"
       ],
       "expected_failure": "an empty admission set fell through to viewer-global search"
-    },
-    {
-      "id": "llm-tool-position-replay-bypass",
-      "patch": "testdata/faults/llm-tool-position-replay-bypass.patch",
-      "sha256": "b9dc387a15df3238039f387afed21524173deff4fa323fd7021b55e32cb4f49c",
-      "proofs": [
-        "pytest:python/tests/service/test_agent_tools_mcp.py"
-      ],
-      "expected_failure": "changed invocation crossed the generation dispatch boundary"
     },
     {
       "id": "dossier-uncertain-search-redispatch-bypass",

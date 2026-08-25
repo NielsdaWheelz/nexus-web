@@ -486,8 +486,11 @@ bounds; the 33 ms / 512-char / 2 KiB SSE flush cadence stays Nexus-owned and
 is applied once, over host `text` frames.
 
 The terminal frame carries `accepted_at` — the host's monotonic-to-wall
-acceptance instant — which Nexus persists at the terminal checkpoint. No Nexus
-write occurs between the `Uncertain` checkpoint and the terminal.
+resource-ownership acceptance instant, taken after slot/capacity admission and
+the per-turn root are secured but before runtime/session construction. It is
+not evidence that a native session reference was established. Nexus persists
+it at the terminal checkpoint. No Nexus write occurs between the `Uncertain`
+checkpoint and the terminal.
 
 `GET /health` gains `command_schema_version`, `policy_revision`,
 `sdk_version`, and `runtime_version`. The client asserts these against its own
@@ -728,11 +731,14 @@ the admission-bound provenance. Raw prompts, outputs, grants, credentials, and
 provider diagnostics are never ledger data.
 
 The row keeps its lifecycle invariants: usage is wholly absent or carries all
-core totals; `session_ref`, `sdk_version`, and `runtime_version` are absent
-only for a terminal proven pre-accept (`Failed` or owner-side `Cancelled`),
-with `accepted_at IS NULL` preserving that proof; a terminal may not change
-the backend/transport/auth route recorded at start; and terminal facts are
-never partially persisted. `generation_seq` keeps the existing per-owner ordering
+core totals; `session_ref` is required for `Succeeded`, while an accepted
+`Failed`/`Cancelled` terminal may lack it when failure or cancellation preceded
+complete native-session establishment; every accepted terminal still carries
+`accepted_at`, `sdk_version`, `runtime_version`, and latency. Those facts and
+`session_ref` are all absent for a terminal proven pre-accept (`Failed` or
+owner-side `Cancelled`), with `accepted_at IS NULL` preserving that proof. A
+terminal may not change the backend/transport/auth route recorded at start,
+and terminal facts are never partially persisted. `generation_seq` keeps the existing per-owner ordering
 semantics and the chat step-path correspondence
 (`generation/<generation_seq>/…`); the rerun drift guard and the chat
 reconciliation lookup are re-cut in the same change so no reader is left

@@ -727,7 +727,14 @@ def test_0222_refuses_every_active_or_uncertain_generation_owner_before_mutation
                 {"id": highlight_id, "user_id": ids["user"]},
             )
 
-        for phase in ("Prepared", "Uncertain", "Completed"):
+        learn_cases: tuple[tuple[str, dict[str, object]], ...] = (
+            ("empty", {}),
+            *(
+                (phase.lower(), {"idea-resolution": _journal_state(phase=phase)})
+                for phase in ("Prepared", "Uncertain", "Completed")
+            ),
+        )
+        for label, coordination in learn_cases:
             learn_request_id = uuid4()
             with engine.begin() as connection:
                 connection.execute(
@@ -744,10 +751,10 @@ def test_0222_refuses_every_active_or_uncertain_generation_owner_before_mutation
                     {
                         "id": learn_request_id,
                         "user_id": ids["user"],
-                        "idempotency_key": f"{phase.lower()}-learn",
+                        "idempotency_key": f"{label}-learn",
                         "request_hash": "a" * 64,
                         "highlight_id": highlight_id,
-                        "coordination": _json({"idea-resolution": _journal_state(phase=phase)}),
+                        "coordination": _json(coordination),
                     },
                 )
             _assert_refused_without_mutation(
@@ -755,7 +762,7 @@ def test_0222_refuses_every_active_or_uncertain_generation_owner_before_mutation
                 engine,
                 call_id=call_id,
                 turn_id=turn_id,
-                blocker=f"{phase} artifact Learn journal",
+                blocker=f"{label} artifact Learn request",
                 expected_error=rf"pending Learn requests.*{learn_request_id}",
             )
             with engine.begin() as connection:

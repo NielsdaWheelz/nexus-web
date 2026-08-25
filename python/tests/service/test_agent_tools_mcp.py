@@ -1667,6 +1667,95 @@ def test_mcp_mount_projects_declarations_and_is_sessionless(
     asyncio.run(scenario())
 
 
+def test_mcp_receipt_landing_refuses_a_lost_job_lease_after_inner_completion(
+    engine: Engine,
+) -> None:
+    """Risk: a completed effect must not extend a stale bearer's job authority."""
+
+    user_id = uuid4()
+    email = f"mcp-receipt-fence-{user_id}@example.invalid"
+    with Session(engine) as db:
+        default_library_id = bootstrap.ensure_user_and_default_library(db, user_id, email)
+        db.commit()
+    race = _prepare_write_race(
+        engine,
+        UserRecord(id=user_id, email=email, default_library_id=default_library_id),
+        label="receipt-fence",
+    )
+
+    with (
+        TestClient(race.app, base_url="http://mcp.test") as client,
+        ThreadPoolExecutor(max_workers=1) as pool,
+        Session(engine) as effect_blocker,
+        Session(engine) as owner_blocker,
+    ):
+        effect_blocker.execute(
+            text("SELECT id FROM libraries WHERE id = :library_id FOR UPDATE"),
+            {"library_id": race.library_id},
+        )
+        effect_blocker_pid = int(effect_blocker.scalar(text("SELECT pg_backend_pid()")))
+        write = pool.submit(
+            _library_add,
+            client,
+            race,
+            request_id="receipt-fence",
+        )
+        _await_backend_blocked_by(
+            engine,
+            blocking_pid=effect_blocker_pid,
+            query_pattern="%FROM libraries l%",
+        )
+
+        lock_generation_owner_in_current_transaction(
+            owner_blocker,
+            LlmCallOwner(kind="chat_run", id=race.run_id),
+        )
+        owner_blocker_pid = int(owner_blocker.scalar(text("SELECT pg_backend_pid()")))
+        effect_blocker.commit()
+        _await_backend_blocked_by(
+            engine,
+            blocking_pid=owner_blocker_pid,
+            query_pattern="%pg_advisory_xact_lock%",
+        )
+
+        # The real ToolExecutor has committed the domain effect and its inner
+        # durable terminal. Expire the queue fence before the outer MCP receipt
+        # obtains generation-owner authority; only replay reconciliation may
+        # project that completed terminal from here.
+        with Session(engine) as stale_db:
+            expire_job_claim(stale_db, job_id=race.job_id)
+            stale_db.commit()
+        owner_blocker.commit()
+        denied_receipt = write.result(timeout=10)
+
+    assert denied_receipt.status_code == 200
+    assert "error" in denied_receipt.json(), "lost job lease still authorized an MCP receipt"
+    assert race.policy_violations == [str(race.generation_id)]
+    with Session(engine) as oracle:
+        assert (
+            oracle.scalar(
+                select(LibraryEntry).where(
+                    LibraryEntry.library_id == race.library_id,
+                    LibraryEntry.media_id == race.media_id,
+                )
+            )
+            is not None
+        )
+        tool_row = oracle.scalar(
+            select(MessageToolCall).where(
+                MessageToolCall.assistant_message_id == race.assistant_message_id,
+                MessageToolCall.canonical_tool_id == "nexus.library.add",
+            )
+        )
+        assert tool_row is not None and tool_row.status == "complete"
+        job = get_job(oracle, race.job_id)
+        assert job is not None
+        journal = job.payload.get("_agent_tool_calls")
+        assert isinstance(journal, dict) and len(journal) == 1
+        entry = next(iter(journal.values()))
+        assert isinstance(entry, dict) and "result" not in entry
+
+
 def test_cancel_and_in_flight_mcp_write_have_one_run_locked_outcome(
     engine: Engine,
 ) -> None:
@@ -1685,47 +1774,46 @@ def test_cancel_and_in_flight_mcp_write_have_one_run_locked_outcome(
     )
 
     cancel_first = _prepare_write_race(engine, race_user, label="cancel-first")
-    with (
-        TestClient(cancel_first.app, base_url="http://mcp.test") as client,
-        ThreadPoolExecutor(max_workers=1) as pool,
-        Session(engine) as blocker,
-    ):
-        lock_generation_owner_in_current_transaction(
-            blocker,
-            LlmCallOwner(kind="chat_run", id=cancel_first.run_id),
-        )
-        blocker_pid = int(blocker.scalar(text("SELECT pg_backend_pid()")))
-        write = pool.submit(
-            _library_add,
-            client,
-            cancel_first,
-            request_id="cancel-first",
-        )
-        _await_backend_blocked_by(
-            engine,
-            blocking_pid=blocker_pid,
-            query_pattern="%pg_advisory_xact_lock%",
-        )
-        assert not write.done(), "the write crossed its blocked authority boundary"
-        assert _cancel_race(engine, cancel_first)
-        blocker.commit()
-        cancelled_write = write.result(timeout=10)
-
-    assert (cancelled_write.status_code, cancelled_write.content) == (401, b"")
-    assert cancel_first.policy_violations == [str(cancel_first.generation_id)]
-    with Session(engine) as oracle:
-        assert (
-            oracle.scalar(
-                select(LibraryEntry).where(
-                    LibraryEntry.library_id == cancel_first.library_id,
-                    LibraryEntry.media_id == cancel_first.media_id,
-                )
-            )
-            is None
-        )
-
-    _fold_race_cancelled(engine, cancel_first)
     with TestClient(cancel_first.app, base_url="http://mcp.test") as client:
+        with (
+            ThreadPoolExecutor(max_workers=1) as pool,
+            Session(engine) as blocker,
+        ):
+            lock_generation_owner_in_current_transaction(
+                blocker,
+                LlmCallOwner(kind="chat_run", id=cancel_first.run_id),
+            )
+            blocker_pid = int(blocker.scalar(text("SELECT pg_backend_pid()")))
+            write = pool.submit(
+                _library_add,
+                client,
+                cancel_first,
+                request_id="cancel-first",
+            )
+            _await_backend_blocked_by(
+                engine,
+                blocking_pid=blocker_pid,
+                query_pattern="%pg_advisory_xact_lock%",
+            )
+            assert not write.done(), "the write crossed its blocked authority boundary"
+            assert _cancel_race(engine, cancel_first)
+            blocker.commit()
+            cancelled_write = write.result(timeout=10)
+
+        assert (cancelled_write.status_code, cancelled_write.content) == (401, b"")
+        assert cancel_first.policy_violations == [str(cancel_first.generation_id)]
+        with Session(engine) as oracle:
+            assert (
+                oracle.scalar(
+                    select(LibraryEntry).where(
+                        LibraryEntry.library_id == cancel_first.library_id,
+                        LibraryEntry.media_id == cancel_first.media_id,
+                    )
+                )
+                is None
+            )
+
+        _fold_race_cancelled(engine, cancel_first)
         denied_after_terminal = _library_add(
             client,
             cancel_first,
@@ -1752,75 +1840,66 @@ def test_cancel_and_in_flight_mcp_write_have_one_run_locked_outcome(
             )
             is None
         )
-        assert (
-            oracle.scalar(
-                select(MessageToolCall).where(
-                    MessageToolCall.assistant_message_id == cancel_first.assistant_message_id,
-                )
-            )
-            is None
-        )
 
     effect_first = _prepare_write_race(engine, race_user, label="effect-first")
-    with (
-        TestClient(effect_first.app, base_url="http://mcp.test") as client,
-        ThreadPoolExecutor(max_workers=2) as pool,
-        Session(engine) as blocker,
-    ):
-        blocker.execute(
-            text("SELECT id FROM libraries WHERE id = :library_id FOR UPDATE"),
-            {"library_id": effect_first.library_id},
-        )
-        blocker_pid = int(blocker.scalar(text("SELECT pg_backend_pid()")))
-        write = pool.submit(
-            _library_add,
-            client,
-            effect_first,
-            request_id="effect-first",
-        )
-        write_pid = _await_backend_blocked_by(
-            engine,
-            blocking_pid=blocker_pid,
-            query_pattern="%FROM libraries l%",
-        )
-        assert not write.done(), "the write did not retain its ChatRun lock through mutation"
-        cancel = pool.submit(_cancel_race, engine, effect_first)
-        _await_backend_blocked_by(
-            engine,
-            blocking_pid=write_pid,
-            query_pattern="%FROM chat_runs%FOR UPDATE%",
-        )
-        assert not cancel.done(), "Cancel crossed the write-owned ChatRun lock"
-        blocker.commit()
-        completed_write = write.result(timeout=10)
-        assert cancel.result(timeout=10)
+    with TestClient(effect_first.app, base_url="http://mcp.test") as client:
+        with (
+            ThreadPoolExecutor(max_workers=2) as pool,
+            Session(engine) as blocker,
+        ):
+            blocker.execute(
+                text("SELECT id FROM libraries WHERE id = :library_id FOR UPDATE"),
+                {"library_id": effect_first.library_id},
+            )
+            blocker_pid = int(blocker.scalar(text("SELECT pg_backend_pid()")))
+            write = pool.submit(
+                _library_add,
+                client,
+                effect_first,
+                request_id="effect-first",
+            )
+            write_pid = _await_backend_blocked_by(
+                engine,
+                blocking_pid=blocker_pid,
+                query_pattern="%FROM libraries l%",
+            )
+            assert not write.done(), "the write did not retain its ChatRun lock through mutation"
+            cancel = pool.submit(_cancel_race, engine, effect_first)
+            _await_backend_blocked_by(
+                engine,
+                blocking_pid=write_pid,
+                query_pattern="%FROM chat_runs%FOR UPDATE%",
+            )
+            assert not cancel.done(), "Cancel crossed the write-owned ChatRun lock"
+            blocker.commit()
+            completed_write = write.result(timeout=10)
+            assert cancel.result(timeout=10)
 
-    assert completed_write.status_code == 200
-    assert completed_write.json()["result"]["isError"] is False
-    assert effect_first.policy_violations == []
-    with Session(engine) as oracle:
-        assert (
-            oracle.scalar(
-                select(LibraryEntry).where(
-                    LibraryEntry.library_id == effect_first.library_id,
-                    LibraryEntry.media_id == effect_first.media_id,
+        assert completed_write.status_code == 200
+        assert completed_write.json()["result"]["isError"] is False
+        assert effect_first.policy_violations == []
+        with Session(engine) as oracle:
+            assert (
+                oracle.scalar(
+                    select(LibraryEntry).where(
+                        LibraryEntry.library_id == effect_first.library_id,
+                        LibraryEntry.media_id == effect_first.media_id,
+                    )
+                )
+                is not None
+            )
+            tool_row = oracle.scalar(
+                select(MessageToolCall).where(
+                    MessageToolCall.assistant_message_id == effect_first.assistant_message_id,
+                    MessageToolCall.canonical_tool_id == "nexus.library.add",
                 )
             )
-            is not None
-        )
-        tool_row = oracle.scalar(
-            select(MessageToolCall).where(
-                MessageToolCall.assistant_message_id == effect_first.assistant_message_id,
-                MessageToolCall.canonical_tool_id == "nexus.library.add",
-            )
-        )
-        assert tool_row is not None
-        assert (tool_row.status, tool_row.error_code) == ("complete", None)
-        run = oracle.get(ChatRun, effect_first.run_id)
-        assert run is not None and run.cancel_requested_at is not None
+            assert tool_row is not None
+            assert (tool_row.status, tool_row.error_code) == ("complete", None)
+            run = oracle.get(ChatRun, effect_first.run_id)
+            assert run is not None and run.cancel_requested_at is not None
 
-    _fold_race_cancelled(engine, effect_first)
-    with TestClient(effect_first.app, base_url="http://mcp.test") as client:
+        _fold_race_cancelled(engine, effect_first)
         denied_after_terminal = _library_add(
             client,
             effect_first,

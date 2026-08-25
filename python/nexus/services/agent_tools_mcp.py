@@ -57,7 +57,6 @@ from nexus.services.llm_ledger import (
     LlmCallOwner,
     current_tool_plan_fingerprint,
     lock_active_generation_for_authority_in_current_transaction,
-    lock_generation_for_authority_in_current_transaction,
 )
 
 if TYPE_CHECKING:
@@ -958,16 +957,21 @@ class AgentToolAuthority:
         journal_key: str,
         receipt: ToolStepResult,
     ) -> None:
-        generation = lock_generation_for_authority_in_current_transaction(
+        # Receipt landing is still live bearer authority. A completed inner
+        # tool position can be projected later by the explicit Chat repair
+        # path, but this request may not write after generation or job-fence
+        # ownership has ended.
+        generation = lock_active_generation_for_authority_in_current_transaction(
             db,
             owner=LlmCallOwner(kind="chat_run", id=self.run_id),
             generation_id=self.generation_id,
         )
         if generation is None:
             raise _PolicyViolation(self.generation_id)
-        run = db.get(ChatRun, self.run_id)
+        run = lock_chat_run_for_update(db, self.run_id)
         if (
             run is None
+            or run.status != "running"
             or claims.sub != str(run.owner_user_id)
             or claims.run_id != str(run.id)
             or claims.job_id != str(self.job_id)
@@ -984,10 +988,18 @@ class AgentToolAuthority:
                     SELECT kind, payload, status, claimed_by, attempts
                     FROM background_jobs
                     WHERE id = :job_id
+                      AND status = 'running'
+                      AND claimed_by = :worker_id
+                      AND attempts = :attempt_no
+                      AND lease_expires_at > clock_timestamp()
                     FOR UPDATE
                     """
                 ),
-                {"job_id": self.job_id},
+                {
+                    "job_id": self.job_id,
+                    "worker_id": self.worker_id,
+                    "attempt_no": self.attempt_no,
+                },
             )
             .mappings()
             .one_or_none()
@@ -996,8 +1008,8 @@ class AgentToolAuthority:
             job_row is None
             or job_row["kind"] != "chat_run"
             or job_row["attempts"] != self.attempt_no
-            or job_row["status"] not in {"running", "succeeded", "dead"}
-            or (job_row["status"] == "running" and job_row["claimed_by"] != self.worker_id)
+            or job_row["status"] != "running"
+            or job_row["claimed_by"] != self.worker_id
         ):
             raise _PolicyViolation(self.generation_id)
         payload = job_row["payload"]
@@ -1024,23 +1036,14 @@ class AgentToolAuthority:
         entry["result"] = receipt_json
         entry["next_citation_ordinal"] = receipt.next_citation_ordinal
         payload["_agent_tool_calls"] = journal
-        updated = db.execute(
-            text(
-                """
-                UPDATE background_jobs
-                SET payload = CAST(:payload AS jsonb), updated_at = now()
-                WHERE id = :job_id AND attempts = :attempt_no
-                RETURNING id
-                """
-            ),
-            {
-                "job_id": self.job_id,
-                "attempt_no": self.attempt_no,
-                "payload": json.dumps(payload),
-            },
-        ).scalar_one_or_none()
-        if updated is None:
-            raise RuntimeError("MCP receipt lost its durable job attempt")
+        if not update_running_job_payload(
+            db,
+            job_id=self.job_id,
+            worker_id=self.worker_id,
+            attempt_no=self.attempt_no,
+            payload=payload,
+        ):
+            raise _PolicyViolation(self.generation_id)
 
     async def reject_unknown(
         self,

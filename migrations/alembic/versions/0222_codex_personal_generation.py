@@ -366,10 +366,6 @@ def _preflight(bind: sa.Connection) -> None:
               ON failures.request_id = requests.id
             WHERE successes.request_id IS NULL
               AND failures.request_id IS NULL
-              AND (
-                  requests.coordination <> '{}'::jsonb
-                  OR requests.resolver_lease_expires_at IS NOT NULL
-              )
             ORDER BY requests.id
             """
         )

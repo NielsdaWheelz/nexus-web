@@ -16,7 +16,7 @@ AGENT_TOOL_GRANT_ISSUER: Final[str] = "nexus-agent-tools"
 AGENT_TOOL_GRANT_AUDIENCE: Final[str] = "nexus-chat-tools-mcp"
 AGENT_TOOL_GRANT_SCOPE: Final[str] = "chat.tools"
 MAX_AGENT_TOOL_GRANT_TTL_SECONDS: Final[int] = max(
-    generation_policy.chat_policy(profile).transport_deadline_seconds
+    generation_policy.chat_policy(profile).turn_timeout_seconds
     for profile in generation_policy.CHAT_PROFILES
 )
 _ALGORITHM: Final[str] = "HS256"
