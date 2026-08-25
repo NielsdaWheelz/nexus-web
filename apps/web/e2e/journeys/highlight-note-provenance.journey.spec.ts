@@ -64,6 +64,48 @@ async function dragSelectExactText(
   ).toBe(exact);
 }
 
+async function scrollDuringSelectionStabilization(
+  page: Page,
+  passage: Locator,
+): Promise<void> {
+  const transition = await passage.evaluate((element) => {
+    for (
+      let ancestor = element.parentElement;
+      ancestor !== null;
+      ancestor = ancestor.parentElement
+    ) {
+      const overflowY = window.getComputedStyle(ancestor).overflowY;
+      const maximumScrollTop = ancestor.scrollHeight - ancestor.clientHeight;
+      if (!/(auto|scroll)/.test(overflowY) || maximumScrollTop <= 0) {
+        continue;
+      }
+      const before = ancestor.scrollTop;
+      ancestor.scrollTop =
+        before + 96 <= maximumScrollTop
+          ? before + 96
+          : Math.max(0, before - 96);
+      return { before, after: ancestor.scrollTop };
+    }
+    return null;
+  });
+  expect(
+    transition,
+    "The mobile reader passage had no owned scroll viewport.",
+  ).not.toBeNull();
+  expect(
+    transition?.after,
+    "The mobile reader viewport did not move during selection stabilization.",
+  ).not.toBe(transition?.before);
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        window.requestAnimationFrame(() => {
+          window.requestAnimationFrame(() => resolve());
+        });
+      }),
+  );
+}
+
 async function ingestArticle(
   page: Parameters<typeof signIn>[0],
 ): Promise<string> {
@@ -164,7 +206,7 @@ test("a highlight note remains attached to the exact canonical passage after a f
   const mobilePassage = page.getByText(QUOTE, { exact: false }).first();
   await expect(mobilePassage).toBeVisible();
   await dragSelectExactText(page, mobilePassage, QUOTE);
-  await page.setViewportSize({ width: 412, height: 844 });
+  await scrollDuringSelectionStabilization(page, mobilePassage);
   await expect(
     page.getByRole("toolbar", { name: "Selection actions" }),
     "A fresh mobile selection must publish its actions after stabilization.",
