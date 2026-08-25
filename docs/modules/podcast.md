@@ -235,6 +235,10 @@ request locks Media before mutable admission decisions, and source ingest binds
 the accepted attempt plus durable job inside the caller-owned transaction.
 Enqueue defects propagate and roll the transaction back; there is no failed
 enqueue response, fallback state, or `enqueue_failed` audit compatibility path.
+If a publisher sidecar cannot produce segments, generated-fallback admission
+returns `Admitted | RejectedQuota` through the source fence. Rejected quota
+commits the immutable request audit first; the worker then publishes terminal
+source/transcript failure under its next exact fence without charging usage.
 
 `podcasts.deepgram_adapter` is a documented non-LLM provider port, not part of the shared
 generation runtime. It owns Deepgram diarization fallback, fixture normalization, and podcast

@@ -1529,6 +1529,11 @@ transaction; it never commits or converts an enqueue defect into durable failed
 state. That source-attempt owner publishes the all-viewer media-fact revision
 exactly once; the outer transcript controller does not publish a second
 revision for the same accepted attempt.
+Publisher-sidecar fallback admission returns the discriminated domain result
+`Admitted | RejectedQuota` from its fenced publication phase. A quota rejection
+therefore commits its immutable audit before the worker raises the typed error
+and publishes terminal source/transcript failure in the next fenced phase; the
+error is never used as callback control flow that would roll the audit back.
 `services/transcripts/state.py` is the sole persistence owner for
 `media_transcript_states`; `current.py` owns artifact publication, while
 `semantic.py` owns every semantic-job payload plus lock-and-job-inventory repair
