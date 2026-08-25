@@ -1141,6 +1141,16 @@ persistence has one strict request wire: `note_block_id`,
 `client_mutation_id`, and `body_pm_json`. Camel-case spellings and the generic
 `id` alias are not accepted or emitted.
 
+Hosted inline projection has one owner per reader family:
+`useHostedTextHighlights` owns the active reflowable fragment and
+`useHostedPdfPageHighlights` owns the active PDF page. The text owner uses the
+shared abortable retry policy, treats an empty list as ready, gates optimistic
+mutation projection and authoritative reconciliation with one latest-wins
+generation, and routes expected failures to Retry while same-system response
+defects throw to the render boundary. Highlight HTTP responses are strictly
+decoded once by `lib/highlights/highlightContract.ts`; route components do not
+own fallback envelopes, raw retry timers, or parallel reload paths.
+
 **Source-authored apparatus** (`services/reader_apparatus.py`): web article,
 EPUB, and PDF ingest paths persist document-authored notes, endnotes,
 bibliography entries, in-document markers, and marker-to-target edges into

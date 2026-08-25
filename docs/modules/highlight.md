@@ -105,6 +105,24 @@ read model only. It must not become the mutation API.
 The standalone highlight list routes remain highlight-owned because other
 callers may need highlight reads without the full Document Map aggregate.
 
+Hosted reader projection has two format-specific owners. Reflowable web,
+transcript, and EPUB content uses
+`app/(authenticated)/media/[id]/useHostedTextHighlights.ts`; PDF pages use
+`app/(authenticated)/media/[id]/useHostedPdfPageHighlights.ts`. The text owner
+keys reads by media and active fragment, aborts superseded requests, applies the
+shared bounded browser retry policy, and owns the generation that gates
+mutation projection and reconciliation. An empty highlight list is a complete,
+successful response and is never retried. Expected request failures become a
+visible Retry obligation, authentication failures go to the authentication
+boundary, and malformed same-system responses go to the render defect
+boundary. `MediaPaneBody` composes these owners; it does not run a parallel
+timer, request-version counter, or direct fragment-highlight reload path.
+
+`lib/highlights/highlightContract.ts` is the browser's strict decoder for the
+standalone highlight response wires. The transport accepts the canonical
+`{data: ...}` envelopes and exact highlight/anchor fields only; it does not
+unwrap alternate envelopes or fill omitted response fields.
+
 ## Mutations And Notes
 
 Highlight creation, update, delete, color changes, and note attachment flow
@@ -247,6 +265,7 @@ Keep these tests aligned with this module contract:
 
 - `python/tests/service/test_citation_provenance.py`
 - `python/tests/service/test_auth_privacy.py`
+- `apps/web/src/app/(authenticated)/media/[id]/useHostedTextHighlights.browser.test.tsx`
 - `apps/web/e2e/journeys/highlight-note-provenance.journey.spec.ts`
 - `apps/web/e2e/journeys/grounded-chat-citation.journey.spec.ts`
 - `testdata/proofs.json` owns the source-to-proof mapping for broader highlight
