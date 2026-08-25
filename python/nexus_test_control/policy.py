@@ -215,7 +215,6 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     ),
     ".github/workflows/release.yml": (
         (
-            'NEXUS_PROVIDER_CERTIFICATION: "1"',
             # The signed release binds the protected USB lab runner; the
             # explicit bootstrap_no_device dispatch is the one hosted
             # exception because no handset exists anywhere yet.
@@ -320,18 +319,6 @@ _DIRECT_RUNNERS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("make-alias", re.compile(r"\bmake\s+(?:test|verify)(?:[-_][A-Za-z0-9_-]+)?\b")),
 )
 _OWNERSHIP_TOKENS: tuple[tuple[str, re.Pattern[str], frozenset[str], dict[str, int]], ...] = (
-    (
-        "provider-certification",
-        re.compile(r"\bNEXUS_PROVIDER_CERTIFICATION\b"),
-        frozenset({".github/workflows/release.yml"}),
-        {".github/workflows/release.yml": 1},
-    ),
-    (
-        "hosted-canary",
-        re.compile(r"\bNEXUS_HOSTED_CANARY\b"),
-        frozenset({".github/workflows/nightly.yml"}),
-        {".github/workflows/nightly.yml": 1},
-    ),
     (
         "codex-hosted-canary",
         re.compile(r"\bNEXUS_CODEX_HOSTED_CANARY\b"),

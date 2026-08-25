@@ -74,12 +74,19 @@ HTTP 503 is capacity only when its status, content type, and body exactly match
 the versioned capacity response. A loss before acceptance is unavailable; a
 loss after HTTP acceptance is ambiguous. An accepted stream without a terminal
 is never reclassified as a known failure. Cancel and policy violation are
-idempotent private controls. Policy violation terminalizes a matching active
-turn as `Failed(policy_violation)`, never `Cancelled`.
+idempotent private controls. Policy violation is monotonic and terminalizes a
+matching active turn as `Failed(policy_violation)`, never `Cancelled`, whether
+it arrives before or after cancellation.
 
 The host admits one generation at a time and releases that slot only after the
 runtime closes. It has no application configuration, database credential, API
-key, application data mount, TCP listener, or writable workspace. Its only
+key, application data mount, TCP listener, or persistent writable runtime
+state beyond one exact encrypted `auth.json`. Every turn owns a tmpfs root with
+separate empty `workspace/` and ephemeral `state/` directories; the profile's
+auth path is an absolute link to that exact writable bind, and the complete
+turn root is deleted after runtime close. This is qualified only for pinned
+Codex `0.144.4` truncate/write refresh persistence; any change to that write
+primitive requires redesign and release qualification. Its only
 application-facing transport is `/run/nexus-codex/agent.sock`.
 
 ## Chat MCP authority
@@ -121,11 +128,12 @@ policy-violation control for that active generation.
 
 ## Durable ownership and ledger
 
-Each durable owner chooses a stable `request_id`, snapshots its intent, and
-uses the shared `Prepared -> Uncertain -> Completed` journal. The owner stages
-the `llm_calls` start beside its `Uncertain` checkpoint and the terminal beside
-`Completed`, in the same caller-owned transaction; `llm_ledger.py` never
-commits.
+Each durable owner chooses a stable `request_id`, constructs one bounded intent,
+stores its fingerprint, and uses the shared
+`Prepared -> Uncertain -> Completed` journal. Raw prompts are not persisted for
+repair. The owner stages the `llm_calls` start beside its `Uncertain` checkpoint
+and the terminal beside `Completed`, in the same caller-owned transaction;
+`llm_ledger.py` never commits.
 
 One ledger row records the owner/generation sequence, operation, plan and policy
 revision, fixed Codex route, model/effort, capability, request/output/tool
@@ -133,9 +141,13 @@ fingerprints, session reference, normalized outcome/failure, usage,
 SDK/runtime versions, acceptance time, latency, and completion. It stores no
 price, cost estimate, generation credential, or raw response.
 
-An owner may redispatch only when its journal replay policy permits it. A paid
-generation that reached `Uncertain` stays suspended until reconciliation or
-explicit cancellation; transport ambiguity is not automatic retry authority.
+An owner may redispatch only when its journal replay policy permits it. An
+accepted generation that reached `Uncertain` stays suspended until
+reconciliation or explicit cancellation; transport ambiguity is not automatic
+retry authority. Every generation owner supports an operator's externally
+established `ProveNotDispatched` decision against the exact journal/ledger
+identity. Recovered-terminal attachment exists only where immutable durable
+inputs can reconstruct the original command and reuse the live decoder.
 
 ## API and historical eligibility
 
@@ -153,8 +165,10 @@ The check uses the typed ledger accessor and never probes raw ledger columns.
 ## Deployment invariants
 
 - The host environment contains no `CODEX_HOME` or `OPENAI_API_KEY`.
-- Both worker lanes mount the Codex UDS read-only and are start-ordered after
-  the host without a health dependency.
+- The API and both worker lanes mount the Codex UDS read-only and are
+  start-ordered after the host without a health dependency. The API needs it
+  only for request-scoped dossier idea resolution; no client receives the
+  credential bind.
 - Only the interactive worker listens for MCP, on `0.0.0.0:8001` inside the
   Compose network.
 - The host has only the internal `nexus_codex_private` attachment. Its sole

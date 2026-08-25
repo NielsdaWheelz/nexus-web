@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
+from nexus.schemas.conversation import ChatRunCreateRequest
 from nexus.schemas.llm import ExpectedChatFailure, LlmProfilesOut
 from nexus.services import generation_policy
 from nexus.services.codex_generation_contract import GenerationTerminal
@@ -125,6 +126,20 @@ def test_product_profiles_are_exactly_the_three_fixed_chat_presets() -> None:
     ):
         with pytest.raises(ValidationError):
             LlmProfilesOut.model_validate({"default_profile_id": "balanced", "profiles": profiles})
+
+
+def test_chat_run_creation_refuses_profiles_outside_the_fixed_catalog() -> None:
+    request = {
+        "destination": {"kind": "New"},
+        "content": "Explain entropy simply.",
+        "reader_selection": {"kind": "Absent"},
+    }
+    assert (
+        ChatRunCreateRequest.model_validate({**request, "profile_id": "balanced"}).profile_id
+        == "balanced"
+    )
+    with pytest.raises(ValidationError):
+        ChatRunCreateRequest.model_validate({**request, "profile_id": "custom"})
 
 
 def test_chat_failure_union_is_the_closed_post_cutover_card_set() -> None:

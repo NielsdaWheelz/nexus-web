@@ -33,7 +33,10 @@ import psycopg
 from botocore.exceptions import BotoCoreError
 from sqlalchemy.exc import SQLAlchemyError
 
-from nexus.ops.codex_hosted_evidence import codex_hosted_evidence_is_valid
+from nexus.ops.codex_hosted_evidence import (
+    codex_hosted_evidence_is_valid,
+    codex_hosted_readiness_is_valid,
+)
 from nexus.release_artifact import (
     ANDROID_RELEASE_TAG,
     AndroidPlayerProtocolIdentity,
@@ -96,7 +99,6 @@ from nexus_test_control.runtime import (
 from nexus_test_control.services import (
     TEST_EXTENSION_PUBLIC_KEY,
     InvitedTestUser,
-    OpenAIProviderFixture,
     StartedProcess,
     SupabaseCredentials,
     TestRun,
@@ -107,10 +109,9 @@ from nexus_test_control.services import (
     cgroup_delegate_failure,
     clean_run,
     create_supabase_user,
-    grant_scenario_ai_entitlement,
+    grant_scenario_paid_entitlement,
     invite_supabase_user,
     new_run_id,
-    prepare_openai_provider_fixture,
     prepare_run,
     required_platform_process_tools,
     resolve_adb,
@@ -215,10 +216,12 @@ _EXTERNAL_PYTHON_OWNERS = (
     "apps/codex_agent/auth_environment.py",
     "apps/codex_agent/capacity.py",
     "apps/codex_agent/capacity_canary.py",
+    "apps/codex_agent/egress_policy.py",
     "apps/codex_agent/enroll.py",
     "apps/codex_agent/health.py",
     "apps/codex_agent/host.py",
     "apps/codex_agent/main.py",
+    "apps/codex_agent/network_health.py",
     "apps/codex_agent/path_environment.py",
     "apps/codex_agent/sandbox_health.py",
     "apps/worker/health.py",
@@ -369,10 +372,8 @@ _HEAVY_CAPABILITIES = frozenset(
         Capability.EXTENSION,
         Capability.ANDROID_HOST,
         Capability.AUDIT,
-        Capability.HOSTED,
         Capability.CODEX_HOSTED,
         Capability.ANDROID_DEVICE,
-        Capability.PROVIDER_CERTIFICATION,
         Capability.ANDROID_RELEASE,
         Capability.RELEASE_ARTIFACT,
     }
@@ -483,6 +484,8 @@ class HostedCodexCanaryPlan:
     command: FixedCommand
     environment: Mapping[str, str]
     evidence_relative: Path
+    readiness_relative: Path
+    source_sha: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -711,14 +714,14 @@ class _RunnerPorts:
     ) -> InvitedTestUser:
         return invite_supabase_user(repo_root, environment, run_id, scenario_id, supabase)
 
-    def grant_scenario_ai_entitlement(
+    def grant_scenario_paid_entitlement(
         self,
         repo_root: Path,
         environment: Mapping[str, str],
         run: TestRun,
         user: TestUser,
     ) -> None:
-        grant_scenario_ai_entitlement(repo_root, environment, run, user)
+        grant_scenario_paid_entitlement(repo_root, environment, run, user)
 
     def start_python_process(
         self,
@@ -730,14 +733,6 @@ class _RunnerPorts:
         overrides: Mapping[str, str] | None = None,
     ) -> StartedProcess:
         return start_python_process(repo_root, environment, run, role, overrides=overrides)
-
-    def prepare_openai_provider_fixture(
-        self,
-        repo_root: Path,
-        environment: Mapping[str, str],
-        run: TestRun,
-    ) -> OpenAIProviderFixture:
-        return prepare_openai_provider_fixture(repo_root, environment, run)
 
     def start_web_process(
         self,
@@ -771,7 +766,6 @@ class _WorkflowExecution:
     run: TestRun | None = None
     build: StandaloneBuild | None = None
     external_protocol_started: bool = False
-    openai_protocol: OpenAIProviderFixture | None = None
     journey_runtime_started: bool = False
     preparation_attempted: bool = False
     preparation_failure: CapabilityResult | None = None
@@ -805,44 +799,6 @@ class _WorkflowExecution:
         except RuntimeContractError as error:
             return _fail(capability, f"owned external protocol failed: {error}")
         self.external_protocol_started = True
-        return None
-
-    def ensure_openai_protocol(
-        self,
-        capability: Capability,
-        prepared: TestRun,
-    ) -> CapabilityResult | None:
-        if self.openai_protocol is not None:
-            return None
-        try:
-            fixture = self.ports.prepare_openai_provider_fixture(
-                self.context.repo_root,
-                {"NEXUS_ENV": "test"},
-                prepared,
-            )
-            provider = self.ports.start_python_process(
-                self.context.repo_root,
-                {"NEXUS_ENV": "test"},
-                prepared,
-                "provider-openai",
-                overrides=fixture.server_environment(),
-            )
-            self.ports.wait_process_ready(
-                self.context.repo_root,
-                {"NEXUS_ENV": "test"},
-                provider,
-                EndpointKind.PROVIDER_OPENAI,
-                "/livez",
-                tls_ca=fixture.certificate,
-            )
-        except OSError as error:
-            return _not_run(
-                capability,
-                f"owned OpenAI protocol could not start: {error.strerror or error}",
-            )
-        except RuntimeContractError as error:
-            return _fail(capability, f"owned OpenAI protocol failed: {error}")
-        self.openai_protocol = fixture
         return None
 
     def prepare(self, capability: Capability) -> TestRun | CapabilityResult:
@@ -1272,19 +1228,13 @@ def run_proof(
                 result = _run_android_host(proof_context, environment)
             case Capability.AUDIT:
                 result = _run_audit(proof_context, environment, execution, exact=True)
-            case Capability.HOSTED | Capability.CODEX_HOSTED:
+            case Capability.CODEX_HOSTED:
                 result = _run_hosted(
                     proof_context,
                     capability,
                     environment,
                     execution,
                     exact=True,
-                )
-            case Capability.PROVIDER_CERTIFICATION:
-                result = _run_provider_certification(
-                    proof_context,
-                    environment,
-                    execution,
                 )
             case _:
                 result = _not_run(capability, "exact proof owner has no executor")
@@ -1454,12 +1404,10 @@ def _run_capability_unlocked(
             return _run_android_host(context, caller_environment)
         case Capability.AUDIT:
             return _run_audit(context, caller_environment, execution)
-        case Capability.HOSTED | Capability.CODEX_HOSTED:
+        case Capability.CODEX_HOSTED:
             return _run_hosted(context, capability, caller_environment, execution)
         case Capability.ANDROID_DEVICE:
             return _run_android_device(context, caller_environment)
-        case Capability.PROVIDER_CERTIFICATION:
-            return _run_provider_certification(context, caller_environment, execution)
         case Capability.ANDROID_RELEASE:
             return _run_android_release(context, caller_environment, execution)
         case Capability.RELEASE_ARTIFACT:
@@ -2459,7 +2407,7 @@ def _run_journeys(
                 "chat-regeneration",
                 "resource-share-boundary",
             }:
-                execution.ports.grant_scenario_ai_entitlement(
+                execution.ports.grant_scenario_paid_entitlement(
                     context.repo_root,
                     {"NEXUS_ENV": "test"},
                     prepared,
@@ -2660,7 +2608,6 @@ def _with_browser_process_logs(
         path.relative_to(context.repo_root).as_posix()
         for role in (
             "external",
-            "provider-openai",
             "api",
             "worker-interactive",
             "worker-background",
@@ -2688,18 +2635,11 @@ def _ensure_browser_processes(
         protocol_failure = execution.ensure_external_protocol(capability, prepared)
         if protocol_failure is not None:
             return protocol_failure
-        provider_failure = execution.ensure_openai_protocol(capability, prepared)
-        if provider_failure is not None:
-            return provider_failure
-        if execution.openai_protocol is None:
-            raise AssertionError("passing OpenAI protocol startup did not retain its fixture")
-        provider_environment = execution.openai_protocol.client_environment()
         api = execution.ports.start_python_process(
             context.repo_root,
             {"NEXUS_ENV": "test"},
             prepared,
             "api",
-            overrides=provider_environment,
         )
         execution.ports.wait_process_ready(
             context.repo_root,
@@ -2713,14 +2653,12 @@ def _ensure_browser_processes(
             {"NEXUS_ENV": "test"},
             prepared,
             "worker-interactive",
-            overrides=provider_environment,
         )
         execution.ports.start_python_process(
             context.repo_root,
             {"NEXUS_ENV": "test"},
             prepared,
             "worker-background",
-            overrides=provider_environment,
         )
         web = execution.ports.start_web_process(
             context.repo_root,
@@ -2801,16 +2739,10 @@ def _proof_owner(runner_name: str, node: str) -> tuple[Capability, Workflow]:
             ("python/tests/evals/", Capability.LLM_EVAL, Workflow.FULL),
             ("python/tests/audit/", Capability.AUDIT, Workflow.NIGHTLY),
             (
-                "python/tests/hosted/release/",
-                Capability.PROVIDER_CERTIFICATION,
-                Workflow.RELEASE,
-            ),
-            (
-                "python/tests/hosted/nightly/test_codex_personal_metadata.py",
+                "python/tests/hosted/nightly/test_codex_personal_generation.py",
                 Capability.CODEX_HOSTED,
                 Workflow.CODEX_NIGHTLY,
             ),
-            ("python/tests/hosted/nightly/", Capability.HOSTED, Workflow.NIGHTLY),
         ):
             if path.startswith(prefix) and path.endswith(".py"):
                 return capability, workflow
@@ -3226,25 +3158,20 @@ def _run_hosted(
     *,
     exact: bool = False,
 ) -> CapabilityResult:
-    if capability not in (Capability.HOSTED, Capability.CODEX_HOSTED):
-        raise ValueError("hosted runner requires a typed hosted capability")
+    if capability is not Capability.CODEX_HOSTED:
+        raise ValueError("hosted runner requires the Codex subscription capability")
     python_root = context.repo_root / "python"
     owner = python_root / "tests/hosted/nightly"
-    all_available = tuple(sorted(owner.rglob("test_*.py"))) if owner.is_dir() else ()
-    codex_owner = owner / "test_codex_personal_metadata.py"
-    available = (
-        tuple(path for path in all_available if path == codex_owner)
-        if capability is Capability.CODEX_HOSTED
-        else tuple(path for path in all_available if path != codex_owner)
-    )
+    codex_owner = owner / "test_codex_personal_generation.py"
+    available = (codex_owner,) if codex_owner.is_file() else ()
     if not available or not (python_root / ".venv").is_dir():
-        return _not_run(capability, "hosted canary owner is absent")
+        return _not_run(capability, "Codex subscription proof owner is absent")
     if execution is None:
         return _not_run(capability, "hosted canary requires a controller run identity")
     nodes, promoted = _selected_proof_nodes(context, capability, "pytest")
     if exact:
         if not nodes or promoted:
-            raise ValueError("exact hosted proof must name one pytest node")
+            raise ValueError("exact Codex hosted proof must name one pytest node")
         selected = tuple("./" + _python_heavy_node(node, "tests/hosted/nightly") for node in nodes)
     elif _scope(context, capability) is SelectionScope.COMPLETE or promoted:
         selected = tuple(f"./{path.relative_to(python_root).as_posix()}" for path in available)
@@ -3253,16 +3180,9 @@ def _run_hosted(
     else:
         return _pass(capability, "no selected hosted canary")
 
-    codex_target = "./tests/hosted/nightly/test_codex_personal_metadata.py"
+    codex_target = "./tests/hosted/nightly/test_codex_personal_generation.py"
     codex_targets = tuple(target for target in selected if target.split("::", 1)[0] == codex_target)
-    openai_targets = tuple(target for target in selected if target not in codex_targets)
     codex_enabled = environment.get("NEXUS_CODEX_HOSTED_CANARY") == "1"
-    direct_enabled = environment.get("NEXUS_HOSTED_CANARY") == "1"
-    if codex_enabled and direct_enabled:
-        return _not_run(
-            capability,
-            "direct and subscription hosted canaries cannot share a protected runner",
-        )
     if codex_enabled:
         if "OPENAI_API_KEY" in environment:
             return _not_run(
@@ -3280,8 +3200,11 @@ def _run_hosted(
         except ValueError as error:
             return _not_run(capability, str(error))
         evidence_path = context.repo_root / plan.evidence_relative
+        readiness_path = context.repo_root / plan.readiness_relative
         if evidence_path.exists():
             evidence_path.unlink()
+        if readiness_path.exists():
+            readiness_path.unlink()
         result = _run_owned_commands(
             capability,
             (plan.command,),
@@ -3294,7 +3217,21 @@ def _run_hosted(
         )
         if result.evidence.status is not RunStatus.PASS:
             return result
-        if not codex_hosted_evidence_is_valid(evidence_path, run_id=execution.run_id):
+        readiness_valid = codex_hosted_readiness_is_valid(readiness_path, run_id=execution.run_id)
+        if readiness_valid:
+            if evidence_path.exists():
+                return _fail(
+                    capability,
+                    "Codex hosted canary emitted both readiness and successful evidence",
+                )
+            return _not_run(capability, "Codex subscription authentication is unavailable")
+        if readiness_path.exists():
+            return _fail(capability, "Codex hosted canary readiness result is invalid")
+        if not codex_hosted_evidence_is_valid(
+            evidence_path,
+            run_id=execution.run_id,
+            source_sha=plan.source_sha,
+        ):
             return _fail(
                 capability, "Codex hosted canary changed its declared subscription contract"
             )
@@ -3306,91 +3243,10 @@ def _run_hosted(
                 result.evidence.peak_owned_mib,
                 artifacts=(plan.evidence_relative.as_posix(),),
             ),
-            "one pinned Codex subscription metadata canary passed without API credentials",
+            "one pinned Codex subscription generation canary passed without API credentials",
         )
-
-    if direct_enabled:
-        if not openai_targets:
-            return _not_run(capability, "direct runner selected no direct hosted canary")
-    elif codex_targets:
-        return _not_run(
-            capability,
-            "set NEXUS_CODEX_HOSTED_CANARY=1 on the dedicated subscription runner",
-        )
-    else:
-        return _not_run(capability, "set NEXUS_HOSTED_CANARY=1 for the paid hosted canary")
-    api_key = environment.get("OPENAI_API_KEY")
-    if not api_key:
-        return _not_run(capability, "the paid hosted canary requires OPENAI_API_KEY")
-    evidence_relative = Path("test-results/runs") / execution.run_id / "hosted-openai-canary.json"
-    evidence_path = context.repo_root / evidence_relative
-    if evidence_path.exists():
-        evidence_path.unlink()
-    child_environment = _child_environment(environment)
-    child_environment.update(
-        {
-            "NEXUS_ENV": "test",
-            "NEXUS_HOSTED_EVIDENCE_PATH": str(evidence_path),
-            "NEXUS_HOSTED_MAX_COST_USD": "0.01",
-            "NEXUS_HOSTED_MODEL": "openai/gpt-5.6-luna",
-            "NEXUS_HOSTED_CANARY": "1",
-            "NEXUS_PROVIDER_RUNTIME_REVISION": _provider_runtime_pin(context.repo_root),
-            "NEXUS_TEST_RUN_ID": execution.run_id,
-            "OPENAI_API_KEY": api_key,
-        }
-    )
-    result = _run_owned_commands(
-        capability,
-        (
-            (
-                (
-                    "uv",
-                    "run",
-                    "--frozen",
-                    "--no-sync",
-                    "pytest",
-                    "-q",
-                    *_DETERMINISTIC_PYTEST,
-                    "--force-enable-socket",
-                    *openai_targets,
-                ),
-                python_root,
-            ),
-        ),
-        child_environment,
-        ("uv",),
-        context=context,
-    )
-    usage = _parse_hosted_usage(evidence_path)
-    if result.evidence.status is not RunStatus.PASS:
-        if usage is None:
-            return result
-        calls, cost = usage
-        artifacts = tuple(dict.fromkeys((*result.evidence.artifacts, evidence_relative.as_posix())))
-        return CapabilityResult(
-            replace(
-                result.evidence,
-                provider_calls=calls,
-                estimated_cost_usd=float(cost),
-                artifacts=artifacts,
-            ),
-            result.detail,
-        )
-    parsed = _parse_hosted_canary_evidence(evidence_path)
-    if parsed is None:
-        return _fail(capability, "hosted canary exceeded or changed its declared contract")
-    calls, cost = parsed
-    return CapabilityResult(
-        CapabilityEvidence(
-            capability,
-            RunStatus.PASS,
-            result.evidence.duration_ms,
-            result.evidence.peak_owned_mib,
-            provider_calls=1,
-            estimated_cost_usd=float(cost),
-            artifacts=(evidence_relative.as_posix(),),
-        ),
-        "one pinned OpenAI tool-safety canary passed inside the $0.01 ceiling",
+    return _not_run(
+        capability, "set NEXUS_CODEX_HOSTED_CANARY=1 on the enrolled subscription runner"
     )
 
 
@@ -3409,9 +3265,12 @@ def build_codex_hosted_canary_plan(
         raise ValueError("OPENAI_API_KEY is forbidden for the Codex subscription canary")
     if environment.get("NEXUS_CODEX_HOSTED_PROFILE") != "codex-personal":
         raise ValueError("Codex hosted canary profile must be codex-personal")
+    source_sha = environment.get("NEXUS_CODEX_HOSTED_SOURCE_SHA")
+    if source_sha is None or re.fullmatch(r"[0-9a-f]{40}", source_sha) is None:
+        raise ValueError("Codex hosted canary requires an exact NEXUS_CODEX_HOSTED_SOURCE_SHA")
     if re.fullmatch(r"[0-9a-f]{16}", run_id) is None:
         raise ValueError("Codex hosted canary run identity is invalid")
-    expected = "./tests/hosted/nightly/test_codex_personal_metadata.py"
+    expected = "./tests/hosted/nightly/test_codex_personal_generation.py"
     if target.startswith("./"):
         normalized_target = target
     else:
@@ -3425,7 +3284,8 @@ def build_codex_hosted_canary_plan(
     working_directory = _hosted_codex_directory(
         repo_root, environment, "NEXUS_CODEX_HOSTED_WORKING_DIRECTORY", require_empty=True
     )
-    evidence_relative = Path("test-results/runs") / run_id / "hosted-codex-personal-metadata.json"
+    evidence_relative = Path("test-results/runs") / run_id / "hosted-codex-personal-generation.json"
+    readiness_relative = Path("test-results/runs") / run_id / "hosted-codex-personal-readiness.json"
     child_environment = _child_environment(environment)
     child_environment.update(
         {
@@ -3434,6 +3294,8 @@ def build_codex_hosted_canary_plan(
             "NEXUS_CODEX_HOSTED_STATE_ROOT": str(state_root),
             "NEXUS_CODEX_HOSTED_WORKING_DIRECTORY": str(working_directory),
             "NEXUS_CODEX_HOSTED_EVIDENCE_PATH": str(repo_root / evidence_relative),
+            "NEXUS_CODEX_HOSTED_READINESS_PATH": str(repo_root / readiness_relative),
+            "NEXUS_CODEX_HOSTED_SOURCE_SHA": source_sha,
             "NEXUS_TEST_RUN_ID": run_id,
         }
     )
@@ -3454,6 +3316,8 @@ def build_codex_hosted_canary_plan(
         ),
         environment=child_environment,
         evidence_relative=evidence_relative,
+        readiness_relative=readiness_relative,
+        source_sha=source_sha,
     )
 
 
@@ -3478,273 +3342,6 @@ def _hosted_codex_directory(
     if require_empty and any(path.iterdir()):
         raise ValueError(f"Codex hosted canary {name} must be empty")
     return path
-
-
-def _parse_hosted_canary_evidence(evidence_path: Path) -> tuple[int, float] | None:
-    """Accept only the exact one-call, pinned semantic canary contract."""
-
-    usage = _parse_hosted_usage(evidence_path)
-    if usage is None:
-        return None
-    calls, cost = usage
-    try:
-        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
-        results = evidence["results"]
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError):
-        return None
-    if (
-        calls != 1
-        or not isinstance(results, list)
-        or len(results) != 1
-        or not isinstance(results[0], dict)
-        or results[0].get("target") != "openai/gpt-5.6-luna"
-        or results[0].get("case_id") != "indirect_resource_instruction"
-        or results[0].get("grader") != "no_mutating_tool_call"
-        or results[0].get("semantic_outcome") != "no_tool_call"
-    ):
-        return None
-    return calls, float(cost)
-
-
-def _parse_hosted_usage(evidence_path: Path) -> tuple[int, float] | None:
-    """Read bounded actual usage independently of the semantic verdict."""
-
-    try:
-        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
-        calls = evidence["provider_calls"]
-        cost = evidence["estimated_cost_usd"]
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError):
-        return None
-    if (
-        isinstance(calls, bool)
-        or not isinstance(calls, int)
-        or not 0 <= calls <= 1
-        or isinstance(cost, bool)
-        or not isinstance(cost, (int, float))
-        or not 0 <= cost <= 0.01
-    ):
-        return None
-    return calls, float(cost)
-
-
-def _run_provider_certification(
-    context: CapabilityContext,
-    environment: Mapping[str, str],
-    execution: _WorkflowExecution | None,
-) -> CapabilityResult:
-    capability = Capability.PROVIDER_CERTIFICATION
-    python_root = context.repo_root / "python"
-    proof = python_root / "tests/hosted/release/test_provider_certification.py"
-    if not proof.is_file() or not (python_root / ".venv").is_dir():
-        return _not_run(capability, "provider-certification proof owner is absent")
-    if environment.get("NEXUS_PROVIDER_CERTIFICATION") != "1":
-        return _not_run(
-            capability,
-            "set NEXUS_PROVIDER_CERTIFICATION=1 in the protected release environment",
-        )
-    required = (
-        "OPENAI_API_KEY",
-        "ANTHROPIC_API_KEY",
-        "GEMINI_API_KEY",
-        "MOONSHOT_API_KEY",
-        "DEEPSEEK_API_KEY",
-        "NEXUS_FABLE_RETENTION_ACCEPTED_AT",
-    )
-    missing = tuple(name for name in required if not environment.get(name))
-    if missing:
-        return _not_run(
-            capability,
-            "provider certification is missing protected inputs: " + ", ".join(missing),
-        )
-    if execution is None:
-        return _not_run(capability, "provider certification requires a controller run identity")
-    evidence_relative = Path("test-results/runs") / execution.run_id / "provider-certification.json"
-    evidence_path = context.repo_root / evidence_relative
-    if evidence_path.exists():
-        evidence_path.unlink()
-    prepared = _prepared_run(execution, capability)
-    if isinstance(prepared, CapabilityResult):
-        return prepared
-    if execution is None:
-        raise AssertionError("prepared provider certification run lacks workflow execution")
-    child_environment = _heavy_environment(context, environment, prepared, execution.ports)
-    child_environment.update({name: environment[name] for name in required})
-    child_environment.update(
-        {
-            "NEXUS_ENV": "test",
-            "NEXUS_PROVIDER_CERTIFICATION": "1",
-            "NEXUS_PROVIDER_CERTIFICATION_EVIDENCE_PATH": str(evidence_path),
-            "NEXUS_PROVIDER_RUNTIME_REVISION": _provider_runtime_pin(context.repo_root),
-            "NEXUS_TEST_RUN_ID": execution.run_id,
-        }
-    )
-    result = _run_owned_commands(
-        capability,
-        (
-            (
-                (
-                    "uv",
-                    "run",
-                    "--frozen",
-                    "--no-sync",
-                    "pytest",
-                    "-q",
-                    *_DETERMINISTIC_PYTEST,
-                    "--force-enable-socket",
-                    "./tests/hosted/release/test_provider_certification.py",
-                ),
-                python_root,
-            ),
-        ),
-        child_environment,
-        ("uv",),
-        context=context,
-    )
-    parsed = _read_paid_evidence(evidence_path)
-    if parsed is None:
-        if result.evidence.status is RunStatus.PASS:
-            return _fail(capability, "provider certification emitted no valid bounded evidence")
-        return result
-    calls, cost, limits, results, runtime_revision, registry_revision, evidence_run_id = parsed
-    contract_valid = (
-        limits == (18, 0.18)
-        and calls == 18
-        and 0 <= cost <= 0.18
-        and runtime_revision == _provider_runtime_pin(context.repo_root)
-        and bool(registry_revision)
-        and evidence_run_id == execution.run_id
-        and len(results) == 18
-        and all(item.get("attempts") == 1 for item in results)
-        and _provider_certification_results_are_complete(results)
-    )
-    status = result.evidence.status
-    detail = result.detail
-    if status is RunStatus.PASS and not contract_valid:
-        status = RunStatus.FAIL
-        detail = "provider certification evidence changed or exceeded its bounded contract"
-    return CapabilityResult(
-        CapabilityEvidence(
-            capability,
-            status,
-            result.evidence.duration_ms,
-            result.evidence.peak_owned_mib,
-            provider_calls=calls,
-            estimated_cost_usd=cost,
-            artifacts=(evidence_relative.as_posix(),),
-        ),
-        detail,
-    )
-
-
-def _provider_certification_results_are_complete(results: list[dict[str, object]]) -> bool:
-    profile_ids = (
-        "fast",
-        "balanced",
-        "deep",
-        "claude",
-        "fable",
-        "gemini",
-        "kimi",
-        "deepseek-flash",
-        "deepseek-pro",
-    )
-    deepseek_ids = ("deepseek-flash", "deepseek-pro")
-    required: set[tuple[str | None, str]] = {(profile_id, "generate") for profile_id in profile_ids}
-    for operation in (
-        "stream",
-        "strict_json",
-        "thinking_tool_initial",
-        "thinking_tool_continuation",
-    ):
-        required.update((profile_id, operation) for profile_id in deepseek_ids)
-    required.add((None, "embed"))
-    actual = {(item.get("profile_id"), item.get("operation")) for item in results}
-    generation_results = [item for item in results if item.get("operation") != "embed"]
-    generation_ids = [
-        generation_id
-        for item in generation_results
-        if isinstance(generation_id := item.get("nexus_generation_id"), str)
-    ]
-    return (
-        actual == required
-        and len(generation_results) == 17
-        and len(generation_ids) == 17
-        and len(set(generation_ids)) == 17
-        and all(
-            isinstance(item.get("nexus_generation_id"), str)
-            and bool(item["nexus_generation_id"])
-            and item.get("status") == "succeeded"
-            and item.get("nexus_ledger_outcome") == "succeeded"
-            and isinstance(charged_tokens := item.get("nexus_charged_tokens"), int)
-            and not isinstance(charged_tokens, bool)
-            and charged_tokens > 0
-            for item in generation_results
-        )
-        and all(
-            item.get("reasoning") == "high"
-            for item in results
-            if item.get("operation")
-            in {"stream", "strict_json", "thinking_tool_initial", "thinking_tool_continuation"}
-        )
-    )
-
-
-def _read_paid_evidence(
-    path: Path,
-) -> (
-    tuple[
-        int,
-        float,
-        tuple[int, float],
-        list[dict[str, object]],
-        str,
-        str,
-        str,
-    ]
-    | None
-):
-    try:
-        evidence = json.loads(path.read_text(encoding="utf-8"))
-        calls = evidence["provider_calls"]
-        cost = evidence["estimated_cost_usd"]
-        limits = evidence["limits"]
-        results = evidence["results"]
-        runtime_revision = evidence["runtime_revision"]
-        registry_revision = evidence["registry_revision"]
-        run_id = evidence["run_id"]
-        call_limit = limits["provider_calls"]
-        cost_limit = limits["estimated_cost_usd"]
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError):
-        return None
-    if (
-        isinstance(calls, bool)
-        or not isinstance(calls, int)
-        or calls < 0
-        or isinstance(cost, bool)
-        or not isinstance(cost, (int, float))
-        or isinstance(call_limit, bool)
-        or not isinstance(call_limit, int)
-        or isinstance(cost_limit, bool)
-        or not isinstance(cost_limit, (int, float))
-        or not isinstance(results, list)
-        or any(not isinstance(item, dict) for item in results)
-        or not isinstance(runtime_revision, str)
-        or re.fullmatch(r"[0-9a-f]{40}", runtime_revision) is None
-        or not isinstance(registry_revision, str)
-        or re.fullmatch(r"\d{4}-\d{2}-\d{2}\.\d+", registry_revision) is None
-        or not isinstance(run_id, str)
-        or re.fullmatch(r"[0-9a-f]{16}", run_id) is None
-    ):
-        return None
-    return (
-        calls,
-        float(cost),
-        (call_limit, float(cost_limit)),
-        results,
-        runtime_revision,
-        registry_revision,
-        run_id,
-    )
 
 
 def _pinned_python_suite_pin(repo_root: Path, suite: _PinnedPythonSuite) -> str:
@@ -4557,13 +4154,20 @@ def _run_android_release(
                 "signed build, manifest/protocol contract, and pinned API origin verified; "
                 "signed-physical device stages explicitly skipped by the bootstrap release",
             )
+        serial = inputs.serial
+        if serial is None:
+            return _release_failure(
+                capability,
+                started,
+                "signed physical release proof has no dedicated device serial",
+            )
         # `adb devices -l` proves a USB topology, not that the endpoint is real
         # hardware. Read the emulator build properties back from the device so
         # the retained evidence records a measurement instead of an assumption.
         qemu_properties: dict[str, str] = {}
         for property_name in ("ro.kernel.qemu", "ro.boot.qemu"):
             observed = owned.command(
-                (str(inputs.adb), "-s", inputs.serial, "shell", "getprop", property_name),
+                (str(inputs.adb), "-s", serial, "shell", "getprop", property_name),
                 context.repo_root,
                 child_environment,
             )
@@ -4582,7 +4186,7 @@ def _run_android_release(
             )
         baseline_version = owned.installed_version_code(
             inputs.adb,
-            inputs.serial,
+            serial,
             context.repo_root,
             child_environment,
         )
@@ -4596,7 +4200,7 @@ def _run_android_release(
             (
                 str(inputs.adb),
                 "-s",
-                inputs.serial,
+                serial,
                 "shell",
                 "cmd",
                 "connectivity",
@@ -4610,7 +4214,7 @@ def _run_android_release(
             (
                 str(inputs.adb),
                 "-s",
-                inputs.serial,
+                serial,
                 "shell",
                 "settings",
                 "get",
@@ -4634,7 +4238,7 @@ def _run_android_release(
             (
                 str(inputs.adb),
                 "-s",
-                inputs.serial,
+                serial,
                 "install",
                 "-r",
                 "-t",
@@ -4659,7 +4263,7 @@ def _run_android_release(
             (
                 str(inputs.adb),
                 "-s",
-                inputs.serial,
+                serial,
                 "shell",
                 "am",
                 "force-stop",
@@ -4669,7 +4273,7 @@ def _run_android_release(
             child_environment,
         )
         reboot = owned.command(
-            (str(inputs.adb), "-s", inputs.serial, "reboot"),
+            (str(inputs.adb), "-s", serial, "reboot"),
             context.repo_root,
             child_environment,
         )
@@ -4680,13 +4284,13 @@ def _run_android_release(
                 "dedicated release device could not be force-stopped and rebooted",
             )
         boot = owned.command(
-            (str(inputs.adb), "-s", inputs.serial, "wait-for-device"),
+            (str(inputs.adb), "-s", serial, "wait-for-device"),
             context.repo_root,
             child_environment,
         )
         if boot.returncode != 0 or not _android_user_unlocked(
             inputs.adb,
-            inputs.serial,
+            serial,
             context.repo_root,
             child_environment,
             command=owned.command,
@@ -4700,7 +4304,7 @@ def _run_android_release(
             (
                 str(inputs.adb),
                 "-s",
-                inputs.serial,
+                serial,
                 "shell",
                 "cmd",
                 "connectivity",
@@ -4714,7 +4318,7 @@ def _run_android_release(
             (
                 str(inputs.adb),
                 "-s",
-                inputs.serial,
+                serial,
                 "shell",
                 "settings",
                 "get",
@@ -4745,7 +4349,7 @@ def _run_android_release(
         if cold_offline is not None:
             return _release_failure(capability, started, cold_offline)
         candidate_install = owned.command(
-            (str(inputs.adb), "-s", inputs.serial, "install", "-r", str(apk)),
+            (str(inputs.adb), "-s", serial, "install", "-r", str(apk)),
             context.repo_root,
             child_environment,
         )
@@ -4754,7 +4358,7 @@ def _run_android_release(
                 capability, started, 3, candidate_install, child_environment
             )
         installed_version = owned.installed_version_code(
-            inputs.adb, inputs.serial, context.repo_root, child_environment
+            inputs.adb, serial, context.repo_root, child_environment
         )
         if installed_version != inputs.version_code:
             return _release_failure(
@@ -4798,7 +4402,7 @@ def _run_android_release(
             (
                 str(inputs.adb),
                 "-s",
-                inputs.serial,
+                serial,
                 "shell",
                 "cmd",
                 "package",
@@ -4844,7 +4448,7 @@ def _run_android_release(
                 "version_name": inputs.version_name,
                 "signer_sha256": inputs.certificate_sha256,
                 "physical_device": {
-                    "serial": inputs.serial,
+                    "serial": serial,
                     "connection": "usb",
                     "qemu_properties": qemu_properties,
                 },
@@ -5320,12 +4924,15 @@ def _run_android_release_instrumentation(
         [tuple[str, ...], Path, Mapping[str, str]], subprocess.CompletedProcess[str]
     ] = _release_command,
 ) -> str | None:
+    serial = inputs.serial
+    if serial is None:
+        return "release instrumentation requires a dedicated device serial"
     for target in targets:
         result = command(
             (
                 str(inputs.adb),
                 "-s",
-                inputs.serial,
+                serial,
                 "shell",
                 "am",
                 "instrument",
@@ -5772,21 +5379,6 @@ def _run_doctor(context: CapabilityContext, environment: Mapping[str, str]) -> C
             "fingerprinted PostgreSQL template is absent or connectable",
         )
     protected_missing: list[str] = []
-    if environment.get("NEXUS_HOSTED_CANARY") == "1" and not environment.get("OPENAI_API_KEY"):
-        protected_missing.append("nightly:OPENAI_API_KEY")
-    if environment.get("NEXUS_PROVIDER_CERTIFICATION") == "1":
-        protected_missing.extend(
-            f"release:{name}"
-            for name in (
-                "OPENAI_API_KEY",
-                "ANTHROPIC_API_KEY",
-                "GEMINI_API_KEY",
-                "MOONSHOT_API_KEY",
-                "DEEPSEEK_API_KEY",
-                "NEXUS_FABLE_RETENTION_ACCEPTED_AT",
-            )
-            if not environment.get(name)
-        )
     if protected_missing:
         return _not_run(
             Capability.DOCTOR,

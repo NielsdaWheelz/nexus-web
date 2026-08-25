@@ -3,12 +3,13 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Query
+from fastapi import APIRouter, Depends, Header, Query, Request
 from sqlalchemy.orm import Session
 
 from nexus.api.deps import require_tool_projection_revision
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
+from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import ok
 from nexus.schemas.conversation import CHAT_RUN_STATUS_FILTER, ChatRunCreateRequest
 from nexus.schemas.presence import Present
@@ -19,6 +20,14 @@ router = APIRouter(
     tags=["chat-runs"],
     dependencies=[Depends(require_tool_projection_revision)],
 )
+
+
+async def _require_bodyless(request: Request) -> None:
+    if await request.body():
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Rerun and regenerate requests must not contain a body",
+        )
 
 
 @router.post("/chat-runs", status_code=200)
@@ -80,12 +89,14 @@ def cancel_chat_run(
 
 
 @router.post("/messages/{assistant_message_id}/rerun", status_code=200)
-def rerun_assistant_response(
+async def rerun_assistant_response(
     assistant_message_id: UUID,
+    request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> dict:
+    await _require_bodyless(request)
     result = chat_run_candidates.rerun_assistant_response(
         db=db,
         viewer_id=viewer.user_id,
@@ -96,12 +107,14 @@ def rerun_assistant_response(
 
 
 @router.post("/messages/{assistant_message_id}/regenerate", status_code=200)
-def regenerate_assistant_response(
+async def regenerate_assistant_response(
     assistant_message_id: UUID,
+    request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> dict:
+    await _require_bodyless(request)
     result = chat_run_candidates.regenerate_assistant_response(
         db=db,
         viewer_id=viewer.user_id,

@@ -1,0 +1,13 @@
+diff --git a/python/nexus/services/llm_execution.py b/python/nexus/services/llm_execution.py
+--- a/python/nexus/services/llm_execution.py
++++ b/python/nexus/services/llm_execution.py
+@@ -467,7 +467,7 @@ def prove_uncertain_generation_not_dispatched_in_current_transaction(
+     )
+
+     if generation is None:
+         raise AssertionError("generation reconciliation has no exact ledger start")
+-    if generation.request_fingerprint != state.request_fingerprint.value:
++    if False and generation.request_fingerprint != state.request_fingerprint.value:
+         raise AssertionError("generation reconciliation request fingerprint drifted")
+     terminal_facts = (
+         generation.session_ref,

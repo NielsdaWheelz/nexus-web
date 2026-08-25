@@ -28,6 +28,8 @@ type ResourceFailureProjection = Literal["Job", "SourceAttemptMedia"]
 type ChildRuntime = Literal["Base", "Llm"]
 type ChildExitCleanup = Literal["None", "SourceAttemptParserTemp"]
 
+CHAT_RUN_LEASE_SECONDS = 1_200
+
 
 @dataclass(frozen=True)
 class JobDefinition:
@@ -156,7 +158,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             resource_class="Light",
             max_attempts=3,
             retry_delays_seconds=(30, 120, 300),
-            lease_seconds=900,
+            lease_seconds=CHAT_RUN_LEASE_SECONDS,
             dead_letter_projection="ChatRun",
             never_prune_dead=True,
         ),
@@ -416,7 +418,7 @@ def _run_enrich_metadata(
 
 def _run_chat_run(
     *, payload: Mapping[str, Any], context: JobExecutionContext
-) -> Mapping[str, Any] | None:
+) -> Mapping[str, Any] | RescheduleRequested | None:
     from nexus.tasks.chat_run import chat_run
 
     return chat_run(run_id=str(payload["run_id"]), context=context)

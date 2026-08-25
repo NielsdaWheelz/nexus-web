@@ -24,6 +24,7 @@ jobs:
       NEXUS_CODEX_HOSTED_PROFILE: codex-personal
       NEXUS_CODEX_HOSTED_STATE_ROOT: /var/lib/nexus-codex-nightly/state
       NEXUS_CODEX_HOSTED_WORKING_DIRECTORY: /var/lib/nexus-codex-nightly/cwd
+      NEXUS_CODEX_HOSTED_SOURCE_SHA: ${{ github.sha }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -80,9 +81,18 @@ jobs:
             find test-results/runs -type f -name hosted-codex-personal-generation.json -print 2>/dev/null \
               | LC_ALL=C sort
           )
-          if [ "$CANARY_OUTCOME" = success ] && [ "${#evidence_files[@]}" = 1 ]; then
+          mapfile -t readiness_files < <(
+            find test-results/runs -type f -name hosted-codex-personal-readiness.json -print 2>/dev/null \
+              | LC_ALL=C sort
+          )
+          if [ "$CANARY_OUTCOME" = success ] && [ "${#evidence_files[@]}" = 1 ] && [ "${#readiness_files[@]}" = 0 ]; then
             python/.venv/bin/python -m nexus.ops.codex_hosted_evidence \
-              stage "${evidence_files[0]}" "$ARTIFACT"
+              stage "${evidence_files[0]}" "$ARTIFACT" "$GITHUB_SHA"
+            exit 0
+          fi
+          if [ "${#evidence_files[@]}" = 0 ] && [ "${#readiness_files[@]}" = 1 ]; then
+            python/.venv/bin/python -m nexus.ops.codex_hosted_evidence \
+              stage-readiness "${readiness_files[0]}" "$ARTIFACT" "$GITHUB_RUN_ID"
             exit 0
           fi
           [ "$CANARY_OUTCOME" != success ] || exit 1
@@ -95,3 +105,15 @@ jobs:
           path: ${{ runner.temp }}/nexus-codex-nightly-${{ github.run_id }}.json
           if-no-files-found: error
           retention-days: 14
+
+      - name: Enforce successful Codex nightly qualification
+        if: always()
+        env:
+          CANARY_OUTCOME: ${{ steps.canary.outcome }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_RUN_ID" =~ ^[0-9]+$ ]]
+          readonly ARTIFACT="${RUNNER_TEMP}/nexus-codex-nightly-${GITHUB_RUN_ID}.json"
+          python/.venv/bin/python -m nexus.ops.codex_hosted_evidence \
+            gate "$ARTIFACT" "$CANARY_OUTCOME" "$GITHUB_SHA"

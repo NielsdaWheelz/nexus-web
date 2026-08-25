@@ -244,7 +244,6 @@ def _minimal_repository(root: Path) -> None:
     _write(
         root,
         ".github/workflows/release.yml",
-        'NEXUS_PROVIDER_CERTIFICATION: "1"\n'
         "runs-on: ${{ inputs.bootstrap_no_device && 'ubuntu-latest' || "
         'fromJSON(\'["self-hosted", "linux", "x64", "nexus-android-usb"]\') }}\n'
         "run: ./scripts/test release\n",
@@ -791,10 +790,10 @@ def test_proof_contract_rejects_multiple_exact_sensitivity_owners_per_file(
     tmp_path: Path,
 ) -> None:
     manifest = _complete_proof_repository(tmp_path)
-    native_agent_host = next(
-        risk for risk in manifest["priority_risks"] if risk["id"] == "native-agent-host"
+    codex_generation_host = next(
+        risk for risk in manifest["priority_risks"] if risk["id"] == "codex-generation-host"
     )
-    native_agent_host["proofs"].append(
+    codex_generation_host["proofs"].append(
         "pytest:python/tests/service/test_codex_capacity_canary_contract.py::"
         "test_release_controller_mirrors_the_canary_exit_and_phase_contract"
     )

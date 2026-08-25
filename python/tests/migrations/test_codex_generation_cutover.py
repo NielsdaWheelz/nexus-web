@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
-from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -15,6 +13,19 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import Engine, create_engine, inspect, text
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from nexus.db.models import ChatRun, Message
+from nexus.errors import ApiError, ApiErrorCode
+from nexus.services.chat_failure import profile_selection_active
+from nexus.services.chat_run_candidates import (
+    regenerate_assistant_response,
+    rerun_assistant_response,
+)
+from nexus.services.conversations import (
+    regeneratable_assistant_message_ids,
+    rerunnable_assistant_message_ids,
+)
 
 _CUTOVER_REVISION = "0222"
 _PREVIOUS_REVISION = "0221"
@@ -28,16 +39,6 @@ _GENERATION_JOB_KINDS = (
     "dawn_write_job",
 )
 _ACTIVE_JOB_STATUSES = ("pending", "running", "failed", "dead")
-_OWNER_KINDS = {
-    "chat_run",
-    "oracle_reading",
-    "artifact_build",
-    "artifact_learn_request",
-    "media_summary",
-    "synapse_scan",
-    "dawn_write",
-    "media_enrichment",
-}
 _FINAL_LEDGER_COLUMNS = {
     "id",
     "owner_kind",
@@ -92,6 +93,134 @@ _NON_NULL_LEDGER_COLUMNS = {
     "streaming",
     "created_at",
 }
+_LEDGER_CHECK_NAMES = {
+    "ck_llm_calls_fingerprints",
+    "ck_llm_calls_generation_seq_positive",
+    "ck_llm_calls_lifecycle",
+    "ck_llm_calls_owner_operation",
+    "ck_llm_calls_plan_capability",
+    "ck_llm_calls_route",
+    "ck_llm_calls_session_ref",
+    "ck_llm_calls_usage",
+}
+_LEDGER_OPERATION_FACTS: dict[str, tuple[str, str, str, str, str]] = {
+    "metadata_enrichment": (
+        "media_enrichment",
+        "routine",
+        "gpt-5.6-luna",
+        "low",
+        "Synthesis",
+    ),
+    "media_summary": ("media_summary", "routine", "gpt-5.6-luna", "low", "Synthesis"),
+    "synapse": ("synapse_scan", "routine", "gpt-5.6-luna", "low", "Synthesis"),
+    "dawn_write": ("dawn_write", "standard", "gpt-5.6-terra", "medium", "Synthesis"),
+    "oracle": ("oracle_reading", "standard", "gpt-5.6-terra", "medium", "Synthesis"),
+    "dossier_page": ("artifact_build", "routine", "gpt-5.6-luna", "low", "Synthesis"),
+    "dossier_note": ("artifact_build", "routine", "gpt-5.6-luna", "low", "Synthesis"),
+    "dossier_media": (
+        "artifact_build",
+        "standard",
+        "gpt-5.6-terra",
+        "medium",
+        "Synthesis",
+    ),
+    "dossier_conversation": (
+        "artifact_build",
+        "standard",
+        "gpt-5.6-terra",
+        "medium",
+        "Synthesis",
+    ),
+    "dossier_library": ("artifact_build", "thorough", "gpt-5.6-terra", "high", "Synthesis"),
+    "dossier_podcast": ("artifact_build", "thorough", "gpt-5.6-terra", "high", "Synthesis"),
+    "dossier_contributor": (
+        "artifact_build",
+        "thorough",
+        "gpt-5.6-terra",
+        "high",
+        "Synthesis",
+    ),
+    "dossier_idea": ("artifact_build", "thorough", "gpt-5.6-terra", "high", "Synthesis"),
+    "dossier_idea_resolve": (
+        "artifact_learn_request",
+        "routine",
+        "gpt-5.6-luna",
+        "low",
+        "Synthesis",
+    ),
+    "chat": ("chat_run", "standard", "gpt-5.6-terra", "medium", "ChatTools"),
+}
+_CHAT_OUTPUT_FINGERPRINT = "3f0d42022e6069f00f4048e3a091c1b225e739ef73e2d0a9fcee8986da69e9e7"
+_CHAT_TOOL_FINGERPRINT = "62494626c69ba139121e1b761e4e2def6ca50ccf1ebfde551f8de061efef049c"
+_INSERT_LEDGER_ROW = """
+INSERT INTO llm_calls (
+    id,
+    owner_kind,
+    owner_id,
+    generation_seq,
+    operation,
+    plan_id,
+    plan_revision,
+    backend,
+    transport,
+    auth_profile,
+    model_name,
+    reasoning_effort,
+    capability_kind,
+    request_fingerprint,
+    output_schema_fingerprint,
+    tool_plan_fingerprint,
+    streaming,
+    session_ref,
+    outcome,
+    error_code,
+    error_detail,
+    input_tokens,
+    output_tokens,
+    total_tokens,
+    reasoning_tokens,
+    cache_read_input_tokens,
+    cache_write_input_tokens,
+    sdk_version,
+    runtime_version,
+    latency_ms,
+    accepted_at,
+    completed_at
+) VALUES (
+    :id,
+    :owner_kind,
+    :owner_id,
+    :generation_seq,
+    :operation,
+    :plan_id,
+    :plan_revision,
+    :backend,
+    :transport,
+    :auth_profile,
+    :model_name,
+    :reasoning_effort,
+    :capability_kind,
+    :request_fingerprint,
+    :output_schema_fingerprint,
+    :tool_plan_fingerprint,
+    :streaming,
+    CAST(:session_ref AS jsonb),
+    :outcome,
+    :error_code,
+    :error_detail,
+    :input_tokens,
+    :output_tokens,
+    :total_tokens,
+    :reasoning_tokens,
+    :cache_read_input_tokens,
+    :cache_write_input_tokens,
+    :sdk_version,
+    :runtime_version,
+    :latency_ms,
+    :accepted_at,
+    :completed_at
+)
+"""
 
 
 def _migration_config() -> Config:
@@ -112,12 +241,204 @@ def _json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+def _ledger_row(operation: str = "metadata_enrichment", **overrides: object) -> dict[str, object]:
+    owner_kind, plan_id, model_name, effort, capability = _LEDGER_OPERATION_FACTS[operation]
+    row: dict[str, object] = {
+        "id": uuid4(),
+        "owner_kind": owner_kind,
+        "owner_id": uuid4(),
+        "generation_seq": 1,
+        "operation": operation,
+        "plan_id": plan_id,
+        "plan_revision": "codex-generation.2026-08-24.2",
+        "backend": "codex",
+        "transport": "sdk",
+        "auth_profile": "codex-personal",
+        "model_name": model_name,
+        "reasoning_effort": effort,
+        "capability_kind": capability,
+        "request_fingerprint": "a" * 64,
+        "output_schema_fingerprint": (
+            _CHAT_OUTPUT_FINGERPRINT if operation == "chat" else "b" * 64
+        ),
+        "tool_plan_fingerprint": _CHAT_TOOL_FINGERPRINT if operation == "chat" else None,
+        "streaming": operation == "chat",
+        "session_ref": None,
+        "outcome": None,
+        "error_code": None,
+        "error_detail": None,
+        "input_tokens": None,
+        "output_tokens": None,
+        "total_tokens": None,
+        "reasoning_tokens": None,
+        "cache_read_input_tokens": None,
+        "cache_write_input_tokens": None,
+        "sdk_version": None,
+        "runtime_version": None,
+        "latency_ms": None,
+        "accepted_at": None,
+        "completed_at": None,
+    }
+    row.update(overrides)
+    return row
+
+
+def _session_ref(**overrides: object) -> str:
+    session_ref: dict[str, object] = {
+        "schema_version": "agent-session-ref.v1",
+        "backend": "codex",
+        "transport": "sdk",
+        "native_session_id": "migration-proof-session",
+        "profile_key": "codex-personal",
+        "state_root_fingerprint": "c" * 64,
+        "cwd_fingerprint": "d" * 64,
+    }
+    session_ref.update(overrides)
+    return _json(session_ref)
+
+
+def _accepted_terminal(
+    operation: str = "metadata_enrichment", **overrides: object
+) -> dict[str, object]:
+    row = _ledger_row(operation)
+    row.update(
+        {
+            "outcome": "Succeeded",
+            "session_ref": _session_ref(),
+            "sdk_version": "0.144.4",
+            "runtime_version": "codex-cli 0.144.4",
+            "latency_ms": 125,
+            "accepted_at": "2026-08-24T12:00:00+00:00",
+            "completed_at": "2026-08-24T12:00:01+00:00",
+        }
+    )
+    row.update(overrides)
+    return row
+
+
+def _assert_ledger_constraints(engine: Engine) -> None:
+    valid_rows = [_ledger_row(operation) for operation in _LEDGER_OPERATION_FACTS]
+    valid_rows.extend(
+        (
+            _ledger_row(
+                operation="chat",
+                plan_id="routine",
+                model_name="gpt-5.6-luna",
+                reasoning_effort="low",
+            ),
+            _ledger_row(
+                operation="chat",
+                plan_id="deep",
+                model_name="gpt-5.6-sol",
+                reasoning_effort="high",
+            ),
+            _ledger_row(
+                operation="synapse",
+                outcome="Failed",
+                error_code="capacity_unavailable",
+                error_detail="codex generation capacity unavailable",
+                completed_at="2026-08-24T12:00:01+00:00",
+            ),
+            _ledger_row(
+                operation="dossier_page",
+                outcome="Cancelled",
+                error_detail="owner cancelled before host acceptance",
+                completed_at="2026-08-24T12:00:01+00:00",
+            ),
+            _accepted_terminal(
+                input_tokens=20,
+                output_tokens=10,
+                total_tokens=30,
+                reasoning_tokens=4,
+                cache_read_input_tokens=2,
+            ),
+            _accepted_terminal(
+                operation="media_summary",
+                outcome="Failed",
+                error_code="timeout",
+                error_detail="codex generation failed: turn_timeout",
+                session_ref=None,
+            ),
+            _accepted_terminal(
+                operation="dawn_write",
+                outcome="Cancelled",
+                error_detail="codex generation cancelled",
+                session_ref=None,
+            ),
+        )
+    )
+    with engine.begin() as connection:
+        connection.execute(text(_INSERT_LEDGER_ROW), valid_rows)
+        connection.execute(text("DELETE FROM llm_calls"))
+
+    invalid_rows = (
+        ("ck_llm_calls_generation_seq_positive", _ledger_row(generation_seq=0)),
+        (
+            "ck_llm_calls_owner_operation",
+            _ledger_row(owner_kind="chat_run"),
+        ),
+        (
+            "ck_llm_calls_plan_capability",
+            _ledger_row(
+                plan_id="standard",
+                model_name="gpt-5.6-terra",
+                reasoning_effort="medium",
+            ),
+        ),
+        ("ck_llm_calls_route", _ledger_row(auth_profile="api-key")),
+        (
+            "ck_llm_calls_fingerprints",
+            _ledger_row(request_fingerprint="A" * 64),
+        ),
+        (
+            "ck_llm_calls_fingerprints",
+            _ledger_row(tool_plan_fingerprint="e" * 64),
+        ),
+        (
+            "ck_llm_calls_fingerprints",
+            _ledger_row(operation="chat", tool_plan_fingerprint=None),
+        ),
+        (
+            "ck_llm_calls_session_ref",
+            _accepted_terminal(session_ref=_session_ref(transport="http")),
+        ),
+        (
+            "ck_llm_calls_usage",
+            _accepted_terminal(input_tokens=1, total_tokens=1),
+        ),
+        (
+            "ck_llm_calls_lifecycle",
+            _accepted_terminal(session_ref=None),
+        ),
+        (
+            "ck_llm_calls_lifecycle",
+            _accepted_terminal(
+                outcome="Failed",
+                error_detail="failed terminal missing normalized code",
+                session_ref=None,
+            ),
+        ),
+        (
+            "ck_llm_calls_lifecycle",
+            _ledger_row(completed_at="2026-08-24T12:00:01+00:00"),
+        ),
+    )
+    for constraint_name, invalid_row in invalid_rows:
+        with pytest.raises(IntegrityError, match=constraint_name):
+            with engine.begin() as connection:
+                connection.execute(text(_INSERT_LEDGER_ROW), invalid_row)
+
+
 def _journal_state(*, phase: str, generation_id: UUID | None = None) -> dict[str, object]:
     return {
         "generation_id": str(generation_id or uuid4()),
         "dispatch_phase": phase,
         "request_fingerprint": {"kind": "Present", "value": "f" * 64},
-        "terminal_result": {"kind": "Absent"},
+        "terminal_result": (
+            {"kind": "Present", "value": "pre-cutover terminal"}
+            if phase == "Completed"
+            else {"kind": "Absent"}
+        ),
     }
 
 
@@ -200,9 +521,10 @@ def _assert_refused_without_mutation(
     call_id: UUID,
     turn_id: UUID,
     blocker: str,
+    expected_error: str = "0222 preflight",
 ) -> None:
     before = _preflight_fingerprint(engine, call_id=call_id, turn_id=turn_id)
-    with pytest.raises(RuntimeError, match="0222 preflight"):
+    with pytest.raises(RuntimeError, match=expected_error):
         command.upgrade(config, _CUTOVER_REVISION)
     after = _preflight_fingerprint(engine, call_id=call_id, turn_id=turn_id)
     assert after == before, f"migration mutated state before refusing {blocker}"
@@ -393,7 +715,7 @@ def test_0222_refuses_every_active_or_uncertain_generation_owner_before_mutation
                 text("DELETE FROM background_jobs WHERE id = :id"), {"id": uncertain_job_id}
             )
 
-        highlight_id, learn_request_id = uuid4(), uuid4()
+        highlight_id = uuid4()
         with engine.begin() as connection:
             connection.execute(
                 text(
@@ -404,32 +726,43 @@ def test_0222_refuses_every_active_or_uncertain_generation_owner_before_mutation
                 ),
                 {"id": highlight_id, "user_id": ids["user"]},
             )
-            connection.execute(
-                text(
-                    """
-                    INSERT INTO artifact_learn_requests (
-                        id, user_id, idempotency_key, request_hash, highlight_id, coordination
-                    ) VALUES (
-                        :id, :user_id, 'uncertain-learn', :request_hash, :highlight_id,
-                        CAST(:coordination AS jsonb)
-                    )
-                    """
-                ),
-                {
-                    "id": learn_request_id,
-                    "user_id": ids["user"],
-                    "request_hash": "a" * 64,
-                    "highlight_id": highlight_id,
-                    "coordination": _json({"idea-resolution": _journal_state(phase="Uncertain")}),
-                },
+
+        for phase in ("Prepared", "Uncertain", "Completed"):
+            learn_request_id = uuid4()
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO artifact_learn_requests (
+                            id, user_id, idempotency_key, request_hash, highlight_id, coordination
+                        ) VALUES (
+                            :id, :user_id, :idempotency_key, :request_hash, :highlight_id,
+                            CAST(:coordination AS jsonb)
+                        )
+                        """
+                    ),
+                    {
+                        "id": learn_request_id,
+                        "user_id": ids["user"],
+                        "idempotency_key": f"{phase.lower()}-learn",
+                        "request_hash": "a" * 64,
+                        "highlight_id": highlight_id,
+                        "coordination": _json({"idea-resolution": _journal_state(phase=phase)}),
+                    },
+                )
+            _assert_refused_without_mutation(
+                config,
+                engine,
+                call_id=call_id,
+                turn_id=turn_id,
+                blocker=f"{phase} artifact Learn journal",
+                expected_error=rf"pending Learn requests.*{learn_request_id}",
             )
-        _assert_refused_without_mutation(
-            config,
-            engine,
-            call_id=call_id,
-            turn_id=turn_id,
-            blocker="Uncertain artifact Learn journal",
-        )
+            with engine.begin() as connection:
+                connection.execute(
+                    text("DELETE FROM artifact_learn_requests WHERE id = :id"),
+                    {"id": learn_request_id},
+                )
 
         legacy_job_id = uuid4()
         legacy_generation_id = uuid4()
@@ -495,11 +828,13 @@ def test_0222_refuses_every_active_or_uncertain_generation_owner_before_mutation
             call_id=call_id,
             turn_id=turn_id,
             blocker="drained job carrying GenerateIntentState/ContinuationState",
+            expected_error=rf"GenerateIntentState or ContinuationState.*{legacy_job_id}",
         )
         with engine.begin() as connection:
             connection.execute(
                 text("DELETE FROM background_jobs WHERE id = :id"), {"id": legacy_job_id}
             )
+            connection.execute(text("DELETE FROM highlights WHERE id = :id"), {"id": highlight_id})
     finally:
         engine.dispose()
 
@@ -543,13 +878,17 @@ def _seed_drained_cutover(connection: object) -> dict[str, UUID]:
                 budget_breakdown
             ) VALUES (
                 :prompt, :chat_run, :conversation, :assistant_message,
-                '{"plan_bound":true}'::jsonb, 1050000, 128000, 922000, 100,
+                CAST(:prompt_manifest AS jsonb), 1050000, 128000, 922000, 100,
                 CAST(:message_ids AS jsonb), '[]'::jsonb, '[]'::jsonb, '[]'::jsonb,
                 '{"source":"context-admission"}'::jsonb
             )
             """
         ),
-        {**ids, "message_ids": _json([str(ids["user_message"])])},
+        {
+            **ids,
+            "prompt_manifest": _json({"plan_bound": True}),
+            "message_ids": _json([str(ids["user_message"])]),
+        },
     )
     connection.execute(
         text(
@@ -644,110 +983,9 @@ def _assert_final_ledger_schema(engine: Engine) -> None:
     assert indexes["ix_llm_calls_owner"] == ("owner_kind", "owner_id")
     assert inspector.get_foreign_keys("llm_calls") == []
 
-    checks = {
-        item["name"]: str(item["sqltext"]) for item in inspector.get_check_constraints("llm_calls")
-    }
-    assert set(re.findall(r"'([^']+)'", checks["ck_llm_calls_owner_kind"])) == _OWNER_KINDS
-    assert set(re.findall(r"'([^']+)'", checks["ck_llm_calls_outcome"])) == {
-        "Succeeded",
-        "Cancelled",
-        "Failed",
-    }
-    assert "generation_seq > 0" in checks["ck_llm_calls_generation_seq_positive"]
     assert {
-        "ck_llm_calls_operation",
-        "ck_llm_calls_owner_operation",
-        "ck_llm_calls_operation_plan",
-        "ck_llm_calls_plan_target",
-        "ck_llm_calls_route",
-        "ck_llm_calls_capability",
-        "ck_llm_calls_fingerprints",
-        "ck_llm_calls_bounded_text",
-        "ck_llm_calls_error_code",
-        "ck_llm_calls_failure_shape",
-        "ck_llm_calls_usage",
-        "ck_llm_calls_session_route",
-        "ck_llm_calls_lifecycle",
-    } <= set(checks)
-
-
-_LEDGER_INSERT = text(
-    """
-    INSERT INTO llm_calls (
-        id, owner_kind, owner_id, generation_seq, operation, plan_id,
-        plan_revision, backend, transport, auth_profile, model_name,
-        reasoning_effort, capability_kind, request_fingerprint,
-        output_schema_fingerprint, tool_plan_fingerprint, streaming,
-        session_ref, outcome, error_code, error_detail, input_tokens,
-        output_tokens, total_tokens, reasoning_tokens, cache_read_input_tokens,
-        cache_write_input_tokens, sdk_version, runtime_version, latency_ms,
-        accepted_at, completed_at
-    ) VALUES (
-        :id, :owner_kind, :owner_id, :generation_seq, :operation, :plan_id,
-        :plan_revision, :backend, :transport, :auth_profile, :model_name,
-        :reasoning_effort, :capability_kind, :request_fingerprint,
-        :output_schema_fingerprint, :tool_plan_fingerprint, :streaming,
-        CAST(:session_ref AS jsonb), :outcome, :error_code, :error_detail,
-        :input_tokens, :output_tokens, :total_tokens, :reasoning_tokens,
-        :cache_read_input_tokens, :cache_write_input_tokens, :sdk_version,
-        :runtime_version, :latency_ms, :accepted_at, :completed_at
-    )
-    """
-)
-
-
-def _ledger_values(**overrides: object) -> dict[str, object]:
-    values: dict[str, object] = {
-        "id": uuid4(),
-        "owner_kind": "media_summary",
-        "owner_id": uuid4(),
-        "generation_seq": 1,
-        "operation": "media_summary",
-        "plan_id": "routine",
-        "plan_revision": "codex-generation.2026-08-24.2",
-        "backend": "codex",
-        "transport": "sdk",
-        "auth_profile": "codex-personal",
-        "model_name": "gpt-5.6-luna",
-        "reasoning_effort": "low",
-        "capability_kind": "Synthesis",
-        "request_fingerprint": "1" * 64,
-        "output_schema_fingerprint": "2" * 64,
-        "tool_plan_fingerprint": None,
-        "streaming": False,
-        "session_ref": None,
-        "outcome": None,
-        "error_code": None,
-        "error_detail": None,
-        "input_tokens": None,
-        "output_tokens": None,
-        "total_tokens": None,
-        "reasoning_tokens": None,
-        "cache_read_input_tokens": None,
-        "cache_write_input_tokens": None,
-        "sdk_version": None,
-        "runtime_version": None,
-        "latency_ms": None,
-        "accepted_at": None,
-        "completed_at": None,
-    }
-    values.update(overrides)
-    return values
-
-
-def _assert_ledger_constraints(engine: Engine) -> None:
-    with engine.begin() as connection:
-        connection.execute(_LEDGER_INSERT, _ledger_values())
-
-    invalid_rows = (
-        _ledger_values(operation="oracle"),
-        _ledger_values(backend="openai"),
-        _ledger_values(outcome="Failed", completed_at=datetime.now(UTC)),
-    )
-    for values in invalid_rows:
-        with pytest.raises(IntegrityError):
-            with engine.begin() as connection:
-                connection.execute(_LEDGER_INSERT, values)
+        item["name"] for item in inspector.get_check_constraints("llm_calls")
+    } == _LEDGER_CHECK_NAMES
 
 
 def _post_cutover_fingerprint(engine: Engine, ids: dict[str, UUID]) -> tuple[object, ...]:
@@ -808,6 +1046,7 @@ def test_0222_deletes_old_audit_and_billing_state_but_preserves_domain_outputs(
         assert prompt_columns["reserved_output_tokens"]["nullable"] is False
 
         _assert_final_ledger_schema(engine)
+        _assert_ledger_constraints(engine)
         with engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
                 _CUTOVER_REVISION
@@ -843,7 +1082,57 @@ def test_0222_deletes_old_audit_and_billing_state_but_preserves_domain_outputs(
                 == 128000
             )
 
-        _assert_ledger_constraints(engine)
+        # The preserved row predates the v2 generation ledger and chat-tool
+        # snapshot. Its old profile/model strings remain historical display
+        # facts, never authority for a fresh billable action.
+        with Session(engine) as db:
+            preserved_run = db.get(ChatRun, ids["chat_run"])
+            assert preserved_run is not None
+            assert profile_selection_active(db, preserved_run) is False
+            assert (
+                regeneratable_assistant_message_ids(
+                    db,
+                    viewer_id=ids["user"],
+                    assistant_message_ids=[ids["assistant_message"]],
+                )
+                == set()
+            )
+            with pytest.raises(ApiError) as regenerate_error:
+                regenerate_assistant_response(
+                    db,
+                    viewer_id=ids["user"],
+                    assistant_message_id=ids["assistant_message"],
+                    idempotency_key=f"pre-cutover-regenerate-{uuid4()}",
+                )
+            assert regenerate_error.value.code is ApiErrorCode.E_REGENERATION_NOT_ALLOWED
+
+            # Exercise the other terminal action against the same pre-cutover
+            # identity: cancellation status can make a current run rerunnable
+            # only when the full ledger-backed profile selection is active.
+            preserved_run = db.get(ChatRun, ids["chat_run"])
+            preserved_message = db.get(Message, ids["assistant_message"])
+            assert preserved_run is not None and preserved_message is not None
+            preserved_run.status = "cancelled"
+            preserved_message.status = "cancelled"
+            db.commit()
+            assert profile_selection_active(db, preserved_run) is False
+            assert (
+                rerunnable_assistant_message_ids(
+                    db,
+                    viewer_id=ids["user"],
+                    assistant_message_ids=[ids["assistant_message"]],
+                )
+                == set()
+            )
+            with pytest.raises(ApiError) as rerun_error:
+                rerun_assistant_response(
+                    db,
+                    viewer_id=ids["user"],
+                    assistant_message_id=ids["assistant_message"],
+                    idempotency_key=f"pre-cutover-rerun-{uuid4()}",
+                )
+            assert rerun_error.value.code is ApiErrorCode.E_RETRY_NOT_ALLOWED
+
         before_downgrade = _post_cutover_fingerprint(engine, ids)
         with pytest.raises(NotImplementedError, match="0222.*irreversible"):
             command.downgrade(config, _PREVIOUS_REVISION)

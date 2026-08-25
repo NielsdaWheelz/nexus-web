@@ -9,6 +9,7 @@ from uuid import UUID
 import pytest
 from pydantic import ValidationError
 
+from nexus.config import Environment, validate_agent_tools_mcp_runtime_origin
 from nexus.services import generation_policy
 from nexus.services.codex_generation_contract import (
     MAX_COMMAND_BODY_BYTES,
@@ -27,6 +28,30 @@ _POLICY_FINGERPRINT = generation_policy.POLICY_FINGERPRINT
 _METADATA_INPUT = "bounded metadata input"
 _INSTRUCTIONS = "Return only the requested result."
 _TOKEN = "grant-secret-must-never-cross-a-diagnostic"
+
+
+def test_deployed_mcp_origin_is_required_only_by_the_interactive_owner() -> None:
+    local_origin = "http://127.0.0.1:8001/internal/agent-tools/mcp"
+    public_origin = "https://api.example.test/internal/agent-tools/mcp"
+
+    for lane in (None, "background", "maintenance"):
+        assert validate_agent_tools_mcp_runtime_origin(
+            local_origin,
+            nexus_env=Environment.PROD,
+            worker_lane=lane,
+        ) == ("127.0.0.1:8001", "http://127.0.0.1:8001")
+
+    with pytest.raises(ValueError, match="deployed interactive worker"):
+        validate_agent_tools_mcp_runtime_origin(
+            local_origin,
+            nexus_env=Environment.PROD,
+            worker_lane="interactive",
+        )
+    assert validate_agent_tools_mcp_runtime_origin(
+        public_origin,
+        nexus_env=Environment.PROD,
+        worker_lane="interactive",
+    ) == ("api.example.test", "https://api.example.test")
 
 
 def _command_payload(
@@ -202,6 +227,11 @@ def test_tool_grant_is_secret_like_and_never_enters_repr_dump_or_fingerprint() -
     other = GenerationCommand.model_validate(_chat_payload(grant="different-secret"))
     assert request_fingerprint(command) == request_fingerprint(other)
 
+    changed_instructions_payload = _chat_payload()
+    changed_instructions_payload["intent"]["instructions"] = "Different system authority."
+    changed_instructions = GenerationCommand.model_validate(changed_instructions_payload)
+    assert request_fingerprint(command) != request_fingerprint(changed_instructions)
+
 
 def test_nested_tagged_types_require_their_kind_on_json_wire() -> None:
     payload = _command_payload()
@@ -290,6 +320,14 @@ def test_text_success_has_no_structured_output_and_session_usage_are_typed() -> 
     assert terminal.session_ref.profile_key == "codex-personal"
     assert terminal.usage is not None
     assert terminal.usage.cache_write_input_tokens == 5
+
+    with pytest.raises(ValidationError, match="successful terminal cannot carry diagnostics"):
+        GenerationTerminal.model_validate(
+            {
+                **terminal.model_dump(mode="json"),
+                "diagnostics": ["operator-supplied text must not become success metadata"],
+            }
+        )
 
 
 def test_tool_completion_and_permission_tool_name_are_closed() -> None:

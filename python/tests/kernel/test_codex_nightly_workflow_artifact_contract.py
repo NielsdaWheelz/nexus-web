@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import subprocess
@@ -12,19 +13,34 @@ from typing import cast
 import pytest
 import yaml
 
+from nexus.services import generation_policy
+
 _RUN_ID = "1234567890"
 _EVIDENCE_NAME = "hosted-codex-personal-generation.json"
+_READINESS_NAME = "hosted-codex-personal-readiness.json"
 _ARTIFACT_NAME = f"nexus-codex-nightly-{_RUN_ID}.json"
 _VALID_EVIDENCE_RUN_ID = "0123456789abcdef"
 _SECOND_EVIDENCE_RUN_ID = "fedcba9876543210"
+_SOURCE_SHA = "a" * 40
 
 
 def _valid_evidence(run_id: str) -> bytes:
     return (
         json.dumps(
             {
-                "schema_version": "nexus-hosted-codex-canary.v2",
+                "schema_version": "nexus-hosted-codex-canary.v3",
                 "run_id": run_id,
+                "source_sha": _SOURCE_SHA,
+                "policy_revision": generation_policy.POLICY_REVISION,
+                "policy_fingerprint": generation_policy.POLICY_FINGERPRINT,
+                "policy_facts_fingerprint": generation_policy.POLICY_FACTS_FINGERPRINT,
+                "provider_runtime_revision": generation_policy.PLAN_EVAL_PIN[
+                    "provider_runtime_revision"
+                ],
+                "codex_sdk_version": generation_policy.PLAN_EVAL_PIN["codex_sdk_version"],
+                "codex_cli_version": generation_policy.PLAN_EVAL_PIN["codex_sdk_version"],
+                "qualification_scope": "model_effort_runtime_wire",
+                "qualified_plan_ids": ["routine", "standard", "thorough", "deep"],
                 "subscription_turns": 4,
                 "results": [
                     *[
@@ -34,27 +50,56 @@ def _valid_evidence(run_id: str) -> bytes:
                             "auth_profile": "codex-personal",
                             "terminal_status": "succeeded",
                             "plan_id": plan_id,
-                            "plan_revision": "2026-08-20.1",
+                            "operation": operation,
+                            "profile": profile,
+                            "operation_revision": generation_policy.operation_revision(
+                                operation, profile=profile
+                            ),
+                            "case_shape": case_shape,
                             "model": model,
                             "reasoning": reasoning,
-                            "structured_output_valid": True,
+                            "structured_output_valid": case_shape == "structured",
                             "session_ref_schema_version": "agent-session-ref.v1",
                             "usage": {
                                 "input_tokens": 1,
                                 "output_tokens": 2,
                                 "total_tokens": 3,
                             },
-                            "sdk_version": "0.144.4",
-                        "runtime_version": "1.0.0",
-                        "tool_events": tool_events,
-                        "elapsed_ms": 1,
-                        "permission_requests": 0,
+                            "sdk_version": generation_policy.PLAN_EVAL_PIN["codex_sdk_version"],
+                            "runtime_version": generation_policy.PLAN_EVAL_PIN["codex_sdk_version"],
+                            "tool_events": tool_events,
+                            "elapsed_ms": 1,
+                            "permission_requests": 0,
                         }
-                        for plan_id, model, reasoning, tool_events in (
-                            ("routine", "gpt-5.6-luna", "low", 0),
-                            ("standard", "gpt-5.6-terra", "medium", 0),
-                            ("thorough", "gpt-5.6-terra", "high", 0),
-                            ("deep", "gpt-5.6-sol", "high", 1),
+                        for plan_id, operation, profile, case_shape, model, reasoning, tool_events in (
+                            (
+                                "routine",
+                                "metadata_enrichment",
+                                None,
+                                "structured",
+                                "gpt-5.6-luna",
+                                "low",
+                                0,
+                            ),
+                            (
+                                "standard",
+                                "dawn_write",
+                                None,
+                                "text",
+                                "gpt-5.6-terra",
+                                "medium",
+                                0,
+                            ),
+                            (
+                                "thorough",
+                                "dossier_library",
+                                None,
+                                "structured",
+                                "gpt-5.6-terra",
+                                "high",
+                                0,
+                            ),
+                            ("deep", "chat", "deep", "mcp_read", "gpt-5.6-sol", "high", 1),
                         )
                     ]
                 ],
@@ -178,6 +223,7 @@ def test_codex_nightly_stages_only_one_run_bound_bounded_json_artifact(
         env={
             "CANARY_OUTCOME": canary_outcome,
             "GITHUB_RUN_ID": _RUN_ID,
+            "GITHUB_SHA": _SOURCE_SHA,
             "PATH": os.environ["PATH"],
             "PYTHONPATH": str(Path(__file__).parents[2]),
             "RUNNER_TEMP": str(runner_temp),
@@ -203,6 +249,192 @@ def test_codex_nightly_stages_only_one_run_bound_bounded_json_artifact(
     _require(sentinel not in artifact, "nightly artifact staging retained a sibling sentinel")
 
 
+def test_codex_nightly_stages_a_bounded_not_run_receipt_for_unavailable_subscription_auth(
+    tmp_path: Path,
+) -> None:
+    stage = _workflow_step("Stage bounded Codex nightly artifact")
+    readiness = tmp_path / "test-results/runs" / _VALID_EVIDENCE_RUN_ID / _READINESS_NAME
+    readiness.parent.mkdir(parents=True)
+    readiness.write_text(
+        json.dumps(
+            {
+                "schema_version": "nexus-hosted-codex-readiness.v1",
+                "run_id": _VALID_EVIDENCE_RUN_ID,
+                "status": "subscription_unavailable",
+            },
+            separators=(",", ":"),
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    runner_temp = tmp_path / "runner-temp"
+    runner_temp.mkdir()
+    workflow_python = tmp_path / "python/.venv/bin/python"
+    workflow_python.parent.mkdir(parents=True)
+    workflow_python.symlink_to(Path(sys.executable))
+
+    result = subprocess.run(
+        ("bash", "-c", _staging_command(stage)),
+        cwd=tmp_path,
+        env={
+            "CANARY_OUTCOME": "failure",
+            "GITHUB_RUN_ID": _RUN_ID,
+            "GITHUB_SHA": _SOURCE_SHA,
+            "PATH": os.environ["PATH"],
+            "PYTHONPATH": str(Path(__file__).parents[2]),
+            "RUNNER_TEMP": str(runner_temp),
+        },
+        check=False,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert (runner_temp / _ARTIFACT_NAME).read_bytes() == (
+        b'{"schema_version":"nexus-hosted-codex-canary-not-run.v1",'
+        b'"github_run_id":1234567890,"status":"subscription_unavailable"}\n'
+    )
+    gate = subprocess.run(
+        ("bash", "-c", _gate_command()),
+        cwd=tmp_path,
+        env={
+            "CANARY_OUTCOME": "failure",
+            "GITHUB_RUN_ID": _RUN_ID,
+            "GITHUB_SHA": _SOURCE_SHA,
+            "PATH": os.environ["PATH"],
+            "PYTHONPATH": str(Path(__file__).parents[2]),
+            "RUNNER_TEMP": str(runner_temp),
+        },
+        check=False,
+        capture_output=True,
+    )
+    assert gate.returncode != 0, "an uploaded not-run receipt turned the nightly green"
+
+
+@pytest.mark.parametrize(
+    ("canary_outcome", "artifact", "expected_returncode"),
+    (
+        ("success", _VALID_EVIDENCE, 0),
+        ("failure", _VALID_EVIDENCE, 1),
+        ("success", _failure_marker(), 1),
+        (
+            "success",
+            b'{"schema_version":"nexus-hosted-codex-canary-not-run.v1",'
+            b'"github_run_id":1234567890,"status":"subscription_unavailable"}\n',
+            1,
+        ),
+    ),
+    ids=("qualified", "controller-failed", "failed-receipt", "not-run-receipt"),
+)
+def test_codex_nightly_final_gate_accepts_only_a_successful_qualification(
+    tmp_path: Path,
+    canary_outcome: str,
+    artifact: bytes,
+    expected_returncode: int,
+) -> None:
+    runner_temp = tmp_path / "runner-temp"
+    runner_temp.mkdir()
+    (runner_temp / _ARTIFACT_NAME).write_bytes(artifact)
+    workflow_python = tmp_path / "python/.venv/bin/python"
+    workflow_python.parent.mkdir(parents=True)
+    workflow_python.symlink_to(Path(sys.executable))
+
+    result = subprocess.run(
+        ("bash", "-c", _gate_command()),
+        cwd=tmp_path,
+        env={
+            "CANARY_OUTCOME": canary_outcome,
+            "GITHUB_RUN_ID": _RUN_ID,
+            "GITHUB_SHA": _SOURCE_SHA,
+            "PATH": os.environ["PATH"],
+            "PYTHONPATH": str(Path(__file__).parents[2]),
+            "RUNNER_TEMP": str(runner_temp),
+        },
+        check=False,
+        capture_output=True,
+    )
+
+    assert result.returncode == expected_returncode
+    assert result.stdout == b""
+    assert result.stderr == b""
+
+
+def test_codex_nightly_enforces_the_exact_per_plan_live_turn_ceiling() -> None:
+    hosted_proof = Path(__file__).parents[1] / "hosted/nightly/test_codex_personal_generation.py"
+    tree = ast.parse(hosted_proof.read_text(encoding="utf-8"), filename=str(hosted_proof))
+    constants = {
+        target.id: node.value.value
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance((target := node.targets[0]), ast.Name)
+        and isinstance(node.value, ast.Constant)
+    }
+    assert constants.get("_MAX_PLAN_ELAPSED_SECONDS") == 600
+    enforced_turns = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncWith)
+        and len(node.items) == 1
+        and isinstance((timeout_call := node.items[0].context_expr), ast.Call)
+        and isinstance(timeout_call.func, ast.Attribute)
+        and isinstance(timeout_call.func.value, ast.Name)
+        and timeout_call.func.value.id == "asyncio"
+        and timeout_call.func.attr == "timeout"
+        and len(timeout_call.args) == 1
+        and isinstance(timeout_call.args[0], ast.Name)
+        and timeout_call.args[0].id == "_MAX_PLAN_ELAPSED_SECONDS"
+        and any(
+            isinstance(candidate, ast.Attribute) and candidate.attr == "stream_turn"
+            for statement in node.body
+            for candidate in ast.walk(statement)
+        )
+    ]
+    assert len(enforced_turns) == 1, "the hosted turn ceiling is only observed after the effect"
+
+
+def test_codex_nightly_readiness_is_emitted_only_by_zero_turn_preflight() -> None:
+    hosted_proof = Path(__file__).parents[1] / "hosted/nightly/test_codex_personal_generation.py"
+    tree = ast.parse(hosted_proof.read_text(encoding="utf-8"), filename=str(hosted_proof))
+    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+    readiness_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_write_readiness"
+    ]
+    assert len(readiness_calls) == 1, "readiness gained a post-preflight emission path"
+    readiness_call = readiness_calls[0]
+    ancestors: list[ast.AST] = []
+    ancestor = parents.get(readiness_call)
+    while ancestor is not None:
+        ancestors.append(ancestor)
+        ancestor = parents.get(ancestor)
+    handlers = [node for node in ancestors if isinstance(node, ast.ExceptHandler)]
+    assert len(handlers) == 1
+    preflight_try = parents.get(handlers[0])
+    assert isinstance(preflight_try, ast.Try)
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_probe_subscription_auth"
+        for statement in preflight_try.body
+        for node in ast.walk(statement)
+    ), "readiness is no longer owned by subscription preflight"
+    paid_loops = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.For)
+        and any(
+            isinstance(candidate, ast.Name) and candidate.id == "_PLANS"
+            for candidate in ast.walk(node.iter)
+        )
+    ]
+    assert len(paid_loops) == 1
+    assert readiness_call.lineno < paid_loops[0].lineno
+    assert not any(isinstance(node, (ast.For, ast.AsyncFor)) for node in ancestors)
+
+
 def _workflow_step(name: str) -> dict[str, object]:
     steps = _workflow_job()["steps"]
     if not isinstance(steps, list):
@@ -226,6 +458,12 @@ def _assert_runner_security_contract() -> None:
     _require(
         job.get("runs-on") == ["self-hosted", "linux", "nexus-codex-nightly"],
         "Codex nightly no longer targets only its dedicated runner label",
+    )
+    environment = job.get("env")
+    _require(
+        isinstance(environment, dict)
+        and environment.get("NEXUS_CODEX_HOSTED_SOURCE_SHA") == "${{ github.sha }}",
+        "Codex nightly no longer binds hosted evidence to the checked-out source SHA",
     )
     steps = job.get("steps")
     _require(isinstance(steps, list), "Codex nightly workflow steps are absent")
@@ -269,6 +507,10 @@ def _staging_command(stage: dict[str, object]) -> str:
     raise AssertionError("Codex nightly workflow staging command is absent")
 
 
+def _gate_command() -> str:
+    return _staging_command(_workflow_step("Enforce successful Codex nightly qualification"))
+
+
 def _assert_artifact_delivery_contract(stage: dict[str, object], upload: dict[str, object]) -> None:
     """The parsed workflow must always upload exactly its bounded run artifact."""
 
@@ -298,6 +540,13 @@ def _assert_artifact_delivery_contract(stage: dict[str, object], upload: dict[st
         "nightly upload must fail closed for a missing artifact",
     )
     _require(upload_with.get("retention-days") == 14, "nightly artifact retention changed")
+    gate = _workflow_step("Enforce successful Codex nightly qualification")
+    _require(gate.get("if") == "always()", "nightly final qualification gate no longer runs")
+    steps = cast(list[object], _workflow_job()["steps"])
+    _require(
+        steps.index(upload) < steps.index(gate),
+        "nightly final gate can prevent the truthful artifact upload",
+    )
 
 
 def _require(condition: bool, message: str) -> None:

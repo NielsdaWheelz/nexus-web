@@ -651,8 +651,10 @@ BROWSER_TOOL_PROJECTION_CONTRACT = {
                 "record_kind",
                 "result_kind",
             ),
-            "null_fields": ("provider_wire_name",),
-            "nullable_fields": ("error_type",),
+            "null_fields": (),
+            # Pre-cutover audit rows may be null; every newly admitted MCP
+            # execution persists its declared canonical wire name.
+            "nullable_fields": ("error_type", "provider_wire_name"),
         },
         "historical_execution": {
             "non_null_fields": (

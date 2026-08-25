@@ -1,12 +1,13 @@
 """The single owner of chat failure projection and rerun-eligibility policy.
 
-`docs/cutovers/llm-provider-runtime-hard-cutover.md` §10 ("Failure and
-rerun"): `ChatRunOut`, message hydration, terminal SSE, reconnect folding, and
-the trust trail all derive the same `ExpectedChatFailure` projection from
-`ChatRun`; none stores or synthesizes a second failure. `chat_run_candidates.py`
-is the only other reader of `rerun_eligibility` — it re-evaluates the same
-policy in the rerun transaction against freshly queried facts; the UI's
-`can_rerun` flag on an earlier read is never authority for the rerun itself.
+`docs/cutovers/codex-personal-generation-hard-cutover.md` §6 ("Chat product
+contract") requires `ChatRunOut`, message hydration, terminal SSE, reconnect
+folding, and the trust trail to derive the same `ExpectedChatFailure`
+projection from `ChatRun`; none stores or synthesizes a second failure.
+`chat_run_candidates.py` is the only other reader of `rerun_eligibility` — it
+re-evaluates the same policy in the rerun transaction against freshly queried
+facts; the UI's `can_rerun` flag on an earlier read is never authority for the
+rerun itself.
 
 `chat_failure_projection` derives purely from stored/caller-supplied facts,
 never from a heuristic:
@@ -15,20 +16,15 @@ never from a heuristic:
   caller from `message_tool_calls`/`chat_run_events` (see
   `compute_has_write_tool_attempt` below) exactly as the dossier's §10 EXISTS
   predicate specifies, and passed in.
-- `attempts` (required only for the four transient codes) is likewise not a
-  `ChatRun` column — migration 0186 adds no such column — so it is sourced by
-  the caller from the run's terminal `llm_calls.attempt_count` row (see
-  `compute_terminal_attempts` below) and passed in. This is the one place
-  this module's signature necessarily diverges from the two-argument shape
-  written in `.dossiers/nexus-backend-api.md`; the divergence follows the
-  same "caller computes a derived fact, module applies pure policy to it"
-  shape already established there for `has_write_tool_attempt`.
+- Plan eligibility is derived through typed `llm_ledger` reads and the active
+  generation policy; the projection never probes retired provider columns or
+  reconstructs pre-cutover routing state.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal, cast
+from typing import cast
 from uuid import UUID
 
 from llm_tools import ToolEffect
@@ -42,116 +38,93 @@ from nexus.schemas.conversation import (
     tool_projection_from_persisted_record,
 )
 from nexus.schemas.llm import (
-    BudgetExceededChatFailure,
+    AssistantUnavailableChatFailure,
     CancelledChatFailure,
     ContextTooLargeChatFailure,
     ExpectedChatFailure,
     IncompleteChatFailure,
-    InvalidToolArgumentsChatFailure,
-    ProviderUnavailableChatFailure,
-    RateLimitedChatFailure,
-    RefusedChatFailure,
-    StreamInterruptedChatFailure,
-    TimeoutChatFailure,
+    InvalidOutputChatFailure,
+    OperatorDefectChatFailure,
 )
+from nexus.services import generation_policy
 from nexus.services.chat_run_tools import decode_persisted_tool_record
-from nexus.services.llm_profiles import profile as lookup_profile
-from nexus.services.llm_profiles import reasoning_level as lookup_reasoning_level
+from nexus.services.llm_ledger import (
+    GenerationRecord,
+    LlmCallOwner,
+    current_tool_plan_fingerprint,
+    read_latest_generation_for_owner,
+    read_latest_generations_for_owners,
+)
 
 logger = get_logger(__name__)
 
 
 class _UnrepresentableTerminal(Exception):
     """Internal signal: a stored terminal state cannot be projected onto the
-    closed `ExpectedChatFailure` union (unrecognized code, an origin outside a
-    code's valid set, or a transient code with no attempts). On the READ path
-    this degrades to the generic non-rerunnable card (`failure=None`), never a
-    500 — see `chat_failure_projection`. The write side stays strict."""
+    closed `ExpectedChatFailure` union. On the read path this degrades to the
+    generic non-rerunnable card (`failure=None`), never a 500 — see
+    `chat_failure_projection`. The write side stays strict."""
 
 
 # The closed §10 code set a terminal ChatRun can carry as error_code, plus the
 # statusonly "cancelled" pseudo-code (ChatRun never stores error_code=
 # 'cancelled'; run.status == 'cancelled' alone drives that variant).
 #
-# Refusal and budget denial reproduce identically on rerun (§10: "Refusal and
-# budget denial are not rerunnable"). context_too_large is grouped here too:
-# it is not named among the conditionally-rerunnable codes below, and
-# rerunning the identical assembled context deterministically reproduces the
-# same oversize outcome — INFERRED from the closed list's shape, not a
-# literal spec sentence; flagged in the impl report.
-_NEVER_RERUNNABLE_CODES = frozenset({"refused", "budget_exceeded", "context_too_large"})
+# These outcomes are deterministic or operator-owned and therefore never
+# expose a rerun affordance.
+_NEVER_RERUNNABLE_CODES = frozenset({"context_too_large", "invalid_output", "operator_defect"})
 
-# "can_rerun=true for incomplete, cancelled, invalid-tool-argument, and
-# transient-exhaustion outcomes only while the exact profile remains active
-# and no side-effecting write tool was attempted" (§10).
+# The current contract permits rerun only for incomplete, cancelled, and
+# assistant-unavailable outcomes while the exact plan remains active and no
+# side-effecting write tool was attempted (§6).
 _CONDITIONALLY_RERUNNABLE_CODES = frozenset(
     {
         "incomplete",
         "cancelled",
-        "invalid_tool_arguments",
-        "rate_limited",
-        "timeout",
-        "provider_unavailable",
-        "stream_interrupted",
+        "assistant_unavailable",
     }
 )
 
-TRANSIENT_CODES = frozenset(
-    {"rate_limited", "timeout", "provider_unavailable", "stream_interrupted"}
-)
-
-_REFUSED_ORIGINS: tuple[Literal["provider_http", "provider_stream"], ...] = (
-    "provider_http",
-    "provider_stream",
-)
-_INCOMPLETE_ORIGINS: tuple[Literal["provider_response"], ...] = ("provider_response",)
-_CONTEXT_TOO_LARGE_ORIGINS: tuple[Literal["intent", "provider_http"], ...] = (
-    "intent",
-    "provider_http",
-)
-_INVALID_TOOL_ARGUMENTS_ORIGINS: tuple[Literal["tool_arguments"], ...] = ("tool_arguments",)
-_BUDGET_EXCEEDED_ORIGINS: tuple[Literal["budget"], ...] = ("budget",)
-_RATE_LIMITED_ORIGINS: tuple[Literal["provider_http"], ...] = ("provider_http",)
-_TIMEOUT_ORIGINS: tuple[Literal["transport"], ...] = ("transport",)
-_PROVIDER_UNAVAILABLE_ORIGINS: tuple[Literal["provider_http", "transport"], ...] = (
-    "provider_http",
-    "transport",
-)
-_STREAM_INTERRUPTED_ORIGINS: tuple[Literal["provider_stream"], ...] = ("provider_stream",)
+_CODE_MAP = {
+    "timeout": "incomplete",
+    "output_limit": "incomplete",
+    "auth": "assistant_unavailable",
+    "quota": "assistant_unavailable",
+    "capacity_unavailable": "assistant_unavailable",
+    "runtime_unavailable": "assistant_unavailable",
+    "policy_violation": "operator_defect",
+    "runtime_defect": "operator_defect",
+}
 
 
 def chat_failure_projection(
     run: ChatRun,
     *,
+    profile_active: bool,
     has_write_tool_attempt: bool,
-    attempts: int | None = None,
 ) -> ExpectedChatFailure | None:
     """Project one `ChatRun`'s stored facts onto the closed `ExpectedChatFailure`
-    union, or `None` for a run that is not a card-bearing failure at all (still
-    running/queued/complete, or a defect with no stored closed code — §10:
-    "A defect exposes no failure variant ... the existing terminal failed run
-    status plus support_id makes the screen boundary render the same generic,
-    non-rerunnable card").
+    union, or `None` for a run that is not a card-bearing failure at all. A
+    corrupted or future terminal that has no representable closed code also
+    projects to the generic non-rerunnable card.
 
-    `attempts` is required (and used) only for the four transient codes; pass
-    `compute_terminal_attempts(db, run)` for those. Every other code ignores it.
-
-    §10 (lines 576-579): a terminal state this projection cannot represent
-    degrades here to `failure=None` (the generic non-rerunnable card) plus a
-    loud operator log — never an `AssertionError` that would 500 `ChatRunOut`,
-    message hydration, terminal SSE folding, or the trust trail. The write-side
-    invariants that produce `ChatRun.error_code`/`error_origin` stay strict.
+    A terminal state this projection cannot represent degrades here to
+    `failure=None` (the generic non-rerunnable card) plus a loud operator log —
+    never an `AssertionError` that would 500 `ChatRunOut`, message hydration,
+    terminal SSE folding, or the trust trail. The write-side invariants that
+    produce `ChatRun.error_code` stay strict.
     """
     try:
         return _project_failure(
-            run, has_write_tool_attempt=has_write_tool_attempt, attempts=attempts
+            run,
+            profile_active=profile_active,
+            has_write_tool_attempt=has_write_tool_attempt,
         )
     except _UnrepresentableTerminal as exc:
         logger.error(
             "chat_failure.unrepresentable_terminal",
             run_id=str(run.id),
             error_code=run.error_code,
-            error_origin=run.error_origin,
             run_status=run.status,
             reason=str(exc),
         )
@@ -161,19 +134,17 @@ def chat_failure_projection(
 def _project_failure(
     run: ChatRun,
     *,
+    profile_active: bool,
     has_write_tool_attempt: bool,
-    attempts: int | None,
 ) -> ExpectedChatFailure | None:
-    profile_active = profile_selection_active(run)
-
     code = "cancelled" if run.status == "cancelled" else run.error_code
     if code is None:
         return None
+    code = _CODE_MAP.get(code, code)
     if code not in _NEVER_RERUNNABLE_CODES and code not in _CONDITIONALLY_RERUNNABLE_CODES:
         # The closed code set is exhaustively covered by the two sets above;
-        # any other stored value is an unrepresentable terminal (a future
-        # write regression or a new code — e.g. reserve's rate_limiter_
-        # unavailable) → generic card on read, loud log for operators.
+        # any other stored value is an unrepresentable terminal: generic card
+        # on read and a loud operator signal.
         raise _UnrepresentableTerminal(f"unrecognized ChatRun.error_code {code!r}")
 
     can_rerun = rerun_eligibility(
@@ -185,121 +156,96 @@ def _project_failure(
 
     if code == "cancelled":
         return CancelledChatFailure(can_rerun=can_rerun)
-    if code == "refused":
-        return RefusedChatFailure(
-            origin=_origin(run, code, _REFUSED_ORIGINS),
-            can_rerun=can_rerun,
-        )
     if code == "incomplete":
-        return IncompleteChatFailure(
-            origin=_origin(run, code, _INCOMPLETE_ORIGINS),
-            can_rerun=can_rerun,
-        )
+        return IncompleteChatFailure(can_rerun=can_rerun)
     if code == "context_too_large":
-        return ContextTooLargeChatFailure(
-            origin=_origin(run, code, _CONTEXT_TOO_LARGE_ORIGINS),
-            can_rerun=can_rerun,
-        )
-    if code == "invalid_tool_arguments":
-        return InvalidToolArgumentsChatFailure(
-            origin=_origin(run, code, _INVALID_TOOL_ARGUMENTS_ORIGINS),
-            can_rerun=can_rerun,
-        )
-    if code == "budget_exceeded":
-        return BudgetExceededChatFailure(
-            origin=_origin(run, code, _BUDGET_EXCEEDED_ORIGINS),
-            can_rerun=can_rerun,
-        )
-    if code in TRANSIENT_CODES:
-        if attempts is None:
-            # Every transient code is written by the terminal fold from a
-            # TransientExhausted leaf, which always carries attempts (§9). A
-            # caller reaching this without supplying attempts (from
-            # compute_terminal_attempts) has a broken query — unrepresentable
-            # on read → generic card + loud log.
-            raise _UnrepresentableTerminal(
-                f"attempts is required to project ChatRun.error_code {code!r}"
-            )
-        return _transient_variant(run, code, attempts, can_rerun)
+        return ContextTooLargeChatFailure()
+    if code == "invalid_output":
+        return InvalidOutputChatFailure()
+    if code == "assistant_unavailable":
+        return AssistantUnavailableChatFailure(can_rerun=can_rerun)
+    if code == "operator_defect":
+        return OperatorDefectChatFailure()
 
     # Unreachable given the up-front guard; kept as a total-match backstop.
     raise _UnrepresentableTerminal(f"unrecognized ChatRun.error_code {code!r}")
 
 
-def _transient_variant(
+def _profile_selection_matches(
     run: ChatRun,
-    code: str,
-    attempts: int,
-    can_rerun: bool,
-) -> ExpectedChatFailure:
-    if code == "rate_limited":
-        return RateLimitedChatFailure(
-            origin=_origin(run, code, _RATE_LIMITED_ORIGINS),
-            attempts=attempts,
-            can_rerun=can_rerun,
-        )
-    if code == "timeout":
-        return TimeoutChatFailure(
-            origin=_origin(run, code, _TIMEOUT_ORIGINS),
-            attempts=attempts,
-            can_rerun=can_rerun,
-        )
-    if code == "provider_unavailable":
-        return ProviderUnavailableChatFailure(
-            origin=_origin(run, code, _PROVIDER_UNAVAILABLE_ORIGINS),
-            attempts=attempts,
-            can_rerun=can_rerun,
-        )
-    return StreamInterruptedChatFailure(
-        origin=_origin(run, code, _STREAM_INTERRUPTED_ORIGINS),
-        attempts=attempts,
-        can_rerun=can_rerun,
+    generation: GenerationRecord | None,
+) -> bool:
+    """Pure exact-plan comparison for one terminal run and its latest ledger."""
+
+    if not _local_profile_selection_candidate(run):
+        return False
+    policy = generation_policy.chat_policy(cast(str, run.profile_id))
+    expected_outcome = {
+        "complete": "Succeeded",
+        "cancelled": "Cancelled",
+        "error": "Failed",
+    }.get(run.status)
+    return bool(
+        generation is not None
+        and expected_outcome is not None
+        and generation.operation == "chat"
+        and generation.plan_id == policy.plan_id
+        and generation.plan_revision == generation_policy.POLICY_REVISION
+        and generation.backend == "codex"
+        and generation.transport == "sdk"
+        and generation.auth_profile == "codex-personal"
+        and generation.model_name == policy.model == run.model_name
+        and generation.reasoning_effort == policy.effort == run.reasoning_effort
+        and generation.capability_kind == "ChatTools"
+        and generation.tool_plan_fingerprint == current_tool_plan_fingerprint()
+        and generation.outcome == expected_outcome
     )
 
 
-def _origin[T: str](run: ChatRun, code: str, allowed: tuple[T, ...]) -> T:
-    origin = run.error_origin
-    if origin not in allowed:
-        # Each code fixes its valid origin Literal(s) at write time
-        # (schemas/llm.py); a stored origin outside that set is an
-        # unrepresentable terminal → generic card on read + loud log.
-        raise _UnrepresentableTerminal(
-            f"ChatRun.error_origin {origin!r} is not valid for error_code {code!r}; "
-            f"allowed origins: {allowed!r}"
+def _local_profile_selection_candidate(run: ChatRun) -> bool:
+    """Reject plainly pre-cutover snapshots before touching the cutover ledger."""
+
+    if run.profile_id not in generation_policy.CHAT_PROFILES:
+        return False
+    if run.tool_profile_id != "chat" or not run.tool_profile_revision:
+        return False
+    expected_outcome = {
+        "complete": "Succeeded",
+        "cancelled": "Cancelled",
+        "error": "Failed",
+    }.get(run.status)
+    if expected_outcome is None:
+        return False
+    policy = generation_policy.chat_policy(run.profile_id)
+    return run.model_name == policy.model and run.reasoning_effort == policy.effort
+
+
+def profile_selection_active(db: Session, run: ChatRun) -> bool:
+    """Whether this terminal run still names today's exact immutable plan."""
+
+    if not _local_profile_selection_candidate(run):
+        return False
+    generation = read_latest_generation_for_owner(
+        db,
+        owner=LlmCallOwner(kind="chat_run", id=run.id),
+    )
+    return _profile_selection_matches(run, generation)
+
+
+def active_profile_run_ids(db: Session, runs: Sequence[ChatRun]) -> set[UUID]:
+    """Bulk exact-plan projection for list/message hydration owners."""
+
+    candidates = [run for run in runs if _local_profile_selection_candidate(run)]
+    owners = [LlmCallOwner(kind="chat_run", id=run.id) for run in candidates]
+    generations = read_latest_generations_for_owners(db, owners=owners)
+    return {
+        run.id
+        for run in candidates
+        if _profile_selection_matches(
+            run,
+            generations.get(LlmCallOwner(kind="chat_run", id=run.id)),
         )
-    return cast(T, origin)
-
-
-def profile_selection_active(run: ChatRun) -> bool:
-    """Whether the run's exact profile *selection* is still rerunnable-active
-    (§10: "a retired, uncertified, or CHANGED profile makes can_rerun=false;
-    rerun never remaps a historical target").
-
-    Beyond the profile id still resolving, this requires:
-      * the selected reasoning option is still offered by that profile, and
-      * the run's resolved target snapshot (provider/model_name/reasoning_
-        effort), when recorded, still matches what the profile + selected
-        reasoning option resolve to today.
-    A run with no stored profile/selection snapshot has nothing to rerun
-    against. A run that recorded no *resolved-target* snapshot (all three
-    NULL) carries no drift evidence here; the rerun transaction closes that gap
-    against the ledger (`chat_run_candidates._ledger_target_drifted`)."""
-    if run.profile_id is None or run.reasoning_option_id is None:
-        return False
-    active = lookup_profile(run.profile_id)
-    if active is None:
-        return False
-    resolved_reasoning = lookup_reasoning_level(active, run.reasoning_option_id)
-    if resolved_reasoning is None:
-        # The selected reasoning option is no longer offered by this profile.
-        return False
-    if run.provider is not None and run.provider != active.target.provider:
-        return False
-    if run.model_name is not None and run.model_name != active.target.model:
-        return False
-    if run.reasoning_effort is not None and run.reasoning_effort != resolved_reasoning:
-        return False
-    return True
+    }
 
 
 def rerun_eligibility(
@@ -320,13 +266,14 @@ def rerun_eligibility(
     is treated as ineligible rather than a defect, since it can only arise
     from stale/racing input, not a write-time invariant this module owns.
     """
-    expected_status = "cancelled" if error_code == "cancelled" else "error"
+    code = _CODE_MAP.get(error_code, error_code)
+    expected_status = "cancelled" if code == "cancelled" else "error"
     if run_status != expected_status:
         return False
 
-    if error_code in _NEVER_RERUNNABLE_CODES:
+    if code in _NEVER_RERUNNABLE_CODES:
         return False
-    if error_code in _CONDITIONALLY_RERUNNABLE_CODES:
+    if code in _CONDITIONALLY_RERUNNABLE_CODES:
         return profile_active and not has_write_tool_attempt
 
     # justify-defect: see chat_failure_projection's matching guard — the
@@ -417,21 +364,3 @@ def _message_write_attempt_assistant_ids(
         if projection.effect is ToolEffect.Write:
             result.add(row.assistant_message_id)
     return result
-
-
-def compute_terminal_attempts(db: Session, run: ChatRun) -> int | None:
-    """Caller-side helper for the `attempts` fact the transient variants carry.
-    `ChatRun` stores no attempts column (migration 0186 adds none); this reads
-    `attempt_count` off the run's terminal `llm_calls` row (highest
-    `call_seq` for `owner_kind='chat_run', owner_id=run.id`) instead. `None`
-    if the run has no ledger history at all.
-    """
-    return db.execute(
-        text("""
-            SELECT attempt_count FROM llm_calls
-            WHERE owner_kind = 'chat_run' AND owner_id = :run_id
-            ORDER BY call_seq DESC
-            LIMIT 1
-        """),
-        {"run_id": run.id},
-    ).scalar_one_or_none()

@@ -81,8 +81,7 @@ test("regenerating a completed answer creates a navigable sibling that survives 
   await gotoWithStrictCsp(page, `/conversations/${conversationId}`);
   const input = page.getByRole("textbox", { name: /ask anything/i });
   await expect(input).toBeVisible();
-  await page.getByRole("combobox", { name: "Model" }).selectOption("fast");
-  await page.getByRole("combobox", { name: "Effort" }).selectOption("high");
+  await page.getByRole("radio", { name: /^Fast\b/ }).check();
   await input.fill(
     "What did SOFIA establish about water in Clavius Crater? Use the attached source.",
   );
@@ -95,11 +94,16 @@ test("regenerating a completed answer creates a navigable sibling that survives 
     firstRun.ok(),
     `Chat admission for conversation ${conversationId} failed: ${firstRun.status()}`,
   ).toBeTruthy();
-  const originalAssistantId = (
+  const admitted = (
     JSON.parse(await firstRun.text()) as {
-      data: { assistant_message: { id: string } };
+      data: {
+        run: { profile_id: string };
+        assistant_message: { id: string };
+      };
     }
-  ).data.assistant_message.id;
+  ).data;
+  const originalAssistantId = admitted.assistant_message.id;
+  expect(admitted.run.profile_id).toBe("fast");
   await expect(
     page.getByText(/SOFIA helped confirm water on the Moon/i).first(),
     `Conversation ${conversationId} did not complete its first grounded answer.`,
@@ -125,6 +129,17 @@ test("regenerating a completed answer creates a navigable sibling that survives 
     "A completed answer must not offer failed-turn Rerun.",
   ).toHaveCount(0);
 
+  let regeneratePostData: string | null | undefined;
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (
+      request.method() === "POST" &&
+      url.origin === webOrigin &&
+      /\/api\/messages\/[^/]+\/regenerate$/.test(url.pathname)
+    ) {
+      regeneratePostData = request.postData();
+    }
+  });
   const regenPromise = page.waitForResponse((response) =>
     matchesResponse(
       response,
@@ -139,12 +154,17 @@ test("regenerating a completed answer creates a navigable sibling that survives 
     regen.ok(),
     `Regenerate failed: ${regen.status()} ${(await regen.text()).slice(0, 300)}`,
   ).toBeTruthy();
+  expect(regeneratePostData, "Regenerate grew a selector body").toBeNull();
   const regenData = (
     JSON.parse(await regen.text()) as {
-      data: { assistant_message: { id: string } };
+      data: {
+        run: { profile_id: string };
+        assistant_message: { id: string };
+      };
     }
   ).data;
   const regeneratedAssistantId = regenData.assistant_message.id;
+  expect(regenData.run.profile_id).toBe("fast");
   // A new sibling candidate, not an overwrite of the original answer.
   expect(regeneratedAssistantId).not.toBe(originalAssistantId);
 

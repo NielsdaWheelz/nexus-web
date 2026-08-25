@@ -1,25 +1,10 @@
-"""Provider-neutral structured prompt plans for durable chat runs, and their
-translation into the runtime's ``GenerateIntent``."""
+"""Provider-neutral structured prompt plans for durable chat runs."""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
-
-from provider_runtime import (
-    Absent,
-    AssistantMessage,
-    CanonicalTool,
-    GenerateIntent,
-    ProviderTarget,
-    ReasoningLevel,
-    SystemMessage,
-    TextOutput,
-    UserMessage,
-)
-from provider_runtime import PromptBlock as RuntimePromptBlock
-from provider_runtime.types import PromptMessage
 
 from nexus.services.prompt_budget import (
     ContextBudgetError,
@@ -141,51 +126,6 @@ def build_prompt_plan(
     turns.append(PromptTurn(role="user", blocks=(current_user_block,)))
 
     return PromptPlan(turns=tuple(turns))
-
-
-def build_generate_intent_from_plan(
-    *,
-    plan: PromptPlan,
-    target: ProviderTarget,
-    max_output_tokens: int,
-    reasoning: ReasoningLevel,
-    tools: tuple[CanonicalTool, ...],
-) -> GenerateIntent:
-    """Derive the runtime ``GenerateIntent`` from the prompt plan exactly once.
-
-    Prompt blocks are persisted as text only; provider engines own any
-    provider-native request shaping.
-    """
-    messages: list[PromptMessage] = []
-    for turn in plan.turns:
-        blocks = tuple(_runtime_block(block) for block in turn.blocks)
-        if turn.role == "system":
-            messages.append(SystemMessage(blocks=blocks))
-        elif turn.role == "user":
-            messages.append(UserMessage(blocks=blocks))
-        else:
-            # Prior assistant turns from history carry no live tool_calls or
-            # continuation — those exist only for the current turn's live loop.
-            messages.append(
-                AssistantMessage(
-                    text="\n".join(block.text for block in turn.blocks),
-                    tool_calls=(),
-                    continuation=Absent(),
-                )
-            )
-    return GenerateIntent(
-        target=target,
-        messages=tuple(messages),
-        max_output_tokens=max_output_tokens,
-        reasoning=reasoning,
-        tools=tools,
-        tool_choice="auto" if tools else "none",
-        output=TextOutput(),
-    )
-
-
-def _runtime_block(block: PromptBlock) -> RuntimePromptBlock:
-    return RuntimePromptBlock(text=block.text)
 
 
 def validate_prompt_plan_budget(plan: PromptPlan, input_budget_tokens: int) -> int:

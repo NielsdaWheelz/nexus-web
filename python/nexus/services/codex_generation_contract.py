@@ -320,6 +320,8 @@ class GenerationTerminal(_WireModel):
     def _terminal_state(self) -> Self:
         if self.status == "succeeded" and self.failure is not None:
             raise ValueError("successful terminal cannot carry failure")
+        if self.status == "succeeded" and self.diagnostics:
+            raise ValueError("successful terminal cannot carry diagnostics")
         if self.status == "succeeded" and self.session_ref is None:
             raise ValueError("successful terminal requires session reference")
         if self.status == "failed" and self.failure is None:
@@ -424,6 +426,25 @@ def normalized_outcome(terminal: GenerationTerminal) -> NormalizedOutcome:
     return "Failed"
 
 
+def retained_terminal_error_detail(terminal: GenerationTerminal) -> str | None:
+    """Return the closed diagnostic detail safe for durable domain state.
+
+    Host diagnostics are bounded and redacted for transport observation, but an
+    operator-attached terminal is not itself proof that submitted diagnostic text
+    came from the host. Durable state therefore retains only facts derived from
+    the terminal's closed status/failure algebra.
+    """
+
+    if terminal.status == "succeeded":
+        return None
+    if terminal.status == "cancelled":
+        return "codex generation cancelled"
+    if terminal.failure is None:
+        raise AssertionError("failed generation terminal has no failure kind")
+    normalized_failure(terminal.failure.kind)
+    return f"codex generation failed: {terminal.failure.kind}"
+
+
 def capacity_rejection_bytes() -> bytes:
     return b'{"schema_version":"nexus-generation-rejection.v2","kind":"capacity_unavailable"}'
 
@@ -451,15 +472,13 @@ def request_fingerprint(command: GenerationCommand) -> str:
         tool_plan_revision = generation_policy.TOOL_PLAN_REVISION
     else:
         tool_plan_revision = None
-    output_payload = command.intent.output.model_dump(mode="json")
     return _digest(
         {
             "operation": command.operation.model_dump(mode="json"),
             "policy_revision": command.policy_revision,
             "prompt_revision": command.operation.revision,
-            "output_schema_digest": _digest(output_payload),
             "tool_plan_revision": tool_plan_revision,
-            "input_digest": _digest(command.intent.input),
+            "intent_digest": _digest(command.intent.model_dump(mode="json")),
         }
     )
 
@@ -493,5 +512,6 @@ __all__ = [
     "command_policy",
     "normalized_outcome",
     "normalized_failure",
+    "retained_terminal_error_detail",
     "request_fingerprint",
 ]

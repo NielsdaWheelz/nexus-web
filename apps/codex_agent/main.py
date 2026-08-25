@@ -11,7 +11,19 @@ from pathlib import Path
 
 import uvicorn
 from apps.codex_agent import sandbox_health
-from apps.codex_agent.auth_environment import reject_api_key_auth
+from apps.codex_agent.auth_environment import (
+    reject_ambient_codex_home,
+    reject_subscription_api_key_auth,
+)
+from apps.codex_agent.credential_state import (
+    create_ephemeral_runtime_paths,
+    enrolled_auth_identity,
+    link_runtime_auth,
+    remove_ephemeral_runtime_paths,
+    require_writable_credential_mount,
+    sync_enrolled_auth_file,
+    validate_runtime_auth_link,
+)
 from apps.codex_agent.host import (
     CODEX_AGENT_HOST_REQUEST_DRAIN_SECONDS,
     CODEX_AGENT_HOST_TEARDOWN_DEADLINE_SECONDS,
@@ -28,32 +40,50 @@ from provider_runtime.agent_runtime import (
 )
 
 _SOCKET_ENV = "NEXUS_CODEX_AGENT_SOCKET"
-_STATE_ROOT_ENV = "NEXUS_CODEX_STATE_ROOT_BASE"
-_WORKING_DIRECTORY_ENV = "NEXUS_CODEX_WORKING_DIRECTORY"
+_CREDENTIAL_FILE_ENV = "NEXUS_CODEX_CREDENTIAL_FILE"
+_WORKING_DIRECTORY_ROOT_ENV = "NEXUS_CODEX_WORKING_DIRECTORY_ROOT"
 _MCP_ORIGIN_ENV = "NEXUS_CODEX_MCP_ORIGIN"
 _CHAT_NETWORK_ATTESTED_ENV = "NEXUS_CODEX_CHAT_NETWORK_ATTESTED"
 
 
 async def run() -> None:
     socket_path = required_absolute_path(_SOCKET_ENV)
-    state_root = required_absolute_path(_STATE_ROOT_ENV)
-    working_directory = required_absolute_path(_WORKING_DIRECTORY_ENV)
+    credential_file = required_absolute_path(_CREDENTIAL_FILE_ENV)
+    working_directory_root = required_absolute_path(_WORKING_DIRECTORY_ROOT_ENV)
     mcp_origin = _required_environment(_MCP_ORIGIN_ENV)
     chat_network_attested = _required_chat_network_attestation()
-    reject_api_key_auth()
-    _validate_directories(socket_path, state_root, working_directory)
+    reject_subscription_api_key_auth()
+    reject_ambient_codex_home()
+    _prepare_working_directory_root(working_directory_root)
+    _validate_directories(socket_path, working_directory_root)
+    require_writable_credential_mount(credential_file)
     _remove_proven_stale_socket(socket_path)
     sandbox_health.check()
     versions = resolve_runtime_versions()
-    await _probe_chatgpt_auth(state_root)
+    probe_paths = create_ephemeral_runtime_paths(working_directory_root, "startup-auth")
+    credential_identity = enrolled_auth_identity(credential_file)
+    probe_auth_link: Path | None = None
+    try:
+        probe_auth_link = link_runtime_auth(credential_file, probe_paths)
+        await _probe_chatgpt_auth(probe_paths.state_root_base)
+    finally:
+        try:
+            if probe_auth_link is not None:
+                validate_runtime_auth_link(probe_auth_link, credential_file)
+                sync_enrolled_auth_file(
+                    credential_file,
+                    expected_identity=credential_identity,
+                )
+        finally:
+            remove_ephemeral_runtime_paths(probe_paths, root=working_directory_root)
 
     def runtime_factory(config: AgentRuntimeConfig) -> AgentRuntime:
         return AgentRuntime(config)
 
     app = create_codex_agent_app(
         runtime_factory=runtime_factory,
-        working_directory=working_directory,
-        state_root_base=state_root,
+        working_directory_root=working_directory_root,
+        credential_file=credential_file,
         versions=versions,
         mcp_origin=mcp_origin,
         chat_network_attested=chat_network_attested,
@@ -114,21 +144,26 @@ def _required_chat_network_attestation() -> bool:
 
 
 def _validate_directories(
-    socket_path: Path, state_root: Path, working_directory: Path
+    socket_path: Path,
+    working_directory_root: Path,
 ) -> None:
+    _validate_owned_directory(socket_path.parent, expected_mode=0o770, label="socket directory")
     _validate_owned_directory(
-        socket_path.parent, expected_mode=0o770, label="socket directory"
-    )
-    _validate_owned_directory(state_root, expected_mode=0o700, label="state root")
-    _validate_owned_directory(
-        working_directory, expected_mode=0o700, label="working directory"
+        working_directory_root,
+        expected_mode=0o700,
+        label="working-directory root",
     )
     if any(entry != socket_path for entry in socket_path.parent.iterdir()):
         raise RuntimeError("Codex agent socket directory may contain only its socket")
-    if any(working_directory.iterdir()):
-        raise RuntimeError(
-            "Codex agent working directory must be an existing empty directory"
-        )
+    if any(working_directory_root.iterdir()):
+        raise RuntimeError("Codex agent working-directory root must be empty at startup")
+
+
+def _prepare_working_directory_root(path: Path) -> None:
+    try:
+        path.mkdir(mode=0o700)
+    except FileExistsError:
+        pass
 
 
 def _validate_owned_directory(path: Path, *, expected_mode: int, label: str) -> None:
@@ -190,9 +225,7 @@ def _remove_proven_stale_socket(path: Path) -> None:
         or current.st_ino != initial.st_ino
         or not stat.S_ISSOCK(current.st_mode)
     ):
-        raise RuntimeError(
-            "Codex agent socket identity changed during stale-socket recovery"
-        )
+        raise RuntimeError("Codex agent socket identity changed during stale-socket recovery")
     path.unlink()
 
 
@@ -203,9 +236,7 @@ def _unlink_owned_socket(path: Path, identity: tuple[int, int] | None) -> None:
         current = path.lstat()
     except FileNotFoundError:
         return
-    if (current.st_dev, current.st_ino) != identity or not stat.S_ISSOCK(
-        current.st_mode
-    ):
+    if (current.st_dev, current.st_ino) != identity or not stat.S_ISSOCK(current.st_mode):
         return
     path.unlink()
 

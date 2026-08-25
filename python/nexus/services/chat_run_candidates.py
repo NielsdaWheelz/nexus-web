@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun, ChatRunTurnContext, Conversation, Message
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
-from nexus.jobs.queue import enqueue_job
+from nexus.jobs.queue import enqueue_job, lock_chat_generation_admission_in_current_transaction
 from nexus.schemas.conversation import ChatRunResponse
 from nexus.services.chat_failure import (
     compute_has_write_tool_attempt,
@@ -58,6 +58,7 @@ def rerun_assistant_response(
 ) -> ChatRunResponse:
     normalized_key = normalize_idempotency_key(idempotency_key)
     try:
+        lock_chat_generation_admission_in_current_transaction(db)
         lock_idempotency_key(db, viewer_id, normalized_key)
 
         _, _, source_run, source_user_message = _resolve_source(
@@ -98,6 +99,7 @@ def regenerate_assistant_response(
 ) -> ChatRunResponse:
     normalized_key = normalize_idempotency_key(idempotency_key)
     try:
+        lock_chat_generation_admission_in_current_transaction(db)
         lock_idempotency_key(db, viewer_id, normalized_key)
 
         source_assistant_message, _, source_run, source_user_message = _resolve_source(
@@ -280,7 +282,7 @@ def _create_sibling_candidate(
     enqueue_job(
         db,
         kind="chat_run",
-        payload={"run_id": str(run.id)},
+        payload={"run_id": str(run.id), "capacity_wait_index": 0},
         priority=50,
         max_attempts=3,
         dedupe_key=f"chat_run:{run.id}",
@@ -304,7 +306,7 @@ def _assert_regenerate_eligible(
             ApiErrorCode.E_REGENERATION_NOT_ALLOWED,
             "Only a completed assistant answer can be regenerated",
         )
-    if not profile_selection_active(source_run):
+    if not profile_selection_active(db, source_run):
         raise ApiError(
             ApiErrorCode.E_REGENERATION_NOT_ALLOWED,
             "Assistant response's profile is retired or now resolves to a different target",
@@ -332,7 +334,7 @@ def _assert_rerun_eligible(db: Session, source_run: ChatRun) -> None:
         )
     # The profile owner compares the recorded plan id/revision to today's policy;
     # a null pre-cutover selection or drifted plan is never rerunnable.
-    profile_active = profile_selection_active(source_run)
+    profile_active = profile_selection_active(db, source_run)
     has_write_tool_attempt = compute_has_write_tool_attempt(db, source_run)
     eligible = rerun_eligibility(
         error_code=error_code,

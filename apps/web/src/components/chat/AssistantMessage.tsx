@@ -63,10 +63,9 @@ export default function AssistantMessage({
   const canBranchFromAssistant =
     message.status === "complete" && Boolean(onReplyToAssistant);
   // The one card-bearing failure read: the failure folds onto the run inside the
-  // trust trail (null for a DEFECT → the generic card). A terminal message status
-  // is what shows the card; a Fable `refused` failure SUPPRESSES all partial text
-  // (the card is the only projection). Any rehydrated terminal status replaces the
-  // client-only ConnectionLostStatusUnknown card.
+  // trust trail (null when no representable failure is stored → the generic
+  // card). A terminal message status is what shows the card; any rehydrated
+  // terminal status replaces the client-only ConnectionLostStatusUnknown card.
   const trustRun = message.trust_trail?.run;
   const failure = trustRun?.failure ?? null;
   const supportId = trustRun?.support_id ?? absent();

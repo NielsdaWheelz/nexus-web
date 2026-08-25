@@ -38,8 +38,8 @@ export default function PrivacyPage() {
       </p>
       <p>
         If you use AI-powered features, the content submitted to those features
-        may be processed by the third-party model providers configured for Nexus
-        so the requested feature can function.
+        is processed by OpenAI through the operator-managed ChatGPT/Codex
+        subscription so the requested feature can function.
       </p>
 
       <h2>How information is shared</h2>

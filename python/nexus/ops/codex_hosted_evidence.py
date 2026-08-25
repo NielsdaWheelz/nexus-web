@@ -9,21 +9,51 @@ import sys
 import tempfile
 from pathlib import Path
 
+from nexus.services import generation_policy
+
 _MAX_BYTES = 16 * 1024
 _MAX_JSON_INTEGER = (1 << 53) - 1
 _MAX_PLAN_ELAPSED_MS = 600_000
 _RUN_ID = re.compile(r"[0-9a-f]{16}")
-_VERSION = re.compile(r"[0-9][A-Za-z0-9.+-]{0,63}")
+_SOURCE_SHA = re.compile(r"[0-9a-f]{40}")
+_QUALIFICATION_SCOPE = "model_effort_runtime_wire"
+_QUALIFIED_PLAN_IDS = ["routine", "standard", "thorough", "deep"]
+_CASE_FACTS = {
+    "routine": ("metadata_enrichment", None, "structured", True, 0),
+    "standard": ("dawn_write", None, "text", False, 0),
+    "thorough": ("dossier_library", None, "structured", True, 0),
+    "deep": ("chat", "deep", "mcp_read", False, 1),
+}
 
 
-def codex_hosted_evidence_is_valid(path: Path, *, run_id: str) -> bool:
+def codex_hosted_evidence_is_valid(path: Path, *, run_id: str, source_sha: str) -> bool:
     """Return whether ``path`` is the exact bounded artifact for ``run_id``."""
 
-    return _validated_evidence_bytes(path, run_id=run_id) is not None
+    return _validated_evidence_bytes(path, run_id=run_id, source_sha=source_sha) is not None
 
 
-def _validated_evidence_bytes(path: Path, *, run_id: str) -> bytes | None:
+def codex_hosted_readiness_is_valid(path: Path, *, run_id: str) -> bool:
+    """Return whether a no-content subscription-readiness result is run-bound."""
+
     if _RUN_ID.fullmatch(run_id) is None:
+        return False
+    try:
+        with path.open("rb") as handle:
+            encoded = handle.read(_MAX_BYTES + 1)
+        if len(encoded) > _MAX_BYTES:
+            return False
+        readiness = json.loads(encoded.decode("utf-8"), object_pairs_hook=_unique_object)
+    except (OSError, UnicodeDecodeError, ValueError):
+        return False
+    return readiness == {
+        "schema_version": "nexus-hosted-codex-readiness.v1",
+        "run_id": run_id,
+        "status": "subscription_unavailable",
+    }
+
+
+def _validated_evidence_bytes(path: Path, *, run_id: str, source_sha: str) -> bytes | None:
+    if _RUN_ID.fullmatch(run_id) is None or _SOURCE_SHA.fullmatch(source_sha) is None:
         return None
     try:
         with path.open("rb") as handle:
@@ -40,21 +70,44 @@ def _validated_evidence_bytes(path: Path, *, run_id: str) -> bytes | None:
     # this validator exists to report as None.
     except (OSError, UnicodeDecodeError, ValueError):
         return None
-    return encoded if _evidence_has_closed_shape(evidence, run_id=run_id) else None
+    return (
+        encoded
+        if _evidence_has_closed_shape(evidence, run_id=run_id, source_sha=source_sha)
+        else None
+    )
 
 
-def _evidence_has_closed_shape(evidence: object, *, run_id: str) -> bool:
+def _evidence_has_closed_shape(evidence: object, *, run_id: str, source_sha: str) -> bool:
     if type(evidence) is not dict or set(evidence) != {
         "schema_version",
         "run_id",
+        "source_sha",
+        "policy_revision",
+        "policy_fingerprint",
+        "policy_facts_fingerprint",
+        "provider_runtime_revision",
+        "codex_sdk_version",
+        "codex_cli_version",
+        "qualification_scope",
+        "qualified_plan_ids",
         "subscription_turns",
         "results",
     }:
         return False
     results = evidence["results"]
     if (
-        evidence.get("schema_version") != "nexus-hosted-codex-canary.v2"
+        evidence.get("schema_version") != "nexus-hosted-codex-canary.v3"
         or evidence.get("run_id") != run_id
+        or evidence.get("source_sha") != source_sha
+        or evidence.get("policy_revision") != generation_policy.POLICY_REVISION
+        or evidence.get("policy_fingerprint") != generation_policy.POLICY_FINGERPRINT
+        or evidence.get("policy_facts_fingerprint") != generation_policy.POLICY_FACTS_FINGERPRINT
+        or evidence.get("provider_runtime_revision")
+        != generation_policy.PLAN_EVAL_PIN["provider_runtime_revision"]
+        or evidence.get("codex_sdk_version") != generation_policy.PLAN_EVAL_PIN["codex_sdk_version"]
+        or evidence.get("codex_cli_version") != generation_policy.PLAN_EVAL_PIN["codex_sdk_version"]
+        or evidence.get("qualification_scope") != _QUALIFICATION_SCOPE
+        or evidence.get("qualified_plan_ids") != _QUALIFIED_PLAN_IDS
         or not _safe_integer(evidence.get("subscription_turns"))
         or evidence["subscription_turns"] != 4
         or type(results) is not list
@@ -73,7 +126,10 @@ def _evidence_has_closed_shape(evidence: object, *, run_id: str) -> bool:
     for result in results:
         if set(result) != {
             "plan_id",
-            "plan_revision",
+            "operation",
+            "profile",
+            "operation_revision",
+            "case_shape",
             "model",
             "reasoning",
             "backend",
@@ -98,12 +154,8 @@ def _evidence_has_closed_shape(evidence: object, *, run_id: str) -> bool:
             or result.get("terminal_status") != "succeeded"
             or type(result.get("structured_output_valid")) is not bool
             or result.get("session_ref_schema_version") != "agent-session-ref.v1"
-            or type(result.get("plan_revision")) is not str
-            or not result["plan_revision"]
-            or type(result.get("sdk_version")) is not str
-            or _VERSION.fullmatch(result["sdk_version"]) is None
-            or type(result.get("runtime_version")) is not str
-            or _VERSION.fullmatch(result["runtime_version"]) is None
+            or result.get("sdk_version") != evidence["codex_sdk_version"]
+            or result.get("runtime_version") != evidence["codex_cli_version"]
             or not _safe_integer(result.get("tool_events"))
             or not _safe_integer(result.get("elapsed_ms"))
             or not 0 < result["elapsed_ms"] <= _MAX_PLAN_ELAPSED_MS
@@ -114,13 +166,25 @@ def _evidence_has_closed_shape(evidence: object, *, run_id: str) -> bool:
             or any(not _safe_integer(usage.get(key)) for key in usage)
         ):
             return False
+        plan_id = result.get("plan_id")
+        expected_case = _CASE_FACTS.get(plan_id)
+        if expected_case is None:
+            return False
+        operation, profile, case_shape, structured_output_valid, tool_events = expected_case
+        expected_revision = generation_policy.operation_revision(operation, profile=profile)
+        if (
+            result.get("operation") != operation
+            or result.get("profile") != profile
+            or result.get("operation_revision") != expected_revision
+            or result.get("case_shape") != case_shape
+            or result.get("structured_output_valid") is not structured_output_valid
+            or result.get("tool_events") != tool_events
+        ):
+            return False
         observed.add((result.get("plan_id"), result.get("model"), result.get("reasoning")))
-        tool_counts[result.get("plan_id")] = int(result["tool_events"])
+        tool_counts[plan_id] = int(result["tool_events"])
     return observed == plans and tool_counts == {
-        "routine": 0,
-        "standard": 0,
-        "thorough": 0,
-        "deep": 1,
+        plan_id: facts[-1] for plan_id, facts in _CASE_FACTS.items()
     }
 
 
@@ -137,14 +201,17 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return value
 
 
-def _stage(source: Path, destination: Path) -> None:
+def _stage(source: Path, destination: Path, source_sha: str) -> None:
     run_id = source.parent.name
     if _RUN_ID.fullmatch(run_id) is None or not destination.is_file():
         raise ValueError("hosted evidence staging paths are invalid")
-    encoded = _validated_evidence_bytes(source, run_id=run_id)
+    encoded = _validated_evidence_bytes(source, run_id=run_id, source_sha=source_sha)
     if encoded is None:
         raise ValueError("hosted evidence is invalid")
+    _replace_atomically(destination, encoded)
 
+
+def _replace_atomically(destination: Path, encoded: bytes) -> None:
     temporary: Path | None = None
     replaced = False
     try:
@@ -166,12 +233,65 @@ def _stage(source: Path, destination: Path) -> None:
             temporary.unlink(missing_ok=True)
 
 
+def _stage_readiness(source: Path, destination: Path, github_run_id: str) -> None:
+    run_id = source.parent.name
+    if _RUN_ID.fullmatch(run_id) is None or not destination.is_file():
+        raise ValueError("hosted readiness staging paths are invalid")
+    if not re.fullmatch(r"[1-9][0-9]*", github_run_id):
+        raise ValueError("GitHub run identity is invalid")
+    if not codex_hosted_readiness_is_valid(source, run_id=run_id):
+        raise ValueError("hosted subscription readiness is invalid")
+    _replace_atomically(
+        destination,
+        (
+            json.dumps(
+                {
+                    "schema_version": "nexus-hosted-codex-canary-not-run.v1",
+                    "github_run_id": int(github_run_id),
+                    "status": "subscription_unavailable",
+                },
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode(),
+    )
+
+
+def _gate(destination: Path, canary_outcome: str, source_sha: str) -> None:
+    if canary_outcome != "success":
+        raise ValueError("hosted canary controller did not succeed")
+    try:
+        with destination.open("rb") as handle:
+            encoded = handle.read(_MAX_BYTES + 1)
+        if len(encoded) > _MAX_BYTES:
+            raise ValueError("hosted qualification artifact is oversized")
+        evidence = json.loads(encoded.decode("utf-8"), object_pairs_hook=_unique_object)
+    except (OSError, UnicodeDecodeError, ValueError):
+        raise ValueError("hosted qualification artifact is invalid") from None
+    if type(evidence) is not dict or not isinstance(evidence.get("run_id"), str):
+        raise ValueError("hosted qualification artifact is not a success receipt")
+    if (
+        _validated_evidence_bytes(
+            destination,
+            run_id=evidence["run_id"],
+            source_sha=source_sha,
+        )
+        is None
+    ):
+        raise ValueError("hosted qualification artifact is invalid")
+
+
 def _main() -> int:
     arguments = sys.argv[1:]
-    if len(arguments) != 3 or arguments[0] != "stage":
-        return 2
     try:
-        _stage(Path(arguments[1]), Path(arguments[2]))
+        if len(arguments) == 4 and arguments[0] == "stage":
+            _stage(Path(arguments[1]), Path(arguments[2]), arguments[3])
+        elif len(arguments) == 4 and arguments[0] == "stage-readiness":
+            _stage_readiness(Path(arguments[1]), Path(arguments[2]), arguments[3])
+        elif len(arguments) == 4 and arguments[0] == "gate":
+            _gate(Path(arguments[1]), arguments[2], arguments[3])
+        else:
+            return 2
     # justify-ignore-error: the CLI contract is a silent nonzero exit; invalid
     # evidence or paths (ValueError) and filesystem failure (OSError) are the
     # only failures staging raises, and both leave the destination untouched.

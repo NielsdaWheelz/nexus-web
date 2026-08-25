@@ -113,11 +113,16 @@ def _prepared(
     )
 
 
-def _host_harness(tmp_path: Path) -> HostReleaseHarness:
+def _host_harness(
+    tmp_path: Path,
+    *,
+    current_revision: str = "0210",
+) -> HostReleaseHarness:
     return HostReleaseHarness.create(
         tmp_path,
         repo_root=REPO_ROOT,
         candidate=_candidate(),
+        current_revision=current_revision,
     )
 
 
@@ -199,7 +204,7 @@ def test_host_release_privileged_python_cannot_write_checkout_bytecode(
         "check": False,
         "capture_output": True,
         "text": True,
-        "timeout": 30,
+        "timeout": 60,
     }
 
 
@@ -220,14 +225,27 @@ def test_codex_host_is_required_only_after_its_immutable_schema_cutover() -> Non
             }
         )
 
-    predecessor = manifest("0215")
-    cutover = manifest("0216")
+    predecessor = manifest("0216")
+    cutover = manifest("0222")
 
     assert release._requires_codex_agent_host(predecessor) is False
     assert release._requires_codex_agent_host(cutover) is True
 
 
-def test_existing_vps_capacity_uses_reservations_and_requires_qualification_before_0216(
+def test_first_0222_apply_accepts_the_exact_0216_predecessor_shape(tmp_path: Path) -> None:
+    """Risk: release admission requires the new sidecar contract from its predecessor."""
+
+    release = _release_module()
+    with _host_harness(tmp_path, current_revision="0216") as harness:
+        completed = harness.run_apply()
+
+        assert completed.returncode == 0, completed.stderr
+        attempt = _stored_attempt(release, harness.root)
+        assert attempt is not None
+        assert attempt.phase is release.ReleasePhase.AwaitingFrontendPromotion
+
+
+def test_existing_vps_capacity_uses_reservations_and_requires_qualification_before_0222(
     host_release_harness: HostReleaseHarness,
 ) -> None:
     """Risk: a nominal 1.9 GiB VPS is rejected by summed hard caps or promoted unqualified."""
@@ -291,8 +309,9 @@ def test_existing_vps_capacity_qualification_writes_exact_immutable_candidate_ev
         for command in state["commands"]
     ), "the sampler must never exec into the cgroup it measures"
     assert state["service_mutations"] == [
+        {"operation": "up", "services": ["codex-egress-policy"]},
         {"operation": "up", "services": ["nexus-codex-agent-host"]},
-        {"operation": "stop", "services": ["nexus-codex-agent-host"]},
+        {"operation": "stop", "services": ["nexus-codex-agent-host", "codex-egress-policy"]},
     ], "qualification may start and stop only its isolated Codex host"
 
     # A fresh pass is final for its validity window: a rerun refuses to
@@ -322,6 +341,10 @@ def test_existing_vps_capacity_qualification_writes_exact_immutable_candidate_ev
             "Codex credential state storage is not the dedicated encrypted mount",
         ),
         ("forbidden_key", "Codex credential state storage is not the dedicated encrypted mount"),
+        (
+            "unsafe_auth_file",
+            "Codex credential state storage is not the dedicated encrypted mount",
+        ),
         ("crypttab_entry", "Codex credential state storage is not the dedicated encrypted mount"),
         ("boot_guard_disabled", "Codex credential state boot guard differs from release contract"),
         ("boot_guard_tampered", "Codex credential state boot guard differs from release contract"),
@@ -353,6 +376,12 @@ def test_codex_capacity_requires_exact_encrypted_state_before_starting_runtime(
         key = harness.root / "var/lib/nexus/codex-state.key"
         subprocess.run(
             ("sudo", "--non-interactive", "touch", str(key)),
+            check=True,
+        )
+    elif admission_kind == "unsafe_auth_file":
+        auth_file = harness.root / "srv/nexus/codex-state/codex/codex-personal/auth.json"
+        subprocess.run(
+            ("sudo", "--non-interactive", "chmod", "0644", str(auth_file)),
             check=True,
         )
     elif admission_kind == "crypttab_entry":
@@ -554,6 +583,22 @@ def test_release_rechecks_caddy_before_any_candidate_or_writer_mutation(
     assert evidence.read_bytes() == original_evidence
 
 
+def test_release_rejects_a_stale_loaded_caddy_config_before_writer_mutation(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: the host file is current while Caddy still serves an old bind inode."""
+
+    harness = host_release_harness
+    harness.update_state(caddy_loaded_config_matches=False)
+
+    refused = harness.run_apply()
+
+    assert refused.returncode != 0
+    assert "Caddy has not loaded the installed candidate config" in refused.stderr
+    assert harness.state()["service_mutations"] == []
+    assert not harness.attempt_path.exists()
+
+
 def test_prepared_release_replay_rechecks_caddy_before_any_further_mutation(
     host_release_harness: HostReleaseHarness,
 ) -> None:
@@ -648,8 +693,12 @@ def test_capacity_cleanup_failure_writes_no_evidence_and_the_canary_is_reclaimed
     state = harness.state()
     assert "capacity_canary" in state
     assert state["service_mutations"] == [
+        {"operation": "up", "services": ["codex-egress-policy"]},
         {"operation": "up", "services": ["nexus-codex-agent-host"]},
-        {"operation": "stop", "services": ["nexus-codex-agent-host"]},
+        {
+            "operation": "stop",
+            "services": ["nexus-codex-agent-host", "codex-egress-policy"],
+        },
     ]
 
     # The same unchanged candidate stays qualifiable: the retry reclaims the
@@ -670,7 +719,7 @@ def test_capacity_qualification_refuses_a_foreign_container_holding_the_canary_n
     evidence.unlink()
     harness.update_state(
         capacity_canary={
-            "id": "b" * 64,
+            "id": "2" * 64,
             "name": f"nexus-codex-capacity-{SOURCE_SHA}",
             "label": "f" * 40,
             "running": True,
@@ -683,7 +732,7 @@ def test_capacity_qualification_refuses_a_foreign_container_holding_the_canary_n
     assert "Codex capacity canary name is held by a foreign container" in refused.stderr
     assert not evidence.exists()
     state = harness.state()
-    assert state["capacity_canary"]["id"] == "b" * 64, "the foreign container must never be removed"
+    assert state["capacity_canary"]["id"] == "2" * 64, "the foreign container must never be removed"
 
 
 def test_capacity_cleanup_preserves_foreign_canary_created_during_run_name_race(
@@ -941,7 +990,7 @@ def test_transient_canary_crash_writes_no_evidence_and_stays_requalifiable(
         ("transport_unavailable", "Codex capacity qualification is transport_retriable"),
         ("transport_ambiguous", "Codex capacity qualification is transport_retriable"),
         ("not_run", "Codex capacity qualification is not_run"),
-        ("provider_blocked", "Codex capacity qualification is provider_blocked"),
+        ("subscription_blocked", "Codex capacity qualification is subscription_blocked"),
     ],
     ids=(
         "preaccept-unavailable",
@@ -957,7 +1006,7 @@ def test_retriable_canary_terminals_write_no_evidence_and_allow_retry(
 ) -> None:
     """Risk: a transport, admission, or account terminal permanently disqualifies the SHA.
 
-    §11: `not_run`, `provider_blocked`, and `transport_retriable` write no
+    §11: `not_run`, `subscription_blocked`, and `transport_retriable` write no
     evidence, and the unchanged SHA may be repeated once the pressure, account,
     or transport fault is resolved.
     """
@@ -1000,7 +1049,7 @@ def test_retriable_canary_terminals_write_no_evidence_and_allow_retry(
             "Codex capacity qualification memory pressure",
         ),
         (
-            "provider_blocked",
+            "subscription_blocked",
             "host-oom-killed",
             "Codex agent host was OOM-killed during capacity qualification",
         ),
@@ -1119,7 +1168,7 @@ def test_host_that_exits_without_an_oom_kill_during_qualification_stays_requalif
     assert json.loads(evidence.read_text(encoding="utf-8"))["status"] == "passed"
 
 
-def test_stale_capacity_evidence_cannot_authorize_the_first_0216_promotion(
+def test_stale_capacity_evidence_cannot_authorize_the_first_0222_promotion(
     host_release_harness: HostReleaseHarness,
 ) -> None:
     """Risk: a weeks-old measurement authorizes promotion onto a drifted host."""
@@ -1167,8 +1216,12 @@ def test_existing_vps_capacity_startup_failure_is_retriable_without_failed_evide
     assert failed.returncode != 0
     assert not evidence.exists()
     assert harness.state()["service_mutations"] == [
+        {"operation": "up", "services": ["codex-egress-policy"]},
         {"operation": "up", "services": ["nexus-codex-agent-host"]},
-        {"operation": "stop", "services": ["nexus-codex-agent-host"]},
+        {
+            "operation": "stop",
+            "services": ["nexus-codex-agent-host", "codex-egress-policy"],
+        },
     ]
 
 
@@ -1196,6 +1249,13 @@ def _set_mode(path: Path, mode: int) -> None:
         check=True,
         capture_output=True,
     )
+
+
+def _write_root_owned(path: Path, value: bytes, *, mode: int) -> None:
+    path.parent.mkdir(mode=0o750, parents=True, exist_ok=True)
+    path.write_bytes(value)
+    _set_owner(path, 0, 0)
+    _set_mode(path, mode)
 
 
 @pytest.fixture
@@ -1281,6 +1341,10 @@ def test_host_apply_uses_verified_backup_and_migration_then_activates_only_apps(
         # The Codex host starts and passes its health wait before any writer,
         # so the background lane can never claim a metadata job into the
         # terminal host-unavailable outcome during activation.
+        {
+            "operation": "up",
+            "services": ["codex-egress-policy"],
+        },
         {
             "operation": "up",
             "services": ["nexus-codex-agent-host"],
@@ -1450,8 +1514,8 @@ def test_host_apply_blocks_an_unknown_running_container_before_stopping_a_writer
             },
         },
         "host_config": {"Memory": 1, "MemoryReservation": 1, "PidsLimit": 1},
-        "id": "b" * 64,
-        "image_id": "sha256:" + "b" * 64,
+        "id": "2" * 64,
+        "image_id": "sha256:" + "2" * 64,
         "oom_killed": False,
         "restart_count": 0,
         "running": True,
@@ -1741,6 +1805,321 @@ def test_host_apply_rejects_writable_caddy_input(tmp_path: Path) -> None:
         assert harness.state()["service_mutations"] == []
 
 
+def test_caddy_activation_preserves_live_inode_and_container(
+    host_release_harness: HostReleaseHarness,
+    tmp_path: Path,
+) -> None:
+    """Risk: route activation replaces the bind inode or recreates the proxy."""
+
+    harness = host_release_harness
+    caddy = harness.root / "etc/nexus/Caddyfile"
+    predecessor = tmp_path / "predecessor-caddy"
+    predecessor.write_text("predecessor-caddy\n", encoding="utf-8")
+    before = caddy.stat()
+    subprocess.run(
+        (
+            "sudo",
+            "--non-interactive",
+            "dd",
+            f"if={predecessor}",
+            f"of={caddy}",
+            "conv=fsync",
+            "status=none",
+        ),
+        check=True,
+        capture_output=True,
+    )
+    harness.update_state(
+        caddy_loaded_config_sha256=hashlib.sha256(b"predecessor-caddy\n").hexdigest(),
+        commands=[],
+        resource_mutations=[],
+        service_mutations=[],
+    )
+    container_id = str(harness.state()["containers"]["caddy"]["id"])
+
+    activated = harness.run_activate_caddy_config()
+
+    assert activated.returncode == 0, activated.stderr
+    receipt = json.loads(activated.stdout)
+    assert receipt == {
+        "caddy_config_sha256": hashlib.sha256(b"test-caddy\n").hexdigest(),
+        "caddy_container_id": container_id,
+        "source_sha": SOURCE_SHA,
+        "status": "active",
+    }
+    after = caddy.stat()
+    assert (after.st_dev, after.st_ino, stat.S_IMODE(after.st_mode)) == (
+        before.st_dev,
+        before.st_ino,
+        0o444,
+    )
+    assert caddy.read_bytes() == b"test-caddy\n"
+    state = harness.state()
+    assert state["containers"]["caddy"]["id"] == container_id
+    assert state["resource_mutations"] == []
+    assert state["service_mutations"] == []
+    assert not (harness.root / "var/lib/nexus/releases/caddy-activation.json").exists()
+    backup = (
+        harness.root
+        / "var/lib/nexus/releases/caddy-activation-backups"
+        / f"{hashlib.sha256(predecessor.read_bytes()).hexdigest()}.Caddyfile"
+    )
+    backup_metadata = subprocess.run(
+        ("sudo", "--non-interactive", "stat", "--format=%u:%g:%a", "--", str(backup)),
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert backup_metadata == "0:0:400"
+
+
+def test_host_apply_refuses_a_pending_caddy_activation_before_any_mutation(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: apply migrates after a reload crash but before its journal is cleared."""
+
+    harness = host_release_harness
+    caddy = harness.root / "etc/nexus/Caddyfile"
+    desired = caddy.read_bytes()
+    identity = caddy.stat()
+    predecessor = b"predecessor-caddy\n"
+    predecessor_digest = hashlib.sha256(predecessor).hexdigest()
+    backup = (
+        harness.root
+        / "var/lib/nexus/releases/caddy-activation-backups"
+        / f"{predecessor_digest}.Caddyfile"
+    )
+    _write_root_owned(backup, predecessor, mode=0o400)
+    config_digest = (harness.root / "etc/nexus/current.env").resolve().stem
+    journal = harness.root / "var/lib/nexus/releases/caddy-activation.json"
+    _write_root_owned(
+        journal,
+        (
+            json.dumps(
+                {
+                    "caddy_device": identity.st_dev,
+                    "caddy_inode": identity.st_ino,
+                    "candidate_sha256": hashlib.sha256(desired).hexdigest(),
+                    "config_sha256": config_digest,
+                    "predecessor_sha256": predecessor_digest,
+                    "schema_version": 1,
+                    "source_sha": SOURCE_SHA,
+                },
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            + "\n"
+        ).encode("ascii"),
+        mode=0o400,
+    )
+    assert harness.state()["caddy_loaded_config_sha256"] == hashlib.sha256(desired).hexdigest()
+
+    refused = harness.run_apply()
+
+    assert refused.returncode != 0
+    assert "pending Caddy activation must be recovered" in refused.stderr
+    assert not harness.attempt_path.exists()
+    state = harness.state()
+    assert state["migration_count"] == 0
+    assert state["resource_mutations"] == []
+    assert state["service_mutations"] == []
+    assert journal.exists()
+
+
+def test_caddy_activation_reload_failure_rolls_back_in_place(
+    host_release_harness: HostReleaseHarness,
+    tmp_path: Path,
+) -> None:
+    """Risk: a failed reload strands disk config ahead of the live proxy."""
+
+    harness = host_release_harness
+    caddy = harness.root / "etc/nexus/Caddyfile"
+    predecessor = tmp_path / "predecessor-caddy"
+    predecessor.write_text("predecessor-caddy\n", encoding="utf-8")
+    before = caddy.stat()
+    subprocess.run(
+        (
+            "sudo",
+            "--non-interactive",
+            "dd",
+            f"if={predecessor}",
+            f"of={caddy}",
+            "conv=fsync",
+            "status=none",
+        ),
+        check=True,
+        capture_output=True,
+    )
+    harness.update_state(
+        caddy_loaded_config_sha256=hashlib.sha256(b"predecessor-caddy\n").hexdigest(),
+        caddy_reload_failures_remaining=1,
+        commands=[],
+        resource_mutations=[],
+        service_mutations=[],
+    )
+
+    refused = harness.run_activate_caddy_config()
+
+    assert refused.returncode != 0
+    after = caddy.stat()
+    assert (after.st_dev, after.st_ino, stat.S_IMODE(after.st_mode)) == (
+        before.st_dev,
+        before.st_ino,
+        0o444,
+    )
+    assert caddy.read_bytes() == b"predecessor-caddy\n"
+    state = harness.state()
+    assert state["caddy_reload_failures_remaining"] == 0
+    assert state["resource_mutations"] == []
+    assert state["service_mutations"] == []
+    assert not (harness.root / "var/lib/nexus/releases/caddy-activation.json").exists()
+    backup = (
+        harness.root
+        / "var/lib/nexus/releases/caddy-activation-backups"
+        / f"{hashlib.sha256(predecessor.read_bytes()).hexdigest()}.Caddyfile"
+    )
+    backup_metadata = subprocess.run(
+        ("sudo", "--non-interactive", "stat", "--format=%u:%g:%a", "--", str(backup)),
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert backup_metadata == "0:0:400"
+
+
+def test_caddy_activation_recovers_a_partial_in_place_write(
+    host_release_harness: HostReleaseHarness,
+    tmp_path: Path,
+) -> None:
+    """Risk: process death after truncate makes the controller unrecoverable."""
+
+    harness = host_release_harness
+    caddy = harness.root / "etc/nexus/Caddyfile"
+    predecessor_bytes = b"predecessor-caddy\n"
+    predecessor = tmp_path / "predecessor-caddy"
+    predecessor.write_bytes(predecessor_bytes)
+    subprocess.run(
+        (
+            "sudo",
+            "--non-interactive",
+            "dd",
+            f"if={predecessor}",
+            f"of={caddy}",
+            "conv=fsync",
+            "status=none",
+        ),
+        check=True,
+        capture_output=True,
+    )
+    identity = caddy.stat()
+    predecessor_digest = hashlib.sha256(predecessor_bytes).hexdigest()
+    backup_dir = harness.root / "var/lib/nexus/releases/caddy-activation-backups"
+    subprocess.run(
+        (
+            "sudo",
+            "--non-interactive",
+            "install",
+            "-d",
+            "-o",
+            "0",
+            "-g",
+            "0",
+            "-m",
+            "0750",
+            str(backup_dir),
+        ),
+        check=True,
+        capture_output=True,
+    )
+    backup = backup_dir / f"{predecessor_digest}.Caddyfile"
+    subprocess.run(
+        (
+            "sudo",
+            "--non-interactive",
+            "install",
+            "-o",
+            "0",
+            "-g",
+            "0",
+            "-m",
+            "0400",
+            str(predecessor),
+            str(backup),
+        ),
+        check=True,
+        capture_output=True,
+    )
+    config_digest = (harness.root / "etc/nexus/current.env").resolve().stem
+    journal_value = {
+        "caddy_device": identity.st_dev,
+        "caddy_inode": identity.st_ino,
+        "candidate_sha256": hashlib.sha256(b"test-caddy\n").hexdigest(),
+        "config_sha256": config_digest,
+        "predecessor_sha256": predecessor_digest,
+        "schema_version": 1,
+        "source_sha": SOURCE_SHA,
+    }
+    journal_source = tmp_path / "caddy-activation.json"
+    journal_source.write_text(
+        json.dumps(journal_value, ensure_ascii=True, separators=(",", ":"), sort_keys=True) + "\n",
+        encoding="ascii",
+    )
+    journal = harness.root / "var/lib/nexus/releases/caddy-activation.json"
+    subprocess.run(
+        (
+            "sudo",
+            "--non-interactive",
+            "install",
+            "-o",
+            "0",
+            "-g",
+            "0",
+            "-m",
+            "0400",
+            str(journal_source),
+            str(journal),
+        ),
+        check=True,
+        capture_output=True,
+    )
+    partial = tmp_path / "partial-caddy"
+    partial.write_bytes(b"part")
+    subprocess.run(
+        (
+            "sudo",
+            "--non-interactive",
+            "dd",
+            f"if={partial}",
+            f"of={caddy}",
+            "conv=fsync",
+            "status=none",
+        ),
+        check=True,
+        capture_output=True,
+    )
+    harness.update_state(caddy_loaded_config_sha256=predecessor_digest)
+
+    recovered = harness.run_activate_caddy_config()
+
+    assert recovered.returncode == 0, recovered.stderr
+    assert not journal.exists()
+    assert caddy.read_bytes() == b"test-caddy\n"
+    after = caddy.stat()
+    assert (after.st_dev, after.st_ino, stat.S_IMODE(after.st_mode)) == (
+        identity.st_dev,
+        identity.st_ino,
+        0o444,
+    )
+    backup_metadata = subprocess.run(
+        ("sudo", "--non-interactive", "stat", "--format=%u:%g:%a", "--", str(backup)),
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert backup_metadata == "0:0:400"
+
+
 def test_current_verification_allows_a_successor_caddy_configuration_transition(
     tmp_path: Path,
 ) -> None:
@@ -1797,7 +2176,7 @@ def test_candidate_still_requires_exact_live_caddy_configuration(
         failed = harness.run_apply()
 
         assert failed.returncode != 0
-        assert "installed Caddy configuration differs" in failed.stderr
+        assert "Caddy has not loaded the installed candidate config" in failed.stderr
         assert not harness.attempt_path.exists()
 
 
@@ -1924,7 +2303,7 @@ def test_host_apply_rejects_a_runtime_identical_but_different_activated_image(
         ("tmpfs", "Codex agent host privilege isolation differs"),
         ("ulimits", "Codex agent host privilege isolation differs"),
         ("network", "Codex agent host network isolation differs"),
-        ("network_peer", "Codex agent host network peer isolation differs"),
+        ("network_peer", "Codex private egress network differs"),
     ],
 )
 def test_host_apply_rejects_codex_host_outer_sandbox_or_network_drift(
@@ -1943,6 +2322,24 @@ def test_host_apply_rejects_codex_host_outer_sandbox_or_network_drift(
     attempt = _stored_attempt(release, harness.root)
     assert attempt is not None
     assert attempt.phase is release.ReleasePhase.ForwardFixRequired
+
+
+def test_host_apply_refuses_an_engine_without_isolated_gateway_support_before_mutation(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: an older Engine silently turns the private bridge into an egress path."""
+
+    harness = host_release_harness
+    harness.update_state(docker_server_version="27.5.1")
+
+    refused = harness.run_apply()
+
+    assert refused.returncode != 0
+    assert "Docker Engine 28 or newer" in refused.stderr
+    assert not harness.attempt_path.exists()
+    state = harness.state()
+    assert state["resource_mutations"] == []
+    assert state["service_mutations"] == []
 
 
 def test_host_apply_execs_the_codex_sandbox_and_health_probes_inside_the_host(
@@ -1993,9 +2390,13 @@ def test_host_apply_rejects_wrong_codex_host_health_identity(
             {
                 "auth_profile": "codex-team",
                 "backend": "codex",
-                "schema_version": "nexus-agent-health.v1",
+                "schema_version": "nexus-generation-health.v2",
                 "status": "ready",
                 "transport": "sdk",
+                "command_schema_version": "nexus-generation-command.v2",
+                "policy_revision": "codex-generation.2026-08-24.2",
+                "sdk_version": "0.144.4",
+                "runtime_version": "0.144.4",
             },
             sort_keys=True,
         )
@@ -2010,6 +2411,99 @@ def test_host_apply_rejects_wrong_codex_host_health_identity(
     assert attempt.phase is release.ReleasePhase.ForwardFixRequired
 
 
+def test_host_apply_rejects_a_reachable_private_gateway_and_stops_the_codex_runtime(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: bridge metadata looks isolated while the credential host can bypass policy."""
+
+    release = _release_module()
+    harness = host_release_harness
+    harness.update_state(codex_host_network_probe_failure=True)
+
+    failed = harness.run_apply()
+
+    assert failed.returncode != 0
+    attempt = _stored_attempt(release, harness.root)
+    assert attempt is not None
+    assert attempt.phase is release.ReleasePhase.ForwardFixRequired
+    assert attempt.failure_code == "external-exhausted"
+    state = harness.state()
+    assert state["containers"]["nexus-codex-agent-host"]["running"] is False
+    assert state["containers"]["codex-egress-policy"]["running"] is False
+
+
+def test_positive_mcp_path_runs_only_after_the_interactive_worker_is_live(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: host qualification or pre-writer proof calls an absent MCP listener."""
+
+    release = _release_module()
+    harness = host_release_harness
+    harness.update_state(codex_host_mcp_probe_failure=True)
+
+    failed = harness.run_apply()
+
+    assert failed.returncode != 0
+    attempt = _stored_attempt(release, harness.root)
+    assert attempt is not None
+    assert attempt.phase is release.ReleasePhase.ForwardFixRequired
+    assert attempt.failure_code == "external-exhausted"
+    commands = harness.state()["commands"]
+    mcp_proofs = [
+        index
+        for index, command in enumerate(commands)
+        if "apps.codex_agent.network_health" in command and "--mcp-origin" in command
+    ]
+    writer_starts = [
+        index
+        for index, command in enumerate(commands)
+        if "up" in command and "worker-interactive" in command
+    ]
+    assert mcp_proofs and writer_starts
+    assert all(any(start < proof for start in writer_starts) for proof in mcp_proofs)
+
+
+def test_capacity_qualification_does_not_require_the_future_mcp_listener(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: pre-migration capacity qualification probes candidate-only MCP."""
+
+    harness = host_release_harness
+    evidence = harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json"
+    evidence.unlink()
+    harness.update_state(codex_host_mcp_probe_failure=True, commands=[])
+
+    qualified = harness.run_qualify_codex_capacity()
+
+    assert qualified.returncode == 0, qualified.stderr
+    assert all("--mcp-origin" not in command for command in harness.state()["commands"])
+
+
+def test_host_apply_rejects_an_unhealthy_codex_egress_policy(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: exact policy metadata is mistaken for a live policy process."""
+
+    release = _release_module()
+    harness = host_release_harness
+    state = harness.state()
+    policy = state["containers"]["codex-egress-policy"]
+    assert isinstance(policy, dict)
+    policy["health_status_override"] = "unhealthy"
+    harness.update_state(containers=state["containers"])
+
+    failed = harness.run_apply()
+
+    assert failed.returncode != 0
+    assert "Codex egress policy is not healthy" in failed.stderr
+    attempt = _stored_attempt(release, harness.root)
+    assert attempt is not None
+    assert attempt.phase is release.ReleasePhase.ForwardFixRequired
+    final_state = harness.state()
+    assert final_state["containers"]["nexus-codex-agent-host"]["running"] is False
+    assert final_state["containers"]["codex-egress-policy"]["running"] is False
+
+
 def test_host_apply_accepts_the_exact_compose_systempaths_security_option(
     host_release_harness: HostReleaseHarness,
 ) -> None:
@@ -2021,9 +2515,84 @@ def test_host_apply_accepts_the_exact_compose_systempaths_security_option(
 
 
 @pytest.mark.parametrize(
+    ("public_mcp_mode", "message"),
+    [
+        ("nonempty-unauthorized", "public MCP mount contract differs"),
+        ("redirect", "public proof redirected"),
+        ("missing", "public MCP mount contract differs"),
+    ],
+)
+def test_host_apply_rejects_public_mcp_mount_drift_and_stops_the_codex_runtime(
+    host_release_harness: HostReleaseHarness,
+    public_mcp_mode: str,
+    message: str,
+) -> None:
+    """Risk: healthy containers are promoted while public TLS misses the MCP mount."""
+
+    release = _release_module()
+    harness = host_release_harness
+    harness.update_state(public_mcp_mode=public_mcp_mode)
+
+    failed = harness.run_apply()
+
+    assert failed.returncode != 0
+    assert message in failed.stderr
+    attempt = _stored_attempt(release, harness.root)
+    assert attempt is not None
+    assert attempt.phase is release.ReleasePhase.ForwardFixRequired
+    assert attempt.failure_code == "candidate-invariant"
+    state = harness.state()
+    assert state["public_requests"] == [
+        {"host": "web.example.test", "path": "/version"},
+        {"host": "api.example.test", "path": "/version"},
+        {"host": "api.example.test", "path": "/readyz"},
+        {"host": "api.example.test", "path": "/internal/agent-tools/mcp"},
+    ]
+    for service in (
+        "api",
+        "worker-interactive",
+        "worker-background",
+        "codex-egress-policy",
+        "nexus-codex-agent-host",
+    ):
+        assert state["containers"][service]["running"] is False
+
+
+@pytest.mark.parametrize("public_mcp_mode", ["throttled", "unavailable"])
+def test_host_apply_classifies_public_mcp_availability_as_external(
+    host_release_harness: HostReleaseHarness,
+    public_mcp_mode: str,
+) -> None:
+    """Risk: transient public MCP pressure is mislabeled candidate drift."""
+
+    release = _release_module()
+    harness = host_release_harness
+    harness.update_state(public_mcp_mode=public_mcp_mode)
+
+    failed = harness.run_apply()
+
+    assert failed.returncode != 0
+    assert "public MCP proof was unavailable" in failed.stderr
+    attempt = _stored_attempt(release, harness.root)
+    assert attempt is not None
+    assert attempt.phase is release.ReleasePhase.ForwardFixRequired
+    assert attempt.failure_code == "external-exhausted"
+    state = harness.state()
+    assert state["public_requests"] == [
+        {"host": "web.example.test", "path": "/version"},
+        {"host": "api.example.test", "path": "/version"},
+        {"host": "api.example.test", "path": "/readyz"},
+        {"host": "api.example.test", "path": "/internal/agent-tools/mcp"},
+        {"host": "api.example.test", "path": "/internal/agent-tools/mcp"},
+    ]
+
+
+@pytest.mark.parametrize(
     "mutation",
     [
         "environment_credential_residue",
+        "host_cmd",
+        "host_privileged",
         "mount_wrong_named_volume",
         "mount_wrong_source",
         "mount_readonly_docker_socket",
@@ -2044,6 +2613,53 @@ def test_host_apply_rejects_codex_host_environment_and_mount_contract_mutants(
 
     assert failed.returncode != 0
     assert "Codex agent host" in failed.stderr
+    attempt = _stored_attempt(release, harness.root)
+    assert attempt is not None
+    assert attempt.phase is release.ReleasePhase.ForwardFixRequired
+
+
+@pytest.mark.parametrize(
+    ("mutation", "failure"),
+    [
+        ("api_socket_missing", "API generation socket environment differs"),
+        ("api_mount_missing", "API generation socket mount differs"),
+        ("api_mount_writable", "API generation socket mount differs"),
+        ("api_mount_extra", "API generation socket mount differs"),
+    ],
+)
+def test_host_apply_rejects_api_generation_socket_surface_drift(
+    host_release_harness: HostReleaseHarness,
+    mutation: str,
+    failure: str,
+) -> None:
+    """Risk: request-scoped dossier generation lacks or overgrants the UDS."""
+
+    release = _release_module()
+    harness = host_release_harness
+    harness.update_state(codex_host_contract_mutation=mutation)
+
+    failed = harness.run_apply()
+
+    assert failed.returncode != 0
+    assert failure in failed.stderr
+    attempt = _stored_attempt(release, harness.root)
+    assert attempt is not None
+    assert attempt.phase is release.ReleasePhase.ForwardFixRequired
+
+
+def test_host_apply_rejects_a_privileged_codex_egress_policy(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: the network boundary quietly gains host-level device authority."""
+
+    release = _release_module()
+    harness = host_release_harness
+    harness.update_state(codex_host_contract_mutation="policy_privileged")
+
+    failed = harness.run_apply()
+
+    assert failed.returncode != 0
+    assert "Codex egress policy isolation differs" in failed.stderr
     attempt = _stored_attempt(release, harness.root)
     assert attempt is not None
     assert attempt.phase is release.ReleasePhase.ForwardFixRequired
@@ -2117,9 +2733,12 @@ def test_host_finalize_proves_public_tls_and_publishes_record_and_current(
     assert record is not None
     assert record.vercel_deployment_id == "dpl_Test123"
     assert harness.state()["public_requests"] == [
+        {"host": "api.example.test", "path": "/internal/agent-tools/mcp"}
+    ] + [
         {"host": host, "path": path}
         for _proof in range(3)
         for host, path in (
+            ("api.example.test", "/internal/agent-tools/mcp"),
             ("web.example.test", "/version"),
             ("api.example.test", "/version"),
             ("api.example.test", "/readyz"),
@@ -2166,6 +2785,7 @@ def test_current_release_resumes_only_the_codex_host_and_rejects_live_bind_drift
     assert state["public_requests"] == [
         {"host": host, "path": path}
         for host, path in (
+            ("api.example.test", "/internal/agent-tools/mcp"),
             ("web.example.test", "/version"),
             ("api.example.test", "/version"),
             ("api.example.test", "/readyz"),
@@ -2193,7 +2813,10 @@ def test_current_release_resumes_only_the_codex_host_and_rejects_live_bind_drift
     state = harness.state()
     assert state["service_mutations"] == [
         {"operation": "up", "services": ["nexus-codex-agent-host"]},
-        {"operation": "stop", "services": ["nexus-codex-agent-host"]},
+        {
+            "operation": "stop",
+            "services": ["nexus-codex-agent-host", "codex-egress-policy"],
+        },
     ]
     containers = state["containers"]
     assert isinstance(containers, dict)
@@ -2312,7 +2935,10 @@ def test_resume_codex_agent_host_startup_failure_stops_without_a_receipt(
     assert refused.stdout == ""
     assert harness.state()["service_mutations"] == [
         {"operation": "up", "services": ["nexus-codex-agent-host"]},
-        {"operation": "stop", "services": ["nexus-codex-agent-host"]},
+        {
+            "operation": "stop",
+            "services": ["nexus-codex-agent-host", "codex-egress-policy"],
+        },
     ]
     stopped = harness.state()["containers"]["nexus-codex-agent-host"]
     assert isinstance(stopped, dict)
@@ -2322,7 +2948,7 @@ def test_resume_codex_agent_host_startup_failure_stops_without_a_receipt(
 def test_resume_codex_agent_host_rejects_every_malformed_direct_bind_and_stops(
     host_release_harness: HostReleaseHarness,
 ) -> None:
-    """Risk: Docker's live bind drifts from the immutable direct-bind declaration."""
+    """Risk: Docker's live bind drifts from the exact refresh-capable declaration."""
 
     harness = host_release_harness
     applied = harness.run_apply()
@@ -2352,7 +2978,10 @@ def test_resume_codex_agent_host_rejects_every_malformed_direct_bind_and_stops(
         state = harness.state()
         assert state["service_mutations"] == [
             {"operation": "up", "services": ["nexus-codex-agent-host"]},
-            {"operation": "stop", "services": ["nexus-codex-agent-host"]},
+            {
+                "operation": "stop",
+                "services": ["nexus-codex-agent-host", "codex-egress-policy"],
+            },
         ], live_kind
         stopped = state["containers"]["nexus-codex-agent-host"]
         assert isinstance(stopped, dict)
@@ -2420,7 +3049,9 @@ def test_host_finalize_rejects_public_api_contract_drift(
     assert store.assert_candidate_admissible(NEXT_SHA) is None
     for service in ("api", "worker-interactive", "worker-background"):
         assert harness.state()["containers"][service]["running"] is False
-    assert harness.state()["public_requests"][:2] == [
+    assert harness.state()["public_requests"][:4] == [
+        {"host": "api.example.test", "path": "/internal/agent-tools/mcp"},
+        {"host": "api.example.test", "path": "/internal/agent-tools/mcp"},
         {"host": "web.example.test", "path": "/version"},
         {"host": "api.example.test", "path": "/version"},
     ]
@@ -3015,6 +3646,36 @@ def test_config_publication_rejects_even_blank_image_owned_node_ingest_script_be
 
         assert {path.name for path in paths.config_root.iterdir()} == before_config
         assert paths.current_config.readlink() == before_current
+
+
+def test_config_publication_refuses_to_orphan_a_pending_caddy_activation(
+    tmp_path: Path,
+) -> None:
+    """Risk: a new config snapshot makes a crash journal impossible to recover."""
+
+    release = _release_module()
+    with _host_harness(tmp_path) as harness:
+        paths = release.ReleasePaths.under(harness.root)
+        source = tmp_path / "source.env"
+        source.write_text("ALPHA=first\n", encoding="utf-8")
+        before_current = paths.current_config.readlink()
+        before_snapshots = tuple(sorted(path.name for path in paths.config_root.glob("*.env")))
+        paths.caddy_activation.write_text("pending\n", encoding="ascii")
+
+        with pytest.raises(
+            release.ReleaseBlocked,
+            match="pending Caddy activation blocks config publication",
+        ):
+            release.publish_config(
+                source,
+                release.ReleaseStore(paths),
+                next_source_sha=SOURCE_SHA,
+            )
+
+        assert paths.current_config.readlink() == before_current
+        assert tuple(sorted(path.name for path in paths.config_root.glob("*.env"))) == (
+            before_snapshots
+        )
 
 
 def test_inspect_resumes_when_current_publication_prefix_is_not_terminal(

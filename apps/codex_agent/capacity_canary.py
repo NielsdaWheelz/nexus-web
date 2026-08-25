@@ -7,9 +7,11 @@ import json
 from pathlib import Path
 from uuid import UUID
 
-from apps.codex_agent.auth_environment import reject_api_key_auth
+from apps.codex_agent.auth_environment import (
+    reject_ambient_codex_home,
+    reject_subscription_api_key_auth,
+)
 from apps.codex_agent.path_environment import required_absolute_path
-from pydantic import SecretStr
 
 from nexus.services import generation_policy
 from nexus.services.codex_generation_client import (
@@ -21,22 +23,20 @@ from nexus.services.codex_generation_client import (
     CodexGenerationUnavailable,
 )
 from nexus.services.codex_generation_contract import (
-    ChatOperation,
+    DossierLibraryOperation,
     GenerationCommand,
     GenerationPermissionRequest,
     GenerationTerminal,
     GenerationToolUse,
 )
 from nexus.services.generation_intent import (
-    BearerToolGrant,
     GenerationIntent,
     TextOutput,
 )
 
-_SCHEMA_VERSION = "nexus-codex-capacity-canary.v2"
+_SCHEMA_VERSION = "nexus-codex-capacity-canary.v3"
 _SOCKET_ENV = "NEXUS_CODEX_AGENT_SOCKET"
 _SYNTHETIC_INPUT = "Reply with one short sentence. Do not call a tool."
-_SYNTHETIC_TOOL_GRANT = "capacity-canary-no-tool-grant"
 # The phase sequence and exit-code table are the canary's public contract: the
 # release controller ships without this package and mirrors both, bound by a
 # conformance proof, so neither side may be changed alone.
@@ -67,7 +67,7 @@ async def check(socket_path: Path) -> tuple[dict[str, object], int]:
 
     turns: list[dict[str, object]] = []
     client = CodexGenerationClient(socket_path)
-    capacity_policy = generation_policy.chat_policy("deep")
+    capacity_policy = generation_policy.operation_policy("dossier_library")
     status = "passed"
     for phase, request_id in TURNS:
         command = _command(request_id)
@@ -104,8 +104,7 @@ async def check(socket_path: Path) -> tuple[dict[str, object], int]:
         turns.append(
             {
                 "phase": phase,
-                "operation": "chat",
-                "profile": "deep",
+                "operation": "dossier_library",
                 "plan_id": capacity_policy.plan_id,
                 "plan_revision": generation_policy.POLICY_REVISION,
                 "capability": capacity_policy.capability,
@@ -140,10 +139,10 @@ async def check(socket_path: Path) -> tuple[dict[str, object], int]:
 
 
 def _command(request_id: UUID) -> GenerationCommand:
-    policy = generation_policy.chat_policy("deep")
+    policy = generation_policy.operation_policy("dossier_library")
     return GenerationCommand(
         request_id=request_id,
-        operation=ChatOperation(revision=policy.revision, profile="deep"),
+        operation=DossierLibraryOperation(revision=policy.revision),
         policy_revision=generation_policy.POLICY_REVISION,
         policy_fingerprint=generation_policy.policy_fingerprint(),
         intent=GenerationIntent(
@@ -153,12 +152,12 @@ def _command(request_id: UUID) -> GenerationCommand:
             input=_SYNTHETIC_INPUT,
             output=TextOutput(),
         ),
-        tool_grant=BearerToolGrant(token=SecretStr(_SYNTHETIC_TOOL_GRANT)),
     )
 
 
 def run() -> int:
-    reject_api_key_auth()
+    reject_subscription_api_key_auth()
+    reject_ambient_codex_home()
     result, exit_code = asyncio.run(check(required_absolute_path(_SOCKET_ENV)))
     print(json.dumps(result, ensure_ascii=True, separators=(",", ":"), sort_keys=True))
     return exit_code

@@ -106,7 +106,7 @@ def execute_chat_tool(
     if claimed_job is None:
         raise AssertionError("claimed Chat job disappeared during tool proof")
     binding = operation.plan.catalog_view.binding(ToolId(tool_id))
-    durable_step_path = f"turn/0/tool/{tool_call_index}"
+    durable_step_path = f"generation/1/tool/{tool_call_index}"
     context = make_chat_execution_context(
         db=db,
         operation=operation,
@@ -118,6 +118,8 @@ def execute_chat_tool(
         admitted_resource_uris=admitted_resource_uris,
         tool_id=binding.spec.id,
         effect_id=effect_id,
+        provider_wire_name=tool_id,
+        provider_arguments=dict(arguments),
     )
     assert isinstance(context, ExecutionContext)
     assert context.plan is operation.plan

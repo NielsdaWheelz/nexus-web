@@ -226,8 +226,6 @@ async def _validated_frames(
                 raise CodexGenerationProtocolDefect(
                     "Codex generation emitted a frame after terminal"
                 )
-            if frame.request_id != command.request_id:
-                raise CodexGenerationProtocolDefect("Codex generation frame request_id mismatched")
             if frame.sequence != expected_sequence:
                 raise CodexGenerationProtocolDefect(
                     "Codex generation frame sequence was not contiguous"
@@ -239,29 +237,24 @@ async def _validated_frames(
                 )
 
             event = frame.event
-            if isinstance(event, GenerationToolUse):
-                if (
-                    command_policy(command).capability != "ChatTools"
-                    or event.name not in allowed_chat_tools
-                ):
-                    forbidden_capability_seen = True
-            elif isinstance(event, GenerationPermissionRequest):
-                forbidden_capability_seen = True
-            elif isinstance(event, GenerationTerminal):
+            if isinstance(event, GenerationTerminal):
                 terminal_seen = True
                 pending_terminal = frame
-                if event.sdk_version != _SDK_VERSION or event.runtime_version != _RUNTIME_VERSION:
-                    raise CodexGenerationProtocolDefect(
-                        "Codex generation terminal runtime identity drifted"
-                    )
-                if forbidden_capability_seen and (
-                    event.status != "failed"
-                    or event.failure is None
-                    or event.failure.kind != "policy_violation"
-                ):
-                    raise CodexGenerationProtocolDefect(
-                        "Codex generation observed forbidden capability without policy failure"
-                    )
+                validate_generation_terminal_frame(
+                    frame,
+                    command,
+                    forbidden_capability_seen=forbidden_capability_seen,
+                )
+            else:
+                _validate_generation_frame_request(frame, command)
+                if isinstance(event, GenerationToolUse):
+                    if (
+                        command_policy(command).capability != "ChatTools"
+                        or event.name not in allowed_chat_tools
+                    ):
+                        forbidden_capability_seen = True
+                elif isinstance(event, GenerationPermissionRequest):
+                    forbidden_capability_seen = True
             if not isinstance(event, GenerationTerminal):
                 yield frame
 
@@ -280,6 +273,39 @@ async def _validated_frames(
     if pending_terminal is None:
         raise AssertionError("terminal observation did not retain its frame")
     yield pending_terminal
+
+
+def validate_generation_terminal_frame(
+    frame: GenerationFrame,
+    command: GenerationCommand,
+    *,
+    forbidden_capability_seen: bool = False,
+) -> GenerationTerminal:
+    """Validate the terminal facts shared by live streaming and operator repair."""
+
+    _validate_generation_frame_request(frame, command)
+    terminal = frame.event
+    if not isinstance(terminal, GenerationTerminal):
+        raise CodexGenerationProtocolDefect("Codex generation attachment is not terminal")
+    if terminal.sdk_version != _SDK_VERSION or terminal.runtime_version != _RUNTIME_VERSION:
+        raise CodexGenerationProtocolDefect("Codex generation terminal runtime identity drifted")
+    if forbidden_capability_seen and (
+        terminal.status != "failed"
+        or terminal.failure is None
+        or terminal.failure.kind != "policy_violation"
+    ):
+        raise CodexGenerationProtocolDefect(
+            "Codex generation observed forbidden capability without policy failure"
+        )
+    return terminal
+
+
+def _validate_generation_frame_request(
+    frame: GenerationFrame,
+    command: GenerationCommand,
+) -> None:
+    if frame.request_id != command.request_id:
+        raise CodexGenerationProtocolDefect("Codex generation frame request_id mismatched")
 
 
 def _parse_frame(raw: bytes) -> GenerationFrame:
@@ -334,4 +360,5 @@ __all__ = [
     "CodexGenerationRequestRejected",
     "CodexGenerationTransportAmbiguous",
     "CodexGenerationUnavailable",
+    "validate_generation_terminal_frame",
 ]

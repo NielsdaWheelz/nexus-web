@@ -206,8 +206,8 @@ EXPECTED_BROWSER_CONTRACT = {
                 "record_kind",
                 "result_kind",
             ),
-            "null_fields": ("provider_wire_name",),
-            "nullable_fields": ("error_type",),
+            "null_fields": (),
+            "nullable_fields": ("error_type", "provider_wire_name"),
         },
         "historical_execution": {
             "non_null_fields": (

@@ -369,6 +369,32 @@ def test_provider_runtime_pin_and_tool_safety_corpus_route_to_deterministic_eval
 @pytest.mark.parametrize(
     "path",
     [
+        "python/nexus/services/generation_policy.py",
+        "python/tests/evals/cases/generation_plans.v1.json",
+    ],
+)
+def test_generation_plan_policy_and_corpus_route_to_the_fixture_only_eval(path: str) -> None:
+    proof = (
+        "pytest:python/tests/evals/test_generation_plan_eval.py::"
+        "test_reviewed_generation_plan_corpus_replays_the_shipped_policy_without_a_live_model"
+    )
+
+    selections = select_changed(
+        (ChangedPath(GitChangeKind.MODIFIED, path),),
+        load_selection_index(REPO_ROOT),
+    )
+
+    assert any(
+        selection.capability is Capability.LLM_EVAL
+        and selection.proof == proof
+        and selection.reason is SelectionReason.PRIORITY_RISK
+        for selection in selections
+    ), f"{path} did not select the deterministic generation-plan eval"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
         ".github/workflows/codex-personal-nightly.yml",
         "apps/codex_agent/host.py",
         "apps/codex_agent/nested/future.py",
@@ -377,7 +403,9 @@ def test_provider_runtime_pin_and_tool_safety_corpus_route_to_deterministic_eval
         "python/uv.lock",
     ],
 )
-def test_native_agent_sources_route_to_the_exact_contract_and_host_proofs(path: str) -> None:
+def test_codex_generation_sources_route_to_the_exact_contract_and_host_proofs(
+    path: str,
+) -> None:
     selections = select_changed(
         (ChangedPath(GitChangeKind.MODIFIED, path),),
         load_selection_index(REPO_ROOT),
@@ -400,7 +428,7 @@ def test_native_agent_sources_route_to_the_exact_contract_and_host_proofs(path: 
                 Capability.KERNEL_PYTHON,
                 "pytest:python/tests/kernel/nexus_test_control/"
                 "test_hosted_canary_semantics.py::"
-                "test_hosted_canary_accepts_exact_four_plan_v2_receipt",
+                "test_hosted_canary_accepts_exact_four_plan_v3_receipt",
             ),
             (
                 Capability.KERNEL_PYTHON,
@@ -523,7 +551,7 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
     [
         (
             # The release controller mirrors the canary's public exit/phase
-            # contract, so release.py is owned by native-agent-host as well as
+            # contract, so release.py is owned by codex-generation-host as well as
             # immutable-production-release: its changes must route to the
             # mirror conformance proof and the host proofs beside the release
             # harness proofs.
@@ -535,6 +563,7 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 Capability.JOURNEYS_ALL,
                 Capability.KERNEL_PYTHON,
                 Capability.KERNEL_WEB,
+                Capability.LLM_EVAL,
                 Capability.LLM_TOOLS,
                 Capability.RELEASE_ARTIFACT,
                 Capability.SERVICE,
@@ -546,7 +575,7 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "playwright:apps/web/e2e/journeys/auth-session.journey.spec.ts",
                 "pytest:python/tests/hosted/nightly/test_codex_personal_generation.py",
                 "pytest:python/tests/kernel/nexus_test_control/test_android_device_method_scope.py::test_exact_android_device_proof_uses_one_instrumentation_method",
-                "pytest:python/tests/kernel/nexus_test_control/test_hosted_canary_semantics.py::test_hosted_canary_accepts_exact_four_plan_v2_receipt",
+                "pytest:python/tests/kernel/nexus_test_control/test_hosted_canary_semantics.py::test_hosted_canary_accepts_exact_four_plan_v3_receipt",
                 "pytest:python/tests/kernel/nexus_test_control/test_provider_runtime_pin.py::test_provider_runtime_is_materialized_from_the_pin_without_retargeting_source",
                 "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape",
                 "pytest:python/tests/kernel/test_android_player_protocol_release_gate.py",
@@ -559,6 +588,10 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/kernel/nexus_test_control/test_policy.py",
                 "pytest:python/tests/kernel/test_backend_artifact.py",
                 "pytest:python/tests/kernel/test_codex_nightly_workflow_artifact_contract.py::test_codex_nightly_stages_only_one_run_bound_bounded_json_artifact",
+                "pytest:python/tests/kernel/test_generation_contract.py",
+                "pytest:python/tests/kernel/test_generation_operation_adapters.py",
+                "pytest:python/tests/kernel/test_generation_policy.py::test_fixed_generation_policy_catalog_is_complete_and_closed",
+                "pytest:python/tests/service/test_codex_generation_client.py",
                 "pytest:python/tests/service/test_codex_egress_policy.py::"
                 "test_codex_egress_allows_only_subscription_auth_and_mcp_sni",
                 "pytest:python/tests/kernel/test_ci_pr_recovery.py",
@@ -569,8 +602,11 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/kernel/test_production_release.py::test_codex_capacity_requires_exact_encrypted_state_before_starting_runtime",
                 "pytest:python/tests/kernel/test_release_bundle_fetch.py",
                 "pytest:python/tests/service/test_codex_generation_host.py::test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot",
+                "pytest:python/tests/service/test_codex_generation_lowering.py::test_operation_identity_lowers_to_one_exact_capability_and_tool_surface",
+                "pytest:python/tests/service/test_codex_generation_redaction.py::test_failed_runtime_terminal_retains_only_the_bounded_host_diagnostic",
                 "pytest:python/tests/service/test_codex_capacity_canary_contract.py",
                 "pytest:python/tests/service/test_codex_capacity_canary_contract.py::test_capacity_canary_rejects_succeeded_terminal_without_bounded_text",
+                "pytest:python/tests/evals/test_generation_plan_eval.py::test_reviewed_generation_plan_corpus_replays_the_shipped_policy_without_a_live_model",
                 "pytest:python/tests/release_artifact/"
                 "test_node_ingest_image_binding.py::"
                 "test_worker_launches_only_the_image_baked_hardened_ingest_entrypoint",
@@ -671,6 +707,7 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 Capability.CODEX_HOSTED,
                 Capability.COMPONENT,
                 Capability.KERNEL_PYTHON,
+                Capability.LLM_EVAL,
                 Capability.LLM_TOOLS,
                 Capability.RELEASE_ARTIFACT,
                 Capability.SERVICE,
@@ -681,19 +718,26 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/kernel/nexus_test_control/test_model.py::test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr",
                 "pytest:python/tests/kernel/nexus_test_control/test_policy.py",
                 "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape",
-                "pytest:python/tests/kernel/nexus_test_control/test_hosted_canary_semantics.py::test_hosted_canary_accepts_exact_four_plan_v2_receipt",
+                "pytest:python/tests/kernel/nexus_test_control/test_hosted_canary_semantics.py::test_hosted_canary_accepts_exact_four_plan_v3_receipt",
                 "pytest:python/tests/kernel/nexus_test_control/test_provider_runtime_pin.py::test_provider_runtime_is_materialized_from_the_pin_without_retargeting_source",
                 "pytest:python/tests/kernel/nexus_test_control/test_android_device_method_scope.py::test_exact_android_device_proof_uses_one_instrumentation_method",
                 "pytest:python/tests/kernel/test_codex_nightly_workflow_artifact_contract.py::test_codex_nightly_stages_only_one_run_bound_bounded_json_artifact",
+                "pytest:python/tests/kernel/test_generation_contract.py",
+                "pytest:python/tests/kernel/test_generation_operation_adapters.py",
+                "pytest:python/tests/kernel/test_generation_policy.py::test_fixed_generation_policy_catalog_is_complete_and_closed",
                 "pytest:python/tests/kernel/test_ci_pr_recovery.py",
+                "pytest:python/tests/service/test_codex_generation_client.py",
                 "pytest:python/tests/service/test_codex_egress_policy.py::"
                 "test_codex_egress_allows_only_subscription_auth_and_mcp_sni",
                 "pytest:python/tests/release_artifact/"
                 "test_node_ingest_image_binding.py::"
                 "test_worker_launches_only_the_image_baked_hardened_ingest_entrypoint",
                 "pytest:python/tests/service/test_codex_generation_host.py::test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot",
+                "pytest:python/tests/service/test_codex_generation_lowering.py::test_operation_identity_lowers_to_one_exact_capability_and_tool_surface",
+                "pytest:python/tests/service/test_codex_generation_redaction.py::test_failed_runtime_terminal_retains_only_the_bounded_host_diagnostic",
                 "pytest:python/tests/service/test_codex_capacity_canary_contract.py",
                 "pytest:python/tests/service/test_codex_capacity_canary_contract.py::test_capacity_canary_rejects_succeeded_terminal_without_bounded_text",
+                "pytest:python/tests/evals/test_generation_plan_eval.py::test_reviewed_generation_plan_corpus_replays_the_shipped_policy_without_a_live_model",
                 "pytest:python/tests/hosted/nightly/test_codex_personal_generation.py",
                 "pytest:python/tests/service/test_llm_tool_projection_protocol.py::"
                 "test_revision_gates_every_changed_chat_projection_boundary",

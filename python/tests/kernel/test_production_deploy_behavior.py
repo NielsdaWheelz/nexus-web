@@ -94,12 +94,15 @@ def test_codex_agent_host_is_private_worker_image_with_credential_and_socket_iso
     )
     actionlint_config = (REPO_ROOT / ".github/actionlint.yaml").read_text(encoding="utf-8")
     worker_image = (REPO_ROOT / "docker/Dockerfile.backend").read_text(encoding="utf-8")
-    start = compose.index("  nexus-codex-agent-host:\n")
+    start = compose.index("\n  nexus-codex-agent-host:\n") + 1
     end = compose.index("  migration:\n", start)
     host = compose[start:end]
     background_start = compose.index("  worker-background:\n")
     background_end = compose.index("\n  nexus-codex-agent-host:\n", background_start)
     background = compose[background_start:background_end]
+    api_start = compose.index("\n  api:\n") + 1
+    api_end = compose.index("\n  worker-interactive:\n", api_start)
+    api = compose[api_start:api_end]
 
     assert "image: ${WORKER_IMAGE:?set an immutable candidate digest}" in host
     assert 'command: ["python", "-m", "apps.codex_agent.main"]' in host
@@ -108,8 +111,9 @@ def test_codex_agent_host_is_private_worker_image_with_credential_and_socket_iso
     assert "expose:" not in host
     assert "DATABASE_URL" not in host
     assert "OPENAI_API_KEY" not in host
-    assert "NEXUS_CODEX_STATE_ROOT_BASE: /var/lib/nexus-codex" in host
-    assert "NEXUS_CODEX_WORKING_DIRECTORY: /var/empty/nexus-codex" in host
+    assert "NEXUS_CODEX_CREDENTIAL_FILE: /run/nexus-codex-credential/auth.json" in host
+    assert "NEXUS_CODEX_WORKING_DIRECTORY_ROOT: /tmp/nexus-codex-turns" in host
+    assert "working_dir: /tmp" in host
     assert "NEXUS_CODEX_AGENT_SOCKET: /run/nexus-codex/agent.sock" in host
     assert "read_only: true" in host
     assert "mem_reservation: 128m" in host
@@ -121,21 +125,27 @@ def test_codex_agent_host_is_private_worker_image_with_credential_and_socket_iso
     assert "seccomp=unconfined" in host
     assert "apparmor=nexus-codex-agent-host" in host
     assert "systempaths=unconfined" in host
-    assert "networks:\n      - codex_egress" in host
+    assert "networks:\n      codex_private:" in host
     assert "nexus_codex_state" not in compose
     assert "- type: bind" in host
-    assert "source: /srv/nexus/codex-state" in host
-    assert "target: /var/lib/nexus-codex" in host
+    assert "source: /srv/nexus/codex-state/codex/codex-personal/auth.json" in host
+    assert "target: /run/nexus-codex-credential/auth.json" in host
+    assert "read_only: false" in host
     assert "create_host_path: false" in host
     assert "propagation: rprivate" in host
     assert "nexus_codex_run:/run/nexus-codex" in host
     assert "nexus_codex_run:/run/nexus-codex:ro" in background
     assert "NEXUS_CODEX_AGENT_SOCKET: /run/nexus-codex/agent.sock" in background
+    assert "NEXUS_CODEX_AGENT_SOCKET: /run/nexus-codex/agent.sock" in api
+    assert "nexus_codex_run:/run/nexus-codex:ro" in api
+    assert "NEXUS_CODEX_CREDENTIAL_FILE" not in api
+    assert "nexus-codex-agent-host:\n        condition: service_started" in api
+    assert "nexus-codex-agent-host:\n        condition: service_healthy" not in api
     # The background lane must not claim a metadata job before the host
     # container and its socket volume exist, but readiness is deliberately NOT a
     # dependency: service_healthy would couple the whole background lane's boot
-    # to the Codex host, while a started-but-never-ready host must soft-fail
-    # only metadata jobs (terminal E_METADATA_AGENT_HOST_UNAVAILABLE). The
+    # to the Codex host, while a started-but-never-ready host must affect only
+    # generation jobs through their normalized failure contracts. The
     # compose graph therefore orders on service_started, never service_healthy.
     assert "nexus-codex-agent-host:\n        condition: service_started" in background
     assert "nexus-codex-agent-host:\n        condition: service_healthy" not in compose
@@ -151,10 +161,13 @@ def test_codex_agent_host_is_private_worker_image_with_credential_and_socket_iso
     sync_env = (REPO_ROOT / "deploy/hetzner/sync-env.sh").read_text(encoding="utf-8")
     assert "reject_codex_host_runtime_keys" in sync_env
     assert (
-        "CODEX_HOME NEXUS_CODEX_STATE_ROOT_BASE NEXUS_CODEX_WORKING_DIRECTORY NEXUS_CODEX_AGENT_SOCKET"
+        "CODEX_HOME NEXUS_CODEX_CREDENTIAL_FILE NEXUS_CODEX_ENROLLMENT_AUTH_FILE NEXUS_CODEX_WORKING_DIRECTORY_ROOT NEXUS_CODEX_AGENT_SOCKET"
         in sync_env
     )
-    assert "  codex_egress:\n    driver: bridge" in compose
+    assert "  codex_private:\n    driver: bridge\n    internal: true" in compose
+    assert "enable_ipv6: false" in compose
+    assert "com.docker.network.bridge.gateway_mode_ipv4: isolated" in compose
+    assert "  codex_proxy_egress:\n    driver: bridge" in compose
     assert "  - apparmor" in cloud_init
     assert "kernel.apparmor_restrict_unprivileged_userns=1" in cloud_init
     assert "apparmor_restrict_unprivileged_userns=0" not in cloud_init
@@ -515,7 +528,7 @@ def test_bound_404_cannot_settle_under_unproven_provider_scope(
 
 
 @pytest.mark.parametrize("phase", ("RollbackRequired", "ForwardFixPending"))
-def test_pending_settlement_uses_installed_bundle_without_provider_dependencies(
+def test_pending_settlement_uses_installed_bundle_without_operator_credentials(
     tmp_path: Path,
     phase: str,
 ) -> None:
@@ -531,7 +544,7 @@ def test_pending_settlement_uses_installed_bundle_without_provider_dependencies(
         authoritative_id=CURRENT_DEPLOYMENT_ID,
     )
 
-    settled = harness.run(include_provider_credentials=False)
+    settled = harness.run(include_operator_credentials=False)
 
     assert settled.returncode != 0
     assert "durable failure settlement unexpectedly returned success" in settled.stderr

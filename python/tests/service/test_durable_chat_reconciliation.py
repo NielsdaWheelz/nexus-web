@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from typing import cast
 from uuid import UUID, uuid4
 
 import pytest
-from provider_runtime.testing import ScriptedRuntime
+from pydantic import SecretStr
 from sqlalchemy import Engine, text
 from sqlalchemy.orm import Session
 
@@ -16,7 +17,24 @@ from nexus.services.chat_run_steps import (
     UncertainChatStep,
     reconcile_uncertain_chat_step,
 )
-from nexus.services.durable_step_journal import ReplayPolicy
+from nexus.services.codex_generation_contract import (
+    ChatOperation,
+    GenerationCommand,
+    request_fingerprint,
+)
+from nexus.services.durable_step_journal import ReplayPolicy, stable_generation_id
+from nexus.services.generation_intent import BearerToolGrant, GenerationIntent, TextOutput
+from nexus.services.generation_policy import (
+    POLICY_FINGERPRINT,
+    POLICY_REVISION,
+    operation_revision,
+)
+from nexus.services.llm_execution import ExecutionRuntime
+from nexus.services.llm_ledger import (
+    GenerationStart,
+    LlmCallOwner,
+    start_generation_in_current_transaction,
+)
 from tests.testkit.chat import create_entitled_chat
 from tests.testkit.unreachable_state import make_failed_job_retryable
 
@@ -38,7 +56,7 @@ def test_uncertain_chat_dispatch_suspends_then_reconciles_the_same_job(
     engine: Engine,
 ) -> None:
     """The committed checkpoint, not a provider fake, prevents redispatch."""
-    path = "turn/0/generation"
+    path = "generation/1"
     with Session(engine) as db:
         chat = create_entitled_chat(db, content=f"Durable checkpoint proof {uuid4()}")
         claimed = _claim_chat(db, chat.job_id, "checkpoint-worker")
@@ -52,14 +70,38 @@ def test_uncertain_chat_dispatch_suspends_then_reconciles_the_same_job(
                 attempt_no=claimed.attempts,
                 resource_class="Light",
             ),
-            llm_runtime=ScriptedRuntime(),
+            llm_runtime=cast(ExecutionRuntime, object()),
         )
-        steps.prepare(path, "reviewed-intent-fingerprint")
+        generation_id = stable_generation_id(chat.run_id, path)
+        command = GenerationCommand(
+            request_id=generation_id,
+            operation=ChatOperation(
+                revision=operation_revision("chat", profile="balanced"),
+                profile="balanced",
+            ),
+            policy_revision=POLICY_REVISION,
+            policy_fingerprint=POLICY_FINGERPRINT,
+            intent=GenerationIntent(
+                instructions="Return one answer.",
+                input="Durable reconciliation proof.",
+                output=TextOutput(),
+            ),
+            tool_grant=BearerToolGrant(token=SecretStr("test-only-grant")),
+        )
+        steps.prepare(path, request_fingerprint(command))
+        start_generation_in_current_transaction(
+            db,
+            GenerationStart(
+                owner=LlmCallOwner(kind="chat_run", id=chat.run_id),
+                command=command,
+                streaming=True,
+            ),
+        )
         steps.mark_uncertain(path)
 
         persisted_phase = db.execute(
             text(
-                "SELECT payload #>> '{coordination,turn/0/generation,dispatch_phase}' "
+                "SELECT payload #>> '{coordination,generation/1,dispatch_phase}' "
                 "FROM background_jobs WHERE id = :job_id"
             ),
             {"job_id": chat.job_id},
@@ -95,7 +137,7 @@ def test_uncertain_chat_dispatch_suspends_then_reconciles_the_same_job(
                     attempt_no=retried.attempts,
                     resource_class="Light",
                 ),
-                llm_runtime=ScriptedRuntime(),
+                llm_runtime=cast(ExecutionRuntime, object()),
             )
             with pytest.raises(UncertainChatStep):
                 retry_steps.read(path, ReplayPolicy.BilledOnce)
@@ -118,7 +160,7 @@ def test_uncertain_chat_dispatch_suspends_then_reconciles_the_same_job(
         repaired = db.execute(
             text(
                 "SELECT status, attempts, payload #>> "
-                "'{coordination,turn/0/generation,dispatch_phase}' "
+                "'{coordination,generation/1,dispatch_phase}' "
                 "FROM background_jobs WHERE id = :job_id"
             ),
             {"job_id": chat.job_id},

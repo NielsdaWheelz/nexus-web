@@ -4,6 +4,13 @@ Status: Implemented
 Date: 2026-07-31
 Type: hard cutover; no legacy path, fallback, compatibility decoder, dual write, or backfill
 
+> **Generation authority amendment (2026-08-25):** The direct-provider retry,
+> billing, continuation, and uncertain-turn discussion below is historical. The
+> current authority is
+> [`codex-personal-generation-hard-cutover.md`](codex-personal-generation-hard-cutover.md):
+> accepted ambiguous Codex generations are never automatically redispatched;
+> `Prepared | Uncertain | Completed` remains the durable-owner contract.
+
 ## Decision
 
 A chat run is one durable operation. Each generation, tool, and publication step
@@ -477,11 +484,8 @@ On implementation, amend these documents rather than leaving contradictions:
 
 - `chat-publication-thin-spine-hard-cutover.md`: supersede “no durable
   Generated -> Published phase or publication replay” only.
-- `llm-provider-runtime-hard-cutover.md`: supersede chat retry-from-scratch/no
-  checkpoint-replay clauses only.
-- `generation-run-harness-hard-cutover.md`: supersede, for durable chat only,
-  the in-memory/drop-on-retry provider-result clause. Other generation owners
-  keep their declared policy.
+- `generation-run-harness-hard-cutover.md`: current composition pointer; the
+  Codex generation cutover owns replay policy for every generation operation.
 - any chat module text that makes worker retry the resume owner without
   persisted per-step state.
 

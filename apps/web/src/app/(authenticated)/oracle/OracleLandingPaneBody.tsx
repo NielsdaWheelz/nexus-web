@@ -42,13 +42,6 @@ function oracleCreateErrorMessage(error: unknown): FeedbackContent {
         message: "Wait a moment, then retry.",
         requestId: error.requestId,
       };
-    case "E_TOKEN_BUDGET_EXCEEDED":
-      return {
-        tone: "Danger",
-        title: "The reading couldn’t begin",
-        message: "The platform AI allowance has been reached.",
-        requestId: error.requestId,
-      };
     default:
       throw error;
   }

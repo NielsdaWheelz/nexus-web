@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
@@ -18,7 +19,6 @@ from llm_tools import (
     WebSearchResultItem,
     canonical_json_bytes,
 )
-from provider_runtime.testing import ScriptedRuntime
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
@@ -70,6 +70,11 @@ from nexus.services.artifacts.subject_policy import (
 )
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.bootstrap import ensure_user_and_default_library
+from nexus.services.codex_generation_contract import (
+    GenerationCommand,
+    GenerationFrame,
+    GenerationHealth,
+)
 from nexus.services.durable_step_journal import (
     AttachReconciledResult,
     Completed,
@@ -79,6 +84,7 @@ from nexus.services.durable_step_journal import (
     read_step_states,
     stable_generation_id,
 )
+from nexus.services.llm_execution import ExecutionRuntime
 from nexus.services.rate_limit import RateLimiter, get_rate_limiter, set_rate_limiter
 from nexus.tasks.artifacts import compose_dossier_tool_runtime
 from tests.testkit.unreachable_state import (
@@ -208,8 +214,6 @@ def _create_idea_build(
         db,
         user_id=user_id,
         plan_tier="ai_pro",
-        platform_token_quota_mode="unlimited",
-        platform_token_limit_monthly=None,
         transcription_quota_mode="unlimited",
         transcription_minutes_limit_monthly=None,
         expires_at=None,
@@ -293,11 +297,28 @@ def _runtime(
         artifact_id=build.artifact_id,
         job=job,
         execution_context=context,
-        llm_runtime=ScriptedRuntime(),
+        llm_runtime=_NeverGenerationRuntime(),
         research_tool_operation=compose_dossier_tool_runtime(web_search_provider).operations[
             "idea_dossier_research"
         ],
     )
+
+
+class _NeverGenerationRuntime(ExecutionRuntime):
+    """This research-replay proof must settle before synthesis dispatch."""
+
+    async def health(self) -> GenerationHealth:
+        raise AssertionError("Dossier research replay reached generation health")
+
+    async def stream(self, command: GenerationCommand) -> AsyncIterator[GenerationFrame]:
+        del command
+        raise AssertionError("Dossier research replay dispatched generation")
+        if False:
+            yield
+
+    async def cancel(self, request_id: UUID) -> None:
+        del request_id
+        raise AssertionError("Dossier research replay cancelled generation")
 
 
 def _plan_snapshot(job: JobRow) -> dict[str, object]:

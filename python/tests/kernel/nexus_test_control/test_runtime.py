@@ -22,7 +22,6 @@ from nexus_test_control.runtime import (
     initialize_runtime,
     local_docker_host,
     process_resource_identity,
-    provider_fixture_identity,
     read_ledger,
     record_created,
     record_planned,
@@ -275,7 +274,6 @@ def test_cleanup_uses_only_persisted_exact_resources_and_never_discovers_sentine
         (ResourceKind.BUCKET, "nexus-production"),
         (ResourceKind.SUPABASE_USER, "owner@example.com"),
         (ResourceKind.PROCESS, f"nexus-process-{RUN_ID}-worker"),
-        (ResourceKind.PROVIDER_FIXTURE, provider_fixture_identity(OTHER_RUN_ID)),
         (ResourceKind.TEMPLATE, template_database_name("a" * 40)),
     ],
 )

@@ -4,6 +4,13 @@
 **Scope:** composer presentation and input behavior only · **Doctrine:** hard
 cut; one owner; no compatibility path
 
+> **Generation-surface amendment (2026-08-25):** The Model/Effort controls and
+> variable-effort text below are historical presentation context, not current
+> product authority. The current contract is
+> [`codex-personal-generation-hard-cutover.md`](codex-personal-generation-hard-cutover.md):
+> one three-option chat-profile picker (`fast`, `balanced`, `deep`), no separate
+> effort control, and no arbitrary provider, model, or effort selection.
+
 ## 1. Decision
 
 Make the composer feel like Nexus's inkwell: a quiet, complete writing
@@ -19,7 +26,7 @@ Governing contracts: [repository rules](../rules/index.md),
 [testing standards](../local-rules/testing-standards.md),
 [chat module](../modules/chat.md),
 [chat interface cutover](chat-interface-hard-cutover.md), and
-[continuation selection cutover](chat-continuation-selection-hard-cutover.md).
+[Codex generation cutover](codex-personal-generation-hard-cutover.md).
 This document narrows their composer presentation; it does not replace their
 domain ownership. Repository rules win on conflict.
 

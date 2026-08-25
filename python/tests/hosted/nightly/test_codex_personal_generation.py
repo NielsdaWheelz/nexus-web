@@ -42,16 +42,19 @@ from provider_runtime.agent_runtime import (
     AgentTerminal,
     AgentToolUse,
     CredentialRef,
+    CredentialRejected,
+    CredentialUnavailable,
+    SessionQuery,
 )
 from pydantic import SecretStr
 
 from nexus.services import generation_policy
 from nexus.services.codex_generation_contract import (
     ChatOperation,
+    DawnWriteOperation,
     DossierLibraryOperation,
     GenerationCommand,
     MetadataEnrichmentOperation,
-    OracleOperation,
 )
 from nexus.services.codex_generation_operations import resolve_codex_generation
 from nexus.services.generation_intent import (
@@ -62,16 +65,18 @@ from nexus.services.generation_intent import (
 )
 
 _PLANS = (
-    ("routine", "gpt-5.6-luna", "low", "text", MetadataEnrichmentOperation),
-    ("standard", "gpt-5.6-terra", "medium", "json", OracleOperation),
-    ("thorough", "gpt-5.6-terra", "high", "text", DossierLibraryOperation),
+    ("routine", "gpt-5.6-luna", "low", "json", MetadataEnrichmentOperation),
+    ("standard", "gpt-5.6-terra", "medium", "text", DawnWriteOperation),
+    ("thorough", "gpt-5.6-terra", "high", "json", DossierLibraryOperation),
     ("deep", "gpt-5.6-sol", "high", "mcp-read", ChatOperation),
 )
 _MCP_HOST = "mcp.nexus.example.com"
 _MCP_PATH = "/internal/agent-tools/mcp"
 _MCP_PROTOCOL_VERSION = "2025-06-18"
 _MCP_TOKEN = "hosted-nightly-read-only-token"
+_MAX_PLAN_ELAPSED_SECONDS = 600
 _MAX_PLAN_ELAPSED_MS = 600_000
+_MAX_MCP_REQUEST_BYTES = 64 * 1024
 
 
 @dataclass(slots=True)
@@ -110,26 +115,96 @@ class _McpAuthApp:
         self._state = state
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
-        if scope.get("type") != "http" or scope.get("path") != _MCP_PATH:
+        if (
+            scope.get("type") != "http"
+            or scope.get("path") != _MCP_PATH
+            or scope.get("method") != "POST"
+        ):
             await _send_http_error(send, 404)
             return
-        headers = {
-            key.decode("latin1"): value.decode("latin1")
+        header_pairs = [
+            (key.decode("latin1"), value.decode("latin1"))
             for key, value in scope.get("headers", [])
-        }
+        ]
+        headers = dict(header_pairs)
+        if len(headers) != len(header_pairs):
+            await _send_http_error(send, 400)
+            return
         if headers.get("authorization") != f"Bearer {_MCP_TOKEN}":
             await _send_http_error(send, 401)
             return
+        if (
+            headers.get("content-type") != "application/json"
+            or headers.get("accept") != "application/json, text/event-stream"
+        ):
+            await _send_http_error(send, 400)
+            return
+        if headers.get("mcp-session-id") is not None:
+            self._state.session_ids.add(headers["mcp-session-id"])
+            await _send_http_error(send, 400)
+            return
+        body = await _read_body(receive)
+        try:
+            wire = json.loads(body)
+        except (UnicodeDecodeError, ValueError):
+            await _send_http_error(send, 400)
+            return
+        if not isinstance(wire, dict) or not isinstance(wire.get("method"), str):
+            await _send_http_error(send, 400)
+            return
         protocol_version = headers.get("mcp-protocol-version")
-        if protocol_version is not None:
-            self._state.protocol_versions.add(protocol_version)
-            if protocol_version != _MCP_PROTOCOL_VERSION:
+        if wire["method"] == "initialize":
+            params = wire.get("params")
+            requested = params.get("protocolVersion") if isinstance(params, dict) else None
+            if requested != _MCP_PROTOCOL_VERSION or protocol_version not in {
+                None,
+                _MCP_PROTOCOL_VERSION,
+            }:
                 await _send_http_error(send, 400)
                 return
-        session_id = headers.get("mcp-session-id")
-        if session_id is not None:
-            self._state.session_ids.add(session_id)
-        await self._manager.handle_request(scope, receive, send)
+        elif protocol_version != _MCP_PROTOCOL_VERSION:
+            await _send_http_error(send, 400)
+            return
+        if protocol_version is not None:
+            self._state.protocol_versions.add(protocol_version)
+
+        delivered = False
+
+        async def replay() -> dict[str, object]:
+            nonlocal delivered
+            if delivered:
+                return {"type": "http.disconnect"}
+            delivered = True
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        async def reject_session_response(message: dict[str, object]) -> None:
+            if message.get("type") == "http.response.start":
+                response_headers = message.get("headers")
+                if isinstance(response_headers, list) and any(
+                    isinstance(item, tuple)
+                    and len(item) == 2
+                    and item[0].lower() == b"mcp-session-id"
+                    for item in response_headers
+                ):
+                    raise AssertionError("stateless MCP peer emitted a session identifier")
+            await send(message)
+
+        await self._manager.handle_request(scope, replay, reject_session_response)
+
+
+async def _read_body(receive: Any) -> bytes:
+    payload = bytearray()
+    more = True
+    while more:
+        message = await receive()
+        if message.get("type") != "http.request":
+            raise RuntimeError("MCP peer request ended before its body")
+        chunk = message.get("body", b"")
+        if not isinstance(chunk, bytes) or len(payload) + len(chunk) > _MAX_MCP_REQUEST_BYTES:
+            raise RuntimeError("MCP peer request exceeded its body contract")
+        payload.extend(chunk)
+        more = message.get("more_body") is True
+    return bytes(payload)
 
 
 async def _send_http_error(send: Any, status: int) -> None:
@@ -283,17 +358,34 @@ def _mcp_peer(root: Path) -> Iterator[_McpPeer]:
 def test_codex_personal_generation_canary_records_exact_four_plan_pairs() -> None:
     _require(os.environ.get("NEXUS_CODEX_HOSTED_CANARY") == "1", "Codex hosted canary is disabled")
     _require("OPENAI_API_KEY" not in os.environ, "Codex hosted canary received an API key")
+    _require("CODEX_API_KEY" not in os.environ, "Codex hosted canary received an API key")
     _require("CODEX_HOME" not in os.environ, "Codex hosted canary received ambient Codex state")
     _require(
         os.environ.get("NEXUS_CODEX_HOSTED_PROFILE") == "codex-personal", "wrong hosted profile"
     )
     state_root = _owned_directory("NEXUS_CODEX_HOSTED_STATE_ROOT", empty=False)
     cwd = _owned_directory("NEXUS_CODEX_HOSTED_WORKING_DIRECTORY", empty=True)
+    sdk_version = importlib.metadata.version("openai-codex")
+    runtime_version = importlib.metadata.version("openai-codex-cli-bin")
+    _require(
+        sdk_version == generation_policy.PLAN_EVAL_PIN["codex_sdk_version"],
+        "Codex SDK drifted from the qualification pin",
+    )
+    _require(
+        runtime_version == generation_policy.PLAN_EVAL_PIN["codex_sdk_version"],
+        "Codex runtime drifted from the qualification pin",
+    )
+    try:
+        _probe_subscription_auth(state_root)
+    except (CredentialUnavailable, CredentialRejected):
+        _write_readiness()
+        pytest.skip("Codex subscription authentication is unavailable")
 
     with _mcp_peer(Path(__file__).parents[4]) as peer:
         results: list[dict[str, object]] = []
         for index, (plan_id, model, effort, shape, operation_type) in enumerate(_PLANS):
             command = _command(index, operation_type, shape)
+            operation_name = command.operation.kind
             resolved = resolve_codex_generation(
                 command,
                 working_directory=cwd,
@@ -328,15 +420,34 @@ def test_codex_personal_generation_canary_records_exact_four_plan_pairs() -> Non
             resolved_effort = resolved.session.reasoning.effort
             _require(resolved_model == model, "resolved model drifted from the plan")
             _require(resolved_effort == effort, "resolved reasoning drifted from the plan")
-            structured_output_valid = terminal.structured_output is not None
-            _require(
-                structured_output_valid is (shape == "json"),
-                "resolved output shape drifted from the plan",
-            )
+            structured_output = terminal.structured_output
+            if shape == "json":
+                structured_output_valid = (
+                    type(structured_output) is dict
+                    and set(structured_output) == {"ok"}
+                    and type(structured_output.get("ok")) is bool
+                )
+                _require(
+                    structured_output_valid,
+                    "strict JSON canary output violated its exact schema",
+                )
+            else:
+                structured_output_valid = False
+                _require(
+                    structured_output is None,
+                    "text canary unexpectedly returned structured output",
+                )
             results.append(
                 {
                     "plan_id": plan_id,
-                    "plan_revision": generation_policy.POLICY_REVISION,
+                    "operation": operation_name,
+                    "profile": "deep" if operation_type is ChatOperation else None,
+                    "operation_revision": command.operation.revision,
+                    "case_shape": {
+                        "text": "text",
+                        "json": "structured",
+                        "mcp-read": "mcp_read",
+                    }[shape],
                     "model": resolved_model,
                     "reasoning": resolved_effort,
                     "backend": "codex",
@@ -350,8 +461,8 @@ def test_codex_personal_generation_canary_records_exact_four_plan_pairs() -> Non
                         "output_tokens": usage_value.output_tokens,
                         "total_tokens": usage_value.total_tokens,
                     },
-                    "sdk_version": importlib.metadata.version("openai-codex"),
-                    "runtime_version": importlib.metadata.version("openai-codex-cli-bin"),
+                    "sdk_version": sdk_version,
+                    "runtime_version": runtime_version,
                     "tool_events": tool_events,
                     "elapsed_ms": elapsed_ms,
                     "permission_requests": 0,
@@ -361,13 +472,31 @@ def test_codex_personal_generation_canary_records_exact_four_plan_pairs() -> Non
         _require(peer.state.methods == ["tools/list", "tools/call"], "MCP sequence drifted")
         _require(peer.state.protocol_versions == {_MCP_PROTOCOL_VERSION}, "MCP protocol drifted")
         _require(not peer.state.session_ids, "stateless MCP peer issued a session")
-        _write_evidence(results)
+        _write_evidence(results, sdk_version=sdk_version, runtime_version=runtime_version)
+
+
+def _probe_subscription_auth(state_root: Path) -> None:
+    async def probe() -> None:
+        runtime = AgentRuntime(AgentRuntimeConfig(state_root_base=state_root))
+        try:
+            await runtime.list_sessions(
+                SessionQuery(
+                    backend="codex",
+                    transport="sdk",
+                    auth=CredentialRef(kind="local_account", profile_key="codex-personal"),
+                    limit=1,
+                )
+            )
+        finally:
+            await runtime.close()
+
+    asyncio.run(probe())
 
 
 def _command(index: int, operation_type: type[Any], shape: str) -> GenerationCommand:
     operation_name = {
         MetadataEnrichmentOperation: "metadata_enrichment",
-        OracleOperation: "oracle",
+        DawnWriteOperation: "dawn_write",
         DossierLibraryOperation: "dossier_library",
         ChatOperation: "chat",
     }[operation_type]
@@ -432,18 +561,23 @@ def _run_once(
     trust_certificate: Path | None = None,
 ) -> tuple[AgentTerminal, int, int]:
     async def run() -> tuple[AgentTerminal, int, int]:
-        started = time.monotonic()
         previous = {
-            name: os.environ.get(name)
-            for name in ("NEXUS_CODEX_HOSTED_MCP_TOKEN", "SSL_CERT_FILE")
+            name: os.environ.get(name) for name in ("NEXUS_CODEX_HOSTED_MCP_TOKEN", "SSL_CERT_FILE")
         }
-        os.environ["NEXUS_CODEX_HOSTED_MCP_TOKEN"] = _MCP_TOKEN
+        os.environ["NEXUS_CODEX_HOSTED_MCP_TOKEN"] = f"Bearer {_MCP_TOKEN}"
         if trust_certificate is not None:
             os.environ["SSL_CERT_FILE"] = str(trust_certificate)
         runtime = AgentRuntime(AgentRuntimeConfig(state_root_base=state_root))
         try:
             session = await runtime.open_session(operation.session)
-            events = [event async for event in runtime.stream_turn(session, operation.turn)]
+            started = time.monotonic()
+            try:
+                # AgentRuntime's stream cancellation has a bounded interrupt/hard-close
+                # path; this deadline initiates that path at the declared live-turn limit.
+                async with asyncio.timeout(_MAX_PLAN_ELAPSED_SECONDS):
+                    events = [event async for event in runtime.stream_turn(session, operation.turn)]
+            except TimeoutError:
+                pytest.fail("Codex plan exceeded elapsed ceiling", pytrace=False)
         finally:
             await runtime.close()
             for name, value in previous.items():
@@ -481,12 +615,26 @@ def _owned_directory(name: str, *, empty: bool) -> Path:
     return path
 
 
-def _write_evidence(results: list[dict[str, object]]) -> None:
+def _write_evidence(
+    results: list[dict[str, object]],
+    *,
+    sdk_version: str,
+    runtime_version: str,
+) -> None:
     path = Path(os.environ["NEXUS_CODEX_HOSTED_EVIDENCE_PATH"])
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
-        "schema_version": "nexus-hosted-codex-canary.v2",
+        "schema_version": "nexus-hosted-codex-canary.v3",
         "run_id": os.environ["NEXUS_TEST_RUN_ID"],
+        "source_sha": os.environ["NEXUS_CODEX_HOSTED_SOURCE_SHA"],
+        "policy_revision": generation_policy.POLICY_REVISION,
+        "policy_fingerprint": generation_policy.POLICY_FINGERPRINT,
+        "policy_facts_fingerprint": generation_policy.POLICY_FACTS_FINGERPRINT,
+        "provider_runtime_revision": generation_policy.PLAN_EVAL_PIN["provider_runtime_revision"],
+        "codex_sdk_version": sdk_version,
+        "codex_cli_version": runtime_version,
+        "qualification_scope": "model_effort_runtime_wire",
+        "qualified_plan_ids": ["routine", "standard", "thorough", "deep"],
         "subscription_turns": 4,
         "results": results,
     }
@@ -495,6 +643,23 @@ def _write_evidence(results: list[dict[str, object]]) -> None:
         json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8"
     )
     temporary.replace(path)
+
+
+def _write_readiness() -> None:
+    path = Path(os.environ["NEXUS_CODEX_HOSTED_READINESS_PATH"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "nexus-hosted-codex-readiness.v1",
+                "run_id": os.environ["NEXUS_TEST_RUN_ID"],
+                "status": "subscription_unavailable",
+            },
+            separators=(",", ":"),
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def _require(condition: bool, message: str) -> None:

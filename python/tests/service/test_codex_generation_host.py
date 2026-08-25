@@ -7,6 +7,7 @@ import json
 import multiprocessing
 import os
 import socket
+import threading
 from collections.abc import AsyncIterator, Iterator, Mapping
 from pathlib import Path
 from tempfile import gettempdir
@@ -17,7 +18,11 @@ import httpx
 import pytest
 import uvicorn
 from apps.codex_agent.capacity import CapacityPaths
-from apps.codex_agent.host import RuntimeVersions, create_codex_agent_app
+from apps.codex_agent.host import (
+    RuntimeVersions,
+    close_runtime_before_release,
+    create_codex_agent_app,
+)
 from provider_runtime.agent_runtime import (
     AgentEvent,
     AgentPermissionRequest,
@@ -59,6 +64,8 @@ _STRUCTURED_SCHEMA = {
     "required": ["answer"],
     "additionalProperties": False,
 }
+_ENROLLED_AUTH = b"test-private-chatgpt-auth"
+_REFRESHED_AUTH = b"test-private-chatgpt-auth-refreshed-by-pinned-truncate-write"
 
 
 def _short_socket_path() -> Path:
@@ -158,6 +165,29 @@ def _wire_command(command: GenerationCommand) -> bytes:
     return json.dumps(payload, separators=(",", ":")).encode()
 
 
+def _generation_scope(body: bytes) -> dict[str, Any]:
+    return {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/v2/generations",
+        "raw_path": b"/v2/generations",
+        "query_string": b"",
+        "root_path": "",
+        "headers": [
+            (b"host", b"nexus-codex"),
+            (b"accept", b"application/x-ndjson"),
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(body)).encode("ascii")),
+        ],
+        "client": ("127.0.0.1", 41234),
+        "server": ("nexus-codex", 80),
+        "state": {},
+    }
+
+
 def _session_ref(index: int) -> AgentSessionRef:
     return AgentSessionRef(
         schema_version="agent-session-ref.v1",
@@ -235,10 +265,32 @@ class _InspectingRuntime(ScriptedAgentRuntime):
         self._opened: AgentSessionRequest | None = None
         self._resolver_name: str | None = None
         self._resolver_matches = False
+        self._cwd_empty_on_open = False
+        self._cwd_residue: Path | None = None
+        self._runtime_auth_at_open: bytes | None = None
+        self._durable_auth_after_open: bytes | None = None
+        self._state_residue: Path | None = None
 
     async def open_session(self, request: AgentSessionRequest) -> AgentSession:
         session = await super().open_session(request)
         self._opened = request
+        cwd = Path(request.cwd)
+        self._cwd_empty_on_open = not any(cwd.iterdir())
+        self._cwd_residue = cwd / "runtime-residue"
+        self._cwd_residue.write_text(f"turn-{self._index}", encoding="utf-8")
+        auth = self._config.state_root_base / "codex" / "codex-personal" / "auth.json"
+        self._runtime_auth_at_open = auth.read_bytes()
+        state_residue = self._config.state_root_base / "runtime-residue"
+        state_residue.write_text(f"turn-{self._index}", encoding="utf-8")
+        self._state_residue = state_residue
+        if self._index == 1:
+            # Pinned rust-v0.144.4 FileAuthStorage::save opens auth.json with
+            # truncate/write/create, then write_all + flush. Reproduce that exact
+            # persistence primitive rather than inventing an atomic replacement.
+            with auth.open("wb") as refreshed:
+                refreshed.write(_REFRESHED_AUTH)
+                refreshed.flush()
+        self._durable_auth_after_open = Path(auth.readlink()).read_bytes()
         if request.mcp_servers:
             server = request.mcp_servers[0]
             assert len(server.header_refs) == 1
@@ -269,9 +321,26 @@ class _InspectingRuntime(ScriptedAgentRuntime):
                     cancel_supplied=self.calls[1].cancel_supplied,
                 ),
                 "state_root_base": str(self._config.state_root_base),
+                "runtime_auth_at_open": self._runtime_auth_at_open,
+                "durable_auth_after_open": self._durable_auth_after_open,
+                "runtime_auth_after_close": (
+                    self._config.state_root_base / "codex" / "codex-personal" / "auth.json"
+                ).read_bytes(),
+                "runtime_auth_link_target": str(
+                    (
+                        self._config.state_root_base / "codex" / "codex-personal" / "auth.json"
+                    ).readlink()
+                ),
                 "resolver_present": self._config.secret_resolver is not None,
                 "resolver_matches": self._resolver_matches,
                 "secret_absent_from_repr": _grant(self._index) not in f"{self._config!r}{opened!r}",
+                "cwd_empty_on_open": self._cwd_empty_on_open,
+                "cwd_residue_present_at_close": (
+                    self._cwd_residue is not None and self._cwd_residue.is_file()
+                ),
+                "state_residue_present_at_close": (
+                    self._state_residue is not None and self._state_residue.is_file()
+                ),
             }
         )
         resolver = self._config.secret_resolver
@@ -430,6 +499,107 @@ class _DisconnectRuntime(_InterruptRuntime):
             self._interrupt_observed.set()
 
 
+class _ResponseStartFailureRuntime(ScriptedAgentRuntime):
+    """Hold one admitted owner live while its ASGI response-start fails."""
+
+    def __init__(self, started: asyncio.Event, closed: asyncio.Event) -> None:
+        super().__init__(sessions=(AgentSession(_session_ref(30)),))
+        self._started = started
+        self._closed = closed
+
+    async def stream_turn(
+        self,
+        session: AgentSession,
+        request: TurnRequest,
+        *,
+        approvals: ApprovalHandler | None = None,
+        cancel: Any = None,
+    ) -> AsyncIterator[AgentEvent]:
+        del session, request, approvals, cancel
+        self._started.set()
+        yield AgentText("queued-before-response-start-failure")
+        await asyncio.Future()
+
+    async def close(self) -> None:
+        await super().close()
+        self._closed.set()
+
+
+class _RepeatedCancellationCloseRuntime(ScriptedAgentRuntime):
+    def __init__(
+        self,
+        started: asyncio.Event,
+        release: asyncio.Event,
+        cancelled: asyncio.Event,
+        finished: asyncio.Event,
+    ) -> None:
+        super().__init__()
+        self._started = started
+        self._release = release
+        self._cancelled = cancelled
+        self._finished = finished
+
+    async def close(self) -> None:
+        self._started.set()
+        try:
+            await self._release.wait()
+        except asyncio.CancelledError:
+            self._cancelled.set()
+            raise
+        await super().close()
+        self._finished.set()
+
+
+class _CredentialIdentitySwapRuntime(ScriptedAgentRuntime):
+    def __init__(self, config: AgentRuntimeConfig, credential_file: Path) -> None:
+        super().__init__(
+            sessions=(AgentSession(_session_ref(32)),),
+            stream_scripts=((_runtime_terminal(32),),),
+        )
+        self._config = config
+        self._credential_file = credential_file
+
+    async def close(self) -> None:
+        await super().close()
+        runtime_auth = self._config.state_root_base / "codex" / "codex-personal" / "auth.json"
+        assert runtime_auth.readlink() == self._credential_file
+        replacement = self._credential_file.with_name("replacement-auth.json")
+        replacement.write_bytes(b"invalid-rename-based-refresh")
+        replacement.chmod(0o600)
+        os.replace(replacement, self._credential_file)
+
+
+class _CancelledFailingCloseRuntime(ScriptedAgentRuntime):
+    def __init__(
+        self,
+        stream_started: asyncio.Event,
+        close_started: asyncio.Event,
+        close_release: asyncio.Event,
+    ) -> None:
+        super().__init__(sessions=(AgentSession(_session_ref(34)),))
+        self._stream_started = stream_started
+        self._close_started = close_started
+        self._close_release = close_release
+
+    async def stream_turn(
+        self,
+        session: AgentSession,
+        request: TurnRequest,
+        *,
+        approvals: ApprovalHandler | None = None,
+        cancel: Any = None,
+    ) -> AsyncIterator[AgentEvent]:
+        del session, request, approvals, cancel
+        self._stream_started.set()
+        yield AgentText("accepted-before-failed-cancel-reap")
+        await asyncio.Future()
+
+    async def close(self) -> None:
+        self._close_started.set()
+        await self._close_release.wait()
+        raise RuntimeError("synthetic native reap failure")
+
+
 async def _serve_until_stopped(
     server: uvicorn.Server,
     listener: socket.socket,
@@ -444,7 +614,7 @@ async def _serve_until_stopped(
 def _run_generation_host(
     socket_path: str,
     cwd: str,
-    state_root: str,
+    credential_file: str,
     capacity_root: str,
     started: Any,
     cancel_observed: Any,
@@ -500,12 +670,21 @@ def _run_generation_host(
                 policy_close_release,
                 policy_close_finished,
             )
+        if runtime_index == 12:
+            return _InterruptRuntime(
+                12,
+                started,
+                cancel_observed,
+                close_started,
+                close_release,
+                close_finished,
+            )
         return _InspectingRuntime(runtime_index, config, report)
 
     app = create_codex_agent_app(
         runtime_factory=runtime_factory,
-        working_directory=Path(cwd),
-        state_root_base=Path(state_root),
+        working_directory_root=Path(cwd),
+        credential_file=Path(credential_file),
         mcp_origin=_MCP_ORIGIN,
         chat_network_attested=chat_network_attested,
         versions=_VERSIONS,
@@ -534,7 +713,7 @@ def _run_generation_host(
 def _start_host(
     socket_path: Path,
     cwd: Path,
-    state_root: Path,
+    credential_file: Path,
     capacity_root: Path,
     events: tuple[Any, ...],
     *,
@@ -565,7 +744,7 @@ def _start_host(
         args=(
             str(socket_path),
             str(cwd),
-            str(state_root),
+            str(credential_file),
             str(capacity_root),
             started,
             cancel_observed,
@@ -610,6 +789,300 @@ async def _post(
     )
 
 
+def test_response_start_failure_reclaims_owner_slot_and_ephemeral_root(
+    tmp_path: Path,
+) -> None:
+    """The response call owns cleanup even before its iterator is entered."""
+
+    async def scenario() -> None:
+        working_root = tmp_path / "runtime"
+        working_root.mkdir()
+        credential_file = tmp_path / "auth.json"
+        credential_file.write_bytes(_ENROLLED_AUTH)
+        credential_file.chmod(0o600)
+        runtime_started = asyncio.Event()
+        runtime_closed = asyncio.Event()
+        runtime_index = 0
+
+        def runtime_factory(_config: AgentRuntimeConfig) -> ScriptedAgentRuntime:
+            nonlocal runtime_index
+            runtime_index += 1
+            if runtime_index == 1:
+                return _ResponseStartFailureRuntime(runtime_started, runtime_closed)
+            return ScriptedAgentRuntime(
+                sessions=(AgentSession(_session_ref(31)),),
+                stream_scripts=((_runtime_terminal(31),),),
+            )
+
+        app = create_codex_agent_app(
+            runtime_factory=runtime_factory,
+            working_directory_root=working_root,
+            credential_file=credential_file,
+            versions=_VERSIONS,
+            capacity_paths=_capacity_paths(tmp_path),
+        )
+        command = _command(30, "response-start-failure")
+        body = _wire_command(command)
+        scope = _generation_scope(body)
+        request_delivered = False
+        never_disconnect = asyncio.Event()
+
+        async def receive() -> dict[str, Any]:
+            nonlocal request_delivered
+            if not request_delivered:
+                request_delivered = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            await never_disconnect.wait()
+            raise AssertionError("unreachable")
+
+        async def fail_response_start(message: dict[str, Any]) -> None:
+            assert message["type"] == "http.response.start"
+            await asyncio.wait_for(runtime_started.wait(), timeout=2)
+            raise RuntimeError("synthetic response-start failure")
+
+        with pytest.raises(RuntimeError, match="synthetic response-start failure"):
+            await app(scope, receive, fail_response_start)
+
+        assert runtime_closed.is_set()
+        assert not tuple(working_root.iterdir())
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, timeout=5) as client:
+            status, media_type, response_body = await _post(
+                client, _command(31, "after-response-start-failure")
+            )
+        assert (status, media_type.split(";", 1)[0]) == (
+            200,
+            "application/x-ndjson",
+        )
+        assert _terminal(_frames(_command(31, "unused"), response_body)).status == ("succeeded")
+        assert runtime_index == 2
+        assert not tuple(working_root.iterdir())
+
+    asyncio.run(scenario())
+
+
+def test_cancellation_before_owner_first_execution_reclaims_admission(
+    tmp_path: Path,
+) -> None:
+    """The endpoint owns cleanup until the owner's first try statement executes."""
+
+    async def scenario() -> None:
+        working_root = tmp_path / "runtime"
+        working_root.mkdir()
+        credential_file = tmp_path / "auth.json"
+        credential_file.write_bytes(_ENROLLED_AUTH)
+        credential_file.chmod(0o600)
+        runtime_count = 0
+
+        def runtime_factory(_config: AgentRuntimeConfig) -> ScriptedAgentRuntime:
+            nonlocal runtime_count
+            runtime_count += 1
+            return ScriptedAgentRuntime(
+                sessions=(AgentSession(_session_ref(33)),),
+                stream_scripts=((_runtime_terminal(33),),),
+            )
+
+        app = create_codex_agent_app(
+            runtime_factory=runtime_factory,
+            working_directory_root=working_root,
+            credential_file=credential_file,
+            versions=_VERSIONS,
+            capacity_paths=_capacity_paths(tmp_path),
+        )
+        command = _command(30, "cancel-before-owner-first-execution")
+        body = _wire_command(command)
+        body_consumed = asyncio.Event()
+
+        async def receive() -> dict[str, Any]:
+            body_consumed.set()
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        async def unreachable_send(_message: dict[str, Any]) -> None:
+            raise AssertionError("pre-start cancellation reached the response boundary")
+
+        request = asyncio.create_task(app(_generation_scope(body), receive, unreachable_send))
+        await body_consumed.wait()
+        request.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await request
+
+        assert runtime_count == 0
+        assert not tuple(working_root.iterdir())
+
+        followup = _command(33, "after-pre-start-cancellation")
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, timeout=5) as client:
+            status, media_type, response_body = await _post(client, followup)
+        assert (status, media_type.split(";", 1)[0]) == (
+            200,
+            "application/x-ndjson",
+        )
+        assert _terminal(_frames(followup, response_body)).status == "succeeded"
+        assert runtime_count == 1
+        assert not tuple(working_root.iterdir())
+
+    asyncio.run(scenario())
+
+
+def test_repeated_cancellation_cannot_cut_short_the_bounded_runtime_close() -> None:
+    async def scenario() -> None:
+        started = asyncio.Event()
+        release = asyncio.Event()
+        close_cancelled = asyncio.Event()
+        finished = asyncio.Event()
+        runtime = _RepeatedCancellationCloseRuntime(
+            started,
+            release,
+            close_cancelled,
+            finished,
+        )
+        runtime_close_unproven = asyncio.Event()
+        owner = asyncio.create_task(
+            close_runtime_before_release(
+                runtime,
+                timeout_seconds=5,
+                runtime_close_unproven=runtime_close_unproven,
+            )
+        )
+        await asyncio.wait_for(started.wait(), timeout=1)
+
+        repeated_cancellation_dispatched = asyncio.Event()
+
+        def cancel_again() -> None:
+            owner.cancel()
+            repeated_cancellation_dispatched.set()
+
+        owner.cancel()
+        asyncio.get_running_loop().call_soon(cancel_again)
+        await asyncio.wait_for(repeated_cancellation_dispatched.wait(), timeout=1)
+
+        assert not owner.done()
+        assert not close_cancelled.is_set()
+        assert not finished.is_set()
+
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await owner
+        assert finished.is_set()
+        assert not close_cancelled.is_set()
+        assert not runtime_close_unproven.is_set()
+
+    asyncio.run(scenario())
+
+
+def test_failed_runtime_reap_during_cancellation_makes_host_unready(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        working_root = tmp_path / "runtime"
+        working_root.mkdir()
+        credential_file = tmp_path / "auth.json"
+        credential_file.write_bytes(_ENROLLED_AUTH)
+        credential_file.chmod(0o600)
+        stream_started = asyncio.Event()
+        close_started = asyncio.Event()
+        close_release = asyncio.Event()
+        runtime_count = 0
+
+        def runtime_factory(_config: AgentRuntimeConfig) -> ScriptedAgentRuntime:
+            nonlocal runtime_count
+            runtime_count += 1
+            return _CancelledFailingCloseRuntime(
+                stream_started,
+                close_started,
+                close_release,
+            )
+
+        app = create_codex_agent_app(
+            runtime_factory=runtime_factory,
+            working_directory_root=working_root,
+            credential_file=credential_file,
+            versions=_VERSIONS,
+            capacity_paths=_capacity_paths(tmp_path),
+        )
+        command = _command(34, "cancel-while-runtime-close-fails")
+        body = _wire_command(command)
+        request_delivered = False
+        never_disconnect = asyncio.Event()
+        first_body_sent = asyncio.Event()
+
+        async def receive() -> dict[str, Any]:
+            nonlocal request_delivered
+            if not request_delivered:
+                request_delivered = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            await never_disconnect.wait()
+            raise AssertionError("unreachable")
+
+        async def send(message: dict[str, Any]) -> None:
+            if message["type"] == "http.response.body" and message.get("body"):
+                first_body_sent.set()
+
+        request = asyncio.create_task(app(_generation_scope(body), receive, send))
+        await asyncio.wait_for(stream_started.wait(), timeout=1)
+        await asyncio.wait_for(first_body_sent.wait(), timeout=1)
+        request.cancel()
+        await asyncio.wait_for(close_started.wait(), timeout=1)
+        request.cancel()
+        close_release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await request
+
+        assert runtime_count == 1
+        assert not tuple(working_root.iterdir())
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, timeout=5) as client:
+            health = await client.get("http://nexus-codex/health")
+            rejected = await _post(client, _command(35, "after-unproven-reap"))
+        assert health.status_code == 503
+        assert rejected[0] == 503
+        assert runtime_count == 1
+
+    asyncio.run(scenario())
+
+
+def test_credential_identity_failure_is_fatal_before_any_success_terminal(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        working_root = tmp_path / "runtime"
+        working_root.mkdir()
+        credential_file = tmp_path / "auth.json"
+        credential_file.write_bytes(_ENROLLED_AUTH)
+        credential_file.chmod(0o600)
+
+        def runtime_factory(config: AgentRuntimeConfig) -> ScriptedAgentRuntime:
+            return _CredentialIdentitySwapRuntime(config, credential_file)
+
+        app = create_codex_agent_app(
+            runtime_factory=runtime_factory,
+            working_directory_root=working_root,
+            credential_file=credential_file,
+            versions=_VERSIONS,
+            capacity_paths=_capacity_paths(tmp_path),
+        )
+        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+        command = _command(32, "rename-credential-instead-of-in-place-refresh")
+        async with httpx.AsyncClient(transport=transport, timeout=5) as client:
+            status, media_type, body = await _post(client, command)
+            health = await client.get("http://nexus-codex/health")
+
+        assert (status, media_type.split(";", 1)[0]) == (
+            200,
+            "application/x-ndjson",
+        )
+        terminal = _terminal(_frames(command, body))
+        assert terminal.status == "failed"
+        assert terminal.failure is not None
+        assert terminal.failure.kind == "runtime_defect"
+        assert health.status_code == 503
+        assert not tuple(working_root.iterdir())
+
+    asyncio.run(scenario())
+
+
 def _frames(command: GenerationCommand, body: bytes) -> tuple[GenerationFrame, ...]:
     frames = tuple(GenerationFrame.model_validate_json(line) for line in body.splitlines())
     assert frames, f"generation {command.request_id} returned an empty stream"
@@ -630,7 +1103,10 @@ def _messages(
     connection: multiprocessing.connection.Connection,
 ) -> Iterator[Mapping[str, object]]:
     while connection.poll():
-        yield cast(Mapping[str, object], connection.recv())
+        try:
+            yield cast(Mapping[str, object], connection.recv())
+        except EOFError:
+            return
 
 
 def test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot(
@@ -655,29 +1131,44 @@ def test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot(
         "https://mcp.nexus.internal/internal/agent-tools/mcp",
     )
     for invalid_origin in invalid_origins:
+        credential_file = tmp_path / "invalid-origin-auth.json"
+        credential_file.write_bytes(_ENROLLED_AUTH)
+        credential_file.chmod(0o600)
         with pytest.raises(ValueError, match="canonical public HTTPS"):
             create_codex_agent_app(
                 runtime_factory=unreachable_runtime_factory,
-                working_directory=tmp_path,
-                state_root_base=tmp_path,
+                working_directory_root=tmp_path,
+                credential_file=credential_file,
                 versions=_VERSIONS,
                 mcp_origin=invalid_origin,
                 chat_network_attested=True,
             )
 
+    version_gate_credential = tmp_path / "version-gate-auth.json"
+    version_gate_credential.write_bytes(_ENROLLED_AUTH)
+    version_gate_credential.chmod(0o600)
+    with pytest.raises(ValueError, match="qualified only for pinned 0.144.4"):
+        create_codex_agent_app(
+            runtime_factory=unreachable_runtime_factory,
+            working_directory_root=tmp_path,
+            credential_file=version_gate_credential,
+            versions=RuntimeVersions(sdk="0.144.5", runtime="0.144.4"),
+        )
+
     unattested_root = tmp_path / "unattested"
     unattested_cwd = unattested_root / "empty-cwd"
-    unattested_state = unattested_root / "state"
+    unattested_credential = unattested_root / "auth.json"
     unattested_root.mkdir()
     unattested_cwd.mkdir()
-    unattested_state.mkdir()
+    unattested_credential.write_bytes(_ENROLLED_AUTH)
+    unattested_credential.chmod(0o600)
     unattested_paths = _capacity_paths(unattested_root)
     unattested_events = tuple(context.Event() for _ in range(11))
     unattested_socket = _short_socket_path()
     unattested_process, unattested_report, unattested_ready = _start_host(
         unattested_socket,
         unattested_cwd,
-        unattested_state,
+        unattested_credential,
         unattested_paths.meminfo.parent,
         unattested_events,
         chat_network_attested=False,
@@ -730,18 +1221,30 @@ def test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot(
     )
     socket_path = _short_socket_path()
     cwd = tmp_path / "empty-cwd"
-    state_root = tmp_path / "state"
+    credential_file = tmp_path / "enrolled-auth.json"
     cwd.mkdir()
-    state_root.mkdir()
+    credential_file.write_bytes(_ENROLLED_AUTH)
+    credential_file.chmod(0o600)
     paths = _capacity_paths(tmp_path)
     process, report, ready = _start_host(
         socket_path,
         cwd,
-        state_root,
+        credential_file,
         paths.meminfo.parent,
         events,
         chat_network_attested=True,
     )
+    reports: list[Mapping[str, object]] = []
+
+    def collect_reports() -> None:
+        while True:
+            try:
+                reports.append(cast(Mapping[str, object], report.recv()))
+            except EOFError:
+                return
+
+    report_collector = threading.Thread(target=collect_reports)
+    report_collector.start()
 
     commands = {
         1: _command(1, "synthesis", structured=True),
@@ -753,8 +1256,9 @@ def test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot(
         7: _command(7, "after-cancel"),
         8: _command(8, "hold-for-policy-violation", chat=True),
         9: _command(9, "after-policy-violation"),
-        10: _command(10, "hold-for-disconnect"),
+        10: _command(10, "hold-for-disconnect", chat=True),
         11: _command(11, "after-disconnect"),
+        13: _command(13, "pure-cancellation"),
     }
     observed: dict[int, tuple[GenerationFrame, ...]] = {}
     try:
@@ -768,6 +1272,24 @@ def test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot(
                     policy_revision=generation_policy.POLICY_REVISION,
                     sdk_version=_VERSIONS.sdk,
                     runtime_version=_VERSIONS.runtime,
+                )
+
+                paths.memory_current.write_text(
+                    f"{385 * 1024 * 1024}\n",
+                    encoding="ascii",
+                )
+                capacity_refusal = await _post(client, _command(12, "capacity-refusal"))
+                assert capacity_refusal == (
+                    503,
+                    "application/json",
+                    b'{"schema_version":"nexus-generation-rejection.v2",'
+                    b'"kind":"capacity_unavailable"}',
+                ), (
+                    "non-admissible capacity must be the exact 503 rejection before runtime construction"
+                )
+                paths.memory_current.write_text(
+                    f"{128 * 1024 * 1024}\n",
+                    encoding="ascii",
                 )
 
                 for index in range(1, 6):
@@ -790,8 +1312,11 @@ def test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot(
                 assert await asyncio.to_thread(started.wait, 5), "runtime did not start"
                 cancel_url = f"http://nexus-codex/v2/generations/{_request_id(6)}/cancel"
                 first_cancel = await client.post(cancel_url)
-                second_cancel = await client.post(cancel_url)
-                assert (first_cancel.status_code, second_cancel.status_code) == (204, 204)
+                policy_after_cancel_url = (
+                    f"http://nexus-codex/v2/generations/{_request_id(6)}/policy-violation"
+                )
+                policy_after_cancel = await client.post(policy_after_cancel_url)
+                assert (first_cancel.status_code, policy_after_cancel.status_code) == (204, 204)
                 assert await asyncio.to_thread(cancel_observed.wait, 5)
                 assert await asyncio.to_thread(close_started.wait, 5)
 
@@ -811,7 +1336,10 @@ def test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot(
                     "application/x-ndjson",
                 )
                 observed[6] = _frames(commands[6], cancelled_body)
-                assert _terminal(observed[6]).status == "cancelled"
+                cancel_then_policy_terminal = _terminal(observed[6])
+                assert cancel_then_policy_terminal.status == "failed"
+                assert cancel_then_policy_terminal.failure is not None
+                assert cancel_then_policy_terminal.failure.kind == "policy_violation"
                 assert close_finished.is_set()
 
                 admitted = await _post(client, commands[7])
@@ -830,7 +1358,10 @@ def test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot(
                     f"http://nexus-codex/v2/generations/{_request_id(8)}/policy-violation"
                 )
                 assert (await client.post(matching_url)).status_code == 204
-                assert (await client.post(matching_url)).status_code == 204
+                cancel_after_policy_url = (
+                    f"http://nexus-codex/v2/generations/{_request_id(8)}/cancel"
+                )
+                assert (await client.post(cancel_after_policy_url)).status_code == 204
                 assert await asyncio.to_thread(policy_observed.wait, 5)
                 assert await asyncio.to_thread(policy_close_started.wait, 5)
 
@@ -882,7 +1413,12 @@ def test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot(
 
                 assert await asyncio.to_thread(policy_observed.wait, 5)
                 assert await asyncio.to_thread(policy_close_started.wait, 5)
-                disconnect_busy = await _post(client, commands[11])
+                probe_transport = httpx.AsyncHTTPTransport(uds=str(socket_path))
+                async with httpx.AsyncClient(
+                    transport=probe_transport,
+                    timeout=5,
+                ) as probe_client:
+                    disconnect_busy = await _post(probe_client, commands[11])
                 assert disconnect_busy[0] == 503
                 assert not policy_close_finished.is_set()
 
@@ -891,6 +1427,26 @@ def test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot(
                 post_disconnect = await _post(client, commands[11])
                 assert post_disconnect[0] == 200
                 observed[11] = _frames(commands[11], post_disconnect[2])
+
+                started.clear()
+                cancel_observed.clear()
+                close_started.clear()
+                close_release.clear()
+                close_finished.clear()
+                pure_cancel_turn = asyncio.create_task(_post(client, commands[13]))
+                assert await asyncio.to_thread(started.wait, 5)
+                pure_cancel_url = f"http://nexus-codex/v2/generations/{_request_id(13)}/cancel"
+                assert (await client.post(pure_cancel_url)).status_code == 204
+                assert await asyncio.to_thread(cancel_observed.wait, 5)
+                assert await asyncio.to_thread(close_started.wait, 5)
+                close_release.set()
+                pure_status, pure_type, pure_body = await pure_cancel_turn
+                assert (pure_status, pure_type.split(";", 1)[0]) == (
+                    200,
+                    "application/x-ndjson",
+                )
+                observed[13] = _frames(commands[13], pure_body)
+                assert _terminal(observed[13]).status == "cancelled"
 
         asyncio.run(exercise())
     finally:
@@ -904,12 +1460,13 @@ def test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot(
         ready.close()
     try:
         assert process.exitcode == 0
-        reports = tuple(_messages(report))
+        report_collector.join(5)
+        assert not report_collector.is_alive(), "UDS host report pipe remained open"
     finally:
         report.close()
 
     factory_indices = [entry["index"] for entry in reports if entry["kind"] == "factory"]
-    assert factory_indices == list(range(1, 12)), "busy refusal constructed a runtime"
+    assert factory_indices == list(range(1, 13)), "busy refusal constructed a runtime"
     lowering = {
         cast(int, entry["index"]): cast(Mapping[str, object], entry)
         for entry in reports
@@ -922,6 +1479,40 @@ def test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot(
     }
     assert cleanup == {2: True, 4: True, 5: True}
 
+    lowered_cwds = {
+        index: Path(cast(str, cast(Mapping[str, object], entry["request"])["cwd"]))
+        for index, entry in lowering.items()
+    }
+    assert len(set(lowered_cwds.values())) == len(lowered_cwds)
+    assert all(
+        path.name == "workspace" and path.parent.parent == cwd for path in lowered_cwds.values()
+    )
+    assert all(not path.exists() for path in lowered_cwds.values())
+    assert not any(cwd.iterdir()), "per-turn tmpfs residue survived runtime close"
+    assert all(entry["cwd_empty_on_open"] is True for entry in lowering.values())
+    assert all(entry["cwd_residue_present_at_close"] is True for entry in lowering.values())
+    assert all(entry["state_residue_present_at_close"] is True for entry in lowering.values())
+    assert lowering[1]["runtime_auth_at_open"] == _ENROLLED_AUTH
+    assert lowering[1]["durable_auth_after_open"] == _REFRESHED_AUTH
+    assert all(
+        entry["runtime_auth_at_open"] == _REFRESHED_AUTH
+        for index, entry in lowering.items()
+        if index != 1
+    ), "the pinned refresh write was not visible to the next turn"
+    assert all(entry["runtime_auth_after_close"] == _REFRESHED_AUTH for entry in lowering.values())
+    assert all(
+        entry["runtime_auth_link_target"] == str(credential_file) for entry in lowering.values()
+    )
+    lowered_state_roots = {
+        index: Path(cast(str, entry["state_root_base"])) for index, entry in lowering.items()
+    }
+    assert all(
+        path == lowered_cwds[index].parent / "state" for index, path in lowered_state_roots.items()
+    )
+    assert all(not path.exists() for path in lowered_state_roots.values())
+    assert all(not path.parent.exists() for path in lowered_cwds.values())
+    assert credential_file.read_bytes() == _REFRESHED_AUTH
+
     synthesis = cast(Mapping[str, object], lowering[1]["request"])
     assert synthesis == {
         "backend": "codex",
@@ -932,7 +1523,7 @@ def test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot(
         "reasoning": "low",
         "system": ("instructions-1",),
         "developer": (),
-        "cwd": str(cwd),
+        "cwd": str(lowered_cwds[1]),
         "additional_dirs": (),
         "policy": {
             "filesystem": "read_only",
@@ -954,7 +1545,7 @@ def test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot(
         "approvals_supplied": False,
         "cancel_supplied": True,
     }
-    assert lowering[1]["state_root_base"] == str(state_root)
+    assert lowering[1]["state_root_base"] == str(lowered_state_roots[1])
     assert lowering[1]["resolver_present"] is False
 
     chat = cast(Mapping[str, object], lowering[2]["request"])
@@ -968,7 +1559,7 @@ def test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot(
         "reasoning": "medium",
         "system": ("instructions-2",),
         "developer": (),
-        "cwd": str(cwd),
+        "cwd": str(lowered_cwds[2]),
         "additional_dirs": (),
         "policy": {
             "filesystem": "workspace_write",
@@ -1014,7 +1605,7 @@ def test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot(
     assert lowering[2]["resolver_present"] is True
     assert lowering[2]["resolver_matches"] is True
     assert lowering[2]["secret_absent_from_repr"] is True
-    assert lowering[2]["state_root_base"] == str(state_root)
+    assert lowering[2]["state_root_base"] == str(lowered_state_roots[2])
 
     def reference_name(index: int) -> str:
         request = cast(Mapping[str, object], lowering[index]["request"])

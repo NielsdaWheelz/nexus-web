@@ -9,6 +9,14 @@
 **Status:** IMPLEMENTED · **Scope:** chat presentation and interaction only ·
 **Doctrine:** hard cut; one owner per capability; no compatibility path
 
+> **Generation-surface amendment (2026-08-25):** The provider-privacy,
+> retention, variable-reasoning, and price facts in this historical presentation
+> cut are non-authoritative. The current product contract is
+> [`codex-personal-generation-hard-cutover.md`](codex-personal-generation-hard-cutover.md):
+> chat exposes exactly `fast`, `balanced`, and `deep` (default `balanced`), each
+> with a fixed display-only model/effort label; it has no effort selector,
+> privacy/retention profile variant, or product cost display.
+
 ## 1. Decision
 
 Make chat read like a conversation, not an instrumentation panel:
@@ -214,9 +222,9 @@ it to send gating and accessible copy. Local `sending`, `reconciling`, empty
 draft, missing profile, and pending quote hydration remain composer-owned
 conditions; they are not added to this caller capability.
 
-Profile/reasoning continuation is governed by
-`chat-continuation-selection-hard-cutover.md`: `ChatComposer` owns the cached
-catalog and resolves explicit draft choice, causal assistant-run selection, and
+Profile-only continuation is governed by
+`codex-personal-generation-hard-cutover.md`: `ChatComposer` owns the cached
+catalog and resolves explicit draft choice, causal assistant-run profile, and
 the exact product default in that order. `ChatProfilePicker` is a pure
 controlled renderer and owns no fetching, defaulting, validation, or mount-time
 mutation.

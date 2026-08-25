@@ -23,7 +23,24 @@ DEAD = "dead"
 
 TERMINAL_STATUSES = frozenset({SUCCEEDED, DEAD})
 
+_CHAT_GENERATION_ADMISSION_LOCK_KEY = "codex-personal-generation-chat-admission.v1"
+
 type JobResourceClass = Literal["Light", "Heavy"]
+
+
+def lock_chat_generation_admission_in_current_transaction(db: Session) -> None:
+    """Serialize Chat queue admission against new background generations.
+
+    Chat mutation owners take this before domain row locks; ``_insert_job_row``
+    repeats it as a re-entrant doorway assertion. Background generation takes
+    its generation-owner lock, then this lock, then atomically arms dispatch.
+    """
+
+    db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
+        {"lock_key": _CHAT_GENERATION_ADMISSION_LOCK_KEY},
+    )
+
 
 _INSERT_JOB_SQL = text(
     """
@@ -459,6 +476,8 @@ def _insert_job_row(
     available_at: datetime | None,
     dedupe_key: str | None,
 ) -> JobRow:
+    if kind == "chat_run":
+        lock_chat_generation_admission_in_current_transaction(db)
     row = (
         db.execute(
             _INSERT_JOB_SQL,

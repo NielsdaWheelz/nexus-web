@@ -1,4 +1,4 @@
-"""Hard-cut residue proof for metadata-owned native-agent failures."""
+"""Hard-cut residue proof for metadata-owned Codex generation dispatch."""
 
 import ast
 from pathlib import Path

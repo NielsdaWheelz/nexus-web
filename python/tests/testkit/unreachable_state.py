@@ -175,6 +175,21 @@ def expire_job_claim(db: Session, *, job_id: UUID) -> None:
     )
 
 
+def expire_artifact_learn_resolver_lease(db: Session, *, request_id: UUID) -> None:
+    """Model an abandoned request-scoped Idea resolver without waiting."""
+
+    updated = db.execute(
+        text(
+            "UPDATE artifact_learn_requests "
+            "SET resolver_lease_expires_at = now() - interval '1 second' "
+            "WHERE id = :request_id "
+            "RETURNING id"
+        ),
+        {"request_id": request_id},
+    ).scalar_one()
+    assert updated == request_id
+
+
 def force_upload_cleanup_job_due(db: Session, *, job_id: UUID) -> None:
     """Advance one upload cleanup reservation past both durable deletion fences."""
     deadline = "1970-01-01T00:00:00+00:00"
@@ -417,39 +432,6 @@ def replace_dead_dossier_step_tool_execution(
     ).scalar_one()
     assert updated == job_id
     return previous
-
-
-def replace_completed_chat_tool_arguments(
-    db: Session,
-    *,
-    job_id: UUID,
-    tool_call_index: int,
-    arguments: dict[str, object],
-) -> None:
-    """Model a changed provider invocation inside one completed Chat generation."""
-
-    payload = db.execute(
-        text("SELECT payload FROM background_jobs WHERE id = :job_id FOR UPDATE"),
-        {"job_id": job_id},
-    ).scalar_one()
-    changed = json.loads(json.dumps(payload))
-    generation = changed["coordination"]["turn/0/generation"]
-    terminal = generation["terminal_result"]
-    assert terminal["kind"] == "Present"
-    assistant_turn = json.loads(terminal["value"])
-    calls = assistant_turn["tool_calls"]
-    assert len(calls) >= tool_call_index
-    calls[tool_call_index - 1]["arguments"] = arguments
-    terminal["value"] = json.dumps(
-        assistant_turn,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    )
-    db.execute(
-        text("UPDATE background_jobs SET payload = CAST(:payload AS jsonb) WHERE id = :job_id"),
-        {"job_id": job_id, "payload": json.dumps(changed)},
-    )
 
 
 def replace_completed_chat_tool_terminal(

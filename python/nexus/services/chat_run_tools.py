@@ -168,7 +168,7 @@ def decode_persisted_tool_record(row: MessageToolCall) -> PersistedToolRecord:
             valid = False
         else:
             valid = (
-                provider is None
+                provider in {None, identity.canonical_tool_id}
                 and identity.canonical_tool_id == canonical
                 and row.tool_call_index >= 1
             )
@@ -275,11 +275,12 @@ def _assert_current_position(
     row: Any,
     *,
     identity: CurrentToolRecordIdentity,
+    provider_wire_name: str | None,
 ) -> None:
     if (
         row["canonical_tool_id"] != identity.canonical_tool_id
         or row["record_kind"] != RecordKind.current_execution
-        or row["provider_wire_name"] is not None
+        or row["provider_wire_name"] != provider_wire_name
         or row["canonical_input_sha256"] != identity.canonical_input_sha256
         or row["tool_contract_revision"] != identity.tool_contract_revision
         or row["binding_policy_revision"] != identity.binding_policy_revision
@@ -295,6 +296,7 @@ def persist_current_tool_record(
     assistant_message_id: UUID,
     tool_call_index: int,
     identity: CurrentToolRecordIdentity,
+    provider_wire_name: str | None = None,
     search_query_fingerprint: str | None,
     scope: str,
     requested_types: list[str],
@@ -317,6 +319,7 @@ def persist_current_tool_record(
         "assistant_message_id": assistant_message_id,
         "tool_call_index": tool_call_index,
         "canonical_tool_id": identity.canonical_tool_id,
+        "provider_wire_name": provider_wire_name,
         "canonical_input_sha256": identity.canonical_input_sha256,
         "tool_contract_revision": identity.tool_contract_revision,
         "binding_policy_revision": identity.binding_policy_revision,
@@ -379,7 +382,7 @@ def persist_current_tool_record(
                     :assistant_message_id,
                     :canonical_tool_id,
                     'current_execution',
-                    NULL,
+                    :provider_wire_name,
                     :canonical_input_sha256,
                     :tool_contract_revision,
                     :binding_policy_revision,
@@ -405,13 +408,18 @@ def persist_current_tool_record(
             params,
         ).scalar_one()
 
-    _assert_current_position(existing, identity=identity)
+    _assert_current_position(
+        existing,
+        identity=identity,
+        provider_wire_name=provider_wire_name,
+    )
     tool_call_id = existing["id"]
     db.execute(
         text(
             """
             UPDATE message_tool_calls
-            SET search_query_fingerprint = :search_query_fingerprint,
+            SET provider_wire_name = :provider_wire_name,
+                search_query_fingerprint = :search_query_fingerprint,
                 scope = :scope,
                 requested_types = :requested_types,
                 result_refs = :result_refs,
@@ -441,6 +449,7 @@ def persist_tool_call_start(
     run: ChatRun,
     tool_call_index: int,
     identity: CurrentToolRecordIdentity,
+    provider_wire_name: str | None = None,
     scope: str,
     requested_types: list[str],
 ) -> UUID:
@@ -451,6 +460,7 @@ def persist_tool_call_start(
         assistant_message_id=run.assistant_message_id,
         tool_call_index=tool_call_index,
         identity=identity,
+        provider_wire_name=provider_wire_name,
         search_query_fingerprint=None,
         scope=scope,
         requested_types=requested_types,

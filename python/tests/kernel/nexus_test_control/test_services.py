@@ -25,7 +25,6 @@ from nexus_test_control.runtime import (
     initialize_runtime,
     migration_database_name,
     process_resource_identity,
-    provider_fixture_identity,
     read_ledger,
     record_created,
     record_planned,
@@ -45,8 +44,6 @@ from nexus_test_control.services import (
     clean_owned_runtime,
     clean_run,
     new_run_id,
-    prepare_openai_provider_fixture,
-    release_openai_provider_fixture,
     run_environment,
     start_python_process,
     start_web_process,
@@ -124,67 +121,6 @@ def _empty_owned_run(tmp_path: Path) -> OwnedRun:
             "http://127.0.0.1:25421", "public-anon-key", "must-not-escape"
         ),
     )
-
-
-def test_openai_provider_fixture_is_ledgered_before_state_and_cleaned_exactly(
-    tmp_path: Path,
-) -> None:
-    run = _empty_owned_run(tmp_path)
-
-    fixture = prepare_openai_provider_fixture(tmp_path, TEST_ENV, run)
-
-    entry = read_ledger(tmp_path, RUN_ID).entries[-1]
-    assert entry.resource == Resource(
-        ResourceKind.PROVIDER_FIXTURE, fixture.state.relative_to(tmp_path).as_posix()
-    )
-    assert fixture.certificate.is_file()
-    assert fixture.key.is_file()
-    assert fixture.audit.is_file()
-
-    clean_run(tmp_path, TEST_ENV, RUN_ID)
-    assert not fixture.state.exists()
-
-
-def test_openai_provider_fixture_preserves_preexisting_unrecorded_state(tmp_path: Path) -> None:
-    run = _empty_owned_run(tmp_path)
-    state = tmp_path / ".nexus-test/runs" / RUN_ID / "openai-provider"
-    state.mkdir()
-    sentinel = state / "sentinel"
-    sentinel.write_text("preserve", encoding="utf-8")
-
-    with pytest.raises(RuntimeContractError, match="already exists"):
-        prepare_openai_provider_fixture(tmp_path, TEST_ENV, run)
-
-    assert sentinel.read_text(encoding="utf-8") == "preserve"
-    assert read_ledger(tmp_path, RUN_ID).entries == ()
-
-
-def test_openai_provider_fixture_cleanup_recovers_partial_planned_state(tmp_path: Path) -> None:
-    _empty_owned_run(tmp_path)
-    resource = Resource(ResourceKind.PROVIDER_FIXTURE, provider_fixture_identity(RUN_ID))
-    record_planned(tmp_path, TEST_ENV, RUN_ID, resource)
-    state = tmp_path / resource.identity
-    state.mkdir()
-    (state / "ca.pem").write_text("partial", encoding="utf-8")
-
-    clean_run(tmp_path, TEST_ENV, RUN_ID)
-
-    assert not state.exists()
-
-
-def test_idle_openai_provider_fixture_can_release_and_recreate_in_one_run(tmp_path: Path) -> None:
-    run = _empty_owned_run(tmp_path)
-    first = prepare_openai_provider_fixture(tmp_path, TEST_ENV, run)
-    first_certificate = first.certificate.read_bytes()
-
-    release_openai_provider_fixture(tmp_path, TEST_ENV, RUN_ID)
-    second = prepare_openai_provider_fixture(tmp_path, TEST_ENV, run)
-
-    assert second.certificate.read_bytes() != first_certificate
-    assert second.state.is_dir()
-    assert [entry.resource.kind for entry in read_ledger(tmp_path, RUN_ID).entries] == [
-        ResourceKind.PROVIDER_FIXTURE
-    ]
 
 
 def test_run_ids_are_exact_opaque_test_ownership_ids() -> None:

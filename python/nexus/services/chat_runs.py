@@ -1,71 +1,22 @@
 """Durable chat-run service.
 
-One chat send is one durable run. HTTP creates/cancels/reads runs; the worker
-executes tools and provider streaming via ``llm_execution.
-execute_generation_stream`` (the sole generation boundary); the stream route
-only tails persisted events.
+ One chat send is one durable run. HTTP creates/cancels/reads runs; the worker
+executes a typed ChatTools command through the Codex host and tails persisted
+events for the stream route.
 """
 
 from __future__ import annotations
 
 import asyncio
 import dataclasses
-import hashlib
-import json
 import time
-from collections.abc import AsyncGenerator
 from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
 from uuid import UUID, uuid4
 
-from llm_tools import (
-    EffectId,
-    MalformedJson,
-    ParsedJson,
-    ToolEffect,
-    ToolExecutor,
-    ToolId,
-    WebSearchProvider,
-    canonical_json_bytes,
-    raw_input_digest,
-)
-from provider_runtime import (
-    Absent,
-    Cancelled,
-    CanonicalTool,
-    ContinuationDelta,
-    Failed,
-    Incomplete,
-    Present,
-    ReasoningLevel,
-    RuntimeStreamEvent,
-    StreamStart,
-    Succeeded,
-    TerminalEvent,
-    TextDelta,
-    ToolCallDelta,
-    ToolCallDone,
-    ToolCallStart,
-    UsageEvent,
-)
-from provider_runtime.registry import ModelRow, resolve_target
-from provider_runtime.tool_adapter import (
-    CanonicalToolCall,
-    PublishedTools,
-    RejectedToolArguments,
-    RejectedToolCall,
-    ToolPublication,
-    lower_tools,
-)
-from provider_runtime.types import (
-    CancelSignal,
-    ContinuationArtifact,
-    Presence,
-    PromptMessage,
-    ToolCall,
-)
-from pydantic import JsonValue
+from llm_tools import WebSearchProvider
+from pydantic import JsonValue, SecretStr
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -86,8 +37,10 @@ from nexus.errors import (
 from nexus.jobs.queue import (
     JobExecutionContext,
     JobRow,
+    RescheduleRequested,
     current_dead_job_for_payload,
     enqueue_job,
+    lock_chat_generation_admission_in_current_transaction,
     requeue_dead_job,
 )
 from nexus.logging import get_logger, set_flow_id
@@ -98,13 +51,13 @@ from nexus.schemas.conversation import (
     BranchAnchorRequest,
     ChatDestination,
     ChatRunResponse,
-    ChatRunToolResultEventPayload,
     EmptyInsertion,
     ExistingChatDestination,
     NoBranchAnchorRequest,
     ReplyInsertion,
-    StoredToolProjection,
 )
+from nexus.services import generation_policy
+from nexus.services.agent_tool_grants import issue_chat_generation_grant
 from nexus.services.chat_reader_selection import (
     build_reader_selection_snapshot,
     compute_reader_selection_revision,
@@ -122,11 +75,10 @@ from nexus.services.chat_run_event_store import (
     TERMINAL_RUN_STATUSES,
     ChatRunEventEmitter,
     is_cancel_requested,
+    lock_chat_run_for_update,
     mark_running,
 )
 from nexus.services.chat_run_finalize import (
-    MAX_ASSISTANT_CONTENT_LENGTH,
-    TRUNCATION_NOTICE,
     finalize_cancelled,
     finalize_run,
 )
@@ -145,32 +97,28 @@ from nexus.services.chat_run_steps import (
     CancelledGeneration,
     ChatStepRuntime,
     ExpectedFailure,
-    LostChatJobLease,
+    GenerationStepResultEnvelope,
     PreparedChatRun,
     PublicationRequest,
     PublicationStepResult,
-    RejectedToolStepRequest,
-    RejectedToolStepResult,
-    assistant_message_from_turn,
     assistant_turn_result,
     chat_tool_profile_admission,
-    decode_generation,
     decode_prepared,
-    decode_rejected_tool,
     step_fingerprint,
-    tool_result_message,
     validate_chat_tool_profile,
 )
-from nexus.services.chat_run_tools import (
-    RecordKind,
-    ToolModelOutput,
-    ToolStepRequest,
-    ToolStepResult,
-    bind_provider_tool_call_events,
-    persist_rejected_provider_tool_call,
-)
-from nexus.services.chat_run_usage import usage_provider_json
 from nexus.services.chat_run_validation import validate_pre_phase
+from nexus.services.codex_generation_contract import (
+    ChatOperation,
+    GenerationCommand,
+    GenerationFrame,
+    GenerationTerminal,
+    GenerationText,
+    GenerationToolUse,
+    GenerationUsageEvent,
+    normalized_failure,
+    request_fingerprint,
+)
 from nexus.services.collection_revisions import (
     CollectionFamily,
     bump_collection_revision,
@@ -185,20 +133,19 @@ from nexus.services.durable_step_journal import (
     Prepared,
     ReplayPolicy,
     StepReplayState,
+    decode_step_result,
+    encode_step_result,
     stable_generation_id,
 )
+from nexus.services.generation_intent import BearerToolGrant
 from nexus.services.llm_execution import (
-    DispatchTransferred,
+    EncodedGenerationTerminal,
     ExecutionRuntime,
-    GenerationRequest,
-    execute_generation_stream,
+    GenerationExecutionRequest,
+    JobGenerationJournal,
+    execute_generation,
 )
-from nexus.services.llm_intent_state import GenerateIntentState, tool_call_from_state
 from nexus.services.llm_ledger import LlmCallOwner
-from nexus.services.llm_outcomes import outcome_failure_facts
-from nexus.services.llm_profiles import LlmProfile
-from nexus.services.llm_profiles import profile as lookup_profile
-from nexus.services.llm_profiles import reasoning_level as lookup_reasoning_level
 from nexus.services.prompt_budget import ContextBudgetError
 from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.redact import safe_kv
@@ -211,18 +158,117 @@ from nexus.services.tool_runtime.composition import (
     FrozenToolOperation,
     compose_product_tool_runtime,
 )
-from nexus.services.tool_runtime.declarations import CHAT_TOOL_DECLARATIONS
 
 logger = get_logger(__name__)
 
 
-REASONING_OUTPUT_TOKENS = 25000
-DEFAULT_OUTPUT_TOKENS = 4096
-MAX_TOOL_ITERATIONS = 8
 CHAT_TEXT_FLUSH_INTERVAL_MS = 33
 CHAT_TEXT_FLUSH_MAX_CHARS = 512
 CHAT_TEXT_FLUSH_MAX_BYTES = 2048
 CHAT_CANCEL_POLL_INTERVAL_SECONDS = 0.25
+CHAT_CAPACITY_WAIT_DELAYS_SECONDS = (5, 10)
+
+
+class _ChatTextCoalescer:
+    """Own the one bounded host-frame to durable-SSE text fold."""
+
+    def __init__(self, emitter: ChatRunEventEmitter) -> None:
+        self._emitter = emitter
+        self._text = ""
+        self._sequence_start: int | None = None
+        self._sequence_end: int | None = None
+        self._timer: asyncio.Task[None] | None = None
+        self._failure: BaseException | None = None
+
+    async def add(self, *, text: str, sequence: int) -> None:
+        self._raise_if_failed()
+        if not text:
+            return
+        remaining = text
+        while remaining:
+            prefix = _bounded_text_prefix(
+                remaining,
+                max_chars=CHAT_TEXT_FLUSH_MAX_CHARS - len(self._text),
+                max_bytes=CHAT_TEXT_FLUSH_MAX_BYTES - len(self._text.encode("utf-8")),
+            )
+            if not prefix:
+                await self.flush()
+                continue
+            if self._sequence_start is None:
+                self._sequence_start = sequence
+            self._sequence_end = sequence
+            self._text += prefix
+            remaining = remaining[len(prefix) :]
+            if (
+                remaining
+                or len(self._text) == CHAT_TEXT_FLUSH_MAX_CHARS
+                or len(self._text.encode("utf-8")) == CHAT_TEXT_FLUSH_MAX_BYTES
+            ):
+                await self.flush()
+        if self._text and self._timer is None:
+            self._timer = asyncio.create_task(self._flush_after_interval())
+
+    async def flush(self) -> None:
+        timer = self._timer
+        self._timer = None
+        if timer is not None and timer is not asyncio.current_task():
+            timer.cancel()
+            with suppress(asyncio.CancelledError):
+                await timer
+        self._raise_if_failed()
+        self._flush_now()
+
+    async def close(self) -> None:
+        await self.flush()
+
+    async def _flush_after_interval(self) -> None:
+        try:
+            await asyncio.sleep(CHAT_TEXT_FLUSH_INTERVAL_MS / 1_000)
+            self._timer = None
+            self._flush_now()
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:
+            self._failure = exc
+
+    def _flush_now(self) -> None:
+        if not self._text:
+            return
+        if self._sequence_start is None or self._sequence_end is None:
+            raise AssertionError("buffered Chat text has no provider sequence")
+        if (
+            len(self._text) > CHAT_TEXT_FLUSH_MAX_CHARS
+            or len(self._text.encode("utf-8")) > CHAT_TEXT_FLUSH_MAX_BYTES
+        ):
+            raise AssertionError("buffered Chat text exceeds its durable SSE bound")
+        self._emitter.assistant_text_delta(
+            text=self._text,
+            provider_event_seq_start=self._sequence_start,
+            provider_event_seq_end=self._sequence_end,
+        )
+        self._text = ""
+        self._sequence_start = None
+        self._sequence_end = None
+
+    def _raise_if_failed(self) -> None:
+        if self._failure is not None:
+            raise RuntimeError("Chat SSE text flush failed") from self._failure
+
+
+def _bounded_text_prefix(text: str, *, max_chars: int, max_bytes: int) -> str:
+    """Take the largest whole-code-point prefix inside both SSE limits."""
+
+    if max_chars < 1 or max_bytes < 1:
+        return ""
+    byte_count = 0
+    end = 0
+    for character in text[:max_chars]:
+        encoded_bytes = len(character.encode("utf-8"))
+        if byte_count + encoded_bytes > max_bytes:
+            break
+        byte_count += encoded_bytes
+        end += 1
+    return text[:end]
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -269,6 +315,8 @@ type ChatExecutionOutcome = (
     | CancelledChatExecution
     | SkippedChatExecution
 )
+
+type ChatExecutionResult = ChatExecutionOutcome | RescheduleRequested
 
 
 def _presence(value: str | None) -> owned_presence.Presence[str]:
@@ -325,14 +373,14 @@ def _log_chat_run_finished(
             "nexus.chat_run.error_code": run.error_code,
             "nexus.chat_run.warning_code": run.publication_warning_code,
             "nexus.chat_run.support_id": run.support_id,
-            "nexus.llm.provider": run.provider,
+            "nexus.llm.backend": "codex",
             "nexus.llm.model": run.model_name,
             "nexus.llm.reasoning": run.reasoning_effort,
             "nexus.chat_run.queue_wait_ms": queue_wait_ms,
             "nexus.chat_run.execution_ms": execution_ms,
             "nexus.chat_run.citation_finalize_ms": citation_finalize_ms,
             "nexus.chat_run.first_visible_text_ms": first_visible_text_ms,
-            "nexus.chat_run.provider_event_count": provider_event_count,
+            "nexus.chat_run.generation_event_count": provider_event_count,
         },
     )
 
@@ -343,103 +391,6 @@ def _chat_tool_operation(
     return compose_product_tool_runtime(web_search_provider).operations["chat"]
 
 
-def _presented_tool(tool_id: ToolId) -> Any:
-    matches = [entry for entry in CHAT_TOOL_DECLARATIONS if entry.spec.id == tool_id]
-    if len(matches) != 1:
-        raise AssertionError(f"frozen Chat tool has no unique presentation: {tool_id!s}")
-    return matches[0]
-
-
-def _canonical_tool_projection(
-    operation: FrozenToolOperation,
-    *,
-    tool_id: ToolId,
-    canonical_input_sha256: str | None,
-) -> StoredToolProjection:
-    binding = operation.plan.catalog_view.binding(tool_id)
-    presented = _presented_tool(tool_id)
-    return StoredToolProjection(
-        record_kind=RecordKind.current_execution.value,
-        canonical_tool_id=str(tool_id),
-        provider_wire_name=None,
-        effect=binding.spec.effect,
-        result_kind=presented.result_kind,
-        activity_label=presented.activity_label,
-        error_type=None,
-        canonical_input_sha256=canonical_input_sha256,
-        tool_contract_revision=binding.spec.tool_contract_revision,
-        binding_policy_revision=binding.policy_revision,
-    )
-
-
-def _rejected_tool_projection(provider_wire_name: str) -> StoredToolProjection:
-    return StoredToolProjection(
-        record_kind=RecordKind.rejected_provider_call.value,
-        canonical_tool_id=None,
-        provider_wire_name=provider_wire_name,
-        effect=None,
-        result_kind="rejected_provider_call",
-        activity_label="Skipped an unavailable tool",
-        error_type=None,
-        canonical_input_sha256=None,
-        tool_contract_revision=None,
-        binding_policy_revision=None,
-    )
-
-
-def _provider_tool_projection(
-    published: PublishedTools,
-    operation: FrozenToolOperation,
-    *,
-    call: ToolCall,
-    include_input_digest: bool,
-) -> StoredToolProjection:
-    resolution = published.decode_tool_call(call)
-    if isinstance(resolution, RejectedToolCall):
-        return _rejected_tool_projection(resolution.raw_name)
-    digest = (
-        raw_input_digest(_provider_raw_tool_input(call, resolution))
-        if include_input_digest
-        else None
-    )
-    return _canonical_tool_projection(
-        operation,
-        tool_id=resolution.tool_id,
-        canonical_input_sha256=digest,
-    )
-
-
-def _provider_raw_tool_input(
-    call: ToolCall,
-    resolution: CanonicalToolCall | RejectedToolArguments,
-) -> ParsedJson | MalformedJson:
-    """Preserve one executor-owned digest input for every known provider call."""
-
-    if isinstance(resolution, CanonicalToolCall) or resolution.reason == "InputTooLarge":
-        return ParsedJson(dict(call.arguments))
-    try:
-        arguments_sha256 = hashlib.sha256(
-            canonical_json_bytes(cast(JsonValue, dict(call.arguments)))
-        ).hexdigest()
-    except (RecursionError, ValueError) as exc:
-        raise AssertionError(
-            "known provider InvalidJson arguments cannot be canonically identified"
-        ) from exc
-    return MalformedJson(
-        raw_utf8=canonical_json_bytes(
-            {
-                "arguments_sha256": arguments_sha256,
-                "reason": resolution.reason,
-            }
-        )
-    )
-
-
-def _max_output_tokens_for_reasoning(row: ModelRow, reasoning: ReasoningLevel) -> int:
-    cap = DEFAULT_OUTPUT_TOKENS if reasoning == "none" else REASONING_OUTPUT_TOKENS
-    return min(cap, row.max_output_tokens)
-
-
 def create_chat_run(
     db: Session,
     *,
@@ -448,7 +399,6 @@ def create_chat_run(
     reader_selection: ReaderSelectionInput | None,
     content: str,
     profile_id: str,
-    reasoning_option_id: str,
     idempotency_key: str | None,
 ) -> ChatRunResponse:
     normalized_key = normalize_idempotency_key(idempotency_key)
@@ -459,7 +409,6 @@ def create_chat_run(
         destination=destination,
         content=content,
         profile_id=profile_id,
-        reasoning_option_id=reasoning_option_id,
         reader_selection_key=selection_key,
     )
 
@@ -476,13 +425,13 @@ def create_chat_run(
         destination=destination,
         content=content,
         profile_id=profile_id,
-        reasoning_option_id=reasoning_option_id,
     )
     tool_admission = chat_tool_profile_admission(_chat_tool_operation(None))
 
     try:
         # 2. Idempotency lock; a matching replay returns before source/revision
         #    validation, while a payload mismatch fails.
+        lock_chat_generation_admission_in_current_transaction(db)
         lock_idempotency_key(db, viewer_id, normalized_key)
         existing = get_run_by_idempotency_key(db, viewer_id, normalized_key)
         if existing is not None:
@@ -567,7 +516,6 @@ def create_chat_run(
             payload_hash=payload_hash,
             status="queued",
             profile_id=profile_id,
-            reasoning_option_id=reasoning_option_id,
             tool_profile_id=tool_admission.profile_id,
             tool_profile_revision=tool_admission.profile_revision,
             tool_profile_snapshot=tool_admission.snapshot,
@@ -592,7 +540,6 @@ def create_chat_run(
                 "user_message_id": str(prepared.user_message.id),
                 "assistant_message_id": str(prepared.assistant_message.id),
                 "profile_id": profile_id,
-                "reasoning_option_id": reasoning_option_id,
                 "chat_subject": (
                     {
                         "requested_resource_ref": subject_ref.uri,
@@ -612,7 +559,7 @@ def create_chat_run(
         enqueue_job(
             db,
             kind="chat_run",
-            payload={"run_id": str(run.id)},
+            payload={"run_id": str(run.id), "capacity_wait_index": 0},
             priority=50,
             max_attempts=3,
             dedupe_key=f"chat_run:{run.id}",
@@ -727,7 +674,11 @@ def list_chat_runs_for_conversation(
 
 
 def cancel_chat_run(db: Session, *, viewer_id: UUID, run_id: UUID) -> ChatRunResponse:
-    run = get_run_for_owner(db, viewer_id, run_id)
+    owned = get_run_for_owner(db, viewer_id, run_id)
+    lock_chat_generation_admission_in_current_transaction(db)
+    run = lock_chat_run_for_update(db, owned.id)
+    if run is None or run.owner_user_id != viewer_id:
+        raise AssertionError("owned chat run disappeared before cancellation")
     if run.status in TERMINAL_RUN_STATUSES:
         return build_chat_run_response(db, viewer_id, run)
     if run.cancel_requested_at is None:
@@ -753,31 +704,21 @@ def assert_chat_run_owner(db: Session, *, viewer_id: UUID, run_id: UUID) -> None
 
 
 async def _watch_chat_run_cancel(
-    db: Session, *, run_id: UUID, cancel_signal: asyncio.Event
+    session_factory: sessionmaker[Session],
+    *,
+    run_id: UUID,
+    cancel_signal: asyncio.Event,
 ) -> None:
     # justify-polling: cancel_requested_at is an UPDATE on the run row, while the
     # existing SSE push channel only notifies appended event rows. This watcher is
-    # scoped to one active provider stream and exits as soon as the stream ends.
+    # scoped to one active generation stream and exits as soon as the stream ends.
     while not cancel_signal.is_set():
-        if is_cancel_requested(db, run_id):
+        with session_factory() as cancel_db:
+            cancelled = is_cancel_requested(cancel_db, run_id)
+        if cancelled:
             cancel_signal.set()
             return
         await asyncio.sleep(CHAT_CANCEL_POLL_INTERVAL_SECONDS)
-
-
-def _latest_generation_support_id(db: Session, run_id: UUID) -> str | None:
-    """`llm_ledger._support_id`'s derivation (``generation_id.hex[:12]``),
-    re-derived from the run's most recent llm_calls row — the terminal fold
-    only receives the runtime's own ``RuntimeStreamEvent`` envelopes, which
-    carry no generation id, so the ledger identity is read back here."""
-    generation_id = db.execute(
-        text(
-            "SELECT id FROM llm_calls WHERE owner_kind = 'chat_run' AND owner_id = :run_id "
-            "ORDER BY call_seq DESC LIMIT 1"
-        ),
-        {"run_id": run_id},
-    ).scalar_one_or_none()
-    return generation_id.hex[:12] if generation_id is not None else None
 
 
 async def execute_chat_run(
@@ -790,7 +731,7 @@ async def execute_chat_run(
     runtime: ExecutionRuntime,
     settings: Settings,
     web_search_provider: WebSearchProvider | None = None,
-) -> ChatExecutionOutcome:
+) -> ChatExecutionResult:
     """Execute one claimed chat job; defects escape into queue recovery."""
     operation = _chat_tool_operation(web_search_provider)
     steps = ChatStepRuntime(
@@ -808,6 +749,7 @@ async def execute_chat_run(
             steps=steps,
             session_factory=session_factory,
             operation=operation,
+            settings=settings,
         )
     except Exception:
         db.rollback()
@@ -824,7 +766,8 @@ async def _execute_chat_run(
     steps: ChatStepRuntime,
     session_factory: sessionmaker[Session],
     operation: FrozenToolOperation,
-) -> ChatExecutionOutcome:
+    settings: Settings,
+) -> ChatExecutionResult:
     run = db.get(ChatRun, run_id)
     if run is None:
         steps.clear()
@@ -834,25 +777,15 @@ async def _execute_chat_run(
         return SkippedChatExecution(reason="Terminal")
     validate_chat_tool_profile(run, operation)
 
-    profile = lookup_profile(run.profile_id) if run.profile_id is not None else None
-    if profile is None:
+    profile = run.profile_id
+    if profile not in generation_policy.CHAT_PROFILES:
         raise AssertionError("chat run profile_id is missing or unknown")
-    reasoning = (
-        lookup_reasoning_level(profile, run.reasoning_option_id)
-        if run.reasoning_option_id is not None
-        else None
-    )
-    if reasoning is None:
-        raise AssertionError("chat run reasoning_option_id is missing or unsupported")
-
-    row = resolve_target(profile.target)
-    max_output_tokens = _max_output_tokens_for_reasoning(row, reasoning)
+    policy = generation_policy.chat_policy(profile)
     mark_running(
         db,
         run.id,
-        provider=profile.target.provider,
-        model_name=profile.target.model,
-        reasoning_effort=reasoning,
+        model_name=policy.model,
+        reasoning_effort=policy.effort,
     )
     run = db.get(ChatRun, run.id)
     if run is None:
@@ -866,17 +799,12 @@ async def _execute_chat_run(
     rate_limiter = get_rate_limiter()
     rate_limiter.acquire_inflight_slot(run.owner_user_id)
     try:
-        published_tools = lower_tools(ToolPublication(plan=operation.plan, revealed_targets=()))
-        tools = published_tools.tools
         try:
             prepared = _prepare_chat_run(
                 db,
                 run=run,
                 steps=steps,
                 profile=profile,
-                reasoning=reasoning,
-                max_output_tokens=max_output_tokens,
-                tools=tools,
             )
         except ContextBudgetError as exc:
             logger.warning(
@@ -895,7 +823,6 @@ async def _execute_chat_run(
                 run_status="error",
                 done_status="error",
                 error_code="context_too_large",
-                error_origin="intent",
                 support_id=uuid4().hex[:12],
                 error_detail=exception_error_detail(exc),
                 commit=False,
@@ -908,142 +835,49 @@ async def _execute_chat_run(
                 error_code="context_too_large",
             )
 
-        base_intent = prepared.generate_intent.to_intent()
-        messages: list[PromptMessage] = list(base_intent.messages)
         full_content = ""
         final_usage: dict[str, JsonValue] | None = None
         last_provider_event_seq: int | None = None
-        citation_n_next = prepared.initial_citation_ordinal
-        tool_call_index_next = prepared.initial_tool_call_index
-        call_owner = LlmCallOwner(kind="chat_run", id=run.id, user_id=run.owner_user_id)
         emitter = ChatRunEventEmitter(db, run, lease_fence=steps.lock_active_attempt)
-
-        for turn_index in range(MAX_TOOL_ITERATIONS):
-            if is_cancel_requested(db, run.id):
-                return _finalize_cancelled_execution(
-                    db,
-                    run=run,
-                    steps=steps,
-                    assistant_content=full_content,
-                    usage=final_usage,
-                    last_provider_event_seq=last_provider_event_seq,
-                )
-
-            generation_path = f"turn/{turn_index}/generation"
-            iter_intent = dataclasses.replace(base_intent, messages=tuple(messages))
-            request_state = GenerateIntentState.from_intent(iter_intent)
-            fingerprint = step_fingerprint(request_state)
-            generation_state = steps.read(generation_path, ReplayPolicy.BilledOnce)
-            if generation_state is None:
-                generation_state = steps.prepare(generation_path, fingerprint)
-            else:
-                _assert_step_fingerprint(generation_state, fingerprint)
-
-            if generation_state.dispatch_phase is Completed:
-                generation_result = decode_generation(generation_state)
-            else:
-                if generation_state.dispatch_phase is not Prepared:
-                    raise AssertionError("generation step is not dispatchable")
-                generation_result = await _dispatch_generation_step(
-                    db,
-                    run=run,
-                    steps=steps,
-                    path=generation_path,
-                    request=GenerationRequest(
-                        generation_id=steps.generation_id(generation_path),
-                        owner=call_owner,
-                        operation="chat",
-                        profile=profile,
-                        reasoning=reasoning,
-                        intent=iter_intent,
-                    ),
-                    session_factory=session_factory,
-                    emitter=emitter,
-                    content_prefix=full_content,
-                    tool_call_index_next=tool_call_index_next,
-                    published_tools=published_tools,
-                    tool_operation=operation,
-                )
-                steps.complete(generation_path, generation_result)
-
-            terminal = _fold_generation_terminal(
-                db,
-                run=run,
-                steps=steps,
-                result=generation_result,
+        generation_path = "generation/1"
+        generation_state = steps.read(generation_path, ReplayPolicy.BilledOnce)
+        if generation_state is None:
+            generation_state = steps.prepare(
+                generation_path,
+                request_fingerprint(
+                    _chat_command_draft(
+                        prepared.generate_intent,
+                        profile,
+                        generation_state_id=stable_generation_id(run.id, generation_path),
+                    )
+                ),
             )
-            if terminal is not None:
-                return terminal
+        elif generation_state.dispatch_phase not in {Prepared, Completed}:
+            raise AssertionError("chat generation step is not dispatchable")
 
-            assert isinstance(generation_result, AssistantTurn)
-            full_content += generation_result.text
-            final_usage = _owned_value(generation_result.usage)
-            last_provider_event_seq = _owned_value(generation_result.last_provider_event_seq)
-            pending_tool_calls = tuple(
-                tool_call_from_state(tool_call) for tool_call in generation_result.tool_calls
-            )
-            if not pending_tool_calls:
-                break
-
-            messages.append(assistant_message_from_turn(generation_result))
-            for tool_call in pending_tool_calls:
-                tool_call_index_next += 1
-                tool_path = f"turn/{turn_index}/tool/{tool_call_index_next}"
-                resolved_call = published_tools.decode_tool_call(tool_call)
-                if isinstance(resolved_call, RejectedToolCall):
-                    tool_result = _execute_rejected_tool_step(
-                        db,
-                        run=run,
-                        steps=steps,
-                        path=tool_path,
-                        rejected=resolved_call,
-                        tool_call_index=tool_call_index_next,
-                        citation_n_next=citation_n_next,
-                        emitter=emitter,
-                    )
-                else:
-                    tool_id = resolved_call.tool_id
-                    raw_input = _provider_raw_tool_input(tool_call, resolved_call)
-                    tool_request = ToolStepRequest(
-                        provider_call_id=tool_call.id,
-                        canonical_tool_id=str(tool_id),
-                        tool_call_index=tool_call_index_next,
-                        arguments=(
-                            cast(dict[str, JsonValue], dict(tool_call.arguments))
-                            if isinstance(resolved_call, CanonicalToolCall)
-                            or resolved_call.reason == "InputTooLarge"
-                            else {}
-                        ),
-                    )
-                    tool_result = await _execute_canonical_tool_step(
-                        db,
-                        run=run,
-                        steps=steps,
-                        path=tool_path,
-                        operation=operation,
-                        request=tool_request,
-                        raw_input=raw_input,
-                        admitted_resource_uris=prepared.admitted_resource_uris,
-                        citation_n_next=citation_n_next,
-                    )
-                citation_n_next = tool_result.next_citation_ordinal
-                messages.append(tool_result_message(tool_result))
-
-                if is_cancel_requested(db, run.id):
-                    return _finalize_cancelled_execution(
-                        db,
-                        run=run,
-                        steps=steps,
-                        assistant_content=full_content,
-                        usage=final_usage,
-                        last_provider_event_seq=last_provider_event_seq,
-                    )
-        else:
-            logger.warning(
-                "chat_run.max_tool_iterations_exceeded",
-                run_id=str(run.id),
-                iterations=MAX_TOOL_ITERATIONS,
-            )
+        generation_result = await _dispatch_generation_step(
+            db,
+            run=run,
+            steps=steps,
+            path=generation_path,
+            generation_id=generation_state.generation_id,
+            intent=prepared.generate_intent,
+            profile=profile,
+            operation=operation,
+            admitted_resource_uris=prepared.admitted_resource_uris,
+            session_factory=session_factory,
+            settings=settings,
+            emitter=emitter,
+        )
+        if isinstance(generation_result, RescheduleRequested):
+            return generation_result
+        terminal = _fold_generation_terminal(db, run=run, steps=steps, result=generation_result)
+        if terminal is not None:
+            return terminal
+        assert isinstance(generation_result, AssistantTurn)
+        full_content = generation_result.text
+        final_usage = _owned_value(generation_result.usage)
+        last_provider_event_seq = _owned_value(generation_result.last_provider_event_seq)
 
         if is_cancel_requested(db, run.id):
             return _finalize_cancelled_execution(
@@ -1072,10 +906,7 @@ def _prepare_chat_run(
     *,
     run: ChatRun,
     steps: ChatStepRuntime,
-    profile: LlmProfile,
-    reasoning: ReasoningLevel,
-    max_output_tokens: int,
-    tools: tuple[CanonicalTool, ...],
+    profile: str,
 ) -> PreparedChatRun:
     state = steps.read("prepare", ReplayPolicy.ReDispatchable)
     if state is not None:
@@ -1094,9 +925,6 @@ def _prepare_chat_run(
         db,
         run=run,
         profile=profile,
-        reasoning=reasoning,
-        max_output_tokens=max_output_tokens,
-        tools=tools,
     )
     persist_prompt_assembly(db, run=run, assembly=assembly)
     reconcile_prompt_retrievals(db, run=run, assembly=assembly)
@@ -1112,7 +940,7 @@ def _prepare_chat_run(
         )
     )
     prepared = PreparedChatRun(
-        generate_intent=GenerateIntentState.from_intent(assembly.generate_intent),
+        generate_intent=assembly.generate_intent,
         admitted_resource_uris=admitted_resource_uris,
         initial_citation_ordinal=attached_numbering.next_ordinal,
         initial_tool_call_index=0,
@@ -1128,248 +956,260 @@ async def _dispatch_generation_step(
     run: ChatRun,
     steps: ChatStepRuntime,
     path: str,
-    request: GenerationRequest,
+    generation_id: UUID,
+    intent: Any,
+    profile: str,
+    operation: FrozenToolOperation,
+    admitted_resource_uris: tuple[str, ...],
     session_factory: sessionmaker[Session],
+    settings: Settings,
     emitter: ChatRunEventEmitter,
-    content_prefix: str,
-    tool_call_index_next: int,
-    published_tools: PublishedTools,
-    tool_operation: FrozenToolOperation,
-) -> AssistantTurn | ExpectedFailure | CancelledGeneration:
-    iter_text = ""
-    pending_tool_calls: list[ToolCall] = []
-    continuation: Presence[ContinuationArtifact] = Absent()
-    provider_tool_indices: dict[str, int] = {}
-    tool_names_by_call_id: dict[str, str] = {}
-    text_buffer = ""
-    text_seq_start: int | None = None
-    text_seq_end = 0
-    last_text_flush = time.monotonic()
-    last_provider_event_seq: int | None = None
-    locally_truncated = False
+) -> AssistantTurn | ExpectedFailure | CancelledGeneration | RescheduleRequested:
+    """Execute one app-owned ChatTools command; MCP owns tool execution."""
+    draft = _chat_command_draft(intent, profile, generation_state_id=generation_id)
+    request_fp = request_fingerprint(draft)
+    with session_factory() as clock_db:
+        now = clock_db.scalar(text("SELECT clock_timestamp()"))
+    if not isinstance(now, datetime):
+        raise AssertionError("database clock did not return a timestamp")
+    grant = issue_chat_generation_grant(
+        user_id=run.owner_user_id,
+        run_id=run.id,
+        job_id=steps.execution_context.job_id,
+        worker_id=steps.execution_context.worker_id,
+        attempt_no=steps.execution_context.attempt_no,
+        generation_id=generation_id,
+        tool_plan_revision=generation_policy.TOOL_PLAN_REVISION,
+        request_fingerprint=request_fp,
+        signing_key=settings.effective_agent_tool_grant_signing_key,
+        now=now if now.tzinfo is not None else now.replace(tzinfo=UTC),
+    )
+    command = draft.model_copy(update={"tool_grant": BearerToolGrant(token=grant)})
 
-    def flush_text_buffer() -> None:
-        nonlocal text_buffer, text_seq_start, last_text_flush
-        if not text_buffer:
+    capacity_wait_index = _chat_capacity_wait_index(steps.job)
+    observed_text_parts: list[str] = []
+    observed_usage: dict[str, JsonValue] | None = None
+    last_sequence: int | None = None
+    text_coalescer = _ChatTextCoalescer(emitter)
+
+    async def observe(frame: GenerationFrame) -> None:
+        nonlocal observed_usage, last_sequence
+        last_sequence = frame.sequence
+        if isinstance(frame.event, GenerationText):
+            observed_text_parts.append(frame.event.text)
+            await text_coalescer.add(
+                text=frame.event.text,
+                sequence=frame.sequence,
+            )
             return
-        emitter.assistant_text_delta(
-            text=text_buffer,
-            provider_event_seq_start=text_seq_start or text_seq_end,
-            provider_event_seq_end=text_seq_end,
-        )
-        text_buffer = ""
-        text_seq_start = None
-        last_text_flush = time.monotonic()
+        await text_coalescer.flush()
+        if isinstance(frame.event, GenerationToolUse):
+            emitter.assistant_activity(
+                phase="tool_calling",
+                provider_event_seq_start=frame.sequence,
+                provider_event_seq_end=frame.sequence,
+            )
+        elif isinstance(frame.event, GenerationUsageEvent):
+            observed_usage = frame.event.usage.model_dump(mode="json")
 
-    cancel_signal = asyncio.Event()
-    cancel_watcher = asyncio.create_task(
-        _watch_chat_run_cancel(db, run_id=run.id, cancel_signal=cancel_signal)
-    )
+    from nexus.services.agent_tools_mcp import AgentToolAuthority
 
-    def mark_dispatch_uncertain() -> None:
-        try:
-            steps.mark_uncertain(path)
-        except LostChatJobLease as exc:
-            raise DispatchTransferred from exc
-
-    stream = execute_generation_stream(
-        request,
+    authority = AgentToolAuthority.from_claimed_chat_attempt(
         session_factory=session_factory,
-        runtime=steps.llm_runtime,
-        cancel=cast(CancelSignal, cancel_signal),
-        before_dispatch=mark_dispatch_uncertain,
+        run_id=run.id,
+        job_id=steps.execution_context.job_id,
+        attempt_no=steps.execution_context.attempt_no,
+        resource_class=steps.execution_context.resource_class,
+        operation=operation,
+        worker_id=steps.execution_context.worker_id,
+        generation_id=generation_id,
+        admitted_resource_uris=admitted_resource_uris,
     )
-    terminal_outcome: object | None = None
+    cancel_signal = asyncio.Event()
+    cancel_watcher: asyncio.Task[None] | None = None
+
+    # First dispatch commits through the prepare step, while a Prepared capacity
+    # replay arrives with the post-mark-running read transaction still active.
+    # Close both shapes before health, UDS, or MCP I/O begins.
+    db.commit()
+
+    def resolve_terminal(
+        terminal_db: Session,
+        terminal: GenerationTerminal,
+    ) -> GenerationTerminal:
+        locked_run = lock_chat_run_for_update(terminal_db, run.id)
+        if locked_run is None:
+            raise AssertionError("chat run disappeared before generation terminal")
+        if locked_run.cancel_requested_at is None or terminal.status == "cancelled":
+            return terminal
+        cancel_signal.set()
+        return terminal.model_copy(
+            update={
+                "status": "cancelled",
+                "failure": None,
+                "final_text": "",
+                "structured_output": None,
+                "diagnostics": ("worker: durable chat cancellation won terminal linearization",),
+            }
+        )
+
     try:
-        async for event in stream:
-            last_provider_event_seq = event.seq
-            inner = event.event
-            if isinstance(inner, StreamStart):
-                emitter.assistant_activity(
-                    phase="thinking",
-                    provider_event_seq_start=event.seq,
-                    provider_event_seq_end=event.seq,
-                )
-                continue
-            if isinstance(inner, TextDelta):
-                delta = inner.text
-                if not locally_truncated:
-                    current_chars = len(content_prefix) + len(iter_text)
-                    if current_chars + len(delta) > MAX_ASSISTANT_CONTENT_LENGTH:
-                        remaining = MAX_ASSISTANT_CONTENT_LENGTH - current_chars
-                        delta = delta[: max(remaining, 0)] + TRUNCATION_NOTICE
-                    if delta:
-                        iter_text += delta
-                        text_buffer += delta
-                        text_seq_start = text_seq_start or event.seq
-                        text_seq_end = event.seq
-                        if (
-                            len(text_buffer) >= CHAT_TEXT_FLUSH_MAX_CHARS
-                            or len(text_buffer.encode("utf-8")) >= CHAT_TEXT_FLUSH_MAX_BYTES
-                            or (time.monotonic() - last_text_flush) * 1000
-                            >= CHAT_TEXT_FLUSH_INTERVAL_MS
-                        ):
-                            flush_text_buffer()
-                    if len(content_prefix) + len(iter_text) >= MAX_ASSISTANT_CONTENT_LENGTH:
-                        locally_truncated = True
-                        flush_text_buffer()
-                        cancel_signal.set()
-                continue
-            if isinstance(inner, ToolCallStart):
-                flush_text_buffer()
-                tool_names_by_call_id[inner.call_id] = inner.name
-                provider_tool_indices.setdefault(
-                    inner.call_id,
-                    tool_call_index_next + len(provider_tool_indices) + 1,
-                )
-                emitter.tool_call_start(
-                    projection=_provider_tool_projection(
-                        published_tools,
-                        tool_operation,
-                        call=ToolCall(id=inner.call_id, name=inner.name, arguments={}),
-                        include_input_digest=False,
-                    ),
-                    tool_call_index=provider_tool_indices[inner.call_id],
-                    provider_tool_call_id=inner.call_id,
-                    provider_event_seq_start=event.seq,
-                    provider_event_seq_end=event.seq,
-                )
-                continue
-            if isinstance(inner, ToolCallDelta):
-                flush_text_buffer()
-                if inner.call_id not in tool_names_by_call_id:
-                    raise AssertionError("provider tool delta arrived before tool start")
-                provider_tool_indices.setdefault(
-                    inner.call_id,
-                    tool_call_index_next + len(provider_tool_indices) + 1,
-                )
-                emitter.tool_call_delta(
-                    projection=_provider_tool_projection(
-                        published_tools,
-                        tool_operation,
-                        call=ToolCall(
-                            id=inner.call_id,
-                            name=tool_names_by_call_id[inner.call_id],
-                            arguments={},
-                        ),
-                        include_input_digest=False,
-                    ),
-                    tool_call_index=provider_tool_indices[inner.call_id],
-                    provider_tool_call_id=inner.call_id,
-                    input_delta=inner.arguments_delta,
-                    input_preview=None,
-                    provider_event_seq_start=event.seq,
-                    provider_event_seq_end=event.seq,
-                )
-                continue
-            if isinstance(inner, ToolCallDone):
-                flush_text_buffer()
-                tool_call = inner.tool_call
-                tool_names_by_call_id[tool_call.id] = tool_call.name
-                provider_tool_indices.setdefault(
-                    tool_call.id,
-                    tool_call_index_next + len(provider_tool_indices) + 1,
-                )
-                pending_tool_calls.append(tool_call)
-                emitter.tool_call_done(
-                    projection=_provider_tool_projection(
-                        published_tools,
-                        tool_operation,
-                        call=tool_call,
-                        include_input_digest=True,
-                    ),
-                    tool_call_index=provider_tool_indices[tool_call.id],
-                    provider_tool_call_id=tool_call.id,
-                    input=dict(tool_call.arguments),
-                    provider_event_seq_start=event.seq,
-                    provider_event_seq_end=event.seq,
-                )
-                continue
-            if isinstance(inner, ContinuationDelta):
-                continuation = Present(inner.artifact)
-                continue
-            if isinstance(inner, UsageEvent):
-                continue
-            if isinstance(inner, TerminalEvent):
-                flush_text_buffer()
-                terminal_outcome = inner.outcome
-                break
-    except ApiError:
-        latest_code = db.execute(
-            text(
-                "SELECT error_code FROM llm_calls WHERE owner_kind = 'chat_run' "
-                "AND owner_id = :run_id ORDER BY call_seq DESC LIMIT 1"
+        cancel_watcher = asyncio.create_task(
+            _watch_chat_run_cancel(
+                session_factory,
+                run_id=run.id,
+                cancel_signal=cancel_signal,
+            )
+        )
+        result = await execute_generation(
+            GenerationExecutionRequest(
+                owner=LlmCallOwner(kind="chat_run", id=run.id),
+                command=command,
+                journal=JobGenerationJournal(
+                    context=steps.execution_context,
+                    step_path=path,
+                    capacity_wait_index=capacity_wait_index,
+                    lock_dispatch=steps.lock_dispatch,
+                ),
+                capacity_wait_index=capacity_wait_index,
+                capacity_wait_delays_seconds=CHAT_CAPACITY_WAIT_DELAYS_SECONDS,
+                streaming=True,
             ),
-            {"run_id": run.id},
-        ).scalar_one_or_none()
-        if latest_code != "budget_exceeded":
-            raise
-        return ExpectedFailure(
-            assistant_content=content_prefix + iter_text,
-            error_code="budget_exceeded",
-            error_origin="budget",
-            usage=owned_presence.absent(),
-            support_id=_owned_optional(_latest_generation_support_id(db, run.id)),
-            last_provider_event_seq=_owned_optional(last_provider_event_seq),
+            session_factory=session_factory,
+            runtime=steps.llm_runtime,
+            observe_frame=observe,
+            cancel_signal=cancel_signal,
+            before_terminal=authority.wait_until_idle,
+            resolve_terminal=resolve_terminal,
+            encode_terminal=lambda terminal: EncodedGenerationTerminal(
+                terminal_result=encode_step_result(
+                    GenerationStepResultEnvelope(
+                        root=_chat_generation_terminal_result(
+                            terminal,
+                            observed_text="".join(observed_text_parts),
+                            observed_usage=observed_usage,
+                            last_sequence=last_sequence,
+                            generation_id=generation_id,
+                        )
+                    )
+                )
+            ),
+            encode_preaccept_failure=lambda code, detail: _encode_chat_preaccept_failure(
+                code,
+                detail=detail,
+                generation_id=generation_id,
+            ),
         )
     finally:
-        cancel_watcher.cancel()
-        with suppress(asyncio.CancelledError):
-            await cancel_watcher
-        await cast(AsyncGenerator[RuntimeStreamEvent, None], stream).aclose()
+        try:
+            await text_coalescer.close()
+        finally:
+            try:
+                if cancel_watcher is not None:
+                    cancel_watcher.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await cancel_watcher
+            finally:
+                try:
+                    await authority.wait_until_idle()
+                finally:
+                    authority.close()
 
-    if terminal_outcome is None:
-        raise AssertionError("generation stream ended without a terminal event")
+    # The host terminal cannot discharge a tool effect whose worker-owned
+    # journal remained ambiguous. Preserve that journal and suspend the job
+    # before any run terminal or publication can clear it.
+    steps.assert_no_uncertain_tool_effect()
 
-    full_content = content_prefix + iter_text
-    usage = cast(dict[str, JsonValue] | None, usage_provider_json(terminal_outcome.meta.usage))
-    support_id = _latest_generation_support_id(db, run.id)
-    if isinstance(terminal_outcome, Cancelled):
-        if locally_truncated:
-            return ExpectedFailure(
-                assistant_content=full_content,
-                error_code="incomplete",
-                error_origin="provider_response",
-                usage=_owned_optional(usage),
-                support_id=_owned_optional(support_id),
-                last_provider_event_seq=_owned_optional(last_provider_event_seq),
-            )
+    if isinstance(result, RescheduleRequested):
+        return result
+    return decode_step_result(result.terminal_result, GenerationStepResultEnvelope).root
+
+
+def _chat_capacity_wait_index(job: JobRow) -> int:
+    value = job.payload.get("capacity_wait_index")
+    if type(value) is not int or not 0 <= value <= len(CHAT_CAPACITY_WAIT_DELAYS_SECONDS):
+        raise AssertionError("chat job has an invalid capacity_wait_index")
+    return value
+
+
+def _chat_generation_terminal_result(
+    terminal: GenerationTerminal,
+    *,
+    observed_text: str,
+    observed_usage: dict[str, JsonValue] | None,
+    last_sequence: int | None,
+    generation_id: UUID,
+) -> AssistantTurn | ExpectedFailure | CancelledGeneration:
+    if terminal.status == "succeeded" and terminal.final_text != observed_text:
+        raise AssertionError("Chat terminal text differs from its streamed text fold")
+    if terminal.status != "succeeded" and terminal.final_text:
+        raise AssertionError("non-success Chat terminal exposed provider text")
+    content = observed_text
+    usage = terminal.usage.model_dump(mode="json") if terminal.usage is not None else observed_usage
+    if terminal.status == "cancelled":
         return CancelledGeneration(
-            assistant_content=full_content,
-            usage=_owned_optional(usage),
-            last_provider_event_seq=_owned_optional(last_provider_event_seq),
+            assistant_content=content,
+            usage=_owned_usage(usage),
+            last_provider_event_seq=_owned_sequence(last_sequence),
         )
-    if isinstance(terminal_outcome, Incomplete):
-        refused = terminal_outcome.status == "refused"
+    if terminal.status == "failed":
+        if terminal.failure is None:
+            raise AssertionError("failed generation omitted failure")
         return ExpectedFailure(
-            assistant_content="" if refused else full_content,
-            error_code="refused" if refused else "incomplete",
-            error_origin="provider_stream" if refused else "provider_response",
-            usage=_owned_optional(usage),
-            support_id=_owned_optional(support_id),
-            last_provider_event_seq=_owned_optional(last_provider_event_seq),
+            assistant_content=content,
+            error_code=normalized_failure(terminal.failure.kind),
+            usage=_owned_usage(usage),
+            support_id=_owned_text(generation_id.hex[:12]),
+            last_provider_event_seq=_owned_sequence(last_sequence),
         )
-    if isinstance(terminal_outcome, Failed):
-        facts = outcome_failure_facts(terminal_outcome)
-        assert facts.error_code is not None
-        assert facts.error_origin is not None
-        return ExpectedFailure(
-            assistant_content=full_content,
-            error_code=facts.error_code,
-            error_origin=facts.error_origin,
-            usage=_owned_optional(usage),
-            support_id=_owned_optional(support_id),
-            last_provider_event_seq=_owned_optional(last_provider_event_seq),
-        )
-    if not isinstance(terminal_outcome, Succeeded):
-        raise AssertionError("unknown provider terminal outcome")
     return assistant_turn_result(
-        text=iter_text,
-        tool_calls=tuple(pending_tool_calls),
-        continuation=continuation,
+        text=content,
+        tool_calls=(),
         usage=usage,
-        support_id=support_id,
-        last_provider_event_seq=last_provider_event_seq,
+        support_id=generation_id.hex[:12],
+        last_provider_event_seq=last_sequence,
+    )
+
+
+def _encode_chat_preaccept_failure(
+    code: str,
+    *,
+    detail: str,
+    generation_id: UUID,
+) -> str:
+    del detail
+    return encode_step_result(
+        GenerationStepResultEnvelope(
+            root=ExpectedFailure(
+                assistant_content="",
+                error_code=code,
+                usage=owned_presence.absent(),
+                support_id=_owned_text(generation_id.hex[:12]),
+                last_provider_event_seq=owned_presence.absent(),
+            )
+        )
+    )
+
+
+def _chat_command_draft(
+    intent: Any,
+    profile: str,
+    *,
+    generation_state_id: UUID | None,
+) -> GenerationCommand:
+    """Build the grant-independent command used for journal identity."""
+    request_id = generation_state_id or uuid4()
+    return GenerationCommand(
+        request_id=request_id,
+        operation=ChatOperation(
+            kind="chat",
+            revision=generation_policy.operation_revision("chat", profile=profile),
+            profile=cast(Any, profile),
+        ),
+        policy_revision=generation_policy.POLICY_REVISION,
+        policy_fingerprint=generation_policy.POLICY_FINGERPRINT,
+        intent=intent,
+        tool_grant=BearerToolGrant(token=SecretStr("pending")),
     )
 
 
@@ -1393,15 +1233,26 @@ def _fold_generation_terminal(
             usage=usage,
             last_provider_event_seq=last_seq,
         )
+    locked_run = lock_chat_run_for_update(db, run.id)
+    if locked_run is None:
+        raise AssertionError("chat run disappeared before terminal fold")
+    if locked_run.cancel_requested_at is not None:
+        return _finalize_cancelled_execution(
+            db,
+            run=locked_run,
+            steps=steps,
+            assistant_content=result.assistant_content,
+            usage=usage,
+            last_provider_event_seq=last_seq,
+        )
     finalize_run(
         db,
-        run_id=run.id,
+        run_id=locked_run.id,
         assistant_content=result.assistant_content,
         assistant_status="error",
         run_status="error",
         done_status="error",
         error_code=result.error_code,
-        error_origin=result.error_origin,
         support_id=_owned_value(result.support_id),
         usage=usage,
         last_provider_event_seq=last_seq,
@@ -1410,129 +1261,6 @@ def _fold_generation_terminal(
     steps.clear()
     _log_chat_run_finished(db, run_id=run.id, outcome="Failed")
     return _failed_chat_execution(db, run_id=run.id, error_code=result.error_code)
-
-
-async def _execute_canonical_tool_step(
-    db: Session,
-    *,
-    run: ChatRun,
-    steps: ChatStepRuntime,
-    path: str,
-    operation: FrozenToolOperation,
-    request: ToolStepRequest,
-    raw_input: ParsedJson | MalformedJson,
-    admitted_resource_uris: tuple[str, ...],
-    citation_n_next: int,
-) -> ToolStepResult:
-    """Execute one adapter-resolved canonical call through the sole executor."""
-
-    from nexus.services.tool_runtime.execution import (
-        chat_tool_execution_receipt,
-        make_chat_execution_context,
-    )
-
-    tool_id = ToolId(request.canonical_tool_id)
-    binding = operation.plan.catalog_view.binding(tool_id)
-    effect_id = (
-        EffectId(str(stable_generation_id(run.id, path)))
-        if binding.spec.effect is ToolEffect.Write
-        else None
-    )
-    context = make_chat_execution_context(
-        db=db,
-        operation=operation,
-        run=run,
-        claimed_job=steps.job,
-        job_context=steps.execution_context,
-        durable_step_path=path,
-        tool_call_index=request.tool_call_index,
-        admitted_resource_uris=admitted_resource_uris,
-        tool_id=tool_id,
-        effect_id=effect_id,
-    )
-    result = await ToolExecutor.execute(binding, raw_input, context)
-    receipt = chat_tool_execution_receipt(
-        context,
-        result=result,
-        provider_call_id=request.provider_call_id,
-        starting_citation_ordinal=citation_n_next,
-    )
-    steps.refresh_job()
-    return receipt
-
-
-def _execute_rejected_tool_step(
-    db: Session,
-    *,
-    run: ChatRun,
-    steps: ChatStepRuntime,
-    path: str,
-    rejected: RejectedToolCall,
-    tool_call_index: int,
-    citation_n_next: int,
-    emitter: ChatRunEventEmitter,
-) -> RejectedToolStepResult:
-    """Persist an unknown provider name as terminal audit, never authority."""
-
-    request = RejectedToolStepRequest(
-        provider_call_id=rejected.provider_call_id,
-        provider_wire_name=rejected.raw_name,
-        tool_call_index=tool_call_index,
-    )
-    fingerprint = step_fingerprint(request)
-    state = steps.read(path, ReplayPolicy.ReDispatchable)
-    if state is not None:
-        _assert_step_fingerprint(state, fingerprint)
-        if state.dispatch_phase is Completed:
-            return decode_rejected_tool(state)
-        if state.dispatch_phase is not Prepared:
-            raise AssertionError("rejected provider call is not dispatchable")
-    else:
-        steps.prepare(path, fingerprint)
-    steps.lock_active_attempt()
-    tool_call_id = persist_rejected_provider_tool_call(
-        db,
-        run=run,
-        tool_call_index=tool_call_index,
-        provider_wire_name=rejected.raw_name,
-    )
-    bind_provider_tool_call_events(
-        db,
-        run=run,
-        tool_call_index=tool_call_index,
-        tool_call_id=tool_call_id,
-    )
-    projection = _rejected_tool_projection(rejected.raw_name)
-    event = ChatRunToolResultEventPayload(
-        **projection.model_dump(mode="python"),
-        tool_call_id=tool_call_id,
-        assistant_message_id=run.assistant_message_id,
-        tool_call_index=tool_call_index,
-        status="error",
-        scope="provider_tool",
-        types=[],
-        filters={},
-        error_code="unknown_tool",
-    )
-    result = RejectedToolStepResult(
-        tool_call_id=tool_call_id,
-        provider_wire_name=rejected.raw_name,
-        tool_call_index=tool_call_index,
-        model_output=ToolModelOutput(
-            call_id=rejected.provider_call_id,
-            output=json.dumps(
-                {"error": {"type": "UnknownTool"}, "type": "Failure"},
-                separators=(",", ":"),
-                sort_keys=True,
-            ),
-            is_error=True,
-        ),
-        next_citation_ordinal=citation_n_next,
-        result_event=event,
-    )
-    emitter.tool_result(event)
-    steps.complete(path, result)
-    return result
 
 
 def _publish_chat_run(
@@ -1547,8 +1275,8 @@ def _publish_chat_run(
 ) -> ChatExecutionOutcome:
     request = PublicationRequest(
         generated_markdown=full_content,
-        usage=_owned_optional(usage),
-        last_provider_event_seq=_owned_optional(last_provider_event_seq),
+        usage=_owned_usage(usage),
+        last_provider_event_seq=_owned_sequence(last_provider_event_seq),
     )
     fingerprint = step_fingerprint(request)
     state = steps.read("publication", ReplayPolicy.ReDispatchable)
@@ -1559,11 +1287,29 @@ def _publish_chat_run(
     if state.dispatch_phase is not Prepared:
         raise AssertionError("publication step cannot be replayed on an active run")
 
+    # Publication is the final domain-effect boundary.  Lock the run before the
+    # queue claim so cancellation and every publication effect share one global
+    # run -> job order.  The earlier cancellation read is only an advisory fast
+    # path; this locked read is the authority immediately before citations and
+    # assistant content become reader-visible.
+    locked_run = lock_chat_run_for_update(db, run.id)
+    if locked_run is None:
+        raise AssertionError("chat run disappeared before publication")
     steps.lock_active_attempt()
+    if locked_run.cancel_requested_at is not None:
+        return _finalize_cancelled_execution(
+            db,
+            run=locked_run,
+            steps=steps,
+            assistant_content=full_content,
+            usage=usage,
+            last_provider_event_seq=last_provider_event_seq,
+        )
+
     citation_started_at = time.monotonic()
     citation_result = publish_chat_citations(
         db,
-        run=run,
+        run=locked_run,
         generated_markdown=full_content,
         emitter=emitter,
     )
@@ -1573,7 +1319,7 @@ def _publish_chat_run(
         degraded_support_id = uuid4().hex[:12]
         finalize_run(
             db,
-            run_id=run.id,
+            run_id=locked_run.id,
             assistant_content=citation_result.content_md,
             assistant_status="complete",
             run_status="complete",
@@ -1592,7 +1338,7 @@ def _publish_chat_run(
             raise AssertionError("unknown citation publication result")
         finalize_run(
             db,
-            run_id=run.id,
+            run_id=locked_run.id,
             assistant_content=citation_result.content_md,
             assistant_status="complete",
             run_status="complete",
@@ -1609,18 +1355,18 @@ def _publish_chat_run(
             "SELECT seq FROM chat_run_events "
             "WHERE run_id = :run_id AND event_type = 'done' ORDER BY seq DESC LIMIT 1"
         ),
-        {"run_id": run.id},
+        {"run_id": locked_run.id},
     ).scalar_one()
     steps.complete_publication(
         PublicationStepResult(
             outcome=outcome_kind,
-            message_id=run.assistant_message_id,
+            message_id=locked_run.assistant_message_id,
             terminal_event_seq=terminal_event_seq,
         )
     )
     _log_chat_run_finished(
         db,
-        run_id=run.id,
+        run_id=locked_run.id,
         outcome=outcome_kind,
         citation_finalize_ms=citation_finalize_ms,
     )
@@ -1628,14 +1374,14 @@ def _publish_chat_run(
         if degraded_support_id is None:
             raise AssertionError("degraded publication is missing a support id")
         return DegradedChatExecution(
-            run_id=run.id,
-            message_id=run.assistant_message_id,
+            run_id=locked_run.id,
+            message_id=locked_run.assistant_message_id,
             warning_code=citation_result.warning_code,
             support_id=degraded_support_id,
         )
     return PublishedChatExecution(
-        run_id=run.id,
-        message_id=run.assistant_message_id,
+        run_id=locked_run.id,
+        message_id=locked_run.assistant_message_id,
         citation_count=citation_result.citation_count,
     )
 
@@ -1670,8 +1416,24 @@ def _assert_step_fingerprint(state: StepReplayState, expected: str) -> None:
         raise AssertionError("durable chat step request fingerprint changed")
 
 
-def _owned_optional[T](value: T | None) -> owned_presence.Presence[T]:
-    return owned_presence.absent() if value is None else owned_presence.present(value)
+def _owned_usage(
+    value: dict[str, JsonValue] | None,
+) -> owned_presence.Presence[dict[str, JsonValue]]:
+    if value is None:
+        return owned_presence.absent()
+    return owned_presence.Present[dict[str, JsonValue]](value=value)
+
+
+def _owned_sequence(value: int | None) -> owned_presence.Presence[int]:
+    if value is None:
+        return owned_presence.absent()
+    return owned_presence.Present[int](value=value)
+
+
+def _owned_text(value: str | None) -> owned_presence.Presence[str]:
+    if value is None:
+        return owned_presence.absent()
+    return owned_presence.Present[str](value=value)
 
 
 def _owned_value[T](value: owned_presence.Presence[T]) -> T | None:

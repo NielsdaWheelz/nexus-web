@@ -141,7 +141,7 @@
         "pytest:python/tests/migrations/test_podcast_publication_migration.py::test_0207_canonicalizes_only_legacy_podcast_publication_instants_and_reaches_head",
         "pytest:python/tests/migrations/test_epub_navigation_offsets_migration.py::test_0208_backfills_exact_offsets_and_0209_rejects_unrepaired_projection",
         "pytest:python/tests/migrations/test_llm_provider_runtime_migration.py",
-        "pytest:python/tests/migrations/test_codex_generation_cutover.py::test_0222_refuses_every_active_or_uncertain_generation_owner_before_mutation",
+        "pytest:python/tests/migrations/test_codex_generation_cutover.py",
         "pytest:python/tests/migrations/test_llm_tools_cutover_migration.py::test_cutover_rewrites_only_closed_historical_variants_and_refuses_live_or_malformed_state",
         "pytest:python/tests/migrations/test_podcast_subscription_lifecycle_events.py",
         "pytest:python/tests/migrations/test_reader_publications_migration.py::test_0219_backfills_only_ready_documents_without_database_cascade",
@@ -165,8 +165,11 @@
         "apps/web/src/components/chat/ChatComposer.tsx",
         "apps/web/src/components/chat/useConversation.ts",
         "apps/web/src/components/chat/AssistantMessage.tsx",
+        "apps/web/src/components/chat/ChatFailureCard.tsx",
+        "apps/web/src/components/chat/useChatMessageUpdates.ts",
         "apps/web/src/lib/conversations/chatRunBody.ts",
         "apps/web/src/lib/conversations/chatDraftKey.ts",
+        "apps/web/src/lib/llm/failure.ts",
         "python/nexus/app.py",
         "python/nexus/services/llm_credentials.py",
         "python/nexus/services/llm_execution.py",
@@ -185,19 +188,26 @@
         "python/tests/service/test_llm_tools_dossier.py",
         "python/nexus/services/artifacts/engine.py",
         "python/nexus/services/artifacts/bindings/idea.py",
+        "python/nexus/services/dawn_write.py",
         "python/nexus/services/media_source_ingest.py",
         "python/nexus/api/routes/dossiers.py",
-        "python/nexus/services/artifacts/dossier_types.py"
+        "python/nexus/services/artifacts/dossier_types.py",
+        "python/tests/service/test_dawn_write_generation_journal.py"
       ],
       "proofs": [
         "pytest:python/tests/kernel/test_semantic_chunks_embedding_runtime.py",
         "pytest:python/tests/service/test_chat_run_candidates.py",
-        "pytest:python/tests/service/test_llm_transport_policy.py::test_llm_worker_ignores_environment_selected_http_proxies",
         "vitest:apps/web/src/components/chat/useChatDraft.unit.test.ts",
         "vitest:apps/web/src/lib/conversations/chatRunBody.unit.test.ts",
         "vitest:apps/web/src/lib/conversations/chatDraftKey.unit.test.ts",
         "vitest:apps/web/src/components/chat/ChatComposer.browser.test.tsx",
         "vitest:apps/web/src/components/chat/AssistantMessage.browser.test.tsx",
+        "vitest:apps/web/src/components/chat/ChatGenerationLifecycle.browser.test.tsx",
+        "vitest:apps/web/src/components/chat/ChatFailureCard.browser.test.tsx",
+        "pytest:python/tests/service/test_llm_profiles.py::test_llm_profiles_route_returns_only_the_three_fixed_presets",
+        "pytest:python/tests/service/test_generation_execution.py",
+        "pytest:python/tests/service/test_generation_execution.py::test_accepted_generation_loss_remains_uncertain_and_never_redispatches",
+        "pytest:python/tests/service/test_dawn_write_generation_journal.py",
         "pytest:python/tests/service/test_llm_tools_dossier.py::test_dossier_freezes_host_plan_and_does_not_automatically_reissue_uncertain_search"
       ],
       "capabilities": [
@@ -307,7 +317,8 @@
         "python/tests/testkit/sitecustomize.py",
         "python/tests/testkit/worker.py",
         "python/nexus/services/tool_runtime/*.py",
-        "python/tests/service/test_llm_tool_replay.py",
+        "python/nexus/services/agent_tools_mcp.py",
+        "python/tests/service/test_agent_tools_mcp.py",
         "apps/android/app/src/main/java/app/nexus/android/offline/OfflineMediaStore.kt",
         "apps/android/app/src/main/java/app/nexus/android/offline/OfflineNetworkPolicyStore.kt",
         "apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingDatabase.kt",
@@ -321,8 +332,9 @@
         "pytest:python/tests/service/test_durable_job_replay.py",
         "pytest:python/tests/service/test_durable_job_replay.py::test_expired_claim_replays_once_and_fences_the_crashed_worker",
         "pytest:python/tests/service/test_durable_chat_reconciliation.py::test_uncertain_chat_dispatch_suspends_then_reconciles_the_same_job",
+        "pytest:python/tests/service/test_chat_codex_execution.py",
         "pytest:python/tests/service/test_heavy_job_capacity.py",
-        "pytest:python/tests/service/test_llm_tool_replay.py::test_position_replay_settles_once_and_does_not_automatically_reissue_uncertain_billed_search",
+        "pytest:python/tests/service/test_agent_tools_mcp.py",
         "gradle:apps/android/app/src/test/java/app/nexus/android/offline/OfflineMediaStoreContractTest.kt",
         "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingLifecycleTest.kt",
         "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingSchedulerStoreBoundaryTest.kt"
@@ -333,32 +345,74 @@
       ]
     },
     {
-      "id": "native-agent-host",
+      "id": "generation-reconciliation",
+      "source_globs": [
+        "python/nexus/services/llm_execution.py",
+        "python/nexus/services/artifacts/engine.py",
+        "python/nexus/services/conversations.py",
+        "python/nexus/services/dawn_write.py",
+        "python/nexus/services/gutenberg.py",
+        "python/nexus/services/highlights.py",
+        "python/nexus/services/media_deletion.py",
+        "python/nexus/services/media_intelligence.py",
+        "python/nexus/services/notes.py",
+        "python/nexus/services/oracle.py",
+        "python/nexus/services/resource_graph/user_relations.py",
+        "python/nexus/services/synapse.py",
+        "python/nexus/services/vault.py",
+        "python/nexus/tasks/enrich_metadata.py"
+      ],
+      "proofs": [
+        "pytest:python/tests/service/test_generation_reconciliation.py",
+        "pytest:python/tests/service/test_generation_reconciliation_owners.py",
+        "pytest:python/tests/service/test_oracle_media_generation_reconciliation.py"
+      ],
+      "capabilities": [
+        "service"
+      ]
+    },
+    {
+      "id": "codex-generation-host",
       "source_globs": [
         ".github/workflows/codex-personal-nightly.yml",
         "apps/codex_agent/**/*.py",
         "deploy/hetzner/release.py",
         "python/pyproject.toml",
+        "python/nexus/services/codex_generation_client.py",
+        "python/nexus/services/codex_generation_contract.py",
+        "python/nexus/services/codex_generation_operations.py",
+        "python/nexus/services/generation_intent.py",
+        "python/nexus/services/generation_policy.py",
         "python/nexus/ops/codex_hosted_evidence.py",
         "python/nexus_test_control/runner.py",
+        "python/tests/evals/cases/generation_plans.v1.json",
+        "python/tests/evals/test_generation_plan_eval.py",
         "python/tests/hosted/nightly/test_codex_personal_generation.py",
         "python/uv.lock"
       ],
       "proofs": [
         "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape",
-        "pytest:python/tests/kernel/nexus_test_control/test_hosted_canary_semantics.py::test_hosted_canary_accepts_exact_four_plan_v2_receipt",
+        "pytest:python/tests/kernel/nexus_test_control/test_hosted_canary_semantics.py::test_hosted_canary_accepts_exact_four_plan_v3_receipt",
         "pytest:python/tests/kernel/nexus_test_control/test_provider_runtime_pin.py::test_provider_runtime_is_materialized_from_the_pin_without_retargeting_source",
         "pytest:python/tests/kernel/nexus_test_control/test_android_device_method_scope.py::test_exact_android_device_proof_uses_one_instrumentation_method",
         "pytest:python/tests/kernel/test_codex_nightly_workflow_artifact_contract.py::test_codex_nightly_stages_only_one_run_bound_bounded_json_artifact",
+        "pytest:python/tests/kernel/test_generation_contract.py",
+        "pytest:python/tests/kernel/test_generation_operation_adapters.py",
+        "pytest:python/tests/kernel/test_generation_policy.py::test_fixed_generation_policy_catalog_is_complete_and_closed",
+        "pytest:python/tests/service/test_codex_generation_client.py",
         "pytest:python/tests/service/test_codex_generation_host.py::test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot",
+        "pytest:python/tests/service/test_codex_generation_lowering.py::test_operation_identity_lowers_to_one_exact_capability_and_tool_surface",
+        "pytest:python/tests/service/test_codex_generation_redaction.py::test_failed_runtime_terminal_retains_only_the_bounded_host_diagnostic",
         "pytest:python/tests/service/test_codex_egress_policy.py::test_codex_egress_allows_only_subscription_auth_and_mcp_sni",
         "pytest:python/tests/service/test_codex_capacity_canary_contract.py",
         "pytest:python/tests/service/test_codex_capacity_canary_contract.py::test_capacity_canary_rejects_succeeded_terminal_without_bounded_text",
+        "pytest:python/tests/evals/test_generation_plan_eval.py::test_reviewed_generation_plan_corpus_replays_the_shipped_policy_without_a_live_model",
         "pytest:python/tests/hosted/nightly/test_codex_personal_generation.py"
       ],
       "capabilities": [
         "codex-hosted",
         "kernel-python",
+        "llm-eval",
         "service"
       ]
     },
@@ -472,6 +526,7 @@
     {
       "id": "llm-tool-safety",
       "source_globs": [
+        "python/nexus/services/agent_tool_grants.py",
         "python/nexus/services/agent_tools/**/*.py",
         "python/nexus/services/chat_prompt.py",
         "python/nexus/services/chat_run_tools.py",
@@ -497,6 +552,7 @@
         "apps/web/src/lib/api/client.ts"
       ],
       "proofs": [
+        "pytest:python/tests/kernel/test_agent_tool_grants.py::test_grant_is_strict_hs256_bearer_and_does_not_leak_secret",
         "pytest:python/tests/service/test_llm_tool_safety.py::test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo",
         "pytest:python/tests/evals/test_tool_safety_eval.py::test_injected_requests_cannot_authorize_a_foreign_mutating_tool_call",
         "pytest:python/tests/kernel/test_llm_tool_declarations.py::test_nexus_declarations_and_browser_projection_are_one_closed_semantic_contract",

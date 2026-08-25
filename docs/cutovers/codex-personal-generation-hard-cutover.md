@@ -1,12 +1,16 @@
 # Codex Personal Generation Hard Cutover
 
-**Status:** PROPOSED IMPLEMENTATION SPECIFICATION
+**Status:** SOURCE CANDIDATE IMPLEMENTED; PRODUCTION ACCEPTANCE PENDING
 
-**Date:** 2026-08-25 (revision 3, adversarially validated against `main` @ `beb88775`)
+**Date:** 2026-08-25 (revision 4, implemented and adversarially reviewed against `main` @ `beb88775`)
 
 **Type:** atomic hard cutover; no compatibility period
 
 **Open questions:** none
+
+The hard-cut source and deterministic proof portfolio are implemented. This
+status does not waive §10: production acceptance still requires the protected
+four-plan nightly plus fresh same-SHA capacity and target-host evidence.
 
 ## 1. Decision
 
@@ -61,14 +65,14 @@ make that revision part of the Nexus contract.
 Goals:
 
 - Route every current generation operation through `codex-personal`.
-- Select the lowest fixed, evaluated model/effort plan that clears each task's
-  quality bar; spend extra reasoning only on rare, high-value work.
+- Select the lowest fixed, reviewed model/effort plan appropriate to each task;
+  spend extra reasoning only on rare, high-value work.
 - Preserve prompts, schemas, citations, publication transactions, cancellation,
   streaming, rerun/regenerate semantics, and tool side-effect controls.
 - Generalize the proven metadata host instead of building a second agent stack.
 - Keep the credential host isolated from PostgreSQL and application secrets.
-- Prove each ownership boundary once, then live-smoke unique plans and the
-  operation portfolio without a Cartesian test matrix.
+- Prove each ownership boundary once, live-smoke unique plans, and observe the
+  operation portfolio through ordinary use without a Cartesian test matrix.
 - Consolidate the two disjoint generation ledgers (`llm_calls` for
   direct-provider operations, `agent_turns` for the native lane) into one, and
   remove all unreachable provider-generation code.
@@ -141,14 +145,16 @@ commentary.
 existing learn-request step journal as its durable owner.
 
 `oracle` is the one plan change in this cutover: it moves from luna/low to
-terra/medium on the interpretive-writing eval family, and ships `standard` only
-with that versioned eval result recorded at the initial policy revision; absent
-the result it ships `routine`. Every other operation keeps its current model
-and effort exactly.
+terra/medium on the reviewed interpretive-writing family, and ships `standard`
+only with that decision pinned in the initial policy revision and the exact
+plan live-qualified; absent either condition it ships `routine`. Every other
+operation keeps its current model and effort exactly.
 
-Promotion or demotion requires a versioned eval result and policy revision. Do
-not add a runtime router until observed failures justify it. The eval corpus
-lives at `python/tests/evals/cases/generation_plans.v1.json` — its content
+Promotion or demotion requires a versioned reviewed task-family decision,
+updated deterministic expectations, exact-plan live qualification, and a
+policy revision. Do not add a runtime router until observed failures justify
+it. The eval corpus lives at
+`python/tests/evals/cases/generation_plans.v1.json` — its content
 contract moves with package A's policy revision, its file and registration
 belong to package G — versioned exactly like `tool_safety.v3.json`: reviewed rubric
 version, per-case baseline, `max_hosted_calls`, and the exact consumer pins.
@@ -236,10 +242,15 @@ Ownership laws:
   caller cannot supply model, effort, backend, auth, tools, or fallback.
 - The generation service is the sole dispatch boundary; `llm_ledger.py` is the
   sole `llm_calls` writer and the sole typed reader.
-- The host owns SDK construction, the Nexus-owned state root
-  (`NEXUS_CODEX_STATE_ROOT_BASE`; ambient `CODEX_HOME` or `OPENAI_API_KEY` in
-  the service environment is a startup defect), ChatGPT auth readiness, the
-  fixed empty cwd, sandbox/permission policy resolution, the single active turn
+- The host owns SDK construction, the exact writable enrolled credential file
+  (`NEXUS_CODEX_CREDENTIAL_FILE`; ambient `CODEX_HOME` or `OPENAI_API_KEY` in
+  the service environment is a startup defect), ChatGPT auth readiness, and a
+  fresh per-turn tmpfs root containing an empty model cwd plus ephemeral Codex
+  runtime state. The runtime profile contains only an absolute link to that
+  exact bind. Enrollment installs `auth.json` once; pinned Codex refreshes that
+  artifact in place, and the host deletes the complete per-turn root after
+  close. The host also owns
+  sandbox/permission policy resolution, the single active turn
   slot, host/cgroup capacity parsing and pre-accept admission, runtime close
   and session cleanup, and `AgentEvent`-to-wire normalization. It has no
   database or generation API credentials.
@@ -322,15 +333,16 @@ Rules:
   `thorough` row's timeout is validated against measured live turns at its
   exact plan before the switch; never ship a bound its own plan predictably
   exceeds. `dawn_write` bounds one user's generation, not the sweep; the
-  sweep's lease covers the population. Chat retains its existing 900-second
-  `RunLimits` tool-run ceiling and the `chat_run` lease is restated so it
-  strictly exceeds chat's derived deadline.
+  sweep's lease covers the population. Chat retains its 900-second `RunLimits`
+  tool-run ceiling, has a 1,035-second derived transport deadline, and uses a
+  1,200-second `chat_run` lease so the terminal checkpoint remains inside
+  ownership.
 - `dossier_idea_resolve` is request-scoped — it executes inside
   `POST /artifacts/dossiers/learn` — and never waits on host capacity: a busy
   host or capacity refusal fails fast to the caller as the existing
   unresolved-idea outcome, and its catalog turn bound is sized so
   admission-to-terminal fits the route's synchronous budget.
-- `Synthesis`: read-only filesystem in the fixed empty cwd,
+- `Synthesis`: read-only filesystem in a fresh empty per-turn tmpfs cwd,
   `builtin_tools="disabled"`, `web_search=false`, no MCP, approvals denied,
   additional directories empty, tool events forbidden.
 - `ChatTools`: built-ins still disabled; one required Streamable HTTP MCP
@@ -339,7 +351,11 @@ Rules:
   network toggle, so a ChatTools session lowers to
   `filesystem=workspace_write`, `network=unrestricted`, `approval=deny`,
   `UnsafeConfirmation(("network_unrestricted",))`, with a private empty tmpfs
-  cwd as the sole writable root and `additional_dirs=()`. The egress boundary
+  cwd as the sole model workspace root and `additional_dirs=()`. The SDK's
+  credential/session/cache state is a sibling inside the same disposable
+  per-turn tmpfs root. Only pinned OAuth refresh writes follow the profile's
+  exact link to the durable enrolled file; every sibling write remains tmpfs.
+  The egress boundary
   for a ChatTools turn is therefore the host container's own network: the
   dedicated egress bridge plus an egress firewall admitting only the ChatGPT
   endpoints and the exact MCP origin. The host refuses ChatTools when that
@@ -423,16 +439,13 @@ a stream that observed a tool or permission event without that terminal is a
 client-detected host defect. Approvals are never granted. Unknown fields,
 revisions, operations, events, or a missing terminal fail closed.
 
-Frame policy is per capability. `Synthesis` keeps the v1 coalescer and the v1
-bounds (1,024 frames / 256 KiB per frame / 1 MiB per stream). `ChatTools`
-streams text incrementally under a separate, evaluated frame budget — a
-bounded flush interval and byte run rather than a 32 KiB buffer — with
-frame/stream ceilings sized to admit a full 900-second tool-looping turn with
-margin (derived from the chat plan's output allowance and tool-receipt budget).
-Both budgets remain authored inside their bounds by construction, and a turn
-that would overrun still ends with the typed `output_limit_exceeded` terminal.
-Both budgets are named in the contract module so host and worker cannot
-disagree.
+Frame policy is per capability. `Synthesis` keeps the v1 coalescer and bounds
+(1,024 frames / 256 KiB per frame / 1 MiB per stream). `ChatTools` streams text
+incrementally through a one-item relay queue under an 8 MiB frame and 16 MiB
+stream ceiling. That admits the 8 MiB model-output budget plus one repeated
+terminal fold without permitting an unbounded producer/consumer backlog.
+Both budgets are authored inside the 64 MiB host runtime bound; an overrun ends
+with the typed `output_limit_exceeded` terminal.
 
 Pre-accept capacity refusal is the sole non-200 response that means safe
 scheduling rather than a rejected command. The host emits `HTTP 503` with
@@ -444,6 +457,16 @@ recognizes capacity only when status, content type, schema, and body match
 exactly; every other non-200 is a closed-contract rejection. No memory, PSI,
 process, or credential fact crosses the response. This exact response is what
 §7 means by a proven pre-accept refusal.
+
+Admission ownership is explicit. The request handler owns the claimed slot and
+per-turn tmpfs root until the owner task executes its first statement inside an
+installed `try/finally`; a start handshake transfers both or makes the handler
+reclaim both after a pre-start cancellation. The response callable then owns
+the independent task across response-start, send, iterator, disconnect, and
+repeated-cancellation failure. It cancels and awaits the owner before returning,
+never blocks an abandoned one-item relay, and does not release the slot until
+the bounded native runtime close, credential sync, and whole-root deletion have
+finished.
 
 Cancellation is explicit: `POST /v2/generations/{request_id}/cancel`
 interrupts the identified active turn; it is idempotent, returns 204 whether
@@ -482,6 +505,21 @@ MCP `2025-06-18`, `stateless_http=True`, and `json_response=True`. This is not
 “latest MCP” negotiation. `2024-11-05`, `2025-03-26`, `2025-11-25`, and
 `2026-07-28` are not accepted alternatives, and there is no legacy SSE,
 stateful-session, dual-era, downgrade, or retry fallback.
+
+Credential persistence is pinned to the same Rust `v0.144.4` implementation:
+`FileAuthStorage::save` opens `$CODEX_HOME/auth.json` with
+`truncate(true).write(true).create(true)`, then `write_all` and `flush`. The
+per-turn profile therefore uses an absolute link to the one exact writable
+encrypted-file bind. Any SDK/runtime upgrade that replaces by rename, changes
+the path/store, or changes refresh-token persistence requires a redesigned
+credential boundary and new release qualification before adoption. The pinned
+upstream write is not atomic replacement and does not call `fsync`. After the
+runtime closes, the host re-proves the original enrolled inode/mode/size and
+`fsync`s that exact descriptor before relaying the terminal; disconnect cleanup
+does the same before releasing the slot. Nexus adds no delayed copy-back window
+that could lose a rotated refresh token. A crash during the upstream
+truncate/write can still corrupt the artifact; startup then fails closed and
+follows the runbook's stopped-host re-enrollment procedure.
 
 The HTTP behavior is exact:
 
@@ -675,8 +713,9 @@ id; owner_kind/id; generation_seq; operation; plan_id/revision (covering the
 admitted model bounds); backend=codex; transport=sdk;
 auth_profile=codex-personal; model_name; reasoning_effort; capability_kind;
 request/output-schema/tool-plan fingerprints; streaming; session_ref;
-outcome; error_code from the closed Failed narrowing; error_detail (bounded,
-redacted); normalized usage; SDK/runtime versions; latency;
+outcome; error_code from the closed Failed narrowing; error_detail (bounded and
+derived only from the closed terminal algebra, never copied from submitted
+diagnostic text); normalized usage; SDK/runtime versions; latency;
 created/accepted/completed timestamps
 ```
 
@@ -690,9 +729,10 @@ provider diagnostics are never ledger data.
 
 The row keeps its lifecycle invariants: usage is wholly absent or carries all
 core totals; `session_ref`, `sdk_version`, and `runtime_version` are absent
-only for a pre-accept failed terminal; a terminal may not change the
-backend/transport/auth route recorded at start; and terminal facts are never
-partially persisted. `generation_seq` keeps the existing per-owner ordering
+only for a terminal proven pre-accept (`Failed` or owner-side `Cancelled`),
+with `accepted_at IS NULL` preserving that proof; a terminal may not change
+the backend/transport/auth route recorded at start; and terminal facts are
+never partially persisted. `generation_seq` keeps the existing per-owner ordering
 semantics and the chat step-path correspondence
 (`generation/<generation_seq>/…`); the rerun drift guard and the chat
 reconciliation lookup are re-cut in the same change so no reader is left
@@ -773,18 +813,30 @@ owner journal:
   `Prepared`. Shared replay codecs still gain no capacity-specific branch. The
   cutover migration initializes `capacity_wait_index` to zero in every
   generation-bearing job payload, not only `enrich_metadata`'s.
+- If a durable owner later proves its `Prepared` work is no longer applicable,
+  it atomically records ledger `Cancelled` and a `Completed` owner no-op memo
+  before publishing or deleting its domain terminal. No session, acceptance,
+  SDK/runtime, or usage facts are fabricated. This is not host cancellation and
+  never applies to `Uncertain` work.
 - After host acceptance, transport loss, host crash, timeout without a proven
   terminal, or ambiguous MCP/tool completion remains `Uncertain` and is never
   automatically redispatched. The only automatic returns to `Prepared` are the
   proven pre-accept capacity refusal and the existing verified lease-recovery
   of a `ReDispatchable` tool position whose dispatch is proven abandoned;
   every `BilledOnce` position stays `Uncertain` until reconciled.
-- An `Uncertain` generation is discharged only by the existing operator
-  reconciliation seam: `ProveNotDispatched` returns it to `Prepared` when
-  non-dispatch is proven from host evidence, and `AttachReconciledResult`
-  attaches a strictly decoded terminal when the turn is proven to have
-  completed. The seam covers every catalog operation after the cutover; there
-  is no automatic path.
+- Every catalog operation exposes the shared command-free
+  `ProveNotDispatched` reconciliation: under the generation-owner lock, the
+  domain journal identity must match the exact nonterminal ledger start before
+  the owner may atomically restore `Prepared` and requeue itself. This path
+  reads no mutable prompt input and performs no host I/O.
+- `AttachReconciledResult` is narrower by design. An owner may expose it only
+  when immutable, version-fenced durable facts reconstruct and fingerprint the
+  exact original command and the recovered terminal can pass the same decoder
+  and ledger landing path as a live terminal. Owners without those facts remain
+  suspended until non-dispatch is proven or the work is explicitly cancelled;
+  they never re-query mutable retrieval, persist raw prompts, accept an
+  operator-supplied command, or fabricate ledger facts merely to enable
+  attachment. There is no automatic reconciliation path.
 - `Completed` replay reuses the recorded terminal and republishes only through
   the domain owner's idempotent path.
 - The MCP client and Nexus add no tool-call retry. Exact duplicate protocol
@@ -792,19 +844,23 @@ owner journal:
   at tool-call position replaces the old per-iteration `turn/{i}/generation`
   steps as the replay unit; one generation records one `llm_calls` row.
 
-The host's existing-VPS envelope is re-qualified for the widest plan before
-promotion: re-run `deploy/hetzner/prove-codex-capacity.sh` with one
-`deep`/Sol-high chat turn holding an active MCP tool loop in addition to the
-metadata turns, asserting `memory.peak <= 320 MiB`, no OOM, PSI within the
-committed thresholds, and file-descriptor headroom. If the widest plan does
-not fit, raise `memory.max`, `_EXPECTED_MEMORY_MAX_BYTES`, and the compose
-limits together in this cutover — never relax the admission predicate.
+The host's existing-VPS envelope is re-qualified before promotion with
+`deploy/hetzner/prove-codex-capacity.sh <source-sha>`: one cold and two warm
+`dossier_library`/`thorough` (`Terra/high`, `Synthesis`) turns assert
+`memory.peak <= 320 MiB`, no OOM, PSI within the committed thresholds, and
+file-descriptor headroom. This representative capacity sample does not claim
+that Deep/Sol or MCP ran; the protected nightly owns those dimensions. If the
+sample does not fit, raise `memory.max`, `_EXPECTED_MEMORY_MAX_BYTES`, and the
+compose limits together in this cutover — never relax the admission predicate.
 
 The irreversible migration runs in a maintenance window. A SELECT-only
 preflight refuses, by name: `background_jobs` rows in `pending|running|failed`
 for every generation kind; any `chat_runs` not in `complete|error|cancelled`;
 any `artifact_builds` with no revision/failure/cancellation; any media
-enrichment intent mid-flight; and any journaled step in `Uncertain`. Dead
+enrichment intent mid-flight; any journaled queue step in `Uncertain`; and any
+nonterminal Artifact Learn request retaining resolver coordination or a live
+resolver lease. Prepared and Completed-without-domain-terminal Learn state is
+also pre-cutover replay state and is never rewritten across the hard cut. Dead
 (Suspended) rows are refused until the operator terminalizes them through the
 existing paths — `reconcile_uncertain_build`/`ProveNotDispatched`/
 `AttachReconciledResult` for dossiers, user Cancel for chat — which the
@@ -832,7 +888,7 @@ the maintenance window, not a repository acceptance criterion
 |---|---|---|---|
 | A. Policy/contracts | plans, mappings, bounds, intents, strict wire unions, eval corpus, error family | `python/nexus/services/llm_profiles.py` -> `python/nexus/services/generation_policy.py`; `python/nexus/services/llm_intent_state.py`, `python/nexus/services/native_agent_contract.py` -> `python/nexus/services/{generation_intent,codex_generation_contract}.py`; `python/nexus/services/structured_synthesis.py`; `python/nexus/schemas/llm.py` (profile + failure unions, including the §6 card recut consumed by E and F); `python/nexus/errors.py` | none |
 | B. Host | UDS v2, SDK lifecycle, capability lowering, secret resolver, isolation | `apps/codex_agent/**`; `python/nexus/services/native_agent_client.py` -> `codex_generation_client.py`; `python/nexus/services/native_agent_operations.py` -> `codex_generation_operations.py` (host-side lowering + fingerprint) | A |
-| C. Execution/ledger | dispatch, uncertainty, capacity wait, one ledger, credentials, migration, durable journals for journal-less operations | `python/nexus/services/{llm_execution,llm_ledger,llm_outcomes,llm_credentials,semantic_chunks,rate_limit,billing}.py`; `python/nexus/services/search/embedding.py`; `python/nexus/tasks/llm_task.py`; the `LlmTaskSpec` dispatch/journal seam in every `python/nexus/tasks/*` caller (the task files themselves stay with D and E); `python/nexus/api/deps.py`; `python/nexus/api/routes/dossiers.py` (learn dispatch); `python/nexus/app.py`; `python/nexus/jobs/{process_executor,registry}.py`; `python/nexus/db/models.py`; new migration; delete `python/nexus/services/agent_turn_ledger.py`; journal/identity seams in `python/nexus/services/{synapse,dawn_write,oracle}.py` (prompts/evidence stay with D) | A |
+| C. Execution/ledger | dispatch, uncertainty, capacity wait, one ledger, credentials, migration, durable journals for journal-less operations | `python/nexus/services/{llm_execution,llm_ledger,llm_outcomes,llm_credentials,semantic_chunks,rate_limit,billing}.py`; `python/nexus/services/search/embedding.py`; `python/nexus/tasks/llm_task.py`; the `LlmTaskSpec` dispatch/journal seam in every `python/nexus/tasks/*` caller (the task files themselves stay with D and E); `python/nexus/api/deps.py`; `python/nexus/api/routes/dossiers.py` (learn dispatch); `python/nexus/app.py`; `python/nexus/jobs/{process_executor,queue,registry}.py`; `python/nexus/db/models.py`; new migration; delete `python/nexus/services/agent_turn_ledger.py`; journal/identity seams in `python/nexus/services/{synapse,dawn_write,oracle}.py` (prompts/evidence stay with D) | A |
 | D. Operation adapters | prompts, evidence, output validation/publication, failure-code recuts | `python/nexus/services/{media_intelligence,synapse,dawn_write,oracle,metadata_enrichment,metadata_dispatch}.py`; `python/nexus/services/artifacts/**`; `python/nexus/tasks/{enrich_metadata,media_unit_build,synapse_scan,dawn_write,oracle_reading,artifacts}.py` | A, C, E |
 | E. Chat/MCP/tools | grant, MCP transport + worker listener, canonical executor bridge, chat transcript/stream, chat failure recut | `python/nexus/services/{chat_runs,chat_run_tools,chat_run_steps,chat_run_usage,chat_run_validation,chat_run_response,chat_failure,message_trust_trails,chat_prompt,context_assembler,conversations,chat_run_idempotency,chat_run_event_store,chat_run_finalize}.py`; `python/nexus/services/tool_runtime/**`; `python/nexus/tasks/chat_run.py`; new `python/nexus/services/{agent_tool_grants,agent_tools_mcp}.py`; `python/nexus/auth/middleware.py` (assert-untouched proof only); `python/nexus/config.py`; `apps/worker/main.py`; `python/pyproject.toml`, `python/uv.lock` | A, B, C |
 | F. Product/operations | profile API/UI, deployment, canaries, docs | `python/nexus/api/routes/{llm_profiles,chat_runs}.py`; `python/nexus/schemas/conversation.py`; `python/nexus/services/chat_run_candidates.py`; `apps/web/src/components/chat/**` (incl. `ChatProfilePicker.tsx`); `apps/web/src/lib/conversations/**` (incl. `chatProfileSelection.ts`); `apps/web/src/lib/api/sse/{requests,events}.ts`; versioned chat-draft storage key; `docker/Dockerfile.backend`; `deploy/hetzner/{docker-compose.yml,release.py,sync-env.sh,prove-codex-capacity.sh,Caddyfile,nexus-codex-agent-host.apparmor}`; `deploy/vercel/sync-env.sh`; `deploy/env/env-prod-backend.example`; `.env.example`; `.github/workflows/{release.yml,codex-personal-nightly.yml}`; `docs/modules/{llms,chat,jobs}.md`; `docs/runbooks/codex-personal-agent-host.md` | B-E |
@@ -869,12 +925,17 @@ Table laws:
   (chat's derived deadline is 90 + 900 + 30 + 15 = 1035). `synapse_scan` and
   `enrich_metadata` keep 300 (turn 120 → deadline 255, the proven margin);
   `dossier_build` keeps 900 (thorough turn 300 → deadline 435).
-- `worker-interactive` mounts `nexus_codex_run:/run/nexus-codex:ro` and sets
-  `NEXUS_CODEX_AGENT_SOCKET` exactly as `worker-background` does; both worker
-  lanes are start-ordered after `nexus-codex-agent-host` without a health
-  dependency, so an unready host soft-fails only generation jobs.
-- The Codex host reaches the MCP origin only through the container-enforced
-  DNS/TLS-SNI sidecar; F amends `deploy/hetzner/docker-compose.yml` and
+- The API and `worker-interactive` mount
+  `nexus_codex_run:/run/nexus-codex:ro` and set
+  `NEXUS_CODEX_AGENT_SOCKET` exactly as `worker-background` does. All three
+  generation clients are start-ordered after `nexus-codex-agent-host` without
+  a health dependency, so the request-scoped dossier resolver has the same UDS
+  capability while an unready host soft-fails only generation work. None
+  receives the credential bind.
+- The Codex host reaches the MCP hostname only through the container-enforced
+  DNS/TLS-SNI sidecar. The exact HTTPS path remains host-config, release, and
+  Caddy/MCP-mount authority; the SNI sidecar cannot enforce an encrypted HTTP
+  path. F amends `deploy/hetzner/docker-compose.yml` and
   `deploy/hetzner/Caddyfile` in the same change so
   `/internal/agent-tools/mcp` routes to the interactive worker's listener and
   nothing else changes route.
@@ -968,16 +1029,16 @@ owned real-UDS process under `python/tests/service/`, not a separate level.
 
 | Ownership boundary | One dominant proof | Level / lane |
 |---|---|---|
-| Policy | every operation and three chat profiles resolve to one exact complete plan with bounds; arbitrary model/effort is unrepresentable; a plan-table edit without a matching eval result fails | kernel-python / PR |
+| Policy | every operation and three chat profiles resolve to one exact complete plan with bounds; arbitrary model/effort is unrepresentable; a plan-table edit without matching reviewed pins fails | kernel-python / PR |
 | Plan policy eval | corpus version, baselines, and pins match the shipped policy revision | llm-eval / FULL |
 | Intent + wire algebra | strict tagged round trip; unknown fields/revisions/operations/events and a missing terminal are rejected | kernel-python / PR |
 | UDS transport | bounded NDJSON, contiguous sequence, terminal-last, capability gating, per-capability frame budgets; synthesis rejects tool events | service / PR |
-| Host lifecycle | one session/turn, correct auth root, built-ins off, exact MCP config/headers, cancel endpoint, cleanup on every terminal | service / PR |
+| Host lifecycle | one session/turn, correct auth root, built-ins off, exact MCP config/headers, monotonic policy abort, cancel endpoint, pre-start and response-start ownership, cancellation-resistant bounded close, credential-sync fail-closed, and cleanup on every terminal/disconnect | service / PR |
 | Host contention | a background dispatch behind a full-length chat turn reschedules within budget, never hard-fails; a chat dispatch against a busy host surfaces `capacity_unavailable` with rerun; an interactive-lane dispatch reaches the host socket | service / PR |
 | Execution + ledger | real Postgres and the real worker process prove dispatch-once, completed replay, pre-accept reschedule, accepted-loss uncertainty, and exactly one ledger row, with the Codex peer as a protocol-valid loopback process behind the production client | service / PR |
 | Journal coverage | every catalog operation checkpoints `Uncertain` before dispatch and refuses a second dispatch under a replayed identity | service / PR |
-| Uncertainty discharge | reconciliation returns an uncertain generation to `Prepared` or attaches a proven terminal; neither path double-publishes | service / PR |
-| Operation portfolio | parameterized catalog proves every operation renders a valid intent/schema within its bounds, cannot choose runtime policy, and publishes in one serializable transaction opened only after the durable terminal | kernel-python + service / PR |
+| Uncertainty discharge | every catalog owner can return an uncertain generation to `Prepared` from an exact journal/ledger non-dispatch proof without reconstructing its prompt; owners with immutable command facts may attach a proven terminal through the live decoder/ledger path; neither path dispatches, commits independently, or double-publishes | service / PR |
+| Operation portfolio | the parameterized catalog proves every operation renders a valid intent/schema within its bounds and cannot choose runtime policy; representative real-Postgres Metadata and Dawn owners prove terminal-before-publication, transaction ownership, and replay without claiming a success matrix for every catalog operation | kernel-python + service / PR |
 | Bounds | the ChatTools bounds admit a maximal admitted transcript and a maximal streamed 900-second turn; overrun is the typed `output_limit_exceeded` terminal | service / PR |
 | MCP authority + tools | real Postgres and local MCP transport prove one read and one reversible write; every request carries the grant, initialize names `2025-06-18`, every later request carries that exact `MCP-Protocol-Version`, all POSTs advertise the exact JSON/SSE accept pair, and neither side emits or accepts `Mcp-Session-Id`; omitted/wrong later versions, other revisions, stateful traffic, dual-era retries, and transport fallback defect; expired/cross-user/cross-run/cross-generation grants fail; integer and string request ids remain distinct; an exact protocol replay at the same identity returns the journaled receipt without re-executing, and a changed payload at that identity defects | service / PR |
 | MCP exposure | a grantless or invalid-grant request to `/internal/agent-tools/mcp` is rejected without tool execution; the grant is accepted only at this mount; no other path changes route or gains an exemption | service / PR |
@@ -1013,9 +1074,10 @@ Live verification is deliberately two-shaped:
   detects auth, quota, model/effort, SDK/runtime, sandbox, and tool-protocol
   drift cheaply. The nightly owner becomes
   `python/tests/hosted/nightly/test_codex_personal_generation.py`; its receipt
-  is `nexus-hosted-codex-canary.v2` with exactly four results, one per unique
-  plan pair, each carrying plan id, model, effort, structured-output validity,
-  usage, and SDK/runtime versions; `permission_requests == 0` in every result;
+  is `nexus-hosted-codex-canary.v3` with the source SHA, exact policy/runtime
+  pins, and exactly four results, one per unique plan pair. Each result carries
+  plan id, model, effort, structured-output validity, usage, and SDK/runtime
+  versions; `permission_requests == 0` in every result;
   `tool_events == 0` for synthesis results and bounded, non-zero only for the
   read-only MCP result. Exactly four subscription turns per run, each with a
   bounded elapsed ceiling, recorded in the receipt and enforced by the
@@ -1031,24 +1093,35 @@ Live verification is deliberately two-shaped:
   row and `nexus-test-routing-sha256` in
   `docs/local-rules/testing-standards.md`, and the workflow's policy-pinned
   lines change in the same commit.
-- Operator certification: a scripted, evidence-writing certification command
-  executed on the enrolled subscription host after deployment — one synthetic
-  fixture per canonical operation plus one reversible chat write and its undo,
-  against a dedicated synthetic user with normal teardown. The command, not
-  the operator, validates terminal status, plan/revision identity, and
-  redaction, and writes bounded redacted machine-checked evidence (the
-  `prove-codex-capacity.sh` pattern). It tests operations, not every
-  operation × model × effort combination. It is not a `./scripts/test` lane
-  and not a release-workflow gate.
 
-Plan qualification precedes the production switch: `./scripts/test
-codex-nightly` must pass all four plan pairs at the candidate revision, and
-its evidence (model, effort, terminal, usage, versions) is a required input to
-the atomic switch — not merely ongoing drift detection. The capacity canary
-moves to the v2 generation command; `deploy/hetzner/prove-codex-capacity.sh
-<source-sha>` is re-run for the cutover SHA against the heaviest admitted plan
-before the first promotion, and its contract proof and registered fault are
-re-authored with it.
+There is deliberately no second live operation-by-operation certification
+system. The closed static catalog proves operation composition and policy;
+representative real-owner service proofs cover publication and replay; the
+four-plan nightly proves every unique external model/effort
+pair plus strict JSON and read-only MCP; the capacity probe proves the shipped
+host envelope. Replaying every side-effecting domain fixture against production
+would duplicate those boundaries, require a product-wide synthetic-user
+teardown lifecycle Nexus does not have, and turn Dawn's population sweep into a
+new scoped job. For this one-user prototype, post-deploy operation checks occur
+through ordinary product use and passive ledger inspection, never through a
+fixture-mode product path.
+
+Plan qualification precedes production: the protected `codex-nightly` lane
+must pass all four exact plan pairs at the candidate revision, and its bounded
+artifact declares the narrow `model_effort_runtime_wire` qualification scope
+and the four exact plan ids. This proves subscription/runtime compatibility for
+each distinct model/effort pair; it does not claim that four representative
+turns evaluate every domain operation. The closed catalog owns operation
+mapping, existing domain tests own operation semantics, and representative
+real-owner service proofs own the cross-boundary publication shape. The
+one-user prototype does not add a second evidence-ingestion subsystem to the
+host controller. Separately,
+`deploy/hetzner/prove-codex-capacity.sh <source-sha>` runs one cold and two warm
+`dossier_library`/`thorough` (`Terra/high`, `Synthesis`) turns through the v2
+generation command. This representative high-effort capacity sample is not a
+claim that Deep/Sol or MCP ran; the nightly owns those dimensions. The
+controller consumes only its fresh, root-owned `nexus-codex-capacity.v2`
+qualification.
 
 Missing required live infrastructure, flags, or state roots is `not_run`. The
 controller additionally probes subscription readiness on the enrolled state
@@ -1079,10 +1152,17 @@ no prompts, model output, grants, or credentials.
    proven pre-accept host capacity refusal and the existing verified
    lease-recovery of a `ReDispatchable` tool position whose dispatch is proven
    abandoned; every `BilledOnce` position stays `Uncertain` until an operator
-   reconciles it.
-7. The credential host has no DB, no provider API key, no ambient operator
-   profile, no writable path outside its per-turn tmpfs cwd, and no egress
-   beyond the container-enforced ChatGPT + MCP allowlist.
+   reconciles it. Every catalog operation supports command-free
+   `ProveNotDispatched`; terminal attachment is admitted only for owners whose
+   immutable durable inputs can validate the original command and recovered
+   terminal through the live landing path.
+7. The credential host has no DB, no provider API key, or ambient operator
+   profile. Its only persistent writable credential/runtime-state path is the
+   exact encrypted `auth.json` bind required for pinned OAuth refresh-token
+   rotation (the UDS volume is transport only). The empty
+   model cwd and all other mutable Codex state share one deleted-after-close
+   per-turn tmpfs root; there is no other Codex state write outside that root.
+   Egress stays within the container-enforced ChatGPT + MCP allowlist.
 8. Under the profile-only contract: streamed text arrives incrementally and
    reconnect folds to the same final content; every tool receipt yields the
    same citation ordinals as today; tool status projects start/complete for
@@ -1098,8 +1178,7 @@ no prompts, model output, grants, or credentials.
    over MCP.
 10. The PR proofs, migration proof, and four-plan nightly smoke pass with
     redacted bounded evidence; fresh (<72 h) codex-capacity evidence exists
-    for the shipped source SHA; and recorded per-operation
-    operator-certification evidence exists after deployment.
+    for the shipped source SHA.
 11. Old providers, ledgers, schemas, configs, tests, docs, fallbacks, and dead
     dependencies are absent from the active tree, proved by the type checker,
     the import graph, and the closed policy/plan proofs — never by a committed
@@ -1112,12 +1191,18 @@ no prompts, model output, grants, or credentials.
     by the active tree.
 12. The cutover migration refuses incompatible active work and has no
     downgrade or compatibility runtime.
-13. Each operation's domain output, observed contributors, and collection
-    revisions converge in one serializable publication transaction opened only
-    after the terminal is durably recorded; no publication transaction spans
-    UDS, SDK, MCP, or Brave I/O.
-14. Every plan assignment in §3 cites a versioned eval result at the shipped
-    policy revision.
+13. The cutover preserves domain-owned publication boundaries: operation
+    outputs, observed contributors, and collection revisions converge only
+    after the terminal is durably recorded, and no publication transaction
+    spans UDS, SDK, MCP, or Brave I/O. Shared execution plus representative
+    real-Postgres Metadata and Dawn proofs establish this cross-boundary shape;
+    this criterion does not claim one successful publication fixture per
+    catalog operation.
+14. Every distinct shipped model/effort plan has one versioned live
+    `model_effort_runtime_wire` qualification at the candidate policy revision;
+    the closed catalog statically maps every operation and chat profile to one
+    of those qualified plans. Operation-specific semantics remain owned by
+    existing domain tests and representative real-owner service proofs.
 
 Implementation is complete only when all fourteen criteria hold in one
 release.

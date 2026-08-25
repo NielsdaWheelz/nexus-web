@@ -38,7 +38,7 @@ def test_suspended_chat_exposes_only_phase_and_masks_its_private_journal(
                 payload = {
                     **claimed.payload,
                     "coordination": {
-                        "turn/0/generation": {
+                        "generation/1": {
                             "request_fingerprint": "sensitive-fingerprint",
                             "terminal_result": secret,
                         }

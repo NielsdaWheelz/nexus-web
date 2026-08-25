@@ -79,7 +79,6 @@ def _send_body() -> dict[str, object]:
         "destination": {"kind": "New"},
         "content": "Prove the projection gate before creating this run.",
         "profile_id": "balanced",
-        "reasoning_option_id": "medium",
         "reader_selection": {"kind": "Absent"},
     }
 
@@ -104,6 +103,8 @@ def _projection_request(
     headers = {} if revision is None else {_PROJECTION_HEADER: revision}
     if path == "/chat-runs" or path.endswith(("/rerun", "/regenerate")):
         headers["Idempotency-Key"] = f"tool-projection-proof-{uuid4()}"
+    if body is None:
+        return client.request(method, path, headers=headers)
     return client.request(method, path, headers=headers, json=body)
 
 
@@ -127,8 +128,6 @@ def test_revision_gates_every_changed_chat_projection_boundary(
         db_session,
         user_id=test_user.id,
         plan_tier="ai_pro",
-        platform_token_quota_mode="unlimited",
-        platform_token_limit_monthly=None,
         transcription_quota_mode="unlimited",
         transcription_minutes_limit_monthly=None,
         expires_at=None,

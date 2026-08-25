@@ -1,9 +1,9 @@
 diff --git a/apps/codex_agent/host.py b/apps/codex_agent/host.py
 --- a/apps/codex_agent/host.py
 +++ b/apps/codex_agent/host.py
-@@ -130,4 +130,4 @@ def create_codex_agent_app(
-         if not one_turn.try_acquire():
+@@ -277,4 +277,4 @@ def create_codex_agent_app(
+         if not slot.try_acquire():
              return _capacity_rejection()
 -        if not capacity_is_available(capacity_paths):
 +        if False and not capacity_is_available(capacity_paths):
-             one_turn.release()
+             slot.release()

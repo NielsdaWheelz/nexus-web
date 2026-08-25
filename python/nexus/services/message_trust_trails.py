@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import func, select, text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_conversation_ids_cte_sql
@@ -15,7 +15,6 @@ from nexus.db.models import (
     ChatRun,
     ChatRunEvent,
     Conversation,
-    LLMCall,
     Message,
     MessageRetrieval,
     MessageToolCall,
@@ -37,9 +36,9 @@ from nexus.schemas.conversation import (
 )
 from nexus.schemas.presence import presence_from_nullable
 from nexus.services.chat_failure import (
+    active_profile_run_ids,
     chat_failure_projection,
     compute_has_write_tool_attempt,
-    compute_terminal_attempts,
 )
 from nexus.services.chat_run_execution import project_chat_run_executions
 from nexus.services.chat_run_tools import decode_persisted_tool_record
@@ -115,6 +114,7 @@ def build_assistant_trust_trails(
         runs_by_message.setdefault(run.assistant_message_id, run)
 
     run_ids = [run.id for run in runs_by_message.values()]
+    active_run_ids = active_profile_run_ids(db, list(runs_by_message.values()))
     execution_by_run = project_chat_run_executions(
         db,
         list(runs_by_message.values()),
@@ -127,16 +127,6 @@ def build_assistant_trust_trails(
             .order_by(ChatRunEvent.seq.desc())
         ):
             done_payloads.setdefault(event.run_id, cast(dict[str, Any], event.payload))
-
-    # SUM all call costs for each run (retries included — each incurs cost).
-    cost_by_run: dict[UUID, int | None] = {}
-    if run_ids:
-        for owner_id, total in db.execute(
-            select(LLMCall.owner_id, func.sum(LLMCall.total_cost_usd_micros).label("total"))
-            .where(LLMCall.owner_kind == "chat_run", LLMCall.owner_id.in_(run_ids))
-            .group_by(LLMCall.owner_id)
-        ):
-            cost_by_run[owner_id] = total
 
     prompt_by_message = {
         row.assistant_message_id: row
@@ -427,28 +417,24 @@ def build_assistant_trust_trails(
                 TrustRunOut(
                     run_id=run.id,
                     profile_id=run.profile_id,
-                    reasoning_option_id=run.reasoning_option_id,
-                    provider=run.provider,
                     model_name=run.model_name,
                     reasoning_effort=presence_from_nullable(run.reasoning_effort),
                     status=cast(Any, "pending" if run.status == "queued" else run.status),
                     usage=cast(dict[str, Any] | None, done_payload.get("usage")),
                     error_code=run.error_code,
-                    error_origin=run.error_origin,
                     support_id=presence_from_nullable(run.support_id),
                     publication_warning=chat_publication_warning_from_nullable(
                         run.publication_warning_code
                     ),
                     failure=chat_failure_projection(
                         run,
+                        profile_active=run.id in active_run_ids,
                         has_write_tool_attempt=compute_has_write_tool_attempt(db, run),
-                        attempts=compute_terminal_attempts(db, run),
                     ),
                     execution=execution_by_run[run.id],
                     final_chars=cast(int | None, done_payload.get("final_chars")),
                     started_at=run.started_at,
                     completed_at=run.completed_at,
-                    total_cost_usd_micros=cost_by_run.get(run.id),
                 )
                 if run is not None
                 else None

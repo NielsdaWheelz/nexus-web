@@ -279,10 +279,10 @@ reject_node_ingest_script() {
 
 reject_codex_host_runtime_keys() {
   local file="$1"
-  local key value
+  local key
 
-  for key in CODEX_HOME NEXUS_CODEX_STATE_ROOT_BASE NEXUS_CODEX_WORKING_DIRECTORY NEXUS_CODEX_AGENT_SOCKET NEXUS_AGENT_TOOLS_MCP_LISTEN NEXUS_CODEX_MCP_ORIGIN NEXUS_CODEX_CHAT_NETWORK_ATTESTED; do
-    if value="$(env_value "$key" "$file")" && ! is_blank "$(normalize_env_value "$value")"; then
+  for key in CODEX_HOME NEXUS_CODEX_CREDENTIAL_FILE NEXUS_CODEX_ENROLLMENT_AUTH_FILE NEXUS_CODEX_WORKING_DIRECTORY_ROOT NEXUS_CODEX_AGENT_SOCKET NEXUS_CODEX_STATE_ROOT_BASE NEXUS_CODEX_WORKING_DIRECTORY NEXUS_AGENT_TOOLS_MCP_LISTEN NEXUS_AGENT_TOOLS_MCP_ORIGIN NEXUS_CODEX_MCP_ORIGIN NEXUS_CODEX_CHAT_NETWORK_ATTESTED NEXUS_CODEX_EGRESS_PROXY_IP NEXUS_CODEX_EGRESS_MCP_HOST; do
+    if env_value "$key" "$file" >/dev/null; then
       die "${key} is owned by the isolated Codex agent host and must not be captured in Nexus runtime env"
     fi
   done
@@ -297,23 +297,13 @@ reject_removed_x_env_keys() {
   fi
 }
 
-reject_removed_llm_env_keys() {
+reject_forbidden_removed_generation_env_keys() {
   local file="$1"
-  local key value
+  local key
 
-  if value="$(env_value "NEXUS_KEY_ENCRYPTION_KEY" "$file")" && ! is_blank "$(normalize_env_value "$value")"; then
-    die "NEXUS_KEY_ENCRYPTION_KEY was removed by the LLM provider-runtime cutover; BYOK API-key encryption no longer exists, so this key can never be set"
-  fi
-
-  for key in CLOUDFLARE_AI_API_TOKEN CLOUDFLARE_AI_ACCOUNT_ID ANTHROPIC_API_KEY GEMINI_API_KEY MOONSHOT_API_KEY DEEPSEEK_API_KEY; do
-    if value="$(env_value "$key" "$file")" && ! is_blank "$(normalize_env_value "$value")"; then
-      die "${key} was removed by the LLM provider-runtime cutover; Cloudflare is no longer an LLM provider"
-    fi
-  done
-
-  for key in NEXUS_FABLE_RETENTION_ACCEPTED_AT NEXUS_PROVIDER_CERTIFICATION; do
-    if value="$(env_value "$key" "$file")" && ! is_blank "$(normalize_env_value "$value")"; then
-      die "${key} was removed by the Codex personal generation hard cut"
+  for key in NEXUS_KEY_ENCRYPTION_KEY CLOUDFLARE_AI_API_TOKEN CLOUDFLARE_AI_ACCOUNT_ID ANTHROPIC_API_KEY GEMINI_API_KEY MOONSHOT_API_KEY DEEPSEEK_API_KEY CODEX_API_KEY NEXUS_FABLE_RETENTION_ACCEPTED_AT NEXUS_PROVIDER_CERTIFICATION STREAM_MAX_OUTPUT_TOKENS_DEFAULT; do
+    if env_value "$key" "$file" >/dev/null; then
+      die "${key} is forbidden after the Codex subscription generation hard cut"
     fi
   done
 }
@@ -360,6 +350,7 @@ require_worker_defaults() {
   [ "$value" = "600" ] || die "INGEST_RECONCILE_SCHEDULE_SECONDS must be 600"
 }
 
+main() {
 [ "$#" = 1 ] || die "usage: deploy/hetzner/sync-env.sh <never-published-source-sha>"
 SOURCE_SHA="$1"
 [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || die "source SHA must be 40 lowercase hex characters"
@@ -422,7 +413,7 @@ reject_legacy_runtime_keys "$tmp_file"
 reject_node_ingest_script "$tmp_file"
 reject_codex_host_runtime_keys "$tmp_file"
 reject_removed_x_env_keys "$tmp_file"
-reject_removed_llm_env_keys "$tmp_file"
+reject_forbidden_removed_generation_env_keys "$tmp_file"
 reject_removed_podcast_env_keys "$tmp_file"
 require_worker_defaults "$tmp_file"
 
@@ -454,3 +445,8 @@ result="$(
 )"
 
 printf '%s\n' "$result"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

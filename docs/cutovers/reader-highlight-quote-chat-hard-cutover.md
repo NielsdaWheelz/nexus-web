@@ -301,7 +301,6 @@ ChatRunCreateRequest
       }
   content: nonblank string
   profile_id: string
-  reasoning_option_id: string
   reader_selection: Presence<{
     key: ReaderSelectionKey
     revision: ReaderSelectionRevision

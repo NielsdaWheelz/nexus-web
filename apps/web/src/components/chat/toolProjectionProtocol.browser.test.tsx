@@ -295,7 +295,7 @@ describe("Chat tool projection protocol", () => {
     const variants = [
       projectionTool("current_execution", {
         canonicalToolId: "nexus.document.search",
-        providerWireName: null,
+        providerWireName: "nexus.document.search",
         effect: "Read",
         resultKind: "retrieval",
         activityLabel: "Searching this document",

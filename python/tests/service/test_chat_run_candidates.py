@@ -19,17 +19,21 @@ per-scenario user id; each owner API commits on its own connection.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 from uuid import UUID, uuid4
 
 import pytest
+from fastapi.testclient import TestClient
+from pydantic import SecretStr
 from sqlalchemy import Engine, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun, ChatRunTurnContext, Message
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
+from nexus.services import generation_policy
 from nexus.services.chat_run_candidates import regenerate_assistant_response
 from nexus.services.chat_run_event_store import mark_running
-from nexus.services.chat_run_finalize import finalize_run
+from nexus.services.chat_run_finalize import finalize_cancelled, finalize_run
 from nexus.services.chat_run_idempotency import (
     compute_regeneration_payload_hash,
     compute_rerun_payload_hash,
@@ -39,14 +43,23 @@ from nexus.services.chat_run_tools import (
     current_tool_record_identity,
     persist_write_tool_call,
 )
+from nexus.services.codex_generation_contract import (
+    ChatOperation,
+    GenerationCommand,
+    GenerationSessionRef,
+    GenerationTerminal,
+)
 from nexus.services.conversations import regeneratable_assistant_message_ids
+from nexus.services.generation_intent import BearerToolGrant, GenerationIntent, TextOutput
+from nexus.services.llm_ledger import (
+    GenerationStart,
+    LlmCallOwner,
+    complete_generation_in_current_transaction,
+    start_generation_in_current_transaction,
+)
+from nexus.services.tool_runtime.declarations import BROWSER_TOOL_PROJECTION_REVISION
+from tests.testkit.auth import UserRecord
 from tests.testkit.chat import create_entitled_chat
-
-# The "balanced" profile at reasoning "medium" resolves to this target; the real
-# worker snapshots exactly these onto the run at `mark_running`.
-_PROVIDER = "openai"
-_MODEL = "gpt-5.6-terra"
-_REASONING_EFFORT = "medium"
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,22 +71,89 @@ class CompletedChat:
     assistant_message_id: UUID
 
 
+def _stage_generation(
+    db: Session,
+    run_id: UUID,
+    assistant_content: str,
+    *,
+    profile_id: Literal["fast", "balanced", "deep"],
+    status: Literal["succeeded", "cancelled"] = "succeeded",
+) -> None:
+    """Create the exact terminal ledger facts a completed production run owns."""
+
+    policy = generation_policy.chat_policy(profile_id)
+    command = GenerationCommand(
+        request_id=uuid4(),
+        operation=ChatOperation(revision=policy.revision, profile=profile_id),
+        policy_revision=generation_policy.POLICY_REVISION,
+        policy_fingerprint=generation_policy.POLICY_FINGERPRINT,
+        intent=GenerationIntent(
+            instructions="Answer the user's question.",
+            input="Regeneration eligibility proof.",
+            output=TextOutput(),
+        ),
+        tool_grant=BearerToolGrant(token=SecretStr("test-only-grant")),
+    )
+    owner = LlmCallOwner(kind="chat_run", id=run_id)
+    start_generation_in_current_transaction(
+        db,
+        GenerationStart(owner=owner, command=command, streaming=True),
+    )
+    complete_generation_in_current_transaction(
+        db,
+        owner=owner,
+        generation_id=command.request_id,
+        terminal=GenerationTerminal(
+            status=status,
+            failure=None,
+            final_text=assistant_content,
+            structured_output=None,
+            session_ref=(
+                GenerationSessionRef(
+                    schema_version="agent-session-ref.v1",
+                    backend="codex",
+                    transport="sdk",
+                    native_session_id=f"thread-{command.request_id}",
+                    profile_key="codex-personal",
+                    state_root_fingerprint="1" * 64,
+                    cwd_fingerprint="2" * 64,
+                )
+                if status == "succeeded"
+                else None
+            ),
+            usage=None,
+            diagnostics=() if status == "succeeded" else ("cancelled by candidate proof",),
+            accepted_at="2026-08-25T12:34:56.123456Z",
+            sdk_version="0.144.4",
+            runtime_version="0.144.4",
+        ),
+        latency_ms=1,
+    )
+
+
 def _complete_chat(
     db: Session,
     *,
     content: str,
     user_id: UUID | None = None,
     assistant_content: str = "The original answer.",
-    snapshot_target_provider: str = _PROVIDER,
+    profile_id: Literal["fast", "balanced", "deep"] = "balanced",
+    snapshot_model: str | None = None,
 ) -> CompletedChat:
     """Drive one admitted chat all the way to a real completed terminal state."""
-    chat = create_entitled_chat(db, content=content, user_id=user_id)
+    policy = generation_policy.chat_policy(profile_id)
+    chat = create_entitled_chat(db, content=content, user_id=user_id, profile_id=profile_id)
     mark_running(
         db,
         chat.run_id,
-        provider=snapshot_target_provider,
-        model_name=_MODEL,
-        reasoning_effort=_REASONING_EFFORT,
+        model_name=snapshot_model or policy.model,
+        reasoning_effort=policy.effort,
+    )
+    _stage_generation(
+        db,
+        chat.run_id,
+        assistant_content,
+        profile_id=profile_id,
     )
     finalize_run(
         db,
@@ -87,6 +167,37 @@ def _complete_chat(
     )
     run = db.get(ChatRun, chat.run_id)
     assert run is not None and run.status == "complete"
+    return CompletedChat(
+        user_id=chat.user_id,
+        conversation_id=chat.conversation_id,
+        run_id=chat.run_id,
+        user_message_id=run.user_message_id,
+        assistant_message_id=run.assistant_message_id,
+    )
+
+
+def _cancelled_chat(
+    db: Session,
+    *,
+    content: str,
+    user_id: UUID,
+    profile_id: Literal["fast", "balanced", "deep"],
+) -> CompletedChat:
+    """Drive one admitted chat through a real cancelled terminal fold."""
+    policy = generation_policy.chat_policy(profile_id)
+    chat = create_entitled_chat(db, content=content, user_id=user_id, profile_id=profile_id)
+    mark_running(
+        db,
+        chat.run_id,
+        model_name=policy.model,
+        reasoning_effort=policy.effort,
+    )
+    _stage_generation(db, chat.run_id, "", profile_id=profile_id, status="cancelled")
+    run = db.get(ChatRun, chat.run_id)
+    assert run is not None
+    finalize_cancelled(db, run)
+    run = db.get(ChatRun, chat.run_id)
+    assert run is not None and run.status == "cancelled"
     return CompletedChat(
         user_id=chat.user_id,
         conversation_id=chat.conversation_id,
@@ -117,6 +228,81 @@ def _assistant_can_regenerate(db: Session, completed: CompletedChat) -> bool:
     response = build_chat_run_response(db, completed.user_id, db.get(ChatRun, completed.run_id))
     assert response.assistant_message.id == completed.assistant_message_id
     return response.assistant_message.can_regenerate
+
+
+def test_rerun_and_regenerate_routes_are_bodyless_and_inherit_the_exact_profile(
+    authenticated_client: TestClient,
+    db_session: Session,
+    test_user: UserRecord,
+) -> None:
+    """The command routes accept no selector surface: a body is rejected before
+    candidate creation, while each bodyless command copies its source profile."""
+    cancelled = _cancelled_chat(
+        db_session,
+        content="Please try this deep answer again.",
+        user_id=test_user.id,
+        profile_id="deep",
+    )
+    completed = _complete_chat(
+        db_session,
+        content="Give me another fast answer.",
+        user_id=test_user.id,
+        profile_id="fast",
+    )
+    source_count = db_session.execute(
+        text("SELECT count(*) FROM chat_runs WHERE owner_user_id = :owner_id"),
+        {"owner_id": test_user.id},
+    ).scalar_one()
+    assert source_count == 2
+
+    boundaries = (
+        ("rerun", cancelled.assistant_message_id),
+        ("regenerate", completed.assistant_message_id),
+    )
+    for operation, assistant_message_id in boundaries:
+        rejected = authenticated_client.post(
+            f"/messages/{assistant_message_id}/{operation}",
+            headers={
+                "X-Nexus-Tool-Projection": BROWSER_TOOL_PROJECTION_REVISION,
+                "Idempotency-Key": f"body-rejected-{operation}-{uuid4()}",
+            },
+            json={"profile_id": "balanced", "reasoning_option_id": "high"},
+        )
+        assert rejected.status_code == 400
+        assert rejected.json()["error"]["code"] == "E_INVALID_REQUEST"
+    assert (
+        db_session.execute(
+            text("SELECT count(*) FROM chat_runs WHERE owner_user_id = :owner_id"),
+            {"owner_id": test_user.id},
+        ).scalar_one()
+        == source_count
+    ), "a rejected selector body still created a candidate"
+
+    rerun = authenticated_client.post(
+        f"/messages/{cancelled.assistant_message_id}/rerun",
+        headers={
+            "X-Nexus-Tool-Projection": BROWSER_TOOL_PROJECTION_REVISION,
+            "Idempotency-Key": f"bodyless-rerun-{uuid4()}",
+        },
+    )
+    assert rerun.status_code == 200, rerun.text
+    rerun_data = rerun.json()["data"]
+    assert rerun_data["run"]["id"] != str(cancelled.run_id)
+    assert rerun_data["run"]["profile_id"] == "deep"
+    assert "reasoning_option_id" not in rerun.text
+
+    regenerate = authenticated_client.post(
+        f"/messages/{completed.assistant_message_id}/regenerate",
+        headers={
+            "X-Nexus-Tool-Projection": BROWSER_TOOL_PROJECTION_REVISION,
+            "Idempotency-Key": f"bodyless-regenerate-{uuid4()}",
+        },
+    )
+    assert regenerate.status_code == 200, regenerate.text
+    regenerate_data = regenerate.json()["data"]
+    assert regenerate_data["run"]["id"] != str(completed.run_id)
+    assert regenerate_data["run"]["profile_id"] == "fast"
+    assert "reasoning_option_id" not in regenerate.text
 
 
 def test_completed_answer_regenerates_a_selected_sibling_copying_prompt_snapshot_and_turn_context(
@@ -187,7 +373,7 @@ def test_completed_answer_regenerates_a_selected_sibling_copying_prompt_snapshot
         assert new_user.branch_root_message_id == source_user.branch_root_message_id
         assert new_user.reader_selection_snapshot == snapshot, "sibling lost the quote snapshot"
         assert new_run.profile_id == "balanced"
-        assert new_run.reasoning_option_id == "medium"
+        assert (new_run.model_name, new_run.reasoning_effort) == (None, None)
 
         # Cloned turn context.
         new_context = db.get(ChatRunTurnContext, new_run_id)
@@ -252,7 +438,7 @@ def test_regeneration_is_blocked_and_unprojected_after_an_assistant_write_tool_a
         assert sibling_runs == 1, "a blocked regeneration still created a sibling run"
 
 
-def test_regeneration_is_blocked_and_unprojected_after_profile_target_drift(
+def test_regeneration_is_blocked_and_unprojected_after_profile_plan_drift(
     engine: Engine,
 ) -> None:
     """Risk (AC-11, §10 "never remaps a historical target"): once the run's
@@ -260,11 +446,9 @@ def test_regeneration_is_blocked_and_unprojected_after_profile_target_drift(
     and rejected."""
     with Session(engine) as db:
         # Complete against a target that no longer matches what "balanced"
-        # resolves to today ("openai"/gpt-5.6-terra) — a stand-in for a drifted
-        # profile: the run's historical snapshot diverges from the live target.
-        completed = _complete_chat(
-            db, content="Summarize the argument.", snapshot_target_provider="anthropic"
-        )
+        # resolves to today — a stand-in for a drifted profile whose historical
+        # execution snapshot diverges from the live plan.
+        completed = _complete_chat(db, content="Summarize the argument.", snapshot_model="retired")
 
         assert _assistant_can_regenerate(db, completed) is False
 
@@ -313,8 +497,7 @@ def test_pending_and_failed_and_user_turns_are_never_regeneratable(
             assistant_status="error",
             run_status="error",
             done_status="error",
-            error_code="incomplete",
-            error_origin="provider_response",
+            error_code="timeout",
             commit=True,
         )
         failed_run = db.get(ChatRun, failed.run_id)

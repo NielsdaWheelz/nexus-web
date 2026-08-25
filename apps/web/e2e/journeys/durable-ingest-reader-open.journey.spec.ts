@@ -340,7 +340,6 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
       content:
         "What did SOFIA establish about water in Clavius Crater? Use the attached source.",
       profile_id: "fast",
-      reasoning_option_id: "high",
       reader_selection: { kind: "Absent" },
     },
   });

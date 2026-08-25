@@ -21,6 +21,12 @@ legacy document-chat owner and the `reader_context` field are gone. See
 > resolver, and stored historical turn subjects remain; `chat_run_turn_contexts`
 > keeps its subject/audit columns but drops its two reader-selection columns.
 
+> **Generation authority amendment (2026-08-25):** Any `model_id`, reasoning,
+> key-mode, provider, or profile-schema detail below is historical and
+> non-authoritative. `/chat-runs` now accepts only the fixed chat `profile_id`
+> defined by
+> [`codex-personal-generation-hard-cutover.md`](codex-personal-generation-hard-cutover.md).
+
 ## North Star
 
 Nexus can start, list, continue, search, cite, open, and inspect a conversation

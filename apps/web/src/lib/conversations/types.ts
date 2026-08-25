@@ -63,101 +63,54 @@ export type ChatSendCapability =
 //
 // Closed, discriminated union (discriminator `code`) exposed by ChatRunOut,
 // message hydration, terminal SSE, reconnect folding, and the trust trail.
-// A DEFECT (internal error) exposes NO variant — `failure` is null but the
-// run status is terminal-failed with a run-owned support_id; render the same generic,
-// non-rerunnable card (see chatFailureMessage in lib/llm/failure.ts).
+// Its fields are deliberately only `code` and `can_rerun`; the browser does
+// not carry backend diagnostics or retry-attempt bookkeeping.
 // =============================================================================
 
 interface ExpectedChatFailureBase {
   can_rerun: boolean;
 }
 
-/** Streamed Fable refusal (provider_stream) or non-streamed provider refusal
- * (provider_http). Never rerunnable. */
-export interface RefusedChatFailure extends ExpectedChatFailureBase {
-  code: "refused";
-  origin: "provider_http" | "provider_stream";
+/** Run status `cancelled` alone drives this variant. */
+export interface CancelledChatFailure extends ExpectedChatFailureBase {
+  code: "cancelled";
+  can_rerun: boolean;
+}
+
+export interface ContextTooLargeChatFailure extends ExpectedChatFailureBase {
+  code: "context_too_large";
+  can_rerun: false;
+}
+
+export interface InvalidOutputChatFailure extends ExpectedChatFailureBase {
+  code: "invalid_output";
+  can_rerun: false;
 }
 
 /** Provider-declared incomplete completion, or local truncation folded to the
  * same closed code. */
 export interface IncompleteChatFailure extends ExpectedChatFailureBase {
   code: "incomplete";
-  origin: "provider_response";
+  can_rerun: boolean;
 }
 
-/** Run status `cancelled` alone drives this variant — a cancelled run's error
- * columns are NULL, so it carries no `origin`. */
-export interface CancelledChatFailure extends ExpectedChatFailureBase {
-  code: "cancelled";
+export interface AssistantUnavailableChatFailure extends ExpectedChatFailureBase {
+  code: "assistant_unavailable";
+  can_rerun: boolean;
 }
 
-/** Owner-side assembly rejected the intent before generation began (`intent`,
- * ledgerless), or the provider rejected an in-bound request as oversize
- * (`provider_http`). */
-export interface ContextTooLargeChatFailure extends ExpectedChatFailureBase {
-  code: "context_too_large";
-  origin: "intent" | "provider_http";
-}
-
-export interface InvalidToolArgumentsChatFailure extends ExpectedChatFailureBase {
-  code: "invalid_tool_arguments";
-  origin: "tool_arguments";
-}
-
-/** Platform-token-reservation denial. Never rerunnable. */
-export interface BudgetExceededChatFailure extends ExpectedChatFailureBase {
-  code: "budget_exceeded";
-  origin: "budget";
-}
-
-/** Transient: mapped from the runtime's TransientExhausted(cause=
- * ProviderRateLimit) leaf. */
-export interface RateLimitedChatFailure extends ExpectedChatFailureBase {
-  code: "rate_limited";
-  origin: "provider_http";
-  attempts: number;
-}
-
-/** Transient: mapped from the runtime's TransientExhausted(cause=
- * ProviderTimeout) leaf. */
-export interface TimeoutChatFailure extends ExpectedChatFailureBase {
-  code: "timeout";
-  origin: "transport";
-  attempts: number;
-}
-
-/** Transient: mapped from either TransientExhausted(cause=
- * ProviderHttpUnavailable) (provider_http) or TransientExhausted(cause=
- * TransportUnavailable) (transport). */
-export interface ProviderUnavailableChatFailure extends ExpectedChatFailureBase {
-  code: "provider_unavailable";
-  origin: "provider_http" | "transport";
-  attempts: number;
-}
-
-/** Transient: mapped from TransientExhausted(cause=
- * ProviderStreamInterrupted), and from crashed/interrupted-run recovery when
- * provider output existed without a terminal. This is the SERVER-side
- * variant — distinct from the CLIENT-only ConnectionLostStatusUnknown owned
- * by useChatRunTail.ts, which is never persisted and never SSE. */
-export interface StreamInterruptedChatFailure extends ExpectedChatFailureBase {
-  code: "stream_interrupted";
-  origin: "provider_stream";
-  attempts: number;
+export interface OperatorDefectChatFailure extends ExpectedChatFailureBase {
+  code: "operator_defect";
+  can_rerun: false;
 }
 
 export type ExpectedChatFailure =
-  | RefusedChatFailure
-  | IncompleteChatFailure
   | CancelledChatFailure
   | ContextTooLargeChatFailure
-  | InvalidToolArgumentsChatFailure
-  | BudgetExceededChatFailure
-  | RateLimitedChatFailure
-  | TimeoutChatFailure
-  | ProviderUnavailableChatFailure
-  | StreamInterruptedChatFailure;
+  | InvalidOutputChatFailure
+  | IncompleteChatFailure
+  | AssistantUnavailableChatFailure
+  | OperatorDefectChatFailure;
 
 export interface ChatPublicationWarning {
   code: "CitationsUnavailable";
@@ -261,7 +214,6 @@ export interface AssistantTrustTrail {
     status: "pending" | "running" | "complete" | "error" | "cancelled";
     usage: Record<string, unknown> | null;
     error_code: string | null;
-    error_origin: string | null;
     failure: ExpectedChatFailure | null;
     execution: Presence<DurableExecution>;
     reasoning_effort: Presence<string>;
@@ -520,7 +472,7 @@ export interface ChatRun {
 
 export interface ChatRunStreamState {
   status:
-    "queued" | "running" | "complete" | "error" | "cancelled" | "interrupted";
+    "queued" | "running" | "complete" | "error" | "cancelled";
   last_event_seq: number;
   folded_event_seq: number;
   assistant_current_text: string;

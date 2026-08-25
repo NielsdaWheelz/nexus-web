@@ -114,7 +114,6 @@ class ApiErrorCode(str, Enum):
     E_MODEL_NOT_AVAILABLE = "E_MODEL_NOT_AVAILABLE"  # 400 - Model not available to user
     E_CONVERSATION_BUSY = "E_CONVERSATION_BUSY"  # 409 - Pending assistant already exists
     E_RATE_LIMITED = "E_RATE_LIMITED"  # 429 - Per-user rate limit exceeded
-    E_TOKEN_BUDGET_EXCEEDED = "E_TOKEN_BUDGET_EXCEEDED"  # 429 - Platform token budget exceeded
     E_IDEMPOTENCY_KEY_REPLAY_MISMATCH = (
         "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH"  # 409 - Key reused with different payload
     )
@@ -199,7 +198,7 @@ class ApiErrorCode(str, Enum):
     E_SOURCE_NOT_READABLE = "E_SOURCE_NOT_READABLE"  # 422
     # Unified Codex generation failures. The first ten names mirror the
     # ledger's closed Failed narrowing; the final three are owner lifecycle
-    # outcomes that are not fabricated provider failures.
+    # outcomes that are not fabricated generation failures.
     E_GENERATION_AUTH = "E_GENERATION_AUTH"  # 503
     E_GENERATION_QUOTA = "E_GENERATION_QUOTA"  # 429
     E_GENERATION_TIMEOUT = "E_GENERATION_TIMEOUT"  # 504
@@ -322,7 +321,6 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_MODEL_NOT_AVAILABLE: 400,
     ApiErrorCode.E_CONVERSATION_BUSY: 409,
     ApiErrorCode.E_RATE_LIMITED: 429,
-    ApiErrorCode.E_TOKEN_BUDGET_EXCEEDED: 429,
     ApiErrorCode.E_IDEMPOTENCY_KEY_REPLAY_MISMATCH: 409,
     # Reader-selection quote-to-chat errors
     ApiErrorCode.E_READER_SELECTION_NOT_FOUND: 404,

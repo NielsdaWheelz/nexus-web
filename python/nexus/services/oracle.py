@@ -11,7 +11,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
@@ -33,6 +33,7 @@ from nexus.db.session import get_session_factory
 from nexus.errors import (
     ApiError,
     ApiErrorCode,
+    InvalidRequestError,
     NotFoundError,
 )
 from nexus.jobs.queue import (
@@ -43,6 +44,8 @@ from nexus.jobs.queue import (
     get_job,
     lock_job,
     lock_running_job_claim,
+    replace_dead_job_payload,
+    requeue_dead_job,
 )
 from nexus.logging import get_logger
 from nexus.schemas.citation import CitationOut
@@ -79,10 +82,13 @@ from nexus.services.llm_execution import (
     GenerationDispatchAborted,
     GenerationExecutionRequest,
     GenerationUncertain,
+    GenerationUncertainResolution,
     JobGenerationJournal,
+    cancel_prepared_generation_without_dispatch_in_current_transaction,
     execute_generation,
+    prove_uncertain_generation_not_dispatched_in_current_transaction,
 )
-from nexus.services.llm_ledger import LlmCallOwner
+from nexus.services.llm_ledger import LlmCallOwner, lock_generation_owner_in_current_transaction
 from nexus.services.oracle_plates import oracle_plate_url
 from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.resource_graph.citations import (
@@ -545,6 +551,94 @@ def assert_reading_owner(db: Session, *, viewer_id: UUID, reading_id: UUID) -> N
     _get_reading_owned_by(db, viewer_id=viewer_id, reading_id=reading_id)
 
 
+def reconcile_uncertain_oracle_reading(
+    db: Session,
+    *,
+    reading_id: UUID,
+    resolution: GenerationUncertainResolution,
+) -> None:
+    """Prove non-dispatch for one suspended Oracle generation and requeue it.
+
+    Oracle intentionally retains no raw prompt, embedding, ranked retrieval, or
+    plate-selection snapshot. Those inputs cannot be reproduced without new
+    external or mutable reads, so terminal attachment is not a safe operation.
+    This entrypoint owns only the evidence-backed non-dispatch transition. It
+    locks the generation owner before the reading and exact dead job, validates
+    the persisted journal fingerprint against the nonterminal ledger start, and
+    returns that same job to Pending without dispatching.
+    """
+
+    def invalid(message: str) -> InvalidRequestError:
+        return InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, message)
+
+    if not isinstance(resolution, step_journal.ProveNotDispatched):
+        raise invalid("Oracle reconciliation can only prove generation was not dispatched")
+
+    owner = LlmCallOwner(kind="oracle_reading", id=reading_id)
+
+    def op() -> None:
+        # The shared generation-owner key is the first lock in live and repair
+        # paths; domain and queue rows follow it in their established order.
+        lock_generation_owner_in_current_transaction(db, owner)
+        reading = db.scalar(
+            select(OracleReading).where(OracleReading.id == reading_id).with_for_update()
+        )
+        if reading is None or reading.status != "pending":
+            raise invalid("Oracle reading is not suspended and pending")
+
+        rows = (
+            db.execute(
+                text(
+                    "SELECT id, payload FROM background_jobs "
+                    "WHERE kind = 'oracle_reading_generate' "
+                    "AND payload ->> 'reading_id' = :reading_id "
+                    "AND status = 'dead' FOR UPDATE"
+                ),
+                {"reading_id": str(reading_id)},
+            )
+            .mappings()
+            .all()
+        )
+        if not rows:
+            raise invalid("Oracle has no dead generation job to reconcile")
+        if len(rows) != 1:
+            raise AssertionError("Oracle reading has multiple dead generation jobs")
+        row = rows[0]
+        payload = dict(row["payload"])
+        if payload.get("reading_id") != str(reading_id):
+            raise AssertionError("dead Oracle job payload identity changed")
+        state = step_journal.decode_step_states(payload).get(_SYNTHESIS_STEP_PATH)
+        if state is None:
+            raise invalid("Oracle has no uncertain generation step to reconcile")
+        if state.dispatch_phase is not step_journal.Uncertain:
+            raise invalid("Oracle generation step is not uncertain")
+        expected_generation_id = step_journal.stable_generation_id(
+            reading_id,
+            _SYNTHESIS_STEP_PATH,
+        )
+        if state.generation_id != expected_generation_id:
+            raise AssertionError("dead Oracle generation identity changed")
+
+        next_state = prove_uncertain_generation_not_dispatched_in_current_transaction(
+            db,
+            owner=owner,
+            state=state,
+        )
+        next_payload = step_journal.payload_with_step_state(
+            payload,
+            step_path=_SYNTHESIS_STEP_PATH,
+            state=next_state,
+        )
+        job_id = UUID(str(row["id"]))
+        if not replace_dead_job_payload(db, job_id=job_id, payload=next_payload):
+            raise AssertionError("locked dead Oracle job changed during reconciliation")
+        if not requeue_dead_job(db, job_id=job_id):
+            raise AssertionError("locked dead Oracle job could not be requeued")
+        db.commit()
+
+    retry_serializable(db, "reconcile_uncertain_oracle_reading", op)
+
+
 # ---------- worker entrypoint -----------------------------------------------
 
 
@@ -617,8 +711,15 @@ class _CompletedOracleFailure(BaseModel):
     error_detail: str | None = None
 
 
+class _CompletedOracleNoop(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    outcome: Literal["noop"] = "noop"
+    status: Literal["streaming", "complete", "failed"]
+
+
 type _CompletedOracle = Annotated[
-    _CompletedOracleSuccess | _CompletedOracleFailure,
+    _CompletedOracleSuccess | _CompletedOracleFailure | _CompletedOracleNoop,
     Field(discriminator="outcome"),
 ]
 _COMPLETED_ORACLE_ADAPTER: TypeAdapter[_CompletedOracle] = TypeAdapter(_CompletedOracle)
@@ -776,6 +877,10 @@ def _apply_completed_oracle(
     context: JobExecutionContext,
     completed: _CompletedOracle,
 ) -> dict[str, Any]:
+    if isinstance(completed, _CompletedOracleNoop):
+        db.commit()
+        return {"status": completed.status, "noop": True}
+
     def publish() -> dict[str, Any]:
         reading = db.scalar(
             select(OracleReading).where(OracleReading.id == reading_id).with_for_update()
@@ -947,6 +1052,88 @@ def _apply_completed_oracle(
     return retry_serializable(db, "oracle.publish", publish)
 
 
+def _stage_oracle_terminal_without_dispatch(
+    db: Session,
+    *,
+    reading_id: UUID,
+    context: JobExecutionContext,
+    reason: str,
+    error_code: str | None = None,
+    error_detail: str | None = None,
+) -> dict[str, Any] | None:
+    """Stage Oracle's journal, ledger, and domain terminal; caller commits."""
+
+    owner = LlmCallOwner(kind="oracle_reading", id=reading_id)
+    lock_generation_owner_in_current_transaction(db, owner)
+    reading = db.scalar(
+        select(OracleReading).where(OracleReading.id == reading_id).with_for_update()
+    )
+    if reading is None:
+        raise ApiError(ApiErrorCode.E_NOT_FOUND, "Oracle reading not found")
+    if not lock_running_job_claim(db, context=context):
+        return None
+    job = get_job(db, context.job_id)
+    if (
+        job is None
+        or job.kind != "oracle_reading_generate"
+        or job.payload.get("reading_id") != str(reading_id)
+    ):
+        raise AssertionError("oracle job disappeared at cancellation")
+
+    if reading.status == "pending":
+        if error_code is None:
+            return {"status": "pending", "noop": True}
+        completed: _CompletedOracle = _CompletedOracleFailure(
+            error_code=error_code,
+            error_detail=error_detail,
+        )
+        result: dict[str, Any] = {"status": "failed", "error_code": error_code}
+    else:
+        if reading.status not in {"streaming", "complete", "failed"}:
+            raise AssertionError(f"oracle reading has unknown status {reading.status!r}")
+        completed = _CompletedOracleNoop(
+            status=cast(Literal["streaming", "complete", "failed"], reading.status)
+        )
+        result = {"status": reading.status, "noop": True}
+
+    state = step_journal.read_step_states(job).get(_SYNTHESIS_STEP_PATH)
+    if state is not None:
+        if state.dispatch_phase is not step_journal.Prepared:
+            raise GenerationUncertain(
+                f"oracle generation {state.generation_id} is not cancellable before dispatch"
+            )
+        next_state = cancel_prepared_generation_without_dispatch_in_current_transaction(
+            db,
+            owner=owner,
+            state=state,
+            terminal_result=_COMPLETED_ORACLE_ADAPTER.dump_json(completed).decode("utf-8"),
+            reason=reason,
+        )
+        if not step_journal.checkpoint_step_state(
+            db,
+            ctx=context,
+            job=job,
+            step_path=_SYNTHESIS_STEP_PATH,
+            state=next_state,
+        ):
+            raise GenerationUncertain(
+                f"oracle generation {state.generation_id} lost its claim at cancellation"
+            )
+
+    if isinstance(completed, _CompletedOracleFailure):
+        run_kit.mark_terminal(
+            db,
+            stream=run_kit.oracle_reading_stream(reading),
+            status="failed",
+            done_payload=oracle_done_payload(status="failed", error_code=completed.error_code),
+            error_code=completed.error_code,
+            error_detail=(
+                completed.error_detail[:1000] if completed.error_detail is not None else None
+            ),
+        )
+    return result
+
+
 async def execute_reading(
     db: Session,
     *,
@@ -988,9 +1175,19 @@ async def execute_reading(
 
     reading = _get_reading_or_fail(db, reading_id)
     if reading.status != "pending":
-        status = reading.status
+        observed_status = reading.status
+        db.rollback()
+        result = _stage_oracle_terminal_without_dispatch(
+            db,
+            reading_id=reading_id,
+            context=context,
+            reason="oracle reading became terminal before dispatch",
+        )
+        if result is None:
+            db.rollback()
+            return {"status": observed_status, "noop": True}
         db.commit()
-        return {"status": status, "noop": True}
+        return result
 
     question = reading.question_text
     viewer_id = reading.user_id
@@ -1005,22 +1202,42 @@ async def execute_reading(
             rate_limiter.acquire_inflight_slot(viewer_id)
             inflight_acquired = True
         except ApiError as exc:
-            _fail(db, reading, code=exc.code.value, detail=exc.message)
-            return {"status": "failed", "error_code": exc.code.value}
+            db.rollback()
+            result = _stage_oracle_terminal_without_dispatch(
+                db,
+                reading_id=reading_id,
+                context=context,
+                reason="oracle concurrency admission failed before dispatch",
+                error_code=exc.code.value,
+                error_detail=exc.message,
+            )
+            if result is None:
+                db.rollback()
+                return {"status": "pending", "noop": True}
+            db.commit()
+            return result
 
         readiness = oracle_corpus.get_oracle_corpus_readiness(db)
         if readiness.status != "ready" or readiness.library_id is None:
-            _fail(
-                db,
-                reading,
-                code=E_ORACLE_CORPUS_NOT_READY,
-                detail=(
-                    f"corpus not ready: {readiness.ready_media_count}/{readiness.work_count} media, "
-                    f"{readiness.resolved_anchor_count}/{readiness.anchor_count} anchors, "
-                    f"{readiness.ready_plate_count}/{readiness.plate_count} plates"
-                ),
+            detail = (
+                f"corpus not ready: {readiness.ready_media_count}/{readiness.work_count} media, "
+                f"{readiness.resolved_anchor_count}/{readiness.anchor_count} anchors, "
+                f"{readiness.ready_plate_count}/{readiness.plate_count} plates"
             )
-            return {"status": "failed", "error_code": E_ORACLE_CORPUS_NOT_READY}
+            db.rollback()
+            result = _stage_oracle_terminal_without_dispatch(
+                db,
+                reading_id=reading_id,
+                context=context,
+                reason="oracle corpus was not ready before dispatch",
+                error_code=E_ORACLE_CORPUS_NOT_READY,
+                error_detail=detail,
+            )
+            if result is None:
+                db.rollback()
+                return {"status": "pending", "noop": True}
+            db.commit()
+            return result
 
         # Embedding construction performs external I/O; the readiness snapshot
         # is complete and no database transaction may cross that boundary.
@@ -1055,22 +1272,52 @@ async def execute_reading(
                 ]
             plate = _pick_plate(db, question=question, candidates=candidates)
         except ApiError as exc:
-            _fail(db, reading, code=exc.code.value, detail=exc.message)
-            return {"status": "failed", "error_code": exc.code.value}
+            db.rollback()
+            result = _stage_oracle_terminal_without_dispatch(
+                db,
+                reading_id=reading_id,
+                context=context,
+                reason="oracle retrieval failed before dispatch",
+                error_code=exc.code.value,
+                error_detail=exc.message,
+            )
+            if result is None:
+                db.rollback()
+                return {"status": "pending", "noop": True}
+            db.commit()
+            return result
 
         if len(candidates) < 3:
-            _fail(
-                db, reading, code="E_INTERNAL", detail="fewer than 3 candidate passages retrieved"
-            )
-            return {"status": "failed", "error_code": "E_INTERNAL"}
-        if requires_user_content and not _candidate_set_includes_user_media(candidates):
-            _fail(
+            db.rollback()
+            result = _stage_oracle_terminal_without_dispatch(
                 db,
-                reading,
-                code=ApiErrorCode.E_APP_SEARCH_FAILED.value,
-                detail="user content is searchable but yielded no user_media candidate",
+                reading_id=reading_id,
+                context=context,
+                reason="oracle retrieved too few passages before dispatch",
+                error_code="E_INTERNAL",
+                error_detail="fewer than 3 candidate passages retrieved",
             )
-            return {"status": "failed", "error_code": ApiErrorCode.E_APP_SEARCH_FAILED.value}
+            if result is None:
+                db.rollback()
+                return {"status": "pending", "noop": True}
+            db.commit()
+            return result
+        if requires_user_content and not _candidate_set_includes_user_media(candidates):
+            detail = "user content is searchable but yielded no user_media candidate"
+            db.rollback()
+            result = _stage_oracle_terminal_without_dispatch(
+                db,
+                reading_id=reading_id,
+                context=context,
+                reason="oracle user content was unavailable before dispatch",
+                error_code=ApiErrorCode.E_APP_SEARCH_FAILED.value,
+                error_detail=detail,
+            )
+            if result is None:
+                db.rollback()
+                return {"status": "pending", "noop": True}
+            db.commit()
+            return result
 
         user_content = _build_oracle_user_content(question=question, candidates=candidates)
         command = _oracle_command(
@@ -1100,9 +1347,20 @@ async def execute_reading(
         elif not isinstance(state.request_fingerprint, Present):
             raise AssertionError("Prepared oracle generation has no fingerprint")
         elif state.request_fingerprint.value != fingerprint:
-            raise AssertionError("Prepared oracle generation input changed")
-        else:
+            db.rollback()
+            result = _stage_oracle_terminal_without_dispatch(
+                db,
+                reading_id=reading_id,
+                context=context,
+                reason="oracle input changed before dispatch",
+                error_code=ApiErrorCode.E_GENERATION_SOURCE_CHANGED.value,
+                error_detail="Oracle input changed after the generation was prepared",
+            )
+            if result is None:
+                db.rollback()
+                return {"status": "pending", "noop": True}
             db.commit()
+            return result
 
         def lock_dispatch(dispatch_db: Session) -> JobRow | None:
             locked_reading = dispatch_db.scalar(
@@ -1119,6 +1377,9 @@ async def execute_reading(
                 return None
             return locked_job
 
+        # A first dispatch reloads the prepared job; a replay may retain an earlier
+        # read snapshot. Neither may cross the generation host I/O boundary.
+        db.commit()
         try:
             execution_result = await execute_generation(
                 GenerationExecutionRequest(
@@ -1144,7 +1405,17 @@ async def execute_reading(
                 encode_preaccept_failure=_encode_oracle_preaccept_failure,
             )
         except GenerationDispatchAborted:
-            return {"status": "pending", "noop": True}
+            result = _stage_oracle_terminal_without_dispatch(
+                db,
+                reading_id=reading_id,
+                context=context,
+                reason="oracle dispatch invalidated before acceptance",
+            )
+            if result is None:
+                db.rollback()
+                return {"status": "pending", "noop": True}
+            db.commit()
+            return result
         if isinstance(execution_result, RescheduleRequested):
             return execution_result
         if not isinstance(execution_result, CompletedGeneration):
@@ -1218,24 +1489,6 @@ def _oracle_image_payload(image: OraclePlate) -> dict[str, Any]:
         "width": image.width,
         "height": image.height,
     }
-
-
-def _fail(db: Session, reading: OracleReading, *, code: str, detail: str | None = None) -> None:
-    """Terminal failure: the one normalized ``done {status, error_code}`` event.
-
-    ``run_kit.mark_terminal`` stamps ``failed_at``/``error_code``/``error_detail``
-    on the reading (``detail`` is operator-facing and never reaches the wire;
-    the FE owns failure copy keyed on ``error_code``).
-    """
-    run_kit.mark_terminal(
-        db,
-        stream=run_kit.oracle_reading_stream(reading),
-        status="failed",
-        done_payload=oracle_done_payload(status="failed", error_code=code),
-        error_code=code,
-        error_detail=detail[:1000] if detail is not None else None,
-    )
-    db.commit()
 
 
 # ---------- internal: retrieval ---------------------------------------------
@@ -1415,7 +1668,7 @@ def _pick_plate(db: Session, *, question: str, candidates: Sequence[_Candidate])
 
 
 # The byte-exact decomposition of the legacy `_ORACLE_SYSTEM_PROMPT` literal
-# through `build_synthesis_prompt`; test_structured_synthesis.py pins the
+# through `build_synthesis_prompt`; test_structured_synthesis_contract.py pins the
 # reassembled bytes against an independent golden copy (N9: verbatim, no
 # rewrites).
 
@@ -1551,7 +1804,7 @@ def _validate_oracle_output(
     Returns (argument, motto, gloss, theme, by_phase, interpretation, omens) where
     by_phase maps each phase to (candidate_index, marginalia). Returns None on any
     semantic failure — surfaced as the validate-hook rejection reason
-    (invalid_structured_output; no repair round, the runtime enforces strict JSON).
+    (invalid_output; no repair round, the runtime enforces strict JSON).
     """
     argument = parsed.argument
     motto = parsed.folio_motto.strip()

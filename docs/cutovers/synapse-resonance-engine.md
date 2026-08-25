@@ -16,6 +16,12 @@ elsewhere in this historical build plan is superseded by that shipped contract
 and by
 [`reader-evidence-scope-associations-hard-cutover.md`](reader-evidence-scope-associations-hard-cutover.md).
 
+> **Generation authority amendment (2026-08-25):** The Anthropic, BYOK,
+> token-budget, and direct-provider envelope sections are historical. Synapse's
+> graph ownership remains relevant; its generation now follows the fixed
+> `synapse` Codex policy in
+> [`codex-personal-generation-hard-cutover.md`](codex-personal-generation-hard-cutover.md).
+
 ## 0. North Star
 
 Nexus means *connection*. Today every connection in `resource_edges` is written

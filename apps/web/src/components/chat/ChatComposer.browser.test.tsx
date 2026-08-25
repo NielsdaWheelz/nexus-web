@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { ComponentProps } from "react";
+import { Component, type ComponentProps, type ReactNode } from "react";
 import { cdp, page, userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@/app/globals.css";
@@ -39,6 +39,25 @@ const PROFILES = {
 interface ChatRunCall {
   body: ChatRunCreateRequest;
   key: string;
+}
+
+class DraftDefectBoundary extends Component<
+  { children: ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  render() {
+    return this.state.failed ? (
+      <p role="alert">Persisted draft rejected</p>
+    ) : (
+      this.props.children
+    );
+  }
 }
 
 const pathKey = (targetId: string): ChatDraftKey => ({
@@ -203,8 +222,21 @@ describe("ChatComposer browser contract", () => {
         command: {
           idempotencyKey: "locked-command-key",
           request: {
+            destination: {
+              kind: "Existing",
+              conversation_id: "00000000-0000-4000-8000-00000000000b",
+              insertion: {
+                kind: "Reply",
+                parent_message_id: "00000000-0000-4000-8000-00000000000c",
+                branch_anchor: {
+                  kind: "assistant_message",
+                  message_id: "00000000-0000-4000-8000-00000000000c",
+                },
+              },
+            },
             content: "in-flight message",
             profile_id: "balanced",
+            reader_selection: { kind: "Absent" },
           },
         },
       },
@@ -243,6 +275,45 @@ describe("ChatComposer browser contract", () => {
       stored?.operation,
       "re-key + initialContent race destroyed the in-flight send command",
     ).toEqual(persisted.operation);
+  });
+
+  it("surfaces a widened persisted v2 request as a browser defect", async () => {
+    const draftKey = newConversationKey(
+      "3f2504e0-4f89-41d3-9a0c-0305e82c3302",
+    );
+    sessionStorage.setItem(
+      "nx_chat_draft.v2:new:3f2504e0-4f89-41d3-9a0c-0305e82c3302",
+      JSON.stringify({
+        text: "do not silently replay this",
+        profile: { profileId: "fast" },
+        operation: {
+          kind: "ReconcileRequired",
+          command: {
+            idempotencyKey: "selector-smuggling-key",
+            request: {
+              destination: { kind: "New" },
+              content: "do not silently replay this",
+              profile_id: "fast",
+              reasoning_option_id: "high",
+              reader_selection: { kind: "Absent" },
+            },
+          },
+        },
+      }),
+    );
+
+    render(
+      withRenderEnvironment(
+        <DraftDefectBoundary>
+          <Composer conversationId={null} draftKey={draftKey} />
+        </DraftDefectBoundary>,
+      ),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Persisted draft rejected",
+    );
+    expect(screen.queryByRole("button", { name: "Retry send" })).toBeNull();
   });
 
   it("reloads an in-flight new-chat send as a locked Retry that replays the exact key and request", async () => {

@@ -23,19 +23,19 @@ TOOL_PLAN_REVISION = "122bae501ba24887bacd88ba79f6e8108b2c91ca97bb6495747d347ec5
 PLAN_EVAL_PIN = {
     "corpus_revision": "generation-plans.v1",
     "policy_revision": POLICY_REVISION,
-    "policy_facts_fingerprint": "fe23681e418015dcb31d5b0fdb4bed345643d0756a819e4e0e16c907006a7031",
+    "policy_facts_fingerprint": "08179b82769191a0d0ebc5871f3e15f16fea5c01fd86db5dd6e1d1e3fd879273",
     "provider_runtime_revision": "a5d9c8e0c1c851daee0731554e0a4a326d3c2819",
     "codex_sdk_version": "0.144.4",
 }
 _PINNED_PLAN_EVAL_PIN = {
     "corpus_revision": "generation-plans.v1",
     "policy_revision": "codex-generation.2026-08-24.2",
-    "policy_facts_fingerprint": "fe23681e418015dcb31d5b0fdb4bed345643d0756a819e4e0e16c907006a7031",
+    "policy_facts_fingerprint": "08179b82769191a0d0ebc5871f3e15f16fea5c01fd86db5dd6e1d1e3fd879273",
     "provider_runtime_revision": "a5d9c8e0c1c851daee0731554e0a4a326d3c2819",
     "codex_sdk_version": "0.144.4",
 }
 _PINNED_POLICY_FACTS_FINGERPRINT = (
-    "fe23681e418015dcb31d5b0fdb4bed345643d0756a819e4e0e16c907006a7031"
+    "08179b82769191a0d0ebc5871f3e15f16fea5c01fd86db5dd6e1d1e3fd879273"
 )
 
 
@@ -104,8 +104,11 @@ _SYNTHESIS_STREAM = StreamBounds(
 )
 _CHAT_STREAM = StreamBounds(
     max_frames=16_384,
-    max_frame_bytes=256 * 1024,
-    max_stream_bytes=512 * 1024 * 1024,
+    # Chat text is streamed in small frames, while the terminal repeats the
+    # final fold. Reserving one 8 MiB terminal inside a 16 MiB stream bounds
+    # user-visible text below the worker/host cgroup headroom.
+    max_frame_bytes=8 * 1024 * 1024,
+    max_stream_bytes=16 * 1024 * 1024,
     text_flush_interval_ms=100,
     text_flush_bytes=8 * 1024,
 )
@@ -305,6 +308,8 @@ def validate_policy() -> None:
         entry = _CHAT_POLICIES[profile]
         if entry.plan_id != plan_id or entry.capability != "ChatTools":
             raise AssertionError(f"chat profile {profile} policy facts drifted")
+        if entry.stream.max_stream_bytes > MODEL_BOUNDS[entry.model].runtime_output_bytes:
+            raise AssertionError(f"chat profile {profile} exceeds its model runtime bound")
     for model, bounds in MODEL_BOUNDS.items():
         if bounds != ModelBounds(1_050_000, 128_000, 64 * 1024 * 1024):
             raise AssertionError(f"model bounds drifted for {model}")

@@ -24,7 +24,7 @@ from nexus.schemas.chat_reader_selection import ReaderSelectionInput, ReaderSele
 from nexus.schemas.citation import CitationOut, CitationRole, CitationTargetRef
 from nexus.schemas.collection_page import CollectionRevision
 from nexus.schemas.execution import DurableExecutionOut
-from nexus.schemas.llm import ExpectedChatFailure
+from nexus.schemas.llm import ChatProfileId, ExpectedChatFailure
 from nexus.schemas.presence import Absent, Presence, Present, absent, present
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.schemas.retrieval import RetrievalContextRef, RetrievalLocator, RetrievalResultRef
@@ -263,7 +263,7 @@ class ChatRunMetaEventPayload(BaseModel):
     conversation_id: UUID
     user_message_id: UUID
     assistant_message_id: UUID
-    profile_id: str = Field(min_length=1)
+    profile_id: ChatProfileId
     chat_subject: ChatRunMetaSubjectPayload | None
 
     model_config = ConfigDict(extra="forbid")
@@ -342,6 +342,12 @@ class ToolProjectionOut(BaseModel):
             declaration = declarations.get(self.canonical_tool_id or "")
             if declaration is None:
                 raise ValueError("unknown canonical tool projection identity")
+            if (
+                self.record_kind == "current_execution"
+                and self.provider_wire_name is not None
+                and self.provider_wire_name != self.canonical_tool_id
+            ):
+                raise ValueError("current tool wire name differs from canonical identity")
             expected = (
                 declaration.spec.effect,
                 declaration.result_kind,
@@ -392,7 +398,7 @@ def tool_projection_from_persisted_record(record: Any) -> ToolProjectionOut:
         return ToolProjectionOut(
             record_kind=record_kind,
             canonical_tool_id=record.canonical_tool_id,
-            provider_wire_name=None,
+            provider_wire_name=record.provider_wire_name,
             effect=declaration.spec.effect,
             result_kind=declaration.result_kind,
             activity_label=declaration.activity_label,
@@ -646,7 +652,6 @@ class TrustRunOut(BaseModel):
     status: Literal["pending", "running", "complete", "error", "cancelled"]
     usage: dict[str, Any] | None = None
     error_code: str | None = None
-    error_origin: str | None = None
     support_id: Presence[str]
     publication_warning: Presence[ChatPublicationWarning]
     failure: ExpectedChatFailure | None = None
@@ -960,7 +965,7 @@ class ChatRunCreateRequest(BaseModel):
 
     destination: ChatDestination
     content: str
-    profile_id: str = Field(min_length=1)
+    profile_id: ChatProfileId
     reader_selection: Presence[ReaderSelectionInput]
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
@@ -1035,7 +1040,7 @@ class ChatRunStreamToolCallOut(ToolProjectionOut):
 class ChatRunStreamStateOut(BaseModel):
     """Materialized cursor state for reconnecting a chat stream."""
 
-    status: Literal["queued", "running", "complete", "error", "cancelled", "interrupted"]
+    status: Literal["queued", "running", "complete", "error", "cancelled"]
     last_event_seq: int = Field(ge=0)
     folded_event_seq: int = Field(ge=0)
     assistant_current_text: str

@@ -102,7 +102,7 @@ def execute_read_resource(
         )
 
     if uri.startswith("page_range:"):
-        return _read_page_range(db, viewer_id, uri)
+        return _enforce_read_bound(_read_page_range(db, viewer_id, uri))
 
     parsed = parse_resource_ref(uri)
     if isinstance(parsed, ResourceRefParseFailure):
@@ -142,10 +142,24 @@ def execute_read_resource(
         )
 
     if read_policy == "media":
-        return _read_media(db, viewer_id, parsed.id, uri)
+        return _enforce_read_bound(_read_media(db, viewer_id, parsed.id, uri))
 
     loaded = load_resource_batch(db, [parsed], viewer_id=viewer_id)[uri]
-    return _present_read(loaded)
+    return _enforce_read_bound(_present_read(loaded))
+
+
+def _enforce_read_bound(result: ReadResourceResult) -> ReadResourceResult:
+    if result.is_error or result.kind == "too_large" or len(result.body) <= READ_DOCUMENT_MAX_CHARS:
+        return result
+    return ReadResourceResult(
+        uri=result.uri,
+        status="complete",
+        body=(
+            f"This resource is {len(result.body):,} characters — too large to read in one call. "
+            "Inspect or search the admitted parent and read a narrower section."
+        ),
+        kind="too_large",
+    )
 
 
 def _missing(uri: str) -> ReadResourceResult:
@@ -161,16 +175,6 @@ def _read_media(db: Session, viewer_id: UUID, media_id: UUID, uri: str) -> ReadR
     document = load_media_document(db, viewer_id, media_id)
     if document is None:
         return _missing(uri)
-    if document.char_count > READ_DOCUMENT_MAX_CHARS:
-        return ReadResourceResult(
-            uri=uri,
-            status="complete",
-            body=(
-                f"This document is {document.char_count:,} characters — too large to read whole. "
-                f'Call nexus__resource__inspect("{uri}") for its section map, then read the sections you need.'
-            ),
-            kind="too_large",
-        )
     return ReadResourceResult(
         uri=uri,
         status="complete",

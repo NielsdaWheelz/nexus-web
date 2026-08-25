@@ -5,13 +5,17 @@ from __future__ import annotations
 import subprocess
 
 import codex_cli_bin
-from apps.codex_agent.auth_environment import reject_api_key_auth
+from apps.codex_agent.auth_environment import (
+    reject_ambient_codex_home,
+    reject_subscription_api_key_auth,
+)
 
 _TIMEOUT_SECONDS = 10.0
 
 
 def check() -> None:
-    reject_api_key_auth()
+    reject_subscription_api_key_auth()
+    reject_ambient_codex_home()
     try:
         completed = subprocess.run(
             (

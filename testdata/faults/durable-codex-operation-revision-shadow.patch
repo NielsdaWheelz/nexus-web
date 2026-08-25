@@ -1,8 +1,0 @@
-diff --git a/python/nexus/services/native_agent_operations.py b/python/nexus/services/native_agent_operations.py
---- a/python/nexus/services/native_agent_operations.py
-+++ b/python/nexus/services/native_agent_operations.py
-@@ -31,3 +31,4 @@
-+METADATA_ENRICHMENT_OPERATION_REVISION = "metadata-enrichment.2026-08-12.4"
- _MODEL = "gpt-5.6-luna"
- _REASONING = "low"
- _AUTH_PROFILE = "codex-personal"

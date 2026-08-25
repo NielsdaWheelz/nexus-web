@@ -45,6 +45,7 @@ from nexus.services.durable_step_journal import (
 )
 from nexus.services.llm_ledger import read_generation
 from nexus_test_control import services as test_services
+from tests.testkit.chat import create_entitled_chat
 from tests.testkit.unreachable_state import (
     lose_metadata_queue_completion_after_published_checkpoint,
 )
@@ -86,6 +87,8 @@ class GenerationPeer:
     audit_path: Path
     process: multiprocessing.Process
     ready: Connection
+    health_observed: Any
+    release_health: Any
     request_observed: Any
     release_response: Any
 
@@ -210,6 +213,8 @@ def _run_generation_peer(
     audit_path: str,
     mode: PeerMode,
     ready: Connection,
+    health_observed: Any,
+    release_health: Any,
     request_observed: Any,
     release_response: Any,
 ) -> None:
@@ -237,6 +242,9 @@ def _run_generation_peer(
             if request_line == b"GET /health HTTP/1.1\r\n":
                 if body:
                     self._protocol_error("health request carried a body")
+                    return
+                health_observed.set()
+                if not release_health.wait(60):
                     return
                 health = GenerationHealth(
                     policy_revision=generation_policy.POLICY_REVISION,
@@ -348,6 +356,9 @@ def _scripted_generation_peer(
     audit_path.parent.mkdir(parents=True, exist_ok=True)
     parent, child = multiprocessing.Pipe(duplex=False)
     process_context = multiprocessing.get_context("fork")
+    health_observed = process_context.Event()
+    release_health = process_context.Event()
+    release_health.set()
     request_observed = process_context.Event()
     release_response = process_context.Event()
     process = process_context.Process(
@@ -357,6 +368,8 @@ def _scripted_generation_peer(
             str(audit_path),
             mode,
             child,
+            health_observed,
+            release_health,
             request_observed,
             release_response,
         ),
@@ -368,6 +381,8 @@ def _scripted_generation_peer(
         audit_path=audit_path,
         process=process,
         ready=parent,
+        health_observed=health_observed,
+        release_health=release_health,
         request_observed=request_observed,
         release_response=release_response,
     )
@@ -375,6 +390,7 @@ def _scripted_generation_peer(
         assert parent.poll(5) and parent.recv() == "ready"
         yield peer
     finally:
+        release_health.set()
         release_response.set()
         parent.close()
         if process.is_alive():
@@ -523,6 +539,31 @@ def _wait_for_prepared_capacity(
     raise AssertionError(f"capacity refusal did not restore Prepared exactly: {observed!r}")
 
 
+def _wait_for_chat_courtesy(
+    engine: Engine,
+    *,
+    seeded: SeededJob,
+    timeout_seconds: float = 30,
+) -> StepReplayState:
+    deadline = time.monotonic() + timeout_seconds
+    observed: tuple[object, ...] | None = None
+    while time.monotonic() < deadline:
+        with Session(engine) as db:
+            job = get_job(db, seeded.job_id)
+            assert job is not None
+            states = tuple(read_step_states(job).values())
+            observed = (
+                job.status,
+                job.attempts,
+                job.payload.get("capacity_wait_index"),
+                tuple(state.dispatch_phase for state in states),
+            )
+            if observed == ("pending", 0, 1, (Prepared,)):
+                assert (job.available_at - job.updated_at).total_seconds() == 30
+                return states[0]
+    raise AssertionError(f"queued Chat did not defer background generation: {observed!r}")
+
+
 def _assert_success_terminal(engine: Engine, seeded: SeededJob, generation_id: UUID) -> None:
     _job, state = _generation_state(
         engine,
@@ -600,12 +641,11 @@ def _wait_for_completed_before_publication(
 
 @pytest.mark.parametrize(
     "mode",
-    ["succeeded", "semantic_invalid", "capacity", "accepted_disconnect"],
+    ["succeeded", "semantic_invalid", "capacity"],
     ids=[
         "terminal-and-completed-replay",
         "accepted-semantic-invalid-output",
         "exact-preaccept-capacity",
-        "accepted-stream-loss",
     ],
 )
 def test_generation_dispatch_is_atomic_and_replay_safe(
@@ -622,7 +662,7 @@ def test_generation_dispatch_is_atomic_and_replay_safe(
     with _scripted_generation_peer(run, mode) as peer:
         try:
             worker = _start_worker(run, peer.socket_path)
-            assert peer.request_observed.wait(10), (
+            assert peer.request_observed.wait(30), (
                 "production worker never reached the v2 UDS peer; "
                 f"audit={_audit_requests(peer.audit_path)!r}"
             )
@@ -696,6 +736,8 @@ def test_generation_dispatch_is_atomic_and_replay_safe(
                             )
                             row = _ledger_row(engine, command.request_id)
                             assert row["error_code"] == "invalid_output"
+                            assert row["error_detail"] == "codex generation invalid output"
+                            assert "English" not in row["error_detail"]
                             assert row["accepted_at"] is not None
                             assert row["session_ref"] == _session_ref(str(command.request_id))
 
@@ -705,7 +747,7 @@ def test_generation_dispatch_is_atomic_and_replay_safe(
                             text("SELECT last_error_code FROM media WHERE id = :media_id"),
                             {"media_id": seeded.media_id},
                         ).scalar_one()
-                    assert media == "E_METADATA_AGENT_INVALID_OUTPUT"
+                    assert media == "E_GENERATION_INVALID_OUTPUT"
                     assert _audit_requests(peer.audit_path) == requests
                 case "capacity":
                     peer.release_response.set()
@@ -752,5 +794,50 @@ def test_generation_dispatch_is_atomic_and_replay_safe(
             peer.release_response.set()
             if replay_worker is not None:
                 kill_and_forget_process(replay_worker)
+            if worker is not None:
+                kill_and_forget_process(worker)
+
+
+def test_accepted_generation_loss_remains_uncertain_and_never_redispatches(
+    engine: Engine,
+) -> None:
+    """An accepted disconnect is a dedicated billed-once replay proof."""
+
+    test_generation_dispatch_is_atomic_and_replay_safe(engine, "accepted_disconnect")
+
+
+def test_chat_enqueue_race_defers_background_before_host_dispatch(engine: Engine) -> None:
+    """A Chat queued after the fast check still wins the atomic dispatch gate."""
+
+    run = controller_run()
+    seeded = _seed_media_job(engine)
+
+    worker: test_services.StartedProcess | None = None
+    with _scripted_generation_peer(run, "succeeded") as peer:
+        try:
+            peer.release_health.clear()
+            worker = _start_worker(run, peer.socket_path)
+            assert peer.health_observed.wait(30), (
+                "background generation did not reach its pre-arm health boundary"
+            )
+            with Session(engine) as db:
+                chat = create_entitled_chat(db, content="Give me the concise answer first.")
+            peer.release_health.set()
+            state = _wait_for_chat_courtesy(engine, seeded=seeded)
+            assert state.dispatch_phase is Prepared
+            assert not peer.request_observed.is_set()
+            assert _audit_requests(peer.audit_path) == []
+            with Session(engine) as db:
+                chat_job = get_job(db, chat.job_id)
+                assert chat_job is not None
+                assert (chat_job.kind, chat_job.status) == ("chat_run", "pending")
+                assert (
+                    db.scalar(
+                        text("SELECT count(*) FROM llm_calls WHERE owner_id = :owner_id"),
+                        {"owner_id": seeded.media_id},
+                    )
+                    == 0
+                )
+        finally:
             if worker is not None:
                 kill_and_forget_process(worker)

@@ -264,6 +264,7 @@ class RateLimiter:
             raise RuntimeError("RateLimiter backend is not configured")
         return self._session_factory()
 
+
 def _advisory_lock_key(*, scope: str, user_id: UUID) -> int:
     # Preserve the established no-date key material for the retained RPM and
     # in-flight scopes while deleting the token-budget dimension.

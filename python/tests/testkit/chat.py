@@ -30,7 +30,6 @@ def create_entitled_chat(
     content: str,
     user_id: UUID | None = None,
     profile_id: str = "balanced",
-    reasoning_option_id: str = "medium",
 ) -> EntitledChat:
     """Create one admitted chat using production bootstrap, billing, and queue owners."""
     owner_id = user_id or uuid4()
@@ -43,8 +42,6 @@ def create_entitled_chat(
         db,
         user_id=owner_id,
         plan_tier="ai_pro",
-        platform_token_quota_mode="unlimited",
-        platform_token_limit_monthly=None,
         transcription_quota_mode="unlimited",
         transcription_minutes_limit_monthly=None,
         expires_at=None,
@@ -61,7 +58,6 @@ def create_entitled_chat(
             reader_selection=None,
             content=content,
             profile_id=profile_id,
-            reasoning_option_id=reasoning_option_id,
             idempotency_key=f"durable-chat-proof-{uuid4()}",
         )
     finally:

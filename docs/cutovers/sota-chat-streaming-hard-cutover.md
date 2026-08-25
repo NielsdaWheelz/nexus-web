@@ -12,19 +12,23 @@ piece landed 2026-06-20 — older transcript rows now skip re-render during
 streaming via `React.memo(MessageRow)` over referentially-stable row props
 (completed messages were already memoized in `MarkdownMessage`).
 
+> **Generation authority amendment (2026-08-25):** The `provider_runtime`,
+> multi-provider, BYOK, provider-cost, and provider-stream contracts below are
+> historical and non-authoritative. Keep only the browser stream/replay and UI
+> lessons. The current execution and wire authority is
+> [`codex-personal-generation-hard-cutover.md`](codex-personal-generation-hard-cutover.md):
+> one Codex-personal host, its v2 generation stream, and the closed terminal
+> contract.
+
 Supersedes the chat/provider-streaming assumptions in:
 
-- `docs/cutovers/generation-run-harness-hard-cutover.md` sections that treat
-  `ModelChunk`, chat SSE `delta`, or char-count replay skipping as sufficient
-  long-term contracts.
-- `docs/cutovers/llm-provider-runtime-hard-cutover.md` where it documents the
-  current `ModelRuntime.stream()` chunk shape as final rather than as the
-  current implementation state.
+- Earlier chat contracts that treat `ModelChunk`, chat SSE `delta`, or
+  char-count replay skipping as sufficient long-term contracts.
 
 Does not supersede:
 
 - the durable generation harness;
-- `provider_runtime` as the only provider wire-protocol owner;
+- the private Codex generation host as the only generation wire owner;
 - `run_kit` as the durable event/terminal owner;
 - `/stream/*` as the browser-to-FastAPI SSE exception;
 - `llm_ledger` as the provider-call flight recorder;

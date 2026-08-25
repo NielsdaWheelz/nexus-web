@@ -24,6 +24,7 @@ from nexus.db.models import (
     HighlightPdfQuad,
     Media,
 )
+from nexus.db.retries import retry_read_committed
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.highlights import (
@@ -1098,9 +1099,13 @@ def delete_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> None:
     Raises:
         NotFoundError(E_MEDIA_NOT_FOUND): If highlight doesn't exist, not owned, or not readable.
     """
-    # Verify highlight exists and is owned by viewer
-    highlight = get_highlight_for_author_write_or_404(db, viewer_id, highlight_id)
 
-    delete_highlight_rows(db, highlight)
-    db.flush()
-    db.commit()
+    def attempt() -> None:
+        # Verify highlight exists and is owned by viewer
+        highlight = get_highlight_for_author_write_or_404(db, viewer_id, highlight_id)
+
+        delete_highlight_rows(db, highlight)
+        db.flush()
+        db.commit()
+
+    retry_read_committed(db, "delete_highlight", attempt)

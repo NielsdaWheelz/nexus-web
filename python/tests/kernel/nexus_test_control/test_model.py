@@ -28,7 +28,8 @@ def test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr() -> Non
         "reading-progress",
         "citation-provenance-identity",
         "durable-job-replay",
-        "native-agent-host",
+        "generation-reconciliation",
+        "codex-generation-host",
         "database-object-convergence",
         "document-import-reliability",
         "llm-tool-safety",
@@ -44,9 +45,7 @@ def test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr() -> Non
     pr_capabilities = {
         requirement.capability for requirement in WORKFLOW_REGISTRY[Workflow.PR].requirements
     }
-    assert Capability.HOSTED not in pr_capabilities
     assert Capability.ANDROID_DEVICE not in pr_capabilities
-    assert Capability.PROVIDER_CERTIFICATION not in pr_capabilities
     assert Capability.JOURNEYS_CRITICAL in pr_capabilities
     assert Capability.JOURNEYS_ALL not in pr_capabilities
     assert tuple(

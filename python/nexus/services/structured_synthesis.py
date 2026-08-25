@@ -38,7 +38,11 @@ from typing import Literal
 
 from pydantic import BaseModel, ValidationError
 
-from nexus.services.codex_generation_contract import GenerationTerminal, normalized_failure
+from nexus.services.codex_generation_contract import (
+    GenerationTerminal,
+    normalized_failure,
+    retained_terminal_error_detail,
+)
 from nexus.services.generation_intent import GenerationIntent, JsonSchemaOutput
 
 # The shared index-grounding rule. Call sites pass it as their first domain
@@ -155,8 +159,11 @@ def decode_structured_synthesis[T: BaseModel](
         raise StructuredSynthesisError("succeeded terminal has no structured output")
     try:
         value = schema.model_validate(terminal.structured_output)
-    except ValidationError as exc:
-        raise StructuredSynthesisError(f"response JSON does not match the schema: {exc}") from exc
+    except ValidationError:
+        # Pydantic's rendered exception includes rejected input values.  The
+        # adapter memo is durable and exception chains may reach defect logs, so
+        # retain only the closed classification at both boundaries.
+        raise StructuredSynthesisError("response JSON does not match the schema") from None
     if validate is not None:
         reason = validate(value)
         if reason is not None:
@@ -174,5 +181,4 @@ def outcome_failure_facts(
         return "cancelled", None
     if terminal.failure is None:
         raise AssertionError("a failed terminal has no failure kind")
-    detail = terminal.diagnostics[0] if terminal.diagnostics else None
-    return normalized_failure(terminal.failure.kind), detail
+    return normalized_failure(terminal.failure.kind), retained_terminal_error_detail(terminal)

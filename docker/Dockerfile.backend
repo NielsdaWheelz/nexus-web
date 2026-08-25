@@ -88,7 +88,6 @@ FROM backend-runtime AS worker-runtime
 RUN apt-get update \
     && apt-get install -y --no-install-recommends bubblewrap \
     && rm -rf /var/lib/apt/lists/* \
-    && install --directory --owner=nexus --group=nexus --mode=0700 /var/empty/nexus-codex \
     && install --directory --owner=nexus --group=nexus --mode=0700 /var/lib/nexus-codex \
     && install --directory --owner=nexus --group=nexus --mode=0770 /run/nexus-codex
 

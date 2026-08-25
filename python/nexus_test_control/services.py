@@ -3,7 +3,6 @@ from __future__ import annotations
 import ctypes
 import errno
 import fcntl
-import ipaddress
 import json
 import mmap
 import os
@@ -19,7 +18,6 @@ import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 from urllib.parse import urlsplit
@@ -30,10 +28,6 @@ import httpx
 import psycopg
 from botocore.client import BaseClient, Config
 from botocore.exceptions import ClientError
-from cryptography import x509
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 from psycopg import sql
 
 from nexus.config import BACKGROUND_WORKER_MEMORY_LIMIT_BYTES
@@ -61,7 +55,6 @@ from nexus_test_control.runtime import (
     local_docker_host,
     migration_database_name,
     process_resource_identity,
-    provider_fixture_identity,
     read_ledger,
     read_previous_runtime_for_cleanup,
     read_runtime,
@@ -256,54 +249,6 @@ class _DarwinProcessInfo(ctypes.Structure):
 def required_platform_process_tools() -> tuple[Path, ...]:
     """Return fixed host tools required by the platform process owner."""
     return (Path(_DARWIN_LSOF),) if sys.platform == "darwin" else ()
-
-
-@dataclass(frozen=True, slots=True)
-class OpenAIProviderFixture:
-    """Exact run-owned state for the canonical OpenAI protocol process."""
-
-    state: Path
-    certificate: Path
-    key: Path = field(repr=False)
-    audit: Path
-    port: int
-
-    def server_environment(self) -> dict[str, str]:
-        return {
-            "NEXUS_TEST_OPENAI_CERTIFICATE": str(self.certificate),
-            "NEXUS_TEST_OPENAI_KEY": str(self.key),
-            "NEXUS_TEST_OPENAI_AUDIT": str(self.audit),
-        }
-
-    def client_environment(self) -> dict[str, str]:
-        return {
-            "NEXUS_TEST_STATIC_DNS": json.dumps(
-                {
-                    "api.openai.com": {"address": "127.0.0.1", "port": self.port},
-                    "www.nasa.gov": "93.184.216.34",
-                },
-                separators=(",", ":"),
-                sort_keys=True,
-            ),
-            "NEXUS_TEST_TLS_CA_CERT": str(self.certificate),
-        }
-
-    def worker_environment(self) -> dict[str, str]:
-        """Compatibility name for production-worker protocol proofs."""
-        return self.client_environment()
-
-    def requests(self) -> tuple[dict[str, object], ...]:
-        rows = tuple(
-            json.loads(line) for line in self.audit.read_text(encoding="utf-8").splitlines() if line
-        )
-        payloads = tuple(
-            row["payload"]
-            for row in rows
-            if isinstance(row, dict)
-            and row.get("path") == "/v1/embeddings"
-            and isinstance(row.get("payload"), dict)
-        )
-        return cast(tuple[dict[str, object], ...], payloads)
 
 
 def run_environment(
@@ -870,13 +815,13 @@ def invite_supabase_user(
     return InvitedTestUser(email)
 
 
-def grant_scenario_ai_entitlement(
+def grant_scenario_paid_entitlement(
     repo_root: Path,
     environment: Mapping[str, str],
     run: TestRun,
     user: TestUser,
 ) -> None:
-    """Bootstrap one scenario user and grant deterministic chat capacity."""
+    """Bootstrap one scenario user and grant deterministic non-generation paid access."""
     from sqlalchemy import create_engine
     from sqlalchemy.orm import Session
 
@@ -906,8 +851,6 @@ def grant_scenario_ai_entitlement(
                 db,
                 user_id=user_id,
                 plan_tier="ai_pro",
-                platform_token_quota_mode="unlimited",
-                platform_token_limit_monthly=None,
                 transcription_quota_mode="unlimited",
                 transcription_minutes_limit_monthly=None,
                 expires_at=None,
@@ -1026,19 +969,24 @@ def start_python_process(
             str(root / "python/tests/fixtures/real_media"),
         )
     elif role == "provider-openai":
+        paths = overrides or {}
+        certificate = paths.get("NEXUS_TEST_OPENAI_CERTIFICATE")
+        key = paths.get("NEXUS_TEST_OPENAI_KEY")
+        audit = paths.get("NEXUS_TEST_OPENAI_AUDIT")
+        if certificate is None or key is None or audit is None:
+            raise RuntimeContractError("embedding peer requires its owned TLS and audit paths")
         _require_loopback_port_available(runtime.ports.provider_openai, role)
-        values = _owned_provider_fixture_paths(root, run.run_id, overrides)
         command = (
             str(root / "python/.venv/bin/python"),
             str(root / "python/tests/testkit/openai_embedding_server.py"),
             "--port",
             str(runtime.ports.provider_openai),
             "--certificate",
-            str(values["NEXUS_TEST_OPENAI_CERTIFICATE"]),
+            certificate,
             "--key",
-            str(values["NEXUS_TEST_OPENAI_KEY"]),
+            key,
             "--audit",
-            str(values["NEXUS_TEST_OPENAI_AUDIT"]),
+            audit,
         )
     elif role == "api":
         _require_loopback_port_available(runtime.ports.api, role)
@@ -1100,146 +1048,6 @@ def start_python_process(
         cwd=root,
         process_environment=process_environment,
     )
-
-
-def prepare_openai_provider_fixture(
-    repo_root: Path,
-    environment: Mapping[str, str],
-    run: TestRun,
-) -> OpenAIProviderFixture:
-    """Create the exact canonical-provider state owned by one persisted run."""
-    require_test_environment(environment)
-    root = canonical_repo_root(repo_root)
-    runtime = read_runtime(root)
-    if run.run_id not in runtime.owned_run_ids:
-        raise RuntimeContractError("OpenAI provider fixture requires an owned run")
-    resource = Resource(ResourceKind.PROVIDER_FIXTURE, provider_fixture_identity(run.run_id))
-    state = root / resource.identity
-    record_planned(root, environment, run.run_id, resource)
-    try:
-        state.mkdir(parents=False, exist_ok=False)
-    except FileExistsError as error:
-        forget_cleaned(root, environment, run.run_id, resource)
-        raise RuntimeContractError("OpenAI provider fixture already exists for this run") from error
-    certificate = state / "ca.pem"
-    key_path = state / "server-key.pem"
-    audit = state / "requests.jsonl"
-    try:
-        audit.touch(mode=0o600, exist_ok=False)
-        _write_openai_test_certificate(certificate, key_path)
-        record_created(root, environment, run.run_id, resource)
-    except Exception:
-        raise
-    return OpenAIProviderFixture(
-        state=state,
-        certificate=certificate,
-        key=key_path,
-        audit=audit,
-        port=runtime.ports.provider_openai,
-    )
-
-
-def _write_openai_test_certificate(certificate: Path, key_path: Path) -> None:
-    host = "api.openai.com"
-    key = rsa.generate_private_key(public_exponent=65_537, key_size=2048)
-    now = datetime.now(UTC)
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, host)])
-    value = (
-        x509.CertificateBuilder()
-        .subject_name(name)
-        .issuer_name(name)
-        .public_key(key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(now - timedelta(minutes=1))
-        .not_valid_after(now + timedelta(days=1))
-        .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
-        .add_extension(
-            x509.SubjectAlternativeName(
-                [x509.DNSName(host), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]
-            ),
-            critical=False,
-        )
-        .add_extension(
-            x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]),
-            critical=False,
-        )
-        .sign(key, hashes.SHA256())
-    )
-    certificate.write_bytes(value.public_bytes(serialization.Encoding.PEM))
-    key_path.write_bytes(
-        key.private_bytes(
-            serialization.Encoding.PEM,
-            serialization.PrivateFormat.PKCS8,
-            serialization.NoEncryption(),
-        )
-    )
-    key_path.chmod(0o600)
-
-
-def _clean_openai_provider_fixture(root: Path, identity: str) -> None:
-    state = root / identity
-    if not state.exists():
-        return
-    if state.is_symlink() or not state.is_dir():
-        raise RuntimeContractError("OpenAI provider fixture state is not an owned directory")
-    expected = {"ca.pem", "server-key.pem", "requests.jsonl"}
-    entries = {entry.name for entry in state.iterdir()}
-    if not entries.issubset(expected) or any(not (state / name).is_file() for name in entries):
-        raise RuntimeContractError("OpenAI provider fixture state has unexpected contents")
-    shutil.rmtree(state)
-
-
-def release_openai_provider_fixture(
-    repo_root: Path,
-    environment: Mapping[str, str],
-    run_id: str,
-) -> None:
-    """Release an idle exact provider fixture between workflow capabilities."""
-    require_test_environment(environment)
-    root = canonical_repo_root(repo_root)
-    with run_lifecycle_lock(root, environment, run_id):
-        ledger = read_ledger(root, run_id)
-        process = Resource(
-            ResourceKind.PROCESS, process_resource_identity(run_id, "provider-openai")
-        )
-        if any(entry.resource == process for entry in ledger.entries):
-            raise RuntimeContractError(
-                "OpenAI provider fixture cannot release while its process exists"
-            )
-        resource = Resource(ResourceKind.PROVIDER_FIXTURE, provider_fixture_identity(run_id))
-        matches = [entry for entry in ledger.entries if entry.resource == resource]
-        if len(matches) != 1:
-            raise RuntimeContractError("OpenAI provider fixture is not uniquely owned by this run")
-        _clean_openai_provider_fixture(root, resource.identity)
-        forget_cleaned(root, environment, run_id, resource)
-
-
-def _owned_provider_fixture_paths(
-    root: Path,
-    run_id: str,
-    overrides: Mapping[str, str] | None,
-) -> dict[str, Path]:
-    names = {
-        "NEXUS_TEST_OPENAI_CERTIFICATE",
-        "NEXUS_TEST_OPENAI_KEY",
-        "NEXUS_TEST_OPENAI_AUDIT",
-    }
-    if overrides is None or not names.issubset(overrides):
-        raise RuntimeContractError("OpenAI provider process requires its owned fixture paths")
-    owned_root = (runtime_state_dir(root) / "runs" / run_id).resolve(strict=True)
-    fixture_resource = Resource(ResourceKind.PROVIDER_FIXTURE, provider_fixture_identity(run_id))
-    fixture_entries = [
-        entry for entry in read_ledger(root, run_id).entries if entry.resource == fixture_resource
-    ]
-    if len(fixture_entries) != 1 or fixture_entries[0].phase is not ResourcePhase.CREATED:
-        raise RuntimeContractError("OpenAI provider process requires its created fixture owner")
-    values: dict[str, Path] = {}
-    for name in names:
-        path = Path(overrides[name]).resolve(strict=True)
-        if owned_root not in path.parents or not path.is_file():
-            raise RuntimeContractError("OpenAI provider fixture path is outside the exact run")
-        values[name] = path
-    return values
 
 
 def start_web_process(
@@ -1748,8 +1556,6 @@ def clean_run(
                     )
                 elif resource.kind is ResourceKind.EXTENSION_PROFILE:
                     _delete_extension_profile(root, resource.identity)
-                elif resource.kind is ResourceKind.PROVIDER_FIXTURE:
-                    _clean_openai_provider_fixture(root, resource.identity)
                 else:
                     raise RuntimeContractError(f"clean has no owner for {resource.kind.value}")
                 forget_cleaned(root, environment, run_id, resource)

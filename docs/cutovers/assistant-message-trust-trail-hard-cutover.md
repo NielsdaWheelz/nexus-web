@@ -10,6 +10,13 @@ Frontend presentation is owned by
 closed `AssistantDetails`, while consequential writes render through visible
 `AssistantWriteTrail`.
 
+> **Generation authority amendment (2026-08-25):** This document's
+> provider/model/key-mode/reasoning and pricing field inventory is historical
+> and non-authoritative. The trust trail now follows the fixed Codex plan and
+> usage facts defined by
+> [`codex-personal-generation-hard-cutover.md`](codex-personal-generation-hard-cutover.md);
+> it exposes neither provider selection nor price.
+
 **Superseded by default-library-virtualization-and-transient-state-pruning-hard-cutover.md
 (2026-07-17):** `message_retrieval_candidate_ledgers` and
 `message_rerank_ledgers` — named throughout this document (including the

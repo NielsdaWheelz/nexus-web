@@ -271,7 +271,7 @@ def test_keyless_boot_preserves_plan_and_refuses_required_web_before_dispatch(
                 "error": {"type": "ToolUnavailable"},
             }
             assert recorder.record(position).dispatches == 0, (
-                "an unavailable Web binding crossed the provider dispatch boundary"
+                "an unavailable Web binding crossed the tool dispatch boundary"
             )
             assert telemetry.events == [("tool.unavailable", {"tool_id": "web.search"})]
 

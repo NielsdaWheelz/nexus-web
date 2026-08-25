@@ -83,7 +83,7 @@ class MetadataMergeResult:
 
 
 # Domain value constraints live on the field annotations: they validate every
-# decoded payload and carry into the exported JSON schema the native agent is
+# decoded payload and carry into the exported JSON schema the generation host is
 # held to.
 _METADATA_STRING_MAX_LENGTHS = {
     "title": 255,
@@ -655,7 +655,7 @@ def get_current_author_names(db: Session, media: Media) -> list[str]:
 
 
 def validate_structured_enrichment(payload: object) -> MetadataEnrichmentOutput | None:
-    """Validate native-agent structured metadata once at ingress.
+    """Validate Codex-generated structured metadata once at ingress.
 
     Returns the accepted model, or None when the payload is outside the domain
     output contract. The one caller classifies None as the invalid-output
@@ -695,7 +695,7 @@ def merge_enrichment(
     media: Media,
     enrichment: MetadataEnrichmentOutput,
 ) -> MetadataMergeResult:
-    """Merge accepted native-agent enrichment into media.
+    """Merge accepted Codex-generated enrichment into media.
 
     The output model is the single owner of every value bound: each present
     field is already stripped, non-blank, and within its declared length, so

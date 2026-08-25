@@ -1,8 +1,8 @@
 diff --git a/python/nexus/ops/codex_hosted_evidence.py b/python/nexus/ops/codex_hosted_evidence.py
 --- a/python/nexus/ops/codex_hosted_evidence.py
 +++ b/python/nexus/ops/codex_hosted_evidence.py
-@@ -12,3 +12,3 @@
+@@ -11,3 +11,3 @@
+ 
 -_MAX_BYTES = 16 * 1024
 +_MAX_BYTES = 32 * 1024
  _MAX_JSON_INTEGER = (1 << 53) - 1
- _RUN_ID = re.compile(r"[0-9a-f]{16}")

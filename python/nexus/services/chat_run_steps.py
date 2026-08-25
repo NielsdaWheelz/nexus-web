@@ -10,25 +10,17 @@ from typing import Annotated, Any, Literal, cast
 from uuid import UUID
 
 from llm_tools import ToolResult
-from provider_runtime import (
-    Absent as RuntimeAbsent,
-)
-from provider_runtime import (
-    AssistantMessage,
-    ToolResultMessage,
-)
-from provider_runtime.types import ToolCall
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, RootModel
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from nexus.db.models import ChatRun, ChatRunEvent, LLMCall, MessageToolCall
+from nexus.db.models import ChatRun
 from nexus.jobs.queue import (
     RUNNING,
     JobExecutionContext,
     JobRow,
     current_dead_job_for_payload,
     get_job,
+    lock_chat_generation_admission_in_current_transaction,
     lock_running_job_claim,
     replace_dead_job_payload,
     requeue_dead_job,
@@ -36,6 +28,7 @@ from nexus.jobs.queue import (
 )
 from nexus.schemas.conversation import ChatRunToolResultEventPayload
 from nexus.schemas.presence import Presence, Present, absent, present
+from nexus.services.chat_run_event_store import lock_chat_run_for_update
 from nexus.services.chat_run_tools import (
     RecordKind,
     ToolModelOutput,
@@ -51,19 +44,20 @@ from nexus.services.durable_step_journal import (
     Uncertain,
     UncertainStepResolution,
     decode_step_result,
+    decode_step_states,
     encode_step_result,
     payload_with_step_state,
     read_step_states,
     stable_generation_id,
 )
-from nexus.services.llm_execution import ExecutionRuntime
-from nexus.services.llm_intent_state import (
-    ContinuationState,
-    GenerateIntentState,
-    ToolCallState,
-    assistant_message_from_state,
-    continuation_state,
-    tool_call_state,
+from nexus.services.generation_intent import GenerationIntent
+from nexus.services.llm_execution import (
+    ExecutionRuntime,
+    prove_uncertain_generation_not_dispatched_in_current_transaction,
+)
+from nexus.services.llm_ledger import (
+    LlmCallOwner,
+    lock_generation_owner_in_current_transaction,
 )
 from nexus.services.tool_runtime.composition import (
     FrozenToolOperation,
@@ -73,6 +67,7 @@ from nexus.services.tool_runtime.composition import (
 )
 from nexus.services.tool_runtime.execution import (
     reconcile_uncertain_tool_completion,
+    recover_chat_tool_execution_receipt,
     stage_reconciled_chat_tool_terminal,
 )
 
@@ -82,7 +77,7 @@ class _StateModel(BaseModel):
 
 
 class PreparedChatRun(_StateModel):
-    generate_intent: GenerateIntentState
+    generate_intent: GenerationIntent
     admitted_resource_uris: tuple[str, ...]
     initial_citation_ordinal: int = Field(ge=1)
     initial_tool_call_index: int = Field(ge=0)
@@ -91,8 +86,7 @@ class PreparedChatRun(_StateModel):
 class AssistantTurn(_StateModel):
     kind: Literal["AssistantTurn"] = "AssistantTurn"
     text: str
-    tool_calls: tuple[ToolCallState, ...]
-    continuation: Presence[ContinuationState]
+    tool_calls: tuple[ChatToolCall, ...]
     usage: Presence[dict[str, JsonValue]]
     support_id: Presence[str]
     last_provider_event_seq: Presence[int]
@@ -102,7 +96,6 @@ class ExpectedFailure(_StateModel):
     kind: Literal["ExpectedFailure"] = "ExpectedFailure"
     assistant_content: str
     error_code: str = Field(min_length=1)
-    error_origin: str = Field(min_length=1)
     usage: Presence[dict[str, JsonValue]]
     support_id: Presence[str]
     last_provider_event_seq: Presence[int]
@@ -165,6 +158,12 @@ type ToolJournalResult = Annotated[
 
 class ToolJournalResultEnvelope(RootModel[ToolJournalResult]):
     model_config = ConfigDict(frozen=True)
+
+
+class ChatToolCall(_StateModel):
+    id: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    arguments: dict[str, JsonValue]
 
 
 @dataclass(frozen=True, slots=True)
@@ -374,11 +373,64 @@ class ChatStepRuntime:
             raise LostChatJobLease(f"chat job {self.job.id} lost its lease")
         self.job = refreshed
 
+    def assert_no_uncertain_tool_effect(self) -> None:
+        """Suspend the run while any MCP effect lacks an authoritative receipt."""
+
+        self.refresh_job()
+        uncertain = sorted(
+            path
+            for path, state in read_step_states(self.job).items()
+            if isinstance(state.tool_execution, Present) and state.dispatch_phase is Uncertain
+        )
+        if uncertain:
+            raise UncertainChatStep(
+                "chat MCP completion requires reconciliation at " + ", ".join(uncertain)
+            )
+        run = lock_chat_run_for_update(self.db, self.run_id)
+        if run is None or run.status not in {"queued", "running"}:
+            self.db.rollback()
+            raise UncertainChatStep("chat MCP receipt recovery requires one active run")
+        self.lock_active_attempt()
+        locked_job = get_job(self.db, self.execution_context.job_id)
+        if locked_job is None:
+            self.db.rollback()
+            raise LostChatJobLease(f"chat job {self.job.id} disappeared")
+        operation = compose_product_tool_runtime(None).operations["chat"]
+        validate_chat_tool_profile(run, operation)
+        payload, incomplete = _repair_completed_mcp_receipts(
+            self.db,
+            run=run,
+            operation=operation,
+            payload=locked_job.payload,
+        )
+        if incomplete:
+            self.db.rollback()
+            raise UncertainChatStep(
+                "chat MCP completion lacks durable receipts at " + ", ".join(incomplete)
+            )
+        if payload != locked_job.payload and not update_running_job_payload(
+            self.db,
+            job_id=self.execution_context.job_id,
+            worker_id=self.execution_context.worker_id,
+            attempt_no=self.execution_context.attempt_no,
+            payload=payload,
+        ):
+            self.db.rollback()
+            raise LostChatJobLease(f"chat job {self.job.id} lost its lease")
+        self.job = replace(locked_job, payload=payload)
+        self.db.commit()
+
     def lock_active_attempt(self) -> None:
         """Lock this live claim into the caller's current effect transaction."""
         if not lock_running_job_claim(self.db, context=self.execution_context):
             self.db.rollback()
             raise LostChatJobLease(f"chat job {self.job.id} lost its lease")
+
+    def lock_dispatch(self, db: Session) -> JobRow | None:
+        """Return the currently fenced job for ``JobGenerationJournal``."""
+        if not lock_running_job_claim(db, context=self.execution_context):
+            return None
+        return get_job(db, self.execution_context.job_id)
 
     def _required_state(self, path: str, phase: Any) -> StepReplayState:
         state = read_step_states(self.job).get(path)
@@ -413,6 +465,103 @@ def decode_rejected_tool(state: StepReplayState) -> RejectedToolStepResult:
     return _decode_completed(state, RejectedToolStepResult)
 
 
+def _repair_completed_mcp_receipts(
+    db: Session,
+    *,
+    run: ChatRun,
+    operation: FrozenToolOperation,
+    payload: dict[str, Any],
+) -> tuple[dict[str, Any], tuple[str, ...]]:
+    """Repair only projections whose inner durable tool terminal is complete."""
+
+    raw_journal = payload.get("_agent_tool_calls", {})
+    if not isinstance(raw_journal, dict):
+        raise AssertionError("chat MCP journal is not an object")
+    states = decode_step_states(payload)
+    prepare_state = states.get("prepare")
+    if prepare_state is None:
+        raise AssertionError("chat MCP journal has no prepare cursor owner")
+    prepared = decode_prepared(prepare_state)
+    cursor = prepared.initial_citation_ordinal
+    expected_index = prepared.initial_tool_call_index + 1
+    journal = {
+        str(key): dict(value) for key, value in raw_journal.items() if isinstance(value, dict)
+    }
+    if len(journal) != len(raw_journal):
+        raise AssertionError("chat MCP journal has an invalid entry")
+    ordered = sorted(journal.items(), key=lambda item: _journal_tool_index(item[1]))
+    incomplete: list[str] = []
+    for key, entry in ordered:
+        generation_seq = entry.get("generation_seq")
+        tool_index = entry.get("tool_index")
+        if (
+            type(generation_seq) is not int
+            or generation_seq < 1
+            or type(tool_index) is not int
+            or tool_index != expected_index
+            or entry.get("citation_ordinal") != cursor
+        ):
+            raise AssertionError("chat MCP journal position/citation order is invalid")
+        raw_result = entry.get("result")
+        if raw_result is None:
+            path = f"generation/{generation_seq}/tool/{tool_index}"
+            state = states.get(path)
+            if (
+                state is None
+                or state.dispatch_phase is not Completed
+                or not isinstance(state.tool_execution, Present)
+                or not isinstance(state.terminal_result, Present)
+            ):
+                incomplete.append(key)
+                expected_index += 1
+                continue
+            identity = state.tool_execution.value.identity
+            provider_wire_name = entry.get("provider_wire_name")
+            provider_call_id = entry.get("provider_call_id")
+            if (
+                entry.get("canonical_tool_id") != identity.tool_id
+                or entry.get("digest") != identity.input_digest
+                or provider_wire_name != identity.tool_id
+                or not isinstance(provider_wire_name, str)
+                or not isinstance(provider_call_id, str)
+            ):
+                raise AssertionError("chat MCP journal differs from its completed tool identity")
+            result = recover_chat_tool_execution_receipt(
+                db=db,
+                operation=operation,
+                run=run,
+                tool_call_index=tool_index,
+                identity=identity,
+                raw_result=state.terminal_result.value,
+                provider_wire_name=provider_wire_name,
+                provider_call_id=provider_call_id,
+                starting_citation_ordinal=cursor,
+            )
+            raw_result = result.model_dump(mode="json")
+            entry["result"] = raw_result
+            entry["next_citation_ordinal"] = result.next_citation_ordinal
+        result = ToolJournalResultEnvelope.model_validate(raw_result).root
+        if (
+            result.tool_call_index != expected_index
+            or entry.get("provider_call_id") != result.model_output.call_id
+            or entry.get("next_citation_ordinal") != result.next_citation_ordinal
+            or result.next_citation_ordinal < cursor
+        ):
+            raise AssertionError("chat MCP receipt disagrees with its journal position")
+        cursor = result.next_citation_ordinal
+        expected_index += 1
+    repaired = dict(payload)
+    repaired["_agent_tool_calls"] = journal
+    return repaired, tuple(incomplete)
+
+
+def _journal_tool_index(entry: dict[str, Any]) -> int:
+    value = entry.get("tool_index")
+    if type(value) is not int:
+        raise AssertionError("chat MCP journal has an invalid entry")
+    return value
+
+
 def reconcile_uncertain_chat_step(
     db: Session,
     *,
@@ -421,6 +570,12 @@ def reconcile_uncertain_chat_step(
     resolution: UncertainStepResolution,
 ) -> None:
     try:
+        owner = LlmCallOwner(kind="chat_run", id=run_id)
+        lock_generation_owner_in_current_transaction(db, owner)
+        lock_chat_generation_admission_in_current_transaction(db)
+        run = lock_chat_run_for_update(db, run_id)
+        if run is None:
+            raise ValueError("reconciled chat run does not exist")
         job = current_dead_job_for_payload(
             db,
             kind="chat_run",
@@ -433,6 +588,7 @@ def reconcile_uncertain_chat_step(
             raise ValueError("chat step is not uncertain")
         if state.generation_id != stable_generation_id(run_id, step_path):
             raise ValueError("chat step has a noncanonical generation id")
+        repair_operation: FrozenToolOperation | None = None
         if isinstance(resolution, ProveNotDispatched):
             tool_execution = state.tool_execution
             if isinstance(tool_execution, Present):
@@ -441,23 +597,29 @@ def reconcile_uncertain_chat_step(
                 tool_execution = present(
                     tool_execution.value.model_copy(update={"dispatch_claim": absent()})
                 )
-            next_state = state.model_copy(
-                update={
-                    "dispatch_phase": Prepared,
-                    "tool_execution": tool_execution,
-                }
-            )
+                next_state = state.model_copy(
+                    update={
+                        "dispatch_phase": Prepared,
+                        "tool_execution": tool_execution,
+                    }
+                )
+            else:
+                next_state = prove_uncertain_generation_not_dispatched_in_current_transaction(
+                    db,
+                    owner=owner,
+                    state=state,
+                )
         elif isinstance(resolution, AttachReconciledResult):
             if isinstance(state.tool_execution, Present):
                 if not isinstance(resolution.tool_settlement, Present):
                     raise ValueError("reconciled tool result requires an exact settlement")
-                run = db.get(ChatRun, run_id)
-                if run is None or run.status not in {"queued", "running"}:
+                if run.status not in {"queued", "running"}:
                     raise ValueError("reconciled chat result requires one active run")
-                tool_match = re.fullmatch(r"turn/\d+/tool/(\d+)", step_path)
+                tool_match = re.fullmatch(r"generation/\d+/tool/(\d+)", step_path)
                 if tool_match is None:
                     raise ValueError("tool execution occupies a non-tool Chat step")
                 operation = compose_product_tool_runtime(None).operations["chat"]
+                repair_operation = operation
                 validate_chat_tool_profile(run, operation)
                 next_state = reconcile_uncertain_tool_completion(
                     operation=operation,
@@ -477,25 +639,24 @@ def reconcile_uncertain_chat_step(
                     result=result,
                 )
             else:
-                if isinstance(resolution.tool_settlement, Present):
-                    raise ValueError("non-tool reconciliation cannot carry a tool settlement")
-                schema = _result_schema(step_path)
-                decoded = decode_step_result(resolution.terminal_result, schema)
-                _validate_reconciled_domain_facts(
-                    db,
-                    run_id=run_id,
-                    step_path=step_path,
-                    result=decoded,
-                )
-                next_state = state.model_copy(
-                    update={
-                        "dispatch_phase": Completed,
-                        "terminal_result": present(resolution.terminal_result),
-                    }
+                raise ValueError(
+                    "chat generation attachment requires immutable original command facts"
                 )
         else:
             raise AssertionError("unknown uncertain chat-step resolution")
         payload = payload_with_step_state(job.payload, step_path=step_path, state=next_state)
+        if repair_operation is not None:
+            payload, incomplete = _repair_completed_mcp_receipts(
+                db,
+                run=run,
+                operation=repair_operation,
+                payload=payload,
+            )
+            if incomplete:
+                raise AssertionError(
+                    "reconciled Chat tool did not produce its outer MCP receipt: "
+                    + ", ".join(incomplete)
+                )
         if not replace_dead_job_payload(db, job_id=job.id, payload=payload):
             raise AssertionError("suspended chat job changed while locked")
         if not requeue_dead_job(db, job_id=job.id):
@@ -512,127 +673,22 @@ def _decode_completed[T: BaseModel](state: StepReplayState, schema: type[T]) -> 
     return decode_step_result(state.terminal_result.value, schema)
 
 
-def _result_schema(path: str) -> type[BaseModel]:
-    if path == "prepare":
-        return PreparedChatRun
-    if path == "publication":
-        return PublicationStepResult
-    if re.fullmatch(r"turn/\d+/generation", path):
-        return GenerationStepResultEnvelope
-    if re.fullmatch(r"turn/\d+/tool/\d+", path):
-        return ToolJournalResultEnvelope
-    raise ValueError("unknown chat step path")
-
-
-def _validate_reconciled_domain_facts(
-    db: Session,
-    *,
-    run_id: UUID,
-    step_path: str,
-    result: BaseModel,
-) -> None:
-    """Prove an attached result already has its canonical durable facts.
-
-    Attachment repairs a missing journal terminal only. It never fabricates
-    billing, tool, retrieval, snapshot, Undo, or SSE facts from an incomplete
-    result envelope.
-    """
-    run = db.get(ChatRun, run_id)
-    if run is None or run.status not in {"queued", "running"}:
-        raise ValueError("reconciled chat result requires one active run")
-
-    generation_match = re.fullmatch(r"turn/(\d+)/generation", step_path)
-    if generation_match is not None:
-        if not isinstance(result, GenerationStepResultEnvelope):
-            raise AssertionError("generation reconciliation decoded the wrong schema")
-        call_seq = int(generation_match.group(1)) + 1
-        call = db.scalar(
-            select(LLMCall).where(
-                LLMCall.owner_kind == "chat_run",
-                LLMCall.owner_id == run_id,
-                LLMCall.call_seq == call_seq,
-            )
-        )
-        if call is None or call.outcome is None:
-            raise ValueError("reconciled generation has no terminal LLM ledger fact")
-        if isinstance(result.root, AssistantTurn) and call.outcome != "succeeded":
-            raise ValueError("reconciled assistant turn disagrees with the LLM ledger")
-        return
-
-    if re.fullmatch(r"turn/\d+/tool/\d+", step_path) is not None:
-        if not isinstance(result, ToolJournalResultEnvelope):
-            raise AssertionError("tool reconciliation decoded the wrong schema")
-        tool_result = result.root
-        event = tool_result.result_event
-        if (
-            event.tool_call_id != tool_result.tool_call_id
-            or event.assistant_message_id != run.assistant_message_id
-            or event.record_kind != tool_result.record_kind
-            or event.canonical_tool_id != tool_result.canonical_tool_id
-            or event.tool_call_index != tool_result.tool_call_index
-        ):
-            raise ValueError("reconciled tool result has inconsistent identity")
-        tool_row = db.get(MessageToolCall, tool_result.tool_call_id)
-        if (
-            tool_row is None
-            or tool_row.assistant_message_id != run.assistant_message_id
-            or tool_row.record_kind != tool_result.record_kind
-            or tool_row.canonical_tool_id != tool_result.canonical_tool_id
-            or tool_row.tool_call_index != tool_result.tool_call_index
-            or tool_row.status != event.status
-            or tool_row.error_code != event.error_code
-        ):
-            raise ValueError("reconciled tool result has no matching canonical tool fact")
-        stored_events = db.scalars(
-            select(ChatRunEvent).where(
-                ChatRunEvent.run_id == run_id,
-                ChatRunEvent.event_type == "tool_result",
-            )
-        ).all()
-        expected_event = event.model_dump(mode="json")
-        if not any(stored.payload == expected_event for stored in stored_events):
-            raise ValueError("reconciled tool result has no matching canonical event")
-        return
-
-    raise ValueError("this chat step cannot accept an attached result")
-
-
-def assistant_message_from_turn(value: AssistantTurn) -> AssistantMessage:
-    return assistant_message_from_state(
-        text=value.text,
-        tool_calls=value.tool_calls,
-        continuation=value.continuation,
-    )
-
-
 def assistant_turn_result(
     *,
     text: str,
-    tool_calls: tuple[ToolCall, ...],
-    continuation: Any,
+    tool_calls: tuple[ChatToolCall, ...],
     usage: dict[str, JsonValue] | None,
     support_id: str | None,
     last_provider_event_seq: int | None,
 ) -> AssistantTurn:
     return AssistantTurn(
         text=text,
-        tool_calls=tuple(tool_call_state(call) for call in tool_calls),
-        continuation=(
-            absent()
-            if isinstance(continuation, RuntimeAbsent)
-            else present(continuation_state(continuation.value))
-        ),
-        usage=absent() if usage is None else present(usage),
-        support_id=absent() if support_id is None else present(support_id),
+        tool_calls=tool_calls,
+        usage=(absent() if usage is None else Present[dict[str, JsonValue]](value=usage)),
+        support_id=absent() if support_id is None else Present[str](value=support_id),
         last_provider_event_seq=(
-            absent() if last_provider_event_seq is None else present(last_provider_event_seq)
+            absent()
+            if last_provider_event_seq is None
+            else Present[int](value=last_provider_event_seq)
         ),
-    )
-
-
-def tool_result_message(value: ToolJournalResult) -> ToolResultMessage:
-    return ToolResultMessage(
-        call_id=value.model_output.call_id,
-        output=value.model_output.output,
-        is_error=value.model_output.is_error,
     )

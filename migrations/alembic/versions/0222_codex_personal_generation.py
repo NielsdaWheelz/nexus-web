@@ -30,6 +30,252 @@ _GENERATION_JOB_KINDS = (
     "dawn_write_job",
 )
 _ACTIVE_JOB_STATUSES = ("pending", "running", "failed", "dead")
+_LLM_CALL_GENERATION_SEQ_CHECK = "generation_seq >= 1"
+_LLM_CALL_OWNER_OPERATION_CHECK = """
+(
+    operation = 'metadata_enrichment' AND owner_kind = 'media_enrichment'
+) OR (
+    operation = 'media_summary' AND owner_kind = 'media_summary'
+) OR (
+    operation = 'synapse' AND owner_kind = 'synapse_scan'
+) OR (
+    operation = 'dawn_write' AND owner_kind = 'dawn_write'
+) OR (
+    operation = 'oracle' AND owner_kind = 'oracle_reading'
+) OR (
+    operation IN (
+        'dossier_page',
+        'dossier_note',
+        'dossier_media',
+        'dossier_conversation',
+        'dossier_library',
+        'dossier_podcast',
+        'dossier_contributor',
+        'dossier_idea'
+    ) AND owner_kind = 'artifact_build'
+) OR (
+    operation = 'dossier_idea_resolve' AND owner_kind = 'artifact_learn_request'
+) OR (
+    operation = 'chat' AND owner_kind = 'chat_run'
+)
+"""
+_LLM_CALL_PLAN_CAPABILITY_CHECK = """
+plan_revision = 'codex-generation.2026-08-24.2'
+AND (
+    operation IN (
+        'metadata_enrichment',
+        'media_summary',
+        'synapse',
+        'dossier_page',
+        'dossier_note',
+        'dossier_idea_resolve'
+    )
+    AND plan_id = 'routine'
+    AND model_name = 'gpt-5.6-luna'
+    AND reasoning_effort = 'low'
+    AND capability_kind = 'Synthesis'
+    OR operation IN (
+        'dawn_write',
+        'oracle',
+        'dossier_media',
+        'dossier_conversation'
+    )
+    AND plan_id = 'standard'
+    AND model_name = 'gpt-5.6-terra'
+    AND reasoning_effort = 'medium'
+    AND capability_kind = 'Synthesis'
+    OR operation IN (
+        'dossier_library',
+        'dossier_podcast',
+        'dossier_contributor',
+        'dossier_idea'
+    )
+    AND plan_id = 'thorough'
+    AND model_name = 'gpt-5.6-terra'
+    AND reasoning_effort = 'high'
+    AND capability_kind = 'Synthesis'
+    OR operation = 'chat'
+    AND capability_kind = 'ChatTools'
+    AND (
+        plan_id = 'routine'
+        AND model_name = 'gpt-5.6-luna'
+        AND reasoning_effort = 'low'
+        OR plan_id = 'standard'
+        AND model_name = 'gpt-5.6-terra'
+        AND reasoning_effort = 'medium'
+        OR plan_id = 'deep'
+        AND model_name = 'gpt-5.6-sol'
+        AND reasoning_effort = 'high'
+    )
+)
+"""
+_LLM_CALL_ROUTE_CHECK = """
+backend = 'codex'
+AND transport = 'sdk'
+AND auth_profile = 'codex-personal'
+"""
+_LLM_CALL_FINGERPRINTS_CHECK = """
+request_fingerprint ~ '^[0-9a-f]{64}$'
+AND output_schema_fingerprint ~ '^[0-9a-f]{64}$'
+AND (
+    operation = 'chat'
+    AND output_schema_fingerprint =
+        '3f0d42022e6069f00f4048e3a091c1b225e739ef73e2d0a9fcee8986da69e9e7'
+    AND tool_plan_fingerprint IS NOT NULL
+    AND tool_plan_fingerprint =
+        '62494626c69ba139121e1b761e4e2def6ca50ccf1ebfde551f8de061efef049c'
+    OR operation <> 'chat' AND tool_plan_fingerprint IS NULL
+)
+"""
+_LLM_CALL_SESSION_REF_CHECK = """
+session_ref IS NULL OR (
+    jsonb_typeof(session_ref) = 'object'
+    AND session_ref ?& ARRAY[
+        'schema_version',
+        'backend',
+        'transport',
+        'native_session_id',
+        'profile_key',
+        'state_root_fingerprint',
+        'cwd_fingerprint'
+    ]
+    AND session_ref - ARRAY[
+        'schema_version',
+        'backend',
+        'transport',
+        'native_session_id',
+        'profile_key',
+        'state_root_fingerprint',
+        'cwd_fingerprint'
+    ] = '{}'::jsonb
+    AND jsonb_typeof(session_ref->'schema_version') = 'string'
+    AND jsonb_typeof(session_ref->'backend') = 'string'
+    AND jsonb_typeof(session_ref->'transport') = 'string'
+    AND jsonb_typeof(session_ref->'native_session_id') = 'string'
+    AND jsonb_typeof(session_ref->'profile_key') = 'string'
+    AND jsonb_typeof(session_ref->'state_root_fingerprint') = 'string'
+    AND jsonb_typeof(session_ref->'cwd_fingerprint') = 'string'
+    AND session_ref->>'schema_version' = 'agent-session-ref.v1'
+    AND session_ref->>'backend' = backend
+    AND session_ref->>'transport' = transport
+    AND session_ref->>'profile_key' = auth_profile
+    AND char_length(session_ref->>'native_session_id') BETWEEN 1 AND 256
+    AND session_ref->>'state_root_fingerprint' ~ '^[0-9a-f]{64}$'
+    AND session_ref->>'cwd_fingerprint' ~ '^[0-9a-f]{64}$'
+)
+"""
+_LLM_CALL_USAGE_CHECK = """
+(
+    input_tokens IS NULL
+    AND output_tokens IS NULL
+    AND total_tokens IS NULL
+    AND reasoning_tokens IS NULL
+    AND cache_read_input_tokens IS NULL
+    AND cache_write_input_tokens IS NULL
+) OR (
+    input_tokens IS NOT NULL AND input_tokens >= 0
+    AND output_tokens IS NOT NULL AND output_tokens >= 0
+    AND total_tokens IS NOT NULL AND total_tokens >= 0
+    AND (reasoning_tokens IS NULL OR reasoning_tokens >= 0)
+    AND (cache_read_input_tokens IS NULL OR cache_read_input_tokens >= 0)
+    AND (cache_write_input_tokens IS NULL OR cache_write_input_tokens >= 0)
+)
+"""
+# Host acceptance precedes SDK session open. Accepted failure/cancellation may
+# therefore have no session reference; accepted success may not.
+_LLM_CALL_LIFECYCLE_CHECK = """
+(
+    outcome IS NULL
+    AND completed_at IS NULL
+    AND accepted_at IS NULL
+    AND session_ref IS NULL
+    AND error_code IS NULL
+    AND error_detail IS NULL
+    AND input_tokens IS NULL
+    AND output_tokens IS NULL
+    AND total_tokens IS NULL
+    AND reasoning_tokens IS NULL
+    AND cache_read_input_tokens IS NULL
+    AND cache_write_input_tokens IS NULL
+    AND sdk_version IS NULL
+    AND runtime_version IS NULL
+    AND latency_ms IS NULL
+) OR (
+    accepted_at IS NULL
+    AND completed_at IS NOT NULL
+    AND session_ref IS NULL
+    AND input_tokens IS NULL
+    AND output_tokens IS NULL
+    AND total_tokens IS NULL
+    AND reasoning_tokens IS NULL
+    AND cache_read_input_tokens IS NULL
+    AND cache_write_input_tokens IS NULL
+    AND sdk_version IS NULL
+    AND runtime_version IS NULL
+    AND latency_ms IS NULL
+    AND (
+        outcome = 'Failed'
+        AND error_code IS NOT NULL
+        AND error_code IN (
+            'auth',
+            'quota',
+            'timeout',
+            'output_limit',
+            'invalid_output',
+            'policy_violation',
+            'runtime_unavailable',
+            'capacity_unavailable',
+            'context_too_large',
+            'defect'
+        )
+        AND error_detail IS NOT NULL
+        AND char_length(error_detail) <= 1000
+        AND error_detail ~ '[^[:space:]]'
+        OR outcome = 'Cancelled'
+        AND error_code IS NULL
+        AND error_detail IS NOT NULL
+        AND char_length(error_detail) <= 1000
+        AND error_detail ~ '[^[:space:]]'
+    )
+) OR (
+    accepted_at IS NOT NULL
+    AND completed_at IS NOT NULL
+    AND sdk_version IS NOT NULL
+    AND char_length(sdk_version) BETWEEN 1 AND 128
+    AND runtime_version IS NOT NULL
+    AND char_length(runtime_version) BETWEEN 1 AND 128
+    AND latency_ms IS NOT NULL
+    AND latency_ms >= 0
+    AND (
+        outcome = 'Succeeded'
+        AND session_ref IS NOT NULL
+        AND error_code IS NULL
+        AND error_detail IS NULL
+        OR outcome = 'Failed'
+        AND error_code IS NOT NULL
+        AND error_code IN (
+            'auth',
+            'quota',
+            'timeout',
+            'output_limit',
+            'invalid_output',
+            'policy_violation',
+            'runtime_unavailable',
+            'capacity_unavailable',
+            'context_too_large',
+            'defect'
+        )
+        AND error_detail IS NOT NULL
+        AND char_length(error_detail) <= 1000
+        AND error_detail ~ '[^[:space:]]'
+        OR outcome = 'Cancelled'
+        AND error_code IS NULL
+        AND error_detail IS NOT NULL
+        AND char_length(error_detail) <= 1000
+        AND error_detail ~ '[^[:space:]]'
+    )
+)
+"""
 
 
 def _fail(message: str) -> None:
@@ -109,25 +355,29 @@ def _preflight(bind: sa.Connection) -> None:
     if uncertain_jobs:
         _fail(f"queue journals contain Uncertain generations: {_ids(uncertain_jobs)}")
 
-    uncertain_learn = bind.execute(
+    incompatible_learn = bind.execute(
         sa.text(
             """
             SELECT requests.id
             FROM artifact_learn_requests AS requests
-            CROSS JOIN LATERAL jsonb_each(
-                CASE
-                    WHEN jsonb_typeof(requests.coordination) = 'object'
-                    THEN requests.coordination
-                    ELSE '{}'::jsonb
-                END
-            ) AS step(path, state)
-            WHERE step.state->>'dispatch_phase' = 'Uncertain'
+            LEFT JOIN artifact_learn_successes AS successes
+              ON successes.request_id = requests.id
+            LEFT JOIN artifact_learn_failures AS failures
+              ON failures.request_id = requests.id
+            WHERE successes.request_id IS NULL
+              AND failures.request_id IS NULL
+              AND (
+                  requests.coordination <> '{}'::jsonb
+                  OR requests.resolver_lease_expires_at IS NOT NULL
+              )
             ORDER BY requests.id
             """
         )
     ).all()
-    if uncertain_learn:
-        _fail(f"Learn journals contain Uncertain generations: {_ids(uncertain_learn)}")
+    if incompatible_learn:
+        _fail(
+            f"pending Learn requests retain pre-cutover resolver state: {_ids(incompatible_learn)}"
+        )
 
     legacy_intents = bind.execute(
         sa.text(
@@ -195,147 +445,38 @@ def _create_generation_ledger() -> None:
         ),
         sa.Column("accepted_at", postgresql.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("completed_at", postgresql.TIMESTAMP(timezone=True), nullable=True),
+        sa.CheckConstraint(
+            _LLM_CALL_GENERATION_SEQ_CHECK,
+            name="ck_llm_calls_generation_seq_positive",
+        ),
+        sa.CheckConstraint(
+            _LLM_CALL_OWNER_OPERATION_CHECK,
+            name="ck_llm_calls_owner_operation",
+        ),
+        sa.CheckConstraint(
+            _LLM_CALL_PLAN_CAPABILITY_CHECK,
+            name="ck_llm_calls_plan_capability",
+        ),
+        sa.CheckConstraint(_LLM_CALL_ROUTE_CHECK, name="ck_llm_calls_route"),
+        sa.CheckConstraint(
+            _LLM_CALL_FINGERPRINTS_CHECK,
+            name="ck_llm_calls_fingerprints",
+        ),
+        sa.CheckConstraint(
+            _LLM_CALL_SESSION_REF_CHECK,
+            name="ck_llm_calls_session_ref",
+        ),
+        sa.CheckConstraint(_LLM_CALL_USAGE_CHECK, name="ck_llm_calls_usage"),
+        sa.CheckConstraint(
+            _LLM_CALL_LIFECYCLE_CHECK,
+            name="ck_llm_calls_lifecycle",
+        ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint(
             "owner_kind",
             "owner_id",
             "generation_seq",
             name="uq_llm_calls_owner_generation_seq",
-        ),
-        sa.CheckConstraint(
-            "owner_kind IN ("
-            "'chat_run', 'oracle_reading', 'artifact_build', "
-            "'artifact_learn_request', 'media_summary', 'synapse_scan', "
-            "'dawn_write', 'media_enrichment'"
-            ")",
-            name="ck_llm_calls_owner_kind",
-        ),
-        sa.CheckConstraint(
-            "outcome IS NULL OR outcome IN ('Succeeded', 'Cancelled', 'Failed')",
-            name="ck_llm_calls_outcome",
-        ),
-        sa.CheckConstraint(
-            "operation IN ("
-            "'metadata_enrichment', 'media_summary', 'synapse', 'dawn_write', 'oracle', "
-            "'dossier_page', 'dossier_note', 'dossier_media', 'dossier_conversation', "
-            "'dossier_library', 'dossier_podcast', 'dossier_contributor', "
-            "'dossier_idea', 'dossier_idea_resolve', 'chat'"
-            ")",
-            name="ck_llm_calls_operation",
-        ),
-        sa.CheckConstraint(
-            "(owner_kind = 'media_enrichment' AND operation = 'metadata_enrichment') OR "
-            "(owner_kind = 'media_summary' AND operation = 'media_summary') OR "
-            "(owner_kind = 'synapse_scan' AND operation = 'synapse') OR "
-            "(owner_kind = 'dawn_write' AND operation = 'dawn_write') OR "
-            "(owner_kind = 'oracle_reading' AND operation = 'oracle') OR "
-            "(owner_kind = 'artifact_build' AND operation IN ("
-            "'dossier_page', 'dossier_note', 'dossier_media', 'dossier_conversation', "
-            "'dossier_library', 'dossier_podcast', 'dossier_contributor', 'dossier_idea'"
-            ")) OR "
-            "(owner_kind = 'artifact_learn_request' AND operation = 'dossier_idea_resolve') OR "
-            "(owner_kind = 'chat_run' AND operation = 'chat')",
-            name="ck_llm_calls_owner_operation",
-        ),
-        sa.CheckConstraint(
-            "(operation IN ("
-            "'metadata_enrichment', 'media_summary', 'synapse', 'dossier_page', "
-            "'dossier_note', 'dossier_idea_resolve'"
-            ") AND plan_id = 'routine') OR "
-            "(operation IN ("
-            "'dawn_write', 'oracle', 'dossier_media', 'dossier_conversation'"
-            ") AND plan_id = 'standard') OR "
-            "(operation IN ("
-            "'dossier_library', 'dossier_podcast', 'dossier_contributor', 'dossier_idea'"
-            ") AND plan_id = 'thorough') OR "
-            "(operation = 'chat' AND plan_id IN ('routine', 'standard', 'deep'))",
-            name="ck_llm_calls_operation_plan",
-        ),
-        sa.CheckConstraint(
-            "(plan_id = 'routine' AND model_name = 'gpt-5.6-luna' "
-            "AND reasoning_effort = 'low') OR "
-            "(plan_id = 'standard' AND model_name = 'gpt-5.6-terra' "
-            "AND reasoning_effort = 'medium') OR "
-            "(plan_id = 'thorough' AND model_name = 'gpt-5.6-terra' "
-            "AND reasoning_effort = 'high') OR "
-            "(plan_id = 'deep' AND model_name = 'gpt-5.6-sol' "
-            "AND reasoning_effort = 'high')",
-            name="ck_llm_calls_plan_target",
-        ),
-        sa.CheckConstraint(
-            "backend = 'codex' AND transport = 'sdk' "
-            "AND auth_profile = 'codex-personal'",
-            name="ck_llm_calls_route",
-        ),
-        sa.CheckConstraint(
-            "(operation = 'chat' AND capability_kind = 'ChatTools' "
-            "AND tool_plan_fingerprint IS NOT NULL) OR "
-            "(operation <> 'chat' AND capability_kind = 'Synthesis' "
-            "AND tool_plan_fingerprint IS NULL)",
-            name="ck_llm_calls_capability",
-        ),
-        sa.CheckConstraint(
-            "request_fingerprint ~ '^[0-9a-f]{64}$' "
-            "AND output_schema_fingerprint ~ '^[0-9a-f]{64}$' "
-            "AND (tool_plan_fingerprint IS NULL "
-            "OR tool_plan_fingerprint ~ '^[0-9a-f]{64}$')",
-            name="ck_llm_calls_fingerprints",
-        ),
-        sa.CheckConstraint(
-            "char_length(plan_revision) BETWEEN 1 AND 128 "
-            "AND (error_detail IS NULL OR char_length(error_detail) <= 1000)",
-            name="ck_llm_calls_bounded_text",
-        ),
-        sa.CheckConstraint(
-            "error_code IS NULL OR error_code IN ("
-            "'auth', 'quota', 'timeout', 'output_limit', 'invalid_output', "
-            "'policy_violation', 'runtime_unavailable', 'capacity_unavailable', "
-            "'context_too_large', 'defect'"
-            ")",
-            name="ck_llm_calls_error_code",
-        ),
-        sa.CheckConstraint(
-            "(outcome = 'Failed') = (error_code IS NOT NULL)",
-            name="ck_llm_calls_failure_shape",
-        ),
-        sa.CheckConstraint(
-            "(input_tokens IS NULL AND output_tokens IS NULL AND total_tokens IS NULL "
-            "AND reasoning_tokens IS NULL AND cache_read_input_tokens IS NULL "
-            "AND cache_write_input_tokens IS NULL) OR "
-            "(input_tokens >= 0 AND output_tokens >= 0 AND total_tokens >= 0 "
-            "AND (reasoning_tokens IS NULL OR reasoning_tokens >= 0) "
-            "AND (cache_read_input_tokens IS NULL OR cache_read_input_tokens >= 0) "
-            "AND (cache_write_input_tokens IS NULL OR cache_write_input_tokens >= 0))",
-            name="ck_llm_calls_usage",
-        ),
-        sa.CheckConstraint(
-            "session_ref IS NULL OR (jsonb_typeof(session_ref) = 'object' "
-            "AND session_ref->>'backend' = backend "
-            "AND session_ref->>'transport' = transport "
-            "AND session_ref->>'profile_key' = auth_profile)",
-            name="ck_llm_calls_session_route",
-        ),
-        sa.CheckConstraint(
-            "(outcome IS NULL AND completed_at IS NULL AND accepted_at IS NULL "
-            "AND session_ref IS NULL AND error_code IS NULL AND error_detail IS NULL "
-            "AND input_tokens IS NULL AND output_tokens IS NULL AND total_tokens IS NULL "
-            "AND reasoning_tokens IS NULL AND cache_read_input_tokens IS NULL "
-            "AND cache_write_input_tokens IS NULL AND sdk_version IS NULL "
-            "AND runtime_version IS NULL AND latency_ms IS NULL) OR "
-            "(outcome IS NOT NULL AND completed_at IS NOT NULL AND ("
-            "(accepted_at IS NULL AND outcome = 'Failed' AND session_ref IS NULL "
-            "AND input_tokens IS NULL AND output_tokens IS NULL AND total_tokens IS NULL "
-            "AND reasoning_tokens IS NULL AND cache_read_input_tokens IS NULL "
-            "AND cache_write_input_tokens IS NULL AND sdk_version IS NULL "
-            "AND runtime_version IS NULL AND latency_ms IS NULL) OR "
-            "(accepted_at IS NOT NULL AND sdk_version IS NOT NULL "
-            "AND runtime_version IS NOT NULL AND latency_ms >= 0 "
-            "AND error_code IS DISTINCT FROM 'capacity_unavailable'))) ",
-            name="ck_llm_calls_lifecycle",
-        ),
-        sa.CheckConstraint(
-            "generation_seq > 0",
-            name="ck_llm_calls_generation_seq_positive",
         ),
     )
     op.create_index("ix_llm_calls_owner", "llm_calls", ["owner_kind", "owner_id"])

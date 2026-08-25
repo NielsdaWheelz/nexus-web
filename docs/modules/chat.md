@@ -56,9 +56,8 @@ Hard-cutover specs that govern chat work. Each owns one axis; they compose.
 - `docs/cutovers/chat-interface-hard-cutover.md` — readable transcript
   hierarchy, progressive disclosure, typed send/privacy state, quote reflow,
   and shared conversation-row activation. IMPLEMENTED.
-- `docs/cutovers/chat-continuation-selection-hard-cutover.md` — causal,
-  branch-correct profile inheritance with explicit draft precedence.
-  IMPLEMENTED.
+- `docs/cutovers/codex-personal-generation-hard-cutover.md` — profile-only
+  plan selection and causal profile inheritance. SOURCE CANDIDATE.
 - `docs/cutovers/conversation-find-hard-cutover.md` — exact selected-path
   Conversation Find, committed-DOM projection, reversible preview, and source
   replacement safety. IMPLEMENTED.
@@ -337,7 +336,7 @@ three (`extra="forbid"`).
 
 At most one action ever renders. `ExpectedChatFailure` is the closed,
 discriminated union (`code` as the tag) mirroring
-`python/nexus/schemas/llm.py`; see [modules/llms.md](llms.md) for the ten
+`python/nexus/schemas/llm.py`; see [modules/llms.md](llms.md) for the six
 variants, their valid origins, and the `chat_failure_projection`/
 `rerun_eligibility` policy that produces them.
 

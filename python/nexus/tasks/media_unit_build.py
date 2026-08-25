@@ -19,9 +19,7 @@ def media_unit_build(
 ) -> dict | RescheduleRequested:
     media_uuid = UUID(media_id)
 
-    async def _handler(
-        db: Session, runtime: ExecutionRuntime
-    ) -> dict | RescheduleRequested:
+    async def _handler(db: Session, runtime: ExecutionRuntime) -> dict | RescheduleRequested:
         outcome = await run_media_unit_build(
             db,
             media_id=media_uuid,

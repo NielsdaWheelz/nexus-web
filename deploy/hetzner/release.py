@@ -74,6 +74,14 @@ _SERVICES = (
 )
 _WRITERS = ("api", "worker-interactive", "worker-background")
 _CODEX_AGENT_HOST = "nexus-codex-agent-host"
+_CODEX_EGRESS_POLICY = "codex-egress-policy"
+_CODEX_PRIVATE_NETWORK = "nexus_codex_private"
+_CODEX_PROXY_EGRESS_NETWORK = "nexus_codex_proxy_egress"
+_CODEX_EGRESS_PROXY_IP = "172.30.0.2"
+_CODEX_AGENT_HOST_IP = "172.30.0.3"
+_CODEX_PRIVATE_BRIDGE_IP = "172.30.0.1"
+_CODEX_PRIVATE_NETWORK_OPTIONS = {"com.docker.network.bridge.gateway_mode_ipv4": "isolated"}
+_CODEX_ISOLATED_GATEWAY_MINIMUM_DOCKER_MAJOR = 28
 _CODEX_AGENT_SECURITY_OPTIONS = {
     "apparmor=nexus-codex-agent-host",
     "no-new-privileges:true",
@@ -86,18 +94,20 @@ _CODEX_AGENT_STOP_GRACE_SECONDS = 45
 # The host's only writable scratch and its process resource ceilings, exactly as
 # Compose declares them; a live container that differs is not the proven host.
 _CODEX_AGENT_TMPFS = {"/tmp": "rw,noexec,nosuid,nodev,size=16m"}
+_CODEX_EGRESS_POLICY_TMPFS = {"/tmp": "rw,noexec,nosuid,nodev,size=8m"}
 _CODEX_AGENT_ULIMITS = frozenset(
     {("core", 0, 0), ("fsize", 1_048_576, 1_048_576), ("nofile", 64, 64)}
 )
 _CODEX_AGENT_RUNTIME_ENVIRONMENT = {
-    "NEXUS_CODEX_STATE_ROOT_BASE": "/var/lib/nexus-codex",
-    "NEXUS_CODEX_WORKING_DIRECTORY": "/var/empty/nexus-codex",
+    "NEXUS_CODEX_CREDENTIAL_FILE": "/run/nexus-codex-credential/auth.json",
+    "NEXUS_CODEX_WORKING_DIRECTORY_ROOT": "/tmp/nexus-codex-turns",
     "NEXUS_CODEX_AGENT_SOCKET": "/run/nexus-codex/agent.sock",
     "NEXUS_CODEX_CHAT_NETWORK_ATTESTED": "true",
 }
 # These are the only environment names inherited from the pinned Python/worker
 # artifact. Their values come from `docker image inspect` and must be preserved
-# exactly by the host container; Compose may add only the three runtime values.
+# exactly by the host container; Compose may add only the fixed runtime values
+# above plus the separately attested dynamic MCP origin.
 _CODEX_AGENT_IMAGE_ENVIRONMENT_NAMES = frozenset(
     {
         "GPG_KEY",
@@ -117,6 +127,8 @@ _CODEX_STATE_MINIMUM_FREE_BYTES = 128 * 1024 * 1024
 _CODEX_STATE_MAPPER_NAME = "nexus-codex-state"
 _CODEX_STATE_MAPPER = Path(f"/dev/mapper/{_CODEX_STATE_MAPPER_NAME}")
 _CODEX_STATE_REQUIRED_MOUNT_OPTIONS = frozenset({"rw", "nosuid", "nodev", "noexec"})
+_CODEX_ENROLLED_AUTH_RELATIVE_PATH = Path("codex/codex-personal/auth.json")
+_CODEX_ENROLLED_AUTH_MAX_BYTES = 64 * 1024
 _CODEX_STATE_BOOT_GUARD_NAME = "nexus-codex-state-boot-guard.service"
 _CODEX_STATE_BOOT_GUARD = b"""#!/bin/sh
 set -eu
@@ -157,18 +169,59 @@ _CADDY_READINESS_COMMAND = (
     "/dev/null",
     "http://127.0.0.1:2019/config/",
 )
+_CADDY_ADAPT_COMMAND = (
+    "caddy",
+    "adapt",
+    "--config",
+    "/etc/caddy/Caddyfile",
+    "--adapter",
+    "caddyfile",
+)
+_CADDY_ADAPT_STDIN_COMMAND = (
+    "caddy",
+    "adapt",
+    "--config",
+    "/dev/stdin",
+    "--adapter",
+    "caddyfile",
+)
+_CADDY_VALIDATE_COMMAND = (
+    "caddy",
+    "validate",
+    "--config",
+    "/etc/caddy/Caddyfile",
+    "--adapter",
+    "caddyfile",
+)
+_CADDY_RELOAD_COMMAND = (
+    "caddy",
+    "reload",
+    "--config",
+    "/etc/caddy/Caddyfile",
+    "--adapter",
+    "caddyfile",
+)
+_CADDY_LOADED_CONFIG_COMMAND = (
+    "wget",
+    "-q",
+    "-O",
+    "-",
+    "http://127.0.0.1:2019/config/",
+)
+_CADDY_CONFIG_MAX_BYTES = 1024 * 1024
 _CODEX_CAPACITY_CLIENT_ENVIRONMENT = {
     "NEXUS_CODEX_AGENT_SOCKET": "/run/nexus-codex/agent.sock",
 }
 _CODEX_CAPACITY_CLIENT_COMMAND = ("-c", "while :; do sleep 3600; done")
-_CODEX_PERSONAL_METADATA_REVISION = 216
-_CAPACITY_SERVICES = (*_SERVICES, _CODEX_AGENT_HOST)
+_CODEX_PERSONAL_GENERATION_REVISION = 222
+_CAPACITY_SERVICES = (*_SERVICES, "codex-egress-policy", _CODEX_AGENT_HOST)
 _RESOURCE_LIMITS = {
     "postgres": (256 * 1024 * 1024, 512 * 1024 * 1024, 256),
     "caddy": (32 * 1024 * 1024, 48 * 1024 * 1024, 128),
     "api": (192 * 1024 * 1024, 320 * 1024 * 1024, 256),
     "worker-interactive": (128 * 1024 * 1024, 256 * 1024 * 1024, 256),
     "worker-background": (128 * 1024 * 1024, 448 * 1024 * 1024, 256),
+    "codex-egress-policy": (32 * 1024 * 1024, 64 * 1024 * 1024, 32),
     _CODEX_AGENT_HOST: (128 * 1024 * 1024, 384 * 1024 * 1024, 64),
     "migration": (256 * 1024 * 1024, 512 * 1024 * 1024, 256),
 }
@@ -187,7 +240,7 @@ _MIN_AVAILABLE_MEMORY_BYTES = 256 * 1024 * 1024
 _MIN_SWAP_BYTES = 1024 * 1024 * 1024
 _MIN_PARSER_TEMP_FREE_BYTES = 512 * 1024 * 1024
 _CODEX_CAPACITY_SCHEMA_VERSION = "nexus-codex-capacity.v2"
-_CODEX_CAPACITY_CANARY_SCHEMA_VERSION = "nexus-codex-capacity-canary.v2"
+_CODEX_CAPACITY_CANARY_SCHEMA_VERSION = "nexus-codex-capacity-canary.v3"
 # The canary owns its phase sequence and exit-code table as the public
 # `apps.codex_agent.capacity_canary.TURNS` and `.EXIT_CODES`. This
 # controller ships in the immutable host bundle without the worker package, so
@@ -241,7 +294,6 @@ _CODEX_CAPACITY_TURN_FIELDS = frozenset(
     {
         "phase",
         "operation",
-        "profile",
         "plan_id",
         "plan_revision",
         "capability",
@@ -284,6 +336,17 @@ _ATTEMPT_FIELDS = frozenset(
     }
 )
 _CONTAINER_FIELDS = frozenset({"container_id", "image", "config_sha256"})
+_CADDY_ACTIVATION_FIELDS = frozenset(
+    {
+        "schema_version",
+        "source_sha",
+        "candidate_sha256",
+        "predecessor_sha256",
+        "config_sha256",
+        "caddy_device",
+        "caddy_inode",
+    }
+)
 _BACKUP_FIELDS = frozenset(
     {"path", "sha256", "byte_count", "database_identity", "starting_revision"}
 )
@@ -633,6 +696,10 @@ class ReleasePaths:
         return self.state_root / "attempts"
 
     @property
+    def codex_enrolled_auth(self) -> Path:
+        return self.codex_state_mount / _CODEX_ENROLLED_AUTH_RELATIVE_PATH
+
+    @property
     def oracle_attempts(self) -> Path:
         return self.state_root / "oracle-attempts"
 
@@ -655,6 +722,54 @@ class ReleasePaths:
     @property
     def forward_fix(self) -> Path:
         return self.state_root / "forward-fix"
+
+    @property
+    def caddy_activation(self) -> Path:
+        return self.state_root / "caddy-activation.json"
+
+    @property
+    def caddy_activation_backups(self) -> Path:
+        return self.state_root / "caddy-activation-backups"
+
+
+@dataclass(frozen=True, slots=True)
+class CaddyActivationJournal:
+    schema_version: int
+    source_sha: str
+    candidate_sha256: str
+    predecessor_sha256: str
+    config_sha256: str
+    caddy_device: int
+    caddy_inode: int
+
+    def __post_init__(self) -> None:
+        if self.schema_version != 1:
+            raise ReleaseDefect("Caddy activation journal schema is unsupported")
+        _require_match("Caddy activation source SHA", self.source_sha, _SHA)
+        for label, value in (
+            ("candidate", self.candidate_sha256),
+            ("predecessor", self.predecessor_sha256),
+            ("config", self.config_sha256),
+        ):
+            _require_match(f"Caddy activation {label} SHA-256", value, _SHA256)
+        if self.caddy_device < 0 or self.caddy_inode < 1:
+            raise ReleaseDefect("Caddy activation inode identity is malformed")
+
+    def as_json(self) -> dict[str, object]:
+        return dataclasses.asdict(self)
+
+    @classmethod
+    def from_json(cls, value: object) -> CaddyActivationJournal:
+        mapping = _closed_mapping(value, _CADDY_ACTIVATION_FIELDS, "Caddy activation journal")
+        return cls(
+            schema_version=_integer(mapping, "schema_version"),
+            source_sha=_string(mapping, "source_sha"),
+            candidate_sha256=_string(mapping, "candidate_sha256"),
+            predecessor_sha256=_string(mapping, "predecessor_sha256"),
+            config_sha256=_string(mapping, "config_sha256"),
+            caddy_device=_integer(mapping, "caddy_device"),
+            caddy_inode=_integer(mapping, "caddy_inode"),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -2150,13 +2265,21 @@ def _create_json(path: Path, value: object) -> None:
     _create_bytes(path, _canonical_json(value))
 
 
-def _create_bytes(path: Path, data: bytes, *, mode: int = 0o640) -> None:
+def _create_bytes(
+    path: Path,
+    data: bytes,
+    *,
+    mode: int = 0o640,
+    owner: tuple[int, int] | None = None,
+) -> None:
     path.parent.mkdir(mode=0o750, parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{path.name}.", suffix=".partial", dir=path.parent
     )
     temporary = Path(temporary_name)
     try:
+        if owner is not None:
+            os.fchown(descriptor, *owner)
         os.fchmod(descriptor, mode)
         stream = os.fdopen(descriptor, "wb")
         descriptor = -1
@@ -2496,22 +2619,24 @@ def _codex_capacity_evidence_expired(measured_at: float) -> bool:
 
 
 def _requires_codex_agent_host(candidate: CandidateManifest) -> bool:
-    """Bind host verification to the release schema that introduced it.
+    """Bind the new host/topology/MCP contract to its hard-cut revision.
 
-    The predecessor has no host by design; every candidate activation and
-    finalization still requires the host explicitly.  Current-release checks
-    begin requiring it only once the immutable migration graph reaches the
-    metadata cutover revision.
+    A 0216 metadata predecessor may use the retired single-container shape.
+    Predecessor verification therefore proves its application publication but
+    does not pretend it implements the 0222 sidecar and MCP contract. Every
+    0222 candidate and current release is held to the new contract exactly.
     """
 
     revision = candidate.expected_database_revision
     if re.fullmatch(r"[0-9]+", revision) is None:
         raise ReleaseDefect("Codex host requirement needs a numeric database revision")
-    return int(revision) >= _CODEX_PERSONAL_METADATA_REVISION
+    return int(revision) >= _CODEX_PERSONAL_GENERATION_REVISION
 
 
 def publish_config(source: Path, store: ReleaseStore, *, next_source_sha: str) -> str:
     store.assert_no_oracle_attempt()
+    if store.paths.caddy_activation.exists():
+        raise ReleaseBlocked("pending Caddy activation blocks config publication")
     store.require_current_record()
     store.assert_fresh_candidate(next_source_sha)
     values = _read_env(source)
@@ -2569,6 +2694,20 @@ class HostRelease:
         if candidate.source_sha != source_sha:
             raise ReleaseDefect("bundle path and candidate source SHA differ")
         return bundle
+
+    def _require_codex_isolated_gateway_support(self) -> None:
+        """Admit only Engines that implement the private bridge's isolation mode."""
+
+        completed = _run(("docker", "version", "--format", "{{.Server.Version}}"))
+        try:
+            version = completed.stdout.decode("ascii").strip()
+        except UnicodeDecodeError as exc:
+            raise ReleaseDefect("Docker Engine server version is malformed") from exc
+        matched = re.fullmatch(r"([0-9]+)(?:\.[0-9]+){1,2}(?:[-+].*)?", version)
+        if matched is None:
+            raise ReleaseDefect("Docker Engine server version is malformed")
+        if int(matched.group(1)) < _CODEX_ISOLATED_GATEWAY_MINIMUM_DOCKER_MAJOR:
+            raise ReleaseBlocked("Docker Engine 28 or newer is required for isolated gateway mode")
 
     def _validate_release_inputs(
         self,
@@ -3082,6 +3221,7 @@ class HostRelease:
         try:
             container = self.paths.codex_state_container.lstat()
             mount = self.paths.codex_state_mount.lstat()
+            credential = self.paths.codex_enrolled_auth.lstat()
             if (
                 not stat.S_ISREG(container.st_mode)
                 or container.st_uid != 0
@@ -3093,6 +3233,12 @@ class HostRelease:
                 or mount.st_uid != 10001
                 or mount.st_gid != 10001
                 or stat.S_IMODE(mount.st_mode) != 0o700
+                or not stat.S_ISREG(credential.st_mode)
+                or credential.st_uid != 10001
+                or credential.st_gid != 10001
+                or stat.S_IMODE(credential.st_mode) != 0o600
+                or credential.st_nlink != 1
+                or not 0 < credential.st_size <= _CODEX_ENROLLED_AUTH_MAX_BYTES
                 or self.paths.codex_state_forbidden_key.exists()
             ):
                 raise ReleaseBlocked(failure)
@@ -3226,7 +3372,12 @@ class HostRelease:
             if int(available_lines[1].strip()) < _CODEX_STATE_MINIMUM_FREE_BYTES:
                 raise ReleaseBlocked("Codex credential state has less than 128 MiB free")
 
-        except (OSError, UnicodeDecodeError, ReleaseDefect, ExternalCommandFailed) as exc:
+        except (
+            OSError,
+            UnicodeDecodeError,
+            ReleaseDefect,
+            ExternalCommandFailed,
+        ) as exc:
             raise ReleaseBlocked(failure) from exc
 
     def _validate_codex_state_boot_guard(self) -> None:
@@ -3486,7 +3637,11 @@ class HostRelease:
             known = (
                 container_id in expected_running
                 or (project == "nexus" and oneoff == "True")
-                or (project == "nexus" and service == _CODEX_AGENT_HOST and oneoff is None)
+                or (
+                    project == "nexus"
+                    and service in {_CODEX_AGENT_HOST, _CODEX_EGRESS_POLICY}
+                    and oneoff is None
+                )
             )
             if not known:
                 unknown.append(f"{container_id} project={project!r} service={service!r}")
@@ -4251,6 +4406,12 @@ class HostRelease:
                 "raise SystemExit(0 if value=={'data':{'status':'ready'}} else 12)",
             ),
         )
+        if require_codex_agent_host:
+            self._prove_api_generation_surface(
+                bundle=bundle,
+                candidate=candidate,
+                config_path=config_path,
+            )
         for lane, service in (
             ("interactive", "worker-interactive"),
             ("background", "worker-background"),
@@ -4268,7 +4429,10 @@ class HostRelease:
             _require_match(f"{service} container id", container_id, _CONTAINER_ID)
             inspected = _inspect_one(container_id, f"{service} health inspect")
             if lane == "interactive":
-                self._validate_interactive_generation_surface(inspected)
+                self._validate_interactive_generation_surface(
+                    inspected,
+                    expected_mcp_origin=self._codex_mcp_origin(config_path),
+                )
             state = _mapping(inspected.get("State"), f"{service} health state")
             health = _mapping(state.get("Health"), f"{service} health")
             log = health.get("Log")
@@ -4359,11 +4523,106 @@ class HostRelease:
                 config_path=config_path,
                 expected_worker_image_id=attempt.candidate_worker_image_id,
             )
+            self._prove_codex_mcp_path(
+                bundle=bundle,
+                candidate=candidate,
+                config_path=config_path,
+            )
         return (
             attempt.candidate_api_image_id,
             attempt.candidate_worker_image_id,
             task_digest,
         )
+
+    def _prove_api_generation_surface(
+        self,
+        *,
+        bundle: Path,
+        candidate: CandidateManifest,
+        config_path: Path,
+    ) -> None:
+        api_container_id = (
+            self._compose(
+                bundle=bundle,
+                candidate=candidate,
+                config_path=config_path,
+                arguments=("ps", "--quiet", "api"),
+            )
+            .stdout.decode()
+            .strip()
+        )
+        _require_match("api container id", api_container_id, _CONTAINER_ID)
+        self._validate_api_generation_surface(
+            _inspect_one(api_container_id, "API generation surface inspect")
+        )
+
+    def _start_codex_agent_host(
+        self,
+        *,
+        bundle: Path,
+        candidate: CandidateManifest,
+        config_path: Path,
+    ) -> None:
+        for service in (_CODEX_EGRESS_POLICY, _CODEX_AGENT_HOST):
+            self._compose(
+                bundle=bundle,
+                candidate=candidate,
+                config_path=config_path,
+                arguments=(
+                    "up",
+                    "--detach",
+                    "--no-deps",
+                    "--wait",
+                    "--wait-timeout",
+                    "90",
+                    service,
+                ),
+                timeout_seconds=120,
+            )
+
+    def _stop_codex_runtime(
+        self,
+        *,
+        bundle: Path,
+        candidate: CandidateManifest,
+        config_path: Path,
+    ) -> None:
+        """Stop and re-inspect both credential-runtime containers exactly."""
+
+        services = (_CODEX_AGENT_HOST, _CODEX_EGRESS_POLICY)
+        self._compose(
+            bundle=bundle,
+            candidate=candidate,
+            config_path=config_path,
+            arguments=(
+                "stop",
+                "--timeout",
+                str(_CODEX_AGENT_STOP_GRACE_SECONDS),
+                *services,
+            ),
+            timeout_seconds=_CODEX_AGENT_STOP_GRACE_SECONDS + 15,
+        )
+        for service in services:
+            observed = (
+                self._compose(
+                    bundle=bundle,
+                    candidate=candidate,
+                    config_path=config_path,
+                    arguments=("ps", "--all", "--quiet", service),
+                )
+                .stdout.decode("ascii")
+                .strip()
+            )
+            identifiers = tuple(observed.splitlines()) if observed else ()
+            if len(identifiers) > 1 or any(
+                _CONTAINER_ID.fullmatch(identifier) is None for identifier in identifiers
+            ):
+                raise ReleaseDefect(f"{service} stopped-container listing is malformed")
+            if identifiers:
+                inspected = _inspect_one(identifiers[0], f"{service} stopped inspect")
+                state = _mapping(inspected.get("State"), f"{service} stopped state")
+                if state.get("Running") is not False:
+                    raise ExternalCommandFailed(f"{service} remains running after stop")
 
     def _prove_codex_agent_host(
         self,
@@ -4405,24 +4664,69 @@ class HostRelease:
             .strip()
         )
         _require_match("Codex agent host container id", container_id, _CONTAINER_ID)
+        policy_image_id = self._container_image_id(
+            bundle=bundle,
+            candidate=candidate,
+            config_path=config_path,
+            service=_CODEX_EGRESS_POLICY,
+        )
+        if policy_image_id != expected_worker_image_id:
+            raise PermanentReleaseFailure(
+                "Codex egress policy image differs from candidate worker digest"
+            )
+        policy_container_id = (
+            self._compose(
+                bundle=bundle,
+                candidate=candidate,
+                config_path=config_path,
+                arguments=("ps", "--quiet", _CODEX_EGRESS_POLICY),
+            )
+            .stdout.decode()
+            .strip()
+        )
+        _require_match("Codex egress policy container id", policy_container_id, _CONTAINER_ID)
         self._validate_codex_agent_host_isolation(
             _inspect_one(container_id, "Codex agent host isolation inspect"),
             image_environment=image_environment,
             expected_mcp_origin=self._codex_mcp_origin(config_path),
         )
-        # The direct Compose bind is attested in the inspected host mount and
+        self._validate_codex_egress_policy_isolation(
+            _inspect_one(policy_container_id, "Codex egress policy isolation inspect"),
+            image_environment=image_environment,
+            expected_image_id=expected_worker_image_id,
+            expected_mcp_host=self._codex_mcp_host(config_path),
+        )
+        # The exact writable credential-file bind is attested in the inspected host and
         # `_require_codex_state_storage` immediately below refreshes the host
         # mapper/mount proof after startup.
         self._require_codex_state_storage()
-        self._validate_codex_agent_host_network_peers(
-            container_id,
-            _inspect_network_one(
-                "nexus_codex_egress",
-                "Codex agent host network inspect",
+        self._validate_codex_egress_topology(
+            host_container_id=container_id,
+            policy_container_id=policy_container_id,
+        )
+        denied_targets = (
+            f"{_CODEX_PRIVATE_BRIDGE_IP}:80",
+            f"{_CODEX_PRIVATE_BRIDGE_IP}:443",
+            f"{self._service_ipv4_address(bundle, candidate, config_path, 'postgres')}:5432",
+            f"{self._service_ipv4_address(bundle, candidate, config_path, 'caddy')}:443",
+        )
+        self._compose(
+            bundle=bundle,
+            candidate=candidate,
+            config_path=config_path,
+            arguments=(
+                "exec",
+                "-T",
+                _CODEX_AGENT_HOST,
+                "python",
+                "-m",
+                "apps.codex_agent.network_health",
+                "--denied-targets",
+                *denied_targets,
             ),
         )
         # Do not exec a credential-bearing process until the just-created
-        # container proves its direct bind and the host mapper are still exact.
+        # container proves its writable credential-file bind and host mapper are exact.
         self._compose(
             bundle=bundle,
             candidate=candidate,
@@ -4443,7 +4747,10 @@ class HostRelease:
             ),
         )
         try:
-            health = _read_json_output(result.stdout, "Codex agent host health")
+            health = _mapping(
+                _read_json_output(result.stdout, "Codex agent host health"),
+                "Codex agent host health",
+            )
         except ReleaseDefect as exc:
             raise PermanentReleaseFailure("Codex agent host health contract is malformed") from exc
         if health != {
@@ -4454,22 +4761,104 @@ class HostRelease:
             "auth_profile": "codex-personal",
             "command_schema_version": "nexus-generation-command.v2",
             "policy_revision": "codex-generation.2026-08-24.2",
-            "sdk_version": health.get("sdk_version"),
-            "runtime_version": health.get("runtime_version"),
-        } or any(
-            not isinstance(health.get(field), str) or not health[field]
-            for field in ("sdk_version", "runtime_version")
-        ):
+            "sdk_version": "0.144.4",
+            "runtime_version": "0.144.4",
+        }:
             raise PermanentReleaseFailure("Codex agent host is not ready with exact auth contract")
 
+    def _prove_codex_mcp_path(
+        self,
+        *,
+        bundle: Path,
+        candidate: CandidateManifest,
+        config_path: Path,
+    ) -> None:
+        """Prove the positive DNS/SNI/TLS/Caddy/MCP path after its worker is live."""
+
+        self._compose(
+            bundle=bundle,
+            candidate=candidate,
+            config_path=config_path,
+            arguments=(
+                "exec",
+                "-T",
+                _CODEX_AGENT_HOST,
+                "python",
+                "-m",
+                "apps.codex_agent.network_health",
+                "--mcp-origin",
+                self._codex_mcp_origin(config_path),
+            ),
+        )
+
+    def _service_ipv4_address(
+        self,
+        bundle: Path,
+        candidate: CandidateManifest,
+        config_path: Path,
+        service: str,
+    ) -> str:
+        container_id = (
+            self._compose(
+                bundle=bundle,
+                candidate=candidate,
+                config_path=config_path,
+                arguments=("ps", "--quiet", service),
+            )
+            .stdout.decode()
+            .strip()
+        )
+        _require_match(f"{service} container id", container_id, _CONTAINER_ID)
+        inspected = _inspect_one(container_id, f"{service} network inspect")
+        settings = _mapping(inspected.get("NetworkSettings"), f"{service} network settings")
+        networks = settings.get("Networks")
+        if not isinstance(networks, dict) or len(networks) != 1:
+            raise PermanentReleaseFailure(f"{service} network attachment differs")
+        attachment = next(iter(networks.values()))
+        if not isinstance(attachment, dict):
+            raise PermanentReleaseFailure(f"{service} network attachment differs")
+        address = attachment.get("IPAddress")
+        try:
+            parsed = ipaddress.IPv4Address(address)
+        except (ipaddress.AddressValueError, TypeError) as exc:
+            raise PermanentReleaseFailure(f"{service} network address is malformed") from exc
+        if not parsed.is_private:
+            raise PermanentReleaseFailure(f"{service} network address is not private")
+        return str(parsed)
+
     @staticmethod
-    def _validate_interactive_generation_surface(inspected: dict[str, Any]) -> None:
+    def _validate_api_generation_surface(inspected: dict[str, Any]) -> None:
+        config = _mapping(inspected.get("Config"), "API generation config")
+        environment = _environment_mapping(
+            config.get("Env"),
+            "API generation environment",
+        )
+        if environment.get("NEXUS_CODEX_AGENT_SOCKET") != "/run/nexus-codex/agent.sock":
+            raise PermanentReleaseFailure("API generation socket environment differs")
+        mounts = inspected.get("Mounts")
+        if not isinstance(mounts, list) or len(mounts) != 1:
+            raise PermanentReleaseFailure("API generation socket mount differs")
+        _require_named_volume_mount(
+            mounts[0],
+            volume_name=_CODEX_AGENT_VOLUME_MOUNTS["/run/nexus-codex"],
+            destination="/run/nexus-codex",
+            read_write=False,
+            volume_label="API Codex run volume",
+            breach=PermanentReleaseFailure,
+            failure="API generation socket mount differs",
+        )
+
+    @staticmethod
+    def _validate_interactive_generation_surface(
+        inspected: dict[str, Any], *, expected_mcp_origin: str
+    ) -> None:
         config = _mapping(inspected.get("Config"), "interactive worker config")
         environment = _environment_mapping(config.get("Env"), "interactive worker environment")
         if (
             environment.get("WORKER_LANE") != "interactive"
             or environment.get("NEXUS_CODEX_AGENT_SOCKET") != "/run/nexus-codex/agent.sock"
             or environment.get("NEXUS_AGENT_TOOLS_MCP_LISTEN") != "0.0.0.0:8001"
+            or environment.get("NEXUS_AGENT_TOOLS_MCP_ORIGIN") != expected_mcp_origin
             or config.get("ExposedPorts") != {"8001/tcp": {}}
         ):
             raise PermanentReleaseFailure("interactive generation surface differs")
@@ -4545,16 +4934,27 @@ class HostRelease:
             raise PermanentReleaseFailure("Codex agent host security-option evidence is malformed")
         if (
             config.get("User") != "10001:10001"
-            or config.get("WorkingDir") != "/var/empty/nexus-codex"
+            or config.get("Cmd") != ["python", "-m", "apps.codex_agent.main"]
+            or config.get("Entrypoint") not in (None, [])
+            or config.get("WorkingDir") != "/tmp"
             or config.get("StopTimeout") != _CODEX_AGENT_STOP_GRACE_SECONDS
             or host_config.get("ReadonlyRootfs") is not True
             or host_config.get("CapDrop") != ["ALL"]
+            or host_config.get("CapAdd") not in (None, [])
+            or host_config.get("Privileged") is not False
+            or host_config.get("Devices") != []
+            or host_config.get("DeviceRequests") not in (None, [])
+            or host_config.get("PidMode") not in ("", "private")
+            or host_config.get("IpcMode") not in ("", "private")
+            or host_config.get("Init") is not True
+            or str(host_config.get("NetworkMode", "")).startswith(("host", "container:"))
             or host_config.get("NanoCpus") != 1_000_000_000
             or set(security_options) != _CODEX_AGENT_SECURITY_OPTIONS
             or host_config.get("MaskedPaths") != []
             or host_config.get("ReadonlyPaths") != []
             or host_config.get("RestartPolicy") != {"MaximumRetryCount": 0, "Name": "no"}
             or host_config.get("Tmpfs") != _CODEX_AGENT_TMPFS
+            or host_config.get("Dns") != [_CODEX_EGRESS_PROXY_IP]
             or _ulimit_set(host_config.get("Ulimits")) != _CODEX_AGENT_ULIMITS
         ):
             raise PermanentReleaseFailure("Codex agent host privilege isolation differs")
@@ -4564,11 +4964,86 @@ class HostRelease:
         if ports not in ({}, None):
             raise PermanentReleaseFailure("Codex agent host exposes a public port")
         networks = network.get("Networks")
-        if not isinstance(networks, dict) or set(networks) != {"nexus_codex_egress"}:
+        if not isinstance(networks, dict) or set(networks) != {_CODEX_PRIVATE_NETWORK}:
             raise PermanentReleaseFailure("Codex agent host network isolation differs")
+        private = networks[_CODEX_PRIVATE_NETWORK]
+        if not isinstance(private, dict) or private.get("IPAddress") != _CODEX_AGENT_HOST_IP:
+            raise PermanentReleaseFailure("Codex agent host network address differs")
+
+    def _validate_codex_egress_policy_isolation(
+        self,
+        inspected: dict[str, Any],
+        *,
+        image_environment: dict[str, str],
+        expected_image_id: str,
+        expected_mcp_host: str,
+    ) -> None:
+        state = _mapping(inspected.get("State"), "Codex egress policy state")
+        health = _mapping(state.get("Health"), "Codex egress policy health")
+        if state.get("Running") is not True or health.get("Status") != "healthy":
+            raise PermanentReleaseFailure("Codex egress policy is not healthy")
+        config = _mapping(inspected.get("Config"), "Codex egress policy config")
+        host_config = _mapping(
+            inspected.get("HostConfig"),
+            "Codex egress policy host config",
+        )
+        try:
+            environment = _environment_mapping(
+                config.get("Env"),
+                "Codex egress policy environment",
+            )
+        except ReleaseDefect as exc:
+            raise PermanentReleaseFailure(
+                "Codex egress policy environment evidence is malformed"
+            ) from exc
+        if (
+            inspected.get("Image") != expected_image_id
+            or config.get("User") != "10002:10002"
+            or config.get("Cmd") != ["python", "-m", "apps.codex_agent.egress_policy"]
+            or config.get("Entrypoint") not in (None, [])
+            or environment
+            != {
+                **image_environment,
+                "NEXUS_CODEX_EGRESS_PROXY_IP": _CODEX_EGRESS_PROXY_IP,
+                "NEXUS_CODEX_EGRESS_MCP_HOST": expected_mcp_host,
+            }
+            or host_config.get("ReadonlyRootfs") is not True
+            or host_config.get("CapDrop") != ["ALL"]
+            or host_config.get("CapAdd") != ["NET_BIND_SERVICE"]
+            or host_config.get("Privileged") is not False
+            or host_config.get("Devices") != []
+            or host_config.get("DeviceRequests") not in (None, [])
+            or host_config.get("PidMode") not in ("", "private")
+            or host_config.get("IpcMode") not in ("", "private")
+            or str(host_config.get("NetworkMode", "")).startswith(("host", "container:"))
+            or host_config.get("SecurityOpt") != ["no-new-privileges:true"]
+            or host_config.get("RestartPolicy")
+            != {"MaximumRetryCount": 0, "Name": "unless-stopped"}
+            or host_config.get("Tmpfs") != _CODEX_EGRESS_POLICY_TMPFS
+        ):
+            raise PermanentReleaseFailure("Codex egress policy isolation differs")
+        self._validate_resource_limits(_CODEX_EGRESS_POLICY, inspected)
+        mounts = inspected.get("Mounts")
+        if mounts != []:
+            raise PermanentReleaseFailure("Codex egress policy mounts differ")
+        network = _mapping(
+            inspected.get("NetworkSettings"),
+            "Codex egress policy network settings",
+        )
+        if network.get("Ports") not in ({}, None):
+            raise PermanentReleaseFailure("Codex egress policy exposes a public port")
+        networks = network.get("Networks")
+        if not isinstance(networks, dict) or set(networks) != {
+            _CODEX_PRIVATE_NETWORK,
+            _CODEX_PROXY_EGRESS_NETWORK,
+        }:
+            raise PermanentReleaseFailure("Codex egress policy network isolation differs")
+        private = networks[_CODEX_PRIVATE_NETWORK]
+        if not isinstance(private, dict) or private.get("IPAddress") != _CODEX_EGRESS_PROXY_IP:
+            raise PermanentReleaseFailure("Codex egress policy network address differs")
 
     @staticmethod
-    def _codex_mcp_origin(config_path: Path) -> str:
+    def _codex_mcp_host(config_path: Path) -> str:
         hostname = _unquote_env(_read_env(config_path).get("CADDY_SITE", ""))
         if (
             _HOST.fullmatch(hostname) is None
@@ -4576,7 +5051,11 @@ class HostRelease:
             or hostname.endswith(".internal")
         ):
             raise PermanentReleaseFailure("Codex MCP origin hostname is not public DNS")
-        return f"https://{hostname}/internal/agent-tools/mcp"
+        return hostname
+
+    @classmethod
+    def _codex_mcp_origin(cls, config_path: Path) -> str:
+        return f"https://{cls._codex_mcp_host(config_path)}/internal/agent-tools/mcp"
 
     def _validate_codex_agent_host_mounts(self, inspected: dict[str, Any]) -> None:
         mounts = inspected.get("Mounts")
@@ -4594,17 +5073,19 @@ class HostRelease:
                     "Codex agent host mounts differ from isolated contract"
                 )
             observed[destination] = mount
-        if set(observed) != {"/var/lib/nexus-codex", *_CODEX_AGENT_VOLUME_MOUNTS}:
+        credential_destination = "/run/nexus-codex-credential/auth.json"
+        if set(observed) != {credential_destination, *_CODEX_AGENT_VOLUME_MOUNTS}:
             raise PermanentReleaseFailure("Codex agent host mounts differ from isolated contract")
-        state_mount = observed["/var/lib/nexus-codex"]
+        credential_mount = observed[credential_destination]
         if (
-            state_mount.get("Destination") != "/var/lib/nexus-codex"
-            or state_mount.get("Type") != "bind"
-            or state_mount.get("Source") != str(self.paths.codex_state_mount)
-            or state_mount.get("RW") is not True
-            or state_mount.get("Propagation") != "rprivate"
-            or state_mount.get("Mode", "rw") not in {"", "rw"}
-            or set(state_mount) - {"Destination", "Mode", "RW", "Source", "Type", "Propagation"}
+            credential_mount.get("Destination") != credential_destination
+            or credential_mount.get("Type") != "bind"
+            or credential_mount.get("Source") != str(self.paths.codex_enrolled_auth)
+            or credential_mount.get("RW") is not True
+            or credential_mount.get("Propagation") != "rprivate"
+            or credential_mount.get("Mode") != "rw"
+            or set(credential_mount)
+            - {"Destination", "Mode", "RW", "Source", "Type", "Propagation"}
         ):
             raise PermanentReleaseFailure("Codex agent host mounts differ from isolated contract")
         for destination, volume_name in _CODEX_AGENT_VOLUME_MOUNTS.items():
@@ -4618,24 +5099,62 @@ class HostRelease:
                 failure="Codex agent host mounts differ from isolated contract",
             )
 
-    def _validate_codex_agent_host_network_peers(
+    def _validate_codex_egress_topology(
         self,
-        container_id: str,
-        inspected: dict[str, Any],
+        *,
+        host_container_id: str,
+        policy_container_id: str,
     ) -> None:
-        containers = inspected.get("Containers")
+        private = _inspect_network_one(
+            _CODEX_PRIVATE_NETWORK,
+            "Codex private network inspect",
+        )
+        private_containers = private.get("Containers")
+        private_ipam = private.get("IPAM")
         if (
-            inspected.get("Name") != "nexus_codex_egress"
-            or inspected.get("Driver") != "bridge"
-            or inspected.get("Scope") != "local"
-            or inspected.get("Internal") is not False
-            or inspected.get("Options") != {}
-            or not _is_default_local_bridge_ipam(inspected.get("IPAM"))
-            or not isinstance(containers, dict)
-            or set(containers) != {container_id}
-            or not isinstance(containers.get(container_id), dict)
+            private.get("Name") != _CODEX_PRIVATE_NETWORK
+            or private.get("Driver") != "bridge"
+            or private.get("Scope") != "local"
+            or private.get("Internal") is not True
+            or private.get("EnableIPv4") is not True
+            or private.get("EnableIPv6") is not False
+            or private.get("Options") != _CODEX_PRIVATE_NETWORK_OPTIONS
+            or not isinstance(private_ipam, dict)
+            or private_ipam.get("Driver") != "default"
+            or private_ipam.get("Options") not in ({}, None)
+            or private_ipam.get("Config") != [{"Subnet": "172.30.0.0/24"}]
+            or not isinstance(private_containers, dict)
+            or set(private_containers) != {host_container_id, policy_container_id}
         ):
-            raise PermanentReleaseFailure("Codex agent host network peer isolation differs")
+            raise PermanentReleaseFailure("Codex private egress network differs")
+        expected_private_addresses = {
+            host_container_id: f"{_CODEX_AGENT_HOST_IP}/24",
+            policy_container_id: f"{_CODEX_EGRESS_PROXY_IP}/24",
+        }
+        if any(
+            not isinstance(private_containers[container_id], dict)
+            or private_containers[container_id].get("IPv4Address") != address
+            for container_id, address in expected_private_addresses.items()
+        ):
+            raise PermanentReleaseFailure("Codex private egress addresses differ")
+
+        public = _inspect_network_one(
+            _CODEX_PROXY_EGRESS_NETWORK,
+            "Codex policy public network inspect",
+        )
+        public_containers = public.get("Containers")
+        if (
+            public.get("Name") != _CODEX_PROXY_EGRESS_NETWORK
+            or public.get("Driver") != "bridge"
+            or public.get("Scope") != "local"
+            or public.get("Internal") is not False
+            or public.get("Options") != {}
+            or not _is_default_local_bridge_ipam(public.get("IPAM"))
+            or not isinstance(public_containers, dict)
+            or set(public_containers) != {policy_container_id}
+            or not isinstance(public_containers.get(policy_container_id), dict)
+        ):
+            raise PermanentReleaseFailure("Codex policy public egress network differs")
 
     def _validate_codex_capacity_client_isolation(
         self,
@@ -4712,6 +5231,7 @@ class HostRelease:
         *,
         canary: dict[str, Any],
         host_container_id: str,
+        policy_container_id: str,
         expected_image: str,
         expected_image_id: str,
         expected_name: str,
@@ -4736,12 +5256,9 @@ class HostRelease:
                 expected_source_sha=expected_source_sha,
                 image_environment=image_environment,
             )
-            self._validate_codex_agent_host_network_peers(
-                host_container_id,
-                _inspect_network_one(
-                    "nexus_codex_egress",
-                    "Codex capacity live network inspect",
-                ),
+            self._validate_codex_egress_topology(
+                host_container_id=host_container_id,
+                policy_container_id=policy_container_id,
             )
         except CodexCapacityBreach:
             raise
@@ -4971,6 +5488,470 @@ class HostRelease:
         except ExternalCommandFailed as exc:
             raise ReleaseBlocked(failure) from exc
 
+    def _live_caddy_container_id(
+        self,
+        *,
+        bundle: Path,
+        candidate: CandidateManifest,
+        config_path: Path,
+    ) -> str:
+        container_id = (
+            self._compose(
+                bundle=bundle,
+                candidate=candidate,
+                config_path=config_path,
+                arguments=("ps", "--quiet", "caddy"),
+            )
+            .stdout.decode("ascii")
+            .strip()
+        )
+        _require_match("live caddy container id", container_id, _CONTAINER_ID)
+        inspected = _inspect_one(container_id, "live caddy container inspect")
+        state = _mapping(inspected.get("State"), "live caddy container state")
+        if state.get("Running") is not True:
+            raise ReleaseBlocked("Caddy is not running")
+        self._validate_caddy_mount(inspected)
+        return container_id
+
+    def _read_caddy_config(self) -> bytes:
+        try:
+            metadata = self.paths.caddy_config.lstat()
+            value = self.paths.caddy_config.read_bytes()
+        except OSError as exc:
+            raise ReleaseDefect("installed Caddy configuration is unavailable") from exc
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != 0
+            or metadata.st_gid != 0
+            or stat.S_IMODE(metadata.st_mode) != 0o444
+            or not value
+            or len(value) > _CADDY_CONFIG_MAX_BYTES
+        ):
+            raise ReleaseDefect("installed Caddy configuration is not exact immutable input")
+        return value
+
+    def _write_caddy_config_in_place(self, value: bytes) -> None:
+        """Replace Caddy bytes without changing the bind mount's inode."""
+
+        if not value or len(value) > _CADDY_CONFIG_MAX_BYTES:
+            raise ReleaseDefect("candidate Caddy configuration size is invalid")
+        path = self.paths.caddy_config
+        try:
+            before = path.lstat()
+            descriptor = os.open(path, os.O_WRONLY | os.O_NOFOLLOW)
+        except OSError as exc:
+            raise ReleaseDefect("installed Caddy configuration cannot be opened safely") from exc
+        try:
+            opened = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(before.st_mode)
+                or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+                or opened.st_uid != 0
+                or opened.st_gid != 0
+                or stat.S_IMODE(opened.st_mode) != 0o444
+            ):
+                raise ReleaseDefect("installed Caddy configuration changed before update")
+            os.ftruncate(descriptor, 0)
+            remaining = memoryview(value)
+            while remaining:
+                written = os.write(descriptor, remaining)
+                if written <= 0:
+                    raise OSError("Caddy configuration write made no progress")
+                remaining = remaining[written:]
+            os.fsync(descriptor)
+        except OSError as exc:
+            raise ReleaseDefect("installed Caddy configuration update failed") from exc
+        finally:
+            os.close(descriptor)
+        after = path.lstat()
+        if (
+            (after.st_dev, after.st_ino) != (before.st_dev, before.st_ino)
+            or after.st_uid != 0
+            or after.st_gid != 0
+            or stat.S_IMODE(after.st_mode) != 0o444
+            or path.read_bytes() != value
+        ):
+            raise ReleaseDefect("installed Caddy configuration update was not exact")
+
+    def _load_caddy_activation(self) -> CaddyActivationJournal | None:
+        path = self.paths.caddy_activation
+        if not path.exists():
+            return None
+        try:
+            metadata = path.lstat()
+            value = _read_canonical_json(path, "Caddy activation journal")
+        except OSError as exc:
+            raise ReleaseDefect("Caddy activation journal is unavailable") from exc
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != 0
+            or metadata.st_gid != 0
+            or stat.S_IMODE(metadata.st_mode) != 0o400
+        ):
+            raise ReleaseDefect("Caddy activation journal metadata differs")
+        return CaddyActivationJournal.from_json(value)
+
+    def _caddy_activation_backup(self, digest: str) -> Path:
+        _require_match("Caddy activation predecessor SHA-256", digest, _SHA256)
+        return self.paths.caddy_activation_backups / f"{digest}.Caddyfile"
+
+    def _read_caddy_activation_backup(self, digest: str) -> bytes:
+        path = self._caddy_activation_backup(digest)
+        try:
+            metadata = path.lstat()
+            value = path.read_bytes()
+        except OSError as exc:
+            raise ReleaseDefect("Caddy activation predecessor backup is unavailable") from exc
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != 0
+            or metadata.st_gid != 0
+            or stat.S_IMODE(metadata.st_mode) != 0o400
+            or not value
+            or len(value) > _CADDY_CONFIG_MAX_BYTES
+            or hashlib.sha256(value).hexdigest() != digest
+        ):
+            raise ReleaseDefect("Caddy activation predecessor backup differs")
+        return value
+
+    def _prepare_caddy_activation(
+        self,
+        *,
+        source_sha: str,
+        candidate: bytes,
+        predecessor: bytes,
+        config_sha256: str,
+    ) -> CaddyActivationJournal:
+        if self._load_caddy_activation() is not None:
+            raise ReleaseDefect("Caddy activation journal was not recovered")
+        metadata = self.paths.caddy_config.lstat()
+        predecessor_sha256 = hashlib.sha256(predecessor).hexdigest()
+        backup = self._caddy_activation_backup(predecessor_sha256)
+        if backup.exists():
+            self._read_caddy_activation_backup(predecessor_sha256)
+        else:
+            _create_bytes(backup, predecessor, mode=0o400, owner=(0, 0))
+        journal = CaddyActivationJournal(
+            schema_version=1,
+            source_sha=source_sha,
+            candidate_sha256=hashlib.sha256(candidate).hexdigest(),
+            predecessor_sha256=predecessor_sha256,
+            config_sha256=config_sha256,
+            caddy_device=metadata.st_dev,
+            caddy_inode=metadata.st_ino,
+        )
+        _create_bytes(
+            self.paths.caddy_activation,
+            _canonical_json(journal.as_json()),
+            mode=0o400,
+            owner=(0, 0),
+        )
+        return journal
+
+    def _restore_pending_caddy_disk(
+        self,
+        *,
+        source_sha: str,
+        candidate: bytes,
+        config_sha256: str,
+    ) -> tuple[CaddyActivationJournal, bytes] | None:
+        journal = self._load_caddy_activation()
+        if journal is None:
+            return None
+        if journal.source_sha != source_sha:
+            raise ReleaseBlocked(
+                f"Caddy activation for {journal.source_sha} must be recovered first"
+            )
+        if (
+            journal.candidate_sha256 != hashlib.sha256(candidate).hexdigest()
+            or journal.config_sha256 != config_sha256
+        ):
+            raise ReleaseDefect("pending Caddy activation differs from immutable inputs")
+        metadata = self.paths.caddy_config.lstat()
+        if (metadata.st_dev, metadata.st_ino) != (
+            journal.caddy_device,
+            journal.caddy_inode,
+        ):
+            raise ReleaseDefect("Caddy bind inode changed during pending activation")
+        predecessor = self._read_caddy_activation_backup(journal.predecessor_sha256)
+        self._write_caddy_config_in_place(predecessor)
+        return journal, predecessor
+
+    def _clear_caddy_activation(self, journal: CaddyActivationJournal) -> None:
+        if self._load_caddy_activation() != journal:
+            raise ReleaseDefect("Caddy activation journal changed before completion")
+        self.paths.caddy_activation.unlink()
+        _fsync_directory(self.paths.caddy_activation.parent)
+
+    def _adapt_caddy_bytes(
+        self,
+        *,
+        bundle: Path,
+        candidate: CandidateManifest,
+        config_path: Path,
+        value: bytes,
+    ) -> object:
+        try:
+            adapted = self._compose(
+                bundle=bundle,
+                candidate=candidate,
+                config_path=config_path,
+                arguments=("exec", "-T", "caddy", *_CADDY_ADAPT_STDIN_COMMAND),
+                input_bytes=value,
+                timeout_seconds=10,
+            )
+        except ExternalCommandFailed as exc:
+            raise ReleaseBlocked("Caddy candidate adaptation is unavailable") from exc
+        try:
+            return _read_json_output(adapted.stdout, "adapted Caddy config")
+        except ReleaseDefect as exc:
+            raise PermanentReleaseFailure("adapted Caddy config is malformed") from exc
+
+    def _read_loaded_caddy_config(
+        self,
+        *,
+        bundle: Path,
+        candidate: CandidateManifest,
+        config_path: Path,
+    ) -> object:
+        try:
+            loaded = self._compose(
+                bundle=bundle,
+                candidate=candidate,
+                config_path=config_path,
+                arguments=("exec", "-T", "caddy", *_CADDY_LOADED_CONFIG_COMMAND),
+                timeout_seconds=10,
+            )
+        except ExternalCommandFailed as exc:
+            raise ReleaseBlocked("Caddy loaded-config proof is unavailable") from exc
+        try:
+            return _read_json_output(loaded.stdout, "loaded Caddy config")
+        except ReleaseDefect as exc:
+            raise PermanentReleaseFailure("Caddy loaded-config proof is malformed") from exc
+
+    def _require_caddy_loaded_config(
+        self,
+        *,
+        bundle: Path,
+        candidate: CandidateManifest,
+        config_path: Path,
+    ) -> None:
+        """Prove the live Caddy process loaded the exact installed candidate file."""
+
+        try:
+            adapted = self._compose(
+                bundle=bundle,
+                candidate=candidate,
+                config_path=config_path,
+                arguments=("exec", "-T", "caddy", *_CADDY_ADAPT_COMMAND),
+                timeout_seconds=10,
+            )
+            loaded = self._compose(
+                bundle=bundle,
+                candidate=candidate,
+                config_path=config_path,
+                arguments=("exec", "-T", "caddy", *_CADDY_LOADED_CONFIG_COMMAND),
+                timeout_seconds=10,
+            )
+        except ExternalCommandFailed as exc:
+            raise ReleaseBlocked("Caddy loaded-config proof is unavailable") from exc
+        try:
+            adapted_value = _read_json_output(adapted.stdout, "adapted Caddy config")
+            loaded_value = _read_json_output(loaded.stdout, "loaded Caddy config")
+        except ReleaseDefect as exc:
+            raise PermanentReleaseFailure("Caddy loaded-config proof is malformed") from exc
+        if loaded_value != adapted_value:
+            raise ReleaseBlocked("Caddy has not loaded the installed candidate config")
+
+    def activate_caddy_config(self, source_sha: str) -> dict[str, str]:
+        """Activate one fresh candidate Caddyfile without replacing its bind inode."""
+
+        self.store.assert_no_oracle_attempt()
+        self.store.assert_fresh_candidate(source_sha)
+        bundle = self.bundle(source_sha)
+        candidate = load_candidate_manifest(bundle / "candidate-manifest.json")
+        config = self._config_snapshot()
+        current_sha = self.store.require_current_record().source_sha
+        self._compose(
+            bundle=bundle,
+            candidate=candidate,
+            config_path=config.path,
+            arguments=("config", "--quiet"),
+        )
+        desired = (bundle / "Caddyfile").read_bytes()
+        if not desired or len(desired) > _CADDY_CONFIG_MAX_BYTES:
+            raise ReleaseDefect("candidate Caddy configuration size is invalid")
+        pending = self._restore_pending_caddy_disk(
+            source_sha=source_sha,
+            candidate=desired,
+            config_sha256=config.sha256,
+        )
+        container_id = self._live_caddy_container_id(
+            bundle=bundle,
+            candidate=candidate,
+            config_path=config.path,
+        )
+        self._require_caddy_admin_ready(
+            bundle=bundle,
+            candidate=candidate,
+            config_path=config.path,
+            failure="Caddy is not ready for configuration activation",
+        )
+        if pending is not None:
+            pending_journal, predecessor = pending
+            adapted_predecessor = self._adapt_caddy_bytes(
+                bundle=bundle,
+                candidate=candidate,
+                config_path=config.path,
+                value=predecessor,
+            )
+            self._compose(
+                bundle=bundle,
+                candidate=candidate,
+                config_path=config.path,
+                arguments=("exec", "-T", "caddy", *_CADDY_VALIDATE_COMMAND),
+                timeout_seconds=10,
+            )
+            self._compose(
+                bundle=bundle,
+                candidate=candidate,
+                config_path=config.path,
+                arguments=("exec", "-T", "caddy", *_CADDY_RELOAD_COMMAND),
+                timeout_seconds=10,
+            )
+            if (
+                self._read_loaded_caddy_config(
+                    bundle=bundle,
+                    candidate=candidate,
+                    config_path=config.path,
+                )
+                != adapted_predecessor
+            ):
+                raise ReleaseDefect("recovered Caddy predecessor did not become live")
+            self._clear_caddy_activation(pending_journal)
+        self.verify_current(current_sha)
+        installed = self._read_caddy_config()
+        adapted_installed = self._adapt_caddy_bytes(
+            bundle=bundle,
+            candidate=candidate,
+            config_path=config.path,
+            value=installed,
+        )
+        adapted_desired = self._adapt_caddy_bytes(
+            bundle=bundle,
+            candidate=candidate,
+            config_path=config.path,
+            value=desired,
+        )
+        loaded = self._read_loaded_caddy_config(
+            bundle=bundle,
+            candidate=candidate,
+            config_path=config.path,
+        )
+        if installed != desired and loaded != adapted_installed:
+            raise ReleaseBlocked("Caddy loaded config differs from the installed predecessor")
+
+        mutated = installed != desired
+        journal = (
+            self._prepare_caddy_activation(
+                source_sha=source_sha,
+                candidate=desired,
+                predecessor=installed,
+                config_sha256=config.sha256,
+            )
+            if mutated
+            else None
+        )
+        try:
+            if mutated:
+                self._write_caddy_config_in_place(desired)
+            self._compose(
+                bundle=bundle,
+                candidate=candidate,
+                config_path=config.path,
+                arguments=("exec", "-T", "caddy", *_CADDY_VALIDATE_COMMAND),
+                timeout_seconds=10,
+            )
+            self._compose(
+                bundle=bundle,
+                candidate=candidate,
+                config_path=config.path,
+                arguments=("exec", "-T", "caddy", *_CADDY_RELOAD_COMMAND),
+                timeout_seconds=10,
+            )
+            reloaded_container_id = self._live_caddy_container_id(
+                bundle=bundle,
+                candidate=candidate,
+                config_path=config.path,
+            )
+            if reloaded_container_id != container_id:
+                raise PermanentReleaseFailure(
+                    "Caddy container changed during in-place configuration activation"
+                )
+            if (
+                self._read_loaded_caddy_config(
+                    bundle=bundle,
+                    candidate=candidate,
+                    config_path=config.path,
+                )
+                != adapted_desired
+            ):
+                raise ReleaseBlocked("Caddy did not load the exact candidate config")
+            self.verify_current(current_sha)
+        except BaseException as activation_error:
+            if mutated:
+                try:
+                    self._write_caddy_config_in_place(installed)
+                    self._compose(
+                        bundle=bundle,
+                        candidate=candidate,
+                        config_path=config.path,
+                        arguments=("exec", "-T", "caddy", *_CADDY_VALIDATE_COMMAND),
+                        timeout_seconds=10,
+                    )
+                    self._compose(
+                        bundle=bundle,
+                        candidate=candidate,
+                        config_path=config.path,
+                        arguments=("exec", "-T", "caddy", *_CADDY_RELOAD_COMMAND),
+                        timeout_seconds=10,
+                    )
+                    if (
+                        self._live_caddy_container_id(
+                            bundle=bundle,
+                            candidate=candidate,
+                            config_path=config.path,
+                        )
+                        != container_id
+                        or self._read_loaded_caddy_config(
+                            bundle=bundle,
+                            candidate=candidate,
+                            config_path=config.path,
+                        )
+                        != adapted_installed
+                    ):
+                        raise ReleaseDefect("Caddy rollback proof differs")
+                    if journal is None:
+                        raise ReleaseDefect("mutated Caddy activation omitted its journal")
+                    self._clear_caddy_activation(journal)
+                except BaseException as rollback_error:
+                    failure = ReleaseDefect(
+                        "Caddy activation failed and exact in-place rollback failed"
+                    )
+                    failure.add_note(f"activation failure: {activation_error}")
+                    raise failure from rollback_error
+            raise
+
+        if journal is not None:
+            self._clear_caddy_activation(journal)
+
+        return {
+            "caddy_config_sha256": hashlib.sha256(desired).hexdigest(),
+            "caddy_container_id": container_id,
+            "source_sha": source_sha,
+            "status": "active",
+        }
+
     def _read_codex_capacity_qualification(
         self,
         *,
@@ -5065,11 +6046,10 @@ class HostRelease:
             phase = _string(turn, "phase")
             phases.append(phase)
             if (
-                _string(turn, "operation") != "chat"
-                or _string(turn, "profile") != "deep"
-                or _string(turn, "plan_id") != "deep"
+                _string(turn, "operation") != "dossier_library"
+                or _string(turn, "plan_id") != "thorough"
                 or _string(turn, "plan_revision") != "codex-generation.2026-08-24.2"
-                or _string(turn, "capability") != "ChatTools"
+                or _string(turn, "capability") != "Synthesis"
                 or _string(turn, "terminal_status") != "succeeded"
                 or turn.get("failure_kind") is not None
                 or _boolean(turn, "usage_present") is not True
@@ -5316,17 +6296,10 @@ class HostRelease:
                 failures.append(exc)
         if stop_host:
             try:
-                self._compose(
+                self._stop_codex_runtime(
                     bundle=bundle,
                     candidate=candidate,
                     config_path=config_path,
-                    arguments=(
-                        "stop",
-                        "--timeout",
-                        str(_CODEX_AGENT_STOP_GRACE_SECONDS),
-                        _CODEX_AGENT_HOST,
-                    ),
-                    timeout_seconds=_CODEX_AGENT_STOP_GRACE_SECONDS + 15,
                 )
             except BaseException as exc:
                 failures.append(exc)
@@ -5336,9 +6309,13 @@ class HostRelease:
         current = self.store.require_current_record()
         if re.fullmatch(r"[0-9]+", current.database_revision) is None:
             raise ReleaseDefect("current database revision is not numeric")
+        candidate_revision = candidate.expected_database_revision
+        if re.fullmatch(r"[0-9]+", candidate_revision) is None:
+            raise ReleaseDefect("candidate database revision is not numeric")
         return (
             _requires_codex_agent_host(candidate)
-            and int(current.database_revision) < _CODEX_PERSONAL_METADATA_REVISION
+            and int(candidate_revision) >= _CODEX_PERSONAL_GENERATION_REVISION
+            and int(current.database_revision) < _CODEX_PERSONAL_GENERATION_REVISION
         )
 
     def _require_first_codex_capacity_qualification(
@@ -5383,7 +6360,8 @@ class HostRelease:
         bundle = self.bundle(source_sha)
         candidate = load_candidate_manifest(bundle / "candidate-manifest.json")
         if not self._requires_first_codex_capacity_qualification(candidate):
-            raise ReleaseBlocked("Codex capacity qualification is only for first 0216 promotion")
+            raise ReleaseBlocked("Codex capacity qualification is only for first 0222 promotion")
+        self._require_codex_isolated_gateway_support()
         worker_image_id = self._image_identity(candidate.images.worker, candidate)
         self._admit_codex_capacity_qualification(
             source_sha=source_sha,
@@ -5395,7 +6373,7 @@ class HostRelease:
         try:
             # Credential storage is operator-provisioned. Prove the LUKS2 ->
             # mapper -> ext4 chain and the locked-boot guard before starting
-            # the host. The direct bind itself is attested immediately after
+            # the host. The exact writable file bind is attested immediately after
             # Docker creates the container and before any controller-owned exec.
             self._require_codex_state_storage()
             self._validate_codex_state_boot_guard()
@@ -5405,20 +6383,10 @@ class HostRelease:
             # its account-auth readiness probe is still failing), so cleanup
             # must not depend on a completed Compose response.
             host_may_be_started = True
-            self._compose(
+            self._start_codex_agent_host(
                 bundle=bundle,
                 candidate=candidate,
                 config_path=config.path,
-                arguments=(
-                    "up",
-                    "--detach",
-                    "--no-deps",
-                    "--wait",
-                    "--wait-timeout",
-                    "90",
-                    _CODEX_AGENT_HOST,
-                ),
-                timeout_seconds=120,
             )
             self._prove_codex_agent_host(
                 bundle=bundle,
@@ -5437,6 +6405,21 @@ class HostRelease:
                 .strip()
             )
             _require_match("Codex capacity host container id", host_container_id, _CONTAINER_ID)
+            policy_container_id = (
+                self._compose(
+                    bundle=bundle,
+                    candidate=candidate,
+                    config_path=config.path,
+                    arguments=("ps", "--quiet", _CODEX_EGRESS_POLICY),
+                )
+                .stdout.decode("ascii")
+                .strip()
+            )
+            _require_match(
+                "Codex capacity egress policy container id",
+                policy_container_id,
+                _CONTAINER_ID,
+            )
         except BaseException as exc:
             # Startup/auth failure is deliberately retriable after device
             # enrollment. It is fail-closed, but cannot honestly be classified
@@ -5506,6 +6489,7 @@ class HostRelease:
             self._prove_codex_capacity_isolation(
                 canary=_inspect_one(canary_id, "Codex capacity canary inspect"),
                 host_container_id=host_container_id,
+                policy_container_id=policy_container_id,
                 expected_image=candidate.images.worker,
                 expected_image_id=worker_image_id,
                 expected_name=name,
@@ -5766,6 +6750,8 @@ class HostRelease:
         production_host: str,
     ) -> ReleaseAttempt:
         self.store.assert_no_oracle_attempt()
+        if self.paths.caddy_activation.exists():
+            raise ReleaseBlocked("pending Caddy activation must be recovered before release apply")
         _require_match("Vercel deployment id", deployment_id, _DEPLOYMENT_ID)
         _require_match("production host", production_host, _HOST)
         self.store.assert_candidate_admissible(source_sha)
@@ -5779,6 +6765,7 @@ class HostRelease:
         )
         candidate = load_candidate_manifest(self.bundle(source_sha) / "candidate-manifest.json")
         if _requires_codex_agent_host(candidate):
+            self._require_codex_isolated_gateway_support()
             self._require_codex_state_storage()
             self._validate_codex_state_boot_guard()
         if existing is None or existing.phase is ReleasePhase.Prepared:
@@ -5790,6 +6777,11 @@ class HostRelease:
                 candidate=candidate,
                 config_path=pre_mutation_config,
                 failure="Caddy is not ready before release mutation",
+            )
+            self._require_caddy_loaded_config(
+                bundle=self.bundle(source_sha),
+                candidate=candidate,
+                config_path=pre_mutation_config,
             )
         if existing is None:
             self._converge_resource_limits(source_sha)
@@ -5981,25 +6973,14 @@ class HostRelease:
             self._require_codex_state_storage()
             self._validate_codex_state_boot_guard()
             self._prepare_codex_agent_host_security(bundle)
-            # `--no-deps` pins each start to the exact named services, so the
-            # writers' declared dependency on the Codex host is honored here by
-            # starting and awaiting the host first. Otherwise the background
-            # lane could claim a metadata job before the socket exists and take
-            # the terminal host-unavailable outcome, which never auto-retries.
-            self._compose(
+            # Start and prove the policy, credential host, sandbox, auth, and
+            # denied routes before writers. The positive MCP path is impossible
+            # until the candidate interactive worker is live, so prove it only
+            # after that listener starts and before the phase can advance.
+            self._start_codex_agent_host(
                 bundle=bundle,
                 candidate=candidate,
                 config_path=Path(attempt.config_path),
-                arguments=(
-                    "up",
-                    "--detach",
-                    "--no-deps",
-                    "--wait",
-                    "--wait-timeout",
-                    "90",
-                    _CODEX_AGENT_HOST,
-                ),
-                timeout_seconds=120,
             )
             self._prove_codex_agent_host(
                 bundle=bundle,
@@ -6022,12 +7003,23 @@ class HostRelease:
                 ),
                 timeout_seconds=120,
             )
+            self._prove_api_generation_surface(
+                bundle=bundle,
+                candidate=candidate,
+                config_path=Path(attempt.config_path),
+            )
+            self._prove_codex_mcp_path(
+                bundle=bundle,
+                candidate=candidate,
+                config_path=Path(attempt.config_path),
+            )
             self._prove_backend(
                 bundle=bundle,
                 candidate=candidate,
                 attempt=attempt,
                 require_codex_agent_host=False,
             )
+            self._prove_public_mcp_mount(Path(attempt.config_path))
             attempt = attempt.advance(
                 ReleasePhase.AwaitingFrontendPromotion,
                 now=_now(),
@@ -6169,6 +7161,12 @@ class HostRelease:
             raise ReleaseDefect("forward fix requires durable failure intent")
         if self.store.forward_fix_sha() is None:
             self.store.set_forward_fix(attempt.source_sha)
+        if _requires_codex_agent_host(candidate):
+            self._stop_codex_runtime(
+                bundle=bundle,
+                candidate=candidate,
+                config_path=Path(attempt.config_path),
+            )
         self._stop_current_writers(
             bundle=bundle,
             candidate=candidate,
@@ -6180,6 +7178,44 @@ class HostRelease:
             failure_code=attempt.failure_code,
         )
         self.store.replace_attempt(failed)
+
+    def _prove_public_mcp_mount(self, config_path: Path) -> None:
+        """Prove public TLS reaches the auth-first worker MCP mount exactly."""
+
+        url = self._codex_mcp_origin(config_path)
+        operation = f"public-mcp:{url}"
+        request = urllib.request.Request(
+            url,
+            data=b"",
+            headers={"Accept": "application/json"},
+            method="POST",
+        )
+        opener = urllib.request.build_opener(_RejectRedirects())
+        try:
+            with opener.open(request, timeout=8) as response:
+                raise PermanentReleaseFailure(
+                    f"public MCP proof returned HTTP {response.status} instead of 401"
+                )
+        except urllib.error.HTTPError as exc:
+            if exc.code in {408, 425, 429} or 500 <= exc.code <= 599:
+                raise ExternalCommandFailed(
+                    f"public MCP proof was unavailable at {url}",
+                    operation=operation,
+                ) from exc
+            body = exc.read(1)
+            if (
+                exc.code != 401
+                or body != b""
+                or exc.geturl() != url
+                or exc.headers.get("Location") is not None
+                or exc.headers.get("Set-Cookie") is not None
+            ):
+                raise PermanentReleaseFailure("public MCP mount contract differs") from exc
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise ExternalCommandFailed(
+                f"public MCP proof failed for {url}",
+                operation=operation,
+            ) from exc
 
     def _fetch_json(self, url: str) -> tuple[dict[str, Any], dict[str, str]]:
         operation = f"public-http:{url}"
@@ -6232,6 +7268,8 @@ class HostRelease:
             expected_task_contract_digest,
             _SHA256,
         )
+        if _requires_codex_agent_host(candidate):
+            self._prove_public_mcp_mount(Path(attempt.config_path))
         web, web_headers = self._fetch_json(f"https://{attempt.production_host}/version")
         expected_web = {
             "source_sha": candidate.source_sha,
@@ -6441,6 +7479,7 @@ class HostRelease:
         candidate = load_candidate_manifest(bundle / "candidate-manifest.json")
         if not _requires_codex_agent_host(candidate):
             raise ReleaseBlocked("current release has no Codex agent host")
+        self._require_codex_isolated_gateway_support()
         self._validate_release_inputs(
             bundle=bundle,
             candidate=candidate,
@@ -6471,20 +7510,10 @@ class HostRelease:
         host_may_be_started = False
         try:
             host_may_be_started = True
-            self._compose(
+            self._start_codex_agent_host(
                 bundle=bundle,
                 candidate=candidate,
                 config_path=Path(attempt.config_path),
-                arguments=(
-                    "up",
-                    "--detach",
-                    "--no-deps",
-                    "--wait",
-                    "--wait-timeout",
-                    "90",
-                    _CODEX_AGENT_HOST,
-                ),
-                timeout_seconds=120,
             )
             self.verify_current(source_sha)
         except BaseException as exc:
@@ -7170,6 +8199,9 @@ def _parser() -> argparse.ArgumentParser:
     install_codex_state_boot_guard = commands.add_parser("install-codex-state-boot-guard")
     install_codex_state_boot_guard.add_argument("--source-sha", required=True)
 
+    activate_caddy_config = commands.add_parser("activate-caddy-config")
+    activate_caddy_config.add_argument("--source-sha", required=True)
+
     finalize = commands.add_parser("finalize")
     finalize.add_argument("--source-sha", required=True)
     finalize.add_argument("--deployment-id", required=True)
@@ -7312,6 +8344,10 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "install-codex-state-boot-guard":
             receipt = controller.install_codex_state_boot_guard(args.source_sha)
+            sys.stdout.buffer.write(_canonical_json(receipt))
+            return 0
+        if args.command == "activate-caddy-config":
+            receipt = controller.activate_caddy_config(args.source_sha)
             sys.stdout.buffer.write(_canonical_json(receipt))
             return 0
         if args.command == "finalize":

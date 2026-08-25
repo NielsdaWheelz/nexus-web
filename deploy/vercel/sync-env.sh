@@ -77,11 +77,24 @@ ANTHROPIC_API_KEY
 GEMINI_API_KEY
 MOONSHOT_API_KEY
 DEEPSEEK_API_KEY
+CODEX_API_KEY
+NEXUS_FABLE_RETENTION_ACCEPTED_AT
+NEXUS_PROVIDER_CERTIFICATION
+STREAM_MAX_OUTPUT_TOKENS_DEFAULT
 AGENT_TOOL_GRANT_SIGNING_KEY
+CODEX_HOME
+NEXUS_CODEX_CREDENTIAL_FILE
+NEXUS_CODEX_ENROLLMENT_AUTH_FILE
 NEXUS_AGENT_TOOLS_MCP_LISTEN
+NEXUS_AGENT_TOOLS_MCP_ORIGIN
 NEXUS_CODEX_AGENT_SOCKET
+NEXUS_CODEX_STATE_ROOT_BASE
+NEXUS_CODEX_WORKING_DIRECTORY
+NEXUS_CODEX_WORKING_DIRECTORY_ROOT
 NEXUS_CODEX_MCP_ORIGIN
 NEXUS_CODEX_CHAT_NETWORK_ATTESTED
+NEXUS_CODEX_EGRESS_PROXY_IP
+NEXUS_CODEX_EGRESS_MCP_HOST
 "
 
 die() {
@@ -303,10 +316,10 @@ reject_frontend_only_keys_from_shared_env() {
 
 reject_backend_runtime_keys() {
   local file="$1"
-  local key value
+  local key
 
   for key in $FORBIDDEN_VERCEL_ENV_KEYS; do
-    if value="$(env_value "$key" "$file")" && ! is_blank "$(normalize_env_value "$value")"; then
+    if env_value "$key" "$file" >/dev/null; then
       die "${key} must not be present in Vercel frontend env"
     fi
   done
@@ -362,7 +375,7 @@ verify_pulled_vercel_env() {
   done
 
   for key in $FORBIDDEN_VERCEL_ENV_KEYS; do
-    if actual="$(env_value "$key" "$pulled_file")" && ! is_blank "$(normalize_env_value "$actual")"; then
+    if env_value "$key" "$pulled_file" >/dev/null; then
       die "Vercel ${VERCEL_ENVIRONMENT} env verification failed: forbidden ${key} is still present after sync"
     fi
   done

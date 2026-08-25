@@ -660,7 +660,7 @@ rather than proposed and reconciled after the fact.
 > row, and recovery relies on the stale reconciler + manual API retry, not
 > queue-level retries.
 
-**Generation boundary in the worker.** Every generative job — chat, Oracle,
+**Generation boundary.** Every durable generative job — chat, Oracle,
 synapse, Dawn, dossiers, media summaries, and metadata enrichment — runs through
 `tasks/llm_task.py:run_llm_task` and
 `services/llm_execution.py:execute_generation`. The durable owner checkpoints a
@@ -670,7 +670,9 @@ command over the private UDS to the isolated Codex host, which authenticates as
 `codex-personal` and resolves the operation's fixed plan from
 `generation_policy.py`. Only a proven pre-accept capacity refusal can restore a
 generation to `Prepared`; accepted ambiguity requires operator reconciliation.
-The existing PostgreSQL queue, leases, and publication owners remain unchanged.
+The request-scoped dossier idea resolver uses the same generation service and
+read-only UDS mount from the API process; API and worker clients receive no
+credential mount. The existing PostgreSQL queue, leases, and publication owners remain unchanged.
 See [modules/llms.md](modules/llms.md).
 
 ChatTools uses one exact MCP wire: Codex SDK/CLI `0.144.4` speaks Streamable
@@ -726,9 +728,11 @@ Other identity surfaces:
 
 ### 7.5 Generation credentials, billing & entitlements
 
-- **Generation credential**: only the isolated Codex host can read the
-  `codex-personal` ChatGPT state root. Application and worker processes receive
-  neither that state nor a generation API key. `services/llm_credentials.py`
+- **Generation credential**: only the isolated Codex host can read the exact
+  enrolled `codex-personal` ChatGPT `auth.json`, mounted read-write solely for
+  pinned `0.144.4` in-place OAuth refresh persistence. All other mutable SDK
+  state is per-turn tmpfs and deleted after close. Application and worker
+  processes receive neither that credential nor a generation API key. `services/llm_credentials.py`
   retains only the narrow OpenAI embedding credential; embeddings are outside
   the generation boundary. See [modules/llms.md](modules/llms.md).
 - **Billing** (`services/billing.py`): Stripe is the system of record;
@@ -1126,9 +1130,10 @@ The AI chat: durable, branchable, streamed, RAG-grounded. Backend:
 - **One send = one durable `ChatRun`.** HTTP never opens generation. `POST
 /chat-runs` validates + (idempotently, keyed on `Idempotency-Key` + a payload
   hash) creates the run and enqueues a `chat_run` job, then returns. The **worker**
-  executes: assemble context → stream Codex text + run tools (up to 8 tool
-  iterations) → append events → finalize. The client merely tails `chat_run_events`
-  over SSE and reconciles via `GET /chat-runs/{id}` on each stream boundary.
+  executes: assemble context → stream Codex text + run tools (up to 64 calls
+  under the frozen Chat tool plan) → append events → finalize. The client merely
+  tails `chat_run_events` over SSE and reconciles via `GET /chat-runs/{id}` on
+  each stream boundary.
 - **Context assembly** (`context_assembler.py`, `prompt_budget.py`): a
   context-admitted, lane-ordered plan (system → scope → attached context → retrieved
   evidence → web evidence → history → current user). The prompt plan stores

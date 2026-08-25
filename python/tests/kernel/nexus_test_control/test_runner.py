@@ -14,6 +14,7 @@ import pytest
 import nexus_test_control.memory as memory
 import nexus_test_control.runner as runner
 from nexus.ops.codex_hosted_evidence import codex_hosted_evidence_is_valid
+from nexus.services import generation_policy
 from nexus_test_control.build import StandaloneBuild
 from nexus_test_control.evidence import CapabilityEvidence
 from nexus_test_control.model import (
@@ -50,6 +51,7 @@ from nexus_test_control.services import (
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 _CANDIDATE_WORKER_IMAGE_ID = "sha256:" + "c" * 64
+_HOSTED_SOURCE_SHA = "a" * 40
 
 
 @pytest.mark.parametrize(
@@ -125,11 +127,15 @@ def test_codex_hosted_canary_plan_requires_dedicated_profile_state_without_an_ap
             "NEXUS_CODEX_HOSTED_PROFILE": "codex-personal",
             "NEXUS_CODEX_HOSTED_STATE_ROOT": str(state_root),
             "NEXUS_CODEX_HOSTED_WORKING_DIRECTORY": str(working_directory),
+            "NEXUS_CODEX_HOSTED_SOURCE_SHA": _HOSTED_SOURCE_SHA,
         },
     )
 
     assert plan.evidence_relative.as_posix() == (
         "test-results/runs/0123456789abcdef/hosted-codex-personal-generation.json"
+    )
+    assert plan.readiness_relative.as_posix() == (
+        "test-results/runs/0123456789abcdef/hosted-codex-personal-readiness.json"
     )
     assert (
         plan.command[0][-1]
@@ -139,6 +145,7 @@ def test_codex_hosted_canary_plan_requires_dedicated_profile_state_without_an_ap
     assert plan.environment["NEXUS_CODEX_HOSTED_STATE_ROOT"] == str(state_root)
     assert plan.environment["NEXUS_CODEX_HOSTED_WORKING_DIRECTORY"] == str(working_directory)
     assert plan.environment["NEXUS_TEST_RUN_ID"] == "0123456789abcdef"
+    assert plan.environment["NEXUS_CODEX_HOSTED_SOURCE_SHA"] == _HOSTED_SOURCE_SHA
     assert "OPENAI_API_KEY" not in plan.environment
 
     with pytest.raises(ValueError, match="OPENAI_API_KEY"):
@@ -166,26 +173,18 @@ def test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape(
     valid = _codex_hosted_canary_evidence(run_id)
     canonical = json.dumps(valid, separators=(",", ":"))
     _write(evidence_path, canonical)
-    assert codex_hosted_evidence_is_valid(evidence_path, run_id=run_id)
+    assert codex_hosted_evidence_is_valid(
+        evidence_path, run_id=run_id, source_sha=_HOSTED_SOURCE_SHA
+    )
 
     authoritative_total = _codex_hosted_canary_evidence(run_id)
     authoritative_result = cast(list[dict[str, object]], authoritative_total["results"])[0]
     authoritative_usage = cast(dict[str, object], authoritative_result["usage"])
     authoritative_usage["total_tokens"] = 4
     _write(evidence_path, json.dumps(authoritative_total, separators=(",", ":")))
-    assert codex_hosted_evidence_is_valid(evidence_path, run_id=run_id), (
-        "provider-reported total tokens are authoritative, not a derived sum"
-    )
-
-    for version_field in ("sdk_version", "runtime_version"):
-        for valid_version in ("0", "1" * 64):
-            boundary = _codex_hosted_canary_evidence(run_id)
-            boundary_result = cast(list[dict[str, object]], boundary["results"])[0]
-            boundary_result[version_field] = valid_version
-            _write(evidence_path, json.dumps(boundary, separators=(",", ":")))
-            assert codex_hosted_evidence_is_valid(evidence_path, run_id=run_id), (
-                f"valid {version_field} boundary {valid_version!r} was rejected"
-            )
+    assert codex_hosted_evidence_is_valid(
+        evidence_path, run_id=run_id, source_sha=_HOSTED_SOURCE_SHA
+    ), "provider-reported total tokens are authoritative, not a derived sum"
 
     token_boundary = _codex_hosted_canary_evidence(run_id)
     token_boundary_result = cast(list[dict[str, object]], token_boundary["results"])[0]
@@ -194,9 +193,9 @@ def test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape(
         {"input_tokens": (1 << 53) - 1, "output_tokens": 0, "total_tokens": (1 << 53) - 1}
     )
     _write(evidence_path, json.dumps(token_boundary, separators=(",", ":")))
-    assert codex_hosted_evidence_is_valid(evidence_path, run_id=run_id), (
-        "the exact JSON-safe token ceiling was rejected"
-    )
+    assert codex_hosted_evidence_is_valid(
+        evidence_path, run_id=run_id, source_sha=_HOSTED_SOURCE_SHA
+    ), "the exact JSON-safe token ceiling was rejected"
 
     invalid_artifacts = [
         (
@@ -247,17 +246,18 @@ def test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape(
             )
         )
 
-    for version_field in ("sdk_version", "runtime_version"):
-        for invalid_version in ("", "v1", "1/2", "1" * 65):
-            evidence = _codex_hosted_canary_evidence(run_id)
-            result = cast(list[dict[str, object]], evidence["results"])[0]
-            result[version_field] = invalid_version
-            invalid_artifacts.append(
-                (
-                    f"invalid {version_field} {invalid_version!r}",
-                    json.dumps(evidence, separators=(",", ":")),
-                )
-            )
+    for field, value in (
+        ("source_sha", "b" * 40),
+        ("policy_revision", "unreviewed-policy"),
+        ("policy_fingerprint", "0" * 64),
+        ("policy_facts_fingerprint", "0" * 64),
+        ("provider_runtime_revision", "0" * 40),
+        ("codex_sdk_version", "0.0.0"),
+        ("codex_cli_version", "0.0.0"),
+    ):
+        evidence = _codex_hosted_canary_evidence(run_id)
+        evidence[field] = value
+        invalid_artifacts.append((f"drifted {field}", json.dumps(evidence, separators=(",", ":"))))
 
     for token_field in ("input_tokens", "output_tokens", "total_tokens"):
         for invalid_value in (True, 0.0, -1, 1 << 53):
@@ -295,15 +295,26 @@ def test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape(
 
     for case, artifact in invalid_artifacts:
         _write(evidence_path, artifact)
-        assert not codex_hosted_evidence_is_valid(evidence_path, run_id=run_id), case
+        assert not codex_hosted_evidence_is_valid(
+            evidence_path, run_id=run_id, source_sha=_HOSTED_SOURCE_SHA
+        ), case
 
     _assert_codex_hosted_evidence_stage_is_atomic_and_run_bound(tmp_path)
 
 
 def _codex_hosted_canary_evidence(run_id: str) -> dict[str, object]:
     return {
-        "schema_version": "nexus-hosted-codex-canary.v2",
+        "schema_version": "nexus-hosted-codex-canary.v3",
         "run_id": run_id,
+        "source_sha": _HOSTED_SOURCE_SHA,
+        "policy_revision": generation_policy.POLICY_REVISION,
+        "policy_fingerprint": generation_policy.POLICY_FINGERPRINT,
+        "policy_facts_fingerprint": generation_policy.POLICY_FACTS_FINGERPRINT,
+        "provider_runtime_revision": generation_policy.PLAN_EVAL_PIN["provider_runtime_revision"],
+        "codex_sdk_version": generation_policy.PLAN_EVAL_PIN["codex_sdk_version"],
+        "codex_cli_version": generation_policy.PLAN_EVAL_PIN["codex_sdk_version"],
+        "qualification_scope": "model_effort_runtime_wire",
+        "qualified_plan_ids": ["routine", "standard", "thorough", "deep"],
         "subscription_turns": 4,
         "results": [
             *[
@@ -313,27 +324,48 @@ def _codex_hosted_canary_evidence(run_id: str) -> dict[str, object]:
                     "auth_profile": "codex-personal",
                     "terminal_status": "succeeded",
                     "plan_id": plan_id,
-                    "plan_revision": "2026-08-20.1",
+                    "operation": operation,
+                    "profile": profile,
+                    "operation_revision": generation_policy.operation_revision(
+                        operation, profile=profile
+                    ),
+                    "case_shape": case_shape,
                     "model": model,
                     "reasoning": reasoning,
-                    "structured_output_valid": True,
+                    "structured_output_valid": case_shape == "structured",
                     "session_ref_schema_version": "agent-session-ref.v1",
                     "usage": {
                         "input_tokens": 1,
                         "output_tokens": 2,
                         "total_tokens": 3,
                     },
-                    "sdk_version": "1.2.3",
-                    "runtime_version": "4.5.6",
+                    "sdk_version": generation_policy.PLAN_EVAL_PIN["codex_sdk_version"],
+                    "runtime_version": generation_policy.PLAN_EVAL_PIN["codex_sdk_version"],
                     "tool_events": tool_events,
                     "elapsed_ms": 1,
                     "permission_requests": 0,
                 }
-                for plan_id, model, reasoning, tool_events in (
-                    ("routine", "gpt-5.6-luna", "low", 0),
-                    ("standard", "gpt-5.6-terra", "medium", 0),
-                    ("thorough", "gpt-5.6-terra", "high", 0),
-                    ("deep", "gpt-5.6-sol", "high", 1),
+                for plan_id, operation, profile, case_shape, model, reasoning, tool_events in (
+                    (
+                        "routine",
+                        "metadata_enrichment",
+                        None,
+                        "structured",
+                        "gpt-5.6-luna",
+                        "low",
+                        0,
+                    ),
+                    ("standard", "dawn_write", None, "text", "gpt-5.6-terra", "medium", 0),
+                    (
+                        "thorough",
+                        "dossier_library",
+                        None,
+                        "structured",
+                        "gpt-5.6-terra",
+                        "high",
+                        0,
+                    ),
+                    ("deep", "chat", "deep", "mcp_read", "gpt-5.6-sol", "high", 1),
                 )
             ]
         ],
@@ -360,6 +392,7 @@ def _assert_codex_hosted_evidence_stage_is_atomic_and_run_bound(
         "stage",
         str(source),
         str(destination),
+        _HOSTED_SOURCE_SHA,
     )
 
     with destination.open("rb") as previous:
@@ -382,7 +415,7 @@ def _assert_codex_hosted_evidence_stage_is_atomic_and_run_bound(
     misbound.write_bytes(encoded)
     destination.write_bytes(fallback)
     rejected = subprocess.run(
-        (*command[:4], str(misbound), str(destination)),
+        (*command[:4], str(misbound), str(destination), _HOSTED_SOURCE_SHA),
         cwd=REPO_ROOT / "python",
         check=False,
         capture_output=True,
@@ -453,10 +486,23 @@ def test_codex_hosted_command_failure_discards_child_output_and_failure_artifact
     assert not tuple(results.iterdir()), "Codex failure evidence directory retained child output"
 
 
+def test_codex_hosted_subscription_readiness_is_an_honest_not_run(tmp_path: Path) -> None:
+    result, _repo_root, results, _sentinel = _run_failing_codex_hosted_workflow(
+        tmp_path, subscription_unavailable=True
+    )
+
+    assert result.id is Capability.CODEX_HOSTED
+    assert result.status is RunStatus.NOT_RUN
+    assert result.detail == "Codex subscription authentication is unavailable"
+    assert result.artifacts == ()
+    assert (results / "hosted-codex-personal-readiness.json").is_file()
+
+
 def _run_failing_codex_hosted_workflow(
     tmp_path: Path,
     *,
     exact: bool = False,
+    subscription_unavailable: bool = False,
 ) -> tuple[CapabilityEvidence, Path, Path, str]:
     """Run the protected workflow against one real failing fake child executable."""
 
@@ -471,12 +517,27 @@ def _run_failing_codex_hosted_workflow(
     state_root.mkdir(mode=0o700)
     working_directory.mkdir(mode=0o700)
     sentinel = "PRIVATE-CODEX-CHILD-CONTENT"
-    _write_executable(
-        repo_root / "bin/uv",
-        stdout=f"stdout:{sentinel}",
-        diagnostic=f"stderr:{sentinel}",
-        exit_status=7,
-    )
+    uv = repo_root / "bin/uv"
+    if subscription_unavailable:
+        _write(
+            uv,
+            "#!/usr/bin/python3\n"
+            "import json\n"
+            "import os\n"
+            "from pathlib import Path\n"
+            "Path(os.environ['NEXUS_CODEX_HOSTED_READINESS_PATH']).write_text(\n"
+            "    json.dumps({'schema_version':'nexus-hosted-codex-readiness.v1',"
+            "'run_id':os.environ['NEXUS_TEST_RUN_ID'],'status':'subscription_unavailable'}) + '\\n'\n"
+            ")\n",
+        )
+        uv.chmod(0o755)
+    else:
+        _write_executable(
+            uv,
+            stdout=f"stdout:{sentinel}",
+            diagnostic=f"stderr:{sentinel}",
+            exit_status=7,
+        )
     evidence_run_id = "0123456789abcdef"
     results = repo_root / "test-results/runs" / evidence_run_id
     results.mkdir(parents=True)
@@ -486,6 +547,7 @@ def _run_failing_codex_hosted_workflow(
         "NEXUS_CODEX_HOSTED_PROFILE": "codex-personal",
         "NEXUS_CODEX_HOSTED_STATE_ROOT": str(state_root),
         "NEXUS_CODEX_HOSTED_WORKING_DIRECTORY": str(working_directory),
+        "NEXUS_CODEX_HOSTED_SOURCE_SHA": _HOSTED_SOURCE_SHA,
         "NEXUS_TEST_EVIDENCE_RUN_ID": evidence_run_id,
         "NEXUS_TEST_RESULTS_DIR": str(results),
     }
@@ -818,6 +880,8 @@ def test_changed_python_static_and_kernel_use_only_the_selected_file_and_node(
         ("apps/api/main.py", "app = object()\n"),
         ("apps/worker/health.py", "def health():\n    return None\n"),
         ("apps/worker/main.py", "def main():\n    return None\n"),
+        ("apps/codex_agent/egress_policy.py", "def policy():\n    return None\n"),
+        ("apps/codex_agent/network_health.py", "def health():\n    return None\n"),
         ("deploy/hetzner/release.py", "def release():\n    return None\n"),
     ),
 )
@@ -1296,34 +1360,38 @@ def test_complete_fast_commands_are_fixed_to_their_final_owners(tmp_path: Path) 
     ]
     assert commands[0]["argv"][-1] == "tests/kernel/nexus_test_control/test_policy.py"
     assert commands[1]["argv"] == ["run", "test:eslint-policy"]
-    assert commands[2]["argv"][-15:] == [
+    assert commands[2]["argv"][-17:] == [
         ".",
         "../apps/api/main.py",
         "../apps/codex_agent/__init__.py",
         "../apps/codex_agent/auth_environment.py",
         "../apps/codex_agent/capacity.py",
         "../apps/codex_agent/capacity_canary.py",
+        "../apps/codex_agent/egress_policy.py",
         "../apps/codex_agent/enroll.py",
         "../apps/codex_agent/health.py",
         "../apps/codex_agent/host.py",
         "../apps/codex_agent/main.py",
+        "../apps/codex_agent/network_health.py",
         "../apps/codex_agent/path_environment.py",
         "../apps/codex_agent/sandbox_health.py",
         "../apps/worker/health.py",
         "../apps/worker/main.py",
         "../deploy/hetzner/release.py",
     ]
-    assert commands[3]["argv"][-15:] == [
+    assert commands[3]["argv"][-17:] == [
         ".",
         "../apps/api/main.py",
         "../apps/codex_agent/__init__.py",
         "../apps/codex_agent/auth_environment.py",
         "../apps/codex_agent/capacity.py",
         "../apps/codex_agent/capacity_canary.py",
+        "../apps/codex_agent/egress_policy.py",
         "../apps/codex_agent/enroll.py",
         "../apps/codex_agent/health.py",
         "../apps/codex_agent/host.py",
         "../apps/codex_agent/main.py",
+        "../apps/codex_agent/network_health.py",
         "../apps/codex_agent/path_environment.py",
         "../apps/codex_agent/sandbox_health.py",
         "../apps/worker/health.py",
@@ -1341,10 +1409,12 @@ def test_complete_fast_commands_are_fixed_to_their_final_owners(tmp_path: Path) 
         "../apps/codex_agent/auth_environment.py",
         "../apps/codex_agent/capacity.py",
         "../apps/codex_agent/capacity_canary.py",
+        "../apps/codex_agent/egress_policy.py",
         "../apps/codex_agent/enroll.py",
         "../apps/codex_agent/health.py",
         "../apps/codex_agent/host.py",
         "../apps/codex_agent/main.py",
+        "../apps/codex_agent/network_health.py",
         "../apps/codex_agent/path_environment.py",
         "../apps/codex_agent/sandbox_health.py",
         "../apps/worker/health.py",
@@ -3616,7 +3686,7 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
             invited_users.append(scenario_id)
             return SimpleNamespace(email=f"nexus+0123456789abcdef+{scenario_id}@example.invalid")
 
-        def grant_scenario_ai_entitlement(
+        def grant_scenario_paid_entitlement(
             self,
             _root: Path,
             _environment: Mapping[str, str],

@@ -33,6 +33,7 @@ from nexus.db.models import (
     Conversation,
     Message,
 )
+from nexus.db.retries import retry_read_committed
 from nexus.errors import (
     ApiErrorCode,
     InvalidRequestError,
@@ -63,8 +64,8 @@ from nexus.schemas.conversation import (
 )
 from nexus.schemas.presence import Presence, absent, present
 from nexus.services.chat_failure import (
+    active_profile_run_ids,
     compute_has_write_tool_attempt,
-    profile_selection_active,
     rerun_eligibility,
     write_tool_attempt_run_ids,
 )
@@ -89,7 +90,6 @@ from nexus.services.collection_revisions import (
     read_collection_revision,
     require_collection_revision,
 )
-from nexus.services.llm_profiles import profile as lookup_profile
 from nexus.services.message_trust_trails import build_assistant_trust_trails
 from nexus.services.resource_graph import cleanup as graph_cleanup
 from nexus.services.resource_graph import context as context_service
@@ -335,12 +335,13 @@ def rerunnable_assistant_message_ids(
     for run in runs:
         latest_by_message_id.setdefault(run.assistant_message_id, run)
 
+    active_run_ids = active_profile_run_ids(db, list(latest_by_message_id.values()))
     rerunnable: set[UUID] = set()
     for message_id, run in latest_by_message_id.items():
         error_code = "cancelled" if run.status == "cancelled" else run.error_code
         if error_code is None:
             continue
-        profile_active = run.profile_id is not None and lookup_profile(run.profile_id) is not None
+        profile_active = run.id in active_run_ids
         has_write_tool_attempt = compute_has_write_tool_attempt(db, run)
         if rerun_eligibility(
             error_code=error_code,
@@ -382,10 +383,11 @@ def regeneratable_assistant_message_ids(
         .all()
     )
     run_by_message_id: dict[UUID, ChatRun] = {run.assistant_message_id: run for run in runs}
+    active_run_ids = active_profile_run_ids(db, list(run_by_message_id.values()))
 
     regeneratable: set[UUID] = set()
     for message_id, run in run_by_message_id.items():
-        if profile_selection_active(run) and not compute_has_write_tool_attempt(db, run):
+        if run.id in active_run_ids and not compute_has_write_tool_attempt(db, run):
             regeneratable.add(message_id)
     return regeneratable
 
@@ -1032,6 +1034,7 @@ def message_action_facts(
         else []
     )
     attempted_run_ids = write_tool_attempt_run_ids(db, runs)
+    active_run_ids = active_profile_run_ids(db, runs)
     latest_run_by_message: dict[UUID, ChatRun] = {}
     for run in runs:
         latest_run_by_message.setdefault(run.assistant_message_id, run)
@@ -1060,10 +1063,7 @@ def message_action_facts(
                 rerun_applicable = rerun_eligibility(
                     error_code=error_code,
                     run_status=terminal_run.status,
-                    profile_active=(
-                        terminal_run.profile_id is not None
-                        and lookup_profile(terminal_run.profile_id) is not None
-                    ),
+                    profile_active=terminal_run.id in active_run_ids,
                     has_write_tool_attempt=terminal_run.id in attempted_run_ids,
                 )
         complete_run = (
@@ -1078,7 +1078,7 @@ def message_action_facts(
             rerun_applicable=rerun_applicable,
             regenerate_applicable=(
                 complete_run is not None
-                and profile_selection_active(complete_run)
+                and complete_run.id in active_run_ids
                 and complete_run.id not in attempted_run_ids
             ),
         )
@@ -1101,28 +1101,32 @@ def delete_conversation(
         NotFoundError(E_CONVERSATION_NOT_FOUND): If conversation doesn't exist
             or viewer is not the owner.
     """
-    # Verify ownership (write = owner-only) and hold the parent row lock while
-    # deleting child rows. Branch path writes insert FK-backed rows concurrently
-    # during active chat panes; the lock prevents a new child from appearing
-    # between explicit child cleanup and the parent delete.
-    conversation = db.scalar(
-        select(Conversation).where(Conversation.id == conversation_id).with_for_update()
-    )
-    if conversation is None or conversation.owner_user_id != viewer_id:
-        raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
 
-    delete_conversation_rows_without_commit(db, conversation_id)
-    bump_all_collection_revisions(
-        db,
-        family=CollectionFamily.ConversationIndex,
-    )
-    revision = read_collection_revision(
-        db,
-        viewer_id=viewer_id,
-        family=CollectionFamily.ConversationIndex,
-    )
-    db.commit()
-    return CollectionRevisionOut(collectionRevision=revision)
+    def attempt() -> CollectionRevisionOut:
+        # Verify ownership (write = owner-only) and hold the parent row lock while
+        # deleting child rows. Branch path writes insert FK-backed rows concurrently
+        # during active chat panes; the lock prevents a new child from appearing
+        # between explicit child cleanup and the parent delete.
+        conversation = db.scalar(
+            select(Conversation).where(Conversation.id == conversation_id).with_for_update()
+        )
+        if conversation is None or conversation.owner_user_id != viewer_id:
+            raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
+
+        delete_conversation_rows_without_commit(db, conversation_id)
+        bump_all_collection_revisions(
+            db,
+            family=CollectionFamily.ConversationIndex,
+        )
+        revision = read_collection_revision(
+            db,
+            viewer_id=viewer_id,
+            family=CollectionFamily.ConversationIndex,
+        )
+        db.commit()
+        return CollectionRevisionOut(collectionRevision=revision)
+
+    return retry_read_committed(db, "delete_conversation", attempt)
 
 
 def list_messages(
@@ -1326,64 +1330,70 @@ def delete_message(db: Session, viewer_id: UUID, message_id: UUID) -> MessageDel
         NotFoundError(E_MESSAGE_NOT_FOUND): If message doesn't exist
             or viewer is not the conversation owner.
     """
-    # Message creation and every Conversation delete linearize on the parent
-    # row. Join through the requested Message so missing/foreign identities stay
-    # masked, then hold that same lock through subtree enumeration, the
-    # remaining-count decision, and commit.
-    conversation = db.scalar(
-        select(Conversation)
-        .join(Message, Message.conversation_id == Conversation.id)
-        .where(Message.id == message_id)
-        .with_for_update(of=Conversation)
-    )
-    if conversation is None or conversation.owner_user_id != viewer_id:
-        raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
 
-    conversation_id = conversation.id
-    # Revalidate under the parent lock. Every competing Message/Conversation
-    # mutator takes this lock, so the deletion set is now stable.
-    if (
-        db.scalar(
-            select(Message.id).where(
-                Message.id == message_id,
-                Message.conversation_id == conversation_id,
-            )
+    def attempt() -> MessageDeleteOut:
+        # Message creation and every Conversation delete linearize on the parent
+        # row. Join through the requested Message so missing/foreign identities stay
+        # masked, then hold that same lock through subtree enumeration, the
+        # remaining-count decision, and commit.
+        conversation = db.scalar(
+            select(Conversation)
+            .join(Message, Message.conversation_id == Conversation.id)
+            .where(Message.id == message_id)
+            .with_for_update(of=Conversation)
         )
-        is None
-    ):
-        raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
+        if conversation is None or conversation.owner_user_id != viewer_id:
+            raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
 
-    message_ids = _message_subtree_ids(db, conversation_id, message_id)
-    delete_message_rows_without_commit(db, message_ids)
-    db.flush()
+        conversation_id = conversation.id
+        # Revalidate under the parent lock. Every competing Message/Conversation
+        # mutator takes this lock, so the deletion set is now stable.
+        if (
+            db.scalar(
+                select(Message.id).where(
+                    Message.id == message_id,
+                    Message.conversation_id == conversation_id,
+                )
+            )
+            is None
+        ):
+            raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
 
-    # Check remaining message count in same transaction
-    remaining = db.scalar(
-        select(func.count()).select_from(Message).where(Message.conversation_id == conversation_id)
-    )
-
-    conversation_deleted = remaining == 0
-
-    # If no messages remain, delete conversation
-    if conversation_deleted:
-        delete_conversation_rows_without_commit(db, conversation_id)
+        message_ids = _message_subtree_ids(db, conversation_id, message_id)
+        delete_message_rows_without_commit(db, message_ids)
         db.flush()
 
-    bump_all_collection_revisions(
-        db,
-        family=CollectionFamily.ConversationIndex,
-    )
-    collection_revision = read_collection_revision(
-        db,
-        viewer_id=viewer_id,
-        family=CollectionFamily.ConversationIndex,
-    )
-    db.commit()
-    return MessageDeleteOut(
-        conversationId=conversation_id,
-        conversationDeleted=conversation_deleted,
-        collectionRevision=collection_revision,
-    )
+        # Check remaining message count in same transaction
+        remaining = db.scalar(
+            select(func.count())
+            .select_from(Message)
+            .where(Message.conversation_id == conversation_id)
+        )
+
+        conversation_deleted = remaining == 0
+
+        # If no messages remain, delete conversation
+        if conversation_deleted:
+            delete_conversation_rows_without_commit(db, conversation_id)
+            db.flush()
+
+        bump_all_collection_revisions(
+            db,
+            family=CollectionFamily.ConversationIndex,
+        )
+        collection_revision = read_collection_revision(
+            db,
+            viewer_id=viewer_id,
+            family=CollectionFamily.ConversationIndex,
+        )
+        db.commit()
+        return MessageDeleteOut(
+            conversationId=conversation_id,
+            conversationDeleted=conversation_deleted,
+            collectionRevision=collection_revision,
+        )
+
+    return retry_read_committed(db, "delete_message", attempt)
 
 
 def delete_conversation_rows_without_commit(db: Session, conversation_id: UUID) -> None:
@@ -1476,12 +1486,11 @@ def delete_message_rows_without_commit(db: Session, message_ids: Sequence[UUID])
         graph_cleanup.delete_edges_for_deleted_resource(
             db, ref=ResourceRef(scheme="message", id=message_id)
         )
-    # NOTE: the polymorphic per-provider-call ledger ``llm_calls`` (migration
-    # 0145, which retired the chat-only per-message usage table) is keyed on the
-    # run parent (owner_kind='chat_run', owner_id=chat_runs.id), not on
-    # message_id, and carries no FK. The generation-run harness deliberately
-    # does not clean it up on conversation/message delete — it is an operational
-    # ledger with its own lifecycle — so there is no replacement DELETE here.
+    # NOTE: the unified generation ledger ``llm_calls`` is keyed on the run
+    # parent (owner_kind='chat_run', owner_id=chat_runs.id), not on message_id,
+    # and carries no FK. It deliberately survives conversation/message deletion
+    # as an operational ledger with its own lifecycle, so there is no
+    # replacement DELETE here.
     db.execute(delete(Message).where(Message.id.in_(message_ids)))
     db.flush()
 

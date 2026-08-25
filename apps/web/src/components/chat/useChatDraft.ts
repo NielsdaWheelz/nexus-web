@@ -41,7 +41,17 @@ import {
 } from "@/lib/conversations/chatProfileSelection";
 import { createRandomId } from "@/lib/createRandomId";
 import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
-import { isRecord } from "@/lib/validation";
+import { decodePresence } from "@/lib/api/presence";
+import { parseReaderSelectionKey } from "@/lib/conversations/readerSelectionKey";
+import type { BranchAnchor } from "@/lib/conversations/types";
+import {
+  expectExactRecord,
+  expectInteger,
+  expectNullableString,
+  expectOneOf,
+  expectString,
+  isRecord,
+} from "@/lib/validation";
 
 export type ChatSendCommand = Readonly<{
   idempotencyKey: string;
@@ -66,6 +76,9 @@ export const EMPTY_DRAFT_RECORD: ChatDraftRecord = {
 };
 
 const STORAGE_PREFIX = "nx_chat_draft.v2:";
+const CANONICAL_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const READER_SELECTION_REVISION_RE = /^[0-9a-f]{64}$/;
 
 // ---------------------------------------------------------------------------
 // Pure operation transitions (exported for direct unit testing)
@@ -102,6 +115,248 @@ export function withClearedOperation(record: ChatDraftRecord): ChatDraftRecord {
 // Storage codec (strict; malformed current data is a defect)
 // ---------------------------------------------------------------------------
 
+function decodeCanonicalUuid(value: unknown, name: string): string {
+  const uuid = expectString(value, name);
+  if (!CANONICAL_UUID_RE.test(uuid)) {
+    throw new TypeError(`${name} must be a canonical UUID`);
+  }
+  return uuid;
+}
+
+function decodeBoundedNullableString(
+  value: unknown,
+  name: string,
+  maxLength: number,
+): string | null {
+  const decoded = expectNullableString(value, name);
+  if (decoded !== null && decoded.length > maxLength) {
+    throw new TypeError(`${name} must be at most ${maxLength} characters`);
+  }
+  return decoded;
+}
+
+function decodeBranchAnchor(value: unknown): BranchAnchor {
+  const record = expectExactRecord(
+    value,
+    isRecord(value) && value.kind === "assistant_message"
+      ? ["kind", "message_id"]
+      : isRecord(value) &&
+          value.kind === "assistant_selection" &&
+          value.offset_status === "mapped"
+        ? [
+            "kind",
+            "message_id",
+            "exact",
+            "prefix",
+            "suffix",
+            "offset_status",
+            "start_offset",
+            "end_offset",
+            "client_selection_id",
+          ]
+        : isRecord(value) && value.kind === "assistant_selection"
+          ? [
+              "kind",
+              "message_id",
+              "exact",
+              "prefix",
+              "suffix",
+              "offset_status",
+              "client_selection_id",
+            ]
+          : ["kind"],
+    "chat send request destination insertion branch_anchor",
+  );
+
+  if (record.kind === "none") {
+    return { kind: "none" };
+  }
+  if (record.kind === "assistant_message") {
+    return {
+      kind: "assistant_message",
+      message_id: decodeCanonicalUuid(
+        record.message_id,
+        "chat send request branch anchor message_id",
+      ),
+    };
+  }
+  if (record.kind !== "assistant_selection") {
+    throw new TypeError("Invalid chat send request branch anchor kind");
+  }
+
+  const exact = expectString(
+    record.exact,
+    "chat send request branch anchor exact",
+  );
+  if (exact.length > 20_000 || exact.trim().length === 0) {
+    throw new TypeError(
+      "chat send request branch anchor exact must be nonblank and at most 20000 characters",
+    );
+  }
+  const common = {
+    kind: "assistant_selection" as const,
+    message_id: decodeCanonicalUuid(
+      record.message_id,
+      "chat send request branch anchor message_id",
+    ),
+    exact,
+    prefix: decodeBoundedNullableString(
+      record.prefix,
+      "chat send request branch anchor prefix",
+      1_000,
+    ),
+    suffix: decodeBoundedNullableString(
+      record.suffix,
+      "chat send request branch anchor suffix",
+      1_000,
+    ),
+    client_selection_id: expectString(
+      record.client_selection_id,
+      "chat send request branch anchor client_selection_id",
+    ),
+  };
+  if (
+    common.client_selection_id.length === 0 ||
+    common.client_selection_id.length > 128
+  ) {
+    throw new TypeError(
+      "chat send request branch anchor client_selection_id must contain 1 to 128 characters",
+    );
+  }
+  const offsetStatus = expectOneOf(
+    record.offset_status,
+    ["mapped", "unmapped"] as const,
+    "chat send request branch anchor offset_status",
+  );
+  if (offsetStatus === "mapped") {
+    return {
+      ...common,
+      offset_status: "mapped",
+      start_offset: expectInteger(
+        record.start_offset,
+        "chat send request branch anchor start_offset",
+      ),
+      end_offset: expectInteger(
+        record.end_offset,
+        "chat send request branch anchor end_offset",
+      ),
+    };
+  }
+  return { ...common, offset_status: "unmapped" };
+}
+
+function decodeChatRunCreateRequest(value: unknown): ChatRunCreateRequest {
+  const request = expectExactRecord(
+    value,
+    ["destination", "content", "profile_id", "reader_selection"],
+    "chat send request",
+  );
+  const destination = expectExactRecord(
+    request.destination,
+    isRecord(request.destination) && request.destination.kind === "Existing"
+      ? ["kind", "conversation_id", "insertion"]
+      : ["kind"],
+    "chat send request destination",
+  );
+
+  let decodedDestination: ChatRunCreateRequest["destination"];
+  if (destination.kind === "New") {
+    decodedDestination = { kind: "New" };
+  } else if (destination.kind === "Existing") {
+    const insertion = expectExactRecord(
+      destination.insertion,
+      isRecord(destination.insertion) && destination.insertion.kind === "Reply"
+        ? ["kind", "parent_message_id", "branch_anchor"]
+        : ["kind"],
+      "chat send request destination insertion",
+    );
+    if (insertion.kind === "Empty") {
+      decodedDestination = {
+        kind: "Existing",
+        conversation_id: decodeCanonicalUuid(
+          destination.conversation_id,
+          "chat send request destination conversation_id",
+        ),
+        insertion: { kind: "Empty" },
+      };
+    } else if (insertion.kind === "Reply") {
+      decodedDestination = {
+        kind: "Existing",
+        conversation_id: decodeCanonicalUuid(
+          destination.conversation_id,
+          "chat send request destination conversation_id",
+        ),
+        insertion: {
+          kind: "Reply",
+          parent_message_id: decodeCanonicalUuid(
+            insertion.parent_message_id,
+            "chat send request destination insertion parent_message_id",
+          ),
+          branch_anchor: decodeBranchAnchor(insertion.branch_anchor),
+        },
+      };
+    } else {
+      throw new TypeError("Invalid chat send request insertion kind");
+    }
+  } else {
+    throw new TypeError("Invalid chat send request destination kind");
+  }
+
+  const content = expectString(request.content, "chat send request content");
+  if (content.trim().length === 0) {
+    throw new TypeError("chat send request content must not be blank");
+  }
+  const profileId = expectOneOf(
+    request.profile_id,
+    ["fast", "balanced", "deep"] as const,
+    "chat send request profile_id",
+  );
+  const readerSelection = decodePresence(
+    request.reader_selection,
+    (rawSelection) => {
+      const selection = expectExactRecord(
+        rawSelection,
+        ["key", "revision"],
+        "chat send request reader_selection value",
+      );
+      const rawKey = expectExactRecord(
+        selection.key,
+        ["media_id", "highlight_id"],
+        "chat send request reader_selection key",
+      );
+      const key = parseReaderSelectionKey({
+        mediaId: rawKey.media_id,
+        highlightId: rawKey.highlight_id,
+      });
+      if (key === null) {
+        throw new TypeError(
+          "chat send request reader_selection key must contain canonical UUIDs",
+        );
+      }
+      const revision = expectString(
+        selection.revision,
+        "chat send request reader_selection revision",
+      );
+      if (!READER_SELECTION_REVISION_RE.test(revision)) {
+        throw new TypeError(
+          "chat send request reader_selection revision must be a lowercase SHA-256 digest",
+        );
+      }
+      return {
+        key: { media_id: key.mediaId, highlight_id: key.highlightId },
+        revision,
+      };
+    },
+  );
+
+  return {
+    destination: decodedDestination,
+    content,
+    profile_id: profileId,
+    reader_selection: readerSelection,
+  };
+}
+
 function decodeCommand(value: unknown): ChatSendCommand {
   if (!isRecord(value)) {
     throw new Error("Invalid chat send command");
@@ -116,7 +371,7 @@ function decodeCommand(value: unknown): ChatSendCommand {
   }
   return {
     idempotencyKey: value.idempotencyKey,
-    request: value.request as unknown as ChatRunCreateRequest,
+    request: decodeChatRunCreateRequest(value.request),
   };
 }
 

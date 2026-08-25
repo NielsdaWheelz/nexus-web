@@ -20,11 +20,14 @@ import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
 const request: ChatRunCreateRequest = {
   destination: {
     kind: "Existing",
-    conversation_id: "conversation-1",
+    conversation_id: "00000000-0000-4000-8000-000000000001",
     insertion: {
       kind: "Reply",
-      parent_message_id: "assistant-1",
-      branch_anchor: { kind: "assistant_message", message_id: "assistant-1" },
+      parent_message_id: "00000000-0000-4000-8000-000000000002",
+      branch_anchor: {
+        kind: "assistant_message",
+        message_id: "00000000-0000-4000-8000-000000000002",
+      },
     },
   },
   content: "why?",
@@ -82,6 +85,16 @@ describe("chat send-operation transitions", () => {
 });
 
 describe("decodeChatDraftRecord", () => {
+  function storedRequest(value: unknown): string {
+    return JSON.stringify({
+      ...draft,
+      operation: {
+        kind: "ReconcileRequired",
+        command: { idempotencyKey: "key-1", request: value },
+      },
+    });
+  }
+
   it("promotes a persisted Submitting to ReconcileRequired at ingress", () => {
     const stored = JSON.stringify(withSubmitting(draft, command));
     // AC-4: reloading an in-flight send exposes a locked replay of the same key.
@@ -98,6 +111,158 @@ describe("decodeChatDraftRecord", () => {
     expect(decodeChatDraftRecord(JSON.stringify(EMPTY_DRAFT_RECORD))).toEqual(
       EMPTY_DRAFT_RECORD,
     );
+  });
+
+  it("decodes every closed destination, anchor, presence, and profile variant", () => {
+    const variants: ChatRunCreateRequest[] = [
+      {
+        destination: { kind: "New" },
+        content: "new question",
+        profile_id: "balanced",
+        reader_selection: { kind: "Absent" },
+      },
+      {
+        destination: {
+          kind: "Existing",
+          conversation_id: "00000000-0000-4000-8000-000000000003",
+          insertion: { kind: "Empty" },
+        },
+        content: "quoted question",
+        profile_id: "deep",
+        reader_selection: {
+          kind: "Present",
+          value: {
+            key: {
+              media_id: "00000000-0000-4000-8000-000000000004",
+              highlight_id: "00000000-0000-4000-8000-000000000005",
+            },
+            revision: "a".repeat(64),
+          },
+        },
+      },
+      {
+        destination: {
+          kind: "Existing",
+          conversation_id: "00000000-0000-4000-8000-000000000006",
+          insertion: {
+            kind: "Reply",
+            parent_message_id: "00000000-0000-4000-8000-000000000007",
+            branch_anchor: {
+              kind: "assistant_selection",
+              message_id: "00000000-0000-4000-8000-000000000007",
+              exact: "mapped quote",
+              prefix: "before",
+              suffix: "after",
+              offset_status: "mapped",
+              start_offset: 2,
+              end_offset: 14,
+              client_selection_id: "selection-1",
+            },
+          },
+        },
+        content: "mapped branch",
+        profile_id: "fast",
+        reader_selection: { kind: "Absent" },
+      },
+      {
+        destination: {
+          kind: "Existing",
+          conversation_id: "00000000-0000-4000-8000-000000000008",
+          insertion: {
+            kind: "Reply",
+            parent_message_id: "00000000-0000-4000-8000-000000000009",
+            branch_anchor: {
+              kind: "assistant_selection",
+              message_id: "00000000-0000-4000-8000-000000000009",
+              exact: "unmapped quote",
+              prefix: null,
+              suffix: null,
+              offset_status: "unmapped",
+              client_selection_id: "selection-2",
+            },
+          },
+        },
+        content: "unmapped branch",
+        profile_id: "balanced",
+        reader_selection: { kind: "Absent" },
+      },
+    ];
+
+    for (const variant of variants) {
+      const decoded = decodeChatDraftRecord(storedRequest(variant));
+      expect(decoded.operation).toEqual({
+        kind: "ReconcileRequired",
+        command: { idempotencyKey: "key-1", request: variant },
+      });
+    }
+  });
+
+  it("deeply rejects incomplete, widened, or selector-bearing persisted requests", () => {
+    const valid = {
+      destination: { kind: "New" },
+      content: "question",
+      profile_id: "fast",
+      reader_selection: { kind: "Absent" },
+    };
+    const invalidRequests: unknown[] = [
+      { ...valid, reasoning_option_id: "high" },
+      { destination: { kind: "New" }, content: "question", profile_id: "fast" },
+      { ...valid, profile_id: "turbo" },
+      { ...valid, content: "   " },
+      { ...valid, destination: { kind: "New", conversation_id: "surplus" } },
+      {
+        ...valid,
+        destination: {
+          kind: "Existing",
+          conversation_id: "00000000-0000-4000-8000-000000000010",
+          insertion: { kind: "Reply", parent_message_id: "missing-anchor" },
+        },
+      },
+      {
+        ...valid,
+        destination: {
+          kind: "Existing",
+          conversation_id: "00000000-0000-4000-8000-000000000010",
+          insertion: {
+            kind: "Reply",
+            parent_message_id: "00000000-0000-4000-8000-000000000011",
+            branch_anchor: { kind: "assistant_message" },
+          },
+        },
+      },
+      {
+        ...valid,
+        reader_selection: {
+          kind: "Present",
+          value: {
+            key: {
+              media_id: "00000000-0000-4000-8000-000000000012",
+              highlight_id: "00000000-0000-4000-8000-000000000013",
+              extra: true,
+            },
+            revision: "a".repeat(64),
+          },
+        },
+      },
+      {
+        ...valid,
+        reader_selection: {
+          kind: "Present",
+          value: {
+            key: {
+              media_id: "00000000-0000-4000-8000-000000000012",
+              highlight_id: "00000000-0000-4000-8000-000000000013",
+            },
+            revision: "NOT-A-DIGEST",
+          },
+        },
+      },
+      { ...valid, reader_selection: null },
+    ];
+
+    for (const invalid of invalidRequests) {
+      expect(() => decodeChatDraftRecord(storedRequest(invalid))).toThrow();
+    }
   });
 
   it("rejects malformed current data as a defect", () => {

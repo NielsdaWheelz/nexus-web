@@ -30,6 +30,7 @@ from nexus.services.codex_generation_contract import (
     normalized_failure,
     normalized_outcome,
     request_fingerprint,
+    retained_terminal_error_detail,
 )
 
 type LlmCallOwnerKind = Literal[
@@ -43,6 +44,26 @@ type LlmCallOwnerKind = Literal[
     "media_enrichment",
 ]
 
+_OPERATION_OWNER_KINDS: dict[str, LlmCallOwnerKind] = {
+    "metadata_enrichment": "media_enrichment",
+    "media_summary": "media_summary",
+    "synapse": "synapse_scan",
+    "dawn_write": "dawn_write",
+    "oracle": "oracle_reading",
+    "dossier_page": "artifact_build",
+    "dossier_note": "artifact_build",
+    "dossier_media": "artifact_build",
+    "dossier_conversation": "artifact_build",
+    "dossier_library": "artifact_build",
+    "dossier_podcast": "artifact_build",
+    "dossier_contributor": "artifact_build",
+    "dossier_idea": "artifact_build",
+    "dossier_idea_resolve": "artifact_learn_request",
+    "chat": "chat_run",
+}
+if set(_OPERATION_OWNER_KINDS) != {*generation_policy.OPERATIONS, "chat"}:
+    raise AssertionError("generation ledger owners do not cover the exact operation catalog")
+
 _MAX_ERROR_DETAIL_LENGTH = 1_000
 
 
@@ -53,6 +74,10 @@ class LlmCallOwner:
     kind: LlmCallOwnerKind
     id: UUID
 
+    def __post_init__(self) -> None:
+        if self.kind not in _OPERATION_OWNER_KINDS.values():
+            raise ValueError(f"unknown generation owner kind {self.kind!r}")
+
 
 @dataclass(frozen=True, slots=True)
 class GenerationStart:
@@ -61,6 +86,16 @@ class GenerationStart:
     owner: LlmCallOwner
     command: GenerationCommand
     streaming: bool
+
+    def __post_init__(self) -> None:
+        operation = self.command.operation.kind
+        expected_owner = _OPERATION_OWNER_KINDS.get(operation)
+        if expected_owner is None:
+            raise AssertionError(f"generation operation {operation!r} has no ledger owner")
+        if self.owner.kind != expected_owner:
+            raise ValueError(
+                f"generation operation {operation!r} requires owner kind {expected_owner!r}"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,7 +196,6 @@ def complete_generation_in_current_transaction(
     terminal: GenerationTerminal,
     latency_ms: int,
     accepted_failure_code: Literal["invalid_output"] | None = None,
-    accepted_failure_detail: str | None = None,
 ) -> None:
     """Stage an accepted host terminal without committing its transaction."""
 
@@ -174,13 +208,9 @@ def complete_generation_in_current_transaction(
     _assert_owner(call, owner)
     _assert_no_terminal(call)
 
-    if (accepted_failure_code is None) != (accepted_failure_detail is None):
-        raise ValueError("accepted failure code and detail must be supplied together")
     if accepted_failure_code is not None:
         if terminal.status != "succeeded":
             raise ValueError("only a successful host terminal can be semantically overridden")
-        if not accepted_failure_detail or not accepted_failure_detail.strip():
-            raise ValueError("accepted failure detail must not be blank")
         outcome: NormalizedOutcome = "Failed"
         error_code: NormalizedFailureCode | None = accepted_failure_code
     else:
@@ -208,9 +238,9 @@ def complete_generation_in_current_transaction(
     call.outcome = outcome
     call.error_code = error_code
     call.error_detail = (
-        accepted_failure_detail[:_MAX_ERROR_DETAIL_LENGTH]
-        if accepted_failure_detail is not None
-        else (terminal.diagnostics[0][:_MAX_ERROR_DETAIL_LENGTH] if terminal.diagnostics else None)
+        "codex generation invalid output"
+        if accepted_failure_code is not None
+        else retained_terminal_error_detail(terminal)
     )
     call.input_tokens = usage.input_tokens if usage is not None else None
     call.output_tokens = usage.output_tokens if usage is not None else None
@@ -244,6 +274,29 @@ def complete_preaccept_failure_if_started_in_current_transaction(
     call.outcome = "Failed"
     call.error_code = error_code
     call.error_detail = error_detail[:_MAX_ERROR_DETAIL_LENGTH]
+    call.completed_at = func.now()
+    return True
+
+
+def cancel_preaccept_generation_if_started_in_current_transaction(
+    db: Session,
+    *,
+    owner: LlmCallOwner,
+    generation_id: UUID,
+    reason: str,
+) -> bool:
+    """Stage an owner-side cancellation proven to precede host acceptance."""
+
+    if not reason.strip():
+        raise ValueError("pre-accept cancellation reason must not be blank")
+    lock_generation_owner_in_current_transaction(db, owner)
+    call = db.scalar(select(LLMCall).where(LLMCall.id == generation_id).with_for_update())
+    if call is None:
+        return False
+    _assert_owner(call, owner)
+    _assert_no_terminal(call)
+    call.outcome = "Cancelled"
+    call.error_detail = reason[:_MAX_ERROR_DETAIL_LENGTH]
     call.completed_at = func.now()
     return True
 
@@ -307,6 +360,24 @@ def lock_active_generation_for_authority_in_current_transaction(
     authority and is returned as absent rather than exposed to the caller.
     """
 
+    record = lock_generation_for_authority_in_current_transaction(
+        db,
+        owner=owner,
+        generation_id=generation_id,
+    )
+    if record is None or record.outcome is not None or record.completed_at is not None:
+        return None
+    return record
+
+
+def lock_generation_for_authority_in_current_transaction(
+    db: Session,
+    *,
+    owner: LlmCallOwner,
+    generation_id: UUID,
+) -> GenerationRecord | None:
+    """Lock one exact owned generation, including an already-terminal row."""
+
     lock_generation_owner_in_current_transaction(db, owner)
     call = db.scalar(
         select(LLMCall)
@@ -314,8 +385,6 @@ def lock_active_generation_for_authority_in_current_transaction(
             LLMCall.id == generation_id,
             LLMCall.owner_kind == owner.kind,
             LLMCall.owner_id == owner.id,
-            LLMCall.outcome.is_(None),
-            LLMCall.completed_at.is_(None),
         )
         .with_for_update()
     )
@@ -514,8 +583,10 @@ __all__ = [
     "LlmCallOwnerKind",
     "complete_generation_in_current_transaction",
     "complete_preaccept_failure_if_started_in_current_transaction",
+    "cancel_preaccept_generation_if_started_in_current_transaction",
     "current_tool_plan_fingerprint",
     "lock_active_generation_for_authority_in_current_transaction",
+    "lock_generation_for_authority_in_current_transaction",
     "lock_generation_owner_in_current_transaction",
     "read_generation",
     "read_generation_for_owner_sequence",

@@ -8,8 +8,6 @@ from typing import Any, Literal, cast
 from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
 
-from provider_runtime import CanonicalTool, GenerateIntent, ReasoningLevel
-from provider_runtime.registry import resolve_target
 from sqlalchemy import bindparam, select, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
@@ -25,9 +23,9 @@ from nexus.db.models import (
 )
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.schemas.conversation import tool_projection_from_persisted_record
+from nexus.services import generation_policy
 from nexus.services.chat_prompt import (
     PromptPlan,
-    build_generate_intent_from_plan,
     build_prompt_plan,
     render_system_prompt_block,
     validate_prompt_plan_budget,
@@ -41,7 +39,7 @@ from nexus.services.chat_reader_selection import (
     render_subject_metadata_block,
 )
 from nexus.services.chat_run_tools import decode_persisted_tool_record
-from nexus.services.llm_profiles import LlmProfile
+from nexus.services.generation_intent import GenerationIntent, TextOutput
 from nexus.services.prompt_budget import (
     BudgetItem,
     BudgetSelection,
@@ -104,7 +102,7 @@ class AssemblyLedger:
 
 @dataclass(frozen=True)
 class ContextAssembly:
-    generate_intent: GenerateIntent
+    generate_intent: GenerationIntent
     prompt_plan: PromptPlan
     history: tuple[HistoryTurn, ...]
     context_blocks: tuple[str, ...]
@@ -121,10 +119,7 @@ def assemble_chat_context(
     db: Session,
     *,
     run: ChatRun,
-    profile: LlmProfile,
-    reasoning: ReasoningLevel,
-    max_output_tokens: int,
-    tools: tuple[CanonicalTool, ...],
+    profile: str,
 ) -> ContextAssembly:
     """Assemble the provider-neutral chat request for a durable chat run."""
 
@@ -254,9 +249,10 @@ def assemble_chat_context(
         text=user_message.content,
         source_refs=[{"type": "message", "id": str(user_message.id)}],
     )
-    row = resolve_target(profile.target)
+    policy = generation_policy.chat_policy(profile)
+    max_output_tokens = generation_policy.MODEL_BOUNDS[policy.model].model_output_tokens
     budget = build_prompt_budget(
-        max_context_tokens=row.context_window,
+        max_context_tokens=generation_policy.MODEL_BOUNDS[policy.model].context_tokens,
         max_output_tokens=max_output_tokens,
     )
     budget_items: list[BudgetItem] = [
@@ -342,13 +338,7 @@ def assemble_chat_context(
     estimated_input_tokens = validate_prompt_plan_budget(prompt_plan, budget.input_budget_tokens)
     validate_prompt_size(prompt_plan)
 
-    generate_intent = build_generate_intent_from_plan(
-        plan=prompt_plan,
-        target=profile.target,
-        max_output_tokens=max_output_tokens,
-        reasoning=reasoning,
-        tools=tools,
-    )
+    generate_intent = _generation_intent_from_plan(prompt_plan)
     included_context_refs: list[Mapping[str, object]] = [
         metadata for key, _text, metadata in mandatory_blocks if key in included_keys
     ]
@@ -372,6 +362,22 @@ def assemble_chat_context(
         retrieval_result_events=tuple(retrieval_result_events),
         ledger=ledger,
         attached_citations=attached_citations,
+    )
+
+
+def _generation_intent_from_plan(plan: PromptPlan) -> GenerationIntent:
+    """Lower the persisted prompt plan to the app-owned wire intent."""
+    if not plan.turns or plan.turns[0].role != "system":
+        raise AssertionError("chat prompt plan must begin with system instructions")
+    instructions = "\n\n".join(block.text for block in plan.turns[0].blocks)
+    input_text = "\n\n".join(
+        f"<{turn.role}>\n" + "\n".join(block.text for block in turn.blocks)
+        for turn in plan.turns[1:]
+    )
+    return GenerationIntent(
+        instructions=instructions,
+        input=input_text,
+        output=TextOutput(),
     )
 
 

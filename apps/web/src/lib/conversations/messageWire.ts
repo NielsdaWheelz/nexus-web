@@ -145,6 +145,15 @@ export function decodeToolProjectionFields(raw: unknown): ToolProjectionFields {
     throw new Error("Invalid tool projection: tagged field must be null");
   }
   if (
+    recordKind === "current_execution" &&
+    providerWireName !== null &&
+    providerWireName !== canonicalToolId
+  ) {
+    throw new Error(
+      "Invalid tool projection: current wire name differs from canonical identity",
+    );
+  }
+  if (
     (recordKind === "attached_context" && resultKind !== "attached_context") ||
     (recordKind === "rejected_provider_call" &&
       resultKind !== "rejected_provider_call") ||

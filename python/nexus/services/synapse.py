@@ -45,9 +45,12 @@ from nexus.jobs.queue import (
     JobExecutionContext,
     JobRow,
     RescheduleRequested,
+    current_dead_job_for_payload,
     enqueue_unique_job,
     get_job,
     lock_running_job_claim,
+    replace_dead_job_payload,
+    requeue_dead_job,
 )
 from nexus.logging import get_logger
 from nexus.schemas.presence import Present, absent, present
@@ -72,10 +75,13 @@ from nexus.services.llm_execution import (
     GenerationDispatchAborted,
     GenerationExecutionRequest,
     GenerationUncertain,
+    GenerationUncertainResolution,
     JobGenerationJournal,
+    cancel_prepared_generation_without_dispatch_in_current_transaction,
     execute_generation,
+    prove_uncertain_generation_not_dispatched_in_current_transaction,
 )
-from nexus.services.llm_ledger import LlmCallOwner
+from nexus.services.llm_ledger import LlmCallOwner, lock_generation_owner_in_current_transaction
 from nexus.services.media_intelligence import NotReady, get_current
 from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.resource_graph.connections import query_connections
@@ -162,8 +168,21 @@ class _CompletedSynapseFailure(BaseModel):
     error_detail: str | None = None
 
 
+class _CompletedSynapseSkipped(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    outcome: Literal["skipped"] = "skipped"
+    reason: Literal[
+        "disabled",
+        "source_missing",
+        "dossier_unavailable",
+        "input_changed",
+        "pre_dispatch_aborted",
+    ]
+
+
 type _CompletedSynapse = Annotated[
-    _CompletedSynapseSuccess | _CompletedSynapseFailure,
+    _CompletedSynapseSuccess | _CompletedSynapseFailure | _CompletedSynapseSkipped,
     Field(discriminator="outcome"),
 ]
 _COMPLETED_SYNAPSE_ADAPTER: TypeAdapter[_CompletedSynapse] = TypeAdapter(_CompletedSynapse)
@@ -280,15 +299,53 @@ def _apply_completed_synapse(
     ref: ResourceRef,
     context: JobExecutionContext,
     completed: _CompletedSynapse,
+    preaccept_reason: str | None = None,
 ) -> ScanResult:
-    if isinstance(completed, _CompletedSynapseFailure):
+    if isinstance(completed, _CompletedSynapseFailure) and preaccept_reason is None:
         db.commit()
         return _generation_failure_result(completed.error_code)
 
+    terminal_result = _COMPLETED_SYNAPSE_ADAPTER.dump_json(completed).decode("utf-8")
+
     def publish() -> ScanResult:
+        if preaccept_reason is not None:
+            owner = LlmCallOwner(kind="synapse_scan", id=ref.id)
+            lock_generation_owner_in_current_transaction(db, owner)
+            _lock_synapse_source_for_reconciliation(db, user_id=user_id, ref=ref)
         if not lock_running_job_claim(db, context=context):
             db.rollback()
             return ScanResult("skipped")
+        if preaccept_reason is not None:
+            owner = LlmCallOwner(kind="synapse_scan", id=ref.id)
+            job = get_job(db, context.job_id)
+            if job is None:
+                raise AssertionError(f"synapse job {context.job_id} disappeared at cancellation")
+            current = step_journal.read_step_states(job).get(_SYNTHESIS_STEP_PATH)
+            if current is None or current.dispatch_phase is not step_journal.Prepared:
+                raise AssertionError("synapse cancellation requires the Prepared checkpoint")
+            next_state = cancel_prepared_generation_without_dispatch_in_current_transaction(
+                db,
+                owner=owner,
+                state=current,
+                terminal_result=terminal_result,
+                reason=preaccept_reason,
+            )
+            if not step_journal.checkpoint_step_state(
+                db,
+                ctx=context,
+                job=job,
+                step_path=_SYNTHESIS_STEP_PATH,
+                state=next_state,
+            ):
+                raise GenerationUncertain(
+                    f"synapse generation {current.generation_id} lost its claim at cancellation"
+                )
+        if isinstance(completed, _CompletedSynapseSkipped):
+            db.commit()
+            return ScanResult("skipped")
+        if isinstance(completed, _CompletedSynapseFailure):
+            db.commit()
+            return _generation_failure_result(completed.error_code)
         try:
             assert_ref_visible(db, viewer_id=user_id, ref=ref)
         except NotFoundError:
@@ -332,6 +389,94 @@ def _apply_completed_synapse(
 
 
 # ---------- public contract -------------------------------------------------
+
+
+def reconcile_uncertain_synapse_generation(
+    db: Session,
+    *,
+    user_id: UUID,
+    ref: ResourceRef,
+    resolution: GenerationUncertainResolution,
+) -> None:
+    """Return one suspended Synapse generation to Prepared and requeue it.
+
+    A scan stores its immutable generation fingerprint but not the dossier,
+    retrieval result, or candidate list that made up its original prompt.
+    Those projections are intentionally mutable, so a recovered host terminal
+    cannot be attached safely.  Prove-not-dispatched remains fully durable.
+    """
+
+    if not isinstance(resolution, step_journal.ProveNotDispatched):
+        raise ValueError(
+            "synapse generation attachment requires durable dossier and candidate facts, which are absent"
+        )
+
+    def op() -> None:
+        owner = LlmCallOwner(kind="synapse_scan", id=ref.id)
+        # Owner advisory lock precedes the source object and the dead job.
+        lock_generation_owner_in_current_transaction(db, owner)
+        _lock_synapse_source_for_reconciliation(db, user_id=user_id, ref=ref)
+        job = current_dead_job_for_payload(
+            db,
+            kind="synapse_scan",
+            expected_payload_match={"user_id": str(user_id), "ref": ref.uri},
+        )
+        if job is None:
+            raise ValueError("synapse source has no suspended generation job")
+        state = step_journal.read_step_states(job).get(_SYNTHESIS_STEP_PATH)
+        if state is None or state.dispatch_phase is not step_journal.Uncertain:
+            raise ValueError("synapse generation is not uncertain")
+        expected_generation_id = step_journal.stable_generation_id(job.id, _SYNTHESIS_STEP_PATH)
+        if state.generation_id != expected_generation_id:
+            raise AssertionError("synapse reconciliation generation identity changed")
+        if not isinstance(state.request_fingerprint, Present):
+            raise AssertionError("synapse reconciliation has no request fingerprint")
+        next_state = prove_uncertain_generation_not_dispatched_in_current_transaction(
+            db,
+            owner=owner,
+            state=state,
+        )
+        payload = step_journal.payload_with_step_state(
+            job.payload,
+            step_path=_SYNTHESIS_STEP_PATH,
+            state=next_state,
+        )
+        if not replace_dead_job_payload(db, job_id=job.id, payload=payload):
+            raise AssertionError("suspended synapse job changed while locked")
+        if not requeue_dead_job(db, job_id=job.id):
+            raise AssertionError("suspended synapse job could not be requeued")
+        db.commit()
+
+    retry_serializable(db, "reconcile_uncertain_synapse_generation", op)
+
+
+def _lock_synapse_source_for_reconciliation(
+    db: Session,
+    *,
+    user_id: UUID,
+    ref: ResourceRef,
+) -> None:
+    """Lock the concrete scan source without treating its current text as input."""
+
+    match ref.scheme:
+        case "media":
+            db.scalar(select(Media.id).where(Media.id == ref.id).with_for_update())
+        case "page":
+            db.scalar(select(Page.id).where(Page.id == ref.id).with_for_update())
+        case "note_block":
+            db.scalar(
+                select(NoteBlock.id)
+                .where(NoteBlock.id == ref.id, NoteBlock.user_id == user_id)
+                .with_for_update()
+            )
+        case "highlight":
+            db.scalar(
+                select(Highlight.id)
+                .where(Highlight.id == ref.id, Highlight.user_id == user_id)
+                .with_for_update()
+            )
+        case _:
+            raise AssertionError("synapse reconciliation has an unsupported source scheme")
 
 
 def queue_synapse_scan(db: Session, *, user_id: UUID, ref: ResourceRef, reason: str) -> bool:
@@ -454,11 +599,31 @@ async def run_synapse_scan(
 
     if not get_settings().synapse_enabled:
         logger.info("synapse_scan_skipped", ref=ref.uri, reason="disabled")
+        if state is not None:
+            db.rollback()
+            return _apply_completed_synapse(
+                db,
+                user_id=user_id,
+                ref=ref,
+                context=context,
+                completed=_CompletedSynapseSkipped(reason="disabled"),
+                preaccept_reason="synapse disabled before dispatch",
+            )
         return ScanResult("skipped")
     try:
         assert_ref_visible(db, viewer_id=user_id, ref=ref)
     except NotFoundError:
         logger.info("synapse_scan_skipped", ref=ref.uri, reason="source_missing")
+        if state is not None:
+            db.rollback()
+            return _apply_completed_synapse(
+                db,
+                user_id=user_id,
+                ref=ref,
+                context=context,
+                completed=_CompletedSynapseSkipped(reason="source_missing"),
+                preaccept_reason="synapse source disappeared before dispatch",
+            )
         return ScanResult("skipped")
 
     db.commit()
@@ -473,6 +638,16 @@ async def run_synapse_scan(
         dossier = _build_dossier(db, user_id=user_id, ref=ref)
         if dossier is None:
             logger.info("synapse_scan_skipped", ref=ref.uri, reason="dossier_unavailable")
+            if state is not None:
+                db.rollback()
+                return _apply_completed_synapse(
+                    db,
+                    user_id=user_id,
+                    ref=ref,
+                    context=context,
+                    completed=_CompletedSynapseSkipped(reason="dossier_unavailable"),
+                    preaccept_reason="synapse dossier unavailable before dispatch",
+                )
             return ScanResult("skipped")
 
         # Close the dossier read transaction before semantic retrieval crosses
@@ -498,12 +673,19 @@ async def run_synapse_scan(
         )
         if not candidates:
             # Current-only (D6): the engine currently sees nothing.
+            if state is not None:
+                db.rollback()
             return _apply_completed_synapse(
                 db,
                 user_id=user_id,
                 ref=ref,
                 context=context,
                 completed=_CompletedSynapseSuccess(edges=()),
+                preaccept_reason=(
+                    "synapse candidate set became empty before dispatch"
+                    if state is not None
+                    else None
+                ),
             )
 
         user_content = _build_synapse_user_content(dossier.text, candidates)
@@ -537,9 +719,15 @@ async def run_synapse_scan(
         elif not isinstance(state.request_fingerprint, Present):
             raise AssertionError("Prepared synapse generation has no fingerprint")
         elif state.request_fingerprint.value != fingerprint:
-            raise AssertionError("Prepared synapse generation input changed")
-        else:
-            db.commit()
+            db.rollback()
+            return _apply_completed_synapse(
+                db,
+                user_id=user_id,
+                ref=ref,
+                context=context,
+                completed=_CompletedSynapseSkipped(reason="input_changed"),
+                preaccept_reason="synapse input changed before dispatch",
+            )
 
         def lock_dispatch(dispatch_db: Session) -> JobRow | None:
             try:
@@ -548,6 +736,9 @@ async def run_synapse_scan(
                 return None
             return get_job(dispatch_db, context.job_id)
 
+        # A first dispatch reloads the prepared job; a replay may retain an earlier
+        # read snapshot. Neither may cross the generation host I/O boundary.
+        db.commit()
         try:
             execution_result = await execute_generation(
                 GenerationExecutionRequest(
@@ -571,7 +762,14 @@ async def run_synapse_scan(
                 encode_preaccept_failure=_encode_synapse_preaccept_failure,
             )
         except GenerationDispatchAborted:
-            return ScanResult("skipped")
+            return _apply_completed_synapse(
+                db,
+                user_id=user_id,
+                ref=ref,
+                context=context,
+                completed=_CompletedSynapseSkipped(reason="pre_dispatch_aborted"),
+                preaccept_reason="synapse dispatch invalidated before acceptance",
+            )
         if isinstance(execution_result, RescheduleRequested):
             return execution_result
         if not isinstance(execution_result, CompletedGeneration):

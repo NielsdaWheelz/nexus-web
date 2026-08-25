@@ -172,13 +172,6 @@ function oracleRetryErrorMessage(error: unknown): FeedbackContent {
         message: "Wait a moment, then retry.",
         requestId: error.requestId,
       };
-    case "E_TOKEN_BUDGET_EXCEEDED":
-      return {
-        tone: "Danger",
-        title: "The retry couldn’t begin",
-        message: "The platform AI allowance has been reached.",
-        requestId: error.requestId,
-      };
     default:
       throw error;
   }
@@ -487,20 +480,66 @@ function FleuronBreak() {
   );
 }
 
-function oracleFailureFeedback(errorCode: string | null): FeedbackContent {
+export type OracleGenerationFailureCode =
+  | "auth"
+  | "quota"
+  | "timeout"
+  | "output_limit"
+  | "invalid_output"
+  | "policy_violation"
+  | "runtime_unavailable"
+  | "capacity_unavailable"
+  | "context_too_large"
+  | "defect"
+  | "E_ORACLE_CORPUS_NOT_READY"
+  | "E_APP_SEARCH_FAILED"
+  | "E_INTERNAL"
+  | "E_RATE_LIMITED";
+
+export function oracleFailureFeedback(errorCode: string | null): FeedbackContent {
   switch (errorCode) {
-    case "E_BILLING_REQUIRED":
+    case "auth":
       return {
         tone: "Danger",
         title: "The reading could not finish.",
-        message: "Platform model access requires an AI tier. Upgrade to continue.",
+        message: "The reading service could not authenticate. Please try again later.",
       };
-    case "E_TOKEN_BUDGET_EXCEEDED":
-    case "budget_exceeded":
+    case "quota":
       return {
         tone: "Danger",
         title: "The reading could not finish.",
-        message: "The platform AI allowance has been reached.",
+        message: "The reading service has reached its usage limit. Please try again later.",
+      };
+    case "timeout":
+      return {
+        tone: "Danger",
+        title: "The reading could not finish.",
+        message: "The reading took too long to complete. Please start a new reading.",
+      };
+    case "output_limit":
+      return {
+        tone: "Danger",
+        title: "The reading could not finish.",
+        message: "The reading was too long to complete. Please start a new reading.",
+      };
+    case "invalid_output":
+    case "policy_violation":
+      return {
+        tone: "Danger",
+        title: "The reading could not finish.",
+        message: "The reading could not be completed. Please start a new reading.",
+      };
+    case "runtime_unavailable":
+      return {
+        tone: "Danger",
+        title: "The reading could not finish.",
+        message: "The reading service is temporarily unavailable. Please try again later.",
+      };
+    case "capacity_unavailable":
+      return {
+        tone: "Danger",
+        title: "The reading could not finish.",
+        message: "The reading service is busy. Please try again shortly.",
       };
     case "context_too_large":
       return {
@@ -516,18 +555,18 @@ function oracleFailureFeedback(errorCode: string | null): FeedbackContent {
         title: "The reading could not finish.",
         message: "The oracle’s source material is not ready. Start a new reading later.",
       };
-    case "invalid_structured_output":
-    case "refused":
-    case "incomplete":
-    case "cancelled":
-    case "rate_limited":
-    case "timeout":
-    case "provider_unavailable":
-    case "stream_interrupted":
+    case "E_RATE_LIMITED":
+      return {
+        tone: "Danger",
+        title: "The oracle is busy.",
+        message: "Wait a moment, then start a new reading.",
+      };
+    case "defect":
+    case "E_INTERNAL":
       return {
         tone: "Danger",
         title: "The reading could not finish.",
-        message: "The reading could not be completed. Please start a new reading.",
+        message: "The reading could not be completed. Please try again later.",
       };
     default:
       throw new Error(

@@ -76,7 +76,8 @@ class PriorityRiskId(StrEnum):
     READING_PROGRESS = "reading-progress"
     CITATION_PROVENANCE_IDENTITY = "citation-provenance-identity"
     DURABLE_JOB_REPLAY = "durable-job-replay"
-    NATIVE_AGENT_HOST = "native-agent-host"
+    GENERATION_RECONCILIATION = "generation-reconciliation"
+    CODEX_GENERATION_HOST = "codex-generation-host"
     DATABASE_OBJECT_CONVERGENCE = "database-object-convergence"
     DOCUMENT_IMPORT_RELIABILITY = "document-import-reliability"
     LLM_TOOL_SAFETY = "llm-tool-safety"
@@ -91,7 +92,7 @@ class PriorityRiskId(StrEnum):
 
 
 PRIORITY_RISK_FLOOR = frozenset(PriorityRiskId)
-PRIORITY_RISK_OWNERSHIP_SHA256 = "dcda0609aba842c4a35edf36f9500b9ec35d6029c4cec66e44417bdafbecfa16"
+PRIORITY_RISK_OWNERSHIP_SHA256 = "947fffe781abe93d8f7a40b947f25fde6231e26b3593a0b379cc0c8d11231118"
 
 
 class ResourceKind(StrEnum):

@@ -19,6 +19,18 @@ from apps.codex_agent.capacity import (
     CapacityPaths,
     capacity_is_available,
 )
+from apps.codex_agent.credential_state import (
+    CredentialFileIdentity,
+    CredentialStateUnavailable,
+    EphemeralRuntimePaths,
+    create_ephemeral_runtime_paths,
+    enrolled_auth_identity,
+    link_runtime_auth,
+    remove_ephemeral_runtime_paths,
+    sync_enrolled_auth_file,
+    validate_enrolled_auth_file,
+    validate_runtime_auth_link,
+)
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 from provider_runtime import Absent, Present, TokenUsage
@@ -60,6 +72,7 @@ from provider_runtime.agent_runtime import (
 )
 from provider_runtime.types import CancelSignal
 from pydantic import ValidationError
+from starlette.types import Receive, Scope, Send
 
 from nexus.services import generation_policy
 from nexus.services.codex_generation_contract import (
@@ -91,14 +104,12 @@ from nexus.services.codex_generation_operations import (
 
 _SDK_DISTRIBUTION = "openai-codex"
 _RUNTIME_DISTRIBUTION = "openai-codex-cli-bin"
+_PINNED_CODEX_VERSION = "0.144.4"
 _SYNTHESIS_TEXT_RUN_BYTES = 32 * 1024
 CODEX_AGENT_HOST_REQUEST_DRAIN_SECONDS = 10.0
 CODEX_AGENT_HOST_TEARDOWN_DEADLINE_SECONDS = float(
     max(
-        [
-            policy.runtime_close_timeout_seconds
-            for policy in generation_policy.OPERATIONS.values()
-        ]
+        [policy.runtime_close_timeout_seconds for policy in generation_policy.OPERATIONS.values()]
         + [
             generation_policy.chat_policy(profile).runtime_close_timeout_seconds
             for profile in generation_policy.CHAT_PROFILES
@@ -182,6 +193,16 @@ class TurnLifecycle:
     def __init__(self) -> None:
         self._active: asyncio.Task[None] | None = None
         self._control: _TurnControl | None = None
+        self._fatal_reason: str | None = None
+
+    @property
+    def ready(self) -> bool:
+        return self._fatal_reason is None
+
+    def fail(self, reason: str) -> None:
+        if not reason:
+            raise ValueError("Codex generation host fatal reason must be non-empty")
+        self._fatal_reason = reason
 
     def start(
         self,
@@ -213,6 +234,30 @@ class TurnLifecycle:
         return active in done
 
 
+class _OwnedStreamingResponse(StreamingResponse):
+    """Bind ASGI response-start/send failure to the independent turn owner."""
+
+    def __init__(
+        self,
+        relay: asyncio.Queue[_RelayedFrame],
+        owner: asyncio.Task[None],
+        abandoned: asyncio.Event,
+    ) -> None:
+        self._owner = owner
+        self._abandoned = abandoned
+        super().__init__(
+            _relay_frames(relay, owner, abandoned),
+            media_type="application/x-ndjson",
+        )
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self._abandoned.set()
+            await _cancel_and_wait_owner(self._owner)
+
+
 def turn_lifecycle(app: FastAPI) -> TurnLifecycle:
     lifecycle = app.state.turn_lifecycle
     if not isinstance(lifecycle, TurnLifecycle):
@@ -223,20 +268,26 @@ def turn_lifecycle(app: FastAPI) -> TurnLifecycle:
 def create_codex_agent_app(
     *,
     runtime_factory: AgentRuntimeFactory,
-    working_directory: Path,
-    state_root_base: Path,
+    working_directory_root: Path,
+    credential_file: Path,
     versions: RuntimeVersions,
     mcp_origin: str | None = None,
     chat_network_attested: bool = False,
     capacity_paths: CapacityPaths = PRODUCTION_CAPACITY_PATHS,
 ) -> FastAPI:
     generation_policy.validate_policy()
+    if versions != RuntimeVersions(
+        sdk=_PINNED_CODEX_VERSION,
+        runtime=_PINNED_CODEX_VERSION,
+    ):
+        raise ValueError("Codex credential persistence is qualified only for pinned 0.144.4")
     _validate_host_configuration(
-        working_directory=working_directory,
-        state_root_base=state_root_base,
+        working_directory_root=working_directory_root,
+        credential_file=credential_file,
         mcp_origin=mcp_origin,
         chat_network_attested=chat_network_attested,
     )
+    validate_enrolled_auth_file(credential_file)
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     slot = _TurnSlot()
     lifecycle = TurnLifecycle()
@@ -244,6 +295,8 @@ def create_codex_agent_app(
 
     @app.get("/health", response_model=GenerationHealth)
     async def health() -> GenerationHealth:
+        if not lifecycle.ready:
+            raise HTTPException(status_code=503, detail="Codex generation host is not ready")
         return GenerationHealth(
             policy_revision=generation_policy.POLICY_REVISION,
             sdk_version=versions.sdk,
@@ -253,18 +306,14 @@ def create_codex_agent_app(
     @app.post("/v2/generations")
     async def generation(request: Request) -> Response:
         if _content_type(request) != "application/json":
-            raise HTTPException(
-                status_code=415, detail="content type must be application/json"
-            )
+            raise HTTPException(status_code=415, detail="content type must be application/json")
         if request.headers.get("accept", "").strip().lower() != "application/x-ndjson":
-            raise HTTPException(
-                status_code=406, detail="accept must be application/x-ndjson"
-            )
+            raise HTTPException(status_code=406, detail="accept must be application/x-ndjson")
         command = await _read_command(request)
         if isinstance(command.operation, ChatOperation) and not chat_network_attested:
-            raise HTTPException(
-                status_code=422, detail="ChatTools network is not attested"
-            )
+            raise HTTPException(status_code=422, detail="ChatTools network is not attested")
+        if not lifecycle.ready:
+            raise HTTPException(status_code=503, detail="Codex generation host is not ready")
 
         if not slot.try_acquire():
             return _capacity_rejection()
@@ -272,28 +321,65 @@ def create_codex_agent_app(
             slot.release()
             return _capacity_rejection()
 
+        try:
+            runtime_paths = create_ephemeral_runtime_paths(
+                working_directory_root,
+                command.request_id.hex,
+            )
+        except Exception:
+            slot.release()
+            raise
         accepted_at = _utc_now()
         control = _TurnControl(command.request_id, asyncio.Event())
-        relay: asyncio.Queue[_RelayedFrame] = asyncio.Queue()
-        owner = lifecycle.start(
+        relay: asyncio.Queue[_RelayedFrame] = asyncio.Queue(maxsize=1)
+        owner_started = asyncio.Event()
+        relay_abandoned = asyncio.Event()
+        turn = _own_admitted_turn(
+            command,
+            accepted_at,
             control,
-            _own_admitted_turn(
-                command,
-                accepted_at,
-                control,
-                relay,
-                slot,
-                lifecycle,
-                runtime_factory=runtime_factory,
-                working_directory=working_directory,
-                state_root_base=state_root_base,
-                mcp_origin=mcp_origin,
-                versions=versions,
-            ),
+            relay,
+            slot,
+            lifecycle,
+            owner_started,
+            relay_abandoned,
+            runtime_factory=runtime_factory,
+            runtime_paths=runtime_paths,
+            working_directory_root=working_directory_root,
+            credential_file=credential_file,
+            mcp_origin=mcp_origin,
+            versions=versions,
         )
-        return StreamingResponse(
-            _relay_frames(relay, owner), media_type="application/x-ndjson"
-        )
+        try:
+            owner = lifecycle.start(control, turn)
+        except BaseException:
+            turn.close()
+            remove_ephemeral_runtime_paths(
+                runtime_paths,
+                root=working_directory_root,
+            )
+            slot.release()
+            raise
+        try:
+            await owner_started.wait()
+        except BaseException:
+            relay_abandoned.set()
+            await _cancel_and_wait_owner(owner)
+            if not owner_started.is_set():
+                _finish_unstarted_turn(
+                    control,
+                    runtime_paths,
+                    slot,
+                    lifecycle,
+                    working_directory_root=working_directory_root,
+                )
+            raise
+        try:
+            return _OwnedStreamingResponse(relay, owner, relay_abandoned)
+        except BaseException:
+            relay_abandoned.set()
+            await _cancel_and_wait_owner(owner)
+            raise
 
     @app.post("/v2/generations/{request_id}/cancel")
     async def cancel(request_id: UUID, request: Request) -> Response:
@@ -312,15 +398,15 @@ def create_codex_agent_app(
 
 def _validate_host_configuration(
     *,
-    working_directory: Path,
-    state_root_base: Path,
+    working_directory_root: Path,
+    credential_file: Path,
     mcp_origin: str | None,
     chat_network_attested: bool,
 ) -> None:
-    if not working_directory.is_absolute():
-        raise ValueError("Codex generation working directory must be absolute")
-    if not state_root_base.is_absolute():
-        raise ValueError("Codex generation state root must be absolute")
+    if not working_directory_root.is_absolute():
+        raise ValueError("Codex generation working-directory root must be absolute")
+    if not credential_file.is_absolute():
+        raise ValueError("Codex generation credential file must be absolute")
     if type(chat_network_attested) is not bool:
         raise ValueError("chat_network_attested must be bool")
     if not chat_network_attested:
@@ -338,9 +424,7 @@ def _validate_host_configuration(
         or bool(parsed.fragment)
         or not _is_public_dns_hostname(parsed.hostname)
     ):
-        raise ValueError(
-            "attested ChatTools requires the canonical public HTTPS MCP endpoint"
-        )
+        raise ValueError("attested ChatTools requires the canonical public HTTPS MCP endpoint")
 
 
 def _is_public_dns_hostname(hostname: str) -> bool:
@@ -372,39 +456,121 @@ async def _own_admitted_turn(
     relay: asyncio.Queue[_RelayedFrame],
     slot: _TurnSlot,
     lifecycle: TurnLifecycle,
+    owner_started: asyncio.Event,
+    relay_abandoned: asyncio.Event,
     *,
     runtime_factory: AgentRuntimeFactory,
-    working_directory: Path,
-    state_root_base: Path,
+    runtime_paths: EphemeralRuntimePaths,
+    working_directory_root: Path,
+    credential_file: Path,
     mcp_origin: str | None,
     versions: RuntimeVersions,
 ) -> None:
+    credential_identity: CredentialFileIdentity | None = None
+    runtime_close_unproven = asyncio.Event()
     try:
+        owner_started.set()
+        credential_identity = enrolled_auth_identity(credential_file)
         async for line in _run_turn(
             command,
             accepted_at,
             control,
             runtime_factory=runtime_factory,
-            working_directory=working_directory,
-            state_root_base=state_root_base,
+            runtime_paths=runtime_paths,
+            credential_file=credential_file,
+            credential_identity=credential_identity,
+            runtime_close_unproven=runtime_close_unproven,
             mcp_origin=mcp_origin,
             versions=versions,
         ):
-            relay.put_nowait(line)
+            await relay.put(line)
     finally:
-        slot.release()
-        lifecycle.finish(control)
-        relay.put_nowait(None)
+        if runtime_close_unproven.is_set():
+            lifecycle.fail("turn_runtime_close_unproven")
+        try:
+            try:
+                if credential_identity is None:
+                    lifecycle.fail("turn_credential_state_invalid")
+                else:
+                    validate_runtime_auth_link(
+                        runtime_paths.state_root_base / "codex" / "codex-personal" / "auth.json",
+                        credential_file,
+                    )
+                    sync_enrolled_auth_file(
+                        credential_file,
+                        expected_identity=credential_identity,
+                    )
+            except BaseException:
+                lifecycle.fail("turn_credential_state_invalid")
+                raise
+        finally:
+            try:
+                try:
+                    remove_ephemeral_runtime_paths(
+                        runtime_paths,
+                        root=working_directory_root,
+                    )
+                except BaseException:
+                    lifecycle.fail("turn_workspace_cleanup_failed")
+                    raise
+            finally:
+                try:
+                    slot.release()
+                finally:
+                    try:
+                        lifecycle.finish(control)
+                    finally:
+                        if not relay_abandoned.is_set():
+                            await relay.put(None)
 
 
 async def _relay_frames(
-    relay: asyncio.Queue[_RelayedFrame], owner: asyncio.Task[None]
+    relay: asyncio.Queue[_RelayedFrame],
+    owner: asyncio.Task[None],
+    abandoned: asyncio.Event,
 ) -> AsyncIterator[bytes]:
     try:
         while (chunk := await relay.get()) is not None:
             yield chunk
+        await owner
     finally:
+        abandoned.set()
+        await _cancel_and_wait_owner(owner)
+
+
+async def _cancel_and_wait_owner(owner: asyncio.Task[None]) -> None:
+    if not owner.done():
         owner.cancel()
+    completion = asyncio.gather(owner, return_exceptions=True)
+    while not completion.done():
+        try:
+            await asyncio.shield(completion)
+        except asyncio.CancelledError:
+            continue
+    completion.result()
+
+
+def _finish_unstarted_turn(
+    control: _TurnControl,
+    runtime_paths: EphemeralRuntimePaths,
+    slot: _TurnSlot,
+    lifecycle: TurnLifecycle,
+    *,
+    working_directory_root: Path,
+) -> None:
+    try:
+        remove_ephemeral_runtime_paths(
+            runtime_paths,
+            root=working_directory_root,
+        )
+    except BaseException:
+        lifecycle.fail("turn_workspace_cleanup_failed")
+        raise
+    finally:
+        try:
+            slot.release()
+        finally:
+            lifecycle.finish(control)
 
 
 async def _read_command(request: Request) -> GenerationCommand:
@@ -417,15 +583,11 @@ async def _read_command(request: Request) -> GenerationCommand:
     async for chunk in request.stream():
         payload.extend(chunk)
         if len(payload) > MAX_COMMAND_BODY_BYTES:
-            raise HTTPException(
-                status_code=413, detail="command exceeds its byte bound"
-            )
+            raise HTTPException(status_code=413, detail="command exceeds its byte bound")
     try:
         return GenerationCommand.model_validate_json(bytes(payload))
     except ValidationError as error:
-        raise HTTPException(
-            status_code=422, detail="invalid generation command"
-        ) from error
+        raise HTTPException(status_code=422, detail="invalid generation command") from error
 
 
 async def _require_empty_body(request: Request) -> None:
@@ -433,15 +595,11 @@ async def _require_empty_body(request: Request) -> None:
         raise HTTPException(status_code=422, detail="control request body is forbidden")
     async for chunk in request.stream():
         if chunk:
-            raise HTTPException(
-                status_code=422, detail="control request body is forbidden"
-            )
+            raise HTTPException(status_code=422, detail="control request body is forbidden")
 
 
 def _capacity_rejection() -> Response:
-    return Response(
-        capacity_rejection_bytes(), status_code=503, media_type="application/json"
-    )
+    return Response(capacity_rejection_bytes(), status_code=503, media_type="application/json")
 
 
 class _StreamBudget:
@@ -476,8 +634,10 @@ async def _run_turn(
     control: _TurnControl,
     *,
     runtime_factory: AgentRuntimeFactory,
-    working_directory: Path,
-    state_root_base: Path,
+    runtime_paths: EphemeralRuntimePaths,
+    credential_file: Path,
+    credential_identity: CredentialFileIdentity,
+    runtime_close_unproven: asyncio.Event,
     mcp_origin: str | None,
     versions: RuntimeVersions,
 ) -> AsyncIterator[bytes]:
@@ -485,10 +645,12 @@ async def _run_turn(
     sequence = 0
     budget = _StreamBudget(command)
     runtime: AgentRuntimePort | None = None
+    runtime_auth_link: Path | None = None
     session: AgentSession | None = None
     operation: ResolvedCodexGeneration | None = None
     terminal: GenerationTerminal | None = None
     terminal_seen = False
+    credential_sync_failed = False
     synthesis_text: list[str] = []
     synthesis_text_bytes = 0
     secret_table: dict[str, str] = {}
@@ -501,17 +663,13 @@ async def _run_turn(
             profile_key="codex-personal",
             name=reference_name,
         )
-        secret_table[reference_name] = (
-            f"Bearer {command.tool_grant.token.get_secret_value()}"
-        )
+        secret_table[reference_name] = f"Bearer {command.tool_grant.token.get_secret_value()}"
 
     async def resolve_secret(name: str) -> str:
         try:
             return secret_table[name]
         except KeyError as error:
-            raise CredentialUnavailable(
-                "generation tool grant is unavailable"
-            ) from error
+            raise CredentialUnavailable("generation tool grant is unavailable") from error
 
     def serialize(event: GenerationEvent) -> bytes:
         return (
@@ -550,15 +708,16 @@ async def _run_turn(
         return [GenerationText(text=text)]
 
     try:
+        runtime_auth_link = link_runtime_auth(credential_file, runtime_paths)
         operation = resolve_codex_generation(
             command,
-            working_directory=working_directory,
+            working_directory=runtime_paths.working_directory,
             mcp_origin=mcp_origin,
             tool_credential=credential,
         )
         runtime = runtime_factory(
             AgentRuntimeConfig(
-                state_root_base=state_root_base,
+                state_root_base=runtime_paths.state_root_base,
                 max_turn_seconds=float(policy.turn_timeout_seconds),
                 secret_resolver=resolve_secret if credential is not None else None,
             )
@@ -601,9 +760,7 @@ async def _run_turn(
                         # Chat text is never held: each provider event is relayed now and
                         # split at the named byte run. Immediate event-granular relay is a
                         # strict implementation of the policy's maximum flush interval.
-                        maximum = (
-                            policy.stream.text_flush_bytes or _SYNTHESIS_TEXT_RUN_BYTES
-                        )
+                        maximum = policy.stream.text_flush_bytes or _SYNTHESIS_TEXT_RUN_BYTES
                         for piece in _split_utf8(event.text, maximum):
                             for line in relay([GenerationText(text=piece)]):
                                 yield line
@@ -612,8 +769,7 @@ async def _run_turn(
                             piece_bytes = len(piece.encode())
                             if (
                                 synthesis_text
-                                and synthesis_text_bytes + piece_bytes
-                                > _SYNTHESIS_TEXT_RUN_BYTES
+                                and synthesis_text_bytes + piece_bytes > _SYNTHESIS_TEXT_RUN_BYTES
                             ):
                                 for line in relay(flush_synthesis_text()):
                                     yield line
@@ -642,9 +798,7 @@ async def _run_turn(
                         session=session,
                         accepted_at=accepted_at,
                         versions=versions,
-                        diagnostics=_diagnostics(
-                            "turn_stream", "forbidden capability event"
-                        ),
+                        diagnostics=_diagnostics("turn_stream", "forbidden capability event"),
                     )
                     break
                 if terminal is not None:
@@ -655,13 +809,19 @@ async def _run_turn(
                     session=session,
                     accepted_at=accepted_at,
                     versions=versions,
-                    diagnostics=_diagnostics(
-                        "turn_stream", "stream ended without terminal"
-                    ),
+                    diagnostics=_diagnostics("turn_stream", "stream ended without terminal"),
                 )
             elif terminal_seen:
                 for line in relay(flush_synthesis_text()):
                     yield line
+    except CredentialStateUnavailable:
+        terminal = _failed_terminal(
+            "credential_unavailable",
+            session=session,
+            accepted_at=accepted_at,
+            versions=versions,
+            diagnostics=_diagnostics("session_open", "credential linking failed"),
+        )
     except TurnNotStarted as error:
         terminal = _turn_not_started_terminal(
             error, session=session, accepted_at=accepted_at, versions=versions
@@ -691,38 +851,42 @@ async def _run_turn(
             diagnostics=_diagnostics("turn_stream", type(error).__name__),
         )
     finally:
-        try:
-            if runtime is not None:
-                close_task = asyncio.create_task(
-                    _bounded_runtime_close(
-                        runtime, float(policy.runtime_close_timeout_seconds)
-                    )
+        # A completed/interrupted turn has no authority to resolve another MCP
+        # request while its process tree is being reaped.
+        secret_table.clear()
+        if runtime is not None:
+            try:
+                await close_runtime_before_release(
+                    runtime,
+                    float(policy.runtime_close_timeout_seconds),
+                    runtime_close_unproven=runtime_close_unproven,
                 )
-                try:
-                    await asyncio.shield(close_task)
-                except asyncio.CancelledError:
-                    # The HTTP relay may disappear while the native process tree is still
-                    # closing. Finish cleanup before cancellation releases the slot.
-                    try:
-                        await close_task
-                    except Exception:
-                        # justify-ignore-error: the disconnected caller cannot observe a
-                        # terminal; the slot still waits for the attempted bounded close.
-                        pass
-                    raise
-                except Exception as error:
-                    if control.reason != "policy_violation":
-                        terminal = _failed_terminal(
-                            "runtime_defect",
-                            session=session,
-                            accepted_at=accepted_at,
-                            versions=versions,
-                            diagnostics=_diagnostics(
-                                "runtime_close", type(error).__name__
-                            ),
-                        )
-        finally:
-            secret_table.clear()
+            except Exception as error:
+                if control.reason != "policy_violation":
+                    terminal = _failed_terminal(
+                        "runtime_defect",
+                        session=session,
+                        accepted_at=accepted_at,
+                        versions=versions,
+                        diagnostics=_diagnostics("runtime_close", type(error).__name__),
+                    )
+
+    if runtime_auth_link is not None:
+        try:
+            validate_runtime_auth_link(runtime_auth_link, credential_file)
+            sync_enrolled_auth_file(
+                credential_file,
+                expected_identity=credential_identity,
+            )
+        except CredentialStateUnavailable as error:
+            credential_sync_failed = True
+            terminal = _failed_terminal(
+                "runtime_defect",
+                session=session,
+                accepted_at=accepted_at,
+                versions=versions,
+                diagnostics=_diagnostics("runtime_close", type(error).__name__),
+            )
 
     if control.reason == "policy_violation":
         terminal = _failed_terminal(
@@ -732,10 +896,8 @@ async def _run_turn(
             versions=versions,
             diagnostics=_diagnostics("turn_stream", "policy violation abort"),
         )
-    elif control.reason == "cancelled":
-        terminal = _cancelled_terminal(
-            session=session, accepted_at=accepted_at, versions=versions
-        )
+    elif control.reason == "cancelled" and not credential_sync_failed:
+        terminal = _cancelled_terminal(session=session, accepted_at=accepted_at, versions=versions)
     if terminal is None:
         terminal = _failed_terminal(
             "runtime_defect",
@@ -757,21 +919,45 @@ async def _run_turn(
     yield line
 
 
-async def _bounded_runtime_close(
-    runtime: AgentRuntimePort, timeout_seconds: float
-) -> None:
+async def _bounded_runtime_close(runtime: AgentRuntimePort, timeout_seconds: float) -> None:
     async with asyncio.timeout(timeout_seconds):
         await runtime.close()
 
 
-def _tool_is_legal(
-    event: AgentToolUse, capability: generation_policy.Capability
-) -> bool:
+async def close_runtime_before_release(
+    runtime: AgentRuntimePort,
+    timeout_seconds: float,
+    *,
+    runtime_close_unproven: asyncio.Event,
+) -> None:
+    """Finish the bounded native close despite repeated caller cancellation."""
+
+    close_task = asyncio.create_task(_bounded_runtime_close(runtime, timeout_seconds))
+    try:
+        await asyncio.shield(close_task)
+    except asyncio.CancelledError as cancellation:
+        # Repeated ASGI cancellation must not reach the native close through an
+        # unshielded follow-up await and release the single admission slot early.
+        while not close_task.done():
+            try:
+                await asyncio.shield(close_task)
+            except asyncio.CancelledError:
+                continue
+        try:
+            close_task.result()
+        except BaseException as close_error:
+            runtime_close_unproven.set()
+            raise cancellation from close_error
+        raise cancellation
+    except BaseException:
+        runtime_close_unproven.set()
+        raise
+
+
+def _tool_is_legal(event: AgentToolUse, capability: generation_policy.Capability) -> bool:
     if capability != "ChatTools":
         return False
-    return event.name in {
-        f"{CHAT_MCP_SERVER_NAME}/{tool}" for tool in chat_mcp_allowed_tools()
-    }
+    return event.name in {f"{CHAT_MCP_SERVER_NAME}/{tool}" for tool in chat_mcp_allowed_tools()}
 
 
 def _event_to_wire(event: AgentEvent) -> GenerationEvent:
@@ -814,9 +1000,7 @@ def _terminal_to_wire(
                 session_ref=terminal.session_ref,
                 accepted_at=accepted_at,
                 versions=versions,
-                diagnostics=_diagnostics(
-                    "turn_stream", "structured output was not an object"
-                ),
+                diagnostics=_diagnostics("turn_stream", "structured output was not an object"),
             )
         structured_output = structured
     else:
@@ -828,7 +1012,7 @@ def _terminal_to_wire(
         structured_output=structured_output,
         session_ref=_session_ref(terminal.session_ref),
         usage=_optional_usage(terminal.usage),
-        diagnostics=_provider_terminal_diagnostics(terminal.status, failure),
+        diagnostics=_runtime_terminal_diagnostics(terminal.status, failure),
         accepted_at=accepted_at,
         sdk_version=versions.sdk,
         runtime_version=versions.runtime,
@@ -904,12 +1088,8 @@ def _turn_not_started_terminal(
     versions: RuntimeVersions,
 ) -> GenerationTerminal:
     if error.reason == "cancelled":
-        return _cancelled_terminal(
-            session=session, accepted_at=accepted_at, versions=versions
-        )
-    kind: FailureKind = (
-        "turn_timeout" if error.reason == "turn_timeout" else "runtime_defect"
-    )
+        return _cancelled_terminal(session=session, accepted_at=accepted_at, versions=versions)
+    kind: FailureKind = "turn_timeout" if error.reason == "turn_timeout" else "runtime_defect"
     return _failed_terminal(
         kind,
         session=session,
@@ -932,23 +1112,20 @@ def _runtime_error_kind(error: AgentRuntimeError) -> FailureKind:
         return "session_unavailable"
     if isinstance(
         error,
-        InvalidAgentRequest
-        | UnsupportedCapability
-        | McpConfigurationError
-        | ConcurrentTurn,
+        InvalidAgentRequest | UnsupportedCapability | McpConfigurationError | ConcurrentTurn,
     ):
         return "invalid_request"
     raise AssertionError("unmapped AgentRuntimeError")
 
 
-def _provider_terminal_diagnostics(
+def _runtime_terminal_diagnostics(
     status: Literal["succeeded", "failed", "cancelled"],
     failure: GenerationFailure | None,
 ) -> tuple[str, ...]:
     if status == "succeeded":
         return ()
     reason = failure.kind if failure is not None else status
-    return _diagnostics("turn_stream", f"provider terminal {reason}")
+    return _diagnostics("turn_stream", f"runtime terminal {reason}")
 
 
 def _diagnostics(phase: _HostPhase, reason: str) -> tuple[str, ...]:
@@ -1008,6 +1185,7 @@ __all__ = [
     "AgentRuntimePort",
     "RuntimeVersions",
     "TurnLifecycle",
+    "close_runtime_before_release",
     "create_codex_agent_app",
     "resolve_runtime_versions",
     "turn_lifecycle",

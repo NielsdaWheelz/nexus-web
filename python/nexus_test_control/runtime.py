@@ -516,11 +516,6 @@ def process_resource_identity(run_id: str, role: str) -> str:
     return f"nexus-process-{run_id}-{role}"
 
 
-def provider_fixture_identity(run_id: str) -> str:
-    require_run_id(run_id)
-    return f".nexus-test/runs/{run_id}/openai-provider"
-
-
 def template_fingerprint(
     repo_root: Path,
     *,
@@ -707,8 +702,6 @@ def _validate_resource(resource: Resource, run_id: str, scenario_id: str | None)
             raise RuntimeContractError("process must not carry scenario metadata")
         role = identity.removeprefix(f"nexus-process-{run_id}-")
         expected = process_resource_identity(run_id, role)
-    elif kind is ResourceKind.PROVIDER_FIXTURE:
-        expected = provider_fixture_identity(run_id)
     elif kind is ResourceKind.EXTENSION_PROFILE:
         if scenario_id is None:
             raise RuntimeContractError("extension profile requires scenario metadata")

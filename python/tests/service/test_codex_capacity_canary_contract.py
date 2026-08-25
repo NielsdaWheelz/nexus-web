@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.metadata
 import importlib.util
 import json
 import socketserver
@@ -19,8 +20,48 @@ import pytest
 from apps.codex_agent import capacity_canary
 from apps.codex_agent.capacity_canary import check
 
+from nexus.services import generation_policy
+
+
+def _write_health(handler: socketserver.StreamRequestHandler) -> None:
+    payload = json.dumps(
+        {
+            "schema_version": "nexus-generation-health.v2",
+            "status": "ready",
+            "backend": "codex",
+            "transport": "sdk",
+            "auth_profile": "codex-personal",
+            "command_schema_version": "nexus-generation-command.v2",
+            "policy_revision": generation_policy.POLICY_REVISION,
+            "sdk_version": importlib.metadata.version("openai-codex"),
+            "runtime_version": importlib.metadata.version("openai-codex-cli-bin"),
+        },
+        separators=(",", ":"),
+    ).encode()
+    handler.wfile.write(
+        b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+        + f"Content-Length: {len(payload)}\r\nConnection: close\r\n\r\n".encode()
+        + payload
+    )
+    handler.wfile.flush()
+
+
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _LINUX_SUN_PATH_BYTES = 108
+
+
+def _request_body(handler: socketserver.StreamRequestHandler, headers: dict[str, str]) -> bytes:
+    if "content-length" in headers:
+        return handler.rfile.read(int(headers["content-length"]))
+    assert headers.get("transfer-encoding") == "chunked"
+    body = bytearray()
+    while True:
+        size = int(handler.rfile.readline().split(b";", 1)[0], 16)
+        if size == 0:
+            handler.rfile.readline()
+            return bytes(body)
+        body.extend(handler.rfile.read(size))
+        assert handler.rfile.read(2) == b"\r\n"
 
 
 def _short_socket_path() -> Path:
@@ -41,9 +82,12 @@ def _empty_success_terminal_host(socket_path: Path) -> Iterator[None]:
                     break
                 name, value = line.decode("ascii").split(":", 1)
                 headers[name.casefold()] = value.strip()
-            command = json.loads(self.rfile.read(int(headers["content-length"])))
+            if request_line.startswith(b"GET /health "):
+                _write_health(self)
+                return
+            command = json.loads(_request_body(self, headers))
             frame = {
-                "schema_version": "nexus-agent-event.v1",
+                "schema_version": "nexus-generation-event.v2",
                 "request_id": command["request_id"],
                 "sequence": 0,
                 "event": {
@@ -70,6 +114,7 @@ def _empty_success_terminal_host(socket_path: Path) -> Iterator[None]:
                         "cache_write_input_tokens": None,
                     },
                     "diagnostics": [],
+                    "accepted_at": "2026-08-24T00:00:00.000000Z",
                     "sdk_version": "0.144.4",
                     "runtime_version": "0.144.4",
                 },
@@ -83,7 +128,7 @@ def _empty_success_terminal_host(socket_path: Path) -> Iterator[None]:
                 + payload
             )
             self.wfile.flush()
-            assert request_line.startswith(b"POST /v1/turns HTTP/")
+            assert request_line.startswith(b"POST /v2/generations HTTP/")
 
     class Server(socketserver.UnixStreamServer):
         allow_reuse_address = False
@@ -112,8 +157,11 @@ def _faulting_turn_host(socket_path: Path, *, mode: str) -> Iterator[None]:
                     break
                 name, value = line.decode("ascii").split(":", 1)
                 headers[name.casefold()] = value.strip()
-            self.rfile.read(int(headers["content-length"]))
-            assert request_line.startswith(b"POST /v1/turns HTTP/")
+            if request_line.startswith(b"GET /health "):
+                _write_health(self)
+                return
+            _request_body(self, headers)
+            assert request_line.startswith(b"POST /v2/generations HTTP/")
             if mode == "request_rejected":
                 self.wfile.write(
                     b"HTTP/1.1 422 Unprocessable Entity\r\n"
@@ -156,18 +204,22 @@ def _faulting_turn_host(socket_path: Path, *, mode: str) -> Iterator[None]:
             socket_path.unlink(missing_ok=True)
 
 
-def test_capacity_canary_rejects_succeeded_terminal_without_metadata_object() -> None:
-    """Risk: qualification promotes a host whose successful turns cannot publish metadata."""
+def test_capacity_canary_rejects_succeeded_terminal_without_bounded_text() -> None:
+    """Risk: qualification promotes a host whose successful turns cannot publish text."""
 
     socket_path = _short_socket_path()
     with _empty_success_terminal_host(socket_path):
         result, exit_code = asyncio.run(check(socket_path))
 
-    assert exit_code == 22, "invalid structured output authorized capacity qualification"
+    assert exit_code == 22, "empty successful text authorized capacity qualification"
     assert result["status"] == "failed"
     assert result["turns"] == [
         {
             "phase": "cold",
+            "operation": "dossier_library",
+            "plan_id": "thorough",
+            "plan_revision": "codex-generation.2026-08-24.2",
+            "capability": "Synthesis",
             "terminal_status": "succeeded",
             "failure_kind": None,
             "usage_present": True,
@@ -188,7 +240,7 @@ def test_capacity_canary_authors_preaccept_unavailable_as_retriable_transport(
 
     assert exit_code == 23
     assert result == {
-        "schema_version": "nexus-codex-capacity-canary.v1",
+        "schema_version": "nexus-codex-capacity-canary.v3",
         "status": "transport_retriable",
         "turns": [],
     }
@@ -203,7 +255,7 @@ def test_capacity_canary_authors_postaccept_loss_as_retriable_transport() -> Non
 
     assert exit_code == 23
     assert result == {
-        "schema_version": "nexus-codex-capacity-canary.v1",
+        "schema_version": "nexus-codex-capacity-canary.v3",
         "status": "transport_retriable",
         "turns": [],
     }
@@ -221,7 +273,7 @@ def test_capacity_canary_keeps_authored_or_protocol_defects_as_failed_breach(
 
     assert exit_code == 22
     assert result == {
-        "schema_version": "nexus-codex-capacity-canary.v1",
+        "schema_version": "nexus-codex-capacity-canary.v3",
         "status": "failed",
         "turns": [],
     }
@@ -247,7 +299,7 @@ def test_release_controller_mirrors_the_canary_exit_and_phase_contract() -> None
     assert capacity_canary.EXIT_CODES == {
         "passed": 0,
         "not_run": 20,
-        "provider_blocked": 21,
+        "subscription_blocked": 21,
         "failed": 22,
         "transport_retriable": 23,
     }

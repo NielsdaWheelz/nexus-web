@@ -140,6 +140,13 @@ def test_non_chat_operation_portfolio_is_exactly_the_policy_catalog() -> None:
     assert set(_COMMANDS) == set(generation_policy.OPERATIONS)
 
 
+def test_metadata_job_result_does_not_duplicate_generation_policy_facts() -> None:
+    assert enrich_metadata._job_result(enrich_metadata._success_result(["title"])) == {
+        "status": "success",
+        "fields": ["title"],
+    }
+
+
 def _successful_structured_terminal(payload: dict[str, object]) -> GenerationTerminal:
     return GenerationTerminal.model_validate(
         {

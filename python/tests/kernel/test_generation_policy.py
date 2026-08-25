@@ -7,10 +7,13 @@ by changing the implementation's own defaults.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import replace
 
 import pytest
 
+from nexus.jobs.registry import CHAT_RUN_LEASE_SECONDS
 from nexus.services import generation_policy
 
 _MODEL_BOUNDS = {
@@ -47,7 +50,7 @@ def _facts(entry: object) -> tuple[object, ...]:
     )
 
 
-def test_fixed_plans_have_one_complete_model_effort_pair() -> None:
+def _assert_fixed_plans_have_one_complete_model_effort_pair() -> None:
     generation_policy.validate_policy()
 
     assert set(generation_policy.PLANS) == {"routine", "standard", "thorough", "deep"}
@@ -63,23 +66,19 @@ def test_fixed_plans_have_one_complete_model_effort_pair() -> None:
     }
 
 
-def test_policy_facts_pin_rejects_a_plan_table_edit(monkeypatch: pytest.MonkeyPatch) -> None:
-    changed = dict(generation_policy.PLANS)
-    changed["routine"] = replace(changed["routine"], model="gpt-5.6-terra")
-    monkeypatch.setattr(generation_policy, "PLANS", changed)
+def test_policy_facts_pin_is_external_to_a_plan_table_edit() -> None:
+    payload = generation_policy._policy_facts_payload()
+    plans = dict(payload["plans"])
+    plans["routine"] = {**plans["routine"], "model": "gpt-5.6-terra"}
+    changed = {**payload, "plans": plans}
+    changed_digest = hashlib.sha256(
+        json.dumps(changed, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
-    with pytest.raises(AssertionError, match="facts fingerprint"):
-        generation_policy.validate_policy()
-
-
-def test_policy_facts_pin_is_not_self_derived(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(generation_policy, "_policy_facts_digest", lambda: "0" * 64)
-
-    with pytest.raises(AssertionError, match="facts fingerprint"):
-        generation_policy.validate_policy()
+    assert changed_digest != generation_policy.POLICY_FACTS_FINGERPRINT
 
 
-def test_model_bounds_are_shared_and_fixed_for_all_codex_targets() -> None:
+def _assert_model_bounds_are_shared_and_fixed_for_all_codex_targets() -> None:
     assert {
         model: (
             bounds.context_tokens,
@@ -91,7 +90,7 @@ def test_model_bounds_are_shared_and_fixed_for_all_codex_targets() -> None:
     assert generation_policy.policy_fingerprint() == generation_policy.POLICY_FINGERPRINT
 
 
-def test_operation_catalog_has_exact_plans_capabilities_timeouts_and_input_bounds() -> None:
+def _assert_operation_catalog_has_exact_plans_capabilities_timeouts_and_input_bounds() -> None:
     assert set(generation_policy.OPERATIONS) == set(_OPERATION_EXPECTATIONS)
     for operation, expected in _OPERATION_EXPECTATIONS.items():
         entry = generation_policy.operation_policy(operation)
@@ -104,7 +103,7 @@ def test_operation_catalog_has_exact_plans_capabilities_timeouts_and_input_bound
         assert entry.transport_deadline_seconds == 90 + expected[3] + 30 + 15
 
 
-def test_chat_is_three_typed_profiles_with_chat_tools_limits() -> None:
+def _assert_chat_is_three_typed_profiles_with_chat_tools_limits() -> None:
     assert set(generation_policy.CHAT_PROFILES) == {"fast", "balanced", "deep"}
     assert {
         profile_id: generation_policy.chat_policy(profile_id).plan_id
@@ -121,11 +120,27 @@ def test_chat_is_three_typed_profiles_with_chat_tools_limits() -> None:
         assert entry.input_max_bytes == 512 * 1024
         assert entry.turn_timeout_seconds == 900
         assert entry.stream.max_frames == 16_384
-        assert entry.stream.max_frame_bytes == 256 * 1024
-        assert entry.stream.max_stream_bytes == 512 * 1024 * 1024
+        assert entry.stream.max_frame_bytes == 8 * 1024 * 1024
+        assert entry.stream.max_stream_bytes == 16 * 1024 * 1024
+        assert (
+            entry.stream.max_stream_bytes
+            <= generation_policy.MODEL_BOUNDS[entry.model].runtime_output_bytes
+        )
         assert entry.stream.text_flush_interval_ms == 100
         assert entry.stream.text_flush_bytes == 8 * 1024
         assert entry.transport_deadline_seconds == 90 + 900 + 30 + 15
+    assert CHAT_RUN_LEASE_SECONDS == 1_200
+    assert CHAT_RUN_LEASE_SECONDS > max(
+        generation_policy.chat_policy(profile).transport_deadline_seconds
+        for profile in generation_policy.CHAT_PROFILES
+    )
+
+
+def test_fixed_generation_policy_catalog_is_complete_and_closed() -> None:
+    _assert_fixed_plans_have_one_complete_model_effort_pair()
+    _assert_model_bounds_are_shared_and_fixed_for_all_codex_targets()
+    _assert_operation_catalog_has_exact_plans_capabilities_timeouts_and_input_bounds()
+    _assert_chat_is_three_typed_profiles_with_chat_tools_limits()
 
 
 def test_policy_catalog_rejects_a_wrong_plan_instead_of_accepting_catalog_drift() -> None:

@@ -24,7 +24,6 @@ def compute_payload_hash(
     destination: ChatDestination,
     content: str,
     profile_id: str,
-    reasoning_option_id: str,
     reader_selection_key: ReaderSelectionKey | None,
 ) -> str:
     """Canonical send-idempotency digest over answer-determining identity only.
@@ -41,7 +40,6 @@ def compute_payload_hash(
         "destination": destination.model_dump(mode="json"),
         "content": content,
         "profile_id": profile_id,
-        "reasoning_option_id": reasoning_option_id,
         "reader_selection_key": (
             {
                 "media_id": str(reader_selection_key.media_id),
@@ -81,7 +79,6 @@ def compute_rerun_payload_hash(
         "source_user_branch_anchor": source_user_message.branch_anchor or {},
         "source_prompt_content": source_user_message.content,
         "source_profile_id": source_run.profile_id,
-        "source_reasoning_option_id": source_run.reasoning_option_id,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(encoded.encode()).hexdigest()
@@ -117,7 +114,6 @@ def compute_regeneration_payload_hash(
         "source_user_branch_anchor": source_user_message.branch_anchor or {},
         "source_prompt_content": source_user_message.content,
         "source_profile_id": source_run.profile_id,
-        "source_reasoning_option_id": source_run.reasoning_option_id,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(encoded.encode()).hexdigest()

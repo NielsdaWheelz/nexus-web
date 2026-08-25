@@ -18,7 +18,10 @@ from nexus.jobs.queue import (
     update_running_job_payload,
 )
 from nexus.logging import get_logger
-from nexus.services.dawn_write import generate_dawn_write
+from nexus.services.dawn_write import (
+    complete_prepared_dawn_write_without_dispatch,
+    generate_dawn_write,
+)
 from nexus.services.llm_execution import ExecutionRuntime
 from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
 
@@ -127,6 +130,20 @@ def dawn_write_sweep(*, context: JobExecutionContext) -> dict | RescheduleReques
     async def _handler(db: Session, runtime: ExecutionRuntime) -> dict | RescheduleRequested:
         settings = get_settings()
         if not settings.dawn_write_enabled:
+            job = get_job(db, context.job_id)
+            if job is None or job.kind != "dawn_write_job":
+                raise AssertionError("dawn write sweep has no matching job")
+            raw_worklist = job.payload.get(_WORKLIST_KEY)
+            if raw_worklist is not None:
+                for item in _WORKLIST_ADAPTER.validate_python(raw_worklist):
+                    complete_prepared_dawn_write_without_dispatch(
+                        db,
+                        user_id=item.user_id,
+                        local_date=item.local_date,
+                        context=context,
+                        reason="disabled",
+                    )
+                    db.commit()
             logger.info("dawn_write_sweep_skipped", reason="disabled")
             return {"skipped": 0, "generated": 0, "already_exists": 0}
 
@@ -152,6 +169,14 @@ def dawn_write_sweep(*, context: JobExecutionContext) -> dict | RescheduleReques
                 )
             )
             if existing is not None:
+                db.rollback()
+                complete_prepared_dawn_write_without_dispatch(
+                    db,
+                    user_id=user_id,
+                    local_date=local_date,
+                    context=context,
+                    reason="already_exists",
+                )
                 already_exists += 1
                 _reset_capacity_wait(db, context=context)
                 continue

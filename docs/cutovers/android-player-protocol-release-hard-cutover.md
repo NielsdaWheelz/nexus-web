@@ -286,8 +286,8 @@ Because no handset exists anywhere, the bootstrap dispatch runs on a hosted
 runner and boots its own emulator with raw tooling, so the ordinary
 `android-device` debug suite still executes in-gate — on the same emulator
 class every non-release workflow uses. Signature, manifest/protocol contract,
-pinned API origin, provider certification, and the full release proof suite
-still gate the release. The step-5 operator smoke remains mandatory, and every
+pinned API origin, and the full release proof suite still gate the release. The
+step-5 operator smoke remains mandatory, and every
 later release must run the full signed-physical stages on the protected USB
 runner against the then-real baseline.
 

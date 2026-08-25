@@ -33,6 +33,7 @@ _RESOURCE_LIMITS = {
     "api": (192 * 1024 * 1024, 320 * 1024 * 1024, 256),
     "worker-interactive": (128 * 1024 * 1024, 256 * 1024 * 1024, 256),
     "worker-background": (128 * 1024 * 1024, 448 * 1024 * 1024, 256),
+    "codex-egress-policy": (32 * 1024 * 1024, 64 * 1024 * 1024, 32),
     "nexus-codex-agent-host": (128 * 1024 * 1024, 384 * 1024 * 1024, 64),
     "migration": (256 * 1024 * 1024, 512 * 1024 * 1024, 256),
 }
@@ -47,7 +48,7 @@ _PUBLIC_HOSTS = frozenset({"api.example.test:443", "web.example.test:443"})
 _CODEX_HOST_PID = 4242
 _CODEX_CAPACITY_CANARY_EXIT_CODES = {
     "not_run": 20,
-    "provider_blocked": 21,
+    "subscription_blocked": 21,
     "failed": 22,
     "transport_retriable": 23,
 }
@@ -99,12 +100,21 @@ _PLAYER_PROTOCOL_CORPUS = b'{"fixture":"android-player-protocol"}\n'
 
 def _codex_host_privilege_config() -> dict[str, object]:
     return {
+        "CapAdd": None,
         "CapDrop": ["ALL"],
+        "DeviceRequests": None,
+        "Devices": [],
+        "Init": True,
+        "IpcMode": "private",
         "MaskedPaths": [],
         "NanoCpus": 1_000_000_000,
+        "NetworkMode": "nexus_codex_private",
+        "PidMode": "",
+        "Privileged": False,
         "ReadonlyRootfs": True,
         "ReadonlyPaths": [],
         "RestartPolicy": {"MaximumRetryCount": 0, "Name": "no"},
+        "Dns": ["172.30.0.2"],
         "SecurityOpt": [
             "no-new-privileges:true",
             "seccomp=unconfined",
@@ -151,10 +161,10 @@ def _root_own(paths: tuple[Path, ...]) -> None:
     )
 
 
-def _nexus_worker_own(path: Path) -> None:
+def _nexus_worker_own(path: Path, *, mode: int = 0o700) -> None:
     if os.geteuid() == 0:
         os.chown(path, 10001, 10001)
-        path.chmod(0o700)
+        path.chmod(mode)
     else:
         subprocess.run(
             (
@@ -162,9 +172,10 @@ def _nexus_worker_own(path: Path) -> None:
                 "--non-interactive",
                 "sh",
                 "-c",
-                'chown 10001:10001 "$1" && chmod 0700 "$1"',
+                'chown 10001:10001 "$1" && chmod "$2" "$1"',
                 "nexus-test-parser-temp",
                 str(path),
+                f"{mode:04o}",
             ),
             check=True,
             capture_output=True,
@@ -226,7 +237,7 @@ def write_codex_capacity_qualification(
     path.write_bytes(
         _canonical_json(
             {
-                "schema_version": "nexus-codex-capacity.v1",
+                "schema_version": "nexus-codex-capacity.v2",
                 "source_sha": source_sha,
                 "worker_image_id": worker_image_id,
                 "status": status,
@@ -239,6 +250,10 @@ def write_codex_capacity_qualification(
                     [
                         {
                             "phase": phase,
+                            "operation": "dossier_library",
+                            "plan_id": "thorough",
+                            "plan_revision": "codex-generation.2026-08-24.2",
+                            "capability": "Synthesis",
                             "terminal_status": "succeeded",
                             "failure_kind": None,
                             "usage_present": True,
@@ -302,13 +317,27 @@ class _PublicTLSProxy(socketserver.ThreadingTCPServer):
 
     def response(
         self,
+        method: str,
         host: str,
         path: str,
-    ) -> tuple[int, dict[str, object], dict[str, str]]:
+    ) -> tuple[int, dict[str, object] | None, dict[str, str]]:
         state = _load_state(self.state_path)
         state["public_requests"].append({"host": host, "path": path})
         _save_state(self.state_path, state)
         headers = {"Cache-Control": "no-store"}
+        if method == "POST" and host == "api.example.test" and path == "/internal/agent-tools/mcp":
+            mode = state["public_mcp_mode"]
+            if mode == "valid":
+                return 401, None, headers
+            if mode == "nonempty-unauthorized":
+                return 401, {"error": "unauthorized"}, headers
+            if mode == "redirect":
+                return 302, {}, {**headers, "Location": "https://api.example.test/version"}
+            if mode == "throttled":
+                return 429, None, headers
+            if mode == "unavailable":
+                return 503, None, headers
+            return 404, {"error": "unknown-test-public-target"}, headers
         candidate_active = bool(state["candidate_active"])
         served_source_sha = (
             str(state["candidate_source_sha"]) if candidate_active else str(state["source_sha"])
@@ -390,7 +419,7 @@ class _PublicTLSProxyHandler(socketserver.BaseRequestHandler):
                 if ":" in line
                 for key, value in (line.split(":", 1),)
             }
-            if len(request_parts) != 3 or request_parts[0] != "GET":
+            if len(request_parts) != 3 or request_parts[0] not in {"GET", "POST"}:
                 status, payload, response_headers = (
                     405,
                     {"error": "method-not-allowed"},
@@ -398,11 +427,20 @@ class _PublicTLSProxyHandler(socketserver.BaseRequestHandler):
                 )
             else:
                 status, payload, response_headers = self.server.response(
+                    request_parts[0],
                     headers.get("host", "").split(":", 1)[0],
                     request_parts[1],
                 )
-            body = _canonical_json(payload)
-            reason = {200: "OK", 302: "Found"}.get(status, "Not Found")
+            body = b"" if payload is None else _canonical_json(payload)
+            reason = {
+                200: "OK",
+                302: "Found",
+                401: "Unauthorized",
+                404: "Not Found",
+                405: "Method Not Allowed",
+                429: "Too Many Requests",
+                503: "Service Unavailable",
+            }[status]
             rendered_headers = "".join(
                 f"{key}: {value}\r\n" for key, value in response_headers.items()
             ).encode()
@@ -410,7 +448,7 @@ class _PublicTLSProxyHandler(socketserver.BaseRequestHandler):
                 f"HTTP/1.1 {status} {reason}\r\n".encode()
                 + rendered_headers
                 + b"Connection: close\r\n"
-                + b"Content-Type: application/json\r\n"
+                + (b"" if payload is None else b"Content-Type: application/json\r\n")
                 + f"Content-Length: {len(body)}\r\n\r\n".encode()
                 + body
             )
@@ -460,6 +498,7 @@ class HostReleaseHarness:
         *,
         repo_root: Path,
         candidate: dict[str, object],
+        current_revision: str = "0210",
     ) -> HostReleaseHarness:
         source_sha = str(candidate["source_sha"])
         images = candidate["images"]
@@ -476,7 +515,7 @@ class HostReleaseHarness:
             "api": current_api_image,
             "worker": current_worker_image,
         }
-        current_candidate["expected_database_revision"] = "0210"
+        current_candidate["expected_database_revision"] = current_revision
         current_candidate["expected_oracle_manifest_digest"] = "sha256:" + "d" * 64
 
         config = (
@@ -515,6 +554,13 @@ class HostReleaseHarness:
         os.truncate(codex_state_container, 1024 * 1024 * 1024)
         codex_state_mount = root / "srv/nexus/codex-state"
         codex_state_mount.mkdir(parents=True)
+        codex_profile_root = codex_state_mount / "codex" / "codex-personal"
+        codex_profile_root.mkdir(parents=True)
+        codex_auth = codex_profile_root / "auth.json"
+        codex_auth.write_bytes(b"test-private-chatgpt-auth")
+        _nexus_worker_own(codex_auth, mode=0o600)
+        _nexus_worker_own(codex_profile_root)
+        _nexus_worker_own(codex_profile_root.parent)
         _nexus_worker_own(codex_state_mount)
         crypttab = root / "etc/crypttab"
         crypttab.write_text("# no automatic Codex credential unlock\n", encoding="utf-8")
@@ -607,6 +653,11 @@ class HostReleaseHarness:
                 "a",
                 current_worker_image,
             ),
+            (
+                "codex-egress-policy",
+                "b",
+                current_worker_image,
+            ),
         ):
             containers[service] = {
                 "id": character * 64,
@@ -618,15 +669,47 @@ class HostReleaseHarness:
                 "config": {
                     "Env": (
                         [
-                            "NEXUS_CODEX_STATE_ROOT_BASE=/var/lib/nexus-codex",
-                            "NEXUS_CODEX_WORKING_DIRECTORY=/var/empty/nexus-codex",
+                            "NEXUS_CODEX_CREDENTIAL_FILE=/run/nexus-codex-credential/auth.json",
+                            "NEXUS_CODEX_WORKING_DIRECTORY_ROOT=/tmp/nexus-codex-turns",
                             "NEXUS_CODEX_AGENT_SOCKET=/run/nexus-codex/agent.sock",
+                            "NEXUS_CODEX_CHAT_NETWORK_ATTESTED=true",
+                            "NEXUS_CODEX_MCP_ORIGIN=https://api.example.test/internal/agent-tools/mcp",
                             *_CODEX_IMAGE_ENVIRONMENT,
                         ]
                         if service == "nexus-codex-agent-host"
+                        else [
+                            *_CODEX_IMAGE_ENVIRONMENT,
+                            "NEXUS_CODEX_EGRESS_PROXY_IP=172.30.0.2",
+                            "NEXUS_CODEX_EGRESS_MCP_HOST=api.example.test",
+                        ]
+                        if service == "codex-egress-policy"
+                        else [
+                            "NEXUS_CODEX_AGENT_SOCKET=/run/nexus-codex/agent.sock",
+                        ]
+                        if service == "api"
+                        else [
+                            "WORKER_LANE=interactive",
+                            "NEXUS_CODEX_AGENT_SOCKET=/run/nexus-codex/agent.sock",
+                            "NEXUS_AGENT_TOOLS_MCP_LISTEN=0.0.0.0:8001",
+                            "NEXUS_AGENT_TOOLS_MCP_ORIGIN=https://api.example.test/internal/agent-tools/mcp",
+                        ]
+                        if service == "worker-interactive"
                         else []
                     ),
                     "Image": image,
+                    **(
+                        {"ExposedPorts": {"8001/tcp": {}}}
+                        if service == "worker-interactive"
+                        else {}
+                    ),
+                    "Cmd": (
+                        ["python", "-m", "apps.codex_agent.main"]
+                        if service == "nexus-codex-agent-host"
+                        else ["python", "-m", "apps.codex_agent.egress_policy"]
+                        if service == "codex-egress-policy"
+                        else None
+                    ),
+                    "Entrypoint": None,
                     "Labels": {
                         "com.docker.compose.project": "nexus",
                         "com.docker.compose.service": service,
@@ -634,10 +717,12 @@ class HostReleaseHarness:
                     **(
                         {
                             "User": "10001:10001",
-                            "WorkingDir": "/var/empty/nexus-codex",
+                            "WorkingDir": "/tmp",
                             "StopTimeout": 45,
                         }
                         if service == "nexus-codex-agent-host"
+                        else {"User": "10002:10002", "StopTimeout": 10, "WorkingDir": "/"}
+                        if service == "codex-egress-policy"
                         else {}
                     ),
                 },
@@ -649,6 +734,21 @@ class HostReleaseHarness:
                     **(
                         _codex_host_privilege_config()
                         if service == "nexus-codex-agent-host"
+                        else {
+                            "CapDrop": ["ALL"],
+                            "CapAdd": ["NET_BIND_SERVICE"],
+                            "DeviceRequests": None,
+                            "Devices": [],
+                            "IpcMode": "private",
+                            "NetworkMode": "nexus_codex_private",
+                            "PidMode": "",
+                            "Privileged": False,
+                            "ReadonlyRootfs": True,
+                            "RestartPolicy": {"MaximumRetryCount": 0, "Name": "unless-stopped"},
+                            "SecurityOpt": ["no-new-privileges:true"],
+                            "Tmpfs": {"/tmp": "rw,noexec,nosuid,nodev,size=8m"},
+                        }
+                        if service == "codex-egress-policy"
                         else {}
                     ),
                 },
@@ -701,19 +801,26 @@ class HostReleaseHarness:
                 "codex_state_live_bind_kind": "exact",
                 "codex_state_boot_guard_enabled": True,
                 "codex_host_startup_failure": False,
+                "codex_host_mcp_probe_failure": False,
+                "codex_host_network_probe_failure": False,
                 # The deployed predecessor Caddy predates a Docker-native
                 # healthcheck.  Keep the fake boundary honest: qualification
                 # must execute the candidate's canonical in-container probe,
                 # not depend on a Health object that production does not have.
                 "caddy_docker_health_present": False,
                 "caddy_health_probe_failure": False,
+                "caddy_loaded_config_matches": True,
+                "caddy_loaded_config_sha256": hashlib.sha256(b"test-caddy\n").hexdigest(),
+                "caddy_reload_failures_remaining": 0,
+                "caddy_validate_failures_remaining": 0,
                 "candidate_health_wait_seconds": 0.0,
                 "candidate_revision": str(candidate["expected_database_revision"]),
-                "current_revision": "0210",
+                "current_revision": current_revision,
                 "commands": [],
                 "containers": containers,
                 "database_identity": "nexus:fake-system-id",
-                "database_revision": "0210",
+                "database_revision": current_revision,
+                "docker_server_version": "29.5.3",
                 "failure_count": 0,
                 "forward_fix_stop_interrupt_fired": False,
                 "interrupt_fired": False,
@@ -734,6 +841,7 @@ class HostReleaseHarness:
                     _PLAYER_PROTOCOL_CORPUS
                 ).hexdigest(),
                 "public_api_mode": "valid",
+                "public_mcp_mode": "valid",
                 "public_web_mode": "valid",
                 "public_requests": [],
                 "resource_mutations": [],
@@ -799,7 +907,7 @@ class HostReleaseHarness:
             predecessor_sha=None,
             config_path=str(config_path),
             config_sha256=config_digest,
-            database_revision="0210",
+            database_revision=current_revision,
             expected_oracle_manifest_digest="sha256:" + "d" * 64,
             vercel_deployment_id=CURRENT_DEPLOYMENT_ID,
             production_host="web.example.test",
@@ -943,7 +1051,7 @@ class HostReleaseHarness:
             check=False,
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=60,
         )
 
     def run_apply(
@@ -998,6 +1106,23 @@ class HostReleaseHarness:
             (
                 str(Path(__file__).resolve()),
                 "install-codex-state-boot-guard",
+                str(self.repo_root / "deploy/hetzner/release.py"),
+                str(self.root),
+                attempted_source,
+            ),
+            environment=self._environment(source_sha=attempted_source),
+        )
+
+    def run_activate_caddy_config(
+        self,
+        *,
+        source_sha: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        attempted_source = self.source_sha if source_sha is None else source_sha
+        return self._run_controller(
+            (
+                str(Path(__file__).resolve()),
+                "activate-caddy-config",
                 str(self.repo_root / "deploy/hetzner/release.py"),
                 str(self.root),
                 attempted_source,
@@ -1205,6 +1330,18 @@ def _container_inspect(state: dict[str, Any], container_id: str) -> dict[str, ob
         "RestartCount": container["restart_count"],
         "State": state_value,
     }
+    default_addresses = {
+        "postgres": "172.28.0.2",
+        "caddy": "172.28.0.3",
+        "api": "172.28.0.4",
+        "worker-interactive": "172.28.0.5",
+        "worker-background": "172.28.0.6",
+    }
+    if isinstance(service, str) and service in default_addresses:
+        inspected["NetworkSettings"] = {
+            "Networks": {"nexus_default": {"IPAddress": default_addresses[service]}},
+            "Ports": {},
+        }
     if container_id == state["containers"]["postgres"]["id"]:
         inspected["Mounts"] = [
             {
@@ -1236,13 +1373,63 @@ def _container_inspect(state: dict[str, Any], container_id: str) -> dict[str, ob
                 "Type": "volume",
             },
         ]
+    if container_id == state["containers"]["api"]["id"]:
+        api_mounts: list[dict[str, object]] = [
+            {
+                "Destination": "/run/nexus-codex",
+                "Name": "nexus_nexus_codex_run",
+                "RW": False,
+                "Source": "/var/lib/docker/volumes/nexus_nexus_codex_run/_data",
+                "Type": "volume",
+            }
+        ]
+        mutation = state["codex_host_contract_mutation"]
+        if mutation == "api_socket_missing":
+            container["config"]["Env"] = []
+        elif mutation == "api_mount_missing":
+            api_mounts = []
+        elif mutation == "api_mount_writable":
+            api_mounts[0]["RW"] = True
+        elif mutation == "api_mount_extra":
+            api_mounts.append(
+                {
+                    "Destination": "/host-home",
+                    "RW": False,
+                    "Source": "/home/nexus",
+                    "Type": "bind",
+                }
+            )
+        inspected["Mounts"] = api_mounts
+    if container_id == state["containers"]["codex-egress-policy"]["id"]:
+        mutation = state["codex_host_contract_mutation"]
+        if mutation == "policy_privileged":
+            container["host_config"]["Privileged"] = True
+        inspected["Mounts"] = []
+        inspected["NetworkSettings"] = {
+            "Networks": {
+                "nexus_codex_private": {"IPAddress": "172.30.0.2"},
+                "nexus_codex_proxy_egress": {},
+            },
+            "Ports": {},
+        }
+    if container_id == state["containers"]["worker-interactive"]["id"]:
+        inspected["Mounts"] = [
+            {
+                "Destination": "/run/nexus-codex",
+                "Name": "nexus_nexus_codex_run",
+                "RW": False,
+                "Source": "/var/lib/docker/volumes/nexus_nexus_codex_run/_data",
+                "Type": "volume",
+            }
+        ]
     if container_id == state["containers"]["nexus-codex-agent-host"]["id"]:
         root = Path(os.environ["NEXUS_FAKE_RELEASE_ATTEMPT"]).parents[5]
         mounts: list[dict[str, object]] = [
             {
-                "Destination": "/var/lib/nexus-codex",
+                "Destination": "/run/nexus-codex-credential/auth.json",
+                "Mode": "rw",
                 "RW": True,
-                "Source": str(root / "srv/nexus/codex-state"),
+                "Source": str(root / "srv/nexus/codex-state/codex/codex-personal/auth.json"),
                 "Type": "bind",
                 "Propagation": "rprivate",
             },
@@ -1257,16 +1444,21 @@ def _container_inspect(state: dict[str, Any], container_id: str) -> dict[str, ob
         mutation = state["codex_host_contract_mutation"]
         live_bind = state["codex_state_live_bind_kind"]
         if live_bind == "wrong_source":
-            mounts[0]["Source"] = "/srv/nexus/foreign-codex-state"
+            mounts[0]["Source"] = "/srv/nexus/foreign-codex-state/auth.json"
         elif live_bind == "wrong_type":
             mounts[0]["Type"] = "volume"
             mounts[0]["Name"] = "nexus_unapproved_state"
         elif live_bind == "readonly":
+            mounts[0]["Mode"] = "ro"
             mounts[0]["RW"] = False
         elif live_bind == "shared_propagation":
             mounts[0]["Propagation"] = "rshared"
         if mutation == "environment_credential_residue":
             container["config"]["Env"].append("AWS_SESSION_TOKEN=credential-residue")
+        elif mutation == "host_cmd":
+            container["config"]["Cmd"] = ["sh"]
+        elif mutation == "host_privileged":
+            container["host_config"]["Privileged"] = True
         elif mutation == "mount_wrong_named_volume":
             mounts[0]["Type"] = "volume"
             mounts[0]["Name"] = "nexus_unapproved_state"
@@ -1295,7 +1487,7 @@ def _container_inspect(state: dict[str, Any], container_id: str) -> dict[str, ob
             "Networks": (
                 {"nexus_default": {}}
                 if state["codex_host_isolation_drift"] == "network"
-                else {"nexus_codex_egress": {}}
+                else {"nexus_codex_private": {"IPAddress": "172.30.0.3"}}
             ),
             "Ports": {},
         }
@@ -1339,9 +1531,9 @@ def _stop_timeout_matches(operation: list[str]) -> bool:
     the release contract.
     """
     timeout, services = operation[2], operation[3:]
-    if services == ["nexus-codex-agent-host"]:
+    if "nexus-codex-agent-host" in services:
         return timeout == "45"
-    return timeout == "30" and "nexus-codex-agent-host" not in services
+    return timeout == "30"
 
 
 def _handle_compose(state: dict[str, Any], operation: list[str]) -> None:
@@ -1513,20 +1705,111 @@ def _handle_compose(state: dict[str, Any], operation: list[str]) -> None:
         return
     if operation[:3] == ["exec", "-T", "caddy"]:
         command = operation[3:]
-        if command != [
+        if command == [
             "wget",
             "-q",
             "-O",
             "/dev/null",
             "http://127.0.0.1:2019/config/",
         ]:
-            raise AssertionError(f"unsupported fake Caddy command: {command!r}")
-        if state["caddy_health_probe_failure"] is True:
-            raise SystemExit(72)
-        return
+            if state["caddy_health_probe_failure"] is True:
+                raise SystemExit(72)
+            return
+        if command == [
+            "caddy",
+            "adapt",
+            "--config",
+            "/etc/caddy/Caddyfile",
+            "--adapter",
+            "caddyfile",
+        ]:
+            root = Path(os.environ["NEXUS_FAKE_RELEASE_ATTEMPT"]).parents[5]
+            digest = hashlib.sha256((root / "etc/nexus/Caddyfile").read_bytes()).hexdigest()
+            _write_json({"caddyfile_sha256": digest})
+            return
+        if command == [
+            "caddy",
+            "adapt",
+            "--config",
+            "/dev/stdin",
+            "--adapter",
+            "caddyfile",
+        ]:
+            value = sys.stdin.buffer.read()
+            if not value:
+                raise AssertionError("fake Caddy stdin adaptation requires bytes")
+            _write_json({"caddyfile_sha256": hashlib.sha256(value).hexdigest()})
+            return
+        if command == [
+            "caddy",
+            "validate",
+            "--config",
+            "/etc/caddy/Caddyfile",
+            "--adapter",
+            "caddyfile",
+        ]:
+            if state["caddy_validate_failures_remaining"] > 0:
+                state["caddy_validate_failures_remaining"] -= 1
+                _save_state(Path(os.environ["NEXUS_FAKE_DOCKER_STATE"]), state)
+                raise SystemExit(72)
+            return
+        if command == [
+            "caddy",
+            "reload",
+            "--config",
+            "/etc/caddy/Caddyfile",
+            "--adapter",
+            "caddyfile",
+        ]:
+            if state["caddy_reload_failures_remaining"] > 0:
+                state["caddy_reload_failures_remaining"] -= 1
+                _save_state(Path(os.environ["NEXUS_FAKE_DOCKER_STATE"]), state)
+                raise SystemExit(72)
+            root = Path(os.environ["NEXUS_FAKE_RELEASE_ATTEMPT"]).parents[5]
+            state["caddy_loaded_config_sha256"] = hashlib.sha256(
+                (root / "etc/nexus/Caddyfile").read_bytes()
+            ).hexdigest()
+            state["caddy_loaded_config_matches"] = True
+            _save_state(Path(os.environ["NEXUS_FAKE_DOCKER_STATE"]), state)
+            return
+        if command == [
+            "wget",
+            "-q",
+            "-O",
+            "-",
+            "http://127.0.0.1:2019/config/",
+        ]:
+            loaded = (
+                {"caddyfile_sha256": state["caddy_loaded_config_sha256"]}
+                if state["caddy_loaded_config_matches"] is True
+                else {"apps": {}}
+            )
+            _write_json(loaded)
+            return
+        raise AssertionError(f"unsupported fake Caddy command: {command!r}")
     if operation[:3] == ["exec", "-T", "nexus-codex-agent-host"]:
         command = operation[3:]
         if command == ["python", "-m", "apps.codex_agent.sandbox_health"]:
+            return
+        if command[:3] == ["python", "-m", "apps.codex_agent.network_health"]:
+            if state["codex_host_network_probe_failure"] is True:
+                raise SystemExit(72)
+            if command[3:4] == ["--mcp-origin"] and state["codex_host_mcp_probe_failure"] is True:
+                raise SystemExit(72)
+            if command[3:] not in [
+                [
+                    "--denied-targets",
+                    "172.30.0.1:80",
+                    "172.30.0.1:443",
+                    "172.28.0.2:5432",
+                    "172.28.0.3:443",
+                ],
+                [
+                    "--mcp-origin",
+                    "https://api.example.test/internal/agent-tools/mcp",
+                ],
+            ]:
+                raise AssertionError(f"unexpected fake Codex network proof: {command!r}")
             return
         if command == ["python", "-m", "apps.codex_agent.health"]:
             override = state["codex_agent_host_health_output_override"]
@@ -1537,9 +1820,13 @@ def _handle_compose(state: dict[str, Any], operation: list[str]) -> None:
                 {
                     "auth_profile": "codex-personal",
                     "backend": "codex",
-                    "schema_version": "nexus-agent-health.v1",
+                    "schema_version": "nexus-generation-health.v2",
                     "status": "ready",
                     "transport": "sdk",
+                    "command_schema_version": "nexus-generation-command.v2",
+                    "policy_revision": "codex-generation.2026-08-24.2",
+                    "sdk_version": "0.144.4",
+                    "runtime_version": "0.144.4",
                 }
             )
             return
@@ -1614,7 +1901,9 @@ def fake_docker_main() -> int:
         _save_state(state_path, state)
         return 72
 
-    if arguments[0] == "compose":
+    if arguments[:3] == ["version", "--format", "{{.Server.Version}}"]:
+        sys.stdout.write(str(state["docker_server_version"]) + "\n")
+    elif arguments[0] == "compose":
         _handle_compose(state, _compose_operation(arguments))
     elif arguments[:2] == ["image", "inspect"]:
         image = arguments[2]
@@ -1901,11 +2190,15 @@ def fake_docker_main() -> int:
             terminal_status = "succeeded" if authored_status == "passed" else "failed"
             _write_json(
                 {
-                    "schema_version": "nexus-codex-capacity-canary.v1",
+                    "schema_version": "nexus-codex-capacity-canary.v3",
                     "status": authored_status,
                     "turns": [
                         {
                             "phase": phase,
+                            "operation": "dossier_library",
+                            "plan_id": "thorough",
+                            "plan_revision": "codex-generation.2026-08-24.2",
+                            "capability": "Synthesis",
                             "terminal_status": terminal_status,
                             "failure_kind": None
                             if authored_status == "passed"
@@ -1986,9 +2279,9 @@ def fake_docker_main() -> int:
                             "Mounts": (
                                 [
                                     {
-                                        "Destination": "/var/lib/nexus-codex",
+                                        "Destination": "/run/nexus-codex-credential/auth.json",
                                         "RW": True,
-                                        "Source": "/srv/nexus/codex-state",
+                                        "Source": "/srv/nexus/codex-state/codex/codex-personal/auth.json",
                                         "Type": "bind",
                                     },
                                     {
@@ -2049,49 +2342,69 @@ def fake_docker_main() -> int:
                     ]
                 )
     elif arguments[:2] == ["network", "inspect"]:
-        if arguments[2:] != ["nexus_codex_egress"]:
-            raise AssertionError("unexpected fake Codex host network inspect")
-        host = state["containers"]["nexus-codex-agent-host"]
-        containers = {str(host["id"]): {"Name": "nexus-nexus-codex-agent-host-1"}}
-        canary = state.get("capacity_canary")
-        if (
-            isinstance(canary, dict)
-            and state["codex_capacity_canary_isolation_drift"]
-            == "credential_mount_and_network_peer"
-        ):
-            containers[str(canary["id"])] = {"Name": str(canary["name"])}
-        if state["codex_host_isolation_drift"] == "network_peer":
-            postgres = state["containers"]["postgres"]
-            containers[str(postgres["id"])] = {"Name": "nexus-postgres-1"}
-        network: dict[str, object] = {
-            "Containers": containers,
-            "Driver": "bridge",
-            "IPAM": {
-                "Config": [{"Gateway": "172.29.0.1", "Subnet": "172.29.0.0/16"}],
-                "Driver": "default",
-                "Options": None,
-            },
-            "Internal": False,
-            "Name": "nexus_codex_egress",
-            "Options": {},
-            "Scope": "local",
-        }
-        mutation = state["codex_host_contract_mutation"]
-        if mutation == "network_driver":
-            network["Driver"] = "overlay"
-        elif mutation == "network_scope":
-            network["Scope"] = "swarm"
-        elif mutation == "network_internal":
-            network["Internal"] = True
-        elif mutation == "network_options":
-            network["Options"] = {"com.docker.network.bridge.enable_icc": "true"}
-        elif mutation == "network_ipam":
-            network["IPAM"] = {
-                "Config": [{"Gateway": "172.29.0.1", "Subnet": "172.29.0.0/16"}],
-                "Driver": "overlay",
-                "Options": None,
+        if arguments[2:] == ["nexus_codex_private"]:
+            host = state["containers"]["nexus-codex-agent-host"]
+            policy = state["containers"]["codex-egress-policy"]
+            containers = {
+                str(host["id"]): {"IPv4Address": "172.30.0.3/24"},
+                str(policy["id"]): {"IPv4Address": "172.30.0.2/24"},
             }
-        _write_json([network])
+            if state["codex_host_isolation_drift"] == "network_peer":
+                postgres = state["containers"]["postgres"]
+                containers[str(postgres["id"])] = {"IPv4Address": "172.30.0.4/24"}
+            network: dict[str, object] = {
+                "Containers": containers,
+                "Driver": "bridge",
+                "EnableIPv4": True,
+                "EnableIPv6": False,
+                "IPAM": {
+                    "Config": [{"Subnet": "172.30.0.0/24"}],
+                    "Driver": "default",
+                    "Options": None,
+                },
+                "Internal": True,
+                "Name": "nexus_codex_private",
+                "Options": {"com.docker.network.bridge.gateway_mode_ipv4": "isolated"},
+                "Scope": "local",
+            }
+            mutation = state["codex_host_contract_mutation"]
+            if mutation == "network_driver":
+                network["Driver"] = "overlay"
+            elif mutation == "network_scope":
+                network["Scope"] = "swarm"
+            elif mutation == "network_internal":
+                network["Internal"] = False
+            elif mutation == "network_options":
+                network["Options"] = {}
+            elif mutation == "network_ipam":
+                network["IPAM"] = {
+                    "Config": [{"Gateway": "172.30.0.1", "Subnet": "172.30.0.0/24"}],
+                    "Driver": "default",
+                    "Options": None,
+                }
+            _write_json([network])
+            return
+        if arguments[2:] == ["nexus_codex_proxy_egress"]:
+            policy = state["containers"]["codex-egress-policy"]
+            _write_json(
+                [
+                    {
+                        "Containers": {str(policy["id"]): {"Name": "nexus-codex-egress-policy-1"}},
+                        "Driver": "bridge",
+                        "IPAM": {
+                            "Config": [{"Gateway": "172.31.0.1", "Subnet": "172.31.0.0/16"}],
+                            "Driver": "default",
+                            "Options": None,
+                        },
+                        "Internal": False,
+                        "Name": "nexus_codex_proxy_egress",
+                        "Options": {},
+                        "Scope": "local",
+                    }
+                ]
+            )
+            return
+        raise AssertionError("unexpected fake Codex host network inspect")
     elif arguments[:4] == ["ps", "--all", "--quiet", "--filter"]:
         if len(arguments) != 5:
             raise AssertionError("unexpected fake Docker container listing")
@@ -2347,6 +2660,16 @@ def install_codex_state_boot_guard_main(arguments: list[str]) -> int:
     return 0
 
 
+def activate_caddy_config_main(arguments: list[str]) -> int:
+    _drop_to_test_group()
+    release_path, root, source_sha = arguments
+    release = _load_release(Path(release_path), "nexus_host_release_activate_caddy_driver")
+    host = release.HostRelease(release.ReleasePaths.under(Path(root)))
+    receipt = host.activate_caddy_config(source_sha)
+    sys.stdout.buffer.write(_canonical_json(receipt))
+    return 0
+
+
 def fail_bound_frontend_main(arguments: list[str]) -> int:
     _drop_to_test_group()
     release_path, root, source_sha, deployment_id = arguments
@@ -2402,6 +2725,8 @@ def main() -> int:
         return resume_codex_agent_host_main(sys.argv[2:])
     if sys.argv[1] == "install-codex-state-boot-guard":
         return install_codex_state_boot_guard_main(sys.argv[2:])
+    if sys.argv[1] == "activate-caddy-config":
+        return activate_caddy_config_main(sys.argv[2:])
     if sys.argv[1] == "fail-bound-frontend":
         return fail_bound_frontend_main(sys.argv[2:])
     if sys.argv[1] == "fail-auth-smoke":

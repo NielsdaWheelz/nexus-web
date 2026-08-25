@@ -58,7 +58,7 @@ _WRITE_TOOL_IDS = (
 
 
 def _effect_id(run_id: UUID, tool_call_index: int) -> EffectId:
-    path = f"turn/0/tool/{tool_call_index}"
+    path = f"generation/1/tool/{tool_call_index}"
     return EffectId(str(stable_generation_id(run_id, path)))
 
 
@@ -392,7 +392,7 @@ def test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo(
         assert claimed_job is not None
         states = read_step_states(claimed_job)
         for index in range(1, 6):
-            path = f"turn/0/tool/{index}"
+            path = f"generation/1/tool/{index}"
             assert states[path].dispatch_phase is Completed
             assert states[path].generation_id == stable_generation_id(run.id, path)
             assert str(states[path].generation_id) == str(_effect_id(run.id, index))

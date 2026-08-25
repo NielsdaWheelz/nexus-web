@@ -34,6 +34,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import is_library_member
+from nexus.db.errors import TransactionRestart
 from nexus.db.models import ArtifactBuild
 from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
@@ -47,6 +48,7 @@ from nexus.jobs.queue import (
     enqueue_unique_job,
     get_job,
     lock_job,
+    lock_running_job_claim,
     requeue_dead_job,
     revoke_jobs_by_dedupe_keys,
     running_job_claim_is_current,
@@ -132,9 +134,14 @@ from nexus.services.llm_execution import (
     GenerationJournal,
     GenerationUncertain,
     JobGenerationJournal,
+    cancel_prepared_generation_without_dispatch_in_current_transaction,
     execute_generation,
+    prove_uncertain_generation_not_dispatched_in_current_transaction,
 )
-from nexus.services.llm_ledger import LlmCallOwner
+from nexus.services.llm_ledger import (
+    LlmCallOwner,
+    lock_generation_owner_in_current_transaction,
+)
 from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.resource_graph.citations import (
     rehome_citations_for_output,
@@ -175,12 +182,13 @@ __all__ = [
     "read_head",
     "read_artifact_head",
     "reconcile_uncertain_build",
+    "reconcile_uncertain_idea_resolution",
     "regenerate_artifact",
     "run_build",
 ]
 
 _MAX_INSTRUCTION_CHARS = 4000
-# The one provider step per build (single synthesis over the reduced inputs, B4).
+# The one generation step per build (single synthesis over the reduced inputs, B4).
 _STEP_PATH = "synthesis"
 _IDEA_RESOLUTION_STEP_PATH = "idea-resolution"
 _WEB_SEARCH_STEP_PATHS = frozenset(
@@ -201,9 +209,9 @@ _FAILURE_CODE_READ_ADAPTER: TypeAdapter[ReadDossierBuildFailureCode] = TypeAdapt
 
 
 class _UncertainReplayDefect(RuntimeError):
-    """A billed provider step is ``Uncertain`` on replay and cannot be reconciled
-    without a provider idempotency/reconciliation key — never auto-redispatched
-    (A8). Defects for the operator; surfaces as Suspended."""
+    """An accepted generation step is ``Uncertain`` on replay and cannot be reconciled
+    without owner-admissible terminal evidence — never auto-redispatched (A8).
+    Defects for the operator; surfaces as Suspended."""
 
 
 class _SynthesisAccepted(BaseModel):
@@ -424,22 +432,24 @@ def reconcile_uncertain_build(
     build_id: UUID,
     resolution: step_journal.UncertainStepResolution,
 ) -> None:
-    """Repair one suspended uncertain provider step, then requeue the same build.
+    """Repair one suspended external step, then requeue the same build.
 
-    The operator must either prove that dispatch never occurred or attach the
-    provider's recovered normalized result. The latter is validated against the
-    subject binding before it is checkpointed. This transition never dispatches.
+    Tool results can be attached through their frozen execution contract.
+    Generations retain only their request fingerprint, so they support the
+    command-free non-dispatch proof and never reconstruct mutable dossier input.
+    This transition never dispatches.
     """
 
     def op() -> None:
+        owner = LlmCallOwner(kind="artifact_build", id=build_id)
+        lock_generation_owner_in_current_transaction(db, owner)
         head_id = _lock_head_id_for_build(db, build_id)
         if head_id is None or _existing_terminal_child(db, build_id) is not None:
             raise BuildNotActive()
         head = _head_row(db, head_id)
         if head is None:
             raise BuildNotActive()
-        binding = BINDINGS.get(head.subject_scheme)
-        if binding is None:
+        if BINDINGS.get(head.subject_scheme) is None:
             raise AssertionError(f"no binding for subject scheme {head.subject_scheme!r}")
         row = (
             db.execute(
@@ -467,13 +477,13 @@ def reconcile_uncertain_build(
         if not uncertain_states:
             raise InvalidRequestError(
                 ApiErrorCode.E_INVALID_REQUEST,
-                "Build has no uncertain provider step to reconcile",
+                "Build has no uncertain external step to reconcile",
             )
         if len(uncertain_states) != 1:
-            raise AssertionError("Dossier build has multiple uncertain provider steps")
+            raise AssertionError("Dossier build has multiple uncertain external steps")
         step_path, state = uncertain_states[0]
         is_tool_execution = isinstance(state.tool_execution, Present)
-        if step_path == _STEP_PATH:
+        if step_path in {_STEP_PATH, "document-repair"}:
             if is_tool_execution:
                 raise AssertionError("uncertain Dossier synthesis contains tool metadata")
         elif step_path in _WEB_SEARCH_STEP_PATHS:
@@ -524,33 +534,30 @@ def reconcile_uncertain_build(
                         "Recovered Web search result or settlement is invalid",
                     ) from exc
             else:
-                if isinstance(resolution.tool_settlement, Present):
-                    raise InvalidRequestError(
-                        ApiErrorCode.E_INVALID_REQUEST,
-                        "Synthesis reconciliation cannot include a tool settlement",
-                    )
-                normalized = binding.schema.model_validate_json(resolution.terminal_result)
+                raise InvalidRequestError(
+                    ApiErrorCode.E_INVALID_REQUEST,
+                    "Dossier generation attachment requires immutable original command facts",
+                )
+        elif isinstance(resolution, step_journal.ProveNotDispatched):
+            if tool_operation is not None:
+                assert isinstance(state.tool_execution, Present)
                 next_state = state.model_copy(
                     update={
-                        "dispatch_phase": step_journal.Completed,
-                        "terminal_result": present(
-                            _SynthesisAccepted(
-                                envelope_json=normalized.model_dump_json()
-                            ).model_dump_json()
+                        "dispatch_phase": step_journal.Prepared,
+                        "terminal_result": absent(),
+                        "tool_execution": present(
+                            state.tool_execution.value.model_copy(
+                                update={"dispatch_claim": absent()}
+                            )
                         ),
                     }
                 )
-        elif isinstance(resolution, step_journal.ProveNotDispatched):
-            updates: dict[str, object] = {
-                "dispatch_phase": step_journal.Prepared,
-                "terminal_result": absent(),
-            }
-            if tool_operation is not None:
-                assert isinstance(state.tool_execution, Present)
-                updates["tool_execution"] = present(
-                    state.tool_execution.value.model_copy(update={"dispatch_claim": absent()})
+            else:
+                next_state = prove_uncertain_generation_not_dispatched_in_current_transaction(
+                    db,
+                    owner=owner,
+                    state=state,
                 )
-            next_state = state.model_copy(update=updates)
         else:
             assert_never(resolution)
         next_state = step_journal.StepReplayState.model_validate(
@@ -1237,6 +1244,84 @@ def _encode_idea_resolution_preaccept_failure(
     return _unresolved_idea_envelope().model_dump_json()
 
 
+def reconcile_uncertain_idea_resolution(
+    db: Session,
+    *,
+    request_id: UUID,
+    requester_user_id: UUID,
+    resolution: step_journal.UncertainStepResolution,
+) -> None:
+    """Restore one abandoned request-scoped Idea resolution after proof.
+
+    The request deliberately retains no rendered resolver prompt, so recovered
+    terminal attachment is unsafe. The next authorized replay may dispatch only
+    after the journal and exact nonterminal ledger start agree under one lock.
+    """
+
+    if not isinstance(resolution, step_journal.ProveNotDispatched):
+        raise ValueError(
+            "Idea-resolution attachment requires immutable rendered inputs, which are absent"
+        )
+
+    def op() -> None:
+        owner = LlmCallOwner(kind="artifact_learn_request", id=request_id)
+        lock_generation_owner_in_current_transaction(db, owner)
+        row = (
+            db.execute(
+                text(
+                    "SELECT user_id, coordination FROM artifact_learn_requests "
+                    "WHERE id = :id FOR UPDATE"
+                ),
+                {"id": request_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if row is None or UUID(str(row["user_id"])) != requester_user_id:
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Highlight not found")
+        current = learn_service.load_learn_request(db, request_id=request_id)
+        if not isinstance(current, learn_service.PendingLearnRequest):
+            raise ValueError("Idea resolution is already terminal")
+        state = step_journal.decode_step_states({"coordination": row["coordination"]}).get(
+            _IDEA_RESOLUTION_STEP_PATH
+        )
+        if state is None or state.dispatch_phase is not step_journal.Uncertain:
+            raise ValueError("Idea resolution is not uncertain")
+        expected_generation_id = step_journal.stable_generation_id(
+            request_id,
+            _IDEA_RESOLUTION_STEP_PATH,
+        )
+        if state.generation_id != expected_generation_id:
+            raise AssertionError("Idea-resolution generation identity changed")
+        next_state = prove_uncertain_generation_not_dispatched_in_current_transaction(
+            db,
+            owner=owner,
+            state=state,
+        )
+        payload = step_journal.payload_with_step_state(
+            {"coordination": row["coordination"]},
+            step_path=_IDEA_RESOLUTION_STEP_PATH,
+            state=next_state,
+        )
+        coordination = payload.get("coordination")
+        if not isinstance(coordination, dict):
+            raise AssertionError("Idea-resolution coordination is not an object")
+        learn_service.checkpoint_learn_coordination(
+            db,
+            request_id=request_id,
+            coordination=coordination,
+        )
+        db.execute(
+            text(
+                "UPDATE artifact_learn_requests SET resolver_lease_expires_at = NULL WHERE id = :id"
+            ),
+            {"id": request_id},
+        )
+        db.commit()
+
+    retry_serializable(db, "reconcile_uncertain_idea_resolution", op)
+
+
 async def _run_idea_resolution_step(
     db: Session,
     *,
@@ -1771,7 +1856,7 @@ async def run_build(
                 db,
                 build_id=build_id,
                 code=DossierBuildFailureCode.InputsChanged,
-                detail="inputs changed before provider dispatch",
+                detail="inputs changed before generation dispatch",
                 support=None,
                 ctx=ctx,
             )
@@ -1935,7 +2020,7 @@ async def _run_synthesis_step(
     runtime: ExecutionRuntime,
     input_recheck: _TerminalInputRecheck,
 ) -> BaseModel | _SynthesisInvalid | RescheduleRequested | None:
-    """Run (or replay) the single coordinated provider step and return the decoded
+    """Run (or replay) the single coordinated generation step and return the decoded
     output. Returns ``None`` when the step wrote a terminal failure or lost its
     lease (the caller returns). Raises a defect on an uncertain-replay."""
     gen_id = step_journal.stable_generation_id(build_id, _STEP_PATH)
@@ -1960,7 +2045,7 @@ async def _run_synthesis_step(
                 db,
                 build_id=build_id,
                 code=DossierBuildFailureCode.InputsChanged,
-                detail="inputs changed since the provider request was prepared",
+                detail="inputs changed since the generation request was prepared",
                 support=None,
                 ctx=ctx,
                 input_recheck=input_recheck,
@@ -2053,13 +2138,22 @@ async def _run_synthesis_step(
             db,
             build_id=build_id,
             code=DossierBuildFailureCode.InputsChanged,
-            detail="inputs changed before provider dispatch",
+            detail="inputs changed before generation dispatch",
             support=None,
             ctx=ctx,
             input_recheck=input_recheck,
         )
         return None
     if progress_result == "inactive":
+        _terminal_failure(
+            db,
+            build_id=build_id,
+            code=DossierBuildFailureCode.InputsChanged,
+            detail="generation owner became inactive before host acceptance",
+            support=None,
+            ctx=ctx,
+            input_recheck=input_recheck,
+        )
         return None
 
     def lock_dispatch(dispatch_db: Session) -> JobRow | None:
@@ -2118,6 +2212,15 @@ async def _run_synthesis_step(
             cancel_watcher.cancel()
             await asyncio.gather(cancel_watcher, return_exceptions=True)
     except GenerationDispatchAborted:
+        _terminal_failure(
+            db,
+            build_id=build_id,
+            code=DossierBuildFailureCode.InputsChanged,
+            detail="generation dispatch was fenced before host acceptance",
+            support=None,
+            ctx=ctx,
+            input_recheck=input_recheck,
+        )
         return None
     except GenerationUncertain as exc:
         raise _UncertainReplayDefect(str(exc)) from exc
@@ -2133,7 +2236,7 @@ async def _run_synthesis_step(
             db,
             build_id=build_id,
             code=DossierBuildFailureCode.InputsChanged,
-            detail="inputs changed during provider dispatch",
+            detail="inputs changed during generation dispatch",
             support=None,
             ctx=ctx,
             input_recheck=input_recheck,
@@ -2303,6 +2406,15 @@ async def _run_document_repair_step(
         )
         return None
     if progress == "inactive":
+        _terminal_failure(
+            db,
+            build_id=build_id,
+            code=DossierBuildFailureCode.InputsChanged,
+            detail="document repair owner became inactive before host acceptance",
+            support=None,
+            ctx=ctx,
+            input_recheck=input_recheck,
+        )
         return None
 
     def lock_dispatch(dispatch_db: Session) -> JobRow | None:
@@ -2347,6 +2459,15 @@ async def _run_document_repair_step(
             encode_preaccept_failure=_encode_dossier_preaccept_failure,
         )
     except GenerationDispatchAborted:
+        _terminal_failure(
+            db,
+            build_id=build_id,
+            code=DossierBuildFailureCode.InputsChanged,
+            detail="document repair dispatch was fenced before host acceptance",
+            support=None,
+            ctx=ctx,
+            input_recheck=input_recheck,
+        )
         return None
     except GenerationUncertain as exc:
         raise _UncertainReplayDefect(str(exc)) from exc
@@ -2513,16 +2634,24 @@ def _terminal_failure(
     modeled failure child + Failed event under the lock."""
 
     def op() -> None:
+        owner = LlmCallOwner(kind="artifact_build", id=build_id)
+        lock_generation_owner_in_current_transaction(db, owner)
         head_id = _lock_head_id_for_build(db, build_id)
         if head_id is None:
             db.rollback()
             return  # head purged (rule 10)
-        if _existing_terminal_child(db, build_id) is not None:
-            db.rollback()
-            return  # RULES 3-5: first committed terminal wins
-        if ctx is not None and not _running_claim_is_current(db, ctx):
+        if not _cancel_prepared_build_generation_in_current_transaction(
+            db,
+            owner=owner,
+            build_id=build_id,
+            ctx=ctx,
+            reason="dossier build terminalized before host acceptance",
+        ):
             db.rollback()
             return
+        if _existing_terminal_child(db, build_id) is not None:
+            db.commit()
+            return  # RULES 3-5: first committed terminal wins
         effective_code = code
         effective_detail = detail
         effective_support = support
@@ -2560,6 +2689,96 @@ def _terminal_failure(
         db.commit()
 
     retry_serializable(db, "_terminal_failure", op)
+
+
+def _cancel_prepared_build_generation_in_current_transaction(
+    db: Session,
+    *,
+    owner: LlmCallOwner,
+    build_id: UUID,
+    ctx: JobExecutionContext | None,
+    reason: str,
+) -> bool:
+    """Close the one prepared Dossier generation before its owner becomes terminal.
+
+    The caller holds the generation-owner advisory lock before the head and queue
+    locks. ``Uncertain`` is intentionally untouched: only a dispatch proven not
+    accepted can be closed by an owner-side cancellation. ``False`` means the
+    supplied worker attempt lost its queue claim and no terminal write is allowed.
+    """
+
+    if ctx is not None:
+        if not lock_running_job_claim(db, context=ctx):
+            return False
+        job = get_job(db, ctx.job_id)
+        if job is None:
+            raise AssertionError(f"generation job {ctx.job_id} disappeared under its claim lock")
+    else:
+        job_id = db.execute(
+            text(
+                "SELECT id FROM background_jobs "
+                "WHERE kind = :kind AND dedupe_key = :dedupe_key FOR UPDATE"
+            ),
+            {
+                "kind": DOSSIER_DEFINITION.job_kind,
+                "dedupe_key": _dispatch_key(build_id),
+            },
+        ).scalar_one_or_none()
+        job = None if job_id is None else lock_job(db, UUID(str(job_id)))
+    if job is None:
+        return ctx is None
+    if (
+        job.kind != DOSSIER_DEFINITION.job_kind
+        or job.dedupe_key != _dispatch_key(build_id)
+        or str(job.payload.get("build_id")) != str(build_id)
+    ):
+        raise AssertionError(f"job {job.id} does not own dossier build {build_id}")
+    active_generation = _active_build_generation(job)
+    if active_generation is None or active_generation[1].dispatch_phase is step_journal.Uncertain:
+        return True
+    step_path, state = active_generation
+    if isinstance(state.tool_execution, Present):
+        raise AssertionError("prepared dossier generation carries tool execution metadata")
+    completed = cancel_prepared_generation_without_dispatch_in_current_transaction(
+        db,
+        owner=owner,
+        state=state,
+        terminal_result=_SynthesisCancelled().model_dump_json(),
+        reason=reason,
+    )
+    db.execute(
+        text("UPDATE background_jobs SET payload = CAST(:payload AS jsonb) WHERE id = :job_id"),
+        {
+            "payload": json.dumps(
+                step_journal.payload_with_step_state(
+                    job.payload,
+                    step_path=step_path,
+                    state=completed,
+                )
+            ),
+            "job_id": job.id,
+        },
+    )
+    return True
+
+
+def _active_build_generation(
+    job: JobRow,
+) -> tuple[str, step_journal.StepReplayState] | None:
+    active = [
+        (path, state)
+        for path, state in step_journal.read_step_states(job).items()
+        if path in {_STEP_PATH, "document-repair"}
+        and state.dispatch_phase in {step_journal.Prepared, step_journal.Uncertain}
+    ]
+    if len(active) > 1:
+        raise AssertionError("dossier build has multiple active generation steps")
+    if not active:
+        return None
+    step_path, state = active[0]
+    if isinstance(state.tool_execution, Present):
+        raise AssertionError(f"active Dossier generation {step_path!r} carries tool metadata")
+    return step_path, state
 
 
 def _terminal_inputs_are_current(
@@ -2689,7 +2908,7 @@ async def _watch_stream_guard(
     input_recheck: _TerminalInputRecheck,
     guard: _StreamGuard,
 ) -> None:
-    """Cancel a provider stream when its build can no longer publish.
+    """Cancel a generation stream when its build can no longer publish.
 
     A fresh session is opened for every poll so a long-lived worker transaction
     cannot hide a committed cancellation, subject/audience visibility loss, or
@@ -2730,7 +2949,9 @@ def cancel_build(db: Session, *, build_id: UUID, actor_user_id: UUID) -> None:
     insert the cancellation child + Cancelled event. Cancelling A immediately
     permits a new build B (the conflict key is the build, not the head)."""
 
-    def op() -> None:
+    def op() -> bool:
+        owner = LlmCallOwner(kind="artifact_build", id=build_id)
+        lock_generation_owner_in_current_transaction(db, owner)
         head_id = _lock_head_id_for_build(db, build_id)
         if head_id is None:
             db.rollback()
@@ -2757,13 +2978,21 @@ def cancel_build(db: Session, *, build_id: UUID, actor_user_id: UUID) -> None:
                 ApiErrorCode.E_DOSSIER_NOT_FOUND,
                 "Dossier build not found",
             ) from None
+        if not _cancel_prepared_build_generation_in_current_transaction(
+            db,
+            owner=owner,
+            build_id=build_id,
+            ctx=None,
+            reason="dossier build was cancelled before host acceptance",
+        ):
+            raise AssertionError("unfenced dossier cancellation lost queue ownership")
         existing = _existing_terminal_child(db, build_id)
         if existing in ("revision", "failure"):
-            db.rollback()
-            raise BuildNotActive()
+            db.commit()
+            return False
         if existing == "cancellation":
-            db.rollback()
-            return  # RULE 4: repeating the winning terminal mutation is a no-op
+            db.commit()
+            return True  # RULE 4: repeating the winning terminal mutation is a no-op
         db.execute(
             text(
                 "INSERT INTO artifact_build_cancellations (build_id, actor_user_id) VALUES (:b, :a)"
@@ -2779,8 +3008,10 @@ def cancel_build(db: Session, *, build_id: UUID, actor_user_id: UUID) -> None:
             ).model_dump(mode="json"),
         )
         db.commit()
+        return True
 
-    retry_serializable(db, "cancel_build", op)
+    if not retry_serializable(db, "cancel_build", op):
+        raise BuildNotActive()
 
 
 def assert_build_viewer(db: Session, *, build_id: UUID, viewer_id: UUID) -> None:
@@ -3083,19 +3314,305 @@ def _read_head_snapshot(
 # ---------------------------------------------------------------------------
 
 
+def _build_ids_for_heads(db: Session, head_ids: Sequence[UUID]) -> list[UUID]:
+    if not head_ids:
+        return []
+    return [
+        UUID(str(build_id))
+        for build_id in db.execute(
+            text("SELECT id FROM artifact_builds WHERE artifact_id = ANY(:head_ids) ORDER BY id"),
+            {"head_ids": list(head_ids)},
+        ).scalars()
+    ]
+
+
+def _learn_request_ids_for_heads(db: Session, head_ids: Sequence[UUID]) -> list[UUID]:
+    if not head_ids:
+        return []
+    return [
+        UUID(str(request_id))
+        for request_id in db.execute(
+            text(
+                """
+                SELECT request.id
+                FROM artifact_learn_requests request
+                WHERE EXISTS (
+                    SELECT 1
+                    FROM artifact_learn_successes success
+                    WHERE success.request_id = request.id
+                      AND success.artifact_id = ANY(:head_ids)
+                )
+                   OR EXISTS (
+                    SELECT 1
+                    FROM artifacts artifact
+                    JOIN artifact_idea_resolutions resolution
+                      ON resolution.idea_subject_id = artifact.subject_id
+                    WHERE artifact.id = ANY(:head_ids)
+                      AND artifact.subject_scheme = 'idea'
+                      AND resolution.highlight_id = request.highlight_id
+                )
+                ORDER BY request.id
+                """
+            ),
+            {"head_ids": list(head_ids)},
+        ).scalars()
+    ]
+
+
+def _existing_learn_request_ids(
+    db: Session,
+    request_ids: Sequence[UUID],
+    *,
+    lock: bool,
+) -> list[UUID]:
+    if not request_ids:
+        return []
+    lock_clause = " FOR UPDATE" if lock else ""
+    return [
+        UUID(str(request_id))
+        for request_id in db.execute(
+            text(
+                "SELECT id FROM artifact_learn_requests "
+                "WHERE id = ANY(:request_ids) ORDER BY id" + lock_clause
+            ),
+            {"request_ids": list(request_ids)},
+        ).scalars()
+    ]
+
+
+def _lock_dossier_jobs_for_builds_in_order(
+    db: Session,
+    build_ids: Sequence[UUID],
+) -> dict[UUID, JobRow]:
+    if not build_ids:
+        return {}
+    expected_build_ids = set(build_ids)
+    dedupe_keys = [_dispatch_key(build_id) for build_id in build_ids]
+    job_ids = [
+        UUID(str(job_id))
+        for job_id in db.execute(
+            text(
+                "SELECT id FROM background_jobs "
+                "WHERE kind = :kind AND dedupe_key = ANY(:dedupe_keys) "
+                "ORDER BY id FOR UPDATE"
+            ),
+            {
+                "kind": DOSSIER_DEFINITION.job_kind,
+                "dedupe_keys": dedupe_keys,
+            },
+        ).scalars()
+    ]
+    jobs_by_build_id: dict[UUID, JobRow] = {}
+    for job_id in job_ids:
+        job = lock_job(db, job_id)
+        if job is None:
+            raise AssertionError(f"locked Dossier job {job_id} disappeared")
+        try:
+            build_id = UUID(str(job.payload.get("build_id")))
+        except (TypeError, ValueError) as exc:
+            raise AssertionError(f"Dossier job {job.id} has no valid build identity") from exc
+        if (
+            build_id not in expected_build_ids
+            or job.kind != DOSSIER_DEFINITION.job_kind
+            or job.dedupe_key != _dispatch_key(build_id)
+        ):
+            raise AssertionError(f"job {job.id} does not own Dossier build {build_id}")
+        if build_id in jobs_by_build_id:
+            raise AssertionError(f"Dossier build {build_id} has multiple queue owners")
+        jobs_by_build_id[build_id] = job
+    return jobs_by_build_id
+
+
+def _lock_cleanup_head_ids_in_order(
+    db: Session,
+    head_ids: Sequence[UUID],
+    *,
+    learn_request_ids: Sequence[UUID] = (),
+) -> list[UUID]:
+    """Lock one exact teardown set in its caller-owned retry transaction.
+
+    The caller's repository transaction retry is the only retry boundary. A
+    concurrent build or request-set change raises ``TransactionRestart`` so the
+    whole owning mutation rolls back and reacquires the exact complete set in
+    global order: generation owners, heads, queue jobs/request leases, ledger.
+    """
+
+    requested_head_ids = sorted(set(head_ids))
+    requested_learn_request_ids = sorted(set(learn_request_ids))
+    if not requested_head_ids and not requested_learn_request_ids:
+        return []
+    candidate_head_ids = (
+        [
+            UUID(str(head_id))
+            for head_id in db.execute(
+                text("SELECT id FROM artifacts WHERE id = ANY(:head_ids) ORDER BY id"),
+                {"head_ids": requested_head_ids},
+            ).scalars()
+        ]
+        if requested_head_ids
+        else []
+    )
+    candidate_build_ids = _build_ids_for_heads(db, candidate_head_ids)
+    candidate_learn_request_ids = sorted(
+        {
+            *_existing_learn_request_ids(
+                db,
+                requested_learn_request_ids,
+                lock=False,
+            ),
+            *_learn_request_ids_for_heads(db, candidate_head_ids),
+        }
+    )
+    owners = sorted(
+        [
+            *(LlmCallOwner(kind="artifact_build", id=build_id) for build_id in candidate_build_ids),
+            *(
+                LlmCallOwner(kind="artifact_learn_request", id=request_id)
+                for request_id in candidate_learn_request_ids
+            ),
+        ],
+        key=lambda owner: (owner.kind, owner.id),
+    )
+    for owner in owners:
+        lock_generation_owner_in_current_transaction(db, owner)
+    locked_head_ids = (
+        [
+            UUID(str(head_id))
+            for head_id in db.execute(
+                text("SELECT id FROM artifacts WHERE id = ANY(:head_ids) ORDER BY id FOR UPDATE"),
+                {"head_ids": candidate_head_ids},
+            ).scalars()
+        ]
+        if candidate_head_ids
+        else []
+    )
+    if locked_head_ids != candidate_head_ids:
+        raise TransactionRestart("Dossier cleanup head set changed")
+    locked_build_ids = _build_ids_for_heads(db, locked_head_ids)
+    if locked_build_ids != candidate_build_ids:
+        raise TransactionRestart("Dossier cleanup build set changed")
+    _lock_dossier_jobs_for_builds_in_order(db, locked_build_ids)
+    locked_learn_request_ids = sorted(
+        {
+            *_existing_learn_request_ids(
+                db,
+                requested_learn_request_ids,
+                lock=True,
+            ),
+            *_existing_learn_request_ids(
+                db,
+                _learn_request_ids_for_heads(db, locked_head_ids),
+                lock=True,
+            ),
+        }
+    )
+    if locked_learn_request_ids != candidate_learn_request_ids:
+        raise TransactionRestart("Dossier cleanup Learn-request set changed")
+    return locked_head_ids
+
+
+def _cancel_prepared_learn_requests_before_purge(
+    db: Session,
+    request_ids: Sequence[UUID],
+    *,
+    reason: str,
+) -> None:
+    if not request_ids:
+        return
+    rows = list(
+        db.execute(
+            text(
+                "SELECT id, coordination FROM artifact_learn_requests "
+                "WHERE id = ANY(:request_ids) ORDER BY id FOR UPDATE"
+            ),
+            {"request_ids": list(request_ids)},
+        ).mappings()
+    )
+    prepared: list[tuple[UUID, dict[str, object], step_journal.StepReplayState]] = []
+    for row in rows:
+        request_id = UUID(str(row["id"]))
+        coordination = row["coordination"]
+        if not isinstance(coordination, dict):
+            raise AssertionError(f"Learn request {request_id} coordination is not an object")
+        state = step_journal.decode_step_states({"coordination": coordination}).get(
+            _IDEA_RESOLUTION_STEP_PATH
+        )
+        if state is None or state.dispatch_phase is step_journal.Completed:
+            continue
+        expected_generation_id = step_journal.stable_generation_id(
+            request_id,
+            _IDEA_RESOLUTION_STEP_PATH,
+        )
+        if state.generation_id != expected_generation_id:
+            raise AssertionError("Idea-resolution generation identity changed during teardown")
+        if isinstance(state.tool_execution, Present):
+            raise AssertionError("Idea-resolution generation carries tool metadata")
+        if state.dispatch_phase is step_journal.Uncertain:
+            raise GenerationUncertain(
+                f"cannot purge uncertain Dossier Idea resolution {request_id}"
+            )
+        prepared.append((request_id, coordination, state))
+
+    for request_id, coordination, state in prepared:
+        owner = LlmCallOwner(kind="artifact_learn_request", id=request_id)
+        completed = cancel_prepared_generation_without_dispatch_in_current_transaction(
+            db,
+            owner=owner,
+            state=state,
+            terminal_result=_unresolved_idea_envelope().model_dump_json(),
+            reason=reason,
+        )
+        payload = step_journal.payload_with_step_state(
+            {"coordination": coordination},
+            step_path=_IDEA_RESOLUTION_STEP_PATH,
+            state=completed,
+        )
+        next_coordination = payload.get("coordination")
+        if not isinstance(next_coordination, dict):
+            raise AssertionError("Idea-resolution coordination is not an object")
+        db.execute(
+            text(
+                "UPDATE artifact_learn_requests "
+                "SET coordination = CAST(:coordination AS jsonb), "
+                "resolver_lease_expires_at = NULL WHERE id = :request_id"
+            ),
+            {
+                "coordination": json.dumps(next_coordination),
+                "request_id": request_id,
+            },
+        )
+
+
+def _assert_no_uncertain_builds_before_purge(
+    db: Session,
+    build_ids: Sequence[UUID],
+) -> None:
+    jobs_by_build_id = _lock_dossier_jobs_for_builds_in_order(db, build_ids)
+    for build_id, job in jobs_by_build_id.items():
+        active_generation = _active_build_generation(job)
+        if (
+            active_generation is not None
+            and active_generation[1].dispatch_phase is step_journal.Uncertain
+        ):
+            raise GenerationUncertain(
+                f"cannot purge uncertain Dossier generation for build {build_id}"
+            )
+
+
 def lock_cleanup_heads_in_order(
     db: Session,
     *,
     subject_refs: Sequence[ResourceRef] = (),
     audiences: Sequence[AudienceScope] = (),
 ) -> list[UUID]:
-    """Prelock one composing cleanup's complete head union in canonical UUID order.
+    """Stabilize one composing cleanup's complete generation/head lock set.
 
     A teardown that will invoke more than one subject/audience cleanup must call
-    this once before invoking any individual cleanup helper. Otherwise two
-    transactions can each hold a head from one subset and then deadlock while
-    their later audience-wide sweeps acquire the overlapping union in a
-    different order.
+    this once before invoking any individual cleanup helper. It acquires every
+    discovered generation owner before the canonical head union, then queue jobs
+    and request leases. Otherwise two transactions can each hold a head from one
+    subset and then deadlock while their later audience-wide sweeps acquire the
+    overlapping union in a different order.
 
     The caller owns the transaction and must keep it open through every nested
     Dossier cleanup. Re-locking one of these rows later in the same transaction
@@ -3117,7 +3634,7 @@ def lock_cleanup_heads_in_order(
     )
     if not subject_keys and not audience_keys:
         return []
-    return [
+    head_ids = [
         UUID(str(head_id))
         for head_id in db.execute(
             text(
@@ -3147,7 +3664,6 @@ def lock_cleanup_heads_in_order(
                       AND key.id = artifact.audience_id
                 )
                 ORDER BY artifact.id
-                FOR UPDATE OF artifact
                 """
             ),
             {
@@ -3156,27 +3672,30 @@ def lock_cleanup_heads_in_order(
             },
         ).scalars()
     ]
+    return _lock_cleanup_head_ids_in_order(db, head_ids)
 
 
 def on_subject_deleted(db: Session, subject_ref: ResourceRef) -> None:
     """Purge every head (all audiences) + its builds + terminal children + events +
     citation edges for a deleted subject, in FK-safe order under the head lock. The
-    caller owns the transaction (no commit here). Cleanup wins over a late worker
-    promote: the build rows are gone, so ``run_build`` no-ops (rule 10)."""
+    caller owns the transaction and whole-operation repository retry (no commit or
+    local retry here). Cleanup wins over a late worker promote: the build rows are
+    gone, so ``run_build`` no-ops (rule 10)."""
     head_ids = [
         UUID(str(r[0]))
         for r in db.execute(
             text(
                 "SELECT id FROM artifacts "
                 "WHERE subject_scheme = :s AND subject_id = :sid "
-                "ORDER BY id FOR UPDATE"
+                "ORDER BY id"
             ),
             {"s": subject_ref.scheme, "sid": subject_ref.id},
         )
     ]
-    if not head_ids:
+    locked_head_ids = _lock_cleanup_head_ids_in_order(db, head_ids)
+    if not locked_head_ids:
         return
-    _delete_heads(db, head_ids)
+    _delete_heads(db, locked_head_ids)
 
 
 def on_subject_audience_removed(
@@ -3193,7 +3712,7 @@ def on_subject_audience_removed(
                 "SELECT id FROM artifacts "
                 "WHERE subject_scheme = :subject_scheme AND subject_id = :subject_id "
                 "AND audience_scheme = :audience_scheme AND audience_id = :audience_id "
-                "FOR UPDATE"
+                "ORDER BY id"
             ),
             {
                 "subject_scheme": subject_ref.scheme,
@@ -3203,8 +3722,9 @@ def on_subject_audience_removed(
             },
         )
     ]
-    if head_ids:
-        _delete_heads(db, head_ids)
+    locked_head_ids = _lock_cleanup_head_ids_in_order(db, head_ids)
+    if locked_head_ids:
+        _delete_heads(db, locked_head_ids)
 
 
 def on_audience_visibility_changed(db: Session, *, audience: AudienceScope) -> None:
@@ -3220,7 +3740,7 @@ def on_audience_visibility_changed(db: Session, *, audience: AudienceScope) -> N
             text(
                 "SELECT id, subject_scheme, subject_id FROM artifacts "
                 "WHERE audience_scheme = 'user' AND audience_id = :audience_id "
-                "ORDER BY id FOR UPDATE"
+                "ORDER BY id"
             ),
             {"audience_id": str(audience.user_id)},
         ).mappings()
@@ -3242,7 +3762,9 @@ def on_audience_visibility_changed(db: Session, *, audience: AudienceScope) -> N
         ):
             lost.append(UUID(str(row["id"])))
     if lost:
-        _delete_heads(db, lost)
+        locked_lost = _lock_cleanup_head_ids_in_order(db, lost)
+        if locked_lost:
+            _delete_heads(db, locked_lost)
 
 
 def on_user_deleted(db: Session, *, user_id: UUID) -> None:
@@ -3251,7 +3773,9 @@ def on_user_deleted(db: Session, *, user_id: UUID) -> None:
     User-audience history is purged. Surviving Library-audience history keeps
     its content, rehomes citation graph ownership to the Library's current
     owner, redacts attribution, and cancels active builds requested by the
-    departing user. The caller owns the surrounding User-deletion transaction.
+    departing user. The caller owns the surrounding User-deletion transaction and
+    its whole-operation ``retry_read_committed`` boundary; this hook never retries
+    or commits a partial account deletion.
     """
     owned_library = db.execute(
         text("SELECT id FROM libraries WHERE owner_user_id = :user_id LIMIT 1"),
@@ -3267,57 +3791,84 @@ def on_user_deleted(db: Session, *, user_id: UUID) -> None:
     # citation re-homing, and attribution redaction. Lock the complete set of
     # heads those mutations can touch once, before any subset cleanup, using the
     # same global UUID order as every other composing cleanup.
-    db.execute(
-        text(
-            """
-            SELECT artifact.id
-            FROM artifacts artifact
-            WHERE (
-                artifact.audience_scheme = 'user'
-                AND artifact.audience_id = :user_id_text
-            )
-               OR EXISTS (
-                SELECT 1
-                FROM artifact_builds build
-                WHERE build.artifact_id = artifact.id
-                  AND build.requester_user_id = :user_id
-            )
-               OR EXISTS (
-                SELECT 1
-                FROM artifact_builds build
-                JOIN artifact_revisions revision ON revision.build_id = build.id
-                WHERE build.artifact_id = artifact.id
-                  AND (
-                    revision.citation_owner_user_id = :user_id
-                    OR revision.creator_user_id = :user_id
-                  )
-            )
-               OR EXISTS (
-                SELECT 1
-                FROM artifact_builds build
-                JOIN artifact_build_cancellations cancellation
-                  ON cancellation.build_id = build.id
-                WHERE build.artifact_id = artifact.id
-                  AND cancellation.actor_user_id = :user_id
-            )
-            ORDER BY artifact.id
-            FOR UPDATE OF artifact
-            """
-        ),
-        {"user_id": user_id, "user_id_text": str(user_id)},
-    ).all()
+    cleanup_head_ids = [
+        UUID(str(head_id))
+        for head_id in db.execute(
+            text(
+                """
+                SELECT artifact.id
+                FROM artifacts artifact
+                WHERE (
+                    artifact.audience_scheme = 'user'
+                    AND artifact.audience_id = :user_id_text
+                )
+                   OR EXISTS (
+                    SELECT 1
+                    FROM artifact_builds build
+                    WHERE build.artifact_id = artifact.id
+                      AND build.requester_user_id = :user_id
+                )
+                   OR EXISTS (
+                    SELECT 1
+                    FROM artifact_builds build
+                    JOIN artifact_revisions revision ON revision.build_id = build.id
+                    WHERE build.artifact_id = artifact.id
+                      AND (
+                        revision.citation_owner_user_id = :user_id
+                        OR revision.creator_user_id = :user_id
+                      )
+                )
+                   OR EXISTS (
+                    SELECT 1
+                    FROM artifact_builds build
+                    JOIN artifact_build_cancellations cancellation
+                      ON cancellation.build_id = build.id
+                    WHERE build.artifact_id = artifact.id
+                      AND cancellation.actor_user_id = :user_id
+                )
+                ORDER BY artifact.id
+                """
+            ),
+            {"user_id": user_id, "user_id_text": str(user_id)},
+        ).scalars()
+    ]
+    user_learn_request_ids = [
+        UUID(str(request_id))
+        for request_id in db.execute(
+            text("SELECT id FROM artifact_learn_requests WHERE user_id = :user_id ORDER BY id"),
+            {"user_id": user_id},
+        ).scalars()
+    ]
+    locked_cleanup_head_ids = _lock_cleanup_head_ids_in_order(
+        db,
+        cleanup_head_ids,
+        learn_request_ids=user_learn_request_ids,
+    )
 
     private_head_ids = [
         UUID(str(row[0]))
         for row in db.execute(
             text(
                 "SELECT id FROM artifacts "
-                "WHERE audience_scheme = 'user' AND audience_id = :user_id "
+                "WHERE id = ANY(:cleanup_head_ids) "
+                "AND audience_scheme = 'user' AND audience_id = :user_id "
                 "ORDER BY id"
             ),
-            {"user_id": str(user_id)},
+            {
+                "cleanup_head_ids": locked_cleanup_head_ids,
+                "user_id": str(user_id),
+            },
         )
     ]
+    _assert_no_uncertain_builds_before_purge(
+        db,
+        _build_ids_for_heads(db, private_head_ids),
+    )
+    _cancel_prepared_learn_requests_before_purge(
+        db,
+        user_learn_request_ids,
+        reason="Dossier Idea resolution owner was deleted before host acceptance",
+    )
     delete_user_learn_rows_before_heads(db, user_id=user_id)
     if private_head_ids:
         _delete_heads(db, private_head_ids)
@@ -3328,13 +3879,17 @@ def on_user_deleted(db: Session, *, user_id: UUID) -> None:
             text(
                 "SELECT a.id "
                 "FROM artifacts a "
-                "WHERE a.audience_scheme = 'library' "
+                "WHERE a.id = ANY(:cleanup_head_ids) "
+                "AND a.audience_scheme = 'library' "
                 "AND EXISTS ("
                 "  SELECT 1 FROM artifact_builds b "
                 "  WHERE b.artifact_id = a.id AND b.requester_user_id = :user_id"
                 ") ORDER BY a.id"
             ),
-            {"user_id": user_id},
+            {
+                "cleanup_head_ids": locked_cleanup_head_ids,
+                "user_id": user_id,
+            },
         ).scalars()
     )
     for head_id in shared_heads:
@@ -3355,6 +3910,28 @@ def on_user_deleted(db: Session, *, user_id: UUID) -> None:
             )
         ]
         for build_id in active_build_ids:
+            job = _lock_dossier_jobs_for_builds_in_order(db, [build_id]).get(build_id)
+            active_generation = _active_build_generation(job) if job is not None else None
+            generation_is_uncertain = (
+                active_generation is not None
+                and active_generation[1].dispatch_phase is step_journal.Uncertain
+            )
+            if generation_is_uncertain:
+                # Dispatch may already have been accepted. Deleting its requester
+                # would make the eventual terminal impossible to attribute, so
+                # the whole outer User teardown must roll back unchanged until
+                # the operator reconciles this generation.
+                raise GenerationUncertain(
+                    f"cannot delete requester with uncertain Dossier generation {build_id}"
+                )
+            if not _cancel_prepared_build_generation_in_current_transaction(
+                db,
+                owner=LlmCallOwner(kind="artifact_build", id=build_id),
+                build_id=build_id,
+                ctx=None,
+                reason="dossier requester was deleted before host acceptance",
+            ):
+                raise AssertionError("user teardown lost Dossier queue ownership")
             db.execute(
                 text(
                     "INSERT INTO artifact_build_cancellations (build_id, actor_user_id) "
@@ -3445,6 +4022,24 @@ def on_user_deleted(db: Session, *, user_id: UUID) -> None:
 def _delete_heads(db: Session, head_ids: list[UUID]) -> None:
     from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
 
+    build_ids = _build_ids_for_heads(db, head_ids)
+    _assert_no_uncertain_builds_before_purge(db, build_ids)
+    learn_request_ids = _learn_request_ids_for_heads(db, head_ids)
+    _cancel_prepared_learn_requests_before_purge(
+        db,
+        learn_request_ids,
+        reason="Dossier Idea resolution was purged before host acceptance",
+    )
+    for build_id in build_ids:
+        if not _cancel_prepared_build_generation_in_current_transaction(
+            db,
+            owner=LlmCallOwner(kind="artifact_build", id=build_id),
+            build_id=build_id,
+            ctx=None,
+            reason="dossier build was purged before host acceptance",
+        ):
+            raise AssertionError("Dossier purge lost queue ownership")
+
     idea_subject_ids = [
         idea_subject_id
         for head_id in head_ids
@@ -3455,13 +4050,6 @@ def _delete_heads(db: Session, head_ids: list[UUID]) -> None:
             )
         )
         is not None
-    ]
-    build_ids = [
-        UUID(str(r[0]))
-        for r in db.execute(
-            text("SELECT id FROM artifact_builds WHERE artifact_id = ANY(:ids)"),
-            {"ids": head_ids},
-        )
     ]
     revision_ids = (
         [
