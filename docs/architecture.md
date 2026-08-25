@@ -641,6 +641,10 @@ The note-reindex payload is closed to exactly `note_block_id` plus `reason`.
 Its registry shim passes the claimed `JobExecutionContext`, so task diagnostics
 use the real queue job identity and expose no direct-call `task_id` or unowned
 `request_id` compatibility surface.
+Worker-only task signatures mirror their registry shims without direct-call
+defaults. Nullable request identity remains explicit at the call site, and the
+podcast semantic-index task opens its production session factory internally;
+there is no unused factory-injection seam.
 
 Task catalog (each is a thin handler in `tasks/` that wraps a service):
 `ingest_media_source`, `enrich_metadata`, `chat_run`,

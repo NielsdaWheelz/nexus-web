@@ -1157,6 +1157,9 @@ scheduler identity; no task-level defaults reconstruct either field.
 Note reindex has one exact `{note_block_id, reason}` payload and receives the
 claimed job context from the registry. Extra request/task identities defect or
 do not exist; diagnostics use the actual queue job id.
+Worker-only ingest, stale-reconciliation, and transcript-semantic task surfaces
+have no direct-call defaults. The semantic task owns its production session
+factory rather than carrying an unused injection branch.
 
 ## Acceptance criteria
 
