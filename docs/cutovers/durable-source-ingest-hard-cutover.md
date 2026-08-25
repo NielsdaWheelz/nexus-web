@@ -738,8 +738,8 @@ Retry/refresh dispatch is a two-transaction command:
 
 - transaction 1 records the new `media_source_attempts` retry/refresh intent,
 - transaction 2 verifies non-reacquirable source storage when required, resets
-  rewriteable domain artifacts, inserts the `ingest_media_source` job, and marks
-  the attempt queued,
+  source-specific execution state without deleting current readable artifacts,
+  inserts the `ingest_media_source` job, and marks the attempt queued,
 - storage objects collected by transaction 2 are deleted only after that
   transaction commits.
 
@@ -752,7 +752,9 @@ requeues run transcript quota admission and write
 `podcast_transcript_request_audits` inside transaction 2 before the
 `ingest_media_source` job is visible. Quota or billing rejection is recorded on
 the source attempt and returned as the typed API error; it is not converted into
-a silent non-enqueued success.
+a silent non-enqueued success. Current transcript segments, fragments, and
+readable state survive admission and are replaced only by the fenced current
+transcript writer after successful acquisition.
 
 ## File Plan
 

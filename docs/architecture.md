@@ -1537,6 +1537,12 @@ Publisher-sidecar fallback admission returns the discriminated domain result
 therefore commits its immutable audit before the worker raises the typed error
 and publishes terminal source/transcript failure in the next fenced phase; the
 error is never used as callback control flow that would roll the audit back.
+Generated-fallback and operator-requeue admission mutate only the generated
+budget reservation, transcription job, and immutable audit. Existing current
+segments, fragments, and readable transcript state remain authoritative until
+`transcripts/current.py` atomically installs their replacement; admission never
+deletes or downgrades the current projection and publishes no duplicate
+collection revision.
 Publisher and generated transcript success callbacks publish only source
 artifacts plus their domain ledger. The common source terminal is the sole owner
 of ready-state, semantic admission, and the success media-fact revision; a

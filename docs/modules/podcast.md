@@ -246,6 +246,11 @@ If a publisher sidecar cannot produce segments, generated-fallback admission
 returns `Admitted | RejectedQuota` through the source fence. Rejected quota
 commits the immutable request audit first; the worker then publishes terminal
 source/transcript failure under its next exact fence without charging usage.
+Generated fallback and operator requeue reserve usage and reset the execution
+job without deleting current segments/fragments or downgrading readable
+transcript state. The prior current projection survives until the fenced
+transcript writer replaces it atomically; the requeue publishes one shared
+media-fact revision, not an additional Podcast-only bump.
 Publisher and generated success callbacks are collection-pure and never enqueue
 semantic work. The common source terminal publishes both effects once after the
 artifact fence succeeds. Starting an already-admitted Episode attempt still
