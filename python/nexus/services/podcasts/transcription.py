@@ -993,7 +993,7 @@ def run_podcast_transcription_now(
             now = datetime.now(UTC)
 
             def publish_publisher_transcript(db: Session, _attempt: object) -> None:
-                write_current_transcript(
+                publish_source_transcript(
                     db,
                     media_id=media_id,
                     request_reason=cast(
@@ -1021,7 +1021,6 @@ def run_podcast_transcription_now(
                     ),
                     {"media_id": media_id, "now": now},
                 )
-                _bump_all_episode_row_collections(db)
 
             run_source_publication_phase(
                 session_factory=session_factory,
@@ -1153,7 +1152,6 @@ def run_podcast_transcription_now(
                 },
             )
             _commit_reserved_usage_for_media(db, media_id=media_id, now=now)
-            _bump_all_episode_row_collections(db)
 
         run_source_publication_phase(
             session_factory=session_factory,

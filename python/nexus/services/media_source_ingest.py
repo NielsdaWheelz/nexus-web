@@ -2771,8 +2771,10 @@ def _run_podcast_episode_transcript(
                 ApiErrorCode.E_INVALID_KIND,
                 "Podcast transcript source attempts must target podcast episode media.",
             )
+        processing_status_changed = media.processing_status != ProcessingStatus.extracting
         begin_extraction(db, media)
-        _bump_media_fact_collections(db)
+        if processing_status_changed:
+            _bump_media_fact_collections(db)
 
     run_source_publication_phase(
         session_factory=session_factory,
