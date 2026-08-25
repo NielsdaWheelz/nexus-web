@@ -14,9 +14,9 @@ from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.retrieval import RetrievalResultRef, retrieval_result_ref_json
 from nexus.schemas.search import (
     ConversationArtifactSearchOut,
-    SearchResultOut,
     SearchResultActivationOut,
     SearchResultContextRefOut,
+    SearchResultOut,
 )
 from nexus.services import bootstrap
 from nexus.services.retrieval_citation import citation_from_search_result
