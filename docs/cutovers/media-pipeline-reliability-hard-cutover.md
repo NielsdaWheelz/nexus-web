@@ -1149,7 +1149,8 @@ new-code operation depends on it.
 Durable job payloads have no compatibility decoding after this cutover. The
 note-index and Synapse owners always persist their exact `reason`; the registry
 defects on an absent, non-string, empty, or padded carrier rather than supplying
-an older default.
+an older default. Optional request and scheduler identities accept only explicit
+absence or canonical text and never recover through string coercion or trimming.
 
 ## Acceptance criteria
 

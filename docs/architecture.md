@@ -631,7 +631,9 @@ class and attempt/lease policy for API `/version` and worker release-health proo
 Registry shims decode durable same-system payloads without compatibility
 defaults. In particular, the sole note-index and Synapse enqueuers persist a
 canonical, nonempty, unpadded `reason`; omission, coercion, or padding defects at
-dispatch instead of inventing `note_edit` or `manual`.
+dispatch instead of inventing `note_edit` or `manual`. Optional `request_id` and
+`scheduler_identity` carriers are either absent/`null` or the same canonical
+text shape; the registry never stringifies or trims malformed values.
 
 Task catalog (each is a thin handler in `tasks/` that wraps a service):
 `ingest_media_source`, `enrich_metadata`, `chat_run`,
