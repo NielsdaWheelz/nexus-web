@@ -37,7 +37,7 @@ import {
   decodePodcastSubscriptionListItem,
   type PodcastSubscriptionListItem,
 } from "./podcastSubscriptions";
-import { usePodcastSubscriptionSettingsModal } from "./usePodcastSubscriptionSettingsModal";
+import { subscribePodcastSubscriptionSettingsInstalls } from "@/lib/podcasts/subscriptionSettings";
 import {
   listMemberLibraries,
   type MemberLibrary,
@@ -359,25 +359,27 @@ export default function PodcastsPaneBody() {
     subscriptionQueryIdentity,
   );
   const [librariesLoading, setLibrariesLoading] = useState(restored === null);
-  // The settings overlay is owned app-level now; this hook is kept only for its
-  // install subscription, which keeps the pane's list rows current after a save.
-  usePodcastSubscriptionSettingsModal({
-    onSaved: (response) => {
-      setRows((prev) =>
-        prev.map((row) =>
-          row.podcast_id === response.podcast_id
-            ? {
-                ...row,
-                default_playback_speed: response.default_playback_speed,
-                pause_shortening_mode: response.pause_shortening_mode,
-                auto_queue: response.auto_queue,
-              }
-            : row,
+  useEffect(
+    () =>
+      subscribePodcastSubscriptionSettingsInstalls((install) => {
+        if (install.kind !== "Settings") return;
+        const response = install.settings;
+        setRows((prev) =>
+          prev.map((row) =>
+            row.podcast_id === response.podcast_id
+              ? {
+                  ...row,
+                  default_playback_speed: response.default_playback_speed,
+                  pause_shortening_mode: response.pause_shortening_mode,
+                  auto_queue: response.auto_queue,
+                }
+              : row,
           ),
-      );
-      refreshSubscriptions();
-    },
-  });
+        );
+        refreshSubscriptions();
+      }),
+    [refreshSubscriptions, setRows],
+  );
 
   const rows = controller?.subscriptions ?? EMPTY_SUBSCRIPTIONS;
   const libraries = controller?.libraries ?? EMPTY_MEMBER_LIBRARIES;

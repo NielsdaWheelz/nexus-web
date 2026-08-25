@@ -78,7 +78,7 @@ import {
   type LibraryPlacementOption,
 } from "@/lib/libraries/libraryPlacement";
 import { useEpisodeTranscriptController } from "./useEpisodeTranscriptController";
-import { usePodcastSubscriptionSettingsModal } from "../usePodcastSubscriptionSettingsModal";
+import { subscribePodcastSubscriptionSettingsInstalls } from "@/lib/podcasts/subscriptionSettings";
 import {
   EPISODE_WIDE_COMMAND_LABELS,
   decodePodcastEpisodeMedia,
@@ -426,35 +426,35 @@ export default function PodcastDetailPaneBody() {
   const completedPodcastDetailRevalidationNonceRef =
     useRef<number | null>(null);
   const [backfillRetryBusy, setBackfillRetryBusy] = useState(false);
-  // The settings overlay is owned app-level (ResourceActionOverlays); this hook
-  // is retained only for its install subscription, which keeps the pane's local
-  // subscription projection current after an app-level settings save.
-  const settingsModal = usePodcastSubscriptionSettingsModal({
-    onSaved: (response) => {
-      if (response.podcast_id !== podcastId) return;
-      setDetail((prev) =>
-        prev && prev.subscription
-          ? {
-              ...prev,
-              subscription: {
-                ...prev.subscription,
-                default_playback_speed: response.default_playback_speed,
-                pause_shortening_mode: response.pause_shortening_mode,
-                auto_queue: response.auto_queue,
-                updated_at: response.updated_at,
-              },
-            }
-          : prev,
-      );
-      clearAllVisitData();
-    },
-  });
+  useEffect(
+    () =>
+      subscribePodcastSubscriptionSettingsInstalls((install) => {
+        if (install.kind !== "Settings") return;
+        const response = install.settings;
+        if (response.podcast_id !== podcastId) return;
+        setDetail((prev) =>
+          prev && prev.subscription
+            ? {
+                ...prev,
+                subscription: {
+                  ...prev.subscription,
+                  default_playback_speed: response.default_playback_speed,
+                  pause_shortening_mode: response.pause_shortening_mode,
+                  auto_queue: response.auto_queue,
+                  updated_at: response.updated_at,
+                },
+              }
+            : prev,
+        );
+        clearAllVisitData();
+      }),
+    [clearAllVisitData, podcastId, setDetail],
+  );
   const transcriptionAllowed = billingAccount?.can_transcribe === true;
 
   useSetPaneLabel(detail?.podcast.title ?? (loading ? null : "Podcast"));
 
   const { clear: clearExpandedShowNotesMediaIds } = expandedShowNotesMediaIds;
-  const closeSettingsModal = settingsModal.close;
   const podcastDetailCacheKey =
     episodeQueryIdentity !== null && !suppressInitialLoad
       ? ["podcast-detail", episodeQueryIdentity, reloadNonce].join(":")
@@ -651,11 +651,9 @@ export default function PodcastDetailPaneBody() {
       setChainEpoch((epoch) => epoch + 1);
       clearExpandedShowNotesMediaIds();
       resetForecasts();
-      closeSettingsModal();
     },
     [
       clearExpandedShowNotesMediaIds,
-      closeSettingsModal,
       episodeQueryIdentity,
       resetForecasts,
     ],
