@@ -23,6 +23,8 @@ from nexus_test_control.sensitivity import (
     SensitivityError,
     SensitivityExecutionError,
     SensitivityRequest,
+    _base_overlays,
+    _python_exact_proof_owner,
     behavioral_red,
     canonical_proof,
     declared_fault_for_proof,
@@ -30,10 +32,12 @@ from nexus_test_control.sensitivity import (
     isolated_worktree,
     prove,
     prove_many,
+    workflow_sensitivity_request,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 EXACT_PROOF = "pytest:python/tests/service/test_owner.py::test_owner"
+WORKSPACE_SESSION_BFF = "apps/web/src/__tests__/helpers/workspaceSessionBff.ts"
 
 
 def _failure(detail: str, *, capability: Capability = Capability.SERVICE) -> CapabilityResult:
@@ -51,6 +55,219 @@ def test_behavioral_red_rejects_collection_and_setup_failures() -> None:
                 proof=EXACT_PROOF,
                 expected_failure=None,
             )
+
+
+def test_web_base_overlays_scope_the_workspace_session_fixture_to_its_proofs() -> None:
+    proofs = (
+        "apps/web/src/lib/workspace/store.browser.test.tsx",
+        "apps/web/src/lib/workspace/adjacentPaneKeybindings.browser.test.tsx",
+        "apps/web/src/components/nexus/Nexus.browser.test.tsx",
+    )
+
+    assert {proof: WORKSPACE_SESSION_BFF in _base_overlays(proof) for proof in proofs} == {
+        proofs[0]: True,
+        proofs[1]: True,
+        proofs[2]: False,
+    }
+
+
+def test_exact_python_owner_ignores_other_tests_but_owns_shared_support() -> None:
+    baseline = """
+import pytest
+
+LIMIT = 16
+
+def bounded(value: int) -> bool:
+    return value <= LIMIT
+
+def test_owner() -> None:
+    assert bounded(16)
+
+def test_other() -> None:
+    assert True
+"""
+    unrelated_test_change = baseline.replace("assert True", "assert 1 == 1")
+    sibling_definition_change = baseline.replace(
+        "def test_other()", '@pytest.mark.parametrize("value", (1,))\ndef test_other()'
+    )
+    selected_test_change = baseline.replace("assert bounded(16)", "assert bounded(17)")
+    shared_support_change = baseline.replace("LIMIT = 16", "LIMIT = 17")
+    ambiguous_owner = baseline + "\ndef test_owner() -> None:\n    assert bounded(16)\n"
+
+    owner = _python_exact_proof_owner(baseline, "test_owner")
+
+    assert owner is not None
+    assert _python_exact_proof_owner(unrelated_test_change, "test_owner") == owner
+    assert _python_exact_proof_owner(sibling_definition_change, "test_owner") == owner
+    assert _python_exact_proof_owner(selected_test_change, "test_owner") != owner
+    assert _python_exact_proof_owner(shared_support_change, "test_owner") != owner
+    assert _python_exact_proof_owner(ambiguous_owner, "test_owner") is None
+
+
+def test_workflow_sensitivity_retains_fault_only_for_unchanged_exact_owner(
+    tmp_path: Path,
+) -> None:
+    proof_path = "python/tests/kernel/test_owner.py"
+    proof = f"pytest:{proof_path}::test_owner"
+    owner = tmp_path / proof_path
+    owner.parent.mkdir(parents=True)
+    baseline = """
+import pytest
+
+LIMIT = 16
+
+def test_owner() -> None:
+    assert LIMIT == 16
+
+def test_other() -> None:
+    assert True
+"""
+    owner.write_text(baseline, encoding="utf-8")
+    for command in (
+        ("git", "init", "-q"),
+        ("git", "config", "user.email", "nexus-test@example.test"),
+        ("git", "config", "user.name", "Nexus Test"),
+        ("git", "add", proof_path),
+        ("git", "commit", "-qm", "base"),
+    ):
+        subprocess.run(command, cwd=tmp_path, check=True)
+    base_sha = subprocess.run(
+        ("git", "rev-parse", "HEAD"),
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    faults = tmp_path / "testdata/faults"
+    faults.mkdir(parents=True)
+    fault_patch = faults / "owner-fault.patch"
+    patch = (
+        "diff --git a/python/nexus_test_control/runner.py "
+        "b/python/nexus_test_control/runner.py\n"
+        "--- a/python/nexus_test_control/runner.py\n"
+        "+++ b/python/nexus_test_control/runner.py\n"
+        "@@ -1 +1 @@\n-old\n+fault\n"
+    )
+    fault_patch.write_text(patch, encoding="utf-8")
+    manifest = faults / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "faults": [
+                    {
+                        "id": "owner-fault",
+                        "patch": "testdata/faults/owner-fault.patch",
+                        "sha256": hashlib.sha256(patch.encode()).hexdigest(),
+                        "proofs": [proof],
+                        "expected_failure": "owner assertion",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def request() -> tuple[SensitivityMethod, str]:
+        selected = workflow_sensitivity_request(
+            tmp_path,
+            proof=proof,
+            changed_paths=(proof_path,),
+            base_sha=base_sha,
+        )
+        return selected.method, selected.against
+
+    owner.write_text(baseline.replace("assert True", "assert 1 == 1"), encoding="utf-8")
+    assert request() == (SensitivityMethod.FAULT, "owner-fault")
+
+    owner.write_text(
+        baseline + "\ndef test_added_sibling() -> None:\n    assert True\n",
+        encoding="utf-8",
+    )
+    assert request() == (SensitivityMethod.FAULT, "owner-fault")
+
+    owner.write_text(baseline.replace("LIMIT == 16", "LIMIT == 17"), encoding="utf-8")
+    assert request() == (SensitivityMethod.BASE, base_sha)
+
+    owner.write_text(baseline.replace("LIMIT = 16", "LIMIT = 17"), encoding="utf-8")
+    assert request() == (SensitivityMethod.BASE, base_sha)
+
+    owner.write_text(baseline.replace("import pytest", "import os"), encoding="utf-8")
+    assert request() == (SensitivityMethod.BASE, base_sha)
+
+    owner.write_text("def test_owner(:\n", encoding="utf-8")
+    assert request() == (SensitivityMethod.BASE, base_sha)
+
+    owner.write_text(baseline, encoding="utf-8")
+    missing_base = workflow_sensitivity_request(
+        tmp_path,
+        proof=proof,
+        changed_paths=(proof_path,),
+        base_sha="f" * 40,
+    )
+    assert (missing_base.method, missing_base.against) == (
+        SensitivityMethod.BASE,
+        "f" * 40,
+    )
+
+    whole_file = workflow_sensitivity_request(
+        tmp_path,
+        proof=f"pytest:{proof_path}",
+        changed_paths=(proof_path,),
+        base_sha=base_sha,
+    )
+    assert (whole_file.method, whole_file.against) == (
+        SensitivityMethod.BASE,
+        base_sha,
+    )
+
+    fault_patch.unlink()
+    manifest.write_text(json.dumps({"version": 1, "faults": []}), encoding="utf-8")
+    assert request() == (SensitivityMethod.BASE, base_sha)
+
+
+@pytest.mark.parametrize(
+    ("proof", "fault_id"),
+    (
+        (
+            "vitest:apps/web/src/lib/workspace/store.browser.test.tsx",
+            "active-pane-reactivation-identity-corruption",
+        ),
+        (
+            "vitest:apps/web/src/components/nexus/Nexus.browser.test.tsx",
+            "nexus-openables-cache-bound-bypass",
+        ),
+    ),
+)
+def test_changed_store_and_nexus_owners_select_base_without_retiring_faults(
+    proof: str,
+    fault_id: str,
+) -> None:
+    proof_path = proof.partition(":")[2]
+    base_sha = "a" * 40
+
+    changed_owner = workflow_sensitivity_request(
+        REPO_ROOT,
+        proof=proof,
+        changed_paths=(proof_path,),
+        base_sha=base_sha,
+    )
+    unchanged_owner = workflow_sensitivity_request(
+        REPO_ROOT,
+        proof=proof,
+        changed_paths=("apps/web/src/example-production-owner.tsx",),
+        base_sha=base_sha,
+    )
+
+    assert (changed_owner.method, changed_owner.against) == (
+        SensitivityMethod.BASE,
+        base_sha,
+    )
+    assert (unchanged_owner.method, unchanged_owner.against) == (
+        SensitivityMethod.FAULT,
+        fault_id,
+    )
+    assert declared_fault_for_proof(REPO_ROOT, proof) == fault_id
 
 
 def test_behavioral_red_records_the_declared_fault_fingerprint_and_property_phase() -> None:

@@ -877,6 +877,8 @@
         "apps/web/src/lib/mobileViewport/MobileViewportProvider.tsx",
         "apps/web/src/lib/mobileViewport/model.ts",
         "apps/web/src/lib/mobileViewport/readMobileCssLength.ts",
+        "apps/web/src/components/switchboard/NexusButton.tsx",
+        "apps/web/src/components/switchboard/switchboard.module.css",
         "apps/web/src/components/workspace/PaneShell.tsx",
         "apps/web/src/lib/ui/viewportSafeArea.ts",
         "apps/web/src/components/ui/FloatingActionSurface.tsx"
@@ -887,7 +889,8 @@
         "vitest:apps/web/src/lib/mobileViewport/MobileViewportProvider.browser.test.tsx",
         "vitest:apps/web/src/components/workspace/PaneShell.mobileViewport.browser.test.tsx",
         "vitest:apps/web/src/components/reader/MobileReaderPositionRibbon.browser.test.tsx",
-        "gradle:apps/android/app/src/androidTest/java/app/nexus/android/SystemInsetsTest.kt::nativeInsetsRemainExactAcrossPublicationClearingAndRotation"
+        "gradle:apps/android/app/src/androidTest/java/app/nexus/android/SystemInsetsTest.kt::nativeInsetsRemainExactAcrossPublicationClearingAndRotation",
+        "gradle:apps/android/app/src/androidTest/java/app/nexus/android/NexusControlGestureTest.kt::nexusControlReceivesHorizontalTouchFromOuterAndInnerHalves"
       ],
       "capabilities": [
         "kernel-web",

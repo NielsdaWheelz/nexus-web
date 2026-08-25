@@ -262,7 +262,7 @@ async function captureReadableArticle(page: Page): Promise<string> {
       },
       {
         message: `Expected article ${mediaId} to publish its document map before mobile geometry is measured.`,
-        timeout: 25_000,
+        timeout: 90_000,
       },
     )
     .toBe("ready");
@@ -419,6 +419,10 @@ test("mobile reader bottom geometry places the ribbon, counts the flow Player on
   page,
   journeyUser,
 }) => {
+  // The real ingest/index pipeline shares one background worker with preceding
+  // journeys, so this journey owns the same bounded readiness budget as the
+  // other real-ingest journeys rather than assuming an empty queue.
+  test.setTimeout(300_000);
   await page.setViewportSize(SIGN_IN_VIEWPORT);
   await signIn(page, journeyUser);
   await page.setViewportSize(PORTRAIT_VIEWPORT);

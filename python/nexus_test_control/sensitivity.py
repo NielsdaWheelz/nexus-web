@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import os
@@ -471,6 +472,74 @@ def declared_fault_for_proof(repo_root: Path, proof: str) -> str | None:
     return owners[0] if owners else None
 
 
+def workflow_sensitivity_request(
+    repo_root: Path,
+    *,
+    proof: str,
+    changed_paths: Sequence[str],
+    base_sha: str,
+) -> SensitivityRequest:
+    """Use BASE for a changed proof owner; retain faults for unchanged owners."""
+    exact_changed_paths = tuple(dict.fromkeys(changed_paths))
+    proof_path = _proof_path(proof)
+    fault_id = declared_fault_for_proof(repo_root, proof)
+    if proof_path in exact_changed_paths and (
+        fault_id is None or _proof_owner_materially_changed(repo_root, proof, base_sha)
+    ):
+        return SensitivityRequest(
+            proof=proof,
+            changed_paths=exact_changed_paths,
+            method=SensitivityMethod.BASE,
+            against=base_sha,
+        )
+
+    return SensitivityRequest(
+        proof=proof,
+        changed_paths=exact_changed_paths,
+        method=SensitivityMethod.FAULT if fault_id else SensitivityMethod.BASE,
+        against=fault_id or base_sha,
+    )
+
+
+def _proof_owner_materially_changed(repo_root: Path, proof: str, base_sha: str) -> bool:
+    """Fail closed unless one exact Python proof and its shared support are unchanged."""
+    runner, _, identity = proof.partition(":")
+    path, separator, node = identity.partition("::")
+    if runner != "pytest" or not separator or not node:
+        return True
+    try:
+        candidate = (repo_root / path).read_text(encoding="utf-8")
+        baseline = _git(repo_root, "show", f"{base_sha}:{path}", capture=True).stdout
+        candidate_owner = _python_exact_proof_owner(candidate, node)
+        baseline_owner = _python_exact_proof_owner(baseline, node)
+    except (OSError, UnicodeError, SyntaxError, SensitivityError):
+        return True
+    return candidate_owner is None or candidate_owner != baseline_owner
+
+
+def _python_exact_proof_owner(source: str, node: str) -> tuple[str, ...] | None:
+    """Fingerprint one module test plus all shared and import-time support."""
+    module = ast.parse(source)
+    owner = tuple(node.split("::"))
+    if len(owner) != 1 or not owner[0]:
+        return None
+
+    retained: list[str] = []
+    selected = 0
+    for statement in module.body:
+        if isinstance(
+            statement, (ast.FunctionDef, ast.AsyncFunctionDef)
+        ) and statement.name.startswith("test_"):
+            if owner == (statement.name,):
+                retained.append(ast.dump(statement, include_attributes=False))
+                selected += 1
+            continue
+        if isinstance(statement, ast.ClassDef) and statement.name.startswith("Test"):
+            continue
+        retained.append(ast.dump(statement, include_attributes=False))
+    return tuple(retained) if selected == 1 else None
+
+
 def canonical_proof(repo_root: Path, proof: str) -> str:
     # An explicit node is already the caller's exact proof identity. Never
     # redirect it to a different priority node merely because both live in the
@@ -562,6 +631,11 @@ def _base_overlays(proof_path: str) -> tuple[str, ...]:
                 "apps/web/bun.lock",
             )
         )
+        if proof_path in (
+            "apps/web/src/lib/workspace/store.browser.test.tsx",
+            "apps/web/src/lib/workspace/adjacentPaneKeybindings.browser.test.tsx",
+        ):
+            shared.append("apps/web/src/__tests__/helpers/workspaceSessionBff.ts")
     return tuple(dict.fromkeys(shared))
 
 

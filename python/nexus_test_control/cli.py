@@ -65,6 +65,7 @@ from nexus_test_control.sensitivity import (
     canonical_proof,
     declared_fault_for_proof,
     prove_many,
+    workflow_sensitivity_request,
 )
 from nexus_test_control.sensitivity import (
     prove as prove_sensitivity,
@@ -770,13 +771,12 @@ def _workflow_sensitivity(
             by_proof.setdefault(item.proof, []).append(item.path)
     requests: list[SensitivityRequest] = []
     for proof, paths in sorted(by_proof.items()):
-        fault_id = declared_fault_for_proof(repo_root, proof)
         requests.append(
-            SensitivityRequest(
+            workflow_sensitivity_request(
+                repo_root,
                 proof=proof,
                 changed_paths=tuple(paths),
-                method=SensitivityMethod.FAULT if fault_id else SensitivityMethod.BASE,
-                against=fault_id or base_sha,
+                base_sha=base_sha,
             )
         )
     return prove_many(

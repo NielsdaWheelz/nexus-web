@@ -80,12 +80,15 @@ In scope:
 
 Non-goals:
 
-- no Switchboard, Find, creation, Places, pane, recently-closed, ranking,
-  dispatch, workspace, persistence, backend, API, database, or schema change;
+- the adjacent-tab accelerator is limited to Nexus controller/components and one
+  workspace-store command; Switchboard state/model, Find, creation, Places,
+  recently-closed, ranking, and dispatch semantics do not change, and there is
+  no workspace persistence, backend, wire API, database, or schema change;
 - no bottom bar, dock, second global control, dedicated tab switcher, pinned
   items, handedness preference, or configurable placement;
-- no new gesture, haptic, long-press, swipe, shared-element transition, or
-  animation system;
+- no gesture beyond the primary-touch horizontal adjacent-tab swipe; no haptic,
+  long-press, vertical action, context-menu command, shared-element transition,
+  or animation system;
 - no generic badge, counter, button, FAB, dock, or floating-control framework;
 - no translucent/glass system, blur dependency, image asset, new icon, theme,
   token family, or design-system migration;
@@ -132,8 +135,14 @@ WorkspaceStore primary pane order (1…MAX_PANES)
          -> phase / collapse / transform / focus / hidden / inert
          -> nexusFace + AsterismMark
          -> nexusCount, visual-only and noninteractive
-  -> onOpen
-  -> existing SwitchboardSheet / MobileSheet
+       semantic activation branches
+         -> tap / native button activation
+              -> onOpen(opener)
+              -> existing SwitchboardSheet / MobileSheet
+         -> primary-touch horizontal swipe
+              -> onActivateAdjacentPane({ direction })
+              -> useNexusController semantic composition
+              -> WorkspaceStore adjacent-pane command
 ```
 
 There is one pane-count truth, one global trigger, one motion owner, one
@@ -141,13 +150,17 @@ obstruction owner, and one Switchboard surface.
 
 ## Capability And API Contract
 
-Keep the existing component API:
+Keep the complete component API:
 
 ```ts
 interface NexusButtonProps {
   paneCount: number;
   switchboardOpen: boolean;
-  onOpen: () => void;
+  onOpen: (opener: HTMLButtonElement) => void;
+  onActivateAdjacentPane: (input: {
+    readonly direction: WorkspaceAdjacentPaneDirection;
+  }) => void;
+  onButtonNodeChange?: (node: HTMLButtonElement | null) => void;
 }
 ```
 
@@ -160,13 +173,17 @@ interface NexusButtonProps {
   fallback for trusted pane state. There is no `0`, dot, `9+`, or `99+` branch.
 - Keep `aria-haspopup="dialog"` and the exact singular/plural accessible name.
 - Keep the visual counter `aria-hidden="true"` and `pointer-events: none`.
-- `onOpen` remains the only command. No counter-specific event exists.
+- `onOpen` remains the sole task-opening command;
+  `onActivateAdjacentPane` is the required semantic traversal command. No
+  counter-specific event exists.
 - Preserve the live click sequence:
-  `beginSwitchboardPerformance(NEXUS_OPEN_PERFORMANCE)` synchronously precedes
-  `onOpen()`.
+  `beginNexusPerformance(NEXUS_OPEN_PERFORMANCE)` synchronously precedes
+  `onOpen(opener)`.
 
-No public API, wire contract, persisted schema, capability registry, event
-name, controller state, or provider interface changes.
+The only public surface changes are the Nexus component/controller composition
+above and the workspace store's adjacent-pane command. No wire contract,
+persisted schema, capability registry, cross-process event, backend API, or
+provider interface changes.
 
 ## Implementation Anatomy And Visual Contract
 
@@ -287,10 +304,13 @@ Normative docs:
   integrated presentation authority
 - this document
 
-Do not modify `useNexusController`, `Nexus`, the final `MobileChromeProvider`,
-`MobileViewportProvider`, workspace schemas, Switchboard components, global
-tokens, or Android native code unless implementation evidence disproves a
-locked contract above. Do not add a production seam for tests.
+The adjacent-tab cutover may modify only the Nexus controller/component
+composition (`useNexusController`, `Nexus`, `NexusButton`, `SwitchboardTask`,
+`ManageTabsPage`, and the control's local styles) and the workspace-store
+command/keybinding composition. Do not modify the final `MobileChromeProvider`,
+`MobileViewportProvider`, workspace schemas, global tokens, wire or persistence
+contracts, backend services, or Android native code. Do not add a production
+seam for tests.
 
 ## Integration preservation proof
 
@@ -326,8 +346,10 @@ locked contract above. Do not add a production seam for tests.
   press/focus. Hover is reviewed only on hover-capable input.
 - **AC8 — Hard cutover.** No inline-count layout, FAB styling, compatibility
   path, fallback, new abstraction, or stale normative requirement remains.
-- **AC9 — Scope.** No controller, state, API, persistence, Switchboard, reader,
-  player, or platform capability changes.
+- **AC9 — Scope.** Changes stop at the Nexus controller/components and the
+  workspace-store adjacent command/keybinding composition. There are no wire,
+  persistence, backend, reader, player, provider, or native-platform capability
+  changes.
 
 ## Required Proof
 

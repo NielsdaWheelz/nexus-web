@@ -386,6 +386,7 @@
   background: transparent;
   color: var(--ink);
   pointer-events: auto;
+  touch-action: pan-y pinch-zoom;
   transform: translateY(
     calc(
       var(--mobile-chrome-collapse) *

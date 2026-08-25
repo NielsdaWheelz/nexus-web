@@ -335,6 +335,11 @@ export default function SwitchboardTask({
             onRetryRetained={controller.retryRetainedActivation}
             onCancelRetained={controller.cancelRetainedActivation}
             feedback={controller.managedTabsFeedback}
+            teachAdjacentSwipe={
+              controller.managedPanes.filter(
+                (pane) => pane.visibility === "visible",
+              ).length >= 2
+            }
           />
         );
       case "OperationBlocked":

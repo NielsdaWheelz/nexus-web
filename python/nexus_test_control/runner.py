@@ -45,9 +45,11 @@ from nexus_test_control.evidence import (
     BrowserIdentity,
     CapabilityEvidence,
     FixedCommandIdentity,
+    JsonValue,
     RunContextEvidence,
     RuntimeIdentity,
     redact_text,
+    write_evidence_json,
 )
 from nexus_test_control.memory import (
     OwnedMemorySampler,
@@ -95,6 +97,7 @@ from nexus_test_control.runtime import (
 )
 from nexus_test_control.services import (
     TEST_EXTENSION_PUBLIC_KEY,
+    AuthorizedAndroidDevice,
     InvitedTestUser,
     OpenAIProviderFixture,
     StartedProcess,
@@ -402,6 +405,13 @@ _EXTERNAL_PROTOCOL_CAPABILITIES = frozenset(
     }
 )
 _TEST_GOOGLE_CLIENT_ID = "nexus-test.apps.googleusercontent.com"
+_ANDROID_DEVICE_EVIDENCE_NAME = "android-device-instrumentation.json"
+_ANDROID_DEVICE_OUTPUT_LIMIT = 64 * 1024
+_ANDROID_DEVICE_ARTIFACT_MAX_BYTES = 2_000_000
+_ANDROID_NEXUS_DIAGNOSTIC_MARKER = "NEXUS_CONTROL_GESTURE_DIAGNOSTICS:"
+_ANDROID_NEXUS_GESTURE_PROOF_PATH = (
+    "apps/android/app/src/androidTest/java/app/nexus/android/NexusControlGestureTest.kt"
+)
 _ANDROID_RELEASE_OWNED_HOST = "nexus.nielseriknandal.com"
 _ANDROID_PLAYER_PROTOCOL_CORPUS = Path("testdata/android/player-protocol.json")
 _CRITICAL_JOURNEY_IDS = frozenset(
@@ -416,6 +426,13 @@ _CRITICAL_JOURNEY_IDS = frozenset(
 )
 
 type FixedCommand = tuple[tuple[str, ...], Path]
+
+
+@dataclass(frozen=True, slots=True)
+class _SuccessfulFixedCommand:
+    argv: tuple[str, ...]
+    cwd: Path
+    completed: subprocess.CompletedProcess[str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -4115,34 +4132,30 @@ def _run_android_device(
         return _not_run(Capability.ANDROID_DEVICE, "Android device proof owner is absent")
     if not _android_sdk_available(android_root, environment):
         return _not_run(Capability.ANDROID_DEVICE, "Android SDK is absent")
-    serial, device_detail = _android_device_target(
+    device, device_detail = _android_device_target(
         android_root,
         environment,
         require_physical=_android_device_requires_physical(context, environment),
     )
-    if serial is None:
+    if device is None:
         return _not_run(Capability.ANDROID_DEVICE, device_detail)
     child_environment = dict(environment)
     child_environment["NEXUS_GOOGLE_WEB_CLIENT_ID"] = _TEST_GOOGLE_CLIENT_ID
-    child_environment["ANDROID_SERIAL"] = serial
+    child_environment["ANDROID_SERIAL"] = device.serial
+    argv = (
+        "./gradlew",
+        "--no-daemon",
+        ":app:connectedDebugAndroidTest",
+        "-Pandroid.testInstrumentationRunnerArguments.notAnnotation="
+        f"{_ANDROID_SIGNED_PROMOTION_ANNOTATION}",
+    )
     with _gradle_lock(context.repo_root):
-        return _run_fixed_commands(
-            Capability.ANDROID_DEVICE,
-            (
-                (
-                    (
-                        "./gradlew",
-                        "--no-daemon",
-                        ":app:connectedDebugAndroidTest",
-                        "-Pandroid.testInstrumentationRunnerArguments.notAnnotation="
-                        f"{_ANDROID_SIGNED_PROMOTION_ANNOTATION}",
-                    ),
-                    android_root,
-                ),
-            ),
+        return _run_android_instrumentation(
+            context,
+            device,
+            argv,
+            android_root,
             child_environment,
-            ("java",),
-            context=context,
         )
 
 
@@ -4175,34 +4188,30 @@ def _run_android_device_exact(
         return _not_run(Capability.ANDROID_DEVICE, "Android device proof owner is absent")
     if not _android_sdk_available(android_root, environment):
         return _not_run(Capability.ANDROID_DEVICE, "Android SDK is absent")
-    serial, device_detail = _android_device_target(
+    device, device_detail = _android_device_target(
         android_root,
         environment,
         require_physical=_android_device_requires_physical(context, environment),
     )
-    if serial is None:
+    if device is None:
         return _not_run(Capability.ANDROID_DEVICE, device_detail)
     target = _android_device_test_target(context.repo_root, node)
     child_environment = dict(environment)
     child_environment["NEXUS_GOOGLE_WEB_CLIENT_ID"] = _TEST_GOOGLE_CLIENT_ID
-    child_environment["ANDROID_SERIAL"] = serial
+    child_environment["ANDROID_SERIAL"] = device.serial
+    argv = (
+        "./gradlew",
+        "--no-daemon",
+        ":app:connectedDebugAndroidTest",
+        f"-Pandroid.testInstrumentationRunnerArguments.class={target}",
+    )
     with _gradle_lock(context.repo_root):
-        result = _run_fixed_commands(
-            Capability.ANDROID_DEVICE,
-            (
-                (
-                    (
-                        "./gradlew",
-                        "--no-daemon",
-                        ":app:connectedDebugAndroidTest",
-                        f"-Pandroid.testInstrumentationRunnerArguments.class={target}",
-                    ),
-                    android_root,
-                ),
-            ),
+        result = _run_android_instrumentation(
+            context,
+            device,
+            argv,
+            android_root,
             child_environment,
-            ("java",),
-            context=context,
         )
     if result.evidence.status is RunStatus.FAIL and _gradle_assertion_failed(android_root, target):
         return CapabilityResult(
@@ -4210,6 +4219,58 @@ def _run_android_device_exact(
             f"proof_result=behavioral_assertion_failure|{result.detail}",
         )
     return result
+
+
+def _run_android_instrumentation(
+    context: CapabilityContext,
+    device: AuthorizedAndroidDevice,
+    argv: tuple[str, ...],
+    android_root: Path,
+    environment: Mapping[str, str],
+) -> CapabilityResult:
+    result, successful = _run_fixed_commands_observed(
+        Capability.ANDROID_DEVICE,
+        ((argv, android_root),),
+        environment,
+        ("java",),
+        context=context,
+    )
+    if result.evidence.status is not RunStatus.PASS:
+        return result
+    if successful is None:
+        raise AssertionError("passing Android instrumentation command identity is absent")
+    if _android_nexus_diagnostics_required(context) and _ANDROID_NEXUS_DIAGNOSTIC_MARKER not in (
+        successful.completed.stdout or ""
+    ):
+        return _result(
+            Capability.ANDROID_DEVICE,
+            RunStatus.NOT_RUN,
+            result.evidence.duration_ms,
+            "successful Nexus-control instrumentation diagnostics were not retained",
+        )
+    artifact, detail = _android_device_success_artifact(
+        context,
+        device,
+        successful,
+        environment,
+    )
+    if artifact is None:
+        return _result(
+            Capability.ANDROID_DEVICE,
+            RunStatus.NOT_RUN,
+            result.evidence.duration_ms,
+            detail,
+        )
+    return CapabilityResult(
+        replace(result.evidence, artifacts=(artifact,)),
+        result.detail,
+    )
+
+
+def _android_nexus_diagnostics_required(context: CapabilityContext) -> bool:
+    if context.proof_id is not None:
+        return context.proof_id.startswith(f"gradle:{_ANDROID_NEXUS_GESTURE_PROOF_PATH}::")
+    return (context.repo_root / _ANDROID_NEXUS_GESTURE_PROOF_PATH).is_file()
 
 
 @dataclass(frozen=True, slots=True)
@@ -4557,13 +4618,20 @@ def _run_android_release(
                 "signed build, manifest/protocol contract, and pinned API origin verified; "
                 "signed-physical device stages explicitly skipped by the bootstrap release",
             )
+        serial = inputs.serial
+        if serial is None:
+            return _release_failure(
+                capability,
+                started,
+                "non-bootstrap Android release has no attested device serial",
+            )
         # `adb devices -l` proves a USB topology, not that the endpoint is real
         # hardware. Read the emulator build properties back from the device so
         # the retained evidence records a measurement instead of an assumption.
         qemu_properties: dict[str, str] = {}
         for property_name in ("ro.kernel.qemu", "ro.boot.qemu"):
             observed = owned.command(
-                (str(inputs.adb), "-s", inputs.serial, "shell", "getprop", property_name),
+                (str(inputs.adb), "-s", serial, "shell", "getprop", property_name),
                 context.repo_root,
                 child_environment,
             )
@@ -4582,7 +4650,7 @@ def _run_android_release(
             )
         baseline_version = owned.installed_version_code(
             inputs.adb,
-            inputs.serial,
+            serial,
             context.repo_root,
             child_environment,
         )
@@ -4596,7 +4664,7 @@ def _run_android_release(
             (
                 str(inputs.adb),
                 "-s",
-                inputs.serial,
+                serial,
                 "shell",
                 "cmd",
                 "connectivity",
@@ -4610,7 +4678,7 @@ def _run_android_release(
             (
                 str(inputs.adb),
                 "-s",
-                inputs.serial,
+                serial,
                 "shell",
                 "settings",
                 "get",
@@ -4634,7 +4702,7 @@ def _run_android_release(
             (
                 str(inputs.adb),
                 "-s",
-                inputs.serial,
+                serial,
                 "install",
                 "-r",
                 "-t",
@@ -4646,7 +4714,8 @@ def _run_android_release(
         if test_install.returncode != 0:
             return _release_command_failure(capability, started, 2, test_install, child_environment)
         baseline = _run_android_release_instrumentation(
-            inputs,
+            inputs.adb,
+            serial,
             baseline_targets,
             context.repo_root,
             child_environment,
@@ -4659,7 +4728,7 @@ def _run_android_release(
             (
                 str(inputs.adb),
                 "-s",
-                inputs.serial,
+                serial,
                 "shell",
                 "am",
                 "force-stop",
@@ -4669,7 +4738,7 @@ def _run_android_release(
             child_environment,
         )
         reboot = owned.command(
-            (str(inputs.adb), "-s", inputs.serial, "reboot"),
+            (str(inputs.adb), "-s", serial, "reboot"),
             context.repo_root,
             child_environment,
         )
@@ -4680,13 +4749,13 @@ def _run_android_release(
                 "dedicated release device could not be force-stopped and rebooted",
             )
         boot = owned.command(
-            (str(inputs.adb), "-s", inputs.serial, "wait-for-device"),
+            (str(inputs.adb), "-s", serial, "wait-for-device"),
             context.repo_root,
             child_environment,
         )
         if boot.returncode != 0 or not _android_user_unlocked(
             inputs.adb,
-            inputs.serial,
+            serial,
             context.repo_root,
             child_environment,
             command=owned.command,
@@ -4700,7 +4769,7 @@ def _run_android_release(
             (
                 str(inputs.adb),
                 "-s",
-                inputs.serial,
+                serial,
                 "shell",
                 "cmd",
                 "connectivity",
@@ -4714,7 +4783,7 @@ def _run_android_release(
             (
                 str(inputs.adb),
                 "-s",
-                inputs.serial,
+                serial,
                 "shell",
                 "settings",
                 "get",
@@ -4735,7 +4804,8 @@ def _run_android_release(
                 "dedicated release device could not be attested offline after reboot",
             )
         cold_offline = _run_android_release_instrumentation(
-            inputs,
+            inputs.adb,
+            serial,
             offline_targets,
             context.repo_root,
             child_environment,
@@ -4745,7 +4815,7 @@ def _run_android_release(
         if cold_offline is not None:
             return _release_failure(capability, started, cold_offline)
         candidate_install = owned.command(
-            (str(inputs.adb), "-s", inputs.serial, "install", "-r", str(apk)),
+            (str(inputs.adb), "-s", serial, "install", "-r", str(apk)),
             context.repo_root,
             child_environment,
         )
@@ -4754,7 +4824,7 @@ def _run_android_release(
                 capability, started, 3, candidate_install, child_environment
             )
         installed_version = owned.installed_version_code(
-            inputs.adb, inputs.serial, context.repo_root, child_environment
+            inputs.adb, serial, context.repo_root, child_environment
         )
         if installed_version != inputs.version_code:
             return _release_failure(
@@ -4763,7 +4833,8 @@ def _run_android_release(
                 "signed physical update did not install the candidate version in place",
             )
         candidate_update = _run_android_release_instrumentation(
-            inputs,
+            inputs.adb,
+            serial,
             candidate_targets,
             context.repo_root,
             child_environment,
@@ -4798,7 +4869,7 @@ def _run_android_release(
             (
                 str(inputs.adb),
                 "-s",
-                inputs.serial,
+                serial,
                 "shell",
                 "cmd",
                 "package",
@@ -4844,7 +4915,7 @@ def _run_android_release(
                 "version_name": inputs.version_name,
                 "signer_sha256": inputs.certificate_sha256,
                 "physical_device": {
-                    "serial": inputs.serial,
+                    "serial": serial,
                     "connection": "usb",
                     "qemu_properties": qemu_properties,
                 },
@@ -5212,13 +5283,13 @@ def _android_release_inputs(
             apkanalyzer,
             bootstrap=True,
         )
-    serial, device_error = authorized_usb_physical_device(adb, environment, repo_root)
-    if serial is None:
+    device, device_error = authorized_usb_physical_device(adb, environment, repo_root)
+    if device is None:
         status = RunStatus.FAIL if device_error.startswith("unsafe") else RunStatus.NOT_RUN
         return _result(capability, status, 0, device_error)
     previous_version_code = _installed_android_version_code(
         adb,
-        serial,
+        device.serial,
         repo_root,
         environment,
     )
@@ -5243,7 +5314,7 @@ def _android_release_inputs(
         version_code,
         previous_version_code,
         version_name,
-        serial,
+        device.serial,
         adb,
         apksigner,
         apkanalyzer,
@@ -5310,7 +5381,8 @@ def _release_command(
 
 
 def _run_android_release_instrumentation(
-    inputs: _AndroidReleaseInputs,
+    adb: Path,
+    serial: str,
     targets: tuple[str, ...],
     repo_root: Path,
     environment: Mapping[str, str],
@@ -5323,9 +5395,9 @@ def _run_android_release_instrumentation(
     for target in targets:
         result = command(
             (
-                str(inputs.adb),
+                str(adb),
                 "-s",
-                inputs.serial,
+                serial,
                 "shell",
                 "am",
                 "instrument",
@@ -6005,7 +6077,7 @@ def _android_device_target(
     environment: Mapping[str, str],
     *,
     require_physical: bool,
-) -> tuple[str | None, str]:
+) -> tuple[AuthorizedAndroidDevice | None, str]:
     """Resolve the exact serial this workflow's device proof may bind.
 
     `release` shares one dedicated USB handset with the signed lane, so its
@@ -6128,6 +6200,28 @@ def _run_fixed_commands(
     elapsed_ms: int = 0,
     pythonpath: Path | None = None,
 ) -> CapabilityResult:
+    result, _successful = _run_fixed_commands_observed(
+        capability,
+        commands,
+        environment,
+        required_tools,
+        context=context,
+        elapsed_ms=elapsed_ms,
+        pythonpath=pythonpath,
+    )
+    return result
+
+
+def _run_fixed_commands_observed(
+    capability: Capability,
+    commands: tuple[FixedCommand, ...],
+    environment: Mapping[str, str],
+    required_tools: tuple[str, ...],
+    *,
+    context: CapabilityContext | None,
+    elapsed_ms: int = 0,
+    pythonpath: Path | None = None,
+) -> tuple[CapabilityResult, _SuccessfulFixedCommand | None]:
     child_environment = _child_environment(environment)
     if pythonpath is not None:
         child_environment["PYTHONPATH"] = str(pythonpath)
@@ -6137,8 +6231,9 @@ def _run_fixed_commands(
         if shutil.which(tool, path=child_environment.get("PATH")) is None
     )
     if missing:
-        return _not_run(capability, f"required tools are absent: {', '.join(missing)}")
+        return _not_run(capability, f"required tools are absent: {', '.join(missing)}"), None
     started = time.monotonic_ns()
+    successful: _SuccessfulFixedCommand | None = None
     for index, (argv, cwd) in enumerate(commands, start=1):
         argv = _fail_fast_command(argv)
         if context is not None and context.run_context is not None:
@@ -6159,11 +6254,14 @@ def _run_fixed_commands(
             )
         except OSError as error:
             duration_ms = elapsed_ms + (time.monotonic_ns() - started) // 1_000_000
-            return _result(
-                capability,
-                RunStatus.NOT_RUN,
-                duration_ms,
-                f"fixed command {index} could not start: {error.strerror or error}",
+            return (
+                _result(
+                    capability,
+                    RunStatus.NOT_RUN,
+                    duration_ms,
+                    f"fixed command {index} could not start: {error.strerror or error}",
+                ),
+                None,
             )
         if completed.returncode != 0:
             duration_ms = elapsed_ms + (time.monotonic_ns() - started) // 1_000_000
@@ -6175,19 +6273,26 @@ def _run_fixed_commands(
                 environment,
             )
             interrupted_by = _command_interruption_signal(completed.returncode)
-            return _result(
-                capability,
-                RunStatus.NOT_RUN if interrupted_by is not None else RunStatus.FAIL,
-                duration_ms,
-                _command_result_detail(index, completed, interrupted_by),
-                artifacts=artifacts,
+            return (
+                _result(
+                    capability,
+                    RunStatus.NOT_RUN if interrupted_by is not None else RunStatus.FAIL,
+                    duration_ms,
+                    _command_result_detail(index, completed, interrupted_by),
+                    artifacts=artifacts,
+                ),
+                None,
             )
+        successful = _SuccessfulFixedCommand(argv, cwd, completed)
     duration_ms = elapsed_ms + (time.monotonic_ns() - started) // 1_000_000
-    return _result(
-        capability,
-        RunStatus.PASS,
-        duration_ms,
-        f"{len(commands)} fixed command{'s' if len(commands) != 1 else ''} passed",
+    return (
+        _result(
+            capability,
+            RunStatus.PASS,
+            duration_ms,
+            f"{len(commands)} fixed command{'s' if len(commands) != 1 else ''} passed",
+        ),
+        successful,
     )
 
 
@@ -6380,6 +6485,73 @@ def _result(
         CapabilityEvidence(capability, status, duration_ms, 0, artifacts=artifacts),
         detail,
     )
+
+
+def _android_device_success_artifact(
+    context: CapabilityContext,
+    device: AuthorizedAndroidDevice,
+    successful: _SuccessfulFixedCommand,
+    environment: Mapping[str, str],
+) -> tuple[str | None, str]:
+    raw_directory = environment.get("NEXUS_TEST_RESULTS_DIR")
+    run_id = environment.get("NEXUS_TEST_EVIDENCE_RUN_ID")
+    if raw_directory is None or run_id is None or re.fullmatch(r"[0-9a-f]{16}", run_id) is None:
+        return None, "successful Android instrumentation has no controller evidence directory"
+    directory = Path(raw_directory)
+    if not directory.is_absolute() or directory.name != run_id or not directory.is_dir():
+        return None, "successful Android instrumentation has an invalid evidence directory"
+    try:
+        expected_directory = context.repo_root.absolute() / "test-results" / "runs" / run_id
+        resolved_expected_directory = (
+            context.repo_root.resolve(strict=True) / "test-results" / "runs" / run_id
+        )
+        if (
+            directory.absolute() != expected_directory
+            or directory.resolve(strict=True) != resolved_expected_directory
+        ):
+            return None, "successful Android instrumentation has an invalid evidence directory"
+    except OSError:
+        return None, "successful Android instrumentation has an invalid evidence directory"
+    try:
+        cwd = successful.cwd.resolve(strict=True).relative_to(
+            context.repo_root.resolve(strict=True)
+        )
+    except (OSError, ValueError):
+        return None, "successful Android instrumentation command left the repository"
+    secrets = environment_secrets(environment)
+    payload: dict[str, JsonValue] = {
+        "version": 1,
+        "capability": Capability.ANDROID_DEVICE.value,
+        "scope": "exact" if context.proof_id is not None else "complete",
+        "authorized_adb_row": device.adb_devices_row,
+        "bound_serial": device.serial,
+        "proof_id": context.proof_id,
+        "command": {
+            "argv": list(_redacted_command_argv(successful.argv, secrets)),
+            "cwd": cwd.as_posix(),
+        },
+        "exit_code": successful.completed.returncode,
+        "stdout": _bounded_android_device_output(successful.completed.stdout or "", secrets),
+        "stderr": _bounded_android_device_output(successful.completed.stderr or "", secrets),
+    }
+    encoded = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    if len(encoded.encode("utf-8")) > _ANDROID_DEVICE_ARTIFACT_MAX_BYTES:
+        return None, "successful Android instrumentation evidence exceeded its artifact bound"
+    relative = Path("test-results/runs") / run_id / _ANDROID_DEVICE_EVIDENCE_NAME
+    artifact = directory / _ANDROID_DEVICE_EVIDENCE_NAME
+    try:
+        write_evidence_json(artifact, payload)
+    except ValueError:
+        return None, "successful Android instrumentation evidence could not be retained"
+    return relative.as_posix(), ""
+
+
+def _bounded_android_device_output(value: str, secrets: Iterable[str]) -> str:
+    redacted = redact_text(value, secrets)
+    if len(redacted) <= _ANDROID_DEVICE_OUTPUT_LIMIT:
+        return redacted
+    prefix = f"[truncated to final {_ANDROID_DEVICE_OUTPUT_LIMIT} characters]\n"
+    return prefix + redacted[-(_ANDROID_DEVICE_OUTPUT_LIMIT - len(prefix)) :]
 
 
 def _failure_artifacts(

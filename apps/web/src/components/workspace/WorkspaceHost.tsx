@@ -36,7 +36,6 @@ import { getBrowserViewportKind } from "@/lib/renderEnvironment/provider";
 import { matchesKeyEvent } from "@/lib/keybindings";
 import { dispatchPaneSearchRequest } from "@/lib/panes/paneSearchEvents";
 import { useKeybindings } from "@/lib/keybindingsProvider";
-import { isEditableTarget } from "@/lib/ui/isEditableTarget";
 import type { PaneBodyMode } from "@/lib/panes/paneRouteModel";
 import {
   paneRouteAllowsSecondarySurface,
@@ -83,6 +82,7 @@ import {
   paneResourceLocatorKey,
   resolvePaneRouteIdentity,
 } from "@/lib/panes/paneIdentity";
+import { useAdjacentPaneKeybindings } from "@/lib/workspace/adjacentPaneKeybindings";
 import {
   resolveWorkspacePaneLabel,
   useWorkspaceHostStore,
@@ -1639,13 +1639,8 @@ function WorkspaceHost() {
     );
   }, []);
 
-  const handleActivatePane = useCallback(
-    (paneId: string, options?: { focusPane?: boolean }) => {
-      const shouldFocusPane = options?.focusPane !== false;
-      activatePane(paneId);
-      if (!shouldFocusPane) {
-        return;
-      }
+  const requestPaneFocus = useCallback(
+    (paneId: string) => {
       pendingPaneFocusPaneIdRef.current = paneId;
       window.requestAnimationFrame(() => {
         if (pendingPaneFocusPaneIdRef.current === paneId) {
@@ -1653,7 +1648,19 @@ function WorkspaceHost() {
         }
       });
     },
-    [activatePane, focusPane],
+    [focusPane],
+  );
+
+  const handleActivatePane = useCallback(
+    (paneId: string, options?: { focusPane?: boolean }) => {
+      const shouldFocusPane = options?.focusPane !== false;
+      activatePane(paneId);
+      if (!shouldFocusPane) {
+        return;
+      }
+      requestPaneFocus(paneId);
+    },
+    [activatePane, requestPaneFocus],
   );
 
   useEffect(() => {
@@ -1689,40 +1696,16 @@ function WorkspaceHost() {
         }
         return;
       }
-      if (isEditableTarget(event.target)) {
-        return;
-      }
-      const nextCombo = keybindings["pane-next"];
-      const prevCombo = keybindings["pane-previous"];
-      const isNext = Boolean(nextCombo) && matchesKeyEvent(nextCombo, event);
-      const isPrevious =
-        Boolean(prevCombo) && matchesKeyEvent(prevCombo, event);
-      if (!isNext && !isPrevious) {
-        return;
-      }
-      event.preventDefault();
-      const visible = primaryPanes.filter(
-        (pane) => pane.visibility === "visible",
-      );
-      if (visible.length < 2) {
-        return;
-      }
-      const index = visible.findIndex(
-        (pane) => pane.id === state.activePrimaryPaneId,
-      );
-      const targetIndex =
-        (index + (isNext ? 1 : -1) + visible.length) % visible.length;
-      handleActivatePane(visible[targetIndex].id);
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [
-    primaryPanes,
     state.activePrimaryPaneId,
     keybindings,
-    handleActivatePane,
     isMobile,
   ]);
+
+  useAdjacentPaneKeybindings({ onActivated: requestPaneFocus });
 
   // --- Close handler ---
   const handleClosePane = useCallback(

@@ -39,6 +39,11 @@ Mobile Nexus is a temporary sustained task, not a drawer or bottom sheet. Root
 owns the autofocused query; Choose Create, Choose Browse, Manage Tabs, Add, and
 recovery pages replace one another inside one opaque viewport-fixed dialog.
 There is no separate Find page, scope state, outside-click, or drag dismissal.
+The Nexus control's native button-activation path — tap, click, keyboard, and
+assistive technology — remains unchanged and is the only way that control opens
+the task. Its primary-touch horizontal swipe is only an adjacent-pane
+accelerator over the workspace-store command; it adds no second Nexus ingress,
+navigation event, or full-screen-task gesture.
 
 Compact presentation covers widths through 768 px and coarse-pointer landscape
 phones through 900 px. Fine-pointer short desktop windows remain desktop.

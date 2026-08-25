@@ -215,6 +215,7 @@ function desktopWorkflow(input: {
           onRetryRetained={controller.retryRetainedActivation}
           onCancelRetained={controller.cancelRetainedActivation}
           feedback={controller.managedTabsFeedback}
+          teachAdjacentSwipe={false}
         />
       );
       break;
@@ -301,6 +302,7 @@ export default function Nexus() {
           paneCount={controller.paneCount}
           switchboardOpen={controller.open}
           onOpen={openMobileNexus}
+          onActivateAdjacentPane={controller.activateAdjacentPane}
           onButtonNodeChange={setCurrentMobileNexusButton}
         />
       ) : null}

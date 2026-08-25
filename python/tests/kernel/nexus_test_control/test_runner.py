@@ -1741,7 +1741,10 @@ def test_android_device_accepts_the_emulator_only_for_the_bootstrap_release(
     suite — on the emulator every non-release workflow already uses."""
     android_root = tmp_path / "apps/android"
     sdk = tmp_path / "android-sdk"
+    run_id = "0123456789abcdef"
+    results = tmp_path / "test-results/runs" / run_id
     sdk.mkdir()
+    results.mkdir(parents=True)
     _write(
         android_root / "app/src/androidTest/java/app/nexus/android/DeviceTest.kt",
         "package app.nexus.android\nclass DeviceTest\n",
@@ -1758,6 +1761,8 @@ def test_android_device_accepts_the_emulator_only_for_the_bootstrap_release(
         **_tool_environment(tmp_path),
         "ANDROID_HOME": str(sdk),
         "NEXUS_ANDROID_RELEASE_BOOTSTRAP_NO_DEVICE": "true",
+        "NEXUS_TEST_EVIDENCE_RUN_ID": run_id,
+        "NEXUS_TEST_RESULTS_DIR": str(results),
     }
 
     result = run_capability(
@@ -1829,9 +1834,14 @@ def test_signed_release_device_attestation_admits_only_one_usb_handset(
     _write_executable(adb, stdout=inventory.rstrip("\n"))
     environment = {**_tool_environment(tmp_path), "ANDROID_HOME": str(sdk)}
 
-    serial, detail = authorized_usb_physical_device(adb, environment, tmp_path)
+    device, detail = authorized_usb_physical_device(adb, environment, tmp_path)
 
-    assert (serial, detail) == (expected_serial, expected_detail)
+    assert (device.serial if device is not None else None, detail) == (
+        expected_serial,
+        expected_detail,
+    )
+    if device is not None:
+        assert device.adb_devices_row == inventory.splitlines()[1]
 
 
 @pytest.mark.parametrize(
@@ -1865,6 +1875,12 @@ def test_signed_release_device_attestation_admits_only_one_usb_handset(
             "Android device proof requires exactly one local emulator or USB device",
             id="ambiguous-inventory",
         ),
+        pytest.param(
+            "emulator-5554 device product:sdk model:sdk transport_id:1\n",
+            None,
+            "Android device inventory could not be read",
+            id="missing-adb-header",
+        ),
     ],
 )
 def test_ordinary_device_attestation_admits_an_emulator_but_never_wireless_adb(
@@ -1879,9 +1895,33 @@ def test_ordinary_device_attestation_admits_an_emulator_but_never_wireless_adb(
     _write_executable(adb, stdout=inventory.rstrip("\n"))
     environment = {**_tool_environment(tmp_path), "ANDROID_HOME": str(sdk)}
 
-    serial, detail = authorized_instrumentation_device(adb, environment, tmp_path)
+    device, detail = authorized_instrumentation_device(adb, environment, tmp_path)
 
-    assert (serial, detail) == (expected_serial, expected_detail)
+    assert (device.serial if device is not None else None, detail) == (
+        expected_serial,
+        expected_detail,
+    )
+    if device is not None:
+        assert device.adb_devices_row == inventory.splitlines()[1]
+
+
+def test_android_device_attestation_rejects_a_tail_truncated_inventory(
+    tmp_path: Path,
+) -> None:
+    sdk = tmp_path / "android-sdk"
+    adb = sdk / "platform-tools/adb"
+    oversized = (
+        "List of devices attached\n"
+        + "transport unavailable product:sdk model:sdk\n" * 2_000
+        + "emulator-5554 device product:sdk model:sdk transport_id:1\n"
+    )
+    _write_executable(adb, stdout=oversized.rstrip("\n"))
+    environment = {**_tool_environment(tmp_path), "ANDROID_HOME": str(sdk)}
+
+    device, detail = authorized_instrumentation_device(adb, environment, tmp_path)
+
+    assert device is None
+    assert detail == "Android device inventory could not be read"
 
 
 def test_android_device_sweep_never_selects_the_signed_promotion_methods(
@@ -1897,7 +1937,10 @@ def test_android_device_sweep_never_selects_the_signed_promotion_methods(
     """
     android_root = tmp_path / "apps/android"
     sdk = tmp_path / "android-sdk"
+    run_id = "fedcba9876543210"
+    results = tmp_path / "test-results/runs" / run_id
     sdk.mkdir()
+    results.mkdir(parents=True)
     _write(
         android_root / "app/src/androidTest/java/app/nexus/android/offline/reading/"
         "OfflineReadingSignedPhysicalPromotionTest.kt",
@@ -1912,7 +1955,12 @@ def test_android_device_sweep_never_selects_the_signed_promotion_methods(
         ),
     )
     _write_executable(android_root / "gradlew")
-    environment = {**_tool_environment(tmp_path), "ANDROID_HOME": str(sdk)}
+    environment = {
+        **_tool_environment(tmp_path),
+        "ANDROID_HOME": str(sdk),
+        "NEXUS_TEST_EVIDENCE_RUN_ID": run_id,
+        "NEXUS_TEST_RESULTS_DIR": str(results),
+    }
 
     result = run_capability(
         CapabilityContext(tmp_path, Workflow.NIGHTLY, ()),
