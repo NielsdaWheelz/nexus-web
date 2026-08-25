@@ -936,6 +936,14 @@ def test_publisher_transcript_worker_publishes_semantics_and_revisions_once(
     assert result["status"] == "completed"
     assert result["source_type"] == "podcast_episode_transcript"
     assert int(result["segment_count"]) > 0
+    assert set(result) == {
+        "status",
+        "segment_count",
+        "source_type",
+        "metadata_enrichment",
+        "transcript_semantic_intent",
+        "transcript_request_reason",
+    }
     db_session.expire_all()
     semantic_jobs = find_nonterminal_jobs_for_payload(
         db_session,
