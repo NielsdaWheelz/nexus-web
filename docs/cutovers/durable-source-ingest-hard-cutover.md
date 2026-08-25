@@ -754,7 +754,11 @@ requeues run transcript quota admission and write
 the source attempt and returned as the typed API error; it is not converted into
 a silent non-enqueued success. Current transcript segments, fragments, and
 readable state survive admission and are replaced only by the fenced current
-transcript writer after successful acquisition.
+transcript writer after successful acquisition. The canonical internal
+request-reason decoder rejects missing and unknown durable source/job values;
+there is no `episode_open` or `operator_requeue` fallback. Transcript acquisition
+returns only its completed artifact result, while every failure raises into the
+typed terminal publication path.
 
 ## File Plan
 

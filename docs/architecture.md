@@ -1543,11 +1543,17 @@ segments, fragments, and readable transcript state remain authoritative until
 `transcripts/current.py` atomically installs their replacement; admission never
 deletes or downgrades the current projection and publishes no duplicate
 collection revision.
+`transcripts/request_reason.py` is the sole internal request-reason owner.
+Validated API values and exact durable source/job values enter that type once;
+missing, whitespace-altered, or unknown same-system discriminants defect rather
+than becoming `episode_open` or `operator_requeue`.
 Publisher and generated transcript success callbacks publish only source
 artifacts plus their domain ledger. The common source terminal is the sole owner
 of ready-state, semantic admission, and the success media-fact revision; a
 worker beginning an already-admitted `extracting` Episode does not publish an
-unchanged revision.
+unchanged revision. The acquisition operation returns only
+`PodcastTranscriptionCompleted`; every modeled failure raises its typed error,
+so no nullable skipped/failed result fields or downstream variant guard exist.
 Podcast source failure likewise has one terminal publication: the source owner
 settles the attempt, while the Podcast failure owner atomically settles Media,
 the transcription job, reserved usage, transcript state, and one shared

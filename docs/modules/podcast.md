@@ -251,11 +251,17 @@ job without deleting current segments/fragments or downgrading readable
 transcript state. The prior current projection survives until the fenced
 transcript writer replaces it atomically; the requeue publishes one shared
 media-fact revision, not an additional Podcast-only bump.
+`transcripts/request_reason.py` owns the exact internal request discriminant.
+Durable source attempts, transcription ledgers, semantic-job payloads, and
+terminal results must carry one canonical value; missing or unknown values are
+defects, never aliases for `episode_open` or `operator_requeue`.
 Publisher and generated success callbacks are collection-pure and never enqueue
 semantic work. The common source terminal publishes both effects once after the
 artifact fence succeeds. Starting an already-admitted Episode attempt still
 counts its processing attempt, but does not publish a second unchanged
-`extracting` collection revision.
+`extracting` collection revision. Acquisition has one success result,
+`PodcastTranscriptionCompleted`; typed failures raise and never serialize dead
+nullable result fields.
 Terminal Podcast failure settles the source attempt once, then publishes Media,
 transcription-job, quota-release, and transcript-state failure through the one
 Podcast failure owner in `podcasts/transcription_failure.py`. The source
