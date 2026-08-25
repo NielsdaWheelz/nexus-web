@@ -42,7 +42,9 @@ def test_codex_egress_allows_only_subscription_auth_and_mcp_sni() -> None:
     assert struct.unpack_from("!H", allowed_dns, 6)[0] == 1
     assert allowed_dns[-4:] == ipaddress.IPv4Address("172.30.0.2").packed
     denied_dns = egress_policy.dns_response(_query("api.anthropic.com"), policy)
-    assert struct.unpack_from("!H", denied_dns, 6)[0] == 0
+    assert struct.unpack_from("!H", denied_dns, 6)[0] == 0, (
+        "unapproved DNS names were resolved to the egress proxy"
+    )
     assert struct.unpack_from("!H", denied_dns, 2)[0] & 0x0005 == 0x0005
 
     assert egress_policy.client_hello_sni(_client_hello("chatgpt.com")) == "chatgpt.com"
