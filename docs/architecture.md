@@ -760,7 +760,10 @@ edge; the user-facing taxonomy is **six kinds** (Documents, Notes, Highlights,
 Conversations, People, Web) folding the internal result types, with
 operator-backed filter chips (`format:`/`author:`/`role:`/`in:`) — not the raw
 result-type grid. The package owns one concern per module (`kinds`, `query`, `scope`,
-`embedding`, `ranking`, `projection`, `cursor`, `batch`, `retrievers/*`, `service`).
+`embedding`, `ranking`, `projection`, `cursor`, `batch`, `retrievers/*`, `resolver`,
+`service`). `service` owns query execution and page orchestration; `resolver` owns
+validated durable-reference dispatch and the single public projection of the
+resolved internal result. Neither module re-exports the other.
 Ranking/retrieval is extracted below that public projection into one internal
 pre-projection candidate seam (`search/candidates.py`); **resource target
 search** (`services/resource_items/targets.py`, `POST
@@ -796,8 +799,11 @@ identity or highlight-note origin from result type or URL.
 
 `schemas/search_types.py` is the sole authority for public search-result
 discriminants. The public response union, retrieval contexts, and durable
-retrieval-result references must cover every discriminant. The conversations
-retriever owns both candidate retrieval and durable rematerialization for
+retrieval-result references must cover every discriminant. `search/resolver.py`
+validates persisted raw discriminants against that authority, narrows them to the
+exhaustive typed dispatcher, decodes the durable UUID once, delegates semantic
+visibility and reconstruction to the owning retriever, and projects once. The
+conversations retriever owns both candidate retrieval and durable rematerialization for
 Conversation, Message, and Conversation Dossier (`artifact`) results under one
 visibility contract. It excludes pending Messages; Dossier rematerialization is
 owner-only, masks foreign subjects as not found, and returns the current revision
