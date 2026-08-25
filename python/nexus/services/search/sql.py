@@ -45,7 +45,7 @@ def hybrid_content_chunk_tail_sql(
     """Build the hybrid content-chunk retrieval query (lexical ∪ semantic).
 
     This is the single owner of the hybrid pipeline shared by document
-    (`library_content._search_content_chunks`) and note-block
+    (`content_evidence._search_content_chunks`) and note-block
     (`notes._search_note_chunks`) search: the `semantic_candidates` / `lexical_candidates`
     / `candidate_ids` (UNION) / `scored_candidates` CTEs, the ANN candidate logic, the
     content_embeddings provider/model/dimensions join predicate, the 0.45/0.35/0.15 hybrid

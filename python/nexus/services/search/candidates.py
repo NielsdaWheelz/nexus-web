@@ -69,18 +69,18 @@ from nexus.services.search.results import (
     _RankedPageResult,
     _RankedPodcastResult,
 )
+from nexus.services.search.retrievers.content_evidence import (
+    _search_content_chunks,
+    _search_evidence_spans,
+)
 from nexus.services.search.retrievers.contributors import _search_contributors
 from nexus.services.search.retrievers.conversations import (
     _search_conversation_artifacts,
     _search_conversations,
     _search_messages,
 )
+from nexus.services.search.retrievers.fragments import _search_fragments
 from nexus.services.search.retrievers.highlights import _search_highlights
-from nexus.services.search.retrievers.library_content import (
-    _search_content_chunks,
-    _search_evidence_spans,
-    _search_fragments,
-)
 from nexus.services.search.retrievers.media import _search_media, _search_podcasts
 from nexus.services.search.retrievers.notes import _search_note_chunks, _search_pages
 from nexus.services.search.retrievers.reader_apparatus import _search_reader_apparatus_items
