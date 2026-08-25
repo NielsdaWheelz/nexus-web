@@ -270,7 +270,7 @@
       "proofs": [
         "pytest:python/tests/service/test_generation_execution.py::test_accepted_generation_loss_remains_uncertain_and_never_redispatches"
       ],
-      "expected_failure": "assert state.dispatch_phase is Uncertain"
+      "expected_failure": "generation dispatch did not persist the Uncertain checkpoint atomically"
     },
     {
       "id": "generation-reconciliation-fingerprint-bypass",

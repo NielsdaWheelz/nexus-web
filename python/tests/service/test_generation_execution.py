@@ -463,7 +463,9 @@ def _assert_started_atomically(
         job_id=seeded.job_id,
         generation_id=command.request_id,
     )
-    assert state.dispatch_phase is Uncertain
+    assert state.dispatch_phase is Uncertain, (
+        "generation dispatch did not persist the Uncertain checkpoint atomically"
+    )
     assert job.status == "running"
     row = _ledger_row(engine, command.request_id)
     expected = {
