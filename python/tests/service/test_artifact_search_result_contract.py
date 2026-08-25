@@ -14,19 +14,20 @@ from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.retrieval import RetrievalResultRef, retrieval_result_ref_json
 from nexus.schemas.search import (
     ConversationArtifactSearchOut,
+    SearchResultOut,
     SearchResultActivationOut,
     SearchResultContextRefOut,
 )
-from nexus.schemas.search_types import ALL_RESULT_TYPES
 from nexus.services import bootstrap
 from nexus.services.retrieval_citation import citation_from_search_result
 from nexus.services.search.service import get_search_result
 
 
 def test_retrieval_result_refs_cover_every_canonical_search_discriminant() -> None:
-    discriminator = TypeAdapter(RetrievalResultRef).json_schema()["discriminator"]
+    public_discriminator = TypeAdapter(SearchResultOut).json_schema()["discriminator"]
+    retrieval_discriminator = TypeAdapter(RetrievalResultRef).json_schema()["discriminator"]
 
-    assert set(discriminator["mapping"]) == set(ALL_RESULT_TYPES)
+    assert set(retrieval_discriminator["mapping"]) == set(public_discriminator["mapping"])
 
 
 def test_artifact_search_result_projects_to_the_canonical_retrieval_ref() -> None:
