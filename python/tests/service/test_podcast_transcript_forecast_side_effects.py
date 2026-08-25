@@ -27,7 +27,9 @@ from nexus.jobs.queue import (
     JobExecutionContext,
     claim_job,
     find_nonterminal_jobs_for_payload,
+    get_job,
 )
+from nexus.jobs.worker import _terminal_resource_failure
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.collection_revisions import (
@@ -951,6 +953,102 @@ def test_publisher_transcript_worker_publishes_semantics_and_revisions_once(
         select(MediaSourceAttempt).where(MediaSourceAttempt.media_id == media_id)
     ).one()
     assert source_attempt.status == "succeeded"
+    for family, revision_after_admission in revisions_after_admission.items():
+        assert (
+            read_collection_revision(
+                db_session,
+                viewer_id=test_user.id,
+                family=family,
+            )
+            == revision_after_admission + 1
+        )
+
+
+def test_podcast_transcript_resource_terminal_repairs_domain_state_once(
+    authenticated_client: TestClient,
+    db_session: Session,
+    test_user: UserRecord,
+) -> None:
+    media_id = _seed_transcription_episode(
+        db_session,
+        user=test_user,
+        title="Resource-limited podcast transcript",
+    )
+    admitted = authenticated_client.post(
+        f"/media/{media_id}/transcript/request",
+        json={"reason": "episode_open", "dry_run": False},
+    )
+    assert admitted.status_code == 202, admitted.text
+    revisions_after_admission = {
+        family: read_collection_revision(
+            db_session,
+            viewer_id=test_user.id,
+            family=family,
+        )
+        for family in (
+            CollectionFamily.AuthorWorks,
+            CollectionFamily.LibraryEntries,
+            CollectionFamily.PodcastEpisodes,
+        )
+    }
+    attempt = db_session.scalars(
+        select(MediaSourceAttempt).where(MediaSourceAttempt.media_id == media_id)
+    ).one()
+    assert attempt.job_id is not None
+    worker_id = "podcast-resource-terminal-worker"
+    claimed = claim_job(
+        db_session,
+        job_id=attempt.job_id,
+        worker_id=worker_id,
+        lease_seconds=300,
+        heavy_kinds=("ingest_media_source",),
+    )
+    db_session.commit()
+    assert claimed is not None
+
+    settlement = _terminal_resource_failure(
+        db_session,
+        claimed=claimed,
+        worker_id=worker_id,
+        projection="SourceAttemptMedia",
+        dimension="Memory",
+    )
+    db_session.commit()
+
+    assert settlement == "ResourceFailed"
+    queue_job = get_job(db_session, claimed.id)
+    assert queue_job is not None
+    assert queue_job.status == "dead"
+    assert queue_job.error_code == ApiErrorCode.E_RESOURCE_LIMIT.value
+    assert queue_job.result == {"kind": "ResourceFailure", "dimension": "Memory"}
+    db_session.expire_all()
+    media = db_session.get(Media, media_id)
+    assert media is not None
+    assert media.processing_status == ProcessingStatus.failed
+    assert media.failure_stage == FailureStage.transcribe
+    assert media.last_error_code == ApiErrorCode.E_RESOURCE_LIMIT.value
+    source_attempt = db_session.get(MediaSourceAttempt, attempt.id)
+    assert source_attempt is not None
+    assert source_attempt.status == "failed"
+    assert source_attempt.error_code == ApiErrorCode.E_RESOURCE_LIMIT.value
+    transcription_job = db_session.get(PodcastTranscriptionJob, media_id)
+    assert transcription_job is not None
+    assert transcription_job.status == "failed"
+    assert transcription_job.error_code == ApiErrorCode.E_RESOURCE_LIMIT.value
+    assert transcription_job.reserved_minutes == 0
+    transcript_state = db_session.get(MediaTranscriptState, media_id)
+    assert transcript_state is not None
+    assert transcript_state.transcript_state == "failed_provider"
+    assert transcript_state.transcript_coverage == "none"
+    assert transcript_state.semantic_status == "none"
+    usage = db_session.scalar(
+        select(PodcastTranscriptionUsageDaily).where(
+            PodcastTranscriptionUsageDaily.user_id == test_user.id
+        )
+    )
+    assert usage is not None
+    assert usage.minutes_used == 0
+    assert usage.minutes_reserved == 0
     for family, revision_after_admission in revisions_after_admission.items():
         assert (
             read_collection_revision(
