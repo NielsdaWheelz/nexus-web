@@ -5,13 +5,15 @@ from __future__ import annotations
 from uuid import UUID, uuid4
 
 import pytest
+from pydantic import TypeAdapter
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ArtifactBuild, ArtifactRevision, Conversation, SynthesisArtifact
 from nexus.errors import ApiErrorCode, NotFoundError
-from nexus.schemas.retrieval import retrieval_result_ref_json
+from nexus.schemas.retrieval import RetrievalResultRef, retrieval_result_ref_json
 from nexus.schemas.search import (
+    ALL_RESULT_TYPES,
     ConversationArtifactSearchOut,
     SearchResultActivationOut,
     SearchResultContextRefOut,
@@ -19,6 +21,12 @@ from nexus.schemas.search import (
 from nexus.services import bootstrap
 from nexus.services.retrieval_citation import citation_from_search_result
 from nexus.services.search.service import get_search_result
+
+
+def test_retrieval_result_refs_cover_every_canonical_search_discriminant() -> None:
+    discriminator = TypeAdapter(RetrievalResultRef).json_schema()["discriminator"]
+
+    assert set(discriminator["mapping"]) == set(ALL_RESULT_TYPES)
 
 
 def test_artifact_search_result_projects_to_the_canonical_retrieval_ref() -> None:
