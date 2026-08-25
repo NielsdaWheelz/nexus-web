@@ -1042,7 +1042,16 @@ def start_python_process(
 ) -> StartedProcess:
     require_test_environment(environment)
     root = canonical_repo_root(repo_root)
+    if role not in {
+        "external",
+        "provider-openai",
+        "api",
+        "worker-interactive",
+        "worker-background",
+    }:
+        raise RuntimeContractError(f"Python process role is not owned: {role}")
     runtime = read_runtime(root)
+    owned_environment = run_environment(root, environment, run)
     if role == "external":
         _require_loopback_port_available(runtime.ports.external, role)
         command = (
@@ -1054,8 +1063,8 @@ def start_python_process(
             str(root / "python/tests/fixtures/real_media"),
         )
     elif role == "provider-openai":
-        _require_loopback_port_available(runtime.ports.provider_openai, role)
         values = _owned_provider_fixture_paths(root, run.run_id, overrides)
+        _require_loopback_port_available(runtime.ports.provider_openai, role)
         command = (
             str(root / "python/.venv/bin/python"),
             str(root / "python/tests/testkit/openai_embedding_server.py"),
@@ -1105,7 +1114,7 @@ def start_python_process(
     else:
         raise RuntimeContractError(f"Python process role is not owned: {role}")
     process_environment = {
-        **run_environment(root, environment, run),
+        **owned_environment,
         "NEXUS_TEST_DENY_EXTERNAL_NETWORK": "1",
         "NEXUS_TEST_STATIC_DNS": '{"www.nasa.gov":"93.184.216.34"}',
         "NODE_OPTIONS": f"--import={root / 'python/tests/testkit/node-network-guard.mjs'}",
@@ -1287,12 +1296,12 @@ def start_web_process(
     if expected_builds not in artifact_root.parents or artifact_root not in server.parents:
         raise RuntimeContractError("web process requires a runtime-owned standalone artifact")
     runtime = read_runtime(root)
-    _require_loopback_port_available(runtime.ports.web, "web")
     owned_environment = run_environment(root, environment, run)
     try:
         source_sha = load_runtime_identity(_runtime_identity_path(root)).source_sha
     except BackendArtifactDefect as exc:
         raise RuntimeContractError("web process requires the exact runtime identity") from exc
+    _require_loopback_port_available(runtime.ports.web, "web")
     return _start_owned_process(
         root,
         environment,

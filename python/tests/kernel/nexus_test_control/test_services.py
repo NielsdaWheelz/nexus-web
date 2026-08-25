@@ -83,8 +83,13 @@ def _process_is_running(process_id: int) -> bool:
     return True
 
 
-def _owned_run(tmp_path: Path, *, migration: bool = True) -> OwnedRun:
-    initialize_runtime(tmp_path, TEST_ENV, _ports())
+def _owned_run(
+    tmp_path: Path,
+    *,
+    migration: bool = True,
+    ports: RuntimePorts | None = None,
+) -> OwnedRun:
+    initialize_runtime(tmp_path, TEST_ENV, ports or _ports())
     claim_run(tmp_path, TEST_ENV, RUN_ID)
     resources = [
         Resource(ResourceKind.RUN_DATABASE, run_database_name(RUN_ID)),
@@ -974,15 +979,45 @@ def test_python_child_rejects_unpersisted_or_public_run_resources_before_spawn(
     tmp_path: Path,
     run: OwnedRun,
 ) -> None:
-    persisted = _owned_run(tmp_path, migration=False)
-    poisoned = replace(
-        run,
-        database_url=run.database_url,
-        migration_database_url=persisted.migration_database_url,
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as occupied_port:
+        occupied_port.bind(("127.0.0.1", 0))
+        occupied_port.listen()
+        api_port = int(occupied_port.getsockname()[1])
+        persisted = _owned_run(
+            tmp_path,
+            migration=False,
+            ports=replace(_ports(), api=api_port),
+        )
+        poisoned = replace(
+            run,
+            database_url=run.database_url,
+            migration_database_url=persisted.migration_database_url,
+        )
+
+        with pytest.raises(RuntimeContractError, match="exact persisted local test run"):
+            start_python_process(tmp_path, TEST_ENV, poisoned, "api")
+
+    assert not any(
+        entry.resource.kind is ResourceKind.PROCESS
+        for entry in read_ledger(tmp_path, RUN_ID).entries
     )
 
-    with pytest.raises(RuntimeContractError, match="exact persisted local test run"):
-        start_python_process(tmp_path, TEST_ENV, poisoned, "api")
+
+def test_provider_child_rejects_missing_owned_fixture_before_port_admission(
+    tmp_path: Path,
+) -> None:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as occupied_port:
+        occupied_port.bind(("127.0.0.1", 0))
+        occupied_port.listen()
+        provider_port = int(occupied_port.getsockname()[1])
+        run = _owned_run(
+            tmp_path,
+            migration=False,
+            ports=replace(_ports(), provider_openai=provider_port),
+        )
+
+        with pytest.raises(RuntimeContractError, match="requires its owned fixture paths"):
+            start_python_process(tmp_path, TEST_ENV, run, "provider-openai")
 
     assert not any(
         entry.resource.kind is ResourceKind.PROCESS
@@ -993,23 +1028,31 @@ def test_python_child_rejects_unpersisted_or_public_run_resources_before_spawn(
 def test_web_child_rejects_public_supabase_before_recording_or_spawning_process(
     tmp_path: Path,
 ) -> None:
-    run = _owned_run(tmp_path, migration=False)
-    poisoned = replace(
-        run,
-        supabase=SupabaseCredentials("https://production.example", "anon", "admin"),
-    )
-    artifact = tmp_path / ".nexus-test/builds" / ("a" * 64)
-    artifact.mkdir(parents=True)
-    server = artifact / "server.js"
-    server.write_text("throw new Error('must not run')\n", encoding="utf-8")
-
-    with pytest.raises(RuntimeContractError, match="exact persisted local test run"):
-        start_web_process(
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as occupied_port:
+        occupied_port.bind(("127.0.0.1", 0))
+        occupied_port.listen()
+        web_port = int(occupied_port.getsockname()[1])
+        run = _owned_run(
             tmp_path,
-            TEST_ENV,
-            poisoned,
-            StandaloneBuild("a" * 64, artifact, server),
+            migration=False,
+            ports=replace(_ports(), web=web_port),
         )
+        poisoned = replace(
+            run,
+            supabase=SupabaseCredentials("https://production.example", "anon", "admin"),
+        )
+        artifact = tmp_path / ".nexus-test/builds" / ("a" * 64)
+        artifact.mkdir(parents=True)
+        server = artifact / "server.js"
+        server.write_text("throw new Error('must not run')\n", encoding="utf-8")
+
+        with pytest.raises(RuntimeContractError, match="exact persisted local test run"):
+            start_web_process(
+                tmp_path,
+                TEST_ENV,
+                poisoned,
+                StandaloneBuild("a" * 64, artifact, server),
+            )
 
     assert not any(
         entry.resource.kind is ResourceKind.PROCESS
