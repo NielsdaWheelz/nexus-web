@@ -565,6 +565,7 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 Capability.KERNEL_WEB,
                 Capability.LLM_EVAL,
                 Capability.LLM_TOOLS,
+                Capability.MIGRATIONS,
                 Capability.RELEASE_ARTIFACT,
                 Capability.SERVICE,
                 Capability.STATIC_PLATFORM,
@@ -591,6 +592,9 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/kernel/test_generation_contract.py",
                 "pytest:python/tests/kernel/test_generation_operation_adapters.py",
                 "pytest:python/tests/kernel/test_generation_policy.py::test_fixed_generation_policy_catalog_is_complete_and_closed",
+                "pytest:python/tests/kernel/test_oracle_host_release.py",
+                "pytest:python/tests/kernel/test_oracle_manifest.py",
+                "pytest:python/tests/kernel/test_oracle_reconcile_contract.py",
                 "pytest:python/tests/service/test_codex_generation_client.py",
                 "pytest:python/tests/service/test_codex_egress_policy.py::"
                 "test_codex_egress_allows_only_subscription_auth_and_mcp_sni",
@@ -614,6 +618,8 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "test_revision_gates_every_changed_chat_projection_boundary",
                 "pytest:python/tests/service/test_llm_tools_availability.py::"
                 "test_keyless_boot_preserves_plan_and_refuses_required_web_before_dispatch",
+                "pytest:python/tests/migrations/test_oracle_publication_migration.py",
+                "pytest:python/tests/service/test_oracle_publication.py",
                 "vitest:apps/web/src/app/android/page.unit.test.tsx",
                 "vitest:apps/web/src/components/chat/toolProjectionProtocol.browser.test.tsx",
                 "pytest:python/tests/service/test_offline_reading_caddy_delivery.py::test_production_caddy_proxy_preserves_exact_package_identity_bytes_without_encoding",

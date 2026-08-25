@@ -707,6 +707,7 @@
       "id": "oracle-publication",
       "source_globs": [
         "deploy/hetzner/reconcile-oracle.sh",
+        "deploy/hetzner/release.py",
         "migrations/alembic/versions/0211_oracle_corpus_publication.py",
         "python/nexus/db/models.py",
         "python/nexus/oracle/manifest.py",

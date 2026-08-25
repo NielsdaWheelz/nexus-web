@@ -4428,7 +4428,7 @@ class HostRelease:
             )
             _require_match(f"{service} container id", container_id, _CONTAINER_ID)
             inspected = _inspect_one(container_id, f"{service} health inspect")
-            if lane == "interactive":
+            if lane == "interactive" and _requires_codex_agent_host(candidate):
                 self._validate_interactive_generation_surface(
                     inspected,
                     expected_mcp_origin=self._codex_mcp_origin(config_path),

@@ -79,26 +79,14 @@ def _root_own(paths: tuple[Path, ...]) -> None:
 
 
 def _container_config(image: str, service: str) -> dict[str, object]:
-    config: dict[str, object] = {
-        "Env": (
-            [
-                "WORKER_LANE=interactive",
-                "NEXUS_CODEX_AGENT_SOCKET=/run/nexus-codex/agent.sock",
-                "NEXUS_AGENT_TOOLS_MCP_LISTEN=0.0.0.0:8001",
-                "NEXUS_AGENT_TOOLS_MCP_ORIGIN=https://api.example.test/internal/agent-tools/mcp",
-            ]
-            if service == "worker-interactive"
-            else []
-        ),
+    return {
+        "Env": [],
         "Image": image,
         "Labels": {
             "com.docker.compose.project": "nexus",
             "com.docker.compose.service": service,
         },
     }
-    if service == "worker-interactive":
-        config["ExposedPorts"] = {"8001/tcp": {}}
-    return config
 
 
 @dataclass(frozen=True, slots=True)
@@ -584,16 +572,6 @@ def _container_inspect(state: dict[str, Any], container_id: str) -> dict[str, ob
                 "Type": "bind",
             }
         ]
-    if container_id == state["containers"]["worker-interactive"]["id"]:
-        inspected["Mounts"] = [
-            {
-                "Destination": "/run/nexus-codex",
-                "Name": "nexus_nexus_codex_run",
-                "RW": False,
-                "Source": "/var/lib/docker/volumes/nexus_nexus_codex_run/_data",
-                "Type": "volume",
-            }
-        ]
     return inspected
 
 
@@ -935,21 +913,6 @@ def fake_docker_main() -> int:
                         "Labels": {"org.opencontainers.image.revision": image["source_sha"]}
                     },
                     "Id": image["id"],
-                }
-            ]
-        )
-    elif arguments[:2] == ["volume", "inspect"]:
-        volume = arguments[2]
-        if volume != "nexus_nexus_codex_run":
-            raise AssertionError(f"unknown fake volume {volume!r}")
-        _write_json(
-            [
-                {
-                    "Driver": "local",
-                    "Mountpoint": "/var/lib/docker/volumes/nexus_nexus_codex_run/_data",
-                    "Name": volume,
-                    "Options": {},
-                    "Scope": "local",
                 }
             ]
         )
