@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.db.models import (
+    FailureStage,
     Media,
     MediaKind,
     MediaSourceAttempt,
@@ -818,6 +819,18 @@ def test_worker_quota_rejection_commits_its_audit_before_terminal_failure(
         json={"reason": "episode_open", "dry_run": False},
     )
     assert admitted.status_code == 202, admitted.text
+    revisions_after_admission = {
+        family: read_collection_revision(
+            db_session,
+            viewer_id=test_user.id,
+            family=family,
+        )
+        for family in (
+            CollectionFamily.AuthorWorks,
+            CollectionFamily.LibraryEntries,
+            CollectionFamily.PodcastEpisodes,
+        )
+    }
 
     result = _run_claimed_transcript_source_attempt(
         db_session,
@@ -829,6 +842,26 @@ def test_worker_quota_rejection_commits_its_audit_before_terminal_failure(
     assert result["status"] == "failed"
     assert result["error_code"] == ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED.value
     db_session.expire_all()
+    media = db_session.get(Media, media_id)
+    assert media is not None
+    assert media.processing_status == ProcessingStatus.failed
+    assert media.failure_stage == FailureStage.transcribe
+    assert media.last_error_code == ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED.value
+    transcript_state = db_session.get(MediaTranscriptState, media_id)
+    assert transcript_state is not None
+    assert transcript_state.transcript_state == "failed_quota"
+    assert transcript_state.transcript_coverage == "none"
+    assert transcript_state.semantic_status == "none"
+    transcription_job = db_session.get(PodcastTranscriptionJob, media_id)
+    assert transcription_job is not None
+    assert transcription_job.status == "failed"
+    assert transcription_job.error_code == ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED.value
+    assert transcription_job.reserved_minutes == 0
+    source_attempt = db_session.scalars(
+        select(MediaSourceAttempt).where(MediaSourceAttempt.media_id == media_id)
+    ).one()
+    assert source_attempt.status == "failed"
+    assert source_attempt.error_code == ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED.value
     audits = db_session.scalars(
         select(PodcastTranscriptRequestAudit)
         .where(PodcastTranscriptRequestAudit.media_id == media_id)
@@ -852,6 +885,15 @@ def test_worker_quota_rejection_commits_its_audit_before_terminal_failure(
         )
         == 0
     )
+    for family, revision_after_admission in revisions_after_admission.items():
+        assert (
+            read_collection_revision(
+                db_session,
+                viewer_id=test_user.id,
+                family=family,
+            )
+            == revision_after_admission + 1
+        )
 
 
 def test_publisher_transcript_worker_publishes_semantics_and_revisions_once(
