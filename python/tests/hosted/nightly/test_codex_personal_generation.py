@@ -77,6 +77,7 @@ _MAX_PLAN_ELAPSED_MS = 600_000
 @dataclass(slots=True)
 class _McpState:
     tool_calls: int = 0
+    methods: list[str] = field(default_factory=list)
     protocol_versions: set[str] = field(default_factory=set)
     session_ids: set[str] = field(default_factory=set)
 
@@ -136,24 +137,29 @@ async def _send_http_error(send: Any, status: int) -> None:
     await send({"type": "http.response.body", "body": b""})
 
 
-async def _list_tools(_context: Any, _params: Any) -> ListToolsResult:
-    return ListToolsResult(
-        tools=[
-            Tool(
-                name="nexus.resource.read",
-                description="Read one bounded proof resource.",
-                inputSchema={
-                    "type": "object",
-                    "properties": {"uri": {"type": "string"}},
-                    "required": ["uri"],
-                },
-            )
-        ]
-    )
+def _list_tools(state: _McpState):
+    async def list_tools(_context: Any, _params: Any) -> ListToolsResult:
+        state.methods.append("tools/list")
+        return ListToolsResult(
+            tools=[
+                Tool(
+                    name="nexus.resource.read",
+                    description="Read one bounded proof resource.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {"uri": {"type": "string"}},
+                        "required": ["uri"],
+                    },
+                )
+            ]
+        )
+
+    return list_tools
 
 
 def _call_tool(state: _McpState):
     async def call(_context: Any, params: Any) -> CallToolResult:
+        state.methods.append("tools/call")
         state.tool_calls += 1
         if params.name != "nexus.resource.read":
             return CallToolResult(
@@ -214,7 +220,7 @@ def _mcp_peer(root: Path) -> Iterator[_McpPeer]:
     mcp_server = Server(
         "nexus-hosted-proof",
         version="1",
-        on_list_tools=_list_tools,
+        on_list_tools=_list_tools(peer_state),
         on_call_tool=_call_tool(peer_state),
     )
     manager = StreamableHTTPSessionManager(
@@ -222,8 +228,8 @@ def _mcp_peer(root: Path) -> Iterator[_McpPeer]:
         json_response=True,
         stateless=True,
         security_settings=TransportSecuritySettings(
-            allowed_hosts=["127.0.0.1:*"] ,
-            allowed_origins=["https://127.0.0.1:*"] ,
+            allowed_hosts=["127.0.0.1:*"],
+            allowed_origins=["https://127.0.0.1:*"],
         ),
     )
     app = _McpAuthApp(manager, peer_state)
@@ -318,18 +324,26 @@ def test_codex_personal_generation_canary_records_exact_four_plan_pairs() -> Non
             usage = terminal.usage
             _require(isinstance(usage, Present), "Codex turn omitted usage")
             usage_value = usage.value
+            resolved_model = resolved.session.model
+            resolved_effort = resolved.session.reasoning.effort
+            _require(resolved_model == model, "resolved model drifted from the plan")
+            _require(resolved_effort == effort, "resolved reasoning drifted from the plan")
+            structured_output_valid = terminal.structured_output is not None
+            _require(
+                structured_output_valid is (shape == "json"),
+                "resolved output shape drifted from the plan",
+            )
             results.append(
                 {
                     "plan_id": plan_id,
                     "plan_revision": generation_policy.POLICY_REVISION,
-                    "model": model,
-                    "reasoning": effort,
+                    "model": resolved_model,
+                    "reasoning": resolved_effort,
                     "backend": "codex",
                     "transport": "sdk",
                     "auth_profile": "codex-personal",
                     "terminal_status": "succeeded",
-                    "structured_output_valid": shape == "json"
-                    and terminal.structured_output is not None,
+                    "structured_output_valid": structured_output_valid,
                     "session_ref_schema_version": "agent-session-ref.v1",
                     "usage": {
                         "input_tokens": usage_value.input_tokens,
@@ -344,6 +358,7 @@ def test_codex_personal_generation_canary_records_exact_four_plan_pairs() -> Non
                 }
             )
         _require(peer.state.tool_calls >= 1, "MCP peer received no tool call")
+        _require(peer.state.methods == ["tools/list", "tools/call"], "MCP sequence drifted")
         _require(peer.state.protocol_versions == {_MCP_PROTOCOL_VERSION}, "MCP protocol drifted")
         _require(not peer.state.session_ids, "stateless MCP peer issued a session")
         _write_evidence(results)
