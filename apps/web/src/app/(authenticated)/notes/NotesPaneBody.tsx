@@ -13,7 +13,8 @@ import CollectionView from "@/components/collections/CollectionView";
 import SelectField from "@/components/ui/SelectField";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { notePagesResource } from "@/lib/api/resource";
-import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
@@ -37,7 +38,10 @@ import {
   updatedTitleViewForSortOption,
 } from "@/lib/collections/updatedTitleIndexView";
 import { PROGRAMMATIC_NEXUS_TARGET_ACTIVATION } from "@/lib/nexus/dispatch";
-import { normalizePageSummary, type NotePageSummary } from "@/lib/notes/normalize";
+import {
+  loadNotePages,
+  type NotePageSummary,
+} from "@/lib/notes/pageContract";
 import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
 import { useResource } from "@/lib/api/useResource";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
@@ -233,10 +237,7 @@ export default function NotesPaneBody() {
         // justify-defect: a non-null request key is built from this exact view.
         throw new Error("Notes index request lost its view identity");
       }
-      const envelope = await apiFetch<{
-        data: { pages?: Record<string, unknown>[] };
-      }>(notePagesResource.clientPath({ view }), { signal });
-      return (envelope.data.pages ?? []).map(normalizePageSummary);
+      return loadNotePages(clientResourceFetcher(signal), { view });
     },
   });
   // Latest-wins atomic commit: the resource reports a result only under the

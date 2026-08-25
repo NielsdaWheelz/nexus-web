@@ -1,5 +1,4 @@
 import { apiFetch } from "@/lib/api/client";
-import { requiredRecord } from "@/lib/notes/normalize";
 import {
   decodeResourceItem,
   normalizeResourceSurface,
@@ -7,6 +6,7 @@ import {
   type ResourceSurface,
   type SurfacePosition,
 } from "@/lib/resources/resourceItems";
+import { expectRecord } from "@/lib/validation";
 
 export type ResourceSurfaceCommand =
   | {
@@ -113,7 +113,7 @@ export async function commandResourceSurface(input: {
       }),
     },
   );
-  const data = requiredRecord(response.data, "surface command response");
+  const data = expectRecord(response.data, "surface command response");
   return normalizeResourceSurface(data.surface);
 }
 
@@ -137,7 +137,7 @@ export async function updateResourceSurfaceTitle(input: {
     },
   );
   return decodeResourceItem(
-    requiredRecord(requiredRecord(response.data, "title response").item, "title item"),
+    expectRecord(expectRecord(response.data, "title response").item, "title item"),
   );
 }
 
@@ -160,9 +160,9 @@ export async function updateResourceSurfaceNoteBody(input: {
       }),
     },
   );
-  const data = requiredRecord(response.data, "note body response");
+  const data = expectRecord(response.data, "note body response");
   return {
-    item: decodeResourceItem(requiredRecord(data.item, "note body item")),
+    item: decodeResourceItem(expectRecord(data.item, "note body item")),
     bodyText: String(data.bodyText ?? ""),
   };
 }

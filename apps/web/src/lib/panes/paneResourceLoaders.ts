@@ -16,7 +16,7 @@ import {
 import { decodeSlateEnvelope } from "@/lib/resonance/contract";
 import type { ResourceFetcher } from "@/lib/api/resourceTransport";
 import type { PaneRouteId, RouteParams } from "@/lib/panes/paneRouteModel";
-import { normalizePageSummary } from "@/lib/notes/normalize";
+import { loadNotePages } from "@/lib/notes/pageContract";
 import { shouldLoadInitialMediaFragments } from "@/lib/media/documentReadiness";
 import { isAbortError } from "@/lib/errors";
 import { decodeContributorDetail } from "@/lib/contributors/detail";
@@ -222,13 +222,7 @@ export const paneResourceLoaders: Partial<
 
   notes: {
     cacheKey: () => notePagesResource.cacheKey({}),
-    load: async (request) => {
-      const env = await request<
-        Record<string, never>,
-        { data: { pages?: Record<string, unknown>[] } }
-      >(notePagesResource, {});
-      return (env.data.pages ?? []).map(normalizePageSummary);
-    },
+    load: (request) => loadNotePages(request, {}),
   },
 
   conversations: {

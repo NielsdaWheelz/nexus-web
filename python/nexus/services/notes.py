@@ -37,6 +37,7 @@ from nexus.schemas.notes import (
     NotePageSummaryOut,
     UpdatePageRequest,
 )
+from nexus.schemas.presence import presence_from_nullable
 from nexus.services import note_bodies, passage_anchors
 from nexus.services.collection_keyset import Direction
 from nexus.services.content_indexing import IndexOwner, delete_content_index
@@ -728,7 +729,7 @@ def _page_out(db: Session, viewer_id: UUID, page: Page) -> NotePageOut:
         id=page.id,
         title=page.title,
         updated_at=page.updated_at,
-        daily_page=(
+        daily_page=presence_from_nullable(
             DailyPageSummaryOut(local_date=daily_local_date)
             if daily_local_date is not None
             else None
