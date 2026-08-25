@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -13,6 +14,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import Engine, create_engine, inspect, text
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.exc import IntegrityError
 
 _CUTOVER_REVISION = "0222"
 _PREVIOUS_REVISION = "0221"
@@ -652,6 +654,100 @@ def _assert_final_ledger_schema(engine: Engine) -> None:
         "Failed",
     }
     assert "generation_seq > 0" in checks["ck_llm_calls_generation_seq_positive"]
+    assert {
+        "ck_llm_calls_operation",
+        "ck_llm_calls_owner_operation",
+        "ck_llm_calls_operation_plan",
+        "ck_llm_calls_plan_target",
+        "ck_llm_calls_route",
+        "ck_llm_calls_capability",
+        "ck_llm_calls_fingerprints",
+        "ck_llm_calls_bounded_text",
+        "ck_llm_calls_error_code",
+        "ck_llm_calls_failure_shape",
+        "ck_llm_calls_usage",
+        "ck_llm_calls_session_route",
+        "ck_llm_calls_lifecycle",
+    } <= set(checks)
+
+
+_LEDGER_INSERT = text(
+    """
+    INSERT INTO llm_calls (
+        id, owner_kind, owner_id, generation_seq, operation, plan_id,
+        plan_revision, backend, transport, auth_profile, model_name,
+        reasoning_effort, capability_kind, request_fingerprint,
+        output_schema_fingerprint, tool_plan_fingerprint, streaming,
+        session_ref, outcome, error_code, error_detail, input_tokens,
+        output_tokens, total_tokens, reasoning_tokens, cache_read_input_tokens,
+        cache_write_input_tokens, sdk_version, runtime_version, latency_ms,
+        accepted_at, completed_at
+    ) VALUES (
+        :id, :owner_kind, :owner_id, :generation_seq, :operation, :plan_id,
+        :plan_revision, :backend, :transport, :auth_profile, :model_name,
+        :reasoning_effort, :capability_kind, :request_fingerprint,
+        :output_schema_fingerprint, :tool_plan_fingerprint, :streaming,
+        CAST(:session_ref AS jsonb), :outcome, :error_code, :error_detail,
+        :input_tokens, :output_tokens, :total_tokens, :reasoning_tokens,
+        :cache_read_input_tokens, :cache_write_input_tokens, :sdk_version,
+        :runtime_version, :latency_ms, :accepted_at, :completed_at
+    )
+    """
+)
+
+
+def _ledger_values(**overrides: object) -> dict[str, object]:
+    values: dict[str, object] = {
+        "id": uuid4(),
+        "owner_kind": "media_summary",
+        "owner_id": uuid4(),
+        "generation_seq": 1,
+        "operation": "media_summary",
+        "plan_id": "routine",
+        "plan_revision": "codex-generation.2026-08-24.1",
+        "backend": "codex",
+        "transport": "sdk",
+        "auth_profile": "codex-personal",
+        "model_name": "gpt-5.6-luna",
+        "reasoning_effort": "low",
+        "capability_kind": "Synthesis",
+        "request_fingerprint": "1" * 64,
+        "output_schema_fingerprint": "2" * 64,
+        "tool_plan_fingerprint": None,
+        "streaming": False,
+        "session_ref": None,
+        "outcome": None,
+        "error_code": None,
+        "error_detail": None,
+        "input_tokens": None,
+        "output_tokens": None,
+        "total_tokens": None,
+        "reasoning_tokens": None,
+        "cache_read_input_tokens": None,
+        "cache_write_input_tokens": None,
+        "sdk_version": None,
+        "runtime_version": None,
+        "latency_ms": None,
+        "accepted_at": None,
+        "completed_at": None,
+    }
+    values.update(overrides)
+    return values
+
+
+def _assert_ledger_constraints(engine: Engine) -> None:
+    with engine.begin() as connection:
+        connection.execute(_LEDGER_INSERT, _ledger_values())
+
+    invalid_rows = (
+        _ledger_values(operation="oracle"),
+        _ledger_values(backend="openai"),
+        _ledger_values(outcome="Failed", completed_at=datetime.now(UTC)),
+    )
+    for values in invalid_rows:
+        with pytest.raises(IntegrityError):
+            with engine.begin() as connection:
+                connection.execute(_LEDGER_INSERT, values)
 
 
 def _post_cutover_fingerprint(engine: Engine, ids: dict[str, UUID]) -> tuple[object, ...]:
@@ -747,6 +843,7 @@ def test_0222_deletes_old_audit_and_billing_state_but_preserves_domain_outputs(
                 == 128000
             )
 
+        _assert_ledger_constraints(engine)
         before_downgrade = _post_cutover_fingerprint(engine, ids)
         with pytest.raises(NotImplementedError, match="0222.*irreversible"):
             command.downgrade(config, _PREVIOUS_REVISION)

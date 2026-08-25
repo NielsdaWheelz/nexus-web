@@ -4683,6 +4683,125 @@ class LLMCall(Base):
             name="ck_llm_calls_outcome",
         ),
         CheckConstraint(
+            "operation IN ("
+            "'metadata_enrichment', 'media_summary', 'synapse', 'dawn_write', 'oracle', "
+            "'dossier_page', 'dossier_note', 'dossier_media', 'dossier_conversation', "
+            "'dossier_library', 'dossier_podcast', 'dossier_contributor', "
+            "'dossier_idea', 'dossier_idea_resolve', 'chat'"
+            ")",
+            name="ck_llm_calls_operation",
+        ),
+        CheckConstraint(
+            "(owner_kind = 'media_enrichment' AND operation = 'metadata_enrichment') OR "
+            "(owner_kind = 'media_summary' AND operation = 'media_summary') OR "
+            "(owner_kind = 'synapse_scan' AND operation = 'synapse') OR "
+            "(owner_kind = 'dawn_write' AND operation = 'dawn_write') OR "
+            "(owner_kind = 'oracle_reading' AND operation = 'oracle') OR "
+            "(owner_kind = 'artifact_build' AND operation IN ("
+            "'dossier_page', 'dossier_note', 'dossier_media', 'dossier_conversation', "
+            "'dossier_library', 'dossier_podcast', 'dossier_contributor', 'dossier_idea'"
+            ")) OR "
+            "(owner_kind = 'artifact_learn_request' AND operation = 'dossier_idea_resolve') OR "
+            "(owner_kind = 'chat_run' AND operation = 'chat')",
+            name="ck_llm_calls_owner_operation",
+        ),
+        CheckConstraint(
+            "(operation IN ("
+            "'metadata_enrichment', 'media_summary', 'synapse', 'dossier_page', "
+            "'dossier_note', 'dossier_idea_resolve'"
+            ") AND plan_id = 'routine') OR "
+            "(operation IN ("
+            "'dawn_write', 'oracle', 'dossier_media', 'dossier_conversation'"
+            ") AND plan_id = 'standard') OR "
+            "(operation IN ("
+            "'dossier_library', 'dossier_podcast', 'dossier_contributor', 'dossier_idea'"
+            ") AND plan_id = 'thorough') OR "
+            "(operation = 'chat' AND plan_id IN ('routine', 'standard', 'deep'))",
+            name="ck_llm_calls_operation_plan",
+        ),
+        CheckConstraint(
+            "(plan_id = 'routine' AND model_name = 'gpt-5.6-luna' "
+            "AND reasoning_effort = 'low') OR "
+            "(plan_id = 'standard' AND model_name = 'gpt-5.6-terra' "
+            "AND reasoning_effort = 'medium') OR "
+            "(plan_id = 'thorough' AND model_name = 'gpt-5.6-terra' "
+            "AND reasoning_effort = 'high') OR "
+            "(plan_id = 'deep' AND model_name = 'gpt-5.6-sol' "
+            "AND reasoning_effort = 'high')",
+            name="ck_llm_calls_plan_target",
+        ),
+        CheckConstraint(
+            "backend = 'codex' AND transport = 'sdk' "
+            "AND auth_profile = 'codex-personal'",
+            name="ck_llm_calls_route",
+        ),
+        CheckConstraint(
+            "(operation = 'chat' AND capability_kind = 'ChatTools' "
+            "AND tool_plan_fingerprint IS NOT NULL) OR "
+            "(operation <> 'chat' AND capability_kind = 'Synthesis' "
+            "AND tool_plan_fingerprint IS NULL)",
+            name="ck_llm_calls_capability",
+        ),
+        CheckConstraint(
+            "request_fingerprint ~ '^[0-9a-f]{64}$' "
+            "AND output_schema_fingerprint ~ '^[0-9a-f]{64}$' "
+            "AND (tool_plan_fingerprint IS NULL "
+            "OR tool_plan_fingerprint ~ '^[0-9a-f]{64}$')",
+            name="ck_llm_calls_fingerprints",
+        ),
+        CheckConstraint(
+            "char_length(plan_revision) BETWEEN 1 AND 128 "
+            "AND (error_detail IS NULL OR char_length(error_detail) <= 1000)",
+            name="ck_llm_calls_bounded_text",
+        ),
+        CheckConstraint(
+            "error_code IS NULL OR error_code IN ("
+            "'auth', 'quota', 'timeout', 'output_limit', 'invalid_output', "
+            "'policy_violation', 'runtime_unavailable', 'capacity_unavailable', "
+            "'context_too_large', 'defect'"
+            ")",
+            name="ck_llm_calls_error_code",
+        ),
+        CheckConstraint(
+            "(outcome = 'Failed') = (error_code IS NOT NULL)",
+            name="ck_llm_calls_failure_shape",
+        ),
+        CheckConstraint(
+            "(input_tokens IS NULL AND output_tokens IS NULL AND total_tokens IS NULL "
+            "AND reasoning_tokens IS NULL AND cache_read_input_tokens IS NULL "
+            "AND cache_write_input_tokens IS NULL) OR "
+            "(input_tokens >= 0 AND output_tokens >= 0 AND total_tokens >= 0 "
+            "AND (reasoning_tokens IS NULL OR reasoning_tokens >= 0) "
+            "AND (cache_read_input_tokens IS NULL OR cache_read_input_tokens >= 0) "
+            "AND (cache_write_input_tokens IS NULL OR cache_write_input_tokens >= 0))",
+            name="ck_llm_calls_usage",
+        ),
+        CheckConstraint(
+            "session_ref IS NULL OR (jsonb_typeof(session_ref) = 'object' "
+            "AND session_ref->>'backend' = backend "
+            "AND session_ref->>'transport' = transport "
+            "AND session_ref->>'profile_key' = auth_profile)",
+            name="ck_llm_calls_session_route",
+        ),
+        CheckConstraint(
+            "(outcome IS NULL AND completed_at IS NULL AND accepted_at IS NULL "
+            "AND session_ref IS NULL AND error_code IS NULL AND error_detail IS NULL "
+            "AND input_tokens IS NULL AND output_tokens IS NULL AND total_tokens IS NULL "
+            "AND reasoning_tokens IS NULL AND cache_read_input_tokens IS NULL "
+            "AND cache_write_input_tokens IS NULL AND sdk_version IS NULL "
+            "AND runtime_version IS NULL AND latency_ms IS NULL) OR "
+            "(outcome IS NOT NULL AND completed_at IS NOT NULL AND ("
+            "(accepted_at IS NULL AND outcome = 'Failed' AND session_ref IS NULL "
+            "AND input_tokens IS NULL AND output_tokens IS NULL AND total_tokens IS NULL "
+            "AND reasoning_tokens IS NULL AND cache_read_input_tokens IS NULL "
+            "AND cache_write_input_tokens IS NULL AND sdk_version IS NULL "
+            "AND runtime_version IS NULL AND latency_ms IS NULL) OR "
+            "(accepted_at IS NOT NULL AND sdk_version IS NOT NULL "
+            "AND runtime_version IS NOT NULL AND latency_ms >= 0 "
+            "AND error_code IS DISTINCT FROM 'capacity_unavailable'))) ",
+            name="ck_llm_calls_lifecycle",
+        ),
+        CheckConstraint(
             "generation_seq > 0",
             name="ck_llm_calls_generation_seq_positive",
         ),
