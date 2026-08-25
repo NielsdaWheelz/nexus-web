@@ -9,12 +9,12 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import httpx
-from provider_runtime import EmbeddingCall, Present, ProviderRuntime
+from provider_runtime import Credentials, EmbeddingCall, Present, ProviderRuntime
 
 from nexus.config import Settings, get_settings
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
-from nexus.services.llm_credentials import embedding_credential, provider_credentials
+from nexus.services.llm_credentials import embedding_credential
 
 logger = get_logger(__name__)
 
@@ -305,7 +305,10 @@ async def _embed_with_openai_async(
     credential = embedding_credential(settings)
 
     vectors: list[list[float]] = []
-    runtime = ProviderRuntime(provider_credentials(settings), http_client=http_client)
+    runtime = ProviderRuntime(
+        Credentials(openai=credential.key),
+        http_client=http_client,
+    )
     for start in range(0, len(texts), 64):
         batch = texts[start : start + 64]
         call = EmbeddingCall(
