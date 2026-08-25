@@ -810,6 +810,14 @@ retriever owns candidate retrieval and durable rematerialization for Media,
 Episode, Video, and Podcast results. Rematerialization reuses canonical media or
 Podcast visibility, requires the requested discriminant to match the stored media
 kind exactly, and projects contributor credits through the shared credit decoder.
+Document-occurrence search is split by semantic owner: the content-chunk,
+fragment, and evidence-span retrievers each own candidate retrieval and durable
+rematerialization for their result type. Durable content chunks require visible
+media, a ready index, their primary canonical evidence span, and an exact match
+when the caller supplies evidence-span ids. Fragments reuse the same visibility
+and index-readiness contract and emit only canonical source locators. Evidence
+spans admit visible media or viewer-owned note blocks, require a ready owner
+index, and preserve that media or note block as the canonical owner identity.
 
 - **Indexing** (`services/content_indexing.py`, `semantic_chunks.py`): text-bearing
   media flows `fragment → content_blocks → chunks → embeddings`; note bodies
