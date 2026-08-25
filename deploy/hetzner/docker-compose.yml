@@ -95,11 +95,21 @@ services:
       WORKER_LANE: interactive
       DATABASE_STATEMENT_TIMEOUT_MS: "300000"
       DATABASE_IDLE_IN_TX_TIMEOUT_MS: "0"
+      NEXUS_CODEX_AGENT_SOCKET: /run/nexus-codex/agent.sock
+      NEXUS_AGENT_TOOLS_MCP_LISTEN: 0.0.0.0:8001
     depends_on:
       postgres:
         condition: service_healthy
       api:
         condition: service_healthy
+      # Start ordering only: an unavailable host soft-fails generation work and
+      # must not prevent the interactive lane from serving unrelated jobs.
+      nexus-codex-agent-host:
+        condition: service_started
+    expose:
+      - "8001"
+    volumes:
+      - nexus_codex_run:/run/nexus-codex:ro
     healthcheck:
       test: ["CMD", "python", "-S", "-m", "apps.worker.health", "--lane", "interactive"]
       interval: 5s
@@ -173,6 +183,8 @@ services:
       NEXUS_CODEX_STATE_ROOT_BASE: /var/lib/nexus-codex
       NEXUS_CODEX_WORKING_DIRECTORY: /var/empty/nexus-codex
       NEXUS_CODEX_AGENT_SOCKET: /run/nexus-codex/agent.sock
+      NEXUS_CODEX_MCP_ORIGIN: https://${CADDY_SITE:?set}/internal/agent-tools/mcp
+      NEXUS_CODEX_CHAT_NETWORK_ATTESTED: "true"
     working_dir: /var/empty/nexus-codex
     read_only: true
     cap_drop:

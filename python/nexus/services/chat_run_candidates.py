@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun, ChatRunTurnContext, Conversation, Message
@@ -45,8 +45,6 @@ from nexus.services.chat_run_message_blocks import message_document
 from nexus.services.chat_run_response import build_chat_run_response
 from nexus.services.chat_run_steps import chat_tool_profile_admission
 from nexus.services.conversation_branches import ensure_branch_metadata, persist_active_leaf
-from nexus.services.llm_profiles import LlmProfile
-from nexus.services.llm_profiles import profile as lookup_profile
 from nexus.services.seq import assign_next_message_seq
 from nexus.services.tool_runtime.composition import compose_product_tool_runtime
 
@@ -190,7 +188,6 @@ def _create_sibling_candidate(
     select it as the active leaf, create + enqueue one durable `ChatRun`, clone
     the source turn context, emit the meta event, commit, and project."""
     assert source_run.profile_id is not None
-    assert source_run.reasoning_option_id is not None
 
     user_message = Message(
         conversation_id=source_run.conversation_id,
@@ -251,7 +248,6 @@ def _create_sibling_candidate(
         payload_hash=payload_hash,
         status="queued",
         profile_id=source_run.profile_id,
-        reasoning_option_id=source_run.reasoning_option_id,
         tool_profile_id=tool_admission.profile_id,
         tool_profile_revision=tool_admission.profile_revision,
         tool_profile_snapshot=tool_admission.snapshot,
@@ -278,7 +274,6 @@ def _create_sibling_candidate(
             "user_message_id": str(user_message.id),
             "assistant_message_id": str(assistant_message.id),
             "profile_id": run.profile_id,
-            "reasoning_option_id": run.reasoning_option_id,
             "chat_subject": None,
         }
     )
@@ -301,7 +296,7 @@ def _assert_regenerate_eligible(
 ) -> None:
     """Re-evaluate regeneration eligibility against freshly queried facts (spec
     §8): the assistant message and its source run are both complete, the source
-    profile/reasoning selection still resolves to its historical target, and no
+    profile selection still resolves to its historical plan, and no
     assistant-write tool was attempted. Ownership and single-run ownership are
     already guaranteed by `_resolve_source`."""
     if source_assistant_message.status != "complete" or source_run.status != "complete":
@@ -324,7 +319,7 @@ def _assert_regenerate_eligible(
 def _assert_rerun_eligible(db: Session, source_run: ChatRun) -> None:
     """Re-evaluate `rerun_eligibility` against freshly queried facts — never
     trusting an earlier `can_rerun` read as authority for the mutation itself."""
-    if source_run.profile_id is None or source_run.reasoning_option_id is None:
+    if source_run.profile_id is None:
         raise ApiError(
             ApiErrorCode.E_RETRY_NOT_ALLOWED,
             "Assistant response has no resolved profile to rerun",
@@ -335,10 +330,8 @@ def _assert_rerun_eligible(db: Session, source_run: ChatRun) -> None:
             ApiErrorCode.E_RETRY_INVALID_STATE,
             "Assistant response is not a terminal failed or cancelled run",
         )
-    # Same drift-aware eligibility the projection uses (retired/uncertified/
-    # changed profile, or a reasoning option no longer offered → not
-    # rerunnable), re-evaluated here against freshly queried facts.
-    active_profile = lookup_profile(source_run.profile_id)
+    # The profile owner compares the recorded plan id/revision to today's policy;
+    # a null pre-cutover selection or drifted plan is never rerunnable.
     profile_active = profile_selection_active(source_run)
     has_write_tool_attempt = compute_has_write_tool_attempt(db, source_run)
     eligible = rerun_eligibility(
@@ -349,37 +342,3 @@ def _assert_rerun_eligible(db: Session, source_run: ChatRun) -> None:
     )
     if not eligible:
         raise ApiError(ApiErrorCode.E_RETRY_NOT_ALLOWED, "Assistant response is not rerunnable")
-
-    # Defense in depth (§10: "rerun never remaps a historical target"): the
-    # projection compares the run's stored resolved-target snapshot, which a run
-    # may not have recorded. The authoritative historical target lives on the
-    # run's terminal `llm_calls` ledger row; if the current profile now resolves
-    # to a different provider/model, the rerun would silently execute elsewhere.
-    if active_profile is not None and _ledger_target_drifted(db, source_run, active_profile):
-        raise ApiError(
-            ApiErrorCode.E_RETRY_NOT_ALLOWED,
-            "Assistant response's profile now resolves to a different target",
-        )
-
-
-def _ledger_target_drifted(db: Session, source_run: ChatRun, active_profile: LlmProfile) -> bool:
-    """Whether the run's historical resolved target (its terminal `llm_calls`
-    row's provider/model_name — always the logical target the plan resolved to)
-    differs from what the current profile resolves to. No ledger row (a run that
-    failed before any call) ⇒ no drift evidence."""
-    row = db.execute(
-        text(
-            "SELECT provider, model_name FROM llm_calls "
-            "WHERE owner_kind = 'chat_run' AND owner_id = :run_id "
-            "ORDER BY call_seq DESC LIMIT 1"
-        ),
-        {"run_id": source_run.id},
-    ).first()
-    if row is None:
-        return False
-    provider, model_name = row
-    if provider is not None and provider != active_profile.target.provider:
-        return True
-    if model_name is not None and model_name != active_profile.target.model:
-        return True
-    return False

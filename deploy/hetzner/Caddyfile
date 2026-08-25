@@ -17,6 +17,11 @@
 	}
 
 	route {
+		@agent_tools_mcp path /internal/agent-tools/mcp
+		handle @agent_tools_mcp {
+			reverse_proxy worker-interactive:8001
+		}
+
 		@offline_reading_package path_regexp ^/offline-reading/packages/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
 		handle @offline_reading_package {
 			reverse_proxy api:8000 {

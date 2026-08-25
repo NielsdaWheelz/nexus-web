@@ -52,14 +52,25 @@ const PROFILES = {
   default_profile_id: "balanced",
   profiles: [
     {
+      id: "fast",
+      label: "Fast",
+      description: "Quick responses for everyday questions.",
+      model_label: "GPT-5.6 Luna",
+      effort_label: "Low",
+    },
+    {
       id: "balanced",
       label: "Balanced",
-      description: "Everyday profile",
-      provider_label: "Nexus AI",
-      model_label: "Balanced model",
-      reasoning_options: [{ id: "medium", label: "Medium" }],
-      default_reasoning_option_id: "medium",
-      privacy: { kind: "Standard", notice: "Processed by Nexus AI." },
+      description: "The default profile: strong general-purpose reasoning.",
+      model_label: "GPT-5.6 Terra",
+      effort_label: "Medium",
+    },
+    {
+      id: "deep",
+      label: "Deep",
+      description: "Slower, deeper reasoning for hard problems.",
+      model_label: "GPT-5.6 Sol",
+      effort_label: "High",
     },
   ],
 };
@@ -422,7 +433,7 @@ describe("Chat tool projection protocol", () => {
         />,
       ),
     );
-    await screen.findByRole("combobox", { name: "Model" });
+    await screen.findByRole("radio", { name: /Balanced/ });
     const composer = screen.getByRole<HTMLTextAreaElement>("textbox", {
       name: "Ask anything",
     });

@@ -2,7 +2,6 @@ import type { LlmProfile } from "@/lib/conversations/types";
 
 export interface ChatProfileSelection {
   readonly profileId: string;
-  readonly reasoningOptionId: string;
 }
 
 export interface InheritedChatProfileSelection {
@@ -37,29 +36,18 @@ interface ResolveChatProfileSelectionInput {
 export function isChatProfileSelection(value: unknown): value is ChatProfileSelection {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   const keys = Object.keys(value);
-  if (
-    keys.length !== 2 ||
-    !Object.hasOwn(value, "profileId") ||
-    !Object.hasOwn(value, "reasoningOptionId")
-  ) {
+  if (keys.length !== 1 || !Object.hasOwn(value, "profileId")) {
     return false;
   }
   const selection = value as Record<string, unknown>;
-  return (
-    typeof selection.profileId === "string" &&
-    typeof selection.reasoningOptionId === "string"
-  );
+  return typeof selection.profileId === "string";
 }
 
 function isAvailable(
   selection: ChatProfileSelection,
   profiles: readonly LlmProfile[],
 ): boolean {
-  const profile = profiles.find((item) => item.id === selection.profileId);
-  return (
-    profile !== undefined &&
-    profile.reasoning_options.some((option) => option.id === selection.reasoningOptionId)
-  );
+  return profiles.some((item) => item.id === selection.profileId);
 }
 
 function productDefaultSelection(
@@ -73,20 +61,7 @@ function productDefaultSelection(
       `LLM profile catalog default profile "${defaultProfileId}" is unavailable`,
     );
   }
-  if (
-    !profile.reasoning_options.some(
-      (option) => option.id === profile.default_reasoning_option_id,
-    )
-  ) {
-    // justify-defect: a ready same-system default profile must expose its default option.
-    throw new Error(
-      `LLM profile catalog default reasoning option "${profile.default_reasoning_option_id}" is unavailable for profile "${profile.id}"`,
-    );
-  }
-  return {
-    profileId: profile.id,
-    reasoningOptionId: profile.default_reasoning_option_id,
-  };
+  return { profileId: profile.id };
 }
 
 export function resolveChatProfileSelection({

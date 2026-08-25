@@ -29,9 +29,7 @@ interface BillingAccount {
   entitlement_source: BillingEntitlementSource;
   entitlement_expires_at: string | null;
   can_share: boolean;
-  can_use_platform_llm: boolean;
   can_transcribe: boolean;
-  ai_token_usage: BillingUsageSnapshot;
   transcription_usage: BillingUsageSnapshot;
 }
 

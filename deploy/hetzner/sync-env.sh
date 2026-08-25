@@ -42,11 +42,7 @@ PODCASTS_ENABLED
 YOUTUBE_DATA_API_KEY
 X_API_BEARER_TOKEN
 OPENAI_API_KEY
-ANTHROPIC_API_KEY
-GEMINI_API_KEY
-MOONSHOT_API_KEY
-DEEPSEEK_API_KEY
-NEXUS_FABLE_RETENTION_ACCEPTED_AT
+AGENT_TOOL_GRANT_SIGNING_KEY
 POSTGRES_IMAGE
 CADDY_IMAGE
 PARSER_TEMP_ROOT
@@ -250,6 +246,18 @@ if (
 PY
 }
 
+require_agent_tool_grant_signing_key() {
+  local file="$1"
+  local grant_key stream_key
+
+  grant_key="$(normalize_env_value "$(env_value "AGENT_TOOL_GRANT_SIGNING_KEY" "$file" || true)")"
+  stream_key="$(normalize_env_value "$(env_value "STREAM_TOKEN_SIGNING_KEY" "$file" || true)")"
+  [ "${#grant_key}" -ge 32 ] || \
+    die "AGENT_TOOL_GRANT_SIGNING_KEY must contain at least 32 characters"
+  [ "$grant_key" != "$stream_key" ] || \
+    die "AGENT_TOOL_GRANT_SIGNING_KEY must be distinct from STREAM_TOKEN_SIGNING_KEY"
+}
+
 reject_legacy_runtime_keys() {
   local file="$1"
   local key value
@@ -273,7 +281,7 @@ reject_codex_host_runtime_keys() {
   local file="$1"
   local key value
 
-  for key in CODEX_HOME NEXUS_CODEX_STATE_ROOT_BASE NEXUS_CODEX_WORKING_DIRECTORY NEXUS_CODEX_AGENT_SOCKET; do
+  for key in CODEX_HOME NEXUS_CODEX_STATE_ROOT_BASE NEXUS_CODEX_WORKING_DIRECTORY NEXUS_CODEX_AGENT_SOCKET NEXUS_AGENT_TOOLS_MCP_LISTEN NEXUS_CODEX_MCP_ORIGIN NEXUS_CODEX_CHAT_NETWORK_ATTESTED; do
     if value="$(env_value "$key" "$file")" && ! is_blank "$(normalize_env_value "$value")"; then
       die "${key} is owned by the isolated Codex agent host and must not be captured in Nexus runtime env"
     fi
@@ -297,9 +305,15 @@ reject_removed_llm_env_keys() {
     die "NEXUS_KEY_ENCRYPTION_KEY was removed by the LLM provider-runtime cutover; BYOK API-key encryption no longer exists, so this key can never be set"
   fi
 
-  for key in CLOUDFLARE_AI_API_TOKEN CLOUDFLARE_AI_ACCOUNT_ID; do
+  for key in CLOUDFLARE_AI_API_TOKEN CLOUDFLARE_AI_ACCOUNT_ID ANTHROPIC_API_KEY GEMINI_API_KEY MOONSHOT_API_KEY DEEPSEEK_API_KEY; do
     if value="$(env_value "$key" "$file")" && ! is_blank "$(normalize_env_value "$value")"; then
       die "${key} was removed by the LLM provider-runtime cutover; Cloudflare is no longer an LLM provider"
+    fi
+  done
+
+  for key in NEXUS_FABLE_RETENTION_ACCEPTED_AT NEXUS_PROVIDER_CERTIFICATION; do
+    if value="$(env_value "$key" "$file")" && ! is_blank "$(normalize_env_value "$value")"; then
+      die "${key} was removed by the Codex personal generation hard cut"
     fi
   done
 }
@@ -401,6 +415,7 @@ require_non_empty_keys "$tmp_file"
 require_prod_env "$tmp_file"
 require_local_database_url "$tmp_file"
 require_cloudflare_r2_s3_api_origin "$tmp_file"
+require_agent_tool_grant_signing_key "$tmp_file"
 require_digest_image POSTGRES_IMAGE "$tmp_file"
 require_digest_image CADDY_IMAGE "$tmp_file"
 reject_legacy_runtime_keys "$tmp_file"

@@ -22,7 +22,6 @@ export function buildChatRunBody(input: {
   conversationId: string | null;
   content: string;
   profileId: string;
-  reasoningOptionId: string;
   branchDraft: BranchDraft | null;
   parentMessageId: string | null;
   readerSelection?: ReaderSelectionInput | null;
@@ -31,7 +30,6 @@ export function buildChatRunBody(input: {
     destination: buildChatDestination(input),
     content: input.content,
     profile_id: input.profileId,
-    reasoning_option_id: input.reasoningOptionId,
     reader_selection: input.readerSelection ? present(input.readerSelection) : absent(),
   };
 }

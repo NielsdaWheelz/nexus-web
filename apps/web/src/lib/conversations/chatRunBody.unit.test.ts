@@ -9,7 +9,6 @@ import type { BranchDraft } from "@/lib/conversations/types";
 const scalars = {
   content: "why?",
   profileId: "fast",
-  reasoningOptionId: "low",
 };
 
 describe("buildChatRunBody", () => {
@@ -24,7 +23,6 @@ describe("buildChatRunBody", () => {
       destination: { kind: "New" },
       content: "why?",
       profile_id: "fast",
-      reasoning_option_id: "low",
       reader_selection: { kind: "Absent" },
     });
   });

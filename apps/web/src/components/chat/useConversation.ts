@@ -1229,17 +1229,10 @@ export function useConversation(
 
     const run = assistant.trust_trail?.run;
     if (!run) return null;
-    if (run.profile_id === null && run.reasoning_option_id === null)
-      return null;
-    if (run.profile_id === null || run.reasoning_option_id === null) {
-      // justify-defect: a ChatRun writes its product profile and reasoning
-      // selection together, so a same-system trust trail cannot contain half.
-      throw new Error("Assistant run selection must be complete");
-    }
+    if (run.profile_id === null) return null;
     return {
       selection: {
         profileId: run.profile_id,
-        reasoningOptionId: run.reasoning_option_id,
       },
       assistantMessageId: assistant.id,
       runId: run.run_id,

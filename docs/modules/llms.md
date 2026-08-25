@@ -2,179 +2,152 @@
 
 ## Scope
 
-This module owns Nexus's direct-provider generation boundary: product profiles,
-platform credentials, durable execution and admission, normalized outcomes and
-the `llm_calls` ledger. Prompt and domain owners build and validate their own
-content, schemas, tools, and final writes; the existing Postgres job queue,
-leases, and durable step journal remain their owners.
+All Nexus generation uses the isolated Codex Personal host. There is no direct
+provider-generation path, BYOK, model browser, provider fallback, price
+projection, provider certification, or platform-AI token entitlement.
+Transcript embedding remains a separate, narrow OpenAI operation and
+transcription remains outside this module.
 
-`provider_runtime` is the immutable external direct-API dependency pinned in
-`python/pyproject.toml`. `ProviderRuntime` owns registry resolution, canonical
-provider endpoints, credentials selection, provider transport, retries,
-normalized outcomes, and provider telemetry. Nexus never plans a wire request,
-rewrites an endpoint, or implements provider retries.
+The product side owns intent, policy, durable coordination, and publication.
+The host owns the pinned Codex SDK/runtime session and the private Unix-socket
+transport. Domain owners still build prompts, validate semantic output, and
+commit their own final writes.
 
-There is no BYOK, per-user key, model-browser UI, gateway route, fallback, or
-availability intersection. This boundary excludes `metadata_enrichment`.
+The primary owners are:
 
-Backend owners: `llm_profiles.py`, `llm_credentials.py`, `llm_execution.py`,
-`llm_intent_state.py`, `llm_outcomes.py`, `llm_ledger.py`,
-`tasks/llm_task.py`, `schemas/llm.py`, and `api/routes/llm_profiles.py`. Queue
-ownership is documented in [jobs.md](jobs.md).
+- `generation_policy.py`: immutable operation/profile-to-plan policy;
+- `generation_intent.py`: provider-independent instructions, input, and output;
+- `codex_generation_contract.py`: closed v2 command, frame, terminal, health,
+  capacity, cancel, and policy-violation contracts;
+- `codex_generation_client.py`: bounded HTTP-over-UDS client;
+- `codex_generation_operations.py`: host-side lowering to pinned
+  `AgentRuntime` types;
+- `llm_ledger.py`: the sole staged writer and typed reader for `llm_calls`;
+- `apps/codex_agent/`: the one-slot generation host.
 
-## Product profiles (`llm_profiles.py`)
+Queue ownership is documented in [jobs.md](jobs.md).
 
-`llm_profiles.py` owns labels, order, defaults, privacy copy, and background
-operation-to-profile policy. `provider_runtime.registry` owns model facts:
-limits, capabilities, reasoning fragments, continuation codec, and registry
-revision. A product profile never duplicates provider facts.
+## Product profiles
 
-`PROFILES` is this fixed nine-row order; `balanced` is the default:
+`GET /llm-profiles` returns exactly these presets in this order; `balanced` is
+the default:
 
-| id | label | target | reasoning options | default |
-|---|---|---|---|---|
-| `fast` | Fast · Luna | `openai/gpt-5.6-luna` | none, low, medium, high, xhigh, max | low |
-| `balanced` | Balanced · Terra | `openai/gpt-5.6-terra` | none, low, medium, high, xhigh, max | medium |
-| `deep` | Deep · Sol | `openai/gpt-5.6-sol` | none, low, medium, high, xhigh, max | high |
-| `claude` | Claude · Sonnet 5 | `anthropic/claude-sonnet-5` | low, medium, high, xhigh, max | medium |
-| `fable` | Claude · Fable 5 | `anthropic/claude-fable-5` | low, medium, high, xhigh, max | high |
-| `gemini` | Gemini · 3.5 Flash | `gemini/gemini-3.5-flash` | minimal, low, medium, high | medium |
-| `kimi` | Kimi · K3 | `moonshot/kimi-k3` | low, high, max | high |
-| `deepseek-flash` | DeepSeek · V4 Flash | `deepseek/deepseek-v4-flash` | none, high, max | high |
-| `deepseek-pro` | DeepSeek · V4 Pro | `deepseek/deepseek-v4-pro` | none, high, max | high |
+| id | label | product description | display target |
+|---|---|---|---|
+| `fast` | Fast | Quick responses for everyday questions. | GPT-5.6 Luna · Low |
+| `balanced` | Balanced | The default profile: strong general-purpose reasoning. | GPT-5.6 Terra · Medium |
+| `deep` | Deep | Slower, deeper reasoning for hard problems. | GPT-5.6 Sol · High |
 
-The existing picker renders these data rows without a provider branch. Selecting
-a profile resets effort to its listed default. DeepSeek uses `StandardPrivacy`
-with the direct-operator notice. Missing provider credentials do not hide a
-profile or reroute a call; required staging/production credentials fail startup.
+The response carries only `id`, `label`, `description`, `model_label`, and
+`effort_label`. The browser sends only `profile_id`; there is no provider,
+model, or effort selector. Rerun and regenerate inherit the source run's
+profile and accept no replacement selection.
 
-`validate_profiles()` runs at API and worker startup. Every profile and
-background mapping must resolve through `provider_runtime.registry`, support
-text, tools, streaming, strict structured output, and a continuation codec,
-and exactly match its advertised reasoning options and default.
+`generation_policy.py` is the authority for the resolved plan. The UI labels
+are presentation, not an execution instruction. Startup validates the complete
+policy catalog and its pinned evaluation fingerprint.
 
-`OPERATION_PROFILES` maps direct operations only: Oracle, Media Summary, and
-Synapse use `fast`; Dossier page, note, and idea-resolve use `fast`; other
-Dossier bindings and Dawn Write use `balanced`. Chat is user-selected. Kimi and
-both DeepSeek profiles are chat choices only.
+## Operation policy
 
-## Credentials and runtime composition
+Every synthesis operation has one revision and one fixed plan. Chat has one
+revision per product profile and the `ChatTools` capability. The policy also
+owns instruction/input bounds, turn timeout, stream bounds, close timeout, and
+the full transport deadline.
 
-`provider_credentials(settings)` is the one direct-generation credential
-constructor. It supplies exactly five platform credentials: OpenAI, Anthropic,
-Gemini, Moonshot, and DeepSeek. The runtime chooses the applicable key.
-`embedding_credential(settings)` remains the narrow OpenAI embedding port.
-Transcription is not an LLM runtime capability; Deepgram remains its separate
-owner.
+Synthesis runs read-only with network disabled, built-ins and web search off,
+no MCP servers, and no tool grant. Chat runs with workspace-write,
+unrestricted network, explicit unsafe-network confirmation, built-ins and web
+search off, and exactly one required Streamable HTTP MCP server named `nexus`.
+Its exact tool allowlist comes from the canonical chat declarations.
 
-`ExecutionRuntime` is the structural test seam. Production composition returns
-`ProviderRuntime` directly from `build_execution_runtime(settings, client)`.
-API dependencies and `run_llm_task` share that composition; no wrapper or
-generation-time credential map exists.
+## Private v2 host protocol
 
-The only retry modes are:
+`CodexGenerationClient.health()` validates the exact command schema, policy
+revision, SDK version, and runtime version before dispatch. `stream(command)`
+performs that health check and then posts once to `/v2/generations`. The host
+returns bounded NDJSON frames with a contiguous zero-based sequence and exactly
+one last terminal frame.
 
-| Mode | Owner behavior |
-|---|---|
-| `Default` | `ProviderRuntime` applies its provider retry policy. |
-| `SingleAttempt` | `ProviderRuntime` receives one zero-delay attempt; it never retries or resumes a stream after a semantic event. |
+HTTP 503 is capacity only when its status, content type, and body exactly match
+the versioned capacity response. A loss before acceptance is unavailable; a
+loss after HTTP acceptance is ambiguous. An accepted stream without a terminal
+is never reclassified as a known failure. Cancel and policy violation are
+idempotent private controls. Policy violation terminalizes a matching active
+turn as `Failed(policy_violation)`, never `Cancelled`.
 
-Every composition uses `Default` except durable `BilledOnce` work: `chat_run`,
-`dossier_build`, `media_unit_build`, and the API-owned Idea resolver use
-`SingleAttempt`. Nexus selects the mode; `ProviderRuntime` implements it.
+The host admits one generation at a time and releases that slot only after the
+runtime closes. It has no application configuration, database credential, API
+key, application data mount, TCP listener, or writable workspace. Its only
+application-facing transport is `/run/nexus-codex/agent.sock`.
 
-## Native subscription metadata
+## Chat MCP authority
 
-`metadata_enrichment` is not a direct-provider operation. Its sole route is the
-private `nexus-codex-agent-host` over a Unix socket, through the pinned public
-`AgentRuntime` with `CredentialRef(local_account, codex-personal)`,
-`gpt-5.6-luna`, and low reasoning. The durable metadata owner snapshots its
-request, records `agent_turns`, and owns prepared/completed/uncertain replay;
-`llm_calls`, direct credentials, provider retry, admission, and price facts do
-not participate.
+The interactive worker serves the official MCP SDK's stateless Streamable HTTP
+app at exactly `/internal/agent-tools/mcp` on its dedicated listener. Caddy
+routes only that exact path. All other traffic keeps its existing route.
 
-The host has no API key, TCP listener, database credentials, MCP, web search,
-writable workspace, or approval path. The operation sets Codex
-`builtin_tools="disabled"`; any residual tool-use or permission-request event
-is a closed policy failure. A terminal stores the opaque session reference,
-usage, SDK/runtime versions, and bounded diagnostics. The ChatGPT-authenticated
-profile state is private to the host; re-enrollment, not credential export, is
-the recovery path.
+The host receives the public HTTPS MCP origin from deployment configuration and
+admits `ChatTools` only when the deployment's explicit network attestation is
+true. Each turn receives a short-lived, run/lease/generation-scoped bearer
+grant signed by the dedicated `AGENT_TOOL_GRANT_SIGNING_KEY`; it never reuses a
+stream token. The grant is resolved into an ephemeral header reference and is
+removed with the per-turn state.
 
-## Durable intent, execution, and admission
+The MCP owner revalidates the live claimed job, attempt, generation, declared
+tool, canonical input, and admitted resources for every call. Tool replay uses
+the durable journal identity. A later authorization failure invokes the host's
+policy-violation control for that active generation.
 
-`GenerateIntentState` in `llm_intent_state.py` is the only persisted
-generation-intent representation. It round-trips text prompt blocks, plain
-JSON-schema tools and strict output, and continuation target/codec/opaque
-payload. Provider wire requests and cache plans are never durable product state.
+## Durable ownership and ledger
 
-`GenerationRequest` carries the owner's replay-stable generation UUID and
-validates the selected profile target and reasoning,
-text-only input, no provider options, no tools with strict JSON, positive and
-row-capped output, and the conservative context bound. Admission reserves:
+Each durable owner chooses a stable `request_id`, snapshots its intent, and
+uses the shared `Prepared -> Uncertain -> Completed` journal. The owner stages
+the `llm_calls` start beside its `Uncertain` checkpoint and the terminal beside
+`Completed`, in the same caller-owned transaction; `llm_ledger.py` never
+commits.
 
-```text
-utf8_bytes(GenerateIntentState.model_dump_json()) + max_output_tokens
-```
+One ledger row records the owner/generation sequence, operation, plan and policy
+revision, fixed Codex route, model/effort, capability, request/output/tool
+fingerprints, session reference, normalized outcome/failure, usage,
+SDK/runtime versions, acceptance time, latency, and completion. It stores no
+provider price, cost estimate, provider credential, or raw response.
 
-This is deterministic quota admission, not tokenization or a cost estimate.
+An owner may redispatch only when its journal replay policy permits it. A paid
+generation that reached `Uncertain` stays suspended until reconciliation or
+explicit cancellation; transport ambiguity is not automatic retry authority.
 
-`execute_generation` and `execute_generation_stream` are the only Nexus
-generation boundary. Their order is: validate; check entitlement; atomically
-insert-or-reuse the pre-dispatch ledger row and reserve admission under the
-owner lock; commit a durable owner's uncertain checkpoint where it has one;
-dispatch; atomically terminalize and settle exactly once. A concurrent replay
-of the same UUID can neither add a ledger row nor recreate a settled
-reservation.
-Expected outcomes pass through after recording. Trusted impossible states record
-a safe defect terminal and raise. The existing queue, leases, and step journal
-continue to own durable orchestration.
+## API and historical eligibility
 
-## Outcomes, ledger, and migration
+`POST /chat-runs` accepts `destination`, `content`, `profile_id`, and
+`reader_selection`. Meta SSE carries the profile snapshot but no reasoning or
+provider choice. `ChatRunOut` exposes the profile plus resolved model/effort;
+the trust trail additionally exposes plan id/revision, usage, and runtime audit
+facts. Neither surface exposes provider or cost.
 
-`llm_outcomes.py` is the exhaustive mapping from `ProviderRuntime` terminals
-to Nexus failure facts. Refused, incomplete, context-too-large, invalid tool
-arguments, invalid structured output, exhausted rate limit/timeout/unavailable,
-and stream interruption have one normalized origin/code; success and
-cancellation carry no error facts. `estimate_cost(CallMeta)` runs only after a
-terminal: absent usage is `missing_usage`, present usage without pricing is
-`missing_pricing`, and otherwise the row records the estimate and provenance.
+Historical conversations remain readable. Rerun/regenerate eligibility is
+fail-closed: a source without a post-cutover profile/plan snapshot, or whose
+recorded plan id/revision no longer equals the active policy, is ineligible.
+The check uses the typed ledger accessor and never probes raw provider/model
+columns.
 
-`llm_ledger.py` is the sole writer of `llm_calls` and the transaction owner for
-ledger plus token-budget state. It commits one requested profile row before
-dispatch and terminal facts afterward: runtime target,
-native reasoning, registry revision, normalized usage, attempt trace, outcome,
-and cost provenance. It is the audit boundary; it has no product API.
+## Deployment invariants
 
-Migration `0215_llm_provider_runtime.py` is the irreversible v2 hard cut. It
-adds requested/native reasoning, registry revision, and cost provenance; removes
-retired plan, cache, pricing-snapshot, raw-usage, and component-cost facts; and
-rewrites prompt manifests without retired cache or reasoning-reserve fields.
-Old durable chat intent payloads are unreadable: migration first refuses live
-or suspended chat coordination, preserves durable domain data, and deletes only
-succeeded `chat_run` queue coordination rows. It retains the existing Postgres
-queue for all v2 work.
-
-## API and failure projection
-
-`GET /llm-profiles` returns the fixed profile tuple for every authenticated
-viewer. Chat create/send keeps `profile_id` and `reasoning_option_id` as the
-only selection inputs. SSE, reconnect, cancellation, failure cards, and trust
-trail shapes are unchanged.
-
-`chat_failure.py` projects stored normalized terminal facts into the closed
-chat-failure union. `chat_run_candidates.py` owns rerun and regenerate sibling
-construction. Neither recreates provider policy or invents a second failure
-record.
+- The host environment contains no `CODEX_HOME` or `OPENAI_API_KEY`.
+- Both worker lanes mount the Codex UDS read-only and are start-ordered after
+  the host without a health dependency.
+- Only the interactive worker listens for MCP, on `0.0.0.0:8001` inside the
+  Compose network.
+- The host remains the sole member of `nexus_codex_egress`; MCP is reached as
+  ordinary public TLS egress, not through a new application-service peer.
+- The MCP origin is HTTPS with the exact path, a lowercase public DNS hostname,
+  and no userinfo, query, or fragment.
+- AppArmor and the inner bwrap/seccomp proof remain release gates.
 
 ## Invariants
 
-- Product profile is policy; registry row is provider fact; `ProviderRuntime`
-  is mechanism.
-- One runtime owns retries, one durable boundary executes a generation, and one
-  ledger writes its audit facts.
-- Missing credentials, usage, pricing, or capability is explicit and never a
-  fallback.
-- Direct API execution and native subscription execution are different systems.
-- The repository has one v2 direct-provider path for non-metadata operations
-  and one exact native subscription metadata route.
+- One policy catalog resolves every operation and chat profile.
+- One private v2 client owns transport classification and bounds.
+- One host owns SDK/runtime sessions and one-slot capacity.
+- One staged ledger owns generation audit.
+- Domain owners alone validate and publish semantic output.
+- There is no direct-provider generation compatibility path.

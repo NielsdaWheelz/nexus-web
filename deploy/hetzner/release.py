@@ -93,6 +93,7 @@ _CODEX_AGENT_RUNTIME_ENVIRONMENT = {
     "NEXUS_CODEX_STATE_ROOT_BASE": "/var/lib/nexus-codex",
     "NEXUS_CODEX_WORKING_DIRECTORY": "/var/empty/nexus-codex",
     "NEXUS_CODEX_AGENT_SOCKET": "/run/nexus-codex/agent.sock",
+    "NEXUS_CODEX_CHAT_NETWORK_ATTESTED": "true",
 }
 # These are the only environment names inherited from the pinned Python/worker
 # artifact. Their values come from `docker image inspect` and must be preserved
@@ -185,8 +186,8 @@ _WORKER_HEALTH_RECEIPT_MAX_AGE_SECONDS = 20.0
 _MIN_AVAILABLE_MEMORY_BYTES = 256 * 1024 * 1024
 _MIN_SWAP_BYTES = 1024 * 1024 * 1024
 _MIN_PARSER_TEMP_FREE_BYTES = 512 * 1024 * 1024
-_CODEX_CAPACITY_SCHEMA_VERSION = "nexus-codex-capacity.v1"
-_CODEX_CAPACITY_CANARY_SCHEMA_VERSION = "nexus-codex-capacity-canary.v1"
+_CODEX_CAPACITY_SCHEMA_VERSION = "nexus-codex-capacity.v2"
+_CODEX_CAPACITY_CANARY_SCHEMA_VERSION = "nexus-codex-capacity-canary.v2"
 # The canary owns its phase sequence and exit-code table as the public
 # `apps.codex_agent.capacity_canary.TURNS` and `.EXIT_CODES`. This
 # controller ships in the immutable host bundle without the worker package, so
@@ -198,7 +199,7 @@ _CODEX_CAPACITY_PHASES = ("cold", "warm_1", "warm_2")
 _CODEX_CAPACITY_CANARY_EXIT_CODES = {
     "passed": 0,
     "not_run": 20,
-    "provider_blocked": 21,
+    "subscription_blocked": 21,
     "failed": 22,
     "transport_retriable": 23,
 }
@@ -239,6 +240,11 @@ _CODEX_CAPACITY_CANARY_FIELDS = frozenset({"schema_version", "status", "turns"})
 _CODEX_CAPACITY_TURN_FIELDS = frozenset(
     {
         "phase",
+        "operation",
+        "profile",
+        "plan_id",
+        "plan_revision",
+        "capability",
         "terminal_status",
         "failure_kind",
         "usage_present",
@@ -4261,6 +4267,8 @@ class HostRelease:
             )
             _require_match(f"{service} container id", container_id, _CONTAINER_ID)
             inspected = _inspect_one(container_id, f"{service} health inspect")
+            if lane == "interactive":
+                self._validate_interactive_generation_surface(inspected)
             state = _mapping(inspected.get("State"), f"{service} health state")
             health = _mapping(state.get("Health"), f"{service} health")
             log = health.get("Log")
@@ -4400,6 +4408,7 @@ class HostRelease:
         self._validate_codex_agent_host_isolation(
             _inspect_one(container_id, "Codex agent host isolation inspect"),
             image_environment=image_environment,
+            expected_mcp_origin=self._codex_mcp_origin(config_path),
         )
         # The direct Compose bind is attested in the inspected host mount and
         # `_require_codex_state_storage` immediately below refreshes the host
@@ -4438,13 +4447,51 @@ class HostRelease:
         except ReleaseDefect as exc:
             raise PermanentReleaseFailure("Codex agent host health contract is malformed") from exc
         if health != {
-            "schema_version": "nexus-agent-health.v1",
+            "schema_version": "nexus-generation-health.v2",
             "status": "ready",
             "backend": "codex",
             "transport": "sdk",
             "auth_profile": "codex-personal",
-        }:
+            "command_schema_version": "nexus-generation-command.v2",
+            "policy_revision": "codex-generation.2026-08-24.2",
+            "sdk_version": health.get("sdk_version"),
+            "runtime_version": health.get("runtime_version"),
+        } or any(
+            not isinstance(health.get(field), str) or not health[field]
+            for field in ("sdk_version", "runtime_version")
+        ):
             raise PermanentReleaseFailure("Codex agent host is not ready with exact auth contract")
+
+    @staticmethod
+    def _validate_interactive_generation_surface(inspected: dict[str, Any]) -> None:
+        config = _mapping(inspected.get("Config"), "interactive worker config")
+        environment = _environment_mapping(config.get("Env"), "interactive worker environment")
+        if (
+            environment.get("WORKER_LANE") != "interactive"
+            or environment.get("NEXUS_CODEX_AGENT_SOCKET") != "/run/nexus-codex/agent.sock"
+            or environment.get("NEXUS_AGENT_TOOLS_MCP_LISTEN") != "0.0.0.0:8001"
+            or config.get("ExposedPorts") != {"8001/tcp": {}}
+        ):
+            raise PermanentReleaseFailure("interactive generation surface differs")
+        mounts = inspected.get("Mounts")
+        if not isinstance(mounts, list):
+            raise PermanentReleaseFailure("interactive generation surface mounts are malformed")
+        run_mounts = [
+            mount
+            for mount in mounts
+            if isinstance(mount, dict) and mount.get("Destination") == "/run/nexus-codex"
+        ]
+        if len(run_mounts) != 1:
+            raise PermanentReleaseFailure("interactive generation socket mount differs")
+        _require_named_volume_mount(
+            run_mounts[0],
+            volume_name=_CODEX_AGENT_VOLUME_MOUNTS["/run/nexus-codex"],
+            destination="/run/nexus-codex",
+            read_write=False,
+            volume_label="interactive worker Codex run volume",
+            breach=PermanentReleaseFailure,
+            failure="interactive generation socket mount differs",
+        )
 
     def _codex_agent_image_environment(self, image: str) -> dict[str, str]:
         inspected = _read_json_output(
@@ -4471,6 +4518,7 @@ class HostRelease:
         inspected: dict[str, Any],
         *,
         image_environment: dict[str, str],
+        expected_mcp_origin: str,
     ) -> None:
         config = _mapping(inspected.get("Config"), "Codex agent host config")
         host_config = _mapping(inspected.get("HostConfig"), "Codex agent host host config")
@@ -4483,7 +4531,11 @@ class HostRelease:
             raise PermanentReleaseFailure(
                 "Codex agent host environment evidence is malformed"
             ) from exc
-        expected_environment = {**image_environment, **_CODEX_AGENT_RUNTIME_ENVIRONMENT}
+        expected_environment = {
+            **image_environment,
+            **_CODEX_AGENT_RUNTIME_ENVIRONMENT,
+            "NEXUS_CODEX_MCP_ORIGIN": expected_mcp_origin,
+        }
         if environment != expected_environment:
             raise PermanentReleaseFailure("Codex agent host environment isolation differs")
         security_options = host_config.get("SecurityOpt")
@@ -4514,6 +4566,17 @@ class HostRelease:
         networks = network.get("Networks")
         if not isinstance(networks, dict) or set(networks) != {"nexus_codex_egress"}:
             raise PermanentReleaseFailure("Codex agent host network isolation differs")
+
+    @staticmethod
+    def _codex_mcp_origin(config_path: Path) -> str:
+        hostname = _unquote_env(_read_env(config_path).get("CADDY_SITE", ""))
+        if (
+            _HOST.fullmatch(hostname) is None
+            or hostname.endswith(".local")
+            or hostname.endswith(".internal")
+        ):
+            raise PermanentReleaseFailure("Codex MCP origin hostname is not public DNS")
+        return f"https://{hostname}/internal/agent-tools/mcp"
 
     def _validate_codex_agent_host_mounts(self, inspected: dict[str, Any]) -> None:
         mounts = inspected.get("Mounts")
@@ -5002,7 +5065,12 @@ class HostRelease:
             phase = _string(turn, "phase")
             phases.append(phase)
             if (
-                _string(turn, "terminal_status") != "succeeded"
+                _string(turn, "operation") != "chat"
+                or _string(turn, "profile") != "deep"
+                or _string(turn, "plan_id") != "deep"
+                or _string(turn, "plan_revision") != "codex-generation.2026-08-24.2"
+                or _string(turn, "capability") != "ChatTools"
+                or _string(turn, "terminal_status") != "succeeded"
                 or turn.get("failure_kind") is not None
                 or _boolean(turn, "usage_present") is not True
                 or not _string(turn, "sdk_version")
@@ -5554,7 +5622,7 @@ class HostRelease:
                 raise CodexCapacityBreach("Codex capacity canary schema differs")
             if result.returncode != _CODEX_CAPACITY_CANARY_EXIT_CODES.get(status):
                 raise CodexCapacityBreach("Codex capacity canary exit status differs")
-            if status in {"not_run", "provider_blocked", "transport_retriable"}:
+            if status in {"not_run", "subscription_blocked", "transport_retriable"}:
                 raise ReleaseBlocked(f"Codex capacity qualification is {status}")
             if status != "passed":
                 raise CodexCapacityBreach("Codex capacity canary failed")

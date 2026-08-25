@@ -3,8 +3,7 @@
 Route contract:
 - GET /llm-profiles: the entire product-facing profile contract (§10). Thin
   adapter — the response is built entirely by `LlmProfilesOut.from_profiles()`
-  over the `services.llm_profiles.PROFILES` registry; this module owns no
-  provider/model/reasoning policy.
+  over the unified generation policy; this module owns no model/effort policy.
 
 All routes require authentication (the response is identical for every
 viewer; no per-user filtering applies).

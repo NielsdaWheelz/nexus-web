@@ -21,6 +21,5 @@ export interface ChatRunCreateRequest {
   destination: ChatDestinationInput;
   content: string;
   profile_id: string;
-  reasoning_option_id: string;
   reader_selection: Presence<ReaderSelectionInput>;
 }

@@ -34,32 +34,16 @@ export interface ConversationListItem {
   updated_at: string;
 }
 
-/** One reasoning option a profile offers (GET /llm-profiles). */
-export interface LlmReasoningOption {
-  id: string;
-  label: string;
-}
-
-export type LlmProfilePrivacy =
-  | { readonly kind: "Standard"; readonly notice: string }
-  | { readonly kind: "ExceptionalRetention"; readonly notice: string };
-
 /**
- * A product-facing LLM profile (GET /llm-profiles). The browser owns no
- * provider/model/reasoning enum, ordering, default, capability, key, or
- * availability policy — it renders exactly what this endpoint returns.
- * Deliberately has no resolved provider/model field: that pair is an
- * internal runtime fact, not a selection control (§10).
+ * A product-facing generation preset from GET /llm-profiles. The browser
+ * renders this catalog verbatim and owns no model or effort selection enum.
  */
 export interface LlmProfile {
   id: string;
   label: string;
   description: string;
-  provider_label: string;
   model_label: string;
-  reasoning_options: LlmReasoningOption[];
-  default_reasoning_option_id: string;
-  privacy: LlmProfilePrivacy;
+  effort_label: string;
 }
 
 /** Response schema for GET /llm-profiles. */
@@ -271,8 +255,8 @@ export interface AssistantTrustTrail {
   run: {
     run_id: string;
     profile_id: string | null;
-    reasoning_option_id: string | null;
-    provider: string | null;
+    plan_id: string | null;
+    plan_revision: string | null;
     model_name: string | null;
     status: "pending" | "running" | "complete" | "error" | "cancelled";
     usage: Record<string, unknown> | null;
@@ -286,7 +270,6 @@ export interface AssistantTrustTrail {
     final_chars: number | null;
     started_at: string | null;
     completed_at: string | null;
-    total_cost_usd_micros: number | null;
   } | null;
   prompt: {
     id: string;
@@ -517,13 +500,9 @@ export interface ChatRun {
   /** Product-selection snapshot taken at creation; null only before the run
    * record has been fully hydrated. */
   profile_id: string | null;
-  reasoning_option_id: string | null;
-  /** Resolved operator facts filled from runtime execution — null until then.
-   * Not selection controls. */
-  provider: string | null;
+  /** Resolved operator facts filled from runtime execution — null until then. */
   model_name: string | null;
   reasoning_effort: string | null;
-  error_origin: string | null;
   support_id: Presence<string>;
   publication_warning: Presence<ChatPublicationWarning>;
   /** The one chat_failure_projection read. Null for a run that is not a

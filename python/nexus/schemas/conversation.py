@@ -264,7 +264,6 @@ class ChatRunMetaEventPayload(BaseModel):
     user_message_id: UUID
     assistant_message_id: UUID
     profile_id: str = Field(min_length=1)
-    reasoning_option_id: str = Field(min_length=1)
     chat_subject: ChatRunMetaSubjectPayload | None
 
     model_config = ConfigDict(extra="forbid")
@@ -640,8 +639,8 @@ class TrustPromptAssemblyOut(BaseModel):
 class TrustRunOut(BaseModel):
     run_id: UUID
     profile_id: str | None = None
-    reasoning_option_id: str | None = None
-    provider: str | None = None
+    plan_id: str | None = None
+    plan_revision: str | None = None
     model_name: str | None = None
     reasoning_effort: Presence[str]
     status: Literal["pending", "running", "complete", "error", "cancelled"]
@@ -655,7 +654,6 @@ class TrustRunOut(BaseModel):
     final_chars: int | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
-    total_cost_usd_micros: int | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -963,7 +961,6 @@ class ChatRunCreateRequest(BaseModel):
     destination: ChatDestination
     content: str
     profile_id: str = Field(min_length=1)
-    reasoning_option_id: str = Field(min_length=1)
     reader_selection: Presence[ReaderSelectionInput]
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
@@ -978,10 +975,9 @@ class ChatRunCreateRequest(BaseModel):
 class ChatRunOut(BaseModel):
     """Response schema for a durable chat run.
 
-    ``profile_id``/``reasoning_option_id`` are the product-selection snapshot
-    taken at creation; ``provider``/``model_name``/``reasoning_effort`` are the
-    resolved operator facts filled at execution from the runtime target and
-    terminal metadata (``None`` until then). ``failure`` is the one
+    ``profile_id`` is the product-selection snapshot taken at creation;
+    ``model_name``/``reasoning_effort`` are the resolved operator facts filled
+    at execution from the admitted plan (``None`` until then). ``failure`` is the one
     ``chat_failure_projection`` read —
     ``None`` for a run that is not a card-bearing failure (still running, or a
     defect with no stored closed code).
@@ -993,11 +989,8 @@ class ChatRunOut(BaseModel):
     user_message_id: UUID
     assistant_message_id: UUID
     profile_id: str | None = None
-    reasoning_option_id: str | None = None
-    provider: str | None = None
     model_name: str | None = None
     reasoning_effort: str | None = None
-    error_origin: str | None = None
     support_id: Presence[str]
     publication_warning: Presence[ChatPublicationWarning]
     failure: ExpectedChatFailure | None = None

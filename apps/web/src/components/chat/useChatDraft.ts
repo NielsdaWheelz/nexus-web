@@ -65,7 +65,7 @@ export const EMPTY_DRAFT_RECORD: ChatDraftRecord = {
   operation: { kind: "Absent" },
 };
 
-const STORAGE_PREFIX = "nx_chat_draft:";
+const STORAGE_PREFIX = "nx_chat_draft.v2:";
 
 // ---------------------------------------------------------------------------
 // Pure operation transitions (exported for direct unit testing)

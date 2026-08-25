@@ -67,11 +67,7 @@ export default function AssistantDetails({
             <dl className={styles.trustMeta}>
               <div>
                 <dt>Model</dt>
-                <dd>
-                  {[trustTrail.run.provider, trustTrail.run.model_name]
-                    .filter(Boolean)
-                    .join("/") || "—"}
-                </dd>
+                <dd>{trustTrail.run.model_name ?? "—"}</dd>
               </div>
               <div>
                 <dt>Status</dt>
@@ -85,6 +81,14 @@ export default function AssistantDetails({
               <div>
                 <dt>Profile</dt>
                 <dd>{trustTrail.run.profile_id ?? "—"}</dd>
+              </div>
+              <div>
+                <dt>Plan</dt>
+                <dd>
+                  {trustTrail.run.plan_id && trustTrail.run.plan_revision
+                    ? `${trustTrail.run.plan_id} · ${trustTrail.run.plan_revision}`
+                    : "—"}
+                </dd>
               </div>
               <div>
                 <dt>Reasoning</dt>
@@ -137,23 +141,6 @@ export default function AssistantDetails({
                       display,
                     )}{" "}
                     tokens
-                  </dd>
-                </div>
-              ) : null}
-              {typeof trustTrail.run.total_cost_usd_micros === "number" ? (
-                <div>
-                  <dt>Cost</dt>
-                  <dd>
-                    {formatDisplayNumber(
-                      trustTrail.run.total_cost_usd_micros / 1_000_000,
-                      display,
-                      {
-                        style: "currency",
-                        currency: "USD",
-                        minimumFractionDigits: 3,
-                        maximumFractionDigits: 3,
-                      },
-                    )}
                   </dd>
                 </div>
               ) : null}

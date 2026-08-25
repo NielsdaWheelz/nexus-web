@@ -29,7 +29,6 @@ const request: ChatRunCreateRequest = {
   },
   content: "why?",
   profile_id: "fast",
-  reasoning_option_id: "low",
   reader_selection: { kind: "Absent" },
 };
 
@@ -37,7 +36,7 @@ const command: ChatSendCommand = { idempotencyKey: "key-1", request };
 
 const draft: ChatDraftRecord = {
   text: "why?",
-  profile: { profileId: "fast", reasoningOptionId: "low" },
+  profile: { profileId: "fast" },
   operation: { kind: "Absent" },
 };
 
@@ -59,7 +58,7 @@ describe("chat send-operation transitions", () => {
     const next = withSubmitting(draft, command);
     expect(next.operation).toEqual({ kind: "Submitting", command });
     expect(next.text).toBe("why?");
-    expect(next.profile).toEqual({ profileId: "fast", reasoningOptionId: "low" });
+    expect(next.profile).toEqual({ profileId: "fast" });
   });
 
   it("withReconcileRequired locks the same command for exact replay", () => {
@@ -78,7 +77,7 @@ describe("chat send-operation transitions", () => {
     const cleared = withClearedOperation(withSubmitting(draft, command));
     expect(cleared.operation).toEqual({ kind: "Absent" });
     expect(cleared.text).toBe("why?");
-    expect(cleared.profile).toEqual({ profileId: "fast", reasoningOptionId: "low" });
+    expect(cleared.profile).toEqual({ profileId: "fast" });
   });
 });
 

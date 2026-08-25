@@ -85,8 +85,8 @@ function billingActionErrorMessage(
 
 function planDescription(planTier: BillingPlanTier): string {
   if (planTier === "plus") return "Sharing and collaboration.";
-  if (planTier === "ai_plus") return "Sharing, platform AI, and transcription.";
-  if (planTier === "ai_pro") return "Higher AI and transcription limits.";
+  if (planTier === "ai_plus") return "Sharing and transcription.";
+  if (planTier === "ai_pro") return "Higher transcription limits.";
   return "Private solo reading and notes.";
 }
 
@@ -350,19 +350,6 @@ export default function SettingsBillingPaneBody() {
 
             <div className={styles.usageGrid}>
               <section className={styles.usageCard}>
-                <h2 className={styles.usageTitle}>AI tokens</h2>
-                <p className={styles.usageValue}>
-                  {formatUsage(account.ai_token_usage.used, "tokens", display)}
-                </p>
-                <p className={styles.usageMeta}>
-                  Limit: {formatUsage(account.ai_token_usage.limit, "tokens", display)}
-                </p>
-                <p className={styles.usageMeta}>
-                  Remaining: {formatUsage(account.ai_token_usage.remaining, "tokens", display)}
-                </p>
-              </section>
-
-              <section className={styles.usageCard}>
                 <h2 className={styles.usageTitle}>Transcription</h2>
                 <p className={styles.usageValue}>
                   {formatUsage(account.transcription_usage.used, "minutes", display)}
@@ -378,7 +365,6 @@ export default function SettingsBillingPaneBody() {
 
             <div className={styles.entitlementRow}>
               <span>Sharing: {yesNo(account.can_share)}</span>
-              <span>Platform AI: {yesNo(account.can_use_platform_llm)}</span>
               <span>Transcription: {yesNo(account.can_transcribe)}</span>
             </div>
 

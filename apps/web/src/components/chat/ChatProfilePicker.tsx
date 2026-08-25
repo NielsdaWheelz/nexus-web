@@ -7,7 +7,7 @@
  * reports only explicit user changes back to the draft.
  */
 
-import Select from "@/components/ui/Select";
+import { useId } from "react";
 import type { ChatProfileSelection } from "@/lib/conversations/chatProfileSelection";
 import type { LlmProfile } from "@/lib/conversations/types";
 import styles from "./ChatProfilePicker.module.css";
@@ -25,69 +25,41 @@ export default function ChatProfilePicker({
   onChange,
   disabled = false,
 }: ChatProfilePickerProps) {
-  const selectedProfile = profiles.find((item) => item.id === value.profileId);
-  if (selectedProfile === undefined) {
+  const groupName = useId();
+  if (!profiles.some((item) => item.id === value.profileId)) {
     // justify-defect: the composer passes a resolver-validated ready selection.
     throw new Error("Resolved chat profile is absent from the ready catalog");
   }
-  const reasoningOptions = selectedProfile.reasoning_options;
-
   return (
-    <div className={styles.picker}>
-      <div className={`${styles.field} ${styles.modelField}`}>
-        <Select
-          size="md"
-          className={styles.control}
-          aria-label="Model"
-          value={value.profileId}
-          disabled={disabled}
-          onChange={(event) => {
-            const profile = profiles.find(
-              (item) => item.id === event.target.value,
-            );
-            if (profile === undefined) {
-              // justify-defect: a native select only emits one of its rendered options.
-              throw new Error(
-                "Selected chat profile is absent from the ready catalog",
-              );
-            }
-            onChange({
-              profileId: profile.id,
-              reasoningOptionId: profile.default_reasoning_option_id,
-            });
-          }}
-        >
-          {profiles.map((profile) => (
-            <option key={profile.id} value={profile.id}>
-              {profile.label}
-            </option>
-          ))}
-        </Select>
-      </div>
-
-      {reasoningOptions.length > 1 ? (
-        <div className={`${styles.field} ${styles.effortField}`}>
-          <Select
-            size="md"
-            className={styles.control}
-            aria-label="Effort"
-            value={value.reasoningOptionId}
-            disabled={disabled}
-            onChange={(event) => {
-              onChange({
-                profileId: value.profileId,
-                reasoningOptionId: event.target.value,
-              });
-            }}
+    <div className={styles.picker} role="radiogroup" aria-label="Response profile">
+      {profiles.map((profile) => {
+        const selected = profile.id === value.profileId;
+        return (
+          <label
+            key={profile.id}
+            className={styles.option}
+            data-selected={selected ? "true" : undefined}
+            data-disabled={disabled ? "true" : undefined}
           >
-            {reasoningOptions.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.label}
-              </option>
-            ))}
-          </Select>
-        </div>
-      ) : null}
+            <input
+              className={styles.radio}
+              type="radio"
+              name={groupName}
+              value={profile.id}
+              checked={selected}
+              disabled={disabled}
+              onChange={() => onChange({ profileId: profile.id })}
+            />
+            <span className={styles.optionCopy}>
+              <strong>{profile.label}</strong>
+              <span>{profile.description}</span>
+              <small>
+                {profile.model_label} · {profile.effort_label}
+              </small>
+            </span>
+          </label>
+        );
+      })}
     </div>
   );
 }

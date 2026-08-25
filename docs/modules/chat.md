@@ -4,14 +4,15 @@
 
 The chat module owns durable, branchable, streamed, retrieval-grounded conversation UX.
 It covers full conversation panes, resource-subject chats, branch replies, context refs,
-assistant-answer selection forks, profile/reasoning-option sends, optimistic run state,
+assistant-answer selection forks, profile-only sends, optimistic run state,
 rerun, and the frontend request contract for `/api/chat-runs`.
 
 Backend owners live under `python/nexus/api/routes/chat_runs.py`,
 `python/nexus/services/chat_run_*`, `python/nexus/services/context_assembler.py`, and
 `python/nexus/services/conversation_branches.py`.
 
-`chat_runs.py` is the run **executor** (provider-stream iteration, the tool loop,
+`chat_runs.py` is the run **executor** (Codex generation-frame iteration, MCP tool
+authority coordination,
 finalization). The cohesive services it composes each have one owner:
 `chat_run_citations` (candidate numbering, attached/read evidence, final
 canonical publication, `citation_index`), `chat_run_tools` (`message_tool_calls`
@@ -56,7 +57,7 @@ Hard-cutover specs that govern chat work. Each owns one axis; they compose.
   hierarchy, progressive disclosure, typed send/privacy state, quote reflow,
   and shared conversation-row activation. IMPLEMENTED.
 - `docs/cutovers/chat-continuation-selection-hard-cutover.md` — causal,
-  branch-correct profile/reasoning inheritance with explicit draft precedence.
+  branch-correct profile inheritance with explicit draft precedence.
   IMPLEMENTED.
 - `docs/cutovers/conversation-find-hard-cutover.md` — exact selected-path
   Conversation Find, committed-DOM projection, reversible preview, and source
@@ -74,12 +75,17 @@ declarations, grants, binding policy, replay policy, and durable tool executor.
 `durable_step_journal.py` owns the shared `Prepared -> Uncertain -> Completed`
 kernel and execution-phase projection.
 
-Chat admission freezes one Native plan with exactly eleven grants:
+Chat admission freezes one `ChatTools` plan with exactly eleven declarations:
 `web.search`, `nexus.search`, `nexus.resource.read`, `nexus.document.search`,
 `nexus.resource.inspect`, `nexus.relations.list`, `nexus.library.add`,
 `nexus.note.create`, `nexus.highlight.create`, `nexus.edge.create`, and
 `nexus.queue.add`. These canonical IDs are the only executable identities; the
-domain-adapter module names under `services/agent_tools/` are not aliases.
+domain-adapter module names under `services/agent_tools/` are not aliases. The
+interactive worker projects only those declarations through the official,
+sessionless Streamable HTTP MCP server at `/internal/agent-tools/mcp`. Each
+generation receives a short-lived bearer grant bound to the run, claimed job,
+attempt, and generation; every tool call revalidates that authority before the
+canonical executor runs.
 
 Completed preparation, generation, and tool results are replay input, never
 cache hints. An ambiguous paid call or write remains `Uncertain` and exhausts to
@@ -184,7 +190,8 @@ consequential write trail with Undo, closed `Sources (N)`, closed `Details`,
 failure/reconnect, Fork/Walk actions, and a fork strip when forks exist. Inline
 citations remain active. The publication warning is a quiet amber
 `role="status"` notice, never a red failure.
-`AssistantDetails` owns run, usage, cost, tool/retrieval, context-reference, and
+`AssistantDetails` owns run plan/model/effort, usage, tool/retrieval,
+context-reference, and
 integrity diagnostics. The deleted colophon has no compatibility replacement.
 
 Fork deletion is pessimistic. A failed DELETE keeps the fork row, presents the
@@ -234,35 +241,34 @@ to reading position** restores the saved eye-line and pin mode once.
 ## Send Path
 
 `ChatComposer` owns user input, the profile catalog, next-turn selection
-resolution, the `ChatProfilePicker` (product-facing Model + Effort controls),
+resolution, the `ChatProfilePicker` (three product-facing preset options),
 and send action wiring. It does not construct API branch semantics directly.
 
 `useChatProfiles` fetches `GET /api/llm-profiles` (module-scope cached across
 mounted composers) and exposes `{ profiles, defaultProfileId, isLoading,
 error }`. Once the catalog is ready, `resolveChatProfileSelection` derives one
-effective `{ profileId, reasoningOptionId }`: an explicit unsent draft choice
-wins, otherwise the causal assistant run wins, otherwise the exact server
-default wins. An unavailable draft or inherited pair is explicitly replaced by
+effective `{ profileId }`: an explicit unsent draft choice wins, otherwise the
+causal assistant run wins, otherwise the exact server default wins. An
+unavailable draft or inherited profile is explicitly replaced by
 the current server default and reported beside the picker. A malformed server
 default is a defect; there is no first-profile substitute.
 
 `useConversation` derives the inherited candidate from the exact branch-draft
 parent when branching, otherwise from the selected-path assistant leaf. It
-reads only the run's product `profile_id` and `reasoning_option_id`; it never
-scans backward or infers product intent from provider, model, effort, or
+reads only the run's product `profile_id`; it never scans backward or infers
+product intent from model, effort, or
 timestamps. `useChatDraft.profile` stores only an explicit unsent choice.
 Inherited and default selections are derived and never persisted as draft
 preferences.
 
 `ChatProfilePicker` is a pure controlled renderer of the ready catalog and
-effective selection. It renders native `Model` and conditional `Effort` selects;
-their values remain the server-owned profile and reasoning-option ids, and
-visible model copy remains `LlmProfile.label`. User changes write the explicit
-draft choice. Each profile carries a required `privacy` union:
-`{ kind: "Standard"; notice } | { kind: "ExceptionalRetention"; notice }`.
-`ChatProfilePicker` renders no privacy or retention copy for any profile. The
-browser owns no provider/model/reasoning enum, ordering, default, capability,
-key, privacy classification, or availability policy — see
+effective selection. Its one radio group renders exactly the server's three
+ordered presets; each option shows `label`, `description`, then
+`model_label · effort_label`. User changes write only `{ profileId }` to the
+explicit draft. Draft storage uses the versioned `nx_chat_draft.v2:` prefix, so
+the removed two-dimensional selection is never decoded as current state. The
+browser owns no model/effort enum, ordering, default, capability, key, or
+availability policy — see
 [modules/llms.md](llms.md).
 
 `useConversation` is the sole owner of caller-level send availability. It
@@ -293,7 +299,7 @@ produces the hard-cut request shape:
   `{ kind: "Existing"; conversation_id; insertion }`, where `insertion` is
   `{ kind: "Empty" }` or `{ kind: "Reply"; parent_message_id; branch_anchor }`
 - `content`
-- `profile_id` / `reasoning_option_id`
+- `profile_id`
 - `reader_selection` — `Presence<{ key: ReaderSelectionKey; revision }>`
 
 The branch anchor lives inside `Existing.Reply.branch_anchor`: branch drafts win
@@ -333,11 +339,13 @@ fresh alternative for an eligible completed answer. Each has its sole BFF route
 (`app/api/messages/[messageId]/{rerun,regenerate}/route.ts`) and both are
 consolidated into one private sibling-candidate constructor
 (`services/chat_run_candidates.py`) with two explicit commands and separate
-eligibility guards: both clone the source user turn (content, parent, branch
+eligibility guards: both keep bodyless selection inheritance and clone the
+source user turn (content, parent, branch
 lineage, reader-selection snapshot, turn context) into a new user sibling with a
 pending assistant child and one queued durable run, then select the new
-assistant as the active leaf. A retired, uncertified, or changed profile, or any
-prior attempted write-tool call on the source run, makes rerun ineligible
+assistant as the active leaf. A pre-cutover run with no recorded profile/plan,
+a recorded plan id/revision that no longer matches the active profile, or any
+prior attempted write-tool call on the source run makes rerun ineligible
 (`can_rerun=false`) and regeneration ineligible (`can_regenerate=false`, and the
 mutation raises `E_REGENERATION_NOT_ALLOWED`). The source assistant must map to
 exactly one owning `ChatRun`; missing or duplicate ownership is a defect, never a

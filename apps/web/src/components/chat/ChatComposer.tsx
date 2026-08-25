@@ -407,7 +407,6 @@ export default function ChatComposer({
       conversationId,
       content: trimmed,
       profileId: effectiveProfileSelection.profileId,
-      reasoningOptionId: effectiveProfileSelection.reasoningOptionId,
       branchDraft,
       parentMessageId,
       readerSelection,

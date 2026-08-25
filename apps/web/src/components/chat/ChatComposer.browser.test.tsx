@@ -13,55 +13,25 @@ const PROFILES = {
   default_profile_id: "balanced",
   profiles: [
     {
-      id: "balanced",
-      label: "Balanced",
-      description: "Everyday profile",
-      provider_label: "Nexus AI",
-      model_label: "Balanced model",
-      reasoning_options: [
-        { id: "medium", label: "Medium" },
-        { id: "high", label: "High" },
-      ],
-      default_reasoning_option_id: "medium",
-      privacy: { kind: "Standard", notice: "Processed by Nexus AI." },
-    },
-    {
       id: "fast",
       label: "Fast",
-      description: "Fast profile",
-      provider_label: "Nexus AI",
-      model_label: "Fast model",
-      reasoning_options: [{ id: "low", label: "Low" }],
-      default_reasoning_option_id: "low",
-      privacy: { kind: "Standard", notice: "Processed by Nexus AI." },
+      description: "Quick responses for everyday questions.",
+      model_label: "GPT-5.6 Luna",
+      effort_label: "Low",
     },
     {
-      id: "deepseek-flash",
-      label: "DeepSeek · V4 Flash",
-      description: "Fast, cost-efficient reasoning for everyday questions",
-      provider_label: "DeepSeek",
-      model_label: "DeepSeek V4 Flash",
-      reasoning_options: [
-        { id: "none", label: "None" },
-        { id: "high", label: "High" },
-        { id: "max", label: "Max" },
-      ],
-      default_reasoning_option_id: "high",
-      privacy: { kind: "Standard", notice: "Processed by DeepSeek." },
+      id: "balanced",
+      label: "Balanced",
+      description: "The default profile: strong general-purpose reasoning.",
+      model_label: "GPT-5.6 Terra",
+      effort_label: "Medium",
     },
     {
-      id: "deepseek-pro",
-      label: "DeepSeek · V4 Pro",
-      description: "DeepSeek's strongest model for harder reasoning.",
-      provider_label: "DeepSeek",
-      model_label: "DeepSeek V4 Pro",
-      reasoning_options: [
-        { id: "none", label: "None" },
-        { id: "high", label: "High" },
-        { id: "max", label: "Max" },
-      ],
-      default_reasoning_option_id: "high",
-      privacy: { kind: "Standard", notice: "Processed by DeepSeek." },
+      id: "deep",
+      label: "Deep",
+      description: "Slower, deeper reasoning for hard problems.",
+      model_label: "GPT-5.6 Sol",
+      effort_label: "High",
     },
   ],
 };
@@ -146,11 +116,9 @@ describe("ChatComposer browser contract", () => {
     const calls: ChatRunCall[] = [];
     installBff(calls);
     const view = render(withRenderEnvironment(<Composer />));
-    const model = await screen.findByRole("combobox", { name: "Model" });
-    await userEvent.selectOptions(model, "deepseek-flash");
-    expect(screen.getByRole<HTMLSelectElement>("combobox", { name: "Effort" }).value).toBe(
-      "high",
-    );
+    const deep = await screen.findByRole("radio", { name: /Deep/ });
+    await userEvent.click(deep);
+    expect(deep).toBeChecked();
 
     const input = screen.getByRole<HTMLTextAreaElement>("textbox", {
       name: "Ask anything",
@@ -164,8 +132,7 @@ describe("ChatComposer browser contract", () => {
     ).toHaveLength(1);
     expect(calls[0].body).toMatchObject({
       content: "First\nSecond",
-      profile_id: "deepseek-flash",
-      reasoning_option_id: "high",
+      profile_id: "deep",
     });
     view.unmount();
 
@@ -177,7 +144,7 @@ describe("ChatComposer browser contract", () => {
         { initialViewport: "mobile" },
       ),
     );
-    await screen.findByRole("combobox", { name: "Model" });
+    await screen.findByRole("radio", { name: /Fast/ });
     const mobileInput = screen.getByRole<HTMLTextAreaElement>("textbox", {
       name: "Ask anything",
     });
@@ -227,7 +194,7 @@ describe("ChatComposer browser contract", () => {
     const calls: ChatRunCall[] = [];
     installBff(calls);
     const lockedKey = pathKey("00000000-0000-4000-8000-00000000000b");
-    const lockedStorageKey = "nx_chat_draft:path:00000000-0000-4000-8000-00000000000b";
+    const lockedStorageKey = "nx_chat_draft.v2:path:00000000-0000-4000-8000-00000000000b";
     const persisted = {
       text: "in-flight message",
       profile: null,
@@ -238,7 +205,6 @@ describe("ChatComposer browser contract", () => {
           request: {
             content: "in-flight message",
             profile_id: "balanced",
-            reasoning_option_id: "medium",
           },
         },
       },
@@ -291,8 +257,7 @@ describe("ChatComposer browser contract", () => {
         <Composer conversationId={null} draftKey={draftKey} />,
       ),
     );
-    const model = await screen.findByRole("combobox", { name: "Model" });
-    await userEvent.selectOptions(model, "deepseek-pro");
+    await userEvent.click(await screen.findByRole("radio", { name: /Deep/ }));
     const input = screen.getByRole<HTMLTextAreaElement>("textbox", {
       name: "Ask anything",
     });
@@ -302,8 +267,7 @@ describe("ChatComposer browser contract", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0].body.destination).toEqual({ kind: "New" });
     expect(calls[0].body).toMatchObject({
-      profile_id: "deepseek-pro",
-      reasoning_option_id: "high",
+      profile_id: "deep",
     });
 
     // Simulate a full reload: unmount and remount a FRESH composer on the same
@@ -360,13 +324,11 @@ describe("ChatComposer browser contract", () => {
         { initialViewport: "mobile" },
       ),
     );
-    const model = await screen.findByRole("combobox", { name: "Model" });
-    const effort = screen.getByRole("combobox", { name: "Effort" });
+    const fast = await screen.findByRole("radio", { name: /Fast/ });
     const stop = screen.getByRole("button", { name: "Stop response" });
     const socketWidth = stop.getBoundingClientRect().width;
 
-    expect(model.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
-    expect(effort.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
+    expect(fast.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
     expect(stop.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
 

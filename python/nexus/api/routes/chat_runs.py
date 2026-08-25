@@ -38,7 +38,6 @@ def create_chat_run(
         reader_selection=reader_selection,
         content=body.content,
         profile_id=body.profile_id,
-        reasoning_option_id=body.reasoning_option_id,
         idempotency_key=idempotency_key,
     )
     return ok(result)
