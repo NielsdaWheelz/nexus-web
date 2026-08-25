@@ -828,6 +828,11 @@ rematerialization under one visible publication-row contract: only `ready` or
 `partial` apparatus states with a non-missing locator participate. Both paths
 decode persisted locator JSON through the canonical retrieval schema, omitting
 or masking malformed rows instead of leaking a projection failure.
+The Web retriever owns persisted public-Web candidate retrieval and durable
+rematerialization through one visible Conversation-ledger row and the canonical
+`WebRetrievalResultRef` decoder. Nexus external-snapshot identity remains
+distinct from provider result identity; foreign snapshots and malformed or
+incomplete ledger refs are omitted or masked as not found.
 
 - **Indexing** (`services/content_indexing.py`, `semantic_chunks.py`): text-bearing
   media flows `fragment → content_blocks → chunks → embeddings`; note bodies
