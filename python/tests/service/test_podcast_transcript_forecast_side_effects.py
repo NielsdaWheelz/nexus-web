@@ -21,12 +21,16 @@ from nexus.db.models import (
     PodcastTranscriptRequestAudit,
     ProcessingStatus,
 )
+from nexus.jobs.queue import find_nonterminal_jobs_for_payload
 from nexus.services.billing_entitlements import grant_entitlement_override
+from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.collection_revisions import (
     CollectionFamily,
     read_collection_revision,
 )
 from nexus.services.library_entries import ensure_media_in_default_library
+from nexus.services.transcript_segments import TranscriptSegmentInput
+from nexus.services.transcripts.current import publish_source_transcript
 from tests.testkit.auth import UserRecord
 
 
@@ -367,6 +371,180 @@ def test_repeated_inflight_request_is_state_and_collection_idempotent(
     assert set(audits_by_outcome) == {"queued", "idempotent"}
     assert audits_by_outcome["queued"].request_reason == "quote"
     assert audits_by_outcome["idempotent"].request_reason == "search"
+
+
+def test_semantic_repair_is_zero_cost_collection_pure_and_idempotent(
+    authenticated_client: TestClient,
+    db_session: Session,
+    test_user: UserRecord,
+) -> None:
+    media_id = _seed_transcription_episode(
+        db_session,
+        user=test_user,
+        title="Shared semantic repair episode",
+    )
+    other_user_id = uuid4()
+    ensure_user_and_default_library(
+        db_session,
+        other_user_id,
+        f"semantic-repair-{other_user_id}@example.invalid",
+    )
+    assert ensure_media_in_default_library(db_session, other_user_id, media_id)
+
+    publish_source_transcript(
+        db_session,
+        media_id=media_id,
+        request_reason="episode_open",
+        transcript_coverage="full",
+        transcript_segments=(
+            TranscriptSegmentInput(
+                segment_idx=0,
+                canonical_text="One shared transcript segment.",
+                t_start_ms=0,
+                t_end_ms=1_500,
+                speaker_label=None,
+            ),
+        ),
+        transcript_origin="Generated",
+        now=datetime.now(UTC),
+    )
+    transcript_state = db_session.get(MediaTranscriptState, media_id)
+    assert transcript_state is not None
+    transcript_state.semantic_status = "failed"
+    db_session.commit()
+
+    viewers = (test_user.id, other_user_id)
+    families = (
+        CollectionFamily.LibraryEntries,
+        CollectionFamily.PodcastEpisodes,
+    )
+    revisions_before = {
+        (viewer_id, family): read_collection_revision(
+            db_session,
+            viewer_id=viewer_id,
+            family=family,
+        )
+        for viewer_id in viewers
+        for family in families
+    }
+
+    response = authenticated_client.post(
+        f"/media/{media_id}/transcript/request",
+        json={"reason": "search", "dry_run": False},
+    )
+
+    assert response.status_code == 202, response.text
+    assert response.json() == {
+        "data": {
+            "media_id": str(media_id),
+            "processing_status": "ready_for_reading",
+            "transcript_state": "ready",
+            "transcript_coverage": "full",
+            "request_reason": "search",
+            "required_minutes": 0,
+            "remaining_minutes": None,
+            "fits_budget": True,
+            "request_enqueued": True,
+        }
+    }
+    db_session.expire_all()
+
+    transcript_state = db_session.get(MediaTranscriptState, media_id)
+    assert transcript_state is not None
+    assert transcript_state.semantic_status == "pending"
+    assert transcript_state.last_request_reason == "search"
+    jobs = find_nonterminal_jobs_for_payload(
+        db_session,
+        kind="podcast_reindex_semantic_job",
+        expected_payload_match={"media_id": str(media_id)},
+    )
+    assert len(jobs) == 1
+    assert jobs[0].payload == {
+        "media_id": str(media_id),
+        "requested_by_user_id": str(test_user.id),
+        "request_reason": "search",
+        "request_id": None,
+    }
+    audits = db_session.scalars(
+        select(PodcastTranscriptRequestAudit).where(
+            PodcastTranscriptRequestAudit.media_id == media_id
+        )
+    ).all()
+    assert len(audits) == 1
+    assert audits[0].outcome == "queued"
+    assert audits[0].required_minutes == 0
+    assert audits[0].remaining_minutes is None
+    assert audits[0].fits_budget is True
+    assert (
+        db_session.scalar(
+            select(func.count())
+            .select_from(PodcastTranscriptionUsageDaily)
+            .where(PodcastTranscriptionUsageDaily.user_id == test_user.id)
+        )
+        == 0
+    )
+    for viewer_id in viewers:
+        for family in families:
+            assert (
+                read_collection_revision(
+                    db_session,
+                    viewer_id=viewer_id,
+                    family=family,
+                )
+                == revisions_before[(viewer_id, family)]
+            )
+
+    repeated = authenticated_client.post(
+        f"/media/{media_id}/transcript/request",
+        json={"reason": "highlight", "dry_run": False},
+    )
+
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json() == {
+        "data": {
+            "media_id": str(media_id),
+            "processing_status": "ready_for_reading",
+            "transcript_state": "ready",
+            "transcript_coverage": "full",
+            "request_reason": "highlight",
+            "required_minutes": 0,
+            "remaining_minutes": None,
+            "fits_budget": True,
+            "request_enqueued": False,
+        }
+    }
+    db_session.expire_all()
+    jobs = find_nonterminal_jobs_for_payload(
+        db_session,
+        kind="podcast_reindex_semantic_job",
+        expected_payload_match={"media_id": str(media_id)},
+    )
+    assert len(jobs) == 1
+    audits = db_session.scalars(
+        select(PodcastTranscriptRequestAudit)
+        .where(PodcastTranscriptRequestAudit.media_id == media_id)
+        .order_by(
+            PodcastTranscriptRequestAudit.created_at,
+            PodcastTranscriptRequestAudit.id,
+        )
+    ).all()
+    assert [audit.outcome for audit in audits] == ["queued", "idempotent"]
+    assert [audit.required_minutes for audit in audits] == [0, 0]
+    assert [audit.request_reason for audit in audits] == ["search", "highlight"]
+    transcript_state = db_session.get(MediaTranscriptState, media_id)
+    assert transcript_state is not None
+    assert transcript_state.semantic_status == "pending"
+    assert transcript_state.last_request_reason == "search"
+    for viewer_id in viewers:
+        for family in families:
+            assert (
+                read_collection_revision(
+                    db_session,
+                    viewer_id=viewer_id,
+                    family=family,
+                )
+                == revisions_before[(viewer_id, family)]
+            )
 
 
 def test_rss_sidecar_admission_queues_once_without_generated_quota(
