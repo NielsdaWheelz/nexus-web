@@ -966,8 +966,15 @@ API is
 `POST /artifact-builds/{sealed_handle}/cancel`. Build streaming is
 `GET /stream/artifact-builds/{sealed_handle}/events`; persisted
 `Started | Progress | Succeeded | Failed | Cancelled` events are build-keyed
-and replayable. The browser renders a revision in a sandboxed, Nexus-styled
-document frame; rejected or partial HTML is never emitted as an event. Media
+and replayable. `lib/dossiers/generationAdapter.ts` is the one browser Dossier
+transport boundary: value responses must be the exact `{data: ...}` envelope,
+Make-current and Cancel must be exact HTTP 204 commands, and same-system shape
+violations become `E_INVALID_RESPONSE` defects. Artifact-build streaming is an
+`artifact-builds` generation-run kind and delegates token minting, encoded path
+construction, and SSE lifecycle to `lib/api/useGenerationRun.ts`; no Dossier
+token or direct-SSE path exists beside it. The browser renders a revision in a
+sandboxed, Nexus-styled document frame; rejected or partial HTML is never
+emitted as an event. Media
 Intelligence is separately read through
 `GET /media/{media_handle}/intelligence`; the Media Dossier renders that
 current projection as a compact Abstract and consumes the same fingerprinted

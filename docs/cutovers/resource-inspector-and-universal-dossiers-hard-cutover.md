@@ -859,7 +859,10 @@ The head read returns:
 Revision list/read owns history. Build stream resume uses the existing
 last-event sequence contract against the new strict persisted build-event
 schema; unsequenced execution advisories are fresh coordination projections and
-are not replayed as domain events.
+are not replayed as domain events. The frontend generation adapter accepts only
+exact `{data: ...}` value responses and exact HTTP 204 commands. It registers
+`artifact-builds` with the shared generation-run opener; no compatibility body,
+Dossier-owned token mint, or direct-SSE connection survives.
 
 Expected API errors are a closed union including invalid subject locator,
 not-found/unauthorized masking, generation in progress, invalid instruction,

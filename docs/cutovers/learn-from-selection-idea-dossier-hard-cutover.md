@@ -905,7 +905,10 @@ GET  /stream/artifact-builds/{build_handle}/events
 - `POST /artifacts/{ref}/builds` is the sole regeneration route.
 - Existing subject-scoped POST is bootstrap-only and conflicts once a head exists.
 - Subject-scoped GET remains Resource Companion lookup.
-- BFF routes are transport-only.
+- BFF routes are transport-only. The browser adapter accepts only exact
+  `{data: ...}` value envelopes and exact HTTP 204 commands, and delegates the
+  `artifact-builds` stream to the shared generation-run opener. No direct-body
+  compatibility decode or Dossier-owned token/SSE path remains.
 
 ### 9.3 Public head identity
 
