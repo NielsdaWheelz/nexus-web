@@ -833,6 +833,11 @@ rematerialization through one visible Conversation-ledger row and the canonical
 `WebRetrievalResultRef` decoder. Nexus external-snapshot identity remains
 distinct from provider result identity; foreign snapshots and malformed or
 incomplete ledger refs are omitted or masked as not found.
+The Contributor retriever owns candidate retrieval and durable
+rematerialization. Discovery admits only identities with visible credited
+targets; durable reopening intentionally widens to the canonical Contributor
+visibility contract so a viewer-linked identity with zero current visible
+credits remains resolvable, while unrelated identities stay masked.
 
 - **Indexing** (`services/content_indexing.py`, `semantic_chunks.py`): text-bearing
   media flows `fragment → content_blocks → chunks → embeddings`; note bodies
