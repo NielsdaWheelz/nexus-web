@@ -9,7 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
-from nexus.errors import NotFoundError
+from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.services.contributor_credits import credit_target_filter_exists_sql
 from nexus.services.locator_resolver import locator_from_resolution, resolve_evidence_span
 from nexus.services.search.constants import (
@@ -27,6 +27,7 @@ from nexus.services.search.results import (
     _build_search_score,
     _build_search_source,
     _RankedContentChunkResult,
+    _SearchScore,
 )
 from nexus.services.search.scope import ScopeUnsupported, scope_filter_sql
 from nexus.services.search.sql import (
@@ -274,3 +275,77 @@ def _search_content_chunks(
             )
         )
     return results
+
+
+def resolve_content_chunk_search_result(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    result_id: UUID,
+    score: _SearchScore,
+    evidence_span_ids: list[UUID] | None,
+) -> _RankedContentChunkResult:
+    """Rematerialize one visible, indexed content-chunk search row."""
+    row = db.execute(
+        text(
+            f"""
+            WITH
+                visible_media AS ({visible_media_ids_cte_sql()}),
+                media_contributor_credits AS ({contributor_credits_rollup_cte_sql("media_id")})
+            SELECT
+                cc.id,
+                cc.owner_kind,
+                cc.owner_id,
+                m.kind,
+                m.title,
+                m.published_date,
+                mcc.contributor_credits,
+                cc.chunk_text,
+                cc.source_kind,
+                cc.primary_evidence_span_id
+            FROM content_chunks cc
+            JOIN media m ON m.id = cc.owner_id AND cc.owner_kind = 'media'
+            JOIN visible_media vm ON vm.media_id = cc.owner_id
+            JOIN content_index_states mcis ON mcis.owner_kind = cc.owner_kind
+                AND mcis.owner_id = cc.owner_id
+                AND mcis.status = 'ready'
+            LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
+            WHERE cc.id = :id
+              AND cc.owner_kind = 'media'
+              AND vm.media_id IS NOT NULL
+            """
+        ),
+        {"viewer_id": viewer_id, "id": result_id},
+    ).first()
+    if row is None or row[9] is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
+    if evidence_span_ids and row[9] not in evidence_span_ids:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
+    resolution = resolve_evidence_span(
+        db,
+        viewer_id=viewer_id,
+        evidence_span_id=row[9],
+    )
+    _require_resolved_evidence(resolution)
+    source_kind = str(row[3])
+    return _RankedContentChunkResult(
+        id=row[0],
+        snippet=_truncate_snippet(str(row[7] or "")),
+        source_kind=str(row[8]),
+        evidence_span_ids=[row[9]],
+        citation_label=str(resolution["citation_label"]),
+        locator=locator_from_resolution(
+            resolution,
+            media_id=row[2],
+            media_kind=source_kind,
+        ),
+        resolver=dict(resolution["resolver"]),
+        source=_build_search_source(
+            row[2],
+            source_kind,
+            str(row[4]),
+            row[6],
+            row[5],
+        ),
+        score=score,
+    )

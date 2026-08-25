@@ -31,8 +31,6 @@ from nexus.schemas.search import (
 )
 from nexus.schemas.search_types import VALID_RESULT_TYPES
 from nexus.services import media_intelligence
-from nexus.services.locator_resolver import locator_from_resolution, resolve_evidence_span
-from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.search.candidates import discovery_candidates
 from nexus.services.search.constants import (
     MAX_LIMIT,
@@ -43,27 +41,30 @@ from nexus.services.search.embedding import _query_has_full_text_terms
 from nexus.services.search.kinds import KIND_TO_RESULT_TYPES
 from nexus.services.search.projection import (
     _direct_fragment_locator,
-    _require_resolved_evidence,
     _result_to_out,
     _truncate_snippet,
 )
 from nexus.services.search.query import SearchQuery
 from nexus.services.search.results import (
     _build_search_source,
-    _RankedContentChunkResult,
-    _RankedEvidenceSpanResult,
-    _RankedFragmentResult,
     _RankedHighlightResult,
     _RankedReaderApparatusItemResult,
     _RankedWebResult,
     _SearchScore,
     _web_result_ref_json,
 )
+from nexus.services.search.retrievers.content_chunks import (
+    resolve_content_chunk_search_result,
+)
 from nexus.services.search.retrievers.contributors import _search_contributors
 from nexus.services.search.retrievers.conversations import (
     ConversationSearchResultType,
     resolve_conversation_search_result,
 )
+from nexus.services.search.retrievers.evidence_spans import (
+    resolve_evidence_span_search_result,
+)
+from nexus.services.search.retrievers.fragments import resolve_fragment_search_result
 from nexus.services.search.retrievers.media import (
     MEDIA_SEARCH_RESULT_TYPES,
     MediaSearchResultType,
@@ -240,143 +241,27 @@ def get_search_result(
         return _result_to_out(db, viewer_id, matches[0])
 
     if result_type == "content_chunk":
-        chunk_id = _uuid_from_search_id(result_id)
-        row = db.execute(
-            text(
-                f"""
-                WITH
-                    visible_media AS ({visible_media_ids_cte_sql()}),
-                    media_contributor_credits AS ({contributor_credits_rollup_cte_sql("media_id")})
-                SELECT
-                    cc.id,
-                    cc.owner_kind,
-                    cc.owner_id,
-                    m.kind,
-                    m.title,
-                    m.published_date,
-                    mcc.contributor_credits,
-                    cc.chunk_text,
-                    cc.source_kind,
-                    cc.primary_evidence_span_id
-                FROM content_chunks cc
-                JOIN media m ON m.id = cc.owner_id AND cc.owner_kind = 'media'
-                JOIN visible_media vm ON vm.media_id = cc.owner_id
-                JOIN content_index_states mcis ON mcis.owner_kind = cc.owner_kind
-                    AND mcis.owner_id = cc.owner_id
-                    AND mcis.status = 'ready'
-                LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
-                WHERE cc.id = :id
-                  AND cc.owner_kind = 'media'
-                  AND vm.media_id IS NOT NULL
-                """
-            ),
-            {"viewer_id": viewer_id, "id": chunk_id},
-        ).first()
-        if row is None or row[9] is None:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
-        if evidence_span_ids and row[9] not in evidence_span_ids:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
-        resolution = resolve_evidence_span(
-            db,
-            viewer_id=viewer_id,
-            evidence_span_id=row[9],
-        )
-        _require_resolved_evidence(resolution)
-        source_kind = str(row[3])
-        source_title = str(row[4])
         return _result_to_out(
             db,
             viewer_id,
-            _RankedContentChunkResult(
-                id=row[0],
-                snippet=_truncate_snippet(str(row[7] or "")),
-                source_kind=str(row[8]),
-                evidence_span_ids=[row[9]],
-                citation_label=str(resolution["citation_label"]),
-                locator=locator_from_resolution(
-                    resolution,
-                    media_id=row[2],
-                    media_kind=source_kind,
-                ),
-                resolver=dict(resolution["resolver"]),
-                source=_build_search_source(
-                    row[2],
-                    source_kind,
-                    source_title,
-                    row[6],
-                    row[5],
-                ),
+            resolve_content_chunk_search_result(
+                db,
+                viewer_id=viewer_id,
+                result_id=_uuid_from_search_id(result_id),
                 score=score,
+                evidence_span_ids=evidence_span_ids,
             ),
         )
 
     if result_type == "fragment":
-        fragment_id = _uuid_from_search_id(result_id)
-        row = db.execute(
-            text(
-                f"""
-                WITH
-                    visible_media AS ({visible_media_ids_cte_sql()}),
-                    media_contributor_credits AS ({contributor_credits_rollup_cte_sql("media_id")})
-                SELECT
-                    f.id,
-                    f.idx,
-                    f.canonical_text,
-                    f.t_start_ms,
-                    f.t_end_ms,
-                    nav.location_id AS section_id,
-                    m.id,
-                    m.kind,
-                    m.title,
-                    m.published_date,
-                    mcc.contributor_credits
-                FROM fragments f
-                JOIN media m ON m.id = f.media_id
-                JOIN visible_media vm ON vm.media_id = f.media_id
-                LEFT JOIN LATERAL (
-                    SELECT location_id
-                    FROM epub_nav_locations nav
-                    WHERE nav.media_id = f.media_id
-                      AND nav.fragment_idx <= f.idx
-                    ORDER BY nav.fragment_idx DESC, nav.ordinal DESC
-                    LIMIT 1
-                ) nav ON true
-                JOIN content_index_states mcis ON mcis.owner_kind = 'media'
-                    AND mcis.owner_id = f.media_id
-                    AND mcis.status = 'ready'
-                LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
-                WHERE f.id = :id
-                """
-            ),
-            {"viewer_id": viewer_id, "id": fragment_id},
-        ).first()
-        if row is None:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
-        locator = _direct_fragment_locator(
-            media_id=row[6],
-            media_kind=str(row[7] or ""),
-            fragment_id=row[0],
-            text_value=str(row[2] or ""),
-            start_offset=0,
-            end_offset=len(str(row[2] or "")),
-            exact=str(row[2] or ""),
-            t_start_ms=int(row[3]) if row[3] is not None else None,
-            t_end_ms=int(row[4]) if row[4] is not None else None,
-            section_id=str(row[5]) if row[5] is not None else None,
-        )
-        if locator is None:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
         return _result_to_out(
             db,
             viewer_id,
-            _RankedFragmentResult(
-                id=row[0],
-                idx=int(row[1]),
-                snippet=_truncate_snippet(str(row[2] or "")),
-                source=_build_search_source(row[6], row[7], row[8], row[10], row[9]),
+            resolve_fragment_search_result(
+                db,
+                viewer_id=viewer_id,
+                result_id=_uuid_from_search_id(result_id),
                 score=score,
-                citation_label=f"fragment {int(row[1]) + 1}",
-                locator=locator,
             ),
         )
 
@@ -659,81 +544,14 @@ def get_search_result(
         )
 
     if result_type == "evidence_span":
-        evidence_span_id = _uuid_from_search_id(result_id)
-        row = db.execute(
-            text(
-                f"""
-                WITH
-                    visible_media AS ({visible_media_ids_cte_sql()}),
-                    media_contributor_credits AS ({contributor_credits_rollup_cte_sql("media_id")})
-                SELECT
-                    es.id,
-                    es.owner_kind,
-                    es.owner_id,
-                    es.span_text,
-                    es.citation_label,
-                    m.kind,
-                    m.title,
-                    m.published_date,
-                    mcc.contributor_credits,
-                    nb.user_id AS note_user_id
-                FROM evidence_spans es
-                LEFT JOIN media m ON m.id = es.owner_id AND es.owner_kind = 'media'
-                LEFT JOIN visible_media vm ON vm.media_id = es.owner_id
-                LEFT JOIN note_blocks nb ON nb.id = es.owner_id AND es.owner_kind = 'note_block'
-                JOIN content_index_states cis ON cis.owner_kind = es.owner_kind
-                    AND cis.owner_id = es.owner_id
-                    AND cis.status = 'ready'
-                LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
-                WHERE es.id = :id
-                  AND (
-                        vm.media_id IS NOT NULL
-                        OR nb.user_id = :viewer_id
-                      )
-                """
-            ),
-            {"viewer_id": viewer_id, "id": evidence_span_id},
-        ).first()
-        if row is None:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
-        resolution = resolve_evidence_span(
-            db,
-            viewer_id=viewer_id,
-            evidence_span_id=row[0],
-        )
-        _require_resolved_evidence(resolution)
-        owner_kind = str(row[1])
-        source_kind = str(row[5] or "note") if owner_kind == "media" else owner_kind
-        source_title = str(row[6] if owner_kind == "media" else "Note")
-        # The span's canonical owner is its owning object: media for a
-        # document span, the note_block for a note-owned span. Carry it
-        # explicitly so the projection does not fabricate a ``media:{id}``
-        # owner from the note_block id parked in ``source.media_id``.
-        owner_ref = ResourceRef(
-            scheme="media" if owner_kind == "media" else "note_block",
-            id=row[2],
-        )
         return _result_to_out(
             db,
             viewer_id,
-            _RankedEvidenceSpanResult(
-                id=row[0],
-                snippet=_truncate_snippet(str(row[3] or "")),
-                citation_label=str(row[4] or resolution.get("citation_label") or ""),
-                locator=locator_from_resolution(
-                    resolution,
-                    media_id=row[2],
-                    media_kind=source_kind,
-                ),
-                source=_build_search_source(
-                    row[2],
-                    source_kind,
-                    source_title,
-                    row[8] if owner_kind == "media" else None,
-                    row[7] if owner_kind == "media" else None,
-                ),
+            resolve_evidence_span_search_result(
+                db,
+                viewer_id=viewer_id,
+                result_id=_uuid_from_search_id(result_id),
                 score=score,
-                owner_ref=owner_ref,
             ),
         )
 
