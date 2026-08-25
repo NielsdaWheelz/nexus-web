@@ -95,6 +95,14 @@ def _bump_episode_row_collections(db: Session, *, viewer_id: UUID) -> None:
     )
 
 
+def _bump_library_entry_collections(db: Session, *, viewer_id: UUID) -> None:
+    bump_collection_families(
+        db,
+        viewer_ids=(viewer_id,),
+        families=(CollectionFamily.LibraryEntries,),
+    )
+
+
 def _bump_all_episode_row_collections(db: Session) -> None:
     bump_all_collection_families(
         db,
@@ -267,58 +275,16 @@ def request_media_transcript_for_viewer(
     transcript_coverage = media.transcript_coverage
     semantic_status = media.semantic_status
     rss_transcript_url = media.rss_transcript_url
-    provider = media.provider
-    provider_id = media.provider_id
 
     if media_kind == "video":
-        if provider != "youtube" or provider_id is None:
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_KIND,
-                "Explicit imported captions require canonical YouTube Media.",
-            )
-        if dry_run:
-            return TranscriptRequestResponse(
-                media_id=str(media_id),
-                processing_status=cast(MediaProcessingStatus, processing_status),
-                transcript_state=transcript_state or "not_requested",
-                transcript_coverage=transcript_coverage or "none",
-                request_reason=cast(TranscriptResponseReason, normalized_reason),
-                required_minutes=0,
-                remaining_minutes=None,
-                fits_budget=True,
-                request_enqueued=False,
-            )
-        db.rollback()
-        caption_result = fetch_youtube_transcript(provider_id)
-        caption_segments = normalize_transcript_segments(caption_result.get("segments"))
-        if caption_result.get("status") != "completed" or not caption_segments:
-            raise ApiError(
-                ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE,
-                "YouTube captions are unavailable",
-            )
-        with transaction(db):
-            if not can_read_media(db, viewer_id, media_id):
-                raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-            write_current_transcript(
-                db,
-                media_id=media_id,
-                request_reason=cast(TranscriptRequestReason, normalized_reason),
-                transcript_coverage="full",
-                transcript_segments=caption_segments,
-                transcript_origin="Imported",
-                now=now,
-            )
-            _bump_episode_row_collections(db, viewer_id=viewer_id)
-        return TranscriptRequestResponse(
-            media_id=str(media_id),
-            processing_status="ready_for_reading",
-            transcript_state="ready",
-            transcript_coverage="full",
-            request_reason=cast(TranscriptResponseReason, normalized_reason),
-            required_minutes=0,
-            remaining_minutes=None,
-            fits_budget=True,
-            request_enqueued=False,
+        return _request_youtube_video_transcript(
+            db,
+            viewer_id=viewer_id,
+            media_id=media_id,
+            media=media,
+            request_reason=normalized_reason,
+            dry_run=dry_run,
+            now=now,
         )
 
     if media_kind != "podcast_episode":
@@ -591,6 +557,71 @@ def request_media_transcript_for_viewer(
         remaining_minutes=remaining_minutes_after,
         fits_budget=True,
         request_enqueued=True,
+    )
+
+
+def _request_youtube_video_transcript(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media_id: UUID,
+    media: _TranscriptRequestMedia,
+    request_reason: str,
+    dry_run: bool,
+    now: datetime,
+) -> TranscriptRequestResponse:
+    if media.provider != "youtube" or media.provider_id is None:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_KIND,
+            "Explicit imported captions require canonical YouTube Media.",
+        )
+    if dry_run:
+        return TranscriptRequestResponse(
+            media_id=str(media_id),
+            processing_status=cast(MediaProcessingStatus, media.processing_status),
+            transcript_state=media.transcript_state or "not_requested",
+            transcript_coverage=media.transcript_coverage or "none",
+            request_reason=cast(TranscriptResponseReason, request_reason),
+            required_minutes=0,
+            remaining_minutes=None,
+            fits_budget=True,
+            request_enqueued=False,
+        )
+
+    db.rollback()
+    caption_result = fetch_youtube_transcript(media.provider_id)
+    caption_segments = normalize_transcript_segments(caption_result.get("segments"))
+    if caption_result.get("status") != "completed" or not caption_segments:
+        raise ApiError(
+            ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE,
+            "YouTube captions are unavailable",
+        )
+
+    from nexus.auth.permissions import can_read_media
+
+    with transaction(db):
+        if not can_read_media(db, viewer_id, media_id):
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+        write_current_transcript(
+            db,
+            media_id=media_id,
+            request_reason=cast(TranscriptRequestReason, request_reason),
+            transcript_coverage="full",
+            transcript_segments=caption_segments,
+            transcript_origin="Imported",
+            now=now,
+        )
+        _bump_library_entry_collections(db, viewer_id=viewer_id)
+    return TranscriptRequestResponse(
+        media_id=str(media_id),
+        processing_status="ready_for_reading",
+        transcript_state="ready",
+        transcript_coverage="full",
+        request_reason=cast(TranscriptResponseReason, request_reason),
+        required_minutes=0,
+        remaining_minutes=None,
+        fits_budget=True,
+        request_enqueued=False,
     )
 
 
