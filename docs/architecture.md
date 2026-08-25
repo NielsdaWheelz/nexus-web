@@ -1519,6 +1519,11 @@ minutes and create one durable transcript source attempt. That source-attempt
 owner publishes the all-viewer media-fact revision exactly once; the outer
 transcript controller does not publish a second revision for the same accepted
 attempt.
+Canonical YouTube Video caption forecast and import live in
+`_request_youtube_video_transcript`. It crosses the provider boundary with no
+database transaction open, reauthorizes before atomic `Imported` transcript
+publication, and advances `LibraryEntries` only; Video import never invalidates
+`PodcastEpisodes`.
 
 The canonical Podcast detail pane observes those two independent owners through
 one viewer-owned subscription-lifecycle snapshot stream. Transactional triggers
