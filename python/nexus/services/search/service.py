@@ -12,12 +12,8 @@ import time
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import (
-    visible_conversation_ids_cte_sql,
-)
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.search import (
@@ -36,13 +32,9 @@ from nexus.services.search.constants import (
 from nexus.services.search.cursor import decode_search_cursor, encode_search_cursor
 from nexus.services.search.embedding import _query_has_full_text_terms
 from nexus.services.search.kinds import KIND_TO_RESULT_TYPES
-from nexus.services.search.projection import _result_to_out, _truncate_snippet
+from nexus.services.search.projection import _result_to_out
 from nexus.services.search.query import SearchQuery
-from nexus.services.search.results import (
-    _RankedWebResult,
-    _SearchScore,
-    _web_result_ref_json,
-)
+from nexus.services.search.results import _SearchScore
 from nexus.services.search.retrievers.content_chunks import (
     resolve_content_chunk_search_result,
 )
@@ -68,6 +60,7 @@ from nexus.services.search.retrievers.notes import (
 from nexus.services.search.retrievers.reader_apparatus import (
     resolve_reader_apparatus_search_result,
 )
+from nexus.services.search.retrievers.web import resolve_web_search_result
 from nexus.services.search.scope import authorize_scope
 from nexus.services.search.telemetry import _log_search
 
@@ -309,73 +302,13 @@ def get_search_result(
         )
 
     if result_type == "web_result":
-        retrieval_id = _uuid_from_search_id(result_id)
-        row = db.execute(
-            text(
-                f"""
-                WITH visible_conversations AS ({visible_conversation_ids_cte_sql()})
-                SELECT
-                    mr.id,
-                    mr.source_id,
-                    COALESCE(mr.result_ref->>'result_ref', mr.source_id),
-                    COALESCE(NULLIF(mr.result_ref->>'title', ''), mr.source_title, mr.source_id),
-                    COALESCE(NULLIF(mr.result_ref->>'url', ''), mr.deep_link),
-                    NULLIF(mr.result_ref->>'display_url', ''),
-                    mr.result_ref->'extra_snippets',
-                    NULLIF(mr.result_ref->>'published_at', ''),
-                    NULLIF(mr.result_ref->>'source_name', ''),
-                    CASE
-                        WHEN mr.result_ref->>'rank' ~ '^[0-9]+$'
-                        THEN CAST(mr.result_ref->>'rank' AS integer)
-                        ELSE NULL
-                    END,
-                    NULLIF(mr.result_ref->>'provider', ''),
-                    NULLIF(mr.result_ref->>'provider_request_id', ''),
-                    COALESCE(NULLIF(mr.exact_snippet, ''), mr.result_ref->>'snippet', ''),
-                    mr.locator,
-                    mr.result_ref,
-                    mr.selected
-                FROM message_retrievals mr
-                JOIN message_tool_calls mtc ON mtc.id = mr.tool_call_id
-                JOIN visible_conversations vc ON vc.conversation_id = mtc.conversation_id
-                JOIN resource_external_snapshots res
-                  ON res.id = CASE
-                      WHEN mr.source_id ~ '^[0-9a-f]{{8}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{12}}$'
-                      THEN CAST(mr.source_id AS uuid)
-                      ELSE NULL
-                  END
-                 AND res.user_id = :viewer_id
-                WHERE mr.id = :id
-                  AND mr.result_type = 'web_result'
-                  AND mr.result_ref->>'type' = 'web_result'
-                  AND mr.locator IS NOT NULL
-                  AND mr.locator != 'null'::jsonb
-                """
-            ),
-            {"viewer_id": viewer_id, "id": retrieval_id},
-        ).first()
-        if row is None or not row[4]:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
-        result_ref = _web_result_ref_json(row[14])
         return _result_to_out(
             db,
             viewer_id,
-            _RankedWebResult(
-                id=str(row[0]),
-                source_id=str(result_ref["source_id"]),
-                result_ref=str(result_ref["result_ref"]),
-                title=str(result_ref["title"]),
-                url=str(result_ref["url"]),
-                display_url=result_ref.get("display_url"),
-                extra_snippets=list(result_ref.get("extra_snippets", [])),
-                published_at=result_ref.get("published_at"),
-                source_name=result_ref.get("source_name"),
-                rank=result_ref.get("rank"),
-                provider=result_ref.get("provider"),
-                provider_request_id=result_ref.get("provider_request_id"),
-                snippet=_truncate_snippet(str(row[12] or "")),
-                locator=result_ref["locator"],
-                selected=bool(row[15]),
+            resolve_web_search_result(
+                db,
+                viewer_id=viewer_id,
+                result_id=_uuid_from_search_id(result_id),
                 score=score,
             ),
         )
