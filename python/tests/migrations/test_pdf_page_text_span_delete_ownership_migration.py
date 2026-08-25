@@ -18,23 +18,11 @@ def test_pdf_page_text_spans_restrict_parent_delete_at_head(
     migration_root = Path(__file__).parents[3] / "migrations"
     config = Config(migration_root / "alembic.ini")
     config.set_main_option("script_location", str(migration_root / "alembic"))
-    command.upgrade(config, "head")
+    command.upgrade(config, "0221")
 
     engine = create_engine(empty_migration_database_url)
     media_id = UUID("00000000-0000-0000-0000-000000002220")
     try:
-        foreign_keys = inspect(engine).get_foreign_keys("pdf_page_text_spans")
-        media_foreign_key = next(
-            constraint
-            for constraint in foreign_keys
-            if constraint["referred_table"] == "media"
-            and constraint["constrained_columns"] == ["media_id"]
-        )
-        assert media_foreign_key["options"].get("ondelete") in {
-            None,
-            "NO ACTION",
-        }, "PDF page-span deletion must remain explicit and non-cascading"
-
         with engine.begin() as connection:
             connection.execute(
                 text(
@@ -56,6 +44,24 @@ def test_pdf_page_text_spans_restrict_parent_delete_at_head(
                 ),
                 {"media_id": media_id},
             )
+
+        command.upgrade(config, "head")
+
+        media_foreign_keys = [
+            constraint
+            for constraint in inspect(engine).get_foreign_keys("pdf_page_text_spans")
+            if constraint["referred_table"] == "media"
+            and constraint["constrained_columns"] == ["media_id"]
+        ]
+        assert len(media_foreign_keys) == 1, (
+            f"expected one PDF page-span media FK, found {media_foreign_keys!r}"
+        )
+        media_foreign_key = media_foreign_keys[0]
+        assert media_foreign_key["name"] == "pdf_page_text_spans_media_id_fkey"
+        assert media_foreign_key["options"].get("ondelete") in {
+            None,
+            "NO ACTION",
+        }, "PDF page-span deletion must remain explicit and non-cascading"
 
         with pytest.raises(IntegrityError):
             with engine.begin() as connection:
