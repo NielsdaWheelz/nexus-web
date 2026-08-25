@@ -1,7 +1,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { describe, expect, it, vi } from "vitest";
-import { useState } from "react";
+import { Component, type ErrorInfo, type ReactNode, useState } from "react";
 import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount";
 import { ResourceActionRuntimeProvider } from "@/lib/actions/resourceActionRuntime";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
@@ -53,12 +53,12 @@ const TITLES = [ZEBRA, AURORA];
 const NEWEST_PAGE = {
   id: "11111111-1111-4111-8111-111111111111",
   title: ZEBRA,
-  updated_at: "2026-08-02T10:00:00Z",
+  updatedAt: "2026-08-02T10:00:00Z",
 };
 const OLDEST_PAGE = {
   id: "22222222-2222-4222-8222-222222222222",
   title: AURORA,
-  updated_at: "2026-08-01T10:00:00Z",
+  updatedAt: "2026-08-01T10:00:00Z",
 };
 const UPDATED_NEWEST = [NEWEST_PAGE, OLDEST_PAGE];
 const TITLE_ASC = [OLDEST_PAGE, NEWEST_PAGE];
@@ -81,7 +81,10 @@ function pagesResponse(pages: readonly (typeof NEWEST_PAGE)[]) {
  * and every other pair — including the explicitly written default — is rejected
  * as an invalid request.
  */
-function stubNotePages(titleAscPage?: Promise<Response>) {
+function stubNotePages(
+  titleAscPage?: Promise<Response>,
+  canonicalPayload: unknown = { data: { pages: UPDATED_NEWEST } },
+) {
   const requests: string[] = [];
   vi.stubGlobal(
     "fetch",
@@ -126,7 +129,7 @@ function stubNotePages(titleAscPage?: Promise<Response>) {
       const sort = url.searchParams.get("sort");
       const direction = url.searchParams.get("direction");
       if (sort === null && direction === null) {
-        return pagesResponse(UPDATED_NEWEST);
+        return Response.json(canonicalPayload);
       }
       if (sort === "title" && direction === "asc") {
         return titleAscPage ?? pagesResponse(TITLE_ASC);
@@ -145,12 +148,39 @@ function stubNotePages(titleAscPage?: Promise<Response>) {
   return requests;
 }
 
+class TestDefectBoundary extends Component<
+  {
+    readonly children: ReactNode;
+    readonly onDefect: (error: Error) => void;
+  },
+  { readonly error: Error | null }
+> {
+  state: { readonly error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, _info: ErrorInfo) {
+    this.props.onDefect(error);
+  }
+
+  render() {
+    if (this.state.error !== null) {
+      return <div role="alert">Notes defect</div>;
+    }
+    return this.props.children;
+  }
+}
+
 function NotesPane({
   initialHref,
   replaced,
+  onDefect = noop,
 }: {
   readonly initialHref: string;
   readonly replaced: string[];
+  readonly onDefect?: (error: Error) => void;
 }) {
   const [href, setHref] = useState(initialHref);
   const routeKey = resolvePaneRouteIdentity(href).routeKey;
@@ -219,7 +249,9 @@ function NotesPane({
                     onResizePrimaryPane={noop}
                     isActive
                   >
-                    <NotesPaneBody />
+                    <TestDefectBoundary onDefect={onDefect}>
+                      <NotesPaneBody />
+                    </TestDefectBoundary>
                   </PaneShell>
                 </div>
                 <ResourceActionOverlays />
@@ -254,6 +286,42 @@ async function openFilter(): Promise<void> {
 }
 
 describe("Notes index domain view", () => {
+  it.each([
+    {
+      name: "an omitted pages collection",
+      payload: { data: {} },
+    },
+    {
+      name: "a legacy snake-case row",
+      payload: {
+        data: {
+          pages: [
+            {
+              id: NEWEST_PAGE.id,
+              title: NEWEST_PAGE.title,
+              updated_at: NEWEST_PAGE.updatedAt,
+            },
+          ],
+        },
+      },
+    },
+  ])("defects on $name instead of rendering owned content", async ({ payload }) => {
+    const onDefect = vi.fn();
+    stubNotePages(undefined, payload);
+
+    render(
+      <NotesPane initialHref="/notes" replaced={[]} onDefect={onDefect} />,
+    );
+
+    expect(await screen.findByText("Notes defect")).toHaveAttribute(
+      "role",
+      "alert",
+    );
+    await waitFor(() => expect(onDefect).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText("No pages yet.")).toBeNull();
+    expect(screen.queryByText(ZEBRA)).toBeNull();
+  });
+
   it("replaces the pane URL with the selected sort, requests exactly that view, and keeps the filter text, open filter row, and prior rows until the new response commits", async () => {
     const titleAsc = deferred<Response>();
     const requests = stubNotePages(titleAsc.promise);
