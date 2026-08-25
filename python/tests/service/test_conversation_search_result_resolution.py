@@ -55,6 +55,8 @@ def test_conversation_and_message_results_reresolve_under_one_visibility_contrac
             content="Durable message result",
             status="complete",
         )
+        db.add(complete_message)
+        db.flush()
         pending_message = Message(
             conversation_id=conversation.id,
             seq=2,
@@ -63,7 +65,7 @@ def test_conversation_and_message_results_reresolve_under_one_visibility_contrac
             status="pending",
             parent_message_id=complete_message.id,
         )
-        db.add_all([complete_message, pending_message])
+        db.add(pending_message)
         db.commit()
 
         conversation_result = get_search_result(
