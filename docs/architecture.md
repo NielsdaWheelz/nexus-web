@@ -1442,6 +1442,14 @@ SERIALIZABLE transaction. Surface activation uses the bounded batch router, so
 heterogeneous rows add no per-occurrence query loop. Intrinsic page-title and
 note-body edits use the resource-item mutation owner. `services/notes.py`
 remains the notes collection, daily-page, dated-capture, and Dawn Write facade.
+A Page list row is exactly `{id,title,updatedAt}`; Page detail adds required
+`dailyPage: Presence<{localDate}>`. `schemas/notes.py` and
+`services/notes.py` own those typed backend shapes and convert nullable daily
+binding state to `Presence` at `_page_out`. On the frontend,
+`lib/notes/pageContract.ts` is the sole exact Page list/detail decoder and owns
+`loadNotePages`; server seed, intent prefetch, and Notes-pane replacement all
+call that same loader. Missing, extra, aliased, or malformed fields are defects,
+not empty-state fallbacks. `dailyPage` remains `Presence` after decoding.
 A daily date is a latent non-mutating locator until its first meaningful Note.
 That first capture creates the ordinary Page, binding, Note, ordered
 occurrence, required versions, and replay receipt in one serializable
@@ -1459,6 +1467,8 @@ Frontend composition is one `PagePaneBody`, one `ResourceSurfaceEditor`, and
 one `useResourceSurfaceSession` for ordinary Page refs and dated daily
 locators, with `NoteBodyEditor` as the sole prose primitive. Pane visit/session
 identity remains stable while a latent date hydrates or adopts `page:{id}`.
+Page and Note body hydration flows through this ResourceSurface owner; no
+frontend Notes block-response client is a competing read path.
 Quick Note adds one provisional final Note immediately; persisted hydration
 merges before it, and acknowledgement cannot erase later local keystrokes.
 `ResourceSurfaceBodyEditor` is a React-owned flat occurrence list, not a second
