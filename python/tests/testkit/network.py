@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 _ALLOWED_HOSTS = frozenset({"127.0.0.1", "::1", "127.0.1.1"})
+_SYSTEM_GETADDRINFO = socket.getaddrinfo
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,7 +124,7 @@ def install_network_guard() -> Callable[[], None]:
             target = static_dns[normalized]
             if isinstance(target, _LoopbackRoute):
                 return original_getaddrinfo(target.address, target.port, *args, **kwargs)
-            return original_getaddrinfo(target, port, *args, **kwargs)
+            return _SYSTEM_GETADDRINFO(target, port, *args, **kwargs)
         if normalized is not None:
             _require_local((normalized, 0))
         return original_getaddrinfo(host, port, *args, **kwargs)
