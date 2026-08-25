@@ -252,7 +252,7 @@ def test_document_results_reresolve_with_exact_evidence_and_owner_identity(
             "start_offset": 0,
             "end_offset": len(owned.text),
             "media_kind": MediaKind.web_article.value,
-            "text_quote_selector": {"exact": owned.text},
+            "text_quote_selector": {"exact": owned.text, "prefix": "", "suffix": ""},
         }
         assert isinstance(span_result, SearchResultEvidenceSpanOut)
         assert span_result.id == owned.evidence_span_id
