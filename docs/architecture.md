@@ -805,7 +805,11 @@ while keeping the Conversation subject as result identity. The notes retriever
 likewise owns candidate retrieval and durable rematerialization for Page and Note
 Block results: Pages are owner-only, and Note Blocks must be owner-visible,
 nonempty, and backed by a ready content index; highlight-note origin is derived
-from the same visible `highlight_note` edge contract in both paths.
+from the same visible `highlight_note` edge contract in both paths. The media
+retriever owns candidate retrieval and durable rematerialization for Media,
+Episode, Video, and Podcast results. Rematerialization reuses canonical media or
+Podcast visibility, requires the requested discriminant to match the stored media
+kind exactly, and projects contributor credits through the shared credit decoder.
 
 - **Indexing** (`services/content_indexing.py`, `semantic_chunks.py`): text-bearing
   media flows `fragment → content_blocks → chunks → embeddings`; note bodies
