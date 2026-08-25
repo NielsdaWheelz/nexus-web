@@ -1170,9 +1170,7 @@ def _run_source_adapter(run: _SourceAdapterRun) -> dict[str, object]:
             session_factory, media_id, attempt, actor_user_id, request_id, fence
         )
     if attempt.source_type == source_types.X_POST:
-        return _run_x_post(
-            session_factory, media_id, attempt, actor_user_id, request_id, fence
-        )
+        return _run_x_post(session_factory, media_id, attempt, actor_user_id, request_id, fence)
     if attempt.source_type in source_types.REMOTE_FILE_SOURCE_TYPES:
         return _run_remote_file(session_factory, media_id, attempt, request_id, fence)
     if attempt.source_type == source_types.BROWSER_ARTICLE_CAPTURE:
