@@ -1194,6 +1194,83 @@ def _run_source_adapter(run: _SourceAdapterRun) -> dict[str, object]:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _SourceTerminalPublication:
+    terminal_media_id: UUID
+    result: dict[str, object]
+    additional_reindex_media_ids: tuple[UUID, ...]
+    publication_media_ids: tuple[UUID, ...]
+    request_id: str | None
+
+    def publish(self, phase_db: Session, attempt: MediaSourceAttempt) -> None:
+        media = phase_db.get(Media, self.terminal_media_id)
+        if media is None:
+            # justify-defect: the common fence locked this terminal identity.
+            raise AssertionError("terminal source media disappeared while locked")
+        if media.processing_status == ProcessingStatus.failed:
+            attempt.status = _ATTEMPT_FAILED
+            attempt.error_code = media.last_error_code
+            attempt.error_message = media.last_error_message
+            attempt.retry_after_seconds = None
+        else:
+            if media.processing_status == ProcessingStatus.extracting:
+                mark_ready_for_reading(phase_db, media)
+            attempt.status = _ATTEMPT_SUCCEEDED
+            attempt.error_code = None
+            attempt.error_message = None
+            attempt.retry_after_seconds = None
+            if self.result.get("warning_error_code") == "E_PDF_TEXT_UNAVAILABLE":
+                mark_stage_warning(
+                    phase_db,
+                    media,
+                    stage="extract",
+                    error_code="E_PDF_TEXT_UNAVAILABLE",
+                    error_message="PDF text is unavailable; OCR is required.",
+                )
+            bump_all_media_fact_collections(phase_db)
+            if bool(self.result.get("transcript_semantic_intent")):
+                enqueue_transcript_semantic_job(
+                    phase_db,
+                    media_id=self.terminal_media_id,
+                    request_reason=require_transcript_request_reason(
+                        self.result.get("transcript_request_reason")
+                    ),
+                )
+            if media.kind in {
+                MediaKind.web_article.value,
+                MediaKind.epub.value,
+                MediaKind.pdf.value,
+            }:
+                from nexus.services.content_indexing import request_media_content_reindex
+
+                request_media_content_reindex(
+                    phase_db,
+                    media_id=self.terminal_media_id,
+                    reason="source_success",
+                    request_id=self.request_id,
+                )
+                for additional_media_id in self.additional_reindex_media_ids:
+                    request_media_content_reindex(
+                        phase_db,
+                        media_id=additional_media_id,
+                        reason="source_success",
+                        request_id=self.request_id,
+                    )
+        attempt.finished_at = func.now()
+        attempt.updated_at = func.now()
+        _sync_document_embed_targets(
+            phase_db,
+            self.terminal_media_id,
+            locked_media_ids=self.publication_media_ids,
+        )
+        for additional_media_id in self.additional_reindex_media_ids:
+            _sync_document_embed_targets(
+                phase_db,
+                additional_media_id,
+                locked_media_ids=self.publication_media_ids,
+            )
+
+
 def _run_claimed_source_attempt(
     *,
     db: Session,
@@ -1403,81 +1480,20 @@ def _run_claimed_source_attempt(
                 "error_message": error_message,
             }
 
-    def publish_terminal(phase_db: Session, attempt: MediaSourceAttempt) -> None:
-        media = phase_db.get(Media, terminal_media_id)
-        if media is None:
-            # justify-defect: the common fence locked this terminal identity.
-            raise AssertionError("terminal source media disappeared while locked")
-        if media.processing_status == ProcessingStatus.failed:
-            attempt.status = _ATTEMPT_FAILED
-            attempt.error_code = media.last_error_code
-            attempt.error_message = media.last_error_message
-            attempt.retry_after_seconds = None
-        else:
-            if media.processing_status == ProcessingStatus.extracting:
-                mark_ready_for_reading(phase_db, media)
-            attempt.status = _ATTEMPT_SUCCEEDED
-            attempt.error_code = None
-            attempt.error_message = None
-            attempt.retry_after_seconds = None
-            if result.get("warning_error_code") == "E_PDF_TEXT_UNAVAILABLE":
-                mark_stage_warning(
-                    phase_db,
-                    media,
-                    stage="extract",
-                    error_code="E_PDF_TEXT_UNAVAILABLE",
-                    error_message="PDF text is unavailable; OCR is required.",
-                )
-            bump_all_media_fact_collections(phase_db)
-            if bool(result.get("transcript_semantic_intent")):
-                enqueue_transcript_semantic_job(
-                    phase_db,
-                    media_id=terminal_media_id,
-                    request_reason=require_transcript_request_reason(
-                        result.get("transcript_request_reason")
-                    ),
-                )
-            if media.kind in {
-                MediaKind.web_article.value,
-                MediaKind.epub.value,
-                MediaKind.pdf.value,
-            }:
-                from nexus.services.content_indexing import request_media_content_reindex
-
-                request_media_content_reindex(
-                    phase_db,
-                    media_id=terminal_media_id,
-                    reason="source_success",
-                    request_id=request_id,
-                )
-                for additional_media_id in additional_reindex_media_ids:
-                    request_media_content_reindex(
-                        phase_db,
-                        media_id=additional_media_id,
-                        reason="source_success",
-                        request_id=request_id,
-                    )
-        attempt.finished_at = func.now()
-        attempt.updated_at = func.now()
-        _sync_document_embed_targets(
-            phase_db,
-            terminal_media_id,
-            locked_media_ids=publication_media_ids,
-        )
-        for additional_media_id in additional_reindex_media_ids:
-            _sync_document_embed_targets(
-                phase_db,
-                additional_media_id,
-                locked_media_ids=publication_media_ids,
-            )
-
+    terminal_publication = _SourceTerminalPublication(
+        terminal_media_id=terminal_media_id,
+        result=result,
+        additional_reindex_media_ids=tuple(additional_reindex_media_ids),
+        publication_media_ids=publication_media_ids,
+        request_id=request_id,
+    )
     try:
         run_source_publication_phase(
             session_factory=session_factory,
             label="publish_source_attempt_terminal",
             fence=fence,
             media_ids=publication_media_ids,
-            mutate=publish_terminal,
+            mutate=terminal_publication.publish,
         )
     except SourcePublicationSuperseded:
         db.rollback()
