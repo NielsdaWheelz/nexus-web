@@ -164,6 +164,7 @@ test("a highlight note remains attached to the exact canonical passage after a f
   const mobilePassage = page.getByText(QUOTE, { exact: false }).first();
   await expect(mobilePassage).toBeVisible();
   await dragSelectExactText(page, mobilePassage, QUOTE);
+  await page.setViewportSize({ width: 412, height: 844 });
   await expect(
     page.getByRole("toolbar", { name: "Selection actions" }),
     "A fresh mobile selection must publish its actions after stabilization.",
