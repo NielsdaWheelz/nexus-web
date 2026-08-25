@@ -1190,6 +1190,9 @@ factory rather than carrying an unused injection branch.
 - a reclaimed source worker is forced stale before every tested artifact,
   supersession, modeled-failure, author-observation, and terminal publication;
   each transaction rolls back with no authoritative write;
+- unexpected contributor-identity, contributor-write, or database defects
+  during author observation propagate to queue-owned defect handling and leave
+  the source attempt running; they are never persisted as `E_INGEST_FAILED`;
 - object-store writes made before a lost claim remain unreferenced and converge
   through the existing reservation/cleanup owner;
 - forced embedding failure after EPUB/PDF/web/X extraction leaves readable

@@ -1022,10 +1022,12 @@ capability-owned:
   web URLs, X/Twitter URLs, YouTube URLs, remote PDF/EPUB URLs, uploaded
   PDF/EPUB files, and browser article/file captures. Its detached acquisition
   phase is one `_run_source_adapter` dispatch over an immutable run value;
+  `_SourceAuthorshipPhase` owns fenced contributor observation and lets
+  unexpected contributor or database defects remain worker defects;
   `_SourceTerminalPublication` owns the final fenced Media/attempt/index/embed
   mutation; `_run_claimed_source_attempt` composes supersession, failure,
   authorship, terminal, and post-success phases rather than embedding provider
-  dispatch or terminal mutation bodies.
+  dispatch, contributor-failure fallback, or terminal mutation bodies.
 - `x_identity.py`, `x_client.py`, `x_rendering.py`, `x_ingest.py`: official-API
   X/Twitter same-author thread capture. Identity comes from provider author ID
   plus conversation ID; quote posts are separate `post:<post_id>` media; provider

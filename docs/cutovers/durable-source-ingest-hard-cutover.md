@@ -774,6 +774,9 @@ typed terminal publication path.
     canonical duplicate resolution orchestration;
   - one detached source-adapter dispatch phase, separate from fenced
     supersession, failure, authorship, and terminal publication;
+  - one immutable authorship phase that applies typed observations under the
+    exact source fence and propagates unexpected contributor defects instead of
+    persisting a generic source failure;
   - one immutable terminal-publication phase owning the final fenced Media,
     attempt, content-index, semantic-index, and document-embed mutations.
 - `python/nexus/services/media_source_types.py`
