@@ -97,12 +97,15 @@ that matter:
   values are never identity. Alias collisions fail closed instead of selecting
   a winner.
 
-- **Current transcript writer — `transcripts.current.write_current_transcript`.** This is the
-  single, advisory-locked writer of `podcast_transcript_segments`, `fragments`, and
-  `media_transcript_states`. It is media-kind agnostic: explicit Podcast and
-  Video Transcribe call it; neither re-implements the replace → insert → index
-  sequence. It holds `pg_advisory_xact_lock('transcript-current:{media_id}')` for the
-  whole sequence and runs in the caller's transaction (`transaction()` is non-reentrant).
+- **Current transcript publication — `transcripts.current`.** This is the single,
+  advisory-locked writer of `podcast_transcript_segments`, `fragments`, and
+  `media_transcript_states`. Non-source import uses `write_current_transcript`,
+  which also makes Media readable and admits semantic work. Fenced source ingest
+  uses `publish_source_transcript`, which publishes artifacts only; the common
+  source terminal owns ready-state, one semantic job, and one media-fact revision.
+  Neither caller re-implements the replace → insert sequence. The owner holds
+  `pg_advisory_xact_lock('transcript-current:{media_id}')` for the whole sequence
+  and runs in the caller's transaction (`transaction()` is non-reentrant).
 
 - **There is no active transcript pointer or version table.** The current transcript is the
   set of `podcast_transcript_segments` and `fragments` for the media. Re-transcription
@@ -239,6 +242,11 @@ If a publisher sidecar cannot produce segments, generated-fallback admission
 returns `Admitted | RejectedQuota` through the source fence. Rejected quota
 commits the immutable request audit first; the worker then publishes terminal
 source/transcript failure under its next exact fence without charging usage.
+Publisher and generated success callbacks are collection-pure and never enqueue
+semantic work. The common source terminal publishes both effects once after the
+artifact fence succeeds. Starting an already-admitted Episode attempt still
+counts its processing attempt, but does not publish a second unchanged
+`extracting` collection revision.
 
 `podcasts.deepgram_adapter` is a documented non-LLM provider port, not part of the shared
 generation runtime. It owns Deepgram diarization fallback, fixture normalization, and podcast

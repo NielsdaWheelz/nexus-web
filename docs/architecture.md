@@ -1534,6 +1534,11 @@ Publisher-sidecar fallback admission returns the discriminated domain result
 therefore commits its immutable audit before the worker raises the typed error
 and publishes terminal source/transcript failure in the next fenced phase; the
 error is never used as callback control flow that would roll the audit back.
+Publisher and generated transcript success callbacks publish only source
+artifacts plus their domain ledger. The common source terminal is the sole owner
+of ready-state, semantic admission, and the success media-fact revision; a
+worker beginning an already-admitted `extracting` Episode does not publish an
+unchanged revision.
 `services/transcripts/state.py` is the sole persistence owner for
 `media_transcript_states`; `current.py` owns artifact publication, while
 `semantic.py` owns every semantic-job payload plus lock-and-job-inventory repair
@@ -2058,7 +2063,9 @@ The test controller owns a persistent workspace-local PostgreSQL/MinIO and
 Supabase Auth stack, per-run database/bucket state, and per-scenario users. It
 passes the Supabase admin key only to controller-owned user lifecycle code;
 Next.js, FastAPI, worker, and migration processes receive only their explicit
-test allowlists.
+test allowlists. Its canonical run environment also owns the external-protocol
+loopback endpoint, proxy, static DNS fixture, and Podcast fixture credentials
+for both in-process service proof and spawned product processes.
 
 **CI**: `.github/workflows/ci.yml` invokes only `./scripts/test pr` and retains
 the same-run summary even on failure. Protected manual/scheduled workflows own
