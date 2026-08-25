@@ -637,6 +637,10 @@ text shape; the registry never stringifies or trims malformed values. The
 scheduler-only Gutenberg sync, job-prune, and auth-handoff purge handlers
 require their scheduler-written `request_id`, and Gutenberg also requires the
 exact `scheduler_identity`; their tasks expose no default or invented identity.
+The note-reindex payload is closed to exactly `note_block_id` plus `reason`.
+Its registry shim passes the claimed `JobExecutionContext`, so task diagnostics
+use the real queue job identity and expose no direct-call `task_id` or unowned
+`request_id` compatibility surface.
 
 Task catalog (each is a thin handler in `tasks/` that wraps a service):
 `ingest_media_source`, `enrich_metadata`, `chat_run`,

@@ -1154,6 +1154,9 @@ absence or canonical text and never recover through string coercion or trimming.
 Scheduler-only Gutenberg sync, background-job prune, and auth-handoff purge
 require the scheduler-owned request identity, while Gutenberg also requires its
 scheduler identity; no task-level defaults reconstruct either field.
+Note reindex has one exact `{note_block_id, reason}` payload and receives the
+claimed job context from the registry. Extra request/task identities defect or
+do not exist; diagnostics use the actual queue job id.
 
 ## Acceptance criteria
 
