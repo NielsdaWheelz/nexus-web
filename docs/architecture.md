@@ -645,6 +645,9 @@ Worker-only task signatures mirror their registry shims without direct-call
 defaults. Nullable request identity remains explicit at the call site, and the
 podcast semantic-index task opens its production session factory internally;
 there is no unused factory-injection seam.
+The periodic storage orphan sweep receives only its claimed job context and
+reloads the fenced continuation payload from that row; the registry does not
+thread a duplicate raw mapping into the task.
 
 Task catalog (each is a thin handler in `tasks/` that wraps a service):
 `ingest_media_source`, `enrich_metadata`, `chat_run`,
