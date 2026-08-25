@@ -1506,6 +1506,10 @@ both forecast and admission. A dry-run may append its explicit immutable
 bump collection revisions. Transcript work state is materialized only after the
 dry-run return boundary. Explicit admission and durable source requeue both use
 the same transcript-job reset owner; no caller carries a second job upsert.
+Forecast, explicit admission, and durable source requeue derive and reserve
+quota through one typed transcript-budget owner. A quota rejection writes only
+its immutable audit fact; it does not materialize transcript work state or bump
+collection revisions.
 
 The canonical Podcast detail pane observes those two independent owners through
 one viewer-owned subscription-lifecycle snapshot stream. Transactional triggers
