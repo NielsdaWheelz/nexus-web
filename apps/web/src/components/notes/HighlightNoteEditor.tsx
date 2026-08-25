@@ -23,7 +23,7 @@ import {
 } from "@/lib/notes/useNoteEditorSession";
 import NoteDraftRecovery from "@/components/notes/NoteDraftRecovery";
 import NoteBodyEditor from "@/components/notes/NoteBodyEditor";
-import type { HighlightLinkedNoteBlock } from "@/lib/highlights/api";
+import type { HighlightLinkedNoteBlock } from "@/lib/highlights/highlightContract";
 import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import { isRecord } from "@/lib/validation";
 import { mediaCaptureErrorMessage } from "@/lib/media/captureFeedback";
