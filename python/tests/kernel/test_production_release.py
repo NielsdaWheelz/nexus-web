@@ -2688,7 +2688,7 @@ def test_host_apply_rejects_codex_egress_bridge_contract_mutants(
     failed = harness.run_apply()
 
     assert failed.returncode != 0
-    assert "Codex agent host network" in failed.stderr
+    assert "Codex private egress network differs" in failed.stderr
     attempt = _stored_attempt(release, harness.root)
     assert attempt is not None
     assert attempt.phase is release.ReleasePhase.ForwardFixRequired
