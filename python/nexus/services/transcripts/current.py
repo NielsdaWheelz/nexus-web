@@ -23,18 +23,9 @@ from nexus.services.transcript_segments import (
     TranscriptSegmentInput,
     insert_transcript_fragments,
 )
+from nexus.services.transcripts.request_reason import TranscriptRequestReason
 from nexus.services.transcripts.semantic import enqueue_transcript_semantic_job
 from nexus.services.transcripts.state import TranscriptOrigin, set_media_transcript_state
-
-TranscriptRequestReason = Literal[
-    "episode_open",
-    "search",
-    "highlight",
-    "quote",
-    "background_warming",
-    "operator_requeue",
-    "rss_feed",
-]
 
 
 @dataclass(frozen=True)

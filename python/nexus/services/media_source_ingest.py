@@ -121,6 +121,10 @@ from nexus.services.source_publication import (
     reset_source_progress,
     run_source_publication_phase,
 )
+from nexus.services.transcripts.request_reason import (
+    TranscriptRequestReason,
+    require_transcript_request_reason,
+)
 from nexus.services.transcripts.semantic import enqueue_transcript_semantic_job
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 from nexus.services.web_article_artifacts import delete_web_article_artifacts
@@ -1405,7 +1409,9 @@ def _run_claimed_source_attempt(
                     phase_db,
                     media_id=terminal_media_id,
                     requested_by_user_id=actor_user_id,
-                    request_reason=str(result.get("transcript_request_reason") or "episode_open"),
+                    request_reason=require_transcript_request_reason(
+                        result.get("transcript_request_reason")
+                    ),
                     request_id=request_id,
                 )
             if media.kind in {
@@ -2013,7 +2019,7 @@ def _prepare_source_requeue_domain_state(
         db,
         media_id=media.id,
         requested_by_user_id=actor_user_id,
-        request_reason=_podcast_request_reason(
+        request_reason=require_transcript_request_reason(
             dict(attempt.source_payload or {}).get("request_reason")
         ),
     )
@@ -2075,21 +2081,6 @@ def _verify_source_requeue_storage(db: Session, *, media_id: UUID, attempt_id: U
             ApiErrorCode.E_STORAGE_MISSING,
             "Source storage object is missing.",
         )
-
-
-def _podcast_request_reason(value: object) -> str:
-    reason = str(value or "").strip()
-    if reason in {
-        "episode_open",
-        "search",
-        "highlight",
-        "quote",
-        "background_warming",
-        "operator_requeue",
-        "rss_feed",
-    }:
-        return reason
-    return "operator_requeue"
 
 
 def _raise_if_source_action_not_reacquirable(
@@ -2277,7 +2268,7 @@ def enqueue_podcast_episode_transcript_source_attempt(
     db: Session,
     media_id: UUID,
     viewer_id: UUID,
-    request_reason: str,
+    request_reason: TranscriptRequestReason,
     request_id: str | None,
 ) -> Literal["created", "idempotent"]:
     """Bind podcast transcript source work inside the caller-owned transaction."""
@@ -2306,7 +2297,7 @@ def enqueue_podcast_episode_transcript_source_attempt(
         provider_target_ref=media.provider_id,
         source_payload={
             "media_kind": media.kind,
-            "request_reason": _podcast_request_reason(request_reason),
+            "request_reason": request_reason,
         },
         request_id=request_id,
         idempotency_key=None,
@@ -2715,6 +2706,10 @@ def _run_podcast_episode_transcript(
 ) -> dict[str, object]:
     from nexus.services.podcasts.transcription import run_podcast_transcription_now
 
+    request_reason = require_transcript_request_reason(
+        dict(attempt.source_payload or {}).get("request_reason")
+    )
+
     def begin_podcast_extraction(db: Session, _attempt: MediaSourceAttempt) -> None:
         media = db.get(Media, media_id)
         if media is None:
@@ -2753,9 +2748,7 @@ def _run_podcast_episode_transcript(
         raise AssertionError("unexpected podcast transcription result variant")
     result["metadata_enrichment"] = True
     result["transcript_semantic_intent"] = True
-    result["transcript_request_reason"] = _podcast_request_reason(
-        dict(attempt.source_payload or {}).get("request_reason")
-    )
+    result["transcript_request_reason"] = request_reason
     return result
 
 

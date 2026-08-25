@@ -16,6 +16,7 @@ from nexus.services.semantic_chunks import (
     current_transcript_embedding_model,
     current_transcript_embedding_provider,
 )
+from nexus.services.transcripts.request_reason import TranscriptRequestReason
 from nexus.services.transcripts.state import set_media_transcript_state
 
 
@@ -31,7 +32,7 @@ def enqueue_transcript_semantic_job(
     *,
     media_id: UUID,
     requested_by_user_id: UUID | None,
-    request_reason: str,
+    request_reason: TranscriptRequestReason,
     request_id: str | None,
 ) -> None:
     """Enqueue one semantic-index job with the canonical transcript payload."""
@@ -54,7 +55,7 @@ def request_transcript_semantic_repair(
     *,
     media_id: UUID,
     requested_by_user_id: UUID | None,
-    request_reason: str,
+    request_reason: TranscriptRequestReason,
     request_id: str | None,
     now: datetime,
 ) -> TranscriptSemanticRepairAdmission:

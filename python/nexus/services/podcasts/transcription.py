@@ -46,9 +46,12 @@ from nexus.services.source_publication import (
 )
 from nexus.services.transcript_segments import normalize_transcript_segments
 from nexus.services.transcripts.current import (
-    TranscriptRequestReason,
     publish_source_transcript,
     write_current_transcript,
+)
+from nexus.services.transcripts.request_reason import (
+    TranscriptRequestReason,
+    require_transcript_request_reason,
 )
 from nexus.services.transcripts.semantic import request_transcript_semantic_repair
 from nexus.services.transcripts.state import (
@@ -504,7 +507,7 @@ def _request_youtube_video_transcript(
     viewer_id: UUID,
     media_id: UUID,
     media: _TranscriptRequestMedia,
-    request_reason: str,
+    request_reason: TranscriptResponseReason,
     dry_run: bool,
     now: datetime,
 ) -> TranscriptRequestResponse:
@@ -519,7 +522,7 @@ def _request_youtube_video_transcript(
             processing_status=cast(MediaProcessingStatus, media.processing_status),
             transcript_state=media.transcript_state or "not_requested",
             transcript_coverage=media.transcript_coverage or "none",
-            request_reason=cast(TranscriptResponseReason, request_reason),
+            request_reason=request_reason,
             required_minutes=0,
             remaining_minutes=None,
             fits_budget=True,
@@ -543,7 +546,7 @@ def _request_youtube_video_transcript(
         write_current_transcript(
             db,
             media_id=media_id,
-            request_reason=cast(TranscriptRequestReason, request_reason),
+            request_reason=request_reason,
             transcript_coverage="full",
             transcript_segments=caption_segments,
             transcript_origin="Imported",
@@ -555,7 +558,7 @@ def _request_youtube_video_transcript(
         processing_status="ready_for_reading",
         transcript_state="ready",
         transcript_coverage="full",
-        request_reason=cast(TranscriptResponseReason, request_reason),
+        request_reason=request_reason,
         required_minutes=0,
         remaining_minutes=None,
         fits_budget=True,
@@ -569,7 +572,7 @@ def _request_rss_podcast_transcript(
     viewer_id: UUID,
     media_id: UUID,
     media: _TranscriptRequestMedia,
-    request_reason: str,
+    request_reason: TranscriptResponseReason,
     dry_run: bool,
     request_id: str | None,
     now: datetime,
@@ -580,7 +583,7 @@ def _request_rss_podcast_transcript(
             processing_status=cast(MediaProcessingStatus, media.processing_status),
             transcript_state=media.transcript_state or "not_requested",
             transcript_coverage=media.transcript_coverage or "none",
-            request_reason=cast(TranscriptResponseReason, request_reason),
+            request_reason=request_reason,
             required_minutes=0,
             remaining_minutes=None,
             fits_budget=True,
@@ -645,7 +648,7 @@ def _request_rss_podcast_transcript(
         processing_status="extracting",
         transcript_state="queued",
         transcript_coverage="none",
-        request_reason=cast(TranscriptResponseReason, request_reason),
+        request_reason=request_reason,
         required_minutes=0,
         remaining_minutes=None,
         fits_budget=True,
@@ -778,7 +781,7 @@ def admit_generated_podcast_transcription_for_source_attempt(
     *,
     media_id: UUID,
     requested_by_user_id: UUID,
-    request_reason: str,
+    request_reason: TranscriptRequestReason,
 ) -> PodcastTranscriptionPreparation:
     """Reserve generated work for an existing durable source attempt.
 
@@ -897,6 +900,7 @@ def run_podcast_transcription_now(
     rss_transcript_url = str(sidecar[0] or "").strip() or None
     reserved_minutes = int(sidecar[3] or 0)
     effective_requester = UUID(str(sidecar[4])) if sidecar[4] is not None else requested_by_user_id
+    admitted_request_reason = require_transcript_request_reason(sidecar[5])
     if rss_transcript_url is not None and reserved_minutes == 0:
         rss_result = fetch_rss_transcript(
             [{"url": rss_transcript_url, "type": None, "language": sidecar[2]}],
@@ -911,10 +915,7 @@ def run_podcast_transcription_now(
                 publish_source_transcript(
                     db,
                     media_id=media_id,
-                    request_reason=cast(
-                        TranscriptRequestReason,
-                        str(sidecar[5] or "episode_open"),
-                    ),
+                    request_reason=admitted_request_reason,
                     transcript_coverage="full",
                     transcript_segments=rss_segments,
                     transcript_origin="Publisher",
@@ -962,7 +963,7 @@ def run_podcast_transcription_now(
                 db,
                 media_id=media_id,
                 requested_by_user_id=effective_requester,
-                request_reason=str(sidecar[5] or "episode_open"),
+                request_reason=admitted_request_reason,
             )
 
         admission = run_source_publication_phase(
@@ -975,7 +976,9 @@ def run_podcast_transcription_now(
         if isinstance(admission, PodcastTranscriptionRejectedQuota):
             raise admission.error
 
-    def publish_running_state(db: Session, _attempt: object) -> tuple[str, str | None]:
+    def publish_running_state(
+        db: Session, _attempt: object
+    ) -> tuple[TranscriptRequestReason, str | None]:
         media_row = db.execute(
             text(
                 """
@@ -1008,19 +1011,19 @@ def run_podcast_transcription_now(
         ).fetchone()
         if ledger is None:
             raise AssertionError("podcast source attempt is missing its quota ledger")
-        request_reason = str(ledger[0] or "episode_open")
+        running_request_reason = require_transcript_request_reason(ledger[0])
         set_media_transcript_state(
             db,
             media_id=media_id,
             transcript_state="running",
             transcript_coverage="none",
             semantic_status="none",
-            last_request_reason=request_reason,
+            last_request_reason=running_request_reason,
             last_error_code=None,
             now=datetime.now(UTC),
         )
         _bump_all_episode_row_collections(db)
-        return request_reason, str(media_row[1] or "").strip() or None
+        return running_request_reason, str(media_row[1] or "").strip() or None
 
     request_reason, audio_url = run_source_publication_phase(
         session_factory=session_factory,
@@ -1043,7 +1046,7 @@ def run_podcast_transcription_now(
             publish_source_transcript(
                 db,
                 media_id=media_id,
-                request_reason=cast(TranscriptRequestReason, request_reason),
+                request_reason=request_reason,
                 transcript_coverage="full",
                 transcript_segments=transcript_segments,
                 transcript_origin="Generated",
@@ -1106,7 +1109,7 @@ def _reset_podcast_transcription_job_for_source_attempt(
     *,
     media_id: UUID,
     requested_by_user_id: UUID,
-    request_reason: str,
+    request_reason: TranscriptRequestReason,
     reserved_minutes: int,
     reservation_usage_date: date | None,
     now: datetime,
@@ -1192,7 +1195,7 @@ def _record_podcast_transcript_request_audit(
     *,
     media_id: UUID,
     requested_by_user_id: UUID,
-    request_reason: str,
+    request_reason: TranscriptRequestReason,
     dry_run: bool,
     outcome: str,
     required_minutes: int | None,
@@ -1246,7 +1249,7 @@ def _transcript_quota_rejection(
     *,
     media_id: UUID,
     requested_by_user_id: UUID,
-    request_reason: str,
+    request_reason: TranscriptRequestReason,
     budget: TranscriptionBudget,
     now: datetime,
 ) -> ApiError:

@@ -449,12 +449,13 @@ def _run_podcast_backfill_subscription(
 def _run_podcast_reindex_semantic(
     *, payload: Mapping[str, Any], context: JobExecutionContext
 ) -> Mapping[str, Any] | None:
+    from nexus.services.transcripts.request_reason import require_transcript_request_reason
     from nexus.tasks.podcast_reindex_semantic import podcast_reindex_semantic_job
 
     return podcast_reindex_semantic_job(
         media_id=str(payload["media_id"]),
         requested_by_user_id=_optional_str(payload.get("requested_by_user_id")),
-        request_reason=str(payload.get("request_reason", "operator_requeue")),
+        request_reason=require_transcript_request_reason(payload.get("request_reason")),
         request_id=_optional_str(payload.get("request_id")),
         context=context,
     )
