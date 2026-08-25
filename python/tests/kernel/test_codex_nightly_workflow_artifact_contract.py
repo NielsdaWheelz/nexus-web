@@ -13,7 +13,7 @@ import pytest
 import yaml
 
 _RUN_ID = "1234567890"
-_EVIDENCE_NAME = "hosted-codex-personal-metadata.json"
+_EVIDENCE_NAME = "hosted-codex-personal-generation.json"
 _ARTIFACT_NAME = f"nexus-codex-nightly-{_RUN_ID}.json"
 _VALID_EVIDENCE_RUN_ID = "0123456789abcdef"
 _SECOND_EVIDENCE_RUN_ID = "fedcba9876543210"
@@ -23,28 +23,40 @@ def _valid_evidence(run_id: str) -> bytes:
     return (
         json.dumps(
             {
-                "schema_version": "nexus-hosted-codex-canary.v1",
+                "schema_version": "nexus-hosted-codex-canary.v2",
                 "run_id": run_id,
-                "subscription_turns": 1,
+                "subscription_turns": 4,
                 "results": [
-                    {
-                        "backend": "codex",
-                        "transport": "sdk",
-                        "auth_profile": "codex-personal",
-                        "model": "gpt-5.6-luna",
-                        "reasoning": "low",
-                        "structured_output_valid": True,
-                        "session_ref_schema_version": "agent-session-ref.v1",
-                        "usage": {
-                            "input_tokens": 1,
-                            "output_tokens": 2,
-                            "total_tokens": 3,
-                        },
-                        "sdk_version": "0.144.4",
+                    *[
+                        {
+                            "backend": "codex",
+                            "transport": "sdk",
+                            "auth_profile": "codex-personal",
+                            "terminal_status": "succeeded",
+                            "plan_id": plan_id,
+                            "plan_revision": "2026-08-20.1",
+                            "model": model,
+                            "reasoning": reasoning,
+                            "structured_output_valid": True,
+                            "session_ref_schema_version": "agent-session-ref.v1",
+                            "usage": {
+                                "input_tokens": 1,
+                                "output_tokens": 2,
+                                "total_tokens": 3,
+                            },
+                            "sdk_version": "0.144.4",
                         "runtime_version": "1.0.0",
-                        "tool_events": 0,
+                        "tool_events": tool_events,
+                        "elapsed_ms": 1,
                         "permission_requests": 0,
-                    }
+                        }
+                        for plan_id, model, reasoning, tool_events in (
+                            ("routine", "gpt-5.6-luna", "low", 0),
+                            ("standard", "gpt-5.6-terra", "medium", 0),
+                            ("thorough", "gpt-5.6-terra", "high", 0),
+                            ("deep", "gpt-5.6-sol", "high", 1),
+                        )
+                    ]
                 ],
             },
             separators=(",", ":"),
@@ -204,7 +216,7 @@ def _workflow_step(name: str) -> dict[str, object]:
 def _workflow_job() -> dict[str, object]:
     workflow_path = Path(__file__).parents[3] / ".github/workflows/codex-personal-nightly.yml"
     workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
-    return cast(dict[str, object], workflow["jobs"]["codex-personal-metadata"])
+    return cast(dict[str, object], workflow["jobs"]["codex-personal-generation"])
 
 
 def _assert_runner_security_contract() -> None:

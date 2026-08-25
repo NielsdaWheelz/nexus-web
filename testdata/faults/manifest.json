@@ -156,15 +156,6 @@
       "expected_failure": "0210 installed the wrong note-body index contract"
     },
     {
-      "id": "costly-effects-stream-interruption-misclassification",
-      "patch": "testdata/faults/costly-effects-stream-interruption-misclassification.patch",
-      "sha256": "155cdd50150b12db727fbbfeae18c409a2352f3665b020de29115568d92578ea",
-      "proofs": [
-        "pytest:python/tests/service/test_costly_effects.py::test_generation_dispatches_once_and_settles_success_or_interruption_exactly_once"
-      ],
-      "expected_failure": "consumer cancellation was not durably terminalized"
-    },
-    {
       "id": "llm-worker-ambient-proxy-bypass",
       "patch": "testdata/faults/llm-worker-ambient-proxy-bypass.patch",
       "sha256": "88e3b76835deffbce5f9d2f506a783e9b9a7df3e20034642a2d385756ffa4f08",
@@ -273,65 +264,11 @@
       "expected_failure": "the Uncertain checkpoint was not durably committed before dispatch"
     },
     {
-      "id": "durable-codex-metadata-uncertain-checkpoint-bypass",
-      "patch": "testdata/faults/durable-codex-metadata-uncertain-checkpoint-bypass.patch",
-      "sha256": "b035f0e4e2f4bcfff9505f67b453300b6a8c12e45091496bb0affdb4af57b883",
-      "proofs": [
-        "pytest:python/tests/service/test_codex_metadata_enrichment.py::test_real_worker_publishes_authors_pins_and_exactly_replays_after_publication"
-      ],
-      "expected_failure": "AssertionError at background child boundary"
-    },
-    {
-      "id": "durable-codex-metadata-postaccept-loss-misclassification",
-      "patch": "testdata/faults/durable-codex-metadata-postaccept-loss-misclassification.patch",
-      "sha256": "5445d2891a6654748b3ae14b88df3d692ee00bd853021586bbc28d40cf6e526f",
-      "proofs": [
-        "pytest:python/tests/service/test_codex_metadata_transport_durability.py::test_postaccept_disconnect_stays_incomplete_and_never_redispatches"
-      ],
-      "expected_failure": "last row: ('succeeded', 1"
-    },
-    {
-      "id": "durable-codex-metadata-quality-bound-bypass",
-      "patch": "testdata/faults/durable-codex-metadata-quality-bound-bypass.patch",
-      "sha256": "eefdf8627b977b378a2d43bdb4110cea8545ed44fd8b3d81b921eb9508207315",
-      "proofs": [
-        "pytest:python/tests/service/test_metadata_content_contract.py::test_metadata_contract_exposes_quality_bounds_and_all_media_kind_targets"
-      ],
-      "expected_failure": "metadata output schema lost reviewed constraints for title"
-    },
-    {
-      "id": "durable-codex-metadata-prompt-budget-bypass",
-      "patch": "testdata/faults/durable-codex-metadata-prompt-budget-bypass.patch",
-      "sha256": "ac548dea6b0a3652861cf0eb25fe95a8ed42d9363aa7660e5eee3db197dcec06",
-      "proofs": [
-        "pytest:python/tests/service/test_metadata_prompt_framing.py::test_metadata_prompt_preserves_envelope_and_delimiter_at_utf8_input_ceiling"
-      ],
-      "expected_failure": "metadata prompt exceeded wire input bound"
-    },
-    {
-      "id": "durable-codex-metadata-migration-retry-bypass",
-      "patch": "testdata/faults/durable-codex-metadata-migration-retry-bypass.patch",
-      "sha256": "5f9d1a6e9378327f2136bba7327f0c83f04e9219f53153ce5b24b4a7d332fd0c",
-      "proofs": [
-        "pytest:python/tests/migrations/test_codex_personal_metadata.py::test_0216_hard_cuts_metadata_calls_and_owns_exact_agent_turn_lifecycle"
-      ],
-      "expected_failure": "0216 did not canonicalize retained metadata capacity jobs"
-    },
-    {
-      "id": "durable-codex-metadata-timeout-collapse",
-      "patch": "testdata/faults/durable-codex-metadata-timeout-collapse.patch",
-      "sha256": "d503d1cb02f6e6b59786d74e0fe1cca8f15f7fe85cad4889b28d70e827e03e38",
-      "proofs": [
-        "pytest:python/tests/service/test_codex_metadata_failure_mapping.py::test_native_timeout_persists_as_a_distinct_metadata_failure"
-      ],
-      "expected_failure": "native turn_timeout must persist as E_METADATA_AGENT_TIMEOUT"
-    },
-    {
       "id": "durable-codex-host-capacity-admission-bypass",
       "patch": "testdata/faults/durable-codex-host-capacity-admission-bypass.patch",
       "sha256": "8baf068d649aa642c638e599ced2d4fb6aa5eaae6a75c0cf08aac8a7b03a9735",
       "proofs": [
-        "pytest:python/tests/service/test_codex_agent_host.py::test_host_refuses_non_admissible_capacity_before_runtime_construction"
+        "pytest:python/tests/service/test_codex_generation_host.py::test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot"
       ],
       "expected_failure": "non-admissible capacity must be the exact 503 rejection before runtime construction"
     },
@@ -349,7 +286,7 @@
       "patch": "testdata/faults/durable-codex-diagnostic-retention-bypass.patch",
       "sha256": "3e2455b021d1bea0944c080269616f0d88fcb7c7c4d36f51855dbcf14e05bf91",
       "proofs": [
-        "pytest:python/tests/service/test_codex_agent_content_privacy.py::test_provider_diagnostic_content_neither_crosses_the_host_nor_reaches_persistence"
+        "pytest:python/tests/service/test_codex_generation_host.py::test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot"
       ],
       "expected_failure": "provider diagnostic content crossed a retention boundary"
     },
@@ -358,27 +295,9 @@
       "patch": "testdata/faults/durable-codex-canary-output-validation-bypass.patch",
       "sha256": "228604b6329838793286cf43d5da2838961a0ca34695f45e017c7a62f6b568b5",
       "proofs": [
-        "pytest:python/tests/service/test_codex_capacity_canary_contract.py::test_capacity_canary_rejects_succeeded_terminal_without_metadata_object"
+        "pytest:python/tests/service/test_codex_capacity_canary_contract.py::test_capacity_canary_rejects_succeeded_terminal_without_bounded_text"
       ],
       "expected_failure": "invalid structured output authorized capacity qualification"
-    },
-    {
-      "id": "durable-codex-operation-revision-shadow",
-      "patch": "testdata/faults/durable-codex-operation-revision-shadow.patch",
-      "sha256": "344163375b7a27598e4703523524a6d085143a90c13d82acb5c5aa1762082a18",
-      "proofs": [
-        "pytest:python/tests/kernel/test_native_agent_operation_facts.py"
-      ],
-      "expected_failure": "metadata operation revision has a duplicate owner"
-    },
-    {
-      "id": "web-search-provider-identity-bypass",
-      "patch": "testdata/faults/web-search-provider-identity-bypass.patch",
-      "sha256": "8f31734ec4774b7051f09fe26c0ed93c7e1c92d538b6a55cd62e1cf2221e65e0",
-      "proofs": [
-        "pytest:python/tests/service/test_web_search_identity.py::test_web_search_provider_ref_remains_telemetry_behind_one_snapshot_identity"
-      ],
-      "expected_failure": "provider result ref replaced the Nexus snapshot identity"
     },
     {
       "id": "conversation-chat-job-revocation-bypass",
@@ -415,24 +334,6 @@
         "pytest:python/tests/evals/test_tool_safety_eval.py::test_injected_requests_cannot_authorize_a_foreign_mutating_tool_call"
       ],
       "expected_failure": "production prompt lost a reviewed tool-safety instruction"
-    },
-    {
-      "id": "llm-tool-prepared-documentation-freeze-bypass",
-      "patch": "testdata/faults/llm-tool-prepared-documentation-freeze-bypass.patch",
-      "sha256": "025853bae37ae9487a6e02b2a2a0e6cdc4070302fd88b212451233ba6f6f6aae",
-      "proofs": [
-        "pytest:python/tests/kernel/test_llm_product_intent.py::test_product_intent_freezes_tool_documentation_at_first_prepare"
-      ],
-      "expected_failure": "prepared tool documentation was not frozen in durable intent"
-    },
-    {
-      "id": "nexus-tool-profile-scope-bypass",
-      "patch": "testdata/faults/nexus-tool-profile-scope-bypass.patch",
-      "sha256": "c90e15734f9dad587bb98d4f700e6098ec0f1fa6529c5862f1e66030c6b583d0",
-      "proofs": [
-        "pytest:python/tests/kernel/test_llm_tool_profiles.py::test_bound_families_compile_exact_closed_operation_profiles_without_fallback"
-      ],
-      "expected_failure": "Left contains one more item: 'nexus.search'"
     },
     {
       "id": "nexus-tool-declaration-effect-bypass",
@@ -498,11 +399,20 @@
       "expected_failure": "evidence exceeds 16 KiB"
     },
     {
+      "id": "codex-egress-allowlist-bypass",
+      "patch": "testdata/faults/codex-egress-allowlist-bypass.patch",
+      "sha256": "c4ad66dc12ab1eb67bb245082423528c839f2356ee47a44023ce4d5b780ab60b",
+      "proofs": [
+        "pytest:python/tests/service/test_codex_egress_policy.py::test_codex_egress_allows_only_subscription_auth_and_mcp_sni"
+      ],
+      "expected_failure": "unapproved DNS names were resolved to the egress proxy"
+    },
+    {
       "id": "hosted-semantic-evidence-bypass",
       "patch": "testdata/faults/hosted-semantic-evidence-bypass.patch",
       "sha256": "1f2c986d88d1805b4a4439d98723f8521dcbd872f45a42d475fde03c2ac5e8b2",
       "proofs": [
-        "pytest:python/tests/kernel/nexus_test_control/test_hosted_canary_semantics.py::test_hosted_canary_parser_rejects_green_cost_evidence_without_safe_semantics"
+        "pytest:python/tests/kernel/nexus_test_control/test_hosted_canary_semantics.py::test_hosted_canary_accepts_exact_four_plan_v2_receipt"
       ],
       "expected_failure": "paid canary cost evidence cannot turn an unsafe semantic result green"
     },
@@ -532,24 +442,6 @@
         "pytest:python/tests/llm_tools_contract/test_pinned_llm_tools.py::test_exact_pins_round_trip_one_canonical_native_tool"
       ],
       "expected_failure": "Nexus Browse still imports web_search_tool"
-    },
-    {
-      "id": "deepseek-flash-reasoning-alias-bypass",
-      "patch": "testdata/faults/deepseek-flash-reasoning-alias-bypass.patch",
-      "sha256": "9ace18f4babb140eea22466858aa844ffde485d0af9fa12a7a70dd252b131eb3",
-      "proofs": [
-        "pytest:python/tests/kernel/test_llm_product_profile_portfolio.py::test_product_profiles_have_the_fixed_nine_row_chat_portfolio"
-      ],
-      "expected_failure": "DeepSeek Flash exposed a placebo reasoning alias"
-    },
-    {
-      "id": "deepseek-flash-profile-registry-drift",
-      "patch": "testdata/faults/deepseek-flash-reasoning-alias-bypass.patch",
-      "sha256": "9ace18f4babb140eea22466858aa844ffde485d0af9fa12a7a70dd252b131eb3",
-      "proofs": [
-        "pytest:python/tests/service/test_llm_profiles.py::test_llm_profiles_returns_the_exact_ordered_nine_row_contract"
-      ],
-      "expected_failure": "do not exactly equal registry options"
     },
     {
       "id": "dossier-citation-disposition-bypass",

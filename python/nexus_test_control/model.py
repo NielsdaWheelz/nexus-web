@@ -56,10 +56,8 @@ class Capability(StrEnum):
     EXTENSION = "extension"
     ANDROID_HOST = "android-host"
     AUDIT = "audit"
-    HOSTED = "hosted"
     CODEX_HOSTED = "codex-hosted"
     ANDROID_DEVICE = "android-device"
-    PROVIDER_CERTIFICATION = "provider-certification"
     ANDROID_RELEASE = "android-release"
     RELEASE_ARTIFACT = "release-artifact"
     DOCTOR = "doctor"
@@ -93,7 +91,7 @@ class PriorityRiskId(StrEnum):
 
 
 PRIORITY_RISK_FLOOR = frozenset(PriorityRiskId)
-PRIORITY_RISK_OWNERSHIP_SHA256 = "8ca91e3a8460f32afc0e0658562218509a32a09ac3f2c04d282f5dba77dc05b3"
+PRIORITY_RISK_OWNERSHIP_SHA256 = "dcda0609aba842c4a35edf36f9500b9ec35d6029c4cec66e44417bdafbecfa16"
 
 
 class ResourceKind(StrEnum):
@@ -104,7 +102,6 @@ class ResourceKind(StrEnum):
     BUCKET = "bucket"
     SUPABASE_USER = "supabase-user"
     PROCESS = "process"
-    PROVIDER_FIXTURE = "provider-fixture"
     EXTENSION_PROFILE = "extension-profile"
     BUILD_ARTIFACT = "build-artifact"
     LOCK = "lock"
@@ -407,7 +404,6 @@ WORKFLOW_REGISTRY: Mapping[Workflow, WorkflowDefinition] = MappingProxyType(
                 (
                     *_FULL_NON_BROWSER,
                     Capability.AUDIT,
-                    Capability.HOSTED,
                     Capability.ANDROID_DEVICE,
                     Capability.JOURNEYS_ALL,
                     Capability.EXTENSION,
@@ -425,7 +421,6 @@ WORKFLOW_REGISTRY: Mapping[Workflow, WorkflowDefinition] = MappingProxyType(
                 (
                     *_FULL_NON_BROWSER,
                     Capability.ANDROID_DEVICE,
-                    Capability.PROVIDER_CERTIFICATION,
                     Capability.ANDROID_RELEASE,
                     Capability.RELEASE_ARTIFACT,
                     Capability.JOURNEYS_ALL,
@@ -458,10 +453,8 @@ DEFERRED_CAPABILITY_OWNER: Mapping[Capability, Workflow] = MappingProxyType(
         Capability.EXTENSION: Workflow.FULL,
         Capability.ANDROID_HOST: Workflow.FULL,
         Capability.AUDIT: Workflow.NIGHTLY,
-        Capability.HOSTED: Workflow.NIGHTLY,
         Capability.CODEX_HOSTED: Workflow.CODEX_NIGHTLY,
         Capability.ANDROID_DEVICE: Workflow.NIGHTLY,
-        Capability.PROVIDER_CERTIFICATION: Workflow.RELEASE,
         Capability.ANDROID_RELEASE: Workflow.RELEASE,
         Capability.RELEASE_ARTIFACT: Workflow.RELEASE,
     }

@@ -36,7 +36,6 @@ from nexus_test_control.runner import (
 )
 from nexus_test_control.runtime import RuntimeContractError
 from nexus_test_control.services import (
-    OpenAIProviderFixture,
     StartedProcess,
     SupabaseCredentials,
     authorized_instrumentation_device,
@@ -112,7 +111,7 @@ def test_codex_hosted_canary_plan_requires_dedicated_profile_state_without_an_ap
 ) -> None:
     """Risk: the subscription canary falls through to the direct API credential lane."""
 
-    proof = "python/tests/hosted/nightly/test_codex_personal_metadata.py"
+    proof = "python/tests/hosted/nightly/test_codex_personal_generation.py"
     state_root = tmp_path.parent / "codex-nightly-state"
     working_directory = tmp_path.parent / "codex-nightly-cwd"
     state_root.mkdir(mode=0o700)
@@ -120,7 +119,7 @@ def test_codex_hosted_canary_plan_requires_dedicated_profile_state_without_an_ap
     plan = runner.build_codex_hosted_canary_plan(
         repo_root=tmp_path,
         run_id="0123456789abcdef",
-        target=f"{proof}::test_codex",
+        target=f"{proof}::test_codex_personal_generation_canary_records_exact_four_plan_pairs",
         environment={
             "NEXUS_CODEX_HOSTED_CANARY": "1",
             "NEXUS_CODEX_HOSTED_PROFILE": "codex-personal",
@@ -130,10 +129,11 @@ def test_codex_hosted_canary_plan_requires_dedicated_profile_state_without_an_ap
     )
 
     assert plan.evidence_relative.as_posix() == (
-        "test-results/runs/0123456789abcdef/hosted-codex-personal-metadata.json"
+        "test-results/runs/0123456789abcdef/hosted-codex-personal-generation.json"
     )
     assert (
-        plan.command[0][-1] == "./tests/hosted/nightly/test_codex_personal_metadata.py::test_codex"
+        plan.command[0][-1]
+        == "./tests/hosted/nightly/test_codex_personal_generation.py::test_codex_personal_generation_canary_records_exact_four_plan_pairs"
     )
     assert plan.environment["NEXUS_CODEX_HOSTED_PROFILE"] == "codex-personal"
     assert plan.environment["NEXUS_CODEX_HOSTED_STATE_ROOT"] == str(state_root)
@@ -145,7 +145,7 @@ def test_codex_hosted_canary_plan_requires_dedicated_profile_state_without_an_ap
         runner.build_codex_hosted_canary_plan(
             repo_root=tmp_path,
             run_id="0123456789abcdef",
-            target=f"{proof}::test_codex",
+            target=f"{proof}::test_codex_personal_generation_canary_records_exact_four_plan_pairs",
             environment={
                 "NEXUS_CODEX_HOSTED_CANARY": "1",
                 "NEXUS_CODEX_HOSTED_PROFILE": "codex-personal",
@@ -161,7 +161,7 @@ def test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape(
 ) -> None:
     """Risk: uploaded evidence retains unbounded, ambiguous, or noncanonical data."""
 
-    evidence_path = tmp_path / "hosted-codex-personal-metadata.json"
+    evidence_path = tmp_path / "hosted-codex-personal-generation.json"
     run_id = "0123456789abcdef"
     valid = _codex_hosted_canary_evidence(run_id)
     canonical = json.dumps(valid, separators=(",", ":"))
@@ -302,28 +302,40 @@ def test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape(
 
 def _codex_hosted_canary_evidence(run_id: str) -> dict[str, object]:
     return {
-        "schema_version": "nexus-hosted-codex-canary.v1",
+        "schema_version": "nexus-hosted-codex-canary.v2",
         "run_id": run_id,
-        "subscription_turns": 1,
+        "subscription_turns": 4,
         "results": [
-            {
-                "backend": "codex",
-                "transport": "sdk",
-                "auth_profile": "codex-personal",
-                "model": "gpt-5.6-luna",
-                "reasoning": "low",
-                "structured_output_valid": True,
-                "session_ref_schema_version": "agent-session-ref.v1",
-                "usage": {
-                    "input_tokens": 1,
-                    "output_tokens": 2,
-                    "total_tokens": 3,
-                },
-                "sdk_version": "1.2.3",
-                "runtime_version": "4.5.6",
-                "tool_events": 0,
-                "permission_requests": 0,
-            }
+            *[
+                {
+                    "backend": "codex",
+                    "transport": "sdk",
+                    "auth_profile": "codex-personal",
+                    "terminal_status": "succeeded",
+                    "plan_id": plan_id,
+                    "plan_revision": "2026-08-20.1",
+                    "model": model,
+                    "reasoning": reasoning,
+                    "structured_output_valid": True,
+                    "session_ref_schema_version": "agent-session-ref.v1",
+                    "usage": {
+                        "input_tokens": 1,
+                        "output_tokens": 2,
+                        "total_tokens": 3,
+                    },
+                    "sdk_version": "1.2.3",
+                    "runtime_version": "4.5.6",
+                    "tool_events": tool_events,
+                    "elapsed_ms": 1,
+                    "permission_requests": 0,
+                }
+                for plan_id, model, reasoning, tool_events in (
+                    ("routine", "gpt-5.6-luna", "low", 0),
+                    ("standard", "gpt-5.6-terra", "medium", 0),
+                    ("thorough", "gpt-5.6-terra", "high", 0),
+                    ("deep", "gpt-5.6-sol", "high", 1),
+                )
+            ]
         ],
     }
 
@@ -332,7 +344,7 @@ def _assert_codex_hosted_evidence_stage_is_atomic_and_run_bound(
     tmp_path: Path,
 ) -> None:
     run_id = "0123456789abcdef"
-    source = tmp_path / "test-results/runs" / run_id / "hosted-codex-personal-metadata.json"
+    source = tmp_path / "test-results/runs" / run_id / "hosted-codex-personal-generation.json"
     encoded = (
         json.dumps(_codex_hosted_canary_evidence(run_id), separators=(",", ":")) + "\n"
     ).encode()
@@ -385,11 +397,11 @@ def _assert_codex_hosted_evidence_stage_is_atomic_and_run_bound(
 @pytest.mark.parametrize(
     ("exact", "expected_target"),
     [
-        (False, "./tests/hosted/nightly/test_codex_personal_metadata.py"),
+        (False, "./tests/hosted/nightly/test_codex_personal_generation.py"),
         (
             True,
-            "./tests/hosted/nightly/test_codex_personal_metadata.py::"
-            "test_codex_personal_metadata_canary_uses_one_structured_subscription_turn",
+            "./tests/hosted/nightly/test_codex_personal_generation.py::"
+            "test_codex_personal_generation_canary_records_exact_four_plan_pairs",
         ),
     ],
     ids=("complete-workflow", "exact-proof"),
@@ -449,8 +461,8 @@ def _run_failing_codex_hosted_workflow(
     """Run the protected workflow against one real failing fake child executable."""
 
     repo_root = tmp_path / "repo"
-    proof_path = "python/tests/hosted/nightly/test_codex_personal_metadata.py"
-    proof_node = "test_codex_personal_metadata_canary_uses_one_structured_subscription_turn"
+    proof_path = "python/tests/hosted/nightly/test_codex_personal_generation.py"
+    proof_node = "test_codex_personal_generation_canary_records_exact_four_plan_pairs"
     _write(repo_root / proof_path, f"def {proof_node}():\n    pass\n")
     (repo_root / "python/.venv").mkdir()
 
@@ -507,8 +519,8 @@ def _run_failing_codex_hosted_workflow(
         ("pytest", "python/tests/audit/property/test_state.py::test_state", Workflow.NIGHTLY),
         (
             "pytest",
-            "python/tests/hosted/nightly/test_openai_canary.py::test_canary",
-            Workflow.NIGHTLY,
+            "python/tests/hosted/nightly/test_codex_personal_generation.py::test_codex_personal_generation_canary_records_exact_four_plan_pairs",
+            Workflow.CODEX_NIGHTLY,
         ),
         (
             "playwright",
@@ -3537,10 +3549,6 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
             *,
             overrides: Mapping[str, str] | None = None,
         ) -> StartedProcess:
-            if role in {"api", "worker-interactive", "worker-background"}:
-                assert overrides is not None
-                assert "NEXUS_TEST_STATIC_DNS" in overrides
-                assert "NEXUS_TEST_TLS_CA_CERT" in overrides
             process_roles.append(role)
             return StartedProcess(
                 role=role,
@@ -3550,21 +3558,6 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
                 owner_token="a" * 32,
                 log_path=f"{role}.log",
             )
-
-        def prepare_openai_provider_fixture(
-            self,
-            _repo_root: Path,
-            _environment: Mapping[str, str],
-            _run: OwnedTestRun,
-        ) -> OpenAIProviderFixture:
-            state = tmp_path / ".nexus-test/runs/0123456789abcdef/openai-provider"
-            state.mkdir(parents=True)
-            certificate = state / "ca.pem"
-            key = state / "server-key.pem"
-            audit = state / "requests.jsonl"
-            for path in (certificate, key, audit):
-                path.touch()
-            return OpenAIProviderFixture(state, certificate, key, audit, 19092)
 
         def start_web_process(
             self,
@@ -3654,7 +3647,6 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
     assert build_calls == ["build"]
     assert process_roles == [
         "external",
-        "provider-openai",
         "api",
         "worker-interactive",
         "worker-background",
@@ -4310,108 +4302,6 @@ def test_workflow_stops_launching_capabilities_after_the_first_decisive_result(
 
     assert result.capabilities[0].status is RunStatus.FAIL
     assert all(item.status is RunStatus.NOT_RUN for item in result.capabilities[1:])
-
-
-def test_paid_evidence_parser_accepts_only_typed_bounded_accounting(tmp_path: Path) -> None:
-    path = tmp_path / "paid.json"
-    _write(
-        path,
-        json.dumps(
-            {
-                "provider_calls": 18,
-                "estimated_cost_usd": 0.031,
-                "runtime_revision": "a" * 40,
-                "registry_revision": "2026-08-11.1",
-                "run_id": "0123456789abcdef",
-                "limits": {"provider_calls": 18, "estimated_cost_usd": 0.18},
-                "results": [{"attempts": 1}],
-            }
-        ),
-    )
-
-    assert runner._read_paid_evidence(path) == (
-        18,
-        0.031,
-        (18, 0.18),
-        [{"attempts": 1}],
-        "a" * 40,
-        "2026-08-11.1",
-        "0123456789abcdef",
-    )
-
-    _write(
-        path,
-        json.dumps(
-            {
-                "provider_calls": True,
-                "estimated_cost_usd": 0,
-                "runtime_revision": "a" * 40,
-                "registry_revision": "2026-08-11.1",
-                "run_id": "0123456789abcdef",
-                "limits": {"provider_calls": 18, "estimated_cost_usd": 0.18},
-                "results": [],
-            }
-        ),
-    )
-    assert runner._read_paid_evidence(path) is None
-
-
-def test_provider_certification_requires_both_deepseek_ac4_probe_sets() -> None:
-    profile_ids = (
-        "fast",
-        "balanced",
-        "deep",
-        "claude",
-        "fable",
-        "gemini",
-        "kimi",
-        "deepseek-flash",
-        "deepseek-pro",
-    )
-    deepseek_ids = ("deepseek-flash", "deepseek-pro")
-    generation_index = 0
-
-    def nexus_result(**facts: object) -> dict[str, object]:
-        nonlocal generation_index
-        generation_index += 1
-        return {
-            **facts,
-            "status": "succeeded",
-            "nexus_generation_id": f"generation-{generation_index}",
-            "nexus_ledger_outcome": "succeeded",
-            "nexus_charged_tokens": 3,
-        }
-
-    results: list[dict[str, object]] = [
-        nexus_result(profile_id=profile_id, operation="generate") for profile_id in profile_ids
-    ]
-    for operation in (
-        "stream",
-        "strict_json",
-        "thinking_tool_initial",
-        "thinking_tool_continuation",
-    ):
-        results.extend(
-            nexus_result(
-                profile_id=profile_id,
-                operation=operation,
-                reasoning="high",
-            )
-            for profile_id in deepseek_ids
-        )
-    results.append({"operation": "embed"})
-
-    assert len(results) == 18
-    assert runner._provider_certification_results_are_complete(results)
-
-    results[-2]["reasoning"] = "none"
-    assert not runner._provider_certification_results_are_complete(results)
-    results[-2]["reasoning"] = "high"
-    results[0]["status"] = "incomplete"
-    assert not runner._provider_certification_results_are_complete(results)
-    results[0]["status"] = "succeeded"
-    results[0].pop("nexus_generation_id")
-    assert not runner._provider_certification_results_are_complete(results)
 
 
 def test_android_release_parsers_fail_closed_on_signer_and_manifest_contract() -> None:

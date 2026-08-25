@@ -1,4 +1,4 @@
-name: Codex Personal Metadata Nightly
+name: Codex Personal Generation Nightly
 
 on:
   schedule:
@@ -6,14 +6,14 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: codex-personal-metadata-nightly
+  group: codex-personal-generation-nightly
   cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  codex-personal-metadata:
+  codex-personal-generation:
     # This label is a private VM runner with its own pre-enrolled `codex-personal`
     # state root. Authentication never enters GitHub secrets or workflow output.
     runs-on: [self-hosted, linux, nexus-codex-nightly]
@@ -59,7 +59,7 @@ jobs:
       - name: Verify bundled Codex Linux sandbox
         run: python/.venv/bin/python -m apps.codex_agent.sandbox_health
 
-      - name: Run protected Codex subscription metadata canary
+      - name: Run protected Codex subscription generation canary
         id: canary
         run: ./scripts/test codex-nightly
 
@@ -77,7 +77,7 @@ jobs:
             "{\"schema_version\":\"nexus-hosted-codex-canary-failure.v1\",\"github_run_id\":${GITHUB_RUN_ID},\"status\":\"failed\"}" \
             > "$ARTIFACT"
           mapfile -t evidence_files < <(
-            find test-results/runs -type f -name hosted-codex-personal-metadata.json -print 2>/dev/null \
+            find test-results/runs -type f -name hosted-codex-personal-generation.json -print 2>/dev/null \
               | LC_ALL=C sort
           )
           if [ "$CANARY_OUTCOME" = success ] && [ "${#evidence_files[@]}" = 1 ]; then
