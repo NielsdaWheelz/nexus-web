@@ -75,6 +75,7 @@ from nexus.services.file_ingest_validation import (
 )
 from nexus.services.fragment_blocks import insert_fragment_blocks
 from nexus.services.media_author_observation_seam import (
+    SourceAuthorObservation,
     attach_author_observation,
     take_author_observations,
 )
@@ -1271,6 +1272,41 @@ class _SourceTerminalPublication:
             )
 
 
+@dataclass(frozen=True, slots=True)
+class _SourceAuthorshipPhase:
+    session_factory: sessionmaker[Session]
+    terminal_media_id: UUID
+    observations: tuple[SourceAuthorObservation, ...]
+    fence: SourcePublicationFence
+    publication_media_ids: tuple[UUID, ...]
+
+    def run(self) -> None:
+        def inspect_source(phase_db: Session, _attempt: MediaSourceAttempt) -> bool:
+            media = phase_db.get(Media, self.terminal_media_id)
+            return media is not None and media.processing_status != ProcessingStatus.failed
+
+        if not run_source_publication_phase(
+            session_factory=self.session_factory,
+            label="inspect_source_before_author_publication",
+            fence=self.fence,
+            media_ids=self.publication_media_ids,
+            mutate=inspect_source,
+        ):
+            return
+
+        for observed_media_id, observation, source in self.observations:
+            observe_contributors_under_source_fence(
+                session_factory=self.session_factory,
+                item=ContributorObservation(
+                    target=MediaTarget(observed_media_id or self.terminal_media_id),
+                    observation=observation,
+                    source=source,
+                ),
+                fence=self.fence,
+                publication_media_ids=self.publication_media_ids,
+            )
+
+
 def _run_claimed_source_attempt(
     *,
     db: Session,
@@ -1399,86 +1435,16 @@ def _run_claimed_source_attempt(
     )
 
     try:
-
-        def inspect_source(phase_db: Session, _attempt: MediaSourceAttempt) -> bool:
-            media = phase_db.get(Media, terminal_media_id)
-            return media is not None and media.processing_status != ProcessingStatus.failed
-
-        source_allows_observations = run_source_publication_phase(
+        _SourceAuthorshipPhase(
             session_factory=session_factory,
-            label="inspect_source_before_author_publication",
+            terminal_media_id=terminal_media_id,
+            observations=tuple(observations),
             fence=fence,
-            media_ids=publication_media_ids,
-            mutate=inspect_source,
-        )
+            publication_media_ids=publication_media_ids,
+        ).run()
     except SourcePublicationSuperseded:
         db.rollback()
         return {"status": "superseded"}
-
-    if source_allows_observations:
-        # Apply each author observation through the facade in a fresh session
-        # before crossing ready. A failure here publishes a modeled source
-        # failure; a crash leaves the attempt running for exact job replay.
-        try:
-            for observed_media_id, observation, source in observations:
-                observe_contributors_under_source_fence(
-                    session_factory=session_factory,
-                    item=ContributorObservation(
-                        target=MediaTarget(observed_media_id or terminal_media_id),
-                        observation=observation,
-                        source=source,
-                    ),
-                    fence=fence,
-                    publication_media_ids=publication_media_ids,
-                )
-        except SourcePublicationSuperseded:
-            db.rollback()
-            return {"status": "superseded"}
-        except Exception as exc:
-            db.rollback()
-            author_failure = exc
-
-            def publish_author_failure(
-                phase_db: Session, _attempt: MediaSourceAttempt
-            ) -> tuple[str, str]:
-                from nexus.services.content_indexing import request_media_content_reindex
-
-                _finish_failed_attempt(phase_db, attempt_id, media_id, author_failure)
-                _sync_document_embed_targets(
-                    phase_db,
-                    media_id,
-                    locked_media_ids=publication_media_ids,
-                )
-                for additional_media_id in additional_reindex_media_ids:
-                    request_media_content_reindex(
-                        phase_db,
-                        media_id=additional_media_id,
-                        reason="source_success",
-                        request_id=request_id,
-                    )
-                    _sync_document_embed_targets(
-                        phase_db,
-                        additional_media_id,
-                        locked_media_ids=publication_media_ids,
-                    )
-                return _source_error_fields(author_failure)
-
-            try:
-                error_code, error_message = run_source_publication_phase(
-                    session_factory=session_factory,
-                    label="publish_source_author_failure",
-                    fence=fence,
-                    media_ids=publication_media_ids,
-                    mutate=publish_author_failure,
-                )
-            except SourcePublicationSuperseded:
-                db.rollback()
-                return {"status": "superseded"}
-            return {
-                "status": "failed",
-                "error_code": error_code,
-                "error_message": error_message,
-            }
 
     terminal_publication = _SourceTerminalPublication(
         terminal_media_id=terminal_media_id,
