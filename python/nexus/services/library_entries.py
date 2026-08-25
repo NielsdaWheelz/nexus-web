@@ -110,7 +110,6 @@ from nexus.services.signed_keyset_cursor import (
 # Mirrors index ix_library_entries_library_order (library_id, position, created_at DESC,
 # id DESC). The single definition of the entry total order.
 _ENTRY_ORDER = "position ASC, created_at DESC, id DESC"
-_ENTRY_COLUMNS = "id, library_id, media_id, podcast_id, created_at, position"
 _TARGET_COLUMN: dict[LibraryEntryKind, str] = {"media": "media_id", "podcast": "podcast_id"}
 
 _READING_WORDS_PER_MINUTE = 240
@@ -223,8 +222,6 @@ _FACTUAL_SORTS: dict[str, type[Title | Creator | Published | Added]] = {
     "published": Published,
     "added": Added,
 }
-_DEFAULT_LIMIT = 100
-_MAX_LIMIT = 200
 
 
 def parse_entries_query(
@@ -567,17 +564,6 @@ def media_target(media_id: UUID) -> EntryTarget:
 
 def podcast_target(podcast_id: UUID) -> EntryTarget:
     return EntryTarget("podcast", podcast_id)
-
-
-@dataclass(frozen=True, slots=True)
-class LibraryEntryHydrationFact:
-    """Typed owner input for strict cross-service Library entry hydration."""
-
-    id: UUID
-    library_id: UUID
-    target: EntryTarget
-    created_at: datetime
-    position: int
 
 
 @dataclass(frozen=True)
@@ -952,48 +938,20 @@ def admin_non_default_library_ids_for_media(
 # ---------------------------------------------------------------------------
 
 
-def hydrate_entry_page(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    facts: Sequence[LibraryEntryHydrationFact],
-) -> list[LibraryEntryListItemOut]:
-    """Strictly hydrate already-visible facts supplied across an owner boundary."""
-    rows = [
-        {
-            "id": fact.id,
-            "library_id": fact.library_id,
-            "media_id": fact.target.id if fact.target.kind == "media" else None,
-            "podcast_id": fact.target.id if fact.target.kind == "podcast" else None,
-            "created_at": fact.created_at,
-            "position": fact.position,
-            "added_at": fact.created_at,
-            "is_virtual": False,
-        }
-        for fact in facts
-    ]
-    entries = _hydrate_entry_rows(db, viewer_id=viewer_id, rows=rows)
-    expected_targets = [fact.target for fact in facts]
-    actual_targets = [
-        EntryTarget(entry.kind, entry.media.id if entry.kind == "media" else entry.podcast.id)
-        for entry in entries
-    ]
-    if actual_targets != expected_targets:
-        # justify-defect: the composing repeatable-read query already proved every
-        # typed target visible; hydration must preserve its exact cardinality/order.
-        raise AssertionError(
-            f"Library entry hydration drifted: expected {expected_targets}, got {actual_targets}"
-        )
-    return entries
-
-
 def _hydrate_entry_rows(
     db: Session, *, viewer_id: UUID, rows: Sequence[Any]
 ) -> list[LibraryEntryListItemOut]:
     """Hydrate name-keyed entry rows into the compact Library list union, batching
-    the media and podcast lookups. Entries whose target is not viewer-visible drop out."""
+    the media and podcast lookups. The owning repeatable-read query already proved
+    every target visible, so hydration preserves exact cardinality and order."""
     if not rows:
         return []
+
+    for row in rows:
+        if (row["media_id"] is None) == (row["podcast_id"] is None):
+            # justify-defect: physical rows have an exactly-one-target database
+            # check and the Default virtual relation emits one typed target.
+            raise AssertionError("library entry hydration row must carry exactly one target")
 
     media_ids = [UUID(str(row["media_id"])) for row in rows if row["media_id"] is not None]
     podcast_ids = [UUID(str(row["podcast_id"])) for row in rows if row["podcast_id"] is not None]
@@ -1129,7 +1087,11 @@ def _hydrate_entry_rows(
         if media_id is not None:
             media = media_by_id.get(media_id)
             if media is None:
-                continue
+                # justify-defect: the owning repeatable-read membership query
+                # already admitted this media through the visibility relation.
+                raise AssertionError(
+                    f"visible library media disappeared during hydration: {media_id}"
+                )
             hydrated.append(
                 LibraryMediaListItemOut(
                     kind="media",
@@ -1180,10 +1142,13 @@ def _hydrate_entry_rows(
             continue
 
         if podcast_id is None:
-            continue
+            # justify-defect: the exact-one-target check above excludes this branch.
+            raise AssertionError("library entry hydration lost its typed target")
         podcast_row = podcast_rows_by_id.get(podcast_id)
         if podcast_row is None:
-            continue
+            # justify-defect: physical Podcast entries retain a restrictive FK and
+            # Default virtual rows originate from the same podcasts relation.
+            raise AssertionError(f"library podcast disappeared during hydration: {podcast_id}")
 
         subscription: Presence[LibraryEntryPodcastSubscriptionOut] = absent()
         if podcast_row["sub_id"] is not None:
@@ -2244,8 +2209,8 @@ def _finish_entry_page(
     """Shared tail for every keyset family (spec S4.2/AC6): the caller already
     fetched ``limit + 1`` rows in the family's own order with no write anywhere
     on this path. Slice to `limit`, hydrate, and — only when there is a next
-    page — build its cursor from the last raw row (hydration can drop the
-    columns a cursor needs, e.g. `MediaOut` carries no `created_at`)."""
+    page — build its cursor from the last raw row (the hydrated output omits
+    cursor-only columns such as entry `created_at`)."""
     page_rows = list(rows[:limit])
     has_more = len(rows) > limit
     page_entries = _hydrate_entry_rows(db, viewer_id=viewer_id, rows=page_rows)
