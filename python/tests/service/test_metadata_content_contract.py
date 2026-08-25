@@ -7,13 +7,17 @@ from collections.abc import Mapping
 from sqlalchemy.orm import Session
 
 from nexus.db.models import Media, MediaKind, ProcessingStatus
+from nexus.services import generation_policy
 from nexus.services.contributor_taxonomy import MAX_CONTRIBUTOR_NAME_CODE_POINTS
 from nexus.services.metadata_enrichment import (
     build_enrichment_user_content,
     metadata_enrichment_agent_definition,
     metadata_prompt_budget,
 )
-from nexus.services.native_agent_contract import METADATA_ENRICHMENT_MAX_INPUT_BYTES
+
+_METADATA_INPUT_MAX_BYTES = generation_policy.operation_policy(
+    "metadata_enrichment"
+).input_max_bytes
 
 
 def _string_branch(schema: Mapping[str, object], name: str) -> Mapping[str, object]:
@@ -141,7 +145,7 @@ def test_metadata_prompt_budget_closes_over_the_wire_bound() -> None:
     finds a negative hint or source budget at runtime instead of at review."""
 
     budget = metadata_prompt_budget()
-    assert budget.wire_bound_bytes == METADATA_ENRICHMENT_MAX_INPUT_BYTES
+    assert budget.wire_bound_bytes == _METADATA_INPUT_MAX_BYTES
     assert (
         budget.hint_total_max_bytes + budget.source_reserved_bytes + budget.framing_reserved_bytes
         == budget.wire_bound_bytes
