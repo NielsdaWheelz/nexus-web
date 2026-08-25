@@ -1504,7 +1504,8 @@ both forecast and admission. A dry-run may append its explicit immutable
 `podcast_transcript_request_audits` forecast fact, but it does not create
 `media_transcript_states`, create/reset a transcription job, reserve usage, or
 bump collection revisions. Transcript work state is materialized only after the
-dry-run return boundary.
+dry-run return boundary. Explicit admission and durable source requeue both use
+the same transcript-job reset owner; no caller carries a second job upsert.
 
 The canonical Podcast detail pane observes those two independent owners through
 one viewer-owned subscription-lifecycle snapshot stream. Transactional triggers
