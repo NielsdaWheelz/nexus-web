@@ -40,6 +40,7 @@ from nexus.services.billing_entitlements import get_effective_entitlements
 from nexus.services.collection_revisions import (
     CollectionFamily,
     bump_all_collection_families,
+    bump_all_media_fact_collections,
     bump_collection_families,
     read_collection_revision,
 )
@@ -877,13 +878,8 @@ def mark_podcast_transcription_failure(
     error_code: str,
     error_message: str,
     now: datetime,
-    mark_media_failed: bool = True,
 ) -> None:
-    """Fail-close podcast transcription with full job/quota/transcript-state repair.
-
-    Also used by operational recovery paths (for example the stale-ingest
-    reconciler) that must not leave orphaned running jobs or reserved quota.
-    """
+    """Publish one terminal Podcast media/job/quota/transcript failure."""
     if error_code == ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value:
         transcript_state = "unavailable"
     elif error_code == ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED.value:
@@ -891,29 +887,28 @@ def mark_podcast_transcription_failure(
     else:
         transcript_state = "failed_provider"
 
-    if mark_media_failed:
-        db.execute(
-            text(
-                """
-                UPDATE media
-                SET
-                    processing_status = 'failed',
-                    failure_stage = 'transcribe',
-                    last_error_code = :error_code,
-                    last_error_message = :error_message,
-                    processing_completed_at = NULL,
-                    failed_at = :now,
-                    updated_at = :now
-                WHERE id = :media_id
-                """
-            ),
-            {
-                "media_id": media_id,
-                "error_code": error_code,
-                "error_message": error_message[:1000],
-                "now": now,
-            },
-        )
+    db.execute(
+        text(
+            """
+            UPDATE media
+            SET
+                processing_status = 'failed',
+                failure_stage = 'transcribe',
+                last_error_code = :error_code,
+                last_error_message = :error_message,
+                processing_completed_at = NULL,
+                failed_at = :now,
+                updated_at = :now
+            WHERE id = :media_id
+            """
+        ),
+        {
+            "media_id": media_id,
+            "error_code": error_code,
+            "error_message": error_message[:1000],
+            "now": now,
+        },
+    )
     db.execute(
         text(
             """
@@ -942,7 +937,7 @@ def mark_podcast_transcription_failure(
         last_error_code=error_code,
         now=now,
     )
-    _bump_all_episode_row_collections(db)
+    bump_all_media_fact_collections(db)
 
 
 def run_podcast_transcription_now(
