@@ -129,7 +129,8 @@ def _wait_for_backend_blocked_by(
                     SELECT pid
                     FROM pg_stat_activity
                     WHERE :blocking_pid = ANY(pg_blocking_pids(pid))
-                      AND query LIKE '%UPDATE background_jobs%'
+                      AND query LIKE '%FROM background_jobs%'
+                      AND query LIKE '%FOR UPDATE%'
                     ORDER BY pid
                     LIMIT 1
                     """
@@ -420,6 +421,7 @@ def test_concurrent_heavy_heartbeat_and_resource_settlement_share_one_lock_order
     engine: Engine,
 ) -> None:
     kind = "heavy_transition_probe"
+    session_factory = create_session_factory(engine)
     for index in range(5):
         worker_id = f"heavy-transition-worker-{index}"
         with Session(engine) as db:
@@ -449,18 +451,18 @@ def test_concurrent_heavy_heartbeat_and_resource_settlement_share_one_lock_order
             failures=failures,
         ) -> None:
             try:
-                with Session(engine) as db:
-                    db.execute(text("SET LOCAL statement_timeout = '5s'"))
-                    barrier.wait()
-                    renewed = heartbeat_job(
-                        db,
+                barrier.wait()
+                renewed = heartbeat_job(
+                    session_factory=session_factory,
+                    context=JobExecutionContext(
                         job_id=claimed.id,
                         worker_id=worker_id,
-                        lease_seconds=30,
+                        attempt_no=claimed.attempts,
                         resource_class="Heavy",
-                    )
-                    db.commit()
-                    outcomes.append(("heartbeat", renewed))
+                    ),
+                    lease_seconds=30,
+                )
+                outcomes.append(("heartbeat", renewed))
             except BaseException as exc:
                 failures.append(exc)
 
