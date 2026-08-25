@@ -266,7 +266,9 @@ The Idea binding receives one frozen HostTable operation whose sole grant is
 `web.search`; it never inherits Chat's Native catalogue. Stored binding metadata
 owns its BilledOnce replay policy, so an uncertain public-Web search is never
 automatically redispatched. Billed synthesis and document repair likewise stay
-suspended after uncertainty, while direct Nexus-search and page
+suspended after uncertainty; the operator can prove either dispatch never
+occurred or attach a recovered schema-valid result, and both paths then requeue
+the same build without an automatic provider call. Direct Nexus-search and page
 accept/readiness/read observations are ReDispatchable and pages awaiting ingest
 yield the worker. The artifact head is the database serialization point; the
 build is the replay identity. Build success, modeled failure, and cancellation
@@ -276,10 +278,13 @@ never pruned.
 
 `services/durable_step_journal.py` owns the shared strict replay-state codec,
 stable step identity, lease-fenced queue-payload checkpoint, and durable
-execution-phase projection. `services/artifacts/coordination.py` now owns only
-the Dossier runtime capability and bounded research-yield behavior; Dossier,
-Media Intelligence, and page-read consumers import journal primitives directly
-from their shared owner.
+execution-phase projection. `services/artifacts/generation_step.py` owns the
+Dossier-specific billed-generation request fingerprint, strict accepted/invalid
+result envelope, and exact Prepared/Uncertain/Completed application for both
+`synthesis` and `document-repair`. `services/artifacts/coordination.py` owns the
+Dossier runtime capability and bounded research-yield behavior. The engine owns
+the distinct streaming/cancellation and unary-repair transports; it does not
+reimplement their journal protocol.
 
 `chat_run` uses that kernel for preparation, every model/tool turn, and final
 publication. Dead chat jobs are retained because their payload is the in-flight

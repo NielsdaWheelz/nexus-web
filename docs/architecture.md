@@ -669,7 +669,11 @@ the durable execution boundary — atomically admitting one replay-stable
 `llm_calls` row plus reservation before dispatch, then atomically terminalizing
 and settling admission exactly once. `ProviderRuntime` owns
 provider retries; `BilledOnce` work selects its single-attempt mode. The existing
-Postgres queue, leases, and durable step journal remain unchanged. See
+Postgres queue, leases, and durable step journal remain unchanged. Within
+`dossier_build`, `services/artifacts/generation_step.py` is the sole Artifact
+owner of the exact `synthesis` and `document-repair` request fingerprints,
+memoized result envelope, and Prepared/Uncertain/Completed transitions; the
+engine keeps their streaming and unary transports explicit. See
 [modules/llms.md](modules/llms.md).
 `enrich_metadata` is deliberately outside this direct-provider envelope. It
 uses the private UDS Codex host with the ChatGPT-authenticated `codex-personal`
