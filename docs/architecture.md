@@ -794,6 +794,13 @@ plus only note blocks classified by a visible `resource_edges.origin =
 "highlight_note"` edge before ranking and limiting. Clients never infer owner
 identity or highlight-note origin from result type or URL.
 
+`schemas/search_types.py` is the sole authority for public search-result
+discriminants. The public response union, retrieval contexts, and durable
+retrieval-result references must cover every discriminant. Conversation Dossier
+(`artifact`) rematerialization belongs to the conversations retriever: it masks
+foreign subjects as not found and returns only the viewer-owned Dossier's current
+revision, while the result identity remains the Conversation subject.
+
 - **Indexing** (`services/content_indexing.py`, `semantic_chunks.py`): text-bearing
   media flows `fragment → content_blocks → chunks → embeddings`; note bodies
   flow `note_block → content_blocks → chunks → embeddings` through
