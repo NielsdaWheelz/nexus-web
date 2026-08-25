@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.db.models import (
     FailureStage,
+    Fragment,
     Media,
     MediaKind,
     MediaSourceAttempt,
@@ -20,6 +21,7 @@ from nexus.db.models import (
     PodcastTranscriptionJob,
     PodcastTranscriptionUsageDaily,
     PodcastTranscriptRequestAudit,
+    PodcastTranscriptSegment,
     ProcessingStatus,
 )
 from nexus.errors import ApiErrorCode
@@ -1057,4 +1059,108 @@ def test_podcast_transcript_resource_terminal_repairs_domain_state_once(
                 family=family,
             )
             == revision_after_admission + 1
+        )
+
+
+def test_podcast_transcript_refresh_preserves_current_artifacts_until_replacement(
+    authenticated_client: TestClient,
+    db_session: Session,
+    test_user: UserRecord,
+) -> None:
+    media_id = _seed_transcription_episode(
+        db_session,
+        user=test_user,
+        title="Refreshable publisher transcript",
+        rss_transcript_url=NASA_TRANSCRIPT_URL,
+    )
+    admitted = authenticated_client.post(
+        f"/media/{media_id}/transcript/request",
+        json={"reason": "episode_open", "dry_run": False},
+    )
+    assert admitted.status_code == 202, admitted.text
+    result = _run_claimed_transcript_source_attempt(
+        db_session,
+        media_id=media_id,
+        actor_user_id=test_user.id,
+        worker_id="publisher-transcript-refresh-seed",
+    )
+    assert result["status"] == "completed"
+    db_session.expire_all()
+    segments_before = db_session.execute(
+        select(
+            PodcastTranscriptSegment.id,
+            PodcastTranscriptSegment.segment_idx,
+            PodcastTranscriptSegment.canonical_text,
+        )
+        .where(PodcastTranscriptSegment.media_id == media_id)
+        .order_by(PodcastTranscriptSegment.segment_idx)
+    ).all()
+    fragments_before = db_session.execute(
+        select(Fragment.id, Fragment.idx, Fragment.canonical_text)
+        .where(Fragment.media_id == media_id)
+        .order_by(Fragment.idx)
+    ).all()
+    assert segments_before
+    assert fragments_before
+    revisions_before = {
+        family: read_collection_revision(
+            db_session,
+            viewer_id=test_user.id,
+            family=family,
+        )
+        for family in (
+            CollectionFamily.AuthorWorks,
+            CollectionFamily.LibraryEntries,
+            CollectionFamily.PodcastEpisodes,
+        )
+    }
+
+    refreshed = authenticated_client.post(
+        f"/media/{media_id}/refresh",
+        headers={"Idempotency-Key": "publisher-transcript-refresh"},
+    )
+
+    assert refreshed.status_code == 202, refreshed.text
+    db_session.expire_all()
+    assert (
+        db_session.execute(
+            select(
+                PodcastTranscriptSegment.id,
+                PodcastTranscriptSegment.segment_idx,
+                PodcastTranscriptSegment.canonical_text,
+            )
+            .where(PodcastTranscriptSegment.media_id == media_id)
+            .order_by(PodcastTranscriptSegment.segment_idx)
+        ).all()
+        == segments_before
+    )
+    assert (
+        db_session.execute(
+            select(Fragment.id, Fragment.idx, Fragment.canonical_text)
+            .where(Fragment.media_id == media_id)
+            .order_by(Fragment.idx)
+        ).all()
+        == fragments_before
+    )
+    transcript_state = db_session.get(MediaTranscriptState, media_id)
+    assert transcript_state is not None
+    assert transcript_state.transcript_state == "ready"
+    assert transcript_state.transcript_coverage == "full"
+    assert transcript_state.semantic_status == "pending"
+    latest_attempt = db_session.scalars(
+        select(MediaSourceAttempt)
+        .where(MediaSourceAttempt.media_id == media_id)
+        .order_by(MediaSourceAttempt.attempt_no.desc())
+    ).first()
+    assert latest_attempt is not None
+    assert latest_attempt.status == "queued"
+    assert latest_attempt.source_payload["request_reason"] == "operator_requeue"
+    for family, revision_before in revisions_before.items():
+        assert (
+            read_collection_revision(
+                db_session,
+                viewer_id=test_user.id,
+                family=family,
+            )
+            == revision_before + 1
         )
