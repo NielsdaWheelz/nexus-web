@@ -632,3 +632,119 @@ def test_rss_sidecar_admission_queues_once_without_generated_quota(
     assert audits[0].required_minutes == 0
     assert audits[0].remaining_minutes is None
     assert audits[0].fits_budget is True
+
+
+def test_batch_quota_rejection_rolls_back_every_episode_admission(
+    authenticated_client: TestClient,
+    db_session: Session,
+    test_user: UserRecord,
+) -> None:
+    first_media_id = _seed_transcription_episode(
+        db_session,
+        user=test_user,
+        title="Atomic batch episode one",
+        transcription_limit_minutes=15,
+    )
+    podcast_id = db_session.scalar(
+        select(PodcastEpisode.podcast_id).where(PodcastEpisode.media_id == first_media_id)
+    )
+    assert podcast_id is not None
+    second_media_id = uuid4()
+    db_session.add(
+        Media(
+            id=second_media_id,
+            kind=MediaKind.podcast_episode.value,
+            title="Atomic batch episode two",
+            processing_status=ProcessingStatus.ready_for_reading,
+            created_by_user_id=test_user.id,
+        )
+    )
+    db_session.flush()
+    db_session.add(
+        PodcastEpisode(
+            media_id=second_media_id,
+            podcast_id=podcast_id,
+            duration_seconds=601,
+        )
+    )
+    assert ensure_media_in_default_library(db_session, test_user.id, second_media_id)
+    db_session.commit()
+
+    media_ids = (first_media_id, second_media_id)
+    revisions_before = {
+        family: read_collection_revision(
+            db_session,
+            viewer_id=test_user.id,
+            family=family,
+        )
+        for family in (CollectionFamily.LibraryEntries, CollectionFamily.PodcastEpisodes)
+    }
+    target = {
+        "kind": "PodcastEpisodeQuery",
+        "podcastId": str(podcast_id),
+        "selection": {"state": "all"},
+        "reason": "quote",
+    }
+    forecast = authenticated_client.post(
+        "/media/transcript/forecasts",
+        json=target,
+    )
+    assert forecast.status_code == 200, forecast.text
+    forecast_data = forecast.json()["data"]
+    assert forecast_data["eligibleCount"] == 2
+    assert forecast_data["requiredMinutes"] == 22
+    assert forecast_data["fitsBudget"] is False
+
+    rejected = authenticated_client.post(
+        "/media/transcript/request/batch",
+        json={
+            "target": target,
+            "selectionFingerprint": forecast_data["selectionFingerprint"],
+        },
+    )
+    assert rejected.status_code == 429, rejected.text
+
+    db_session.expire_all()
+    for model in (
+        MediaTranscriptState,
+        PodcastTranscriptionJob,
+        MediaSourceAttempt,
+    ):
+        assert (
+            db_session.scalar(
+                select(func.count()).select_from(model).where(model.media_id.in_(media_ids))
+            )
+            == 0
+        )
+    assert (
+        db_session.scalar(
+            select(func.count())
+            .select_from(PodcastTranscriptionUsageDaily)
+            .where(PodcastTranscriptionUsageDaily.user_id == test_user.id)
+        )
+        == 0
+    )
+    audit_outcomes = db_session.scalars(
+        select(PodcastTranscriptRequestAudit.outcome).where(
+            PodcastTranscriptRequestAudit.media_id.in_(media_ids)
+        )
+    ).all()
+    assert sorted(audit_outcomes) == ["forecast", "forecast"]
+    for media_id in media_ids:
+        assert (
+            find_nonterminal_jobs_for_payload(
+                db_session,
+                kind="ingest_media_source",
+                expected_payload_match={"media_id": str(media_id)},
+            )
+            == []
+        )
+    for family, revision_before in revisions_before.items():
+        assert (
+            read_collection_revision(
+                db_session,
+                viewer_id=test_user.id,
+                family=family,
+            )
+            == revision_before
+        )
