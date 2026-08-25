@@ -1131,6 +1131,71 @@ def run_source_attempt(
         db.close()
 
 
+@dataclass(frozen=True, slots=True)
+class _SourceAdapterRun:
+    session_factory: sessionmaker[Session]
+    media_id: UUID
+    attempt: MediaSourceAttempt
+    actor_user_id: UUID
+    request_id: str | None
+    fence: SourcePublicationFence
+
+
+def _run_source_adapter(run: _SourceAdapterRun) -> dict[str, object]:
+    """Dispatch one detached source snapshot to its acquisition adapter."""
+    session_factory = run.session_factory
+    media_id = run.media_id
+    attempt = run.attempt
+    actor_user_id = run.actor_user_id
+    request_id = run.request_id
+    fence = run.fence
+    if attempt.source_type == source_types.GENERIC_WEB_URL:
+        return _run_generic_web_article(
+            session_factory, media_id, attempt, actor_user_id, request_id, fence
+        )
+    if attempt.source_type in {
+        source_types.YOUTUBE_VIDEO,
+        source_types.VIDEO_TRANSCRIPT,
+    }:
+        return _run_youtube_video(
+            session_factory,
+            media_id,
+            attempt,
+            actor_user_id,
+            request_id,
+            fence,
+        )
+    if attempt.source_type == source_types.X_AUTHOR_THREAD:
+        return _run_x_author_thread(
+            session_factory, media_id, attempt, actor_user_id, request_id, fence
+        )
+    if attempt.source_type == source_types.X_POST:
+        return _run_x_post(
+            session_factory, media_id, attempt, actor_user_id, request_id, fence
+        )
+    if attempt.source_type in source_types.REMOTE_FILE_SOURCE_TYPES:
+        return _run_remote_file(session_factory, media_id, attempt, request_id, fence)
+    if attempt.source_type == source_types.BROWSER_ARTICLE_CAPTURE:
+        return _run_browser_article_capture(session_factory, media_id, attempt, request_id, fence)
+    if attempt.source_type == source_types.EMAIL_MESSAGE:
+        return _run_email_message(session_factory, media_id, attempt, request_id, fence)
+    if attempt.source_type in source_types.LOCAL_FILE_SOURCE_TYPES:
+        return _run_existing_file(session_factory, media_id, fence)
+    if attempt.source_type == source_types.PODCAST_EPISODE_TRANSCRIPT:
+        return _run_podcast_episode_transcript(
+            session_factory,
+            media_id,
+            attempt,
+            actor_user_id,
+            request_id,
+            fence,
+        )
+    raise ApiError(
+        ApiErrorCode.E_INVALID_KIND,
+        f"Unsupported source attempt type: {attempt.source_type}",
+    )
+
+
 def _run_claimed_source_attempt(
     *,
     db: Session,
@@ -1155,54 +1220,16 @@ def _run_claimed_source_attempt(
 
     superseded_storage_paths: list[str] = []
     try:
-        if attempt.source_type == source_types.GENERIC_WEB_URL:
-            result = _run_generic_web_article(
-                session_factory, media_id, attempt, actor_user_id, request_id, fence
+        result = _run_source_adapter(
+            _SourceAdapterRun(
+                session_factory=session_factory,
+                media_id=media_id,
+                attempt=attempt,
+                actor_user_id=actor_user_id,
+                request_id=request_id,
+                fence=fence,
             )
-        elif attempt.source_type in {
-            source_types.YOUTUBE_VIDEO,
-            source_types.VIDEO_TRANSCRIPT,
-        }:
-            result = _run_youtube_video(
-                session_factory,
-                media_id,
-                attempt,
-                actor_user_id,
-                request_id,
-                fence,
-            )
-        elif attempt.source_type == source_types.X_AUTHOR_THREAD:
-            result = _run_x_author_thread(
-                session_factory, media_id, attempt, actor_user_id, request_id, fence
-            )
-        elif attempt.source_type == source_types.X_POST:
-            result = _run_x_post(
-                session_factory, media_id, attempt, actor_user_id, request_id, fence
-            )
-        elif attempt.source_type in source_types.REMOTE_FILE_SOURCE_TYPES:
-            result = _run_remote_file(session_factory, media_id, attempt, request_id, fence)
-        elif attempt.source_type == source_types.BROWSER_ARTICLE_CAPTURE:
-            result = _run_browser_article_capture(
-                session_factory, media_id, attempt, request_id, fence
-            )
-        elif attempt.source_type == source_types.EMAIL_MESSAGE:
-            result = _run_email_message(session_factory, media_id, attempt, request_id, fence)
-        elif attempt.source_type in source_types.LOCAL_FILE_SOURCE_TYPES:
-            result = _run_existing_file(session_factory, media_id, fence)
-        elif attempt.source_type == source_types.PODCAST_EPISODE_TRANSCRIPT:
-            result = _run_podcast_episode_transcript(
-                session_factory,
-                media_id,
-                attempt,
-                actor_user_id,
-                request_id,
-                fence,
-            )
-        else:
-            raise ApiError(
-                ApiErrorCode.E_INVALID_KIND,
-                f"Unsupported source attempt type: {attempt.source_type}",
-            )
+        )
         result_media_id = _superseded_media_id(result)
         terminal_media_id = media_id
         if result_media_id is not None and result_media_id != media_id:
