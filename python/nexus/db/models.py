@@ -4117,7 +4117,7 @@ class PodcastTranscriptRequestAudit(Base):
             name="ck_podcast_transcript_request_audits_reason",
         ),
         CheckConstraint(
-            "outcome IN ('forecast', 'queued', 'idempotent', 'rejected_quota', 'enqueue_failed')",
+            "outcome IN ('forecast', 'queued', 'idempotent', 'rejected_quota')",
             name="ck_podcast_transcript_request_audits_outcome",
         ),
         CheckConstraint(
