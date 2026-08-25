@@ -95,7 +95,7 @@ def _empty_success_terminal_host(socket_path: Path) -> Iterator[None]:
                     "status": "succeeded",
                     "failure": None,
                     "final_text": "",
-                    "structured_output": {},
+                    "structured_output": None,
                     "session_ref": {
                         "schema_version": "agent-session-ref.v1",
                         "backend": "codex",
