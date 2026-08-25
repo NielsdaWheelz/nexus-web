@@ -127,14 +127,16 @@ describe("resource locator transport identity", () => {
 
     await expect(
       resolveResourceLocators([locator(PAGE_A), locator(PAGE_B)]),
-    ).rejects.toMatchObject<ApiError>({ code: "E_INVALID_RESPONSE" });
+    ).rejects.toMatchObject({
+      code: "E_INVALID_RESPONSE",
+    } satisfies Partial<ApiError>);
   });
 
   it("requires the singleton response to match its requested locator", async () => {
     installResponse([resolution(PAGE_B)]);
 
-    await expect(resolveResourceLocator(locator(PAGE_A))).rejects.toMatchObject<
-      ApiError
-    >({ code: "E_INVALID_RESPONSE" });
+    await expect(resolveResourceLocator(locator(PAGE_A))).rejects.toMatchObject(
+      { code: "E_INVALID_RESPONSE" } satisfies Partial<ApiError>,
+    );
   });
 });

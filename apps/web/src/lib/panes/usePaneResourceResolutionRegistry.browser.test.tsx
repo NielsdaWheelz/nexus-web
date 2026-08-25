@@ -72,7 +72,11 @@ function responseRow(candidate: PaneResourceLocator, missing = false) {
 
 function locatorMap(...locators: PaneResourceLocator[]) {
   return new Map(
-    locators.map((candidate) => [paneResourceLocatorKey(candidate), candidate]),
+    locators.map((candidate) => {
+      const key = paneResourceLocatorKey(candidate);
+      if (key === null) throw new Error("A concrete locator must have a key");
+      return [key, candidate] as const;
+    }),
   );
 }
 
@@ -151,15 +155,24 @@ describe("pane resource resolution registry in Chromium", () => {
 
     render(<Harness locators={locatorMap(locator(PAGE_A), locator(PAGE_B))} />);
 
-    expect(await screen.findByText(/resource_ref:page:1111.*Resolved:ready/)).toBeVisible();
-    expect(screen.getByText(/resource_ref:page:2222.*Resolved:missing/)).toBeVisible();
+    expect(
+      await screen.findByText(/resource_ref:page:1111.*Resolved:ready/),
+    ).toBeVisible();
+    expect(
+      screen.getByText(/resource_ref:page:2222.*Resolved:missing/),
+    ).toBeVisible();
     expect(requests).toEqual([[locator(PAGE_A), locator(PAGE_B)]]);
   });
 
   it("discards an in-flight result after its locator leaves the live set", async () => {
     const request = deferred<Response>();
-    vi.stubGlobal("fetch", vi.fn(() => request.promise));
-    const { rerender } = render(<Harness locators={locatorMap(locator(PAGE_A))} />);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => request.promise),
+    );
+    const { rerender } = render(
+      <Harness locators={locatorMap(locator(PAGE_A))} />,
+    );
 
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
     rerender(<Harness locators={locatorMap()} />);
@@ -198,9 +211,7 @@ describe("pane resource resolution registry in Chromium", () => {
   it("raises a malformed same-system response through the render boundary", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        Response.json({ data: { resolutions: [] } }),
-      ),
+      vi.fn(async () => Response.json({ data: { resolutions: [] } })),
     );
 
     render(

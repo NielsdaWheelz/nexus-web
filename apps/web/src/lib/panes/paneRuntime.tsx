@@ -204,10 +204,7 @@ interface PaneRuntimeProviderProps {
     surfaceId: PaneTransientSecondarySurfaceId,
     returnFocusTo?: HTMLElement | null,
   ) => void;
-  onCloseTransientSecondarySurface?: (
-    paneId: string,
-    routeKey: string,
-  ) => void;
+  onCloseTransientSecondarySurface?: (paneId: string, routeKey: string) => void;
   onPreviewTransientSecondaryResult?: (
     paneId: string,
     routeKey: string,
@@ -345,11 +342,23 @@ export function PaneRuntimeProvider({
   const routeKey = routeKeyProp ?? buildPaneRouteKey(routeId, href);
   const resourceRef = resourceItem?.ref ?? null;
   const resourceKey = resourceKeyForItem(resourceItem);
-  const effectiveResourceStatus: PaneResourceStatus = resourceItem
-    ? "ready"
-    : resourceStatus === "ready"
-      ? "pending"
-      : resourceStatus;
+  const hasResolvedStatus =
+    resourceStatus === "ready" || resourceStatus === "missing";
+  if (hasResolvedStatus !== (resourceItem !== null)) {
+    throw new Error(
+      "Pane resource status and resource item must settle as one tagged state",
+    );
+  }
+  if (
+    resourceItem !== null &&
+    ((resourceItem.missing && resourceStatus !== "missing") ||
+      (!resourceItem.missing && resourceStatus !== "ready"))
+  ) {
+    throw new Error(
+      "Pane resource status must match resource item availability",
+    );
+  }
+  const effectiveResourceStatus = resourceStatus;
   const secondaryPaneId = secondaryPane?.id ?? null;
   const commandsRef = useRef({
     paneId,
@@ -558,14 +567,17 @@ export function PaneRuntimeProvider({
     },
     [],
   );
-  const setPaneAliases = useCallback((aliases: readonly string[]) => {
-    const current = commandsRef.current;
-    current.onSetPaneAliases?.({
-      paneId: current.paneId,
-      visitId,
-      aliases,
-    });
-  }, [visitId]);
+  const setPaneAliases = useCallback(
+    (aliases: readonly string[]) => {
+      const current = commandsRef.current;
+      current.onSetPaneAliases?.({
+        paneId: current.paneId,
+        visitId,
+        aliases,
+      });
+    },
+    [visitId],
+  );
   const value = useMemo<PaneRuntimeContextValue>(
     () => ({
       paneId,
