@@ -10,11 +10,8 @@ from nexus.config import get_settings
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import set_stream_jti
 from nexus.services import stream_tokens
-from nexus.services.llm_execution import (
-    ExecutionRuntime,
-    ProviderRetryMode,
-    build_execution_runtime,
-)
+from nexus.services.codex_generation_client import CodexGenerationClient
+from nexus.services.llm_execution import ExecutionRuntime
 from nexus.services.tool_runtime.declarations import BROWSER_TOOL_PROJECTION_REVISION
 
 TOOL_PROJECTION_HEADER = "X-Nexus-Tool-Projection"
@@ -48,9 +45,7 @@ def get_stream_viewer(request: Request) -> UUID:
     return verified.user_id
 
 
-def get_single_attempt_execution_runtime(request: Request) -> ExecutionRuntime:
-    return build_execution_runtime(
-        get_settings(),
-        request.app.state.httpx_client,
-        retry_mode=ProviderRetryMode.SingleAttempt,
-    )
+def get_generation_runtime() -> ExecutionRuntime:
+    """Construct the sole request-scoped private Codex transport."""
+
+    return CodexGenerationClient(get_settings().codex_agent_socket)
