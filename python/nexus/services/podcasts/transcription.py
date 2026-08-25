@@ -773,16 +773,18 @@ def request_podcast_episode_query_transcripts(
         )
 
 
-def prepare_podcast_transcription_for_source_attempt(
+def admit_generated_podcast_transcription_for_source_attempt(
     db: Session,
     *,
     media_id: UUID,
     requested_by_user_id: UUID,
     request_reason: str,
 ) -> PodcastTranscriptionPreparation:
-    """Reset podcast transcript-domain rows for a durable source attempt.
+    """Reserve generated work for an existing durable source attempt.
 
-    Caller owns authorization, media kind validation, media source status, and commit.
+    Current readable transcript artifacts remain authoritative until the source
+    publication fence replaces them. The caller owns authorization, source
+    status, and commit.
     """
     now = datetime.now(UTC)
     media_row = db.execute(
@@ -841,12 +843,6 @@ def prepare_podcast_transcription_for_source_attempt(
         request_reason=request_reason,
         reserved_minutes=budget.required_minutes,
         reservation_usage_date=budget.usage_date,
-        now=now,
-    )
-    _reset_media_transcript_state_for_source_attempt(
-        db,
-        media_id=media_id,
-        request_reason=request_reason,
         now=now,
     )
     _record_podcast_transcript_request_audit(
@@ -962,7 +958,7 @@ def run_podcast_transcription_now(
         def admit_generated_fallback(
             db: Session, _attempt: object
         ) -> PodcastTranscriptionPreparation:
-            return prepare_podcast_transcription_for_source_attempt(
+            return admit_generated_podcast_transcription_for_source_attempt(
                 db,
                 media_id=media_id,
                 requested_by_user_id=effective_requester,
@@ -1184,33 +1180,6 @@ def _reset_podcast_transcription_job_for_source_attempt(
             params,
         )
     _assert_one_mutated_row(result, "podcast_transcription_jobs")
-
-
-def _reset_media_transcript_state_for_source_attempt(
-    db: Session,
-    *,
-    media_id: UUID,
-    request_reason: str,
-    now: datetime,
-) -> None:
-    # Clear the current transcript so readers show nothing until re-transcription
-    # installs replacement current rows.
-    db.execute(
-        text("DELETE FROM podcast_transcript_segments WHERE media_id = :media_id"),
-        {"media_id": media_id},
-    )
-    db.execute(text("DELETE FROM fragments WHERE media_id = :media_id"), {"media_id": media_id})
-    set_media_transcript_state(
-        db,
-        media_id=media_id,
-        transcript_state="queued",
-        transcript_coverage="none",
-        semantic_status="none",
-        last_request_reason=request_reason,
-        last_error_code=None,
-        now=now,
-    )
-    _bump_all_episode_row_collections(db)
 
 
 def _assert_one_mutated_row(result: Any, table_name: str) -> None:

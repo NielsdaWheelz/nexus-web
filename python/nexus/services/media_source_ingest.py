@@ -2006,10 +2006,10 @@ def _prepare_source_requeue_domain_state(
         return
     from nexus.services.podcasts.transcription import (
         PodcastTranscriptionRejectedQuota,
-        prepare_podcast_transcription_for_source_attempt,
+        admit_generated_podcast_transcription_for_source_attempt,
     )
 
-    admission = prepare_podcast_transcription_for_source_attempt(
+    admission = admit_generated_podcast_transcription_for_source_attempt(
         db,
         media_id=media.id,
         requested_by_user_id=actor_user_id,
