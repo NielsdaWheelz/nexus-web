@@ -20,9 +20,10 @@ function observedSession(
   title: string,
   day: "10" | "11",
   continuesBeyondRange = false,
+  mediaId = "00000000-0000-4000-8000-000000000002",
 ): unknown {
   return {
-    mediaRef: "media:00000000-0000-4000-8000-000000000002",
+    mediaRef: `media:${mediaId}`,
     title,
     modality: "Reading",
     device: { deviceHandle: DEVICE_HANDLE, label: "Desktop" },
@@ -130,7 +131,14 @@ function stats(
 function sessionPage(title: string, day: "10" | "11" = "10"): Response {
   return Response.json({
     data: {
-      sessions: [observedSession(title, day)],
+      sessions: [
+        observedSession(
+          title,
+          day,
+          false,
+          "00000000-0000-4000-8000-000000000003",
+        ),
+      ],
       nextCursor: { kind: "Absent" },
     },
   });
@@ -189,12 +197,14 @@ describe("Stats activity freshness", () => {
     });
     let statsReads = 0;
     let oldPageStarted = false;
+    const oldPageRequest: { signal: AbortSignal | null } = { signal: null };
     vi.stubGlobal(
       "fetch",
-      vi.fn((input: RequestInfo | URL) => {
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
         const url = input instanceof Request ? input.url : String(input);
         if (url.includes("/api/consumption/sessions?")) {
           oldPageStarted = true;
+          oldPageRequest.signal = init?.signal ?? null;
           return oldPage;
         }
         statsReads += 1;
@@ -215,17 +225,18 @@ describe("Stats activity freshness", () => {
         );
       }),
     );
-    const user = userEvent.setup();
     const view = render(<StatsPane />);
 
-    await user.click(
-      await screen.findByRole("button", { name: "Load more sessions" }),
-    );
+    const loadMore = await screen.findByRole("button", {
+      name: "Load more sessions",
+    });
+    act(() => loadMore.click());
     await waitFor(() => expect(oldPageStarted).toBe(true));
 
     view.rerender(<StatsPane href={NEXT_HREF} />);
     expect(await screen.findByText("New current session")).toBeVisible();
     expect(screen.queryByText("Old current session")).not.toBeInTheDocument();
+    expect(oldPageRequest.signal?.aborted).toBe(true);
 
     resolveOldPage(sessionPage("Stale continuation"));
     await waitFor(() => expect(oldPageSettled).toBe(true));
@@ -268,21 +279,24 @@ describe("Stats activity freshness", () => {
         );
       }),
     );
-    const user = userEvent.setup();
     render(<StatsPane />);
 
-    await user.click(
-      await screen.findByRole("button", { name: "Load more sessions" }),
-    );
+    const loadMore = await screen.findByRole("button", {
+      name: "Load more sessions",
+    });
+    act(() => loadMore.click());
 
     expect(await screen.findByText("Sessions couldn’t load")).toBeVisible();
     expect(screen.getByText("A Book")).toBeVisible();
-    await user.click(
-      screen.getByRole("button", { name: "Retry loading sessions" }),
-    );
+    const retry = screen.getByRole("button", {
+      name: "Retry loading sessions",
+    });
+    act(() => retry.click());
 
     expect(await screen.findByText("Recovered session")).toBeVisible();
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Sessions couldn’t load"),
+    ).not.toBeInTheDocument();
   });
 
   it("revalidates a mounted pane after local acceptance and foreground recovery", async () => {
