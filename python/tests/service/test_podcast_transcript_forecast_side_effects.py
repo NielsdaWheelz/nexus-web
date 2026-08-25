@@ -286,3 +286,81 @@ def test_quota_rejection_audits_without_materializing_transcript_work_state(
     assert audits[0].required_minutes == 11
     assert audits[0].remaining_minutes == 5
     assert audits[0].fits_budget is False
+
+
+def test_repeated_inflight_request_is_state_and_collection_idempotent(
+    authenticated_client: TestClient,
+    db_session: Session,
+    test_user: UserRecord,
+) -> None:
+    media_id = _seed_transcription_episode(
+        db_session,
+        user=test_user,
+        title="Idempotent admission episode",
+    )
+
+    admitted = authenticated_client.post(
+        f"/media/{media_id}/transcript/request",
+        json={"reason": "quote", "dry_run": False},
+    )
+    assert admitted.status_code == 202, admitted.text
+    revision_after_admission = read_collection_revision(
+        db_session,
+        viewer_id=test_user.id,
+        family=CollectionFamily.PodcastEpisodes,
+    )
+
+    repeated = authenticated_client.post(
+        f"/media/{media_id}/transcript/request",
+        json={"reason": "search", "dry_run": False},
+    )
+
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json() == {
+        "data": {
+            "media_id": str(media_id),
+            "processing_status": "extracting",
+            "transcript_state": "queued",
+            "transcript_coverage": "none",
+            "request_reason": "search",
+            "required_minutes": 11,
+            "remaining_minutes": None,
+            "fits_budget": True,
+            "request_enqueued": False,
+        }
+    }
+    db_session.expire_all()
+
+    assert (
+        read_collection_revision(
+            db_session,
+            viewer_id=test_user.id,
+            family=CollectionFamily.PodcastEpisodes,
+        )
+        == revision_after_admission
+    )
+    job = db_session.get(PodcastTranscriptionJob, media_id)
+    assert job is not None
+    assert job.request_reason == "quote"
+    assert job.reserved_minutes == 11
+    assert job.status == "pending"
+
+    usage_rows = db_session.scalars(
+        select(PodcastTranscriptionUsageDaily).where(
+            PodcastTranscriptionUsageDaily.user_id == test_user.id
+        )
+    ).all()
+    assert len(usage_rows) == 1
+    assert usage_rows[0].minutes_used == 0
+    assert usage_rows[0].minutes_reserved == 11
+
+    audits = db_session.scalars(
+        select(PodcastTranscriptRequestAudit).where(
+            PodcastTranscriptRequestAudit.media_id == media_id
+        )
+    ).all()
+    assert len(audits) == 2
+    audits_by_outcome = {audit.outcome: audit for audit in audits}
+    assert set(audits_by_outcome) == {"queued", "idempotent"}
+    assert audits_by_outcome["queued"].request_reason == "quote"
+    assert audits_by_outcome["idempotent"].request_reason == "search"
