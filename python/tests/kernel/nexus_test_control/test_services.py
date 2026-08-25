@@ -941,6 +941,12 @@ def test_run_environment_contains_only_exact_local_resources_and_no_admin_key(
     assert environment["NEXUS_EXTENSION_REDIRECT_ORIGINS"] == (
         f"https://{TEST_EXTENSION_ID}.chromiumapp.org"
     )
+    assert environment["NEXUS_TEST_STATIC_DNS"] == '{"www.nasa.gov":"93.184.216.34"}'
+    assert environment["OUTBOUND_HTTP_PROXY_URL"] == "http://127.0.0.1:19091"
+    assert environment["PODCASTS_ENABLED"] == "true"
+    assert environment["PODCAST_INDEX_API_KEY"] == "nexus-test-fixture-podcast-key"
+    assert environment["PODCAST_INDEX_API_SECRET"] == "nexus-test-fixture-podcast-secret"
+    assert environment["PODCAST_INDEX_BASE_URL"] == "http://127.0.0.1:19091"
     assert "must-not-escape" not in repr(environment)
     assert not {
         "SERVICE_ROLE_KEY",
