@@ -21,6 +21,10 @@ from nexus.db.models import (
     ProcessingStatus,
 )
 from nexus.services.billing_entitlements import grant_entitlement_override
+from nexus.services.collection_revisions import (
+    CollectionFamily,
+    read_collection_revision,
+)
 from nexus.services.library_entries import ensure_media_in_default_library
 from tests.testkit.auth import UserRecord
 
@@ -30,6 +34,7 @@ def _seed_transcription_episode(
     *,
     user: UserRecord,
     title: str,
+    transcription_limit_minutes: int | None = None,
 ) -> UUID:
     podcast_id = uuid4()
     media_id = uuid4()
@@ -66,8 +71,10 @@ def _seed_transcription_episode(
         plan_tier="ai_pro",
         platform_token_quota_mode="unlimited",
         platform_token_limit_monthly=None,
-        transcription_quota_mode="unlimited",
-        transcription_minutes_limit_monthly=None,
+        transcription_quota_mode=(
+            "custom" if transcription_limit_minutes is not None else "unlimited"
+        ),
+        transcription_minutes_limit_monthly=transcription_limit_minutes,
         expires_at=None,
         reason="transcript admission proof",
         actor_label="nexus-test",
@@ -222,3 +229,60 @@ def test_transcript_admission_resets_one_existing_job_and_reserves_once(
     assert audits[0].required_minutes == 11
     assert audits[0].remaining_minutes is None
     assert audits[0].fits_budget is True
+
+
+def test_quota_rejection_audits_without_materializing_transcript_work_state(
+    authenticated_client: TestClient,
+    db_session: Session,
+    test_user: UserRecord,
+) -> None:
+    media_id = _seed_transcription_episode(
+        db_session,
+        user=test_user,
+        title="Quota-rejected episode",
+        transcription_limit_minutes=5,
+    )
+    revision_before = read_collection_revision(
+        db_session,
+        viewer_id=test_user.id,
+        family=CollectionFamily.PodcastEpisodes,
+    )
+
+    response = authenticated_client.post(
+        f"/media/{media_id}/transcript/request",
+        json={"reason": "episode_open", "dry_run": False},
+    )
+
+    assert response.status_code == 429, response.text
+    assert response.json()["error"]["code"] == "E_PODCAST_QUOTA_EXCEEDED"
+    db_session.expire_all()
+
+    assert db_session.get(MediaTranscriptState, media_id) is None
+    assert db_session.get(PodcastTranscriptionJob, media_id) is None
+    assert (
+        db_session.scalar(
+            select(func.count())
+            .select_from(PodcastTranscriptionUsageDaily)
+            .where(PodcastTranscriptionUsageDaily.user_id == test_user.id)
+        )
+        == 0
+    )
+    assert (
+        read_collection_revision(
+            db_session,
+            viewer_id=test_user.id,
+            family=CollectionFamily.PodcastEpisodes,
+        )
+        == revision_before
+    )
+    audits = db_session.scalars(
+        select(PodcastTranscriptRequestAudit).where(
+            PodcastTranscriptRequestAudit.media_id == media_id
+        )
+    ).all()
+    assert len(audits) == 1
+    assert audits[0].dry_run is False
+    assert audits[0].outcome == "rejected_quota"
+    assert audits[0].required_minutes == 11
+    assert audits[0].remaining_minutes == 5
+    assert audits[0].fits_budget is False
