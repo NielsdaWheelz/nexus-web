@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, cast
 from uuid import UUID
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, tuple_
 from sqlalchemy.orm import Session
 
 from nexus.db.models import LLMCall
@@ -258,6 +259,111 @@ def read_generation(
     return None if call is None else _record(call)
 
 
+def read_latest_generations_for_owners(
+    db: Session,
+    *,
+    owners: Collection[LlmCallOwner],
+    outcome: NormalizedOutcome | None = None,
+) -> dict[LlmCallOwner, GenerationRecord]:
+    """Bulk-read each typed owner's newest matching generation in one query."""
+
+    distinct_owners = tuple(dict.fromkeys(owners))
+    if not distinct_owners:
+        return {}
+
+    owner_identity = tuple_(LLMCall.owner_kind, LLMCall.owner_id)
+    latest_generation_query = select(
+        LLMCall.owner_kind.label("owner_kind"),
+        LLMCall.owner_id.label("owner_id"),
+        func.max(LLMCall.generation_seq).label("generation_seq"),
+    ).where(owner_identity.in_([(owner.kind, owner.id) for owner in distinct_owners]))
+    if outcome is not None:
+        latest_generation_query = latest_generation_query.where(LLMCall.outcome == outcome)
+    latest_generations = latest_generation_query.group_by(
+        LLMCall.owner_kind, LLMCall.owner_id
+    ).subquery()
+    calls = db.scalars(
+        select(LLMCall).join(
+            latest_generations,
+            (LLMCall.owner_kind == latest_generations.c.owner_kind)
+            & (LLMCall.owner_id == latest_generations.c.owner_id)
+            & (LLMCall.generation_seq == latest_generations.c.generation_seq),
+        )
+    ).all()
+    records = [_record(call) for call in calls]
+    return {LlmCallOwner(kind=record.owner_kind, id=record.owner_id): record for record in records}
+
+
+def lock_active_generation_for_authority_in_current_transaction(
+    db: Session,
+    *,
+    owner: LlmCallOwner,
+    generation_id: UUID,
+) -> GenerationRecord | None:
+    """Lock one nonterminal owned generation before a tool-authority row lock.
+
+    The owner advisory lock is always first, matching dispatch and terminal
+    ordering. A missing, cross-owner, or already-terminal identity is not
+    authority and is returned as absent rather than exposed to the caller.
+    """
+
+    lock_generation_owner_in_current_transaction(db, owner)
+    call = db.scalar(
+        select(LLMCall)
+        .where(
+            LLMCall.id == generation_id,
+            LLMCall.owner_kind == owner.kind,
+            LLMCall.owner_id == owner.id,
+            LLMCall.outcome.is_(None),
+            LLMCall.completed_at.is_(None),
+        )
+        .with_for_update()
+    )
+    return None if call is None else _record(call)
+
+
+def read_latest_generation_for_owner(
+    db: Session,
+    *,
+    owner: LlmCallOwner,
+) -> GenerationRecord | None:
+    """Read the newest generation for one owner through the typed ledger."""
+
+    call = db.scalar(
+        select(LLMCall)
+        .where(LLMCall.owner_kind == owner.kind, LLMCall.owner_id == owner.id)
+        .order_by(LLMCall.generation_seq.desc())
+        .limit(1)
+    )
+    return None if call is None else _record(call)
+
+
+def read_generation_for_owner_sequence(
+    db: Session,
+    *,
+    owner: LlmCallOwner,
+    generation_seq: int,
+) -> GenerationRecord | None:
+    """Read one owner-local generation ordinal through the typed ledger."""
+
+    if generation_seq < 1:
+        raise ValueError("generation_seq must be positive")
+    call = db.scalar(
+        select(LLMCall).where(
+            LLMCall.owner_kind == owner.kind,
+            LLMCall.owner_id == owner.id,
+            LLMCall.generation_seq == generation_seq,
+        )
+    )
+    return None if call is None else _record(call)
+
+
+def current_tool_plan_fingerprint() -> str:
+    """Return the ledger representation of the one pinned Chat tool plan."""
+
+    return _digest({"tool_plan_revision": generation_policy.TOOL_PLAN_REVISION})
+
+
 def _record(call: LLMCall) -> GenerationRecord:
     return GenerationRecord(
         id=call.id,
@@ -386,7 +492,7 @@ def _output_schema_fingerprint(command: GenerationCommand) -> str:
 def _tool_plan_fingerprint(command: GenerationCommand) -> str | None:
     if not isinstance(command.operation, ChatOperation):
         return None
-    return _digest({"tool_plan_revision": generation_policy.TOOL_PLAN_REVISION})
+    return current_tool_plan_fingerprint()
 
 
 def _digest(value: object) -> str:
@@ -408,7 +514,12 @@ __all__ = [
     "LlmCallOwnerKind",
     "complete_generation_in_current_transaction",
     "complete_preaccept_failure_if_started_in_current_transaction",
+    "current_tool_plan_fingerprint",
+    "lock_active_generation_for_authority_in_current_transaction",
     "lock_generation_owner_in_current_transaction",
     "read_generation",
+    "read_generation_for_owner_sequence",
+    "read_latest_generations_for_owners",
+    "read_latest_generation_for_owner",
     "start_generation_in_current_transaction",
 ]

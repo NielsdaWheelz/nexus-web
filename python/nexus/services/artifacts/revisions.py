@@ -3,10 +3,9 @@
 Recomposed for the universal head/build/revision normalization: history is read
 per artifact head (join ``revision -> build -> artifact``), authorization is the
 head's derived :class:`AudienceScope` (a user match, or library membership), and
-the model provenance join is the build-owned ``llm_calls`` (``owner_kind =
-'artifact_build'``) with no per-operation filter. Coverage is binding-owned and
-derived by the route from the revision's typed ``input_manifest``; it is no longer
-computed here.
+model provenance is read in bulk through the typed generation ledger. Coverage
+is binding-owned and derived by the route from the revision's typed
+``input_manifest``; it is no longer computed here.
 """
 
 from __future__ import annotations
@@ -23,6 +22,7 @@ from sqlalchemy.orm import Session
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.citation import CitationOut
 from nexus.services.artifacts.subject_policy import visible_persisted_subject
+from nexus.services.llm_ledger import LlmCallOwner, read_latest_generations_for_owners
 from nexus.services.resource_graph.citations import build_citation_outs_for_sources
 from nexus.services.resource_graph.refs import ResourceRef
 
@@ -70,34 +70,22 @@ def list_revisions(db: Session, *, viewer_id: UUID, artifact_id: UUID) -> list[R
         db.execute(
             text(
                 """
-                SELECT r.id, a.subject_scheme, r.created_at, r.promoted_at, r.input_manifest,
+                SELECT r.id, bld.id AS build_id, a.subject_scheme,
+                       r.created_at, r.promoted_at, r.input_manifest,
                        r.creator_user_id,
                        bld.instruction,
-                       lc.backend AS model_provider,
-                       lc.model_name AS model_name,
-                       lc.total_tokens AS total_tokens,
                        COUNT(e.id) AS citation_count
                 FROM artifact_revisions r
                 JOIN artifact_builds bld ON bld.id = r.build_id
                 JOIN artifacts a ON a.id = bld.artifact_id
-                LEFT JOIN LATERAL (
-                    SELECT backend, model_name, total_tokens
-                    FROM llm_calls
-                    WHERE owner_kind = 'artifact_build'
-                      AND owner_id = bld.id
-                      AND outcome = 'Succeeded'
-                    ORDER BY generation_seq DESC
-                    LIMIT 1
-                ) lc ON true
                 LEFT JOIN resource_edges e
                   ON e.source_scheme = 'artifact_revision'
                  AND e.source_id = r.id
                  AND e.origin = 'citation'
                  AND e.ordinal IS NOT NULL
                 WHERE bld.artifact_id = :artifact_id
-                GROUP BY r.id, a.subject_scheme, r.created_at, r.promoted_at, r.input_manifest,
-                         r.creator_user_id, bld.instruction,
-                         lc.backend, lc.model_name, lc.total_tokens
+                GROUP BY r.id, bld.id, a.subject_scheme, r.created_at, r.promoted_at,
+                         r.input_manifest, r.creator_user_id, bld.instruction
                 ORDER BY r.created_at DESC, r.id DESC
                 """
             ),
@@ -106,30 +94,41 @@ def list_revisions(db: Session, *, viewer_id: UUID, artifact_id: UUID) -> list[R
         .mappings()
         .all()
     )
-    return [
-        RevisionSummary(
-            artifact_id=artifact_id,
-            subject_scheme=str(row["subject_scheme"]),
-            revision_id=UUID(str(row["id"])),
-            created_at=row["created_at"],
-            promoted_at=row["promoted_at"],
-            is_current=current is not None and UUID(str(row["id"])) == current,
-            citation_count=int(row["citation_count"]),
-            input_manifest=(
-                dict(row["input_manifest"]) if isinstance(row["input_manifest"], dict) else {}
-            ),
-            instruction=(str(row["instruction"]) if row["instruction"] is not None else None),
-            creator_user_id=(
-                UUID(str(row["creator_user_id"])) if row["creator_user_id"] is not None else None
-            ),
-            model_provider=(
-                str(row["model_provider"]) if row["model_provider"] is not None else None
-            ),
-            model_name=str(row["model_name"]) if row["model_name"] is not None else None,
-            total_tokens=int(row["total_tokens"]) if row["total_tokens"] is not None else None,
+    generations_by_owner = read_latest_generations_for_owners(
+        db,
+        owners=[LlmCallOwner(kind="artifact_build", id=UUID(str(row["build_id"]))) for row in rows],
+        outcome="Succeeded",
+    )
+    summaries: list[RevisionSummary] = []
+    for row in rows:
+        revision_id = UUID(str(row["id"]))
+        generation = generations_by_owner.get(
+            LlmCallOwner(kind="artifact_build", id=UUID(str(row["build_id"])))
         )
-        for row in rows
-    ]
+        summaries.append(
+            RevisionSummary(
+                artifact_id=artifact_id,
+                subject_scheme=str(row["subject_scheme"]),
+                revision_id=revision_id,
+                created_at=row["created_at"],
+                promoted_at=row["promoted_at"],
+                is_current=current is not None and revision_id == current,
+                citation_count=int(row["citation_count"]),
+                input_manifest=(
+                    dict(row["input_manifest"]) if isinstance(row["input_manifest"], dict) else {}
+                ),
+                instruction=(str(row["instruction"]) if row["instruction"] is not None else None),
+                creator_user_id=(
+                    UUID(str(row["creator_user_id"]))
+                    if row["creator_user_id"] is not None
+                    else None
+                ),
+                model_provider=generation.backend if generation is not None else None,
+                model_name=generation.model_name if generation is not None else None,
+                total_tokens=generation.total_tokens if generation is not None else None,
+            )
+        )
+    return summaries
 
 
 def get_revision(db: Session, *, viewer_id: UUID, revision_id: UUID) -> RevisionView:
@@ -138,28 +137,16 @@ def get_revision(db: Session, *, viewer_id: UUID, revision_id: UUID) -> Revision
         db.execute(
             text(
                 """
-                SELECT bld.artifact_id, bld.instruction,
+                SELECT bld.id AS build_id, bld.artifact_id, bld.instruction,
                        r.content_html, r.content_text,
                        r.created_at, r.promoted_at, r.input_manifest,
                        r.creator_user_id,
                        r.citation_owner_user_id,
                        a.current_revision_id, a.subject_scheme, a.subject_id,
-                       a.audience_scheme, a.audience_id,
-                       lc.backend AS model_provider,
-                       lc.model_name AS model_name,
-                       lc.total_tokens AS total_tokens
+                       a.audience_scheme, a.audience_id
                 FROM artifact_revisions r
                 JOIN artifact_builds bld ON bld.id = r.build_id
                 JOIN artifacts a ON a.id = bld.artifact_id
-                LEFT JOIN LATERAL (
-                    SELECT backend, model_name, total_tokens
-                    FROM llm_calls
-                    WHERE owner_kind = 'artifact_build'
-                      AND owner_id = bld.id
-                      AND outcome = 'Succeeded'
-                    ORDER BY generation_seq DESC
-                    LIMIT 1
-                ) lc ON true
                 WHERE r.id = :revision_id
                 """
             ),
@@ -176,6 +163,12 @@ def get_revision(db: Session, *, viewer_id: UUID, revision_id: UUID) -> Revision
         viewer_id=viewer_id,
         message="Revision not found",
     )
+    build_owner = LlmCallOwner(kind="artifact_build", id=UUID(str(row["build_id"])))
+    generation = read_latest_generations_for_owners(
+        db,
+        owners=[build_owner],
+        outcome="Succeeded",
+    ).get(build_owner)
     citation_owner = UUID(str(row["citation_owner_user_id"]))
     source = ResourceRef(scheme="artifact_revision", id=revision_id)
     citations = build_citation_outs_for_sources(
@@ -202,9 +195,9 @@ def get_revision(db: Session, *, viewer_id: UUID, revision_id: UUID) -> Revision
         creator_user_id=(
             UUID(str(row["creator_user_id"])) if row["creator_user_id"] is not None else None
         ),
-        model_provider=str(row["model_provider"]) if row["model_provider"] is not None else None,
-        model_name=str(row["model_name"]) if row["model_name"] is not None else None,
-        total_tokens=int(row["total_tokens"]) if row["total_tokens"] is not None else None,
+        model_provider=generation.backend if generation is not None else None,
+        model_name=generation.model_name if generation is not None else None,
+        total_tokens=generation.total_tokens if generation is not None else None,
     )
 
 
