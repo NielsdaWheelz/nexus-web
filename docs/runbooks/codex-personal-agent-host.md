@@ -3,7 +3,7 @@
 This runbook owns the credential-safe deployment boundary for
 `nexus-codex-agent-host`. The host serves the private v2 generation protocol on
 `/run/nexus-codex/agent.sock`; it has no TCP listener, Nexus application
-configuration, database credential, provider API key, application data mount,
+configuration, database credential, generation API key, application data mount,
 or host-home mount.
 
 ## Runtime boundary
@@ -13,9 +13,13 @@ or host-home mount.
 - The host runs as `10001:10001`, read-only, capability-free, with
   `no-new-privileges`, the named AppArmor profile, a 384 MiB cgroup, and one
   writable per-turn state root under the encrypted mount.
-- The host is the sole member of `nexus_codex_egress`. It reaches ChatGPT and
-  the production MCP origin as ordinary public TLS egress. It gains no Docker
-  network peer for PostgreSQL, API, Caddy, or either worker.
+- The host and `codex-egress-policy` are the only members of the internal
+  `nexus_codex_private` network. The host has no public-network attachment;
+  the policy sidecar is the sole member of `nexus_codex_proxy_egress` and the
+  host's only network peer. It exposes private DNS plus a TLS-SNI tunnel for
+  ChatGPT, `auth.openai.com`, and the exact production MCP hostname. TLS stays
+  end-to-end; the sidecar receives no plaintext, grant, or credential. Neither
+  container can reach PostgreSQL, API, Caddy, or either worker directly.
 - Both worker lanes mount `nexus_codex_run:/run/nexus-codex:ro`. Only the
   interactive worker serves MCP, on `0.0.0.0:8001` inside Compose. Caddy routes
   exactly `/internal/agent-tools/mcp` there and leaves every other route
@@ -24,8 +28,34 @@ or host-home mount.
   `NEXUS_CODEX_CHAT_NETWORK_ATTESTED=true` from Compose. The origin must use a
   lowercase public DNS hostname and the exact path, with no userinfo, query, or
   fragment.
-- Never set `CODEX_HOME`, `OPENAI_API_KEY`, or another provider key on the
+- Never set `CODEX_HOME`, `OPENAI_API_KEY`, or another generation API key on the
   running host. `CODEX_HOME` is legal only for the one enrollment command.
+
+## MCP wire pin
+
+Production ChatTools interoperation is one fixed contract:
+
+- client: `openai-codex==0.144.4` and
+  `openai-codex-cli-bin==0.144.4`;
+- server: official `mcp==2.1.0`, configured with `stateless_http=True` and
+  `json_response=True`;
+- wire revision: MCP `2025-06-18` only;
+- endpoint: HTTPS POST to exactly `/internal/agent-tools/mcp`.
+
+Every request carries the ephemeral
+`Authorization: Bearer <generation grant>`, `Content-Type: application/json`,
+and `Accept: application/json, text/event-stream`. The initialize body declares
+`protocolVersion: 2025-06-18`; Codex omits `MCP-Protocol-Version` on that first
+request, and the mount accepts only an omitted or identical header there.
+Every subsequent POST requires `MCP-Protocol-Version: 2025-06-18`. Any other
+revision, a missing later header, or any client `Mcp-Session-Id` is a protocol
+rejection.
+
+Despite the `Accept` advertisement, Nexus returns JSON for requests and a
+bodyless acknowledgement for notifications. It returns no session id and
+configures no GET/SSE stream, DELETE-session lifecycle, event store, resume,
+OAuth, protocol downgrade, or dual/fallback server. Do not “upgrade” the wire
+revision independently of the pinned Codex client and its service proof.
 
 ## Encrypted credential state
 
@@ -125,8 +155,9 @@ stat -c '%u:%g:%a %n' \
 
 Normal release admission installs and parses the exact AppArmor profile before
 writers stop. It verifies the LUKS mapping/mount, boot guard, direct bind,
-container environment, UDS volume, single-member egress network, inner
-sandbox, and exact v2 health identity.
+container environment, UDS volume, two-network egress topology, fixed private
+addresses and DNS, sidecar isolation, inner sandbox, and exact v2 health
+identity.
 
 After reboot, unlock and mount the credential state interactively, then use the
 controller. Do not invoke Compose directly:
@@ -143,8 +174,9 @@ sudo env PYTHONDONTWRITEBYTECODE=1 \
 ```
 
 Success emits one bounded `nexus-codex-agent-host-resume.v1` receipt. A missing
-mapping, changed mount option, unexpected environment/mount/network peer, or
-health mismatch refuses before the host is admitted.
+mapping, changed mount option, unexpected environment/mount/network peer,
+sidecar-policy mismatch, or health mismatch refuses before the host is
+admitted.
 
 ## Locked-reboot acceptance
 
@@ -195,9 +227,10 @@ events; the MCP result has a bounded non-zero count; permission requests are
 always zero.
 
 The nightly runner has a distinct encrypted Codex profile, no database, no
-Docker authority, and no Nexus process. Its MCP peer is the pinned official SDK
-served locally with TLS and one static read-only tool. A missing credential,
-runner, state root, or policy pin is `not_run`, never skipped green.
+Docker authority, and no Nexus process. Its MCP peer is the same
+`mcp==2.1.0` stateless JSON server on wire revision `2025-06-18`, served locally
+with TLS and one static read-only tool. A missing credential, runner, state
+root, or policy pin is `not_run`, never skipped green.
 
 ## Operator operation certification
 
@@ -210,9 +243,10 @@ contracts before writing bounded redacted evidence.
 
 The observation producer is the E/D integration seam: it must dispatch through
 the real worker/domain owners and perform normal synthetic-user teardown. The
-certifier contains no direct-provider or fixture-mode fallback and refuses a
-partial or hand-shaped contract. Until that producer is landed, the strict
-schema/validator is available but operator certification remains `not_run`.
+certifier contains no alternate generation client or fixture-mode fallback and
+refuses a partial or hand-shaped contract. Until that producer is landed, the
+strict schema/validator is available but operator certification remains
+`not_run`.
 
 Once the integration runner produces its root-owned observation file, seal it
 from the clean checkout for the deployed SHA:
@@ -268,7 +302,7 @@ sandbox, environment, MCP-origin, or capacity checks.
 ## Incident boundaries
 
 - Quota/auth/runtime/sandbox failure is terminal for that generation; never add
-  an API-key fallback or automatic account probing.
+  API-based generation fallback or automatic account probing.
 - A pre-accept capacity refusal is known. A post-accept disconnect is uncertain
   and never capacity or redispatch authority.
 - Grant values, `auth.json`, raw SDK frames, model output, prompts, and device

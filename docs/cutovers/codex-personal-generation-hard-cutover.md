@@ -2,7 +2,7 @@
 
 **Status:** PROPOSED IMPLEMENTATION SPECIFICATION
 
-**Date:** 2026-08-24 (revision 2, adversarially validated against `main` @ `beb88775`)
+**Date:** 2026-08-25 (revision 3, adversarially validated against `main` @ `beb88775`)
 
 **Type:** atomic hard cutover; no compatibility period
 
@@ -48,10 +48,13 @@ The official [Codex SDK](https://learn.chatgpt.com/docs/codex-sdk),
 [model guidance](https://learn.chatgpt.com/docs/models), and
 [MCP contract](https://learn.chatgpt.com/docs/extend/mcp?surface=cli) are the
 external authorities. The repository pins are the executable authority:
-`provider-runtime` at its exact git rev, `openai-codex`/`openai-codex-cli-bin`
-at their exact locked versions, the plan pins in `generation_policy.py`, and —
-added by this cutover — the official MCP SDK at an exact locked version.
-`python/uv.lock` moves with `python/pyproject.toml` in the owning package.
+the AgentRuntime dependency (`provider-runtime`, sourced from `llm-calling`) at
+its exact git revision, `openai-codex`/`openai-codex-cli-bin` at exactly
+`0.144.4`, the plan pins in `generation_policy.py`, and the official MCP server
+SDK at exactly `mcp==2.1.0`. `python/uv.lock` moves with
+`python/pyproject.toml` in the owning package. The MCP wire pin is separately
+fixed to `2025-06-18`; a dependency that can parse another revision does not
+make that revision part of the Nexus contract.
 
 ## 2. Goals and non-goals
 
@@ -239,7 +242,7 @@ Ownership laws:
   fixed empty cwd, sandbox/permission policy resolution, the single active turn
   slot, host/cgroup capacity parsing and pre-accept admission, runtime close
   and session cleanup, and `AgentEvent`-to-wire normalization. It has no
-  database or provider API credentials.
+  database or generation API credentials.
 - The host is a distinct process and a distinct image command; it is not a
   distinct package. It imports the policy and contract modules from the shared
   image and nothing that opens a database, provider, or object-store handle.
@@ -341,7 +344,7 @@ Rules:
   dedicated egress bridge plus an egress firewall admitting only the ChatGPT
   endpoints and the exact MCP origin. The host refuses ChatTools when that
   container network policy is not attested. Widening the adapter is an
-  out-of-scope `provider-runtime` change.
+  new AgentRuntime/Codex-adapter design and a new policy revision.
 - A policy revision fingerprints plans, operation mappings, capability rules,
   bounds, and tool-plan revision. `generation_policy.py` is the single
   implementation; the host imports it from the shared image rather than
@@ -470,13 +473,30 @@ before dispatch, so an image or policy mismatch is refused before any
 
 ### Nexus MCP API
 
-Add the official `mcp` Python SDK as a new pinned runtime dependency in
-`python/pyproject.toml` and `python/uv.lock` (exact `==` version, recorded in
-the module doc; `uv sync --frozen` must succeed unchanged) and serve its
+Pin the official server SDK at `mcp==2.1.0` in `python/pyproject.toml` and
+`python/uv.lock` (`uv sync --frozen` must succeed unchanged) and serve its
 Streamable HTTP ASGI app at `/internal/agent-tools/mcp`; do not hand-roll
-JSON-RPC. The hard-cut protocol is MCP `2026-07-28`: it is sessionless, and
-older stateful-session negotiation is refused. SSE resumability/event-store
-replay is disabled, so the only replay path is the durable tool journal below.
+JSON-RPC. Interoperation is hard-pinned to the actual
+`openai-codex==0.144.4` / `openai-codex-cli-bin==0.144.4` client contract:
+MCP `2025-06-18`, `stateless_http=True`, and `json_response=True`. This is not
+“latest MCP” negotiation. `2024-11-05`, `2025-03-26`, `2025-11-25`, and
+`2026-07-28` are not accepted alternatives, and there is no legacy SSE,
+stateful-session, dual-era, downgrade, or retry fallback.
+
+The HTTP behavior is exact:
+
+| Request | Required request headers | Response/session law |
+|---|---|---|
+| `initialize` POST | `Authorization: Bearer <generation grant>`; `Content-Type: application/json`; Codex advertises `Accept: application/json, text/event-stream`; the JSON body declares `protocolVersion: 2025-06-18`. Codex omits `MCP-Protocol-Version` on this pre-negotiation request; the mount also tolerates the same exact value, never another value. | JSON response selects only `2025-06-18`; no `Mcp-Session-Id` is emitted. |
+| every later POST, including `notifications/initialized`, `tools/list`, and `tools/call` | The same authorization/content/accept headers plus `MCP-Protocol-Version: 2025-06-18`. | Requests carrying a missing/different revision or any `Mcp-Session-Id` are rejected. JSON-RPC requests receive `application/json`; notifications receive the SDK's bodyless acknowledgement. |
+
+The `text/event-stream` token in `Accept` is the pinned Streamable HTTP client
+advertisement, not a Nexus streaming mode. Nexus configures JSON responses,
+creates no transport session, serves no GET event stream or DELETE-session
+lifecycle, stores no event id, and implements no resumability. The only replay
+path is the durable tool journal below. The per-generation grant is the only
+configured `Authorization` source; OAuth discovery, anonymous connection, and
+another bearer source are not fallbacks.
 
 The mount is served by the interactive worker process that owns the chat run —
 the single durable-journal writer of §4 — on a dedicated listener.
@@ -494,15 +514,20 @@ The MCP origin is the production Caddy origin; the hostname is a real,
 publicly resolvable, lowercase DNS name (the pinned runtime's hostname rules
 refuse `localhost`, `.local`, and `.internal` names, so no internal-only
 origin is expressible). The path is therefore publicly routable, and its sole
-boundary is the run-scoped grant plus per-call revalidation — a deliberate
-decision matching the existing public bearer-scoped stream routes, not an
-oversight. Every request without a valid grant receives an unauthenticated
-rejection with no body distinguishing the route's existence, and the path is
-rate-limited at the edge. No network peer is added between the Codex host and
-any application service: the host reaches the origin as ordinary internet
-egress over TLS, so `deploy/hetzner/release.py`'s exact `nexus_codex_egress`
-single-member bridge inspection is unchanged and stays a release gate; the
-host's egress firewall admits exactly the ChatGPT endpoints and this origin.
+application boundary is the run-scoped grant plus per-call revalidation — a
+deliberate decision matching the existing public bearer-scoped stream routes,
+not an oversight. Every request without a valid grant receives an
+unauthenticated rejection with no body distinguishing the route's existence,
+and the path is rate-limited before bearer/body parsing.
+
+The host has no public-network attachment. Its only network peer is a
+credential-free policy sidecar on an internal bridge. That sidecar owns the
+host's DNS and tunnels end-to-end TLS only when ClientHello SNI names a
+ChatGPT endpoint, `auth.openai.com`, or the exact MCP hostname; only the
+sidecar joins a separate public-egress bridge. It never terminates TLS and
+therefore sees no grant, credential, prompt, output, or application data.
+`deploy/hetzner/release.py` proves both exact network memberships, fixed
+private addresses, and the sidecar's isolation before admitting the host.
 
 The dedicated HS256 grant reuses the proven token-codec pattern with its own
 signing key, issuer, and audience — deliberately not the stream token's, which
@@ -522,8 +547,8 @@ generation. Every tool call independently revalidates signature with `alg`
 pinned to HS256, exact `iss`/`aud`/`scope`, `nbf`/`exp` against the database
 clock with no skew allowance, the active job lease/fence, run/user ownership,
 generation, plan revision, cancellation, declared tool, and admitted resource
-scope. No session identifier is accepted, persisted, or inferred. The grant is
-refused at every Nexus surface other than the MCP mount.
+scope. No session identifier is accepted, returned, persisted, or inferred.
+The grant is refused at every Nexus surface other than the MCP mount.
 
 A request with no verifiable grant is indistinguishably unauthenticated and
 cannot name or affect a generation. When a correctly signed grant identifies
@@ -551,9 +576,8 @@ existing `background_jobs.payload` journal. A repeat of the same identity
 returns the journaled receipt verbatim; the same identity with a different
 canonical input digest is a defect, not a new call. Concurrent calls serialize
 on the fence, so the ordinal is total. One generation writes exactly one
-ledger row; `call_seq` is no longer derived from a turn index. A negotiated
-protocol revision, if the SDK exposes it, is bounded audit metadata only and
-never part of replay identity.
+ledger row; `call_seq` is no longer derived from a turn index. The fixed MCP
+revision is deployment policy, not replay identity or per-call audit state.
 
 MCP tool names are governed by one rule with three name spaces. The declared
 MCP tool name is the canonical tool id where the pinned MCP SDK accepts it;
@@ -849,10 +873,11 @@ Table laws:
   `NEXUS_CODEX_AGENT_SOCKET` exactly as `worker-background` does; both worker
   lanes are start-ordered after `nexus-codex-agent-host` without a health
   dependency, so an unready host soft-fails only generation jobs.
-- The Codex host reaches the MCP origin as public egress only; F amends
-  `deploy/hetzner/docker-compose.yml` and `deploy/hetzner/Caddyfile` in the
-  same change so `/internal/agent-tools/mcp` routes to the interactive
-  worker's listener and nothing else changes route.
+- The Codex host reaches the MCP origin only through the container-enforced
+  DNS/TLS-SNI sidecar; F amends `deploy/hetzner/docker-compose.yml` and
+  `deploy/hetzner/Caddyfile` in the same change so
+  `/internal/agent-tools/mcp` routes to the interactive worker's listener and
+  nothing else changes route.
 
 Deletion manifest for the final refactor:
 
@@ -954,7 +979,7 @@ owned real-UDS process under `python/tests/service/`, not a separate level.
 | Uncertainty discharge | reconciliation returns an uncertain generation to `Prepared` or attaches a proven terminal; neither path double-publishes | service / PR |
 | Operation portfolio | parameterized catalog proves every operation renders a valid intent/schema within its bounds, cannot choose runtime policy, and publishes in one serializable transaction opened only after the durable terminal | kernel-python + service / PR |
 | Bounds | the ChatTools bounds admit a maximal admitted transcript and a maximal streamed 900-second turn; overrun is the typed `output_limit_exceeded` terminal | service / PR |
-| MCP authority + tools | real Postgres and local MCP transport prove one read and one reversible write; expired/cross-user/cross-run/cross-generation grants fail; integer and string request ids remain distinct; an exact protocol replay at the same identity returns the journaled receipt without re-executing, and a changed payload at that identity defects | service / PR |
+| MCP authority + tools | real Postgres and local MCP transport prove one read and one reversible write; every request carries the grant, initialize names `2025-06-18`, every later request carries that exact `MCP-Protocol-Version`, all POSTs advertise the exact JSON/SSE accept pair, and neither side emits or accepts `Mcp-Session-Id`; omitted/wrong later versions, other revisions, stateful traffic, dual-era retries, and transport fallback defect; expired/cross-user/cross-run/cross-generation grants fail; integer and string request ids remain distinct; an exact protocol replay at the same identity returns the journaled receipt without re-executing, and a changed payload at that identity defects | service / PR |
 | MCP exposure | a grantless or invalid-grant request to `/internal/agent-tools/mcp` is rejected without tool execution; the grant is accepted only at this mount; no other path changes route or gains an exemption | service / PR |
 | Secret and capability confinement | the grant never appears in repr, logs, ledger rows, fingerprints, or evidence; built-ins/web search stay off; ChatTools lowering is exactly §5's | service / PR |
 | Tool-authority containment | injected resource text, forged tool results, and cross-account requests cannot authorize a mutating MCP tool; deterministic corpus and rubric | llm-eval + service / PR |
@@ -976,7 +1001,7 @@ registered as one canonical node under its existing priority risk; one
 physical file has one owning risk and at most one exact node.
 
 GREEN: implement the smallest owner that makes each proof pass; use no live
-provider in PR lanes.
+subscription turn in PR lanes.
 
 REFACTOR: atomically switch every caller, delete all superseded owners/config/
 docs, then run the `changed`, `confidence`, and `pr` workflows selected by
@@ -995,9 +1020,10 @@ Live verification is deliberately two-shaped:
   read-only MCP result. Exactly four subscription turns per run, each with a
   bounded elapsed ceiling, recorded in the receipt and enforced by the
   evidence contract; exceeding the declared turn or time budget fails the
-  lane. The nightly's MCP peer is test-owned: the same pinned MCP SDK's
-  Streamable HTTP app, served by the proof at a loopback origin with locally
-  terminated TLS and one static read-only tool. The runner gains no database,
+  lane. The nightly's MCP peer is test-owned: the same `mcp==2.1.0` stateless
+  JSON Streamable HTTP app on revision `2025-06-18`, served by the proof at a
+  loopback origin with locally terminated TLS and one static read-only tool.
+  The runner gains no database,
   Docker authority, or Nexus process; its credential-boundary provisioning is
   unchanged. Drift in the Nexus-side MCP mount, authorization, and tool
   bridge stays owned by the PR-level service proofs. The controller's
@@ -1079,10 +1105,11 @@ no prompts, model output, grants, or credentials.
     the import graph, and the closed policy/plan proofs — never by a committed
     source-grep test. The integrator's one-time deletion-manifest search is
     release evidence recorded in the change report, not a retained test.
-    `provider-runtime` remains pinned — it owns embeddings, `AgentRuntime`,
-    and the Codex SDK extra — and the deletion applies to Nexus-side profiles,
-    credential composition, certification fixtures, and any dependency no
-    longer imported by the active tree.
+    The pinned AgentRuntime dependency (`provider-runtime`, sourced from
+    `llm-calling`) remains only for embeddings, `AgentRuntime`, and its Codex SDK
+    extra; the deletion applies to Nexus-side generation profiles, credential
+    composition, certification fixtures, and any dependency no longer imported
+    by the active tree.
 12. The cutover migration refuses incompatible active work and has no
     downgrade or compatibility runtime.
 13. Each operation's domain output, observed contributors, and collection

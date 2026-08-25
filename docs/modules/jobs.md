@@ -238,14 +238,14 @@ Every generation goes through
 identity before dispatch is armed; stages the `llm_calls` start beside the
 durable `Uncertain` checkpoint; streams one v2 generation; and stages the
 terminal beside `Completed`. It owns capacity wait/reschedule, accepted-loss
-uncertainty, replay, and the normalized failure boundary. There is no direct
-provider runtime or per-job retry policy.
+uncertainty, replay, and the normalized failure boundary. This is the only
+generation execution boundary, and jobs have no local retry policy.
 
 Each task supplies only its stable operation identity, bounded intent, durable
 owner/step identity, lease-fenced row-validation callback, and semantic result
 decoder. Model, effort, capability, timeouts, and stream bounds come from
 `generation_policy.py`. `enrich_metadata` now uses this same command, client,
-journal, and `llm_calls` path; the metadata-only `agent_turns` route is gone.
+journal, and `llm_calls` path.
 
 `dossier_build` is one generic kind for Media, Conversation, Library, Podcast,
 Contributor, Page, Note, and internal Idea subjects. Its binding registry

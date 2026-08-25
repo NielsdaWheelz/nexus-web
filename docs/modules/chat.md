@@ -16,7 +16,7 @@ authority coordination,
 finalization). The cohesive services it composes each have one owner:
 `chat_run_citations` (candidate numbering, attached/read evidence, final
 canonical publication, `citation_index`), `chat_run_tools` (`message_tool_calls`
-lifecycle + numbered tool-output rendering + provider tool-event binding), and the
+lifecycle + numbered tool-output rendering + Codex tool-event binding), and the
 `ChatRunEventEmitter` in `chat_run_event_store` — the single durable run-event
 append owner (typed streaming methods commit inline for SSE visibility; batch
 tool-result/citation/context events defer to the executor's transaction). The
@@ -81,11 +81,19 @@ Chat admission freezes one `ChatTools` plan with exactly eleven declarations:
 `nexus.note.create`, `nexus.highlight.create`, `nexus.edge.create`, and
 `nexus.queue.add`. These canonical IDs are the only executable identities; the
 domain-adapter module names under `services/agent_tools/` are not aliases. The
-interactive worker projects only those declarations through the official,
-sessionless Streamable HTTP MCP server at `/internal/agent-tools/mcp`. Each
-generation receives a short-lived bearer grant bound to the run, claimed job,
-attempt, and generation; every tool call revalidates that authority before the
-canonical executor runs.
+interactive worker projects only those declarations through the official
+`mcp==2.1.0` stateless, JSON-response Streamable HTTP server at
+`/internal/agent-tools/mcp`. The only client is Codex SDK/CLI `0.144.4`, pinned
+to MCP `2025-06-18`. Initialize declares that revision in its body; every later
+POST requires `MCP-Protocol-Version: 2025-06-18`. Codex sends
+`Content-Type: application/json` and
+`Accept: application/json, text/event-stream`; the latter does not enable a
+Nexus SSE response. The server emits no `Mcp-Session-Id` and owns no transport
+session, GET stream, event store, resume, protocol downgrade, or dual/fallback
+path. Each generation receives a short-lived bearer grant bound to the run,
+claimed job, attempt, and generation; every POST carries it in `Authorization`,
+and every tool call revalidates that authority before the canonical executor
+runs.
 
 Completed preparation, generation, and tool results are replay input, never
 cache hints. An ambiguous paid call or write remains `Uncertain` and exhausts to
