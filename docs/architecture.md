@@ -823,6 +823,11 @@ under one visible, ready-indexed typed-anchor row contract. Fragment-offset and
 PDF-geometry hits share one strict locator decoder; stale, cross-media, missing,
 or schema-invalid anchors are omitted from search and masked as not found when a
 durable reference is reopened.
+The Reader Apparatus retriever likewise owns candidate retrieval and durable
+rematerialization under one visible publication-row contract: only `ready` or
+`partial` apparatus states with a non-missing locator participate. Both paths
+decode persisted locator JSON through the canonical retrieval schema, omitting
+or masking malformed rows instead of leaking a projection failure.
 
 - **Indexing** (`services/content_indexing.py`, `semantic_chunks.py`): text-bearing
   media flows `fragment → content_blocks → chunks → embeddings`; note bodies
