@@ -26,12 +26,12 @@ from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.schemas.search import (
-    VALID_RESULT_TYPES,
     SearchPageInfo,
     SearchResponse,
     SearchResultOut,
     SearchResultSourceOut,
 )
+from nexus.schemas.search_types import VALID_RESULT_TYPES
 from nexus.services import media_intelligence
 from nexus.services.locator_resolver import locator_from_resolution, resolve_evidence_span
 from nexus.services.resource_graph.highlight_notes import (
@@ -71,6 +71,7 @@ from nexus.services.search.results import (
     _web_result_ref_json,
 )
 from nexus.services.search.retrievers.contributors import _search_contributors
+from nexus.services.search.retrievers.conversations import resolve_conversation_artifact_result
 from nexus.services.search.scope import authorize_scope
 from nexus.services.search.sql import contributor_credits_rollup_cte_sql
 from nexus.services.search.telemetry import _log_search
@@ -718,6 +719,18 @@ def get_search_result(
                 id=row[0],
                 title=str(row[1] or "Conversation"),
                 snippet=str(row[1] or "Conversation"),
+                score=score,
+            ),
+        )
+
+    if result_type == "artifact":
+        return _result_to_out(
+            db,
+            viewer_id,
+            resolve_conversation_artifact_result(
+                db,
+                viewer_id=viewer_id,
+                conversation_id=_uuid_from_search_id(result_id),
                 score=score,
             ),
         )

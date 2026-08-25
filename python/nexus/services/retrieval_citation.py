@@ -192,6 +192,12 @@ class RetrievalCitation:
                 "score": self.score,
                 "selected": self.selected,
             }
+        if self.result_type == "artifact":
+            return {
+                **common,
+                "revision_id": self.result_ref["revision_id"],
+                "subject_ref": self.result_ref["subject_ref"],
+            }
         if self.result_type == "web_result":
             # The web-search citation already carries the full validated
             # ``WebRetrievalResultRef`` shape (extra fields the compact model does
