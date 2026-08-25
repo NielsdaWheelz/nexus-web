@@ -389,7 +389,7 @@ def _run_ingest_media_source(
         media_id=str(payload["media_id"]),
         attempt_id=str(payload["attempt_id"]),
         actor_user_id=str(payload["actor_user_id"]),
-        request_id=_optional_str(payload.get("request_id")),
+        request_id=_optional_job_text(payload, "request_id", "ingest_media_source"),
         context=context,
     )
 
@@ -409,7 +409,7 @@ def _run_enrich_metadata(
 
     return enrich_metadata(
         media_id=str(payload["media_id"]),
-        request_id=_optional_str(payload.get("request_id")),
+        request_id=_optional_job_text(payload, "request_id", "enrich_metadata"),
         context=context,
     )
 
@@ -466,8 +466,8 @@ def _run_note_reindex(
 
     return note_reindex_job(
         note_block_id=str(payload["note_block_id"]),
-        reason=_require_job_reason(payload, kind="note_reindex_job"),
-        request_id=_optional_str(payload.get("request_id")),
+        reason=_require_job_text(payload, "reason", "note_reindex_job"),
+        request_id=_optional_job_text(payload, "request_id", "note_reindex_job"),
     )
 
 
@@ -493,7 +493,7 @@ def _run_reconcile_stale_ingest_media(
     from nexus.tasks.reconcile_stale_ingest_media import reconcile_stale_ingest_media_job
 
     return reconcile_stale_ingest_media_job(
-        request_id=_optional_str(payload.get("request_id")),
+        request_id=_optional_job_text(payload, "request_id", "reconcile_stale_ingest_media_job"),
     )
 
 
@@ -503,8 +503,10 @@ def _run_sync_gutenberg_catalog(
     from nexus.tasks.sync_gutenberg_catalog import sync_gutenberg_catalog_job
 
     return sync_gutenberg_catalog_job(
-        request_id=_optional_str(payload.get("request_id")),
-        scheduler_identity=_optional_str(payload.get("scheduler_identity")),
+        request_id=_optional_job_text(payload, "request_id", "sync_gutenberg_catalog_job"),
+        scheduler_identity=_optional_job_text(
+            payload, "scheduler_identity", "sync_gutenberg_catalog_job"
+        ),
     )
 
 
@@ -513,7 +515,9 @@ def _run_prune_background_jobs(
 ) -> Mapping[str, Any] | None:
     from nexus.tasks.prune_background_jobs import prune_background_jobs_job
 
-    return prune_background_jobs_job(request_id=_optional_str(payload.get("request_id")))
+    return prune_background_jobs_job(
+        request_id=_optional_job_text(payload, "request_id", "prune_background_jobs_job")
+    )
 
 
 def _run_purge_expired_auth_handoff_codes(
@@ -522,7 +526,7 @@ def _run_purge_expired_auth_handoff_codes(
     from nexus.tasks.purge_expired_auth_handoff_codes import purge_expired_auth_handoff_codes_job
 
     return purge_expired_auth_handoff_codes_job(
-        request_id=_optional_str(payload.get("request_id")),
+        request_id=_optional_job_text(payload, "request_id", "purge_expired_auth_handoff_codes"),
     )
 
 
@@ -554,7 +558,7 @@ def _run_synapse_scan(
     return synapse_scan(
         user_id=str(payload["user_id"]),
         ref=str(payload["ref"]),
-        reason=_require_job_reason(payload, kind="synapse_scan"),
+        reason=_require_job_text(payload, "reason", "synapse_scan"),
     )
 
 
@@ -598,17 +602,21 @@ def _run_storage_orphan_sweep(
     return storage_orphan_sweep(payload=payload, context=context)
 
 
-def _optional_str(value: Any) -> str | None:
-    if value is None:
+def _optional_job_text(
+    payload: Mapping[str, Any],
+    key: str,
+    kind: str,
+) -> str | None:
+    if payload.get(key) is None:
         return None
-    normalized = str(value).strip()
-    return normalized or None
+    return _require_job_text(payload, key, kind)
 
 
-def _require_job_reason(payload: Mapping[str, Any], *, kind: str) -> str:
-    value = payload.get("reason")
+def _require_job_text(payload: Mapping[str, Any], key: str, kind: str) -> str:
+    value = payload.get(key)
     if not isinstance(value, str) or not value or value != value.strip():
-        # justify-defect: canonical job enqueuers always persist one exact reason;
-        # missing, coerced, or padded values are same-system payload corruption.
-        raise AssertionError(f"{kind} payload requires canonical reason")
+        # justify-defect: canonical job enqueuers always persist exact text or
+        # explicit absence; missing required, coerced, or padded values are
+        # same-system payload corruption.
+        raise AssertionError(f"{kind} payload requires canonical {key}")
     return value
