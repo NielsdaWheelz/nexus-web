@@ -38,6 +38,7 @@ from nexus.services.media_source_ingest import run_source_attempt
 from nexus.services.transcript_segments import TranscriptSegmentInput
 from nexus.services.transcripts.current import publish_source_transcript
 from tests.testkit.auth import UserRecord
+from tests.testkit.external_server import NASA_TRANSCRIPT_URL
 
 
 def _seed_transcription_episode(
@@ -94,6 +95,50 @@ def _seed_transcription_episode(
     )
     db.commit()
     return media_id
+
+
+def _run_claimed_transcript_source_attempt(
+    db: Session,
+    *,
+    media_id: UUID,
+    actor_user_id: UUID,
+    worker_id: str,
+) -> dict[str, object]:
+    db.expire_all()
+    attempt = db.scalars(
+        select(MediaSourceAttempt).where(MediaSourceAttempt.media_id == media_id)
+    ).one()
+    assert attempt.job_id is not None
+    claimed = claim_job(
+        db,
+        job_id=attempt.job_id,
+        worker_id=worker_id,
+        lease_seconds=300,
+        heavy_kinds=("ingest_media_source",),
+    )
+    attempt_id = attempt.id
+    job_id = attempt.job_id
+    db.commit()
+    assert claimed is not None
+
+    return run_source_attempt(
+        session_factory=sessionmaker(
+            bind=db.get_bind(),
+            autoflush=False,
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        ),
+        media_id=media_id,
+        attempt_id=attempt_id,
+        actor_user_id=actor_user_id,
+        request_id=None,
+        context=JobExecutionContext(
+            job_id=job_id,
+            worker_id=worker_id,
+            attempt_no=claimed.attempts,
+            resource_class="Heavy",
+        ),
+    )
 
 
 def test_transcript_forecast_only_persists_its_explicit_audit(
@@ -774,41 +819,11 @@ def test_worker_quota_rejection_commits_its_audit_before_terminal_failure(
     )
     assert admitted.status_code == 202, admitted.text
 
-    db_session.expire_all()
-    attempt = db_session.scalars(
-        select(MediaSourceAttempt).where(MediaSourceAttempt.media_id == media_id)
-    ).one()
-    assert attempt.job_id is not None
-    worker_id = "publisher-fallback-quota-worker"
-    claimed = claim_job(
+    result = _run_claimed_transcript_source_attempt(
         db_session,
-        job_id=attempt.job_id,
-        worker_id=worker_id,
-        lease_seconds=300,
-        heavy_kinds=("ingest_media_source",),
-    )
-    attempt_id = attempt.id
-    job_id = attempt.job_id
-    db_session.commit()
-    assert claimed is not None
-
-    result = run_source_attempt(
-        session_factory=sessionmaker(
-            bind=db_session.get_bind(),
-            autoflush=False,
-            expire_on_commit=False,
-            join_transaction_mode="create_savepoint",
-        ),
         media_id=media_id,
-        attempt_id=attempt_id,
         actor_user_id=test_user.id,
-        request_id=None,
-        context=JobExecutionContext(
-            job_id=job_id,
-            worker_id=worker_id,
-            attempt_no=claimed.attempts,
-            resource_class="Heavy",
-        ),
+        worker_id="publisher-fallback-quota-worker",
     )
 
     assert result["status"] == "failed"
@@ -837,3 +852,69 @@ def test_worker_quota_rejection_commits_its_audit_before_terminal_failure(
         )
         == 0
     )
+
+
+def test_publisher_transcript_worker_publishes_semantics_and_revisions_once(
+    authenticated_client: TestClient,
+    db_session: Session,
+    test_user: UserRecord,
+) -> None:
+    media_id = _seed_transcription_episode(
+        db_session,
+        user=test_user,
+        title="Exactly-once publisher transcript",
+        rss_transcript_url=NASA_TRANSCRIPT_URL,
+    )
+    admitted = authenticated_client.post(
+        f"/media/{media_id}/transcript/request",
+        json={"reason": "episode_open", "dry_run": False},
+    )
+    assert admitted.status_code == 202, admitted.text
+    revisions_after_admission = {
+        family: read_collection_revision(
+            db_session,
+            viewer_id=test_user.id,
+            family=family,
+        )
+        for family in (CollectionFamily.LibraryEntries, CollectionFamily.PodcastEpisodes)
+    }
+
+    result = _run_claimed_transcript_source_attempt(
+        db_session,
+        media_id=media_id,
+        actor_user_id=test_user.id,
+        worker_id="publisher-transcript-worker",
+    )
+
+    assert result["status"] == "completed"
+    assert result["source_type"] == "podcast_episode_transcript"
+    assert int(result["segment_count"]) > 0
+    db_session.expire_all()
+    semantic_jobs = find_nonterminal_jobs_for_payload(
+        db_session,
+        kind="podcast_reindex_semantic_job",
+        expected_payload_match={"media_id": str(media_id)},
+    )
+    assert len(semantic_jobs) == 1
+    transcript_state = db_session.get(MediaTranscriptState, media_id)
+    assert transcript_state is not None
+    assert transcript_state.transcript_state == "ready"
+    assert transcript_state.transcript_coverage == "full"
+    assert transcript_state.semantic_status == "pending"
+    assert transcript_state.transcript_origin == "Publisher"
+    transcription_job = db_session.get(PodcastTranscriptionJob, media_id)
+    assert transcription_job is not None
+    assert transcription_job.status == "completed"
+    source_attempt = db_session.scalars(
+        select(MediaSourceAttempt).where(MediaSourceAttempt.media_id == media_id)
+    ).one()
+    assert source_attempt.status == "succeeded"
+    for family, revision_after_admission in revisions_after_admission.items():
+        assert (
+            read_collection_revision(
+                db_session,
+                viewer_id=test_user.id,
+                family=family,
+            )
+            == revision_after_admission + 1
+        )
