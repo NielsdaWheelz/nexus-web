@@ -1021,8 +1021,11 @@ capability-owned:
   (GET/PUT, no batch endpoint); position/duration/nullable episode-rate DML is owned by
   `services/consumption/_listening_store.py` (§8.8).
 - `media_file_access.py`: signed original-file download URLs.
-- `media_processing_state.py`: every processing-state transition, including
+- `media_processing_state.py`: in-process processing transitions, including
   reingest reset and ready-for-reading completion.
+- `source_attempt_failures.py`: the terminal source-attempt transaction across
+  attempt, Media, transcript, Podcast job, reservation, and revisions;
+  `media_failure_projection.py` is its lightweight Media failure-field writer.
 
 **Entity & state machine:** `media.processing_status` runs
 `pending → extracting → ready_for_reading` or `failed`. Search/embedding
@@ -1542,8 +1545,12 @@ unchanged revision.
 Podcast source failure likewise has one terminal publication: the source owner
 settles the attempt, while the Podcast failure owner atomically settles Media,
 the transcription job, reserved usage, transcript state, and one shared
-media-fact revision. `collection_revisions.bump_all_media_fact_collections`
+media-fact revision. `media_fact_revisions.bump_all_media_fact_collections`
 owns the exact `AuthorWorks | LibraryEntries | PodcastEpisodes` family set.
+Podcast budget admission lives in `podcasts/transcription_usage.py`; reservation
+release/commit lives in the supervisor-safe
+`podcasts/transcription_reservation_settlement.py`. Neither terminal owner
+imports provider adapters.
 `services/transcripts/state.py` is the sole persistence owner for
 `media_transcript_states`; `current.py` owns artifact publication, while
 `semantic.py` owns every semantic-job payload plus lock-and-job-inventory repair
@@ -2159,7 +2166,7 @@ The things most likely to bite you, distilled:
 | The schema                                                        | `python/nexus/db/models.py` (+ `migrations/alembic/versions/`)                                                                                                                                         |
 | Background jobs / worker                                          | `python/nexus/jobs/`, `python/nexus/tasks/`, `apps/worker/`                                                                                                                                            |
 | Codex personal metadata host (native subscription turn)           | `apps/codex_agent/`, `python/nexus/services/native_agent_*.py`, `python/nexus/services/agent_turn_ledger.py`, [`modules/llms.md`](modules/llms.md), [`runbooks/codex-personal-agent-host.md`](runbooks/codex-personal-agent-host.md) |
-| Media catalog and ingest owners                                   | `python/nexus/services/media.py`, `media_ingest.py`, `media_source_ingest.py`, `x_ingest.py`, `youtube_video_ingest.py`, `remote_file_ingest.py`, `remote_file_client.py`, `media_processing_state.py` |
+| Media catalog and ingest owners                                   | `python/nexus/services/media.py`, `media_ingest.py`, `media_source_ingest.py`, `source_attempt_failures.py`, `media_failure_projection.py`, `media_fact_revisions.py`, `x_ingest.py`, `youtube_video_ingest.py`, `remote_file_ingest.py`, `remote_file_client.py`, `media_processing_state.py` |
 | Reader/highlights backend                                         | `python/nexus/services/{reader,epub_*,pdf_*,fragment_blocks,highlights,passage_anchors,locator_resolver,text_quote,pdf_quote_match}.py`                                                                |
 | Chat / conversations                                              | `python/nexus/services/chat_runs.py` + `chat_run_*`, `context_assembler.py`, `conversations.py`                                                                                                        |
 | Oracle                                                            | `python/nexus/services/oracle.py`, `python/nexus/services/oracle_corpus.py`, `python/nexus/services/oracle_plates.py`                                                                                  |

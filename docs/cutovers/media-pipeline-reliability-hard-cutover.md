@@ -279,7 +279,8 @@ media deletion
 
 | Concern | Sole owner |
 | --- | --- |
-| Accepted source and attempt state | `media_source_ingest.py` + `media_source_attempts` |
+| Accepted and active source-attempt state | `media_source_ingest.py` + `media_source_attempts` |
+| Terminal source-attempt and domain failure | `source_attempt_failures.py` |
 | Source publication fencing | source service + queue-owned exact-claim lock |
 | Same-source terminal policy | one predicate in `capabilities.py` |
 | Readable document state | media processing service + `media.processing_status` |

@@ -563,7 +563,10 @@ and `error_code` on the attempt row for specificity.
 - `failed`: source acquisition/materialization failed,
 - `superseded`: a newer attempt replaced this attempt before it ran.
 
-Only `media_source_ingest.py` writes these states.
+`media_source_ingest.py` owns acceptance, queueing, running, success, and
+supersession. `source_attempt_failures.py` owns the sole terminal failure
+transaction, including its source-specific domain projections. No worker or
+source adapter writes attempt failure directly.
 
 ## Canonical Identity and Duplicate Resolution
 
@@ -896,7 +899,9 @@ Current repeated pattern:
 Canonical owner:
 
 - `media_processing_state.py` for primitive transitions,
-- `media_source_ingest.py` for when transitions occur.
+- `media_source_ingest.py` for active and successful transitions,
+- `source_attempt_failures.py` for terminal failure publication,
+- `media_failure_projection.py` for the lightweight terminal Media tuple.
 
 No source module writes the failure tuple directly.
 

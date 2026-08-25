@@ -13,7 +13,11 @@ transcript chunk indexing is owned by `content_indexing`.
 Backend owners live under `python/nexus/services/podcasts/*`, the media-level
 `python/nexus/services/transcripts/*`, the YouTube transcript owner
 `python/nexus/services/youtube_transcripts.py`, and the egress helpers under
-`python/nexus/services/net/*`. Frontend pane composition lives under
+`python/nexus/services/net/*`. Transcript admission, reservation settlement,
+and terminal failure are separate owners in `podcasts/transcription_usage.py`,
+`podcasts/transcription_reservation_settlement.py`, and
+`podcasts/transcription_failure.py`; none imports the provider adapter on the
+background supervisor path. Frontend pane composition lives under
 `apps/web/src/app/(authenticated)/podcasts/*`; reusable Podcast contracts and
 controllers live under `apps/web/src/lib/podcasts/*`, and reusable presentation
 lives under `apps/web/src/components/podcasts/*`. The Nexus Import session
@@ -249,7 +253,9 @@ counts its processing attempt, but does not publish a second unchanged
 `extracting` collection revision.
 Terminal Podcast failure settles the source attempt once, then publishes Media,
 transcription-job, quota-release, and transcript-state failure through the one
-Podcast failure owner. That same transaction advances the canonical shared
+Podcast failure owner in `podcasts/transcription_failure.py`. The source
+transaction is owned by `source_attempt_failures.py`, and the queue supervisor
+only dispatches to that typed owner. That same transaction advances the canonical shared
 media-fact collection family set once; it does not layer a second Episode-row
 revision over generic source failure.
 

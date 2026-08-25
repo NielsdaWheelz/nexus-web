@@ -36,6 +36,10 @@ handler in a fresh bounded child through `jobs/process_executor.py`
 (`docs/cutovers/document-import-reliability-hard-cutover.md` §7): the supervisor keeps
 the claim, heartbeat, Heavy-capacity lease, wall timeout, and terminal transition, and
 never imports a parser, provider, or storage client.
+For a `SourceAttemptMedia` resource terminal it preserves the queue/lease fence,
+then delegates domain publication to the lightweight
+`services/source_attempt_failures.py` owner. The supervisor does not mutate
+source, Media, Podcast, transcript, quota, or collection tables itself.
 
 Child lifetime is bound to supervisor lifetime three ways, so an abrupt supervisor
 death cannot leave an orphan holding a live claim: a liveness pipe whose write end only
