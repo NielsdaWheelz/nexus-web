@@ -1546,7 +1546,9 @@ collection revision.
 `transcripts/request_reason.py` is the sole internal request-reason owner.
 Validated API values and exact durable source/job values enter that type once;
 missing, whitespace-altered, or unknown same-system discriminants defect rather
-than becoming `episode_open` or `operator_requeue`.
+than becoming `episode_open` or `operator_requeue`. A transcript semantic job
+persists only `media_id` and that request reason; request/user correlation is
+not a worker input and is not copied into the durable payload.
 Publisher and generated transcript success callbacks publish only source
 artifacts plus their domain ledger. The common source terminal is the sole owner
 of ready-state, semantic admission, and the success media-fact revision; a

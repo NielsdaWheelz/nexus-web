@@ -254,7 +254,9 @@ media-fact revision, not an additional Podcast-only bump.
 `transcripts/request_reason.py` owns the exact internal request discriminant.
 Durable source attempts, transcription ledgers, semantic-job payloads, and
 terminal results must carry one canonical value; missing or unknown values are
-defects, never aliases for `episode_open` or `operator_requeue`.
+defects, never aliases for `episode_open` or `operator_requeue`. Semantic jobs
+carry only `media_id` and `request_reason`; unused requester/request identities
+do not survive admission into the worker payload.
 Publisher and generated success callbacks are collection-pure and never enqueue
 semantic work. The common source terminal publishes both effects once after the
 artifact fence succeeds. Starting an already-admitted Episode attempt still
