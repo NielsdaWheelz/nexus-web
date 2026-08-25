@@ -12,7 +12,7 @@ from nexus.db.models import Conversation, Message
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.search import SearchResultConversationOut, SearchResultMessageOut
 from nexus.services import bootstrap
-from nexus.services.search.service import get_search_result
+from nexus.services.search.resolver import get_search_result
 
 
 def test_conversation_and_message_results_reresolve_under_one_visibility_contract(

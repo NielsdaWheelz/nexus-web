@@ -12,7 +12,7 @@ from nexus.db.models import ContentIndexState, NoteBlock, Page
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.search import SearchResultNoteBlockOut, SearchResultPageOut
 from nexus.services import bootstrap
-from nexus.services.search.service import get_search_result
+from nexus.services.search.resolver import get_search_result
 
 
 def test_page_and_note_block_results_reresolve_under_one_owner_contract(

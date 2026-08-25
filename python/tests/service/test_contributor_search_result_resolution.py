@@ -21,7 +21,7 @@ from nexus.schemas.search import SearchResultContributorOut
 from nexus.services import bootstrap, library_entries
 from nexus.services.resource_graph.edges import create_link
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.search.service import get_search_result
+from nexus.services.search.resolver import get_search_result
 
 
 def _seed_credited_contributor(

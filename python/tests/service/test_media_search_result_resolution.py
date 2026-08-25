@@ -18,7 +18,7 @@ from nexus.schemas.search import (
     SearchResultVideoOut,
 )
 from nexus.services import bootstrap, library_entries
-from nexus.services.search.service import get_search_result
+from nexus.services.search.resolver import get_search_result
 
 
 def test_media_and_podcast_results_reresolve_with_exact_type_and_visibility(

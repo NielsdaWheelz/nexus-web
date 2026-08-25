@@ -1,20 +1,17 @@
-"""Search orchestrator and durable-ref resolver.
+"""Public search orchestration and response pagination.
 
 Retrieval, ranking, and per-type dispatch live behind the shared pre-projection
 candidate seam (``search.candidates``); this module owns the public ``search``
-contract (gates, pagination, ``SearchResultOut`` projection) and
-``get_search_result`` durable-ref re-resolution.
+contract: gates, pagination, and ``SearchResultOut`` projection.
 """
 
 from __future__ import annotations
 
 import time
-from typing import cast
 from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.logging import get_logger
 from nexus.schemas.search import (
     SearchPageInfo,
@@ -22,7 +19,6 @@ from nexus.schemas.search import (
     SearchResultOut,
     SearchResultSourceOut,
 )
-from nexus.schemas.search_types import VALID_RESULT_TYPES
 from nexus.services import media_intelligence
 from nexus.services.search.candidates import discovery_candidates
 from nexus.services.search.constants import (
@@ -31,36 +27,8 @@ from nexus.services.search.constants import (
 )
 from nexus.services.search.cursor import decode_search_cursor, encode_search_cursor
 from nexus.services.search.embedding import _query_has_full_text_terms
-from nexus.services.search.kinds import KIND_TO_RESULT_TYPES
 from nexus.services.search.projection import _result_to_out
 from nexus.services.search.query import SearchQuery
-from nexus.services.search.results import _SearchScore
-from nexus.services.search.retrievers.content_chunks import (
-    resolve_content_chunk_search_result,
-)
-from nexus.services.search.retrievers.contributors import resolve_contributor_search_result
-from nexus.services.search.retrievers.conversations import (
-    ConversationSearchResultType,
-    resolve_conversation_search_result,
-)
-from nexus.services.search.retrievers.evidence_spans import (
-    resolve_evidence_span_search_result,
-)
-from nexus.services.search.retrievers.fragments import resolve_fragment_search_result
-from nexus.services.search.retrievers.highlights import resolve_highlight_search_result
-from nexus.services.search.retrievers.media import (
-    MEDIA_SEARCH_RESULT_TYPES,
-    MediaSearchResultType,
-    resolve_media_search_result,
-)
-from nexus.services.search.retrievers.notes import (
-    NotesSearchResultType,
-    resolve_notes_search_result,
-)
-from nexus.services.search.retrievers.reader_apparatus import (
-    resolve_reader_apparatus_search_result,
-)
-from nexus.services.search.retrievers.web import resolve_web_search_result
 from nexus.services.search.scope import authorize_scope
 from nexus.services.search.telemetry import _log_search
 
@@ -174,154 +142,3 @@ def search(db: Session, viewer_id: UUID, query: SearchQuery) -> SearchResponse:
         results=results,
         page=SearchPageInfo(has_more=has_more, next_cursor=next_cursor),
     )
-
-
-def get_search_result(
-    db: Session,
-    viewer_id: UUID,
-    result_type: str,
-    result_id: str,
-    evidence_span_ids: list[UUID] | None = None,
-) -> SearchResultOut:
-    """Resolve one typed search result by durable object ref."""
-    if result_type not in VALID_RESULT_TYPES:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST, f"Invalid search type: {result_type}"
-        )
-
-    score = _SearchScore(raw=1.0, weighted=1.0, normalized=1.0)
-
-    if result_type in MEDIA_SEARCH_RESULT_TYPES:
-        return _result_to_out(
-            db,
-            viewer_id,
-            resolve_media_search_result(
-                db,
-                viewer_id=viewer_id,
-                result_type=cast(MediaSearchResultType, result_type),
-                result_id=_uuid_from_search_id(result_id),
-                score=score,
-            ),
-        )
-
-    if result_type == "contributor":
-        return _result_to_out(
-            db,
-            viewer_id,
-            resolve_contributor_search_result(
-                db,
-                viewer_id=viewer_id,
-                result_id=_uuid_from_search_id(result_id),
-                score=score,
-            ),
-        )
-
-    if result_type == "content_chunk":
-        return _result_to_out(
-            db,
-            viewer_id,
-            resolve_content_chunk_search_result(
-                db,
-                viewer_id=viewer_id,
-                result_id=_uuid_from_search_id(result_id),
-                score=score,
-                evidence_span_ids=evidence_span_ids,
-            ),
-        )
-
-    if result_type == "fragment":
-        return _result_to_out(
-            db,
-            viewer_id,
-            resolve_fragment_search_result(
-                db,
-                viewer_id=viewer_id,
-                result_id=_uuid_from_search_id(result_id),
-                score=score,
-            ),
-        )
-
-    if result_type in KIND_TO_RESULT_TYPES["notes"]:
-        return _result_to_out(
-            db,
-            viewer_id,
-            resolve_notes_search_result(
-                db,
-                viewer_id=viewer_id,
-                result_type=cast(NotesSearchResultType, result_type),
-                result_id=_uuid_from_search_id(result_id),
-                score=score,
-            ),
-        )
-
-    if result_type == "highlight":
-        return _result_to_out(
-            db,
-            viewer_id,
-            resolve_highlight_search_result(
-                db,
-                viewer_id=viewer_id,
-                result_id=_uuid_from_search_id(result_id),
-                score=score,
-            ),
-        )
-
-    if result_type in KIND_TO_RESULT_TYPES["conversations"]:
-        return _result_to_out(
-            db,
-            viewer_id,
-            resolve_conversation_search_result(
-                db,
-                viewer_id=viewer_id,
-                result_type=cast(ConversationSearchResultType, result_type),
-                result_id=_uuid_from_search_id(result_id),
-                score=score,
-            ),
-        )
-
-    if result_type == "reader_apparatus_item":
-        return _result_to_out(
-            db,
-            viewer_id,
-            resolve_reader_apparatus_search_result(
-                db,
-                viewer_id=viewer_id,
-                result_id=_uuid_from_search_id(result_id),
-                score=score,
-            ),
-        )
-
-    if result_type == "web_result":
-        return _result_to_out(
-            db,
-            viewer_id,
-            resolve_web_search_result(
-                db,
-                viewer_id=viewer_id,
-                result_id=_uuid_from_search_id(result_id),
-                score=score,
-            ),
-        )
-
-    if result_type == "evidence_span":
-        return _result_to_out(
-            db,
-            viewer_id,
-            resolve_evidence_span_search_result(
-                db,
-                viewer_id=viewer_id,
-                result_id=_uuid_from_search_id(result_id),
-                score=score,
-            ),
-        )
-
-    raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, f"Invalid search type: {result_type}")
-
-
-def _uuid_from_search_id(result_id: str) -> UUID:
-    try:
-        return UUID(result_id)
-    except ValueError as exc:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST, "Invalid search result id"
-        ) from exc

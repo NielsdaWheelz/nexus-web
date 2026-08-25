@@ -27,7 +27,7 @@ from nexus.schemas.search import (
     SearchResultFragmentOut,
 )
 from nexus.services import bootstrap, library_entries
-from nexus.services.search.service import get_search_result
+from nexus.services.search.resolver import get_search_result
 
 
 @dataclass(frozen=True, slots=True)

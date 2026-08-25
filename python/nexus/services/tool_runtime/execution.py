@@ -1660,7 +1660,7 @@ def _citation_for_ref(
     if result_type is None:
         return None
     from nexus.services.retrieval_citation import citation_from_search_result
-    from nexus.services.search.service import get_search_result
+    from nexus.services.search.resolver import get_search_result
 
     try:
         result = get_search_result(

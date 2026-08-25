@@ -20,7 +20,7 @@ from nexus.schemas.search import (
 )
 from nexus.services import bootstrap
 from nexus.services.retrieval_citation import citation_from_search_result
-from nexus.services.search.service import get_search_result
+from nexus.services.search.resolver import get_search_result
 
 
 def test_retrieval_result_refs_cover_every_canonical_search_discriminant() -> None:

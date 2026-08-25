@@ -21,7 +21,7 @@ from nexus.schemas.retrieval import ExternalSnapshotId, ProviderResultRef
 from nexus.schemas.search import SearchResultWebOut
 from nexus.services import bootstrap
 from nexus.services.agent_tools.web_search import PersistedWebSearchCitation
-from nexus.services.search.service import get_search_result
+from nexus.services.search.resolver import get_search_result
 
 
 @dataclass(frozen=True, slots=True)
