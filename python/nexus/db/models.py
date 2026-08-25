@@ -5745,12 +5745,6 @@ class BillingEntitlementOverride(Base):
         nullable=False,
     )
     plan_tier: Mapped[str] = mapped_column(Text, nullable=False)
-    platform_token_quota_mode: Mapped[str] = mapped_column(
-        Text,
-        nullable=False,
-        server_default="plan",
-    )
-    platform_token_limit_monthly: Mapped[int | None] = mapped_column(Integer, nullable=True)
     transcription_quota_mode: Mapped[str] = mapped_column(
         Text,
         nullable=False,
@@ -5790,24 +5784,6 @@ class BillingEntitlementOverride(Base):
         CheckConstraint(
             "plan_tier IN ('plus', 'ai_plus', 'ai_pro')",
             name="ck_billing_entitlement_overrides_plan_tier",
-        ),
-        CheckConstraint(
-            "platform_token_quota_mode IN ('plan', 'custom', 'unlimited')",
-            name="ck_billing_entitlement_overrides_platform_token_quota_mode",
-        ),
-        CheckConstraint(
-            """
-            (
-                platform_token_quota_mode = 'custom'
-                AND platform_token_limit_monthly IS NOT NULL
-                AND platform_token_limit_monthly >= 0
-            )
-            OR (
-                platform_token_quota_mode <> 'custom'
-                AND platform_token_limit_monthly IS NULL
-            )
-            """,
-            name="ck_billing_entitlement_overrides_platform_token_limit",
         ),
         CheckConstraint(
             "transcription_quota_mode IN ('plan', 'custom', 'unlimited')",

@@ -352,6 +352,19 @@ def upgrade() -> None:
     op.drop_table("token_budget_reservations")
     op.drop_table("token_budget_daily_usage")
 
+    op.drop_constraint(
+        "ck_billing_entitlement_overrides_platform_token_limit",
+        "billing_entitlement_overrides",
+        type_="check",
+    )
+    op.drop_constraint(
+        "ck_billing_entitlement_overrides_platform_token_quota_mode",
+        "billing_entitlement_overrides",
+        type_="check",
+    )
+    op.drop_column("billing_entitlement_overrides", "platform_token_limit_monthly")
+    op.drop_column("billing_entitlement_overrides", "platform_token_quota_mode")
+
     op.drop_column("chat_runs", "reasoning_option_id")
     op.drop_column("chat_runs", "provider")
     op.drop_column("chat_runs", "error_origin")
