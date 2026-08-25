@@ -801,7 +801,11 @@ retriever owns both candidate retrieval and durable rematerialization for
 Conversation, Message, and Conversation Dossier (`artifact`) results under one
 visibility contract. It excludes pending Messages; Dossier rematerialization is
 owner-only, masks foreign subjects as not found, and returns the current revision
-while keeping the Conversation subject as result identity.
+while keeping the Conversation subject as result identity. The notes retriever
+likewise owns candidate retrieval and durable rematerialization for Page and Note
+Block results: Pages are owner-only, and Note Blocks must be owner-visible,
+nonempty, and backed by a ready content index; highlight-note origin is derived
+from the same visible `highlight_note` edge contract in both paths.
 
 - **Indexing** (`services/content_indexing.py`, `semantic_chunks.py`): text-bearing
   media flows `fragment → content_blocks → chunks → embeddings`; note bodies
