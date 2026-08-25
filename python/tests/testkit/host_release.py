@@ -822,6 +822,7 @@ class HostReleaseHarness:
                 "database_revision": current_revision,
                 "docker_server_version": "29.5.3",
                 "failure_count": 0,
+                "failure_command": None,
                 "forward_fix_stop_interrupt_fired": False,
                 "interrupt_fired": False,
                 "jobs": {},
@@ -845,7 +846,6 @@ class HostReleaseHarness:
                 "public_web_mode": "valid",
                 "public_requests": [],
                 "resource_mutations": [],
-                "return_interrupt_fired": False,
                 "service_mutations": [],
                 "source_sha": CURRENT_SHA,
                 "candidate_source_sha": source_sha,
@@ -1888,9 +1888,17 @@ def fake_docker_main() -> int:
         return 0
     failure_phase = os.environ.get("NEXUS_FAKE_FAILURE_PHASE")
     if failure_phase is not None and phase == failure_phase and state["failure_count"] < 2:
-        state["failure_count"] += 1
-        _save_state(state_path, state)
-        return 72
+        # Phase failure proves exhaustion of one retry budget. Pin the first
+        # command so phase-entry preflights cannot spend the attempts on two
+        # independent operations and accidentally let the release succeed.
+        failure_command = state["failure_command"]
+        if failure_command is None:
+            state["failure_command"] = arguments
+            failure_command = arguments
+        if arguments == failure_command:
+            state["failure_count"] += 1
+            _save_state(state_path, state)
+            return 72
     semantic_operation = _semantic_operation(
         arguments,
         candidate_active=bool(state["candidate_active"]),
@@ -2601,8 +2609,8 @@ def apply_main(arguments: list[str]) -> int:
     ):
         state_path = Path(os.environ["NEXUS_FAKE_DOCKER_STATE"])
         state = _load_state(state_path)
-        if not state["return_interrupt_fired"]:
-            state["return_interrupt_fired"] = True
+        if not state["interrupt_fired"]:
+            state["interrupt_fired"] = True
             _save_state(state_path, state)
             os.kill(os.getpid(), signal.SIGKILL)
     sys.stdout.buffer.write(_canonical_json(attempt.as_json()))

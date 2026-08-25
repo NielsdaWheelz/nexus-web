@@ -2732,24 +2732,30 @@ def test_host_finalize_proves_public_tls_and_publishes_record_and_current(
     record = store.load_record(SOURCE_SHA)
     assert record is not None
     assert record.vercel_deployment_id == "dpl_Test123"
+    predecessor_public = [
+        {"host": "web.example.test", "path": "/version"},
+        {"host": "api.example.test", "path": "/version"},
+        {"host": "api.example.test", "path": "/readyz"},
+    ]
+    candidate_mcp_mount = [{"host": "api.example.test", "path": "/internal/agent-tools/mcp"}]
+    candidate_public = [
+        {"host": "api.example.test", "path": "/internal/agent-tools/mcp"},
+        {"host": "web.example.test", "path": "/version"},
+        {"host": "api.example.test", "path": "/version"},
+        {"host": "api.example.test", "path": "/readyz"},
+    ]
     assert harness.state()["public_requests"] == [
-        {"host": "api.example.test", "path": "/internal/agent-tools/mcp"}
-    ] + [
-        {"host": host, "path": path}
-        for _proof in range(3)
-        for host, path in (
-            ("api.example.test", "/internal/agent-tools/mcp"),
-            ("web.example.test", "/version"),
-            ("api.example.test", "/version"),
-            ("api.example.test", "/readyz"),
-        )
+        *predecessor_public,
+        *candidate_mcp_mount,
+        *candidate_public,
+        *candidate_public,
     ]
 
 
-def test_current_release_resumes_only_the_codex_host_and_rejects_live_bind_drift(
+def test_current_release_resumes_only_the_codex_runtime_pair_and_rejects_live_bind_drift(
     host_release_harness: HostReleaseHarness,
 ) -> None:
-    """Risk: reboot recovery bypasses the release owner or starts on plaintext state."""
+    """Risk: reboot recovery starts app writers or a host on plaintext state."""
 
     harness = host_release_harness
     applied = harness.run_apply()
@@ -2780,7 +2786,8 @@ def test_current_release_resumes_only_the_codex_host_and_rejects_live_bind_drift
     }
     state = harness.state()
     assert state["service_mutations"] == [
-        {"operation": "up", "services": ["nexus-codex-agent-host"]}
+        {"operation": "up", "services": ["codex-egress-policy"]},
+        {"operation": "up", "services": ["nexus-codex-agent-host"]},
     ]
     assert state["public_requests"] == [
         {"host": host, "path": path}
@@ -2812,6 +2819,7 @@ def test_current_release_resumes_only_the_codex_host_and_rejects_live_bind_drift
     assert "Codex agent host mounts differ from isolated contract" in refused.stderr
     state = harness.state()
     assert state["service_mutations"] == [
+        {"operation": "up", "services": ["codex-egress-policy"]},
         {"operation": "up", "services": ["nexus-codex-agent-host"]},
         {
             "operation": "stop",
@@ -2934,6 +2942,7 @@ def test_resume_codex_agent_host_startup_failure_stops_without_a_receipt(
     assert refused.returncode != 0
     assert refused.stdout == ""
     assert harness.state()["service_mutations"] == [
+        {"operation": "up", "services": ["codex-egress-policy"]},
         {"operation": "up", "services": ["nexus-codex-agent-host"]},
         {
             "operation": "stop",
@@ -2977,6 +2986,7 @@ def test_resume_codex_agent_host_rejects_every_malformed_direct_bind_and_stops(
         assert "Codex agent host mounts differ from isolated contract" in refused.stderr, live_kind
         state = harness.state()
         assert state["service_mutations"] == [
+            {"operation": "up", "services": ["codex-egress-policy"]},
             {"operation": "up", "services": ["nexus-codex-agent-host"]},
             {
                 "operation": "stop",
@@ -3049,7 +3059,10 @@ def test_host_finalize_rejects_public_api_contract_drift(
     assert store.assert_candidate_admissible(NEXT_SHA) is None
     for service in ("api", "worker-interactive", "worker-background"):
         assert harness.state()["containers"][service]["running"] is False
-    assert harness.state()["public_requests"][:4] == [
+    assert harness.state()["public_requests"] == [
+        {"host": "web.example.test", "path": "/version"},
+        {"host": "api.example.test", "path": "/version"},
+        {"host": "api.example.test", "path": "/readyz"},
         {"host": "api.example.test", "path": "/internal/agent-tools/mcp"},
         {"host": "api.example.test", "path": "/internal/agent-tools/mcp"},
         {"host": "web.example.test", "path": "/version"},
