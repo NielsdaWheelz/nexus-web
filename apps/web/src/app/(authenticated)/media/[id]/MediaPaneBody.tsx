@@ -4058,7 +4058,12 @@ export default function MediaPaneBody() {
     if (resolvedHighlightTargetResource.status !== "ready") {
       return;
     }
-    if (!activeContent || !contentRef.current || epubSectionLoading) {
+    if (
+      textHighlightInitialLoading ||
+      !activeContent ||
+      !contentRef.current ||
+      epubSectionLoading
+    ) {
       return;
     }
     if (urlHighlightAppliedRef.current === requestedHighlightId) {
@@ -4107,6 +4112,7 @@ export default function MediaPaneBody() {
     mobileChromeVisibleLocks,
     readerScrollPositioner,
     markActive,
+    textHighlightInitialLoading,
   ]);
 
   useEffect(() => {
@@ -4139,7 +4145,12 @@ export default function MediaPaneBody() {
       urlEvidenceAppliedRef.current = null;
       return;
     }
-    if (!activeContent || !contentRef.current || epubSectionLoading) {
+    if (
+      textHighlightInitialLoading ||
+      !activeContent ||
+      !contentRef.current ||
+      epubSectionLoading
+    ) {
       return;
     }
     if (urlEvidenceAppliedRef.current === textEvidenceHighlightId) {
@@ -4182,6 +4193,7 @@ export default function MediaPaneBody() {
     resolvedEvidenceHighlightId,
     temporaryTextHighlight,
     markActive,
+    textHighlightInitialLoading,
   ]);
 
   useEffect(() => {
