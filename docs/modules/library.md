@@ -168,6 +168,11 @@ episodes immediately resurface with their consumption state intact.
   `collectionRevision`; concurrent membership or ordering changes return
   `409 E_COLLECTION_CHANGED`. A cursor from the wrong viewer, library, view, or
   pre-cutover family is `400 E_INVALID_CURSOR`, never reinterpreted.
+- **Total list hydration.** The repeatable-read membership query is the sole
+  visibility filter and emits one exact Media-or-Podcast target per row. Batched
+  hydration must preserve that cardinality and order; a missing admitted target
+  or malformed target row is an invariant defect, never a silently shortened
+  page with an advanced cursor. No cross-service entry-hydration API exists.
 - **Libraries index views.** `GET /libraries` accepts `sort=created|name` plus
   `direction=asc|desc`. `Created — oldest` is canonical and omits both keys; the
   only valid non-default pairs are `created+desc` and `name+asc|desc`. A partial

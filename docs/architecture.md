@@ -1315,10 +1315,12 @@ roles, ownership transfer, membership guards, ingest access checks),
 ordering, and all item-in-library commands; it also composes the URL-only
 factual view lenses, the fixed `Unfiled`/`In Progress` entry projections, and
 the hide-finished completion filter for reads — no DML on
-alternate views, positions unchanged), and `services/library_invitations.py` (the
-`library_invitations` table). Visibility itself is enforced by the boolean
-predicates in `auth/permissions.py`; the search/object readers read
-`library_entries` under an explicit Tier-R allowlist.
+  alternate views, positions unchanged), and `services/library_invitations.py` (the
+  `library_invitations` table). Visibility itself is enforced by the boolean
+  predicates in `auth/permissions.py`; the search/object readers read
+  `library_entries` under an explicit Tier-R allowlist. Library list hydration is
+  private and total: the repeatable-read membership query filters visibility,
+  and every admitted Media or Podcast row must produce exactly one response item.
 
 - Every user has one **default library** (special: can't be renamed/deleted/shared
   or receive physical Podcast entries) plus shareable libraries with `memberships`
