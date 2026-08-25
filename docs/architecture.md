@@ -818,6 +818,11 @@ when the caller supplies evidence-span ids. Fragments reuse the same visibility
 and index-readiness contract and emit only canonical source locators. Evidence
 spans admit visible media or viewer-owned note blocks, require a ready owner
 index, and preserve that media or note block as the canonical owner identity.
+The Highlights retriever owns candidate retrieval and durable rematerialization
+under one visible, ready-indexed typed-anchor row contract. Fragment-offset and
+PDF-geometry hits share one strict locator decoder; stale, cross-media, missing,
+or schema-invalid anchors are omitted from search and masked as not found when a
+durable reference is reopened.
 
 - **Indexing** (`services/content_indexing.py`, `semantic_chunks.py`): text-bearing
   media flows `fragment → content_blocks → chunks → embeddings`; note bodies
