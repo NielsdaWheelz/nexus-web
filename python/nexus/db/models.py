@@ -4623,7 +4623,7 @@ class ConversationShare(Base):
 
 
 class LLMCall(Base):
-    """One provider LLM call in the polymorphic ledger (sole writer: llm_ledger)."""
+    """One replay-stable Codex generation (sole writer: ``llm_ledger``)."""
 
     __tablename__ = "llm_calls"
 
@@ -4634,92 +4634,20 @@ class LLMCall(Base):
     )
     owner_kind: Mapped[str] = mapped_column(Text, nullable=False)
     owner_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    call_seq: Mapped[int] = mapped_column(Integer, nullable=False)
-    provider: Mapped[str] = mapped_column(Text, nullable=False)
-    upstream_provider: Mapped[str | None] = mapped_column(Text, nullable=True)
-    model_name: Mapped[str] = mapped_column(Text, nullable=False)
-    llm_operation: Mapped[str] = mapped_column(Text, nullable=False)
-    streaming: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    requested_reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
-    native_reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
-    registry_revision: Mapped[str | None] = mapped_column(Text, nullable=True)
-    input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    reasoning_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    cache_write_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    cache_read_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    outcome: Mapped[str | None] = mapped_column(Text, nullable=True)
-    error_origin: Mapped[str | None] = mapped_column(Text, nullable=True)
-    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
-    provider_request_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    total_cost_usd_micros: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    cost_status: Mapped[str] = mapped_column(Text, nullable=False)
-    cost_source: Mapped[str | None] = mapped_column(Text, nullable=True)
-    cost_as_of: Mapped[date | None] = mapped_column(Date, nullable=True)
-    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
-    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
-    terminal_attempt_status: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default=text("'success'")
-    )
-    provider_attempts: Mapped[list[dict[str, object]] | None] = mapped_column(
-        JSONB(none_as_null=True), nullable=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "owner_kind IN ('chat_run', 'oracle_reading', 'artifact_build', "
-            "'artifact_learn_request', 'media_summary', 'synapse_scan', 'dawn_write')",
-            name="ck_llm_calls_owner_kind",
-        ),
-        CheckConstraint("call_seq >= 1", name="ck_llm_calls_call_seq_positive"),
-        CheckConstraint(
-            "attempt_count >= 1 AND retry_count >= 0 AND retry_count <= attempt_count - 1",
-            name="ck_llm_calls_attempt_counts",
-        ),
-        CheckConstraint(
-            "terminal_attempt_status IN ('success', 'retryable_error', 'terminal_error', 'abandoned')",
-            name="ck_llm_calls_terminal_attempt_status",
-        ),
-        CheckConstraint(
-            "provider_attempts IS NULL OR jsonb_typeof(provider_attempts) = 'array'",
-            name="ck_llm_calls_provider_attempts_array",
-        ),
-        CheckConstraint(
-            "total_cost_usd_micros IS NULL OR total_cost_usd_micros >= 0",
-            name="ck_llm_calls_total_cost_non_negative",
-        ),
-        UniqueConstraint("owner_kind", "owner_id", "call_seq", name="uq_llm_calls_owner_call_seq"),
-        Index("ix_llm_calls_owner", "owner_kind", "owner_id"),
-    )
-
-
-class AgentTurn(Base):
-    """One native-agent turn in the durable audit ledger (sole writer: agent_turn_ledger)."""
-
-    __tablename__ = "agent_turns"
-
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    owner_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    owner_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    turn_seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    generation_seq: Mapped[int] = mapped_column(Integer, nullable=False)
     operation: Mapped[str] = mapped_column(Text, nullable=False)
-    operation_revision: Mapped[str] = mapped_column(Text, nullable=False)
+    plan_id: Mapped[str] = mapped_column(Text, nullable=False)
+    plan_revision: Mapped[str] = mapped_column(Text, nullable=False)
     backend: Mapped[str] = mapped_column(Text, nullable=False)
     transport: Mapped[str] = mapped_column(Text, nullable=False)
     auth_profile: Mapped[str] = mapped_column(Text, nullable=False)
     model_name: Mapped[str] = mapped_column(Text, nullable=False)
-    requested_reasoning: Mapped[str] = mapped_column(Text, nullable=False)
+    reasoning_effort: Mapped[str] = mapped_column(Text, nullable=False)
+    capability_kind: Mapped[str] = mapped_column(Text, nullable=False)
     request_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
-    policy_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
     output_schema_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
+    tool_plan_fingerprint: Mapped[str | None] = mapped_column(Text, nullable=True)
+    streaming: Mapped[bool] = mapped_column(Boolean, nullable=False)
     session_ref: Mapped[dict[str, object] | None] = mapped_column(
         JSONB(none_as_null=True), nullable=True
     )
@@ -4734,18 +4662,37 @@ class AgentTurn(Base):
     cache_write_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     sdk_version: Mapped[str | None] = mapped_column(Text, nullable=True)
     runtime_version: Mapped[str | None] = mapped_column(Text, nullable=True)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
     )
+    accepted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
     __table_args__ = (
+        CheckConstraint(
+            "owner_kind IN ('chat_run', 'oracle_reading', 'artifact_build', "
+            "'artifact_learn_request', 'media_summary', 'synapse_scan', 'dawn_write', "
+            "'media_enrichment')",
+            name="ck_llm_calls_owner_kind",
+        ),
+        CheckConstraint(
+            "outcome IS NULL OR outcome IN ('Succeeded', 'Cancelled', 'Failed')",
+            name="ck_llm_calls_outcome",
+        ),
+        CheckConstraint(
+            "generation_seq > 0",
+            name="ck_llm_calls_generation_seq_positive",
+        ),
         UniqueConstraint(
             "owner_kind",
             "owner_id",
-            "turn_seq",
-            name="uq_agent_turns_owner_turn_seq",
+            "generation_seq",
+            name="uq_llm_calls_owner_generation_seq",
         ),
+        Index("ix_llm_calls_owner", "owner_kind", "owner_id"),
     )
 
 
@@ -5310,16 +5257,11 @@ class ChatRun(Base):
     idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
     payload_hash: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")
-    # Product selection snapshots (non-FK: profile_id/reasoning_option_id name a
-    # frozen registry row in services/llm_profiles.py, not a mutable table).
+    # Product selection snapshot and resolved admitted-plan facts.
     profile_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    reasoning_option_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     tool_profile_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     tool_profile_revision: Mapped[str | None] = mapped_column(Text, nullable=True)
     tool_profile_snapshot: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
-    # Resolved operator/trust-trail facts, filled from runtime target and
-    # terminal metadata.
-    provider: Mapped[str | None] = mapped_column(Text, nullable=True)
     model_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     reasoning_effort: Mapped[str | None] = mapped_column(Text, nullable=True)
     cancel_requested_at: Mapped[datetime | None] = mapped_column(
@@ -5329,7 +5271,6 @@ class ChatRun(Base):
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    error_origin: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     support_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     publication_warning_code: Mapped[str | None] = mapped_column(Text, nullable=True)

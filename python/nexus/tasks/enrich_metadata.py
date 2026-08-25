@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime
 from typing import Annotated, Literal, assert_never
 from uuid import UUID
@@ -11,7 +10,6 @@ from pydantic import BaseModel, ConfigDict, Field, RootModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from nexus.config import get_settings
 from nexus.db.models import FailureStage, Media, ProcessingStatus
 from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
@@ -20,23 +18,21 @@ from nexus.jobs.queue import (
     JobExecutionContext,
     JobRow,
     RescheduleRequested,
-    ScheduleAfter,
     get_job,
     lock_and_renew_running_job_claim,
     lock_jobs_for_payload,
-    lock_running_job_claim,
-    update_running_job_payload,
 )
 from nexus.logging import get_logger
 from nexus.schemas.presence import Presence, Present, absent, present
-from nexus.services.agent_turn_ledger import (
-    AgentTurnOwner,
-    AgentTurnStart,
-    AgentTurnTerminal,
-    complete_turn_if_started_in_current_transaction,
-    complete_turn_in_current_transaction,
-    lock_turn_owner_in_current_transaction,
-    start_turn_in_current_transaction,
+from nexus.services import generation_policy
+from nexus.services.codex_generation_contract import (
+    GenerationCommand,
+    GenerationTerminal,
+    NormalizedFailureCode,
+    normalized_failure,
+)
+from nexus.services.codex_generation_contract import (
+    request_fingerprint as generation_request_fingerprint,
 )
 from nexus.services.collection_revisions import (
     CollectionFamily,
@@ -54,9 +50,23 @@ from nexus.services.durable_step_journal import (
     checkpoint_step_state,
     decode_step_result,
     encode_step_result,
-    payload_with_step_state,
     read_step_states,
     stable_generation_id,
+)
+from nexus.services.llm_execution import (
+    AcceptedGenerationFailure,
+    CompletedGeneration,
+    EncodedGenerationTerminal,
+    ExecutionRuntime,
+    GenerationDispatchAborted,
+    GenerationExecutionRequest,
+    GenerationUncertain,
+    execute_generation,
+)
+from nexus.services.llm_ledger import (
+    LlmCallOwner,
+    complete_preaccept_failure_if_started_in_current_transaction,
+    lock_generation_owner_in_current_transaction,
 )
 from nexus.services.metadata_dispatch import METADATA_STEP_PATH
 from nexus.services.metadata_enrichment import (
@@ -64,32 +74,16 @@ from nexus.services.metadata_enrichment import (
     build_enrichment_user_content,
     get_content_sample,
     merge_enrichment,
+    metadata_enrichment_agent_definition,
     validate_structured_enrichment,
 )
-from nexus.services.native_agent_client import (
-    CodexAgentClient,
-    NativeAgentCapacityUnavailable,
-    NativeAgentProtocolDefect,
-    NativeAgentRequestRejected,
-    NativeAgentTransportAmbiguous,
-    NativeAgentUnavailable,
-)
-from nexus.services.native_agent_contract import (
-    NativeAgentFailureKind,
-    NativeAgentTerminal,
-    NativeAgentUsage,
-)
-from nexus.services.native_agent_operations import (
-    build_metadata_enrichment_command,
-    metadata_enrichment_operation_facts,
-    native_agent_request_fingerprint,
-)
+from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
 
 logger = get_logger(__name__)
 
 _MAX_ERROR_DETAIL_LENGTH = 1000
 _LEASE_SECONDS = 300
-_CAPACITY_WAIT_DELAYS_SECONDS = (30, 60, 120, 300)
+_CAPACITY_WAIT_DELAYS_SECONDS = (30, 60, 120, 300, 600)
 _MAX_CAPACITY_WAIT_INDEX = len(_CAPACITY_WAIT_DELAYS_SECONDS)
 _PRE_DISPATCH_SOURCE_CHANGED_DETAIL = "metadata request fingerprint changed before dispatch"
 _PRE_DISPATCH_MEDIA_MISSING_DETAIL = "metadata media no longer exists before dispatch"
@@ -106,6 +100,7 @@ _COLLECTION_FAMILIES = (
     CollectionFamily.PodcastEpisodes,
     CollectionFamily.PodcastSubscriptions,
 )
+_METADATA_TASK_SPEC = LlmTaskSpec(label="metadata_generation")
 
 
 class _ResultModel(BaseModel):
@@ -183,6 +178,41 @@ class _UncertainMetadataTurn(RuntimeError):
     """A billed-once native turn may have executed and cannot be redispatched."""
 
     error_code = ApiErrorCode.E_METADATA_AGENT_UNCERTAIN
+
+
+class _PreDispatchMetadataTerminal(RuntimeError):
+    """Domain state became inapplicable while the dispatch rows were locked."""
+
+    def __init__(self, reason: _PreDispatchTerminalReason) -> None:
+        super().__init__(reason)
+        self.reason: _PreDispatchTerminalReason = reason
+
+
+def _metadata_generation_command(*, generation_id: UUID, input: str) -> GenerationCommand:
+    instructions, output_schema = metadata_enrichment_agent_definition()
+    return GenerationCommand.model_validate(
+        {
+            "schema_version": "nexus-generation-command.v2",
+            "request_id": generation_id,
+            "operation": {
+                "kind": "metadata_enrichment",
+                "revision": generation_policy.operation_revision("metadata_enrichment"),
+            },
+            "policy_revision": generation_policy.POLICY_REVISION,
+            "policy_fingerprint": generation_policy.POLICY_FINGERPRINT,
+            "intent": {
+                "instructions": instructions,
+                "input": input,
+                "output": {
+                    "kind": "JsonSchema",
+                    "name": "media_metadata_enrichment",
+                    "schema": output_schema,
+                    "strict": True,
+                },
+            },
+            "tool_grant": None,
+        }
+    )
 
 
 def _failed_result(*, error_code: ApiErrorCode, detail: str) -> _CompletedFailure:
@@ -293,7 +323,7 @@ def enrich_metadata(
             if state.dispatch_phase is Uncertain:
                 db.commit()
                 raise _UncertainMetadataTurn(
-                    f"metadata job {context.job_id} has an unresolved native-agent turn"
+                    f"metadata job {context.job_id} has an unresolved generation"
                 )
             if state.dispatch_phase is not Prepared:
                 # justify-defect: DispatchPhase is a closed three-member enum
@@ -339,11 +369,11 @@ def enrich_metadata(
             media,
             get_content_sample(db, media),
         )
-        command = build_metadata_enrichment_command(
-            request_id=generation_id,
+        command = _metadata_generation_command(
+            generation_id=generation_id,
             input=user_content,
         )
-        reconstructed_fingerprint = native_agent_request_fingerprint(command)
+        reconstructed_fingerprint = generation_request_fingerprint(command)
         if state is None:
             request_fingerprint = reconstructed_fingerprint
             prepared = StepReplayState(
@@ -388,26 +418,22 @@ def enrich_metadata(
             # fingerprint or returned; pyright cannot see that exhaustively.
             raise AssertionError("metadata dispatch has no request fingerprint")
 
-    with factory() as db:
-        # Lock-ordering rule (see lock_turn_owner_in_current_transaction): the
-        # ledger's advisory owner lock comes FIRST in every transaction that
-        # will take it, ahead of the media row and the queue rows locked below.
-        # The terminal checkpoint takes it before its own job row for the same
-        # reason; without one designed order these two transactions would
-        # deadlock AB-BA. pg_advisory_xact_lock is reentrant, so the inner
-        # acquisition inside start_turn_in_current_transaction stays.
-        turn_owner = AgentTurnOwner(kind="media_enrichment", id=media_uuid)
-        lock_turn_owner_in_current_transaction(db, turn_owner)
-        media = db.scalar(select(Media).where(Media.id == media_uuid).with_for_update())
+    owner = LlmCallOwner(kind="media_enrichment", id=media_uuid)
+
+    def lock_dispatch(db: Session) -> JobRow | None:
+        """Lock metadata domain rows after the shared owner advisory lock."""
+
+        locked_media = db.scalar(select(Media).where(Media.id == media_uuid).with_for_update())
         jobs = lock_jobs_for_payload(
             db,
             kind="enrich_metadata",
             expected_payload_match={"media_id": str(media_uuid)},
         )
-        job = next((candidate for candidate in jobs if candidate.id == context.job_id), None)
-        if job is None:
-            # justify-defect: the claimed row matched this payload one
-            # transaction ago and terminal transitions never rewrite payloads.
+        locked_job = next(
+            (candidate for candidate in jobs if candidate.id == context.job_id),
+            None,
+        )
+        if locked_job is None:
             raise AssertionError(f"metadata job {context.job_id} disappeared before dispatch")
         if any(
             candidate.id != context.job_id
@@ -415,153 +441,66 @@ def enrich_metadata(
             and other_state.dispatch_phase is Uncertain
             for candidate in jobs
         ):
-            raise _UncertainMetadataTurn(
-                f"media {media_uuid} already has an unresolved native-agent turn"
-            )
-        if not lock_running_job_claim(db, context=context):
-            # A lapsed lease let a later attempt advance the step; the queue's
-            # reclaim is ordinary durable-workflow behaviour, not a defect.
-            db.rollback()
-            return _job_result(_SkippedPublication(reason="claim_lost_before_dispatch"))
-        current = read_step_states(job).get(METADATA_STEP_PATH)
-        if current is None or current.dispatch_phase is not Prepared:
-            # justify-defect: this attempt owns the live claim, so no other
-            # writer advanced the step it durably committed as Prepared before
-            # entering the dispatch transaction.
-            raise AssertionError("metadata dispatch requires the Prepared checkpoint")
-        if media is None:
-            result = _stage_pre_dispatch_terminal(
-                db,
-                context=context,
-                job=job,
-                media=None,
-                generation_id=generation_id,
-                request_fingerprint=request_fingerprint,
-                observed_reason="media_not_found",
-            )
-            db.commit()
-            return _job_result(result)
-        if media.processing_status not in _READY_STATES:
-            result = _stage_pre_dispatch_terminal(
-                db,
-                context=context,
-                job=job,
-                media=media,
-                generation_id=generation_id,
-                request_fingerprint=request_fingerprint,
-                observed_reason="not_ready",
-            )
-            db.commit()
-            return _job_result(result)
-        facts = metadata_enrichment_operation_facts()
-        # The start row and the Uncertain checkpoint commit atomically: an
-        # incomplete ledger row can exist only if dispatch was actually armed.
-        start_turn_in_current_transaction(
+            raise _UncertainMetadataTurn(f"media {media_uuid} already has an unresolved generation")
+        if locked_media is None:
+            raise _PreDispatchMetadataTerminal("media_not_found")
+        if locked_media.processing_status not in _READY_STATES:
+            raise _PreDispatchMetadataTerminal("not_ready")
+        locked_content = build_enrichment_user_content(
             db,
-            AgentTurnStart(
-                id=generation_id,
-                owner=turn_owner,
-                operation=facts.operation,
-                operation_revision=facts.revision,
-                backend=facts.backend,
-                transport=facts.transport,
-                auth_profile=facts.auth_profile,
-                model_name=facts.model,
-                requested_reasoning=facts.reasoning,
-                request_fingerprint=request_fingerprint,
-                policy_fingerprint=facts.policy_fingerprint,
-                output_schema_fingerprint=facts.output_schema_fingerprint,
-            ),
+            locked_media,
+            get_content_sample(db, locked_media),
         )
-        if not checkpoint_step_state(
-            db,
-            ctx=context,
-            job=job,
-            step_path=METADATA_STEP_PATH,
-            state=StepReplayState(
-                generation_id=generation_id,
-                dispatch_phase=Uncertain,
-                request_fingerprint=present(request_fingerprint),
-                terminal_result=absent(),
-            ),
-        ):
-            db.rollback()
-            return _job_result(_SkippedPublication(reason="claim_lost_before_dispatch"))
-        db.commit()
+        locked_command = _metadata_generation_command(
+            generation_id=generation_id,
+            input=locked_content,
+        )
+        if generation_request_fingerprint(locked_command) != request_fingerprint:
+            raise _PreDispatchMetadataTerminal("source_changed")
+        return locked_job
 
-    with factory() as db:
-        committed_job = get_job(db, context.job_id)
-        if committed_job is None:
-            # justify-defect: the Uncertain checkpoint just committed on this
-            # exact claimed row.
-            raise AssertionError(f"metadata job {context.job_id} disappeared before host I/O")
-        committed = read_step_states(committed_job).get(METADATA_STEP_PATH)
-        if (
-            committed is None
-            or committed.generation_id != generation_id
-            or committed.dispatch_phase is not Uncertain
-            or not isinstance(committed.request_fingerprint, Present)
-            or committed.request_fingerprint.value != request_fingerprint
-        ):
-            # justify-defect: dispatching a billed turn without its durable
-            # Uncertain checkpoint would break the billed-once guarantee.
-            raise AssertionError(
-                "the Uncertain checkpoint was not durably committed before native dispatch"
-            )
-        db.commit()
+    async def execute(
+        _db: Session,
+        runtime: ExecutionRuntime,
+    ) -> CompletedGeneration | RescheduleRequested:
+        return await execute_generation(
+            GenerationExecutionRequest(
+                owner=owner,
+                command=command,
+                context=context,
+                step_path=METADATA_STEP_PATH,
+                capacity_wait_index=capacity_wait_index,
+                capacity_wait_delays_seconds=_CAPACITY_WAIT_DELAYS_SECONDS,
+            ),
+            session_factory=factory,
+            runtime=runtime,
+            lock_dispatch=lock_dispatch,
+            encode_terminal=_encode_metadata_terminal,
+            encode_preaccept_failure=_encode_metadata_preaccept_failure,
+        )
 
     try:
-        terminal = asyncio.run(CodexAgentClient(get_settings().codex_agent_socket).turn(command))
-    except NativeAgentCapacityUnavailable as exc:
-        if capacity_wait_index < _MAX_CAPACITY_WAIT_INDEX:
-            return _reschedule_preaccept_capacity_wait(
-                factory,
-                context=context,
-                generation_id=generation_id,
-                request_fingerprint=request_fingerprint,
-                capacity_wait_index=capacity_wait_index,
-            )
-        completed = _failed_result(
-            error_code=ApiErrorCode.E_METADATA_AGENT_CAPACITY_UNAVAILABLE,
-            detail=exception_error_detail(exc),
+        execution_result = run_llm_task(_METADATA_TASK_SPEC, execute)
+    except _PreDispatchMetadataTerminal as exc:
+        return _complete_pre_dispatch_terminal(
+            factory,
+            context=context,
+            media_id=media_uuid,
+            generation_id=generation_id,
+            request_fingerprint=request_fingerprint,
+            observed_reason=exc.reason,
         )
-        audit_terminal = _preaccept_terminal(
-            code="capacity_unavailable",
-            detail=completed.error_detail or "native-agent capacity unavailable",
-        )
-    except NativeAgentTransportAmbiguous as exc:
+    except GenerationDispatchAborted:
+        return _job_result(_SkippedPublication(reason="claim_lost_before_dispatch"))
+    except GenerationUncertain as exc:
         raise _UncertainMetadataTurn(exception_error_detail(exc)) from exc
-    except NativeAgentProtocolDefect as exc:
-        raise _UncertainMetadataTurn(exception_error_detail(exc)) from exc
-    except NativeAgentUnavailable as exc:
-        completed = _failed_result(
-            error_code=ApiErrorCode.E_METADATA_AGENT_HOST_UNAVAILABLE,
-            detail=exception_error_detail(exc),
-        )
-        audit_terminal = _preaccept_terminal(
-            code="host_unavailable",
-            detail=completed.error_detail or "native-agent host unavailable",
-        )
-    except NativeAgentRequestRejected as exc:
-        completed = _failed_result(
-            error_code=ApiErrorCode.E_METADATA_AGENT_HOST_REJECTED,
-            detail=exception_error_detail(exc),
-        )
-        audit_terminal = _preaccept_terminal(
-            code="request_rejected",
-            detail=completed.error_detail or "native-agent request rejected",
-        )
-    else:
-        completed, audit_terminal = _normalize_terminal(terminal)
 
-    _checkpoint_completed(
-        factory,
-        context=context,
-        generation_id=generation_id,
-        request_fingerprint=request_fingerprint,
-        completed=completed,
-        terminal=audit_terminal,
-    )
+    if isinstance(execution_result, RescheduleRequested):
+        return execution_result
+    completed = decode_step_result(
+        execution_result.terminal_result,
+        _CompletedMetadataResultEnvelope,
+    ).root
     return _publish_completed(
         factory,
         context=context,
@@ -582,11 +521,11 @@ def _complete_pre_dispatch_terminal(
 ) -> dict[str, object]:
     """Atomically finish one Prepared retry that became inapplicable."""
     with factory() as db:
-        owner = AgentTurnOwner(kind="media_enrichment", id=media_id)
+        owner = LlmCallOwner(kind="media_enrichment", id=media_id)
         # One canonical order across dispatch, retry, publication, and this
         # early terminal: ledger owner -> media -> queue rows. The ledger's
         # completion acquisition below is therefore a reentrant no-op.
-        lock_turn_owner_in_current_transaction(db, owner)
+        lock_generation_owner_in_current_transaction(db, owner)
         media = db.scalar(select(Media).where(Media.id == media_id).with_for_update())
         jobs = lock_jobs_for_payload(
             db,
@@ -606,11 +545,10 @@ def _complete_pre_dispatch_terminal(
             and other_state.dispatch_phase is Uncertain
             for candidate in jobs
         ):
-            raise _UncertainMetadataTurn(
-                f"media {media_id} already has an unresolved native-agent turn"
-            )
+            raise _UncertainMetadataTurn(f"media {media_id} already has an unresolved generation")
         result = _stage_pre_dispatch_terminal(
             db,
+            owner=owner,
             context=context,
             job=job,
             media=media,
@@ -625,6 +563,7 @@ def _complete_pre_dispatch_terminal(
 def _stage_pre_dispatch_terminal(
     db: Session,
     *,
+    owner: LlmCallOwner,
     context: JobExecutionContext,
     job: JobRow,
     media: Media | None,
@@ -663,10 +602,7 @@ def _stage_pre_dispatch_terminal(
                 error_detail=_PRE_DISPATCH_SOURCE_CHANGED_DETAIL,
                 publication_result=Present[_MetadataPublicationResult](value=result),
             )
-            terminal = _preaccept_terminal(
-                code="source_changed",
-                detail=_PRE_DISPATCH_SOURCE_CHANGED_DETAIL,
-            )
+            terminal_detail = _PRE_DISPATCH_SOURCE_CHANGED_DETAIL
             if media is None:
                 # justify-defect: reason resolution above selects
                 # media_not_found before source_changed.
@@ -678,23 +614,27 @@ def _stage_pre_dispatch_terminal(
             completed = _CompletedSkip(
                 publication_result=Present[_SkippedPublication](value=result),
             )
-            terminal = _preaccept_terminal(
-                code="media_not_found",
-                detail=_PRE_DISPATCH_MEDIA_MISSING_DETAIL,
-            )
+            terminal_detail = _PRE_DISPATCH_MEDIA_MISSING_DETAIL
         case "not_ready":
             result = _SkippedPublication(reason="not_ready")
             completed = _CompletedSkip(
                 publication_result=Present[_SkippedPublication](value=result),
             )
-            terminal = _preaccept_terminal(
-                code="not_ready",
-                detail=_PRE_DISPATCH_NOT_READY_DETAIL,
-            )
+            terminal_detail = _PRE_DISPATCH_NOT_READY_DETAIL
         case _ as unreachable:
             assert_never(unreachable)
 
-    complete_turn_if_started_in_current_transaction(db, generation_id, terminal)
+    # This path normally precedes the first dispatch and therefore has no
+    # ledger row. A prior exact capacity refusal may have restored Prepared
+    # after staging a start; close that audit instead of leaving a terminal
+    # owner journal beside an open generation row.
+    complete_preaccept_failure_if_started_in_current_transaction(
+        db,
+        owner=owner,
+        generation_id=generation_id,
+        error_code="defect",
+        error_detail=terminal_detail,
+    )
     if not checkpoint_step_state(
         db,
         ctx=context,
@@ -714,250 +654,86 @@ def _stage_pre_dispatch_terminal(
     return result
 
 
-def _reschedule_preaccept_capacity_wait(
-    factory: sessionmaker[Session],
-    *,
-    context: JobExecutionContext,
-    generation_id: UUID,
-    request_fingerprint: str,
-    capacity_wait_index: int,
-) -> RescheduleRequested:
-    """Restore Prepared durably before asking the queue to release this attempt."""
-    delay_seconds = _CAPACITY_WAIT_DELAYS_SECONDS[capacity_wait_index]
-    next_wait_index = capacity_wait_index + 1
-    with factory() as db:
-        if not lock_running_job_claim(db, context=context):
-            # The lease lapsed during the refused request and a later attempt
-            # may already own the step: this attempt must not rewrite it.
-            db.rollback()
-            raise _UncertainMetadataTurn(
-                f"metadata job {context.job_id} lost its claim during capacity wait"
-            )
-        job = get_job(db, context.job_id)
-        if job is None:
-            # justify-defect: the locked live claim above proves the row exists.
-            raise AssertionError(f"metadata job {context.job_id} disappeared at capacity wait")
-        # justify-defect: only the live claim holder advances the wait index.
-        if _capacity_wait_index(job.payload) != capacity_wait_index:
-            raise AssertionError("metadata capacity wait index changed during dispatch")
-        current = read_step_states(job).get(METADATA_STEP_PATH)
-        if current is None or current.dispatch_phase is not Uncertain:
-            # justify-defect: under the live claim, a pre-accept capacity
-            # rejection can only follow this attempt's own committed Uncertain
-            # checkpoint.
-            raise AssertionError("metadata capacity wait requires the Uncertain checkpoint")
-        if (
-            _persisted_request_fingerprint(current, generation_id=generation_id)
-            != request_fingerprint
-        ):
-            # justify-defect: only the live claim holder rewrites its own
-            # persisted fingerprint.
-            raise AssertionError("metadata capacity wait request fingerprint changed")
-
-        prepared = StepReplayState(
-            generation_id=generation_id,
-            dispatch_phase=Prepared,
-            request_fingerprint=present(request_fingerprint),
-            terminal_result=absent(),
-        )
-        payload = payload_with_step_state(
-            {**job.payload, "capacity_wait_index": next_wait_index},
-            step_path=METADATA_STEP_PATH,
-            state=prepared,
-        )
-        if not update_running_job_payload(
-            db,
-            job_id=context.job_id,
-            worker_id=context.worker_id,
-            attempt_no=context.attempt_no,
-            payload=payload,
-        ):
-            db.rollback()
-            raise _UncertainMetadataTurn(
-                f"metadata job {context.job_id} lost its claim during capacity wait"
-            )
-        db.commit()
-
-    return RescheduleRequested(schedule=ScheduleAfter(delay_seconds), payload=payload)
-
-
 def _normalize_terminal(
-    terminal: NativeAgentTerminal,
-) -> tuple[_CompletedMetadataResult, AgentTurnTerminal]:
-    usage = terminal.usage
-    session_ref = terminal.session_ref.model_dump(mode="json") if terminal.session_ref else None
-    usage_facts = _usage_facts(usage)
-
+    terminal: GenerationTerminal,
+) -> _CompletedMetadataResult:
     match terminal.status:
         case "succeeded":
             validated = validate_structured_enrichment(terminal.structured_output)
             if validated is None:
-                completed = _failed_result(
+                return _failed_result(
                     error_code=ApiErrorCode.E_METADATA_AGENT_INVALID_OUTPUT,
-                    detail="native agent returned metadata outside the domain output contract",
-                )
-                return completed, AgentTurnTerminal(
-                    outcome="failed",
-                    session_ref=session_ref,
-                    error_code="output_schema_violation",
-                    error_detail=completed.error_detail,
-                    **usage_facts,
-                    sdk_version=terminal.sdk_version,
-                    runtime_version=terminal.runtime_version,
+                    detail="generation returned metadata outside the domain output contract",
                 )
             if not validated.model_dump(exclude_none=True):
-                completed = _failed_result(
+                return _failed_result(
                     error_code=ApiErrorCode.E_METADATA_NO_FIELDS,
-                    detail="native agent returned no confident metadata fields",
+                    detail="generation returned no confident metadata fields",
                 )
-            else:
-                completed = _CompletedSuccess(
-                    enrichment=validated,
-                    publication_result=absent(),
-                )
-            return completed, AgentTurnTerminal(
-                outcome="succeeded",
-                session_ref=session_ref,
-                error_code=None,
-                error_detail=None,
-                **usage_facts,
-                sdk_version=terminal.sdk_version,
-                runtime_version=terminal.runtime_version,
+            return _CompletedSuccess(
+                enrichment=validated,
+                publication_result=absent(),
             )
         case "cancelled":
             return _failed_result(
                 error_code=ApiErrorCode.E_METADATA_AGENT_CANCELLED,
-                detail="native metadata turn was cancelled",
-            ), AgentTurnTerminal(
-                outcome="cancelled",
-                session_ref=session_ref,
-                error_code=None,
-                error_detail=None,
-                **usage_facts,
-                sdk_version=terminal.sdk_version,
-                runtime_version=terminal.runtime_version,
+                detail="metadata generation was cancelled",
             )
         case "failed":
             if terminal.failure is None:
                 # justify-defect: the wire contract's own validator requires a
                 # typed failure on every failed terminal.
-                raise AssertionError("failed native-agent terminal has no typed failure")
-            domain_code = _failure_code(terminal.failure.kind)
+                raise AssertionError("failed generation terminal has no typed failure")
+            domain_code = _failure_code(normalized_failure(terminal.failure.kind))
             detail = terminal.diagnostics[0]
-            completed = _failed_result(error_code=domain_code, detail=detail)
-            return completed, AgentTurnTerminal(
-                outcome="failed",
-                session_ref=session_ref,
-                error_code=terminal.failure.kind,
-                error_detail=completed.error_detail,
-                **usage_facts,
-                sdk_version=terminal.sdk_version,
-                runtime_version=terminal.runtime_version,
-            )
+            return _failed_result(error_code=domain_code, detail=detail)
         case _ as unreachable:
             assert_never(unreachable)
 
 
-def _failure_code(kind: NativeAgentFailureKind) -> ApiErrorCode:
+def _failure_code(kind: NormalizedFailureCode) -> ApiErrorCode:
     match kind:
-        case "quota_exhausted":
+        case "quota":
             return ApiErrorCode.E_METADATA_AGENT_QUOTA_EXHAUSTED
-        case "turn_timeout":
+        case "timeout":
             return ApiErrorCode.E_METADATA_AGENT_TIMEOUT
-        case "output_schema_violation" | "output_limit_exceeded":
-            # An output outside its schema or outside the bounded stream the private
-            # contract can carry is the same product fact: no usable metadata came back.
+        case "invalid_output" | "output_limit" | "context_too_large":
             return ApiErrorCode.E_METADATA_AGENT_INVALID_OUTPUT
-        case "credential_unavailable" | "credential_rejected":
+        case "auth":
             return ApiErrorCode.E_METADATA_AGENT_AUTH_UNAVAILABLE
-        case "executable_unavailable" | "sdk_unavailable" | "session_unavailable":
+        case "runtime_unavailable":
             return ApiErrorCode.E_METADATA_AGENT_HOST_UNAVAILABLE
-        case "invalid_request":
-            return ApiErrorCode.E_METADATA_AGENT_HOST_REJECTED
-        case "policy_violation" | "approval_unanswered":
+        case "policy_violation":
             return ApiErrorCode.E_METADATA_AGENT_POLICY_VIOLATION
-        case "backend_failed" | "runtime_defect":
+        case "defect":
             return ApiErrorCode.E_METADATA_AGENT_RUNTIME_FAILED
+        case "capacity_unavailable":
+            return ApiErrorCode.E_METADATA_AGENT_CAPACITY_UNAVAILABLE
         case _ as unreachable:
             assert_never(unreachable)
 
 
-def _usage_facts(usage: NativeAgentUsage | None) -> dict[str, int | None]:
-    if usage is None:
-        return {
-            "input_tokens": None,
-            "output_tokens": None,
-            "total_tokens": None,
-            "reasoning_tokens": None,
-            "cache_read_input_tokens": None,
-            "cache_write_input_tokens": None,
-        }
-    return {
-        "input_tokens": usage.input_tokens,
-        "output_tokens": usage.output_tokens,
-        "total_tokens": usage.total_tokens,
-        "reasoning_tokens": usage.reasoning_tokens,
-        "cache_read_input_tokens": usage.cache_read_input_tokens,
-        "cache_write_input_tokens": usage.cache_write_input_tokens,
-    }
-
-
-def _preaccept_terminal(*, code: str, detail: str) -> AgentTurnTerminal:
-    return AgentTurnTerminal(
-        outcome="failed",
-        session_ref=None,
-        error_code=code,
-        error_detail=detail,
-        input_tokens=None,
-        output_tokens=None,
-        total_tokens=None,
-        reasoning_tokens=None,
-        cache_read_input_tokens=None,
-        cache_write_input_tokens=None,
-        sdk_version=None,
-        runtime_version=None,
+def _encode_metadata_terminal(terminal: GenerationTerminal) -> EncodedGenerationTerminal:
+    completed = _normalize_terminal(terminal)
+    accepted_failure = (
+        AcceptedGenerationFailure(
+            code="invalid_output",
+            detail=completed.error_detail,
+        )
+        if terminal.status == "succeeded" and isinstance(completed, _CompletedFailure)
+        else None
+    )
+    return EncodedGenerationTerminal(
+        terminal_result=encode_step_result(completed),
+        accepted_failure=accepted_failure,
     )
 
 
-def _checkpoint_completed(
-    factory: sessionmaker[Session],
-    *,
-    context: JobExecutionContext,
-    generation_id: UUID,
-    request_fingerprint: str,
-    completed: _CompletedMetadataResult,
-    terminal: AgentTurnTerminal,
-) -> None:
-    with factory() as db:
-        job = get_job(db, context.job_id)
-        if job is None:
-            # justify-defect: the worker holds this claimed row; only unpruned
-            # terminal transitions could remove it mid-attempt.
-            raise AssertionError(f"metadata job {context.job_id} disappeared at terminal")
-        current = read_step_states(job).get(METADATA_STEP_PATH)
-        if current is None or current.dispatch_phase is not Uncertain:
-            # justify-defect: a native terminal can only land on this
-            # attempt's own committed Uncertain checkpoint.
-            raise AssertionError("metadata terminal requires the Uncertain checkpoint")
-        complete_turn_in_current_transaction(db, generation_id, terminal)
-        landed = checkpoint_step_state(
-            db,
-            ctx=context,
-            job=job,
-            step_path=METADATA_STEP_PATH,
-            state=StepReplayState(
-                generation_id=generation_id,
-                dispatch_phase=Completed,
-                request_fingerprint=present(request_fingerprint),
-                terminal_result=present(encode_step_result(completed)),
-            ),
-        )
-        if not landed:
-            db.rollback()
-            raise _UncertainMetadataTurn(
-                f"metadata job {context.job_id} lost its claim before terminal checkpoint"
-            )
-        db.commit()
+def _encode_metadata_preaccept_failure(
+    code: NormalizedFailureCode,
+    detail: str,
+) -> str:
+    return encode_step_result(_failed_result(error_code=_failure_code(code), detail=detail))
 
 
 def _publish_completed(
@@ -1054,11 +830,11 @@ def _publish_completed_transaction(
         media,
         get_content_sample(db, media),
     )
-    current_command = build_metadata_enrichment_command(
-        request_id=stable_generation_id(context.job_id, METADATA_STEP_PATH),
+    current_command = _metadata_generation_command(
+        generation_id=stable_generation_id(context.job_id, METADATA_STEP_PATH),
         input=current_content,
     )
-    if native_agent_request_fingerprint(current_command) != request_fingerprint:
+    if generation_request_fingerprint(current_command) != request_fingerprint:
         code = ApiErrorCode.E_METADATA_AGENT_SOURCE_CHANGED.value
         detail = "media facts changed before metadata publication"
         _record_metadata_failure(media, code, detail)
@@ -1174,13 +950,15 @@ def _checkpoint_published(
 
 
 def _success_result(fields: tuple[str, ...] | list[str]) -> _SuccessfulPublication:
-    facts = metadata_enrichment_operation_facts()
+    policy = generation_policy.operation_policy("metadata_enrichment")
+    if policy.model != "gpt-5.6-luna":
+        raise AssertionError("metadata result model differs from the admitted policy")
     return _SuccessfulPublication(
         fields=tuple(fields),
-        backend=facts.backend,
-        transport=facts.transport,
-        auth_profile=facts.auth_profile,
-        model=facts.model,
+        backend="codex",
+        transport="sdk",
+        auth_profile="codex-personal",
+        model="gpt-5.6-luna",
     )
 
 

@@ -1,16 +1,4 @@
-"""The one worker envelope for LLM provider jobs.
-
-``run_llm_task`` owns the mechanics every LLM task body used to hand-copy: one
-DB session, one fresh event loop, one ``httpx.AsyncClient`` (per-kind timeout
-and pool limits), one production ``ExecutionRuntime`` construction delegating
-to ``provider_runtime.ProviderRuntime`` (platform keys are the only source of provider availability;
-``services/llm_credentials.py`` is the read side) — the worker exception
-boundary, and teardown. The handler owns everything domain-specific: payload
-semantics, the ``llm_execution.execute_generation``/``execute_generation_
-stream`` call, finalization. It receives the shared client so chat can build
-its web-search provider without a second ``httpx.AsyncClient`` (this module is
-the only constructor of loops, clients, and runtimes under ``nexus/tasks/``).
-"""
+"""The one synchronous worker envelope for private Codex generation jobs."""
 
 from __future__ import annotations
 
@@ -18,67 +6,43 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-import httpx
 from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
 from nexus.db.session import get_session_factory
 from nexus.logging import get_logger
-from nexus.services.llm_execution import (
-    ExecutionRuntime,
-    ProviderRetryMode,
-    build_execution_runtime,
-)
+from nexus.services.codex_generation_client import CodexGenerationClient
+from nexus.services.llm_execution import ExecutionRuntime
 
 logger = get_logger(__name__)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class LlmTaskSpec:
-    """Per-kind envelope policy for one LLM task."""
+    """Identity of one worker-owned generation envelope."""
 
-    label: str  # log-event prefix: "chat_run", "oracle_reading", ...
-    http_timeout_s: float = 60.0  # LI uses 120.0
-    http_limits: tuple[int, int] = (10, 5)  # (max_connections, max_keepalive); chat (100, 20)
-    retry_mode: ProviderRetryMode = ProviderRetryMode.Default
+    label: str
 
 
 def run_llm_task[R](
     spec: LlmTaskSpec,
-    handler: Callable[[Session, ExecutionRuntime, httpx.AsyncClient], Awaitable[R]],
+    handler: Callable[[Session, ExecutionRuntime], Awaitable[R]],
     *,
     on_worker_exception: Callable[[Session, Exception], R] | None = None,
 ) -> R:
-    """Run one LLM task body inside the shared worker envelope.
+    """Run one async Codex task with one session and one owned event loop."""
 
-    On an unexpected exception the boundary logs ``{label}_failed_unexpected``
-    and delegates to ``on_worker_exception`` (which stores a safe terminal
-    failure and returns the task result); without one the exception propagates
-    to the queue's retry policy.
-    """
     db = get_session_factory()()
 
     async def _call() -> R:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(spec.http_timeout_s, connect=10.0),
-            limits=httpx.Limits(
-                max_connections=spec.http_limits[0],
-                max_keepalive_connections=spec.http_limits[1],
-            ),
-            trust_env=False,
-        ) as client:
-            runtime = build_execution_runtime(
-                get_settings(),
-                client,
-                retry_mode=spec.retry_mode,
-            )
-            return await handler(db, runtime, client)
+        runtime = CodexGenerationClient(get_settings().codex_agent_socket)
+        return await handler(db, runtime)
 
     loop = asyncio.new_event_loop()
     try:
         return loop.run_until_complete(_call())
-    # justify-ignore-error: worker boundary — on_worker_exception stores a safe
-    # terminal failure; without one the queue's retry policy applies.
+    # justify-ignore-error: worker boundary — the optional owner callback stores
+    # its safe terminal; without one the durable queue retry policy applies.
     except Exception as exc:
         logger.exception(f"{spec.label}_failed_unexpected")
         if on_worker_exception is None:
@@ -87,3 +51,6 @@ def run_llm_task[R](
     finally:
         loop.close()
         db.close()
+
+
+__all__ = ["LlmTaskSpec", "run_llm_task"]

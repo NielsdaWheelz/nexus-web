@@ -1,0 +1,679 @@
+"""Priority proof for one durable Codex generation execution boundary.
+
+The private UDS peer is a protocol-valid external process.  The worker, queue,
+PostgreSQL ledger, and owner journal are production code; the proof observes
+their commits through independent database sessions.
+"""
+
+from __future__ import annotations
+
+import json
+import multiprocessing
+import os
+import socketserver
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
+from multiprocessing.connection import Connection
+from pathlib import Path
+from typing import Any, Literal, assert_never
+from uuid import UUID, uuid4
+
+import pytest
+from sqlalchemy import Engine, text
+from sqlalchemy.orm import Session
+
+from nexus.jobs.queue import get_job
+from nexus.services import generation_policy
+from nexus.services.codex_generation_contract import (
+    MAX_COMMAND_BODY_BYTES,
+    GenerationCommand,
+    GenerationFrame,
+    GenerationHealth,
+    capacity_rejection_bytes,
+    request_fingerprint,
+)
+from nexus.services.durable_step_journal import (
+    Completed,
+    Prepared,
+    StepReplayState,
+    Uncertain,
+    read_step_states,
+)
+from nexus.services.llm_ledger import read_generation
+from nexus_test_control import services as test_services
+from tests.testkit.codex_metadata import (
+    SUCCESS_OUTPUT,
+    SeededJob,
+    audit_requests,
+    run_owned_socket_path,
+    seed_media_job,
+    start_worker,
+)
+from tests.testkit.unreachable_state import (
+    lose_metadata_queue_completion_after_published_checkpoint,
+)
+from tests.testkit.worker import controller_run, kill_and_forget_process, wait_for_job
+
+type PeerMode = Literal[
+    "succeeded",
+    "semantic_invalid",
+    "capacity",
+    "accepted_disconnect",
+]
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_ACCEPTED_AT = "2026-08-24T12:34:56.123456Z"
+_SDK_VERSION = "0.144.4"
+_RUNTIME_VERSION = "0.144.4"
+
+
+@dataclass(frozen=True, slots=True)
+class GenerationPeer:
+    socket_path: Path
+    audit_path: Path
+    process: multiprocessing.Process
+    ready: Connection
+    request_observed: Any
+    release_response: Any
+
+
+def _session_ref(request_id: str) -> dict[str, object]:
+    return {
+        "schema_version": "agent-session-ref.v1",
+        "backend": "codex",
+        "transport": "sdk",
+        "native_session_id": f"thread-{request_id}",
+        "profile_key": "codex-personal",
+        "state_root_fingerprint": "1" * 64,
+        "cwd_fingerprint": "2" * 64,
+    }
+
+
+def _terminal_frame(
+    command: GenerationCommand,
+    *,
+    structured_output: dict[str, object] | None = None,
+) -> bytes:
+    frame = GenerationFrame.model_validate(
+        {
+            "schema_version": "nexus-generation-event.v2",
+            "request_id": str(command.request_id),
+            "sequence": 0,
+            "event": {
+                "kind": "terminal",
+                "status": "succeeded",
+                "failure": None,
+                "final_text": "metadata terminal",
+                "structured_output": SUCCESS_OUTPUT
+                if structured_output is None
+                else structured_output,
+                "session_ref": _session_ref(str(command.request_id)),
+                "usage": {
+                    "input_tokens": 80,
+                    "output_tokens": 20,
+                    "total_tokens": 100,
+                    "reasoning_tokens": 5,
+                    "cache_read_input_tokens": None,
+                    "cache_write_input_tokens": None,
+                },
+                "diagnostics": [],
+                "accepted_at": _ACCEPTED_AT,
+                "sdk_version": _SDK_VERSION,
+                "runtime_version": _RUNTIME_VERSION,
+            },
+        }
+    )
+    return frame.model_dump_json().encode("utf-8") + b"\n"
+
+
+def _run_generation_peer(
+    socket_path: str,
+    audit_path: str,
+    mode: PeerMode,
+    ready: Connection,
+    request_observed: Any,
+    release_response: Any,
+) -> None:
+    class Handler(socketserver.StreamRequestHandler):
+        def handle(self) -> None:
+            request_line = self.rfile.readline()
+            headers: dict[str, str] = {}
+            while True:
+                line = self.rfile.readline()
+                if line in (b"\r\n", b"\n", b""):
+                    break
+                try:
+                    name, value = line.decode("ascii").split(":", 1)
+                except (UnicodeDecodeError, ValueError):
+                    self._protocol_error("malformed HTTP header")
+                    return
+                headers[name.casefold()] = value.strip()
+
+            content_length = int(headers.get("content-length", "0"))
+            if content_length > MAX_COMMAND_BODY_BYTES:
+                self._protocol_error("command body exceeds the v2 ceiling")
+                return
+            body = self.rfile.read(content_length)
+
+            if request_line == b"GET /health HTTP/1.1\r\n":
+                if body:
+                    self._protocol_error("health request carried a body")
+                    return
+                health = GenerationHealth(
+                    policy_revision=generation_policy.POLICY_REVISION,
+                    sdk_version=_SDK_VERSION,
+                    runtime_version=_RUNTIME_VERSION,
+                )
+                self._respond(
+                    b"200 OK",
+                    b"application/json",
+                    health.model_dump_json().encode("utf-8"),
+                )
+                return
+
+            if request_line != b"POST /v2/generations HTTP/1.1\r\n":
+                self._protocol_error(
+                    f"unexpected request line {request_line.decode('ascii', errors='replace').strip()}"
+                )
+                return
+            if headers.get("content-type") != "application/json":
+                self._protocol_error("generation command content type is not application/json")
+                return
+            try:
+                command = GenerationCommand.model_validate_json(body)
+            except Exception as error:
+                self._protocol_error(f"invalid v2 command: {type(error).__name__}")
+                return
+            if command.operation.kind != "metadata_enrichment":
+                self._protocol_error(f"unexpected operation {command.operation.kind}")
+                return
+
+            with Path(audit_path).open("a", encoding="utf-8") as audit:
+                audit.write(json.dumps(json.loads(body), sort_keys=True) + "\n")
+            request_observed.set()
+            if not release_response.wait(60):
+                return
+
+            match mode:
+                case "succeeded":
+                    self._respond(
+                        b"200 OK",
+                        b"application/x-ndjson",
+                        _terminal_frame(command),
+                    )
+                case "semantic_invalid":
+                    self._respond(
+                        b"200 OK",
+                        b"application/x-ndjson",
+                        _terminal_frame(
+                            command,
+                            structured_output={**SUCCESS_OUTPUT, "language": "English"},
+                        ),
+                    )
+                case "capacity":
+                    self._respond(
+                        b"503 Service Unavailable",
+                        b"application/json",
+                        capacity_rejection_bytes(),
+                    )
+                case "accepted_disconnect":
+                    self._respond(
+                        b"200 OK",
+                        b"application/x-ndjson",
+                        b"",
+                    )
+                case _ as unreachable:
+                    assert_never(unreachable)
+
+        def _protocol_error(self, detail: str) -> None:
+            with Path(audit_path).open("a", encoding="utf-8") as audit:
+                audit.write(json.dumps({"protocol_error": detail}, sort_keys=True) + "\n")
+            request_observed.set()
+            self._respond(
+                b"400 Bad Request",
+                b"application/json",
+                b'{"detail":"invalid generation request"}',
+            )
+
+        def _respond(self, status: bytes, content_type: bytes, payload: bytes) -> None:
+            self.wfile.write(
+                b"HTTP/1.1 "
+                + status
+                + b"\r\nContent-Type: "
+                + content_type
+                + b"\r\n"
+                + f"Content-Length: {len(payload)}\r\n".encode("ascii")
+                + b"Connection: close\r\n\r\n"
+                + payload
+            )
+            self.wfile.flush()
+
+    class Server(socketserver.UnixStreamServer):
+        allow_reuse_address = False
+
+    socket_target = Path(socket_path)
+    os.chdir(socket_target.parent)
+    with Server(socket_target.name, Handler) as server:
+        ready.send("ready")
+        server.serve_forever(poll_interval=0.01)
+
+
+@contextmanager
+def _scripted_generation_peer(
+    run: test_services.TestRun,
+    mode: PeerMode,
+) -> Iterator[GenerationPeer]:
+    token = uuid4().hex
+    socket_path = run_owned_socket_path(run, token=f"g{token}")
+    audit_path = _REPO_ROOT / "test-results" / "runs" / run.run_id / f"generation-{token}.jsonl"
+    audit_path.parent.mkdir(parents=True, exist_ok=True)
+    parent, child = multiprocessing.Pipe(duplex=False)
+    process_context = multiprocessing.get_context("fork")
+    request_observed = process_context.Event()
+    release_response = process_context.Event()
+    process = process_context.Process(
+        target=_run_generation_peer,
+        args=(
+            str(socket_path),
+            str(audit_path),
+            mode,
+            child,
+            request_observed,
+            release_response,
+        ),
+    )
+    process.start()
+    child.close()
+    peer = GenerationPeer(
+        socket_path=socket_path,
+        audit_path=audit_path,
+        process=process,
+        ready=parent,
+        request_observed=request_observed,
+        release_response=release_response,
+    )
+    try:
+        assert parent.poll(5) and parent.recv() == "ready"
+        yield peer
+    finally:
+        release_response.set()
+        parent.close()
+        if process.is_alive():
+            process.terminate()
+        process.join(5)
+        socket_path.unlink(missing_ok=True)
+
+
+def _generation_state(
+    engine: Engine,
+    *,
+    job_id: UUID,
+    generation_id: UUID,
+) -> tuple[object, StepReplayState]:
+    with Session(engine) as db:
+        job = get_job(db, job_id)
+        assert job is not None
+        matches = [
+            (path, state)
+            for path, state in read_step_states(job).items()
+            if state.generation_id == generation_id
+        ]
+        assert len(matches) == 1, (
+            f"generation {generation_id} must own exactly one durable journal position: {matches!r}"
+        )
+        return job, matches[0][1]
+
+
+def _ledger_row(engine: Engine, generation_id: UUID) -> dict[str, object]:
+    with engine.connect() as oracle:
+        rows = (
+            oracle.execute(
+                text("SELECT * FROM llm_calls WHERE id = :generation_id"),
+                {"generation_id": generation_id},
+            )
+            .mappings()
+            .all()
+        )
+    assert len(rows) == 1, f"generation {generation_id} must own exactly one llm_calls row"
+    return dict(rows[0])
+
+
+def _ledger_and_journal_commit_ids(
+    engine: Engine, *, job_id: UUID, generation_id: UUID
+) -> tuple[str, str]:
+    """Read current PostgreSQL transaction ids for ledger and journal writes."""
+
+    with engine.connect() as oracle:
+        row = oracle.execute(
+            text(
+                """
+                SELECT
+                    (SELECT xmin::text FROM llm_calls WHERE id = :generation_id),
+                    (SELECT xmin::text FROM background_jobs WHERE id = :job_id)
+                """
+            ),
+            {"generation_id": generation_id, "job_id": job_id},
+        ).one()
+    return str(row[0]), str(row[1])
+
+
+def _assert_started_atomically(
+    engine: Engine,
+    *,
+    seeded: SeededJob,
+    command: GenerationCommand,
+) -> None:
+    job, state = _generation_state(
+        engine,
+        job_id=seeded.job_id,
+        generation_id=command.request_id,
+    )
+    assert state.dispatch_phase is Uncertain
+    assert job.status == "running"
+    row = _ledger_row(engine, command.request_id)
+    expected = {
+        "id": command.request_id,
+        "owner_kind": "media_enrichment",
+        "owner_id": seeded.media_id,
+        "generation_seq": 1,
+        "operation": "metadata_enrichment",
+        "plan_id": "routine",
+        "plan_revision": generation_policy.POLICY_REVISION,
+        "backend": "codex",
+        "transport": "sdk",
+        "auth_profile": "codex-personal",
+        "model_name": "gpt-5.6-luna",
+        "reasoning_effort": "low",
+        "capability_kind": "Synthesis",
+        "request_fingerprint": request_fingerprint(command),
+        "streaming": False,
+        "session_ref": None,
+        "outcome": None,
+        "error_code": None,
+        "accepted_at": None,
+        "completed_at": None,
+    }
+    assert {key: row[key] for key in expected} == expected
+    assert isinstance(row["output_schema_fingerprint"], str)
+    assert len(row["output_schema_fingerprint"]) == 64
+    assert row["tool_plan_fingerprint"] is None
+    assert row["created_at"] is not None
+    ledger_commit_id, journal_commit_id = _ledger_and_journal_commit_ids(
+        engine,
+        job_id=seeded.job_id,
+        generation_id=command.request_id,
+    )
+    assert ledger_commit_id == journal_commit_id, (
+        "ledger start and Uncertain journal must share one PostgreSQL transaction"
+    )
+    with Session(engine) as db:
+        typed = read_generation(db, generation_id=command.request_id)
+        assert typed is not None
+        assert (typed.id, typed.owner_kind, typed.owner_id, typed.outcome) == (
+            command.request_id,
+            "media_enrichment",
+            seeded.media_id,
+            None,
+        )
+
+
+def _wait_for_prepared_capacity(
+    engine: Engine,
+    *,
+    seeded: SeededJob,
+    generation_id: UUID,
+    timeout_seconds: float = 30,
+) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    observed: tuple[object, ...] | None = None
+    while time.monotonic() < deadline:
+        job, state = _generation_state(
+            engine,
+            job_id=seeded.job_id,
+            generation_id=generation_id,
+        )
+        observed = (
+            job.status,
+            job.attempts,
+            job.payload.get("capacity_wait_index"),
+            state.dispatch_phase,
+        )
+        if observed == ("pending", 0, 1, Prepared):
+            assert (job.available_at - job.updated_at).total_seconds() == 30
+            return
+    raise AssertionError(f"capacity refusal did not restore Prepared exactly: {observed!r}")
+
+
+def _assert_success_terminal(engine: Engine, seeded: SeededJob, generation_id: UUID) -> None:
+    _job, state = _generation_state(
+        engine,
+        job_id=seeded.job_id,
+        generation_id=generation_id,
+    )
+    assert state.dispatch_phase is Completed
+    row = _ledger_row(engine, generation_id)
+    assert {
+        "outcome": row["outcome"],
+        "error_code": row["error_code"],
+        "session_ref": row["session_ref"],
+        "input_tokens": row["input_tokens"],
+        "output_tokens": row["output_tokens"],
+        "total_tokens": row["total_tokens"],
+        "reasoning_tokens": row["reasoning_tokens"],
+        "cache_read_input_tokens": row["cache_read_input_tokens"],
+        "cache_write_input_tokens": row["cache_write_input_tokens"],
+        "sdk_version": row["sdk_version"],
+        "runtime_version": row["runtime_version"],
+        "accepted_at": row["accepted_at"].isoformat().replace("+00:00", "Z"),
+    } == {
+        "outcome": "Succeeded",
+        "error_code": None,
+        "session_ref": _session_ref(str(generation_id)),
+        "input_tokens": 80,
+        "output_tokens": 20,
+        "total_tokens": 100,
+        "reasoning_tokens": 5,
+        "cache_read_input_tokens": None,
+        "cache_write_input_tokens": None,
+        "sdk_version": _SDK_VERSION,
+        "runtime_version": _RUNTIME_VERSION,
+        "accepted_at": _ACCEPTED_AT,
+    }
+    assert row["latency_ms"] is not None and int(row["latency_ms"]) >= 0
+    assert row["completed_at"] is not None
+
+
+def _wait_for_completed_before_publication(
+    engine: Engine,
+    *,
+    seeded: SeededJob,
+    generation_id: UUID,
+    expected_outcome: Literal["Succeeded", "Failed"],
+    timeout_seconds: float = 10,
+) -> None:
+    """Observe the terminal commit while publication is blocked on ``media``."""
+
+    deadline = time.monotonic() + timeout_seconds
+    observed: tuple[object, ...] | None = None
+    while time.monotonic() < deadline:
+        job, state = _generation_state(
+            engine,
+            job_id=seeded.job_id,
+            generation_id=generation_id,
+        )
+        row = _ledger_row(engine, generation_id)
+        observed = (job.status, state.dispatch_phase, row["outcome"])
+        if observed == ("running", Completed, expected_outcome):
+            ledger_commit_id, journal_commit_id = _ledger_and_journal_commit_ids(
+                engine,
+                job_id=seeded.job_id,
+                generation_id=generation_id,
+            )
+            assert ledger_commit_id == journal_commit_id, (
+                "ledger terminal and Completed journal must share one PostgreSQL transaction"
+            )
+            return
+    raise AssertionError(
+        "terminal checkpoint did not commit before metadata publication; "
+        f"generation_id={generation_id}, observed={observed!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    "mode",
+    ["succeeded", "semantic_invalid", "capacity", "accepted_disconnect"],
+    ids=[
+        "terminal-and-completed-replay",
+        "accepted-semantic-invalid-output",
+        "exact-preaccept-capacity",
+        "accepted-stream-loss",
+    ],
+)
+def test_generation_dispatch_is_atomic_and_replay_safe(
+    engine: Engine,
+    mode: PeerMode,
+) -> None:
+    """One dominant scenario protects dispatch-once, atomic audit, and ambiguity."""
+
+    run = controller_run()
+    seeded = seed_media_job(engine)
+    worker: test_services.StartedProcess | None = None
+    replay_worker: test_services.StartedProcess | None = None
+
+    with _scripted_generation_peer(run, mode) as peer:
+        try:
+            worker = start_worker(run, peer.socket_path)
+            assert peer.request_observed.wait(10), (
+                "production worker never reached the v2 UDS peer; "
+                f"audit={audit_requests(peer.audit_path)!r}"
+            )
+            requests = audit_requests(peer.audit_path)
+            assert len(requests) == 1 and "protocol_error" not in requests[0], requests
+            command = GenerationCommand.model_validate(requests[0])
+
+            _assert_started_atomically(engine, seeded=seeded, command=command)
+
+            match mode:
+                case "succeeded":
+                    with engine.connect() as publication_lock:
+                        with publication_lock.begin():
+                            assert (
+                                publication_lock.scalar(
+                                    text("SELECT id FROM media WHERE id = :id FOR UPDATE"),
+                                    {"id": seeded.media_id},
+                                )
+                                == seeded.media_id
+                            )
+                            peer.release_response.set()
+                            _wait_for_completed_before_publication(
+                                engine,
+                                seeded=seeded,
+                                generation_id=command.request_id,
+                                expected_outcome="Succeeded",
+                            )
+                            _assert_success_terminal(engine, seeded, command.request_id)
+                            assert publication_lock.execute(
+                                text(
+                                    """
+                                    SELECT title, publisher, description,
+                                           published_date, language, metadata_enriched_at
+                                    FROM media WHERE id = :id
+                                    """
+                                ),
+                                {"id": seeded.media_id},
+                            ).one() == ("dune.epub", None, None, None, None, None)
+
+                    wait_for_job(engine, seeded.job_id, status="succeeded", attempts=1)
+                    _assert_success_terminal(engine, seeded, command.request_id)
+
+                    kill_and_forget_process(worker)
+                    worker = None
+                    with Session(engine) as db:
+                        lose_metadata_queue_completion_after_published_checkpoint(
+                            db,
+                            job_id=seeded.job_id,
+                        )
+                        db.commit()
+                    replay_worker = start_worker(run, peer.socket_path)
+                    wait_for_job(engine, seeded.job_id, status="succeeded", attempts=2)
+                    _assert_success_terminal(engine, seeded, command.request_id)
+                    assert audit_requests(peer.audit_path) == requests
+                case "semantic_invalid":
+                    with engine.connect() as publication_lock:
+                        with publication_lock.begin():
+                            assert (
+                                publication_lock.scalar(
+                                    text("SELECT id FROM media WHERE id = :id FOR UPDATE"),
+                                    {"id": seeded.media_id},
+                                )
+                                == seeded.media_id
+                            )
+                            peer.release_response.set()
+                            _wait_for_completed_before_publication(
+                                engine,
+                                seeded=seeded,
+                                generation_id=command.request_id,
+                                expected_outcome="Failed",
+                            )
+                            row = _ledger_row(engine, command.request_id)
+                            assert row["error_code"] == "invalid_output"
+                            assert row["accepted_at"] is not None
+                            assert row["session_ref"] == _session_ref(str(command.request_id))
+
+                    wait_for_job(engine, seeded.job_id, status="succeeded", attempts=1)
+                    with Session(engine) as db:
+                        media = db.execute(
+                            text("SELECT last_error_code FROM media WHERE id = :media_id"),
+                            {"media_id": seeded.media_id},
+                        ).scalar_one()
+                    assert media == "E_METADATA_AGENT_INVALID_OUTPUT"
+                    assert audit_requests(peer.audit_path) == requests
+                case "capacity":
+                    peer.release_response.set()
+                    _wait_for_prepared_capacity(
+                        engine,
+                        seeded=seeded,
+                        generation_id=command.request_id,
+                    )
+                    _job, state = _generation_state(
+                        engine,
+                        job_id=seeded.job_id,
+                        generation_id=command.request_id,
+                    )
+                    row = _ledger_row(engine, command.request_id)
+                    assert state.dispatch_phase is Prepared
+                    assert row["outcome"] is None and row["accepted_at"] is None
+                    assert audit_requests(peer.audit_path) == requests
+                case "accepted_disconnect":
+                    peer.release_response.set()
+                    wait_for_job(engine, seeded.job_id, status="dead", attempts=2)
+                    _job, state = _generation_state(
+                        engine,
+                        job_id=seeded.job_id,
+                        generation_id=command.request_id,
+                    )
+                    row = _ledger_row(engine, command.request_id)
+                    assert state.dispatch_phase is Uncertain
+                    assert row["outcome"] is None
+                    assert row["accepted_at"] is None
+                    assert row["completed_at"] is None
+                    assert audit_requests(peer.audit_path) == requests
+                case _ as unreachable:
+                    assert_never(unreachable)
+
+            with engine.connect() as oracle:
+                assert (
+                    oracle.scalar(
+                        text("SELECT count(*) FROM llm_calls WHERE id = :generation_id"),
+                        {"generation_id": command.request_id},
+                    )
+                    == 1
+                )
+        finally:
+            peer.release_response.set()
+            if replay_worker is not None:
+                kill_and_forget_process(replay_worker)
+            if worker is not None:
+                kill_and_forget_process(worker)

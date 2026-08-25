@@ -1,500 +1,466 @@
-"""The sole Nexus boundary for ledgered direct-provider generation."""
+"""The sole Nexus dispatch boundary for durable Codex generations."""
 
 from __future__ import annotations
 
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
-from enum import StrEnum
-from typing import Never, Protocol, assert_never, cast
-from uuid import UUID
+from typing import Literal, Protocol
 
-import httpx
-from provider_runtime import (
-    Absent,
-    GenerateIntent,
-    Present,
-    ProviderRuntime,
-    ReasoningLevel,
-    RuntimeStreamEvent,
-    TerminalEvent,
-    TokenUsage,
-)
-from provider_runtime import CallOutcome as ProviderCallOutcome
-from provider_runtime.errors import InvalidRequest, RuntimeDefect, sanitize_provider_text
-from provider_runtime.registry import resolve_target
-from provider_runtime.types import (
-    Billability,
-    CancelSignal,
-    ConfirmedNonBillable,
-    FailureOrigin,
-    ImageBlock,
-    NotDispatched,
-    Presence,
-    RetryPolicy,
-    StrictJsonOutput,
-    UserMessage,
-)
 from sqlalchemy.orm import Session, sessionmaker
 
-from nexus.config import Settings
-from nexus.errors import ApiError, ApiErrorCode
-from nexus.logging import get_logger
-from nexus.services.billing_entitlements import get_effective_entitlements
-from nexus.services.llm_credentials import provider_credentials
-from nexus.services.llm_intent_state import conservative_token_admission_bound
-from nexus.services.llm_ledger import (
-    AdmissionDenied,
-    ExistingTerminalCall,
-    LlmCallOwner,
-    start_call,
-    terminalize,
-    terminalize_defect,
+from nexus.jobs.queue import (
+    JobExecutionContext,
+    JobRow,
+    RescheduleRequested,
+    ScheduleAfter,
+    get_job,
+    lock_running_job_claim,
+    update_running_job_payload,
 )
-from nexus.services.llm_profiles import LlmOperation, LlmProfile
-from nexus.services.rate_limit import RateLimiter, get_rate_limiter
+from nexus.schemas.presence import Present, absent, present
+from nexus.services.codex_generation_contract import (
+    GenerationCommand,
+    GenerationFrame,
+    GenerationHealth,
+    GenerationTerminal,
+    NormalizedFailureCode,
+    request_fingerprint,
+)
+from nexus.services.durable_step_journal import (
+    Completed,
+    Prepared,
+    StepReplayState,
+    Uncertain,
+    checkpoint_step_state,
+    payload_with_step_state,
+    read_step_states,
+)
+from nexus.services.llm_ledger import (
+    GenerationStart,
+    LlmCallOwner,
+    complete_generation_in_current_transaction,
+    complete_preaccept_failure_if_started_in_current_transaction,
+    lock_generation_owner_in_current_transaction,
+    start_generation_in_current_transaction,
+)
 
-logger = get_logger(__name__)
-
-
-@dataclass(frozen=True, slots=True)
-class GenerationRequest:
-    generation_id: UUID
-    owner: LlmCallOwner
-    operation: LlmOperation
-    profile: LlmProfile
-    reasoning: ReasoningLevel
-    intent: GenerateIntent
-
-    def __post_init__(self) -> None:
-        if self.intent.target != self.profile.target:
-            raise InvalidRequest(message="generation target does not match its product profile")
-        if self.intent.reasoning != self.reasoning:
-            raise InvalidRequest(message="generation reasoning does not match its product request")
-        if self.reasoning not in {option.id for option in self.profile.reasoning_options}:
-            raise InvalidRequest(
-                message="generation reasoning is not offered by its product profile"
-            )
-        if any(
-            isinstance(message, UserMessage)
-            and any(isinstance(block, ImageBlock) for block in message.blocks)
-            for message in self.intent.messages
-        ):
-            raise InvalidRequest(message="Nexus generation is text-only")
-        if self.intent.provider_options:
-            raise InvalidRequest(message="Nexus does not accept provider_options")
-        if self.intent.tools and isinstance(self.intent.output, StrictJsonOutput):
-            raise InvalidRequest(message="tools and strict JSON output cannot be combined")
-
-        row = resolve_target(self.intent.target)
-        if self.intent.max_output_tokens <= 0:
-            raise InvalidRequest(message="max_output_tokens must be positive")
-        if self.intent.max_output_tokens > row.max_output_tokens:
-            raise InvalidRequest(message="max_output_tokens exceeds the registry row cap")
-        input_bound = (
-            conservative_token_admission_bound(self.intent) - self.intent.max_output_tokens
-        )
-        if input_bound > row.context_window - self.intent.max_output_tokens:
-            raise InvalidRequest(message="generation exceeds the conservative context bound")
-
-
-@dataclass(frozen=True, slots=True)
-class CallOutcome:
-    generation_id: UUID
-    outcome: ProviderCallOutcome
-    support_id: Presence[str]
-
-
-class DispatchTransferred(RuntimeError):
-    """Another durable attempt owns the shared generation and reservation."""
-
-
-class DispatchAborted(RuntimeError):
-    """The durable owner proved that this generation must not dispatch."""
+type LockedDispatch = Callable[[Session], JobRow | None]
+type EncodeTerminal = Callable[[GenerationTerminal], "EncodedGenerationTerminal"]
+type EncodePreacceptFailure = Callable[[NormalizedFailureCode, str], str]
+type ObserveFrame = Callable[[GenerationFrame], Awaitable[None]]
 
 
 class ExecutionRuntime(Protocol):
-    async def generate(
-        self,
-        intent: GenerateIntent,
-        *,
-        cancel: CancelSignal | None = None,
-    ) -> ProviderCallOutcome: ...
+    """The strict Codex host surface consumed by generation orchestration."""
 
-    def stream(
-        self,
-        intent: GenerateIntent,
-        *,
-        cancel: CancelSignal | None = None,
-    ) -> AsyncIterator[RuntimeStreamEvent]: ...
+    async def health(self) -> GenerationHealth: ...
+
+    def stream(self, command: GenerationCommand) -> AsyncIterator[GenerationFrame]: ...
 
 
-class ProviderRetryMode(StrEnum):
-    Default = "Default"
-    SingleAttempt = "SingleAttempt"
+@dataclass(frozen=True, slots=True)
+class GenerationExecutionRequest:
+    """Owner-neutral facts needed to execute one journaled generation."""
+
+    owner: LlmCallOwner
+    command: GenerationCommand
+    context: JobExecutionContext
+    step_path: str
+    capacity_wait_index: int
+    capacity_wait_delays_seconds: tuple[int, ...]
+    streaming: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.step_path:
+            raise ValueError("generation step_path must not be blank")
+        if self.capacity_wait_index < 0:
+            raise ValueError("generation capacity_wait_index must not be negative")
+        if any(delay <= 0 for delay in self.capacity_wait_delays_seconds):
+            raise ValueError("generation capacity waits must be positive")
+        if self.capacity_wait_index > len(self.capacity_wait_delays_seconds):
+            raise ValueError("generation capacity_wait_index exceeds its schedule")
 
 
-_SINGLE_ATTEMPT_RETRY = RetryPolicy(
-    max_attempts=1,
-    initial_delay_s=0,
-    max_delay_s=0,
-    jitter_s=0,
-    deadline_s=Absent(),
-)
+@dataclass(frozen=True, slots=True)
+class CompletedGeneration:
+    """One durable Completed memo, whether newly landed or replayed."""
+
+    terminal_result: str
+    terminal: GenerationTerminal | None
+    replayed: bool
 
 
-def build_execution_runtime(
-    settings: Settings,
-    client: httpx.AsyncClient,
-    *,
-    retry_mode: ProviderRetryMode = ProviderRetryMode.Default,
-) -> ExecutionRuntime:
-    credentials = provider_credentials(settings)
-    match retry_mode:
-        case ProviderRetryMode.Default:
-            return ProviderRuntime(credentials, http_client=client)
-        case ProviderRetryMode.SingleAttempt:
-            return ProviderRuntime(
-                credentials,
-                retry=_SINGLE_ATTEMPT_RETRY,
-                http_client=client,
-            )
-        case _:
-            assert_never(retry_mode)
+@dataclass(frozen=True, slots=True)
+class AcceptedGenerationFailure:
+    """Domain validation that overrides an accepted host success in the ledger."""
+
+    code: Literal["invalid_output"]
+    detail: str
+
+    def __post_init__(self) -> None:
+        if not self.detail.strip():
+            raise ValueError("accepted generation failure detail must not be blank")
+
+
+@dataclass(frozen=True, slots=True)
+class EncodedGenerationTerminal:
+    """Replay memo plus an optional effective outcome for semantic validation."""
+
+    terminal_result: str
+    accepted_failure: AcceptedGenerationFailure | None = None
+
+
+type GenerationExecutionResult = CompletedGeneration | RescheduleRequested
+
+
+class GenerationUncertain(RuntimeError):
+    """An armed generation may have run and must not dispatch automatically."""
+
+
+class GenerationDispatchAborted(RuntimeError):
+    """The live lease or owner validation prevented dispatch before host I/O."""
 
 
 async def execute_generation(
-    req: GenerationRequest,
+    request: GenerationExecutionRequest,
     *,
     session_factory: sessionmaker[Session],
     runtime: ExecutionRuntime,
-    before_dispatch: Callable[[], None] | None = None,
-) -> CallOutcome:
-    _check_entitlement(session_factory, user_id=req.owner.user_id)
-    reservation_amount = conservative_token_admission_bound(req.intent)
-    rate_limiter = get_rate_limiter()
+    lock_dispatch: LockedDispatch,
+    encode_terminal: EncodeTerminal,
+    encode_preaccept_failure: EncodePreacceptFailure,
+    observe_frame: ObserveFrame | None = None,
+) -> GenerationExecutionResult:
+    """Execute once with durable ambiguity and no transaction across UDS I/O.
 
-    def admit(db: Session) -> None:
-        try:
-            rate_limiter.reserve_token_budget_in_transaction(
-                db,
-                user_id=req.owner.user_id,
-                reservation_id=req.generation_id,
-                est_tokens=reservation_amount,
-            )
-        except ApiError as exc:
-            origin, code, detail = _reservation_defect_facts(exc)
-            raise AdmissionDenied(
-                origin=origin,
-                code=code,
-                detail=detail,
-                cause=exc,
-            ) from exc
+    The adapter prepares the journal before entering and supplies one callback
+    that, after this service has taken the advisory owner lock, locks and
+    revalidates its domain rows and returns the current claimed job row.
+    """
 
+    # The concrete client lowers chat tools through app-owned declarations,
+    # whose import graph also contains operation adapters. Resolve its closed
+    # exception family only at execution time so the abstract orchestration
+    # module remains an acyclic dependency for those adapters.
+    from nexus.services.codex_generation_client import (
+        CodexGenerationCapacityUnavailable,
+        CodexGenerationClientError,
+        CodexGenerationProtocolDefect,
+    )
+
+    replay = _read_replay(session_factory, request)
+    if replay is not None:
+        return replay
+
+    # Image/policy drift is proven before the dispatch transaction can make the
+    # generation Uncertain. CodexGenerationClient.stream rechecks health at its
+    # own wire boundary as defense in depth.
+    await runtime.health()
+    _arm_dispatch(
+        session_factory,
+        request,
+        lock_dispatch=lock_dispatch,
+    )
+
+    started = time.monotonic()
+    terminal: GenerationTerminal | None = None
     try:
-        generation_id = start_call(
+        async for frame in runtime.stream(request.command):
+            if observe_frame is not None:
+                await observe_frame(frame)
+            if isinstance(frame.event, GenerationTerminal):
+                terminal = frame.event
+    except CodexGenerationCapacityUnavailable as error:
+        return _restore_capacity_or_complete(
             session_factory,
-            generation_id=req.generation_id,
-            owner=req.owner,
-            operation=req.operation,
-            profile=req.profile,
-            requested_reasoning=req.reasoning,
-            streaming=False,
-            admit=admit,
+            request,
+            encode_preaccept_failure=encode_preaccept_failure,
+            detail=str(error),
         )
-    except AdmissionDenied as exc:
-        raise exc.cause from exc
-    except ExistingTerminalCall as exc:
-        _raise_existing_terminal(exc)
+    except (CodexGenerationClientError, CodexGenerationProtocolDefect) as error:
+        raise GenerationUncertain(str(error)) from error
 
-    dispatch_attempted = False
-    settled = False
-    defect: BaseException | None = None
-    try:
-        if before_dispatch is not None:
-            before_dispatch()
-        dispatch_attempted = True
-        started = time.monotonic()
-        outcome = await runtime.generate(req.intent)
-        facts = terminalize(
-            session_factory,
-            generation_id=generation_id,
-            outcome=outcome,
-            latency_ms=int((time.monotonic() - started) * 1000),
-            settle=lambda db, terminal: _settle_success_in_transaction(
-                db,
-                rate_limiter,
-                user_id=req.owner.user_id,
-                generation_id=generation_id,
-                reservation_amount=reservation_amount,
-                billability=terminal.billability,
-                usage=terminal.usage,
+    if terminal is None:
+        # The strict client normally raises transport ambiguity first; keeping
+        # this assertion local prevents a permissive alternate runtime from
+        # fabricating completion.
+        raise GenerationUncertain("Codex generation stream ended without terminal")
+    encoded = encode_terminal(terminal)
+    _land_terminal(
+        session_factory,
+        request,
+        terminal=terminal,
+        encoded=encoded,
+        latency_ms=int((time.monotonic() - started) * 1000),
+    )
+    return CompletedGeneration(
+        terminal_result=encoded.terminal_result,
+        terminal=terminal,
+        replayed=False,
+    )
+
+
+def _read_replay(
+    session_factory: sessionmaker[Session],
+    request: GenerationExecutionRequest,
+) -> CompletedGeneration | None:
+    with session_factory() as db:
+        job = get_job(db, request.context.job_id)
+        if job is None:
+            raise AssertionError(
+                f"generation job {request.context.job_id} disappeared before execution"
+            )
+        state = read_step_states(job).get(request.step_path)
+        if state is None:
+            raise AssertionError("generation execution requires a Prepared checkpoint")
+        _assert_identity(state, request)
+        if state.dispatch_phase is Prepared:
+            return None
+        if state.dispatch_phase is Uncertain:
+            raise GenerationUncertain(
+                f"generation {request.command.request_id} has an unresolved dispatch"
+            )
+        if state.dispatch_phase is not Completed:
+            raise AssertionError(f"unknown generation phase {state.dispatch_phase!r}")
+        if not isinstance(state.terminal_result, Present):
+            raise AssertionError("Completed generation has no terminal result")
+        return CompletedGeneration(
+            terminal_result=state.terminal_result.value,
+            terminal=None,
+            replayed=True,
+        )
+
+
+def _arm_dispatch(
+    session_factory: sessionmaker[Session],
+    request: GenerationExecutionRequest,
+    *,
+    lock_dispatch: LockedDispatch,
+) -> None:
+    with session_factory() as db:
+        lock_generation_owner_in_current_transaction(db, request.owner)
+        job = lock_dispatch(db)
+        if job is None or not lock_running_job_claim(db, context=request.context):
+            db.rollback()
+            raise GenerationDispatchAborted(
+                f"generation {request.command.request_id} lost its claim before dispatch"
+            )
+        state = read_step_states(job).get(request.step_path)
+        if state is None or state.dispatch_phase is not Prepared:
+            raise AssertionError("generation dispatch requires the Prepared checkpoint")
+        _assert_identity(state, request)
+        start_generation_in_current_transaction(
+            db,
+            GenerationStart(
+                owner=request.owner,
+                command=request.command,
+                streaming=request.streaming,
             ),
         )
-        settled = True
-        return CallOutcome(generation_id, outcome, facts.support_id)
-    except BaseException as exc:
-        defect = exc
-        raise
-    finally:
-        if isinstance(defect, DispatchTransferred):
-            pass
-        elif isinstance(defect, DispatchAborted):
-            terminalize_defect(
-                session_factory,
-                generation_id=generation_id,
-                origin="plan",
-                code="dispatch_aborted",
-                detail=sanitize_provider_text(str(defect))
-                or "dispatch aborted before provider I/O",
-                settle=lambda db: rate_limiter.release_token_budget_in_transaction(
-                    db,
-                    user_id=req.owner.user_id,
-                    reservation_id=generation_id,
-                ),
-            )
-        elif not settled:
-            _settle_defect(
-                rate_limiter,
-                session_factory,
-                user_id=req.owner.user_id,
-                generation_id=generation_id,
-                reservation_amount=reservation_amount,
-                dispatch_attempted=dispatch_attempted,
-                defect=defect,
-            )
-
-
-async def execute_generation_stream(
-    req: GenerationRequest,
-    *,
-    session_factory: sessionmaker[Session],
-    runtime: ExecutionRuntime,
-    cancel: CancelSignal,
-    before_dispatch: Callable[[], None] | None = None,
-) -> AsyncIterator[RuntimeStreamEvent]:
-    _check_entitlement(session_factory, user_id=req.owner.user_id)
-    reservation_amount = conservative_token_admission_bound(req.intent)
-    rate_limiter = get_rate_limiter()
-
-    def admit(db: Session) -> None:
-        try:
-            rate_limiter.reserve_token_budget_in_transaction(
-                db,
-                user_id=req.owner.user_id,
-                reservation_id=req.generation_id,
-                est_tokens=reservation_amount,
-            )
-        except ApiError as exc:
-            origin, code, detail = _reservation_defect_facts(exc)
-            raise AdmissionDenied(
-                origin=origin,
-                code=code,
-                detail=detail,
-                cause=exc,
-            ) from exc
-
-    try:
-        generation_id = start_call(
-            session_factory,
-            generation_id=req.generation_id,
-            owner=req.owner,
-            operation=req.operation,
-            profile=req.profile,
-            requested_reasoning=req.reasoning,
-            streaming=True,
-            admit=admit,
+        landed = checkpoint_step_state(
+            db,
+            ctx=request.context,
+            job=job,
+            step_path=request.step_path,
+            state=StepReplayState(
+                generation_id=request.command.request_id,
+                dispatch_phase=Uncertain,
+                request_fingerprint=present(request_fingerprint(request.command)),
+                terminal_result=absent(),
+            ),
         )
-    except AdmissionDenied as exc:
-        raise exc.cause from exc
-    except ExistingTerminalCall as exc:
-        _raise_existing_terminal(exc)
-
-    dispatch_attempted = False
-    settled = False
-    defect: BaseException | None = None
-    try:
-        if before_dispatch is not None:
-            before_dispatch()
-        dispatch_attempted = True
-        started = time.monotonic()
-        async for event in runtime.stream(req.intent, cancel=cancel):
-            if isinstance(event.event, TerminalEvent):
-                terminalize(
-                    session_factory,
-                    generation_id=generation_id,
-                    outcome=event.event.outcome,
-                    latency_ms=int((time.monotonic() - started) * 1000),
-                    settle=lambda db, terminal: _settle_success_in_transaction(
-                        db,
-                        rate_limiter,
-                        user_id=req.owner.user_id,
-                        generation_id=generation_id,
-                        reservation_amount=reservation_amount,
-                        billability=terminal.billability,
-                        usage=terminal.usage,
-                    ),
-                )
-                settled = True
-            yield event
-    except GeneratorExit:
-        raise
-    except BaseException as exc:
-        defect = exc
-        raise
-    finally:
-        if isinstance(defect, DispatchTransferred):
-            pass
-        elif isinstance(defect, DispatchAborted):
-            terminalize_defect(
-                session_factory,
-                generation_id=generation_id,
-                origin="plan",
-                code="dispatch_aborted",
-                detail=sanitize_provider_text(str(defect))
-                or "dispatch aborted before provider I/O",
-                settle=lambda db: rate_limiter.release_token_budget_in_transaction(
-                    db,
-                    user_id=req.owner.user_id,
-                    reservation_id=generation_id,
-                ),
+        if not landed:
+            db.rollback()
+            raise GenerationDispatchAborted(
+                f"generation {request.command.request_id} lost its claim before dispatch"
             )
-        elif not settled:
-            _settle_defect(
-                rate_limiter,
-                session_factory,
-                user_id=req.owner.user_id,
-                generation_id=generation_id,
-                reservation_amount=reservation_amount,
-                dispatch_attempted=dispatch_attempted,
-                defect=defect,
-                fallback_origin="provider_stream",
-                fallback_code="stream_interrupted",
-                fallback_detail="stream closed before a terminal event was observed",
-            )
-
-
-def _check_entitlement(session_factory: sessionmaker[Session], *, user_id: UUID) -> None:
-    with session_factory() as db:
-        entitlements = get_effective_entitlements(db, user_id)
         db.commit()
-    if not entitlements.can_use_platform_llm:
-        raise ApiError(ApiErrorCode.E_BILLING_REQUIRED, "Platform LLM access requires an AI tier.")
 
 
-def _raise_existing_terminal(exc: ExistingTerminalCall) -> Never:
-    code_map = {
-        "budget_exceeded": ApiErrorCode.E_TOKEN_BUDGET_EXCEEDED,
-        "rate_limiter_unavailable": ApiErrorCode.E_RATE_LIMITER_UNAVAILABLE,
-        "billing_required": ApiErrorCode.E_BILLING_REQUIRED,
-        "reservation_denied": ApiErrorCode.E_RATE_LIMITER_UNAVAILABLE,
-    }
-    if exc.code in code_map:
-        raise ApiError(code_map[exc.code], exc.detail or exc.code)
-    if exc.code == "dispatch_aborted":
-        raise DispatchAborted(exc.detail or "dispatch was previously aborted")
-    raise RuntimeDefect(
-        origin=cast(FailureOrigin, exc.origin or "provider_response"),
-        code=exc.code or "terminal_generation_replayed",
-        message=exc.detail or str(exc),
-    )
-
-
-def _reservation_defect_facts(exc: ApiError) -> tuple[FailureOrigin, str, str]:
-    if exc.code == ApiErrorCode.E_TOKEN_BUDGET_EXCEEDED:
-        return "budget", "budget_exceeded", "token budget reservation denied"
-    if exc.code == ApiErrorCode.E_RATE_LIMITER_UNAVAILABLE:
-        return "budget", "rate_limiter_unavailable", "token-budget limiter unavailable"
-    if exc.code == ApiErrorCode.E_BILLING_REQUIRED:
-        return "budget", "billing_required", "platform LLM billing required"
-    return "budget", "reservation_denied", sanitize_provider_text(str(exc))
-
-
-def _settle_success_in_transaction(
-    db: Session,
-    rate_limiter: RateLimiter,
-    *,
-    user_id: UUID,
-    generation_id: UUID,
-    reservation_amount: int,
-    billability: Billability,
-    usage: Presence[TokenUsage],
-) -> None:
-    if isinstance(billability, (NotDispatched, ConfirmedNonBillable)):
-        rate_limiter.release_token_budget_in_transaction(
-            db,
-            user_id=user_id,
-            reservation_id=generation_id,
-        )
-        return
-    if isinstance(usage, Present):
-        actual_tokens = usage.value.total_tokens
-        if actual_tokens > reservation_amount:
-            logger.warning(
-                "llm_call.budget_over_bound",
-                generation_id=str(generation_id),
-                reserved_tokens=reservation_amount,
-                actual_tokens=actual_tokens,
-            )
-        rate_limiter.commit_token_budget_in_transaction(
-            db,
-            user_id=user_id,
-            reservation_id=generation_id,
-            actual_tokens=actual_tokens,
-        )
-        return
-    rate_limiter.commit_token_budget_in_transaction(
-        db,
-        user_id=user_id,
-        reservation_id=generation_id,
-        actual_tokens=reservation_amount,
-    )
-
-
-def _settle_defect(
-    rate_limiter: RateLimiter,
+def _land_terminal(
     session_factory: sessionmaker[Session],
+    request: GenerationExecutionRequest,
     *,
-    user_id: UUID,
-    generation_id: UUID,
-    reservation_amount: int,
-    dispatch_attempted: bool,
-    defect: BaseException | None,
-    fallback_origin: FailureOrigin = "provider_response",
-    fallback_code: str = "unclassified_defect",
-    fallback_detail: str = "generation ended without a terminal outcome",
+    terminal: GenerationTerminal,
+    encoded: EncodedGenerationTerminal,
+    latency_ms: int,
 ) -> None:
-    def settle(db: Session) -> None:
-        if dispatch_attempted:
-            rate_limiter.commit_token_budget_in_transaction(
-                db,
-                user_id=user_id,
-                reservation_id=generation_id,
-                actual_tokens=reservation_amount,
+    with session_factory() as db:
+        lock_generation_owner_in_current_transaction(db, request.owner)
+        job = get_job(db, request.context.job_id)
+        if job is None:
+            raise AssertionError(f"generation job {request.context.job_id} disappeared at terminal")
+        state = read_step_states(job).get(request.step_path)
+        if state is None or state.dispatch_phase is not Uncertain:
+            raise AssertionError("generation terminal requires the Uncertain checkpoint")
+        _assert_identity(state, request)
+        complete_generation_in_current_transaction(
+            db,
+            owner=request.owner,
+            generation_id=request.command.request_id,
+            terminal=terminal,
+            latency_ms=latency_ms,
+            accepted_failure_code=(
+                encoded.accepted_failure.code if encoded.accepted_failure is not None else None
+            ),
+            accepted_failure_detail=(
+                encoded.accepted_failure.detail if encoded.accepted_failure is not None else None
+            ),
+        )
+        landed = checkpoint_step_state(
+            db,
+            ctx=request.context,
+            job=job,
+            step_path=request.step_path,
+            state=StepReplayState(
+                generation_id=request.command.request_id,
+                dispatch_phase=Completed,
+                request_fingerprint=present(request_fingerprint(request.command)),
+                terminal_result=present(encoded.terminal_result),
+            ),
+        )
+        if not landed:
+            db.rollback()
+            raise GenerationUncertain(
+                f"generation {request.command.request_id} lost its claim at terminal"
             )
-        else:
-            rate_limiter.release_token_budget_in_transaction(
-                db,
-                user_id=user_id,
-                reservation_id=generation_id,
+        db.commit()
+
+
+def _restore_capacity_or_complete(
+    session_factory: sessionmaker[Session],
+    request: GenerationExecutionRequest,
+    *,
+    encode_preaccept_failure: EncodePreacceptFailure,
+    detail: str,
+) -> GenerationExecutionResult:
+    index = request.capacity_wait_index
+    if index < len(request.capacity_wait_delays_seconds):
+        delay_seconds = request.capacity_wait_delays_seconds[index]
+        payload = _restore_prepared(
+            session_factory,
+            request,
+            next_wait_index=index + 1,
+        )
+        return RescheduleRequested(
+            schedule=ScheduleAfter(delay_seconds),
+            payload=payload,
+        )
+
+    code: NormalizedFailureCode = "capacity_unavailable"
+    terminal_result = encode_preaccept_failure(code, detail)
+    with session_factory() as db:
+        lock_generation_owner_in_current_transaction(db, request.owner)
+        job = get_job(db, request.context.job_id)
+        if job is None:
+            raise AssertionError(
+                f"generation job {request.context.job_id} disappeared at capacity exhaustion"
             )
-
-    origin, code, detail = (
-        _defect_facts(defect)
-        if defect is not None
-        else (fallback_origin, fallback_code, fallback_detail)
+        state = read_step_states(job).get(request.step_path)
+        if state is None or state.dispatch_phase is not Uncertain:
+            raise AssertionError("capacity exhaustion requires the Uncertain checkpoint")
+        _assert_identity(state, request)
+        if not complete_preaccept_failure_if_started_in_current_transaction(
+            db,
+            owner=request.owner,
+            generation_id=request.command.request_id,
+            error_code=code,
+            error_detail=detail,
+        ):
+            raise AssertionError("capacity exhaustion has no started ledger row")
+        landed = checkpoint_step_state(
+            db,
+            ctx=request.context,
+            job=job,
+            step_path=request.step_path,
+            state=StepReplayState(
+                generation_id=request.command.request_id,
+                dispatch_phase=Completed,
+                request_fingerprint=present(request_fingerprint(request.command)),
+                terminal_result=present(terminal_result),
+            ),
+        )
+        if not landed:
+            db.rollback()
+            raise GenerationUncertain(
+                f"generation {request.command.request_id} lost its claim at capacity exhaustion"
+            )
+        db.commit()
+    return CompletedGeneration(
+        terminal_result=terminal_result,
+        terminal=None,
+        replayed=False,
     )
-    terminalize_defect(
-        session_factory,
-        generation_id=generation_id,
-        origin=origin,
-        code=code,
-        detail=detail,
-        settle=settle,
-    )
 
 
-def _defect_facts(exc: BaseException) -> tuple[FailureOrigin, str, str]:
-    if isinstance(exc, RuntimeDefect):
-        return exc.origin, exc.code, exc.message
-    return "provider_response", "unclassified_defect", sanitize_provider_text(str(exc))
+def _restore_prepared(
+    session_factory: sessionmaker[Session],
+    request: GenerationExecutionRequest,
+    *,
+    next_wait_index: int,
+) -> dict[str, object]:
+    with session_factory() as db:
+        lock_generation_owner_in_current_transaction(db, request.owner)
+        if not lock_running_job_claim(db, context=request.context):
+            db.rollback()
+            raise GenerationUncertain(
+                f"generation {request.command.request_id} lost its claim at capacity refusal"
+            )
+        job = get_job(db, request.context.job_id)
+        if job is None:
+            raise AssertionError(
+                f"generation job {request.context.job_id} disappeared at capacity refusal"
+            )
+        state = read_step_states(job).get(request.step_path)
+        if state is None or state.dispatch_phase is not Uncertain:
+            raise AssertionError("capacity refusal requires the Uncertain checkpoint")
+        _assert_identity(state, request)
+        observed_index = job.payload.get("capacity_wait_index")
+        if observed_index != request.capacity_wait_index:
+            raise AssertionError("generation capacity wait index changed during dispatch")
+        payload = payload_with_step_state(
+            {**job.payload, "capacity_wait_index": next_wait_index},
+            step_path=request.step_path,
+            state=StepReplayState(
+                generation_id=request.command.request_id,
+                dispatch_phase=Prepared,
+                request_fingerprint=present(request_fingerprint(request.command)),
+                terminal_result=absent(),
+            ),
+        )
+        if not update_running_job_payload(
+            db,
+            job_id=request.context.job_id,
+            worker_id=request.context.worker_id,
+            attempt_no=request.context.attempt_no,
+            payload=payload,
+        ):
+            db.rollback()
+            raise GenerationUncertain(
+                f"generation {request.command.request_id} lost its claim at capacity refusal"
+            )
+        db.commit()
+        return payload
+
+
+def _assert_identity(state: StepReplayState, request: GenerationExecutionRequest) -> None:
+    if state.generation_id != request.command.request_id:
+        raise AssertionError("generation journal identity differs from command")
+    if not isinstance(state.request_fingerprint, Present):
+        raise AssertionError("generation journal has no request fingerprint")
+    if state.request_fingerprint.value != request_fingerprint(request.command):
+        raise AssertionError("generation journal request fingerprint drifted")
+
+
+__all__ = [
+    "AcceptedGenerationFailure",
+    "CompletedGeneration",
+    "EncodedGenerationTerminal",
+    "ExecutionRuntime",
+    "GenerationDispatchAborted",
+    "GenerationExecutionRequest",
+    "GenerationExecutionResult",
+    "GenerationUncertain",
+    "execute_generation",
+]
