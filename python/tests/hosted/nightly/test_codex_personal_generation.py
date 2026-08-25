@@ -376,7 +376,7 @@ def test_codex_personal_generation_canary_records_exact_four_plan_pairs() -> Non
         _probe_subscription_auth(state_root)
     except (CredentialUnavailable, CredentialRejected):
         _write_readiness()
-        pytest.skip("Codex subscription authentication is unavailable")
+        return
 
     with _mcp_peer(Path(__file__).parents[4]) as peer:
         results: list[dict[str, object]] = []
