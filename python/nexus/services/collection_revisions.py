@@ -148,15 +148,3 @@ def bump_all_collection_families(
     """Advance several explicitly owned families for every current viewer."""
     for family in sorted(set(families), key=lambda value: value.value):
         bump_all_collection_revisions(db, family=family)
-
-
-def bump_all_media_fact_collections(db: Session) -> None:
-    """Advance every collection whose rows project shared Media facts."""
-    bump_all_collection_families(
-        db,
-        families=(
-            CollectionFamily.AuthorWorks,
-            CollectionFamily.LibraryEntries,
-            CollectionFamily.PodcastEpisodes,
-        ),
-    )

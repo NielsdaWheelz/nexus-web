@@ -8,11 +8,9 @@ from typing import Any, Literal, cast
 from uuid import UUID
 
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.coerce import coerce_positive_int
-from nexus.db.errors import integrity_constraint_name
 from nexus.db.session import transaction
 from nexus.errors import (
     ApiError,
@@ -35,12 +33,9 @@ from nexus.schemas.podcast import (
     PodcastEpisodeQueryTranscriptTarget,
 )
 from nexus.schemas.presence import absent, present
-from nexus.services.billing import get_transcription_usage
-from nexus.services.billing_entitlements import get_effective_entitlements
 from nexus.services.collection_revisions import (
     CollectionFamily,
     bump_all_collection_families,
-    bump_all_media_fact_collections,
     bump_collection_families,
     read_collection_revision,
 )
@@ -68,6 +63,15 @@ from .deepgram_adapter import (
 from .episodes import (
     episode_selection_fingerprint,
     resolve_transcript_eligible_episode_ids,
+)
+from .transcription_reservation_settlement import (
+    commit_transcription_reservation,
+    release_transcription_reservation,
+)
+from .transcription_usage import (
+    TranscriptionBudget,
+    read_transcription_budget,
+    reserve_transcription_usage,
 )
 
 logger = get_logger(__name__)
@@ -100,17 +104,6 @@ class TranscriptionRunResult:
     job_status: str | None = None
     error_code: str | None = None
     segment_count: int | None = None
-
-
-@dataclass(frozen=True)
-class _TranscriptBudget:
-    required_minutes: int
-    usage_date: date
-    usage_start_date: date
-    usage_end_date: date
-    monthly_limit_minutes: int | None
-    remaining_minutes: int | None
-    fits: bool
 
 
 @dataclass(frozen=True)
@@ -305,7 +298,7 @@ def _request_podcast_episode_transcript(
             now=now,
         )
 
-    budget = _read_transcript_budget(
+    budget = read_transcription_budget(
         db,
         user_id=viewer_id,
         duration_seconds=media.duration_seconds,
@@ -383,7 +376,7 @@ def _request_podcast_episode_transcript(
             request_reason=request_reason,
         )
 
-    remaining_minutes_after = _reserve_transcript_budget(
+    remaining_minutes_after = reserve_transcription_usage(
         db,
         user_id=viewer_id,
         budget=budget,
@@ -600,7 +593,7 @@ def _request_rss_podcast_transcript(
         now=now,
         request_reason=request_reason,
     )
-    _release_reserved_usage_for_media(db, media_id=media_id, now=now)
+    release_transcription_reservation(db, media_id=media_id, now=now)
     _reset_podcast_transcription_job_for_source_attempt(
         db,
         media_id=media_id,
@@ -817,7 +810,7 @@ def prepare_podcast_transcription_for_source_attempt(
         )
 
     duration_seconds = coerce_positive_int(media_row[1])
-    budget = _read_transcript_budget(
+    budget = read_transcription_budget(
         db,
         user_id=requested_by_user_id,
         duration_seconds=duration_seconds,
@@ -835,7 +828,7 @@ def prepare_podcast_transcription_for_source_attempt(
             )
         )
 
-    remaining_minutes_after = _reserve_transcript_budget(
+    remaining_minutes_after = reserve_transcription_usage(
         db,
         user_id=requested_by_user_id,
         budget=budget,
@@ -869,75 +862,6 @@ def prepare_podcast_transcription_for_source_attempt(
         now=now,
     )
     return PodcastTranscriptionAdmitted()
-
-
-def mark_podcast_transcription_failure(
-    db: Session,
-    *,
-    media_id: UUID,
-    error_code: str,
-    error_message: str,
-    now: datetime,
-) -> None:
-    """Publish one terminal Podcast media/job/quota/transcript failure."""
-    if error_code == ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value:
-        transcript_state = "unavailable"
-    elif error_code == ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED.value:
-        transcript_state = "failed_quota"
-    else:
-        transcript_state = "failed_provider"
-
-    db.execute(
-        text(
-            """
-            UPDATE media
-            SET
-                processing_status = 'failed',
-                failure_stage = 'transcribe',
-                last_error_code = :error_code,
-                last_error_message = :error_message,
-                processing_completed_at = NULL,
-                failed_at = :now,
-                updated_at = :now
-            WHERE id = :media_id
-            """
-        ),
-        {
-            "media_id": media_id,
-            "error_code": error_code,
-            "error_message": error_message[:1000],
-            "now": now,
-        },
-    )
-    db.execute(
-        text(
-            """
-            UPDATE podcast_transcription_jobs
-            SET
-                status = 'failed',
-                error_code = :error_code,
-                completed_at = :now,
-                updated_at = :now
-            WHERE media_id = :media_id
-            """
-        ),
-        {
-            "media_id": media_id,
-            "error_code": error_code,
-            "now": now,
-        },
-    )
-    _release_reserved_usage_for_media(db, media_id=media_id, now=now)
-    set_media_transcript_state(
-        db,
-        media_id=media_id,
-        transcript_state=transcript_state,
-        transcript_coverage="none",
-        semantic_status="none",
-        last_error_code=error_code,
-        now=now,
-    )
-    bump_all_media_fact_collections(db)
 
 
 def run_podcast_transcription_now(
@@ -1146,7 +1070,7 @@ def run_podcast_transcription_now(
                     "now": now,
                 },
             )
-            _commit_reserved_usage_for_media(db, media_id=media_id, now=now)
+            commit_transcription_reservation(db, media_id=media_id, now=now)
 
         run_source_publication_phase(
             session_factory=session_factory,
@@ -1294,44 +1218,6 @@ def _assert_one_mutated_row(result: Any, table_name: str) -> None:
         raise RuntimeError(f"{table_name} mutation affected an unexpected row count")
 
 
-def _read_transcript_budget(
-    db: Session,
-    *,
-    user_id: UUID,
-    duration_seconds: int | None,
-    now: datetime,
-) -> _TranscriptBudget:
-    entitlements = get_effective_entitlements(db, user_id)
-    if not entitlements.can_transcribe:
-        raise ApiError(ApiErrorCode.E_BILLING_REQUIRED, "Transcription requires an AI tier.")
-
-    required_minutes = max(1, (duration_seconds + 59) // 60) if duration_seconds else 1
-    usage_start_date = entitlements.usage_period_start.date()
-    usage_end_date = entitlements.usage_period_end.date()
-    usage_snapshot = get_transcription_usage(
-        db,
-        user_id,
-        usage_start_date,
-        usage_end_date,
-    )
-    consumed_minutes = int(usage_snapshot["used"]) + int(usage_snapshot["reserved"])
-    monthly_limit_minutes = entitlements.transcription_minutes_limit_monthly
-    remaining_minutes = (
-        None
-        if monthly_limit_minutes is None
-        else max(0, int(monthly_limit_minutes) - consumed_minutes)
-    )
-    return _TranscriptBudget(
-        required_minutes=required_minutes,
-        usage_date=now.date(),
-        usage_start_date=usage_start_date,
-        usage_end_date=usage_end_date,
-        monthly_limit_minutes=monthly_limit_minutes,
-        remaining_minutes=remaining_minutes,
-        fits=remaining_minutes is None or required_minutes <= remaining_minutes,
-    )
-
-
 def _record_podcast_transcript_request_audit(
     db: Session,
     *,
@@ -1392,7 +1278,7 @@ def _transcript_quota_rejection(
     media_id: UUID,
     requested_by_user_id: UUID,
     request_reason: str,
-    budget: _TranscriptBudget,
+    budget: TranscriptionBudget,
     now: datetime,
 ) -> ApiError:
     assert not budget.fits  # justify-service-invariant-check: caller gates on budget.fits.
@@ -1412,331 +1298,3 @@ def _transcript_quota_rejection(
         ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED,
         "Monthly transcription quota exceeded",
     )
-
-
-def _reserve_transcript_budget(
-    db: Session,
-    *,
-    user_id: UUID,
-    budget: _TranscriptBudget,
-    now: datetime,
-) -> int | None:
-    assert budget.fits  # justify-service-invariant-check: only admitted work reserves usage.
-    usage_snapshot = _reserve_usage_minutes_or_raise(
-        db,
-        user_id=user_id,
-        usage_date=budget.usage_date,
-        usage_start_date=budget.usage_start_date,
-        usage_end_date=budget.usage_end_date,
-        required_minutes=budget.required_minutes,
-        monthly_limit_minutes=budget.monthly_limit_minutes,
-        now=now,
-    )
-    if budget.monthly_limit_minutes is None:
-        return None
-    return max(0, budget.monthly_limit_minutes - int(usage_snapshot["total"]))
-
-
-def _reserve_usage_minutes_or_raise(
-    db: Session,
-    *,
-    user_id: UUID,
-    usage_date: date,
-    usage_start_date: date,
-    usage_end_date: date,
-    required_minutes: int,
-    monthly_limit_minutes: int | None,
-    now: datetime,
-) -> dict[str, int]:
-    if required_minutes <= 0:
-        usage_snapshot = get_transcription_usage(db, user_id, usage_start_date, usage_end_date)
-        return {
-            "used": usage_snapshot["used"],
-            "reserved": usage_snapshot["reserved"],
-            "total": usage_snapshot["used"] + usage_snapshot["reserved"],
-        }
-
-    # One user row serializes quota checks across all usage days without adding
-    # zero-minute rows to the daily usage ledger.
-    user_lock = db.execute(
-        text("SELECT 1 FROM users WHERE id = :user_id FOR UPDATE"),
-        {"user_id": user_id},
-    ).fetchone()
-    assert (
-        user_lock is not None
-    )  # justify-service-invariant-check: caller already resolved the user.
-    _ensure_usage_daily_row(
-        db,
-        user_id=user_id,
-        usage_date=usage_date,
-        now=now,
-    )
-
-    if monthly_limit_minutes is None:
-        admitted_row = db.execute(
-            text(
-                """
-                UPDATE podcast_transcription_usage_daily
-                SET
-                    minutes_reserved = minutes_reserved + :required_minutes,
-                    updated_at = :updated_at
-                WHERE user_id = :user_id
-                  AND usage_date = :usage_date
-                RETURNING minutes_used, minutes_reserved
-                """
-            ),
-            {
-                "user_id": user_id,
-                "usage_date": usage_date,
-                "required_minutes": required_minutes,
-                "updated_at": now,
-            },
-        ).fetchone()
-    else:
-        admitted_row = db.execute(
-            text(
-                """
-                UPDATE podcast_transcription_usage_daily AS usage
-                SET
-                    minutes_reserved = usage.minutes_reserved + :required_minutes,
-                    updated_at = :updated_at
-                WHERE usage.user_id = :user_id
-                  AND usage.usage_date = :usage_date
-                  AND (
-                        COALESCE(
-                            (
-                                SELECT SUM(other.minutes_used + other.minutes_reserved)
-                                FROM podcast_transcription_usage_daily other
-                                WHERE other.user_id = :user_id
-                                  AND other.usage_date >= :usage_start_date
-                                  AND other.usage_date < :usage_end_date
-                                  AND other.usage_date <> :usage_date
-                            ),
-                            0
-                        )
-                        + usage.minutes_used
-                        + usage.minutes_reserved
-                        + :required_minutes
-                      ) <= :monthly_limit_minutes
-                RETURNING usage.minutes_used, usage.minutes_reserved
-                """
-            ),
-            {
-                "user_id": user_id,
-                "usage_date": usage_date,
-                "usage_start_date": usage_start_date,
-                "usage_end_date": usage_end_date,
-                "required_minutes": required_minutes,
-                "monthly_limit_minutes": monthly_limit_minutes,
-                "updated_at": now,
-            },
-        ).fetchone()
-    if admitted_row is None:
-        usage_before = get_transcription_usage(db, user_id, usage_start_date, usage_end_date)
-        logger.warning(
-            "podcast_quota_exceeded",
-            viewer_id=str(user_id),
-            usage_date=usage_date.isoformat(),
-            used_minutes=usage_before["used"],
-            reserved_minutes=usage_before["reserved"],
-            required_minutes=required_minutes,
-            monthly_limit_minutes=monthly_limit_minutes,
-        )
-        raise ApiError(
-            ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED,
-            "Monthly transcription quota exceeded",
-        )
-
-    usage_after = get_transcription_usage(db, user_id, usage_start_date, usage_end_date)
-    used_after = int(usage_after["used"] or 0)
-    reserved_after = int(usage_after["reserved"] or 0)
-    return {
-        "used": used_after,
-        "reserved": reserved_after,
-        "total": used_after + reserved_after,
-    }
-
-
-def _ensure_usage_daily_row(
-    db: Session,
-    *,
-    user_id: UUID,
-    usage_date: date,
-    now: datetime,
-) -> None:
-    existing_row = db.execute(
-        text(
-            """
-            SELECT 1
-            FROM podcast_transcription_usage_daily
-            WHERE user_id = :user_id
-              AND usage_date = :usage_date
-            """
-        ),
-        {"user_id": user_id, "usage_date": usage_date},
-    ).fetchone()
-    if existing_row is not None:
-        return
-
-    try:
-        with db.begin_nested():
-            db.execute(
-                text(
-                    """
-                    INSERT INTO podcast_transcription_usage_daily (
-                        user_id,
-                        usage_date,
-                        minutes_used,
-                        minutes_reserved,
-                        updated_at
-                    )
-                    VALUES (
-                        :user_id,
-                        :usage_date,
-                        0,
-                        0,
-                        :updated_at
-                    )
-                    """
-                ),
-                {
-                    "user_id": user_id,
-                    "usage_date": usage_date,
-                    "updated_at": now,
-                },
-            )
-    except IntegrityError as exc:
-        if not _is_usage_daily_identity_conflict(exc):
-            raise
-
-
-def _is_usage_daily_identity_conflict(exc: IntegrityError) -> bool:
-    orig = getattr(exc, "orig", None)
-    constraint_name = integrity_constraint_name(exc)
-    if constraint_name:
-        return constraint_name == "podcast_transcription_usage_daily_pkey"
-    return "podcast_transcription_usage_daily_pkey" in str(orig or exc)
-
-
-def _claim_job_reservation(
-    db: Session,
-    *,
-    media_id: UUID,
-    now: datetime,
-) -> tuple[UUID | None, date | None, int] | None:
-    row = db.execute(
-        text(
-            """
-            WITH claimed AS MATERIALIZED (
-                SELECT
-                    media_id,
-                    requested_by_user_id,
-                    reservation_usage_date,
-                    reserved_minutes
-                FROM podcast_transcription_jobs
-                WHERE media_id = :media_id
-                  AND reserved_minutes > 0
-                  AND reservation_usage_date IS NOT NULL
-            ),
-            cleared AS (
-                UPDATE podcast_transcription_jobs job
-                SET
-                    reserved_minutes = 0,
-                    reservation_usage_date = NULL,
-                    updated_at = :now
-                FROM claimed
-                WHERE job.media_id = claimed.media_id
-                  AND job.reserved_minutes = claimed.reserved_minutes
-                  AND job.reservation_usage_date = claimed.reservation_usage_date
-                  AND job.reserved_minutes > 0
-                  AND job.reservation_usage_date IS NOT NULL
-                RETURNING
-                    claimed.requested_by_user_id,
-                    claimed.reservation_usage_date,
-                    claimed.reserved_minutes
-            )
-            SELECT requested_by_user_id, reservation_usage_date, reserved_minutes
-            FROM cleared
-            """
-        ),
-        {"media_id": media_id, "now": now},
-    ).fetchone()
-    if row is None:
-        return None
-    return row[0], row[1], int(row[2] or 0)
-
-
-def _release_reserved_usage_for_media(
-    db: Session,
-    *,
-    media_id: UUID,
-    now: datetime,
-) -> None:
-    reservation = _claim_job_reservation(db, media_id=media_id, now=now)
-    if reservation is None:
-        return
-
-    user_id, usage_date, reserved_minutes = reservation
-    if user_id is not None and usage_date is not None and reserved_minutes > 0:
-        db.execute(
-            text(
-                """
-                UPDATE podcast_transcription_usage_daily
-                SET
-                    minutes_reserved = GREATEST(minutes_reserved - :reserved_minutes, 0),
-                    updated_at = :updated_at
-                WHERE user_id = :user_id
-                  AND usage_date = :usage_date
-                """
-            ),
-            {
-                "user_id": user_id,
-                "usage_date": usage_date,
-                "reserved_minutes": reserved_minutes,
-                "updated_at": now,
-            },
-        )
-
-
-def _commit_reserved_usage_for_media(
-    db: Session,
-    *,
-    media_id: UUID,
-    now: datetime,
-) -> None:
-    reservation = _claim_job_reservation(db, media_id=media_id, now=now)
-    if reservation is None:
-        return
-
-    user_id, usage_date, reserved_minutes = reservation
-    if user_id is None or usage_date is None or reserved_minutes <= 0:
-        return
-
-    _ensure_usage_daily_row(
-        db,
-        user_id=user_id,
-        usage_date=usage_date,
-        now=now,
-    )
-    result = db.execute(
-        text(
-            """
-            UPDATE podcast_transcription_usage_daily
-            SET
-                minutes_used = minutes_used + :minutes_used,
-                minutes_reserved = GREATEST(minutes_reserved - :minutes_used, 0),
-                updated_at = :updated_at
-            WHERE user_id = :user_id
-              AND usage_date = :usage_date
-            """
-        ),
-        {
-            "user_id": user_id,
-            "usage_date": usage_date,
-            "minutes_used": reserved_minutes,
-            "updated_at": now,
-        },
-    )
-    assert (
-        getattr(result, "rowcount", 0) == 1
-    )  # justify-service-invariant-check: ensured usage row exists.

@@ -142,41 +142,6 @@ def mark_extraction_started_by_id(db: Session, *, media_id: UUID, now: datetime)
     )
 
 
-def mark_failed_by_id(
-    db: Session,
-    *,
-    media_id: UUID,
-    stage: str,
-    error_code: str,
-    error_message: str,
-    now: datetime,
-) -> None:
-    """Transition media to the terminal failed state by id; callers own commit."""
-    db.execute(
-        text(
-            """
-            UPDATE media
-            SET processing_status = :processing_status,
-                failure_stage = :failure_stage,
-                last_error_code = :error_code,
-                last_error_message = :error_message,
-                processing_completed_at = NULL,
-                failed_at = :now,
-                updated_at = :now
-            WHERE id = :media_id
-            """
-        ),
-        {
-            "media_id": media_id,
-            "processing_status": ProcessingStatus.failed.value,
-            "failure_stage": FailureStage(stage).value,
-            "error_code": error_code,
-            "error_message": error_message,
-            "now": now,
-        },
-    )
-
-
 def mark_stage_warning(
     db: Session,
     media: Media,

@@ -54,9 +54,6 @@ from nexus.services import (
     media_source_types as source_types,
 )
 from nexus.services.capabilities import is_same_source_terminal_error
-from nexus.services.collection_revisions import (
-    bump_all_media_fact_collections,
-)
 from nexus.services.contributor_observation_seam import (
     ContributorObservation,
     MediaTarget,
@@ -85,9 +82,10 @@ from nexus.services.media_deletion import (
     delete_document_storage_objects,
     delete_duplicate_document_media,
 )
+from nexus.services.media_fact_revisions import bump_all_media_fact_collections
+from nexus.services.media_failure_projection import require_media_failure_stage
 from nexus.services.media_processing_state import (
     begin_extraction,
-    mark_failed,
     mark_ready_for_reading,
     mark_source_queued,
     mark_stage_warning,
@@ -109,6 +107,11 @@ from nexus.services.remote_file_ingest import arxiv_pdf_source_from_url, remote_
 from nexus.services.source_attempt_artifacts import (
     clone_source_payload_for_new_attempt,
     source_attempt_storage_paths,
+)
+from nexus.services.source_attempt_failures import (
+    SourceAttemptFailure,
+    publish_source_attempt_failure,
+    source_attempt_failure_stage,
 )
 from nexus.services.source_publication import (
     SourcePublicationFence,
@@ -1547,7 +1550,7 @@ def retry_source_for_viewer(
         attempt_id=retry_attempt.id,
         actor_user_id=viewer_id,
         request_id=request_id,
-        failure_stage=_source_attempt_failure_stage(retry_attempt),
+        failure_stage=source_attempt_failure_stage(retry_attempt.source_type),
     )
     media = db.get(Media, media.id) or media
     retry_attempt = db.get(MediaSourceAttempt, retry_attempt.id) or retry_attempt
@@ -1631,7 +1634,7 @@ def refresh_source_for_viewer(
         attempt_id=refresh_attempt.id,
         actor_user_id=viewer_id,
         request_id=request_id,
-        failure_stage=_source_attempt_failure_stage(refresh_attempt),
+        failure_stage=source_attempt_failure_stage(refresh_attempt.source_type),
     )
     media = db.get(Media, media.id) or media
     refresh_attempt = db.get(MediaSourceAttempt, refresh_attempt.id) or refresh_attempt
@@ -1697,7 +1700,7 @@ def repair_source_for_system_media(
             attempt_id=attempt.id,
             actor_user_id=actor_user_id,
             request_id=request_id,
-            failure_stage=_source_attempt_failure_stage(attempt),
+            failure_stage=source_attempt_failure_stage(attempt.source_type),
         )
         media = db.get(Media, media.id) or media
         attempt = db.get(MediaSourceAttempt, attempt.id) or attempt
@@ -1747,7 +1750,7 @@ def repair_source_for_system_media(
         attempt_id=repair_attempt.id,
         actor_user_id=actor_user_id,
         request_id=request_id,
-        failure_stage=_source_attempt_failure_stage(repair_attempt),
+        failure_stage=source_attempt_failure_stage(repair_attempt.source_type),
     )
     media = db.get(Media, media.id) or media
     repair_attempt = db.get(MediaSourceAttempt, repair_attempt.id) or repair_attempt
@@ -2089,12 +2092,6 @@ def _podcast_request_reason(value: object) -> str:
     return "operator_requeue"
 
 
-def _source_attempt_failure_stage(attempt: MediaSourceAttempt | None) -> str:
-    if attempt is not None and attempt.source_type in source_types.TRANSCRIPT_SOURCE_TYPES:
-        return "transcribe"
-    return "extract"
-
-
 def _raise_if_source_action_not_reacquirable(
     db: Session,
     media: Media,
@@ -2379,53 +2376,6 @@ def ensure_stale_source_attempt_job(
     attempt.retry_after_seconds = None
     attempt.updated_at = func.now()
     return "enqueued"
-
-
-def mark_source_attempt_and_media_failed(
-    *,
-    db: Session,
-    media_id: UUID,
-    attempt_id: UUID | None,
-    stage: str,
-    error_code: str,
-    error_message: str,
-    retry_after_seconds: int | None = None,
-) -> None:
-    """Fail one source attempt and its owning media through the source owner."""
-    attempt = db.get(MediaSourceAttempt, attempt_id) if attempt_id is not None else None
-    _mark_source_attempt_failed(
-        attempt,
-        error_code=error_code,
-        error_message=error_message,
-        retry_after_seconds=retry_after_seconds,
-    )
-    media = db.get(Media, media_id)
-    if media is None:
-        return
-    mark_failed(
-        db,
-        media,
-        stage=stage,
-        error_code=error_code,
-        error_message=error_message[:1000],
-    )
-    bump_all_media_fact_collections(db)
-
-
-def _mark_source_attempt_failed(
-    attempt: MediaSourceAttempt | None,
-    *,
-    error_code: str,
-    error_message: str,
-    retry_after_seconds: int | None,
-) -> None:
-    if attempt is not None:
-        attempt.status = _ATTEMPT_FAILED
-        attempt.error_code = error_code
-        attempt.error_message = error_message[:1000]
-        attempt.retry_after_seconds = retry_after_seconds
-        attempt.finished_at = func.now()
-        attempt.updated_at = func.now()
 
 
 def _load_owned_media_for_source_action(
@@ -3630,47 +3580,15 @@ def _finish_failed_attempt(
     exc: Exception,
 ) -> None:
     attempt = db.get(MediaSourceAttempt, attempt_id)
-    if attempt is not None and attempt.source_type == source_types.PODCAST_EPISODE_TRANSCRIPT:
-        from nexus.services.podcasts.transcription import (
-            mark_podcast_transcription_failure,
-        )
-
-        error_code, error_message = _source_error_fields(exc)
-        _mark_source_attempt_failed(
-            attempt,
-            error_code=error_code,
-            error_message=error_message,
-            retry_after_seconds=_source_retry_after_seconds(exc),
-        )
-        mark_podcast_transcription_failure(
-            db,
-            media_id=media_id,
-            error_code=error_code,
-            error_message=error_message,
-            now=datetime.now(UTC),
-        )
-        return
+    if attempt is None:
+        raise AssertionError("terminal source failure has no source attempt")
     _fail_source_attempt_and_media(
         db,
         media_id=media_id,
         attempt_id=attempt_id,
         exc=exc,
-        stage=_source_attempt_failure_stage(attempt),
+        stage=source_attempt_failure_stage(attempt.source_type),
     )
-    if attempt is not None and attempt.source_type in source_types.TRANSCRIPT_SOURCE_TYPES:
-        from nexus.services.transcripts.state import set_media_transcript_state
-
-        error_code, _error_message = _source_error_fields(exc)
-        set_media_transcript_state(
-            db,
-            media_id=media_id,
-            transcript_state="unavailable",
-            transcript_coverage="none",
-            semantic_status="failed",
-            last_request_reason=None,
-            last_error_code=error_code,
-            now=datetime.now(UTC),
-        )
 
 
 def _run_post_success_source_actions(
@@ -3685,40 +3603,26 @@ def _run_post_success_source_actions(
             db.commit()
 
 
-def _fail_latest_attempt_and_media(
-    db: Session,
-    media_id: UUID,
-    exc: Exception,
-    *,
-    stage: str,
-) -> None:
-    attempt = _latest_source_attempt(db, media_id)
-    _fail_source_attempt_and_media(
-        db,
-        media_id=media_id,
-        attempt_id=attempt.id if attempt is not None else None,
-        exc=exc,
-        stage=stage,
-    )
-
-
 def _fail_source_attempt_and_media(
     db: Session,
     *,
     media_id: UUID,
-    attempt_id: UUID | None,
+    attempt_id: UUID,
     exc: Exception,
     stage: str,
 ) -> None:
     error_code, error_message = _source_error_fields(exc)
-    mark_source_attempt_and_media_failed(
-        db=db,
-        media_id=media_id,
-        attempt_id=attempt_id,
-        stage=stage,
-        error_code=error_code,
-        error_message=error_message,
-        retry_after_seconds=_source_retry_after_seconds(exc),
+    publish_source_attempt_failure(
+        db,
+        SourceAttemptFailure(
+            media_id=media_id,
+            attempt_id=attempt_id,
+            failure_stage=require_media_failure_stage(stage),
+            error_code=error_code,
+            error_message=error_message,
+            retry_after_seconds=_source_retry_after_seconds(exc),
+            now=datetime.now(UTC),
+        ),
     )
 
 
