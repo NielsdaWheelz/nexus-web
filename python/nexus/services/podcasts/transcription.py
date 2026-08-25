@@ -368,16 +368,6 @@ def request_media_transcript_for_viewer(
     if not entitlements.can_transcribe:
         raise ApiError(ApiErrorCode.E_BILLING_REQUIRED, "Transcription requires an AI tier.")
 
-    if transcript_state is None:
-        ensure_media_transcript_state_row(
-            db,
-            media_id=media_id,
-            now=now,
-            request_reason=normalized_reason,
-        )
-        transcript_state = "not_requested"
-        transcript_coverage = "none"
-
     monthly_limit_minutes = entitlements.transcription_minutes_limit_monthly
     usage_start_date = entitlements.usage_period_start.date()
     usage_end_date = entitlements.usage_period_end.date()
@@ -439,6 +429,16 @@ def request_media_transcript_for_viewer(
             fits_budget=fits_budget,
             request_enqueued=False,
         )
+
+    if transcript_state is None:
+        ensure_media_transcript_state_row(
+            db,
+            media_id=media_id,
+            now=now,
+            request_reason=normalized_reason,
+        )
+        transcript_state = "not_requested"
+        transcript_coverage = "none"
 
     _bump_episode_row_collections(db, viewer_id=viewer_id)
 
