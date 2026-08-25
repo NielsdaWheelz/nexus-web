@@ -177,7 +177,7 @@ class _CompletedMetadataResultEnvelope(RootModel[_CompletedMetadataResult]):
 class _UncertainMetadataTurn(RuntimeError):
     """A billed-once native turn may have executed and cannot be redispatched."""
 
-    error_code = ApiErrorCode.E_METADATA_AGENT_UNCERTAIN
+    error_code = ApiErrorCode.E_GENERATION_UNCERTAIN
 
 
 class _PreDispatchMetadataTerminal(RuntimeError):
@@ -592,7 +592,7 @@ def _stage_pre_dispatch_terminal(
 
     match reason:
         case "source_changed":
-            code = ApiErrorCode.E_METADATA_AGENT_SOURCE_CHANGED.value
+            code = ApiErrorCode.E_GENERATION_SOURCE_CHANGED.value
             result: _MetadataPublicationResult = _FailedPublication(
                 reason="source_changed",
                 error_code=code,
@@ -662,12 +662,12 @@ def _normalize_terminal(
             validated = validate_structured_enrichment(terminal.structured_output)
             if validated is None:
                 return _failed_result(
-                    error_code=ApiErrorCode.E_METADATA_AGENT_INVALID_OUTPUT,
+                    error_code=ApiErrorCode.E_GENERATION_INVALID_OUTPUT,
                     detail="generation returned metadata outside the domain output contract",
                 )
             if not validated.model_dump(exclude_none=True):
                 return _failed_result(
-                    error_code=ApiErrorCode.E_METADATA_NO_FIELDS,
+                    error_code=ApiErrorCode.E_GENERATION_INVALID_OUTPUT,
                     detail="generation returned no confident metadata fields",
                 )
             return _CompletedSuccess(
@@ -676,7 +676,7 @@ def _normalize_terminal(
             )
         case "cancelled":
             return _failed_result(
-                error_code=ApiErrorCode.E_METADATA_AGENT_CANCELLED,
+                error_code=ApiErrorCode.E_GENERATION_CANCELLED,
                 detail="metadata generation was cancelled",
             )
         case "failed":
@@ -694,21 +694,25 @@ def _normalize_terminal(
 def _failure_code(kind: NormalizedFailureCode) -> ApiErrorCode:
     match kind:
         case "quota":
-            return ApiErrorCode.E_METADATA_AGENT_QUOTA_EXHAUSTED
+            return ApiErrorCode.E_GENERATION_QUOTA
         case "timeout":
-            return ApiErrorCode.E_METADATA_AGENT_TIMEOUT
-        case "invalid_output" | "output_limit" | "context_too_large":
-            return ApiErrorCode.E_METADATA_AGENT_INVALID_OUTPUT
+            return ApiErrorCode.E_GENERATION_TIMEOUT
+        case "invalid_output":
+            return ApiErrorCode.E_GENERATION_INVALID_OUTPUT
+        case "output_limit":
+            return ApiErrorCode.E_GENERATION_OUTPUT_LIMIT
+        case "context_too_large":
+            return ApiErrorCode.E_GENERATION_CONTEXT_TOO_LARGE
         case "auth":
-            return ApiErrorCode.E_METADATA_AGENT_AUTH_UNAVAILABLE
+            return ApiErrorCode.E_GENERATION_AUTH
         case "runtime_unavailable":
-            return ApiErrorCode.E_METADATA_AGENT_HOST_UNAVAILABLE
+            return ApiErrorCode.E_GENERATION_RUNTIME_UNAVAILABLE
         case "policy_violation":
-            return ApiErrorCode.E_METADATA_AGENT_POLICY_VIOLATION
+            return ApiErrorCode.E_GENERATION_POLICY_VIOLATION
         case "defect":
-            return ApiErrorCode.E_METADATA_AGENT_RUNTIME_FAILED
+            return ApiErrorCode.E_GENERATION_DEFECT
         case "capacity_unavailable":
-            return ApiErrorCode.E_METADATA_AGENT_CAPACITY_UNAVAILABLE
+            return ApiErrorCode.E_GENERATION_CAPACITY_UNAVAILABLE
         case _ as unreachable:
             assert_never(unreachable)
 
@@ -835,7 +839,7 @@ def _publish_completed_transaction(
         input=current_content,
     )
     if generation_request_fingerprint(current_command) != request_fingerprint:
-        code = ApiErrorCode.E_METADATA_AGENT_SOURCE_CHANGED.value
+        code = ApiErrorCode.E_GENERATION_SOURCE_CHANGED.value
         detail = "media facts changed before metadata publication"
         _record_metadata_failure(media, code, detail)
         bump_all_collection_families(db, families=_COLLECTION_FAMILIES)
@@ -851,7 +855,7 @@ def _publish_completed_transaction(
 
     merge_result = merge_enrichment(db, media, completed.enrichment)
     if not merge_result.accepted_fields:
-        code = ApiErrorCode.E_METADATA_NO_FIELDS.value
+        code = ApiErrorCode.E_GENERATION_INVALID_OUTPUT.value
         detail = "native agent returned no applicable metadata fields"
         _record_metadata_failure(media, code, detail)
         bump_all_collection_families(db, families=_COLLECTION_FAMILIES)
