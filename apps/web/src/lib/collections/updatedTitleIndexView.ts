@@ -1,48 +1,48 @@
-// The Notes index view: the closed sort type, a strict total
-// URLSearchParams <-> NotesIndexView codec, the API query, and the exact
-// `Sort by` inventory. See
-// docs/cutovers/collection-refinement-capability-hard-cutover.md.
-
 import { assertNever } from "@/lib/assertNever";
 
 type Direction = "asc" | "desc";
 
-export type NotesIndexView =
+/**
+ * The shared collection view for resources ordered by their update instant or
+ * title. The canonical updated-newest view is the sole view with no URL keys.
+ */
+export type UpdatedTitleIndexView =
   | { kind: "Canonical" }
   | { kind: "UpdatedOldest" }
   | { kind: "Title"; direction: Direction };
 
-/** Updated — newest: the existing default and the sole view with no owned keys. */
-export const CANONICAL_NOTES_INDEX_VIEW: NotesIndexView = { kind: "Canonical" };
+export const CANONICAL_UPDATED_TITLE_INDEX_VIEW: UpdatedTitleIndexView = {
+  kind: "Canonical",
+};
 
-export type DecodedNotesIndexView =
-  | { kind: "Valid"; view: NotesIndexView }
+export type DecodedUpdatedTitleIndexView =
+  | { kind: "Valid"; view: UpdatedTitleIndexView }
   | { kind: "Invalid" };
 
 /**
- * Strict, total decode of the view-owned `sort`/`direction` keys. A partial,
- * duplicated, unknown, or redundantly-default pair is Invalid rather than
- * normalized, so the pane never requests a collection its URL does not name.
+ * Strictly decode the view-owned `sort` and `direction` keys. Malformed,
+ * duplicated, unknown, and redundantly canonical forms are invalid.
  */
-export function decodeNotesIndexView(
+export function decodeUpdatedTitleIndexView(
   params: URLSearchParams,
-): DecodedNotesIndexView {
+): DecodedUpdatedTitleIndexView {
   const sorts = params.getAll("sort");
   const directions = params.getAll("direction");
   if (sorts.length > 1 || directions.length > 1) {
     return { kind: "Invalid" };
   }
+
   const sort = sorts[0];
   const direction = directions[0];
   if (sort === undefined && direction === undefined) {
-    return { kind: "Valid", view: { kind: "Canonical" } };
+    return { kind: "Valid", view: CANONICAL_UPDATED_TITLE_INDEX_VIEW };
   }
   if (sort === undefined || (direction !== "asc" && direction !== "desc")) {
     return { kind: "Invalid" };
   }
+
   switch (sort) {
     case "updated":
-      // `updated&desc` is the canonical view, whose sole address omits both keys.
       return direction === "asc"
         ? { kind: "Valid", view: { kind: "UpdatedOldest" } }
         : { kind: "Invalid" };
@@ -53,14 +53,15 @@ export function decodeNotesIndexView(
   }
 }
 
-/** Replaces the view-owned keys and preserves unrelated pane keys. */
-export function encodeNotesIndexView(
-  view: NotesIndexView,
+/** Replace the view-owned keys while preserving unrelated pane state. */
+export function encodeUpdatedTitleIndexView(
+  view: UpdatedTitleIndexView,
   current: URLSearchParams,
 ): URLSearchParams {
   const next = new URLSearchParams(current);
   next.delete("sort");
   next.delete("direction");
+
   switch (view.kind) {
     case "Canonical":
       break;
@@ -75,25 +76,31 @@ export function encodeNotesIndexView(
     default:
       assertNever(view);
   }
+
   return next;
 }
 
-/** The API query suffix (e.g. "?sort=title&direction=asc", or "" for canonical). */
-export function notesIndexViewQuery(view: NotesIndexView): string {
-  const query = encodeNotesIndexView(view, new URLSearchParams()).toString();
+export function updatedTitleIndexViewQuery(view: UpdatedTitleIndexView): string {
+  const query = encodeUpdatedTitleIndexView(
+    view,
+    new URLSearchParams(),
+  ).toString();
   return query ? `?${query}` : "";
 }
 
-export const NOTES_SORT_OPTION_IDS = [
+export const UPDATED_TITLE_SORT_OPTION_IDS = [
   "updated-newest",
   "updated-oldest",
   "title-asc",
   "title-desc",
 ] as const;
 
-export type NotesSortOptionId = (typeof NOTES_SORT_OPTION_IDS)[number];
+export type UpdatedTitleSortOptionId =
+  (typeof UPDATED_TITLE_SORT_OPTION_IDS)[number];
 
-export function notesSortOptionLabel(id: NotesSortOptionId): string {
+export function updatedTitleSortOptionLabel(
+  id: UpdatedTitleSortOptionId,
+): string {
   switch (id) {
     case "updated-newest":
       return "Updated — newest";
@@ -108,7 +115,9 @@ export function notesSortOptionLabel(id: NotesSortOptionId): string {
   }
 }
 
-export function notesSortOptionOf(view: NotesIndexView): NotesSortOptionId {
+export function updatedTitleSortOptionOf(
+  view: UpdatedTitleIndexView,
+): UpdatedTitleSortOptionId {
   switch (view.kind) {
     case "Canonical":
       return "updated-newest";
@@ -121,10 +130,12 @@ export function notesSortOptionOf(view: NotesIndexView): NotesSortOptionId {
   }
 }
 
-export function notesViewForSortOption(id: NotesSortOptionId): NotesIndexView {
+export function updatedTitleViewForSortOption(
+  id: UpdatedTitleSortOptionId,
+): UpdatedTitleIndexView {
   switch (id) {
     case "updated-newest":
-      return { kind: "Canonical" };
+      return CANONICAL_UPDATED_TITLE_INDEX_VIEW;
     case "updated-oldest":
       return { kind: "UpdatedOldest" };
     case "title-asc":

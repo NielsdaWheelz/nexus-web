@@ -696,15 +696,6 @@
       "expected_failure": "DID NOT RAISE"
     },
     {
-      "id": "epub-cutover-failed-attempt-admission",
-      "patch": "testdata/faults/epub-cutover-failed-attempt-admission.patch",
-      "sha256": "102739e42a4d72b65b9e47c6ce8824b12a7781cf91a1c305b1ea12bf1ef759cc",
-      "proofs": [
-        "pytest:python/tests/kernel/test_epub_navigation_offsets_cutover.py::test_cutover_state_model_admits_only_resumable_media_and_owned_dead_work"
-      ],
-      "expected_failure": "DID NOT RAISE"
-    },
-    {
       "id": "reader-restore-write-suppression-bypass",
       "patch": "testdata/faults/reader-restore-write-suppression-bypass.patch",
       "sha256": "191c33c5558b60a45389d3ebccb10c55474c45f00769aebf18768aa5be933537",

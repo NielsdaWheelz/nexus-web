@@ -69,8 +69,8 @@ from nexus.services.resource_graph.schemas import (
     ConnectionQuery,
     EdgeCreate,
 )
-from nexus.services.search import search
 from nexus.services.search.query import SearchQuery
+from nexus.services.search.service import search
 from nexus.services.structured_synthesis import (
     INDEX_GROUNDING_RULE,
     StructuredSynthesisError,

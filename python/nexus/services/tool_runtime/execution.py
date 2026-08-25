@@ -1660,7 +1660,7 @@ def _citation_for_ref(
     if result_type is None:
         return None
     from nexus.services.retrieval_citation import citation_from_search_result
-    from nexus.services.search import get_search_result
+    from nexus.services.search.service import get_search_result
 
     try:
         result = get_search_result(
@@ -1932,9 +1932,9 @@ def _run_document_search(
     context: ExecutionContext,
 ) -> HandlerSuccess[tool_declarations.DocumentSearchSuccess]:
     from nexus.services.retrieval_citation import citation_from_search_result
-    from nexus.services.search import search
     from nexus.services.search.query import build_search_query
     from nexus.services.search.scope import scope_from_uri
+    from nexus.services.search.service import search
 
     recorder = _chat_recorder(context)
     _assert_visible(recorder, value.uri)
