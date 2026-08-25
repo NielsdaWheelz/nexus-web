@@ -14,6 +14,7 @@ TranscriptRequestReason = Literal[
     "rss_feed",
 ]
 
+
 def require_transcript_request_reason(value: object) -> TranscriptRequestReason:
     """Decode one exact same-system request reason or defect."""
     if not isinstance(value, str) or value not in {
