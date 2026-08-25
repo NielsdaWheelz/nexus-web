@@ -149,7 +149,9 @@ test("a subscribed podcast refreshes and durably resumes real episode playback",
     controls.getByRole("button", { name: /^(?:Play|Pause) media player$/ }),
     `Episode from podcast ${podcastId} did not establish an operable player session.`,
   ).toBeVisible();
-  await controls.getByRole("button", { name: "Play media player", exact: true }).click();
+  // The Episode Play command owns both session creation and native playback.
+  // A second toggle can race the accessible-name transition and pause the
+  // already-playing element, so assert the owned outcome directly.
   await expect(
     controls.getByRole("button", { name: "Pause media player", exact: true }),
   ).toBeVisible({ timeout: 15_000 });
