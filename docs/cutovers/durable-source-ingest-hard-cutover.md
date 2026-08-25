@@ -747,6 +747,11 @@ If transaction 2 fails, the cleanup rolls back and the retry/refresh attempt is
 marked failed. The previous artifacts are not destroyed by a queue insertion or
 source-preflight failure.
 
+Source adapters hand typed authorship observations to the contributor facade
+through `media_author_observation_seam.py`. Only an absent carrier means no
+observation; malformed same-system carriers defect instead of silently dropping
+credited provenance and allowing source success.
+
 Podcast transcript source retry is part of the same dispatch contract. Operator
 requeues run transcript quota admission and write
 `podcast_transcript_request_audits` inside transaction 2 before the

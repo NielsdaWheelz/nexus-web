@@ -1420,7 +1420,11 @@ Credit resolution prefers explicit id → exact stable key → confirmed alias �
 new contributor, and runs inline inside the same fresh SERIALIZABLE-retried
 transaction (`retry_serializable`, D-11 constraint allowlist) that replaces a
 lane's declared observed role slice — there is no separate dedupe job, proposal
-table, or merge contract (§ job registry, below). Visibility predicates
+table, or merge contract (§ job registry, below).
+`media_author_observation_seam.py` is the sole in-memory carrier between source
+adapters and that facade. An absent carrier means no observation; a malformed
+container, tuple, media identity, observation, or source is a same-system defect
+and never degrades to empty authorship. Visibility predicates
 (`visible_podcast_ids_cte_sql`, `visible_content_credit_rows_sql`,
 `visible_contributor_ids_cte_sql`) live solely in `auth/permissions.py`;
 persisted-chat-ref checks live in `chat_context_refs.py`. There is no `/authors`
