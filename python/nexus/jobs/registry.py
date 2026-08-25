@@ -466,7 +466,7 @@ def _run_note_reindex(
 
     return note_reindex_job(
         note_block_id=str(payload["note_block_id"]),
-        reason=str(payload.get("reason", "note_edit")),
+        reason=_require_job_reason(payload, kind="note_reindex_job"),
         request_id=_optional_str(payload.get("request_id")),
     )
 
@@ -554,7 +554,7 @@ def _run_synapse_scan(
     return synapse_scan(
         user_id=str(payload["user_id"]),
         ref=str(payload["ref"]),
-        reason=str(payload.get("reason", "manual")),
+        reason=_require_job_reason(payload, kind="synapse_scan"),
     )
 
 
@@ -603,3 +603,12 @@ def _optional_str(value: Any) -> str | None:
         return None
     normalized = str(value).strip()
     return normalized or None
+
+
+def _require_job_reason(payload: Mapping[str, Any], *, kind: str) -> str:
+    value = payload.get("reason")
+    if not isinstance(value, str) or not value or value != value.strip():
+        # justify-defect: canonical job enqueuers always persist one exact reason;
+        # missing, coerced, or padded values are same-system payload corruption.
+        raise AssertionError(f"{kind} payload requires canonical reason")
+    return value

@@ -15,7 +15,7 @@ logger = get_logger(__name__)
 
 def note_reindex_job(
     note_block_id: str,
-    reason: str = "note_edit",
+    reason: str,
     request_id: str | None = None,
     task_id: str | None = None,
 ) -> dict:
