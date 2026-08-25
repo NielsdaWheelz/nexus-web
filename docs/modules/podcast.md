@@ -13,11 +13,14 @@ transcript chunk indexing is owned by `content_indexing`.
 Backend owners live under `python/nexus/services/podcasts/*`, the media-level
 `python/nexus/services/transcripts/*`, the YouTube transcript owner
 `python/nexus/services/youtube_transcripts.py`, and the egress helpers under
-`python/nexus/services/net/*`. Frontend podcast-management owners live under
-`apps/web/src/app/(authenticated)/podcasts/*`. The Nexus Import session composes
-the OPML import boundary from `apps/web/src/lib/podcasts/opmlImport.ts`; it owns
-local file admission, one destination set, and aggregate result presentation,
-while the podcast backend remains the sole XML/feed/import policy owner.
+`python/nexus/services/net/*`. Frontend pane composition lives under
+`apps/web/src/app/(authenticated)/podcasts/*`; reusable Podcast contracts and
+controllers live under `apps/web/src/lib/podcasts/*`, and reusable presentation
+lives under `apps/web/src/components/podcasts/*`. The Nexus Import session
+composes the OPML import boundary from
+`apps/web/src/lib/podcasts/opmlImport.ts`; it owns local file admission, one
+destination set, and aggregate result presentation, while the podcast backend
+remains the sole XML/feed/import policy owner.
 
 Followed-show and episode pane text filtering is local Pane Search over the
 exhaustively loaded current domain view. It matches title and contributor
@@ -128,6 +131,15 @@ that matter:
   `remove_unsubscribed_podcast_placements` to remove viewer-owned unshared
   placements and report retained shared placements. Within a named Library,
   parent Podcast placement subsumes direct episode placement.
+
+- **Subscription-settings UI — `PodcastSubscriptionSettingsOverlay`.** The
+  app-level resource overlay is the only load/draft/save/reconcile lifecycle
+  owner. `PodcastSubscriptionSettingsDialog` is presentation-only, and
+  `lib/podcasts/subscriptionSettings.ts` strictly decodes the complete GET/PATCH
+  envelopes, serializes mutations, and publishes canonical installs. Podcast,
+  Podcast-detail, and Library panes subscribe directly to that install
+  publisher to refresh their local projections; they do not instantiate a
+  second modal controller or persist a hidden settings draft.
 
 - **Feed-controlled fetches — `net.safe_fetch.safe_get`.** Every fetch of a feed-controlled
   URL (RSS feed pages, Podcasting 2.0 chapter JSON, transcript sidecars) goes through one
