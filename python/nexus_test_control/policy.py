@@ -111,6 +111,7 @@ _RETIRED_RESOURCE_ACTION_PATHS = (
     "apps/web/src/app/(authenticated)/podcasts/usePodcastSubscriptionActions.ts",
 )
 _RETIRED_CLEANUP_PATHS = (
+    "apps/web/src/app/(authenticated)/oracle/atlas/page.tsx",
     "apps/web/src/lib/conversations/indexView.ts",
     "apps/web/src/lib/conversations/indexView.unit.test.ts",
     "apps/web/src/lib/notes/pageIndexView.ts",
@@ -120,6 +121,7 @@ _RETIRED_CLEANUP_PATHS = (
     "python/tests/kernel/test_epub_navigation_offsets_cutover.py",
     "testdata/faults/epub-cutover-failed-attempt-admission.patch",
 )
+_RETIRED_ORACLE_ATLAS_SOURCE_FRAGMENTS = ("/oracle/atlas", "oracleAtlas")
 _PRODUCT_SOURCE_ROOTS: tuple[tuple[str, frozenset[str]], ...] = (
     ("python/nexus", frozenset({".py"})),
     ("apps/api", frozenset({".py"})),
@@ -1043,6 +1045,23 @@ def repository_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
             if _WEB_TEST_LOOKING.search(candidate.name) or "__tests__" in candidate.parts:
                 continue
             text = candidate.read_text(encoding="utf-8")
+            retired_oracle_atlas_fragment = next(
+                (
+                    fragment
+                    for fragment in _RETIRED_ORACLE_ATLAS_SOURCE_FRAGMENTS
+                    if fragment in text
+                ),
+                None,
+            )
+            if retired_oracle_atlas_fragment is not None:
+                violations.append(
+                    PolicyViolation(
+                        "repository-retired-oracle-atlas-source",
+                        relative,
+                        "the Grand Atlas is canonical; the retired Oracle Atlas route and "
+                        f"pane id must stay absent: {retired_oracle_atlas_fragment}",
+                    )
+                )
             retired = tuple(seam for seam in _RETIRED_PRODUCT_TEST_SEAMS if seam in text)
             generic = _PRODUCT_TEST_SEAM.search(text)
             if retired:

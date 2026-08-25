@@ -307,6 +307,7 @@ def test_repository_guard_rejects_resurrected_resource_action_module(
 @pytest.mark.parametrize(
     "relative",
     [
+        "apps/web/src/app/(authenticated)/oracle/atlas/page.tsx",
         "apps/web/src/lib/conversations/indexView.ts",
         "apps/web/src/lib/conversations/indexView.unit.test.ts",
         "apps/web/src/lib/notes/pageIndexView.ts",
@@ -325,6 +326,26 @@ def test_repository_guard_rejects_retired_cleanup_path(tmp_path: Path, relative:
 
     assert any(
         violation.rule == "repository-retired-cleanup-path" and violation.path == relative
+        for violation in violations
+    )
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'export const retiredHref = "/oracle/atlas";\n',
+        'export const retiredRouteId = "oracleAtlas";\n',
+    ],
+)
+def test_repository_guard_rejects_retired_oracle_atlas_source(tmp_path: Path, source: str) -> None:
+    _minimal_repository(tmp_path)
+    relative = "apps/web/src/lib/oracleAtlasRoute.ts"
+    _write(tmp_path, relative, source)
+
+    violations = repository_violations(tmp_path)
+
+    assert any(
+        violation.rule == "repository-retired-oracle-atlas-source" and violation.path == relative
         for violation in violations
     )
 
