@@ -604,7 +604,7 @@ def _run_storage_orphan_sweep(
 ) -> Mapping[str, Any] | RescheduleRequested | None:
     from nexus.tasks.storage_orphan_sweep import storage_orphan_sweep
 
-    return storage_orphan_sweep(payload=payload, context=context)
+    return storage_orphan_sweep(context=context)
 
 
 def _optional_job_text(
