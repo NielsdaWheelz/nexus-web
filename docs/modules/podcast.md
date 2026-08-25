@@ -228,6 +228,14 @@ Semantic repair is zero-cost indexing work: it serializes on Media, inventories
 the canonical queue, never invalidates collection rows, and a repeat against a
 live repair job is audit-only idempotency.
 
+Single-Episode and fingerprinted query admission share that private owner but
+have different transaction boundaries: a single quota rejection commits only
+its immutable audit, while a query admits every selected Episode or none. Each
+request locks Media before mutable admission decisions, and source ingest binds
+the accepted attempt plus durable job inside the caller-owned transaction.
+Enqueue defects propagate and roll the transaction back; there is no failed
+enqueue response, fallback state, or `enqueue_failed` audit compatibility path.
+
 `podcasts.deepgram_adapter` is a documented non-LLM provider port, not part of the shared
 generation runtime. It owns Deepgram diarization fallback, fixture normalization, and podcast
 transcript error mapping. The removal gate is a provider-runtime transcription API that can

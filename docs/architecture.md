@@ -1511,17 +1511,24 @@ dry-run return boundary. Explicit admission and durable source requeue both use
 the same transcript-job reset owner; no caller carries a second job upsert.
 Forecast, explicit admission, and durable source requeue derive and reserve
 quota through one typed transcript-budget owner. A quota rejection writes only
-its immutable audit fact; it does not materialize transcript work state or bump
-collection revisions. Repeated inflight admission is likewise an audit-only
+its immutable audit fact for a single request; it does not materialize
+transcript work state or bump collection revisions. A fingerprinted episode
+query is one atomic admission transaction: Media rows lock in deterministic
+selection order, and any stale selection, quota rejection, or enqueue defect
+rolls back every episode's state, reservation, audit, source attempt, queue job,
+and collection revision. Repeated inflight admission is likewise an audit-only
 idempotent fact; Podcast collection revisions advance only when the request
 changes viewer-visible transcript work state.
-The request path reads its media/job/transcript inputs once through the typed
-`_TranscriptRequestMedia` snapshot. Publisher-sidecar forecast and admission
-then live in `_request_rss_podcast_transcript`: they reserve zero generated
-minutes and create one durable transcript source attempt. That source-attempt
-owner publishes the all-viewer media-fact revision exactly once; the outer
-transcript controller does not publish a second revision for the same accepted
-attempt.
+The request path locks and reads its media/job/transcript inputs once through
+the typed `_TranscriptRequestMedia` snapshot. Publisher-sidecar forecast and
+admission then live in `_request_rss_podcast_transcript`: they reserve zero
+generated minutes and create one durable transcript source attempt.
+`media_source_ingest.enqueue_podcast_episode_transcript_source_attempt` binds
+the accepted attempt to its durable job inside the transcript caller's current
+transaction; it never commits or converts an enqueue defect into durable failed
+state. That source-attempt owner publishes the all-viewer media-fact revision
+exactly once; the outer transcript controller does not publish a second
+revision for the same accepted attempt.
 `services/transcripts/state.py` is the sole persistence owner for
 `media_transcript_states`; `current.py` owns artifact publication, while
 `semantic.py` owns every semantic-job payload plus lock-and-job-inventory repair
@@ -1529,7 +1536,7 @@ admission. Readable-transcript repair costs zero generated minutes, never bumps
 collection revisions because `semantic_status` is not a collection-row fact,
 and treats a live pending/running/retryable semantic job as idempotent instead
 of dispatching duplicate work. Database enqueue defects propagate and roll back;
-there is no semantic `enqueue_failed` fallback.
+there is no transcript `enqueue_failed` runtime or persisted audit outcome.
 Canonical YouTube Video caption forecast and import live in
 `_request_youtube_video_transcript`. It crosses the provider boundary with no
 database transaction open, reauthorizes before atomic `Imported` transcript
