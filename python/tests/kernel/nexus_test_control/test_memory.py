@@ -219,7 +219,7 @@ def test_inflight_sample_ignores_only_an_owner_disabled_for_exact_teardown(
     assert (evidence.process_tree_rss, evidence.container_working_set, evidence.total) == (2, 4, 6)
 
 
-def test_active_owner_recovers_one_transient_container_probe_without_losing_evidence(
+def test_active_owner_recovers_one_transient_container_sample_without_losing_evidence(
     tmp_path: Path,
 ) -> None:
     samples = 0
@@ -237,6 +237,8 @@ def test_active_owner_recovers_one_transient_container_probe_without_losing_evid
         process_reader=lambda _pid: 2 * 1024 * 1024,
         container_reader=read_container,
     )
+    sampler._sample(include_containers=True)
+    assert sampler.snapshot().measurement_complete is False
     sampler._sample(include_containers=True)
     evidence = sampler.snapshot()
 
@@ -265,11 +267,14 @@ def test_active_owner_docker_error_remains_a_fail_closed_measurement(
     )
     sampler.start()
     sampler._sample(include_containers=True)
+    assert sampler.snapshot().measurement_complete is True
+    sampler._sample(include_containers=True)
     evidence = sampler.stop()
 
+    assert samples == 3
     assert evidence.measurement_complete is False
     assert sampler.failure_detail == (
-        "owned container probe failed 2 consecutive reads: "
+        "owned container probe failed 2 consecutive samples: "
         "synthetic Docker failure for active owner"
     )
     assert (evidence.process_tree_rss, evidence.container_working_set, evidence.total) == (2, 4, 6)
