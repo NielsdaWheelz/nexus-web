@@ -6,7 +6,7 @@ import hashlib
 import json
 import posixpath
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal, cast
 from urllib.parse import unquote, urlparse
@@ -2732,24 +2732,21 @@ def _run_podcast_episode_transcript(
         mutate=begin_podcast_extraction,
     )
 
-    result = asdict(
-        run_podcast_transcription_now(
-            session_factory,
-            media_id=media_id,
-            requested_by_user_id=actor_user_id,
-            request_id=request_id,
-            publication_fence=fence,
-        )
+    completed = run_podcast_transcription_now(
+        session_factory,
+        media_id=media_id,
+        requested_by_user_id=actor_user_id,
+        request_id=request_id,
+        publication_fence=fence,
     )
-    result["source_type"] = source_types.PODCAST_EPISODE_TRANSCRIPT
-    if result.get("status") != "completed":
-        # justify-defect: the adapter either returns its sole success variant or
-        # raises a typed modeled outcome/unexpected dependency fault.
-        raise AssertionError("unexpected podcast transcription result variant")
-    result["metadata_enrichment"] = True
-    result["transcript_semantic_intent"] = True
-    result["transcript_request_reason"] = request_reason
-    return result
+    return {
+        "status": completed.status,
+        "segment_count": completed.segment_count,
+        "source_type": source_types.PODCAST_EPISODE_TRANSCRIPT,
+        "metadata_enrichment": True,
+        "transcript_semantic_intent": True,
+        "transcript_request_reason": request_reason,
+    }
 
 
 def _run_prepared_html_article(

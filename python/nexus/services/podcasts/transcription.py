@@ -99,14 +99,11 @@ def _bump_all_episode_row_collections(db: Session) -> None:
 
 
 @dataclass(frozen=True)
-class TranscriptionRunResult:
-    """Worker result for a single podcast transcription run."""
+class PodcastTranscriptionCompleted:
+    """Successful artifact result from one podcast transcription run."""
 
-    status: Literal["skipped", "failed", "completed"]
-    reason: str | None = None
-    job_status: str | None = None
-    error_code: str | None = None
-    segment_count: int | None = None
+    segment_count: int
+    status: Literal["completed"] = "completed"
 
 
 @dataclass(frozen=True)
@@ -870,7 +867,7 @@ def run_podcast_transcription_now(
     requested_by_user_id: UUID | None,
     request_id: str | None = None,
     publication_fence: SourcePublicationFence,
-) -> TranscriptionRunResult:
+) -> PodcastTranscriptionCompleted:
     snapshot = session_factory()
     try:
         sidecar = snapshot.execute(
@@ -945,10 +942,7 @@ def run_podcast_transcription_now(
                 media_ids=(media_id,),
                 mutate=publish_publisher_transcript,
             )
-            return TranscriptionRunResult(
-                status="completed",
-                segment_count=len(rss_segments),
-            )
+            return PodcastTranscriptionCompleted(segment_count=len(rss_segments))
 
         if effective_requester is None:
             raise ApiError(
@@ -1078,10 +1072,7 @@ def run_podcast_transcription_now(
             media_ids=(media_id,),
             mutate=publish_transcript,
         )
-        return TranscriptionRunResult(
-            status="completed",
-            segment_count=len(transcript_segments),
-        )
+        return PodcastTranscriptionCompleted(segment_count=len(transcript_segments))
 
     if transcription_status == "completed":
         raise RuntimeError("podcast transcription completed without valid segments")
