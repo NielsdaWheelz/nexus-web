@@ -182,6 +182,10 @@ import {
 } from "@/lib/dossiers/generationAdapter";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
 import { useReaderScrollPositioner } from "@/lib/reader/paneScroll";
+import {
+  useRetainedReaderSelection,
+  useRetainedReaderSelectionGeometry,
+} from "@/lib/reader/useRetainedReaderSelection";
 import { canonicalCpLength } from "@/lib/reader/textOffsets";
 import { composeRefs } from "@/lib/ui/composeRefs";
 import {
@@ -435,7 +439,6 @@ interface EvidenceResolutionResponse {
   };
 }
 
-const MOBILE_SELECTION_STABILIZATION_DELAY_MS = 180;
 const READER_POSITION_BUCKET_CP = 1024;
 const READER_APPARATUS_FOCUS_CLASS = "reader-apparatus-focused";
 const READER_APPARATUS_HOVER_CLASS = "reader-apparatus-hover";
@@ -450,18 +453,16 @@ interface ReaderApparatusPreviewState {
   bodyText: string;
 }
 
-function buildSelectionSnapshotKey(selection: SelectionState): string {
-  const { left, top, width, height } = selection.rect;
-  return [
-    selection.fragmentId,
-    String(selection.startOffset),
-    String(selection.endOffset),
-    selection.selectedText,
-    left.toFixed(1),
-    top.toFixed(1),
-    width.toFixed(1),
-    height.toFixed(1),
-  ].join("::");
+function sameMediaSelection(
+  left: SelectionState,
+  right: SelectionState,
+): boolean {
+  return (
+    left.fragmentId === right.fragmentId &&
+    left.startOffset === right.startOffset &&
+    left.endOffset === right.endOffset &&
+    left.selectedText === right.selectedText
+  );
 }
 
 function readerApparatusSelector(itemId: string): string {
@@ -1027,8 +1028,7 @@ export default function MediaPaneBody() {
       loading: true,
       error: null,
     });
-  const [pdfSignedUrlRefreshToken, setPdfSignedUrlRefreshToken] =
-    useState(0);
+  const [pdfSignedUrlRefreshToken, setPdfSignedUrlRefreshToken] = useState(0);
   const [pdfRefreshToken, setPdfRefreshToken] = useState(0);
   const [semanticViewportPublication, setSemanticViewportPublication] =
     useState<{
@@ -1185,7 +1185,9 @@ export default function MediaPaneBody() {
     },
     pdf: {
       sourceCacheKey:
-        isPdf && canRead ? `${id}:pdf-source:${pdfSignedUrlRefreshToken}` : null,
+        isPdf && canRead
+          ? `${id}:pdf-source:${pdfSignedUrlRefreshToken}`
+          : null,
       sourceRefreshToken: pdfSignedUrlRefreshToken,
     },
   });
@@ -1568,16 +1570,11 @@ export default function MediaPaneBody() {
   const webSectionScrollKeyRef = useRef<string | null>(null);
 
   // Retained canonical selection for highlight actions
-  const [selection, setSelection] = useState<SelectionState | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const selectionActionInFlightRef = useRef(false);
   const freshSelectionLinkSessionRef = useRef(false);
   const [isMismatchDisabled, setIsMismatchDisabled] = useState(false);
   const appliedRequestedReaderLocRef = useRef<string | null>(null);
-  const selectionSnapshotRef = useRef<SelectionState | null>(null);
-  const selectionSnapshotKeyRef = useRef<string | null>(null);
-  const selectionVisibleRef = useRef(false);
-  const mobileSelectionTimerRef = useRef<number | null>(null);
 
   const contentRef = useRef<HTMLDivElement>(null);
   const pdfContentRef = useRef<HTMLDivElement>(null);
@@ -1585,6 +1582,16 @@ export default function MediaPaneBody() {
   const textViewportRef = useRef<HTMLDivElement>(null);
   const textEndRef = useRef<HTMLElement>(null);
   const cursorRef = useRef<CanonicalCursorResult | null>(null);
+  const {
+    visible: selection,
+    capture: captureRetainedSelection,
+    clear: clearRetainedSelectionState,
+    retainVisibleOrClear: retainVisibleSelectionOrClear,
+    readCaptured: readRetainedSelection,
+    refreshCaptured: refreshRetainedSelection,
+  } = useRetainedReaderSelection<SelectionState>({
+    sameSemanticSelection: sameMediaSelection,
+  });
   const webFindRenderedStateRef = useRef<WebFindRenderedState | null>(null);
   const epubFindRenderedStateRef = useRef<EpubFindRenderedState | null>(null);
   const renderedFragmentIdRef = useRef<string | null>(null);
@@ -1687,48 +1694,27 @@ export default function MediaPaneBody() {
     setEpubRestoreRequest(null);
   }, []);
 
-  const clearPendingMobileSelectionPublish = useCallback(() => {
-    if (mobileSelectionTimerRef.current == null) {
+  const clearRetainedSelection = useCallback(() => {
+    clearRetainedSelectionState();
+  }, [clearRetainedSelectionState]);
+
+  const clearReaderSelection = useCallback(() => {
+    clearRetainedSelectionState();
+    const liveSelection = window.getSelection();
+    if (!liveSelection || liveSelection.rangeCount === 0) {
       return;
     }
-    window.clearTimeout(mobileSelectionTimerRef.current);
-    mobileSelectionTimerRef.current = null;
-  }, []);
-
-  const publishSelection = useCallback(
-    (nextSelection: SelectionState | null) => {
-      selectionVisibleRef.current = nextSelection !== null;
-      setSelection(nextSelection);
-    },
-    [],
-  );
-
-  const clearRetainedSelection = useCallback(
-    (removeLiveSelection: boolean) => {
-      clearPendingMobileSelectionPublish();
-      selectionSnapshotRef.current = null;
-      selectionSnapshotKeyRef.current = null;
-      publishSelection(null);
-      if (removeLiveSelection) {
-        window.getSelection()?.removeAllRanges();
-      }
-    },
-    [clearPendingMobileSelectionPublish, publishSelection],
-  );
-
-  selectionVisibleRef.current = selection !== null;
+    const range = liveSelection.getRangeAt(0);
+    if (contentRef.current?.contains(range.commonAncestorContainer)) {
+      liveSelection.removeAllRanges();
+    }
+  }, [clearRetainedSelectionState]);
 
   useEffect(() => {
     if (selection !== null || !selectionActionInFlightRef.current) return;
     selectionActionInFlightRef.current = false;
     setIsCreating(false);
   }, [selection]);
-
-  useEffect(() => {
-    return () => {
-      clearPendingMobileSelectionPublish();
-    };
-  }, [clearPendingMobileSelectionPublish]);
 
   // ---- Derived state ----
   const transcriptState = media?.transcript_state ?? null;
@@ -2091,7 +2077,7 @@ export default function MediaPaneBody() {
     highlightVersionRef.current += 1;
     clearFocus();
     setHighlights([]);
-    clearRetainedSelection(false);
+    clearRetainedSelection();
     setHoveredHighlightId(null);
     setHighlightActionAnchor(null);
     setFocusedApparatusItemId(null);
@@ -2299,7 +2285,7 @@ export default function MediaPaneBody() {
   );
 
   useEffect(() => {
-    const retainedSelection = selectionSnapshotRef.current;
+    const retainedSelection = readRetainedSelection();
     if (!retainedSelection) {
       return;
     }
@@ -2308,9 +2294,14 @@ export default function MediaPaneBody() {
       retainedSelection.fragmentId !== activeContent.fragmentId ||
       isMismatchDisabled
     ) {
-      clearRetainedSelection(false);
+      clearRetainedSelection();
     }
-  }, [activeContent, clearRetainedSelection, isMismatchDisabled]);
+  }, [
+    activeContent,
+    clearRetainedSelection,
+    isMismatchDisabled,
+    readRetainedSelection,
+  ]);
 
   useEffect(() => {
     // Reset PDF-specific pane state whenever media identity/type changes.
@@ -2563,7 +2554,7 @@ export default function MediaPaneBody() {
     }
     clearFocus();
     setHighlights([]);
-    clearRetainedSelection(false);
+    clearRetainedSelection();
   }, [
     activeEpubSection?.section_id,
     activeSectionId,
@@ -4278,31 +4269,32 @@ export default function MediaPaneBody() {
 
   const handleSelectionChange = useCallback(() => {
     if (isPdf) {
-      clearRetainedSelection(false);
+      clearRetainedSelection();
       return;
     }
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || !contentRef.current) {
-      clearPendingMobileSelectionPublish();
-      if (!selectionVisibleRef.current || focusState.editingBounds) {
-        clearRetainedSelection(false);
+      if (focusState.editingBounds) {
+        clearRetainedSelection();
+      } else {
+        retainVisibleSelectionOrClear();
       }
       return;
     }
 
     const range = sel.getRangeAt(0);
     if (!contentRef.current.contains(range.commonAncestorContainer)) {
-      clearRetainedSelection(false);
+      clearRetainedSelection();
       return;
     }
 
     if (isMismatchDisabled) {
-      clearRetainedSelection(false);
+      clearRetainedSelection();
       return;
     }
 
     if (!activeContent || !cursorRef.current) {
-      clearRetainedSelection(false);
+      clearRetainedSelection();
       return;
     }
 
@@ -4313,13 +4305,13 @@ export default function MediaPaneBody() {
     );
 
     if (!result.success) {
-      clearRetainedSelection(false);
+      clearRetainedSelection();
       return;
     }
 
     const geometry = readSelectionRangeGeometry(range);
     if (!geometry) {
-      clearRetainedSelection(false);
+      clearRetainedSelection();
       return;
     }
     const nextSelection: SelectionState = {
@@ -4330,45 +4322,22 @@ export default function MediaPaneBody() {
       range: range.cloneRange(),
       ...geometry,
     };
-    const nextSelectionKey = buildSelectionSnapshotKey(nextSelection);
-    const previousSelectionKey = selectionSnapshotKeyRef.current;
-    selectionSnapshotRef.current = nextSelection;
-    selectionSnapshotKeyRef.current = nextSelectionKey;
-
-    if (!isMobileViewport || focusState.editingBounds) {
-      clearPendingMobileSelectionPublish();
-      publishSelection(nextSelection);
-      return;
-    }
-
-    if (
-      previousSelectionKey === nextSelectionKey &&
-      (selectionVisibleRef.current || mobileSelectionTimerRef.current != null)
-    ) {
-      return;
-    }
-
-    clearPendingMobileSelectionPublish();
-    publishSelection(null);
-    mobileSelectionTimerRef.current = window.setTimeout(() => {
-      mobileSelectionTimerRef.current = null;
-      if (
-        selectionSnapshotKeyRef.current !== nextSelectionKey ||
-        selectionSnapshotRef.current == null
-      ) {
-        return;
-      }
-      publishSelection(selectionSnapshotRef.current);
-    }, MOBILE_SELECTION_STABILIZATION_DELAY_MS);
+    captureRetainedSelection({
+      snapshot: nextSelection,
+      publication:
+        !isMobileViewport || focusState.editingBounds
+          ? "Immediate"
+          : "Stabilized",
+    });
   }, [
     activeContent,
-    clearPendingMobileSelectionPublish,
+    captureRetainedSelection,
     clearRetainedSelection,
     focusState.editingBounds,
     isMismatchDisabled,
     isMobileViewport,
     isPdf,
-    publishSelection,
+    retainVisibleSelectionOrClear,
   ]);
 
   useEffect(() => {
@@ -4379,68 +4348,35 @@ export default function MediaPaneBody() {
   }, [handleSelectionChange]);
 
   const refreshRetainedSelectionGeometry = useCallback(() => {
-    const retainedSelection = selectionSnapshotRef.current;
-    if (!retainedSelection || isPdf) return;
-    const content = contentRef.current;
-    let belongsToCurrentContent = false;
-    try {
-      belongsToCurrentContent = Boolean(
-        content &&
-        content.contains(retainedSelection.range.startContainer) &&
-        content.contains(retainedSelection.range.endContainer),
-      );
-    } catch {
-      belongsToCurrentContent = false;
-    }
-    const geometry = belongsToCurrentContent
-      ? readSelectionRangeGeometry(retainedSelection.range)
-      : null;
-    if (!geometry) {
-      clearRetainedSelection(false);
+    if (isPdf) {
       return;
     }
-    const refreshedSelection = { ...retainedSelection, ...geometry };
-    selectionSnapshotRef.current = refreshedSelection;
-    selectionSnapshotKeyRef.current =
-      buildSelectionSnapshotKey(refreshedSelection);
-    if (selectionVisibleRef.current) {
-      publishSelection(refreshedSelection);
-    }
-  }, [clearRetainedSelection, isPdf, publishSelection]);
+    refreshRetainedSelection((captured) => {
+      const content = contentRef.current;
+      let belongsToCurrentContent = false;
+      try {
+        belongsToCurrentContent = Boolean(
+          content &&
+          content.contains(captured.range.startContainer) &&
+          content.contains(captured.range.endContainer),
+        );
+      } catch {
+        belongsToCurrentContent = false;
+      }
+      const geometry = belongsToCurrentContent
+        ? readSelectionRangeGeometry(captured.range)
+        : null;
+      return geometry ? { ...captured, ...geometry } : null;
+    });
+  }, [isPdf, refreshRetainedSelection]);
 
-  useEffect(() => {
-    if (isPdf) return;
-    let active = true;
-    let refreshFrame = 0;
-    const scheduleRefresh = () => {
-      if (!active || refreshFrame !== 0) return;
-      refreshFrame = window.requestAnimationFrame(() => {
-        refreshFrame = 0;
-        if (active) refreshRetainedSelectionGeometry();
-      });
-    };
-    const viewport = textViewportRef.current;
-    const content = contentRef.current;
-    const visualViewport = window.visualViewport;
-    const resizeObserver = new ResizeObserver(scheduleRefresh);
-    if (viewport) resizeObserver.observe(viewport);
-    if (content && content !== viewport) resizeObserver.observe(content);
-    viewport?.addEventListener("scroll", scheduleRefresh, { passive: true });
-    window.addEventListener("resize", scheduleRefresh, { passive: true });
-    window.addEventListener("scroll", scheduleRefresh, true);
-    visualViewport?.addEventListener?.("resize", scheduleRefresh);
-    visualViewport?.addEventListener?.("scroll", scheduleRefresh);
-    return () => {
-      active = false;
-      resizeObserver.disconnect();
-      if (refreshFrame !== 0) window.cancelAnimationFrame(refreshFrame);
-      viewport?.removeEventListener("scroll", scheduleRefresh);
-      window.removeEventListener("resize", scheduleRefresh);
-      window.removeEventListener("scroll", scheduleRefresh, true);
-      visualViewport?.removeEventListener?.("resize", scheduleRefresh);
-      visualViewport?.removeEventListener?.("scroll", scheduleRefresh);
-    };
-  }, [activeContent?.fragmentId, isPdf, refreshRetainedSelectionGeometry]);
+  useRetainedReaderSelectionGeometry({
+    enabled: !isPdf,
+    sourceKey: activeContent?.fragmentId ?? null,
+    viewportRef: textViewportRef,
+    contentRef,
+    refresh: refreshRetainedSelectionGeometry,
+  });
 
   // ==========================================================================
   // Highlight Creation
@@ -4448,7 +4384,7 @@ export default function MediaPaneBody() {
 
   const handleCreateHighlight = useCallback(
     async (color: HighlightColor): Promise<Highlight | null> => {
-      const activeSelection = selectionSnapshotRef.current;
+      const activeSelection = readRetainedSelection();
       if (
         !activeSelection ||
         !activeContent ||
@@ -4458,7 +4394,7 @@ export default function MediaPaneBody() {
       }
 
       if (isMismatchDisabled) {
-        clearRetainedSelection(false);
+        clearRetainedSelection();
         return null;
       }
 
@@ -4472,7 +4408,7 @@ export default function MediaPaneBody() {
             message: "Select the text again.",
           },
         });
-        clearRetainedSelection(false);
+        clearRetainedSelection();
         return null;
       }
 
@@ -4491,7 +4427,7 @@ export default function MediaPaneBody() {
         if (duplicate) {
           focusHighlight(duplicate.id);
           selectionRetiring = true;
-          clearRetainedSelection(true);
+          clearReaderSelection();
           return duplicate;
         }
 
@@ -4509,7 +4445,7 @@ export default function MediaPaneBody() {
         setHighlights((prev) => upsertHighlightSorted(prev, createdHighlight));
         focusHighlight(createdHighlight.id);
         selectionRetiring = true;
-        clearRetainedSelection(true);
+        clearReaderSelection();
         refreshMediaHighlights();
 
         void fetchHighlights(activeContent.fragmentId)
@@ -4553,7 +4489,7 @@ export default function MediaPaneBody() {
             }
 
             selectionRetiring = true;
-            clearRetainedSelection(true);
+            clearReaderSelection();
             return existing ?? null;
           } catch (refreshErr) {
             if (handleUnauthenticatedApiError(refreshErr)) {
@@ -4580,6 +4516,7 @@ export default function MediaPaneBody() {
     },
     [
       activeContent,
+      clearReaderSelection,
       clearRetainedSelection,
       isMismatchDisabled,
       highlights,
@@ -4587,12 +4524,13 @@ export default function MediaPaneBody() {
       id,
       feedback,
       publishMediaFailure,
+      readRetainedSelection,
       refreshMediaHighlights,
     ],
   );
 
   const handleDismissPopover = useCallback(() => {
-    clearRetainedSelection(false);
+    clearRetainedSelection();
   }, [clearRetainedSelection]);
 
   // Note verb (selection popover button + bare-`n` chord): snapshot the quote
@@ -4600,7 +4538,7 @@ export default function MediaPaneBody() {
   // highlight create runs concurrently (handleCreateHighlight reads the
   // retained snapshot and clears the selection itself).
   const handleAddNoteToSelection = useCallback(() => {
-    const activeSelection = selectionSnapshotRef.current;
+    const activeSelection = readRetainedSelection();
     if (!activeSelection || selectionActionInFlightRef.current) return;
     setQuickNote({
       kind: "pending-create",
@@ -4609,7 +4547,7 @@ export default function MediaPaneBody() {
       anchorRect: activeSelection.rect,
       creation: handleCreateHighlight(DEFAULT_COLOR),
     });
-  }, [handleCreateHighlight]);
+  }, [handleCreateHighlight, readRetainedSelection]);
 
   useHighlightNoteChord({
     enabled: !isPdf && selection !== null && !focusState.editingBounds,
@@ -4623,7 +4561,7 @@ export default function MediaPaneBody() {
       setActiveTranscriptFragmentId(fragment.id);
       clearFocus();
       setHighlights([]);
-      clearRetainedSelection(false);
+      clearRetainedSelection();
     },
     [cancelRestoreSession, clearFocus, clearRetainedSelection, clearTarget],
   );
@@ -4786,7 +4724,7 @@ export default function MediaPaneBody() {
         highlightBoundsIntentRef.current = null;
         if (pending) await pending.onCommitted();
         cancelEditBounds();
-        clearRetainedSelection(true);
+        clearReaderSelection();
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) {
           return;
@@ -4804,6 +4742,7 @@ export default function MediaPaneBody() {
     activeContent,
     isMismatchDisabled,
     highlights,
+    clearReaderSelection,
     clearRetainedSelection,
     focusHighlight,
     cancelEditBounds,
@@ -5085,7 +5024,7 @@ export default function MediaPaneBody() {
       }
       cancelRestoreSession();
       clearFocus();
-      clearRetainedSelection(false);
+      clearRetainedSelection();
       setHighlights([]);
       setTarget({
         kind: "fragment",
@@ -6686,7 +6625,7 @@ export default function MediaPaneBody() {
   const refreshLinkedReaderState = useCallback(async () => {
     if (freshSelectionLinkSessionRef.current) {
       freshSelectionLinkSessionRef.current = false;
-      clearRetainedSelection(true);
+      clearReaderSelection();
     }
     refreshMediaHighlights();
     // Link creation can atomically materialize a fresh Highlight outside the
@@ -6697,7 +6636,7 @@ export default function MediaPaneBody() {
     const pending = highlightLinkIntentRef.current;
     highlightLinkIntentRef.current = null;
     if (pending) await pending.onCommitted();
-  }, [clearRetainedSelection, refreshMediaHighlights]);
+  }, [clearReaderSelection, refreshMediaHighlights]);
 
   const openEvidenceForLink = useCallback(() => {
     requestSecondarySurface("resource-evidence");
@@ -6729,7 +6668,7 @@ export default function MediaPaneBody() {
         });
         return;
       }
-      const activeSelection = selectionSnapshotRef.current;
+      const activeSelection = readRetainedSelection();
       if (!activeSelection || selectionActionInFlightRef.current) return;
       selectionActionInFlightRef.current = true;
       freshSelectionLinkSessionRef.current = true;
@@ -6745,7 +6684,7 @@ export default function MediaPaneBody() {
         },
       });
     },
-    [linkComposer],
+    [linkComposer, readRetainedSelection],
   );
 
   const handleCloseLinkComposer = useCallback(() => {
@@ -7410,7 +7349,7 @@ export default function MediaPaneBody() {
         }
         cancelRestoreSession();
         clearFocus();
-        clearRetainedSelection(false);
+        clearRetainedSelection();
         setHighlights([]);
         pendingDocumentEmbedPulseRef.current = {
           fragmentId,

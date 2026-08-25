@@ -995,6 +995,7 @@
         "apps/web/src/components/reader/document-map/**/*",
         "apps/web/src/components/ui/FloatingActionSurface.tsx",
         "apps/web/src/lib/reader/usePendingDocumentMapPulse.ts",
+        "apps/web/src/lib/reader/useRetainedReaderSelection.ts",
         "apps/web/src/app/(authenticated)/media/*/MediaPaneBody.tsx",
         "apps/web/src/lib/panes/paneRenderRegistry.tsx"
       ],
@@ -1219,6 +1220,7 @@
         "apps/web/src/components/switchboard/NexusButton.tsx",
         "apps/web/src/components/reader/MobileReaderPositionRibbon.tsx",
         "apps/web/src/app/(authenticated)/media/*/MediaPaneBody.tsx",
+        "apps/web/src/lib/reader/useRetainedReaderSelection.ts",
         "apps/web/src/lib/panes/paneRenderRegistry.tsx"
       ],
       "risks": [
