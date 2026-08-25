@@ -464,10 +464,15 @@ def _run_note_reindex(
 ) -> Mapping[str, Any] | None:
     from nexus.tasks.note_reindex import note_reindex_job
 
+    if set(payload) - {"note_block_id", "reason"}:
+        # justify-defect: enqueue_note_reindex owns one closed durable payload.
+        raise AssertionError(
+            "note_reindex_job payload keys must be exactly note_block_id and reason"
+        )
     return note_reindex_job(
         note_block_id=str(payload["note_block_id"]),
         reason=_require_job_text(payload, "reason", "note_reindex_job"),
-        request_id=_optional_job_text(payload, "request_id", "note_reindex_job"),
+        context=context,
     )
 
 

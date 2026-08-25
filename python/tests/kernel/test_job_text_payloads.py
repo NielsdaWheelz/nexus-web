@@ -50,16 +50,17 @@ def test_job_handlers_defect_on_noncanonical_reason_carriers(
 def test_job_handlers_defect_on_noncanonical_optional_text_carriers(
     request_id: object,
 ) -> None:
-    handler = resolve_job_handler("nexus.jobs.registry:_run_note_reindex")
+    handler = resolve_job_handler("nexus.jobs.registry:_run_ingest_media_source")
 
     with pytest.raises(
         AssertionError,
-        match="note_reindex_job payload requires canonical request_id",
+        match="ingest_media_source payload requires canonical request_id",
     ):
         handler(
             payload={
-                "note_block_id": "invalid",
-                "reason": "note_edit",
+                "media_id": "invalid",
+                "attempt_id": "invalid",
+                "actor_user_id": "invalid",
                 "request_id": request_id,
             },
             context=_light_context(),
@@ -70,17 +71,16 @@ def test_job_handlers_defect_on_noncanonical_optional_text_carriers(
 def test_job_handlers_preserve_optional_text_absence(
     optional_payload: dict[str, object],
 ) -> None:
-    handler = resolve_job_handler("nexus.jobs.registry:_run_note_reindex")
+    handler = resolve_job_handler("nexus.jobs.registry:_run_ingest_media_source")
     payload: dict[str, object] = {
-        "note_block_id": "invalid",
-        "reason": "note_edit",
+        "media_id": "invalid",
+        "attempt_id": "invalid",
+        "actor_user_id": "invalid",
         **optional_payload,
     }
 
-    assert handler(payload=payload, context=_light_context()) == {
-        "status": "failed",
-        "error_code": "E_INVALID_REQUEST",
-    }
+    with pytest.raises(ValueError):
+        handler(payload=payload, context=_light_context())
 
 
 @pytest.mark.parametrize(
