@@ -130,6 +130,7 @@ function assistantMessage(toolCalls: MessageToolCall[]): ConversationMessage {
     message_document: { type: "message_document", blocks: [] },
     trust_trail: trustTrail,
     citations: [],
+    reader_selection: { kind: "Absent" },
     status: "pending",
     can_rerun: false,
     can_regenerate: false,

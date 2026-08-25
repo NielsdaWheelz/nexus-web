@@ -5,9 +5,9 @@
  * A `ConversationMessage` arrives from several transports (the messages GET, the
  * conversation tree, and the `POST /chat-runs` family — create, rerun, reconcile,
  * reconnect, active-runs). Each carries a `reader_selection` field that is a
- * `Presence<ReaderSelectionOut>` on the forward wire and absent on older wire.
- * These helpers decode it into the owned `Presence<ReaderSelectionOut>` the model
- * and view code consume (`docs/rules/boundaries.md`: decode once at the boundary).
+ * `Presence<ReaderSelectionOut>` on the forward wire. These helpers decode it
+ * into the owned `Presence<ReaderSelectionOut>` the model and view code consume
+ * (`docs/rules/boundaries.md`: decode once at the boundary).
  *
  * Only a quoted user message carries a `Present` snapshot; the assistant message
  * and every non-quote message is `Absent`. The client never fabricates a
@@ -15,7 +15,7 @@
  * only on the server-returned user message.
  */
 
-import { absent, decodePresence, type Presence } from "@/lib/api/presence";
+import { decodePresence, type Presence } from "@/lib/api/presence";
 import {
   decodeDurableExecution,
   type DurableExecution,
@@ -169,13 +169,12 @@ export function decodeMessageToolCall(raw: unknown): MessageToolCall {
 
 /**
  * Decode a wire `reader_selection` field into an owned `Presence<ReaderSelectionOut>`.
- * A missing field (older wire that predates the quote cutover) is Absent; anything
- * present is strictly decoded, so a malformed `Present` snapshot throws.
+ * Both variants are strictly decoded; omission, null, and a malformed `Present`
+ * snapshot are same-system defects.
  */
 export function decodeReaderSelectionPresence(
   raw: unknown,
 ): Presence<ReaderSelectionOut> {
-  if (raw === undefined || raw === null) return absent();
   return decodePresence(raw, (value) => {
     const out = decodeReaderSelectionOut(value);
     if (out === null) throw new Error("Invalid reader_selection wire value");

@@ -377,7 +377,7 @@ export interface ConversationMessage {
    * The immutable reader-quote snapshot projection, decoded at the message
    * boundary. Present only on a quoted user message; Absent everywhere else.
    */
-  reader_selection?: Presence<ReaderSelectionOut>;
+  reader_selection: Presence<ReaderSelectionOut>;
   status: "pending" | "complete" | "error" | "cancelled";
   can_rerun: boolean;
   /** True only for a currently-eligible completed assistant message; false for
