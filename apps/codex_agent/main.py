@@ -30,12 +30,16 @@ from provider_runtime.agent_runtime import (
 _SOCKET_ENV = "NEXUS_CODEX_AGENT_SOCKET"
 _STATE_ROOT_ENV = "NEXUS_CODEX_STATE_ROOT_BASE"
 _WORKING_DIRECTORY_ENV = "NEXUS_CODEX_WORKING_DIRECTORY"
+_MCP_ORIGIN_ENV = "NEXUS_CODEX_MCP_ORIGIN"
+_CHAT_NETWORK_ATTESTED_ENV = "NEXUS_CODEX_CHAT_NETWORK_ATTESTED"
 
 
 async def run() -> None:
     socket_path = required_absolute_path(_SOCKET_ENV)
     state_root = required_absolute_path(_STATE_ROOT_ENV)
     working_directory = required_absolute_path(_WORKING_DIRECTORY_ENV)
+    mcp_origin = _required_environment(_MCP_ORIGIN_ENV)
+    chat_network_attested = _required_chat_network_attestation()
     reject_api_key_auth()
     _validate_directories(socket_path, state_root, working_directory)
     _remove_proven_stale_socket(socket_path)
@@ -43,13 +47,16 @@ async def run() -> None:
     versions = resolve_runtime_versions()
     await _probe_chatgpt_auth(state_root)
 
-    def runtime_factory() -> AgentRuntime:
-        return AgentRuntime(AgentRuntimeConfig(state_root_base=state_root))
+    def runtime_factory(config: AgentRuntimeConfig) -> AgentRuntime:
+        return AgentRuntime(config)
 
     app = create_codex_agent_app(
         runtime_factory=runtime_factory,
         working_directory=working_directory,
+        state_root_base=state_root,
         versions=versions,
+        mcp_origin=mcp_origin,
+        chat_network_attested=chat_network_attested,
     )
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     owned_identity: tuple[int, int] | None = None
@@ -92,14 +99,36 @@ async def _probe_chatgpt_auth(state_root: Path) -> None:
         await runtime.close()
 
 
-def _validate_directories(socket_path: Path, state_root: Path, working_directory: Path) -> None:
-    _validate_owned_directory(socket_path.parent, expected_mode=0o770, label="socket directory")
+def _required_environment(name: str) -> str:
+    value = os.environ.get(name)
+    if value is None or not value:
+        raise RuntimeError(f"{name} is required")
+    return value
+
+
+def _required_chat_network_attestation() -> bool:
+    value = _required_environment(_CHAT_NETWORK_ATTESTED_ENV)
+    if value != "true":
+        raise RuntimeError(f"{_CHAT_NETWORK_ATTESTED_ENV} must be exactly 'true'")
+    return True
+
+
+def _validate_directories(
+    socket_path: Path, state_root: Path, working_directory: Path
+) -> None:
+    _validate_owned_directory(
+        socket_path.parent, expected_mode=0o770, label="socket directory"
+    )
     _validate_owned_directory(state_root, expected_mode=0o700, label="state root")
-    _validate_owned_directory(working_directory, expected_mode=0o700, label="working directory")
+    _validate_owned_directory(
+        working_directory, expected_mode=0o700, label="working directory"
+    )
     if any(entry != socket_path for entry in socket_path.parent.iterdir()):
         raise RuntimeError("Codex agent socket directory may contain only its socket")
     if any(working_directory.iterdir()):
-        raise RuntimeError("Codex agent working directory must be an existing empty directory")
+        raise RuntimeError(
+            "Codex agent working directory must be an existing empty directory"
+        )
 
 
 def _validate_owned_directory(path: Path, *, expected_mode: int, label: str) -> None:
@@ -161,7 +190,9 @@ def _remove_proven_stale_socket(path: Path) -> None:
         or current.st_ino != initial.st_ino
         or not stat.S_ISSOCK(current.st_mode)
     ):
-        raise RuntimeError("Codex agent socket identity changed during stale-socket recovery")
+        raise RuntimeError(
+            "Codex agent socket identity changed during stale-socket recovery"
+        )
     path.unlink()
 
 
@@ -172,7 +203,9 @@ def _unlink_owned_socket(path: Path, identity: tuple[int, int] | None) -> None:
         current = path.lstat()
     except FileNotFoundError:
         return
-    if (current.st_dev, current.st_ino) != identity or not stat.S_ISSOCK(current.st_mode):
+    if (current.st_dev, current.st_ino) != identity or not stat.S_ISSOCK(
+        current.st_mode
+    ):
         return
     path.unlink()
 
