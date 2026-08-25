@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from nexus.db.models import (
     Media,
     MediaKind,
+    MediaSourceAttempt,
     MediaTranscriptState,
     Podcast,
     PodcastEpisode,
@@ -35,6 +36,7 @@ def _seed_transcription_episode(
     user: UserRecord,
     title: str,
     transcription_limit_minutes: int | None = None,
+    rss_transcript_url: str | None = None,
 ) -> UUID:
     podcast_id = uuid4()
     media_id = uuid4()
@@ -62,6 +64,7 @@ def _seed_transcription_episode(
             media_id=media_id,
             podcast_id=podcast_id,
             duration_seconds=601,
+            rss_transcript_url=rss_transcript_url,
         )
     )
     assert ensure_media_in_default_library(db, user.id, media_id)
@@ -364,3 +367,90 @@ def test_repeated_inflight_request_is_state_and_collection_idempotent(
     assert set(audits_by_outcome) == {"queued", "idempotent"}
     assert audits_by_outcome["queued"].request_reason == "quote"
     assert audits_by_outcome["idempotent"].request_reason == "search"
+
+
+def test_rss_sidecar_admission_queues_once_without_generated_quota(
+    authenticated_client: TestClient,
+    db_session: Session,
+    test_user: UserRecord,
+) -> None:
+    media_id = _seed_transcription_episode(
+        db_session,
+        user=test_user,
+        title="Publisher transcript episode",
+        rss_transcript_url="https://feeds.example.invalid/episode-transcript.vtt",
+    )
+    revision_before = read_collection_revision(
+        db_session,
+        viewer_id=test_user.id,
+        family=CollectionFamily.PodcastEpisodes,
+    )
+
+    response = authenticated_client.post(
+        f"/media/{media_id}/transcript/request",
+        json={"reason": "episode_open", "dry_run": False},
+    )
+
+    assert response.status_code == 202, response.text
+    assert response.json() == {
+        "data": {
+            "media_id": str(media_id),
+            "processing_status": "extracting",
+            "transcript_state": "queued",
+            "transcript_coverage": "none",
+            "request_reason": "episode_open",
+            "required_minutes": 0,
+            "remaining_minutes": None,
+            "fits_budget": True,
+            "request_enqueued": True,
+        }
+    }
+    db_session.expire_all()
+
+    transcript_state = db_session.get(MediaTranscriptState, media_id)
+    assert transcript_state is not None
+    assert transcript_state.transcript_state == "queued"
+    assert transcript_state.transcript_coverage == "none"
+    assert transcript_state.semantic_status == "none"
+
+    job = db_session.get(PodcastTranscriptionJob, media_id)
+    assert job is not None
+    assert job.status == "pending"
+    assert job.reserved_minutes == 0
+    assert job.reservation_usage_date is None
+
+    attempts = db_session.scalars(
+        select(MediaSourceAttempt).where(MediaSourceAttempt.media_id == media_id)
+    ).all()
+    assert len(attempts) == 1
+    assert attempts[0].source_type == "podcast_episode_transcript"
+    assert attempts[0].status == "queued"
+    assert attempts[0].source_payload["request_reason"] == "episode_open"
+
+    assert (
+        db_session.scalar(
+            select(func.count())
+            .select_from(PodcastTranscriptionUsageDaily)
+            .where(PodcastTranscriptionUsageDaily.user_id == test_user.id)
+        )
+        == 0
+    )
+    assert (
+        read_collection_revision(
+            db_session,
+            viewer_id=test_user.id,
+            family=CollectionFamily.PodcastEpisodes,
+        )
+        == revision_before + 1
+    )
+
+    audits = db_session.scalars(
+        select(PodcastTranscriptRequestAudit).where(
+            PodcastTranscriptRequestAudit.media_id == media_id
+        )
+    ).all()
+    assert len(audits) == 1
+    assert audits[0].outcome == "queued"
+    assert audits[0].required_minutes == 0
+    assert audits[0].remaining_minutes is None
+    assert audits[0].fits_budget is True
