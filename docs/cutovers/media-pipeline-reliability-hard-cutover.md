@@ -1146,6 +1146,11 @@ roll-forward. Do not restore inline indexing or the undifferentiated worker.
 Schema downgrade is reserved for a demonstrated schema defect and only while no
 new-code operation depends on it.
 
+Durable job payloads have no compatibility decoding after this cutover. The
+note-index and Synapse owners always persist their exact `reason`; the registry
+defects on an absent, non-string, empty, or padded carrier rather than supplying
+an older default.
+
 ## Acceptance criteria
 
 ### Database and teardown

@@ -628,6 +628,10 @@ missing/unknown lanes, registry drift, and raw allowlists on normal lanes.
 `get_task_contract_digest()` fingerprints the registry's per-kind resource
 class and attempt/lease policy for API `/version` and worker release-health proof. See
 [modules/jobs.md](modules/jobs.md).
+Registry shims decode durable same-system payloads without compatibility
+defaults. In particular, the sole note-index and Synapse enqueuers persist a
+canonical, nonempty, unpadded `reason`; omission, coercion, or padding defects at
+dispatch instead of inventing `note_edit` or `manual`.
 
 Task catalog (each is a thin handler in `tasks/` that wraps a service):
 `ingest_media_source`, `enrich_metadata`, `chat_run`,
