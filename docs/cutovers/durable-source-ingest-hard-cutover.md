@@ -771,7 +771,9 @@ typed terminal publication path.
 
 - `python/nexus/services/media_source_ingest.py`
   - source acceptance, attempts, retry, refresh, job payload construction,
-    canonical duplicate resolution orchestration.
+    canonical duplicate resolution orchestration;
+  - one detached source-adapter dispatch phase, separate from fenced
+    supersession, failure, authorship, and terminal publication.
 - `python/nexus/services/media_source_types.py`
   - canonical source-attempt type constants and policy sets used by dispatch,
     retryability, failure-stage, and cleanup rules.

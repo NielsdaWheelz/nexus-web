@@ -1020,7 +1020,11 @@ capability-owned:
 - `media_ingest.py`: URL transport adapter into `media_source_ingest.py`.
 - `media_source_ingest.py`: accepted source-attempt state machine for generic
   web URLs, X/Twitter URLs, YouTube URLs, remote PDF/EPUB URLs, uploaded
-  PDF/EPUB files, and browser article/file captures.
+  PDF/EPUB files, and browser article/file captures. Its detached acquisition
+  phase is one `_run_source_adapter` dispatch over an immutable run value;
+  `_run_claimed_source_attempt` retains fenced supersession, failure, authorship,
+  terminal publication, and post-success orchestration rather than mixing
+  provider selection into those phases.
 - `x_identity.py`, `x_client.py`, `x_rendering.py`, `x_ingest.py`: official-API
   X/Twitter same-author thread capture. Identity comes from provider author ID
   plus conversation ID; quote posts are separate `post:<post_id>` media; provider
