@@ -116,6 +116,17 @@ class TranscriptionRunResult:
     segment_count: int | None = None
 
 
+@dataclass(frozen=True)
+class _TranscriptBudget:
+    required_minutes: int
+    usage_date: date
+    usage_start_date: date
+    usage_end_date: date
+    monthly_limit_minutes: int | None
+    remaining_minutes: int | None
+    fits: bool
+
+
 def _semantic_index_requires_repair(
     db: Session,
     *,
@@ -165,7 +176,6 @@ def request_media_transcript_for_viewer(
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
     now = datetime.now(UTC)
-    usage_date = now.date()
     media_row = db.execute(
         text(
             """
@@ -282,7 +292,6 @@ def request_media_transcript_for_viewer(
             "Transcript request is only supported for podcast episodes.",
         )
 
-    required_minutes = max(1, (duration_seconds + 59) // 60) if duration_seconds else 1
     already_ready = transcript_state in {"ready", "partial"} and transcript_coverage in {
         "partial",
         "full",
@@ -364,26 +373,12 @@ def request_media_transcript_for_viewer(
             request_enqueued=enqueued,
         )
 
-    entitlements = get_effective_entitlements(db, viewer_id)
-    if not entitlements.can_transcribe:
-        raise ApiError(ApiErrorCode.E_BILLING_REQUIRED, "Transcription requires an AI tier.")
-
-    monthly_limit_minutes = entitlements.transcription_minutes_limit_monthly
-    usage_start_date = entitlements.usage_period_start.date()
-    usage_end_date = entitlements.usage_period_end.date()
-    usage_snapshot = get_transcription_usage(
+    budget = _read_transcript_budget(
         db,
-        viewer_id,
-        usage_start_date,
-        usage_end_date,
+        user_id=viewer_id,
+        duration_seconds=duration_seconds,
+        now=now,
     )
-    consumed_minutes = int(usage_snapshot["used"]) + int(usage_snapshot["reserved"])
-    remaining_minutes = (
-        None
-        if monthly_limit_minutes is None
-        else max(0, int(monthly_limit_minutes) - consumed_minutes)
-    )
-    fits_budget = remaining_minutes is None or required_minutes <= remaining_minutes
 
     semantic_needs_repair = already_ready and semantic_status in {"pending", "failed"}
     if (
@@ -411,9 +406,9 @@ def request_media_transcript_for_viewer(
             request_reason=normalized_reason,
             dry_run=True,
             outcome="forecast",
-            required_minutes=required_minutes,
-            remaining_minutes=remaining_minutes,
-            fits_budget=fits_budget,
+            required_minutes=budget.required_minutes,
+            remaining_minutes=budget.remaining_minutes,
+            fits_budget=budget.fits,
             now=now,
         )
         if _auto_commit:
@@ -424,11 +419,24 @@ def request_media_transcript_for_viewer(
             transcript_state=transcript_state or "not_requested",
             transcript_coverage=transcript_coverage or "none",
             request_reason=cast(TranscriptResponseReason, normalized_reason),
-            required_minutes=required_minutes,
-            remaining_minutes=remaining_minutes,
-            fits_budget=fits_budget,
+            required_minutes=budget.required_minutes,
+            remaining_minutes=budget.remaining_minutes,
+            fits_budget=budget.fits,
             request_enqueued=False,
         )
+
+    if not budget.fits and not already_ready and not already_inflight:
+        quota_error = _transcript_quota_rejection(
+            db,
+            media_id=media_id,
+            requested_by_user_id=viewer_id,
+            request_reason=normalized_reason,
+            budget=budget,
+            now=now,
+        )
+        if _auto_commit:
+            db.commit()
+        raise quota_error
 
     if transcript_state is None:
         ensure_media_transcript_state_row(
@@ -469,8 +477,8 @@ def request_media_transcript_for_viewer(
             request_reason=normalized_reason,
             dry_run=False,
             outcome="queued" if semantic_repair_enqueued else "enqueue_failed",
-            required_minutes=required_minutes,
-            remaining_minutes=remaining_minutes,
+            required_minutes=budget.required_minutes,
+            remaining_minutes=budget.remaining_minutes,
             fits_budget=True,
             now=now,
         )
@@ -482,8 +490,8 @@ def request_media_transcript_for_viewer(
             transcript_state=transcript_state or "ready",
             transcript_coverage=transcript_coverage or "full",
             request_reason=cast(TranscriptResponseReason, normalized_reason),
-            required_minutes=required_minutes,
-            remaining_minutes=remaining_minutes,
+            required_minutes=budget.required_minutes,
+            remaining_minutes=budget.remaining_minutes,
             fits_budget=True,
             request_enqueued=semantic_repair_enqueued,
         )
@@ -497,8 +505,8 @@ def request_media_transcript_for_viewer(
             request_reason=normalized_reason,
             dry_run=False,
             outcome="idempotent",
-            required_minutes=required_minutes,
-            remaining_minutes=remaining_minutes,
+            required_minutes=budget.required_minutes,
+            remaining_minutes=budget.remaining_minutes,
             fits_budget=True,
             now=now,
         )
@@ -510,46 +518,17 @@ def request_media_transcript_for_viewer(
             transcript_state=transcript_state or ("ready" if already_ready else "queued"),
             transcript_coverage=transcript_coverage or ("full" if already_ready else "none"),
             request_reason=cast(TranscriptResponseReason, normalized_reason),
-            required_minutes=required_minutes,
-            remaining_minutes=remaining_minutes,
+            required_minutes=budget.required_minutes,
+            remaining_minutes=budget.remaining_minutes,
             fits_budget=True,
             request_enqueued=False,
         )
 
-    if not fits_budget:
-        _record_podcast_transcript_request_audit(
-            db,
-            media_id=media_id,
-            requested_by_user_id=viewer_id,
-            request_reason=normalized_reason,
-            dry_run=False,
-            outcome="rejected_quota",
-            required_minutes=required_minutes,
-            remaining_minutes=remaining_minutes,
-            fits_budget=False,
-            now=now,
-        )
-        if _auto_commit:
-            db.commit()
-        raise ApiError(
-            ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED,
-            "Monthly transcription quota exceeded",
-        )
-
-    usage_snapshot_after = _reserve_usage_minutes_or_raise(
+    remaining_minutes_after = _reserve_transcript_budget(
         db,
         user_id=viewer_id,
-        usage_date=usage_date,
-        usage_start_date=usage_start_date,
-        usage_end_date=usage_end_date,
-        required_minutes=required_minutes,
-        monthly_limit_minutes=monthly_limit_minutes,
+        budget=budget,
         now=now,
-    )
-    remaining_minutes_after = (
-        None
-        if monthly_limit_minutes is None
-        else max(0, int(monthly_limit_minutes) - int(usage_snapshot_after["total"]))
     )
 
     _reset_podcast_transcription_job_for_source_attempt(
@@ -557,8 +536,8 @@ def request_media_transcript_for_viewer(
         media_id=media_id,
         requested_by_user_id=viewer_id,
         request_reason=normalized_reason,
-        reserved_minutes=required_minutes,
-        reservation_usage_date=usage_date,
+        reserved_minutes=budget.required_minutes,
+        reservation_usage_date=budget.usage_date,
         now=now,
     )
 
@@ -595,8 +574,8 @@ def request_media_transcript_for_viewer(
             request_reason=normalized_reason,
             dry_run=False,
             outcome="enqueue_failed",
-            required_minutes=required_minutes,
-            remaining_minutes=remaining_minutes,
+            required_minutes=budget.required_minutes,
+            remaining_minutes=budget.remaining_minutes,
             fits_budget=True,
             now=now,
         )
@@ -608,8 +587,8 @@ def request_media_transcript_for_viewer(
             transcript_state="failed_provider",
             transcript_coverage="none",
             request_reason=cast(TranscriptResponseReason, normalized_reason),
-            required_minutes=required_minutes,
-            remaining_minutes=remaining_minutes,
+            required_minutes=budget.required_minutes,
+            remaining_minutes=budget.remaining_minutes,
             fits_budget=True,
             request_enqueued=False,
         )
@@ -621,7 +600,7 @@ def request_media_transcript_for_viewer(
         request_reason=normalized_reason,
         dry_run=False,
         outcome="queued",
-        required_minutes=required_minutes,
+        required_minutes=budget.required_minutes,
         remaining_minutes=remaining_minutes_after,
         fits_budget=True,
         now=now,
@@ -634,7 +613,7 @@ def request_media_transcript_for_viewer(
         transcript_state="queued",
         transcript_coverage="none",
         request_reason=cast(TranscriptResponseReason, normalized_reason),
-        required_minutes=required_minutes,
+        required_minutes=budget.required_minutes,
         remaining_minutes=remaining_minutes_after,
         fits_budget=True,
         request_enqueued=True,
@@ -736,7 +715,6 @@ def prepare_podcast_transcription_for_source_attempt(
     Caller owns authorization, media kind validation, media source status, and commit.
     """
     now = datetime.now(UTC)
-    usage_date = now.date()
     media_row = db.execute(
         text(
             """
@@ -762,67 +740,35 @@ def prepare_podcast_transcription_for_source_attempt(
         )
 
     duration_seconds = coerce_positive_int(media_row[1])
-    required_minutes = max(1, (duration_seconds + 59) // 60) if duration_seconds else 1
-    entitlements = get_effective_entitlements(db, requested_by_user_id)
-    if not entitlements.can_transcribe:
-        raise ApiError(ApiErrorCode.E_BILLING_REQUIRED, "Transcription requires an AI tier.")
-
-    monthly_limit_minutes = entitlements.transcription_minutes_limit_monthly
-    usage_start_date = entitlements.usage_period_start.date()
-    usage_end_date = entitlements.usage_period_end.date()
-    usage_snapshot = get_transcription_usage(
+    budget = _read_transcript_budget(
         db,
-        requested_by_user_id,
-        usage_start_date,
-        usage_end_date,
+        user_id=requested_by_user_id,
+        duration_seconds=duration_seconds,
+        now=now,
     )
-    consumed_minutes = int(usage_snapshot["used"]) + int(usage_snapshot["reserved"])
-    remaining_minutes = (
-        None
-        if monthly_limit_minutes is None
-        else max(0, int(monthly_limit_minutes) - consumed_minutes)
-    )
-    fits_budget = remaining_minutes is None or required_minutes <= remaining_minutes
-    if not fits_budget:
-        _record_podcast_transcript_request_audit(
+    if not budget.fits:
+        raise _transcript_quota_rejection(
             db,
             media_id=media_id,
             requested_by_user_id=requested_by_user_id,
             request_reason=request_reason,
-            dry_run=False,
-            outcome="rejected_quota",
-            required_minutes=required_minutes,
-            remaining_minutes=remaining_minutes,
-            fits_budget=False,
+            budget=budget,
             now=now,
         )
-        raise ApiError(
-            ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED,
-            "Monthly transcription quota exceeded",
-        )
 
-    usage_snapshot_after = _reserve_usage_minutes_or_raise(
+    remaining_minutes_after = _reserve_transcript_budget(
         db,
         user_id=requested_by_user_id,
-        usage_date=usage_date,
-        usage_start_date=usage_start_date,
-        usage_end_date=usage_end_date,
-        required_minutes=required_minutes,
-        monthly_limit_minutes=monthly_limit_minutes,
+        budget=budget,
         now=now,
-    )
-    remaining_minutes_after = (
-        None
-        if monthly_limit_minutes is None
-        else max(0, int(monthly_limit_minutes) - int(usage_snapshot_after["total"]))
     )
     _reset_podcast_transcription_job_for_source_attempt(
         db,
         media_id=media_id,
         requested_by_user_id=requested_by_user_id,
         request_reason=request_reason,
-        reserved_minutes=required_minutes,
-        reservation_usage_date=usage_date,
+        reserved_minutes=budget.required_minutes,
+        reservation_usage_date=budget.usage_date,
         now=now,
     )
     _reset_media_transcript_state_for_source_attempt(
@@ -838,7 +784,7 @@ def prepare_podcast_transcription_for_source_attempt(
         request_reason=request_reason,
         dry_run=False,
         outcome="queued",
-        required_minutes=required_minutes,
+        required_minutes=budget.required_minutes,
         remaining_minutes=remaining_minutes_after,
         fits_budget=True,
         now=now,
@@ -1345,6 +1291,44 @@ def _assert_one_mutated_row(result: Any, table_name: str) -> None:
         raise RuntimeError(f"{table_name} mutation affected an unexpected row count")
 
 
+def _read_transcript_budget(
+    db: Session,
+    *,
+    user_id: UUID,
+    duration_seconds: int | None,
+    now: datetime,
+) -> _TranscriptBudget:
+    entitlements = get_effective_entitlements(db, user_id)
+    if not entitlements.can_transcribe:
+        raise ApiError(ApiErrorCode.E_BILLING_REQUIRED, "Transcription requires an AI tier.")
+
+    required_minutes = max(1, (duration_seconds + 59) // 60) if duration_seconds else 1
+    usage_start_date = entitlements.usage_period_start.date()
+    usage_end_date = entitlements.usage_period_end.date()
+    usage_snapshot = get_transcription_usage(
+        db,
+        user_id,
+        usage_start_date,
+        usage_end_date,
+    )
+    consumed_minutes = int(usage_snapshot["used"]) + int(usage_snapshot["reserved"])
+    monthly_limit_minutes = entitlements.transcription_minutes_limit_monthly
+    remaining_minutes = (
+        None
+        if monthly_limit_minutes is None
+        else max(0, int(monthly_limit_minutes) - consumed_minutes)
+    )
+    return _TranscriptBudget(
+        required_minutes=required_minutes,
+        usage_date=now.date(),
+        usage_start_date=usage_start_date,
+        usage_end_date=usage_end_date,
+        monthly_limit_minutes=monthly_limit_minutes,
+        remaining_minutes=remaining_minutes,
+        fits=remaining_minutes is None or required_minutes <= remaining_minutes,
+    )
+
+
 def _record_podcast_transcript_request_audit(
     db: Session,
     *,
@@ -1397,6 +1381,57 @@ def _record_podcast_transcript_request_audit(
             "created_at": now,
         },
     )
+
+
+def _transcript_quota_rejection(
+    db: Session,
+    *,
+    media_id: UUID,
+    requested_by_user_id: UUID,
+    request_reason: str,
+    budget: _TranscriptBudget,
+    now: datetime,
+) -> ApiError:
+    assert not budget.fits  # justify-service-invariant-check: caller gates on budget.fits.
+    _record_podcast_transcript_request_audit(
+        db,
+        media_id=media_id,
+        requested_by_user_id=requested_by_user_id,
+        request_reason=request_reason,
+        dry_run=False,
+        outcome="rejected_quota",
+        required_minutes=budget.required_minutes,
+        remaining_minutes=budget.remaining_minutes,
+        fits_budget=False,
+        now=now,
+    )
+    return ApiError(
+        ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED,
+        "Monthly transcription quota exceeded",
+    )
+
+
+def _reserve_transcript_budget(
+    db: Session,
+    *,
+    user_id: UUID,
+    budget: _TranscriptBudget,
+    now: datetime,
+) -> int | None:
+    assert budget.fits  # justify-service-invariant-check: only admitted work reserves usage.
+    usage_snapshot = _reserve_usage_minutes_or_raise(
+        db,
+        user_id=user_id,
+        usage_date=budget.usage_date,
+        usage_start_date=budget.usage_start_date,
+        usage_end_date=budget.usage_end_date,
+        required_minutes=budget.required_minutes,
+        monthly_limit_minutes=budget.monthly_limit_minutes,
+        now=now,
+    )
+    if budget.monthly_limit_minutes is None:
+        return None
+    return max(0, budget.monthly_limit_minutes - int(usage_snapshot["total"]))
 
 
 def _reserve_usage_minutes_or_raise(
