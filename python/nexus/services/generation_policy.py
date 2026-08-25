@@ -16,24 +16,26 @@ PlanId = Literal["routine", "standard", "thorough", "deep"]
 Capability = Literal["Synthesis", "ChatTools"]
 ChatProfile = Literal["fast", "balanced", "deep"]
 
-POLICY_REVISION = "codex-generation.2026-08-24.1"
-TOOL_PLAN_REVISION = "chat-tools.v1"
+POLICY_REVISION = "codex-generation.2026-08-24.2"
+# Exact frozen `llm_tools` Chat plan revision. The MCP composition boundary
+# independently proves its generated plan retains this pin.
+TOOL_PLAN_REVISION = "122bae501ba24887bacd88ba79f6e8108b2c91ca97bb6495747d347ec5a5ac53"
 PLAN_EVAL_PIN = {
     "corpus_revision": "generation-plans.v1",
     "policy_revision": POLICY_REVISION,
-    "policy_facts_fingerprint": "386c6a70cd723f379601bf52154c4dc5c1bc934f95ac3e6c5dd34bc72fbe13d0",
+    "policy_facts_fingerprint": "fe23681e418015dcb31d5b0fdb4bed345643d0756a819e4e0e16c907006a7031",
     "provider_runtime_revision": "a5d9c8e0c1c851daee0731554e0a4a326d3c2819",
     "codex_sdk_version": "0.144.4",
 }
 _PINNED_PLAN_EVAL_PIN = {
     "corpus_revision": "generation-plans.v1",
-    "policy_revision": "codex-generation.2026-08-24.1",
-    "policy_facts_fingerprint": "386c6a70cd723f379601bf52154c4dc5c1bc934f95ac3e6c5dd34bc72fbe13d0",
+    "policy_revision": "codex-generation.2026-08-24.2",
+    "policy_facts_fingerprint": "fe23681e418015dcb31d5b0fdb4bed345643d0756a819e4e0e16c907006a7031",
     "provider_runtime_revision": "a5d9c8e0c1c851daee0731554e0a4a326d3c2819",
     "codex_sdk_version": "0.144.4",
 }
 _PINNED_POLICY_FACTS_FINGERPRINT = (
-    "386c6a70cd723f379601bf52154c4dc5c1bc934f95ac3e6c5dd34bc72fbe13d0"
+    "fe23681e418015dcb31d5b0fdb4bed345643d0756a819e4e0e16c907006a7031"
 )
 
 
@@ -176,7 +178,7 @@ _CHAT_PLAN: dict[ChatProfile, PlanId] = {
 _CHAT_POLICIES: dict[ChatProfile, OperationPolicy] = {
     profile: OperationPolicy(
         operation="chat",
-        revision=f"chat.{profile}.2026-08-24.1",
+        revision=f"chat.{profile}.2026-08-24.2",
         plan_id=plan_id,
         model=PLANS[plan_id].model,
         effort=PLANS[plan_id].effort,

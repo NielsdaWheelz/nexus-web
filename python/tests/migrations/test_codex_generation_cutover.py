@@ -704,7 +704,7 @@ def _ledger_values(**overrides: object) -> dict[str, object]:
         "generation_seq": 1,
         "operation": "media_summary",
         "plan_id": "routine",
-        "plan_revision": "codex-generation.2026-08-24.1",
+        "plan_revision": "codex-generation.2026-08-24.2",
         "backend": "codex",
         "transport": "sdk",
         "auth_profile": "codex-personal",
