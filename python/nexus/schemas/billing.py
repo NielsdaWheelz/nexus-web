@@ -59,7 +59,5 @@ class BillingAccountOut(BaseModel):
     entitlement_source: EntitlementSource
     entitlement_expires_at: datetime | None
     can_share: bool
-    can_use_platform_llm: bool
     can_transcribe: bool
-    ai_token_usage: BillingUsageBucketOut
     transcription_usage: BillingUsageBucketOut
