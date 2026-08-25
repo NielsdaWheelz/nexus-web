@@ -3,6 +3,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError as PydanticValidationError
 
 from nexus.jobs.queue import JobExecutionContext
 from nexus.jobs.registry import resolve_job_handler
@@ -80,3 +81,47 @@ def test_job_handlers_preserve_optional_text_absence(
         "status": "failed",
         "error_code": "E_INVALID_REQUEST",
     }
+
+
+@pytest.mark.parametrize(
+    ("handler_path", "kind", "payload", "missing_key"),
+    (
+        (
+            "nexus.jobs.registry:_run_sync_gutenberg_catalog",
+            "sync_gutenberg_catalog_job",
+            {},
+            "request_id",
+        ),
+        (
+            "nexus.jobs.registry:_run_sync_gutenberg_catalog",
+            "sync_gutenberg_catalog_job",
+            {"request_id": "periodic:sync"},
+            "scheduler_identity",
+        ),
+        (
+            "nexus.jobs.registry:_run_prune_background_jobs",
+            "prune_background_jobs_job",
+            {},
+            "request_id",
+        ),
+        (
+            "nexus.jobs.registry:_run_purge_expired_auth_handoff_codes",
+            "purge_expired_auth_handoff_codes",
+            {},
+            "request_id",
+        ),
+    ),
+)
+def test_scheduler_job_handlers_defect_on_missing_owned_text(
+    handler_path: str,
+    kind: str,
+    payload: dict[str, object],
+    missing_key: str,
+) -> None:
+    handler = resolve_job_handler(handler_path)
+
+    with pytest.raises((AssertionError, PydanticValidationError)) as raised:
+        handler(payload=payload, context=_light_context())
+
+    assert isinstance(raised.value, AssertionError)
+    assert str(raised.value) == f"{kind} payload requires canonical {missing_key}"
