@@ -21,7 +21,6 @@ from nexus.auth.permissions import (
     visible_media_ids_cte_sql,
     visible_podcast_ids_cte_sql,
 )
-from nexus.db.models import NoteBlock
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.retrieval import retrieval_locator_json
@@ -34,9 +33,6 @@ from nexus.schemas.search import (
 from nexus.schemas.search_types import VALID_RESULT_TYPES
 from nexus.services import media_intelligence
 from nexus.services.locator_resolver import locator_from_resolution, resolve_evidence_span
-from nexus.services.resource_graph.highlight_notes import (
-    highlight_excerpts_for_note_blocks,
-)
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.search.candidates import discovery_candidates
 from nexus.services.search.constants import (
@@ -61,8 +57,6 @@ from nexus.services.search.results import (
     _RankedFragmentResult,
     _RankedHighlightResult,
     _RankedMediaResult,
-    _RankedNoteBlockResult,
-    _RankedPageResult,
     _RankedPodcastResult,
     _RankedReaderApparatusItemResult,
     _RankedWebResult,
@@ -73,6 +67,10 @@ from nexus.services.search.retrievers.contributors import _search_contributors
 from nexus.services.search.retrievers.conversations import (
     ConversationSearchResultType,
     resolve_conversation_search_result,
+)
+from nexus.services.search.retrievers.notes import (
+    NotesSearchResultType,
+    resolve_notes_search_result,
 )
 from nexus.services.search.scope import authorize_scope
 from nexus.services.search.sql import contributor_credits_rollup_cte_sql
@@ -445,80 +443,16 @@ def get_search_result(
             ),
         )
 
-    if result_type == "page":
-        page_id = _uuid_from_search_id(result_id)
-        row = db.execute(
-            text(
-                """
-                SELECT id, title
-                FROM pages
-                WHERE id = :id
-                  AND user_id = :viewer_id
-                """
-            ),
-            {"viewer_id": viewer_id, "id": page_id},
-        ).first()
-        if row is None:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
+    if result_type in KIND_TO_RESULT_TYPES["notes"]:
         return _result_to_out(
             db,
             viewer_id,
-            _RankedPageResult(
-                id=row[0],
-                title=row[1],
-                snippet=_truncate_snippet(str(row[1])),
+            resolve_notes_search_result(
+                db,
+                viewer_id=viewer_id,
+                result_type=cast(NotesSearchResultType, result_type),
+                result_id=_uuid_from_search_id(result_id),
                 score=score,
-            ),
-        )
-
-    if result_type == "note_block":
-        block_id = _uuid_from_search_id(result_id)
-        block = db.get(NoteBlock, block_id)
-        if block is None or block.user_id != viewer_id:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
-        ready = db.execute(
-            text(
-                """
-                SELECT 1
-                FROM content_index_states
-                WHERE owner_kind = 'note_block'
-                  AND owner_id = :block_id
-                  AND status = 'ready'
-                """
-            ),
-            {"block_id": block_id},
-        ).first()
-        if ready is None:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
-        if not str(block.body_text or ""):
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
-        # Mirror the candidate-retrieval highlight-note classification so the
-        # durable-ref re-resolution path reports note_origin/highlight_excerpt
-        # correctly: a block proven by a visible highlight_note edge is a
-        # highlight note, not a plain note.
-        highlight_exact = highlight_excerpts_for_note_blocks(
-            db, viewer_id=viewer_id, note_ids=[block.id]
-        ).get(block.id)
-        return _result_to_out(
-            db,
-            viewer_id,
-            _RankedNoteBlockResult(
-                id=block.id,
-                snippet=_truncate_snippet(str(block.body_text or "")),
-                body_text=block.body_text,
-                score=score,
-                highlight_excerpt=_truncate_snippet(highlight_exact) if highlight_exact else None,
-                note_origin="highlight_note" if highlight_exact else "note",
-                locator=retrieval_locator_json(
-                    {
-                        "type": "note_block_offsets",
-                        "block_id": str(block.id),
-                        "start_offset": 0,
-                        "end_offset": len(str(block.body_text or "")),
-                    }
-                )
-                if block.body_text
-                else None,
             ),
         )
 
