@@ -2291,8 +2291,8 @@ def enqueue_podcast_episode_transcript_source_attempt(
     viewer_id: UUID,
     request_reason: str,
     request_id: str | None,
-) -> bool:
-    """Create and enqueue the source-owner attempt for podcast transcript acquisition."""
+) -> Literal["created", "idempotent"]:
+    """Bind podcast transcript source work inside the caller-owned transaction."""
     media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
     if media is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
@@ -2304,7 +2304,7 @@ def enqueue_podcast_episode_transcript_source_attempt(
 
     latest = _latest_source_attempt(db, media_id)
     if latest is not None and latest.status in _IN_FLIGHT_ATTEMPT_STATUSES:
-        return True
+        return "idempotent"
 
     attempt = create_attempt(
         db,
@@ -2327,14 +2327,14 @@ def enqueue_podcast_episode_transcript_source_attempt(
     mark_source_queued(db, media)
     _bump_media_fact_collections(db)
     db.flush()
-    return _enqueue_accepted_attempt(
+    enqueue_accepted_source_attempt_in_transaction(
         db,
         media_id=media_id,
         attempt_id=attempt.id,
         actor_user_id=viewer_id,
         request_id=request_id,
-        failure_stage="transcribe",
     )
+    return "created"
 
 
 def ensure_stale_source_attempt_job(

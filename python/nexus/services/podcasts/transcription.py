@@ -8,7 +8,7 @@ from typing import Any, Literal, cast
 from uuid import UUID
 
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.coerce import coerce_positive_int
@@ -126,6 +126,14 @@ class _TranscriptRequestMedia:
     provider_id: str | None
 
 
+@dataclass(frozen=True)
+class _TranscriptQuotaRejection:
+    error: ApiError
+
+
+_PodcastTranscriptRequestResult = TranscriptRequestResponse | _TranscriptQuotaRejection
+
+
 def _read_transcript_request_media(
     db: Session,
     *,
@@ -171,6 +179,7 @@ def _read_transcript_request_media(
                 m.provider_id
             FROM media m
             WHERE m.id = :media_id
+            FOR UPDATE OF m
             """
         ),
         {"media_id": media_id},
@@ -199,7 +208,6 @@ def request_media_transcript_for_viewer(
     reason: TranscriptResponseReason,
     dry_run: bool = False,
     request_id: str | None = None,
-    _auto_commit: bool = True,
 ) -> TranscriptRequestResponse:
     from nexus.auth.permissions import can_read_media
 
@@ -222,17 +230,20 @@ def request_media_transcript_for_viewer(
             now=now,
         )
     if media.kind == "podcast_episode":
-        return _request_podcast_episode_transcript(
-            db,
-            viewer_id=viewer_id,
-            media_id=media_id,
-            media=media,
-            request_reason=reason,
-            dry_run=dry_run,
-            request_id=request_id,
-            now=now,
-            auto_commit=_auto_commit,
-        )
+        with transaction(db):
+            result = _request_podcast_episode_transcript(
+                db,
+                viewer_id=viewer_id,
+                media_id=media_id,
+                media=media,
+                request_reason=reason,
+                dry_run=dry_run,
+                request_id=request_id,
+                now=now,
+            )
+        if isinstance(result, _TranscriptQuotaRejection):
+            raise result.error
+        return result
 
     raise InvalidRequestError(
         ApiErrorCode.E_INVALID_KIND,
@@ -250,8 +261,7 @@ def _request_podcast_episode_transcript(
     dry_run: bool,
     request_id: str | None,
     now: datetime,
-    auto_commit: bool,
-) -> TranscriptRequestResponse:
+) -> _PodcastTranscriptRequestResult:
     already_ready = media.transcript_state in {
         "ready",
         "partial",
@@ -271,8 +281,6 @@ def _request_podcast_episode_transcript(
             request_id=request_id,
             now=now,
         )
-        if auto_commit and not dry_run:
-            db.commit()
         return response
 
     if already_ready:
@@ -285,7 +293,6 @@ def _request_podcast_episode_transcript(
             dry_run=dry_run,
             request_id=request_id,
             now=now,
-            auto_commit=auto_commit,
         )
 
     budget = _read_transcript_budget(
@@ -309,8 +316,6 @@ def _request_podcast_episode_transcript(
             fits_budget=budget.fits,
             now=now,
         )
-        if auto_commit:
-            db.commit()
         return TranscriptRequestResponse(
             media_id=str(media_id),
             processing_status=cast(MediaProcessingStatus, effective_status),
@@ -324,17 +329,16 @@ def _request_podcast_episode_transcript(
         )
 
     if not budget.fits and not already_inflight:
-        quota_error = _transcript_quota_rejection(
-            db,
-            media_id=media_id,
-            requested_by_user_id=viewer_id,
-            request_reason=request_reason,
-            budget=budget,
-            now=now,
+        return _TranscriptQuotaRejection(
+            error=_transcript_quota_rejection(
+                db,
+                media_id=media_id,
+                requested_by_user_id=viewer_id,
+                request_reason=request_reason,
+                budget=budget,
+                now=now,
+            )
         )
-        if auto_commit:
-            db.commit()
-        raise quota_error
 
     if already_inflight:
         _record_podcast_transcript_request_audit(
@@ -349,8 +353,6 @@ def _request_podcast_episode_transcript(
             fits_budget=True,
             now=now,
         )
-        if auto_commit:
-            db.commit()
         return TranscriptRequestResponse(
             media_id=str(media_id),
             processing_status=cast(MediaProcessingStatus, effective_status),
@@ -399,46 +401,21 @@ def _request_podcast_episode_transcript(
         now=now,
     )
 
-    enqueued = _enqueue_podcast_transcript_source_attempt(
-        db,
+    from nexus.services.media_source_ingest import (
+        enqueue_podcast_episode_transcript_source_attempt,
+    )
+
+    source_admission = enqueue_podcast_episode_transcript_source_attempt(
+        db=db,
         media_id=media_id,
-        requested_by_user_id=viewer_id,
+        viewer_id=viewer_id,
         request_reason=request_reason,
         request_id=request_id,
     )
-    if not enqueued:
-        mark_podcast_transcription_failure(
-            db,
-            media_id=media_id,
-            error_code=ApiErrorCode.E_INTERNAL.value,
-            error_message="Failed to enqueue podcast transcription job",
-            now=now,
-        )
-        _record_podcast_transcript_request_audit(
-            db,
-            media_id=media_id,
-            requested_by_user_id=viewer_id,
-            request_reason=request_reason,
-            dry_run=False,
-            outcome="enqueue_failed",
-            required_minutes=budget.required_minutes,
-            remaining_minutes=budget.remaining_minutes,
-            fits_budget=True,
-            now=now,
-        )
-        if auto_commit:
-            db.commit()
-        return TranscriptRequestResponse(
-            media_id=str(media_id),
-            processing_status="failed",
-            transcript_state="failed_provider",
-            transcript_coverage="none",
-            request_reason=request_reason,
-            required_minutes=budget.required_minutes,
-            remaining_minutes=budget.remaining_minutes,
-            fits_budget=True,
-            request_enqueued=False,
-        )
+    if source_admission != "created":
+        # justify-defect: the Media lock and transcript state gate make a
+        # pre-existing in-flight source attempt unreachable on this branch.
+        raise AssertionError("podcast transcript source admission lost its state invariant")
 
     _record_podcast_transcript_request_audit(
         db,
@@ -452,8 +429,6 @@ def _request_podcast_episode_transcript(
         fits_budget=True,
         now=now,
     )
-    if auto_commit:
-        db.commit()
     return TranscriptRequestResponse(
         media_id=str(media_id),
         processing_status="extracting",
@@ -477,7 +452,6 @@ def _request_ready_podcast_transcript(
     dry_run: bool,
     request_id: str | None,
     now: datetime,
-    auto_commit: bool,
 ) -> TranscriptRequestResponse:
     if dry_run:
         outcome: Literal["forecast", "queued", "idempotent"] = "forecast"
@@ -508,8 +482,6 @@ def _request_ready_podcast_transcript(
         fits_budget=True,
         now=now,
     )
-    if auto_commit:
-        db.commit()
     return TranscriptRequestResponse(
         media_id=str(media_id),
         processing_status="ready_for_reading",
@@ -638,20 +610,28 @@ def _request_rss_podcast_transcript(
         last_error_code=None,
         now=now,
     )
-    enqueued = _enqueue_podcast_transcript_source_attempt(
-        db,
+    from nexus.services.media_source_ingest import (
+        enqueue_podcast_episode_transcript_source_attempt,
+    )
+
+    source_admission = enqueue_podcast_episode_transcript_source_attempt(
+        db=db,
         media_id=media_id,
-        requested_by_user_id=viewer_id,
+        viewer_id=viewer_id,
         request_reason=request_reason,
         request_id=request_id,
     )
+    if source_admission != "created":
+        # justify-defect: the Media lock and transcript state gate make a
+        # pre-existing in-flight source attempt unreachable on this branch.
+        raise AssertionError("podcast transcript source admission lost its state invariant")
     _record_podcast_transcript_request_audit(
         db,
         media_id=media_id,
         requested_by_user_id=viewer_id,
         request_reason=request_reason,
         dry_run=False,
-        outcome="queued" if enqueued else "enqueue_failed",
+        outcome="queued",
         required_minutes=0,
         remaining_minutes=None,
         fits_budget=True,
@@ -659,14 +639,47 @@ def _request_rss_podcast_transcript(
     )
     return TranscriptRequestResponse(
         media_id=str(media_id),
-        processing_status="extracting" if enqueued else "failed",
-        transcript_state="queued" if enqueued else "failed_provider",
+        processing_status="extracting",
+        transcript_state="queued",
         transcript_coverage="none",
         request_reason=cast(TranscriptResponseReason, request_reason),
         required_minutes=0,
         remaining_minutes=None,
         fits_budget=True,
-        request_enqueued=enqueued,
+        request_enqueued=True,
+    )
+
+
+def _request_podcast_transcript_for_viewer_in_current_transaction(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media_id: UUID,
+    reason: TranscriptResponseReason,
+    dry_run: bool,
+    request_id: str | None = None,
+) -> _PodcastTranscriptRequestResult:
+    from nexus.auth.permissions import can_read_media
+
+    if not can_read_media(db, viewer_id, media_id):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    media = _read_transcript_request_media(db, media_id=media_id)
+    if media is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    if media.kind != "podcast_episode":
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_KIND,
+            "Transcript batch admission only supports podcast episodes.",
+        )
+    return _request_podcast_episode_transcript(
+        db,
+        viewer_id=viewer_id,
+        media_id=media_id,
+        media=media,
+        request_reason=reason,
+        dry_run=dry_run,
+        request_id=request_id,
+        now=datetime.now(UTC),
     )
 
 
@@ -676,38 +689,41 @@ def forecast_podcast_episode_query_transcripts(
     viewer_id: UUID,
     target: PodcastEpisodeQueryTranscriptTarget,
 ) -> PodcastEpisodeQueryTranscriptForecastOut:
-    media_ids = resolve_transcript_eligible_episode_ids(
-        db,
-        viewer_id=viewer_id,
-        podcast_id=target.podcast_id,
-        selection=target.selection,
-    )
-    forecasts = [
-        request_media_transcript_for_viewer(
+    with transaction(db):
+        media_ids = resolve_transcript_eligible_episode_ids(
             db,
             viewer_id=viewer_id,
-            media_id=media_id,
-            reason=target.reason,
-            dry_run=True,
-            _auto_commit=False,
+            podcast_id=target.podcast_id,
+            selection=target.selection,
         )
-        for media_id in media_ids
-    ]
-    db.commit()
-    required_minutes = sum(item.required_minutes for item in forecasts)
-    remaining_values = [
-        item.remaining_minutes for item in forecasts if item.remaining_minutes is not None
-    ]
-    remaining_minutes = min(remaining_values) if remaining_values else None
-    return PodcastEpisodeQueryTranscriptForecastOut(
-        eligible_count=len(media_ids),
-        required_minutes=required_minutes,
-        remaining_minutes=(
-            present(remaining_minutes) if remaining_minutes is not None else absent()
-        ),
-        fits_budget=remaining_minutes is None or required_minutes <= remaining_minutes,
-        selection_fingerprint=episode_selection_fingerprint(media_ids),
-    )
+        forecasts: list[TranscriptRequestResponse] = []
+        for media_id in media_ids:
+            forecast = _request_podcast_transcript_for_viewer_in_current_transaction(
+                db,
+                viewer_id=viewer_id,
+                media_id=media_id,
+                reason=target.reason,
+                dry_run=True,
+            )
+            if isinstance(forecast, _TranscriptQuotaRejection):
+                # justify-defect: dry-run admission never rejects quota.
+                raise AssertionError("podcast transcript forecast returned a quota rejection")
+            forecasts.append(forecast)
+        required_minutes = sum(item.required_minutes for item in forecasts)
+        remaining_values = [
+            item.remaining_minutes for item in forecasts if item.remaining_minutes is not None
+        ]
+        remaining_minutes = min(remaining_values) if remaining_values else None
+        result = PodcastEpisodeQueryTranscriptForecastOut(
+            eligible_count=len(media_ids),
+            required_minutes=required_minutes,
+            remaining_minutes=(
+                present(remaining_minutes) if remaining_minutes is not None else absent()
+            ),
+            fits_budget=remaining_minutes is None or required_minutes <= remaining_minutes,
+            selection_fingerprint=episode_selection_fingerprint(media_ids),
+        )
+    return result
 
 
 def request_podcast_episode_query_transcripts(
@@ -732,14 +748,15 @@ def request_podcast_episode_query_transcripts(
             )
         queued_count = 0
         for media_id in media_ids:
-            admission = request_media_transcript_for_viewer(
+            admission = _request_podcast_transcript_for_viewer_in_current_transaction(
                 db,
                 viewer_id=viewer_id,
                 media_id=media_id,
                 reason=target.reason,
                 dry_run=False,
-                _auto_commit=False,
             )
+            if isinstance(admission, _TranscriptQuotaRejection):
+                raise admission.error
             queued_count += int(admission.request_enqueued)
         revision = read_collection_revision(
             db,
@@ -839,37 +856,6 @@ def prepare_podcast_transcription_for_source_attempt(
         fits_budget=True,
         now=now,
     )
-
-
-def _enqueue_podcast_transcript_source_attempt(
-    db: Session,
-    *,
-    media_id: UUID,
-    requested_by_user_id: UUID,
-    request_reason: str,
-    request_id: str | None = None,
-) -> bool:
-    from nexus.services.media_source_ingest import (
-        enqueue_podcast_episode_transcript_source_attempt,
-    )
-
-    try:
-        return enqueue_podcast_episode_transcript_source_attempt(
-            db=db,
-            media_id=media_id,
-            viewer_id=requested_by_user_id,
-            request_reason=request_reason,
-            request_id=request_id,
-        )
-    except SQLAlchemyError as exc:
-        logger.warning(
-            "podcast_transcript_source_attempt_enqueue_failed",
-            media_id=str(media_id),
-            requested_by_user_id=str(requested_by_user_id),
-            request_reason=request_reason,
-            error=str(exc),
-        )
-        return False
 
 
 def mark_podcast_transcription_failure(
