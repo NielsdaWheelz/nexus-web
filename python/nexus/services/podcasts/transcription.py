@@ -127,6 +127,20 @@ class _TranscriptBudget:
     fits: bool
 
 
+@dataclass(frozen=True)
+class _TranscriptRequestMedia:
+    kind: str
+    processing_status: str
+    duration_seconds: int | None
+    job_status: str | None
+    transcript_state: str | None
+    transcript_coverage: str | None
+    semantic_status: str
+    rss_transcript_url: str | None
+    provider: str | None
+    provider_id: str | None
+
+
 def _semantic_index_requires_repair(
     db: Session,
     *,
@@ -153,36 +167,17 @@ def _semantic_index_requires_repair(
     return row[0] != "ready" or row[1] != embedding_provider or row[2] != embedding_model
 
 
-def request_media_transcript_for_viewer(
+def _read_transcript_request_media(
     db: Session,
-    viewer_id: UUID,
-    media_id: UUID,
     *,
-    reason: str,
-    dry_run: bool = False,
-    request_id: str | None = None,
-    _auto_commit: bool = True,
-) -> TranscriptRequestResponse:
-    from nexus.auth.permissions import can_read_media
-
-    normalized_reason = str(reason or "").strip()
-    if normalized_reason not in PODCAST_TRANSCRIPT_REQUEST_REASONS:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Invalid transcript request reason",
-        )
-
-    if not can_read_media(db, viewer_id, media_id):
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-
-    now = datetime.now(UTC)
-    media_row = db.execute(
+    media_id: UUID,
+) -> _TranscriptRequestMedia | None:
+    row = db.execute(
         text(
             """
             SELECT
                 m.kind,
                 m.processing_status,
-                m.last_error_code,
                 (
                     SELECT pe.duration_seconds
                     FROM podcast_episodes pe
@@ -221,19 +216,59 @@ def request_media_transcript_for_viewer(
         ),
         {"media_id": media_id},
     ).fetchone()
-    if media_row is None:
+    if row is None:
+        return None
+    return _TranscriptRequestMedia(
+        kind=str(row[0] or ""),
+        processing_status=str(row[1] or ""),
+        duration_seconds=coerce_positive_int(row[2]),
+        job_status=str(row[3] or "").strip() or None,
+        transcript_state=str(row[4] or "").strip() or None,
+        transcript_coverage=str(row[5] or "").strip() or None,
+        semantic_status=str(row[6] or "").strip() or "none",
+        rss_transcript_url=str(row[7] or "").strip() or None,
+        provider=str(row[8] or "").strip() or None,
+        provider_id=str(row[9] or "").strip() or None,
+    )
+
+
+def request_media_transcript_for_viewer(
+    db: Session,
+    viewer_id: UUID,
+    media_id: UUID,
+    *,
+    reason: str,
+    dry_run: bool = False,
+    request_id: str | None = None,
+    _auto_commit: bool = True,
+) -> TranscriptRequestResponse:
+    from nexus.auth.permissions import can_read_media
+
+    normalized_reason = str(reason or "").strip()
+    if normalized_reason not in PODCAST_TRANSCRIPT_REQUEST_REASONS:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Invalid transcript request reason",
+        )
+
+    if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
-    media_kind = str(media_row[0] or "")
-    processing_status = str(media_row[1] or "")
-    duration_seconds = coerce_positive_int(media_row[3])
-    job_status = str(media_row[4] or "").strip() or None
-    transcript_state = str(media_row[5] or "").strip() or None
-    transcript_coverage = str(media_row[6] or "").strip() or None
-    semantic_status = str(media_row[7] or "").strip() or "none"
-    rss_transcript_url = str(media_row[8] or "").strip() or None
-    provider = str(media_row[9] or "").strip() or None
-    provider_id = str(media_row[10] or "").strip() or None
+    now = datetime.now(UTC)
+    media = _read_transcript_request_media(db, media_id=media_id)
+    if media is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+
+    media_kind = media.kind
+    processing_status = media.processing_status
+    duration_seconds = media.duration_seconds
+    job_status = media.job_status
+    transcript_state = media.transcript_state
+    transcript_coverage = media.transcript_coverage
+    semantic_status = media.semantic_status
+    rss_transcript_url = media.rss_transcript_url
+    provider = media.provider
+    provider_id = media.provider_id
 
     if media_kind == "video":
         if provider != "youtube" or provider_id is None:
@@ -301,77 +336,19 @@ def request_media_transcript_for_viewer(
         "running",
     }
     if rss_transcript_url is not None and not already_ready and not already_inflight:
-        if dry_run:
-            return TranscriptRequestResponse(
-                media_id=str(media_id),
-                processing_status=cast(MediaProcessingStatus, processing_status),
-                transcript_state=transcript_state or "not_requested",
-                transcript_coverage=transcript_coverage or "none",
-                request_reason=cast(TranscriptResponseReason, normalized_reason),
-                required_minutes=0,
-                remaining_minutes=None,
-                fits_budget=True,
-                request_enqueued=False,
-            )
-        ensure_media_transcript_state_row(
+        response = _request_rss_podcast_transcript(
             db,
+            viewer_id=viewer_id,
             media_id=media_id,
-            now=now,
+            media=media,
             request_reason=normalized_reason,
-        )
-        _release_reserved_usage_for_media(db, media_id=media_id, now=now)
-        _reset_podcast_transcription_job_for_source_attempt(
-            db,
-            media_id=media_id,
-            requested_by_user_id=viewer_id,
-            request_reason=normalized_reason,
-            reserved_minutes=0,
-            reservation_usage_date=None,
-            now=now,
-        )
-        set_media_transcript_state(
-            db,
-            media_id=media_id,
-            transcript_state="queued",
-            transcript_coverage="none",
-            semantic_status="none",
-            last_request_reason=normalized_reason,
-            last_error_code=None,
-            now=now,
-        )
-        enqueued = _enqueue_podcast_transcript_source_attempt(
-            db,
-            media_id=media_id,
-            requested_by_user_id=viewer_id,
-            request_reason=normalized_reason,
+            dry_run=dry_run,
             request_id=request_id,
-        )
-        _record_podcast_transcript_request_audit(
-            db,
-            media_id=media_id,
-            requested_by_user_id=viewer_id,
-            request_reason=normalized_reason,
-            dry_run=False,
-            outcome="queued" if enqueued else "enqueue_failed",
-            required_minutes=0,
-            remaining_minutes=None,
-            fits_budget=True,
             now=now,
         )
-        _bump_episode_row_collections(db, viewer_id=viewer_id)
-        if _auto_commit:
+        if _auto_commit and not dry_run:
             db.commit()
-        return TranscriptRequestResponse(
-            media_id=str(media_id),
-            processing_status="extracting" if enqueued else "failed",
-            transcript_state="queued" if enqueued else "failed_provider",
-            transcript_coverage="none",
-            request_reason=cast(TranscriptResponseReason, normalized_reason),
-            required_minutes=0,
-            remaining_minutes=None,
-            fits_budget=True,
-            request_enqueued=enqueued,
-        )
+        return response
 
     budget = _read_transcript_budget(
         db,
@@ -556,7 +533,6 @@ def request_media_transcript_for_viewer(
         request_reason=normalized_reason,
         request_id=request_id,
     )
-    _bump_episode_row_collections(db, viewer_id=viewer_id)
     if not enqueued:
         mark_podcast_transcription_failure(
             db,
@@ -615,6 +591,88 @@ def request_media_transcript_for_viewer(
         remaining_minutes=remaining_minutes_after,
         fits_budget=True,
         request_enqueued=True,
+    )
+
+
+def _request_rss_podcast_transcript(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media_id: UUID,
+    media: _TranscriptRequestMedia,
+    request_reason: str,
+    dry_run: bool,
+    request_id: str | None,
+    now: datetime,
+) -> TranscriptRequestResponse:
+    if dry_run:
+        return TranscriptRequestResponse(
+            media_id=str(media_id),
+            processing_status=cast(MediaProcessingStatus, media.processing_status),
+            transcript_state=media.transcript_state or "not_requested",
+            transcript_coverage=media.transcript_coverage or "none",
+            request_reason=cast(TranscriptResponseReason, request_reason),
+            required_minutes=0,
+            remaining_minutes=None,
+            fits_budget=True,
+            request_enqueued=False,
+        )
+
+    ensure_media_transcript_state_row(
+        db,
+        media_id=media_id,
+        now=now,
+        request_reason=request_reason,
+    )
+    _release_reserved_usage_for_media(db, media_id=media_id, now=now)
+    _reset_podcast_transcription_job_for_source_attempt(
+        db,
+        media_id=media_id,
+        requested_by_user_id=viewer_id,
+        request_reason=request_reason,
+        reserved_minutes=0,
+        reservation_usage_date=None,
+        now=now,
+    )
+    set_media_transcript_state(
+        db,
+        media_id=media_id,
+        transcript_state="queued",
+        transcript_coverage="none",
+        semantic_status="none",
+        last_request_reason=request_reason,
+        last_error_code=None,
+        now=now,
+    )
+    enqueued = _enqueue_podcast_transcript_source_attempt(
+        db,
+        media_id=media_id,
+        requested_by_user_id=viewer_id,
+        request_reason=request_reason,
+        request_id=request_id,
+    )
+    _record_podcast_transcript_request_audit(
+        db,
+        media_id=media_id,
+        requested_by_user_id=viewer_id,
+        request_reason=request_reason,
+        dry_run=False,
+        outcome="queued" if enqueued else "enqueue_failed",
+        required_minutes=0,
+        remaining_minutes=None,
+        fits_budget=True,
+        now=now,
+    )
+    return TranscriptRequestResponse(
+        media_id=str(media_id),
+        processing_status="extracting" if enqueued else "failed",
+        transcript_state="queued" if enqueued else "failed_provider",
+        transcript_coverage="none",
+        request_reason=cast(TranscriptResponseReason, request_reason),
+        required_minutes=0,
+        remaining_minutes=None,
+        fits_budget=True,
+        request_enqueued=enqueued,
     )
 
 
