@@ -127,11 +127,20 @@ class _TranscriptRequestMedia:
 
 
 @dataclass(frozen=True)
-class _TranscriptQuotaRejection:
+class PodcastTranscriptionAdmitted:
+    kind: Literal["Admitted"] = "Admitted"
+
+
+@dataclass(frozen=True)
+class PodcastTranscriptionRejectedQuota:
     error: ApiError
+    kind: Literal["RejectedQuota"] = "RejectedQuota"
 
 
-_PodcastTranscriptRequestResult = TranscriptRequestResponse | _TranscriptQuotaRejection
+type PodcastTranscriptionPreparation = (
+    PodcastTranscriptionAdmitted | PodcastTranscriptionRejectedQuota
+)
+_PodcastTranscriptRequestResult = TranscriptRequestResponse | PodcastTranscriptionRejectedQuota
 
 
 def _read_transcript_request_media(
@@ -241,7 +250,7 @@ def request_media_transcript_for_viewer(
                 request_id=request_id,
                 now=now,
             )
-        if isinstance(result, _TranscriptQuotaRejection):
+        if isinstance(result, PodcastTranscriptionRejectedQuota):
             raise result.error
         return result
 
@@ -329,7 +338,7 @@ def _request_podcast_episode_transcript(
         )
 
     if not budget.fits and not already_inflight:
-        return _TranscriptQuotaRejection(
+        return PodcastTranscriptionRejectedQuota(
             error=_transcript_quota_rejection(
                 db,
                 media_id=media_id,
@@ -705,7 +714,7 @@ def forecast_podcast_episode_query_transcripts(
                 reason=target.reason,
                 dry_run=True,
             )
-            if isinstance(forecast, _TranscriptQuotaRejection):
+            if isinstance(forecast, PodcastTranscriptionRejectedQuota):
                 # justify-defect: dry-run admission never rejects quota.
                 raise AssertionError("podcast transcript forecast returned a quota rejection")
             forecasts.append(forecast)
@@ -755,7 +764,7 @@ def request_podcast_episode_query_transcripts(
                 reason=target.reason,
                 dry_run=False,
             )
-            if isinstance(admission, _TranscriptQuotaRejection):
+            if isinstance(admission, PodcastTranscriptionRejectedQuota):
                 raise admission.error
             queued_count += int(admission.request_enqueued)
         revision = read_collection_revision(
@@ -776,7 +785,7 @@ def prepare_podcast_transcription_for_source_attempt(
     media_id: UUID,
     requested_by_user_id: UUID,
     request_reason: str,
-) -> None:
+) -> PodcastTranscriptionPreparation:
     """Reset podcast transcript-domain rows for a durable source attempt.
 
     Caller owns authorization, media kind validation, media source status, and commit.
@@ -814,13 +823,15 @@ def prepare_podcast_transcription_for_source_attempt(
         now=now,
     )
     if not budget.fits:
-        raise _transcript_quota_rejection(
-            db,
-            media_id=media_id,
-            requested_by_user_id=requested_by_user_id,
-            request_reason=request_reason,
-            budget=budget,
-            now=now,
+        return PodcastTranscriptionRejectedQuota(
+            error=_transcript_quota_rejection(
+                db,
+                media_id=media_id,
+                requested_by_user_id=requested_by_user_id,
+                request_reason=request_reason,
+                budget=budget,
+                now=now,
+            )
         )
 
     remaining_minutes_after = _reserve_transcript_budget(
@@ -856,6 +867,7 @@ def prepare_podcast_transcription_for_source_attempt(
         fits_budget=True,
         now=now,
     )
+    return PodcastTranscriptionAdmitted()
 
 
 def mark_podcast_transcription_failure(
@@ -1029,21 +1041,25 @@ def run_podcast_transcription_now(
                 "Generated transcript fallback requires an AI tier.",
             )
 
-        def admit_generated_fallback(db: Session, _attempt: object) -> None:
-            prepare_podcast_transcription_for_source_attempt(
+        def admit_generated_fallback(
+            db: Session, _attempt: object
+        ) -> PodcastTranscriptionPreparation:
+            return prepare_podcast_transcription_for_source_attempt(
                 db,
                 media_id=media_id,
                 requested_by_user_id=effective_requester,
                 request_reason=str(sidecar[5] or "episode_open"),
             )
 
-        run_source_publication_phase(
+        admission = run_source_publication_phase(
             session_factory=session_factory,
             label="admit_podcast_generated_fallback",
             fence=publication_fence,
             media_ids=(media_id,),
             mutate=admit_generated_fallback,
         )
+        if isinstance(admission, PodcastTranscriptionRejectedQuota):
+            raise admission.error
 
     def publish_running_state(db: Session, _attempt: object) -> tuple[str, str | None]:
         media_row = db.execute(
