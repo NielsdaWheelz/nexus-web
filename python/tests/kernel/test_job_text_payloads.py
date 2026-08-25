@@ -125,3 +125,20 @@ def test_scheduler_job_handlers_defect_on_missing_owned_text(
 
     assert isinstance(raised.value, AssertionError)
     assert str(raised.value) == f"{kind} payload requires canonical {missing_key}"
+
+
+def test_note_reindex_handler_defects_on_unowned_payload_fields() -> None:
+    handler = resolve_job_handler("nexus.jobs.registry:_run_note_reindex")
+
+    with pytest.raises(
+        AssertionError,
+        match="note_reindex_job payload keys must be exactly note_block_id and reason",
+    ):
+        handler(
+            payload={
+                "note_block_id": "invalid",
+                "reason": "note_edit",
+                "request_id": "unowned-request",
+            },
+            context=_light_context(),
+        )
