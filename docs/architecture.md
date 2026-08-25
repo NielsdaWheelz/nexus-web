@@ -1516,6 +1516,12 @@ and a deterministic Year in Reading view. Exact session Exclude/Restore is the
 only correction lifecycle. Accepted writes publish the
 process-local Consumption revision; focus, activation, visibility, pageshow,
 and online transitions revalidate cross-process state without polling. The
+committed Stats response owns its session-continuation state: the pane delegates
+manual cursor lifecycle to `lib/api/useCursorPagination.ts`, builds continuation
+requests from the committed decoded view, aborts stale generations on a new
+first page, preserves rows across retryable continuation failure, and never
+uses an empty-string cursor as a second absence encoding; wire absence stays
+`Presence<string>` until the pagination adapter unwraps it. The
 full contract is [`modules/consumption-activity.md`](modules/consumption-activity.md).
 
 ### 8.10 Search, Browse, desktop Nexus, and mobile Nexus
