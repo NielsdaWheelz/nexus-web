@@ -9,7 +9,7 @@ contract (gates, pagination, ``SearchResultOut`` projection) and
 from __future__ import annotations
 
 import time
-from typing import Literal
+from typing import Literal, cast
 from uuid import UUID
 
 from sqlalchemy import text
@@ -45,6 +45,7 @@ from nexus.services.search.constants import (
 )
 from nexus.services.search.cursor import decode_search_cursor, encode_search_cursor
 from nexus.services.search.embedding import _query_has_full_text_terms
+from nexus.services.search.kinds import KIND_TO_RESULT_TYPES
 from nexus.services.search.projection import (
     _direct_fragment_locator,
     _require_resolved_evidence,
@@ -56,12 +57,10 @@ from nexus.services.search.results import (
     _build_search_source,
     _parse_contributor_credits,
     _RankedContentChunkResult,
-    _RankedConversationResult,
     _RankedEvidenceSpanResult,
     _RankedFragmentResult,
     _RankedHighlightResult,
     _RankedMediaResult,
-    _RankedMessageResult,
     _RankedNoteBlockResult,
     _RankedPageResult,
     _RankedPodcastResult,
@@ -71,7 +70,10 @@ from nexus.services.search.results import (
     _web_result_ref_json,
 )
 from nexus.services.search.retrievers.contributors import _search_contributors
-from nexus.services.search.retrievers.conversations import resolve_conversation_artifact_result
+from nexus.services.search.retrievers.conversations import (
+    ConversationSearchResultType,
+    resolve_conversation_search_result,
+)
 from nexus.services.search.scope import authorize_scope
 from nexus.services.search.sql import contributor_credits_rollup_cte_sql
 from nexus.services.search.telemetry import _log_search
@@ -653,84 +655,15 @@ def get_search_result(
             ),
         )
 
-    if result_type == "message":
-        message_id = _uuid_from_search_id(result_id)
-        row = db.execute(
-            text(
-                f"""
-                WITH visible_conversations AS ({visible_conversation_ids_cte_sql()})
-                SELECT m.id, m.conversation_id, m.seq, m.content
-                FROM messages m
-                JOIN visible_conversations vc ON vc.conversation_id = m.conversation_id
-                WHERE m.id = :id
-                  AND m.status != 'pending'
-                """
-            ),
-            {"viewer_id": viewer_id, "id": message_id},
-        ).first()
-        if row is None:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
-        if not str(row[3] or ""):
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
+    if result_type in KIND_TO_RESULT_TYPES["conversations"]:
         return _result_to_out(
             db,
             viewer_id,
-            _RankedMessageResult(
-                id=row[0],
-                snippet=_truncate_snippet(str(row[3] or "")),
-                conversation_id=row[1],
-                seq=row[2],
-                score=score,
-                locator=retrieval_locator_json(
-                    {
-                        "type": "message_offsets",
-                        "conversation_id": str(row[1]),
-                        "message_id": str(row[0]),
-                        "message_seq": int(row[2]),
-                        "start_offset": 0,
-                        "end_offset": len(str(row[3] or "")),
-                    }
-                )
-                if row[3]
-                else None,
-            ),
-        )
-
-    if result_type == "conversation":
-        conversation_id = _uuid_from_search_id(result_id)
-        row = db.execute(
-            text(
-                f"""
-                WITH visible_conversations AS ({visible_conversation_ids_cte_sql()})
-                SELECT c.id, c.title
-                FROM conversations c
-                JOIN visible_conversations vc ON vc.conversation_id = c.id
-                WHERE c.id = :id
-                """
-            ),
-            {"viewer_id": viewer_id, "id": conversation_id},
-        ).first()
-        if row is None:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
-        return _result_to_out(
-            db,
-            viewer_id,
-            _RankedConversationResult(
-                id=row[0],
-                title=str(row[1] or "Conversation"),
-                snippet=str(row[1] or "Conversation"),
-                score=score,
-            ),
-        )
-
-    if result_type == "artifact":
-        return _result_to_out(
-            db,
-            viewer_id,
-            resolve_conversation_artifact_result(
+            resolve_conversation_search_result(
                 db,
                 viewer_id=viewer_id,
-                conversation_id=_uuid_from_search_id(result_id),
+                result_type=cast(ConversationSearchResultType, result_type),
+                result_id=_uuid_from_search_id(result_id),
                 score=score,
             ),
         )
