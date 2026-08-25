@@ -438,18 +438,6 @@ def request_media_transcript_for_viewer(
             db.commit()
         raise quota_error
 
-    if transcript_state is None:
-        ensure_media_transcript_state_row(
-            db,
-            media_id=media_id,
-            now=now,
-            request_reason=normalized_reason,
-        )
-        transcript_state = "not_requested"
-        transcript_coverage = "none"
-
-    _bump_episode_row_collections(db, viewer_id=viewer_id)
-
     if semantic_needs_repair:
         semantic_repair_enqueued = _enqueue_podcast_semantic_repair_job(
             db,
@@ -469,6 +457,7 @@ def request_media_transcript_for_viewer(
                 last_error_code=None,
                 now=now,
             )
+            _bump_episode_row_collections(db, viewer_id=viewer_id)
 
         _record_podcast_transcript_request_audit(
             db,
@@ -524,6 +513,14 @@ def request_media_transcript_for_viewer(
             request_enqueued=False,
         )
 
+    if transcript_state is None:
+        ensure_media_transcript_state_row(
+            db,
+            media_id=media_id,
+            now=now,
+            request_reason=normalized_reason,
+        )
+
     remaining_minutes_after = _reserve_transcript_budget(
         db,
         user_id=viewer_id,
@@ -559,6 +556,7 @@ def request_media_transcript_for_viewer(
         request_reason=normalized_reason,
         request_id=request_id,
     )
+    _bump_episode_row_collections(db, viewer_id=viewer_id)
     if not enqueued:
         mark_podcast_transcription_failure(
             db,
