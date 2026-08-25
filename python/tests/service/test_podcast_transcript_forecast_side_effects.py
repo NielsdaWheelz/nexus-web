@@ -518,9 +518,7 @@ def test_semantic_repair_is_zero_cost_collection_pure_and_idempotent(
     assert len(jobs) == 1
     assert jobs[0].payload == {
         "media_id": str(media_id),
-        "requested_by_user_id": str(test_user.id),
         "request_reason": "search",
-        "request_id": None,
     }
     audits = db_session.scalars(
         select(PodcastTranscriptRequestAudit).where(
