@@ -1539,6 +1539,11 @@ artifacts plus their domain ledger. The common source terminal is the sole owner
 of ready-state, semantic admission, and the success media-fact revision; a
 worker beginning an already-admitted `extracting` Episode does not publish an
 unchanged revision.
+Podcast source failure likewise has one terminal publication: the source owner
+settles the attempt, while the Podcast failure owner atomically settles Media,
+the transcription job, reserved usage, transcript state, and one shared
+media-fact revision. `collection_revisions.bump_all_media_fact_collections`
+owns the exact `AuthorWorks | LibraryEntries | PodcastEpisodes` family set.
 `services/transcripts/state.py` is the sole persistence owner for
 `media_transcript_states`; `current.py` owns artifact publication, while
 `semantic.py` owns every semantic-job payload plus lock-and-job-inventory repair

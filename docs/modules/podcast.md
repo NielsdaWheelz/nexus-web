@@ -247,6 +247,11 @@ semantic work. The common source terminal publishes both effects once after the
 artifact fence succeeds. Starting an already-admitted Episode attempt still
 counts its processing attempt, but does not publish a second unchanged
 `extracting` collection revision.
+Terminal Podcast failure settles the source attempt once, then publishes Media,
+transcription-job, quota-release, and transcript-state failure through the one
+Podcast failure owner. That same transaction advances the canonical shared
+media-fact collection family set once; it does not layer a second Episode-row
+revision over generic source failure.
 
 `podcasts.deepgram_adapter` is a documented non-LLM provider port, not part of the shared
 generation runtime. It owns Deepgram diarization fallback, fixture normalization, and podcast
