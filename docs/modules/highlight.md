@@ -114,6 +114,10 @@ owner and require the corresponding quote/match-state payload.
 
 Attached notes are note blocks linked to highlights through `resource_edges`
 with `origin='highlight_note'`. There is no separate highlight-note table.
+`PUT /highlights/{highlight_id}/note` accepts exactly `note_block_id`,
+`client_mutation_id`, and `body_pm_json`; it has no camel-case or generic `id`
+aliases. The frontend converts its camel-case internal values only at this
+outgoing transport boundary.
 Ordinary highlight deletion is explicit and child-first: graph/view-state
 attachments (including any `link_note` motif and Link/stance edges naming the
 highlight), then PDF quads, then the PDF/fragment anchor, then the highlight

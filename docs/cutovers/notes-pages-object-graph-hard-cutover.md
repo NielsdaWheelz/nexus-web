@@ -19,7 +19,9 @@ Current hard-cutover state:
   resolver path for block panes and object-ref resolution. Page/block edits
   persist through the versioned page-document command path; highlight notes
   write through `/api/highlights/{highlightId}/note`; quick-note empty-delete
-  writes through the page document command helper.
+  writes through the page document command helper. The Highlight-note request
+  wire is exact snake_case (`note_block_id`, `client_mutation_id`,
+  `body_pm_json`); camel-case and generic `id` aliases are deleted.
 - User graph tags were removed by
   `docs/cutovers/user-graph-tags-hard-cutover.md`. `#tag` is plain note text;
   the editor has no `#` autocomplete and note body sync creates no tag edges.

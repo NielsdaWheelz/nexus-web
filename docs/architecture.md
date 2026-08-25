@@ -1136,7 +1136,10 @@ selection becomes a stored highlight with a precomputed
 the canonical quote shown to chat. PDF highlights may have empty `exact` (no
 text-layer match) — a first-class geometry-only state Evidence renders with an
 explicit placeholder. The current highlight
-contract lives in [`modules/highlight.md`](modules/highlight.md).
+contract lives in [`modules/highlight.md`](modules/highlight.md). Highlight-note
+persistence has one strict request wire: `note_block_id`,
+`client_mutation_id`, and `body_pm_json`. Camel-case spellings and the generic
+`id` alias are not accepted or emitted.
 
 **Source-authored apparatus** (`services/reader_apparatus.py`): web article,
 EPUB, and PDF ingest paths persist document-authored notes, endnotes,
