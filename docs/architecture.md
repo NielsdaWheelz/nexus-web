@@ -1509,7 +1509,9 @@ the same transcript-job reset owner; no caller carries a second job upsert.
 Forecast, explicit admission, and durable source requeue derive and reserve
 quota through one typed transcript-budget owner. A quota rejection writes only
 its immutable audit fact; it does not materialize transcript work state or bump
-collection revisions.
+collection revisions. Repeated ready or inflight admission is likewise an
+audit-only idempotent fact; Podcast collection revisions advance only when the
+request changes viewer-visible transcript work state.
 
 The canonical Podcast detail pane observes those two independent owners through
 one viewer-owned subscription-lifecycle snapshot stream. Transactional triggers
