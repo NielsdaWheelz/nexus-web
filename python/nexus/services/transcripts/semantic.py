@@ -31,9 +31,7 @@ def enqueue_transcript_semantic_job(
     db: Session,
     *,
     media_id: UUID,
-    requested_by_user_id: UUID | None,
     request_reason: TranscriptRequestReason,
-    request_id: str | None,
 ) -> None:
     """Enqueue one semantic-index job with the canonical transcript payload."""
     enqueue_job(
@@ -41,11 +39,7 @@ def enqueue_transcript_semantic_job(
         kind="podcast_reindex_semantic_job",
         payload={
             "media_id": str(media_id),
-            "requested_by_user_id": (
-                str(requested_by_user_id) if requested_by_user_id is not None else None
-            ),
             "request_reason": request_reason,
-            "request_id": request_id,
         },
     )
 
@@ -54,9 +48,7 @@ def request_transcript_semantic_repair(
     db: Session,
     *,
     media_id: UUID,
-    requested_by_user_id: UUID | None,
     request_reason: TranscriptRequestReason,
-    request_id: str | None,
     now: datetime,
 ) -> TranscriptSemanticRepairAdmission:
     """Admit at most one repair job for one current readable transcript."""
@@ -114,9 +106,7 @@ def request_transcript_semantic_repair(
     enqueue_transcript_semantic_job(
         db,
         media_id=media_id,
-        requested_by_user_id=requested_by_user_id,
         request_reason=request_reason,
-        request_id=request_id,
     )
     set_media_transcript_state(
         db,

@@ -194,7 +194,6 @@ def reconcile_stale_ingest_media_job(
                     _ensure_semantic,
                     db,
                     media_id=UUID(str(row["media_id"])),
-                    request_id=request_id,
                 ),
             )
         finally:
@@ -257,15 +256,12 @@ def _ensure_semantic(
     db: Session,
     *,
     media_id: UUID,
-    request_id: str | None,
 ) -> bool:
     try:
         admission = request_transcript_semantic_repair(
             db,
             media_id=media_id,
-            requested_by_user_id=None,
             request_reason="operator_requeue",
-            request_id=request_id,
             now=datetime.now(UTC),
         )
     except NotFoundError:

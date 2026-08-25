@@ -40,15 +40,12 @@ class _TranscriptSnapshot:
 
 def podcast_reindex_semantic_job(
     media_id: str,
-    requested_by_user_id: str | None = None,
-    request_reason: TranscriptRequestReason = "operator_requeue",
-    request_id: str | None = None,
+    request_reason: TranscriptRequestReason,
     *,
     context: JobExecutionContext,
     session_factory: sessionmaker[Session] | None = None,
 ) -> dict[str, object]:
     """Prepare a DB snapshot, embed outside a transaction, then publish exactly."""
-    del requested_by_user_id, request_id
     media_uuid = UUID(media_id)
     factory = session_factory or get_session_factory()
 

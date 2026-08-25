@@ -1408,11 +1408,9 @@ def _run_claimed_source_attempt(
                 enqueue_transcript_semantic_job(
                     phase_db,
                     media_id=terminal_media_id,
-                    requested_by_user_id=actor_user_id,
                     request_reason=require_transcript_request_reason(
                         result.get("transcript_request_reason")
                     ),
-                    request_id=request_id,
                 )
             if media.kind in {
                 MediaKind.web_article.value,

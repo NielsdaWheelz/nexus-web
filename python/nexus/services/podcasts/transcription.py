@@ -294,7 +294,6 @@ def _request_podcast_episode_transcript(
             media=media,
             request_reason=request_reason,
             dry_run=dry_run,
-            request_id=request_id,
             now=now,
         )
 
@@ -453,7 +452,6 @@ def _request_ready_podcast_transcript(
     media: _TranscriptRequestMedia,
     request_reason: TranscriptResponseReason,
     dry_run: bool,
-    request_id: str | None,
     now: datetime,
 ) -> TranscriptRequestResponse:
     if dry_run:
@@ -464,9 +462,7 @@ def _request_ready_podcast_transcript(
         admission = request_transcript_semantic_repair(
             db,
             media_id=media_id,
-            requested_by_user_id=viewer_id,
             request_reason=request_reason,
-            request_id=request_id,
             now=now,
         )
         outcome = admission.outcome

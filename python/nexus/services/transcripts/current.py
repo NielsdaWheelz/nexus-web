@@ -171,9 +171,7 @@ def _publish_current_transcript_artifacts(
         enqueue_transcript_semantic_job(
             db,
             media_id=media_id,
-            requested_by_user_id=None,
             request_reason=request_reason,
-            request_id=None,
         )
     return CurrentTranscriptWriteResult(
         segment_count=len(transcript_segments),

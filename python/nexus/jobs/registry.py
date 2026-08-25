@@ -454,9 +454,7 @@ def _run_podcast_reindex_semantic(
 
     return podcast_reindex_semantic_job(
         media_id=str(payload["media_id"]),
-        requested_by_user_id=_optional_str(payload.get("requested_by_user_id")),
         request_reason=require_transcript_request_reason(payload.get("request_reason")),
-        request_id=_optional_str(payload.get("request_id")),
         context=context,
     )
 
