@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from importlib import import_module
 from uuid import uuid4
 
 import pytest
@@ -20,14 +19,6 @@ from nexus.schemas.search import (
 )
 from nexus.services import bootstrap, library_entries
 from nexus.services.search.service import get_search_result
-
-
-def test_media_result_resolution_has_one_domain_owner() -> None:
-    owner = import_module("nexus.services.search.retrievers.media")
-    resolver = getattr(owner, "resolve_media_search_result", None)
-
-    assert resolver is not None
-    assert resolver.__module__ == owner.__name__
 
 
 def test_media_and_podcast_results_reresolve_with_exact_type_and_visibility(

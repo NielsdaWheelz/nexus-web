@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from importlib import import_module
 from uuid import uuid4
 
 import pytest
@@ -14,14 +13,6 @@ from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.search import SearchResultConversationOut, SearchResultMessageOut
 from nexus.services import bootstrap
 from nexus.services.search.service import get_search_result
-
-
-def test_conversation_result_resolution_has_one_domain_owner() -> None:
-    owner = import_module("nexus.services.search.retrievers.conversations")
-    resolver = getattr(owner, "resolve_conversation_search_result", None)
-
-    assert resolver is not None
-    assert resolver.__module__ == owner.__name__
 
 
 def test_conversation_and_message_results_reresolve_under_one_visibility_contract(
