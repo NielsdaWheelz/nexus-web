@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -964,6 +965,56 @@ def test_publisher_transcript_worker_publishes_semantics_and_revisions_once(
             )
             == revision_after_admission + 1
         )
+
+
+def test_podcast_transcript_worker_defects_on_unknown_durable_request_reason(
+    authenticated_client: TestClient,
+    db_session: Session,
+    test_user: UserRecord,
+) -> None:
+    media_id = _seed_transcription_episode(
+        db_session,
+        user=test_user,
+        title="Strict transcript request reason",
+        rss_transcript_url=NASA_TRANSCRIPT_URL,
+    )
+    admitted = authenticated_client.post(
+        f"/media/{media_id}/transcript/request",
+        json={"reason": "episode_open", "dry_run": False},
+    )
+    assert admitted.status_code == 202, admitted.text
+    attempt = db_session.scalars(
+        select(MediaSourceAttempt).where(MediaSourceAttempt.media_id == media_id)
+    ).one()
+    attempt.source_payload = {
+        **dict(attempt.source_payload or {}),
+        "request_reason": "legacy_request",
+    }
+    db_session.commit()
+
+    with pytest.raises(
+        AssertionError,
+        match="invalid transcript request reason 'legacy_request'",
+    ):
+        _run_claimed_transcript_source_attempt(
+            db_session,
+            media_id=media_id,
+            actor_user_id=test_user.id,
+            worker_id="strict-transcript-request-reason-worker",
+        )
+
+    db_session.expire_all()
+    transcript_state = db_session.get(MediaTranscriptState, media_id)
+    assert transcript_state is not None
+    assert transcript_state.transcript_state == "queued"
+    assert (
+        db_session.scalar(
+            select(func.count())
+            .select_from(PodcastTranscriptSegment)
+            .where(PodcastTranscriptSegment.media_id == media_id)
+        )
+        == 0
+    )
 
 
 def test_podcast_transcript_resource_terminal_repairs_domain_state_once(
