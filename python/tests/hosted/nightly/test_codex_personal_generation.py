@@ -308,9 +308,11 @@ def _mcp_peer(root: Path) -> Iterator[_McpPeer]:
         ),
     )
     app = _McpAuthApp(manager, peer_state)
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = int(probe.getsockname()[1])
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(16)
+    port = int(listener.getsockname()[1])
     server = uvicorn.Server(
         uvicorn.Config(
             app,
@@ -323,21 +325,16 @@ def _mcp_peer(root: Path) -> Iterator[_McpPeer]:
             lifespan="off",
         )
     )
-    peer = _McpPeer(server, None, peer_state, certificate, key)
+    peer = _McpPeer(server, None, peer_state, certificate, key, port)
 
     async def serve() -> None:
-        async with manager.run():
-            peer.thread = threading.current_thread()
-            serving = asyncio.create_task(server.serve())
-            for _ in range(100):
-                if server.started:
-                    peer.port = port
-                    ready.set()
-                    break
-                await asyncio.sleep(0.01)
-            else:
-                raise RuntimeError("MCP peer did not bind exactly one socket")
-            await serving
+        try:
+            async with manager.run():
+                peer.thread = threading.current_thread()
+                ready.set()
+                await server.serve(sockets=[listener])
+        finally:
+            listener.close()
 
     ready = threading.Event()
 
