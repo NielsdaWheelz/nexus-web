@@ -1083,6 +1083,7 @@ def start_python_process(
         "NODE_OPTIONS": f"--import={root / 'python/tests/testkit/node-network-guard.mjs'}",
         "OPENAI_API_KEY": "nexus-test-fixture-openai-key",
         "OUTBOUND_HTTP_PROXY_URL": f"http://127.0.0.1:{runtime.ports.external}",
+        "PODCASTS_ENABLED": "true",
         "PODCAST_INDEX_API_KEY": "nexus-test-fixture-podcast-key",
         "PODCAST_INDEX_API_SECRET": "nexus-test-fixture-podcast-secret",
         "PODCAST_INDEX_BASE_URL": f"http://127.0.0.1:{runtime.ports.external}",
