@@ -1,248 +1,148 @@
-"""LLM product-facing API schemas.
+"""Product-facing Codex generation schemas.
 
-Two independent contracts live here (`docs/cutovers/llm-provider-runtime-hard-
-cutover.md` §10):
-
-- `LlmProfilesOut`: the `GET /llm-profiles` response, built from
-  `nexus.services.llm_profiles.PROFILES`. The browser owns no provider/model/
-  reasoning enum, ordering, default, capability, key, or availability policy;
-  this schema is the entire product-facing profile contract.
-- `ExpectedChatFailure`: the closed, discriminated chat-failure union exposed
-  by `ChatRunOut`, message hydration, terminal SSE, reconnect folding, and the
-  trust trail — all derived by `chat_failure_projection`
-  (`services/chat_failure.py`), never synthesized ad hoc. One variant per
-  card-bearing §10 code; each variant fixes its `origin` to the narrowed
-  `ChatRun.error_origin` Literal(s) that code can actually carry (§9's closed
-  origin union), except `cancelled`, which carries no origin — a cancelled run
-  has NULL error columns; run status alone drives that variant. The support
-  occurrence belongs to the run read model, not to these taxonomy variants.
-  Transient variants (mapped from the runtime's `TransientExhausted`)
-  additionally carry `attempts`.
+The browser chooses one of three fixed chat profiles. Runtime target, effort,
+provider, privacy, and retry facts are deliberately absent from this contract.
 """
 
 from __future__ import annotations
 
-from typing import Annotated, Literal, assert_never
+from typing import Annotated, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from nexus.services.llm_profiles import (
-    DEFAULT_PROFILE_ID,
-    PROFILES,
-    ExceptionalRetentionPrivacy,
-    LlmProfile,
-    StandardPrivacy,
+from nexus.services import generation_policy
+
+ChatProfileId = Literal["fast", "balanced", "deep"]
+_PROFILE_ORDER: tuple[ChatProfileId, ChatProfileId, ChatProfileId] = (
+    "fast",
+    "balanced",
+    "deep",
 )
-
-# =============================================================================
-# GET /llm-profiles
-# =============================================================================
-
-
-class ReasoningOptionOut(BaseModel):
-    id: str
-    label: str
-
-    model_config = ConfigDict(frozen=True)
-
-
-class StandardPrivacyOut(BaseModel):
-    kind: Literal["Standard"]
-    notice: str
-
-    model_config = ConfigDict(frozen=True)
-
-
-class ExceptionalRetentionPrivacyOut(BaseModel):
-    kind: Literal["ExceptionalRetention"]
-    notice: str
-
-    model_config = ConfigDict(frozen=True)
-
-
-ProfilePrivacyOut = Annotated[
-    StandardPrivacyOut | ExceptionalRetentionPrivacyOut,
-    Field(discriminator="kind"),
-]
-
-
-def profile_privacy_out(
-    privacy: StandardPrivacy | ExceptionalRetentionPrivacy,
-) -> ProfilePrivacyOut:
-    match privacy:
-        case StandardPrivacy(notice=notice):
-            return StandardPrivacyOut(kind="Standard", notice=notice)
-        case ExceptionalRetentionPrivacy(notice=notice):
-            return ExceptionalRetentionPrivacyOut(
-                kind="ExceptionalRetention",
-                notice=notice,
-            )
-        case _ as unreachable:
-            assert_never(unreachable)
+_PROFILE_LABELS = {"fast": "Fast", "balanced": "Balanced", "deep": "Deep"}
+_MODEL_LABELS = {
+    "gpt-5.6-luna": "GPT-5.6 Luna",
+    "gpt-5.6-terra": "GPT-5.6 Terra",
+    "gpt-5.6-sol": "GPT-5.6 Sol",
+}
+_EFFORT_LABELS = {"low": "Low", "medium": "Medium", "high": "High"}
 
 
 class LlmProfileOut(BaseModel):
-    id: str
+    id: ChatProfileId
     label: str
     description: str
-    provider_label: str
     model_label: str
-    reasoning_options: list[ReasoningOptionOut]
-    default_reasoning_option_id: str
-    privacy: ProfilePrivacyOut
+    effort_label: str
 
-    model_config = ConfigDict(frozen=True)
-
-    @classmethod
-    def from_profile(cls, entry: LlmProfile) -> LlmProfileOut:
-        """Project a `services.llm_profiles.LlmProfile` onto its product-facing
-        API fields. Deliberately omits `target`: the resolved provider/model
-        pair is an internal runtime fact, not a selection control (§10)."""
-        return cls(
-            id=entry.id,
-            label=entry.label,
-            description=entry.description,
-            provider_label=entry.provider_label,
-            model_label=entry.model_label,
-            reasoning_options=[
-                ReasoningOptionOut(id=option.id, label=option.label)
-                for option in entry.reasoning_options
-            ],
-            default_reasoning_option_id=entry.default_reasoning_option_id,
-            privacy=profile_privacy_out(entry.privacy),
-        )
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
 
 class LlmProfilesOut(BaseModel):
-    """Response schema for `GET /llm-profiles`."""
+    """The exact three-option response for ``GET /llm-profiles``."""
 
-    default_profile_id: str
-    profiles: list[LlmProfileOut]
+    default_profile_id: Literal["balanced"]
+    profiles: tuple[LlmProfileOut, LlmProfileOut, LlmProfileOut]
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    @model_validator(mode="after")
+    def _exact_profile_order(self) -> LlmProfilesOut:
+        profile_ids = tuple(profile.id for profile in self.profiles)
+        if profile_ids != _PROFILE_ORDER or len(set(profile_ids)) != len(profile_ids):
+            raise ValueError("profiles must be exactly fast, balanced, deep in order")
+        return self
 
     @classmethod
     def from_profiles(cls) -> LlmProfilesOut:
-        """Build the route's entire response from the product profile
-        registry, so `api/routes/llm_profiles.py` is a thin adapter."""
+        profile_ids = cast(tuple[ChatProfileId, ...], generation_policy.CHAT_PROFILES)
+        if profile_ids != _PROFILE_ORDER:
+            raise AssertionError("generation policy profile order drifted")
+        profiles = (
+            _profile_out(profile_ids[0]),
+            _profile_out(profile_ids[1]),
+            _profile_out(profile_ids[2]),
+        )
         return cls(
-            default_profile_id=DEFAULT_PROFILE_ID,
-            profiles=[LlmProfileOut.from_profile(entry) for entry in PROFILES],
+            default_profile_id="balanced",
+            profiles=profiles,
         )
 
 
-# =============================================================================
-# ExpectedChatFailure
-# =============================================================================
+def _profile_out(profile_id: ChatProfileId) -> LlmProfileOut:
+    policy = generation_policy.chat_policy(profile_id)
+    try:
+        label = _PROFILE_LABELS[profile_id]
+        model_label = _MODEL_LABELS[policy.model]
+        effort_label = _EFFORT_LABELS[policy.effort]
+    except KeyError as error:
+        raise AssertionError(f"unpresentable shipped chat policy {profile_id!r}") from error
+    return LlmProfileOut(
+        id=profile_id,
+        label=label,
+        description={
+            "fast": "Quick responses for everyday questions.",
+            "balanced": "The default profile: strong general-purpose reasoning.",
+            "deep": "Slower, deeper reasoning for hard problems.",
+        }[profile_id],
+        model_label=model_label,
+        effort_label=effort_label,
+    )
 
 
 class ExpectedChatFailureBase(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-
-class RefusedChatFailure(ExpectedChatFailureBase):
-    """Streamed Fable refusal (`provider_stream`) or a non-streamed provider
-    refusal (`provider_http`). Never rerunnable (§10)."""
-
-    code: Literal["refused"] = "refused"
-    origin: Literal["provider_http", "provider_stream"]
-    can_rerun: bool
-
-
-class IncompleteChatFailure(ExpectedChatFailureBase):
-    """Provider-declared incomplete completion, or local truncation folded to
-    the same closed code. `origin` is always `provider_response`."""
-
-    code: Literal["incomplete"] = "incomplete"
-    origin: Literal["provider_response"]
-    can_rerun: bool
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
 
 class CancelledChatFailure(ExpectedChatFailureBase):
-    """Run status `cancelled` alone drives this variant — `ChatRun` never
-    stores a `cancelled` `error_code`, and a cancelled run's error columns are
-    NULL, so this variant carries no `origin`."""
-
     code: Literal["cancelled"] = "cancelled"
     can_rerun: bool
 
 
 class ContextTooLargeChatFailure(ExpectedChatFailureBase):
-    """Owner-side assembly rejected the intent before any generation attempt
-    began (`intent`, ledgerless), or the provider rejected an in-bound request
-    as oversize (`provider_http`)."""
-
     code: Literal["context_too_large"] = "context_too_large"
-    origin: Literal["intent", "provider_http"]
+    can_rerun: Literal[False] = False
+
+
+class InvalidOutputChatFailure(ExpectedChatFailureBase):
+    code: Literal["invalid_output"] = "invalid_output"
+    can_rerun: Literal[False] = False
+
+
+class IncompleteChatFailure(ExpectedChatFailureBase):
+    code: Literal["incomplete"] = "incomplete"
     can_rerun: bool
 
 
-class InvalidToolArgumentsChatFailure(ExpectedChatFailureBase):
-    code: Literal["invalid_tool_arguments"] = "invalid_tool_arguments"
-    origin: Literal["tool_arguments"]
+class AssistantUnavailableChatFailure(ExpectedChatFailureBase):
+    code: Literal["assistant_unavailable"] = "assistant_unavailable"
     can_rerun: bool
 
 
-class BudgetExceededChatFailure(ExpectedChatFailureBase):
-    """Platform-token-reservation denial. Never rerunnable (§9)."""
-
-    code: Literal["budget_exceeded"] = "budget_exceeded"
-    origin: Literal["budget"]
-    can_rerun: bool
-
-
-class RateLimitedChatFailure(ExpectedChatFailureBase):
-    """Transient: mapped from the runtime's `TransientExhausted(cause=
-    ProviderRateLimit)` leaf."""
-
-    code: Literal["rate_limited"] = "rate_limited"
-    origin: Literal["provider_http"]
-    attempts: int = Field(ge=1)
-    can_rerun: bool
-
-
-class TimeoutChatFailure(ExpectedChatFailureBase):
-    """Transient: mapped from the runtime's `TransientExhausted(cause=
-    ProviderTimeout)` leaf."""
-
-    code: Literal["timeout"] = "timeout"
-    origin: Literal["transport"]
-    attempts: int = Field(ge=1)
-    can_rerun: bool
-
-
-class ProviderUnavailableChatFailure(ExpectedChatFailureBase):
-    """Transient: mapped from either the runtime's `TransientExhausted(cause=
-    ProviderHttpUnavailable)` (`provider_http`) or `TransientExhausted(cause=
-    TransportUnavailable)` (`transport`) leaf."""
-
-    code: Literal["provider_unavailable"] = "provider_unavailable"
-    origin: Literal["provider_http", "transport"]
-    attempts: int = Field(ge=1)
-    can_rerun: bool
-
-
-class StreamInterruptedChatFailure(ExpectedChatFailureBase):
-    """Transient: mapped from the runtime's `TransientExhausted(cause=
-    ProviderStreamInterrupted)` leaf, and from crashed/interrupted-run
-    recovery when provider output existed without a terminal."""
-
-    code: Literal["stream_interrupted"] = "stream_interrupted"
-    origin: Literal["provider_stream"]
-    attempts: int = Field(ge=1)
-    can_rerun: bool
+class OperatorDefectChatFailure(ExpectedChatFailureBase):
+    code: Literal["operator_defect"] = "operator_defect"
+    can_rerun: Literal[False] = False
 
 
 ExpectedChatFailure = Annotated[
-    RefusedChatFailure
-    | IncompleteChatFailure
-    | CancelledChatFailure
+    CancelledChatFailure
     | ContextTooLargeChatFailure
-    | InvalidToolArgumentsChatFailure
-    | BudgetExceededChatFailure
-    | RateLimitedChatFailure
-    | TimeoutChatFailure
-    | ProviderUnavailableChatFailure
-    | StreamInterruptedChatFailure,
+    | InvalidOutputChatFailure
+    | IncompleteChatFailure
+    | AssistantUnavailableChatFailure
+    | OperatorDefectChatFailure,
     Field(discriminator="code"),
+]
+
+
+__all__ = [
+    "AssistantUnavailableChatFailure",
+    "CancelledChatFailure",
+    "ContextTooLargeChatFailure",
+    "ExpectedChatFailure",
+    "ExpectedChatFailureBase",
+    "IncompleteChatFailure",
+    "InvalidOutputChatFailure",
+    "LlmProfileOut",
+    "LlmProfilesOut",
+    "OperatorDefectChatFailure",
 ]
