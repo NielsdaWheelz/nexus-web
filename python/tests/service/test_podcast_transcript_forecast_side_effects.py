@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.db.models import (
     Media,
@@ -21,7 +21,12 @@ from nexus.db.models import (
     PodcastTranscriptRequestAudit,
     ProcessingStatus,
 )
-from nexus.jobs.queue import find_nonterminal_jobs_for_payload
+from nexus.errors import ApiErrorCode
+from nexus.jobs.queue import (
+    JobExecutionContext,
+    claim_job,
+    find_nonterminal_jobs_for_payload,
+)
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.collection_revisions import (
@@ -29,6 +34,7 @@ from nexus.services.collection_revisions import (
     read_collection_revision,
 )
 from nexus.services.library_entries import ensure_media_in_default_library
+from nexus.services.media_source_ingest import run_source_attempt
 from nexus.services.transcript_segments import TranscriptSegmentInput
 from nexus.services.transcripts.current import publish_source_transcript
 from tests.testkit.auth import UserRecord
@@ -748,3 +754,86 @@ def test_batch_quota_rejection_rolls_back_every_episode_admission(
             )
             == revision_before
         )
+
+
+def test_worker_quota_rejection_commits_its_audit_before_terminal_failure(
+    authenticated_client: TestClient,
+    db_session: Session,
+    test_user: UserRecord,
+) -> None:
+    media_id = _seed_transcription_episode(
+        db_session,
+        user=test_user,
+        title="Publisher fallback quota rejection",
+        transcription_limit_minutes=5,
+        rss_transcript_url="https://feeds.example.invalid/unsupported-transcript.bin",
+    )
+    admitted = authenticated_client.post(
+        f"/media/{media_id}/transcript/request",
+        json={"reason": "episode_open", "dry_run": False},
+    )
+    assert admitted.status_code == 202, admitted.text
+
+    db_session.expire_all()
+    attempt = db_session.scalars(
+        select(MediaSourceAttempt).where(MediaSourceAttempt.media_id == media_id)
+    ).one()
+    assert attempt.job_id is not None
+    worker_id = "publisher-fallback-quota-worker"
+    claimed = claim_job(
+        db_session,
+        job_id=attempt.job_id,
+        worker_id=worker_id,
+        lease_seconds=300,
+        heavy_kinds=("ingest_media_source",),
+    )
+    attempt_id = attempt.id
+    job_id = attempt.job_id
+    db_session.commit()
+    assert claimed is not None
+
+    result = run_source_attempt(
+        session_factory=sessionmaker(
+            bind=db_session.get_bind(),
+            autoflush=False,
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        ),
+        media_id=media_id,
+        attempt_id=attempt_id,
+        actor_user_id=test_user.id,
+        request_id=None,
+        context=JobExecutionContext(
+            job_id=job_id,
+            worker_id=worker_id,
+            attempt_no=claimed.attempts,
+            resource_class="Heavy",
+        ),
+    )
+
+    assert result["status"] == "failed"
+    assert result["error_code"] == ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED.value
+    db_session.expire_all()
+    audits = db_session.scalars(
+        select(PodcastTranscriptRequestAudit)
+        .where(PodcastTranscriptRequestAudit.media_id == media_id)
+        .order_by(
+            PodcastTranscriptRequestAudit.created_at,
+            PodcastTranscriptRequestAudit.id,
+        )
+    ).all()
+    assert [audit.outcome for audit in audits] == ["queued", "rejected_quota"]
+    rejected = audits[1]
+    assert rejected.requested_by_user_id == test_user.id
+    assert rejected.request_reason == "episode_open"
+    assert rejected.required_minutes == 11
+    assert rejected.remaining_minutes == 5
+    assert rejected.fits_budget is False
+    assert (
+        db_session.scalar(
+            select(func.count())
+            .select_from(PodcastTranscriptionUsageDaily)
+            .where(PodcastTranscriptionUsageDaily.user_id == test_user.id)
+        )
+        == 0
+    )
