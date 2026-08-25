@@ -22,7 +22,7 @@ from nexus.services.content_indexing import (
     publish_content_index,
 )
 from nexus.services.transcript_segments import TranscriptSegmentInput
-from nexus.services.transcripts.current import set_media_transcript_state
+from nexus.services.transcripts.state import set_media_transcript_state
 
 _LEASE_SECONDS = 300
 

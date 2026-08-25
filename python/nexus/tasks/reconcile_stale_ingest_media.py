@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from functools import partial
 from uuid import UUID
 
@@ -11,12 +12,13 @@ from sqlalchemy.orm import Session
 from nexus.config import get_settings
 from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
-from nexus.jobs.queue import enqueue_job, lock_jobs_for_payload
+from nexus.errors import NotFoundError
 from nexus.services.content_indexing import (
     MediaContentReindexIntent,
     ensure_media_content_reindex_job,
 )
 from nexus.services.media_source_ingest import ensure_stale_source_attempt_job
+from nexus.services.transcripts.semantic import request_transcript_semantic_repair
 
 _BATCH_LIMIT = 25
 
@@ -257,30 +259,17 @@ def _ensure_semantic(
     media_id: UUID,
     request_id: str | None,
 ) -> bool:
-    locked = db.execute(
-        text("SELECT id FROM media WHERE id = :media_id FOR UPDATE"),
-        {"media_id": media_id},
-    ).scalar_one_or_none()
-    if locked is None:
+    try:
+        admission = request_transcript_semantic_repair(
+            db,
+            media_id=media_id,
+            requested_by_user_id=None,
+            request_reason="operator_requeue",
+            request_id=request_id,
+            now=datetime.now(UTC),
+        )
+    except NotFoundError:
         db.commit()
         return False
-    jobs = lock_jobs_for_payload(
-        db,
-        kind="podcast_reindex_semantic_job",
-        expected_payload_match={"media_id": str(media_id)},
-    )
-    if any(job.status in {"pending", "failed", "running", "dead"} for job in jobs):
-        db.commit()
-        return False
-    enqueue_job(
-        db,
-        kind="podcast_reindex_semantic_job",
-        payload={
-            "media_id": str(media_id),
-            "requested_by_user_id": None,
-            "request_reason": "operator_requeue",
-            "request_id": request_id,
-        },
-    )
     db.commit()
-    return True
+    return admission.outcome == "queued"

@@ -119,6 +119,7 @@ from nexus.services.source_publication import (
     reset_source_progress,
     run_source_publication_phase,
 )
+from nexus.services.transcripts.semantic import enqueue_transcript_semantic_job
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 from nexus.services.web_article_artifacts import delete_web_article_artifacts
 from nexus.services.web_article_ingest import materialize_web_article_source
@@ -1409,17 +1410,12 @@ def _run_claimed_source_attempt(
                 )
             _bump_media_fact_collections(phase_db)
             if bool(result.get("transcript_semantic_intent")):
-                enqueue_job(
+                enqueue_transcript_semantic_job(
                     phase_db,
-                    kind="podcast_reindex_semantic_job",
-                    payload={
-                        "media_id": str(terminal_media_id),
-                        "requested_by_user_id": str(actor_user_id),
-                        "request_reason": str(
-                            result.get("transcript_request_reason") or "episode_open"
-                        ),
-                        "request_id": request_id,
-                    },
+                    media_id=terminal_media_id,
+                    requested_by_user_id=actor_user_id,
+                    request_reason=str(result.get("transcript_request_reason") or "episode_open"),
+                    request_id=request_id,
                 )
             if media.kind in {
                 MediaKind.web_article.value,
@@ -3648,7 +3644,7 @@ def _finish_failed_attempt(
             mark_media_failed=False,
         )
     elif attempt is not None and attempt.source_type in source_types.TRANSCRIPT_SOURCE_TYPES:
-        from nexus.services.transcripts.current import set_media_transcript_state
+        from nexus.services.transcripts.state import set_media_transcript_state
 
         error_code, _error_message = _source_error_fields(exc)
         set_media_transcript_state(
