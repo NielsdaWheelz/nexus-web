@@ -1877,6 +1877,8 @@ def fake_docker_main() -> int:
     state = _load_state(state_path)
     arguments = sys.argv[2:]
     state["commands"].append(arguments)
+    # A failed fake command is still an attempted external effect and must remain auditable.
+    _save_state(state_path, state)
     phase = _attempt_phase()
     interrupt_phase = os.environ.get("NEXUS_FAKE_INTERRUPT_PHASE")
     if interrupt_phase is not None and phase == interrupt_phase and not state["interrupt_fired"]:
