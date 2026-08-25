@@ -289,7 +289,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             resource_class="Light",
             max_attempts=1,
             retry_delays_seconds=(0,),
-            lease_seconds=300,  # worst case: retrieval + 45s call + 45s repair round
+            lease_seconds=450,
         ),
         "media_unit_build": JobDefinition(
             kind="media_unit_build",
@@ -297,7 +297,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             resource_class="Light",
             max_attempts=3,
             retry_delays_seconds=(60, 300, 900),
-            lease_seconds=300,
+            lease_seconds=450,
             # Provider replay state lives in the job payload. Dead uncertain
             # transitions stay operator-discoverable.
             never_prune_dead=True,
@@ -319,7 +319,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             resource_class="Light",
             max_attempts=1,
             retry_delays_seconds=(0,),
-            lease_seconds=300,
+            lease_seconds=900,
             periodic_interval_seconds=(
                 int(settings.dawn_write_schedule_seconds)
                 if settings.dawn_write_schedule_seconds > 0
@@ -529,15 +529,18 @@ def _run_purge_expired_auth_handoff_codes(
 
 def _run_oracle_reading_generate(
     *, payload: Mapping[str, Any], context: JobExecutionContext
-) -> Mapping[str, Any] | None:
+) -> Mapping[str, Any] | RescheduleRequested | None:
     from nexus.tasks.oracle_reading import oracle_reading_generate
 
-    return oracle_reading_generate(reading_id=str(payload["reading_id"]))
+    return oracle_reading_generate(
+        reading_id=str(payload["reading_id"]),
+        context=context,
+    )
 
 
 def _run_media_unit_build(
     *, payload: Mapping[str, Any], context: JobExecutionContext
-) -> Mapping[str, Any] | None:
+) -> Mapping[str, Any] | RescheduleRequested | None:
     from nexus.tasks.media_unit_build import media_unit_build
 
     return media_unit_build(
@@ -549,22 +552,23 @@ def _run_media_unit_build(
 
 def _run_synapse_scan(
     *, payload: Mapping[str, Any], context: JobExecutionContext
-) -> Mapping[str, Any] | None:
+) -> Mapping[str, Any] | RescheduleRequested | None:
     from nexus.tasks.synapse_scan import synapse_scan
 
     return synapse_scan(
         user_id=str(payload["user_id"]),
         ref=str(payload["ref"]),
         reason=str(payload.get("reason", "manual")),
+        context=context,
     )
 
 
 def _run_dawn_write_sweep(
     *, payload: Mapping[str, Any], context: JobExecutionContext
-) -> Mapping[str, Any] | None:
+) -> Mapping[str, Any] | RescheduleRequested | None:
     from nexus.tasks.dawn_write import dawn_write_sweep
 
-    return dawn_write_sweep()
+    return dawn_write_sweep(context=context)
 
 
 def _run_atlas_project(

@@ -22,11 +22,10 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal, cast
-from uuid import UUID, uuid4
+from typing import Annotated, Literal, cast
+from uuid import UUID
 
-from provider_runtime import Succeeded
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 from sqlalchemy import and_, or_, select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -34,6 +33,7 @@ from sqlalchemy.orm import Session
 from nexus.config import get_settings
 from nexus.db.errors import integrity_constraint_name
 from nexus.db.models import Highlight, Media, NoteBlock, Page, SynapseSuppression
+from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
 from nexus.errors import (
     ApiError,
@@ -41,16 +41,41 @@ from nexus.errors import (
     ConflictError,
     NotFoundError,
 )
-from nexus.jobs.queue import enqueue_unique_job
+from nexus.jobs.queue import (
+    JobExecutionContext,
+    JobRow,
+    RescheduleRequested,
+    enqueue_unique_job,
+    get_job,
+    lock_running_job_claim,
+)
 from nexus.logging import get_logger
+from nexus.schemas.presence import Present, absent, present
 from nexus.schemas.search import (
     SearchResultContentChunkOut,
     SearchResultNoteBlockOut,
     SearchResultOut,
 )
-from nexus.services.llm_execution import ExecutionRuntime, GenerationRequest, execute_generation
+from nexus.services import durable_step_journal as step_journal
+from nexus.services import generation_policy
+from nexus.services.codex_generation_contract import (
+    GenerationCommand,
+    GenerationTerminal,
+    NormalizedFailureCode,
+    request_fingerprint,
+)
+from nexus.services.llm_execution import (
+    AcceptedGenerationFailure,
+    CompletedGeneration,
+    EncodedGenerationTerminal,
+    ExecutionRuntime,
+    GenerationDispatchAborted,
+    GenerationExecutionRequest,
+    GenerationUncertain,
+    JobGenerationJournal,
+    execute_generation,
+)
 from nexus.services.llm_ledger import LlmCallOwner
-from nexus.services.llm_profiles import operation_profile
 from nexus.services.media_intelligence import NotReady, get_current
 from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.resource_graph.connections import query_connections
@@ -61,7 +86,11 @@ from nexus.services.resource_graph.edges import (
 )
 from nexus.services.resource_graph.highlight_notes import linked_note_blocks_for_highlights
 from nexus.services.resource_graph.policy import SYNAPSE_SOURCE_SCHEMES
-from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
+from nexus.services.resource_graph.refs import (
+    ResourceRef,
+    ResourceScheme,
+    assert_resource_ref,
+)
 from nexus.services.resource_graph.resolve import assert_ref_visible
 from nexus.services.resource_graph.schemas import (
     CitationSnapshot,
@@ -91,38 +120,215 @@ SYNAPSE_MAX_CONNECTIONS = 4
 # two spans of a book is passage grain, four is monologue (D9). Keyed on the
 # candidate's owner media.
 SYNAPSE_MAX_CONNECTIONS_PER_WORK = 2
-SYNAPSE_MAX_OUTPUT_TOKENS = 1000
 SYNAPSE_QUERY_CHAR_BUDGET = 800
 SYNAPSE_DOSSIER_CHAR_BUDGET = 12_000
-
-# The only genuinely transient generation outcomes: retrying re-bills a fresh
-# provider call, so a scan may retry ONLY these. Every other failure
-# (structured-output decode, refusal, context_too_large, budget/billing) is
-# deterministic — retrying re-runs the same billed call up to the ladder depth
-# for the same result, so those short-circuit to a non-retryable terminal.
-_TRANSIENT_SCAN_CODES = frozenset(
-    {"provider_unavailable", "rate_limited", "timeout", "stream_interrupted"}
-)
+_SYNTHESIS_STEP_PATH = "synthesis"
+_CAPACITY_WAIT_DELAYS_SECONDS = (30, 60, 120, 300, 600)
 
 
 @dataclass(frozen=True, slots=True)
 class ScanResult:
     """One scan's worker outcome. ``status`` drives the queue retry ladder:
     ``failed`` is in ``synapse_scan``'s ``failed_result_statuses`` (retryable);
-    ``terminal_failed`` is not (deterministic — completes without a re-billing
-    retry). ``ok``/``skipped`` are non-failure completions. ``error_code`` is
+    ``terminal_failed`` is not (a durable Completed memo cannot be dispatched
+    again). ``ok``/``skipped`` are non-failure completions. ``error_code`` is
     persisted in the job ``result_payload`` for operator correlation."""
 
     status: Literal["ok", "skipped", "failed", "terminal_failed"]
     error_code: str | None = None
 
 
+class _CompletedSynapseEdge(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    target_uri: str
+    title: str
+    kind: Literal["context", "supports", "contradicts"]
+    rationale: str
+
+
+class _CompletedSynapseSuccess(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    outcome: Literal["success"] = "success"
+    edges: tuple[_CompletedSynapseEdge, ...]
+
+
+class _CompletedSynapseFailure(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    outcome: Literal["failure"] = "failure"
+    error_code: str
+    error_detail: str | None = None
+
+
+type _CompletedSynapse = Annotated[
+    _CompletedSynapseSuccess | _CompletedSynapseFailure,
+    Field(discriminator="outcome"),
+]
+_COMPLETED_SYNAPSE_ADAPTER: TypeAdapter[_CompletedSynapse] = TypeAdapter(_CompletedSynapse)
+
+
+def _capacity_wait_index(job: JobRow) -> int:
+    value = job.payload.get("capacity_wait_index")
+    if type(value) is not int or not 0 <= value <= len(_CAPACITY_WAIT_DELAYS_SECONDS):
+        raise AssertionError("synapse job has an invalid capacity_wait_index")
+    return value
+
+
+def _synapse_command(*, generation_id: UUID, user_content: str) -> GenerationCommand:
+    return GenerationCommand.model_validate(
+        {
+            "request_id": generation_id,
+            "operation": {
+                "kind": SYNAPSE_OPERATION,
+                "revision": generation_policy.operation_revision(SYNAPSE_OPERATION),
+            },
+            "policy_revision": generation_policy.POLICY_REVISION,
+            "policy_fingerprint": generation_policy.POLICY_FINGERPRINT,
+            "intent": build_synthesis_intent(
+                system_prompt=_SYNAPSE_SYSTEM_PROMPT,
+                user_content=user_content,
+                schema=SynapseSynthesis,
+            ),
+        }
+    )
+
+
+def _encode_synapse_terminal(
+    terminal: GenerationTerminal,
+    *,
+    candidates: list[_SynapseCandidate],
+) -> EncodedGenerationTerminal:
+    accepted_failure: AcceptedGenerationFailure | None = None
+    if terminal.status == "succeeded":
+        try:
+            value = decode_structured_synthesis(terminal, schema=SynapseSynthesis)
+            if len(value.connections) > SYNAPSE_MAX_CONNECTIONS:
+                raise StructuredSynthesisError(
+                    f"synapse output exceeds {SYNAPSE_MAX_CONNECTIONS} connections"
+                )
+            grounded = (
+                ground_indices(
+                    value.connections,
+                    candidates,
+                    index_of=lambda connection: connection.candidate_index,
+                    policy="drop",
+                )
+                or []
+            )
+            if len(grounded) != len(value.connections):
+                raise StructuredSynthesisError(
+                    "synapse output references a candidate index that was not offered"
+                )
+        except StructuredSynthesisError as exc:
+            detail = str(exc)
+            completed: _CompletedSynapse = _CompletedSynapseFailure(
+                error_code="invalid_output",
+                error_detail=detail,
+            )
+            accepted_failure = AcceptedGenerationFailure(
+                code="invalid_output",
+                detail=detail,
+            )
+        else:
+            edges: list[_CompletedSynapseEdge] = []
+            seen_targets: set[ResourceRef] = set()
+            for connection, candidate in grounded:
+                if candidate.target in seen_targets:
+                    continue
+                seen_targets.add(candidate.target)
+                edges.append(
+                    _CompletedSynapseEdge(
+                        target_uri=candidate.target.uri,
+                        title=candidate.label,
+                        kind=connection.kind,
+                        rationale=connection.rationale,
+                    )
+                )
+            completed = _CompletedSynapseSuccess(edges=tuple(edges[:SYNAPSE_MAX_CONNECTIONS]))
+    else:
+        code, detail = outcome_failure_facts(terminal)
+        completed = _CompletedSynapseFailure(
+            error_code=code,
+            error_detail=detail,
+        )
+    return EncodedGenerationTerminal(
+        terminal_result=_COMPLETED_SYNAPSE_ADAPTER.dump_json(completed).decode("utf-8"),
+        accepted_failure=accepted_failure,
+    )
+
+
+def _encode_synapse_preaccept_failure(
+    code: NormalizedFailureCode,
+    detail: str,
+) -> str:
+    return _COMPLETED_SYNAPSE_ADAPTER.dump_json(
+        _CompletedSynapseFailure(error_code=code, error_detail=detail)
+    ).decode("utf-8")
+
+
 def _generation_failure_result(code: str | None) -> ScanResult:
-    """Classify a generation-failure ``error_code`` into a retryable
-    (``failed``) or deterministic (``terminal_failed``) scan outcome."""
-    if code is not None and code in _TRANSIENT_SCAN_CODES:
-        return ScanResult("failed", error_code=code)
+    """A Completed generation failure cannot dispatch again at this identity."""
     return ScanResult("terminal_failed", error_code=code)
+
+
+def _apply_completed_synapse(
+    db: Session,
+    *,
+    user_id: UUID,
+    ref: ResourceRef,
+    context: JobExecutionContext,
+    completed: _CompletedSynapse,
+) -> ScanResult:
+    if isinstance(completed, _CompletedSynapseFailure):
+        db.commit()
+        return _generation_failure_result(completed.error_code)
+
+    def publish() -> ScanResult:
+        if not lock_running_job_claim(db, context=context):
+            db.rollback()
+            return ScanResult("skipped")
+        try:
+            assert_ref_visible(db, viewer_id=user_id, ref=ref)
+        except NotFoundError:
+            db.commit()
+            return ScanResult("skipped")
+        recheck_excluded = _excluded_refs(
+            db,
+            user_id=user_id,
+            ref=ref,
+            kin=frozenset(),
+        )
+        edges = [
+            edge
+            for edge in completed.edges
+            if assert_resource_ref(edge.target_uri) not in recheck_excluded
+        ]
+        written = replace_edges_for_origin(
+            db,
+            viewer_id=user_id,
+            source=ref,
+            origin="synapse",
+            edges=[
+                EdgeCreate(
+                    source=ref,
+                    target=assert_resource_ref(edge.target_uri),
+                    kind=edge.kind,
+                    origin="synapse",
+                    snapshot=CitationSnapshot(
+                        title=edge.title,
+                        excerpt=edge.rationale,
+                    ),
+                )
+                for edge in edges
+            ],
+        )
+        db.commit()
+        logger.info("synapse_scan_completed", ref=ref.uri, edges=len(written))
+        return ScanResult("ok")
+
+    return retry_serializable(db, "synapse.publish", publish)
 
 
 # ---------- public contract -------------------------------------------------
@@ -157,7 +363,13 @@ def queue_synapse_scan(db: Session, *, user_id: UUID, ref: ResourceRef, reason: 
             _, inserted = enqueue_unique_job(
                 db,
                 kind="synapse_scan",
-                payload={"user_id": str(user_id), "ref": ref.uri, "reason": reason},
+                payload={
+                    "user_id": str(user_id),
+                    "ref": ref.uri,
+                    "reason": reason,
+                    "capacity_wait_index": 0,
+                    "coordination": {},
+                },
                 dedupe_key=dedupe_key,
             )
         return inserted
@@ -187,25 +399,59 @@ def scan_status(
 
 
 async def run_synapse_scan(
-    db: Session, *, user_id: UUID, ref: ResourceRef, runtime: ExecutionRuntime
-) -> ScanResult:
+    db: Session,
+    *,
+    user_id: UUID,
+    ref: ResourceRef,
+    context: JobExecutionContext,
+    runtime: ExecutionRuntime,
+) -> ScanResult | RescheduleRequested:
     """Worker body: one dossier → retrieve → judge → replace-set scan.
 
     ``skipped`` (quiet, no edge changes): engine disabled, source missing or
     not visible, or dossier unavailable (media unit not ready, page never
     indexed). ``failed`` (queue retry ladder, prior edges intact): a
-    genuinely transient rejection (inflight rate-limit, limiter outage,
-    transient-exhausted generation) worth another billed attempt.
-    ``terminal_failed`` (prior edges intact, NOT retried): a deterministic
-    failure (structured-output decode, refusal, context_too_large,
-    budget/billing) a re-run would only re-bill for the same result. ``ok``
+    genuinely transient pre-dispatch concurrency rejection. ``terminal_failed``
+    (prior edges intact, NOT retried): any Completed generation failure, because
+    its replay identity cannot dispatch again. ``ok``
     replace-sets the ``(source, origin='synapse')`` edge set — possibly to
     empty (current-only, D6).
 
-    The provider call runs on the platform credential inside the shared
-    rate-limit envelope; every attempt is one ``llm_calls`` row (owner
+    The Codex generation runs inside the shared concurrency envelope; every
+    attempt is one ``llm_calls`` row (owner
     ``synapse_scan`` = the source object id, AC8).
     """
+    job = get_job(db, context.job_id)
+    if job is None:
+        raise AssertionError(f"synapse job {context.job_id} disappeared")
+    if (
+        job.kind != "synapse_scan"
+        or str(job.payload.get("user_id")) != str(user_id)
+        or job.payload.get("ref") != ref.uri
+    ):
+        raise AssertionError("synapse job payload identity changed")
+    generation_id = step_journal.stable_generation_id(
+        context.job_id,
+        _SYNTHESIS_STEP_PATH,
+    )
+    state = step_journal.read_step_states(job).get(_SYNTHESIS_STEP_PATH)
+    if state is not None and state.generation_id != generation_id:
+        raise AssertionError("synapse generation identity changed")
+    if state is not None and state.dispatch_phase is step_journal.Completed:
+        if not isinstance(state.terminal_result, Present):
+            raise AssertionError("Completed synapse generation has no result")
+        completed = _COMPLETED_SYNAPSE_ADAPTER.validate_json(state.terminal_result.value)
+        return _apply_completed_synapse(
+            db,
+            user_id=user_id,
+            ref=ref,
+            context=context,
+            completed=completed,
+        )
+    if state is not None and state.dispatch_phase is step_journal.Uncertain:
+        db.commit()
+        raise GenerationUncertain(f"synapse generation {generation_id} has an unresolved dispatch")
+
     if not get_settings().synapse_enabled:
         logger.info("synapse_scan_skipped", ref=ref.uri, reason="disabled")
         return ScanResult("skipped")
@@ -215,6 +461,7 @@ async def run_synapse_scan(
         logger.info("synapse_scan_skipped", ref=ref.uri, reason="source_missing")
         return ScanResult("skipped")
 
+    db.commit()
     rate_limiter = get_rate_limiter()
     try:
         rate_limiter.acquire_inflight_slot(user_id)
@@ -228,11 +475,12 @@ async def run_synapse_scan(
             logger.info("synapse_scan_skipped", ref=ref.uri, reason="dossier_unavailable")
             return ScanResult("skipped")
 
-        # Retrieval runs before any uncommitted writes in this session
-        # (build_query_embedding rolls back a non-entry transaction around its
-        # HTTP call); everything up to here is reads only. Over-fetch: the
+        # Close the dossier read transaction before semantic retrieval crosses
+        # the embedding transport. ``search`` then owns and closes its own
+        # pre-I/O read transaction. Over-fetch: the
         # self/kin/connected/suppressed exclusion happens after retrieval, and
         # the source's own chunks often dominate the top hits.
+        db.commit()
         response = search(
             db,
             user_id,
@@ -250,110 +498,92 @@ async def run_synapse_scan(
         )
         if not candidates:
             # Current-only (D6): the engine currently sees nothing.
-            written = replace_edges_for_origin(
-                db, viewer_id=user_id, source=ref, origin="synapse", edges=[]
+            return _apply_completed_synapse(
+                db,
+                user_id=user_id,
+                ref=ref,
+                context=context,
+                completed=_CompletedSynapseSuccess(edges=()),
             )
-            db.commit()
-            logger.info("synapse_scan_completed", ref=ref.uri, edges=len(written))
-            return ScanResult("ok")
 
         user_content = _build_synapse_user_content(dossier.text, candidates)
-        profile = operation_profile(SYNAPSE_OPERATION)
-        intent = build_synthesis_intent(
-            profile=profile,
-            system_prompt=_SYNAPSE_SYSTEM_PROMPT,
+        command = _synapse_command(
+            generation_id=generation_id,
             user_content=user_content,
-            max_output_tokens=SYNAPSE_MAX_OUTPUT_TOKENS,
-            schema=SynapseSynthesis,
         )
+        fingerprint = request_fingerprint(command)
+        if state is None:
+            current_job = get_job(db, context.job_id)
+            if current_job is None:
+                raise AssertionError(f"synapse job {context.job_id} disappeared at prepare")
+            if not step_journal.checkpoint_step_state(
+                db,
+                ctx=context,
+                job=current_job,
+                step_path=_SYNTHESIS_STEP_PATH,
+                state=step_journal.StepReplayState(
+                    generation_id=generation_id,
+                    dispatch_phase=step_journal.Prepared,
+                    request_fingerprint=present(fingerprint),
+                    terminal_result=absent(),
+                ),
+            ):
+                db.rollback()
+                return ScanResult("skipped")
+            db.commit()
+            job = get_job(db, context.job_id)
+            if job is None:
+                raise AssertionError(f"synapse job {context.job_id} disappeared after prepare")
+        elif not isinstance(state.request_fingerprint, Present):
+            raise AssertionError("Prepared synapse generation has no fingerprint")
+        elif state.request_fingerprint.value != fingerprint:
+            raise AssertionError("Prepared synapse generation input changed")
+        else:
+            db.commit()
+
+        def lock_dispatch(dispatch_db: Session) -> JobRow | None:
+            try:
+                assert_ref_visible(dispatch_db, viewer_id=user_id, ref=ref)
+            except NotFoundError:
+                return None
+            return get_job(dispatch_db, context.job_id)
+
         try:
-            call = await execute_generation(
-                GenerationRequest(
-                    generation_id=uuid4(),
-                    owner=LlmCallOwner(kind="synapse_scan", id=ref.id, user_id=user_id),
-                    operation=SYNAPSE_OPERATION,
-                    profile=profile,
-                    reasoning=profile.default_reasoning_option_id,
-                    intent=intent,
+            execution_result = await execute_generation(
+                GenerationExecutionRequest(
+                    owner=LlmCallOwner(kind="synapse_scan", id=ref.id),
+                    command=command,
+                    journal=JobGenerationJournal(
+                        context=context,
+                        step_path=_SYNTHESIS_STEP_PATH,
+                        capacity_wait_index=_capacity_wait_index(job),
+                        lock_dispatch=lock_dispatch,
+                    ),
+                    capacity_wait_index=_capacity_wait_index(job),
+                    capacity_wait_delays_seconds=_CAPACITY_WAIT_DELAYS_SECONDS,
                 ),
                 session_factory=get_session_factory(),
                 runtime=runtime,
+                encode_terminal=lambda terminal: _encode_synapse_terminal(
+                    terminal,
+                    candidates=candidates,
+                ),
+                encode_preaccept_failure=_encode_synapse_preaccept_failure,
             )
-        except ApiError as exc:
-            # Only a limiter outage is transient here; budget/billing denials
-            # are deterministic (a retry re-denies without dispatching).
-            logger.warning("synapse_scan_llm_rejected", ref=ref.uri, error_code=exc.code.value)
-            if exc.code == ApiErrorCode.E_RATE_LIMITER_UNAVAILABLE:
-                return ScanResult("failed", error_code=exc.code.value)
-            return ScanResult("terminal_failed", error_code=exc.code.value)
-
-        if not isinstance(call.outcome, Succeeded):
-            code, _detail = outcome_failure_facts(call.outcome)
-            logger.warning("synapse_scan_llm_failure", ref=ref.uri, error_code=code)
-            # Keep the failed-attempt llm_calls row; run_llm_task only closes
-            # the session, it never commits.
-            db.commit()
-            return _generation_failure_result(code)
-
-        try:
-            value = decode_structured_synthesis(call.outcome, schema=SynapseSynthesis)
-        except StructuredSynthesisError as exc:
-            # Deterministic decode failure (no repair round): a retry re-bills
-            # the same call for the same malformed output — do not retry.
-            logger.warning("synapse_scan_llm_failure", ref=ref.uri, error=str(exc)[:200])
-            db.commit()
-            return ScanResult("terminal_failed", error_code="invalid_structured_output")
-
-        # Commit the per-attempt llm_calls rows now so a write failure below
-        # cannot erase them (media-unit precedent).
-        db.commit()
-        grounded = (
-            ground_indices(
-                value.connections,
-                candidates,
-                index_of=lambda connection: connection.candidate_index,
-                policy="drop",
-            )
-            or []
-        )
-        # Dedupe by target before the cap so a degenerate output repeating one
-        # index cannot evict a distinct valid survivor.
-        survivors: list[tuple[SynapseConnectionOut, _SynapseCandidate]] = []
-        seen_targets: set[ResourceRef] = set()
-        for connection, candidate in grounded:
-            if candidate.target in seen_targets:
-                continue
-            seen_targets.add(candidate.target)
-            survivors.append((connection, candidate))
-        survivors = survivors[:SYNAPSE_MAX_CONNECTIONS]
-        # Re-check exclusions in the replace-set's own transaction: a dismiss
-        # or a new edge that landed during the up-to-45s provider call must
-        # win over this scan, not be overwritten by it.
-        recheck_excluded = _excluded_refs(db, user_id=user_id, ref=ref, kin=frozenset())
-        survivors = [
-            (connection, candidate)
-            for connection, candidate in survivors
-            if _candidate_exclusion_ref(candidate) not in recheck_excluded
-        ]
-        written = replace_edges_for_origin(
+        except GenerationDispatchAborted:
+            return ScanResult("skipped")
+        if isinstance(execution_result, RescheduleRequested):
+            return execution_result
+        if not isinstance(execution_result, CompletedGeneration):
+            raise AssertionError("synapse generation result is not exhaustive")
+        completed = _COMPLETED_SYNAPSE_ADAPTER.validate_json(execution_result.terminal_result)
+        return _apply_completed_synapse(
             db,
-            viewer_id=user_id,
-            source=ref,
-            origin="synapse",
-            edges=[
-                EdgeCreate(
-                    source=ref,
-                    target=candidate.target,
-                    kind=connection.kind,
-                    origin="synapse",
-                    snapshot=CitationSnapshot(title=candidate.label, excerpt=connection.rationale),
-                )
-                for connection, candidate in survivors
-            ],
+            user_id=user_id,
+            ref=ref,
+            context=context,
+            completed=completed,
         )
-        db.commit()
-        logger.info("synapse_scan_completed", ref=ref.uri, edges=len(written))
-        return ScanResult("ok")
     finally:
         rate_limiter.release_inflight_slot(user_id)
 

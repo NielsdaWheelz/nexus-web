@@ -73,7 +73,7 @@ def list_revisions(db: Session, *, viewer_id: UUID, artifact_id: UUID) -> list[R
                 SELECT r.id, a.subject_scheme, r.created_at, r.promoted_at, r.input_manifest,
                        r.creator_user_id,
                        bld.instruction,
-                       lc.provider AS model_provider,
+                       lc.backend AS model_provider,
                        lc.model_name AS model_name,
                        lc.total_tokens AS total_tokens,
                        COUNT(e.id) AS citation_count
@@ -81,12 +81,12 @@ def list_revisions(db: Session, *, viewer_id: UUID, artifact_id: UUID) -> list[R
                 JOIN artifact_builds bld ON bld.id = r.build_id
                 JOIN artifacts a ON a.id = bld.artifact_id
                 LEFT JOIN LATERAL (
-                    SELECT provider, model_name, total_tokens
+                    SELECT backend, model_name, total_tokens
                     FROM llm_calls
                     WHERE owner_kind = 'artifact_build'
                       AND owner_id = bld.id
-                      AND outcome = 'succeeded'
-                    ORDER BY call_seq DESC
+                      AND outcome = 'Succeeded'
+                    ORDER BY generation_seq DESC
                     LIMIT 1
                 ) lc ON true
                 LEFT JOIN resource_edges e
@@ -97,7 +97,7 @@ def list_revisions(db: Session, *, viewer_id: UUID, artifact_id: UUID) -> list[R
                 WHERE bld.artifact_id = :artifact_id
                 GROUP BY r.id, a.subject_scheme, r.created_at, r.promoted_at, r.input_manifest,
                          r.creator_user_id, bld.instruction,
-                         lc.provider, lc.model_name, lc.total_tokens
+                         lc.backend, lc.model_name, lc.total_tokens
                 ORDER BY r.created_at DESC, r.id DESC
                 """
             ),
@@ -145,19 +145,19 @@ def get_revision(db: Session, *, viewer_id: UUID, revision_id: UUID) -> Revision
                        r.citation_owner_user_id,
                        a.current_revision_id, a.subject_scheme, a.subject_id,
                        a.audience_scheme, a.audience_id,
-                       lc.provider AS model_provider,
+                       lc.backend AS model_provider,
                        lc.model_name AS model_name,
                        lc.total_tokens AS total_tokens
                 FROM artifact_revisions r
                 JOIN artifact_builds bld ON bld.id = r.build_id
                 JOIN artifacts a ON a.id = bld.artifact_id
                 LEFT JOIN LATERAL (
-                    SELECT provider, model_name, total_tokens
+                    SELECT backend, model_name, total_tokens
                     FROM llm_calls
                     WHERE owner_kind = 'artifact_build'
                       AND owner_id = bld.id
-                      AND outcome = 'succeeded'
-                    ORDER BY call_seq DESC
+                      AND outcome = 'Succeeded'
+                    ORDER BY generation_seq DESC
                     LIMIT 1
                 ) lc ON true
                 WHERE r.id = :revision_id

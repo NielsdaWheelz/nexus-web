@@ -15,7 +15,7 @@ from nexus.services.artifacts.bindings._shared import (
     AggregateMediaBinding,
     synthesis_prompt,
 )
-from nexus.services.artifacts.bindings.base import require_resource_subject
+from nexus.services.artifacts.bindings.base import DossierOperation, require_resource_subject
 from nexus.services.artifacts.coordination import DossierBuildRuntime
 from nexus.services.artifacts.dossier_types import (
     AudienceScope,
@@ -36,13 +36,12 @@ from nexus.services.contributor_taxonomy import (
     assume_contributor_handle,
     parse_contributor_handle,
 )
-from nexus.services.llm_profiles import BackgroundLlmOperation
 from nexus.services.resource_graph.refs import ResourceRef
 
 
 class ContributorBinding(AggregateMediaBinding):
     subject_scheme = "contributor"
-    llm_operation: BackgroundLlmOperation = "dossier_contributor"
+    llm_operation: DossierOperation = "dossier_contributor"
     system_prompt = synthesis_prompt("a contributor across all visible credited works")
     candidates_heading = "GROUNDED CLAIMS FROM CONTRIBUTOR WORKS"
 
@@ -138,7 +137,7 @@ class ContributorSubjectPolicy:
     def collection_viewer(self, resolved: ResolvedSubject, audience: AudienceScope) -> UUID | None:
         return _audience_user(audience)
 
-    def requester_billing(self, resolved: ResolvedSubject, requester_user_id: UUID) -> UUID:
+    def requester_admission(self, resolved: ResolvedSubject, requester_user_id: UUID) -> UUID:
         return requester_user_id
 
     def citation_owner(

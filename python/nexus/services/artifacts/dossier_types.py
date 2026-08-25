@@ -106,13 +106,29 @@ class DossierBuildFailureCode(StrEnum):
     NoSourceMaterial = "NoSourceMaterial"
     InputsChanged = "InputsChanged"
     DependencyProjectionFailed = "DependencyProjectionFailed"
-    EntitlementDenied = "EntitlementDenied"
-    BudgetExceeded = "BudgetExceeded"
     ContextTooLarge = "ContextTooLarge"
-    ProviderRefused = "ProviderRefused"
-    ProviderIncomplete = "ProviderIncomplete"
+    Auth = "Auth"
+    Quota = "Quota"
+    Timeout = "Timeout"
+    OutputLimit = "OutputLimit"
+    InvalidOutput = "InvalidOutput"
+    PolicyViolation = "PolicyViolation"
+    RuntimeUnavailable = "RuntimeUnavailable"
+    CapacityUnavailable = "CapacityUnavailable"
     DocumentValidationFailed = "DocumentValidationFailed"
     CitationValidationFailed = "CitationValidationFailed"
+
+
+class HistoricalDossierBuildFailureCode(StrEnum):
+    """Read-only legacy spellings; new terminal producers cannot accept these."""
+
+    EntitlementDenied = "EntitlementDenied"
+    BudgetExceeded = "BudgetExceeded"
+    ProviderRefused = "ProviderRefused"
+    ProviderIncomplete = "ProviderIncomplete"
+
+
+type ReadDossierBuildFailureCode = DossierBuildFailureCode | HistoricalDossierBuildFailureCode
 
 
 class ArtifactBuildEventType(StrEnum):
@@ -168,7 +184,7 @@ class FailedEventPayload(_StrictModel):
     shape is code-owned (migration supports live in ``manifests.py``), so it stays
     an opaque owned-absence JSON object here to avoid a layering cycle."""
 
-    failure_code: DossierBuildFailureCode
+    failure_code: ReadDossierBuildFailureCode
     detail: Presence[str]
     support: Presence[dict[str, Any]]
 
