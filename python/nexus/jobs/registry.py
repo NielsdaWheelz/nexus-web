@@ -503,8 +503,8 @@ def _run_sync_gutenberg_catalog(
     from nexus.tasks.sync_gutenberg_catalog import sync_gutenberg_catalog_job
 
     return sync_gutenberg_catalog_job(
-        request_id=_optional_job_text(payload, "request_id", "sync_gutenberg_catalog_job"),
-        scheduler_identity=_optional_job_text(
+        request_id=_require_job_text(payload, "request_id", "sync_gutenberg_catalog_job"),
+        scheduler_identity=_require_job_text(
             payload, "scheduler_identity", "sync_gutenberg_catalog_job"
         ),
     )
@@ -516,7 +516,7 @@ def _run_prune_background_jobs(
     from nexus.tasks.prune_background_jobs import prune_background_jobs_job
 
     return prune_background_jobs_job(
-        request_id=_optional_job_text(payload, "request_id", "prune_background_jobs_job")
+        request_id=_require_job_text(payload, "request_id", "prune_background_jobs_job")
     )
 
 
@@ -526,7 +526,7 @@ def _run_purge_expired_auth_handoff_codes(
     from nexus.tasks.purge_expired_auth_handoff_codes import purge_expired_auth_handoff_codes_job
 
     return purge_expired_auth_handoff_codes_job(
-        request_id=_optional_job_text(payload, "request_id", "purge_expired_auth_handoff_codes"),
+        request_id=_require_job_text(payload, "request_id", "purge_expired_auth_handoff_codes"),
     )
 
 
