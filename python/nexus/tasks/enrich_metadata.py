@@ -61,6 +61,7 @@ from nexus.services.llm_execution import (
     GenerationDispatchAborted,
     GenerationExecutionRequest,
     GenerationUncertain,
+    JobGenerationJournal,
     execute_generation,
 )
 from nexus.services.llm_ledger import (
@@ -467,14 +468,17 @@ def enrich_metadata(
             GenerationExecutionRequest(
                 owner=owner,
                 command=command,
-                context=context,
-                step_path=METADATA_STEP_PATH,
+                journal=JobGenerationJournal(
+                    context=context,
+                    step_path=METADATA_STEP_PATH,
+                    capacity_wait_index=capacity_wait_index,
+                    lock_dispatch=lock_dispatch,
+                ),
                 capacity_wait_index=capacity_wait_index,
                 capacity_wait_delays_seconds=_CAPACITY_WAIT_DELAYS_SECONDS,
             ),
             session_factory=factory,
             runtime=runtime,
-            lock_dispatch=lock_dispatch,
             encode_terminal=_encode_metadata_terminal,
             encode_preaccept_failure=_encode_metadata_preaccept_failure,
         )

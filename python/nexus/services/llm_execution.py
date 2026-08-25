@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Literal, Protocol
+from uuid import UUID
 
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -58,6 +60,147 @@ class ExecutionRuntime(Protocol):
 
     def stream(self, command: GenerationCommand) -> AsyncIterator[GenerationFrame]: ...
 
+    async def cancel(self, request_id: UUID) -> None: ...
+
+
+class CancellationSignal(Protocol):
+    """One-way owner cancellation notification for an accepted generation."""
+
+    async def wait(self) -> bool: ...
+
+
+class GenerationJournal(Protocol):
+    """Durable owner checkpoint contract composed with the generation ledger.
+
+    Implementations lock and validate their own owner/fence, but never commit
+    or roll back. The execution service always takes the ledger advisory lock
+    first and owns the surrounding transaction.
+    """
+
+    def read(self, db: Session) -> StepReplayState | None: ...
+
+    def arm(
+        self,
+        db: Session,
+        *,
+        expected: StepReplayState,
+        next_state: StepReplayState,
+    ) -> bool: ...
+
+    def complete(
+        self,
+        db: Session,
+        *,
+        expected: StepReplayState,
+        next_state: StepReplayState,
+    ) -> bool: ...
+
+    def restore_prepared(
+        self,
+        db: Session,
+        *,
+        expected: StepReplayState,
+        next_state: StepReplayState,
+        next_capacity_wait_index: int,
+    ) -> dict[str, object]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class JobGenerationJournal:
+    """Lease-fenced generation journal stored in ``background_jobs.payload``."""
+
+    context: JobExecutionContext
+    step_path: str
+    capacity_wait_index: int
+    lock_dispatch: LockedDispatch
+
+    def __post_init__(self) -> None:
+        if not self.step_path:
+            raise ValueError("generation step_path must not be blank")
+        if self.capacity_wait_index < 0:
+            raise ValueError("generation capacity_wait_index must not be negative")
+
+    def read(self, db: Session) -> StepReplayState | None:
+        job = get_job(db, self.context.job_id)
+        if job is None:
+            raise AssertionError(f"generation job {self.context.job_id} disappeared")
+        return read_step_states(job).get(self.step_path)
+
+    def arm(
+        self,
+        db: Session,
+        *,
+        expected: StepReplayState,
+        next_state: StepReplayState,
+    ) -> bool:
+        job = self.lock_dispatch(db)
+        if job is None or not lock_running_job_claim(db, context=self.context):
+            return False
+        _assert_expected_state(read_step_states(job).get(self.step_path), expected)
+        return checkpoint_step_state(
+            db,
+            ctx=self.context,
+            job=job,
+            step_path=self.step_path,
+            state=next_state,
+        )
+
+    def complete(
+        self,
+        db: Session,
+        *,
+        expected: StepReplayState,
+        next_state: StepReplayState,
+    ) -> bool:
+        if not lock_running_job_claim(db, context=self.context):
+            return False
+        job = get_job(db, self.context.job_id)
+        if job is None:
+            raise AssertionError(f"generation job {self.context.job_id} disappeared")
+        _assert_expected_state(read_step_states(job).get(self.step_path), expected)
+        return checkpoint_step_state(
+            db,
+            ctx=self.context,
+            job=job,
+            step_path=self.step_path,
+            state=next_state,
+        )
+
+    def restore_prepared(
+        self,
+        db: Session,
+        *,
+        expected: StepReplayState,
+        next_state: StepReplayState,
+        next_capacity_wait_index: int,
+    ) -> dict[str, object]:
+        if not lock_running_job_claim(db, context=self.context):
+            raise GenerationUncertain(
+                f"generation {expected.generation_id} lost its claim at capacity refusal"
+            )
+        job = get_job(db, self.context.job_id)
+        if job is None:
+            raise AssertionError(f"generation job {self.context.job_id} disappeared")
+        _assert_expected_state(read_step_states(job).get(self.step_path), expected)
+        if job.payload.get("capacity_wait_index") != self.capacity_wait_index:
+            raise AssertionError("generation capacity wait index changed during dispatch")
+        payload = payload_with_step_state(
+            {**job.payload, "capacity_wait_index": next_capacity_wait_index},
+            step_path=self.step_path,
+            state=next_state,
+        )
+        if not update_running_job_payload(
+            db,
+            job_id=self.context.job_id,
+            worker_id=self.context.worker_id,
+            attempt_no=self.context.attempt_no,
+            payload=payload,
+        ):
+            raise GenerationUncertain(
+                f"generation {expected.generation_id} lost its claim at capacity refusal"
+            )
+        return payload
+
 
 @dataclass(frozen=True, slots=True)
 class GenerationExecutionRequest:
@@ -65,15 +208,12 @@ class GenerationExecutionRequest:
 
     owner: LlmCallOwner
     command: GenerationCommand
-    context: JobExecutionContext
-    step_path: str
+    journal: GenerationJournal
     capacity_wait_index: int
     capacity_wait_delays_seconds: tuple[int, ...]
     streaming: bool = False
 
     def __post_init__(self) -> None:
-        if not self.step_path:
-            raise ValueError("generation step_path must not be blank")
         if self.capacity_wait_index < 0:
             raise ValueError("generation capacity_wait_index must not be negative")
         if any(delay <= 0 for delay in self.capacity_wait_delays_seconds):
@@ -127,10 +267,10 @@ async def execute_generation(
     *,
     session_factory: sessionmaker[Session],
     runtime: ExecutionRuntime,
-    lock_dispatch: LockedDispatch,
     encode_terminal: EncodeTerminal,
     encode_preaccept_failure: EncodePreacceptFailure,
     observe_frame: ObserveFrame | None = None,
+    cancel_signal: CancellationSignal | None = None,
 ) -> GenerationExecutionResult:
     """Execute once with durable ambiguity and no transaction across UDS I/O.
 
@@ -160,17 +300,16 @@ async def execute_generation(
     _arm_dispatch(
         session_factory,
         request,
-        lock_dispatch=lock_dispatch,
     )
 
     started = time.monotonic()
-    terminal: GenerationTerminal | None = None
     try:
-        async for frame in runtime.stream(request.command):
-            if observe_frame is not None:
-                await observe_frame(frame)
-            if isinstance(frame.event, GenerationTerminal):
-                terminal = frame.event
+        terminal = await _consume_generation(
+            request,
+            runtime=runtime,
+            observe_frame=observe_frame,
+            cancel_signal=cancel_signal,
+        )
     except CodexGenerationCapacityUnavailable as error:
         return _restore_capacity_or_complete(
             session_factory,
@@ -206,12 +345,7 @@ def _read_replay(
     request: GenerationExecutionRequest,
 ) -> CompletedGeneration | None:
     with session_factory() as db:
-        job = get_job(db, request.context.job_id)
-        if job is None:
-            raise AssertionError(
-                f"generation job {request.context.job_id} disappeared before execution"
-            )
-        state = read_step_states(job).get(request.step_path)
+        state = request.journal.read(db)
         if state is None:
             raise AssertionError("generation execution requires a Prepared checkpoint")
         _assert_identity(state, request)
@@ -235,18 +369,10 @@ def _read_replay(
 def _arm_dispatch(
     session_factory: sessionmaker[Session],
     request: GenerationExecutionRequest,
-    *,
-    lock_dispatch: LockedDispatch,
 ) -> None:
     with session_factory() as db:
         lock_generation_owner_in_current_transaction(db, request.owner)
-        job = lock_dispatch(db)
-        if job is None or not lock_running_job_claim(db, context=request.context):
-            db.rollback()
-            raise GenerationDispatchAborted(
-                f"generation {request.command.request_id} lost its claim before dispatch"
-            )
-        state = read_step_states(job).get(request.step_path)
+        state = request.journal.read(db)
         if state is None or state.dispatch_phase is not Prepared:
             raise AssertionError("generation dispatch requires the Prepared checkpoint")
         _assert_identity(state, request)
@@ -258,12 +384,10 @@ def _arm_dispatch(
                 streaming=request.streaming,
             ),
         )
-        landed = checkpoint_step_state(
+        landed = request.journal.arm(
             db,
-            ctx=request.context,
-            job=job,
-            step_path=request.step_path,
-            state=StepReplayState(
+            expected=state,
+            next_state=StepReplayState(
                 generation_id=request.command.request_id,
                 dispatch_phase=Uncertain,
                 request_fingerprint=present(request_fingerprint(request.command)),
@@ -288,10 +412,7 @@ def _land_terminal(
 ) -> None:
     with session_factory() as db:
         lock_generation_owner_in_current_transaction(db, request.owner)
-        job = get_job(db, request.context.job_id)
-        if job is None:
-            raise AssertionError(f"generation job {request.context.job_id} disappeared at terminal")
-        state = read_step_states(job).get(request.step_path)
+        state = request.journal.read(db)
         if state is None or state.dispatch_phase is not Uncertain:
             raise AssertionError("generation terminal requires the Uncertain checkpoint")
         _assert_identity(state, request)
@@ -308,12 +429,10 @@ def _land_terminal(
                 encoded.accepted_failure.detail if encoded.accepted_failure is not None else None
             ),
         )
-        landed = checkpoint_step_state(
+        landed = request.journal.complete(
             db,
-            ctx=request.context,
-            job=job,
-            step_path=request.step_path,
-            state=StepReplayState(
+            expected=state,
+            next_state=StepReplayState(
                 generation_id=request.command.request_id,
                 dispatch_phase=Completed,
                 request_fingerprint=present(request_fingerprint(request.command)),
@@ -352,12 +471,7 @@ def _restore_capacity_or_complete(
     terminal_result = encode_preaccept_failure(code, detail)
     with session_factory() as db:
         lock_generation_owner_in_current_transaction(db, request.owner)
-        job = get_job(db, request.context.job_id)
-        if job is None:
-            raise AssertionError(
-                f"generation job {request.context.job_id} disappeared at capacity exhaustion"
-            )
-        state = read_step_states(job).get(request.step_path)
+        state = request.journal.read(db)
         if state is None or state.dispatch_phase is not Uncertain:
             raise AssertionError("capacity exhaustion requires the Uncertain checkpoint")
         _assert_identity(state, request)
@@ -369,12 +483,10 @@ def _restore_capacity_or_complete(
             error_detail=detail,
         ):
             raise AssertionError("capacity exhaustion has no started ledger row")
-        landed = checkpoint_step_state(
+        landed = request.journal.complete(
             db,
-            ctx=request.context,
-            job=job,
-            step_path=request.step_path,
-            state=StepReplayState(
+            expected=state,
+            next_state=StepReplayState(
                 generation_id=request.command.request_id,
                 dispatch_phase=Completed,
                 request_fingerprint=present(request_fingerprint(request.command)),
@@ -402,46 +514,60 @@ def _restore_prepared(
 ) -> dict[str, object]:
     with session_factory() as db:
         lock_generation_owner_in_current_transaction(db, request.owner)
-        if not lock_running_job_claim(db, context=request.context):
-            db.rollback()
-            raise GenerationUncertain(
-                f"generation {request.command.request_id} lost its claim at capacity refusal"
-            )
-        job = get_job(db, request.context.job_id)
-        if job is None:
-            raise AssertionError(
-                f"generation job {request.context.job_id} disappeared at capacity refusal"
-            )
-        state = read_step_states(job).get(request.step_path)
+        state = request.journal.read(db)
         if state is None or state.dispatch_phase is not Uncertain:
             raise AssertionError("capacity refusal requires the Uncertain checkpoint")
         _assert_identity(state, request)
-        observed_index = job.payload.get("capacity_wait_index")
-        if observed_index != request.capacity_wait_index:
-            raise AssertionError("generation capacity wait index changed during dispatch")
-        payload = payload_with_step_state(
-            {**job.payload, "capacity_wait_index": next_wait_index},
-            step_path=request.step_path,
-            state=StepReplayState(
+        payload = request.journal.restore_prepared(
+            db,
+            expected=state,
+            next_state=StepReplayState(
                 generation_id=request.command.request_id,
                 dispatch_phase=Prepared,
                 request_fingerprint=present(request_fingerprint(request.command)),
                 terminal_result=absent(),
             ),
+            next_capacity_wait_index=next_wait_index,
         )
-        if not update_running_job_payload(
-            db,
-            job_id=request.context.job_id,
-            worker_id=request.context.worker_id,
-            attempt_no=request.context.attempt_no,
-            payload=payload,
-        ):
-            db.rollback()
-            raise GenerationUncertain(
-                f"generation {request.command.request_id} lost its claim at capacity refusal"
-            )
         db.commit()
         return payload
+
+
+async def _consume_generation(
+    request: GenerationExecutionRequest,
+    *,
+    runtime: ExecutionRuntime,
+    observe_frame: ObserveFrame | None,
+    cancel_signal: CancellationSignal | None,
+) -> GenerationTerminal | None:
+    async def consume() -> GenerationTerminal | None:
+        terminal: GenerationTerminal | None = None
+        async for frame in runtime.stream(request.command):
+            if observe_frame is not None:
+                await observe_frame(frame)
+            if isinstance(frame.event, GenerationTerminal):
+                terminal = frame.event
+        return terminal
+
+    if cancel_signal is None:
+        return await consume()
+
+    stream_task = asyncio.create_task(consume())
+    cancel_task = asyncio.create_task(cancel_signal.wait())
+    try:
+        done, _ = await asyncio.wait(
+            (stream_task, cancel_task),
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if stream_task in done:
+            return await stream_task
+        await runtime.cancel(request.command.request_id)
+        return await stream_task
+    finally:
+        for task in (stream_task, cancel_task):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(stream_task, cancel_task, return_exceptions=True)
 
 
 def _assert_identity(state: StepReplayState, request: GenerationExecutionRequest) -> None:
@@ -453,14 +579,25 @@ def _assert_identity(state: StepReplayState, request: GenerationExecutionRequest
         raise AssertionError("generation journal request fingerprint drifted")
 
 
+def _assert_expected_state(
+    observed: StepReplayState | None,
+    expected: StepReplayState,
+) -> None:
+    if observed != expected:
+        raise AssertionError("generation journal changed during its checkpoint transition")
+
+
 __all__ = [
     "AcceptedGenerationFailure",
+    "CancellationSignal",
     "CompletedGeneration",
     "EncodedGenerationTerminal",
     "ExecutionRuntime",
     "GenerationDispatchAborted",
     "GenerationExecutionRequest",
     "GenerationExecutionResult",
+    "GenerationJournal",
     "GenerationUncertain",
+    "JobGenerationJournal",
     "execute_generation",
 ]
