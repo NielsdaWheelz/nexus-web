@@ -43,14 +43,13 @@ def podcast_reindex_semantic_job(
     request_reason: TranscriptRequestReason,
     *,
     context: JobExecutionContext,
-    session_factory: sessionmaker[Session] | None = None,
 ) -> dict[str, object]:
     """Prepare a DB snapshot, embed outside a transaction, then publish exactly."""
     media_uuid = UUID(media_id)
-    factory = session_factory or get_session_factory()
+    session_factory = get_session_factory()
 
     snapshot = _prepare_snapshot(
-        factory,
+        session_factory,
         media_id=media_uuid,
         request_reason=request_reason,
         context=context,
@@ -67,7 +66,7 @@ def podcast_reindex_semantic_job(
         ),
     )
     published = _publish_snapshot(
-        factory,
+        session_factory,
         snapshot=snapshot,
         plan=plan,
         context=context,

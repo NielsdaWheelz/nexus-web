@@ -24,7 +24,7 @@ _BATCH_LIMIT = 25
 
 
 def reconcile_stale_ingest_media_job(
-    request_id: str | None = None,
+    request_id: str | None,
 ) -> dict[str, int]:
     settings = get_settings()
     discovery = get_session_factory()()

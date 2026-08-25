@@ -14,7 +14,7 @@ def ingest_media_source(
     media_id: str,
     attempt_id: str,
     actor_user_id: str,
-    request_id: str | None = None,
+    request_id: str | None,
     *,
     context: JobExecutionContext,
 ) -> dict[str, object]:
