@@ -186,8 +186,9 @@ __all__ = [
 ]
 
 _MAX_INSTRUCTION_CHARS = 4000
-# The one provider step per build (single synthesis over the reduced inputs, B4).
-_STEP_PATH = "synthesis"
+_SYNTHESIS_STEP_PATH = "synthesis"
+_DOCUMENT_REPAIR_STEP_PATH = "document-repair"
+_BILLED_GENERATION_STEP_PATHS = frozenset({_SYNTHESIS_STEP_PATH, _DOCUMENT_REPAIR_STEP_PATH})
 _IDEA_RESOLUTION_STEP_PATH = "idea-resolution"
 _WEB_SEARCH_STEP_PATHS = frozenset(
     {
@@ -310,9 +311,9 @@ def reconcile_uncertain_build(
             raise AssertionError("Dossier build has multiple uncertain provider steps")
         step_path, state = uncertain_states[0]
         is_tool_execution = isinstance(state.tool_execution, Present)
-        if step_path == _STEP_PATH:
+        if step_path in _BILLED_GENERATION_STEP_PATHS:
             if is_tool_execution:
-                raise AssertionError("uncertain Dossier synthesis contains tool metadata")
+                raise AssertionError("uncertain Dossier generation contains tool metadata")
         elif step_path in _WEB_SEARCH_STEP_PATHS:
             if not is_tool_execution:
                 raise AssertionError("uncertain Dossier Web position lacks bound tool metadata")
@@ -1628,7 +1629,7 @@ async def _run_synthesis_step(
     """Run (or replay) the single coordinated provider step and return the decoded
     output. Returns ``None`` when the step wrote a terminal failure or lost its
     lease (the caller returns). Raises a defect on an uncertain-replay."""
-    gen_id = step_journal.stable_generation_id(build_id, _STEP_PATH)
+    gen_id = step_journal.stable_generation_id(build_id, _SYNTHESIS_STEP_PATH)
     profile = operation_profile(binding.llm_operation)
     user_content = binding.build_user_content(collected, instruction)
     intent = replace(
@@ -1658,7 +1659,7 @@ async def _run_synthesis_step(
         ).encode()
     ).hexdigest()
     states = step_journal.read_step_states(job)
-    st = states.get(_STEP_PATH)
+    st = states.get(_SYNTHESIS_STEP_PATH)
     if st is not None:
         if st.generation_id != gen_id:
             raise AssertionError("dossier synthesis replay generation identity changed")
@@ -1707,7 +1708,7 @@ async def _run_synthesis_step(
             db,
             ctx=ctx,
             job=job,
-            step_path=_STEP_PATH,
+            step_path=_SYNTHESIS_STEP_PATH,
             state=prepared,
         ):
             db.rollback()
@@ -1767,7 +1768,7 @@ async def _run_synthesis_step(
             db,
             ctx=ctx,
             job=job,
-            step_path=_STEP_PATH,
+            step_path=_SYNTHESIS_STEP_PATH,
             state=step_journal.StepReplayState(
                 generation_id=gen_id,
                 dispatch_phase=step_journal.Uncertain,
@@ -1974,7 +1975,7 @@ def _checkpoint_synthesis_result(
         db,
         ctx=ctx,
         job=fresh_job,
-        step_path=_STEP_PATH,
+        step_path=_SYNTHESIS_STEP_PATH,
         state=step_journal.StepReplayState(
             generation_id=generation_id,
             dispatch_phase=step_journal.Completed,
@@ -2005,7 +2006,7 @@ async def _run_document_repair_step(
     input_recheck: _TerminalInputRecheck,
 ) -> BaseModel | _SynthesisInvalid | None:
     """Run the one replay-safe, tool-free document repair attempt."""
-    path = "document-repair"
+    path = _DOCUMENT_REPAIR_STEP_PATH
     generation_id = step_journal.stable_generation_id(build_id, path)
     profile = operation_profile(binding.llm_operation)
     original_user_content = binding.build_user_content(collected, instruction)
