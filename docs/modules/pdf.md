@@ -10,6 +10,9 @@ PDF source acceptance is owned by `media_source_ingest.py`.
 - `pdf_ingest.py` owns PDF text extraction artifacts, page spans, and plain
   text. Source success atomically requests the revision-fenced
   `media_content_reindex_job`.
+- `media_deletion.py` is the sole production owner for deleting PDF Media. It
+  explicitly removes derived page spans before the parent row; neither the
+  database foreign key nor an ORM relationship cascades that cleanup.
 - `pdf_readiness.py`, `pdf_highlights.py`, and related reader services own PDF
   quote/highlight readiness and locator behavior.
 
