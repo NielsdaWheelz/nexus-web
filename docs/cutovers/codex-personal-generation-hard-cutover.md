@@ -367,7 +367,11 @@ Replace metadata-only `POST /v1/turns` with `POST /v2/generations`; retain
 {
   "schema_version": "nexus-generation-command.v2",
   "request_id": "<replay-stable UUID>",
-  "operation": {"kind": "chat", "revision": "<catalog revision>"},
+  "operation": {
+    "kind": "chat",
+    "profile": "balanced",
+    "revision": "<catalog revision>"
+  },
   "policy_revision": "<exact revision>",
   "policy_fingerprint": "<sha256>",
   "intent": {
@@ -470,8 +474,9 @@ Add the official `mcp` Python SDK as a new pinned runtime dependency in
 `python/pyproject.toml` and `python/uv.lock` (exact `==` version, recorded in
 the module doc; `uv sync --frozen` must succeed unchanged) and serve its
 Streamable HTTP ASGI app at `/internal/agent-tools/mcp`; do not hand-roll
-JSON-RPC. Stateful sessions are enabled; SSE resumability/event-store replay
-is disabled, so the only replay path is the durable tool journal below.
+JSON-RPC. The hard-cut protocol is MCP `2026-07-28`: it is sessionless, and
+older stateful-session negotiation is refused. SSE resumability/event-store
+replay is disabled, so the only replay path is the durable tool journal below.
 
 The mount is served by the interactive worker process that owns the chat run —
 the single durable-journal writer of §4 — on a dedicated listener.
@@ -512,16 +517,23 @@ iss, aud, scope, sub, jti, run_id, job_id, worker_id, attempt_no,
 generation_id, tool_plan_revision, request_fingerprint, iat, nbf, exp
 ```
 
-`exp` is at most the chat run ceiling. The token is multi-use within one MCP
-session: on the first authenticated request the resolver binds `jti` to the
-transport's `Mcp-Session-Id`; a presentation of the same `jti` under a
-different session id is refused and terminates the run's grant. Every tool
-call revalidates signature with `alg` pinned to HS256, exact
-`iss`/`aud`/`scope`, `nbf`/`exp` against the database clock with no skew
-allowance, the bound session id, the active job lease/fence, run/user
-ownership, generation, plan revision, cancellation, declared tool, and
-admitted resource scope. The grant is refused at every Nexus surface other
-than the MCP mount.
+`exp` is at most the chat run ceiling. The token is multi-use for exactly one
+generation. Every tool call independently revalidates signature with `alg`
+pinned to HS256, exact `iss`/`aud`/`scope`, `nbf`/`exp` against the database
+clock with no skew allowance, the active job lease/fence, run/user ownership,
+generation, plan revision, cancellation, declared tool, and admitted resource
+scope. No session identifier is accepted, persisted, or inferred. The grant is
+refused at every Nexus surface other than the MCP mount.
+
+A request with no verifiable grant is indistinguishably unauthenticated and
+cannot name or affect a generation. When a correctly signed grant identifies
+an active generation but fails a later authorization fact (lease/fence,
+owner, revision, cancellation, declaration, or resource scope), the MCP owner
+signals the host over the private UDS with
+`POST /v2/generations/{request_id}/policy-violation`. The idempotent endpoint
+returns 204, interrupts that active runtime, and closes its still-open stream
+with `Failed(policy_violation)`; it cannot select another generation. This is
+the sole cross-process abort path and carries no grant or diagnostic body.
 
 Tool positions are assigned by Nexus at MCP-request admission via one
 monotonic per-generation counter yielding
@@ -529,15 +541,19 @@ monotonic per-generation counter yielding
 `turn/<n>/tool/<n>` grammar in the step-schema, reconciliation, and
 write-`EffectId` owners; `<n>` is also `message_tool_calls.tool_call_index`
 and the citation-ordinal cursor, both read from the journal. The protocol
-identity of a call is the tuple `(grant jti, Mcp-Session-Id, JSON-RPC request
-id)`. On first admission the handler binds that identity, under the run's
-lease fence in one transaction, to the next durable tool position, recording
-the identity tuple and the canonical input digest alongside it. A repeat of
-the same identity tuple returns the journaled receipt verbatim; the same
-identity tuple with a different canonical input digest is a defect, not a new
-call. Concurrent calls serialize on the fence, so the ordinal is total. One
-generation writes exactly one ledger row; `call_seq` is no longer derived
-from a turn index.
+identity of a call is `(grant jti, typed JSON-RPC request id)`. The request id
+is encoded as a tagged `integer` or `string` value so `1` and `"1"` remain
+distinct; booleans, nulls, floats, oversized integers, and strings over the
+declared bound are refused. On first admission the handler binds that identity,
+under the run's lease fence in one transaction, to the next durable tool
+position, recording the tagged identity and canonical input digest in the
+existing `background_jobs.payload` journal. A repeat of the same identity
+returns the journaled receipt verbatim; the same identity with a different
+canonical input digest is a defect, not a new call. Concurrent calls serialize
+on the fence, so the ordinal is total. One generation writes exactly one
+ledger row; `call_seq` is no longer derived from a turn index. A negotiated
+protocol revision, if the SDK exposes it, is bounded audit metadata only and
+never part of replay identity.
 
 MCP tool names are governed by one rule with three name spaces. The declared
 MCP tool name is the canonical tool id where the pinned MCP SDK accepts it;
@@ -754,7 +770,7 @@ owner journal:
 
 The host's existing-VPS envelope is re-qualified for the widest plan before
 promotion: re-run `deploy/hetzner/prove-codex-capacity.sh` with one
-`deep`/Sol-high chat turn holding an open MCP session in addition to the
+`deep`/Sol-high chat turn holding an active MCP tool loop in addition to the
 metadata turns, asserting `memory.peak <= 320 MiB`, no OOM, PSI within the
 committed thresholds, and file-descriptor headroom. If the widest plan does
 not fit, raise `memory.max`, `_EXPECTED_MEMORY_MAX_BYTES`, and the compose
@@ -792,9 +808,9 @@ the maintenance window, not a repository acceptance criterion
 |---|---|---|---|
 | A. Policy/contracts | plans, mappings, bounds, intents, strict wire unions, eval corpus, error family | `python/nexus/services/llm_profiles.py` -> `python/nexus/services/generation_policy.py`; `python/nexus/services/llm_intent_state.py`, `python/nexus/services/native_agent_contract.py` -> `python/nexus/services/{generation_intent,codex_generation_contract}.py`; `python/nexus/services/structured_synthesis.py`; `python/nexus/schemas/llm.py` (profile + failure unions, including the §6 card recut consumed by E and F); `python/nexus/errors.py` | none |
 | B. Host | UDS v2, SDK lifecycle, capability lowering, secret resolver, isolation | `apps/codex_agent/**`; `python/nexus/services/native_agent_client.py` -> `codex_generation_client.py`; `python/nexus/services/native_agent_operations.py` -> `codex_generation_operations.py` (host-side lowering + fingerprint) | A |
-| C. Execution/ledger | dispatch, uncertainty, capacity wait, one ledger, credentials, migration, durable journals for journal-less operations | `python/nexus/services/{llm_execution,llm_ledger,llm_outcomes,llm_credentials,semantic_chunks,rate_limit}.py`; `python/nexus/services/search/embedding.py`; `python/nexus/tasks/llm_task.py`; the `LlmTaskSpec` dispatch/journal seam in every `python/nexus/tasks/*` caller (the task files themselves stay with D and E); `python/nexus/api/deps.py`; `python/nexus/api/routes/dossiers.py` (learn dispatch); `python/nexus/app.py`; `python/nexus/jobs/process_executor.py`; `python/nexus/db/models.py`; new migration; delete `python/nexus/services/agent_turn_ledger.py`; journal/identity seams in `python/nexus/services/{synapse,dawn_write,oracle}.py` (prompts/evidence stay with D) | A |
+| C. Execution/ledger | dispatch, uncertainty, capacity wait, one ledger, credentials, migration, durable journals for journal-less operations | `python/nexus/services/{llm_execution,llm_ledger,llm_outcomes,llm_credentials,semantic_chunks,rate_limit,billing}.py`; `python/nexus/services/search/embedding.py`; `python/nexus/tasks/llm_task.py`; the `LlmTaskSpec` dispatch/journal seam in every `python/nexus/tasks/*` caller (the task files themselves stay with D and E); `python/nexus/api/deps.py`; `python/nexus/api/routes/dossiers.py` (learn dispatch); `python/nexus/app.py`; `python/nexus/jobs/{process_executor,registry}.py`; `python/nexus/db/models.py`; new migration; delete `python/nexus/services/agent_turn_ledger.py`; journal/identity seams in `python/nexus/services/{synapse,dawn_write,oracle}.py` (prompts/evidence stay with D) | A |
 | D. Operation adapters | prompts, evidence, output validation/publication, failure-code recuts | `python/nexus/services/{media_intelligence,synapse,dawn_write,oracle,metadata_enrichment,metadata_dispatch}.py`; `python/nexus/services/artifacts/**`; `python/nexus/tasks/{enrich_metadata,media_unit_build,synapse_scan,dawn_write,oracle_reading,artifacts}.py` | A, C, E |
-| E. Chat/MCP/tools | grant, MCP transport + worker listener, canonical executor bridge, chat transcript/stream, chat failure recut | `python/nexus/services/{chat_runs,chat_run_tools,chat_run_steps,chat_run_usage,chat_run_validation,chat_run_response,chat_failure,message_trust_trails,chat_prompt,context_assembler,conversations}.py`; `python/nexus/services/tool_runtime/**`; `python/nexus/tasks/chat_run.py`; new `python/nexus/services/{agent_tool_grants,agent_tools_mcp}.py`; `python/nexus/auth/middleware.py` (assert-untouched proof only); `python/nexus/config.py`; `apps/web/src/lib/conversations/types.ts`; `python/pyproject.toml`, `python/uv.lock` | A, B, C |
+| E. Chat/MCP/tools | grant, MCP transport + worker listener, canonical executor bridge, chat transcript/stream, chat failure recut | `python/nexus/services/{chat_runs,chat_run_tools,chat_run_steps,chat_run_usage,chat_run_validation,chat_run_response,chat_failure,message_trust_trails,chat_prompt,context_assembler,conversations,chat_run_idempotency,chat_run_event_store,chat_run_finalize}.py`; `python/nexus/services/tool_runtime/**`; `python/nexus/tasks/chat_run.py`; new `python/nexus/services/{agent_tool_grants,agent_tools_mcp}.py`; `python/nexus/auth/middleware.py` (assert-untouched proof only); `python/nexus/config.py`; `apps/worker/main.py`; `python/pyproject.toml`, `python/uv.lock` | A, B, C |
 | F. Product/operations | profile API/UI, deployment, canaries, docs | `python/nexus/api/routes/{llm_profiles,chat_runs}.py`; `python/nexus/schemas/conversation.py`; `python/nexus/services/chat_run_candidates.py`; `apps/web/src/components/chat/**` (incl. `ChatProfilePicker.tsx`); `apps/web/src/lib/conversations/**` (incl. `chatProfileSelection.ts`); `apps/web/src/lib/api/sse/{requests,events}.ts`; versioned chat-draft storage key; `docker/Dockerfile.backend`; `deploy/hetzner/{docker-compose.yml,release.py,sync-env.sh,prove-codex-capacity.sh,Caddyfile,nexus-codex-agent-host.apparmor}`; `deploy/vercel/sync-env.sh`; `deploy/env/env-prod-backend.example`; `.env.example`; `.github/workflows/{release.yml,codex-personal-nightly.yml}`; `docs/modules/{llms,chat,jobs}.md`; `docs/runbooks/codex-personal-agent-host.md` | B-E |
 | G. Proof portfolio and test control | failing proofs, lanes, capabilities, routing, evidence schema, proof/fault registry | only files under `python/tests/**`, `testdata/**` (incl. `testdata/proofs.json`, `testdata/faults/manifest.json` and patches), `python/nexus_test_control/**` (registry digests included), and `python/nexus/ops/codex_hosted_evidence.py`; the affected rows and `nexus-test-routing-sha256` in `docs/local-rules/testing-standards.md` | A-F |
 
@@ -938,7 +954,7 @@ owned real-UDS process under `python/tests/service/`, not a separate level.
 | Uncertainty discharge | reconciliation returns an uncertain generation to `Prepared` or attaches a proven terminal; neither path double-publishes | service / PR |
 | Operation portfolio | parameterized catalog proves every operation renders a valid intent/schema within its bounds, cannot choose runtime policy, and publishes in one serializable transaction opened only after the durable terminal | kernel-python + service / PR |
 | Bounds | the ChatTools bounds admit a maximal admitted transcript and a maximal streamed 900-second turn; overrun is the typed `output_limit_exceeded` terminal | service / PR |
-| MCP authority + tools | real Postgres and local MCP transport prove one read and one reversible write; expired/cross-user/cross-run/cross-session grants fail; an exact protocol replay at the same identity returns the journaled receipt without re-executing, and a changed payload at that identity defects | service / PR |
+| MCP authority + tools | real Postgres and local MCP transport prove one read and one reversible write; expired/cross-user/cross-run/cross-generation grants fail; integer and string request ids remain distinct; an exact protocol replay at the same identity returns the journaled receipt without re-executing, and a changed payload at that identity defects | service / PR |
 | MCP exposure | a grantless or invalid-grant request to `/internal/agent-tools/mcp` is rejected without tool execution; the grant is accepted only at this mount; no other path changes route or gains an exemption | service / PR |
 | Secret and capability confinement | the grant never appears in repr, logs, ledger rows, fingerprints, or evidence; built-ins/web search stay off; ChatTools lowering is exactly §5's | service / PR |
 | Tool-authority containment | injected resource text, forged tool results, and cross-account requests cannot authorize a mutating MCP tool; deterministic corpus and rubric | llm-eval + service / PR |
