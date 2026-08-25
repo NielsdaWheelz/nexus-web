@@ -633,7 +633,10 @@ defaults. In particular, the sole note-index and Synapse enqueuers persist a
 canonical, nonempty, unpadded `reason`; omission, coercion, or padding defects at
 dispatch instead of inventing `note_edit` or `manual`. Optional `request_id` and
 `scheduler_identity` carriers are either absent/`null` or the same canonical
-text shape; the registry never stringifies or trims malformed values.
+text shape; the registry never stringifies or trims malformed values. The
+scheduler-only Gutenberg sync, job-prune, and auth-handoff purge handlers
+require their scheduler-written `request_id`, and Gutenberg also requires the
+exact `scheduler_identity`; their tasks expose no default or invented identity.
 
 Task catalog (each is a thin handler in `tasks/` that wraps a service):
 `ingest_media_source`, `enrich_metadata`, `chat_run`,

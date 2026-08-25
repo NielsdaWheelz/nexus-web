@@ -1151,6 +1151,9 @@ note-index and Synapse owners always persist their exact `reason`; the registry
 defects on an absent, non-string, empty, or padded carrier rather than supplying
 an older default. Optional request and scheduler identities accept only explicit
 absence or canonical text and never recover through string coercion or trimming.
+Scheduler-only Gutenberg sync, background-job prune, and auth-handoff purge
+require the scheduler-owned request identity, while Gutenberg also requires its
+scheduler identity; no task-level defaults reconstruct either field.
 
 ## Acceptance criteria
 
