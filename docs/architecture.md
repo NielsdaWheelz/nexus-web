@@ -1500,7 +1500,10 @@ Episode Transcribe prefers a publisher sidecar, then the quota-gated Deepgram
 path; explicit Video Transcribe uses the YouTube caption provider. Current
 transcript origin is exactly `Publisher | Imported | Generated`.
 `services/podcasts/transcription.py::request_media_transcript_for_viewer` owns
-both forecast and admission. A dry-run may append its explicit immutable
+authorization, one typed media snapshot, and strict media-kind dispatch only.
+`_request_podcast_episode_transcript` owns the Episode precedence machine:
+publisher sidecar, readable transcript, inflight work, quota rejection, then
+fresh generated admission. A dry-run may append its explicit immutable
 `podcast_transcript_request_audits` forecast fact, but it does not create
 `media_transcript_states`, create/reset a transcription job, reserve usage, or
 bump collection revisions. Transcript work state is materialized only after the
@@ -1509,9 +1512,9 @@ the same transcript-job reset owner; no caller carries a second job upsert.
 Forecast, explicit admission, and durable source requeue derive and reserve
 quota through one typed transcript-budget owner. A quota rejection writes only
 its immutable audit fact; it does not materialize transcript work state or bump
-collection revisions. Repeated ready or inflight admission is likewise an
-audit-only idempotent fact; Podcast collection revisions advance only when the
-request changes viewer-visible transcript work state.
+collection revisions. Repeated inflight admission is likewise an audit-only
+idempotent fact; Podcast collection revisions advance only when the request
+changes viewer-visible transcript work state.
 The request path reads its media/job/transcript inputs once through the typed
 `_TranscriptRequestMedia` snapshot. Publisher-sidecar forecast and admission
 then live in `_request_rss_podcast_transcript`: they reserve zero generated
@@ -1519,6 +1522,14 @@ minutes and create one durable transcript source attempt. That source-attempt
 owner publishes the all-viewer media-fact revision exactly once; the outer
 transcript controller does not publish a second revision for the same accepted
 attempt.
+`services/transcripts/state.py` is the sole persistence owner for
+`media_transcript_states`; `current.py` owns artifact publication, while
+`semantic.py` owns every semantic-job payload plus lock-and-job-inventory repair
+admission. Readable-transcript repair costs zero generated minutes, never bumps
+collection revisions because `semantic_status` is not a collection-row fact,
+and treats a live pending/running/retryable semantic job as idempotent instead
+of dispatching duplicate work. Database enqueue defects propagate and roll back;
+there is no semantic `enqueue_failed` fallback.
 Canonical YouTube Video caption forecast and import live in
 `_request_youtube_video_transcript`. It crosses the provider boundary with no
 database transaction open, reauthorizes before atomic `Imported` transcript

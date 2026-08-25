@@ -220,6 +220,14 @@ current embedding provider/model. `media_transcript_states.transcript_origin`
 records exactly `Publisher`, `Imported`, or `Generated` while transcript state
 is Ready/Partial and is absent otherwise.
 
+The public transcript request service is a media-kind dispatcher; one private
+Podcast Episode owner holds sidecar/readable/inflight/quota/fresh-admission
+precedence. Current transcript lifecycle persistence, artifact publication, and
+semantic-job admission have separate owners under `services/transcripts/`.
+Semantic repair is zero-cost indexing work: it serializes on Media, inventories
+the canonical queue, never invalidates collection rows, and a repeat against a
+live repair job is audit-only idempotency.
+
 `podcasts.deepgram_adapter` is a documented non-LLM provider port, not part of the shared
 generation runtime. It owns Deepgram diarization fallback, fixture normalization, and podcast
 transcript error mapping. The removal gate is a provider-runtime transcription API that can
