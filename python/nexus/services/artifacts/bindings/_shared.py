@@ -26,10 +26,10 @@ from nexus.auth.permissions import can_read_media
 from nexus.services.artifacts.bindings.base import (
     DossierBindingBase,
     DossierInputTooLarge,
-    MaterializedDossier,
+    PublishableDossier,
 )
 from nexus.services.artifacts.coordination import DossierBuildRuntime
-from nexus.services.artifacts.document_html import accept_model_article
+from nexus.services.artifacts.document_html import accept_model_article, compile_learning_document
 from nexus.services.artifacts.dossier_types import (
     AudienceScope,
     DossierBuildFailureCode,
@@ -195,8 +195,8 @@ def document_repair_user_content(
 def materialize_standard(
     decoded_output: BaseModel,
     candidates: list[Candidate],
-) -> MaterializedDossier:
-    """Accept the article and fail closed on every citation mismatch."""
+) -> PublishableDossier:
+    """Accept and compile the article, failing closed on every citation mismatch."""
 
     value = cast("StandardSynthesis", decoded_output)
     article = accept_model_article(value.content_html)
@@ -232,7 +232,13 @@ def materialize_standard(
                 snapshot=candidate.snapshot,
             )
         )
-    return MaterializedDossier(article=article, citations=tuple(out))
+    citations = tuple(out)
+    compiled = compile_learning_document(article, citations)
+    return PublishableDossier(
+        content_html=compiled.content_html,
+        content_text=compiled.content_text,
+        citations=citations,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -488,7 +494,7 @@ class AggregateMediaBinding(DossierBindingBase):
         collected: AggregateCollected,  # noqa: ARG002
         decoded_output: BaseModel,
         witness: AggregateWitness,
-    ) -> MaterializedDossier:
+    ) -> PublishableDossier:
         return materialize_standard(decoded_output, witness.candidates)
 
     def input_manifest(self, collected: AggregateCollected) -> InputManifestV1:

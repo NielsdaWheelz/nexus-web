@@ -77,7 +77,7 @@ from nexus.services.artifacts.bindings._shared import (
     document_repair_system_prompt,
     document_repair_user_content,
 )
-from nexus.services.artifacts.bindings.base import DossierInputTooLarge, MaterializedDossier
+from nexus.services.artifacts.bindings.base import DossierInputTooLarge, PublishableDossier
 from nexus.services.artifacts.coordination import (
     DossierBuildRuntime,
     DossierResearchPending,
@@ -86,7 +86,6 @@ from nexus.services.artifacts.coordination import (
 from nexus.services.artifacts.definition import DOSSIER_DEFINITION
 from nexus.services.artifacts.document_html import (
     DocumentHtmlError,
-    compile_learning_document,
 )
 from nexus.services.artifacts.dossier_types import (
     ArtifactBuildEventType,
@@ -1311,6 +1310,79 @@ def _build_ticket_for_idempotency(
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True, slots=True)
+class _DossierDocumentAcceptance:
+    db: Session
+    build_id: UUID
+    binding: DossierBinding
+    collected: object
+    instruction: str | None
+    requester: UUID
+    runtime: DossierBuildRuntime
+    witness: object
+    input_recheck: _TerminalInputRecheck
+
+    async def accept(
+        self,
+        decoded: BaseModel | ArtifactGenerationInvalid,
+    ) -> PublishableDossier | None:
+        if isinstance(decoded, ArtifactGenerationInvalid):
+            rejected_output = decoded.rejected_output
+            diagnostic = decoded.diagnostic
+        else:
+            rejected_output = decoded.model_dump_json()
+            try:
+                return self.binding.materialize(self.collected, decoded, self.witness)
+            except DocumentHtmlError as exc:
+                diagnostic = str(exc)
+            except CitationValidationError as exc:
+                self._terminalize(DossierBuildFailureCode.CitationValidationFailed, str(exc))
+                return None
+
+        repaired = await _run_document_repair_step(
+            self.db,
+            build_id=self.build_id,
+            binding=self.binding,
+            collected=self.collected,
+            instruction=self.instruction,
+            requester=self.requester,
+            runtime=self.runtime,
+            rejected_output=rejected_output,
+            diagnostic=diagnostic,
+            input_recheck=self.input_recheck,
+        )
+        if repaired is None:
+            return None
+        if isinstance(repaired, ArtifactGenerationInvalid):
+            self._terminalize(
+                DossierBuildFailureCode.DocumentValidationFailed,
+                repaired.diagnostic,
+            )
+            return None
+        try:
+            return self.binding.materialize(self.collected, repaired, self.witness)
+        except (DocumentHtmlError, CitationValidationError) as exc:
+            code = (
+                DossierBuildFailureCode.CitationValidationFailed
+                if isinstance(exc, CitationValidationError)
+                else DossierBuildFailureCode.DocumentValidationFailed
+            )
+            self._terminalize(code, str(exc))
+            return None
+
+    def _terminalize(self, code: DossierBuildFailureCode, detail: str) -> None:
+        self.db.commit()
+        _terminal_failure(
+            self.db,
+            build_id=self.build_id,
+            code=code,
+            detail=detail,
+            support=None,
+            ctx=self.runtime.execution_context,
+            input_recheck=self.input_recheck,
+        )
+
+
 async def run_build(
     db: Session,
     *,
@@ -1478,97 +1550,20 @@ async def run_build(
         if decoded is None:
             return  # the step already terminalized the build (failure) or lost its lease
 
-        rejected_output = ""
-        document_diagnostic: str | None = None
-        materialized: MaterializedDossier | None = None
-        compiled = None
-        if isinstance(decoded, ArtifactGenerationInvalid):
-            rejected_output = decoded.rejected_output
-            document_diagnostic = decoded.diagnostic
-        else:
-            rejected_output = decoded.model_dump_json()
-            try:
-                materialized = binding.materialize(collected, decoded, witness)
-                compiled = compile_learning_document(
-                    materialized.article,
-                    materialized.citations,
-                )
-            except DocumentHtmlError as exc:
-                document_diagnostic = str(exc)
-            except CitationValidationError as exc:
-                db.commit()
-                _terminal_failure(
-                    db,
-                    build_id=build_id,
-                    code=DossierBuildFailureCode.CitationValidationFailed,
-                    detail=str(exc),
-                    support=None,
-                    ctx=ctx,
-                    input_recheck=input_recheck,
-                )
-                return
-
-        if document_diagnostic is not None:
-            repaired = await _run_document_repair_step(
-                db,
-                build_id=build_id,
-                binding=binding,
-                collected=collected,
-                instruction=instruction,
-                requester=requester,
-                runtime=runtime,
-                rejected_output=rejected_output,
-                diagnostic=document_diagnostic,
-                input_recheck=input_recheck,
-            )
-            if repaired is None:
-                return
-            if isinstance(repaired, ArtifactGenerationInvalid):
-                db.commit()
-                _terminal_failure(
-                    db,
-                    build_id=build_id,
-                    code=DossierBuildFailureCode.DocumentValidationFailed,
-                    detail=repaired.diagnostic,
-                    support=None,
-                    ctx=ctx,
-                    input_recheck=input_recheck,
-                )
-                return
-            try:
-                materialized = binding.materialize(collected, repaired, witness)
-                compiled = compile_learning_document(
-                    materialized.article,
-                    materialized.citations,
-                )
-            except DocumentHtmlError as exc:
-                db.commit()
-                _terminal_failure(
-                    db,
-                    build_id=build_id,
-                    code=DossierBuildFailureCode.DocumentValidationFailed,
-                    detail=str(exc),
-                    support=None,
-                    ctx=ctx,
-                    input_recheck=input_recheck,
-                )
-                return
-            except CitationValidationError as exc:
-                db.commit()
-                _terminal_failure(
-                    db,
-                    build_id=build_id,
-                    code=DossierBuildFailureCode.CitationValidationFailed,
-                    detail=str(exc),
-                    support=None,
-                    ctx=ctx,
-                    input_recheck=input_recheck,
-                )
-                return
-
-        if materialized is None or compiled is None:
-            raise AssertionError("accepted Dossier output was not compiled")
-        citations = materialized.citations
+        document = await _DossierDocumentAcceptance(
+            db=db,
+            build_id=build_id,
+            binding=binding,
+            collected=collected,
+            instruction=instruction,
+            requester=requester,
+            runtime=runtime,
+            witness=witness,
+            input_recheck=input_recheck,
+        ).accept(decoded)
+        if document is None:
+            return
+        citations = document.citations
         if len(citations) < DOSSIER_DEFINITION.min_materialized_citations:
             raise AssertionError("strict citation materializer accepted too few citations")
         manifest = binding.input_manifest(collected)
@@ -1581,8 +1576,8 @@ async def run_build(
             audience=audience,
             policy=policy,
             binding=binding,
-            content_html=compiled.content_html,
-            content_text=compiled.content_text,
+            content_html=document.content_html,
+            content_text=document.content_text,
             citations=citations,
             manifest=manifest,
             witness=witness,
