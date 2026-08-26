@@ -131,8 +131,6 @@ from nexus.services.artifacts.idea_identity import InvalidIdeaText
 from nexus.services.artifacts.idea_seeds import (
     delete_artifact_idea_rows_before_head,
     delete_idea_subject_after_head,
-    delete_user_idea_rows_after_heads,
-    delete_user_learn_rows_before_heads,
     register_idea_seed,
 )
 from nexus.services.artifacts.manifests import InputManifestV1
@@ -156,10 +154,7 @@ from nexus.services.llm_execution import (
 from nexus.services.llm_ledger import LlmCallOwner
 from nexus.services.llm_profiles import operation_profile
 from nexus.services.rate_limit import get_rate_limiter
-from nexus.services.resource_graph.citations import (
-    rehome_citations_for_output,
-    replace_citations_for_output,
-)
+from nexus.services.resource_graph.citations import replace_citations_for_output
 from nexus.services.resource_graph.refs import RESOURCE_SCHEMES, ResourceRef, ResourceScheme
 from nexus.services.resource_graph.schemas import CitationInput
 from nexus.services.structured_synthesis import (
@@ -189,9 +184,7 @@ __all__ = [
     "lock_cleanup_heads_in_order",
     "make_current",
     "on_audience_visibility_changed",
-    "on_subject_audience_removed",
     "on_subject_deleted",
-    "on_user_deleted",
     "read_head",
     "read_artifact_head",
     "reconcile_uncertain_build",
@@ -2726,34 +2719,6 @@ def on_subject_deleted(db: Session, subject_ref: ResourceRef) -> None:
     _delete_heads(db, head_ids)
 
 
-def on_subject_audience_removed(
-    db: Session,
-    *,
-    subject_ref: ResourceRef,
-    audience: AudienceScope,
-) -> None:
-    """Purge one subject/audience head after that audience loses visibility."""
-    head_ids = [
-        UUID(str(row[0]))
-        for row in db.execute(
-            text(
-                "SELECT id FROM artifacts "
-                "WHERE subject_scheme = :subject_scheme AND subject_id = :subject_id "
-                "AND audience_scheme = :audience_scheme AND audience_id = :audience_id "
-                "FOR UPDATE"
-            ),
-            {
-                "subject_scheme": subject_ref.scheme,
-                "subject_id": subject_ref.id,
-                "audience_scheme": audience.scheme,
-                "audience_id": str(audience.audience_id),
-            },
-        )
-    ]
-    if head_ids:
-        _delete_heads(db, head_ids)
-
-
 def on_audience_visibility_changed(db: Session, *, audience: AudienceScope) -> None:
     """Purge User-audience heads whose subjects are no longer visible.
 
@@ -2790,203 +2755,6 @@ def on_audience_visibility_changed(db: Session, *, audience: AudienceScope) -> N
             lost.append(UUID(str(row["id"])))
     if lost:
         _delete_heads(db, lost)
-
-
-def on_user_deleted(db: Session, *, user_id: UUID) -> None:
-    """Apply the Dossier-owned part of explicit User teardown.
-
-    User-audience history is purged. Surviving Library-audience history keeps
-    its content, rehomes citation graph ownership to the Library's current
-    owner, redacts attribution, and cancels active builds requested by the
-    departing user. The caller owns the surrounding User-deletion transaction.
-    """
-    owned_library = db.execute(
-        text("SELECT id FROM libraries WHERE owner_user_id = :user_id LIMIT 1"),
-        {"user_id": user_id},
-    ).scalar_one_or_none()
-    if owned_library is not None:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Transfer or delete owned libraries before deleting the user",
-        )
-
-    # User teardown composes private-head deletion, shared-build cancellation,
-    # citation re-homing, and attribution redaction. Lock the complete set of
-    # heads those mutations can touch once, before any subset cleanup, using the
-    # same global UUID order as every other composing cleanup.
-    db.execute(
-        text(
-            """
-            SELECT artifact.id
-            FROM artifacts artifact
-            WHERE (
-                artifact.audience_scheme = 'user'
-                AND artifact.audience_id = :user_id_text
-            )
-               OR EXISTS (
-                SELECT 1
-                FROM artifact_builds build
-                WHERE build.artifact_id = artifact.id
-                  AND build.requester_user_id = :user_id
-            )
-               OR EXISTS (
-                SELECT 1
-                FROM artifact_builds build
-                JOIN artifact_revisions revision ON revision.build_id = build.id
-                WHERE build.artifact_id = artifact.id
-                  AND (
-                    revision.citation_owner_user_id = :user_id
-                    OR revision.creator_user_id = :user_id
-                  )
-            )
-               OR EXISTS (
-                SELECT 1
-                FROM artifact_builds build
-                JOIN artifact_build_cancellations cancellation
-                  ON cancellation.build_id = build.id
-                WHERE build.artifact_id = artifact.id
-                  AND cancellation.actor_user_id = :user_id
-            )
-            ORDER BY artifact.id
-            FOR UPDATE OF artifact
-            """
-        ),
-        {"user_id": user_id, "user_id_text": str(user_id)},
-    ).all()
-
-    private_head_ids = [
-        UUID(str(row[0]))
-        for row in db.execute(
-            text(
-                "SELECT id FROM artifacts "
-                "WHERE audience_scheme = 'user' AND audience_id = :user_id "
-                "ORDER BY id"
-            ),
-            {"user_id": str(user_id)},
-        )
-    ]
-    delete_user_learn_rows_before_heads(db, user_id=user_id)
-    if private_head_ids:
-        _delete_heads(db, private_head_ids)
-    delete_user_idea_rows_after_heads(db, user_id=user_id)
-
-    shared_heads = list(
-        db.execute(
-            text(
-                "SELECT a.id "
-                "FROM artifacts a "
-                "WHERE a.audience_scheme = 'library' "
-                "AND EXISTS ("
-                "  SELECT 1 FROM artifact_builds b "
-                "  WHERE b.artifact_id = a.id AND b.requester_user_id = :user_id"
-                ") ORDER BY a.id"
-            ),
-            {"user_id": user_id},
-        ).scalars()
-    )
-    for head_id in shared_heads:
-        active_build_ids = [
-            UUID(str(row[0]))
-            for row in db.execute(
-                text(
-                    "SELECT b.id FROM artifact_builds b "
-                    "WHERE b.artifact_id = :head_id AND b.requester_user_id = :user_id "
-                    "AND NOT EXISTS (SELECT 1 FROM artifact_revisions r WHERE r.build_id = b.id) "
-                    "AND NOT EXISTS ("
-                    "  SELECT 1 FROM artifact_build_failures f WHERE f.build_id = b.id"
-                    ") AND NOT EXISTS ("
-                    "  SELECT 1 FROM artifact_build_cancellations c WHERE c.build_id = b.id"
-                    ") ORDER BY b.created_at, b.id"
-                ),
-                {"head_id": head_id, "user_id": user_id},
-            )
-        ]
-        for build_id in active_build_ids:
-            db.execute(
-                text(
-                    "INSERT INTO artifact_build_cancellations (build_id, actor_user_id) "
-                    "VALUES (:build_id, NULL)"
-                ),
-                {"build_id": build_id},
-            )
-            _append_build_event(
-                db,
-                build_id=build_id,
-                event_type=ArtifactBuildEventType.Cancelled,
-                payload=CancelledEventPayload(
-                    actor=absent(),
-                    at=datetime.now(UTC),
-                ).model_dump(mode="json"),
-            )
-            revoke_jobs_by_dedupe_keys(
-                db,
-                kind=DOSSIER_DEFINITION.job_kind,
-                dedupe_keys=[_dispatch_key(build_id)],
-            )
-
-    revision_owners = list(
-        db.execute(
-            text(
-                "SELECT r.id AS revision_id, l.owner_user_id AS new_owner_id "
-                "FROM artifact_revisions r "
-                "JOIN artifact_builds b ON b.id = r.build_id "
-                "JOIN artifacts a ON a.id = b.artifact_id "
-                "JOIN libraries l ON l.id = a.audience_id::uuid "
-                "WHERE a.audience_scheme = 'library' "
-                "AND r.citation_owner_user_id = :user_id "
-                "ORDER BY r.id"
-            ),
-            {"user_id": user_id},
-        ).mappings()
-    )
-    for row in revision_owners:
-        revision_id = UUID(str(row["revision_id"]))
-        new_owner_id = UUID(str(row["new_owner_id"]))
-        rehome_citations_for_output(
-            db,
-            source=ResourceRef(scheme="artifact_revision", id=revision_id),
-            new_owner_user_id=new_owner_id,
-        )
-        db.execute(
-            text(
-                "UPDATE artifact_revisions SET citation_owner_user_id = :new_owner_id "
-                "WHERE id = :revision_id"
-            ),
-            {"new_owner_id": new_owner_id, "revision_id": revision_id},
-        )
-
-    cancelled_build_ids = [
-        UUID(str(row[0]))
-        for row in db.execute(
-            text(
-                "SELECT build_id FROM artifact_build_cancellations WHERE actor_user_id = :user_id"
-            ),
-            {"user_id": user_id},
-        )
-    ]
-    if cancelled_build_ids:
-        db.execute(
-            text(
-                "UPDATE artifact_build_events "
-                "SET payload = jsonb_set(payload, '{actor}', '{\"kind\":\"Absent\"}'::jsonb) "
-                "WHERE build_id = ANY(:build_ids) AND event_type = 'Cancelled'"
-            ),
-            {"build_ids": cancelled_build_ids},
-        )
-    db.execute(
-        text("UPDATE artifact_builds SET requester_user_id = NULL WHERE requester_user_id = :u"),
-        {"u": user_id},
-    )
-    db.execute(
-        text("UPDATE artifact_revisions SET creator_user_id = NULL WHERE creator_user_id = :u"),
-        {"u": user_id},
-    )
-    db.execute(
-        text(
-            "UPDATE artifact_build_cancellations SET actor_user_id = NULL WHERE actor_user_id = :u"
-        ),
-        {"u": user_id},
-    )
 
 
 def _delete_heads(db: Session, head_ids: list[UUID]) -> None:
