@@ -7,7 +7,6 @@ already-admitted canonical identity; raw SQL elsewhere may only read rows.
 
 from __future__ import annotations
 
-import hashlib
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -15,7 +14,6 @@ from enum import StrEnum
 from typing import Any, Literal
 from uuid import UUID
 
-from llm_tools import canonical_json_bytes
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
@@ -255,10 +253,6 @@ class ToolStepResult(_ToolStepModel):
     result_event: ChatRunToolResultEventPayload
 
 
-def tool_step_fingerprint(value: ToolStepRequest) -> str:
-    return hashlib.sha256(canonical_json_bytes(value.model_dump(mode="json"))).hexdigest()
-
-
 def _prune_tool_call_retrievals(
     db: Session, *, tool_call_id: UUID, min_ordinal: int | None = None
 ) -> None:
@@ -465,25 +459,6 @@ def persist_tool_call_start(
     return tool_call_id
 
 
-def persist_tool_call_error(db: Session, *, tool_call_id: UUID, error_code: str) -> None:
-    updated_id = db.execute(
-        text(
-            """
-            UPDATE message_tool_calls
-            SET status = 'error',
-                error_code = :error_code,
-                updated_at = now()
-            WHERE id = :tool_call_id
-              AND record_kind = 'current_execution'
-            RETURNING id
-            """
-        ),
-        {"tool_call_id": tool_call_id, "error_code": error_code},
-    ).scalar_one_or_none()
-    if updated_id is None:
-        raise AssertionError("only a current tool row may terminalize as an execution error")
-
-
 def persist_rejected_provider_tool_call(
     db: Session,
     *,
@@ -676,81 +651,6 @@ def bind_provider_tool_call_events(
     )
 
 
-def persist_tool_call_trace(
-    db: Session,
-    *,
-    run: ChatRun,
-    tool_call_index: int,
-    identity: CurrentToolRecordIdentity,
-    result: Any,
-) -> UUID:
-    """Persist a canonical resource read/inspect invocation and audit result."""
-
-    payload = {
-        "uri": result.uri,
-        "status": result.status,
-        "error_code": result.error_code,
-        "body_chars": len(result.body or ""),
-    }
-    tool_call_id = persist_current_tool_record(
-        db,
-        conversation_id=run.conversation_id,
-        user_message_id=run.user_message_id,
-        assistant_message_id=run.assistant_message_id,
-        tool_call_index=tool_call_index,
-        identity=identity,
-        search_query_fingerprint=None,
-        scope="conversation_context",
-        requested_types=[],
-        result_refs=[payload],
-        selected_context_refs=[],
-        provider_request_ids=[],
-        latency_ms=None,
-        status="error" if result.is_error else "complete",
-        error_code=result.error_code,
-    )
-    _prune_tool_call_retrievals(db, tool_call_id=tool_call_id)
-    return tool_call_id
-
-
-def persist_write_tool_call(
-    db: Session,
-    *,
-    run: ChatRun,
-    tool_call_index: int,
-    identity: CurrentToolRecordIdentity,
-    created_refs: list[dict[str, Any]],
-    status: str,
-    error_code: str | None,
-) -> UUID:
-    """Stage an assistant write tool call and its created refs.
-
-    The caller owns the atomic journal/event/tool-row commit. Stable effect IDs
-    make any concern-owned commit that must still precede this row convergent;
-    the existing row is re-armed when a prior attempt is deliberately retried.
-    """
-    tool_call_id = persist_current_tool_record(
-        db,
-        conversation_id=run.conversation_id,
-        user_message_id=run.user_message_id,
-        assistant_message_id=run.assistant_message_id,
-        tool_call_index=tool_call_index,
-        identity=identity,
-        search_query_fingerprint=None,
-        scope="assistant_write",
-        requested_types=[],
-        result_refs=created_refs,
-        selected_context_refs=[],
-        provider_request_ids=[],
-        latency_ms=None,
-        status=status,
-        error_code=error_code,
-        clear_reverted=True,
-    )
-    _prune_tool_call_retrievals(db, tool_call_id=tool_call_id)
-    return tool_call_id
-
-
 def assistant_write_tool_call_count(
     db: Session, *, assistant_message_id: UUID, canonical_tool_ids: Sequence[str]
 ) -> int:
@@ -778,36 +678,3 @@ def assistant_write_tool_call_count(
             },
         ).scalar_one()
     )
-
-
-def tool_trace_event(
-    *,
-    run: ChatRun,
-    tool_call_id: UUID,
-    tool_call_index: int,
-    identity: CurrentToolRecordIdentity,
-    error_type: str | None,
-    result: Any,
-) -> dict[str, object]:
-    declaration = _current_declaration(identity.canonical_tool_id)
-    event = ChatRunToolResultEventPayload(
-        record_kind=RecordKind.current_execution.value,
-        canonical_tool_id=identity.canonical_tool_id,
-        provider_wire_name=None,
-        effect=declaration.spec.effect,
-        result_kind=declaration.result_kind,
-        activity_label=declaration.activity_label,
-        error_type=error_type,
-        canonical_input_sha256=identity.canonical_input_sha256,
-        tool_contract_revision=identity.tool_contract_revision,
-        binding_policy_revision=identity.binding_policy_revision,
-        tool_call_id=tool_call_id,
-        assistant_message_id=run.assistant_message_id,
-        tool_call_index=tool_call_index,
-        status="error" if result.is_error else "complete",
-        scope="conversation_context",
-        types=[],
-        filters={"uri": result.uri},
-        error_code=result.error_code,
-    )
-    return event.model_dump(mode="json")
