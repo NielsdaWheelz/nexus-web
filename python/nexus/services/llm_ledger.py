@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal, cast
+from typing import Literal, Never, cast, get_args
 from uuid import UUID
 
+from pydantic import ValidationError
 from sqlalchemy import func, select, text, tuple_
 from sqlalchemy.orm import Session
 
@@ -23,7 +25,9 @@ from nexus.services import generation_policy
 from nexus.services.codex_generation_contract import (
     ChatOperation,
     GenerationCommand,
+    GenerationSessionRef,
     GenerationTerminal,
+    GenerationUsage,
     NormalizedFailureCode,
     NormalizedOutcome,
     command_policy,
@@ -32,6 +36,7 @@ from nexus.services.codex_generation_contract import (
     request_fingerprint,
     retained_terminal_error_detail,
 )
+from nexus.services.generation_intent import TextOutput
 
 type LlmCallOwnerKind = Literal[
     "chat_run",
@@ -65,6 +70,9 @@ if set(_OPERATION_OWNER_KINDS) != {*generation_policy.OPERATIONS, "chat"}:
     raise AssertionError("generation ledger owners do not cover the exact operation catalog")
 
 _MAX_ERROR_DETAIL_LENGTH = 1_000
+_MAX_RUNTIME_VERSION_LENGTH = 128
+_SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+_NORMALIZED_FAILURE_CODES: frozenset[str] = frozenset(get_args(NormalizedFailureCode))
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +168,7 @@ def start_generation_in_current_transaction(
     lock_generation_owner_in_current_transaction(db, owner)
     existing = db.get(LLMCall, command.request_id)
     if existing is not None:
+        _validate_persisted_call(existing)
         _assert_start_identity(existing, start)
         return existing.id
 
@@ -184,7 +193,7 @@ def start_generation_in_current_transaction(
         streaming=start.streaming,
     )
     db.add(call)
-    db.flush()
+    _flush_and_validate_staged_call(db, call)
     return call.id
 
 
@@ -199,12 +208,15 @@ def complete_generation_in_current_transaction(
 ) -> None:
     """Stage an accepted host terminal without committing its transaction."""
 
+    if accepted_failure_code not in {None, "invalid_output"}:
+        raise ValueError(f"unknown accepted failure override {accepted_failure_code!r}")
     if latency_ms < 0:
         raise ValueError("generation latency_ms must not be negative")
     lock_generation_owner_in_current_transaction(db, owner)
     call = db.scalar(select(LLMCall).where(LLMCall.id == generation_id).with_for_update())
     if call is None:
         raise AssertionError(f"llm_calls row missing for generation_id={generation_id}")
+    _validate_persisted_call(call)
     _assert_owner(call, owner)
     _assert_no_terminal(call)
 
@@ -253,6 +265,7 @@ def complete_generation_in_current_transaction(
     call.latency_ms = latency_ms
     call.accepted_at = datetime.fromisoformat(terminal.accepted_at[:-1] + "+00:00")
     call.completed_at = func.now()
+    _flush_and_validate_staged_call(db, call)
 
 
 def complete_preaccept_failure_if_started_in_current_transaction(
@@ -265,16 +278,21 @@ def complete_preaccept_failure_if_started_in_current_transaction(
 ) -> bool:
     """Stage a known pre-accept failure only when dispatch had been armed."""
 
+    if error_code not in _NORMALIZED_FAILURE_CODES:
+        raise ValueError(f"unknown normalized pre-accept failure code {error_code!r}")
+    retained_detail = _retained_preaccept_detail(error_detail, label="failure detail")
     lock_generation_owner_in_current_transaction(db, owner)
     call = db.scalar(select(LLMCall).where(LLMCall.id == generation_id).with_for_update())
     if call is None:
         return False
+    _validate_persisted_call(call)
     _assert_owner(call, owner)
     _assert_no_terminal(call)
     call.outcome = "Failed"
     call.error_code = error_code
-    call.error_detail = error_detail[:_MAX_ERROR_DETAIL_LENGTH]
+    call.error_detail = retained_detail
     call.completed_at = func.now()
+    _flush_and_validate_staged_call(db, call)
     return True
 
 
@@ -287,17 +305,18 @@ def cancel_preaccept_generation_if_started_in_current_transaction(
 ) -> bool:
     """Stage an owner-side cancellation proven to precede host acceptance."""
 
-    if not reason.strip():
-        raise ValueError("pre-accept cancellation reason must not be blank")
+    retained_reason = _retained_preaccept_detail(reason, label="cancellation reason")
     lock_generation_owner_in_current_transaction(db, owner)
     call = db.scalar(select(LLMCall).where(LLMCall.id == generation_id).with_for_update())
     if call is None:
         return False
+    _validate_persisted_call(call)
     _assert_owner(call, owner)
     _assert_no_terminal(call)
     call.outcome = "Cancelled"
-    call.error_detail = reason[:_MAX_ERROR_DETAIL_LENGTH]
+    call.error_detail = retained_reason
     call.completed_at = func.now()
+    _flush_and_validate_staged_call(db, call)
     return True
 
 
@@ -433,7 +452,213 @@ def current_tool_plan_fingerprint() -> str:
     return _digest({"tool_plan_revision": generation_policy.TOOL_PLAN_REVISION})
 
 
+def _flush_and_validate_staged_call(db: Session, call: LLMCall) -> None:
+    """Resolve database-owned facts and validate without committing the caller's work."""
+
+    db.flush()
+    _validate_persisted_call(call)
+
+
+def _validate_persisted_call(call: LLMCall) -> None:
+    """Defect unless one trusted row matches the sole writer's exact contract."""
+
+    if call.generation_seq < 1:
+        _ledger_defect(call, f"generation_seq={call.generation_seq} is not positive")
+
+    expected_owner = _OPERATION_OWNER_KINDS.get(call.operation)
+    if expected_owner is None or call.owner_kind != expected_owner:
+        _ledger_defect(
+            call,
+            f"owner/operation pair {(call.owner_kind, call.operation)!r} is not catalogued",
+        )
+
+    if call.plan_revision != generation_policy.POLICY_REVISION:
+        _ledger_defect(call, f"plan revision {call.plan_revision!r} is not current")
+    policy_facts = (
+        call.plan_id,
+        call.model_name,
+        call.reasoning_effort,
+        call.capability_kind,
+    )
+    if call.operation == "chat":
+        allowed_chat_facts = {
+            (policy.plan_id, policy.model, policy.effort, policy.capability)
+            for policy in (
+                generation_policy.chat_policy(profile)
+                for profile in generation_policy.CHAT_PROFILES
+            )
+        }
+        if policy_facts not in allowed_chat_facts:
+            _ledger_defect(call, f"chat plan facts {policy_facts!r} are not catalogued")
+    else:
+        try:
+            policy = generation_policy.operation_policy(call.operation)
+        except ValueError:
+            _ledger_defect(call, f"operation {call.operation!r} has no synthesis policy")
+        expected_policy_facts = (
+            policy.plan_id,
+            policy.model,
+            policy.effort,
+            policy.capability,
+        )
+        if policy_facts != expected_policy_facts:
+            _ledger_defect(
+                call,
+                f"plan facts {policy_facts!r} differ from {expected_policy_facts!r}",
+            )
+
+    route = (call.backend, call.transport, call.auth_profile)
+    if route != ("codex", "sdk", "codex-personal"):
+        _ledger_defect(call, f"route {route!r} is not Codex Personal")
+
+    if _SHA256_PATTERN.fullmatch(call.request_fingerprint) is None:
+        _ledger_defect(call, "request_fingerprint is not lowercase SHA-256")
+    if _SHA256_PATTERN.fullmatch(call.output_schema_fingerprint) is None:
+        _ledger_defect(call, "output_schema_fingerprint is not lowercase SHA-256")
+    if call.operation == "chat":
+        if call.output_schema_fingerprint != _chat_output_schema_fingerprint():
+            _ledger_defect(call, "Chat output_schema_fingerprint is not the Text contract")
+        if call.tool_plan_fingerprint != current_tool_plan_fingerprint():
+            _ledger_defect(call, "Chat tool_plan_fingerprint is not the pinned plan")
+    elif call.tool_plan_fingerprint is not None:
+        _ledger_defect(call, "Synthesis generation carries a tool_plan_fingerprint")
+
+    _validate_session_ref(call)
+    _validate_usage(call)
+    _validate_lifecycle(call)
+
+
+def _validate_session_ref(call: LLMCall) -> None:
+    if call.session_ref is None:
+        return
+    try:
+        GenerationSessionRef.model_validate(call.session_ref, strict=True)
+    except ValidationError as error:
+        _ledger_defect(
+            call,
+            f"session_ref is invalid: {error.errors(include_url=False, include_input=False)!r}",
+        )
+
+
+def _validate_usage(call: LLMCall) -> None:
+    usage = {
+        "input_tokens": call.input_tokens,
+        "output_tokens": call.output_tokens,
+        "total_tokens": call.total_tokens,
+        "reasoning_tokens": call.reasoning_tokens,
+        "cache_read_input_tokens": call.cache_read_input_tokens,
+        "cache_write_input_tokens": call.cache_write_input_tokens,
+    }
+    if all(value is None for value in usage.values()):
+        return
+    try:
+        GenerationUsage.model_validate(usage, strict=True)
+    except ValidationError as error:
+        _ledger_defect(
+            call,
+            f"usage is invalid: {error.errors(include_url=False, include_input=False)!r}",
+        )
+
+
+def _validate_lifecycle(call: LLMCall) -> None:
+    terminal_facts = (
+        call.session_ref,
+        call.error_code,
+        call.error_detail,
+        call.input_tokens,
+        call.output_tokens,
+        call.total_tokens,
+        call.reasoning_tokens,
+        call.cache_read_input_tokens,
+        call.cache_write_input_tokens,
+        call.sdk_version,
+        call.runtime_version,
+        call.latency_ms,
+        call.accepted_at,
+        call.completed_at,
+    )
+    if call.outcome is None:
+        if any(value is not None for value in terminal_facts):
+            _ledger_defect(call, "nonterminal lifecycle carries terminal facts")
+        return
+
+    if call.outcome not in {"Succeeded", "Failed", "Cancelled"}:
+        _ledger_defect(call, f"outcome {call.outcome!r} is not normalized")
+    if call.completed_at is None:
+        _ledger_defect(call, "terminal lifecycle has no completed_at")
+    _validate_terminal_error_facts(call)
+
+    if call.accepted_at is None:
+        if call.outcome == "Succeeded":
+            _ledger_defect(call, "pre-accept lifecycle cannot succeed")
+        preaccept_forbidden = (
+            call.session_ref,
+            call.input_tokens,
+            call.output_tokens,
+            call.total_tokens,
+            call.reasoning_tokens,
+            call.cache_read_input_tokens,
+            call.cache_write_input_tokens,
+            call.sdk_version,
+            call.runtime_version,
+            call.latency_ms,
+        )
+        if any(value is not None for value in preaccept_forbidden):
+            _ledger_defect(call, "pre-accept lifecycle carries accepted-host facts")
+        return
+
+    if not _bounded_version(call.sdk_version):
+        _ledger_defect(call, f"sdk_version {call.sdk_version!r} is not bounded")
+    if not _bounded_version(call.runtime_version):
+        _ledger_defect(call, f"runtime_version {call.runtime_version!r} is not bounded")
+    if call.latency_ms is None or call.latency_ms < 0:
+        _ledger_defect(call, f"latency_ms {call.latency_ms!r} is invalid")
+    if call.outcome == "Succeeded" and call.session_ref is None:
+        _ledger_defect(call, "accepted success has no session_ref")
+
+
+def _validate_terminal_error_facts(call: LLMCall) -> None:
+    if call.outcome == "Succeeded":
+        if call.error_code is not None or call.error_detail is not None:
+            _ledger_defect(call, "successful lifecycle carries failure facts")
+        return
+    if call.outcome == "Failed":
+        if call.error_code not in _NORMALIZED_FAILURE_CODES:
+            _ledger_defect(call, f"failure code {call.error_code!r} is not normalized")
+    elif call.error_code is not None:
+        _ledger_defect(call, "cancelled lifecycle carries a failure code")
+    if not _bounded_error_detail(call.error_detail):
+        _ledger_defect(call, "terminal error_detail is invalid")
+
+
+def _bounded_version(value: str | None) -> bool:
+    return value is not None and 1 <= len(value) <= _MAX_RUNTIME_VERSION_LENGTH
+
+
+def _bounded_error_detail(value: str | None) -> bool:
+    return value is not None and len(value) <= _MAX_ERROR_DETAIL_LENGTH and bool(value.strip())
+
+
+def _retained_preaccept_detail(value: str, *, label: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"pre-accept {label} must be text")
+    retained = value[:_MAX_ERROR_DETAIL_LENGTH]
+    if not retained.strip():
+        raise ValueError(f"pre-accept {label} must not be blank")
+    return retained
+
+
+def _chat_output_schema_fingerprint() -> str:
+    return _digest(TextOutput().model_dump(mode="json", by_alias=True))
+
+
+def _ledger_defect(call: LLMCall, detail: str) -> Never:
+    # justify-defect: llm_ledger is the sole writer, so an invalid trusted row is corruption.
+    raise AssertionError(f"llm_calls row id={call.id} is corrupt: {detail}")
+
+
 def _record(call: LLMCall) -> GenerationRecord:
+    _validate_persisted_call(call)
     return GenerationRecord(
         id=call.id,
         owner_kind=cast(LlmCallOwnerKind, call.owner_kind),

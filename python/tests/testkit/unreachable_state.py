@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from typing import Literal, assert_never
 from uuid import UUID
 
 from sqlalchemy import Engine, text
@@ -774,6 +775,71 @@ def delete_jobs_by_ids(db: Session, *, job_ids: Sequence[UUID]) -> None:
         text("DELETE FROM background_jobs WHERE id = ANY(CAST(:job_ids AS uuid[]))"),
         {"job_ids": list(job_ids)},
     )
+
+
+type GenerationLedgerCorruption = Literal[
+    "nonpositive_sequence",
+    "owner_operation",
+    "plan_capability",
+    "route",
+    "fingerprint",
+    "session_ref",
+    "usage",
+    "lifecycle",
+]
+
+
+def corrupt_generation_ledger_row(
+    db: Session,
+    *,
+    generation_id: UUID,
+    corruption: GenerationLedgerCorruption,
+) -> None:
+    """Create one closed invalid ledger-row shape for trusted-read defect proof."""
+
+    match corruption:
+        case "nonpositive_sequence":
+            statement = (
+                "UPDATE llm_calls SET generation_seq = 0 WHERE id = :generation_id RETURNING id"
+            )
+        case "owner_operation":
+            statement = (
+                "UPDATE llm_calls SET owner_kind = 'chat_run' "
+                "WHERE id = :generation_id RETURNING id"
+            )
+        case "plan_capability":
+            statement = (
+                "UPDATE llm_calls SET model_name = 'gpt-5.6-sol' "
+                "WHERE id = :generation_id RETURNING id"
+            )
+        case "route":
+            statement = (
+                "UPDATE llm_calls SET auth_profile = 'api-key' "
+                "WHERE id = :generation_id RETURNING id"
+            )
+        case "fingerprint":
+            statement = (
+                "UPDATE llm_calls SET request_fingerprint = repeat('A', 64) "
+                "WHERE id = :generation_id RETURNING id"
+            )
+        case "session_ref":
+            statement = (
+                "UPDATE llm_calls SET session_ref = "
+                '\'{"schema_version":"wrong"}\'::jsonb '
+                "WHERE id = :generation_id RETURNING id"
+            )
+        case "usage":
+            statement = (
+                "UPDATE llm_calls SET input_tokens = 1 WHERE id = :generation_id RETURNING id"
+            )
+        case "lifecycle":
+            statement = (
+                "UPDATE llm_calls SET completed_at = now() WHERE id = :generation_id RETURNING id"
+            )
+        case unreachable:
+            assert_never(unreachable)
+    updated = db.execute(text(statement), {"generation_id": generation_id})
+    assert updated.scalar_one() == generation_id
 
 
 def delete_generations_by_ids(db: Session, *, generation_ids: Sequence[UUID]) -> None:

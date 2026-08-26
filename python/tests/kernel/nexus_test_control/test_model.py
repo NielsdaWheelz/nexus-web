@@ -25,6 +25,7 @@ def test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr() -> Non
         "destructive-side-effects",
         "migration-compatibility",
         "costly-effects",
+        "generation-ledger-contract",
         "reading-progress",
         "citation-provenance-identity",
         "durable-job-replay",

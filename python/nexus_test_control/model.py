@@ -73,6 +73,7 @@ class PriorityRiskId(StrEnum):
     DESTRUCTIVE_SIDE_EFFECTS = "destructive-side-effects"
     MIGRATION_COMPATIBILITY = "migration-compatibility"
     COSTLY_EFFECTS = "costly-effects"
+    GENERATION_LEDGER_CONTRACT = "generation-ledger-contract"
     READING_PROGRESS = "reading-progress"
     CITATION_PROVENANCE_IDENTITY = "citation-provenance-identity"
     DURABLE_JOB_REPLAY = "durable-job-replay"
@@ -92,7 +93,7 @@ class PriorityRiskId(StrEnum):
 
 
 PRIORITY_RISK_FLOOR = frozenset(PriorityRiskId)
-PRIORITY_RISK_OWNERSHIP_SHA256 = "7b8060323f8531951a8b0ff6283425816cc11055e1df878cf03e906073660e32"
+PRIORITY_RISK_OWNERSHIP_SHA256 = "48740bac1b7d7d67d6ac95e4884a783bcc85ed4b99ca96409be5e86f2964a224"
 
 
 class ResourceKind(StrEnum):

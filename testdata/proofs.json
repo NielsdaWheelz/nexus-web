@@ -214,6 +214,19 @@
       ]
     },
     {
+      "id": "generation-ledger-contract",
+      "source_globs": [
+        "python/nexus/services/llm_ledger.py",
+        "python/tests/testkit/unreachable_state.py"
+      ],
+      "proofs": [
+        "pytest:python/tests/service/test_llm_ledger.py"
+      ],
+      "capabilities": [
+        "service"
+      ]
+    },
+    {
       "id": "reading-progress",
       "source_globs": [
         "python/nexus/services/consumption/**/*.py",

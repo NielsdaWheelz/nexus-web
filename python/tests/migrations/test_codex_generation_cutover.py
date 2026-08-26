@@ -12,7 +12,6 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import Engine, create_engine, inspect, text
 from sqlalchemy.dialects import postgresql
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun, Message
@@ -93,134 +92,6 @@ _NON_NULL_LEDGER_COLUMNS = {
     "streaming",
     "created_at",
 }
-_LEDGER_CHECK_NAMES = {
-    "ck_llm_calls_fingerprints",
-    "ck_llm_calls_generation_seq_positive",
-    "ck_llm_calls_lifecycle",
-    "ck_llm_calls_owner_operation",
-    "ck_llm_calls_plan_capability",
-    "ck_llm_calls_route",
-    "ck_llm_calls_session_ref",
-    "ck_llm_calls_usage",
-}
-_LEDGER_OPERATION_FACTS: dict[str, tuple[str, str, str, str, str]] = {
-    "metadata_enrichment": (
-        "media_enrichment",
-        "routine",
-        "gpt-5.6-luna",
-        "low",
-        "Synthesis",
-    ),
-    "media_summary": ("media_summary", "routine", "gpt-5.6-luna", "low", "Synthesis"),
-    "synapse": ("synapse_scan", "routine", "gpt-5.6-luna", "low", "Synthesis"),
-    "dawn_write": ("dawn_write", "standard", "gpt-5.6-terra", "medium", "Synthesis"),
-    "oracle": ("oracle_reading", "standard", "gpt-5.6-terra", "medium", "Synthesis"),
-    "dossier_page": ("artifact_build", "routine", "gpt-5.6-luna", "low", "Synthesis"),
-    "dossier_note": ("artifact_build", "routine", "gpt-5.6-luna", "low", "Synthesis"),
-    "dossier_media": (
-        "artifact_build",
-        "standard",
-        "gpt-5.6-terra",
-        "medium",
-        "Synthesis",
-    ),
-    "dossier_conversation": (
-        "artifact_build",
-        "standard",
-        "gpt-5.6-terra",
-        "medium",
-        "Synthesis",
-    ),
-    "dossier_library": ("artifact_build", "thorough", "gpt-5.6-terra", "high", "Synthesis"),
-    "dossier_podcast": ("artifact_build", "thorough", "gpt-5.6-terra", "high", "Synthesis"),
-    "dossier_contributor": (
-        "artifact_build",
-        "thorough",
-        "gpt-5.6-terra",
-        "high",
-        "Synthesis",
-    ),
-    "dossier_idea": ("artifact_build", "thorough", "gpt-5.6-terra", "high", "Synthesis"),
-    "dossier_idea_resolve": (
-        "artifact_learn_request",
-        "routine",
-        "gpt-5.6-luna",
-        "low",
-        "Synthesis",
-    ),
-    "chat": ("chat_run", "standard", "gpt-5.6-terra", "medium", "ChatTools"),
-}
-_CHAT_OUTPUT_FINGERPRINT = "3f0d42022e6069f00f4048e3a091c1b225e739ef73e2d0a9fcee8986da69e9e7"
-_CHAT_TOOL_FINGERPRINT = "62494626c69ba139121e1b761e4e2def6ca50ccf1ebfde551f8de061efef049c"
-_INSERT_LEDGER_ROW = """
-INSERT INTO llm_calls (
-    id,
-    owner_kind,
-    owner_id,
-    generation_seq,
-    operation,
-    plan_id,
-    plan_revision,
-    backend,
-    transport,
-    auth_profile,
-    model_name,
-    reasoning_effort,
-    capability_kind,
-    request_fingerprint,
-    output_schema_fingerprint,
-    tool_plan_fingerprint,
-    streaming,
-    session_ref,
-    outcome,
-    error_code,
-    error_detail,
-    input_tokens,
-    output_tokens,
-    total_tokens,
-    reasoning_tokens,
-    cache_read_input_tokens,
-    cache_write_input_tokens,
-    sdk_version,
-    runtime_version,
-    latency_ms,
-    accepted_at,
-    completed_at
-) VALUES (
-    :id,
-    :owner_kind,
-    :owner_id,
-    :generation_seq,
-    :operation,
-    :plan_id,
-    :plan_revision,
-    :backend,
-    :transport,
-    :auth_profile,
-    :model_name,
-    :reasoning_effort,
-    :capability_kind,
-    :request_fingerprint,
-    :output_schema_fingerprint,
-    :tool_plan_fingerprint,
-    :streaming,
-    CAST(:session_ref AS jsonb),
-    :outcome,
-    :error_code,
-    :error_detail,
-    :input_tokens,
-    :output_tokens,
-    :total_tokens,
-    :reasoning_tokens,
-    :cache_read_input_tokens,
-    :cache_write_input_tokens,
-    :sdk_version,
-    :runtime_version,
-    :latency_ms,
-    :accepted_at,
-    :completed_at
-)
-"""
 
 
 def _migration_config() -> Config:
@@ -239,194 +110,6 @@ def _require_cutover_revision(config: Config) -> None:
 
 def _json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-
-
-def _ledger_row(operation: str = "metadata_enrichment", **overrides: object) -> dict[str, object]:
-    owner_kind, plan_id, model_name, effort, capability = _LEDGER_OPERATION_FACTS[operation]
-    row: dict[str, object] = {
-        "id": uuid4(),
-        "owner_kind": owner_kind,
-        "owner_id": uuid4(),
-        "generation_seq": 1,
-        "operation": operation,
-        "plan_id": plan_id,
-        "plan_revision": "codex-generation.2026-08-24.2",
-        "backend": "codex",
-        "transport": "sdk",
-        "auth_profile": "codex-personal",
-        "model_name": model_name,
-        "reasoning_effort": effort,
-        "capability_kind": capability,
-        "request_fingerprint": "a" * 64,
-        "output_schema_fingerprint": (
-            _CHAT_OUTPUT_FINGERPRINT if operation == "chat" else "b" * 64
-        ),
-        "tool_plan_fingerprint": _CHAT_TOOL_FINGERPRINT if operation == "chat" else None,
-        "streaming": operation == "chat",
-        "session_ref": None,
-        "outcome": None,
-        "error_code": None,
-        "error_detail": None,
-        "input_tokens": None,
-        "output_tokens": None,
-        "total_tokens": None,
-        "reasoning_tokens": None,
-        "cache_read_input_tokens": None,
-        "cache_write_input_tokens": None,
-        "sdk_version": None,
-        "runtime_version": None,
-        "latency_ms": None,
-        "accepted_at": None,
-        "completed_at": None,
-    }
-    row.update(overrides)
-    return row
-
-
-def _session_ref(**overrides: object) -> str:
-    session_ref: dict[str, object] = {
-        "schema_version": "agent-session-ref.v1",
-        "backend": "codex",
-        "transport": "sdk",
-        "native_session_id": "migration-proof-session",
-        "profile_key": "codex-personal",
-        "state_root_fingerprint": "c" * 64,
-        "cwd_fingerprint": "d" * 64,
-    }
-    session_ref.update(overrides)
-    return _json(session_ref)
-
-
-def _accepted_terminal(
-    operation: str = "metadata_enrichment", **overrides: object
-) -> dict[str, object]:
-    row = _ledger_row(operation)
-    row.update(
-        {
-            "outcome": "Succeeded",
-            "session_ref": _session_ref(),
-            "sdk_version": "0.144.4",
-            "runtime_version": "codex-cli 0.144.4",
-            "latency_ms": 125,
-            "accepted_at": "2026-08-24T12:00:00+00:00",
-            "completed_at": "2026-08-24T12:00:01+00:00",
-        }
-    )
-    row.update(overrides)
-    return row
-
-
-def _assert_ledger_constraints(engine: Engine) -> None:
-    valid_rows = [_ledger_row(operation) for operation in _LEDGER_OPERATION_FACTS]
-    valid_rows.extend(
-        (
-            _ledger_row(
-                operation="chat",
-                plan_id="routine",
-                model_name="gpt-5.6-luna",
-                reasoning_effort="low",
-            ),
-            _ledger_row(
-                operation="chat",
-                plan_id="deep",
-                model_name="gpt-5.6-sol",
-                reasoning_effort="high",
-            ),
-            _ledger_row(
-                operation="synapse",
-                outcome="Failed",
-                error_code="capacity_unavailable",
-                error_detail="codex generation capacity unavailable",
-                completed_at="2026-08-24T12:00:01+00:00",
-            ),
-            _ledger_row(
-                operation="dossier_page",
-                outcome="Cancelled",
-                error_detail="owner cancelled before host acceptance",
-                completed_at="2026-08-24T12:00:01+00:00",
-            ),
-            _accepted_terminal(
-                input_tokens=20,
-                output_tokens=10,
-                total_tokens=30,
-                reasoning_tokens=4,
-                cache_read_input_tokens=2,
-            ),
-            _accepted_terminal(
-                operation="media_summary",
-                outcome="Failed",
-                error_code="timeout",
-                error_detail="codex generation failed: turn_timeout",
-                session_ref=None,
-            ),
-            _accepted_terminal(
-                operation="dawn_write",
-                outcome="Cancelled",
-                error_detail="codex generation cancelled",
-                session_ref=None,
-            ),
-        )
-    )
-    with engine.begin() as connection:
-        connection.execute(text(_INSERT_LEDGER_ROW), valid_rows)
-        connection.execute(text("DELETE FROM llm_calls"))
-
-    invalid_rows = (
-        ("ck_llm_calls_generation_seq_positive", _ledger_row(generation_seq=0)),
-        (
-            "ck_llm_calls_owner_operation",
-            _ledger_row(owner_kind="chat_run"),
-        ),
-        (
-            "ck_llm_calls_plan_capability",
-            _ledger_row(
-                plan_id="standard",
-                model_name="gpt-5.6-terra",
-                reasoning_effort="medium",
-            ),
-        ),
-        ("ck_llm_calls_route", _ledger_row(auth_profile="api-key")),
-        (
-            "ck_llm_calls_fingerprints",
-            _ledger_row(request_fingerprint="A" * 64),
-        ),
-        (
-            "ck_llm_calls_fingerprints",
-            _ledger_row(tool_plan_fingerprint="e" * 64),
-        ),
-        (
-            "ck_llm_calls_fingerprints",
-            _ledger_row(operation="chat", tool_plan_fingerprint=None),
-        ),
-        (
-            "ck_llm_calls_session_ref",
-            _accepted_terminal(session_ref=_session_ref(transport="http")),
-        ),
-        (
-            "ck_llm_calls_usage",
-            _accepted_terminal(input_tokens=1, total_tokens=1),
-        ),
-        (
-            "ck_llm_calls_lifecycle",
-            _accepted_terminal(session_ref=None),
-        ),
-        (
-            "ck_llm_calls_lifecycle",
-            _accepted_terminal(
-                outcome="Failed",
-                error_detail="failed terminal missing normalized code",
-                session_ref=None,
-            ),
-        ),
-        (
-            "ck_llm_calls_lifecycle",
-            _ledger_row(completed_at="2026-08-24T12:00:01+00:00"),
-        ),
-    )
-    for constraint_name, invalid_row in invalid_rows:
-        with pytest.raises(IntegrityError, match=constraint_name):
-            with engine.begin() as connection:
-                connection.execute(text(_INSERT_LEDGER_ROW), invalid_row)
 
 
 def _journal_state(*, phase: str, generation_id: UUID | None = None) -> dict[str, object]:
@@ -975,24 +658,26 @@ def _assert_final_ledger_schema(engine: Engine) -> None:
     } & set(columns)
 
     assert inspector.get_pk_constraint("llm_calls")["constrained_columns"] == ["id"]
-    unique = {
+    unique_constraints = {
         item["name"]: tuple(item["column_names"])
         for item in inspector.get_unique_constraints("llm_calls")
     }
-    assert unique["uq_llm_calls_owner_generation_seq"] == (
-        "owner_kind",
-        "owner_id",
-        "generation_seq",
-    )
-    indexes = {
-        item["name"]: tuple(item["column_names"]) for item in inspector.get_indexes("llm_calls")
+    assert unique_constraints == {
+        "uq_llm_calls_owner_generation_seq": (
+            "owner_kind",
+            "owner_id",
+            "generation_seq",
+        )
     }
-    assert indexes["ix_llm_calls_owner"] == ("owner_kind", "owner_id")
+    standalone_indexes = [
+        item
+        for item in inspector.get_indexes("llm_calls")
+        if item.get("duplicates_constraint") not in unique_constraints
+        and item["name"] not in unique_constraints
+    ]
+    assert standalone_indexes == []
     assert inspector.get_foreign_keys("llm_calls") == []
-
-    assert {
-        item["name"] for item in inspector.get_check_constraints("llm_calls")
-    } == _LEDGER_CHECK_NAMES
+    assert inspector.get_check_constraints("llm_calls") == []
 
 
 def _post_cutover_fingerprint(engine: Engine, ids: dict[str, UUID]) -> tuple[object, ...]:
@@ -1053,7 +738,6 @@ def test_0222_deletes_old_audit_and_billing_state_but_preserves_domain_outputs(
         assert prompt_columns["reserved_output_tokens"]["nullable"] is False
 
         _assert_final_ledger_schema(engine)
-        _assert_ledger_constraints(engine)
         with engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
                 _CUTOVER_REVISION
