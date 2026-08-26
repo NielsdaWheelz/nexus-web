@@ -4,7 +4,7 @@ import {
   type Node as ProseMirrorNode,
   type NodeSpec,
 } from "prosemirror-model";
-import { isRecord } from "@/lib/validation";
+import { expectRecord, expectString, isRecord } from "@/lib/validation";
 
 function requiredDomAttribute(dom: HTMLElement, name: string): string | false {
   const value = dom.getAttribute(name);
@@ -234,6 +234,32 @@ export function createNoteBodyDoc(input: {
 export function noteBodyValueFromDoc(doc: ProseMirrorNode): NoteBodyValue {
   const body = doc.firstChild ?? paragraphFromText("");
   return noteBodyValueFromNode(body);
+}
+
+/** Strict decoder for persisted note bodies; recovery never invents text. */
+export function decodeNoteBodyValue(
+  rawPmJson: unknown,
+  rawText: unknown,
+  name: string,
+): NoteBodyValue {
+  const bodyPmJson = expectRecord(rawPmJson, `${name}.bodyPmJson`);
+  const bodyText = expectString(rawText, `${name}.bodyText`);
+  let body: ProseMirrorNode;
+  try {
+    body = noteBodySchema.nodeFromJSON(bodyPmJson);
+  } catch {
+    throw new TypeError(`${name}.bodyPmJson must be a valid note body`);
+  }
+  if (!body.type.isInGroup("block_body")) {
+    throw new TypeError(`${name}.bodyPmJson must contain one note body block`);
+  }
+  const value = noteBodyValueFromDoc(
+    noteBodySchema.nodes.note_body_doc!.create(null, body),
+  );
+  if (value.bodyText !== bodyText) {
+    throw new TypeError(`${name}.bodyText must match bodyPmJson`);
+  }
+  return value;
 }
 
 export function noteBodyNodeFromJson(

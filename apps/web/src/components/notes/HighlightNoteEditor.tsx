@@ -19,8 +19,8 @@ import {
 import { noteBodyHasContent } from "@/lib/notes/prosemirror/bodyContent";
 import {
   readStoredNoteEditorDraft,
-  useNoteEditorSession,
-} from "@/lib/notes/useNoteEditorSession";
+} from "@/lib/notes/noteEditorDraftStore";
+import { useNoteEditorSession } from "@/lib/notes/useNoteEditorSession";
 import NoteDraftRecovery from "@/components/notes/NoteDraftRecovery";
 import NoteBodyEditor from "@/components/notes/NoteBodyEditor";
 import type { HighlightLinkedNoteBlock } from "@/lib/highlights/highlightContract";
@@ -200,9 +200,7 @@ export default function HighlightNoteEditor({
     }),
     [note?.body_pm_json, note?.body_text],
   );
-  const [initialBody, setInitialBody] = useState(
-    () => readStoredNoteEditorDraft(resourceKey)?.body ?? persistedBody,
-  );
+  const [initialBody, setInitialBody] = useState(persistedBody);
 
   const saveBody = useCallback(
     async (
