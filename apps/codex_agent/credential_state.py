@@ -53,10 +53,7 @@ def create_ephemeral_runtime_paths(root: Path, scope: str) -> EphemeralRuntimePa
             temporary_directory,
         ):
             metadata = path.lstat()
-            if (
-                not stat.S_ISDIR(metadata.st_mode)
-                or stat.S_IMODE(metadata.st_mode) != 0o700
-            ):
+            if not stat.S_ISDIR(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != 0o700:
                 raise RuntimeError("Codex ephemeral runtime directory is not private")
     except BaseException:
         shutil.rmtree(runtime_root, ignore_errors=True)
@@ -115,9 +112,7 @@ def sync_enrolled_auth_file(
             expected_identity.device,
             expected_identity.inode,
         ):
-            raise CredentialStateUnavailable(
-                "enrolled Codex credential changed identity"
-            )
+            raise CredentialStateUnavailable("enrolled Codex credential changed identity")
         try:
             os.fsync(descriptor)
         except OSError as error:
@@ -211,13 +206,8 @@ def link_runtime_auth(
         for directory in (profile_root.parent, profile_root):
             directory.chmod(0o700)
             metadata = directory.lstat()
-            if (
-                not stat.S_ISDIR(metadata.st_mode)
-                or stat.S_IMODE(metadata.st_mode) != 0o700
-            ):
-                raise CredentialStateUnavailable(
-                    "ephemeral Codex profile is not private"
-                )
+            if not stat.S_ISDIR(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != 0o700:
+                raise CredentialStateUnavailable("ephemeral Codex profile is not private")
         destination = profile_root / "auth.json"
         destination.symlink_to(enrolled_auth_file)
         validate_runtime_auth_link(destination, enrolled_auth_file)
@@ -225,9 +215,7 @@ def link_runtime_auth(
     except CredentialStateUnavailable:
         raise
     except OSError as error:
-        raise CredentialStateUnavailable(
-            "enrolled Codex credential could not be linked"
-        ) from error
+        raise CredentialStateUnavailable("enrolled Codex credential could not be linked") from error
 
 
 def validate_runtime_auth_link(path: Path, enrolled_auth_file: Path) -> None:
@@ -237,9 +225,7 @@ def validate_runtime_auth_link(path: Path, enrolled_auth_file: Path) -> None:
         metadata = path.lstat()
         target = Path(os.readlink(path))
     except OSError as error:
-        raise CredentialStateUnavailable(
-            "ephemeral Codex auth link is unavailable"
-        ) from error
+        raise CredentialStateUnavailable("ephemeral Codex auth link is unavailable") from error
     if not stat.S_ISLNK(metadata.st_mode) or target != enrolled_auth_file:
         raise CredentialStateUnavailable("ephemeral Codex auth link changed identity")
     validate_enrolled_auth_file(enrolled_auth_file)
@@ -281,18 +267,14 @@ def require_unenrolled_target(target: Path) -> None:
 
 def _open_enrolled_auth(path: Path, *, writable: bool = False) -> int:
     if not path.is_absolute() or Path(os.path.normpath(str(path))) != path:
-        raise CredentialStateUnavailable(
-            "Codex credential file must be normalized and absolute"
-        )
+        raise CredentialStateUnavailable("Codex credential file must be normalized and absolute")
     _reject_symlink_components(path.parent)
     try:
         initial = path.lstat()
         access = os.O_WRONLY if writable else os.O_RDONLY
         descriptor = os.open(path, access | os.O_CLOEXEC | os.O_NOFOLLOW)
     except OSError as error:
-        raise CredentialStateUnavailable(
-            "enrolled Codex credential is unavailable"
-        ) from error
+        raise CredentialStateUnavailable("enrolled Codex credential is unavailable") from error
     try:
         current = os.fstat(descriptor)
         if (
@@ -304,9 +286,7 @@ def _open_enrolled_auth(path: Path, *, writable: bool = False) -> int:
             or current.st_nlink != 1
             or not 0 < current.st_size <= MAX_CODEX_AUTH_BYTES
         ):
-            raise CredentialStateUnavailable(
-                "enrolled Codex credential has unsafe metadata"
-            )
+            raise CredentialStateUnavailable("enrolled Codex credential has unsafe metadata")
     except BaseException:
         os.close(descriptor)
         raise
@@ -318,9 +298,7 @@ def _read_bounded(descriptor: int) -> bytes:
     while chunk := os.read(descriptor, 16 * 1024):
         payload.extend(chunk)
         if len(payload) > MAX_CODEX_AUTH_BYTES:
-            raise CredentialStateUnavailable(
-                "enrolled Codex credential exceeds its byte bound"
-            )
+            raise CredentialStateUnavailable("enrolled Codex credential exceeds its byte bound")
     if not payload:
         raise CredentialStateUnavailable("enrolled Codex credential is empty")
     return bytes(payload)
@@ -361,9 +339,7 @@ def _prepare_private_parent(path: Path) -> None:
         or metadata.st_gid != os.getegid()
         or stat.S_IMODE(metadata.st_mode) != 0o700
     ):
-        raise RuntimeError(
-            "Codex credential-state root must be private and process-owned"
-        )
+        raise RuntimeError("Codex credential-state root must be private and process-owned")
     for directory in reversed(missing):
         directory.mkdir(mode=0o700)
     _reject_symlink_components(path)
@@ -375,9 +351,7 @@ def _prepare_private_parent(path: Path) -> None:
             or metadata.st_gid != os.getegid()
             or stat.S_IMODE(metadata.st_mode) != 0o700
         ):
-            raise RuntimeError(
-                "Codex credential parent must be private and process-owned"
-            )
+            raise RuntimeError("Codex credential parent must be private and process-owned")
 
 
 def _reject_symlink_components(path: Path) -> None:
@@ -389,6 +363,4 @@ def _reject_symlink_components(path: Path) -> None:
         except FileNotFoundError:
             return
         if stat.S_ISLNK(metadata.st_mode):
-            raise CredentialStateUnavailable(
-                "Codex credential path must not traverse symlinks"
-            )
+            raise CredentialStateUnavailable("Codex credential path must not traverse symlinks")

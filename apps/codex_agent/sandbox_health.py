@@ -91,10 +91,7 @@ def check(working_directory_root: Path) -> None:
             check=False,
         )
         marker = paths.temporary_directory / "sandbox-health"
-        passed = (
-            completed.returncode == 0
-            and marker.read_text(encoding="ascii") == "confined"
-        )
+        passed = completed.returncode == 0 and marker.read_text(encoding="ascii") == "confined"
     except (OSError, UnicodeDecodeError, subprocess.TimeoutExpired) as error:
         failure = error
     finally:

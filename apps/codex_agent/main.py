@@ -150,9 +150,7 @@ def _validate_directories(
     socket_path: Path,
     working_directory_root: Path,
 ) -> None:
-    _validate_owned_directory(
-        socket_path.parent, expected_mode=0o770, label="socket directory"
-    )
+    _validate_owned_directory(socket_path.parent, expected_mode=0o770, label="socket directory")
     _validate_owned_directory(
         working_directory_root,
         expected_mode=0o700,
@@ -161,9 +159,7 @@ def _validate_directories(
     if any(entry != socket_path for entry in socket_path.parent.iterdir()):
         raise RuntimeError("Codex agent socket directory may contain only its socket")
     if any(working_directory_root.iterdir()):
-        raise RuntimeError(
-            "Codex agent working-directory root must be empty at startup"
-        )
+        raise RuntimeError("Codex agent working-directory root must be empty at startup")
 
 
 def _prepare_working_directory_root(path: Path) -> None:
@@ -232,9 +228,7 @@ def _remove_proven_stale_socket(path: Path) -> None:
         or current.st_ino != initial.st_ino
         or not stat.S_ISSOCK(current.st_mode)
     ):
-        raise RuntimeError(
-            "Codex agent socket identity changed during stale-socket recovery"
-        )
+        raise RuntimeError("Codex agent socket identity changed during stale-socket recovery")
     path.unlink()
 
 
@@ -245,9 +239,7 @@ def _unlink_owned_socket(path: Path, identity: tuple[int, int] | None) -> None:
         current = path.lstat()
     except FileNotFoundError:
         return
-    if (current.st_dev, current.st_ino) != identity or not stat.S_ISSOCK(
-        current.st_mode
-    ):
+    if (current.st_dev, current.st_ino) != identity or not stat.S_ISSOCK(current.st_mode):
         return
     path.unlink()
 
