@@ -157,11 +157,10 @@ The wrong moves are:
 - `python/nexus/services/resource_graph/context.py` checks
   `RESOURCE_ITEM_CAPABILITIES[target.scheme].attachable` before adding context
   refs.
-- `python/nexus/services/resource_items/chat_subjects.py` checks
-  `chat_subject`, `attachable`, and generated-output behavior.
-- `python/nexus/services/context_assembler.py` uses `prompt_render` and
-  `CITABLE_RESOURCE_RESULT_TYPES` for prompt rendering and attached citation
-  materialization.
+- `python/nexus/services/context_assembler.py` validates stored historical
+  subjects through the `chat_subject` capability and their conversation context
+  edge, then uses `prompt_render` and `CITABLE_RESOURCE_RESULT_TYPES` for prompt
+  rendering and attached citation materialization.
 - `python/nexus/services/agent_tools/read_resource.py` already imports readable
   and citable policy from the capability module.
 - `python/nexus/services/agent_tools/app_search.py` already imports
@@ -756,7 +755,6 @@ functions.
 - `python/nexus/services/agent_tools/inspect_resource.py`
 - `python/nexus/services/agent_tools/app_search.py`
 - `python/nexus/services/context_assembler.py`
-- `python/nexus/services/resource_items/chat_subjects.py`
 - `python/nexus/services/resource_graph/context.py`
 - `python/nexus/services/resource_graph/connections.py`
 - `python/nexus/services/resource_graph/policy.py`

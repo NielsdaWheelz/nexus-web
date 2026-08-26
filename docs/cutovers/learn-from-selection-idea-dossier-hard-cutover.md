@@ -1036,7 +1036,7 @@ Expected owners; do not create parallel abstractions.
   `agent_tools/web_search.py` only if the provider-neutral search result contract
   must be extracted without changing chat behavior
 - `python/nexus/services/{media_source_ingest,web_article_ingest}.py`
-- `python/nexus/services/resource_items/{routing,capabilities,chat_subjects}.py`
+- `python/nexus/services/resource_items/{routing,capabilities}.py`
 - `python/nexus/services/resource_graph/{resolve,cleanup}.py`
 - `python/nexus/services/search/retrievers/{conversations,resource_metadata}.py`
 - `python/nexus/tasks/artifacts.py`

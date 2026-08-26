@@ -552,7 +552,8 @@ Primary backend modifications:
 - `python/nexus/services/{chat_runs,chat_run_validation,chat_run_idempotency}.py`
 - `python/nexus/services/{chat_run_message_prep,chat_run_response,chat_reruns}.py`
 - `python/nexus/services/{conversations,conversation_branches,context_assembler,chat_prompt}.py`
-- `python/nexus/services/resource_items/chat_subjects.py`
+- delete `python/nexus/services/resource_items/chat_subjects.py`; the removed
+  request lane leaves the resolver with no callers
 
 Primary frontend modifications:
 
