@@ -696,10 +696,10 @@ continues to be the only writer of library entries.
 The source lifecycle owner must call:
 
 - `validate_writable_library_destinations` before durable acceptance,
-- `assign_libraries_for_media_in_current_transaction` in the media creation
-  transaction,
-- `assign_libraries_for_media` when canonical duplicate resolution returns a
-  winner.
+- `assign_libraries_for_media_in_current_transaction` inside the owning media
+  acceptance transaction, including canonical duplicate-winner resolution.
+
+There is no standalone assignment transaction wrapper.
 
 ### Background Jobs
 

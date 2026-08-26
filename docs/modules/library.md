@@ -25,7 +25,8 @@ created_at DESC, id DESC"`), the locked `ensure_entry` append, deletes and
   commands (`list_item_libraries`, `ensure_media_in_library`,
   `add_podcast_to_library`, `remove_podcast_from_library`, `reorder_entries`,
   `ensure_media_in_libraries_for_viewer`,
-  `ensure_media_absent_from_library_for_viewer`, `assign_libraries_for_media`,
+  `ensure_media_absent_from_library_for_viewer`,
+  `assign_libraries_for_media_in_current_transaction`,
   named Podcast placement/compaction, and unsubscribe placement teardown).
   It also composes, for reads only, the factual view lenses (Title/Creator/
   Published/Added, each ascending or descending) and a hide-finished
@@ -379,12 +380,12 @@ library the viewer can read.
   `validate_writable_library_destinations` or
   `resolve_writable_non_default_library_ids`; default IDs, duplicate IDs,
   inaccessible IDs, and member-only IDs are invalid for destination arrays.
-- **Assignment.** `library_entries.assign_libraries_for_media` is the standalone
-  transaction-owning command for attaching media to the viewer's default library
-  plus selected destinations. Media creation workflows that already own a
-  transaction call `assign_libraries_for_media_in_current_transaction` before
-  committing the created media. `ensure_media_in_libraries_for_viewer` adds
-  post-hoc destinations atomically as a bodyless command.
+- **Assignment.** Media intake and canonical-duplicate workflows attach the
+  viewer's default library plus selected destinations by calling
+  `assign_libraries_for_media_in_current_transaction` inside their existing
+  acceptance transaction; there is no standalone transaction wrapper.
+  `ensure_media_in_libraries_for_viewer` adds post-hoc destinations atomically
+  as a bodyless command.
 
 The canonical HTTP placement surface is:
 
