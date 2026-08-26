@@ -21,18 +21,17 @@ logger = get_logger(__name__)
 _SPEC = LlmTaskSpec(label="oracle_reading")
 
 
-def oracle_reading_generate(reading_id: str) -> dict:
-    reading_uuid = UUID(reading_id)
-    logger.info("oracle_reading_started", reading_id=reading_id)
+def oracle_reading_generate(reading_id: UUID) -> dict:
+    logger.info("oracle_reading_started", reading_id=str(reading_id))
 
     async def _handler(db: Session, runtime: ExecutionRuntime, _client: httpx.AsyncClient) -> dict:
-        return await execute_reading(db, reading_id=reading_uuid, runtime=runtime)
+        return await execute_reading(db, reading_id=reading_id, runtime=runtime)
 
     def _on_worker_exception(db: Session, exc: Exception) -> dict:
         reading, failed_now = run_kit.fail_run_after_worker_exception(
             db,
             load_parent=lambda session: session.get(
-                OracleReading, reading_uuid, populate_existing=True
+                OracleReading, reading_id, populate_existing=True
             ),
             is_terminal=lambda r: r.status
             in run_kit.terminal_statuses(run_kit.RunStreamKind.OracleReading),
@@ -52,5 +51,5 @@ def oracle_reading_generate(reading_id: str) -> dict:
         return {"status": "failed", "error_code": "E_INTERNAL"}
 
     result = run_llm_task(_SPEC, _handler, on_worker_exception=_on_worker_exception)
-    logger.info("oracle_reading_completed", reading_id=reading_id, result=result)
+    logger.info("oracle_reading_completed", reading_id=str(reading_id), result=result)
     return result

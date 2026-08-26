@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
 from typing import Any, Literal, cast
+from uuid import UUID
 
 from nexus.config import get_settings
 from nexus.jobs.dead_letter_projections import DeadLetterProjection
@@ -540,7 +541,14 @@ def _run_oracle_reading_generate(
 ) -> Mapping[str, Any] | None:
     from nexus.tasks.oracle_reading import oracle_reading_generate
 
-    return oracle_reading_generate(reading_id=str(payload["reading_id"]))
+    if set(payload) != {"reading_id"}:
+        # justify-defect: Oracle has one canonical same-system producer and one
+        # exact durable carrier. Additional keys are payload corruption, not an
+        # extension surface.
+        raise AssertionError("oracle_reading_generate payload keys must be exactly reading_id")
+    return oracle_reading_generate(
+        reading_id=_require_job_uuid(payload, "reading_id", "oracle_reading_generate")
+    )
 
 
 def _run_media_unit_build(
@@ -625,3 +633,14 @@ def _require_job_text(payload: Mapping[str, Any], key: str, kind: str) -> str:
         # same-system payload corruption.
         raise AssertionError(f"{kind} payload requires canonical {key}")
     return value
+
+
+def _require_job_uuid(payload: Mapping[str, Any], key: str, kind: str) -> UUID:
+    value = _require_job_text(payload, key, kind)
+    try:
+        parsed = UUID(value)
+    except ValueError as exc:
+        raise AssertionError(f"{kind} payload requires canonical {key}") from exc
+    if str(parsed) != value:
+        raise AssertionError(f"{kind} payload requires canonical {key}")
+    return parsed

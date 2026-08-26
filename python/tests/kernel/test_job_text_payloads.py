@@ -127,6 +127,45 @@ def test_scheduler_job_handlers_defect_on_missing_owned_text(
     assert str(raised.value) == f"{kind} payload requires canonical {missing_key}"
 
 
+@pytest.mark.parametrize(
+    "reading_id",
+    (
+        None,
+        "",
+        " reading",
+        "not-a-uuid",
+        "00000000-0000-0000-0000-0000000000AA",
+        "{00000000-0000-0000-0000-0000000000aa}",
+        uuid4(),
+        7,
+    ),
+)
+def test_oracle_job_handler_defects_on_noncanonical_reading_id(reading_id: object) -> None:
+    handler = resolve_job_handler("nexus.jobs.registry:_run_oracle_reading_generate")
+
+    with pytest.raises(
+        AssertionError,
+        match="oracle_reading_generate payload requires canonical reading_id",
+    ):
+        handler(
+            payload={"reading_id": reading_id},
+            context=_light_context(),
+        )
+
+
+def test_oracle_job_handler_defects_on_unowned_payload_fields() -> None:
+    handler = resolve_job_handler("nexus.jobs.registry:_run_oracle_reading_generate")
+
+    with pytest.raises(
+        AssertionError,
+        match="oracle_reading_generate payload keys must be exactly reading_id",
+    ):
+        handler(
+            payload={"reading_id": str(uuid4()), "extra_id": str(uuid4())},
+            context=_light_context(),
+        )
+
+
 def test_note_reindex_handler_defects_on_unowned_payload_fields() -> None:
     handler = resolve_job_handler("nexus.jobs.registry:_run_note_reindex")
 
