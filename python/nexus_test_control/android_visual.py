@@ -71,6 +71,7 @@ MAIN_ACTIVITY = "app.nexus.android.MainActivity"
 OWNED_HOST = "127.0.0.1"
 DEVICE_WEB_ORIGIN = f"http://{OWNED_HOST}:3000"
 DEVICE_STREAM_ORIGIN = f"http://{OWNED_HOST}:8000"
+WEB_READINESS_PATH = "/version"
 DEVICE_TCP_WEB = 3000
 DEVICE_TCP_STREAM = 8000
 # The handoff flow establishes the WebView session; the debug build only needs a
@@ -535,7 +536,7 @@ def _visual_run(
     web = start_web_process(root, environment, run, build, overrides=device_overrides)
     # Readiness needs an exact-200 public route; later gates separately prove
     # the authenticated device session at the requested product path.
-    wait_process_ready(root, environment, web, EndpointKind.WEB, "/version")
+    wait_process_ready(root, environment, web, EndpointKind.WEB, WEB_READINESS_PATH)
 
     reverse = {DEVICE_TCP_WEB: runtime.ports.web, DEVICE_TCP_STREAM: runtime.ports.api}
     stack.callback(lambda: _remove_reverse(adb, serial, reverse, environment, root))
