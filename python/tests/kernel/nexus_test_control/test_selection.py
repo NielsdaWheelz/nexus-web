@@ -138,6 +138,51 @@ def test_unmapped_product_change_routes_conservatively() -> None:
     ]
 
 
+def test_python_test_file_selects_its_exact_executable_owner() -> None:
+    path = "python/tests/service/test_owner.py"
+
+    selections = select_changed(parse_git_name_status(f"M\0{path}\0".encode()))
+
+    assert [
+        (item.capability, item.reason, item.proof, item.sensitivity_required) for item in selections
+    ] == [(Capability.SERVICE, SelectionReason.CHANGED_TEST, f"pytest:{path}", True)]
+
+
+def test_global_pytest_support_promotes_every_consuming_capability() -> None:
+    selections = select_changed(parse_git_name_status(b"M\0python/tests/conftest.py\0"))
+
+    assert [
+        (item.capability, item.reason, item.proof, item.sensitivity_required) for item in selections
+    ] == [
+        (Capability.KERNEL_PYTHON, SelectionReason.PROMOTED_CAPABILITY, None, False),
+        (Capability.SERVICE, SelectionReason.PROMOTED_CAPABILITY, None, False),
+        (Capability.MIGRATIONS, SelectionReason.PROMOTED_CAPABILITY, None, False),
+        (Capability.LLM_EVAL, SelectionReason.PROMOTED_CAPABILITY, None, False),
+        (Capability.AUDIT, SelectionReason.PROMOTED_CAPABILITY, None, False),
+        (Capability.PROVIDER_RUNTIME, SelectionReason.PROMOTED_CAPABILITY, None, False),
+        (Capability.LLM_TOOLS, SelectionReason.PROMOTED_CAPABILITY, None, False),
+        (Capability.RELEASE_ARTIFACT, SelectionReason.PROMOTED_CAPABILITY, None, False),
+        (Capability.CODEX_HOSTED, SelectionReason.PROMOTED_CAPABILITY, None, False),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("path", "capability"),
+    [
+        ("python/tests/service/conftest.py", Capability.SERVICE),
+        ("python/tests/migrations/conftest.py", Capability.MIGRATIONS),
+    ],
+)
+def test_python_support_file_promotes_its_typed_proof_owner(
+    path: str, capability: Capability
+) -> None:
+    selections = select_changed(parse_git_name_status(f"M\0{path}\0".encode()))
+
+    assert [
+        (item.capability, item.reason, item.proof, item.sensitivity_required) for item in selections
+    ] == [(capability, SelectionReason.PROMOTED_CAPABILITY, None, False)]
+
+
 def test_control_plane_change_promotes_complete_policy_and_kernel() -> None:
     selections = select_changed(parse_git_name_status(b"M\0python/nexus_test_control/policy.py\0"))
     assert {item.capability for item in selections} == {
