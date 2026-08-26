@@ -135,10 +135,10 @@ def _idea_work_counts(db: Session, *, artifact_id: UUID) -> tuple[int, int]:
     return builds, jobs
 
 
-def test_configured_brave_provider_factory_is_shared_by_app_chat_and_dossier(
+def test_configured_brave_provider_factory_is_shared_by_app_mcp_and_dossier(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Every product process lowers one exact configured Brave dependency."""
+    """Every tool-owning process lowers one exact configured Brave dependency."""
     monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "configured-provider-proof")
     monkeypatch.setenv(
         "BRAVE_SEARCH_BASE_URL",
@@ -149,27 +149,29 @@ def test_configured_brave_provider_factory_is_shared_by_app_chat_and_dossier(
     try:
         consumers = {
             "app": importlib.import_module("nexus.app"),
-            "chat": importlib.import_module("nexus.tasks.chat_run"),
+            "mcp": importlib.import_module("nexus.services.agent_tools_mcp"),
             "dossier": importlib.import_module("nexus.tasks.artifacts"),
         }
-        factories = {
-            name: getattr(module, "compose_configured_web_search_provider", None)
-            for name, module in consumers.items()
-        }
-        assert all(callable(factory) for factory in factories.values()), (
-            "app, Chat, and Dossier must bind the shared configured Brave factory; "
-            f"observed {factories!r}"
-        )
-        assert len({id(factory) for factory in factories.values()}) == 1, (
-            "app, Chat, and Dossier bound different Brave provider factories"
-        )
-        factory = factories["app"]
+        composition = importlib.import_module("nexus.services.tool_runtime.composition")
+        factory = composition.compose_configured_web_search_provider
         assert getattr(factory, "__module__", None) == (
             "nexus.services.tool_runtime.composition"
         ), "configured Brave provider policy has no single product-composition owner"
         for consumer_name, module in consumers.items():
             module_path = Path(str(module.__file__))
             tree = ast.parse(module_path.read_text())
+            imports = [
+                alias
+                for node in ast.walk(tree)
+                if isinstance(node, ast.ImportFrom)
+                and node.module == "nexus.services.tool_runtime.composition"
+                for alias in node.names
+                if alias.name == "compose_configured_web_search_provider"
+            ]
+            assert len(imports) == 1, (
+                f"{consumer_name} must import the single configured Brave factory; "
+                f"observed {len(imports)} imports in {module_path}"
+            )
             calls = [
                 node
                 for node in ast.walk(tree)
@@ -202,6 +204,36 @@ def test_configured_brave_provider_factory_is_shared_by_app_chat_and_dossier(
                 f"{consumer_name} still owns Brave configuration in {module_path}"
             )
 
+        chat_module = importlib.import_module("nexus.tasks.chat_run")
+        chat_path = Path(str(chat_module.__file__))
+        chat_tree = ast.parse(chat_path.read_text())
+        chat_provider_calls = [
+            node
+            for node in ast.walk(chat_tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "compose_configured_web_search_provider"
+        ]
+        assert chat_provider_calls == [], "Chat worker still owns a direct Brave provider"
+        execute_chat_calls = [
+            node
+            for node in ast.walk(chat_tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "execute_chat_run"
+        ]
+        assert len(execute_chat_calls) == 1
+        delegated_providers = [
+            keyword.value
+            for keyword in execute_chat_calls[0].keywords
+            if keyword.arg == "web_search_provider"
+        ]
+        assert len(delegated_providers) == 1
+        assert isinstance(delegated_providers[0], ast.Constant)
+        assert delegated_providers[0].value is None, (
+            "Chat must delegate configured Web execution to its scoped MCP listener"
+        )
+
         constructor_arguments: list[tuple[object, str, str, float]] = []
         provider = object()
 
@@ -215,7 +247,6 @@ def test_configured_brave_provider_factory_is_shared_by_app_chat_and_dossier(
             constructor_arguments.append((client, api_key, base_url, timeout_seconds))
             return provider
 
-        composition = importlib.import_module("nexus.services.tool_runtime.composition")
         monkeypatch.setattr(composition, "BraveSearchProvider", record_constructor)
         client = object()
         assert factory(client, settings=get_settings()) is provider
