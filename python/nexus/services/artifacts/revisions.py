@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.citation import CitationOut
-from nexus.services.artifacts.subject_policy import visible_persisted_subject
+from nexus.services.artifacts.registry import visible_persisted_subject
 from nexus.services.resource_graph.citations import build_citation_outs_for_sources
 from nexus.services.resource_graph.refs import ResourceRef
 

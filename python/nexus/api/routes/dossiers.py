@@ -39,7 +39,6 @@ from nexus.schemas.presence import (
 )
 from nexus.services.artifacts import engine
 from nexus.services.artifacts import revisions as revision_service
-from nexus.services.artifacts.bindings import BINDINGS
 from nexus.services.artifacts.dossier_types import (
     CancelledEventPayload,
     DossierSubjectLocator,
@@ -53,10 +52,8 @@ from nexus.services.artifacts.manifests import (
     InputManifestV1,
     project_manifest_to_wire,
 )
-from nexus.services.artifacts.subject_policy import (
-    SUBJECT_POLICIES,
-    ResolvedIdeaSubject,
-)
+from nexus.services.artifacts.registry import dossier_registration
+from nexus.services.artifacts.subject_policy import ResolvedIdeaSubject
 from nexus.services.llm_execution import ExecutionRuntime
 from nexus.services.resource_graph.refs import (
     ResourceRef,
@@ -82,10 +79,10 @@ def _require_idea_web_research(request: Request) -> None:
 
 
 def _subject_locator(subject_scheme: str, subject_handle: str) -> DossierSubjectLocator:
-    policy = SUBJECT_POLICIES.get(subject_scheme)
-    if policy is None:
+    registration = dossier_registration(subject_scheme)
+    if registration is None:
         raise InvalidSubjectLocator()
-    return policy.decode_locator(subject_handle)
+    return registration.policy.decode_locator(subject_handle)
 
 
 def _artifact_ref(raw: str) -> ResourceRef:
@@ -160,8 +157,10 @@ def _manifest_and_coverage(
     raw_manifest: dict,
 ) -> tuple[InputManifestOut, DossierCoverageOut]:
     manifest = _MANIFEST_ADAPTER.validate_python(raw_manifest)
-    binding = BINDINGS[subject_scheme]
-    coverage = binding.coverage(manifest)
+    registration = dossier_registration(subject_scheme)
+    if registration is None:
+        raise AssertionError(f"no Dossier registration for subject scheme {subject_scheme!r}")
+    coverage = registration.binding.coverage(manifest)
     return project_manifest_to_wire(manifest), _COVERAGE_ADAPTER.validate_python(
         {"kind": manifest.kind, **asdict(coverage)}
     )
@@ -220,6 +219,9 @@ def _head_out(
     viewer_id: UUID,
     head: engine.DossierHeadView,
 ) -> DossierHeadOut:
+    registration = dossier_registration(head.subject_scheme)
+    if registration is None:
+        raise AssertionError(f"no Dossier registration for subject scheme {head.subject_scheme!r}")
     current = absent()
     if head.current_revision_id is not None:
         current = present(
@@ -271,7 +273,7 @@ def _head_out(
             else absent()
         ),
         revision_count=head.revision_count,
-        media_abstract=BINDINGS[head.subject_scheme].media_abstract(
+        media_abstract=registration.binding.media_abstract(
             db,
             subject_id=head.subject_id,
             requester_user_id=viewer_id,

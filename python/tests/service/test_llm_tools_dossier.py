@@ -64,10 +64,8 @@ from nexus.services.artifacts.research import (
     FrozenIdeaEvidence,
     collect_idea_evidence,
 )
-from nexus.services.artifacts.subject_policy import (
-    ResolvedIdeaSubject,
-    visible_persisted_subject,
-)
+from nexus.services.artifacts.registry import visible_persisted_subject
+from nexus.services.artifacts.subject_policy import ResolvedIdeaSubject
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.durable_step_journal import (

@@ -70,14 +70,17 @@ from nexus.schemas.presence import Present, absent, present
 from nexus.services import durable_step_journal as step_journal
 from nexus.services import run_kit
 from nexus.services.artifacts import learn as learn_service
-from nexus.services.artifacts.bindings import BINDINGS, DossierBinding
 from nexus.services.artifacts.bindings._shared import (
     AggregateDependenciesPending,
     CitationValidationError,
     document_repair_system_prompt,
     document_repair_user_content,
 )
-from nexus.services.artifacts.bindings.base import DossierInputTooLarge, PublishableDossier
+from nexus.services.artifacts.bindings.base import (
+    DossierBinding,
+    DossierInputTooLarge,
+    PublishableDossier,
+)
 from nexus.services.artifacts.coordination import (
     DossierBuildRuntime,
     DossierResearchPending,
@@ -133,12 +136,14 @@ from nexus.services.artifacts.idea_seeds import (
     register_idea_seed,
 )
 from nexus.services.artifacts.manifests import InputManifestV1
+from nexus.services.artifacts.registry import (
+    dossier_registration,
+    visible_persisted_subject,
+)
 from nexus.services.artifacts.research import ResearchInputsChanged
 from nexus.services.artifacts.subject_policy import (
-    SUBJECT_POLICIES,
     ResolvedSubject,
     SubjectPolicy,
-    visible_persisted_subject,
 )
 from nexus.services.llm_execution import (
     DispatchAborted,
@@ -260,9 +265,10 @@ def reconcile_uncertain_build(
         head = _head_row(db, head_id)
         if head is None:
             raise BuildNotActive()
-        binding = BINDINGS.get(head.subject_scheme)
-        if binding is None:
-            raise AssertionError(f"no binding for subject scheme {head.subject_scheme!r}")
+        registration = dossier_registration(head.subject_scheme)
+        if registration is None:
+            raise AssertionError(f"no registration for subject scheme {head.subject_scheme!r}")
+        binding = registration.binding
         row = (
             db.execute(
                 text(
@@ -1412,12 +1418,13 @@ async def run_build(
         or str(job.payload.get("build_id")) != str(build_id)
     ):
         raise AssertionError(f"job {job.id} does not own dossier build {build_id}")
-    policy = SUBJECT_POLICIES.get(head.subject_scheme)
-    binding = BINDINGS.get(head.subject_scheme)
-    if policy is None or binding is None:
-        # justify-defect: a persisted build whose subject scheme is not wired to a
-        # policy + binding is an integrator misconfiguration, not a runtime state.
-        raise AssertionError(f"no policy/binding for subject scheme {head.subject_scheme!r}")
+    registration = dossier_registration(head.subject_scheme)
+    if registration is None:
+        # justify-defect: a persisted build whose subject scheme is not wired is
+        # an integrator misconfiguration, not a runtime state.
+        raise AssertionError(f"no registration for subject scheme {head.subject_scheme!r}")
+    policy = registration.policy
+    binding = registration.binding
     # Capture plain values before any commit expires the ORM object.
     requester_user_id = build.requester_user_id
     instruction = build.instruction
@@ -2595,9 +2602,10 @@ def _read_head_snapshot(
                 cancelled_at=b["cancelled_at"],
             )
 
+    registration = dossier_registration(resolved.scheme)
     freshness = _freshness(
         db,
-        binding=BINDINGS.get(resolved.scheme),
+        binding=registration.binding if registration is not None else None,
         resolved=resolved,
         audience=audience,
         current_revision_id=current_revision_id,
@@ -3078,10 +3086,10 @@ class _JobState:
 
 def _policy_for_locator(locator: DossierSubjectLocator) -> SubjectPolicy:
     scheme = _subject_scheme(locator)
-    policy = SUBJECT_POLICIES.get(scheme)
-    if policy is None:
+    registration = dossier_registration(scheme)
+    if registration is None:
         raise InvalidSubjectLocator(f"{scheme!r} is not an eligible dossier subject")
-    return policy
+    return registration.policy
 
 
 def _subject_scheme(locator: DossierSubjectLocator) -> str:
