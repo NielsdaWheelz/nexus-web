@@ -242,8 +242,9 @@ artifact_idea_seeds
 - `services/highlights.delete_highlight_rows` explicitly removes resolution/seed
   and affected Learn-replay rows before deleting a Highlight.
 - Idea Artifact teardown deletes affected Learn replay → seeds → existing
-  Artifact children/head → resolutions → Idea subject. User teardown applies
-  the same owner order across all owned rows.
+  Artifact children/head → resolutions → Idea subject.
+- Account deletion requires a future cross-subsystem account-lifecycle owner;
+  this feature exposes no partial User teardown.
 - No automatic Artifact→Highlight Link is created; no UI falsely claims a
   Connections recovery path.
 
@@ -284,7 +285,7 @@ artifact_learn_failures
   `build_id`. Validate this exact union on every read/write.
 - Replay returns the recorded terminal response, including the original build
   handle after build completion.
-- Highlight/Artifact/User teardown deletes affected replay rows first. The exact
+- Highlight or Artifact teardown deletes affected replay rows first. The exact
   replay promise ends when its target is explicitly deleted. A resolver owner
   or waiter that observes this teardown returns the normal masked not-found
   outcome; it never asserts or recreates the request.

@@ -677,12 +677,11 @@ multiple terminal children or multiple revisions for one build is a defect.
   existing citation edges.
 
 Requester, revision creator, and cancellation actor are nullable attribution
-FKs. Explicit User teardown nulls them on surviving shared-Library history and
-the UI renders “Deleted user.” `citation_owner_user_id` is non-null because it
-is graph ownership, not display attribution. Before deleting such a user,
-surviving Library history rehomes its citation edges and revision owner to the
-Library’s current owner. A Library owner must transfer or delete the Library
-before that User becomes unobservable.
+FKs, and the UI renders absent attribution as “Deleted user.”
+`citation_owner_user_id` is non-null because it is graph ownership, not display
+attribution. No product account-deletion composer exists; the non-cascading User
+FKs intentionally block deletion until account lifecycle owns the complete
+cross-subsystem operation.
 
 ### `artifact_build_events`
 
@@ -886,10 +885,11 @@ variants, and creates the Idea/resolution/seed/Learn replay tables.
 There is no compatibility reader, body backfill, migrated failure, or dual
 event/body contract.
 
-Subject and User teardown remains explicit and child-first. It deletes affected
-Learn replay rows, Idea seeds/resolutions, graph/view-state children, build
-children, and heads in the owning service order; no cascade or stale worker may
-recreate state after the head/build lease check fails.
+Subject teardown and audience-visibility cleanup remain explicit and
+child-first. They delete affected Learn replay rows, Idea seeds/resolutions,
+graph/view-state children, build children, and heads in the owning service
+order; no cascade or stale worker may recreate state after the head/build lease
+check fails. Artifact exposes no partial User teardown helper.
 
 ## Freshness, Coverage, And Reingestion
 
@@ -1114,9 +1114,8 @@ No partial state ships.
       without synthesizing a failure.
 - [x] Arrows are view-only; Make current atomically authorizes/repoints and
       recomputes freshness.
-- [x] Subject/audience/User teardown follows the specified queue, graph,
-      attribution, citation-owner, and FK-safe rules; no late worker recreates
-      state.
+- [x] Subject teardown and audience-visibility cleanup follow the specified
+      queue, graph, and FK-safe rules; no late worker recreates state.
 
 ### Migration and hard cut
 
