@@ -1,9 +1,9 @@
-import type { ResourceSurfaceCommand } from "@/lib/resourceSurface/api";
 import {
   decodeNoteBodyPmJson,
   decodeNoteBodyValue,
 } from "@/lib/notes/prosemirror/schema";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
+import type { ResourceSurfaceCommand } from "@/lib/resourceSurface/model";
 import {
   decodeResourceSurfaceSnapshot,
   type ResourceSurface,

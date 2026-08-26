@@ -7,12 +7,10 @@ import {
   resourceSurfaceCommandId,
   updateResourceSurfaceNoteBody,
   updateResourceSurfaceTitle,
-  type ResourceSurfaceCommand,
 } from "@/lib/resourceSurface/api";
 import { isApiError } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import type { ResourceItem, ResourceSurface, ResourceSurfaceOccurrence } from "@/lib/resources/resourceItems";
-import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
+import type { ResourceSurface } from "@/lib/resources/resourceItems";
 import { appendDailyDraftText, captureDailySurface, createDailyDraft, dailyDraftBodyChanged, draftNoteRef, loadDailySurface, pendingDailyBody, surfaceContainsDailyDraft, type DailySurfaceSessionOptions } from "@/lib/resourceSurface/dailySurfacePersistence";
 import {
   clearPersistedResourceSurfaceDraft,
@@ -20,10 +18,17 @@ import {
   persistResourceSurfaceDraft,
   readResourceSurfaceDraft,
   type ResourceSurfaceDraftIntent as Intent,
-  type ResourceSurfaceDraftPosition as PositionRef,
   type ResourceSurfacePendingBody as PendingBody,
   type ResourceSurfacePendingTitle as PendingTitle,
 } from "@/lib/resourceSurface/draftStore";
+import {
+  createResourceSurfaceIntent,
+  materializeResourceSurfaceIntent,
+  projectResourceSurface,
+  resourceSurfaceLaneVersion,
+  resourceSurfaceOccurrenceForRef,
+  type ResourceSurfaceCommand,
+} from "@/lib/resourceSurface/model";
 import type { MountedEditorMutationLease } from "@/lib/actions/mountedActionHandoff";
 import { acknowledgeDailyDraftHandoff, clearDailyDraft, readDailyDraft, writeDailyDraft, type DailyDraft, type DailyDraftHandoff } from "@/lib/notes/dailyDraftStore";
 import { noteBodyHasContent } from "@/lib/notes/prosemirror/bodyContent";
@@ -53,96 +58,6 @@ export interface DailyResourceSurfaceSession extends Omit<ResourceSurfaceSession
   provisional: { occurrenceId: string; noteRef: string; bodyPmJson: Record<string, unknown>; bodyText: string } | null;
   inputHandoff: DailyDraftHandoff;
   acknowledgeInputHandoff(handoffId: string): void;
-}
-
-function lane(item: ResourceItem, name: "title" | "body" | "outgoing_edges") {
-  const value = item.versionByLane[name];
-  if (typeof value !== "number") throw new Error(`Resource surface is missing ${name} version for ${item.ref}`);
-  return value;
-}
-
-function occurrenceForRef(surface: ResourceSurface, ref: string) {
-  return surface.orderedItems.find((item) => item.target.item.ref === ref);
-}
-
-function positionFor(surface: ResourceSurface, position: PositionRef) {
-  if (position.kind === "start") return { kind: "start" } as const;
-  const occurrence = occurrenceForRef(surface, position.targetRef);
-  return occurrence ? { kind: "after" as const, occurrenceId: occurrence.occurrenceId } : null;
-}
-
-function insertIndex(items: ResourceSurfaceOccurrence[], position: { kind: "start" } | { kind: "after"; occurrenceId: string }) {
-  if (position.kind === "start") return 0;
-  const index = items.findIndex((item) => item.occurrenceId === position.occurrenceId);
-  return index < 0 ? items.length : index + 1;
-}
-
-function localOccurrence(surface: ResourceSurface, noteId: string, bodyPmJson: Record<string, unknown>): ResourceSurfaceOccurrence {
-  const ref = `note_block:${noteId}`;
-  return {
-    occurrenceId: `local:${noteId}`,
-    target: {
-      item: { ...surface.source.item, ref, scheme: "note_block", id: noteId, label: "", summary: "", route: `/notes/${noteId}`, activation: { resourceRef: ref, kind: "route", href: `/notes/${noteId}`, unresolvedReason: null }, versionByLane: { body: 0, outgoing_edges: 0 } },
-      content: { kind: "note_body", bodyPmJson, bodyText: "" },
-    },
-  };
-}
-
-function optimistic(surface: ResourceSurface, command: ResourceSurfaceCommand): ResourceSurface {
-  if (command.type === "remove_occurrence") return { ...surface, orderedItems: surface.orderedItems.filter((item) => item.occurrenceId !== command.occurrenceId) };
-  if (command.type === "move_occurrence") {
-    const occurrence = surface.orderedItems.find((item) => item.occurrenceId === command.occurrenceId);
-    if (!occurrence) return surface;
-    const orderedItems = surface.orderedItems.filter((item) => item !== occurrence);
-    orderedItems.splice(insertIndex(orderedItems, command.position), 0, occurrence);
-    return { ...surface, orderedItems };
-  }
-  if (command.type === "insert_note") {
-    const orderedItems = [...surface.orderedItems];
-    orderedItems.splice(insertIndex(orderedItems, command.position), 0, localOccurrence(surface, command.noteId, command.bodyPmJson));
-    return { ...surface, orderedItems };
-  }
-  if (command.type === "split_note") {
-    const orderedItems = surface.orderedItems.map((item) => item.occurrenceId === command.occurrenceId && item.target.content.kind === "note_body" ? { ...item, target: { ...item.target, content: { kind: "note_body" as const, bodyPmJson: command.leftBodyPmJson, bodyText: "" } } } : item);
-    const index = orderedItems.findIndex((item) => item.occurrenceId === command.occurrenceId);
-    orderedItems.splice(index < 0 ? orderedItems.length : index + 1, 0, localOccurrence(surface, command.noteId, command.rightBodyPmJson));
-    return { ...surface, orderedItems };
-  }
-  const parsedTarget = parseResourceRef(command.targetRef);
-  if (parsedTarget === null) {
-    throw new TypeError("insert_resource targetRef must be canonical");
-  }
-  const orderedItems = [...surface.orderedItems];
-  orderedItems.splice(insertIndex(orderedItems, command.position), 0, { occurrenceId: `local:${command.targetRef}`, target: { item: { ...surface.source.item, ref: command.targetRef, scheme: parsedTarget.scheme, id: parsedTarget.id, label: "Resource", summary: "", route: null, activation: { resourceRef: command.targetRef, kind: "none", href: null, unresolvedReason: null } }, content: { kind: "resource_summary" } } });
-  return { ...surface, orderedItems };
-}
-
-function intentFor(
-  surface: ResourceSurface,
-  command: ResourceSurfaceCommand,
-): Intent | null {
-  const occurrenceId = command.type === "split_note" || command.type === "move_occurrence" || command.type === "remove_occurrence" ? command.occurrenceId : undefined;
-  const occurrenceTargetRef = occurrenceId ? surface.orderedItems.find((item) => item.occurrenceId === occurrenceId)?.target.item.ref : undefined;
-  const rawPosition = command.type === "insert_note" || command.type === "insert_resource" || command.type === "move_occurrence" ? command.position : undefined;
-  const position: PositionRef | undefined = rawPosition?.kind === "after" ? (() => {
-    const target = surface.orderedItems.find((item) => item.occurrenceId === rawPosition.occurrenceId);
-    return target ? { kind: "after" as const, targetRef: target.target.item.ref } : undefined;
-  })() : rawPosition;
-  if (rawPosition?.kind === "after" && !position) return null;
-  if (occurrenceId && !occurrenceTargetRef) return null;
-  return { clientMutationId: resourceSurfaceCommandId(), command, occurrenceTargetRef, position };
-}
-
-function materialize(surface: ResourceSurface, intent: Intent): ResourceSurfaceCommand | null {
-  const occurrence = intent.occurrenceTargetRef ? occurrenceForRef(surface, intent.occurrenceTargetRef) : undefined;
-  const position = intent.position ? positionFor(surface, intent.position) : undefined;
-  const command = intent.command;
-  if (command.type === "insert_note" && position) return { ...command, position };
-  if (command.type === "insert_resource" && position) return { ...command, position };
-  if (command.type === "move_occurrence" && occurrence && position) return { ...command, occurrenceId: occurrence.occurrenceId, position };
-  if (command.type === "remove_occurrence" && occurrence) return { ...command, occurrenceId: occurrence.occurrenceId };
-  if (command.type === "split_note" && occurrence) return { ...command, occurrenceId: occurrence.occurrenceId };
-  return null;
 }
 
 type PersistedSessionOptions = {
@@ -209,21 +124,15 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
   }, []);
 
   const derived = useCallback(() => {
-    let next = acknowledgedRef.current;
-    if (!next) return null;
-    for (const intent of intentsRef.current) {
-      const command = materialize(next, intent);
-      if (command) next = optimistic(next, command);
-    }
-    if (titleRef.current !== undefined && next.source.content.kind === "page_title") next = { ...next, source: { ...next.source, content: { kind: "page_title", title: titleRef.current.value } } };
-    const applyBody = (item: ResourceSurfaceOccurrence) => {
-      const body = bodiesRef.current.get(item.target.item.ref);
-      return body && item.target.content.kind === "note_body" ? { ...item, target: { ...item.target, content: { kind: "note_body" as const, bodyPmJson: body.bodyPmJson, bodyText: body.bodyText } } } : item;
-    };
-    next = { ...next, orderedItems: next.orderedItems.map(applyBody) };
-    const sourceBody = bodiesRef.current.get(next.source.item.ref);
-    if (sourceBody && next.source.content.kind === "note_body") next = { ...next, source: { ...next.source, content: { kind: "note_body", bodyPmJson: sourceBody.bodyPmJson, bodyText: sourceBody.bodyText } } };
-    return next;
+    const acknowledgedSurface = acknowledgedRef.current;
+    return acknowledgedSurface === null
+      ? null
+      : projectResourceSurface({
+          acknowledgedSurface,
+          intents: intentsRef.current,
+          title: titleRef.current,
+          bodies: bodiesRef.current,
+        });
   }, []);
 
   const publish = useCallback(() => setSurface(derived()), [derived]);
@@ -337,7 +246,7 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
       void updateResourceSurfaceTitle({
         sourceRef,
         clientMutationId: title.clientMutationId,
-        baseVersion: lane(ack.source.item, "title"),
+        baseVersion: resourceSurfaceLaneVersion(ack.source.item, "title"),
         title: title.value,
       }).then(async (item) => {
         try {
@@ -412,7 +321,10 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
       }
       if (!ack || !sourceRef) continue;
       if (intrinsicActiveRef.current.has(ref)) continue;
-      const sourceItem = ack.source.item.ref === ref ? ack.source.item : occurrenceForRef(ack, ref)?.target.item;
+      const sourceItem =
+        ack.source.item.ref === ref
+          ? ack.source.item
+          : resourceSurfaceOccurrenceForRef(ack, ref)?.target.item;
       if (!sourceItem) continue;
       intrinsicActiveRef.current.add(ref);
       setStatus("saving");
@@ -423,7 +335,7 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
       void updateResourceSurfaceNoteBody({
         noteRef: ref,
         clientMutationId: body.clientMutationId,
-        baseVersion: lane(sourceItem, "body"),
+        baseVersion: resourceSurfaceLaneVersion(sourceItem, "body"),
         bodyPmJson: body.bodyPmJson,
       }).then(async (result) => {
         try {
@@ -507,7 +419,7 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
       return;
     }
     const intent = intentsRef.current[0]!;
-    const command = materialize(acknowledged, intent);
+    const command = materializeResourceSurfaceIntent(acknowledged, intent);
     if (!command) {
       const error = new Error(
         "This edit no longer matches the current resource order.",
@@ -524,8 +436,8 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
     }
     activeRef.current = true; setStatus("saving");
     const generation = generationRef.current;
-    const bases: Array<{ ref: string; lane: "body" | "outgoing_edges"; version: number }> = [{ ref: acknowledged.source.item.ref, lane: "outgoing_edges", version: lane(acknowledged.source.item, "outgoing_edges") }];
-    if (command.type === "split_note") { const row = acknowledged.orderedItems.find((item) => item.occurrenceId === command.occurrenceId); if (!row) { stoppedRef.current = true; activeRef.current = false; setStatus("failed"); return; } bases.push({ ref: row.target.item.ref, lane: "body" as const, version: lane(row.target.item, "body") }); }
+    const bases: Array<{ ref: string; lane: "body" | "outgoing_edges"; version: number }> = [{ ref: acknowledged.source.item.ref, lane: "outgoing_edges", version: resourceSurfaceLaneVersion(acknowledged.source.item, "outgoing_edges") }];
+    if (command.type === "split_note") { const row = acknowledged.orderedItems.find((item) => item.occurrenceId === command.occurrenceId); if (!row) { stoppedRef.current = true; activeRef.current = false; setStatus("failed"); return; } bases.push({ ref: row.target.item.ref, lane: "body" as const, version: resourceSurfaceLaneVersion(row.target.item, "body") }); }
     void commandResourceSurface({ sourceRef, clientMutationId: intent.clientMutationId, baseVersions: bases, command }).then((next) => {
       if (generation !== generationRef.current) return;
       acknowledgedRef.current = next;
@@ -740,7 +652,7 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
       acknowledged?.source.item.ref === ref
         ? acknowledged.source.content
         : acknowledged
-          ? occurrenceForRef(acknowledged, ref)?.target.content
+          ? resourceSurfaceOccurrenceForRef(acknowledged, ref)?.target.content
           : undefined;
     if (
       (
@@ -832,7 +744,11 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
     }
     const before = derived();
     if (!before) return;
-    const intent = intentFor(before, next);
+    const intent = createResourceSurfaceIntent({
+      surface: before,
+      command: next,
+      clientMutationId: resourceSurfaceCommandId(),
+    });
     if (!intent) {
       const error = new Error(
         "This edit no longer matches the current resource order.",
@@ -985,7 +901,9 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
   if (daily) {
     const draft = draftSnapshot === undefined ? dailyDraftRef.current : draftSnapshot;
     const ref = draft ? draftNoteRef(draft.noteId) : null;
-    const canonical = ref && surface ? occurrenceForRef(surface, ref) : null;
+    const canonical = ref && surface
+      ? resourceSurfaceOccurrenceForRef(surface, ref)
+      : null;
     const pending = ref ? bodiesRef.current.get(ref) : undefined;
     return {
       surface,

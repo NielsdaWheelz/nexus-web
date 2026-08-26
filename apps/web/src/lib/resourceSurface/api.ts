@@ -6,33 +6,8 @@ import {
   type ResourceSurface,
   type SurfacePosition,
 } from "@/lib/resources/resourceItems";
+import type { ResourceSurfaceCommand } from "@/lib/resourceSurface/model";
 import { expectRecord } from "@/lib/validation";
-
-export type ResourceSurfaceCommand =
-  | {
-      type: "insert_note";
-      noteId: string;
-      position: SurfacePosition;
-      bodyPmJson: Record<string, unknown>;
-    }
-  | {
-      type: "split_note";
-      occurrenceId: string;
-      noteId: string;
-      leftBodyPmJson: Record<string, unknown>;
-      rightBodyPmJson: Record<string, unknown>;
-    }
-  | {
-      type: "insert_resource";
-      targetRef: string;
-      position: SurfacePosition;
-    }
-  | {
-      type: "move_occurrence";
-      occurrenceId: string;
-      position: SurfacePosition;
-    }
-  | { type: "remove_occurrence"; occurrenceId: string };
 
 export interface ResourceLaneVersion {
   ref: string;
