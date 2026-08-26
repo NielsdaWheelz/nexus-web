@@ -17,16 +17,13 @@ import {
 import {
   expectArray,
   expectBoolean,
+  expectCanonicalRfcUuid as canonicalUuid,
   expectExactRecord,
   expectIsoInstant,
   expectNonemptyString,
   expectNonnegativeInteger,
   expectOneOf,
-  expectString,
 } from "@/lib/validation";
-
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 export type MediaActivityActiveStatus = "Queued" | "Processing";
 export type MediaActivityStage =
@@ -136,14 +133,6 @@ export interface MediaRepairResult {
   readonly mediaId: string;
   readonly scope: MediaRepairScope;
   readonly jobId: string;
-}
-
-function canonicalUuid(raw: unknown, name: string): string {
-  const value = expectString(raw, name);
-  if (!UUID_RE.test(value)) {
-    throw new TypeError(`${name} must be a canonical lowercase UUID`);
-  }
-  return value;
 }
 
 function sourceProgress(raw: unknown): SourceProgress {

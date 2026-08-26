@@ -11,6 +11,7 @@ import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import {
   expectArray,
   expectBoolean,
+  expectCanonicalUuid,
   expectExactRecord,
   expectOneOf,
   expectRecord,
@@ -142,17 +143,7 @@ export type ResourceActionCapability =
       readonly noteBlockId: string;
     };
 
-const CANONICAL_UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const FACTS_REVISION_RE = /^[0-9a-f]{64}$/;
-
-function expectCanonicalUuid(raw: unknown, name: string): string {
-  const value = expectString(raw, name);
-  if (!CANONICAL_UUID_RE.test(value)) {
-    throw new TypeError(`${name} must be a canonical UUID`);
-  }
-  return value;
-}
 
 function expectFactsRevision(raw: unknown, name: string): string {
   const value = expectString(raw, name);

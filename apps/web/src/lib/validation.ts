@@ -67,12 +67,31 @@ export function expectString(raw: unknown, name: string): string {
 
 const CANONICAL_UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const CANONICAL_RFC_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+export function isCanonicalUuid(raw: unknown): raw is string {
+  return typeof raw === "string" && CANONICAL_UUID_RE.test(raw);
+}
 
 /** Strict decoder for canonical lowercase UUID wire values. */
 export function expectCanonicalUuid(raw: unknown, name: string): string {
   const value = expectString(raw, name);
-  if (!CANONICAL_UUID_RE.test(value)) {
+  if (!isCanonicalUuid(value)) {
     throw new TypeError(`${name} must be a canonical lowercase UUID`);
+  }
+  return value;
+}
+
+export function isCanonicalRfcUuid(raw: unknown): raw is string {
+  return typeof raw === "string" && CANONICAL_RFC_UUID_RE.test(raw);
+}
+
+/** Strict decoder for a lowercase RFC variant UUID with a known version. */
+export function expectCanonicalRfcUuid(raw: unknown, name: string): string {
+  const value = expectString(raw, name);
+  if (!isCanonicalRfcUuid(value)) {
+    throw new TypeError(`${name} must be a canonical lowercase RFC UUID`);
   }
   return value;
 }

@@ -9,14 +9,13 @@ import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import {
   expectArray,
+  expectCanonicalUuid,
   expectExactRecord,
   expectIsoInstant,
   expectNonemptyString,
   expectString,
 } from "@/lib/validation";
 
-const CANONICAL_UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const MAX_PAGE_TITLE_CODEPOINTS = 200;
 
 export interface NotePageSummary {
@@ -35,11 +34,7 @@ export interface NotePage extends NotePageSummary {
 }
 
 export function decodeNotePageId(raw: unknown, context: string): string {
-  const id = expectString(raw, context);
-  if (!CANONICAL_UUID_RE.test(id)) {
-    throw new TypeError(`${context} must be a canonical lowercase UUID`);
-  }
-  return id;
+  return expectCanonicalUuid(raw, context);
 }
 
 export function decodeNoteLocalDate(raw: unknown, context: string): string {

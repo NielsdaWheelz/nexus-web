@@ -1,6 +1,7 @@
 import { decodePresence, type Presence } from "@/lib/api/presence";
 import {
   expectArray,
+  expectCanonicalRfcUuid as canonicalUuid,
   expectExactRecord,
   expectIsoInstant,
   expectNonnegativeInteger,
@@ -20,8 +21,6 @@ import type {
 } from "@/lib/reader/ReaderProgressPort";
 
 export const OFFLINE_READING_PROTOCOL_VERSION = 1 as const;
-const CANONICAL_UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
 const LEASE_READER_PATH_RE =
   /^\/nexus-offline\/lease\/[0-9a-f]{32}\/reader\.json$/;
@@ -172,14 +171,6 @@ export type ReadingInbound =
       readonly kind: "OpenReadingRequested";
       readonly mediaId: string;
     };
-
-function canonicalUuid(raw: unknown, name: string): string {
-  const value = expectString(raw, name);
-  if (!CANONICAL_UUID_RE.test(value)) {
-    throw new TypeError(`${name} must be a canonical lowercase UUID`);
-  }
-  return value;
-}
 
 function positiveInteger(raw: unknown, name: string): number {
   const value = expectNonnegativeInteger(raw, name);

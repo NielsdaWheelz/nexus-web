@@ -38,7 +38,7 @@ import {
   parsePauseShorteningMode,
   type PauseShorteningMode,
 } from "@/lib/player/pauseShortening";
-import { expectIsoInstant } from "@/lib/validation";
+import { expectIsoInstant, isCanonicalUuid } from "@/lib/validation";
 import { MEDIA_KINDS, type MediaKind } from "@/lib/media/kind";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 
@@ -51,9 +51,6 @@ import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 // throw; `parse*` is the wire-ingress name used by decoders, `assume*` is the
 // already-canonical name used by callers holding a known-good string.
 
-const CANONICAL_UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-
 export type MediaId = string & { readonly __mediaId: unique symbol };
 export type LecternItemId = string & { readonly __lecternItemId: unique symbol };
 export type CompletionHandle = string & { readonly __completionHandle: unique symbol };
@@ -62,28 +59,28 @@ export type CompletionHandle = string & { readonly __completionHandle: unique sy
 export type AppHref = string & { readonly __appHref: unique symbol };
 
 export function parseMediaId(value: string): MediaId {
-  if (!CANONICAL_UUID_RE.test(value)) {
+  if (!isCanonicalUuid(value)) {
     throw new Error(`Invalid MediaId: ${JSON.stringify(value)}`);
   }
   return value as MediaId;
 }
 
 export function assumeMediaId(value: string): MediaId {
-  if (!CANONICAL_UUID_RE.test(value)) {
+  if (!isCanonicalUuid(value)) {
     throw new Error(`Non-canonical MediaId: ${JSON.stringify(value)}`);
   }
   return value as MediaId;
 }
 
 export function parseLecternItemId(value: string): LecternItemId {
-  if (!CANONICAL_UUID_RE.test(value)) {
+  if (!isCanonicalUuid(value)) {
     throw new Error(`Invalid LecternItemId: ${JSON.stringify(value)}`);
   }
   return value as LecternItemId;
 }
 
 export function assumeLecternItemId(value: string): LecternItemId {
-  if (!CANONICAL_UUID_RE.test(value)) {
+  if (!isCanonicalUuid(value)) {
     throw new Error(`Non-canonical LecternItemId: ${JSON.stringify(value)}`);
   }
   return value as LecternItemId;
@@ -413,7 +410,7 @@ function decodeAppHref(raw: unknown): AppHref {
 
 function decodeUuidString(raw: unknown, context: string): string {
   const value = asString(raw, context);
-  if (!CANONICAL_UUID_RE.test(value)) {
+  if (!isCanonicalUuid(value)) {
     throw new Error(`Invalid ${context}: expected a canonical UUID.`);
   }
   return value;
