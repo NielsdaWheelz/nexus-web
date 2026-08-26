@@ -13,8 +13,17 @@ import { isApiError } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { ResourceItem, ResourceSurface, ResourceSurfaceOccurrence } from "@/lib/resources/resourceItems";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
-import { isRecord } from "@/lib/validation";
 import { appendDailyDraftText, captureDailySurface, createDailyDraft, dailyDraftBodyChanged, draftNoteRef, loadDailySurface, pendingDailyBody, surfaceContainsDailyDraft, type DailySurfaceSessionOptions } from "@/lib/resourceSurface/dailySurfacePersistence";
+import {
+  clearPersistedResourceSurfaceDraft,
+  pendingResourceSurfaceBodies,
+  persistResourceSurfaceDraft,
+  readResourceSurfaceDraft,
+  type ResourceSurfaceDraftIntent as Intent,
+  type ResourceSurfaceDraftPosition as PositionRef,
+  type ResourceSurfacePendingBody as PendingBody,
+  type ResourceSurfacePendingTitle as PendingTitle,
+} from "@/lib/resourceSurface/draftStore";
 import type { MountedEditorMutationLease } from "@/lib/actions/mountedActionHandoff";
 import { acknowledgeDailyDraftHandoff, clearDailyDraft, readDailyDraft, writeDailyDraft, type DailyDraft, type DailyDraftHandoff } from "@/lib/notes/dailyDraftStore";
 import { noteBodyHasContent } from "@/lib/notes/prosemirror/bodyContent";
@@ -22,40 +31,8 @@ import { copyText } from "@/lib/ui/copyText";
 
 const IDLE_DELAY_MS = 1500;
 const MAX_WAIT_MS = 5000;
-const STORAGE_PREFIX = "nexus.resourceSurface:";
 
 type Status = "clean" | "dirty" | "saving" | "recovered" | "failed";
-type PositionRef = { kind: "start" } | { kind: "after"; targetRef: string };
-type Intent = {
-  clientMutationId: string;
-  command: ResourceSurfaceCommand;
-  occurrenceTargetRef?: string;
-  position?: PositionRef;
-};
-type PendingTitle = {
-  value: string;
-  clientMutationId: string;
-};
-type PendingBody = {
-  bodyPmJson: Record<string, unknown>;
-  bodyText: string;
-  clientMutationId: string;
-};
-type Draft = {
-  version: 1;
-  source_ref: string;
-  acknowledged_surface: ResourceSurface;
-  commands: Intent[];
-  title?: {
-    value: string;
-    client_mutation_id: string;
-  };
-  bodies: Record<string, {
-    body_pm_json: Record<string, unknown>;
-    body_text: string;
-    client_mutation_id: string;
-  }>;
-};
 
 export interface ResourceSurfaceSession {
   surface: ResourceSurface;
@@ -168,114 +145,6 @@ function materialize(surface: ResourceSurface, intent: Intent): ResourceSurfaceC
   return null;
 }
 
-function readDraft(sourceRef: string): Draft | null {
-  try {
-    const raw = window.localStorage.getItem(`${STORAGE_PREFIX}${sourceRef}`);
-    if (!raw) return null;
-    const draft = JSON.parse(raw) as Partial<Draft>;
-    const validTitle =
-      draft.title === undefined ||
-      (
-        isRecord(draft.title) &&
-        typeof draft.title.value === "string" &&
-        typeof draft.title.client_mutation_id === "string"
-      );
-    const validBodies =
-      isRecord(draft.bodies) &&
-      Object.values(draft.bodies).every(
-        (body) =>
-          isRecord(body) &&
-          isRecord(body.body_pm_json) &&
-          typeof body.body_text === "string" &&
-          typeof body.client_mutation_id === "string",
-      );
-    if (
-      draft.version === 1 &&
-      draft.source_ref === sourceRef &&
-      isRecord(draft.acknowledged_surface) &&
-      Array.isArray(draft.commands) &&
-      validTitle &&
-      validBodies
-    ) {
-      return draft as Draft;
-    }
-    window.localStorage.removeItem(`${STORAGE_PREFIX}${sourceRef}`);
-  } catch {
-    try {
-      window.localStorage.removeItem(`${STORAGE_PREFIX}${sourceRef}`);
-    } catch {
-      // Browser storage is optional recovery state.
-    }
-  }
-  return null;
-}
-
-function pendingBodies(draft: Draft | null): Map<string, PendingBody> {
-  return new Map(
-    Object.entries(draft?.bodies ?? {}).map(([ref, body]) => [
-      ref,
-      {
-        bodyPmJson: body.body_pm_json,
-        bodyText: body.body_text,
-        clientMutationId: body.client_mutation_id,
-      },
-    ]),
-  );
-}
-
-function persistDraft(input: {
-  sourceRef: string;
-  acknowledgedSurface: ResourceSurface;
-  commands: Intent[];
-  title: PendingTitle | undefined;
-  bodies: Map<string, PendingBody>;
-  omittedBodyRef?: string;
-}): boolean {
-  const bodies: Draft["bodies"] = {};
-  for (const [ref, body] of input.bodies) {
-    if (ref === input.omittedBodyRef) continue;
-    bodies[ref] = {
-      body_pm_json: body.bodyPmJson,
-      body_text: body.bodyText,
-      client_mutation_id: body.clientMutationId,
-    };
-  }
-  const hasPending =
-    input.commands.length > 0 ||
-    input.title !== undefined ||
-    Object.keys(bodies).length > 0;
-  try {
-    if (!hasPending) {
-      window.localStorage.removeItem(`${STORAGE_PREFIX}${input.sourceRef}`);
-      return false;
-    }
-    window.localStorage.setItem(`${STORAGE_PREFIX}${input.sourceRef}`, JSON.stringify({
-      version: 1,
-      source_ref: input.sourceRef,
-      acknowledged_surface: input.acknowledgedSurface,
-      commands: input.commands,
-      ...(input.title === undefined ? {} : {
-        title: {
-          value: input.title.value,
-          client_mutation_id: input.title.clientMutationId,
-        },
-      }),
-      bodies,
-    } satisfies Draft));
-  } catch {
-    // Browser storage is a recovery aid; unavailable storage must not block editing.
-  }
-  return hasPending;
-}
-
-function clearPersistedDraft(sourceRef: string): void {
-  try {
-    window.localStorage.removeItem(`${STORAGE_PREFIX}${sourceRef}`);
-  } catch {
-    // Browser storage is optional recovery state.
-  }
-}
-
 type PersistedSessionOptions = {
   sourceRef: string;
   initialSurface: ResourceSurface;
@@ -363,7 +232,7 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
     ownerSurface: ResourceSurface,
     dailyDraft: DailyDraft | null,
   ) => {
-    const resourceDraft = readDraft(sourceRef);
+    const resourceDraft = readResourceSurfaceDraft(sourceRef);
     const acknowledged = resourceDraft?.acknowledged_surface ?? ownerSurface;
     acknowledgedRef.current = acknowledged;
     sourceRefRef.current = sourceRef;
@@ -374,7 +243,7 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
           clientMutationId: resourceDraft.title.client_mutation_id,
         }
       : undefined;
-    bodiesRef.current = pendingBodies(resourceDraft);
+    bodiesRef.current = pendingResourceSurfaceBodies(resourceDraft);
     if (dailyDraft) {
       const ref = draftNoteRef(dailyDraft.noteId);
       bodiesRef.current.set(
@@ -401,7 +270,7 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
       const sourceRef = sourceRefRef.current;
       const acknowledged = acknowledgedRef.current;
       if (sourceRef && acknowledged) {
-        persistDraft({
+        persistResourceSurfaceDraft({
           sourceRef,
           acknowledgedSurface: acknowledged,
           commands: intentsRef.current,
@@ -418,7 +287,7 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
     }
     const sourceRef = sourceRefRef.current;
     if (!sourceRef || !acknowledgedRef.current) return;
-    const hasPending = persistDraft({
+    const hasPending = persistResourceSurfaceDraft({
       sourceRef,
       acknowledgedSurface: acknowledgedRef.current,
       commands: intentsRef.current,
@@ -772,7 +641,7 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
     generationRef.current += 1;
     const sourceRef = sourceRefRef.current;
     if (!sourceRef || !initialSurface) return clearTimers;
-    const draft = readDraft(sourceRef);
+    const draft = readResourceSurfaceDraft(sourceRef);
     acknowledgedRef.current = draft?.acknowledged_surface ?? initialSurface;
     intentsRef.current = draft?.commands ?? [];
     titleRef.current = draft?.title
@@ -781,7 +650,7 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
           clientMutationId: draft.title.client_mutation_id,
         }
       : undefined;
-    bodiesRef.current = pendingBodies(draft);
+    bodiesRef.current = pendingResourceSurfaceBodies(draft);
     intrinsicActiveRef.current.clear();
     stoppedRef.current = false;
     requiresRebaseRef.current = false;
@@ -997,7 +866,7 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
       intentsRef.current = []; titleRef.current = undefined; bodiesRef.current.clear();
       clearDailyDraft(currentInput.daily.accountId, currentInput.daily.localDate);
       const sourceRef = sourceRefRef.current;
-      if (sourceRef) clearPersistedDraft(sourceRef);
+      if (sourceRef) clearPersistedResourceSurfaceDraft(sourceRef);
       setHasRecoveredDraft(false);
       await loadDailyOwner();
       return;
@@ -1096,7 +965,7 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
   const copyRecovery = useCallback(async () => {
     const currentInput = inputRef.current;
     const resourceDraft = sourceRefRef.current
-      ? readDraft(sourceRefRef.current)
+      ? readResourceSurfaceDraft(sourceRefRef.current)
       : null;
     const dailyDraft = "daily" in currentInput
       ? readDailyDraft(currentInput.daily.accountId, currentInput.daily.localDate)

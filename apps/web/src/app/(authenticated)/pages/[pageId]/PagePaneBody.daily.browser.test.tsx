@@ -34,6 +34,8 @@ const ACCOUNT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const PAGE_ID = "11111111-1111-4111-8111-111111111111";
 const DRAFT_NOTE_ID = "22222222-2222-4222-8222-222222222222";
 const SERVER_NOTE_ID = "33333333-3333-4333-8333-333333333333";
+const SERVER_OCCURRENCE_ID = "44444444-4444-4444-8444-444444444444";
+const DAILY_NOTE_OCCURRENCE_ID = "55555555-5555-4555-8555-555555555555";
 const LOCAL_DATE = "2026-07-30";
 const UPDATED_AT = "2026-07-30T16:00:00Z";
 const DEFAULT_TITLE = "Thursday, July 30";
@@ -351,7 +353,7 @@ describe("PagePaneBody daily hydration", () => {
             },
             ordered_items: [
               {
-                occurrence_id: "server-row",
+                occurrence_id: SERVER_OCCURRENCE_ID,
                 target: {
                   item: noteItem(SERVER_NOTE_ID),
                   content: {
@@ -499,7 +501,7 @@ describe("PagePaneBody daily hydration", () => {
       },
       ordered_items: [
         {
-          occurrence_id: "daily-note-row",
+          occurrence_id: DAILY_NOTE_OCCURRENCE_ID,
           target: {
             item: {
               ...noteItem(noteId),
@@ -754,7 +756,7 @@ describe("PagePaneBody daily hydration", () => {
             },
             ordered_items: [
               {
-                occurrence_id: "server-row",
+                occurrence_id: SERVER_OCCURRENCE_ID,
                 target: {
                   item: noteItem(SERVER_NOTE_ID),
                   content: {

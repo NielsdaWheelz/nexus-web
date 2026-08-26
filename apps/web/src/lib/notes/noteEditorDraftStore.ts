@@ -96,18 +96,19 @@ export function storeNoteEditorDraft(
   clientMutationId: string,
 ): void {
   if (typeof window === "undefined") return;
+  const serialized = JSON.stringify({
+    version: 1,
+    bodyPmJson: body.bodyPmJson,
+    bodyText: body.bodyText,
+    metadata,
+    sequence,
+    clientMutationId,
+    updatedAt: new Date().toISOString(),
+  });
   try {
     window.localStorage.setItem(
       noteEditorDraftStorageKey(resourceKey),
-      JSON.stringify({
-        version: 1,
-        bodyPmJson: body.bodyPmJson,
-        bodyText: body.bodyText,
-        metadata,
-        sequence,
-        clientMutationId,
-        updatedAt: new Date().toISOString(),
-      }),
+      serialized,
     );
   } catch {
     // Local recovery may be unavailable; the owning network autosave continues.

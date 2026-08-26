@@ -236,25 +236,37 @@ export function noteBodyValueFromDoc(doc: ProseMirrorNode): NoteBodyValue {
   return noteBodyValueFromNode(body);
 }
 
+function decodeNoteBodyNode(raw: unknown, name: string): ProseMirrorNode {
+  const bodyPmJson = expectRecord(raw, name);
+  let body: ProseMirrorNode;
+  try {
+    body = noteBodySchema.nodeFromJSON(bodyPmJson);
+  } catch {
+    throw new TypeError(`${name} must be a valid note body`);
+  }
+  if (!body.type.isInGroup("block_body")) {
+    throw new TypeError(`${name} must contain one note body block`);
+  }
+  return body;
+}
+
+/** Strict decoder for a persisted note-body ProseMirror value. */
+export function decodeNoteBodyPmJson(
+  raw: unknown,
+  name: string,
+): Record<string, unknown> {
+  return noteBodyValueFromNode(decodeNoteBodyNode(raw, name)).bodyPmJson;
+}
+
 /** Strict decoder for persisted note bodies; recovery never invents text. */
 export function decodeNoteBodyValue(
   rawPmJson: unknown,
   rawText: unknown,
   name: string,
 ): NoteBodyValue {
-  const bodyPmJson = expectRecord(rawPmJson, `${name}.bodyPmJson`);
   const bodyText = expectString(rawText, `${name}.bodyText`);
-  let body: ProseMirrorNode;
-  try {
-    body = noteBodySchema.nodeFromJSON(bodyPmJson);
-  } catch {
-    throw new TypeError(`${name}.bodyPmJson must be a valid note body`);
-  }
-  if (!body.type.isInGroup("block_body")) {
-    throw new TypeError(`${name}.bodyPmJson must contain one note body block`);
-  }
-  const value = noteBodyValueFromDoc(
-    noteBodySchema.nodes.note_body_doc!.create(null, body),
+  const value = noteBodyValueFromNode(
+    decodeNoteBodyNode(rawPmJson, `${name}.bodyPmJson`),
   );
   if (value.bodyText !== bodyText) {
     throw new TypeError(`${name}.bodyText must match bodyPmJson`);
