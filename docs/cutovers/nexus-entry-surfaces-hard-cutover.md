@@ -516,9 +516,11 @@ Modify:
   `docs/cutovers/{auth-session-recovery-hard-cutover.md,android-player-protocol-release-hard-cutover.md,browse-surface-deletion-hard-cutover.md}`;
 - `deploy/hetzner/release.py`,
   `python/nexus/release_artifact.py`,
+  `python/nexus_test_control/android_visual.py`,
   `python/nexus_test_control/runner.py`,
   `python/nexus_test_control/model.py`,
   `python/tests/kernel/test_backend_artifact.py`,
+  `python/tests/kernel/nexus_test_control/test_android_visual.py`,
   `python/tests/kernel/nexus_test_control/test_selection.py`,
   `python/tests/kernel/test_android_player_protocol_release_gate.py`, and the
   canonical fixture in `python/tests/testkit/production_deploy.py`, solely to
@@ -569,6 +571,10 @@ insets; synthetic Android emulation cannot replace the physical boundary.
 `android-visual` authenticates before navigation, so it cannot prove the login
 surface. Review `/login` manually on a signed-out physical shell and record the
 candidate SHA/device/build. Use the harness only for the public colophon:
+
+The harness uses the existing public `/version` route solely to prove its owned
+local web process is ready. It must not probe protected `/`, whose anonymous
+redirect is an application contract rather than a health failure.
 
 ```sh
 ./scripts/test android-visual --sha <candidate-sha> --path /android --device primary

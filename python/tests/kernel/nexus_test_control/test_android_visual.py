@@ -12,6 +12,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 from uuid import NAMESPACE_URL, UUID, uuid5
 
@@ -255,6 +256,53 @@ def test_device_session_code_hash_equals_the_servers_stored_code_hash() -> None:
     session = _device_session()
     assert session.code_hash == server_challenge_hash(session.code)
     assert session.code_hash == hashlib.sha256(session.code.encode()).hexdigest()
+
+
+def test_visual_runtime_uses_the_public_version_route_for_web_readiness(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class ReadinessObserved(Exception):
+        pass
+
+    calls: list[tuple[av.EndpointKind, str]] = []
+
+    def wait_ready(
+        _root: Path,
+        _environment: dict[str, str],
+        _process: object,
+        endpoint: av.EndpointKind,
+        path: str,
+    ) -> None:
+        calls.append((endpoint, path))
+        if endpoint is av.EndpointKind.WEB:
+            raise ReadinessObserved
+
+    monkeypatch.setattr(av, "available_memory_mib", lambda: 4096)
+    monkeypatch.setattr(av, "read_runtime", lambda _root: object())
+    monkeypatch.setattr(av, "ensure_standalone_build", lambda *_args: object())
+    monkeypatch.setattr(av, "start_python_process", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(av, "start_web_process", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(av, "wait_process_ready", wait_ready)
+
+    with av.ExitStack() as stack, pytest.raises(ReadinessObserved):
+        av._visual_run(
+            tmp_path,
+            {},
+            run=SimpleNamespace(),
+            supabase=SimpleNamespace(anon_key="anon"),
+            requested_path="/android",
+            alias="primary",
+            source={},
+            adb=tmp_path / "adb",
+            serial="device",
+            stack=stack,
+        )
+
+    assert calls == [
+        (av.EndpointKind.API, "/readyz"),
+        (av.EndpointKind.WEB, "/version"),
+    ]
 
 
 # --- Native fingerprint: rebuild only when native inputs change --------------

@@ -533,9 +533,9 @@ def _visual_run(
     api = start_python_process(root, environment, run, "api", overrides=device_overrides)
     wait_process_ready(root, environment, api, EndpointKind.API, "/readyz")
     web = start_web_process(root, environment, run, build, overrides=device_overrides)
-    # The protected root redirects before handoff; readiness needs an exact-200
-    # public route while later gates prove the authenticated device session.
-    wait_process_ready(root, environment, web, EndpointKind.WEB, "/login")
+    # Readiness needs an exact-200 public route; later gates separately prove
+    # the authenticated device session at the requested product path.
+    wait_process_ready(root, environment, web, EndpointKind.WEB, "/version")
 
     reverse = {DEVICE_TCP_WEB: runtime.ports.web, DEVICE_TCP_STREAM: runtime.ports.api}
     stack.callback(lambda: _remove_reverse(adb, serial, reverse, environment, root))
