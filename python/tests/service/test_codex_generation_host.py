@@ -998,10 +998,12 @@ def test_failed_runtime_reap_during_cancellation_makes_host_unready(
             runtime_factory=runtime_factory,
             working_directory_root=working_root,
             credential_file=credential_file,
+            mcp_origin=_MCP_ORIGIN,
+            chat_network_attested=True,
             versions=_VERSIONS,
             capacity_paths=_capacity_paths(tmp_path),
         )
-        command = _command(34, "cancel-while-runtime-close-fails")
+        command = _command(34, "cancel-while-runtime-close-fails", chat=True)
         body = _wire_command(command)
         request_delivered = False
         never_disconnect = asyncio.Event()

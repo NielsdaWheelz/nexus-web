@@ -333,6 +333,7 @@ def create_codex_agent_app(
         control = _TurnControl(command.request_id, asyncio.Event())
         relay: asyncio.Queue[_RelayedFrame] = asyncio.Queue(maxsize=1)
         owner_started = asyncio.Event()
+        execution_released = asyncio.Event()
         relay_abandoned = asyncio.Event()
         turn = _own_admitted_turn(
             command,
@@ -342,6 +343,7 @@ def create_codex_agent_app(
             slot,
             lifecycle,
             owner_started,
+            execution_released,
             relay_abandoned,
             runtime_factory=runtime_factory,
             runtime_paths=runtime_paths,
@@ -375,11 +377,13 @@ def create_codex_agent_app(
                 )
             raise
         try:
-            return _OwnedStreamingResponse(relay, owner, relay_abandoned)
+            response = _OwnedStreamingResponse(relay, owner, relay_abandoned)
         except BaseException:
             relay_abandoned.set()
             await _cancel_and_wait_owner(owner)
             raise
+        execution_released.set()
+        return response
 
     @app.post("/v2/generations/{request_id}/cancel")
     async def cancel(request_id: UUID, request: Request) -> Response:
@@ -457,6 +461,7 @@ async def _own_admitted_turn(
     slot: _TurnSlot,
     lifecycle: TurnLifecycle,
     owner_started: asyncio.Event,
+    execution_released: asyncio.Event,
     relay_abandoned: asyncio.Event,
     *,
     runtime_factory: AgentRuntimeFactory,
@@ -467,9 +472,15 @@ async def _own_admitted_turn(
     versions: RuntimeVersions,
 ) -> None:
     credential_identity: CredentialFileIdentity | None = None
+    execution_released_observed = False
     runtime_close_unproven = asyncio.Event()
     try:
         owner_started.set()
+        # Cleanup ownership is established before any credential or runtime work.
+        # The endpoint releases execution only after the streaming response exists,
+        # leaving a deterministic cancellation point at the ownership handoff.
+        await execution_released.wait()
+        execution_released_observed = True
         credential_identity = enrolled_auth_identity(credential_file)
         async for line in _run_turn(
             command,
@@ -489,17 +500,21 @@ async def _own_admitted_turn(
             lifecycle.fail("turn_runtime_close_unproven")
         try:
             try:
-                if credential_identity is None:
-                    lifecycle.fail("turn_credential_state_invalid")
-                else:
-                    validate_runtime_auth_link(
-                        runtime_paths.state_root_base / "codex" / "codex-personal" / "auth.json",
-                        credential_file,
-                    )
-                    sync_enrolled_auth_file(
-                        credential_file,
-                        expected_identity=credential_identity,
-                    )
+                if execution_released_observed:
+                    if credential_identity is None:
+                        lifecycle.fail("turn_credential_state_invalid")
+                    else:
+                        validate_runtime_auth_link(
+                            runtime_paths.state_root_base
+                            / "codex"
+                            / "codex-personal"
+                            / "auth.json",
+                            credential_file,
+                        )
+                        sync_enrolled_auth_file(
+                            credential_file,
+                            expected_identity=credential_identity,
+                        )
             except BaseException:
                 lifecycle.fail("turn_credential_state_invalid")
                 raise
