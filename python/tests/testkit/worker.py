@@ -12,7 +12,12 @@ from sqlalchemy import Engine, text
 
 from nexus_test_control import services as test_services
 from nexus_test_control.model import Resource, ResourceKind
-from nexus_test_control.runtime import forget_cleaned, process_resource_identity
+from nexus_test_control.runtime import (
+    EndpointKind,
+    forget_cleaned,
+    process_resource_identity,
+    runtime_endpoint,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _TEST_ENV = {"NEXUS_ENV": "test"}
@@ -98,6 +103,14 @@ def assert_production_worker(
     assert environment.get("WORKER_LANE") == process.role.removeprefix("worker-")
     assert environment.get("DATABASE_URL") == run.database_url
     assert environment.get("NEXUS_TEST_RUN_ID") == run.run_id
+    if process.role == "worker-interactive":
+        mcp_endpoint = runtime_endpoint(_REPO_ROOT, _TEST_ENV, EndpointKind.AGENT_TOOLS_MCP)
+        assert environment.get("NEXUS_AGENT_TOOLS_MCP_LISTEN") == mcp_endpoint.removeprefix(
+            "http://"
+        )
+        assert environment.get("NEXUS_AGENT_TOOLS_MCP_ORIGIN") == (
+            f"{mcp_endpoint}/internal/agent-tools/mcp"
+        )
 
 
 def kill_and_forget_process(process: test_services.StartedProcess) -> None:

@@ -11,6 +11,9 @@ execution boundary, one `llm_calls` ledger, and one scoped HTTPS MCP tool path.
 The cut is atomic: no provider, API-key, compatibility, or redispatch fallback
 remains for generation. Embeddings, transcription, Brave retrieval,
 deterministic authors, and abstract projection remain outside the cutover.
+The local controller's v4 runtime owns a distinct MCP port and proves the real
+interactive worker's exact `127.0.0.1` listener, literal mount, persisted
+process identity, and grantless `401` before Chat dispatch.
 
 ## One-time deletion audit
 
@@ -50,7 +53,7 @@ formatting, lint, and diff diagnostics report no violations.
 
 ## Verification
 
-The 80/20 proof shape is one dominant proof per ownership boundary, fifteen
+The 80/20 proof shape is one dominant proof per ownership boundary, sixteen
 representative sensitivity faults, then `changed`, `confidence`, `pr`, `full`,
 `release`, and the protected `codex-nightly` lane. Final clean-SHA receipts are
 recorded here after the source candidate is committed.
@@ -58,7 +61,7 @@ recorded here after the source candidate is committed.
 | Gate | Candidate result |
 |---|---|
 | Focused owner proofs | pending final clean-SHA run |
-| Fifteen fault red/green proofs | pending final clean-SHA run |
+| Sixteen fault red/green proofs | pending final clean-SHA run |
 | `changed` / `confidence` / `pr` | pending final clean-SHA run |
 | `full` / `release` | pending final clean-SHA run |
 | Protected four-plan `codex-nightly` | pending enrolled-runner execution |

@@ -7,17 +7,18 @@ their commits through independent database sessions.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import multiprocessing
 import os
 import socketserver
 import time
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from multiprocessing.connection import Connection
 from pathlib import Path
-from typing import Any, Literal, assert_never
+from typing import Any, Literal, assert_never, cast
 from uuid import UUID, uuid4
 
 import pytest
@@ -25,14 +26,27 @@ from sqlalchemy import Engine, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import LibraryEntry, Media, ProcessingStatus
-from nexus.jobs.queue import enqueue_job, get_job
+from nexus.db.session import create_session_factory
+from nexus.jobs.queue import (
+    JobExecutionContext,
+    JobRow,
+    claim_job,
+    complete_job,
+    enqueue_job,
+    get_job,
+    lock_job,
+)
+from nexus.schemas.presence import absent, present
 from nexus.services import generation_policy
 from nexus.services.bootstrap import ensure_user_and_default_library
+from nexus.services.codex_generation_client import CodexGenerationTransportAmbiguous
 from nexus.services.codex_generation_contract import (
     MAX_COMMAND_BODY_BYTES,
     GenerationCommand,
     GenerationFrame,
     GenerationHealth,
+    GenerationTerminal,
+    NormalizedFailureCode,
     capacity_rejection_bytes,
     request_fingerprint,
 )
@@ -41,15 +55,28 @@ from nexus.services.durable_step_journal import (
     Prepared,
     StepReplayState,
     Uncertain,
+    payload_with_step_state,
     read_step_states,
 )
-from nexus.services.llm_ledger import read_generation
+from nexus.services.llm_execution import (
+    EncodedGenerationTerminal,
+    GenerationExecutionRequest,
+    GenerationUncertain,
+    JobGenerationJournal,
+    execute_generation,
+)
+from nexus.services.llm_ledger import LlmCallOwner, LlmCallOwnerKind, read_generation
 from nexus_test_control import services as test_services
 from tests.testkit.chat import create_entitled_chat
 from tests.testkit.unreachable_state import (
+    delete_generations_by_ids,
+    delete_jobs_by_ids,
     lose_metadata_queue_completion_after_published_checkpoint,
+    make_pending_job_due,
 )
 from tests.testkit.worker import controller_run, kill_and_forget_process, wait_for_job
+
+pytestmark = pytest.mark.usefixtures("committed_chat_state_isolation")
 
 type PeerMode = Literal[
     "succeeded",
@@ -71,6 +98,27 @@ _SUCCESS_OUTPUT = {
     "description": "A science-fiction novel set on Arrakis.",
     "published_date": "1965",
     "language": "en",
+}
+_FULL_BACKGROUND_COURTESY_DELAYS_SECONDS = (30, 60, 120, 300, 600)
+_CATALOG_JOURNAL_OPERATIONS = (*generation_policy.OPERATIONS, "chat")
+_CATALOG_JOURNAL_JOB_KIND = "generation_catalog_journal_proof"
+_CATALOG_JOURNAL_STEP_PATH = "generation"
+_CATALOG_OWNER_KIND_BY_OPERATION: dict[str, LlmCallOwnerKind] = {
+    "metadata_enrichment": "media_enrichment",
+    "media_summary": "media_summary",
+    "synapse": "synapse_scan",
+    "dawn_write": "dawn_write",
+    "oracle": "oracle_reading",
+    "dossier_page": "artifact_build",
+    "dossier_note": "artifact_build",
+    "dossier_media": "artifact_build",
+    "dossier_conversation": "artifact_build",
+    "dossier_library": "artifact_build",
+    "dossier_podcast": "artifact_build",
+    "dossier_contributor": "artifact_build",
+    "dossier_idea": "artifact_build",
+    "dossier_idea_resolve": "artifact_learn_request",
+    "chat": "chat_run",
 }
 
 
@@ -452,6 +500,201 @@ def _ledger_and_journal_commit_ids(
     return str(row[0]), str(row[1])
 
 
+def _catalog_generation_command(operation: str, *, generation_id: UUID) -> GenerationCommand:
+    profile = "balanced" if operation == "chat" else None
+    return GenerationCommand.model_validate(
+        {
+            "schema_version": "nexus-generation-command.v2",
+            "request_id": generation_id,
+            "operation": {
+                "kind": operation,
+                "revision": generation_policy.operation_revision(operation, profile=profile),
+                **({"profile": profile} if profile is not None else {}),
+            },
+            "policy_revision": generation_policy.POLICY_REVISION,
+            "policy_fingerprint": generation_policy.POLICY_FINGERPRINT,
+            "intent": {
+                "instructions": "Return one bounded catalog proof result.",
+                "input": f"journal dispatch identity for {operation}",
+                "output": {"kind": "Text"},
+            },
+            **(
+                {
+                    "tool_grant": {
+                        "kind": "Bearer",
+                        "token": f"catalog-proof-{generation_id}",
+                    }
+                }
+                if operation == "chat"
+                else {}
+            ),
+        }
+    )
+
+
+def _seed_claimed_catalog_journal_job(
+    engine: Engine,
+    *,
+    command: GenerationCommand,
+) -> tuple[JobRow, JobExecutionContext]:
+    prepared = StepReplayState(
+        generation_id=command.request_id,
+        dispatch_phase=Prepared,
+        request_fingerprint=present(request_fingerprint(command)),
+        terminal_result=absent(),
+    )
+    with Session(engine) as db:
+        job = enqueue_job(
+            db,
+            kind=_CATALOG_JOURNAL_JOB_KIND,
+            payload=payload_with_step_state(
+                {"capacity_wait_index": 0},
+                step_path=_CATALOG_JOURNAL_STEP_PATH,
+                state=prepared,
+            ),
+            max_attempts=1,
+            dedupe_key=f"catalog-journal:{command.request_id}",
+        )
+        worker_id = f"catalog-journal-{job.id}"
+        claimed = claim_job(
+            db,
+            job_id=job.id,
+            worker_id=worker_id,
+            lease_seconds=300,
+            heavy_kinds=(),
+            allowed_kinds=(_CATALOG_JOURNAL_JOB_KIND,),
+        )
+        assert claimed is not None
+        db.commit()
+    assert (claimed.status, claimed.attempts, claimed.claimed_by) == (
+        "running",
+        1,
+        worker_id,
+    )
+    return (
+        claimed,
+        JobExecutionContext(
+            job_id=claimed.id,
+            worker_id=worker_id,
+            attempt_no=claimed.attempts,
+            resource_class="Light",
+        ),
+    )
+
+
+@dataclass(slots=True)
+class _CommittedStartObservingRuntime:
+    engine: Engine
+    job_id: UUID
+    owner: LlmCallOwner
+    health_calls: int = 0
+    stream_calls: int = 0
+    committed_start_observations: int = 0
+
+    async def health(self) -> GenerationHealth:
+        self.health_calls += 1
+        return GenerationHealth(
+            policy_revision=generation_policy.POLICY_REVISION,
+            sdk_version=_SDK_VERSION,
+            runtime_version=_RUNTIME_VERSION,
+        )
+
+    def stream(self, command: GenerationCommand) -> AsyncIterator[GenerationFrame]:
+        self.stream_calls += 1
+        return _CommittedStartAmbiguousStream(runtime=self, command=command)
+
+    async def cancel(self, request_id: UUID) -> None:
+        raise AssertionError(f"catalog journal proof unexpectedly cancelled {request_id}")
+
+    def observe_committed_start(self, command: GenerationCommand) -> None:
+        job, state = _generation_state(
+            self.engine,
+            job_id=self.job_id,
+            generation_id=command.request_id,
+        )
+        assert (job.status, state.dispatch_phase) == ("running", Uncertain)
+        row = _ledger_row(self.engine, command.request_id)
+        assert {
+            "owner_kind": row["owner_kind"],
+            "owner_id": row["owner_id"],
+            "operation": row["operation"],
+            "request_fingerprint": row["request_fingerprint"],
+            "outcome": row["outcome"],
+        } == {
+            "owner_kind": self.owner.kind,
+            "owner_id": self.owner.id,
+            "operation": command.operation.kind,
+            "request_fingerprint": request_fingerprint(command),
+            "outcome": None,
+        }
+        with Session(self.engine) as oracle:
+            typed = read_generation(oracle, generation_id=command.request_id)
+            assert typed is not None
+            assert (typed.owner_kind, typed.owner_id, typed.outcome) == (
+                self.owner.kind,
+                self.owner.id,
+                None,
+            )
+            assert (
+                oracle.scalar(
+                    text("SELECT count(*) FROM llm_calls WHERE id = :generation_id"),
+                    {"generation_id": command.request_id},
+                )
+                == 1
+            )
+        ledger_commit_id, journal_commit_id = _ledger_and_journal_commit_ids(
+            self.engine,
+            job_id=self.job_id,
+            generation_id=command.request_id,
+        )
+        assert ledger_commit_id == journal_commit_id
+        self.committed_start_observations += 1
+
+
+@dataclass(slots=True)
+class _CommittedStartAmbiguousStream:
+    runtime: _CommittedStartObservingRuntime
+    command: GenerationCommand
+    consumed: bool = False
+
+    def __aiter__(self) -> AsyncIterator[GenerationFrame]:
+        return self
+
+    async def __anext__(self) -> GenerationFrame:
+        if self.consumed:
+            raise StopAsyncIteration
+        self.consumed = True
+        self.runtime.observe_committed_start(self.command)
+        raise CodexGenerationTransportAmbiguous(
+            f"accepted catalog generation {self.command.request_id} lost its response"
+        )
+
+
+def _unexpected_catalog_terminal(
+    _terminal: GenerationTerminal,
+) -> EncodedGenerationTerminal:
+    raise AssertionError("catalog ambiguity proof unexpectedly reached a terminal")
+
+
+def _unexpected_catalog_preaccept_failure(
+    code: NormalizedFailureCode,
+    detail: str,
+) -> str:
+    raise AssertionError(f"catalog ambiguity proof failed before acceptance: {code}: {detail}")
+
+
+def _delete_catalog_journal_proof(
+    engine: Engine,
+    *,
+    generation_id: UUID,
+    job_id: UUID,
+) -> None:
+    with Session(engine) as db:
+        delete_generations_by_ids(db, generation_ids=(generation_id,))
+        delete_jobs_by_ids(db, job_ids=(job_id,))
+        db.commit()
+
+
 def _assert_started_atomically(
     engine: Engine,
     *,
@@ -545,6 +788,8 @@ def _wait_for_chat_courtesy(
     engine: Engine,
     *,
     seeded: SeededJob,
+    wait_index: int = 1,
+    delay_seconds: int = 30,
     timeout_seconds: float = 30,
 ) -> StepReplayState:
     deadline = time.monotonic() + timeout_seconds
@@ -560,8 +805,8 @@ def _wait_for_chat_courtesy(
                 job.payload.get("capacity_wait_index"),
                 tuple(state.dispatch_phase for state in states),
             )
-            if observed == ("pending", 0, 1, (Prepared,)):
-                assert (job.available_at - job.updated_at).total_seconds() == 30
+            if observed == ("pending", 0, wait_index, (Prepared,)):
+                assert (job.available_at - job.updated_at).total_seconds() == delay_seconds
                 return states[0]
     raise AssertionError(f"queued Chat did not defer background generation: {observed!r}")
 
@@ -843,3 +1088,215 @@ def test_chat_enqueue_race_defers_background_before_host_dispatch(engine: Engine
         finally:
             if worker is not None:
                 kill_and_forget_process(worker)
+
+
+def test_background_chat_courtesy_uses_the_full_fixed_schedule(engine: Engine) -> None:
+    """A live Chat claim defers five times without spending the job retry budget."""
+
+    assert generation_policy.capacity_wait_delays_seconds("metadata_enrichment") == (
+        _FULL_BACKGROUND_COURTESY_DELAYS_SECONDS
+    )
+    chat_turn_seconds = generation_policy.chat_policy("balanced").turn_timeout_seconds
+    assert (
+        sum(_FULL_BACKGROUND_COURTESY_DELAYS_SECONDS[:-1])
+        < chat_turn_seconds
+        < sum(_FULL_BACKGROUND_COURTESY_DELAYS_SECONDS)
+    )
+    run = controller_run()
+    seeded = _seed_media_job(engine)
+    chat_worker_id = f"chat-courtesy-{uuid4()}"
+    with Session(engine) as db:
+        chat = create_entitled_chat(db, content="Keep this interactive turn admitted.")
+        claimed_chat = claim_job(
+            db,
+            job_id=chat.job_id,
+            worker_id=chat_worker_id,
+            lease_seconds=900,
+            heavy_kinds=(),
+            allowed_kinds=("chat_run",),
+        )
+        assert claimed_chat is not None
+        db.commit()
+    assert (claimed_chat.kind, claimed_chat.status, claimed_chat.attempts) == (
+        "chat_run",
+        "running",
+        1,
+    )
+
+    worker: test_services.StartedProcess | None = None
+    with _scripted_generation_peer(run, "succeeded") as peer:
+        try:
+            worker = _start_worker(run, peer.socket_path)
+            for wait_index, delay_seconds in enumerate(
+                _FULL_BACKGROUND_COURTESY_DELAYS_SECONDS,
+                start=1,
+            ):
+                state = _wait_for_chat_courtesy(
+                    engine,
+                    seeded=seeded,
+                    wait_index=wait_index,
+                    delay_seconds=delay_seconds,
+                )
+                assert state.dispatch_phase is Prepared
+                assert not peer.health_observed.is_set()
+                assert not peer.request_observed.is_set()
+                assert _audit_requests(peer.audit_path) == []
+                with Session(engine) as db:
+                    background = get_job(db, seeded.job_id)
+                    live_chat = get_job(db, chat.job_id)
+                    assert background is not None and live_chat is not None
+                    assert (
+                        background.status,
+                        background.attempts,
+                        background.payload.get("capacity_wait_index"),
+                    ) == ("pending", 0, wait_index)
+                    assert (
+                        live_chat.status,
+                        live_chat.attempts,
+                        live_chat.claimed_by,
+                    ) == ("running", 1, chat_worker_id)
+                    if wait_index < len(_FULL_BACKGROUND_COURTESY_DELAYS_SECONDS):
+                        make_pending_job_due(db, job_id=seeded.job_id)
+                        db.commit()
+
+            with Session(engine) as db:
+                assert complete_job(
+                    db,
+                    job_id=chat.job_id,
+                    worker_id=chat_worker_id,
+                )
+                make_pending_job_due(db, job_id=seeded.job_id)
+                db.commit()
+
+            assert peer.health_observed.wait(30), (
+                "background generation never reached health after Chat completed"
+            )
+            assert peer.request_observed.wait(30), (
+                "background generation never reached the UDS peer after Chat completed"
+            )
+            requests = _audit_requests(peer.audit_path)
+            assert len(requests) == 1 and "protocol_error" not in requests[0], requests
+            command = GenerationCommand.model_validate(requests[0])
+            assert command.operation.kind == "metadata_enrichment"
+            peer.release_response.set()
+
+            wait_for_job(engine, seeded.job_id, status="succeeded", attempts=1)
+            _assert_success_terminal(engine, seeded, command.request_id)
+            with Session(engine) as db:
+                background = get_job(db, seeded.job_id)
+                completed_chat = get_job(db, chat.job_id)
+                media = db.get(Media, seeded.media_id)
+                assert background is not None and completed_chat is not None
+                assert media is not None
+                assert (
+                    background.status,
+                    background.attempts,
+                    background.error_code,
+                    background.last_error,
+                ) == ("succeeded", 1, None, None)
+                assert (completed_chat.status, completed_chat.attempts) == ("succeeded", 1)
+                assert (
+                    media.title,
+                    media.publisher,
+                    media.description,
+                    media.published_date,
+                    media.language,
+                    media.last_error_code,
+                ) == (
+                    _SUCCESS_OUTPUT["title"],
+                    _SUCCESS_OUTPUT["publisher"],
+                    _SUCCESS_OUTPUT["description"],
+                    _SUCCESS_OUTPUT["published_date"],
+                    _SUCCESS_OUTPUT["language"],
+                    None,
+                )
+                assert media.metadata_enriched_at is not None
+        finally:
+            peer.release_response.set()
+            if worker is not None:
+                kill_and_forget_process(worker)
+
+
+@pytest.mark.parametrize("operation", _CATALOG_JOURNAL_OPERATIONS)
+def test_catalog_generation_journal_blocks_ambiguous_redispatch(
+    engine: Engine,
+    operation: str,
+) -> None:
+    """Every closed generation identity commits one start before host dispatch."""
+
+    expected_operations = {*generation_policy.OPERATIONS, "chat"}
+    assert len(generation_policy.OPERATIONS) == 14
+    assert len(_CATALOG_JOURNAL_OPERATIONS) == len(expected_operations) == 15
+    assert set(_CATALOG_JOURNAL_OPERATIONS) == expected_operations
+    assert set(_CATALOG_OWNER_KIND_BY_OPERATION) == expected_operations
+
+    generation_id = uuid4()
+    command = _catalog_generation_command(operation, generation_id=generation_id)
+    owner = LlmCallOwner(
+        kind=cast(LlmCallOwnerKind, _CATALOG_OWNER_KIND_BY_OPERATION[operation]),
+        id=uuid4(),
+    )
+    job, context = _seed_claimed_catalog_journal_job(engine, command=command)
+    runtime = _CommittedStartObservingRuntime(
+        engine=engine,
+        job_id=job.id,
+        owner=owner,
+    )
+
+    def lock_dispatch(db: Session) -> JobRow | None:
+        locked = lock_job(db, job.id)
+        if locked is None or locked.kind != _CATALOG_JOURNAL_JOB_KIND:
+            return None
+        return locked
+
+    request = GenerationExecutionRequest(
+        owner=owner,
+        command=command,
+        journal=JobGenerationJournal(
+            context=context,
+            step_path=_CATALOG_JOURNAL_STEP_PATH,
+            capacity_wait_index=0,
+            lock_dispatch=lock_dispatch,
+        ),
+        capacity_wait_index=0,
+        streaming=operation == "chat",
+    )
+    session_factory = create_session_factory(engine)
+    try:
+        with pytest.raises(GenerationUncertain, match="lost its response"):
+            asyncio.run(
+                execute_generation(
+                    request,
+                    session_factory=session_factory,
+                    runtime=runtime,
+                    encode_terminal=_unexpected_catalog_terminal,
+                    encode_preaccept_failure=_unexpected_catalog_preaccept_failure,
+                )
+            )
+        assert (
+            runtime.health_calls,
+            runtime.stream_calls,
+            runtime.committed_start_observations,
+        ) == (1, 1, 1)
+
+        with pytest.raises(GenerationUncertain, match="unresolved dispatch"):
+            asyncio.run(
+                execute_generation(
+                    request,
+                    session_factory=session_factory,
+                    runtime=runtime,
+                    encode_terminal=_unexpected_catalog_terminal,
+                    encode_preaccept_failure=_unexpected_catalog_preaccept_failure,
+                )
+            )
+        assert (
+            runtime.health_calls,
+            runtime.stream_calls,
+            runtime.committed_start_observations,
+        ) == (1, 1, 1)
+    finally:
+        _delete_catalog_journal_proof(
+            engine,
+            generation_id=generation_id,
+            job_id=job.id,
+        )

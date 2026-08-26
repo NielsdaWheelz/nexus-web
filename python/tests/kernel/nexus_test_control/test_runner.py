@@ -3642,6 +3642,7 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
     bun.chmod(0o755)
     build_calls: list[str] = []
     process_roles: list[str] = []
+    readiness_calls: list[tuple[str, runner.EndpointKind, str]] = []
     password_users: list[str] = []
     invited_users: list[str] = []
     entitlements: list[str] = []
@@ -3715,6 +3716,7 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
             *,
             tls_ca: Path | None = None,
         ) -> None:
+            readiness_calls.append((_process.role, _endpoint, _path))
             if _endpoint is runner.EndpointKind.PROVIDER_OPENAI:
                 assert tls_ca is not None
             return
@@ -3780,6 +3782,16 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
         "worker-interactive",
         "worker-background",
         "web",
+    ]
+    assert readiness_calls == [
+        ("external", runner.EndpointKind.EXTERNAL, "/livez"),
+        ("api", runner.EndpointKind.API, "/readyz"),
+        (
+            "worker-interactive",
+            runner.EndpointKind.AGENT_TOOLS_MCP,
+            "/internal/agent-tools/mcp",
+        ),
+        ("web", runner.EndpointKind.WEB, "/login"),
     ]
     assert invited_users == ["auth-session"]
     assert password_users == [

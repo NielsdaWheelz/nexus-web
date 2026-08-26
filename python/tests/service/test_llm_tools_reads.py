@@ -7,6 +7,7 @@ import re
 from collections.abc import Mapping
 from uuid import uuid4
 
+import pytest
 from llm_tools import ToolId, canonical_json_bytes
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
@@ -32,11 +33,13 @@ from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.schemas import EdgeCreate
 from tests.testkit.chat import create_entitled_chat
 from tests.testkit.llm_tool_scenarios import (
-    claim_chat_tool_job,
+    claim_running_chat_tool_job,
     compose_keyless_tool_runtime,
     create_readable_media,
     execute_chat_tool,
 )
+
+pytestmark = pytest.mark.usefixtures("committed_chat_state_isolation")
 
 _EVIDENCE_KEYS = {
     "admission_scope",
@@ -248,9 +251,10 @@ def test_nexus_reads_are_scoped_citable_and_closed(engine: Engine) -> None:
 
         runtime = compose_keyless_tool_runtime()
         operation = runtime.operations["chat"]
-        job_context = claim_chat_tool_job(
+        job_context = claim_running_chat_tool_job(
             db,
             job_id=chat.job_id,
+            run=run,
             worker_id=f"read-tools-{uuid4()}",
         )
         admitted = (
@@ -492,7 +496,8 @@ def test_nexus_reads_are_scoped_citable_and_closed(engine: Engine) -> None:
         )
         assert len(rows) == 19
         assert {row.record_kind for row in rows} == {"current_execution"}
-        assert all(row.provider_wire_name is None for row in rows)
+        assert all(row.provider_wire_name is not None for row in rows)
+        assert all(row.provider_wire_name == row.canonical_tool_id for row in rows)
         assert [row.canonical_tool_id for row in rows[:5]] == list(tool_ids)
         assert rows[5].canonical_tool_id == "nexus.resource.read"
         assert all(row.canonical_input_sha256 for row in rows)

@@ -30,8 +30,17 @@ from sqlalchemy.orm import Session
 from nexus.config import get_settings
 from nexus.db.models import ChatRun, ChatRunEvent, LLMCall, Message
 from nexus.db.session import create_session_factory
-from nexus.jobs.queue import RescheduleRequested, ScheduleAfter, get_job, lock_running_job_claim
-from nexus.services import generation_policy
+from nexus.jobs.queue import (
+    JobExecutionContext,
+    JobRow,
+    RescheduleRequested,
+    ScheduleAfter,
+    complete_job,
+    get_job,
+    lock_running_job_claim,
+    reschedule_running_job,
+)
+from nexus.services import chat_run_candidates, generation_policy
 from nexus.services.chat_run_event_store import ChatRunEventEmitter
 from nexus.services.chat_runs import (
     CancelledChatExecution,
@@ -48,6 +57,7 @@ from nexus.services.codex_generation_client import (
 )
 from nexus.services.codex_generation_contract import (
     MAX_COMMAND_BODY_BYTES,
+    ChatOperation,
     GenerationCommand,
     GenerationFailure,
     GenerationFrame,
@@ -58,8 +68,19 @@ from nexus.services.codex_generation_contract import (
     GenerationUsage,
 )
 from nexus.services.rate_limit import RateLimiter, get_rate_limiter, set_rate_limiter
+from nexus_test_control import services as test_services
+from nexus_test_control.runtime import EndpointKind
 from tests.testkit.chat import create_entitled_chat
 from tests.testkit.llm_tool_scenarios import claim_chat_tool_job
+from tests.testkit.unreachable_state import make_pending_job_due
+from tests.testkit.worker import (
+    assert_production_worker,
+    controller_run,
+    kill_and_forget_process,
+    wait_for_job,
+)
+
+pytestmark = pytest.mark.usefixtures("committed_chat_state_isolation")
 
 type TerminalMode = Literal["cancelled", "failed", "succeeded"]
 
@@ -68,6 +89,8 @@ _PARTIAL_TEXT = "Visible partial answer."
 _LARGE_MULTIBYTE_TEXT = "λ" * 3_000
 _SDK_VERSION = importlib.metadata.version("openai-codex")
 _RUNTIME_VERSION = importlib.metadata.version("openai-codex-cli-bin")
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_TEST_ENV = {"NEXUS_ENV": "test"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,6 +146,23 @@ class _CapacityThenSuccessfulChatRuntime:
 
     async def cancel(self, request_id: UUID) -> None:
         raise AssertionError(f"unexpected Chat cancellation for {request_id}")
+
+
+class _CapacityRefusalFrames:
+    def __aiter__(self) -> _CapacityRefusalFrames:
+        return self
+
+    async def __anext__(self) -> GenerationFrame:
+        raise CodexGenerationCapacityUnavailable("controlled capacity refusal")
+
+
+class _AlwaysCapacityChatRuntime(_CapacityThenSuccessfulChatRuntime):
+    """Strict host boundary that refuses every generation before acceptance."""
+
+    def stream(self, command: GenerationCommand) -> AsyncIterator[GenerationFrame]:
+        self._observe_entry("stream")
+        self.commands.append(command)
+        return _CapacityRefusalFrames()
 
 
 def _frame(command: GenerationCommand, sequence: int, event: object) -> bytes:
@@ -327,6 +367,22 @@ def _audit_requests(peer: _GenerationPeer) -> list[dict[str, Any]]:
     return [json.loads(line) for line in peer.audit_path.read_text().splitlines()]
 
 
+def _start_interactive_worker(
+    run: test_services.TestRun,
+    socket_path: Path,
+) -> test_services.StartedProcess:
+    return test_services.start_python_process(
+        _REPO_ROOT,
+        _TEST_ENV,
+        run,
+        "worker-interactive",
+        overrides={
+            "NEXUS_CODEX_AGENT_SOCKET": str(socket_path),
+            "WORKER_POLL_INTERVAL_SECONDS": "0.1",
+        },
+    )
+
+
 def test_prepared_chat_capacity_replay_enters_runtime_without_a_caller_transaction(
     engine: Engine,
 ) -> None:
@@ -391,6 +447,205 @@ def test_prepared_chat_capacity_replay_enters_runtime_without_a_caller_transacti
             ]
     finally:
         set_rate_limiter(previous_limiter)
+
+
+def test_chat_capacity_schedule_exhaustion_projects_rerunnable_sibling(
+    engine: Engine,
+) -> None:
+    """A busy host waits exactly twice, then lands one rerunnable product failure."""
+
+    session_factory = create_session_factory(engine)
+    previous_limiter = get_rate_limiter()
+    set_rate_limiter(RateLimiter(session_factory=session_factory))
+    try:
+        with Session(engine, expire_on_commit=False) as db:
+            chat = create_entitled_chat(
+                db,
+                content="Keep this deep Chat turn stable while capacity is busy.",
+                profile_id="deep",
+            )
+            runtime = _AlwaysCapacityChatRuntime(db)
+            contexts: list[JobExecutionContext] = []
+
+            def claim_attempt(worker_id: str) -> tuple[JobRow, JobExecutionContext]:
+                context = claim_chat_tool_job(
+                    db,
+                    job_id=chat.job_id,
+                    worker_id=worker_id,
+                )
+                assert isinstance(context, JobExecutionContext)
+                db.commit()
+                claimed_job = get_job(db, chat.job_id)
+                assert claimed_job is not None
+                assert (claimed_job.status, claimed_job.attempts, claimed_job.claimed_by) == (
+                    "running",
+                    1,
+                    worker_id,
+                )
+                db.commit()
+                contexts.append(context)
+                return claimed_job, context
+
+            for refusal, expected_delay in enumerate((5, 10), start=1):
+                job, context = claim_attempt(f"chat-capacity-{refusal}")
+                outcome = asyncio.run(
+                    execute_chat_run(
+                        db,
+                        run_id=chat.run_id,
+                        job=job,
+                        execution_context=context,
+                        session_factory=session_factory,
+                        runtime=runtime,
+                        settings=get_settings(),
+                    )
+                )
+                assert isinstance(outcome, RescheduleRequested)
+                assert outcome.schedule == ScheduleAfter(expected_delay)
+                assert reschedule_running_job(
+                    db,
+                    job_id=chat.job_id,
+                    worker_id=context.worker_id,
+                    attempt_no=context.attempt_no,
+                    schedule=outcome.schedule,
+                    payload=outcome.payload,
+                )
+                db.commit()
+
+                pending = get_job(db, chat.job_id)
+                assert pending is not None
+                assert (pending.status, pending.attempts, pending.claimed_by) == (
+                    "pending",
+                    0,
+                    None,
+                )
+                assert pending.payload["capacity_wait_index"] == refusal
+                assert (pending.available_at - pending.updated_at).total_seconds() == expected_delay
+                db.commit()
+                make_pending_job_due(db, job_id=chat.job_id)
+                db.commit()
+
+            job, context = claim_attempt("chat-capacity-3")
+            terminal = asyncio.run(
+                execute_chat_run(
+                    db,
+                    run_id=chat.run_id,
+                    job=job,
+                    execution_context=context,
+                    session_factory=session_factory,
+                    runtime=runtime,
+                    settings=get_settings(),
+                )
+            )
+            assert isinstance(terminal, FailedChatExecution)
+            assert terminal.error_code.model_dump(mode="json") == {
+                "kind": "Present",
+                "value": "capacity_unavailable",
+            }
+            assert complete_job(
+                db,
+                job_id=chat.job_id,
+                worker_id=context.worker_id,
+            )
+            db.commit()
+
+            terminal_job = get_job(db, chat.job_id)
+            assert terminal_job is not None
+            assert (terminal_job.status, terminal_job.attempts, terminal_job.max_attempts) == (
+                "succeeded",
+                1,
+                3,
+            )
+            assert [attempt.attempt_no for attempt in contexts] == [1, 1, 1]
+            assert len(runtime.commands) == 3
+            assert {command.request_id for command in runtime.commands} == {
+                runtime.commands[0].request_id
+            }
+            assert runtime.transaction_entrypoints == ["health", "stream"] * 3
+            db.commit()
+
+        with session_factory() as projection_db:
+            projected = get_chat_run(
+                projection_db,
+                viewer_id=chat.user_id,
+                run_id=chat.run_id,
+            )
+            assert projected.run.status == "error"
+            assert projected.run.error_code == "capacity_unavailable"
+            assert projected.run.failure is not None
+            assert (
+                projected.run.failure.code,
+                projected.run.failure.can_rerun,
+                projected.assistant_message.can_rerun,
+            ) == ("assistant_unavailable", True, True)
+
+            rerun = chat_run_candidates.rerun_assistant_response(
+                projection_db,
+                viewer_id=chat.user_id,
+                assistant_message_id=projected.assistant_message.id,
+                idempotency_key=f"capacity-rerun-{uuid4()}",
+            )
+            assert rerun.run.id != projected.run.id
+            assert rerun.run.status == "queued"
+            assert rerun.run.profile_id == projected.run.profile_id == "deep"
+            assert rerun.conversation.id == projected.conversation.id
+            assert rerun.user_message.id != projected.user_message.id
+            assert rerun.assistant_message.id != projected.assistant_message.id
+    finally:
+        set_rate_limiter(previous_limiter)
+
+
+def test_interactive_worker_reaches_the_private_generation_socket(engine: Engine) -> None:
+    """The production interactive lane claims Chat and dispatches over the v2 UDS."""
+
+    run = controller_run()
+    worker: test_services.StartedProcess | None = None
+    with _generation_peer("succeeded", gated=True) as peer:
+        try:
+            with Session(engine) as db:
+                chat = create_entitled_chat(
+                    db,
+                    content="Answer through the production interactive worker.",
+                )
+
+            worker = _start_interactive_worker(run, peer.socket_path)
+            assert_production_worker(worker, run)
+            test_services.wait_process_ready(
+                _REPO_ROOT,
+                _TEST_ENV,
+                worker,
+                EndpointKind.AGENT_TOOLS_MCP,
+                "/internal/agent-tools/mcp",
+            )
+            assert peer.request_observed.wait(30), (
+                "interactive worker never reached the private generation socket"
+            )
+            requests = _audit_requests(peer)
+            assert len(requests) == 1
+            command = GenerationCommand.model_validate(requests[0])
+            assert isinstance(command.operation, ChatOperation)
+            assert command.operation.profile == "balanced"
+            peer.release_response.set()
+
+            wait_for_job(engine, chat.job_id, status="succeeded", attempts=1)
+            with Session(engine) as db:
+                persisted = get_chat_run(
+                    db,
+                    viewer_id=chat.user_id,
+                    run_id=chat.run_id,
+                )
+                assert persisted.run.status == "complete"
+                assert [
+                    block.text for block in persisted.assistant_message.message_document.blocks
+                ] == [_PARTIAL_TEXT]
+                generations = list(
+                    db.scalars(select(LLMCall).where(LLMCall.owner_id == chat.run_id))
+                )
+                assert len(generations) == 1
+                assert generations[0].outcome == "Succeeded"
+        finally:
+            peer.release_response.set()
+            if worker is not None:
+                kill_and_forget_process(worker)
 
 
 @pytest.mark.parametrize("mode", ["cancelled", "failed"])

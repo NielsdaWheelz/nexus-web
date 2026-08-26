@@ -776,6 +776,16 @@ def delete_jobs_by_ids(db: Session, *, job_ids: Sequence[UUID]) -> None:
     )
 
 
+def delete_generations_by_ids(db: Session, *, generation_ids: Sequence[UUID]) -> None:
+    """Remove only committed generation ledger rows owned by one exact proof."""
+    if not generation_ids:
+        return
+    db.execute(
+        text("DELETE FROM llm_calls WHERE id = ANY(CAST(:generation_ids AS uuid[]))"),
+        {"generation_ids": list(generation_ids)},
+    )
+
+
 def delete_source_attempt_and_media(
     db: Session,
     *,

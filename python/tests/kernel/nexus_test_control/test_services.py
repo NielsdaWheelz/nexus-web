@@ -9,6 +9,7 @@ import sys
 import threading
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
 
 import httpx
 import pytest
@@ -62,7 +63,9 @@ RUN_ID = "0123456789abcdef"
 
 
 def _ports() -> RuntimePorts:
-    return RuntimePorts(15432, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 13000, 19091, 19092)
+    return RuntimePorts(
+        15432, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 18001, 13000, 19091, 19092
+    )
 
 
 def _process_is_running(process_id: int) -> bool:
@@ -522,6 +525,173 @@ def test_readiness_rejects_an_owned_listener_that_returns_unauthorized(tmp_path:
         clean_run(tmp_path, TEST_ENV, RUN_ID)
 
 
+def test_mcp_readiness_accepts_only_an_exact_owned_loopback_unauthorized_listener(
+    tmp_path: Path,
+) -> None:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as allocator:
+        allocator.bind(("127.0.0.1", 0))
+        port = int(allocator.getsockname()[1])
+    initialize_runtime(tmp_path, TEST_ENV, replace(_ports(), agent_tools_mcp=port))
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    server = (
+        "import http.server,sys; "
+        "handler=type('Unauthorized',(http.server.BaseHTTPRequestHandler,),{"
+        "'do_GET':lambda self:(self.send_response(401),self.end_headers()),"
+        "'log_message':lambda *args:None}); "
+        "http.server.ThreadingHTTPServer(('127.0.0.1',int(sys.argv[1])),handler).serve_forever()"
+    )
+    owned = _start_owned_process(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        "worker-interactive",
+        (sys.executable, "-c", server, str(port)),
+        cwd=tmp_path,
+        process_environment={"NEXUS_TEST_RUN_ID": RUN_ID},
+    )
+    try:
+        wait_process_ready(
+            tmp_path,
+            TEST_ENV,
+            owned,
+            EndpointKind.AGENT_TOOLS_MCP,
+            "/internal/agent-tools/mcp",
+        )
+    finally:
+        clean_run(tmp_path, TEST_ENV, RUN_ID)
+
+
+def test_mcp_readiness_rejects_an_owned_wildcard_unauthorized_listener(
+    tmp_path: Path,
+) -> None:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as allocator:
+        allocator.bind(("127.0.0.1", 0))
+        port = int(allocator.getsockname()[1])
+    initialize_runtime(tmp_path, TEST_ENV, replace(_ports(), agent_tools_mcp=port))
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    server = (
+        "import http.server,sys; "
+        "handler=type('Unauthorized',(http.server.BaseHTTPRequestHandler,),{"
+        "'do_GET':lambda self:(self.send_response(401),self.end_headers()),"
+        "'log_message':lambda *args:None}); "
+        "http.server.ThreadingHTTPServer(('0.0.0.0',int(sys.argv[1])),handler).serve_forever()"
+    )
+    owned = _start_owned_process(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        "worker-interactive",
+        (sys.executable, "-c", server, str(port)),
+        cwd=tmp_path,
+        process_environment={"NEXUS_TEST_RUN_ID": RUN_ID},
+    )
+    try:
+        for _attempt in range(500):
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+                if probe.connect_ex(("127.0.0.1", port)) == 0:
+                    break
+            threading.Event().wait(0.01)
+        else:
+            pytest.fail("owned wildcard listener did not start")
+
+        with pytest.raises(RuntimeContractError, match="did not become ready"):
+            wait_process_ready(
+                tmp_path,
+                TEST_ENV,
+                owned,
+                EndpointKind.AGENT_TOOLS_MCP,
+                "/internal/agent-tools/mcp",
+                timeout_seconds=0.2,
+            )
+    finally:
+        clean_run(tmp_path, TEST_ENV, RUN_ID)
+
+
+def test_darwin_listener_attestation_selects_only_the_exact_loopback_address() -> None:
+    output = "p123\nf10\nn127.0.0.1:18001\np456\nf11\nn*:18001\np789\nf12\nn127.0.0.1:18002\n"
+
+    assert services._parse_darwin_lsof_listener_process_ids(
+        output,
+        host="127.0.0.1",
+        port=18001,
+    ) == (123,)
+
+
+@pytest.mark.parametrize(
+    "path",
+    (
+        "/internal/agent-tools/mcp?alias=1",
+        "/internal/agent-tools/mcp/",
+        "/internal/agent-tools/mcp#alias",
+    ),
+)
+def test_mcp_readiness_rejects_path_aliases_before_contact(tmp_path: Path, path: str) -> None:
+    process = services.StartedProcess(
+        "worker-interactive",
+        99999,
+        "1",
+        RUN_ID,
+        "0" * 32,
+        "unused.log",
+    )
+
+    with pytest.raises(RuntimeContractError, match="literal path"):
+        wait_process_ready(
+            tmp_path,
+            TEST_ENV,
+            process,
+            EndpointKind.AGENT_TOOLS_MCP,
+            path,
+        )
+
+
+def test_mcp_readiness_rejects_a_string_endpoint_alias_before_contact(tmp_path: Path) -> None:
+    process = services.StartedProcess(
+        "worker-interactive",
+        99999,
+        "1",
+        RUN_ID,
+        "0" * 32,
+        "unused.log",
+    )
+
+    with pytest.raises(RuntimeContractError, match="typed endpoint"):
+        wait_process_ready(
+            tmp_path,
+            TEST_ENV,
+            process,
+            cast(EndpointKind, "agent-tools-mcp"),
+            "/internal/agent-tools/mcp",
+        )
+
+
+def test_mcp_readiness_rejects_a_relabelled_noninteractive_ledger_process(
+    tmp_path: Path,
+) -> None:
+    initialize_runtime(tmp_path, TEST_ENV, _ports())
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    owned = _start_owned_process(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        "api",
+        (sys.executable, "-c", "import signal; signal.pause()"),
+        cwd=tmp_path,
+        process_environment={"NEXUS_TEST_RUN_ID": RUN_ID},
+    )
+    try:
+        with pytest.raises(RuntimeContractError, match="exact created worker-interactive"):
+            wait_process_ready(
+                tmp_path,
+                TEST_ENV,
+                replace(owned, role="worker-interactive"),
+                EndpointKind.AGENT_TOOLS_MCP,
+                "/internal/agent-tools/mcp",
+            )
+    finally:
+        clean_run(tmp_path, TEST_ENV, RUN_ID)
+
+
 def test_readiness_grace_requires_immutable_birth_identity_and_time() -> None:
     assert _startup_identity_pending(birth_matches=True, now=1, deadline=2)
     assert not _startup_identity_pending(birth_matches=False, now=1, deadline=2)
@@ -539,6 +709,9 @@ def test_caller_resource_configuration_is_rejected_and_secrets_have_safe_reprs()
         {"AWS_ENDPOINT_URL_S3": "https://production.example"},
         {"PGHOST": "production.example"},
         {"SUPABASE_ACCESS_TOKEN": "production-token"},
+        {"NEXUS_AGENT_TOOLS_MCP_LISTEN": "0.0.0.0:8001"},
+        {"NEXUS_AGENT_TOOLS_MCP_ORIGIN": ("https://production.example/internal/agent-tools/mcp")},
+        {"WORKER_LANE": "interactive"},
         {"OUTBOUND_HTTP_PROXY_URL": "https://production.example"},
         {"PODCAST_INDEX_BASE_URL": "https://production.example"},
         {"NEXUS_TEST_STATIC_DNS": '{"production.example":"93.184.216.34"}'},
@@ -557,6 +730,48 @@ def test_caller_resource_configuration_is_rejected_and_secrets_have_safe_reprs()
             "test@example.invalid",
             "password-secret",
         )
+    )
+
+
+@pytest.mark.parametrize(
+    ("role", "setting", "value"),
+    (
+        ("worker-interactive", "WORKER_LANE", "background"),
+        ("worker-interactive", "NEXUS_AGENT_TOOLS_MCP_LISTEN", "127.0.0.1:28001"),
+        (
+            "worker-interactive",
+            "NEXUS_AGENT_TOOLS_MCP_ORIGIN",
+            "http://127.0.0.1:28001/internal/agent-tools/mcp",
+        ),
+        ("worker-background", "WORKER_LANE", "interactive"),
+        ("worker-background", "NEXUS_AGENT_TOOLS_MCP_LISTEN", "0.0.0.0:28001"),
+        (
+            "worker-background",
+            "NEXUS_AGENT_TOOLS_MCP_ORIGIN",
+            "http://127.0.0.1:28001/internal/agent-tools/mcp",
+        ),
+    ),
+)
+def test_worker_rejects_a_runtime_topology_override_before_spawn(
+    tmp_path: Path,
+    role: str,
+    setting: str,
+    value: str,
+) -> None:
+    run = _owned_run(tmp_path, migration=False)
+
+    with pytest.raises(RuntimeContractError, match="runtime topology is controller-owned"):
+        start_python_process(
+            tmp_path,
+            TEST_ENV,
+            run,
+            role,
+            overrides={setting: value},
+        )
+
+    assert not any(
+        entry.resource.kind is ResourceKind.PROCESS
+        for entry in read_ledger(tmp_path, RUN_ID).entries
     )
 
 
@@ -1070,8 +1285,8 @@ def test_clean_upgrades_then_removes_the_exact_previous_runtime(
     runtime = initialize_runtime(tmp_path, TEST_ENV, _ports())
     runtime_path = tmp_path / ".nexus-test/runtime.json"
     previous = json.loads(runtime_path.read_text(encoding="utf-8"))
-    previous["version"] = 2
-    del previous["ports"]["provider_openai"]
+    previous["version"] = 3
+    del previous["ports"]["agent_tools_mcp"]
     runtime_path.write_text(json.dumps(previous), encoding="utf-8")
     commands: list[tuple[str, ...]] = []
 
@@ -1085,7 +1300,7 @@ def test_clean_upgrades_then_removes_the_exact_previous_runtime(
             tmp_path,
             TEST_ENV,
             command_runner=run_command,
-            port_available=lambda port: port == 19092,
+            port_available=lambda port: port == 18001,
         )
         == ()
     )

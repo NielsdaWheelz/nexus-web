@@ -124,6 +124,8 @@ from tests.testkit.llm_tool_scenarios import (
 )
 from tests.testkit.unreachable_state import expire_job_claim, make_failed_job_retryable
 
+pytestmark = pytest.mark.usefixtures("committed_chat_state_isolation")
+
 _SIGNING_KEY = SecretStr("dedicated-chat-tools-hs256-test-key")
 
 

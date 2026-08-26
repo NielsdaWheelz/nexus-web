@@ -31,6 +31,7 @@ from nexus.db.models import (
     Message,
     ProcessingStatus,
 )
+from nexus.jobs.queue import JobExecutionContext
 from nexus.services import bootstrap, library_entries
 from nexus.services.chat_prompt import PromptPlan, build_prompt_plan
 from nexus.services.prompt_budget import make_prompt_block
@@ -62,10 +63,15 @@ def compose_keyless_tool_runtime() -> Any:
     )
 
 
-def claim_chat_tool_job(db: Session, *, job_id: UUID, worker_id: str) -> Any:
+def claim_chat_tool_job(
+    db: Session,
+    *,
+    job_id: UUID,
+    worker_id: str,
+) -> JobExecutionContext:
     """Claim the production Chat job and return its worker fencing identity."""
 
-    from nexus.jobs.queue import JobExecutionContext, claim_job
+    from nexus.jobs.queue import claim_job
 
     claimed = claim_job(
         db,
@@ -83,6 +89,31 @@ def claim_chat_tool_job(db: Session, *, job_id: UUID, worker_id: str) -> Any:
         attempt_no=claimed.attempts,
         resource_class="Light",
     )
+
+
+def claim_running_chat_tool_job(
+    db: Session,
+    *,
+    job_id: UUID,
+    run: ChatRun,
+    worker_id: str,
+) -> JobExecutionContext:
+    """Claim like the worker, commit, then enter Chat's run-first mutation order."""
+
+    from nexus.services import generation_policy
+    from nexus.services.chat_run_event_store import mark_running
+
+    context = claim_chat_tool_job(db, job_id=job_id, worker_id=worker_id)
+    db.commit()
+    chat_policy = generation_policy.chat_policy("balanced")
+    mark_running(
+        db,
+        run.id,
+        model_name=chat_policy.model,
+        reasoning_effort=chat_policy.effort,
+    )
+    assert run.status == "running"
+    return context
 
 
 def execute_chat_tool(

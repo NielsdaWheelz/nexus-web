@@ -1,4 +1,4 @@
-"""Committed-state fixtures shared by the upload-session service proof."""
+"""Committed-state fixtures shared by service proofs."""
 
 from __future__ import annotations
 
@@ -6,16 +6,46 @@ from collections.abc import Generator
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, select, text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import MediaUploadSession
+from nexus.db.models import LLMCall, MediaUploadSession
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.storage.client import get_storage_client
 from nexus.storage.paths import build_upload_session_staging_storage_path
 from tests.testkit.auth import UserRecord
-from tests.testkit.unreachable_state import cleanup_committed_upload_user
+from tests.testkit.unreachable_state import (
+    cleanup_committed_upload_user,
+    delete_generations_by_ids,
+    delete_jobs_by_ids,
+)
 from tests.testkit.upload_sessions import delete_storage_prefix
+
+
+@pytest.fixture
+def committed_chat_state_isolation(engine: Engine) -> Generator[None, None, None]:
+    """Remove only queue and generation rows committed by the requesting proof."""
+
+    with Session(engine) as db:
+        existing_ids = frozenset(
+            db.scalars(text("SELECT id FROM background_jobs WHERE kind = 'chat_run'")).all()
+        )
+        existing_generation_ids = frozenset(db.scalars(select(LLMCall.id)).all())
+    yield
+    with Session(engine) as db:
+        current_ids = frozenset(
+            db.scalars(text("SELECT id FROM background_jobs WHERE kind = 'chat_run'")).all()
+        )
+        current_generation_ids = frozenset(db.scalars(select(LLMCall.id)).all())
+        delete_generations_by_ids(
+            db,
+            generation_ids=tuple(sorted(current_generation_ids - existing_generation_ids, key=str)),
+        )
+        delete_jobs_by_ids(
+            db,
+            job_ids=tuple(sorted(current_ids - existing_ids, key=str)),
+        )
+        db.commit()
 
 
 @pytest.fixture

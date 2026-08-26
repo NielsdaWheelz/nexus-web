@@ -110,6 +110,7 @@ _PORT_DEFAULTS = (
     25424,
     25425,
     18000,
+    18001,
     13000,
     19091,
     19092,
@@ -124,53 +125,63 @@ _SAFE_CHILD_ENV = ("HOME", "LANG", "LC_ALL", "PATH", "TMPDIR", "TZ", "UV_CACHE_D
 _STATUS_KEYS = frozenset(
     {"API_URL", "ANON_KEY", "PUBLISHABLE_KEY", "SECRET_KEY", "SERVICE_ROLE_KEY"}
 )
-_CALLER_RESOURCE_ENV = frozenset(
+_CONTROLLER_OWNED_PROCESS_ENV = frozenset(
     {
-        "AWS_ACCESS_KEY_ID",
-        "AWS_ENDPOINT_URL",
-        "AWS_ENDPOINT_URL_S3",
-        "AWS_PROFILE",
-        "AWS_SECRET_ACCESS_KEY",
-        "AWS_SESSION_TOKEN",
-        "CSP_MEDIA_ORIGINS",
-        "DATABASE_URL",
-        "DATABASE_URL_TEST",
-        "DATABASE_URL_TEST_MIGRATIONS",
-        "NEXT_PUBLIC_SUPABASE_URL",
-        "NEXUS_TEST_PROCESS_OWNER",
-        "NEXUS_TEST_PROCESS_OWNER_FD",
-        "NEXUS_TEST_STATIC_DNS",
-        "NEXUS_TEST_TLS_CA_CERT",
-        "NODE_OPTIONS",
-        "OUTBOUND_HTTP_PROXY_URL",
-        "PODCAST_INDEX_API_KEY",
-        "PODCAST_INDEX_API_SECRET",
-        "PODCAST_INDEX_BASE_URL",
-        "PGDATABASE",
-        "PGHOST",
-        "PGPASSFILE",
-        "PGPASSWORD",
-        "PGSERVICE",
-        "PGSERVICEFILE",
-        "PGUSER",
-        "R2_ENDPOINT_URL",
-        "R2_ACCESS_KEY_ID",
-        "R2_BUCKET",
-        "R2_REGION",
-        "R2_S3_API_ORIGIN",
-        "R2_SECRET_ACCESS_KEY",
-        "SERVICE_ROLE_KEY",
-        "SUPABASE_ANON_KEY",
-        "SUPABASE_ACCESS_TOKEN",
-        "SUPABASE_AUTH_ADMIN_KEY",
-        "SUPABASE_DATABASE_URL",
-        "SUPABASE_DB_URL",
-        "SUPABASE_ISSUER",
-        "SUPABASE_JWKS_URL",
-        "SUPABASE_SERVICE_KEY",
-        "SUPABASE_SERVICE_ROLE_KEY",
-        "SUPABASE_URL",
+        "NEXUS_AGENT_TOOLS_MCP_LISTEN",
+        "NEXUS_AGENT_TOOLS_MCP_ORIGIN",
+        "WORKER_LANE",
     }
+)
+_CALLER_RESOURCE_ENV = (
+    frozenset(
+        {
+            "AWS_ACCESS_KEY_ID",
+            "AWS_ENDPOINT_URL",
+            "AWS_ENDPOINT_URL_S3",
+            "AWS_PROFILE",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+            "CSP_MEDIA_ORIGINS",
+            "DATABASE_URL",
+            "DATABASE_URL_TEST",
+            "DATABASE_URL_TEST_MIGRATIONS",
+            "NEXT_PUBLIC_SUPABASE_URL",
+            "NEXUS_TEST_PROCESS_OWNER",
+            "NEXUS_TEST_PROCESS_OWNER_FD",
+            "NEXUS_TEST_STATIC_DNS",
+            "NEXUS_TEST_TLS_CA_CERT",
+            "NODE_OPTIONS",
+            "OUTBOUND_HTTP_PROXY_URL",
+            "PODCAST_INDEX_API_KEY",
+            "PODCAST_INDEX_API_SECRET",
+            "PODCAST_INDEX_BASE_URL",
+            "PGDATABASE",
+            "PGHOST",
+            "PGPASSFILE",
+            "PGPASSWORD",
+            "PGSERVICE",
+            "PGSERVICEFILE",
+            "PGUSER",
+            "R2_ENDPOINT_URL",
+            "R2_ACCESS_KEY_ID",
+            "R2_BUCKET",
+            "R2_REGION",
+            "R2_S3_API_ORIGIN",
+            "R2_SECRET_ACCESS_KEY",
+            "SERVICE_ROLE_KEY",
+            "SUPABASE_ANON_KEY",
+            "SUPABASE_ACCESS_TOKEN",
+            "SUPABASE_AUTH_ADMIN_KEY",
+            "SUPABASE_DATABASE_URL",
+            "SUPABASE_DB_URL",
+            "SUPABASE_ISSUER",
+            "SUPABASE_JWKS_URL",
+            "SUPABASE_SERVICE_KEY",
+            "SUPABASE_SERVICE_ROLE_KEY",
+            "SUPABASE_URL",
+        }
+    )
+    | _CONTROLLER_OWNED_PROCESS_ENV
 )
 
 
@@ -958,6 +969,13 @@ def start_python_process(
     require_test_environment(environment)
     root = canonical_repo_root(repo_root)
     runtime = read_runtime(root)
+    supplied_topology_keys = _CONTROLLER_OWNED_PROCESS_ENV.intersection(overrides or {})
+    if supplied_topology_keys:
+        raise RuntimeContractError(
+            "Python process runtime topology is controller-owned: "
+            + ", ".join(sorted(supplied_topology_keys))
+        )
+    owned_role_environment: dict[str, str] = {}
     if role == "external":
         _require_loopback_port_available(runtime.ports.external, role)
         command = (
@@ -1006,7 +1024,17 @@ def start_python_process(
             "-m",
             "apps.worker.main",
         )
-        if role == "worker-background":
+        if role == "worker-interactive":
+            _require_loopback_port_available(
+                runtime.ports.agent_tools_mcp,
+                "worker-interactive MCP",
+            )
+            mcp_endpoint = runtime_endpoint(root, environment, EndpointKind.AGENT_TOOLS_MCP)
+            owned_role_environment = {
+                "NEXUS_AGENT_TOOLS_MCP_LISTEN": mcp_endpoint.removeprefix("http://"),
+                "NEXUS_AGENT_TOOLS_MCP_ORIGIN": (f"{mcp_endpoint}/internal/agent-tools/mcp"),
+            }
+        else:
             systemd_run = _require_cgroup_delegate()
             command = (
                 systemd_run,
@@ -1035,9 +1063,10 @@ def start_python_process(
         "PODCAST_INDEX_API_SECRET": "nexus-test-fixture-podcast-secret",
         "PODCAST_INDEX_BASE_URL": f"http://127.0.0.1:{runtime.ports.external}",
         "PYTHONPATH": f"{root / 'python' / 'tests' / 'testkit'}:{root / 'python'}:{root}",
+        **(overrides or {}),
         **({"WORKER_LANE": role.removeprefix("worker-")} if role.startswith("worker-") else {}),
         **(user_systemd_environment() if role == "worker-background" else {}),
-        **(overrides or {}),
+        **owned_role_environment,
     }
     return _start_owned_process(
         root,
@@ -1301,9 +1330,15 @@ def wait_process_ready(
 ) -> None:
     """Wait for an owned process at one exact recorded runtime endpoint."""
     require_test_environment(environment)
+    if type(endpoint) is not EndpointKind:
+        raise RuntimeContractError("process readiness requires a typed endpoint")
     if not path.startswith("/") or "//" in path:
         raise RuntimeContractError("process readiness path must be absolute and normalized")
     root = canonical_repo_root(repo_root)
+    if endpoint is EndpointKind.AGENT_TOOLS_MCP:
+        if path != "/internal/agent-tools/mcp":
+            raise RuntimeContractError("agent-tools MCP readiness requires its literal path")
+        _require_exact_created_process(root, process, "worker-interactive")
     url = runtime_endpoint(root, environment, endpoint) + path
     port = urlsplit(url).port
     if port is None:
@@ -1319,7 +1354,16 @@ def wait_process_ready(
         raise RuntimeContractError("TLS CA is only valid for provider readiness")
     else:
         verify = True
-    _wait_owned_process_url_ready(root, process, url, port, verify, timeout_seconds)
+    expected_status_code = 401 if endpoint is EndpointKind.AGENT_TOOLS_MCP else 200
+    _wait_owned_process_url_ready(
+        root,
+        process,
+        url,
+        port,
+        verify,
+        timeout_seconds,
+        expected_status_code=expected_status_code,
+    )
 
 
 def wait_offline_reading_caddy_ready(
@@ -1340,7 +1384,13 @@ def wait_offline_reading_caddy_ready(
     if port is None:
         raise RuntimeContractError("only Caddy seam proof processes have run-allocated ports")
     _wait_owned_process_url_ready(
-        root, process, f"http://127.0.0.1:{port}{path}", port, True, timeout_seconds
+        root,
+        process,
+        f"http://127.0.0.1:{port}{path}",
+        port,
+        True,
+        timeout_seconds,
+        expected_status_code=200,
     )
 
 
@@ -1351,7 +1401,12 @@ def _wait_owned_process_url_ready(
     port: int,
     verify: ssl.SSLContext | bool,
     timeout_seconds: float,
+    *,
+    expected_status_code: int,
 ) -> None:
+    host = urlsplit(url).hostname
+    if host != "127.0.0.1":
+        raise RuntimeContractError("process readiness endpoint must use exact IPv4 loopback")
     deadline = time.monotonic() + timeout_seconds
     identity_deadline = min(deadline, time.monotonic() + 2)
     with httpx.Client(
@@ -1384,8 +1439,8 @@ def _wait_owned_process_url_ready(
             try:
                 response = client.get(url)
                 if (
-                    response.status_code == 200
-                    and _process_group_owns_listener(process.process_group_id, port)
+                    response.status_code == expected_status_code
+                    and _process_group_owns_listener(process.process_group_id, host, port)
                     and _owned_process_identity_matches(
                         root,
                         process.process_group_id,
@@ -1399,6 +1454,29 @@ def _wait_owned_process_url_ready(
                 pass
             time.sleep(0.05)
     raise RuntimeContractError(f"owned {process.role} process did not become ready")
+
+
+def _require_exact_created_process(root: Path, process: StartedProcess, role: str) -> None:
+    expected_resource = Resource(
+        ResourceKind.PROCESS,
+        process_resource_identity(process.run_id, role),
+    )
+    matching = [
+        entry
+        for entry in read_ledger(root, process.run_id).entries
+        if entry.resource == expected_resource
+    ]
+    if (
+        process.role != role
+        or len(matching) != 1
+        or matching[0].phase is not ResourcePhase.CREATED
+        or matching[0].external_id != process.owner_token
+        or matching[0].process_group_id != process.process_group_id
+        or matching[0].process_start_token != process.process_start_token
+    ):
+        raise RuntimeContractError(
+            f"process readiness requires the exact created {role} ledger owner"
+        )
 
 
 def _start_owned_process(
@@ -1681,13 +1759,13 @@ def _upgrade_previous_runtime_if_needed(
                 previous = read_previous_runtime_for_cleanup(root)
             except RuntimeContractError:
                 raise current_error from None
-            used = set(previous.ports.as_dict().values()) - {previous.ports.provider_openai}
+            used = set(previous.ports.as_dict().values()) - {previous.ports.agent_tools_mcp}
             ephemeral_port_range = _local_ephemeral_port_range()
-            for port in _candidate_ports(19092, ephemeral_port_range):
+            for port in _candidate_ports(18001, ephemeral_port_range):
                 if port not in used and is_port_available(port):
                     upgrade_previous_runtime(root, environment, port)
                     return
-    raise RuntimeContractError("no local provider test port is available")
+    raise RuntimeContractError("no local agent-tools MCP test port is available")
 
 
 def _local_ephemeral_port_range() -> tuple[int, int]:
@@ -2245,10 +2323,12 @@ def _startup_identity_pending(*, birth_matches: bool, now: float, deadline: floa
     return birth_matches and now < deadline
 
 
-def _process_group_owns_listener(process_group_id: int, port: int) -> bool:
+def _process_group_owns_listener(process_group_id: int, host: str, port: int) -> bool:
+    if host != "127.0.0.1":
+        return False
     if sys.platform == "darwin":
         try:
-            process_ids = _darwin_lsof_process_ids(("-a", f"-iTCP:{port}", "-sTCP:LISTEN"))
+            process_ids = _darwin_lsof_listener_process_ids(host, port)
         except RuntimeContractError:
             return False
         for process_id in process_ids:
@@ -2266,12 +2346,11 @@ def _process_group_owns_listener(process_group_id: int, port: int) -> bool:
         rows = Path("/proc/net/tcp").read_text(encoding="ascii").splitlines()[1:]
     except OSError:
         return False
+    expected_address = f"0100007F:{port:04X}"
     for row in rows:
         columns = row.split()
-        if len(columns) > 9:
-            _, raw_port = columns[1].rsplit(":", 1)
-            if columns[3] == "0A" and int(raw_port, 16) == port:
-                listener_inodes.add(columns[9])
+        if len(columns) > 9 and columns[1].upper() == expected_address and columns[3] == "0A":
+            listener_inodes.add(columns[9])
     if not listener_inodes:
         return False
     for process_root in Path("/proc").iterdir():
@@ -2517,6 +2596,55 @@ def _darwin_lsof_process_ids(selection: tuple[str, ...]) -> tuple[int, ...]:
     if not rows or any(not row.isdecimal() for row in rows):
         raise RuntimeContractError("Darwin process ownership output was malformed")
     return tuple(dict.fromkeys(int(row) for row in rows))
+
+
+def _darwin_lsof_listener_process_ids(host: str, port: int) -> tuple[int, ...]:
+    try:
+        result = subprocess.run(
+            (
+                _DARWIN_LSOF,
+                "-nP",
+                "-Fpfn",
+                "-a",
+                f"-iTCP:{port}",
+                "-sTCP:LISTEN",
+            ),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=1,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeContractError("Darwin listener ownership could not be inspected") from exc
+    if result.returncode == 1 and not result.stdout.strip():
+        return ()
+    if result.returncode != 0:
+        raise RuntimeContractError("Darwin listener ownership inspection failed")
+    return _parse_darwin_lsof_listener_process_ids(result.stdout, host=host, port=port)
+
+
+def _parse_darwin_lsof_listener_process_ids(
+    output: str,
+    *,
+    host: str,
+    port: int,
+) -> tuple[int, ...]:
+    process_id: int | None = None
+    file_process_id: int | None = None
+    matching_process_ids: list[int] = []
+    expected_name = f"{host}:{port}"
+    for row in output.splitlines():
+        if row.startswith("p") and row[1:].isdecimal():
+            process_id = int(row[1:])
+            file_process_id = None
+        elif row.startswith("f") and row[1:] and process_id is not None:
+            file_process_id = process_id
+        elif row.startswith("n") and file_process_id is not None:
+            if row[1:] == expected_name:
+                matching_process_ids.append(file_process_id)
+        else:
+            raise RuntimeContractError("Darwin listener ownership output was malformed")
+    return tuple(dict.fromkeys(matching_process_ids))
 
 
 def _child_environment(environment: Mapping[str, str]) -> dict[str, str]:

@@ -32,6 +32,7 @@ from nexus.db.models import (
     ResourceEdge,
 )
 from nexus.errors import ApiError, ApiErrorCode
+from nexus.jobs.queue import JobExecutionContext
 from nexus.schemas.library import CreateLibraryRequest
 from nexus.schemas.notes import CreatePageRequest
 from nexus.services import bootstrap, library_entries, library_governance, notes
@@ -42,11 +43,13 @@ from nexus.services.durable_step_journal import Completed, read_step_states, sta
 from nexus.services.message_trust_trails import build_assistant_trust_trail
 from tests.testkit.chat import create_entitled_chat
 from tests.testkit.llm_tool_scenarios import (
-    claim_chat_tool_job,
+    claim_running_chat_tool_job,
     compose_keyless_tool_runtime,
     create_readable_media,
     execute_chat_tool,
 )
+
+pytestmark = pytest.mark.usefixtures("committed_chat_state_isolation")
 
 _WRITE_TOOL_IDS = (
     "nexus.library.add",
@@ -67,7 +70,7 @@ def _execute_write(
     *,
     operation: Any,
     run: ChatRun,
-    job_context: Any,
+    job_context: JobExecutionContext,
     tool_id: str,
     tool_call_index: int,
     arguments: dict[str, object],
@@ -284,9 +287,10 @@ def test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo(
 
         runtime = compose_keyless_tool_runtime()
         operation = runtime.operations["chat"]
-        job_context = claim_chat_tool_job(
+        job_context = claim_running_chat_tool_job(
             db,
             job_id=chat.job_id,
+            run=run,
             worker_id=f"write-tools-{uuid4()}",
         )
         successful_cases = (
@@ -621,7 +625,8 @@ def test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo(
         )
         assert tuple(tool.canonical_tool_id for tool in trust.tool_calls[:5]) == _WRITE_TOOL_IDS
         assert all(tool.record_kind == "current_execution" for tool in trust.tool_calls)
-        assert all(tool.provider_wire_name is None for tool in trust.tool_calls)
+        assert all(tool.provider_wire_name is not None for tool in trust.tool_calls)
+        assert all(tool.provider_wire_name == tool.canonical_tool_id for tool in trust.tool_calls)
         assert all(tool.result_kind == "mutation" for tool in trust.tool_calls)
         assert all(tool.effect == ToolEffect.Write for tool in trust.tool_calls)
 
@@ -811,9 +816,10 @@ def _assert_library_add_closes_podcast_owner_refusals(engine: Engine) -> None:
 
         runtime = compose_keyless_tool_runtime()
         operation = runtime.operations["chat"]
-        job_context = claim_chat_tool_job(
+        job_context = claim_running_chat_tool_job(
             db,
             job_id=chat.job_id,
+            run=run,
             worker_id=f"podcast-write-refusal-{uuid4()}",
         )
         cases = (

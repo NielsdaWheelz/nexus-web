@@ -2650,11 +2650,18 @@ def _ensure_browser_processes(
             EndpointKind.API,
             "/readyz",
         )
-        execution.ports.start_python_process(
+        interactive = execution.ports.start_python_process(
             context.repo_root,
             {"NEXUS_ENV": "test"},
             prepared,
             "worker-interactive",
+        )
+        execution.ports.wait_process_ready(
+            context.repo_root,
+            {"NEXUS_ENV": "test"},
+            interactive,
+            EndpointKind.AGENT_TOOLS_MCP,
+            "/internal/agent-tools/mcp",
         )
         execution.ports.start_python_process(
             context.repo_root,

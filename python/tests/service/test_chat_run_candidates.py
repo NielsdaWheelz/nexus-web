@@ -20,7 +20,6 @@ deliberately global single-host admission rule.
 
 from __future__ import annotations
 
-from collections.abc import Generator
 from dataclasses import dataclass
 from typing import Literal
 from uuid import UUID, uuid4
@@ -63,24 +62,8 @@ from nexus.services.llm_ledger import (
 from nexus.services.tool_runtime.declarations import BROWSER_TOOL_PROJECTION_REVISION
 from tests.testkit.auth import UserRecord
 from tests.testkit.chat import create_entitled_chat
-from tests.testkit.unreachable_state import delete_jobs_by_ids
 
-
-@pytest.fixture(autouse=True)
-def _remove_committed_candidate_jobs(engine: Engine) -> Generator[None, None, None]:
-    """Keep this proof's synthetic queue rows out of global Chat courtesy."""
-
-    with Session(engine) as db:
-        existing_ids = frozenset(
-            db.scalars(text("SELECT id FROM background_jobs WHERE kind = 'chat_run'")).all()
-        )
-    yield
-    with Session(engine) as db:
-        current_ids = frozenset(
-            db.scalars(text("SELECT id FROM background_jobs WHERE kind = 'chat_run'")).all()
-        )
-        delete_jobs_by_ids(db, job_ids=tuple(current_ids - existing_ids))
-        db.commit()
+pytestmark = pytest.mark.usefixtures("committed_chat_state_isolation")
 
 
 @dataclass(frozen=True, slots=True)

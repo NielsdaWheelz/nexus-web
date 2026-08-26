@@ -16,6 +16,8 @@ from nexus.services.chat_runs import get_chat_run
 from nexus.services.durable_step_journal import DurableExecutionPhase
 from tests.testkit.chat import create_entitled_chat
 
+pytestmark = pytest.mark.usefixtures("committed_chat_state_isolation")
+
 
 def test_suspended_chat_exposes_only_phase_and_masks_its_private_journal(
     engine: Engine,

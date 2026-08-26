@@ -16,8 +16,8 @@ from typing import cast
 
 from nexus_test_control.model import Resource, ResourceKind
 
-RUNTIME_VERSION = 3
-PREVIOUS_RUNTIME_VERSION = 2
+RUNTIME_VERSION = 4
+PREVIOUS_RUNTIME_VERSION = 3
 LEDGER_VERSION = 1
 LOOPBACK_HOST = "127.0.0.1"
 TEMPLATE_FINGERPRINT_HEX_LENGTH = 40
@@ -53,6 +53,7 @@ class EndpointKind(StrEnum):
     SUPABASE = "supabase"
     INBUCKET = "inbucket"
     API = "api"
+    AGENT_TOOLS_MCP = "agent-tools-mcp"
     EXTERNAL = "external"
     PROVIDER_OPENAI = "provider-openai"
     WEB = "web"
@@ -73,6 +74,7 @@ class RuntimePorts:
     supabase_inbucket: int
     supabase_shadow: int
     api: int
+    agent_tools_mcp: int
     web: int
     external: int
     provider_openai: int
@@ -97,6 +99,7 @@ class RuntimePorts:
             "supabase_inbucket": self.supabase_inbucket,
             "supabase_shadow": self.supabase_shadow,
             "api": self.api,
+            "agent_tools_mcp": self.agent_tools_mcp,
             "web": self.web,
             "external": self.external,
             "provider_openai": self.provider_openai,
@@ -737,6 +740,7 @@ def _endpoint(ports: RuntimePorts, kind: EndpointKind) -> str:
         EndpointKind.SUPABASE: ports.supabase_api,
         EndpointKind.INBUCKET: ports.supabase_inbucket,
         EndpointKind.API: ports.api,
+        EndpointKind.AGENT_TOOLS_MCP: ports.agent_tools_mcp,
         EndpointKind.EXTERNAL: ports.external,
         EndpointKind.PROVIDER_OPENAI: ports.provider_openai,
         EndpointKind.WEB: ports.web,
@@ -796,7 +800,7 @@ def _runtime_from_json(value: object, *, allow_previous: bool = False) -> Runtim
     ports = _object(data["ports"], "runtime ports")
     expected_ports = set(RuntimePorts.__annotations__)
     if allow_previous and version == PREVIOUS_RUNTIME_VERSION:
-        expected_ports.remove("provider_openai")
+        expected_ports.remove("agent_tools_mcp")
     _keys(ports, expected_ports, "runtime ports")
     if version == PREVIOUS_RUNTIME_VERSION:
         used_ports = set(ports.values())
@@ -805,8 +809,8 @@ def _runtime_from_json(value: object, *, allow_previous: bool = False) -> Runtim
             None,
         )
         if placeholder is None:
-            raise RuntimeContractError("previous runtime has no free provider-port placeholder")
-        ports = {**ports, "provider_openai": placeholder}
+            raise RuntimeContractError("previous runtime has no free MCP-port placeholder")
+        ports = {**ports, "agent_tools_mcp": placeholder}
     run_ids = data["owned_run_ids"]
     if not isinstance(run_ids, list) or any(not isinstance(item, str) for item in run_ids):
         raise RuntimeContractError("owned_run_ids must be an array of strings")
@@ -831,14 +835,14 @@ def _runtime_from_json(value: object, *, allow_previous: bool = False) -> Runtim
 def upgrade_previous_runtime(
     repo_root: Path,
     environment: Mapping[str, str],
-    provider_openai: int,
+    agent_tools_mcp: int,
 ) -> RuntimeRecord:
-    """Atomically add the v3 provider port to an exact workspace-owned v2 record."""
+    """Atomically add the v4 MCP port to an exact workspace-owned v3 record."""
     require_test_environment(environment)
-    if isinstance(provider_openai, bool) or not isinstance(provider_openai, int):
-        raise RuntimeContractError("provider port must be an integer")
-    if not 1 <= provider_openai <= 65_535:
-        raise RuntimeContractError("provider port must be between 1 and 65535")
+    if isinstance(agent_tools_mcp, bool) or not isinstance(agent_tools_mcp, int):
+        raise RuntimeContractError("agent-tools MCP port must be an integer")
+    if not 1 <= agent_tools_mcp <= 65_535:
+        raise RuntimeContractError("agent-tools MCP port must be between 1 and 65535")
     with _state_lock(repo_root, "runtime"):
         record = _runtime_from_json(
             _read_json(runtime_record_path(repo_root)),
@@ -849,10 +853,10 @@ def upgrade_previous_runtime(
         if record.version != PREVIOUS_RUNTIME_VERSION:
             raise RuntimeContractError("upgrade requires the immediately previous runtime")
         owned_ports = {
-            port for name, port in record.ports.as_dict().items() if name != "provider_openai"
+            port for name, port in record.ports.as_dict().items() if name != "agent_tools_mcp"
         }
-        if provider_openai in owned_ports:
-            raise RuntimeContractError("provider port collides with an owned runtime port")
+        if agent_tools_mcp in owned_ports:
+            raise RuntimeContractError("agent-tools MCP port collides with an owned runtime port")
         expected_repo_id = repo_id_for(repo_root)
         if record.repo_id != expected_repo_id:
             raise RuntimeContractError("runtime belongs to a different repository")
@@ -863,14 +867,14 @@ def upgrade_previous_runtime(
         upgraded = replace(
             record,
             version=RUNTIME_VERSION,
-            ports=replace(record.ports, provider_openai=provider_openai),
+            ports=replace(record.ports, agent_tools_mcp=agent_tools_mcp),
         )
         _write_json(runtime_record_path(repo_root), _runtime_to_json(upgraded))
         return upgraded
 
 
 def read_previous_runtime_for_cleanup(repo_root: Path) -> RuntimeRecord:
-    """Decode v2 only for exact owned cleanup; never start or reuse it."""
+    """Decode v3 only for exact owned cleanup; never start or reuse it."""
     record = _runtime_from_json(
         _read_json(runtime_record_path(repo_root)),
         allow_previous=True,

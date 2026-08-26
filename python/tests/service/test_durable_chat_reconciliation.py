@@ -38,6 +38,8 @@ from nexus.services.llm_ledger import (
 from tests.testkit.chat import create_entitled_chat
 from tests.testkit.unreachable_state import make_failed_job_retryable
 
+pytestmark = pytest.mark.usefixtures("committed_chat_state_isolation")
+
 
 def _claim_chat(db: Session, job_id: UUID, worker_id: str):
     claimed = claim_job(
