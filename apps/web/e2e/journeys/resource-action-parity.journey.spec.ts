@@ -101,6 +101,13 @@ async function openActionMenu(
     menuItems.first(),
     `${surface}: the action menu opened with no menuitems.`,
   ).toBeVisible();
+  await expect(
+    menu.getByRole("menuitem", {
+      name: "Resource actions are loading…",
+      exact: true,
+    }),
+    `${surface}: the canonical resource suffix did not finish loading.`,
+  ).toHaveCount(0);
   return { menu, menuItems };
 }
 
