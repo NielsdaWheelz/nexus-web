@@ -596,6 +596,8 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/kernel/test_oracle_manifest.py",
                 "pytest:python/tests/kernel/test_oracle_reconcile_contract.py",
                 "pytest:python/tests/service/test_codex_generation_client.py",
+                "pytest:python/tests/service/test_codex_runtime_confinement.py::"
+                "test_confined_runtime_owns_startup_and_workspace_write_tmp_policy_at_sdk_boundary",
                 "pytest:python/tests/service/test_codex_egress_policy.py::"
                 "test_codex_egress_allows_only_subscription_auth_and_mcp_sni",
                 "pytest:python/tests/kernel/test_ci_pr_recovery.py",
@@ -733,6 +735,8 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/kernel/test_generation_policy.py::test_fixed_generation_policy_catalog_is_complete_and_closed",
                 "pytest:python/tests/kernel/test_ci_pr_recovery.py",
                 "pytest:python/tests/service/test_codex_generation_client.py",
+                "pytest:python/tests/service/test_codex_runtime_confinement.py::"
+                "test_confined_runtime_owns_startup_and_workspace_write_tmp_policy_at_sdk_boundary",
                 "pytest:python/tests/service/test_codex_egress_policy.py::"
                 "test_codex_egress_allows_only_subscription_auth_and_mcp_sni",
                 "pytest:python/tests/release_artifact/"
