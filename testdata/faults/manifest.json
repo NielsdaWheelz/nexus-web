@@ -300,6 +300,15 @@
       "expected_failure": "policy facts fingerprint does not match the pinned catalog"
     },
     {
+      "id": "codex-temporary-confinement-bypass",
+      "patch": "testdata/faults/codex-temporary-confinement-bypass.patch",
+      "sha256": "cb0898e7043cc3bea63b0e7e0a8b75cc7161ed5a08e4168618472ab68964772d",
+      "proofs": [
+        "pytest:python/tests/service/test_codex_runtime_confinement.py::test_confined_runtime_owns_startup_and_workspace_write_tmp_policy_at_sdk_boundary"
+      ],
+      "expected_failure": "Codex child TMPDIR escaped its turn root"
+    },
+    {
       "id": "durable-codex-host-capacity-admission-bypass",
       "patch": "testdata/faults/durable-codex-host-capacity-admission-bypass.patch",
       "sha256": "7d1826f60dc345e1a2318cca18c80533f6fbba03afafa8b795fbfd57b5aa15d2",
@@ -367,7 +376,7 @@
       "patch": "testdata/faults/agent-tool-receipt-lease-fence-bypass.patch",
       "sha256": "3f3ae2fef4df85c61014a75af391249685e9e292985474a2e00d340b5abafc02",
       "proofs": [
-        "pytest:python/tests/service/test_agent_tools_mcp.py"
+        "pytest:python/tests/service/test_agent_tools_mcp.py::test_mcp_receipt_landing_refuses_a_lost_job_lease_after_inner_completion"
       ],
       "expected_failure": "lost job lease still authorized an MCP receipt"
     },
@@ -424,15 +433,6 @@
         "pytest:python/tests/service/test_llm_tool_projection_protocol.py::test_revision_gates_every_changed_chat_projection_boundary"
       ],
       "expected_failure": "fresh send with missing revision crossed the public Chat boundary"
-    },
-    {
-      "id": "llm-tools-cutover-migration-bypass",
-      "patch": "testdata/faults/llm-tools-cutover-migration-bypass.patch",
-      "sha256": "644fed427d54de6dbc93c5621e6eca955e9b16e852cdeaba7e20562936911f45",
-      "proofs": [
-        "pytest:python/tests/migrations/test_llm_tools_cutover_migration.py::test_cutover_rewrites_only_closed_historical_variants_and_refuses_live_or_malformed_state"
-      ],
-      "expected_failure": "Using attached resources"
     },
     {
       "id": "codex-hosted-evidence-size-bound-bypass",

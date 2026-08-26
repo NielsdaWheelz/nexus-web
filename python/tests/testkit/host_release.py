@@ -121,7 +121,12 @@ def _codex_host_privilege_config() -> dict[str, object]:
             "apparmor=nexus-codex-agent-host",
             "systempaths=unconfined",
         ],
-        "Tmpfs": {"/tmp": "rw,noexec,nosuid,nodev,size=16m"},
+        "Tmpfs": {
+            "/run/nexus-codex-turns": (
+                "rw,exec,nosuid,nodev,size=16m,mode=0700,uid=10001,gid=10001"
+            ),
+            "/tmp": "rw,noexec,nosuid,nodev,size=16m",
+        },
         "Ulimits": [
             {"Name": "core", "Soft": 0, "Hard": 0},
             {"Name": "fsize", "Soft": 1_048_576, "Hard": 1_048_576},
@@ -670,7 +675,7 @@ class HostReleaseHarness:
                     "Env": (
                         [
                             "NEXUS_CODEX_CREDENTIAL_FILE=/run/nexus-codex-credential/auth.json",
-                            "NEXUS_CODEX_WORKING_DIRECTORY_ROOT=/tmp/nexus-codex-turns",
+                            "NEXUS_CODEX_WORKING_DIRECTORY_ROOT=/run/nexus-codex-turns",
                             "NEXUS_CODEX_AGENT_SOCKET=/run/nexus-codex/agent.sock",
                             "NEXUS_CODEX_CHAT_NETWORK_ATTESTED=true",
                             "NEXUS_CODEX_MCP_ORIGIN=https://api.example.test/internal/agent-tools/mcp",

@@ -148,7 +148,7 @@ class ActiveAgentToolRegistry:
     """
 
     session_factory: sessionmaker[Session]
-    _authorities: dict[tuple[str, str, str, str, int], AgentToolAuthority] = field(
+    _authorities: dict[tuple[str, str, str, str, int, str], AgentToolAuthority] = field(
         default_factory=dict
     )
     _notified: set[UUID] = field(default_factory=set)
@@ -194,6 +194,7 @@ class ActiveAgentToolRegistry:
             str(authority.generation_id),
             authority.worker_id,
             authority.attempt_no,
+            authority.grant_jti,
         )
         with self._registry_lock:
             existing = self._authorities.get(key)
@@ -208,6 +209,7 @@ class ActiveAgentToolRegistry:
             str(authority.generation_id),
             authority.worker_id,
             authority.attempt_no,
+            authority.grant_jti,
         )
         with self._registry_lock:
             if self._authorities.get(key) is authority:
@@ -223,6 +225,7 @@ class ActiveAgentToolRegistry:
                     claims.generation_id,
                     claims.worker_id,
                     claims.attempt_no,
+                    claims.jti,
                 )
             )
 
@@ -382,6 +385,7 @@ class AgentToolAuthority:
     operation: FrozenToolOperation
     worker_id: str
     generation_id: UUID
+    grant_jti: str
     admitted_resource_uris: frozenset[str]
     _notified_policy_violations: set[UUID] = field(default_factory=set)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -391,6 +395,11 @@ class AgentToolAuthority:
     _accepting_calls: bool = True
 
     def __post_init__(self) -> None:
+        try:
+            if str(UUID(self.grant_jti)) != self.grant_jti:
+                raise ValueError
+        except ValueError as exc:
+            raise ValueError("agent-tool authority grant jti must be a canonical UUID") from exc
         self._idle.set()
 
     def has_tool(self, tool_id: str) -> bool:
@@ -442,6 +451,7 @@ class AgentToolAuthority:
         operation: FrozenToolOperation,
         worker_id: str,
         generation_id: UUID,
+        grant_jti: str,
         admitted_resource_uris: tuple[str, ...],
     ) -> AgentToolAuthority:
         with session_factory() as db:
@@ -468,6 +478,7 @@ class AgentToolAuthority:
             operation=execution_operation,
             worker_id=worker_id,
             generation_id=generation_id,
+            grant_jti=grant_jti,
             admitted_resource_uris=frozenset(admitted_resource_uris),
         )
         if registry is not None:
@@ -673,6 +684,7 @@ class AgentToolAuthority:
                 and claims.worker_id == self.worker_id
                 and claims.attempt_no == self.attempt_no
                 and claims.generation_id == str(self.generation_id)
+                and claims.jti == self.grant_jti
                 and _grant_matches_generation(claims, generation)
             )
         else:
@@ -777,6 +789,23 @@ class AgentToolAuthority:
             provider_call_id=provider_call_id,
             tool_index=tool_index,
         )
+        if canonical_tool_id is not None:
+            from nexus.services.tool_runtime.execution import (
+                stage_chat_tool_pre_dispatch_admission,
+            )
+
+            payload = stage_chat_tool_pre_dispatch_admission(
+                db=db,
+                operation=self.operation,
+                run=run,
+                payload=payload,
+                durable_step_path=request_id.position(generation.generation_seq, tool_index),
+                tool_call_index=tool_index,
+                tool_id=ToolId(canonical_tool_id),
+                input_digest=digest,
+                arguments=arguments,
+                provider_wire_name=provider_wire_name,
+            )
         self._persist_journal(db, payload, journal)
         return (
             run,
@@ -978,6 +1007,7 @@ class AgentToolAuthority:
             or claims.worker_id != self.worker_id
             or claims.attempt_no != self.attempt_no
             or claims.generation_id != str(self.generation_id)
+            or claims.jti != self.grant_jti
             or not _grant_matches_generation(claims, generation)
         ):
             raise _PolicyViolation(self.generation_id)

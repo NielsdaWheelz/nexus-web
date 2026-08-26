@@ -66,7 +66,6 @@ from nexus.services.structured_synthesis import outcome_failure_facts
 logger = get_logger(__name__)
 
 DAWN_WRITE_OPERATION = "dawn_write"
-_CAPACITY_WAIT_DELAYS_SECONDS = (30, 60, 120, 300, 600)
 _DAWN_WRITE_WORKLIST_KEY = "dawn_write_worklist"
 
 _SYSTEM_PROMPT = """\
@@ -568,9 +567,7 @@ async def generate_dawn_write(
     if job.kind != "dawn_write_job":
         raise AssertionError("dawn write generation has the wrong job kind")
     capacity_wait_index = job.payload.get("capacity_wait_index")
-    if type(capacity_wait_index) is not int or not 0 <= capacity_wait_index <= len(
-        _CAPACITY_WAIT_DELAYS_SECONDS
-    ):
+    if type(capacity_wait_index) is not int or capacity_wait_index < 0:
         raise AssertionError("dawn write job has an invalid capacity_wait_index")
     step_path = _dawn_write_step_path(user_id=user_id, local_date=local_date)
     generation_id = step_journal.stable_generation_id(context.job_id, step_path)
@@ -710,7 +707,6 @@ async def generate_dawn_write(
                         lock_dispatch=lock_dispatch,
                     ),
                     capacity_wait_index=capacity_wait_index,
-                    capacity_wait_delays_seconds=_CAPACITY_WAIT_DELAYS_SECONDS,
                 ),
                 session_factory=get_session_factory(),
                 runtime=runtime,

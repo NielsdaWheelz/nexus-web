@@ -24,6 +24,7 @@ from nexus.jobs.queue import (
     update_running_job_payload,
 )
 from nexus.schemas.presence import Present, absent, present
+from nexus.services import generation_policy
 from nexus.services.codex_generation_contract import (
     GenerationCommand,
     GenerationFrame,
@@ -62,6 +63,12 @@ type EncodePreacceptFailure = Callable[[NormalizedFailureCode, str], str]
 type ObserveFrame = Callable[[GenerationFrame], Awaitable[None]]
 type BeforeTerminal = Callable[[], Awaitable[None]]
 type ResolveTerminal = Callable[[Session, GenerationTerminal], GenerationTerminal]
+
+
+def _capacity_wait_delays_seconds(command: GenerationCommand) -> tuple[int, ...]:
+    """Resolve the fixed wait policy from the canonical operation identity."""
+
+    return generation_policy.capacity_wait_delays_seconds(command.operation.kind)
 
 
 class ExecutionRuntime(Protocol):
@@ -221,15 +228,12 @@ class GenerationExecutionRequest:
     command: GenerationCommand
     journal: GenerationJournal
     capacity_wait_index: int
-    capacity_wait_delays_seconds: tuple[int, ...]
     streaming: bool = False
 
     def __post_init__(self) -> None:
         if self.capacity_wait_index < 0:
             raise ValueError("generation capacity_wait_index must not be negative")
-        if any(delay <= 0 for delay in self.capacity_wait_delays_seconds):
-            raise ValueError("generation capacity waits must be positive")
-        if self.capacity_wait_index > len(self.capacity_wait_delays_seconds):
+        if self.capacity_wait_index > len(_capacity_wait_delays_seconds(self.command)):
             raise ValueError("generation capacity_wait_index exceeds its schedule")
 
 
@@ -453,8 +457,9 @@ def _defer_background_while_chat_is_waiting_in_current_transaction(
         raise AssertionError("Chat courtesy requires the Prepared checkpoint")
     _assert_identity(state, request.command)
     index = request.capacity_wait_index
-    if index < len(request.capacity_wait_delays_seconds):
-        delay_seconds = request.capacity_wait_delays_seconds[index]
+    capacity_wait_delays_seconds = _capacity_wait_delays_seconds(request.command)
+    if index < len(capacity_wait_delays_seconds):
+        delay_seconds = capacity_wait_delays_seconds[index]
         payload = request.journal.restore_prepared(
             db,
             expected=state,
@@ -837,8 +842,9 @@ def _restore_capacity_or_complete(
 ) -> GenerationExecutionResult:
     detail = "codex generation capacity unavailable"
     index = request.capacity_wait_index
-    if index < len(request.capacity_wait_delays_seconds):
-        delay_seconds = request.capacity_wait_delays_seconds[index]
+    capacity_wait_delays_seconds = _capacity_wait_delays_seconds(request.command)
+    if index < len(capacity_wait_delays_seconds):
+        delay_seconds = capacity_wait_delays_seconds[index]
         payload = _restore_prepared(
             session_factory,
             request,

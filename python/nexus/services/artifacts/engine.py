@@ -201,7 +201,6 @@ _WEB_SEARCH_STEP_PATHS = frozenset(
 _WEB_SEARCH_TOOL_ID = ToolId("web.search")
 _VISIBLE_SYNTHESIS_FIELD = "content_html"
 _CANCEL_POLL_INTERVAL_SECONDS = 0.25
-_CAPACITY_WAIT_DELAYS_SECONDS = (30, 60, 120, 300, 600)
 _MANIFEST_ADAPTER: TypeAdapter[InputManifestV1] = TypeAdapter(InputManifestV1)
 _FAILURE_CODE_READ_ADAPTER: TypeAdapter[ReadDossierBuildFailureCode] = TypeAdapter(
     ReadDossierBuildFailureCode
@@ -377,7 +376,7 @@ def _encode_dossier_preaccept_failure(
 
 def _capacity_wait_index(job: JobRow) -> int:
     value = job.payload.get("capacity_wait_index")
-    if type(value) is not int or not 0 <= value <= len(_CAPACITY_WAIT_DELAYS_SECONDS):
+    if type(value) is not int or value < 0:
         raise AssertionError("dossier job has an invalid capacity_wait_index")
     return value
 
@@ -1430,7 +1429,6 @@ async def _run_idea_resolution_step(
                         journal,
                     ),
                     capacity_wait_index=0,
-                    capacity_wait_delays_seconds=(),
                 ),
                 session_factory=get_session_factory(),
                 runtime=runtime,
@@ -2194,7 +2192,6 @@ async def _run_synthesis_step(
                         lock_dispatch=lock_dispatch,
                     ),
                     capacity_wait_index=_capacity_wait_index(job),
-                    capacity_wait_delays_seconds=_CAPACITY_WAIT_DELAYS_SECONDS,
                     streaming=True,
                 ),
                 session_factory=get_session_factory(),
@@ -2446,7 +2443,6 @@ async def _run_document_repair_step(
                     lock_dispatch=lock_dispatch,
                 ),
                 capacity_wait_index=_capacity_wait_index(job),
-                capacity_wait_delays_seconds=_CAPACITY_WAIT_DELAYS_SECONDS,
             ),
             session_factory=get_session_factory(),
             runtime=runtime,

@@ -29,23 +29,34 @@ class EphemeralRuntimePaths:
     root: Path
     working_directory: Path
     state_root_base: Path
+    temporary_directory: Path
 
 
 def create_ephemeral_runtime_paths(root: Path, scope: str) -> EphemeralRuntimePaths:
-    """Create one private runtime-state/cwd pair beneath the host tmpfs root."""
+    """Create one private runtime-state/cwd/tmp tree beneath the host tmpfs root."""
 
     if not scope or "/" in scope or scope in {".", ".."}:
         raise ValueError("Codex runtime scope must be one safe path component")
     runtime_root = root / f"{scope}-{uuid4().hex}"
     working_directory = runtime_root / "workspace"
     state_root_base = runtime_root / "state"
+    temporary_directory = runtime_root / "tmp"
     try:
         runtime_root.mkdir(mode=0o700)
         working_directory.mkdir(mode=0o700)
         state_root_base.mkdir(mode=0o700)
-        for path in (runtime_root, working_directory, state_root_base):
+        temporary_directory.mkdir(mode=0o700)
+        for path in (
+            runtime_root,
+            working_directory,
+            state_root_base,
+            temporary_directory,
+        ):
             metadata = path.lstat()
-            if not stat.S_ISDIR(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != 0o700:
+            if (
+                not stat.S_ISDIR(metadata.st_mode)
+                or stat.S_IMODE(metadata.st_mode) != 0o700
+            ):
                 raise RuntimeError("Codex ephemeral runtime directory is not private")
     except BaseException:
         shutil.rmtree(runtime_root, ignore_errors=True)
@@ -54,6 +65,7 @@ def create_ephemeral_runtime_paths(root: Path, scope: str) -> EphemeralRuntimePa
         root=runtime_root,
         working_directory=working_directory,
         state_root_base=state_root_base,
+        temporary_directory=temporary_directory,
     )
 
 
@@ -65,6 +77,7 @@ def remove_ephemeral_runtime_paths(paths: EphemeralRuntimePaths, *, root: Path) 
     if (
         paths.working_directory != paths.root / "workspace"
         or paths.state_root_base != paths.root / "state"
+        or paths.temporary_directory != paths.root / "tmp"
     ):
         raise RuntimeError("Codex ephemeral runtime paths changed ownership")
     shutil.rmtree(paths.root)
@@ -102,7 +115,9 @@ def sync_enrolled_auth_file(
             expected_identity.device,
             expected_identity.inode,
         ):
-            raise CredentialStateUnavailable("enrolled Codex credential changed identity")
+            raise CredentialStateUnavailable(
+                "enrolled Codex credential changed identity"
+            )
         try:
             os.fsync(descriptor)
         except OSError as error:
@@ -141,6 +156,48 @@ def require_writable_credential_mount(
     os.close(descriptor)
 
 
+def require_private_executable_runtime_mount(
+    path: Path,
+    *,
+    mountinfo_path: Path = Path("/proc/self/mountinfo"),
+) -> None:
+    """Require the private exec tmpfs needed by the pinned SDK launcher."""
+
+    try:
+        metadata = path.lstat()
+        resolved = path.resolve()
+        lines = mountinfo_path.read_text(encoding="ascii").splitlines()
+    except (OSError, UnicodeDecodeError) as error:
+        raise RuntimeError("Codex runtime mount evidence is unavailable") from error
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_IMODE(metadata.st_mode) != 0o700
+        or metadata.st_uid != os.geteuid()
+        or resolved != path
+    ):
+        raise RuntimeError("Codex runtime mount is not private")
+    matches: list[tuple[tuple[str, ...], int]] = []
+    for line in lines:
+        fields = tuple(line.split())
+        try:
+            separator = fields.index("-")
+        except ValueError:
+            continue
+        if len(fields) > separator + 1 and len(fields) >= 6 and fields[4] == str(path):
+            matches.append((fields, separator))
+    if len(matches) != 1:
+        raise RuntimeError("Codex runtime root must be one exact tmpfs mount")
+    fields, separator = matches[0]
+    options = frozenset(fields[5].split(","))
+    if (
+        fields[separator + 1] != "tmpfs"
+        or not {"rw", "nosuid", "nodev"}.issubset(options)
+        or "ro" in options
+        or "noexec" in options
+    ):
+        raise RuntimeError("Codex runtime tmpfs must be private and executable")
+
+
 def link_runtime_auth(
     enrolled_auth_file: Path,
     runtime: EphemeralRuntimePaths,
@@ -154,8 +211,13 @@ def link_runtime_auth(
         for directory in (profile_root.parent, profile_root):
             directory.chmod(0o700)
             metadata = directory.lstat()
-            if not stat.S_ISDIR(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != 0o700:
-                raise CredentialStateUnavailable("ephemeral Codex profile is not private")
+            if (
+                not stat.S_ISDIR(metadata.st_mode)
+                or stat.S_IMODE(metadata.st_mode) != 0o700
+            ):
+                raise CredentialStateUnavailable(
+                    "ephemeral Codex profile is not private"
+                )
         destination = profile_root / "auth.json"
         destination.symlink_to(enrolled_auth_file)
         validate_runtime_auth_link(destination, enrolled_auth_file)
@@ -163,7 +225,9 @@ def link_runtime_auth(
     except CredentialStateUnavailable:
         raise
     except OSError as error:
-        raise CredentialStateUnavailable("enrolled Codex credential could not be linked") from error
+        raise CredentialStateUnavailable(
+            "enrolled Codex credential could not be linked"
+        ) from error
 
 
 def validate_runtime_auth_link(path: Path, enrolled_auth_file: Path) -> None:
@@ -173,7 +237,9 @@ def validate_runtime_auth_link(path: Path, enrolled_auth_file: Path) -> None:
         metadata = path.lstat()
         target = Path(os.readlink(path))
     except OSError as error:
-        raise CredentialStateUnavailable("ephemeral Codex auth link is unavailable") from error
+        raise CredentialStateUnavailable(
+            "ephemeral Codex auth link is unavailable"
+        ) from error
     if not stat.S_ISLNK(metadata.st_mode) or target != enrolled_auth_file:
         raise CredentialStateUnavailable("ephemeral Codex auth link changed identity")
     validate_enrolled_auth_file(enrolled_auth_file)
@@ -215,14 +281,18 @@ def require_unenrolled_target(target: Path) -> None:
 
 def _open_enrolled_auth(path: Path, *, writable: bool = False) -> int:
     if not path.is_absolute() or Path(os.path.normpath(str(path))) != path:
-        raise CredentialStateUnavailable("Codex credential file must be normalized and absolute")
+        raise CredentialStateUnavailable(
+            "Codex credential file must be normalized and absolute"
+        )
     _reject_symlink_components(path.parent)
     try:
         initial = path.lstat()
         access = os.O_WRONLY if writable else os.O_RDONLY
         descriptor = os.open(path, access | os.O_CLOEXEC | os.O_NOFOLLOW)
     except OSError as error:
-        raise CredentialStateUnavailable("enrolled Codex credential is unavailable") from error
+        raise CredentialStateUnavailable(
+            "enrolled Codex credential is unavailable"
+        ) from error
     try:
         current = os.fstat(descriptor)
         if (
@@ -234,7 +304,9 @@ def _open_enrolled_auth(path: Path, *, writable: bool = False) -> int:
             or current.st_nlink != 1
             or not 0 < current.st_size <= MAX_CODEX_AUTH_BYTES
         ):
-            raise CredentialStateUnavailable("enrolled Codex credential has unsafe metadata")
+            raise CredentialStateUnavailable(
+                "enrolled Codex credential has unsafe metadata"
+            )
     except BaseException:
         os.close(descriptor)
         raise
@@ -246,7 +318,9 @@ def _read_bounded(descriptor: int) -> bytes:
     while chunk := os.read(descriptor, 16 * 1024):
         payload.extend(chunk)
         if len(payload) > MAX_CODEX_AUTH_BYTES:
-            raise CredentialStateUnavailable("enrolled Codex credential exceeds its byte bound")
+            raise CredentialStateUnavailable(
+                "enrolled Codex credential exceeds its byte bound"
+            )
     if not payload:
         raise CredentialStateUnavailable("enrolled Codex credential is empty")
     return bytes(payload)
@@ -287,7 +361,9 @@ def _prepare_private_parent(path: Path) -> None:
         or metadata.st_gid != os.getegid()
         or stat.S_IMODE(metadata.st_mode) != 0o700
     ):
-        raise RuntimeError("Codex credential-state root must be private and process-owned")
+        raise RuntimeError(
+            "Codex credential-state root must be private and process-owned"
+        )
     for directory in reversed(missing):
         directory.mkdir(mode=0o700)
     _reject_symlink_components(path)
@@ -299,7 +375,9 @@ def _prepare_private_parent(path: Path) -> None:
             or metadata.st_gid != os.getegid()
             or stat.S_IMODE(metadata.st_mode) != 0o700
         ):
-            raise RuntimeError("Codex credential parent must be private and process-owned")
+            raise RuntimeError(
+                "Codex credential parent must be private and process-owned"
+            )
 
 
 def _reject_symlink_components(path: Path) -> None:
@@ -311,4 +389,6 @@ def _reject_symlink_components(path: Path) -> None:
         except FileNotFoundError:
             return
         if stat.S_ISLNK(metadata.st_mode):
-            raise CredentialStateUnavailable("Codex credential path must not traverse symlinks")
+            raise CredentialStateUnavailable(
+                "Codex credential path must not traverse symlinks"
+            )

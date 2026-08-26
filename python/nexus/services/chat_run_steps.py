@@ -68,6 +68,7 @@ from nexus.services.tool_runtime.composition import (
 from nexus.services.tool_runtime.execution import (
     reconcile_uncertain_tool_completion,
     recover_chat_tool_execution_receipt,
+    stage_prepared_chat_tool_not_dispatched,
     stage_reconciled_chat_tool_terminal,
 )
 
@@ -420,6 +421,67 @@ class ChatStepRuntime:
         self.job = replace(locked_job, payload=payload)
         self.db.commit()
 
+    def stage_prepared_mcp_cancellation_terminals(self) -> None:
+        """Close admission-only MCP positions inside the cancelled terminal fold."""
+
+        run = lock_chat_run_for_update(self.db, self.run_id)
+        if run is None or run.status not in {"queued", "running"}:
+            self.db.rollback()
+            raise LostChatJobLease("Chat cancelled terminal lost its active run authority")
+        self.lock_active_attempt()
+        locked_job = get_job(self.db, self.execution_context.job_id)
+        if locked_job is None:
+            self.db.rollback()
+            raise LostChatJobLease(f"chat job {self.job.id} disappeared")
+        operation = compose_product_tool_runtime(None).operations["chat"]
+        validate_chat_tool_profile(run, operation)
+        payload = locked_job.payload
+        states = read_step_states(locked_job)
+        prepared: list[tuple[int, int, str, StepReplayState]] = []
+        for path, state in states.items():
+            match = re.fullmatch(r"generation/(\d+)/tool/(\d+)", path)
+            if (
+                match is None
+                or state.dispatch_phase is not Prepared
+                or not isinstance(state.tool_execution, Present)
+            ):
+                continue
+            generation_seq, tool_call_index = (int(value) for value in match.groups())
+            prepared.append((generation_seq, tool_call_index, path, state))
+
+        for generation_seq, tool_call_index, path, state in sorted(prepared):
+            generation_state = states.get(f"generation/{generation_seq}")
+            if generation_state is None or generation_state.dispatch_phase is not Uncertain:
+                self.db.rollback()
+                raise AssertionError("prepared MCP cancellation has no uncertain outer generation")
+            if state.generation_id != stable_generation_id(self.run_id, path):
+                self.db.rollback()
+                raise AssertionError("prepared MCP cancellation has a noncanonical generation id")
+            _assert_incomplete_mcp_entry_for_tool_state(
+                payload,
+                step_path=path,
+                state=state,
+            )
+            completed = stage_prepared_chat_tool_not_dispatched(
+                db=self.db,
+                operation=operation,
+                run=run,
+                tool_call_index=tool_call_index,
+                state=state,
+            )
+            payload = payload_with_step_state(payload, step_path=path, state=completed)
+
+        if payload != locked_job.payload and not update_running_job_payload(
+            self.db,
+            job_id=self.execution_context.job_id,
+            worker_id=self.execution_context.worker_id,
+            attempt_no=self.execution_context.attempt_no,
+            payload=payload,
+        ):
+            self.db.rollback()
+            raise LostChatJobLease(f"chat job {self.job.id} lost its lease")
+        self.job = replace(locked_job, payload=payload)
+
     def lock_active_attempt(self) -> None:
         """Lock this live claim into the caller's current effect transaction."""
         if not lock_running_job_claim(self.db, context=self.execution_context):
@@ -560,6 +622,117 @@ def _journal_tool_index(entry: dict[str, Any]) -> int:
     if type(value) is not int:
         raise AssertionError("chat MCP journal has an invalid entry")
     return value
+
+
+def _assert_incomplete_mcp_entry_for_tool_state(
+    payload: dict[str, Any],
+    *,
+    step_path: str,
+    state: StepReplayState,
+) -> None:
+    """Require one preserved outer admission before resolving non-dispatch."""
+
+    match = re.fullmatch(r"generation/(\d+)/tool/(\d+)", step_path)
+    if match is None or not isinstance(state.tool_execution, Present):
+        raise ValueError("Chat tool state has no canonical MCP position")
+    generation_seq, tool_index = (int(value) for value in match.groups())
+    raw_journal = payload.get("_agent_tool_calls", {})
+    if not isinstance(raw_journal, dict):
+        raise ValueError("Chat MCP journal is not an object")
+    matches = [
+        entry
+        for entry in raw_journal.values()
+        if isinstance(entry, dict)
+        and entry.get("generation_seq") == generation_seq
+        and entry.get("tool_index") == tool_index
+    ]
+    if len(matches) != 1:
+        raise ValueError("Chat tool state does not own one outer MCP admission")
+    entry = matches[0]
+    identity = state.tool_execution.value.identity
+    if (
+        entry.get("result") is not None
+        or entry.get("canonical_tool_id") != identity.tool_id
+        or entry.get("provider_wire_name") != identity.tool_id
+        or entry.get("digest") != identity.input_digest
+        or not isinstance(entry.get("provider_call_id"), str)
+        or type(entry.get("citation_ordinal")) is not int
+    ):
+        raise ValueError("Chat outer MCP admission differs from its prepared tool state")
+
+
+def reconcile_prepared_mcp_admission_not_dispatched(
+    db: Session,
+    *,
+    run_id: UUID,
+    step_path: str,
+) -> None:
+    """Close one proven-undispatched MCP admission without resolving its generation."""
+
+    try:
+        owner = LlmCallOwner(kind="chat_run", id=run_id)
+        lock_generation_owner_in_current_transaction(db, owner)
+        lock_chat_generation_admission_in_current_transaction(db)
+        run = lock_chat_run_for_update(db, run_id)
+        if run is None:
+            raise ValueError("reconciled chat run does not exist")
+        job = current_dead_job_for_payload(
+            db,
+            kind="chat_run",
+            expected_payload_match={"run_id": str(run_id)},
+        )
+        if job is None:
+            raise ValueError("chat run has no suspended job")
+        state = read_step_states(job).get(step_path)
+        if (
+            state is None
+            or state.dispatch_phase is not Prepared
+            or not isinstance(state.tool_execution, Present)
+        ):
+            raise ValueError("chat step is not a prepared MCP admission")
+        if state.generation_id != stable_generation_id(run_id, step_path):
+            raise ValueError("chat step has a noncanonical generation id")
+        tool_match = re.fullmatch(r"generation/(\d+)/tool/(\d+)", step_path)
+        if tool_match is None:
+            raise ValueError("prepared MCP admission occupies a non-tool Chat step")
+        generation_seq, tool_call_index = (int(value) for value in tool_match.groups())
+        generation_path = f"generation/{generation_seq}"
+        generation_state = read_step_states(job).get(generation_path)
+        if generation_state is None or generation_state.dispatch_phase is not Uncertain:
+            raise ValueError("prepared MCP admission has no uncertain outer generation")
+        if run.status not in {"queued", "running"}:
+            raise ValueError("reconciled chat result requires one active run")
+        operation = compose_product_tool_runtime(None).operations["chat"]
+        validate_chat_tool_profile(run, operation)
+        _assert_incomplete_mcp_entry_for_tool_state(
+            job.payload,
+            step_path=step_path,
+            state=state,
+        )
+        next_state = stage_prepared_chat_tool_not_dispatched(
+            db=db,
+            operation=operation,
+            run=run,
+            tool_call_index=tool_call_index,
+            state=state,
+        )
+        payload = payload_with_step_state(job.payload, step_path=step_path, state=next_state)
+        payload, incomplete = _repair_completed_mcp_receipts(
+            db,
+            run=run,
+            operation=operation,
+            payload=payload,
+        )
+        if incomplete:
+            raise AssertionError(
+                "prepared Chat tool did not produce its outer MCP receipt: " + ", ".join(incomplete)
+            )
+        if not replace_dead_job_payload(db, job_id=job.id, payload=payload):
+            raise AssertionError("suspended chat job changed while locked")
+        db.commit()
+    except BaseException:
+        db.rollback()
+        raise
 
 
 def reconcile_uncertain_chat_step(

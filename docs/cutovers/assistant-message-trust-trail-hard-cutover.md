@@ -10,13 +10,6 @@ Frontend presentation is owned by
 closed `AssistantDetails`, while consequential writes render through visible
 `AssistantWriteTrail`.
 
-> **Generation authority amendment (2026-08-25):** This document's
-> provider/model/key-mode/reasoning and pricing field inventory is historical
-> and non-authoritative. The trust trail now follows the fixed Codex plan and
-> usage facts defined by
-> [`codex-personal-generation-hard-cutover.md`](codex-personal-generation-hard-cutover.md);
-> it exposes neither provider selection nor price.
-
 **Superseded by default-library-virtualization-and-transient-state-pruning-hard-cutover.md
 (2026-07-17):** `message_retrieval_candidate_ledgers` and
 `message_rerank_ledgers` — named throughout this document (including the
@@ -35,8 +28,9 @@ vs. reload contract — is unchanged.
 ## 0. North star
 
 Every assistant message carries one durable, backend-built trust trail that
-answers: what prompt budget and context assembled this answer, what model/run
-executed it, which tools ran, which retrieval rows and ledgers were produced,
+answers: what prompt budget and context assembled this answer, what fixed
+profile/plan executed it, which tools ran, which retrieval rows and ledgers were
+produced,
 which retrievals became citation edges, which citation edges graduated into
 conversation context refs, and what terminal status/error/usage closed the run.
 
@@ -45,7 +39,8 @@ over the source-of-truth rows the backend already persists:
 `chat_prompt_assemblies`, `message_tool_calls`, `message_retrievals`,
 `message_retrieval_candidate_ledgers`, `message_rerank_ledgers`,
 `resource_edges(origin='citation')`, `chat_run_events(context_ref_added)`, and
-`chat_runs`. The frontend renders that read model inside assistant messages.
+`chat_runs`, plus the matching row exposed through the typed `llm_calls`
+reader. The frontend renders that read model inside assistant messages.
 Streaming mutates the same shape while the run is live; reload returns the same
 shape from the API. No trust fact exists only in React state.
 
@@ -87,8 +82,8 @@ live, the same facts must survive reload.
 - No retrieval telemetry in `message_document`; the message document is answer
   content only.
 - No frontend reconstruction of citation linkage from rendered `[N]` chips.
-- No raw prompt, hidden provider reasoning, API key material, or operator-only
-  `llm_calls` payloads in the product UI.
+- No raw prompt, hidden model reasoning, generation credential, host diagnostic,
+  or operator-only `llm_calls` payload in the product UI.
 - No compatibility code for old `message_document` retrieval-result blocks after
   the cutover migration.
 
@@ -178,8 +173,8 @@ assembly summaries, citation edges, and reference graduations.
 
 G5. Safe disclosure. The UI exposes metadata, statuses, source titles, snippets
 already eligible for citation cards, retrieval scores, selected/included flags,
-budget summaries, and linkage IDs. It does not expose raw hidden reasoning, raw
-API keys, full prompt text, or raw provider payloads.
+budget summaries, and linkage IDs. It does not expose raw hidden reasoning,
+generation credentials, full prompt text, or raw host/SDK payloads.
 
 G6. Consolidation. Remove telemetry duplication from `message_document`, remove
 top-level transient frontend tool/retrieval fields, and remove the standalone
@@ -200,8 +195,8 @@ N1. No post-hoc factual verifier, support-status classifier, or answer grader.
 N2. No raw prompt transcript UI. Prompt assembly is summarized through budgets,
 manifest entries, included IDs, dropped items, and safe context references.
 
-N3. No hidden provider reasoning disclosure. Provider reasoning artifacts stay
-provider-runtime continuity data, never product data.
+N3. No hidden reasoning disclosure. Native continuity artifacts and model
+reasoning content are never product data.
 
 N4. No generic observability platform. This cutover builds the product read
 model. OTel/export/vendor traces can be added later from the same persisted
@@ -232,7 +227,7 @@ Each assistant message renders:
 3. A closed `Details` disclosure below Sources and outside the answer text
    selection container.
 4. Expanded detail on demand:
-   - run/model/status summary;
+   - run/profile/plan/status summary;
    - prompt assembly budget/manifest summary;
    - ordered tool timeline;
    - retrieval rows grouped by tool call;
@@ -313,8 +308,10 @@ apps/web/src/components/chat/AssistantMessage.tsx
 
 The trust trail service reads, but does not mutate, these owners:
 
-- `chat_runs`: run status, provider/model/key-mode/reasoning-mode, terminal
-  error/usage fields already exposed through run responses.
+- `chat_runs`: profile snapshot, resolved model/effort snapshot, run status,
+  terminal error, and publication fields already exposed through run responses.
+- typed `llm_ledger` reader: matching plan id/revision and normalized usage;
+  the trust service never queries raw ledger columns.
 - `chat_prompt_assemblies`: prompt budget, manifest, included/dropped IDs,
   context refs.
 - `message_tool_calls`: tool timeline and status.
@@ -380,7 +377,6 @@ The trail exposes prompt assembly as a safe summary:
 - `cacheable_input_tokens_estimate`
 - `max_context_tokens`
 - `reserved_output_tokens`
-- `reserved_reasoning_tokens`
 - `input_budget_tokens`
 - `estimated_input_tokens`
 - `prompt_block_manifest`
@@ -390,8 +386,8 @@ The trail exposes prompt assembly as a safe summary:
 - `dropped_items`
 - `budget_breakdown`
 
-It does not expose the raw system prompt, raw full assembled prompt, provider
-request body, hidden reasoning, or API keys.
+It does not expose the raw system prompt, raw full assembled prompt, generation
+command/native request, hidden reasoning, or credentials.
 
 ### 7.7 Integrity notices
 
@@ -445,11 +441,11 @@ class AssistantTrustTrailOut(BaseModel):
 ```python
 class TrustRunOut(BaseModel):
     run_id: UUID
-    model_id: UUID
-    provider: str
-    model_name: str
-    reasoning_mode: str | None
-    key_mode: str | None
+    profile_id: str | None
+    plan_id: str | None
+    plan_revision: str | None
+    model_name: str | None
+    reasoning_effort: Presence[str]
     status: Literal["pending", "running", "complete", "error", "cancelled"]
     usage: dict[str, JsonValue] | None
     error_code: str | None
@@ -485,6 +481,9 @@ class TrustToolCallOut(BaseModel):
 
 `tool_name` is a string, not a two-value literal. Strictness belongs in the
 payload shape, not in pretending only search tools exist.
+
+`provider_request_ids` belongs only to retrieval/tool adapters such as Brave;
+it is not a generation-route or Codex diagnostic field.
 
 ### 8.5 Retrieval row
 
@@ -758,13 +757,15 @@ assembly, the trail must say so honestly.
 Citation edges remain the durable provenance edge. The trust trail reads them
 for message-local inspection and does not add resource graph mutations.
 
-### 12.5 LLM/provider runtime
+### 12.5 Generation boundary and ledger
 
-Hidden provider reasoning, encrypted reasoning content, provider raw payloads,
-and raw request bodies remain outside the product read model. `llm_calls` stays
-operator-queryable. A later observability export can map trust-trail rows and
-provider ledgers into traces, but the assistant-message product surface remains
-safe and typed.
+The trust trail composes with the fixed-plan generation contract only at its
+typed read boundary. It may show `profile_id`, plan id/revision, resolved
+model/effort, normalized usage, and safe terminal facts. It never exposes a
+route choice, price, credential, native continuity artifact, raw command,
+host/SDK diagnostic, or raw `llm_calls` row. The authoritative execution and
+ledger contract remains
+[`codex-personal-generation-hard-cutover.md`](codex-personal-generation-hard-cutover.md).
 
 ### 12.6 Search and retrieval
 
@@ -779,7 +780,7 @@ trail.
 
 Allowed in UI:
 
-- provider/model names;
+- product profile, plan id/revision, and resolved model/effort;
 - run status/error code;
 - token/budget summaries;
 - prompt block manifest metadata;
@@ -793,9 +794,10 @@ Allowed in UI:
 
 Not allowed in UI:
 
-- API keys or key fingerprints beyond existing key-mode labels;
-- hidden provider reasoning or encrypted reasoning blobs;
-- raw provider request/response payloads;
+- generation credentials or credential fingerprints;
+- hidden reasoning or native continuity artifacts;
+- raw generation commands, host frames, or SDK payloads;
+- route/provider selection or price;
 - raw full prompt text;
 - raw tool arguments/results that are not already safe retrieval/citation data;
 - stack traces or operator `error_detail`;
@@ -836,14 +838,20 @@ does not break selection/fork behavior.
 AC9. A failed run shows partial tool/retrieval trail and safe error code without
 hiding the answer.
 
-AC10. No UI displays hidden provider reasoning, raw prompts, API key material,
-or operator-only `llm_calls` details.
+AC10. No UI displays hidden reasoning, raw prompts, generation credentials,
+route/provider selection, price, host/SDK diagnostics, or operator-only
+`llm_calls` details.
 
 AC11. Live stream completion followed by reconcile does not clobber citations or
 trust facts.
 
 AC12. Reload after completion shows the same trust summary counts as the live
 completed message.
+
+AC13. Current runs show the profile, plan id/revision, resolved model/effort,
+and normalized usage from the fixed-plan snapshot and typed ledger reader; no
+removed provider, key-mode, reasoning-option, or cost field survives in either
+wire schema or UI.
 
 ---
 
@@ -969,7 +977,8 @@ D8. Integrity notices are ledger consistency notices, not truth evaluation.
 
 D9. Reconcile response wins after stream completion.
 
-D10. No raw provider reasoning, raw prompt, or operator ledger UI.
+D10. No hidden reasoning, raw prompt, generation route/price, or operator
+ledger UI.
 
 ---
 
@@ -995,10 +1004,10 @@ answer content. Hard cutover strips them.
 Rejected. They expose the same capability in another shape and force the UI to
 compose multiple APIs to explain one assistant message.
 
-### E. Display raw prompt/provider payloads
+### E. Display raw generation payloads
 
-Rejected. It is unsafe, noisy, and conflicts with the LLM module's provider
-reasoning boundary. The trail exposes safe summaries and linkage.
+Rejected. It is unsafe, noisy, and conflicts with the LLM module's generation
+boundary. The trail exposes safe summaries and linkage.
 
 ---
 

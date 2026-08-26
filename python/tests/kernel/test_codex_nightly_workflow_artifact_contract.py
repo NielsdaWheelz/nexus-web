@@ -465,6 +465,11 @@ def _assert_runner_security_contract() -> None:
         and environment.get("NEXUS_CODEX_HOSTED_SOURCE_SHA") == "${{ github.sha }}",
         "Codex nightly no longer binds hosted evidence to the checked-out source SHA",
     )
+    _require(
+        environment.get("NEXUS_CODEX_HOSTED_TEMPORARY_DIRECTORY")
+        == "/var/lib/nexus-codex-nightly/tmp",
+        "Codex nightly no longer owns its exact confined temporary directory",
+    )
     steps = job.get("steps")
     _require(isinstance(steps, list), "Codex nightly workflow steps are absent")
     action_uses = tuple(
@@ -497,6 +502,29 @@ def _assert_runner_security_contract() -> None:
     _require(
         "/sys/kernel/security/apparmor/profiles" not in commands,
         "Codex nightly requires privileged securityfs inspection from the runner account",
+    )
+    cleanup = _workflow_step("Scrub disposable Codex nightly state")
+    cleanup_command = cleanup.get("run")
+    _require(
+        cleanup.get("if") == "always()"
+        and isinstance(cleanup_command, str)
+        and 'test "$NEXUS_CODEX_HOSTED_TEMPORARY_DIRECTORY" = /var/lib/nexus-codex-nightly/tmp'
+        in cleanup_command
+        and 'find "$NEXUS_CODEX_HOSTED_TEMPORARY_DIRECTORY" -mindepth 1 -delete' in cleanup_command
+        and 'find "$NEXUS_CODEX_HOSTED_WORKING_DIRECTORY" -mindepth 1 -delete' in cleanup_command,
+        "Codex nightly no longer always scrubs its exact disposable runtime directories",
+    )
+    boundary = _workflow_step("Verify dedicated subscription state boundary")
+    boundary_command = boundary.get("run")
+    _require(
+        isinstance(boundary_command, str)
+        and 'test "$(stat -c \'%d\' "$NEXUS_CODEX_HOSTED_STATE_ROOT")" = '
+        '"$(stat -c \'%d\' "$NEXUS_CODEX_HOSTED_TEMPORARY_DIRECTORY")"'
+        in boundary_command
+        and 'test "$(stat -c \'%d\' "$NEXUS_CODEX_HOSTED_STATE_ROOT")" = '
+        '"$(stat -c \'%d\' "$NEXUS_CODEX_HOSTED_WORKING_DIRECTORY")"'
+        in boundary_command,
+        "Codex nightly no longer binds state, temporary, and workspace to one filesystem",
     )
 
 

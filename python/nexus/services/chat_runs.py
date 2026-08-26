@@ -166,7 +166,6 @@ CHAT_TEXT_FLUSH_INTERVAL_MS = 33
 CHAT_TEXT_FLUSH_MAX_CHARS = 512
 CHAT_TEXT_FLUSH_MAX_BYTES = 2048
 CHAT_CANCEL_POLL_INTERVAL_SECONDS = 0.25
-CHAT_CAPACITY_WAIT_DELAYS_SECONDS = (5, 10)
 
 
 class _ChatTextCoalescer:
@@ -972,7 +971,7 @@ async def _dispatch_generation_step(
         now = clock_db.scalar(text("SELECT clock_timestamp()"))
     if not isinstance(now, datetime):
         raise AssertionError("database clock did not return a timestamp")
-    grant = issue_chat_generation_grant(
+    issued_grant = issue_chat_generation_grant(
         user_id=run.owner_user_id,
         run_id=run.id,
         job_id=steps.execution_context.job_id,
@@ -984,7 +983,7 @@ async def _dispatch_generation_step(
         signing_key=settings.effective_agent_tool_grant_signing_key,
         now=now if now.tzinfo is not None else now.replace(tzinfo=UTC),
     )
-    command = draft.model_copy(update={"tool_grant": BearerToolGrant(token=grant)})
+    command = draft.model_copy(update={"tool_grant": BearerToolGrant(token=issued_grant.token)})
 
     capacity_wait_index = _chat_capacity_wait_index(steps.job)
     observed_text_parts: list[str] = []
@@ -1023,6 +1022,7 @@ async def _dispatch_generation_step(
         operation=operation,
         worker_id=steps.execution_context.worker_id,
         generation_id=generation_id,
+        grant_jti=issued_grant.jti,
         admitted_resource_uris=admitted_resource_uris,
     )
     cancel_signal = asyncio.Event()
@@ -1072,7 +1072,6 @@ async def _dispatch_generation_step(
                     lock_dispatch=steps.lock_dispatch,
                 ),
                 capacity_wait_index=capacity_wait_index,
-                capacity_wait_delays_seconds=CHAT_CAPACITY_WAIT_DELAYS_SECONDS,
                 streaming=True,
             ),
             session_factory=session_factory,
@@ -1127,7 +1126,7 @@ async def _dispatch_generation_step(
 
 def _chat_capacity_wait_index(job: JobRow) -> int:
     value = job.payload.get("capacity_wait_index")
-    if type(value) is not int or not 0 <= value <= len(CHAT_CAPACITY_WAIT_DELAYS_SECONDS):
+    if type(value) is not int or value < 0:
         raise AssertionError("chat job has an invalid capacity_wait_index")
     return value
 
@@ -1395,6 +1394,7 @@ def _finalize_cancelled_execution(
     usage: dict[str, JsonValue] | None = None,
     last_provider_event_seq: int | None = None,
 ) -> CancelledChatExecution:
+    steps.stage_prepared_mcp_cancellation_terminals()
     finalize_cancelled(
         db,
         run,

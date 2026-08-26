@@ -21,12 +21,6 @@ legacy document-chat owner and the `reader_context` field are gone. See
 > resolver, and stored historical turn subjects remain; `chat_run_turn_contexts`
 > keeps its subject/audit columns but drops its two reader-selection columns.
 
-> **Generation authority amendment (2026-08-25):** Any `model_id`, reasoning,
-> key-mode, provider, or profile-schema detail below is historical and
-> non-authoritative. `/chat-runs` now accepts only the fixed chat `profile_id`
-> defined by
-> [`codex-personal-generation-hard-cutover.md`](codex-personal-generation-hard-cutover.md).
-
 ## North Star
 
 Nexus can start, list, continue, search, cite, open, and inspect a conversation
@@ -190,7 +184,7 @@ G3. Delete `reader_context` from schemas, frontend request builders, queue
 payloads, prompt assembly, tests, and docs.
 
 G4. Keep `reader_selection` as a bind-only quote anchor, but persist enough
-durable identity for retry and trust inspection.
+durable identity for queue replay and trust inspection.
 
 G5. Render a dedicated primary `<subject>` prompt block before generic
 `<resources>`.
@@ -333,9 +327,7 @@ subject substitute.
 {
   "conversation_id": "...",
   "content": "...",
-  "model_id": "...",
-  "reasoning": "default",
-  "key_mode": "auto",
+  "profile_id": "balanced",
   "branch_anchor": { "kind": "none" },
   "chat_subject": {
     "resource_ref": "note_block:00000000-0000-4000-8000-000000000001"
@@ -347,6 +339,10 @@ subject substitute.
 Rules:
 
 - `chat_subject` is optional for ordinary continuation chat.
+- `profile_id` is the sole generation selection. It resolves through the fixed
+  Fast/Balanced/Deep policy in
+  [`codex-personal-generation-hard-cutover.md`](codex-personal-generation-hard-cutover.md);
+  no route, model, effort, credential, or retry option is accepted.
 - When present, it is parsed at the FastAPI boundary into a canonical
   `ResourceRef`.
 - The subject resource must be visible and chat-subject-capable.
@@ -357,8 +353,8 @@ Rules:
   transaction.
 - Default companion refs are attached in deterministic order after the subject.
 - The queue payload carries only `run_id`.
-- Retry and dead-letter finalization load durable run context from the database,
-  not request-only payload fields.
+- Queue replay loads durable run context from the database, not request-only
+  payload fields; dead-letter handling fabricates no run terminal.
 
 ### Prompt Rendering
 
@@ -683,9 +679,7 @@ class ChatRunCreateRequest(BaseModel):
     parent_message_id: UUID | None = None
     branch_anchor: BranchAnchorRequest = Field(default_factory=NoBranchAnchorRequest)
     content: str
-    model_id: UUID
-    reasoning: ReasoningMode
-    key_mode: LLMKeyMode
+    profile_id: ChatProfileId
     chat_subject: ChatSubjectRequest | None = None
     reader_selection: ReaderSelectionRequest | None = None
 ```
@@ -812,7 +806,8 @@ Rules:
   snapshots, trust trails, or retrieval telemetry.
 - Prompt assembly snapshots the rendered blocks in `chat_prompt_assemblies`;
   that remains the prompt ledger.
-- Retry loads this row and re-renders the same answer-determining anchors.
+- Queue replay loads this row and re-renders the same answer-determining
+  anchors.
 
 ## Chat Run Service Flow
 
@@ -822,15 +817,13 @@ Target sequence:
 
 1. Normalize idempotency key.
 2. Parse and resolve `chat_subject` through `resource_items.chat_subjects`.
-3. Validate model/key/rate/branch/reader-selection inputs.
+3. Validate profile/branch/reader-selection inputs.
 4. Compute idempotency hash including:
    - conversation id;
    - parent id;
    - branch anchor;
    - content;
-   - model id;
-   - reasoning;
-   - key mode;
+   - profile id;
    - consumed subject ref;
    - requested subject ref when different;
    - reader selection durable identity.
@@ -1384,8 +1377,9 @@ trust trail or branch semantics.
 
 ## Acceptance Criteria
 
-AC1. `ChatRunCreateRequest` accepts `chat_subject.resource_ref` and rejects
-malformed refs with `E_INVALID_REQUEST`.
+AC1. `ChatRunCreateRequest` accepts `chat_subject.resource_ref`, rejects
+malformed refs with `E_INVALID_REQUEST`, and accepts only `profile_id` for
+generation selection; `model_id`, reasoning, and key-mode fields are absent.
 
 AC2. `reader_context` is absent from backend schemas, frontend request types,
 request-body assembly, queue payloads, prompt assembly, tests, and docs.
@@ -1395,8 +1389,9 @@ conversation context edge to that note block and persists durable turn context.
 
 AC4. The idempotency hash changes when the consumed subject ref changes.
 
-AC5. Retrying a failed resource-chat run uses durable turn context, not queue
-payload fields.
+AC5. Replaying a resource-chat job uses durable turn context, not queue payload
+fields; it does not change the fixed profile or grant generation redispatch
+authority.
 
 AC6. Prompt assembly renders one `<subject>` block for a subject run.
 
@@ -1476,7 +1471,7 @@ AC32. No fallback alias from document chat to resource chat remains.
 3. Add durable run turn context.
    - Migration and model.
    - Persistence helpers.
-   - Retry loading path.
+   - Queue-replay loading path.
 
 4. Change `/chat-runs`.
    - Add `ChatSubjectRequest`.

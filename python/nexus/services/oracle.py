@@ -163,7 +163,6 @@ ORACLE_PHASES: tuple[OraclePhase, OraclePhase, OraclePhase] = (
     "ascent",
 )
 _SYNTHESIS_STEP_PATH = "synthesis"
-_CAPACITY_WAIT_DELAYS_SECONDS = (30, 60, 120, 300, 600)
 # Typed cause when the worker finds the corpus library/media/index/anchors not ready (§10.5).
 E_ORACLE_CORPUS_NOT_READY = "E_ORACLE_CORPUS_NOT_READY"
 ORACLE_URL_RE = re.compile(r"\b(?:https?://|www\.)", re.IGNORECASE)
@@ -1148,9 +1147,7 @@ async def execute_reading(
     if job.kind != "oracle_reading_generate" or job.payload.get("reading_id") != str(reading_id):
         raise AssertionError("oracle job payload identity changed")
     capacity_wait_index = job.payload.get("capacity_wait_index")
-    if type(capacity_wait_index) is not int or not 0 <= capacity_wait_index <= len(
-        _CAPACITY_WAIT_DELAYS_SECONDS
-    ):
+    if type(capacity_wait_index) is not int or capacity_wait_index < 0:
         raise AssertionError("oracle job has an invalid capacity_wait_index")
     generation_id = step_journal.stable_generation_id(
         reading_id,
@@ -1392,7 +1389,6 @@ async def execute_reading(
                         lock_dispatch=lock_dispatch,
                     ),
                     capacity_wait_index=capacity_wait_index,
-                    capacity_wait_delays_seconds=_CAPACITY_WAIT_DELAYS_SECONDS,
                 ),
                 session_factory=get_session_factory(),
                 runtime=runtime,

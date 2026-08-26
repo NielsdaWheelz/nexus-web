@@ -13,6 +13,7 @@ import {
 } from "@/lib/conversations/citationOut";
 import {
   DOSSIER_BUILD_FAILURE_CODES,
+  HISTORICAL_DOSSIER_BUILD_FAILURE_CODES,
   type DossierBuildFailureCode,
   type DossierBuildSummary,
   type DossierCancelledFacts,
@@ -24,6 +25,7 @@ import {
   type DossierRevision,
   type DossierRevisionSummary,
   type MediaAbstract,
+  type ReadDossierBuildFailureCode,
 } from "@/lib/dossiers/dossierControllerTypes";
 import {
   normalizeResourceActivation,
@@ -51,14 +53,30 @@ function decodeInteger(value: unknown, field: string): number {
   return value;
 }
 
+function isListedString<const Values extends readonly string[]>(
+  value: unknown,
+  values: Values,
+): value is Values[number] {
+  return (
+    typeof value === "string" && values.some((candidate) => candidate === value)
+  );
+}
+
+/** Decode only the current backend write vocabulary. */
 export function decodeFailureCode(value: unknown): DossierBuildFailureCode {
-  if (
-    typeof value === "string" &&
-    (DOSSIER_BUILD_FAILURE_CODES as readonly string[]).includes(value)
-  ) {
-    return value as DossierBuildFailureCode;
+  if (isListedString(value, DOSSIER_BUILD_FAILURE_CODES)) {
+    return value;
   }
-  return fail(`unknown failure code ${JSON.stringify(value)}`);
+  return fail(`unknown current failure code ${JSON.stringify(value)}`);
+}
+
+export function decodeReadDossierBuildFailureCode(
+  value: unknown,
+): ReadDossierBuildFailureCode {
+  if (isListedString(value, HISTORICAL_DOSSIER_BUILD_FAILURE_CODES)) {
+    return value;
+  }
+  return decodeFailureCode(value);
 }
 
 function decodeFreshness(value: unknown): DossierFreshness {
@@ -625,7 +643,7 @@ function decodeFailedFacts(raw: unknown): DossierFailedFacts {
     "failure facts",
   );
   return {
-    failureCode: decodeFailureCode(failure.failure_code),
+    failureCode: decodeReadDossierBuildFailureCode(failure.failure_code),
     detail: decodePresence(failure.detail, (v) => decodeString(v, "detail")),
     support: decodePresence(failure.support, decodeSupport),
   };

@@ -7,7 +7,6 @@
 import { dossierBuildFailureMessage } from "@/lib/dossiers/dossierErrorMessage";
 import type { DurableExecutionPhase } from "@/lib/api/executionAdvisory";
 import type {
-  DossierBuildFailureCode,
   DossierControllerState,
   DossierFreshness,
   DossierHistoryStatus,
@@ -16,6 +15,7 @@ import type {
   DossierRevisionSummary,
   DossierTerminalOutcome,
   MediaAbstract,
+  ReadDossierBuildFailureCode,
 } from "@/lib/dossiers/dossierControllerTypes";
 
 /** What occupies the reading area. */
@@ -58,7 +58,7 @@ export type DossierActivityView =
       progress: string | null;
     }
   | { kind: "Suspended" }
-  | { kind: "Failed"; code: DossierBuildFailureCode; message: string }
+  | { kind: "Failed"; code: ReadDossierBuildFailureCode; message: string }
   | { kind: "Cancelled" };
 
 export interface DossierControls {

@@ -16,6 +16,7 @@ from apps.codex_agent.credential_state import (
     enrolled_auth_identity,
     link_runtime_auth,
     remove_ephemeral_runtime_paths,
+    require_private_executable_runtime_mount,
     require_writable_credential_mount,
     sync_enrolled_auth_file,
 )
@@ -162,6 +163,26 @@ def test_runtime_credential_requires_an_exact_writable_file_mount(tmp_path: Path
         require_writable_credential_mount(credential, mountinfo_path=mountinfo)
 
 
+def test_runtime_launcher_requires_one_private_executable_tmpfs(tmp_path: Path) -> None:
+    runtime_root = tmp_path / "turns"
+    runtime_root.mkdir(mode=0o700)
+    mountinfo = tmp_path / "mountinfo"
+    mountinfo.write_text(
+        f"43 21 0:32 / {runtime_root} rw,nosuid,nodev - tmpfs tmpfs rw,size=16777216,mode=700\n",
+        encoding="ascii",
+    )
+
+    require_private_executable_runtime_mount(runtime_root, mountinfo_path=mountinfo)
+
+    mountinfo.write_text(
+        f"43 21 0:32 / {runtime_root} rw,nosuid,nodev,noexec - tmpfs tmpfs "
+        "rw,size=16777216,mode=700\n",
+        encoding="ascii",
+    )
+    with pytest.raises(RuntimeError, match="private and executable"):
+        require_private_executable_runtime_mount(runtime_root, mountinfo_path=mountinfo)
+
+
 def test_pinned_refresh_is_power_synced_in_place_and_runtime_state_is_discarded(
     tmp_path: Path,
 ) -> None:
@@ -174,6 +195,10 @@ def test_pinned_refresh_is_power_synced_in_place_and_runtime_state_is_discarded(
     runtime = create_ephemeral_runtime_paths(turn_root, "refresh")
     runtime_auth = link_runtime_auth(credential, runtime)
 
+    assert runtime.temporary_directory == runtime.root / "tmp"
+    assert runtime.temporary_directory.is_dir()
+    assert stat.S_IMODE(runtime.temporary_directory.stat().st_mode) == 0o700
+
     with runtime_auth.open("wb") as pinned_save:
         pinned_save.write(b"rotated-private-chatgpt-auth")
         pinned_save.flush()
@@ -183,6 +208,7 @@ def test_pinned_refresh_is_power_synced_in_place_and_runtime_state_is_discarded(
     remove_ephemeral_runtime_paths(runtime, root=turn_root)
     assert not runtime.working_directory.exists()
     assert not runtime.state_root_base.exists()
+    assert not runtime.temporary_directory.exists()
     assert not runtime.root.exists()
 
     replacement = tmp_path / "replacement.json"

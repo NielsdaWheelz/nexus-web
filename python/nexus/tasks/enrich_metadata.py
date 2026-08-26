@@ -92,8 +92,6 @@ logger = get_logger(__name__)
 
 _MAX_ERROR_DETAIL_LENGTH = 1000
 _LEASE_SECONDS = 300
-_CAPACITY_WAIT_DELAYS_SECONDS = (30, 60, 120, 300, 600)
-_MAX_CAPACITY_WAIT_INDEX = len(_CAPACITY_WAIT_DELAYS_SECONDS)
 _PRE_DISPATCH_SOURCE_CHANGED_DETAIL = "metadata request fingerprint changed before dispatch"
 _PRE_DISPATCH_MEDIA_MISSING_DETAIL = "metadata media no longer exists before dispatch"
 _PRE_DISPATCH_NOT_READY_DETAIL = "metadata media is no longer ready before dispatch"
@@ -333,8 +331,9 @@ def _capacity_wait_index(payload: dict[str, object]) -> int:
         # justify-defect: every enqueue and reschedule writes the wait index, so
         # a payload without it is hard-cut corruption, not a legacy shape.
         raise AssertionError("metadata job has no capacity_wait_index") from exc
-    # justify-defect: the only writers store a bounded non-negative int.
-    if type(value) is not int or not 0 <= value <= _MAX_CAPACITY_WAIT_INDEX:
+    # justify-defect: the only writers store a non-negative int; the generation
+    # execution owner validates it against the operation's fixed schedule.
+    if type(value) is not int or value < 0:
         raise AssertionError("metadata job has an invalid capacity_wait_index")
     return value
 
@@ -536,7 +535,6 @@ def enrich_metadata(
                     lock_dispatch=lock_dispatch,
                 ),
                 capacity_wait_index=capacity_wait_index,
-                capacity_wait_delays_seconds=_CAPACITY_WAIT_DELAYS_SECONDS,
             ),
             session_factory=factory,
             runtime=runtime,

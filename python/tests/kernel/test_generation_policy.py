@@ -95,6 +95,9 @@ def _assert_operation_catalog_has_exact_plans_capabilities_timeouts_and_input_bo
     for operation, expected in _OPERATION_EXPECTATIONS.items():
         entry = generation_policy.operation_policy(operation)
         assert _facts(entry) == expected
+        assert generation_policy.capacity_wait_delays_seconds(operation) == (
+            () if operation == "dossier_idea_resolve" else (30, 60, 120, 300, 600)
+        )
         assert entry.instructions_max_bytes == 32 * 1024
         assert entry.capability == "Synthesis"
         assert entry.stream.max_frames == 1_024
@@ -105,6 +108,7 @@ def _assert_operation_catalog_has_exact_plans_capabilities_timeouts_and_input_bo
 
 def _assert_chat_is_three_typed_profiles_with_chat_tools_limits() -> None:
     assert set(generation_policy.CHAT_PROFILES) == {"fast", "balanced", "deep"}
+    assert generation_policy.capacity_wait_delays_seconds("chat") == (5, 10)
     assert {
         profile_id: generation_policy.chat_policy(profile_id).plan_id
         for profile_id in generation_policy.CHAT_PROFILES

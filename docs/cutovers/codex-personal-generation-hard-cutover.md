@@ -8,6 +8,9 @@
 
 **Open questions:** none
 
+**Change report:**
+[codex-personal-generation-hard-cutover-change-report.md](codex-personal-generation-hard-cutover-change-report.md)
+
 The hard-cut source and deterministic proof portfolio are implemented. This
 status does not waive §10: production acceptance still requires the protected
 four-plan nightly plus fresh same-SHA capacity and target-host evidence.
@@ -245,8 +248,16 @@ Ownership laws:
 - The host owns SDK construction, the exact writable enrolled credential file
   (`NEXUS_CODEX_CREDENTIAL_FILE`; ambient `CODEX_HOME` or `OPENAI_API_KEY` in
   the service environment is a startup defect), ChatGPT auth readiness, and a
-  fresh per-turn tmpfs root containing an empty model cwd plus ephemeral Codex
-  runtime state. The runtime profile contains only an absolute link to that
+  fresh per-turn root on the exact private executable
+  `/run/nexus-codex-turns` tmpfs containing an empty model cwd, ephemeral Codex
+  runtime state, and a private temporary directory. The exec exception exists
+  only because the pinned SDK publishes its private supervisor beside profile
+  state. The entire bounded disposable root therefore inherits exec at the
+  outer mount; the inner bwrap/seccomp policy confines model-writable paths,
+  general `/tmp` stays on a separate `noexec` tmpfs, and startup proves the real
+  SDK launcher path before serving. The pinned adapter sets
+  `TMPDIR` to that directory and configures Codex workspace-write to exclude
+  bare `/tmp`. The runtime profile contains only an absolute link to that
   exact bind. Enrollment installs `auth.json` once; pinned Codex refreshes that
   artifact in place, and the host deletes the complete per-turn root after
   close. The host also owns
@@ -843,6 +854,11 @@ owner journal:
   they never re-query mutable retrieval, persist raw prompts, accept an
   operator-supplied command, or fabricate ledger facts merely to enable
   attachment. There is no automatic reconciliation path.
+- User cancellation may abandon an uncertain outer Chat generation, but before
+  its terminal fold clears the job journal it atomically terminalizes every
+  exact admission-only `Prepared` MCP position as a zero-attempt failure. It
+  never redispatches the tool, fabricates an outer receipt, or reclassifies an
+  `Uncertain` tool position.
 - `Completed` replay reuses the recorded terminal and republishes only through
   the domain owner's idempotent path.
 - The MCP client and Nexus add no tool-call retry. Exact duplicate protocol
@@ -1039,7 +1055,7 @@ owned real-UDS process under `python/tests/service/`, not a separate level.
 | Plan policy eval | corpus version, baselines, and pins match the shipped policy revision | llm-eval / FULL |
 | Intent + wire algebra | strict tagged round trip; unknown fields/revisions/operations/events and a missing terminal are rejected | kernel-python / PR |
 | UDS transport | bounded NDJSON, contiguous sequence, terminal-last, capability gating, per-capability frame budgets; synthesis rejects tool events | service / PR |
-| Host lifecycle | one session/turn, correct auth root, built-ins off, exact MCP config/headers, monotonic policy abort, cancel endpoint, pre-start and response-start ownership, cancellation-resistant bounded close, credential-sync fail-closed, and cleanup on every terminal/disconnect | service / PR |
+| Host lifecycle | one session/turn, exact private executable runtime mount plus general `noexec` `/tmp`, real SDK startup, correct auth root, built-ins off, exact MCP config/headers, monotonic policy abort, cancel endpoint, pre-start and response-start ownership, cancellation-resistant bounded close, credential-sync fail-closed, and cleanup on every terminal/disconnect | kernel-python + service + release / PR and release |
 | Host contention | a background dispatch behind a full-length chat turn reschedules within budget, never hard-fails; a chat dispatch against a busy host surfaces `capacity_unavailable` with rerun; an interactive-lane dispatch reaches the host socket | service / PR |
 | Execution + ledger | real Postgres and the real worker process prove dispatch-once, completed replay, pre-accept reschedule, accepted-loss uncertainty, and exactly one ledger row, with the Codex peer as a protocol-valid loopback process behind the production client | service / PR |
 | Journal coverage | every catalog operation checkpoints `Uncertain` before dispatch and refuses a second dispatch under a replayed identity | service / PR |

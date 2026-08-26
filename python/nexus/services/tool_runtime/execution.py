@@ -29,6 +29,7 @@ from llm_tools import (
     HandlerSuccess,
     InvocationPosition,
     NoDeclaredError,
+    ParsedJson,
     PlanCatalogView,
     PositionState,
     Principal,
@@ -46,6 +47,7 @@ from llm_tools import (
     ToolId,
     ToolResult,
     canonical_json_bytes,
+    raw_input_digest,
     render_prompt,
 )
 from llm_tools import (
@@ -91,6 +93,8 @@ from nexus.services.durable_step_journal import (
     ToolExecutionState,
     Uncertain,
     checkpoint_step_state,
+    decode_step_states,
+    payload_with_step_state,
     read_step_states,
     stable_generation_id,
 )
@@ -341,6 +345,183 @@ def reconcile_uncertain_tool_completion(
         }
     )
     return StepReplayState.model_validate(completed.model_dump(mode="python"))
+
+
+def _reservation_is_within_run_limits(
+    states: Sequence[StepReplayState],
+    *,
+    limits: RunLimits,
+    reservation: ToolExecutionReservation,
+) -> bool:
+    accepted: list[ToolExecutionReservation] = []
+    in_flight = 0
+    for state in states:
+        if not isinstance(state.tool_execution, Present):
+            continue
+        tool = state.tool_execution.value
+        if not isinstance(tool.reservation, Present) or not tool.reservation.value.accepted:
+            continue
+        accepted.append(tool.reservation.value)
+        if state.dispatch_phase is Uncertain:
+            in_flight += 1
+    return (
+        sum(item.calls for item in accepted) + reservation.calls <= limits.max_calls
+        and sum(item.input_bytes for item in accepted) + reservation.input_bytes
+        <= limits.max_input_bytes
+        and sum(item.max_attempts for item in accepted) + reservation.max_attempts
+        <= limits.max_external_attempts
+        and sum(item.max_output_bytes for item in accepted) + reservation.max_output_bytes
+        <= limits.max_output_bytes
+        and in_flight < limits.max_in_flight
+    )
+
+
+def stage_chat_tool_pre_dispatch_admission(
+    *,
+    db: Session,
+    operation: FrozenToolOperation,
+    run: ChatRun,
+    payload: dict[str, Any],
+    durable_step_path: str,
+    tool_call_index: int,
+    tool_id: ToolId,
+    input_digest: str,
+    arguments: Mapping[str, Any],
+    provider_wire_name: str,
+) -> dict[str, Any]:
+    """Stage the exact executor-owned pre-dispatch position without committing.
+
+    The MCP authority owns the surrounding lease-fenced transaction. Keeping
+    this state, the current tool row, and its already-staged admission events in
+    that transaction closes the admission-before-``ToolExecutor.occupy`` crash
+    window while leaving dispatch and terminalization with the executor runtime.
+    """
+
+    if tool_call_index < 1 or durable_step_path.rsplit("/", 1)[-1] != str(tool_call_index):
+        raise ValueError("Chat durable position differs from its tool-call index")
+    if provider_wire_name != str(tool_id):
+        raise ValueError("Chat MCP provider name differs from its canonical tool id")
+    if input_digest != raw_input_digest(ParsedJson(dict(arguments))):
+        raise ValueError("Chat MCP input digest differs from its exact argument envelope")
+    states = decode_step_states(payload)
+    if durable_step_path in states:
+        raise ValueError("Chat MCP admission collided with an occupied durable position")
+    binding = operation.plan.catalog_view.binding(tool_id)
+    grant = operation.plan.grant(tool_id)
+    reservation = ToolExecutionReservation(
+        calls=1,
+        input_bytes=len(canonical_json_bytes({"type": "ParsedJson", "value": dict(arguments)})),
+        max_attempts=grant.limits.max_attempts,
+        max_output_bytes=grant.limits.max_output_bytes,
+        accepted=False,
+    )
+    reservation = reservation.model_copy(
+        update={
+            "accepted": _reservation_is_within_run_limits(
+                tuple(states.values()),
+                limits=operation.profile.run_limits,
+                reservation=reservation,
+            )
+        }
+    )
+    identity = ToolExecutionIdentity(
+        tool_id=str(tool_id),
+        tool_contract_revision=binding.spec.tool_contract_revision,
+        policy_revision=binding.policy_revision,
+        plan_revision=str(operation.plan.plan_revision),
+        input_digest=input_digest,
+        replay_policy=_journal_policy(binding.replay_policy),
+    )
+    state = StepReplayState(
+        generation_id=stable_generation_id(run.id, durable_step_path),
+        dispatch_phase=Prepared,
+        request_fingerprint=_PRESENT_STR(value=input_digest),
+        terminal_result=absent(),
+        tool_execution=_PRESENT_TOOL_EXECUTION(
+            value=ToolExecutionState(
+                identity=identity,
+                reservation=_PRESENT_TOOL_RESERVATION(value=reservation),
+            )
+        ),
+    )
+    record_identity = current_tool_record_identity(
+        canonical_tool_id=str(tool_id),
+        canonical_input_sha256=input_digest,
+        binding_policy_revision=binding.policy_revision,
+    )
+    tool_call_id = persist_tool_call_start(
+        db,
+        run=run,
+        tool_call_index=tool_call_index,
+        identity=record_identity,
+        provider_wire_name=provider_wire_name,
+        scope=(
+            "assistant_write" if binding.spec.effect is ToolEffect.Write else "conversation_context"
+        ),
+        requested_types=[],
+    )
+    bind_provider_tool_call_events(
+        db,
+        run=run,
+        tool_call_index=tool_call_index,
+        tool_call_id=tool_call_id,
+    )
+    return payload_with_step_state(payload, step_path=durable_step_path, state=state)
+
+
+def stage_prepared_chat_tool_not_dispatched(
+    *,
+    db: Session,
+    operation: FrozenToolOperation,
+    run: ChatRun,
+    tool_call_index: int,
+    state: StepReplayState,
+) -> StepReplayState:
+    """Terminalize a proven pre-dispatch Chat position without effect I/O."""
+
+    if state.dispatch_phase is not Prepared or not isinstance(state.tool_execution, Present):
+        raise ValueError("only a prepared Chat tool position is proven not dispatched")
+    execution = state.tool_execution.value
+    identity = execution.identity
+    _assert_operation_identity(operation, identity)
+    if (
+        not isinstance(state.request_fingerprint, Present)
+        or state.request_fingerprint.value != identity.input_digest
+        or isinstance(state.terminal_result, Present)
+        or not isinstance(execution.reservation, Present)
+        or isinstance(execution.dispatch_claim, Present)
+        or isinstance(execution.settlement, Present)
+    ):
+        raise ValueError("prepared Chat tool position is not a non-dispatch proof")
+    reservation = execution.reservation.value
+    error_type = "DeadlineExceeded" if reservation.accepted else "BudgetExceeded"
+    result: ToolResult = {"type": "Failure", "error": {"type": error_type}}
+    raw_result = canonical_json_bytes(result).decode("utf-8")
+    settlement = ToolExecutionSettlement(
+        actual_attempts=0,
+        actual_output_bytes=len(raw_result.encode("utf-8")) if reservation.accepted else 0,
+    )
+    completed = state.model_copy(
+        update={
+            "dispatch_phase": Completed,
+            "terminal_result": _PRESENT_STR(value=raw_result),
+            "tool_execution": _PRESENT_TOOL_EXECUTION(
+                value=execution.model_copy(
+                    update={"settlement": _PRESENT_TOOL_SETTLEMENT(value=settlement)}
+                )
+            ),
+        }
+    )
+    completed = StepReplayState.model_validate(completed.model_dump(mode="python"))
+    _stage_chat_tool_terminal_for_reconciliation(
+        db=db,
+        operation=operation,
+        run=run,
+        tool_call_index=tool_call_index,
+        identity=identity,
+        result=result,
+    )
+    return completed
 
 
 class _DurableBudgetState:
@@ -841,27 +1022,17 @@ class NexusPositionRecorder:
         job = get_job(self.db, self.job_context.job_id)
         if job is None:
             return False
-        accepted: list[ToolExecutionReservation] = []
-        in_flight = 0
-        for state in read_step_states(job).values():
-            if not isinstance(state.tool_execution, Present):
-                continue
-            tool = state.tool_execution.value
-            if not isinstance(tool.reservation, Present) or not tool.reservation.value.accepted:
-                continue
-            accepted.append(tool.reservation.value)
-            if state.dispatch_phase is Uncertain:
-                in_flight += 1
-        limits = self.budgets.limits
-        return (
-            sum(item.calls for item in accepted) + reservation.calls <= limits.max_calls
-            and sum(item.input_bytes for item in accepted) + reservation.input_bytes
-            <= limits.max_input_bytes
-            and sum(item.max_attempts for item in accepted) + reservation.max_attempts
-            <= limits.max_external_attempts
-            and sum(item.max_output_bytes for item in accepted) + reservation.max_output_bytes
-            <= limits.max_output_bytes
-            and in_flight < limits.max_in_flight
+        proposed = ToolExecutionReservation(
+            calls=reservation.calls,
+            input_bytes=reservation.input_bytes,
+            max_attempts=reservation.max_attempts,
+            max_output_bytes=reservation.max_output_bytes,
+            accepted=False,
+        )
+        return _reservation_is_within_run_limits(
+            tuple(read_step_states(job).values()),
+            limits=self.budgets.limits,
+            reservation=proposed,
         )
 
     def _validate_settlement(
@@ -1224,6 +1395,28 @@ def stage_reconciled_chat_tool_terminal(
     binding = _assert_operation_identity(operation, identity)
     if binding.replay_policy is not PortableReplayPolicy.BilledOnce:
         raise ValueError("only BilledOnce Chat tools accept reconciled terminals")
+    _stage_chat_tool_terminal_for_reconciliation(
+        db=db,
+        operation=operation,
+        run=run,
+        tool_call_index=tool_call_index,
+        identity=identity,
+        result=result,
+    )
+
+
+def _stage_chat_tool_terminal_for_reconciliation(
+    *,
+    db: Session,
+    operation: FrozenToolOperation,
+    run: ChatRun,
+    tool_call_index: int,
+    identity: ToolExecutionIdentity,
+    result: ToolResult,
+) -> None:
+    """Use the live Chat projection for one already-validated operator terminal."""
+
+    binding = _assert_operation_identity(operation, identity)
     if tool_call_index < 1:
         raise ValueError("Chat tool-call index must be positive")
     stored_run = db.get(ChatRun, run.id)
@@ -1306,7 +1499,11 @@ def stage_reconciled_chat_tool_terminal(
         provider_wire_name=identity.tool_id,
         provider_arguments=None,
     )
-    audit = _AuditProjection(scope="conversation_context")
+    audit = _AuditProjection(
+        scope=(
+            "assistant_write" if binding.spec.effect is ToolEffect.Write else "conversation_context"
+        )
+    )
     if identity.tool_id == "web.search":
         audit = _build_web_search_audit(
             db,
@@ -2530,7 +2727,9 @@ __all__ = [
     "chat_tool_execution_receipt",
     "make_chat_execution_context",
     "make_durable_execution_context",
+    "stage_prepared_chat_tool_not_dispatched",
     "reconcile_uncertain_tool_completion",
     "recover_chat_tool_execution_receipt",
+    "stage_chat_tool_pre_dispatch_admission",
     "stage_reconciled_chat_tool_terminal",
 ]

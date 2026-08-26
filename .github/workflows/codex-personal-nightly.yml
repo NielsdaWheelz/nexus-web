@@ -23,6 +23,7 @@ jobs:
       NEXUS_CODEX_HOSTED_CANARY: "1"
       NEXUS_CODEX_HOSTED_PROFILE: codex-personal
       NEXUS_CODEX_HOSTED_STATE_ROOT: /var/lib/nexus-codex-nightly/state
+      NEXUS_CODEX_HOSTED_TEMPORARY_DIRECTORY: /var/lib/nexus-codex-nightly/tmp
       NEXUS_CODEX_HOSTED_WORKING_DIRECTORY: /var/lib/nexus-codex-nightly/cwd
       NEXUS_CODEX_HOSTED_SOURCE_SHA: ${{ github.sha }}
 
@@ -52,17 +53,35 @@ jobs:
           test "$(stat -c '%u:%g:%a' /etc/apparmor.d/nexus-codex-nightly-bwrap)" = "0:0:644"
           cmp deploy/hetzner/nexus-codex-nightly-bwrap.apparmor /etc/apparmor.d/nexus-codex-nightly-bwrap
           test -d "$NEXUS_CODEX_HOSTED_STATE_ROOT"
+          test -d "$NEXUS_CODEX_HOSTED_TEMPORARY_DIRECTORY"
           test -d "$NEXUS_CODEX_HOSTED_WORKING_DIRECTORY"
           test "$(stat -c '%u:%a' "$NEXUS_CODEX_HOSTED_STATE_ROOT")" = "$(id -u):700"
+          test "$(stat -c '%u:%a' "$NEXUS_CODEX_HOSTED_TEMPORARY_DIRECTORY")" = "$(id -u):700"
           test "$(stat -c '%u:%a' "$NEXUS_CODEX_HOSTED_WORKING_DIRECTORY")" = "$(id -u):700"
+          test "$(stat -c '%d' "$NEXUS_CODEX_HOSTED_STATE_ROOT")" = "$(stat -c '%d' "$NEXUS_CODEX_HOSTED_TEMPORARY_DIRECTORY")"
+          test "$(stat -c '%d' "$NEXUS_CODEX_HOSTED_STATE_ROOT")" = "$(stat -c '%d' "$NEXUS_CODEX_HOSTED_WORKING_DIRECTORY")"
+          test -z "$(find "$NEXUS_CODEX_HOSTED_TEMPORARY_DIRECTORY" -mindepth 1 -print -quit)"
           test -z "$(find "$NEXUS_CODEX_HOSTED_WORKING_DIRECTORY" -mindepth 1 -print -quit)"
 
       - name: Verify bundled Codex Linux sandbox
-        run: python/.venv/bin/python -m apps.codex_agent.sandbox_health
+        run: |
+          NEXUS_CODEX_WORKING_DIRECTORY_ROOT="$NEXUS_CODEX_HOSTED_WORKING_DIRECTORY" \
+            python/.venv/bin/python -m apps.codex_agent.sandbox_health
 
       - name: Run protected Codex subscription generation canary
         id: canary
         run: ./scripts/test codex-nightly
+
+      - name: Scrub disposable Codex nightly state
+        if: always()
+        run: |
+          set -euo pipefail
+          test "$NEXUS_CODEX_HOSTED_TEMPORARY_DIRECTORY" = /var/lib/nexus-codex-nightly/tmp
+          test "$NEXUS_CODEX_HOSTED_WORKING_DIRECTORY" = /var/lib/nexus-codex-nightly/cwd
+          find "$NEXUS_CODEX_HOSTED_TEMPORARY_DIRECTORY" -mindepth 1 -delete
+          find "$NEXUS_CODEX_HOSTED_WORKING_DIRECTORY" -mindepth 1 -delete
+          test -z "$(find "$NEXUS_CODEX_HOSTED_TEMPORARY_DIRECTORY" -mindepth 1 -print -quit)"
+          test -z "$(find "$NEXUS_CODEX_HOSTED_WORKING_DIRECTORY" -mindepth 1 -print -quit)"
 
       - name: Stage bounded Codex nightly artifact
         if: always()

@@ -15,11 +15,13 @@ from apps.codex_agent.auth_environment import (
     reject_ambient_codex_home,
     reject_subscription_api_key_auth,
 )
+from apps.codex_agent.confined_runtime import create_confined_runtime
 from apps.codex_agent.credential_state import (
     create_ephemeral_runtime_paths,
     enrolled_auth_identity,
     link_runtime_auth,
     remove_ephemeral_runtime_paths,
+    require_private_executable_runtime_mount,
     require_writable_credential_mount,
     sync_enrolled_auth_file,
     validate_runtime_auth_link,
@@ -56,9 +58,10 @@ async def run() -> None:
     reject_ambient_codex_home()
     _prepare_working_directory_root(working_directory_root)
     _validate_directories(socket_path, working_directory_root)
+    require_private_executable_runtime_mount(working_directory_root)
     require_writable_credential_mount(credential_file)
     _remove_proven_stale_socket(socket_path)
-    sandbox_health.check()
+    sandbox_health.check(working_directory_root)
     versions = resolve_runtime_versions()
     probe_paths = create_ephemeral_runtime_paths(working_directory_root, "startup-auth")
     credential_identity = enrolled_auth_identity(credential_file)
@@ -78,7 +81,7 @@ async def run() -> None:
             remove_ephemeral_runtime_paths(probe_paths, root=working_directory_root)
 
     def runtime_factory(config: AgentRuntimeConfig) -> AgentRuntime:
-        return AgentRuntime(config)
+        return create_confined_runtime(config)
 
     app = create_codex_agent_app(
         runtime_factory=runtime_factory,
@@ -115,7 +118,7 @@ async def run() -> None:
 
 
 async def _probe_chatgpt_auth(state_root: Path) -> None:
-    runtime = AgentRuntime(AgentRuntimeConfig(state_root_base=state_root))
+    runtime = create_confined_runtime(AgentRuntimeConfig(state_root_base=state_root))
     try:
         await runtime.list_sessions(
             SessionQuery(
@@ -147,7 +150,9 @@ def _validate_directories(
     socket_path: Path,
     working_directory_root: Path,
 ) -> None:
-    _validate_owned_directory(socket_path.parent, expected_mode=0o770, label="socket directory")
+    _validate_owned_directory(
+        socket_path.parent, expected_mode=0o770, label="socket directory"
+    )
     _validate_owned_directory(
         working_directory_root,
         expected_mode=0o700,
@@ -156,7 +161,9 @@ def _validate_directories(
     if any(entry != socket_path for entry in socket_path.parent.iterdir()):
         raise RuntimeError("Codex agent socket directory may contain only its socket")
     if any(working_directory_root.iterdir()):
-        raise RuntimeError("Codex agent working-directory root must be empty at startup")
+        raise RuntimeError(
+            "Codex agent working-directory root must be empty at startup"
+        )
 
 
 def _prepare_working_directory_root(path: Path) -> None:
@@ -225,7 +232,9 @@ def _remove_proven_stale_socket(path: Path) -> None:
         or current.st_ino != initial.st_ino
         or not stat.S_ISSOCK(current.st_mode)
     ):
-        raise RuntimeError("Codex agent socket identity changed during stale-socket recovery")
+        raise RuntimeError(
+            "Codex agent socket identity changed during stale-socket recovery"
+        )
     path.unlink()
 
 
@@ -236,7 +245,9 @@ def _unlink_owned_socket(path: Path, identity: tuple[int, int] | None) -> None:
         current = path.lstat()
     except FileNotFoundError:
         return
-    if (current.st_dev, current.st_ino) != identity or not stat.S_ISSOCK(current.st_mode):
+    if (current.st_dev, current.st_ino) != identity or not stat.S_ISSOCK(
+        current.st_mode
+    ):
         return
     path.unlink()
 

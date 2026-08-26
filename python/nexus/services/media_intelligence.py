@@ -112,7 +112,6 @@ logger = get_logger(__name__)
 MEDIA_UNIT_OPERATION = "media_summary"
 _MEDIA_UNIT_JOB_KIND = "media_unit_build"
 _MEDIA_UNIT_STEP_PATH = "synthesis"
-_CAPACITY_WAIT_DELAYS_SECONDS = (30, 60, 120, 300, 600)
 # Budget the candidate context to leave output headroom inside the model window.
 # Approximated in characters (~4 chars/token); chunks past the budget are dropped
 # with a warning rather than silently capped.
@@ -801,7 +800,7 @@ def _complete_prepared_media_unit_without_dispatch(
 
 def _generation_capacity_wait_index(job: JobRow) -> int:
     value = job.payload.get("capacity_wait_index")
-    if type(value) is not int or not 0 <= value <= len(_CAPACITY_WAIT_DELAYS_SECONDS):
+    if type(value) is not int or value < 0:
         raise AssertionError("media unit job has an invalid capacity_wait_index")
     return value
 
@@ -1345,7 +1344,6 @@ async def run_media_unit_build(
                         lock_dispatch=lock_dispatch,
                     ),
                     capacity_wait_index=_generation_capacity_wait_index(job),
-                    capacity_wait_delays_seconds=_CAPACITY_WAIT_DELAYS_SECONDS,
                 ),
                 session_factory=get_session_factory(),
                 runtime=runtime,

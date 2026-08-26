@@ -26,6 +26,7 @@ from uuid import UUID
 
 import pytest
 import uvicorn
+from apps.codex_agent.confined_runtime import create_confined_runtime
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -37,7 +38,6 @@ from mcp.types import CallToolResult, ListToolsResult, TextContent, Tool
 from provider_runtime import Present
 from provider_runtime.agent_runtime import (
     AgentPermissionRequest,
-    AgentRuntime,
     AgentRuntimeConfig,
     AgentTerminal,
     AgentToolUse,
@@ -361,6 +361,14 @@ def test_codex_personal_generation_canary_records_exact_four_plan_pairs() -> Non
         os.environ.get("NEXUS_CODEX_HOSTED_PROFILE") == "codex-personal", "wrong hosted profile"
     )
     state_root = _owned_directory("NEXUS_CODEX_HOSTED_STATE_ROOT", empty=False)
+    temporary_directory = _owned_directory(
+        "NEXUS_CODEX_HOSTED_TEMPORARY_DIRECTORY",
+        empty=True,
+    )
+    _require(
+        temporary_directory == state_root.parent / "tmp",
+        "hosted temporary directory differs from the confined runtime layout",
+    )
     cwd = _owned_directory("NEXUS_CODEX_HOSTED_WORKING_DIRECTORY", empty=True)
     sdk_version = importlib.metadata.version("openai-codex")
     runtime_version = importlib.metadata.version("openai-codex-cli-bin")
@@ -474,7 +482,7 @@ def test_codex_personal_generation_canary_records_exact_four_plan_pairs() -> Non
 
 def _probe_subscription_auth(state_root: Path) -> None:
     async def probe() -> None:
-        runtime = AgentRuntime(AgentRuntimeConfig(state_root_base=state_root))
+        runtime = create_confined_runtime(AgentRuntimeConfig(state_root_base=state_root))
         try:
             await runtime.list_sessions(
                 SessionQuery(
@@ -564,7 +572,7 @@ def _run_once(
         os.environ["NEXUS_CODEX_HOSTED_MCP_TOKEN"] = f"Bearer {_MCP_TOKEN}"
         if trust_certificate is not None:
             os.environ["SSL_CERT_FILE"] = str(trust_certificate)
-        runtime = AgentRuntime(AgentRuntimeConfig(state_root_base=state_root))
+        runtime = create_confined_runtime(AgentRuntimeConfig(state_root_base=state_root))
         try:
             session = await runtime.open_session(operation.session)
             started = time.monotonic()

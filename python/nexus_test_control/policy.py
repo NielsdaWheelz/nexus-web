@@ -208,6 +208,14 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
             "runs-on: [self-hosted, linux, nexus-codex-nightly]",
             "cmp deploy/hetzner/nexus-codex-nightly-bwrap.apparmor ",
             "/etc/apparmor.d/nexus-codex-nightly-bwrap",
+            "NEXUS_CODEX_HOSTED_TEMPORARY_DIRECTORY",
+            'test "$(stat -c \'%d\' "$NEXUS_CODEX_HOSTED_STATE_ROOT")" = '
+            '"$(stat -c \'%d\' "$NEXUS_CODEX_HOSTED_TEMPORARY_DIRECTORY")"',
+            'test "$(stat -c \'%d\' "$NEXUS_CODEX_HOSTED_STATE_ROOT")" = '
+            '"$(stat -c \'%d\' "$NEXUS_CODEX_HOSTED_WORKING_DIRECTORY")"',
+            "Scrub disposable Codex nightly state",
+            'find "$NEXUS_CODEX_HOSTED_TEMPORARY_DIRECTORY" -mindepth 1 -delete',
+            'NEXUS_CODEX_WORKING_DIRECTORY_ROOT="$NEXUS_CODEX_HOSTED_WORKING_DIRECTORY"',
             "python/.venv/bin/python -m apps.codex_agent.sandbox_health",
             "run: ./scripts/test codex-nightly",
         ),
@@ -361,6 +369,18 @@ def _attribute_parts(node: ast.AST) -> tuple[str, ...]:
     if isinstance(node, ast.Name):
         parts.append(node.id)
     return tuple(reversed(parts))
+
+
+def _resolves_agent_runtime_constructor(
+    expression: ast.AST,
+    *,
+    direct_aliases: set[str],
+    module_aliases: set[tuple[str, ...]],
+) -> bool:
+    parts = _attribute_parts(expression)
+    return (len(parts) == 1 and parts[0] in direct_aliases) or any(
+        parts == (*prefix, "AgentRuntime") for prefix in module_aliases
+    )
 
 
 def _vacuous_assertion(node: ast.AST) -> bool:
@@ -829,6 +849,124 @@ def _package_runner_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
     return _sorted(violations)
 
 
+def _codex_agent_runtime_construction_violations(
+    repo_root: Path,
+) -> tuple[PolicyViolation, ...]:
+    """Keep the pinned AgentRuntime constructor behind the confinement owner."""
+
+    root = repo_root / "apps/codex_agent"
+    candidates = list(root.rglob("*.py")) if root.is_dir() else []
+    hosted_canary = repo_root / "python/tests/hosted/nightly/test_codex_personal_generation.py"
+    if hosted_canary.is_file():
+        candidates.append(hosted_canary)
+    if not candidates:
+        return ()
+    violations: list[PolicyViolation] = []
+    for candidate in sorted(candidates):
+        relative = candidate.relative_to(repo_root).as_posix()
+        if relative == "apps/codex_agent/confined_runtime.py":
+            continue
+        try:
+            tree = ast.parse(candidate.read_text(encoding="utf-8"), filename=relative)
+        except (OSError, UnicodeDecodeError, SyntaxError):
+            continue
+
+        direct_aliases: set[str] = set()
+        module_aliases: set[tuple[str, ...]] = {("provider_runtime", "agent_runtime")}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name in {
+                        "provider_runtime.agent_runtime",
+                        "provider_runtime.agent_runtime.runtime",
+                    }:
+                        module_aliases.add(
+                            (alias.asname,)
+                            if alias.asname is not None
+                            else tuple(alias.name.split("."))
+                        )
+                    elif alias.name == "provider_runtime" and alias.asname is not None:
+                        module_aliases.add((alias.asname, "agent_runtime"))
+            elif isinstance(node, ast.ImportFrom):
+                if node.module is not None and (
+                    node.module == "provider_runtime.agent_runtime"
+                    or node.module.startswith("provider_runtime.agent_runtime.")
+                ):
+                    for alias in node.names:
+                        if alias.name in {"AgentRuntime", "*"}:
+                            direct_aliases.add(alias.asname or "AgentRuntime")
+                        elif (
+                            node.module == "provider_runtime.agent_runtime"
+                            and alias.name == "runtime"
+                        ):
+                            module_aliases.add((alias.asname or alias.name,))
+                elif node.module == "provider_runtime":
+                    for alias in node.names:
+                        if alias.name == "agent_runtime":
+                            module_aliases.add((alias.asname or alias.name,))
+
+        changed = True
+        while changed:
+            changed = False
+            for node in ast.walk(tree):
+                value: ast.AST | None = None
+                targets: tuple[ast.expr, ...] = ()
+                if isinstance(node, ast.Assign):
+                    value = node.value
+                    targets = tuple(node.targets)
+                elif isinstance(node, ast.AnnAssign):
+                    value = node.value
+                    targets = (node.target,)
+                if value is None or not _resolves_agent_runtime_constructor(
+                    value,
+                    direct_aliases=direct_aliases,
+                    module_aliases=module_aliases,
+                ):
+                    continue
+                for target in targets:
+                    if isinstance(target, ast.Name) and target.id not in direct_aliases:
+                        direct_aliases.add(target.id)
+                        changed = True
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and _resolves_agent_runtime_constructor(
+                node.func,
+                direct_aliases=direct_aliases,
+                module_aliases=module_aliases,
+            ):
+                violations.append(
+                    PolicyViolation(
+                        "codex-agent-runtime-confinement",
+                        relative,
+                        "AgentRuntime construction belongs only to confined_runtime.py",
+                        node.lineno,
+                    )
+                )
+        if relative == "apps/codex_agent/main.py":
+            functions = {
+                node.name: node
+                for node in ast.walk(tree)
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            }
+            for function_name in ("runtime_factory", "_probe_chatgpt_auth"):
+                function = functions.get(function_name)
+                calls_confined_factory = function is not None and any(
+                    isinstance(node, ast.Call)
+                    and _attribute_parts(node.func) == ("create_confined_runtime",)
+                    for node in ast.walk(function)
+                )
+                if not calls_confined_factory:
+                    violations.append(
+                        PolicyViolation(
+                            "codex-agent-runtime-wiring",
+                            relative,
+                            f"{function_name} must construct only the confined runtime",
+                            function.lineno if function is not None else None,
+                        )
+                    )
+    return _sorted(violations)
+
+
 def repository_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
     """Check the small repository-level contracts that are mechanically decisive."""
     violations: list[PolicyViolation] = []
@@ -1053,6 +1191,7 @@ def repository_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
         )
     violations.extend(_executable_route_violations(repo_root))
     violations.extend(_package_runner_violations(repo_root))
+    violations.extend(_codex_agent_runtime_construction_violations(repo_root))
     return _sorted(violations)
 
 

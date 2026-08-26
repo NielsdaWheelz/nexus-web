@@ -9,14 +9,6 @@
 **Status:** IMPLEMENTED · **Scope:** chat presentation and interaction only ·
 **Doctrine:** hard cut; one owner per capability; no compatibility path
 
-> **Generation-surface amendment (2026-08-25):** The provider-privacy,
-> retention, variable-reasoning, and price facts in this historical presentation
-> cut are non-authoritative. The current product contract is
-> [`codex-personal-generation-hard-cutover.md`](codex-personal-generation-hard-cutover.md):
-> chat exposes exactly `fast`, `balanced`, and `deep` (default `balanced`), each
-> with a fixed display-only model/effort label; it has no effort selector,
-> privacy/retention profile variant, or product cost display.
-
 ## 1. Decision
 
 Make chat read like a conversation, not an instrumentation panel:
@@ -35,7 +27,8 @@ reader-selection, or pane-routing semantics.
 
 1. Assistant prose uses the normal sans text register in chat. `MachineText`
    remains the owner for dossiers, Synapse, Dawn, and other machine artifacts.
-2. Provider privacy and retention metadata has no composer chrome.
+2. Chat exposes only the fixed Fast, Balanced, and Deep product profiles; route,
+   privacy, retention, model, effort, and price are not independent controls.
 3. Conversation-row activation is fixed in shared `ResourceRow`; no
    conversation-only click handler or nested interactive row is added.
 4. Inline citations remain. The repeated source list and run diagnostics become
@@ -51,7 +44,7 @@ reader-selection, or pane-routing semantics.
 - Make chat-list activation work across the row's inert area.
 - Prevent quote or message content from widening the pane.
 - Keep actionable writes, failures, warnings, and active work visible.
-- Replace stringly send/privacy state with exhaustive typed contracts.
+- Replace stringly send state with one exhaustive typed contract.
 - Delete superseded components, CSS, tests, and documentation requirements.
 
 ## 4. Non-goals
@@ -98,9 +91,9 @@ fork strip, only when forks exist
 - Inline citation markers remain active in the answer.
 - `Sources (N)` contains the current numbered source links and is closed by
   default.
-- `Details` contains model/profile, reasoning, usage, cost, tool/retrieval
-  counts, context references, and integrity notices. Only a warning count may
-  decorate the closed summary.
+- `Details` contains profile, fixed plan/model/effort facts, usage,
+  tool/retrieval counts, context references, and integrity notices. It exposes
+  neither route nor price. Only a warning count may decorate the closed summary.
 - The existing colophon is deleted; it duplicates `Details`.
 - Fork and Walk move below the answer. On hover-capable devices they appear on
   turn hover/focus; on touch they remain visible.
@@ -117,8 +110,9 @@ fork strip, only when forks exist
 - A blocked Enter/send attempt does not clear the draft or move focus.
 - The blocked reason is available to assistive technology through one polite
   live region; surrounding visible state supplies the sighted explanation.
-- Profiles render no privacy or retention copy in the composer.
-- Profile and reasoning selectors remain native `Select` controls.
+- One `Response profile` control renders exactly Fast, Balanced, and Deep, with
+  Balanced as the server default. There is no independent model or effort
+  selector and no privacy or retention copy.
 
 ### 5.3 Quote
 
@@ -165,7 +159,7 @@ conversation tree/run state
   -> ChatSendCapability
   -> ChatComposer
 
-LLM profile registry
+generation_policy chat catalog
   -> LlmProfileOut
   -> GET /llm-profiles
   -> useChatProfiles
@@ -194,7 +188,6 @@ ConversationMessage
 | Send availability derivation | `useConversation` | `ChatComposer` |
 | Causal inherited profile selection | `useConversation` | `ChatComposer` |
 | Ready-catalog selection precedence | `resolveChatProfileSelection` | `ChatComposer` |
-| Profile privacy classification | `llm_profiles.py` registry | profile API/UI |
 | Quote geometry and disclosure | `QuotedPassageCard` | composer, user turn |
 | Collection row hit target | `ResourceRow` | every collection row |
 | Conversation title/count/time copy | `lib/conversations/presentation.ts` | list, destination picker |
@@ -229,39 +222,6 @@ the exact product default in that order. `ChatProfilePicker` is a pure
 controlled renderer and owns no fetching, defaulting, validation, or mount-time
 mutation.
 
-### 7.2 Profile privacy API
-
-Hard-replace `privacy_notice: string` with this nested union on every profile:
-
-```json
-{
-  "privacy": {
-    "kind": "Standard",
-    "notice": "Standard provider retention. ..."
-  }
-}
-```
-
-```json
-{
-  "privacy": {
-    "kind": "ExceptionalRetention",
-    "notice": "Anthropic retains ..."
-  }
-}
-```
-
-Rules:
-
-- Wire discriminator values are exactly `Standard` and
-  `ExceptionalRetention`.
-- The registry owns classification and copy.
-- `LlmProfileOut` projects the union; the route and BFF remain thin.
-- The browser exhaustively switches on `privacy.kind`.
-- Delete `privacy_notice` everywhere. No optional field, decoder fallback,
-  dual payload, version, or compatibility alias remains.
-- No acknowledgement state is persisted.
-
 ## 8. Layout and interaction rules
 
 - One transcript scroll owner remains `ChatSurface`.
@@ -287,8 +247,11 @@ Rules:
 - Rename the retained inspector to `AssistantDetails`; delete the old files.
 - Delete `Colophon.tsx`, its CSS, both tests, imports, and helpers.
 - Delete visible role-label markup and orphaned kicker/signature styles.
-- Delete `privacy_notice`, `sendDisabledReason`, and
-  `ChatComposer.disabledReason`, including their tests, comments, and fixtures.
+- Delete `privacy_notice`, profile privacy variants, reasoning options,
+  `sendDisabledReason`, and `ChatComposer.disabledReason`, including their
+  tests, comments, and fixtures. The surviving profile wire is the exact
+  five-field contract in the
+  [Codex generation cutover](codex-personal-generation-hard-cutover.md).
 - Remove the machine-hand guard that requires chat Markdown to be inside
   `MachineText`; retain token ownership and non-chat consumer guards.
 - Update superseded requirements in:
@@ -305,7 +268,7 @@ Rules:
 | Composer | `components/chat/{ChatComposer,ChatProfilePicker,useConversation}.*` |
 | Quote | `components/chat/QuotedPassageCard.*` |
 | List | `components/ui/ResourceRow.*`; `lib/conversations/presentation.ts` (new); `lib/collections/presenters/conversation.ts`; `components/chat/ConversationDestinationOverlay.tsx`; `app/(authenticated)/conversations/ConversationsPaneBody.tsx` |
-| API/schema | `python/nexus/services/llm_profiles.py`; `python/nexus/schemas/llm.py`; `python/tests/{test_llm_profiles,test_llm_schemas}.py`; `lib/conversations/types.ts` |
+| API/schema | `python/nexus/services/generation_policy.py`; `python/nexus/schemas/llm.py`; fixed-profile policy/schema tests; `lib/conversations/types.ts` |
 | Guards/docs | `lib/ui/machineHandCutover.guards.test.ts`; the five documents in §9 |
 | Journey | `e2e/tests/conversations.spec.ts` |
 
@@ -314,7 +277,7 @@ models, reader-selection schemas, or BFF behavior.
 
 ## 11. Implementation order
 
-1. **Contracts:** add red tests; hard-replace profile privacy and send
+1. **Contracts:** add red tests; hard-replace the profile catalog and send
    capability types.
 2. **Transcript:** cut MachineText/labels/colophon; establish hierarchy and
    disclosures; delete old files in the same slice.
@@ -339,9 +302,12 @@ No slice may leave old and new contracts live together.
   remains available, and no red “wait” banner renders.
 - **AC-6:** Real composer errors remain visible and distinct from capability
   state.
-- **AC-7:** Profiles render no privacy or retention chrome in the composer.
-- **AC-8:** `privacy_notice`, `sendDisabledReason`, and
-  `ChatComposer.disabledReason` have zero production or test references.
+- **AC-7:** The composer renders exactly Fast, Balanced, and Deep from the
+  server catalog and sends only `profile_id`; it has no model, effort, privacy,
+  retention, or price control.
+- **AC-8:** `privacy_notice`, profile privacy variants, reasoning-option fields,
+  `sendDisabledReason`, and `ChatComposer.disabledReason` have zero production
+  or test references.
 - **AC-9:** A pending or sent quote with a long source name and unbroken content
   causes no pane-level overflow at `320 CSS px`; full quote disclosure works.
 - **AC-10:** Clicking title, metadata, or inert whitespace in a conversation row
@@ -359,7 +325,7 @@ No slice may leave old and new contracts live together.
 
 Write behavior tests first, then run only the focused owners:
 
-- backend profile registry/schema tests;
+- backend fixed-profile policy/schema tests;
 - `ChatComposer`, `ChatProfilePicker`, `useConversation`;
 - `MessageRow`, `AssistantMessage`, quote, and machine-hand guard tests;
 - `ResourceRow` and `ConversationsPaneBody`;

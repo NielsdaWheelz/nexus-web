@@ -275,6 +275,7 @@ def _prepare_mcp_safety_boundary(
         operation=operation,
         worker_id=worker_id,
         generation_id=generation_id,
+        grant_jti=claims.jti,
         admitted_resource_uris=(foreign_uri,),
     )
     return _McpSafetyBoundary(

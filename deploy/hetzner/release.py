@@ -80,7 +80,9 @@ _CODEX_PROXY_EGRESS_NETWORK = "nexus_codex_proxy_egress"
 _CODEX_EGRESS_PROXY_IP = "172.30.0.2"
 _CODEX_AGENT_HOST_IP = "172.30.0.3"
 _CODEX_PRIVATE_BRIDGE_IP = "172.30.0.1"
-_CODEX_PRIVATE_NETWORK_OPTIONS = {"com.docker.network.bridge.gateway_mode_ipv4": "isolated"}
+_CODEX_PRIVATE_NETWORK_OPTIONS = {
+    "com.docker.network.bridge.gateway_mode_ipv4": "isolated"
+}
 _CODEX_ISOLATED_GATEWAY_MINIMUM_DOCKER_MAJOR = 28
 _CODEX_AGENT_SECURITY_OPTIONS = {
     "apparmor=nexus-codex-agent-host",
@@ -91,16 +93,22 @@ _CODEX_AGENT_SECURITY_OPTIONS = {
 # The host's published graceful-stop budget (apps/codex_agent/host.py): request drain,
 # interrupted-turn runtime close, and exit margin. Every stop of the host grants it.
 _CODEX_AGENT_STOP_GRACE_SECONDS = 45
-# The host's only writable scratch and its process resource ceilings, exactly as
-# Compose declares them; a live container that differs is not the proven host.
-_CODEX_AGENT_TMPFS = {"/tmp": "rw,noexec,nosuid,nodev,size=16m"}
+# The private executable tmpfs exists only because the pinned SDK launches a
+# content-addressed supervisor beside its profile state. General /tmp remains
+# noexec; a live container that differs is not the proven host.
+_CODEX_AGENT_TMPFS = {
+    "/run/nexus-codex-turns": (
+        "rw,exec,nosuid,nodev,size=16m,mode=0700,uid=10001,gid=10001"
+    ),
+    "/tmp": "rw,noexec,nosuid,nodev,size=16m",
+}
 _CODEX_EGRESS_POLICY_TMPFS = {"/tmp": "rw,noexec,nosuid,nodev,size=8m"}
 _CODEX_AGENT_ULIMITS = frozenset(
     {("core", 0, 0), ("fsize", 1_048_576, 1_048_576), ("nofile", 64, 64)}
 )
 _CODEX_AGENT_RUNTIME_ENVIRONMENT = {
     "NEXUS_CODEX_CREDENTIAL_FILE": "/run/nexus-codex-credential/auth.json",
-    "NEXUS_CODEX_WORKING_DIRECTORY_ROOT": "/tmp/nexus-codex-turns",
+    "NEXUS_CODEX_WORKING_DIRECTORY_ROOT": "/run/nexus-codex-turns",
     "NEXUS_CODEX_AGENT_SOCKET": "/run/nexus-codex/agent.sock",
     "NEXUS_CODEX_CHAT_NETWORK_ATTESTED": "true",
 }
@@ -677,12 +685,15 @@ class ReleasePaths:
             codex_apparmor_profile=root / "etc/apparmor.d/nexus-codex-agent-host",
             codex_state_container=root / "var/lib/nexus/codex-state.luks",
             codex_state_mount=root / "srv/nexus/codex-state",
-            codex_state_boot_guard=(root / "usr/local/sbin/nexus-codex-state-boot-guard"),
+            codex_state_boot_guard=(
+                root / "usr/local/sbin/nexus-codex-state-boot-guard"
+            ),
             codex_state_boot_guard_unit=(
                 root / "etc/systemd/system/nexus-codex-state-boot-guard.service"
             ),
             codex_state_docker_drop_in=(
-                root / "etc/systemd/system/docker.service.d/20-nexus-codex-state-guard.conf"
+                root
+                / "etc/systemd/system/docker.service.d/20-nexus-codex-state-guard.conf"
             ),
             crypttab=root / "etc/crypttab",
             codex_state_forbidden_key=root / "var/lib/nexus/codex-state.key",
@@ -760,7 +771,9 @@ class CaddyActivationJournal:
 
     @classmethod
     def from_json(cls, value: object) -> CaddyActivationJournal:
-        mapping = _closed_mapping(value, _CADDY_ACTIVATION_FIELDS, "Caddy activation journal")
+        mapping = _closed_mapping(
+            value, _CADDY_ACTIVATION_FIELDS, "Caddy activation journal"
+        )
         return cls(
             schema_version=_integer(mapping, "schema_version"),
             source_sha=_string(mapping, "source_sha"),
@@ -780,7 +793,9 @@ class ContainerEvidence:
 
     def __post_init__(self) -> None:
         _require_match("container id", self.container_id, _CONTAINER_ID)
-        if not (_IMAGE_ID.fullmatch(self.image) or _IMAGE_REFERENCE.fullmatch(self.image)):
+        if not (
+            _IMAGE_ID.fullmatch(self.image) or _IMAGE_REFERENCE.fullmatch(self.image)
+        ):
             raise ReleaseDefect("container image must be an immutable digest")
         _require_match("container config SHA-256", self.config_sha256, _SHA256)
 
@@ -882,7 +897,10 @@ class OracleAttempt:
             _ORACLE_DIGEST,
         )
         config_path = Path(self.config_path)
-        if not config_path.is_absolute() or config_path.name != f"{self.config_sha256}.env":
+        if (
+            not config_path.is_absolute()
+            or config_path.name != f"{self.config_sha256}.env"
+        ):
             raise ReleaseDefect("Oracle captured config path is not content-addressed")
         _require_match("Oracle config SHA-256", self.config_sha256, _SHA256)
         if not isinstance(
@@ -891,7 +909,9 @@ class OracleAttempt:
         ):
             raise ReleaseDefect("Oracle prior marker is malformed")
         if tuple(sorted(self.containers)) != tuple(sorted(_WRITERS)):
-            raise ReleaseDefect("Oracle container evidence must cover exact app writers")
+            raise ReleaseDefect(
+                "Oracle container evidence must cover exact app writers"
+            )
         _require_timestamp(self.created_at)
         _require_timestamp(self.updated_at)
 
@@ -926,11 +946,15 @@ class OracleAttempt:
 
     @property
     def target_name(self) -> str:
-        return f"{self.source_sha}-{self.expected_manifest_digest.removeprefix('sha256:')}"
+        return (
+            f"{self.source_sha}-{self.expected_manifest_digest.removeprefix('sha256:')}"
+        )
 
     def advance(self, phase: OraclePhase, *, now: str) -> OracleAttempt:
         if phase not in _ORACLE_TRANSITIONS[self.phase]:
-            raise ReleaseDefect(f"invalid Oracle transition {self.phase.value} -> {phase.value}")
+            raise ReleaseDefect(
+                f"invalid Oracle transition {self.phase.value} -> {phase.value}"
+            )
         return dataclasses.replace(self, phase=phase, updated_at=now)
 
     def as_json(self) -> dict[str, object]:
@@ -942,7 +966,8 @@ class OracleAttempt:
             "config_sha256": self.config_sha256,
             "prior_marker": self.prior_marker.as_json(),
             "containers": {
-                service: evidence.as_json() for service, evidence in sorted(self.containers.items())
+                service: evidence.as_json()
+                for service, evidence in sorted(self.containers.items())
             },
             "phase": self.phase.value,
             "created_at": self.created_at,
@@ -1013,13 +1038,17 @@ class OracleRepairBinding:
             self.repair_manifest_sha256,
             _SHA256,
         )
-        _require_match("Oracle repair API image", self.repair_api_image, _IMAGE_REFERENCE)
+        _require_match(
+            "Oracle repair API image", self.repair_api_image, _IMAGE_REFERENCE
+        )
         _require_match(
             "Oracle repair worker image",
             self.repair_worker_image,
             _IMAGE_REFERENCE,
         )
-        _require_match("Oracle repair API image id", self.repair_api_image_id, _IMAGE_ID)
+        _require_match(
+            "Oracle repair API image id", self.repair_api_image_id, _IMAGE_ID
+        )
         _require_match(
             "Oracle repair worker image id",
             self.repair_worker_image_id,
@@ -1189,7 +1218,9 @@ def _accept_oracle_preflight(data: bytes, expected_digest: str) -> None:
         or _string(value, "manifest_digest") != expected_digest
         or _boolean(value, "removals")
     ):
-        raise PermanentReleaseFailure("Oracle preflight did not accept an additive target")
+        raise PermanentReleaseFailure(
+            "Oracle preflight did not accept an additive target"
+        )
 
 
 def _accept_oracle_unpublish(data: bytes, expected_digest: str) -> None:
@@ -1262,7 +1293,9 @@ class BackupEvidence:
             raise ReleaseDefect("backup byte count must be positive")
         if not self.database_identity or "\n" in self.database_identity:
             raise ReleaseDefect("database identity is malformed")
-        _require_match("starting database revision", self.starting_revision, _DATABASE_REVISION)
+        _require_match(
+            "starting database revision", self.starting_revision, _DATABASE_REVISION
+        )
 
     def as_json(self) -> dict[str, object]:
         return dataclasses.asdict(self)
@@ -1305,7 +1338,9 @@ class ReleaseAttempt:
         _require_match("attempt source SHA", self.source_sha, _SHA)
         _require_match("manifest SHA-256", self.manifest_sha256, _SHA256)
         _require_match("candidate API image id", self.candidate_api_image_id, _IMAGE_ID)
-        _require_match("candidate worker image id", self.candidate_worker_image_id, _IMAGE_ID)
+        _require_match(
+            "candidate worker image id", self.candidate_worker_image_id, _IMAGE_ID
+        )
         if self.predecessor_sha is None:
             if self.phase is not ReleasePhase.Succeeded:
                 raise ReleaseDefect("successor release attempt requires a predecessor")
@@ -1318,11 +1353,15 @@ class ReleaseAttempt:
             if self.forward_fix_of == self.source_sha:
                 raise ReleaseDefect("release cannot forward-fix itself")
         if tuple(sorted(self.containers)) != tuple(sorted(_SERVICES)):
-            raise ReleaseDefect("container evidence must cover the exact production services")
+            raise ReleaseDefect(
+                "container evidence must cover the exact production services"
+            )
         if not Path(self.config_path).is_absolute():
             raise ReleaseDefect("captured config path must be absolute")
         _require_match("config SHA-256", self.config_sha256, _SHA256)
-        _require_match("Vercel deployment id", self.vercel_deployment_id, _DEPLOYMENT_ID)
+        _require_match(
+            "Vercel deployment id", self.vercel_deployment_id, _DEPLOYMENT_ID
+        )
         _require_match("production host", self.production_host, _HOST)
         if self.phase is ReleasePhase.BackupVerified and self.backup is None:
             raise ReleaseDefect("BackupVerified attempt has no backup evidence")
@@ -1332,7 +1371,9 @@ class ReleaseAttempt:
             self.phase in {ReleasePhase.Prepared, ReleasePhase.WritersStopped}
             and self.backup is not None
         ):
-            raise ReleaseDefect("pre-backup release attempt already has backup evidence")
+            raise ReleaseDefect(
+                "pre-backup release attempt already has backup evidence"
+            )
         if self.failure_code is not None and not re.fullmatch(
             r"[a-z][a-z0-9-]{0,63}", self.failure_code
         ):
@@ -1399,7 +1440,9 @@ class ReleaseAttempt:
         failure_code: str | None = None,
     ) -> ReleaseAttempt:
         if phase not in _TRANSITIONS[self.phase]:
-            raise ReleaseDefect(f"invalid release transition {self.phase.value} -> {phase.value}")
+            raise ReleaseDefect(
+                f"invalid release transition {self.phase.value} -> {phase.value}"
+            )
         return dataclasses.replace(
             self,
             phase=phase,
@@ -1443,7 +1486,8 @@ class ReleaseAttempt:
             "predecessor_sha": self.predecessor_sha,
             "forward_fix_of": self.forward_fix_of,
             "containers": {
-                service: evidence.as_json() for service, evidence in sorted(self.containers.items())
+                service: evidence.as_json()
+                for service, evidence in sorted(self.containers.items())
             },
             "config_path": self.config_path,
             "config_sha256": self.config_sha256,
@@ -1482,7 +1526,9 @@ class ReleaseAttempt:
             vercel_deployment_id=_string(mapping, "vercel_deployment_id"),
             production_host=_string(mapping, "production_host"),
             phase=phase,
-            backup=None if backup_value is None else BackupEvidence.from_json(backup_value),
+            backup=None
+            if backup_value is None
+            else BackupEvidence.from_json(backup_value),
             failure_code=_optional_string(mapping, "failure_code"),
             created_at=_string(mapping, "created_at"),
             updated_at=_string(mapping, "updated_at"),
@@ -1519,14 +1565,22 @@ class ReleaseRecord:
         if self.predecessor_sha is not None:
             _require_match("record predecessor SHA", self.predecessor_sha, _SHA)
             if self.predecessor_sha == self.source_sha:
-                raise ReleaseDefect("release record predecessor must differ from source")
+                raise ReleaseDefect(
+                    "release record predecessor must differ from source"
+                )
         if not Path(self.config_path).is_absolute():
             raise ReleaseDefect("record config path must be absolute")
         _require_match("record config SHA-256", self.config_sha256, _SHA256)
-        _require_match("record database revision", self.database_revision, _DATABASE_REVISION)
-        if not re.fullmatch(r"sha256:[0-9a-f]{64}", self.expected_oracle_manifest_digest):
+        _require_match(
+            "record database revision", self.database_revision, _DATABASE_REVISION
+        )
+        if not re.fullmatch(
+            r"sha256:[0-9a-f]{64}", self.expected_oracle_manifest_digest
+        ):
             raise ReleaseDefect("record Oracle digest is malformed")
-        _require_match("record Vercel deployment id", self.vercel_deployment_id, _DEPLOYMENT_ID)
+        _require_match(
+            "record Vercel deployment id", self.vercel_deployment_id, _DEPLOYMENT_ID
+        )
         _require_match("record production host", self.production_host, _HOST)
         _require_timestamp(self.verified_at)
 
@@ -1547,7 +1601,10 @@ class ReleaseRecord:
             ReleasePhase.Succeeded,
         }:
             raise ReleaseDefect("release record requires a promoted frontend")
-        if attempt.predecessor_sha is None and attempt.phase is not ReleasePhase.Succeeded:
+        if (
+            attempt.predecessor_sha is None
+            and attempt.phase is not ReleasePhase.Succeeded
+        ):
             raise ReleaseDefect("successor release record requires a predecessor")
         return cls(
             schema_version=1,
@@ -1585,7 +1642,9 @@ class ReleaseRecord:
             config_path=_string(mapping, "config_path"),
             config_sha256=_string(mapping, "config_sha256"),
             database_revision=_string(mapping, "database_revision"),
-            expected_oracle_manifest_digest=_string(mapping, "expected_oracle_manifest_digest"),
+            expected_oracle_manifest_digest=_string(
+                mapping, "expected_oracle_manifest_digest"
+            ),
             vercel_deployment_id=_string(mapping, "vercel_deployment_id"),
             production_host=_string(mapping, "production_host"),
             verified_at=_string(mapping, "verified_at"),
@@ -1628,7 +1687,9 @@ class ReleaseStore:
 
     def create_attempt(self, attempt: ReleaseAttempt) -> None:
         self._prepare_state_directories()
-        _create_json(self.paths.attempts / f"{attempt.source_sha}.json", attempt.as_json())
+        _create_json(
+            self.paths.attempts / f"{attempt.source_sha}.json", attempt.as_json()
+        )
 
     def replace_attempt(self, attempt: ReleaseAttempt) -> None:
         current = self.load_attempt(attempt.source_sha)
@@ -1649,7 +1710,9 @@ class ReleaseStore:
             raise ReleaseDefect(
                 f"invalid stored release transition {current.phase.value} -> {attempt.phase.value}"
             )
-        _atomic_json(self.paths.attempts / f"{attempt.source_sha}.json", attempt.as_json())
+        _atomic_json(
+            self.paths.attempts / f"{attempt.source_sha}.json", attempt.as_json()
+        )
 
     def load_attempt(self, source_sha: str) -> ReleaseAttempt | None:
         _require_match("source SHA", source_sha, _SHA)
@@ -1667,7 +1730,9 @@ class ReleaseStore:
                 continue
             if not re.fullmatch(r"[0-9a-f]{40}\.json", path.name):
                 raise ReleaseDefect(f"unknown release attempt state file {path}")
-            attempt = ReleaseAttempt.from_json(_read_canonical_json(path, "release attempt"))
+            attempt = ReleaseAttempt.from_json(
+                _read_canonical_json(path, "release attempt")
+            )
             if path.name != f"{attempt.source_sha}.json":
                 raise ReleaseDefect(f"release attempt filename disagrees with {path}")
             attempts.append(attempt)
@@ -1676,7 +1741,9 @@ class ReleaseStore:
     def active_attempt(self) -> ReleaseAttempt | None:
         active = tuple(attempt for attempt in self.attempts() if not attempt.terminal)
         if len(active) > 1:
-            raise ReleaseDefect("multiple nonterminal application release attempts exist")
+            raise ReleaseDefect(
+                "multiple nonterminal application release attempts exist"
+            )
         return active[0] if active else None
 
     def assert_candidate_admissible(self, source_sha: str) -> None:
@@ -1691,7 +1758,10 @@ class ReleaseStore:
             )
         existing = self.load_attempt(source_sha)
         if existing is not None:
-            if existing.phase is ReleasePhase.Succeeded and self.current_sha() == source_sha:
+            if (
+                existing.phase is ReleasePhase.Succeeded
+                and self.current_sha() == source_sha
+            ):
                 return
             raise ReleaseBlocked(
                 f"source SHA {source_sha} is permanently terminal as {existing.phase.value}"
@@ -1700,7 +1770,9 @@ class ReleaseStore:
             raise ReleaseBlocked(f"source SHA {source_sha} was already published")
         failed_sha = self.forward_fix_sha()
         if failed_sha == source_sha:
-            raise ReleaseBlocked(f"failed source SHA {source_sha} cannot forward-fix itself")
+            raise ReleaseBlocked(
+                f"failed source SHA {source_sha} cannot forward-fix itself"
+            )
 
     def assert_fresh_candidate(self, source_sha: str) -> None:
         """Require a never-started, never-published SHA for config preparation."""
@@ -1722,7 +1794,9 @@ class ReleaseStore:
         path = self.paths.records / f"{record.source_sha}.json"
         if path.exists():
             if self.load_record(record.source_sha) != record:
-                raise ReleaseDefect(f"immutable release record {record.source_sha} changed")
+                raise ReleaseDefect(
+                    f"immutable release record {record.source_sha} changed"
+                )
             return
         _create_json(path, record.as_json())
 
@@ -1740,12 +1814,18 @@ class ReleaseStore:
         _require_match("current source SHA", source_sha, _SHA)
         record = self.load_record(source_sha)
         if record is None:
-            raise ReleaseDefect("current source SHA requires an immutable release record")
+            raise ReleaseDefect(
+                "current source SHA requires an immutable release record"
+            )
         previous = self.current_sha()
         if previous is None:
-            raise ReleaseBlocked("application release requires an existing current record")
+            raise ReleaseBlocked(
+                "application release requires an existing current record"
+            )
         if previous != source_sha and record.predecessor_sha != previous:
-            raise ReleaseDefect("release record predecessor differs from prior current SHA")
+            raise ReleaseDefect(
+                "release record predecessor differs from prior current SHA"
+            )
         _atomic_bytes(self.paths.current, f"{source_sha}\n".encode())
 
     def current_sha(self) -> str | None:
@@ -1760,13 +1840,17 @@ class ReleaseStore:
     def require_current_record(self) -> ReleaseRecord:
         current = self.current_sha()
         if current is None:
-            raise ReleaseBlocked("application release requires an existing current record")
+            raise ReleaseBlocked(
+                "application release requires an existing current record"
+            )
         record = self.load_record(current)
         if record is None:
             raise ReleaseDefect("current source SHA has no immutable release record")
         return record
 
-    def complete_published_attempt(self, source_sha: str, *, now: str) -> ReleaseAttempt:
+    def complete_published_attempt(
+        self, source_sha: str, *, now: str
+    ) -> ReleaseAttempt:
         attempt = self.load_attempt(source_sha)
         if attempt is None:
             raise ReleaseDefect(f"release attempt {source_sha} does not exist")
@@ -1777,7 +1861,9 @@ class ReleaseStore:
         if attempt.phase is ReleasePhase.Succeeded:
             return attempt
         if attempt.phase is not ReleasePhase.FrontendPromoted:
-            raise ReleaseDefect(f"published-prefix recovery cannot complete {attempt.phase.value}")
+            raise ReleaseDefect(
+                f"published-prefix recovery cannot complete {attempt.phase.value}"
+            )
         succeeded = attempt.advance(ReleasePhase.Succeeded, now=now)
         self.replace_attempt(succeeded)
         return succeeded
@@ -1825,7 +1911,9 @@ class ReleaseStore:
         if failed_sha is None or attempt.forward_fix_of != failed_sha:
             return
         if failed_sha == successor_sha:
-            raise ReleaseDefect("a failed release cannot clear its own forward-fix pointer")
+            raise ReleaseDefect(
+                "a failed release cannot clear its own forward-fix pointer"
+            )
         self.paths.forward_fix.unlink()
         _fsync_directory(self.paths.forward_fix.parent)
 
@@ -1890,14 +1978,18 @@ class ReleaseStore:
                 continue
             if re.fullmatch(r"[0-9a-f]{40}-[0-9a-f]{64}\.json", path.name) is None:
                 raise ReleaseDefect(f"unknown Oracle attempt state file {path}")
-            attempt = OracleAttempt.from_json(_read_canonical_json(path, "Oracle attempt"))
+            attempt = OracleAttempt.from_json(
+                _read_canonical_json(path, "Oracle attempt")
+            )
             if path.name != f"{attempt.target_name}.json":
                 raise ReleaseDefect(f"Oracle attempt filename disagrees with {path}")
             attempts.append(attempt)
         return tuple(attempts)
 
     def active_oracle_attempt(self) -> OracleAttempt | None:
-        active = tuple(attempt for attempt in self.oracle_attempts() if not attempt.terminal)
+        active = tuple(
+            attempt for attempt in self.oracle_attempts() if not attempt.terminal
+        )
         if len(active) > 1:
             raise ReleaseDefect("multiple nonterminal Oracle attempts exist")
         return active[0] if active else None
@@ -1955,7 +2047,9 @@ class ReleaseStore:
         path = self.paths.oracle_repairs / f"{name}.json"
         if not path.exists():
             return None
-        binding = OracleRepairBinding.from_json(_read_canonical_json(path, "Oracle repair binding"))
+        binding = OracleRepairBinding.from_json(
+            _read_canonical_json(path, "Oracle repair binding")
+        )
         if binding.target_name != name:
             raise ReleaseDefect(f"Oracle repair binding filename disagrees with {path}")
         return binding
@@ -1973,7 +2067,9 @@ class ReleaseStore:
                 _read_canonical_json(path, "Oracle repair binding")
             )
             if path.name != f"{binding.target_name}.json":
-                raise ReleaseDefect(f"Oracle repair binding filename disagrees with {path}")
+                raise ReleaseDefect(
+                    f"Oracle repair binding filename disagrees with {path}"
+                )
             bindings.append(binding)
         return tuple(bindings)
 
@@ -1990,7 +2086,8 @@ class ReleaseStore:
 
 def _canonical_json(value: object) -> bytes:
     return (
-        json.dumps(value, ensure_ascii=True, separators=(",", ":"), sort_keys=True) + "\n"
+        json.dumps(value, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+        + "\n"
     ).encode()
 
 
@@ -2026,13 +2123,17 @@ def load_android_release_manifest(
         raise ReleaseDefect("Android release manifest run id is malformed")
     tag = manifest.get("tag")
     if not isinstance(tag, str) or tag != expected_tag:
-        raise ReleaseDefect("Android release manifest tag differs from the selected stable release")
+        raise ReleaseDefect(
+            "Android release manifest tag differs from the selected stable release"
+        )
     if manifest.get("package") != "app.nexus.android":
         raise ReleaseDefect("Android release manifest package is unsupported")
     if type(manifest.get("version_code")) is not int or manifest["version_code"] < 1:
         raise ReleaseDefect("Android release manifest version code is malformed")
     if manifest.get("version_name") != expected_tag.removeprefix("android-v"):
-        raise ReleaseDefect("Android release manifest version name differs from its tag")
+        raise ReleaseDefect(
+            "Android release manifest version name differs from its tag"
+        )
     _require_match("Android release manifest git SHA", manifest.get("git_sha"), _SHA)
     _require_match(
         "Android release manifest signer SHA-256",
@@ -2054,15 +2155,21 @@ def load_android_release_manifest(
     for name, digest in assets.items():
         _require_match(f"Android release manifest asset {name}", digest, _SHA256)
     if any(assets[name] != source_apk_sha256 for name in apk_names):
-        raise ReleaseDefect("Android release manifest APK assets differ from their source digest")
+        raise ReleaseDefect(
+            "Android release manifest APK assets differ from their source digest"
+        )
     try:
-        identity = AndroidPlayerProtocolIdentity.from_json(manifest.get("player_protocol"))
+        identity = AndroidPlayerProtocolIdentity.from_json(
+            manifest.get("player_protocol")
+        )
     except BackendArtifactDefect as exc:
         raise ReleaseDefect(f"Android release manifest {exc}") from exc
     if identity != android_player_protocol_identity(corpus):
         # The signed APK ships before the web candidate; a lagging published
         # identity is an expected release-order stop, not malformed input.
-        raise ReleaseBlocked("Android release manifest player protocol differs from the corpus")
+        raise ReleaseBlocked(
+            "Android release manifest player protocol differs from the corpus"
+        )
     return identity
 
 
@@ -2086,7 +2193,9 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return value
 
 
-def _closed_mapping(value: object, fields: frozenset[str], label: str) -> dict[str, Any]:
+def _closed_mapping(
+    value: object, fields: frozenset[str], label: str
+) -> dict[str, Any]:
     mapping = _mapping(value, label)
     if mapping.keys() != fields:
         raise ReleaseDefect(f"{label} fields are not the exact supported contract")
@@ -2188,7 +2297,9 @@ def _finite_number(mapping: dict[str, Any], key: str) -> float:
 
 
 def _string_list(value: object, label: str) -> tuple[str, ...]:
-    if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
+    if not isinstance(value, list) or not all(
+        isinstance(item, str) and item for item in value
+    ):
         raise ReleaseDefect(f"{label} must be an array of nonempty strings")
     return tuple(value)
 
@@ -2229,7 +2340,8 @@ def _docker_timestamp_seconds(value: object, label: str) -> float:
     offset_seconds = 0
     if offset_sign := matched.group("offset_sign"):
         offset_seconds = (
-            int(matched.group("offset_hours")) * 60 + int(matched.group("offset_minutes"))
+            int(matched.group("offset_hours")) * 60
+            + int(matched.group("offset_minutes"))
         ) * 60
         if offset_sign == "-":
             offset_seconds = -offset_seconds
@@ -2337,7 +2449,9 @@ def release_lock(path: Path) -> Iterator[None]:
         try:
             fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
-            raise ReleaseBlocked("another Nexus host mutation holds the release lock") from exc
+            raise ReleaseBlocked(
+                "another Nexus host mutation holds the release lock"
+            ) from exc
         yield
 
 
@@ -2413,7 +2527,9 @@ def _run_observed(
         ) from exc
 
 
-def _stdout(command: tuple[str, ...], *, environment: dict[str, str] | None = None) -> str:
+def _stdout(
+    command: tuple[str, ...], *, environment: dict[str, str] | None = None
+) -> str:
     result = _run(command, environment=environment)
     try:
         return result.stdout.decode("utf-8").strip()
@@ -2526,7 +2642,9 @@ def _install_immutable_bundle(
         if _bundle_files(destination) != _BUNDLE_FILES:
             raise ReleaseDefect("installed release bundle has changed shape")
         for relative in _BUNDLE_FILES:
-            if (source / relative).read_bytes() != (destination / relative).read_bytes():
+            if (source / relative).read_bytes() != (
+                destination / relative
+            ).read_bytes():
                 raise ReleaseDefect("installed immutable release bundle differs")
         return destination
 
@@ -2590,7 +2708,11 @@ def _read_env(path: Path) -> dict[str, str]:
         if not line or line.startswith("#"):
             continue
         key, separator, value = line.partition("=")
-        if not separator or re.fullmatch(r"[A-Z][A-Z0-9_]*", key) is None or "\x00" in value:
+        if (
+            not separator
+            or re.fullmatch(r"[A-Z][A-Z0-9_]*", key) is None
+            or "\x00" in value
+        ):
             raise ReleaseDefect(f"config line {line_number} is malformed")
         if key in values:
             raise ReleaseDefect(f"config key {key} is duplicated")
@@ -2658,7 +2780,9 @@ def publish_config(source: Path, store: ReleaseStore, *, next_source_sha: str) -
         or stat.S_IMODE(metadata.st_mode) != 0o440
         or destination.read_bytes() != canonical
     ):
-        raise ReleaseDefect("content-addressed config path is not exact immutable input")
+        raise ReleaseDefect(
+            "content-addressed config path is not exact immutable input"
+        )
 
     store.paths.current_config.parent.mkdir(mode=0o750, parents=True, exist_ok=True)
     temporary = store.paths.current_config.with_name(
@@ -2682,7 +2806,9 @@ class HostRelease:
         _require_match("bundle source SHA", source_sha, _SHA)
         bundle = self.paths.bundle_root / source_sha
         if _bundle_files(bundle) != _BUNDLE_FILES:
-            raise ReleaseDefect("installed release bundle has unsupported or missing files")
+            raise ReleaseDefect(
+                "installed release bundle has unsupported or missing files"
+            )
         for relative in _BUNDLE_FILES:
             item = bundle / relative
             metadata = item.stat()
@@ -2707,7 +2833,9 @@ class HostRelease:
         if matched is None:
             raise ReleaseDefect("Docker Engine server version is malformed")
         if int(matched.group(1)) < _CODEX_ISOLATED_GATEWAY_MINIMUM_DOCKER_MAJOR:
-            raise ReleaseBlocked("Docker Engine 28 or newer is required for isolated gateway mode")
+            raise ReleaseBlocked(
+                "Docker Engine 28 or newer is required for isolated gateway mode"
+            )
 
     def _validate_release_inputs(
         self,
@@ -2746,9 +2874,12 @@ class HostRelease:
                 or caddy_metadata.st_uid != 0
                 or caddy_metadata.st_gid != 0
                 or stat.S_IMODE(caddy_metadata.st_mode) != 0o444
-                or (bundle / "Caddyfile").read_bytes() != self.paths.caddy_config.read_bytes()
+                or (bundle / "Caddyfile").read_bytes()
+                != self.paths.caddy_config.read_bytes()
             ):
-                raise ReleaseDefect("installed Caddy configuration differs from release input")
+                raise ReleaseDefect(
+                    "installed Caddy configuration differs from release input"
+                )
 
     def _validate_caddy_mount(self, inspected: dict[str, Any]) -> None:
         mounts = inspected.get("Mounts")
@@ -2757,10 +2888,13 @@ class HostRelease:
         caddyfile_mounts = [
             mount
             for mount in mounts
-            if isinstance(mount, dict) and mount.get("Destination") == "/etc/caddy/Caddyfile"
+            if isinstance(mount, dict)
+            and mount.get("Destination") == "/etc/caddy/Caddyfile"
         ]
         if len(caddyfile_mounts) != 1:
-            raise PermanentReleaseFailure("live caddy does not have one exact Caddyfile mount")
+            raise PermanentReleaseFailure(
+                "live caddy does not have one exact Caddyfile mount"
+            )
         mount = caddyfile_mounts[0]
         if (
             mount.get("Type") != "bind"
@@ -2840,11 +2974,15 @@ class HostRelease:
     ) -> bytes:
         service = arguments[0]
         if service not in {"migration", "worker-background"}:
-            raise ReleaseDefect(f"durable Compose job service {service!r} is unsupported")
+            raise ReleaseDefect(
+                f"durable Compose job service {service!r} is unsupported"
+            )
         expected_image_reference = (
             candidate.images.api if service == "migration" else candidate.images.worker
         )
-        expected_command = _MIGRATION_COMMAND if service == "migration" else arguments[1:]
+        expected_command = (
+            _MIGRATION_COMMAND if service == "migration" else arguments[1:]
+        )
         completed = self._settle_compose_job(
             name,
             service=service,
@@ -2873,7 +3011,9 @@ class HostRelease:
             expected_command=expected_command,
         )
         if completed is None:
-            raise ReleaseDefect(f"durable Compose job {name} disappeared after completion")
+            raise ReleaseDefect(
+                f"durable Compose job {name} disappeared after completion"
+            )
         return completed
 
     def _settle_compose_job(
@@ -2928,16 +3068,21 @@ class HostRelease:
                 # container by requiring a well-formed label, and pin the actual
                 # execution through the immutable bundle's image id, command, and
                 # resource limits, all of which are compared here.
-                or _SHA256.fullmatch(str(labels.get("com.docker.compose.config-hash"))) is None
+                or _SHA256.fullmatch(str(labels.get("com.docker.compose.config-hash")))
+                is None
             ):
                 raise ReleaseDefect("durable Compose job identity differs")
             self._validate_resource_limits(service, inspected)
-            state = _mapping(inspected.get("State"), f"durable Compose job {name} state")
+            state = _mapping(
+                inspected.get("State"), f"durable Compose job {name} state"
+            )
             if state.get("Running") is True:
                 raise ReleaseBlocked(f"durable Compose job {name} is still running")
             exit_code = state.get("ExitCode")
             if type(exit_code) is not int:
-                raise ReleaseDefect(f"durable Compose job {name} exit code is malformed")
+                raise ReleaseDefect(
+                    f"durable Compose job {name} exit code is malformed"
+                )
             output = _run(("docker", "logs", "--tail", "1", listed)).stdout
             _run(("docker", "rm", listed))
             if exit_code != 0:
@@ -2945,7 +3090,9 @@ class HostRelease:
             return output
         return None
 
-    def _validate_resource_limits(self, service: str, inspected: dict[str, Any]) -> None:
+    def _validate_resource_limits(
+        self, service: str, inspected: dict[str, Any]
+    ) -> None:
         expected = _RESOURCE_LIMITS.get(service)
         if expected is None:
             raise ReleaseDefect(f"resource contract for {service!r} is unsupported")
@@ -2970,14 +3117,18 @@ class HostRelease:
 
     def _config_snapshot(self) -> ConfigSnapshot:
         if not self.paths.current_config.is_symlink():
-            raise ReleaseDefect("current config must be an atomic content-addressed symlink")
+            raise ReleaseDefect(
+                "current config must be an atomic content-addressed symlink"
+            )
         try:
             path = self.paths.current_config.resolve(strict=True)
             root = self.paths.config_root.resolve(strict=True)
         except OSError as exc:
             raise ReleaseDefect("current config target cannot be resolved") from exc
         if path.parent != root or re.fullmatch(r"[0-9a-f]{64}\.env", path.name) is None:
-            raise ReleaseDefect("current config points outside the canonical config root")
+            raise ReleaseDefect(
+                "current config points outside the canonical config root"
+            )
         metadata = path.stat()
         if (
             not stat.S_ISREG(metadata.st_mode)
@@ -2988,7 +3139,9 @@ class HostRelease:
             raise ReleaseDefect("current config is not root-owned immutable input")
         digest = _sha256(path)
         if path.name != f"{digest}.env":
-            raise ReleaseDefect("current config filename disagrees with its content digest")
+            raise ReleaseDefect(
+                "current config filename disagrees with its content digest"
+            )
         return ConfigSnapshot(path=path, sha256=digest, values=_read_env(path))
 
     def _container_evidence(
@@ -3008,7 +3161,9 @@ class HostRelease:
         }
         for service, image in expected_infra_images.items():
             if _IMAGE_REFERENCE.fullmatch(image) is None:
-                raise ReleaseDefect(f"{service} image config must be an immutable digest")
+                raise ReleaseDefect(
+                    f"{service} image config must be an immutable digest"
+                )
         for service in _SERVICES:
             result = self._compose(
                 bundle=bundle,
@@ -3031,7 +3186,9 @@ class HostRelease:
                         f"predecessor {service} is not healthy",
                         operation=f"predecessor-health:{service}",
                     )
-            image_id = _require_match(f"{service} image id", inspected.get("Image"), _IMAGE_ID)
+            image_id = _require_match(
+                f"{service} image id", inspected.get("Image"), _IMAGE_ID
+            )
             config = _mapping(inspected.get("Config"), f"{service} config")
             labels = _mapping(config.get("Labels"), f"{service} Compose labels")
             if (
@@ -3074,7 +3231,11 @@ class HostRelease:
         value = _mapping(raw, f"{service} resource usage")
         usage = value.get("MemUsage")
         pids = value.get("PIDs")
-        if not isinstance(usage, str) or not isinstance(pids, str) or not pids.isdigit():
+        if (
+            not isinstance(usage, str)
+            or not isinstance(pids, str)
+            or not pids.isdigit()
+        ):
             raise ReleaseDefect(f"{service} resource usage is malformed")
         matched = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)(B|KiB|MiB|GiB) / .+", usage)
         if matched is None:
@@ -3094,7 +3255,10 @@ class HostRelease:
     def _converge_resource_limits(self, source_sha: str) -> None:
         current_record = self.store.require_current_record()
         current_attempt = self.store.load_attempt(current_record.source_sha)
-        if current_attempt is None or current_attempt.phase is not ReleasePhase.Succeeded:
+        if (
+            current_attempt is None
+            or current_attempt.phase is not ReleasePhase.Succeeded
+        ):
             raise ReleaseDefect("current release attempt is not exactly succeeded")
         self.store.assert_candidate_admissible(source_sha)
         bundle = self.bundle(source_sha)
@@ -3137,8 +3301,12 @@ class HostRelease:
         drifted: list[tuple[str, str]] = []
         for service in _SERVICES:
             container_id = containers[service].container_id
-            inspected = _inspect_one(container_id, f"{service} resource convergence inspect")
-            host_config = _mapping(inspected.get("HostConfig"), f"{service} host config")
+            inspected = _inspect_one(
+                container_id, f"{service} resource convergence inspect"
+            )
+            host_config = _mapping(
+                inspected.get("HostConfig"), f"{service} host config"
+            )
             expected = _RESOURCE_LIMITS[service]
             observed = (
                 host_config.get("MemoryReservation"),
@@ -3158,9 +3326,13 @@ class HostRelease:
                 raise ReleaseBlocked(
                     f"{service} is not freshly proved {state_name} for resource convergence"
                 )
-            memory, pids = self._container_usage(container_id, service) if running else (0, 0)
+            memory, pids = (
+                self._container_usage(container_id, service) if running else (0, 0)
+            )
             if memory >= expected[1]:
-                raise ReleaseBlocked(f"{service} current memory is not below its hard limit")
+                raise ReleaseBlocked(
+                    f"{service} current memory is not below its hard limit"
+                )
             if pids > expected[2]:
                 raise ReleaseBlocked(f"{service} current PID use exceeds its limit")
             drifted.append((service, container_id))
@@ -3252,7 +3424,10 @@ class HostRelease:
                 )
                 if any(
                     fields[0] == _CODEX_STATE_MAPPER_NAME
-                    or (len(fields) > 1 and fields[1] == str(self.paths.codex_state_container))
+                    or (
+                        len(fields) > 1
+                        and fields[1] == str(self.paths.codex_state_container)
+                    )
                     for fields in configured
                 ):
                     raise ReleaseBlocked(failure)
@@ -3308,7 +3483,8 @@ class HostRelease:
             if (
                 backing.returncode != 0
                 or backing.stderr
-                or backing.stdout.decode("utf-8").strip() != str(self.paths.codex_state_container)
+                or backing.stdout.decode("utf-8").strip()
+                != str(self.paths.codex_state_container)
             ):
                 raise ReleaseBlocked(failure)
 
@@ -3370,7 +3546,9 @@ class HostRelease:
             ):
                 raise ReleaseBlocked(failure)
             if int(available_lines[1].strip()) < _CODEX_STATE_MINIMUM_FREE_BYTES:
-                raise ReleaseBlocked("Codex credential state has less than 128 MiB free")
+                raise ReleaseBlocked(
+                    "Codex credential state has less than 128 MiB free"
+                )
 
         except (
             OSError,
@@ -3474,26 +3652,43 @@ class HostRelease:
     ) -> None:
         for service in _SERVICES:
             evidence = attempt.containers[service]
-            inspected = _inspect_one(evidence.container_id, f"{service} replay preflight inspect")
-            config = _mapping(inspected.get("Config"), f"{service} replay preflight config")
-            labels = _mapping(config.get("Labels"), f"{service} replay preflight labels")
-            state = _mapping(inspected.get("State"), f"{service} replay preflight state")
+            inspected = _inspect_one(
+                evidence.container_id, f"{service} replay preflight inspect"
+            )
+            config = _mapping(
+                inspected.get("Config"), f"{service} replay preflight config"
+            )
+            labels = _mapping(
+                config.get("Labels"), f"{service} replay preflight labels"
+            )
+            state = _mapping(
+                inspected.get("State"), f"{service} replay preflight state"
+            )
             running = state.get("Running")
             if type(running) is not bool:
-                raise ReleaseDefect(f"{service} replay preflight running state is malformed")
+                raise ReleaseDefect(
+                    f"{service} replay preflight running state is malformed"
+                )
             if (
                 inspected.get("Image") != evidence.image
-                or hashlib.sha256(_canonical_json(config)).hexdigest() != evidence.config_sha256
+                or hashlib.sha256(_canonical_json(config)).hexdigest()
+                != evidence.config_sha256
                 or labels.get("com.docker.compose.project") != "nexus"
                 or labels.get("com.docker.compose.service") != service
             ):
-                raise ReleaseDefect(f"{service} identity changed before replay mutation")
+                raise ReleaseDefect(
+                    f"{service} identity changed before replay mutation"
+                )
             if service in _INFRASTRUCTURE_SERVICES:
                 if running is not True:
-                    raise ReleaseBlocked(f"{service} is not running before replay mutation")
+                    raise ReleaseBlocked(
+                        f"{service} is not running before replay mutation"
+                    )
             elif writers_running is not None and running is not writers_running:
                 expected = "running" if writers_running else "stopped"
-                raise ReleaseBlocked(f"{service} is not {expected} before replay mutation")
+                raise ReleaseBlocked(
+                    f"{service} is not {expected} before replay mutation"
+                )
             self._validate_resource_limits(service, inspected)
             if service == "caddy":
                 self._validate_caddy_mount(inspected)
@@ -3519,7 +3714,12 @@ class HostRelease:
             if key not in {"MemTotal", "MemAvailable", "SwapTotal"}:
                 continue
             parts = raw.split()
-            if not separator or len(parts) != 2 or parts[1] != "kB" or not parts[0].isdigit():
+            if (
+                not separator
+                or len(parts) != 2
+                or parts[1] != "kB"
+                or not parts[0].isdigit()
+            ):
                 raise ReleaseDefect(f"host {key} evidence is malformed")
             if key in meminfo:
                 raise ReleaseDefect(f"host {key} evidence is duplicated")
@@ -3536,17 +3736,23 @@ class HostRelease:
         """
 
         pressure: dict[str, float] = {}
-        for line in self._host_text(self.paths.memory_pressure, "memory pressure").splitlines():
+        for line in self._host_text(
+            self.paths.memory_pressure, "memory pressure"
+        ).splitlines():
             parts = line.split()
             if not parts or parts[0] not in {"some", "full"}:
                 continue
-            avg10 = next((item for item in parts[1:] if item.startswith("avg10=")), None)
+            avg10 = next(
+                (item for item in parts[1:] if item.startswith("avg10=")), None
+            )
             if avg10 is None or parts[0] in pressure:
                 raise ReleaseDefect("host memory pressure evidence is malformed")
             try:
                 measured = float(avg10.removeprefix("avg10="))
             except ValueError as exc:
-                raise ReleaseDefect("host memory pressure evidence is malformed") from exc
+                raise ReleaseDefect(
+                    "host memory pressure evidence is malformed"
+                ) from exc
             if not math.isfinite(measured):
                 raise ReleaseDefect("host memory pressure evidence is malformed")
             pressure[parts[0]] = measured
@@ -3570,7 +3776,9 @@ class HostRelease:
         meminfo = self._host_memory_bytes()
         if meminfo["MemTotal"] < _MIN_HOST_MEMORY_BYTES:
             raise ReleaseBlocked("host memory is below the committed 1900 MiB floor")
-        reservation_sum = sum(_RESOURCE_LIMITS[service][0] for service in _CAPACITY_SERVICES)
+        reservation_sum = sum(
+            _RESOURCE_LIMITS[service][0] for service in _CAPACITY_SERVICES
+        )
         if meminfo["MemTotal"] - reservation_sum < _HOST_RESERVED_MEMORY_BYTES:
             raise ReleaseBlocked("host memory reserve is below 320 MiB")
         if meminfo["MemAvailable"] < _MIN_AVAILABLE_MEMORY_BYTES:
@@ -3598,7 +3806,9 @@ class HostRelease:
         except OSError as exc:
             raise ReleaseBlocked("parser temporary filesystem is unavailable") from exc
         if parser_temp_free < _MIN_PARSER_TEMP_FREE_BYTES:
-            raise ReleaseBlocked("parser temporary filesystem has less than 512 MiB free")
+            raise ReleaseBlocked(
+                "parser temporary filesystem has less than 512 MiB free"
+            )
 
         output = _stdout(("docker", "ps", "--quiet", "--no-trunc"))
         running_ids = tuple(line for line in output.splitlines() if line)
@@ -3613,7 +3823,9 @@ class HostRelease:
         }
         unknown: list[str] = []
         for container_id in running_ids:
-            inspected = _inspect_one(container_id, f"running container {container_id} inspect")
+            inspected = _inspect_one(
+                container_id, f"running container {container_id} inspect"
+            )
             config = _mapping(inspected.get("Config"), "running container config")
             labels = _mapping(config.get("Labels"), "running container labels")
             project = labels.get("com.docker.compose.project")
@@ -3623,7 +3835,9 @@ class HostRelease:
             restart_count = inspected.get("RestartCount")
             oom_killed = state.get("OOMKilled")
             if type(restart_count) is not int or type(oom_killed) is not bool:
-                raise ReleaseDefect("running container restart/OOM evidence is malformed")
+                raise ReleaseDefect(
+                    "running container restart/OOM evidence is malformed"
+                )
             print(
                 "host-container"
                 f" id={container_id} project={project!r} service={service!r}"
@@ -3644,10 +3858,14 @@ class HostRelease:
                 )
             )
             if not known:
-                unknown.append(f"{container_id} project={project!r} service={service!r}")
+                unknown.append(
+                    f"{container_id} project={project!r} service={service!r}"
+                )
         if unknown:
             raise ReleaseBlocked("unknown running container: " + ", ".join(unknown))
-        stats = _stdout(("docker", "stats", "--no-stream", "--format", "{{json .}}", *running_ids))
+        stats = _stdout(
+            ("docker", "stats", "--no-stream", "--format", "{{json .}}", *running_ids)
+        )
         print(f"host-container-memory {stats}", file=sys.stderr)
 
     def _image_identity(self, image: str, candidate: CandidateManifest) -> str:
@@ -3662,7 +3880,9 @@ class HostRelease:
             or not isinstance(inspected[0], dict)
         ):
             raise ReleaseDefect("candidate image inspect shape is malformed")
-        image_id = _require_match("candidate image id", inspected[0].get("Id"), _IMAGE_ID)
+        image_id = _require_match(
+            "candidate image id", inspected[0].get("Id"), _IMAGE_ID
+        )
         config = _mapping(inspected[0].get("Config"), "candidate image config")
         labels = _mapping(config.get("Labels"), "candidate image labels")
         if labels.get("org.opencontainers.image.revision") != candidate.source_sha:
@@ -3689,16 +3909,22 @@ class HostRelease:
         identity = RuntimeIdentity(
             source_sha=_string(mapping, "source_sha"),
             expected_database_revision=_string(mapping, "expected_database_revision"),
-            expected_oracle_manifest_digest=_string(mapping, "expected_oracle_manifest_digest"),
+            expected_oracle_manifest_digest=_string(
+                mapping, "expected_oracle_manifest_digest"
+            ),
         )
         if identity_bytes != _canonical_json(identity.as_json()):
             raise ReleaseDefect("candidate runtime identity is not canonical JSON")
         if (
             identity.source_sha != candidate.source_sha
-            or identity.expected_database_revision != candidate.expected_database_revision
-            or identity.expected_oracle_manifest_digest != candidate.expected_oracle_manifest_digest
+            or identity.expected_database_revision
+            != candidate.expected_database_revision
+            or identity.expected_oracle_manifest_digest
+            != candidate.expected_oracle_manifest_digest
         ):
-            raise PermanentReleaseFailure("candidate runtime identity differs from manifest")
+            raise PermanentReleaseFailure(
+                "candidate runtime identity differs from manifest"
+            )
         return image_id
 
     def _database_revisions(
@@ -3753,7 +3979,9 @@ class HostRelease:
         except ExternalCommandFailed as exc:
             raise ExternalCommandFailed(str(exc), operation=operation) from exc
         revisions = tuple(line for line in output.splitlines() if line)
-        if any(_DATABASE_REVISION.fullmatch(revision) is None for revision in revisions):
+        if any(
+            _DATABASE_REVISION.fullmatch(revision) is None for revision in revisions
+        ):
             raise ReleaseDefect("database has a malformed Alembic revision")
         return revisions
 
@@ -3817,7 +4045,8 @@ class HostRelease:
             or caddy_metadata.st_uid != 0
             or caddy_metadata.st_gid != 0
             or stat.S_IMODE(caddy_metadata.st_mode) != 0o444
-            or (bundle / "Caddyfile").read_bytes() != self.paths.caddy_config.read_bytes()
+            or (bundle / "Caddyfile").read_bytes()
+            != self.paths.caddy_config.read_bytes()
         ):
             raise PermanentReleaseFailure(
                 "installed Caddy configuration differs from release input"
@@ -3852,8 +4081,10 @@ class HostRelease:
         if forward_fix_sha is None:
             if (
                 containers["api"].image != current_record.api_image_id
-                or containers["worker-interactive"].image != current_record.worker_image_id
-                or containers["worker-background"].image != current_record.worker_image_id
+                or containers["worker-interactive"].image
+                != current_record.worker_image_id
+                or containers["worker-background"].image
+                != current_record.worker_image_id
             ):
                 raise PermanentReleaseFailure(
                     "live predecessor containers differ from the current release record"
@@ -3932,7 +4163,9 @@ class HostRelease:
         return result
 
     def _assert_running_state(self, container_id: str, *, running: bool) -> None:
-        observed = _stdout(("docker", "inspect", "--format", "{{.State.Running}}", container_id))
+        observed = _stdout(
+            ("docker", "inspect", "--format", "{{.State.Running}}", container_id)
+        )
         expected = "true" if running else "false"
         if observed != expected:
             raise ExternalCommandFailed(
@@ -3993,7 +4226,9 @@ class HostRelease:
             .strip()
         )
         if output:
-            _require_match("stopped worker-background container id", output, _CONTAINER_ID)
+            _require_match(
+                "stopped worker-background container id", output, _CONTAINER_ID
+            )
             self._assert_running_state(output, running=False)
         self._compose(
             bundle=bundle,
@@ -4018,7 +4253,9 @@ class HostRelease:
             if len(container_ids) != 1:
                 raise ReleaseDefect(f"stopped {service} has multiple containers")
             container_id = container_ids[0]
-            _require_match(f"stopped {service} container id", container_id, _CONTAINER_ID)
+            _require_match(
+                f"stopped {service} container id", container_id, _CONTAINER_ID
+            )
             self._assert_running_state(container_id, running=False)
 
     def _restart_predecessor(self, attempt: ReleaseAttempt) -> None:
@@ -4028,7 +4265,10 @@ class HostRelease:
             if item.get("Image") != evidence.image:
                 raise ReleaseDefect(f"rollback {service} image identity changed")
             config = _mapping(item.get("Config"), f"rollback {service} config")
-            if hashlib.sha256(_canonical_json(config)).hexdigest() != evidence.config_sha256:
+            if (
+                hashlib.sha256(_canonical_json(config)).hexdigest()
+                != evidence.config_sha256
+            ):
                 raise ReleaseDefect(f"rollback {service} config identity changed")
             _run(("docker", "start", evidence.container_id))
 
@@ -4051,7 +4291,9 @@ class HostRelease:
                 return
             # justify-polling: Docker health is the only predecessor readiness signal.
             time.sleep(1)
-        raise ExternalCommandFailed("exact predecessor containers did not become healthy")
+        raise ExternalCommandFailed(
+            "exact predecessor containers did not become healthy"
+        )
 
     def _backup(
         self,
@@ -4271,7 +4513,9 @@ class HostRelease:
             subprocess.TimeoutExpired,
             OSError,
         ) as exc:
-            raise ExternalCommandFailed("bounded PostgreSQL backup verification failed") from exc
+            raise ExternalCommandFailed(
+                "bounded PostgreSQL backup verification failed"
+            ) from exc
         if not result.stdout.strip():
             raise ReleaseDefect("pg_restore did not list a valid database backup")
 
@@ -4339,11 +4583,16 @@ class HostRelease:
                 self._validate_caddy_mount(item)
             if (
                 item.get("Image") != evidence.image
-                or hashlib.sha256(_canonical_json(config)).hexdigest() != evidence.config_sha256
-                or _mapping(item.get("State"), f"{service} unchanged state").get("Running")
+                or hashlib.sha256(_canonical_json(config)).hexdigest()
+                != evidence.config_sha256
+                or _mapping(item.get("State"), f"{service} unchanged state").get(
+                    "Running"
+                )
                 is not True
             ):
-                raise PermanentReleaseFailure(f"{service} identity changed during app release")
+                raise PermanentReleaseFailure(
+                    f"{service} identity changed during app release"
+                )
 
     def _prove_backend(
         self,
@@ -4386,7 +4635,10 @@ class HostRelease:
         ):
             raise PermanentReleaseFailure("API runtime identity differs from candidate")
         task_digest_value = data.get("task_contract_digest")
-        if not isinstance(task_digest_value, str) or _SHA256.fullmatch(task_digest_value) is None:
+        if (
+            not isinstance(task_digest_value, str)
+            or _SHA256.fullmatch(task_digest_value) is None
+        ):
             raise PermanentReleaseFailure("API task contract digest is malformed")
         task_digest = task_digest_value
 
@@ -4451,7 +4703,9 @@ class HostRelease:
             started_at = _docker_timestamp_seconds(
                 latest.get("Start"), f"{service} health receipt start"
             )
-            ended_at = _docker_timestamp_seconds(latest.get("End"), f"{service} health receipt end")
+            ended_at = _docker_timestamp_seconds(
+                latest.get("End"), f"{service} health receipt end"
+            )
             receipt_age = time.time() - ended_at
             if (
                 latest.get("ExitCode") != 0
@@ -4484,7 +4738,8 @@ class HostRelease:
                 or worker.get("status") != "ready"
                 or worker.get("lane") != lane
                 or worker.get("source_sha") != candidate.source_sha
-                or worker.get("expected_database_revision") != candidate.expected_database_revision
+                or worker.get("expected_database_revision")
+                != candidate.expected_database_revision
                 or worker.get("expected_oracle_manifest_digest")
                 != candidate.expected_oracle_manifest_digest
                 or worker.get("task_contract_digest") != task_digest
@@ -4513,9 +4768,13 @@ class HostRelease:
             for service in ("worker-interactive", "worker-background")
         }
         if api_id != attempt.candidate_api_image_id:
-            raise PermanentReleaseFailure("API container image differs from candidate digest")
+            raise PermanentReleaseFailure(
+                "API container image differs from candidate digest"
+            )
         if worker_ids != {attempt.candidate_worker_image_id}:
-            raise PermanentReleaseFailure("worker container images differ from candidate digest")
+            raise PermanentReleaseFailure(
+                "worker container images differ from candidate digest"
+            )
         if require_codex_agent_host:
             self._prove_codex_agent_host(
                 bundle=bundle,
@@ -4615,7 +4874,8 @@ class HostRelease:
             )
             identifiers = tuple(observed.splitlines()) if observed else ()
             if len(identifiers) > 1 or any(
-                _CONTAINER_ID.fullmatch(identifier) is None for identifier in identifiers
+                _CONTAINER_ID.fullmatch(identifier) is None
+                for identifier in identifiers
             ):
                 raise ReleaseDefect(f"{service} stopped-container listing is malformed")
             if identifiers:
@@ -4684,7 +4944,9 @@ class HostRelease:
             .stdout.decode()
             .strip()
         )
-        _require_match("Codex egress policy container id", policy_container_id, _CONTAINER_ID)
+        _require_match(
+            "Codex egress policy container id", policy_container_id, _CONTAINER_ID
+        )
         self._validate_codex_agent_host_isolation(
             _inspect_one(container_id, "Codex agent host isolation inspect"),
             image_environment=image_environment,
@@ -4752,7 +5014,9 @@ class HostRelease:
                 "Codex agent host health",
             )
         except ReleaseDefect as exc:
-            raise PermanentReleaseFailure("Codex agent host health contract is malformed") from exc
+            raise PermanentReleaseFailure(
+                "Codex agent host health contract is malformed"
+            ) from exc
         if health != {
             "schema_version": "nexus-generation-health.v2",
             "status": "ready",
@@ -4764,7 +5028,9 @@ class HostRelease:
             "sdk_version": "0.144.4",
             "runtime_version": "0.144.4",
         }:
-            raise PermanentReleaseFailure("Codex agent host is not ready with exact auth contract")
+            raise PermanentReleaseFailure(
+                "Codex agent host is not ready with exact auth contract"
+            )
 
     def _prove_codex_mcp_path(
         self,
@@ -4810,7 +5076,9 @@ class HostRelease:
         )
         _require_match(f"{service} container id", container_id, _CONTAINER_ID)
         inspected = _inspect_one(container_id, f"{service} network inspect")
-        settings = _mapping(inspected.get("NetworkSettings"), f"{service} network settings")
+        settings = _mapping(
+            inspected.get("NetworkSettings"), f"{service} network settings"
+        )
         networks = settings.get("Networks")
         if not isinstance(networks, dict) or len(networks) != 1:
             raise PermanentReleaseFailure(f"{service} network attachment differs")
@@ -4821,7 +5089,9 @@ class HostRelease:
         try:
             parsed = ipaddress.IPv4Address(address)
         except (ipaddress.AddressValueError, TypeError) as exc:
-            raise PermanentReleaseFailure(f"{service} network address is malformed") from exc
+            raise PermanentReleaseFailure(
+                f"{service} network address is malformed"
+            ) from exc
         if not parsed.is_private:
             raise PermanentReleaseFailure(f"{service} network address is not private")
         return str(parsed)
@@ -4853,10 +5123,13 @@ class HostRelease:
         inspected: dict[str, Any], *, expected_mcp_origin: str
     ) -> None:
         config = _mapping(inspected.get("Config"), "interactive worker config")
-        environment = _environment_mapping(config.get("Env"), "interactive worker environment")
+        environment = _environment_mapping(
+            config.get("Env"), "interactive worker environment"
+        )
         if (
             environment.get("WORKER_LANE") != "interactive"
-            or environment.get("NEXUS_CODEX_AGENT_SOCKET") != "/run/nexus-codex/agent.sock"
+            or environment.get("NEXUS_CODEX_AGENT_SOCKET")
+            != "/run/nexus-codex/agent.sock"
             or environment.get("NEXUS_AGENT_TOOLS_MCP_LISTEN") != "0.0.0.0:8001"
             or environment.get("NEXUS_AGENT_TOOLS_MCP_ORIGIN") != expected_mcp_origin
             or config.get("ExposedPorts") != {"8001/tcp": {}}
@@ -4864,11 +5137,14 @@ class HostRelease:
             raise PermanentReleaseFailure("interactive generation surface differs")
         mounts = inspected.get("Mounts")
         if not isinstance(mounts, list):
-            raise PermanentReleaseFailure("interactive generation surface mounts are malformed")
+            raise PermanentReleaseFailure(
+                "interactive generation surface mounts are malformed"
+            )
         run_mounts = [
             mount
             for mount in mounts
-            if isinstance(mount, dict) and mount.get("Destination") == "/run/nexus-codex"
+            if isinstance(mount, dict)
+            and mount.get("Destination") == "/run/nexus-codex"
         ]
         if len(run_mounts) != 1:
             raise PermanentReleaseFailure("interactive generation socket mount differs")
@@ -4899,7 +5175,9 @@ class HostRelease:
             "Codex agent worker image environment",
         )
         if set(environment) != _CODEX_AGENT_IMAGE_ENVIRONMENT_NAMES:
-            raise PermanentReleaseFailure("Codex agent worker image environment differs")
+            raise PermanentReleaseFailure(
+                "Codex agent worker image environment differs"
+            )
         return environment
 
     def _validate_codex_agent_host_isolation(
@@ -4910,7 +5188,9 @@ class HostRelease:
         expected_mcp_origin: str,
     ) -> None:
         config = _mapping(inspected.get("Config"), "Codex agent host config")
-        host_config = _mapping(inspected.get("HostConfig"), "Codex agent host host config")
+        host_config = _mapping(
+            inspected.get("HostConfig"), "Codex agent host host config"
+        )
         try:
             environment = _environment_mapping(
                 config.get("Env"),
@@ -4926,12 +5206,16 @@ class HostRelease:
             "NEXUS_CODEX_MCP_ORIGIN": expected_mcp_origin,
         }
         if environment != expected_environment:
-            raise PermanentReleaseFailure("Codex agent host environment isolation differs")
+            raise PermanentReleaseFailure(
+                "Codex agent host environment isolation differs"
+            )
         security_options = host_config.get("SecurityOpt")
         if not isinstance(security_options, list) or not all(
             isinstance(option, str) for option in security_options
         ):
-            raise PermanentReleaseFailure("Codex agent host security-option evidence is malformed")
+            raise PermanentReleaseFailure(
+                "Codex agent host security-option evidence is malformed"
+            )
         if (
             config.get("User") != "10001:10001"
             or config.get("Cmd") != ["python", "-m", "apps.codex_agent.main"]
@@ -4947,19 +5231,26 @@ class HostRelease:
             or host_config.get("PidMode") not in ("", "private")
             or host_config.get("IpcMode") not in ("", "private")
             or host_config.get("Init") is not True
-            or str(host_config.get("NetworkMode", "")).startswith(("host", "container:"))
+            or str(host_config.get("NetworkMode", "")).startswith(
+                ("host", "container:")
+            )
             or host_config.get("NanoCpus") != 1_000_000_000
             or set(security_options) != _CODEX_AGENT_SECURITY_OPTIONS
             or host_config.get("MaskedPaths") != []
             or host_config.get("ReadonlyPaths") != []
-            or host_config.get("RestartPolicy") != {"MaximumRetryCount": 0, "Name": "no"}
+            or host_config.get("RestartPolicy")
+            != {"MaximumRetryCount": 0, "Name": "no"}
             or host_config.get("Tmpfs") != _CODEX_AGENT_TMPFS
             or host_config.get("Dns") != [_CODEX_EGRESS_PROXY_IP]
             or _ulimit_set(host_config.get("Ulimits")) != _CODEX_AGENT_ULIMITS
         ):
-            raise PermanentReleaseFailure("Codex agent host privilege isolation differs")
+            raise PermanentReleaseFailure(
+                "Codex agent host privilege isolation differs"
+            )
         self._validate_codex_agent_host_mounts(inspected)
-        network = _mapping(inspected.get("NetworkSettings"), "Codex agent host network settings")
+        network = _mapping(
+            inspected.get("NetworkSettings"), "Codex agent host network settings"
+        )
         ports = network.get("Ports")
         if ports not in ({}, None):
             raise PermanentReleaseFailure("Codex agent host exposes a public port")
@@ -4967,7 +5258,10 @@ class HostRelease:
         if not isinstance(networks, dict) or set(networks) != {_CODEX_PRIVATE_NETWORK}:
             raise PermanentReleaseFailure("Codex agent host network isolation differs")
         private = networks[_CODEX_PRIVATE_NETWORK]
-        if not isinstance(private, dict) or private.get("IPAddress") != _CODEX_AGENT_HOST_IP:
+        if (
+            not isinstance(private, dict)
+            or private.get("IPAddress") != _CODEX_AGENT_HOST_IP
+        ):
             raise PermanentReleaseFailure("Codex agent host network address differs")
 
     def _validate_codex_egress_policy_isolation(
@@ -5015,7 +5309,9 @@ class HostRelease:
             or host_config.get("DeviceRequests") not in (None, [])
             or host_config.get("PidMode") not in ("", "private")
             or host_config.get("IpcMode") not in ("", "private")
-            or str(host_config.get("NetworkMode", "")).startswith(("host", "container:"))
+            or str(host_config.get("NetworkMode", "")).startswith(
+                ("host", "container:")
+            )
             or host_config.get("SecurityOpt") != ["no-new-privileges:true"]
             or host_config.get("RestartPolicy")
             != {"MaximumRetryCount": 0, "Name": "unless-stopped"}
@@ -5037,9 +5333,14 @@ class HostRelease:
             _CODEX_PRIVATE_NETWORK,
             _CODEX_PROXY_EGRESS_NETWORK,
         }:
-            raise PermanentReleaseFailure("Codex egress policy network isolation differs")
+            raise PermanentReleaseFailure(
+                "Codex egress policy network isolation differs"
+            )
         private = networks[_CODEX_PRIVATE_NETWORK]
-        if not isinstance(private, dict) or private.get("IPAddress") != _CODEX_EGRESS_PROXY_IP:
+        if (
+            not isinstance(private, dict)
+            or private.get("IPAddress") != _CODEX_EGRESS_PROXY_IP
+        ):
             raise PermanentReleaseFailure("Codex egress policy network address differs")
 
     @staticmethod
@@ -5059,8 +5360,13 @@ class HostRelease:
 
     def _validate_codex_agent_host_mounts(self, inspected: dict[str, Any]) -> None:
         mounts = inspected.get("Mounts")
-        if not isinstance(mounts, list) or len(mounts) != len(_CODEX_AGENT_VOLUME_MOUNTS) + 1:
-            raise PermanentReleaseFailure("Codex agent host mounts differ from isolated contract")
+        if (
+            not isinstance(mounts, list)
+            or len(mounts) != len(_CODEX_AGENT_VOLUME_MOUNTS) + 1
+        ):
+            raise PermanentReleaseFailure(
+                "Codex agent host mounts differ from isolated contract"
+            )
         observed: dict[str, dict[str, Any]] = {}
         for mount in mounts:
             if not isinstance(mount, dict):
@@ -5075,7 +5381,9 @@ class HostRelease:
             observed[destination] = mount
         credential_destination = "/run/nexus-codex-credential/auth.json"
         if set(observed) != {credential_destination, *_CODEX_AGENT_VOLUME_MOUNTS}:
-            raise PermanentReleaseFailure("Codex agent host mounts differ from isolated contract")
+            raise PermanentReleaseFailure(
+                "Codex agent host mounts differ from isolated contract"
+            )
         credential_mount = observed[credential_destination]
         if (
             credential_mount.get("Destination") != credential_destination
@@ -5087,7 +5395,9 @@ class HostRelease:
             or set(credential_mount)
             - {"Destination", "Mode", "RW", "Source", "Type", "Propagation"}
         ):
-            raise PermanentReleaseFailure("Codex agent host mounts differ from isolated contract")
+            raise PermanentReleaseFailure(
+                "Codex agent host mounts differ from isolated contract"
+            )
         for destination, volume_name in _CODEX_AGENT_VOLUME_MOUNTS.items():
             _require_named_volume_mount(
                 observed[destination],
@@ -5178,7 +5488,9 @@ class HostRelease:
                 "Codex capacity canary environment",
             )
         except ReleaseDefect as exc:
-            raise CodexCapacityBreach("Codex capacity canary isolation differs") from exc
+            raise CodexCapacityBreach(
+                "Codex capacity canary isolation differs"
+            ) from exc
         labels = config.get("Labels")
         security_options = host_config.get("SecurityOpt")
         if (
@@ -5191,7 +5503,8 @@ class HostRelease:
             or config.get("User") != "10001:10001"
             or config.get("Entrypoint") != ["sh"]
             or config.get("Cmd") != list(_CODEX_CAPACITY_CLIENT_COMMAND)
-            or environment != {**image_environment, **_CODEX_CAPACITY_CLIENT_ENVIRONMENT}
+            or environment
+            != {**image_environment, **_CODEX_CAPACITY_CLIENT_ENVIRONMENT}
             or host_config.get("NetworkMode") != "none"
             or host_config.get("ReadonlyRootfs") is not True
             or host_config.get("CapDrop") != ["ALL"]
@@ -5312,13 +5625,17 @@ class HostRelease:
         """Read the three non-content host counters retained by qualification."""
 
         memory = self._host_memory_bytes()
-        reservation_sum = sum(_RESOURCE_LIMITS[service][0] for service in _CAPACITY_SERVICES)
+        reservation_sum = sum(
+            _RESOURCE_LIMITS[service][0] for service in _CAPACITY_SERVICES
+        )
         if (
             memory["MemTotal"] < _MIN_HOST_MEMORY_BYTES
             or memory["MemTotal"] - reservation_sum < _HOST_RESERVED_MEMORY_BYTES
             or memory["SwapTotal"] < _MIN_SWAP_BYTES
         ):
-            raise ReleaseBlocked("Codex capacity qualification host envelope is unavailable")
+            raise ReleaseBlocked(
+                "Codex capacity qualification host envelope is unavailable"
+            )
         pressure = self._host_memory_pressure()
         return memory["MemAvailable"], pressure["some"], pressure["full"]
 
@@ -5390,7 +5707,9 @@ class HostRelease:
             return CodexCapacityBreach(
                 "Codex agent host was OOM-killed during capacity qualification"
             )
-        return ExternalCommandFailed("Codex agent host exited during capacity qualification")
+        return ExternalCommandFailed(
+            "Codex agent host exited during capacity qualification"
+        )
 
     def _codex_capacity_cgroup_metrics(self, cgroup: Path) -> tuple[int, int, int, int]:
         values: dict[str, int] = {}
@@ -5415,7 +5734,9 @@ class HostRelease:
             values["memory.current"] > values["memory.max"]
             or values["memory.peak"] > values["memory.max"]
         ):
-            raise CodexCapacityBreach("Codex capacity cgroup counters exceed memory.max")
+            raise CodexCapacityBreach(
+                "Codex capacity cgroup counters exceed memory.max"
+            )
         return (
             values["memory.max"],
             values["memory.current"],
@@ -5448,7 +5769,9 @@ class HostRelease:
                 .stdout.decode("ascii")
                 .strip()
             )
-            _require_match(f"Codex capacity {service} container id", container_id, _CONTAINER_ID)
+            _require_match(
+                f"Codex capacity {service} container id", container_id, _CONTAINER_ID
+            )
             inspected = _inspect_one(container_id, f"Codex capacity {service} inspect")
             self._validate_resource_limits(service, inspected)
             state = _mapping(inspected.get("State"), f"Codex capacity {service} state")
@@ -5527,7 +5850,9 @@ class HostRelease:
             or not value
             or len(value) > _CADDY_CONFIG_MAX_BYTES
         ):
-            raise ReleaseDefect("installed Caddy configuration is not exact immutable input")
+            raise ReleaseDefect(
+                "installed Caddy configuration is not exact immutable input"
+            )
         return value
 
     def _write_caddy_config_in_place(self, value: bytes) -> None:
@@ -5540,7 +5865,9 @@ class HostRelease:
             before = path.lstat()
             descriptor = os.open(path, os.O_WRONLY | os.O_NOFOLLOW)
         except OSError as exc:
-            raise ReleaseDefect("installed Caddy configuration cannot be opened safely") from exc
+            raise ReleaseDefect(
+                "installed Caddy configuration cannot be opened safely"
+            ) from exc
         try:
             opened = os.fstat(descriptor)
             if (
@@ -5550,7 +5877,9 @@ class HostRelease:
                 or opened.st_gid != 0
                 or stat.S_IMODE(opened.st_mode) != 0o444
             ):
-                raise ReleaseDefect("installed Caddy configuration changed before update")
+                raise ReleaseDefect(
+                    "installed Caddy configuration changed before update"
+                )
             os.ftruncate(descriptor, 0)
             remaining = memoryview(value)
             while remaining:
@@ -5601,7 +5930,9 @@ class HostRelease:
             metadata = path.lstat()
             value = path.read_bytes()
         except OSError as exc:
-            raise ReleaseDefect("Caddy activation predecessor backup is unavailable") from exc
+            raise ReleaseDefect(
+                "Caddy activation predecessor backup is unavailable"
+            ) from exc
         if (
             not stat.S_ISREG(metadata.st_mode)
             or metadata.st_uid != 0
@@ -5666,7 +5997,9 @@ class HostRelease:
             journal.candidate_sha256 != hashlib.sha256(candidate).hexdigest()
             or journal.config_sha256 != config_sha256
         ):
-            raise ReleaseDefect("pending Caddy activation differs from immutable inputs")
+            raise ReleaseDefect(
+                "pending Caddy activation differs from immutable inputs"
+            )
         metadata = self.paths.caddy_config.lstat()
         if (metadata.st_dev, metadata.st_ino) != (
             journal.caddy_device,
@@ -5727,7 +6060,9 @@ class HostRelease:
         try:
             return _read_json_output(loaded.stdout, "loaded Caddy config")
         except ReleaseDefect as exc:
-            raise PermanentReleaseFailure("Caddy loaded-config proof is malformed") from exc
+            raise PermanentReleaseFailure(
+                "Caddy loaded-config proof is malformed"
+            ) from exc
 
     def _require_caddy_loaded_config(
         self,
@@ -5759,7 +6094,9 @@ class HostRelease:
             adapted_value = _read_json_output(adapted.stdout, "adapted Caddy config")
             loaded_value = _read_json_output(loaded.stdout, "loaded Caddy config")
         except ReleaseDefect as exc:
-            raise PermanentReleaseFailure("Caddy loaded-config proof is malformed") from exc
+            raise PermanentReleaseFailure(
+                "Caddy loaded-config proof is malformed"
+            ) from exc
         if loaded_value != adapted_value:
             raise ReleaseBlocked("Caddy has not loaded the installed candidate config")
 
@@ -5849,7 +6186,9 @@ class HostRelease:
             config_path=config.path,
         )
         if installed != desired and loaded != adapted_installed:
-            raise ReleaseBlocked("Caddy loaded config differs from the installed predecessor")
+            raise ReleaseBlocked(
+                "Caddy loaded config differs from the installed predecessor"
+            )
 
         mutated = installed != desired
         journal = (
@@ -5932,7 +6271,9 @@ class HostRelease:
                     ):
                         raise ReleaseDefect("Caddy rollback proof differs")
                     if journal is None:
-                        raise ReleaseDefect("mutated Caddy activation omitted its journal")
+                        raise ReleaseDefect(
+                            "mutated Caddy activation omitted its journal"
+                        )
                     self._clear_caddy_activation(journal)
                 except BaseException as rollback_error:
                     failure = ReleaseDefect(
@@ -6011,22 +6352,35 @@ class HostRelease:
             or _string(evidence, "worker_image_id") != worker_image_id
             or _string(evidence, "status") != "passed"
         ):
-            raise CodexCapacityBreach("Codex capacity qualification differs from candidate")
+            raise CodexCapacityBreach(
+                "Codex capacity qualification differs from candidate"
+            )
         if (
             _nonnegative_integer(evidence, "cgroup_memory_max")
             != _RESOURCE_LIMITS[_CODEX_AGENT_HOST][1]
         ):
-            raise CodexCapacityBreach("Codex capacity qualification cgroup limit differs")
+            raise CodexCapacityBreach(
+                "Codex capacity qualification cgroup limit differs"
+            )
         peak = _nonnegative_integer(evidence, "cgroup_memory_peak")
         if peak > 320 * 1024 * 1024:
-            raise CodexCapacityBreach("Codex capacity qualification cgroup peak exceeds 320 MiB")
+            raise CodexCapacityBreach(
+                "Codex capacity qualification cgroup peak exceeds 320 MiB"
+            )
         if (
             _nonnegative_integer(evidence, "cgroup_memory_current")
             > _RESOURCE_LIMITS[_CODEX_AGENT_HOST][1]
         ):
-            raise CodexCapacityBreach("Codex capacity qualification cgroup current exceeds limit")
-        if _nonnegative_integer(evidence, "minimum_mem_available") < _MIN_AVAILABLE_MEMORY_BYTES:
-            raise CodexCapacityBreach("Codex capacity qualification host headroom is below 256 MiB")
+            raise CodexCapacityBreach(
+                "Codex capacity qualification cgroup current exceeds limit"
+            )
+        if (
+            _nonnegative_integer(evidence, "minimum_mem_available")
+            < _MIN_AVAILABLE_MEMORY_BYTES
+        ):
+            raise CodexCapacityBreach(
+                "Codex capacity qualification host headroom is below 256 MiB"
+            )
         some = _finite_number(evidence, "maximum_memory_psi_some")
         full = _finite_number(evidence, "maximum_memory_psi_full")
         if full != 0 or some > 5:
@@ -6034,10 +6388,14 @@ class HostRelease:
                 "Codex capacity qualification memory pressure exceeds envelope"
             )
         if _nonnegative_integer(evidence, "oom_kill_delta") != 0:
-            raise CodexCapacityBreach("Codex capacity qualification observed an OOM kill")
+            raise CodexCapacityBreach(
+                "Codex capacity qualification observed an OOM kill"
+            )
         turns = evidence.get("turns")
         if not isinstance(turns, list) or len(turns) != len(_CODEX_CAPACITY_PHASES):
-            raise CodexCapacityBreach("Codex capacity qualification turns are malformed")
+            raise CodexCapacityBreach(
+                "Codex capacity qualification turns are malformed"
+            )
         phases: list[str] = []
         for value in turns:
             turn = _closed_mapping(
@@ -6061,9 +6419,13 @@ class HostRelease:
                 raise CodexCapacityBreach("Codex capacity qualification turn differs")
         if tuple(phases) != _CODEX_CAPACITY_PHASES:
             raise CodexCapacityBreach("Codex capacity qualification turn phases differ")
-        services = _string_list(evidence.get("services"), "Codex capacity qualification services")
+        services = _string_list(
+            evidence.get("services"), "Codex capacity qualification services"
+        )
         if tuple(services) != _CODEX_CAPACITY_SERVICES:
-            raise CodexCapacityBreach("Codex capacity qualification service health differs")
+            raise CodexCapacityBreach(
+                "Codex capacity qualification service health differs"
+            )
         return _release_timestamp_seconds(
             _string(evidence, "measured_at"),
             "Codex capacity qualification",
@@ -6087,7 +6449,9 @@ class HostRelease:
             or _string(evidence, "worker_image_id") != worker_image_id
             or _string(evidence, "status") != "failed"
         ):
-            raise CodexCapacityBreach("Codex capacity qualification differs from candidate")
+            raise CodexCapacityBreach(
+                "Codex capacity qualification differs from candidate"
+            )
         if (
             evidence.get("turns") != []
             or _nonnegative_integer(evidence, "cgroup_memory_max")
@@ -6128,7 +6492,9 @@ class HostRelease:
                 worker_image_id=worker_image_id,
             )
         else:
-            raise CodexCapacityBreach("Codex capacity qualification status is malformed")
+            raise CodexCapacityBreach(
+                "Codex capacity qualification status is malformed"
+            )
         return status, measured_at
 
     def _admit_codex_capacity_qualification(
@@ -6148,7 +6514,9 @@ class HostRelease:
             worker_image_id=worker_image_id,
         )
         if status == "failed":
-            raise ReleaseBlocked("Codex capacity qualification failed evidence is immutable")
+            raise ReleaseBlocked(
+                "Codex capacity qualification failed evidence is immutable"
+            )
         if not _codex_capacity_evidence_expired(measured_at):
             raise ReleaseBlocked("Codex capacity qualification evidence already exists")
 
@@ -6194,11 +6562,15 @@ class HostRelease:
             worker_image_id=worker_image_id,
         )
         if status == "failed":
-            raise ReleaseBlocked("Codex capacity qualification failed evidence is immutable")
+            raise ReleaseBlocked(
+                "Codex capacity qualification failed evidence is immutable"
+            )
         if not _codex_capacity_evidence_expired(measured_at):
             raise ReleaseBlocked("Codex capacity qualification evidence already exists")
 
-    def _write_codex_capacity_failure(self, *, source_sha: str, worker_image_id: str) -> None:
+    def _write_codex_capacity_failure(
+        self, *, source_sha: str, worker_image_id: str
+    ) -> None:
         self._write_codex_capacity_evidence(
             source_sha,
             worker_image_id,
@@ -6232,7 +6604,9 @@ class HostRelease:
             )
         )
         identifiers = tuple(observed.splitlines()) if observed else ()
-        if any(_CONTAINER_ID.fullmatch(identifier) is None for identifier in identifiers):
+        if any(
+            _CONTAINER_ID.fullmatch(identifier) is None for identifier in identifiers
+        ):
             raise ReleaseDefect("Codex capacity canary listing is malformed")
         return identifiers
 
@@ -6246,7 +6620,9 @@ class HostRelease:
         """Remove only exact inspected containers owned by this qualification."""
 
         for canary_id in self._codex_capacity_canary_ids(name):
-            inspected = _inspect_one(canary_id, f"Codex capacity canary {operation} inspect")
+            inspected = _inspect_one(
+                canary_id, f"Codex capacity canary {operation} inspect"
+            )
             config = _mapping(
                 inspected.get("Config"),
                 f"Codex capacity canary {operation} config",
@@ -6257,14 +6633,18 @@ class HostRelease:
                 or not isinstance(labels, dict)
                 or labels.get(_CODEX_CAPACITY_CANARY_LABEL) != source_sha
             ):
-                raise ReleaseBlocked("Codex capacity canary name is held by a foreign container")
+                raise ReleaseBlocked(
+                    "Codex capacity canary name is held by a foreign container"
+                )
             # Delete by the inspected immutable ID, never the reusable name. If
             # the inspected container disappears and another process wins the
             # name before this call, Docker can only reject the stale ID; it
             # cannot redirect deletion onto the replacement.
             _run(("docker", "rm", "--force", canary_id), timeout_seconds=30)
         if self._codex_capacity_canary_ids(name):
-            raise ExternalCommandFailed(f"Codex capacity canary remains after {operation}")
+            raise ExternalCommandFailed(
+                f"Codex capacity canary remains after {operation}"
+            )
 
     def _reclaim_codex_capacity_canary(self, name: str, *, source_sha: str) -> None:
         """Remove an owned canary left behind by an interrupted same-SHA proof."""
@@ -6305,7 +6685,9 @@ class HostRelease:
                 failures.append(exc)
         return tuple(failures)
 
-    def _requires_first_codex_capacity_qualification(self, candidate: CandidateManifest) -> bool:
+    def _requires_first_codex_capacity_qualification(
+        self, candidate: CandidateManifest
+    ) -> bool:
         current = self.store.require_current_record()
         if re.fullmatch(r"[0-9]+", current.database_revision) is None:
             raise ReleaseDefect("current database revision is not numeric")
@@ -6360,14 +6742,18 @@ class HostRelease:
         bundle = self.bundle(source_sha)
         candidate = load_candidate_manifest(bundle / "candidate-manifest.json")
         if not self._requires_first_codex_capacity_qualification(candidate):
-            raise ReleaseBlocked("Codex capacity qualification is only for first 0222 promotion")
+            raise ReleaseBlocked(
+                "Codex capacity qualification is only for first 0222 promotion"
+            )
         self._require_codex_isolated_gateway_support()
         worker_image_id = self._image_identity(candidate.images.worker, candidate)
         self._admit_codex_capacity_qualification(
             source_sha=source_sha,
             worker_image_id=worker_image_id,
         )
-        self._require_qualification_host_sample(self._qualification_host_sample(), initial=True)
+        self._require_qualification_host_sample(
+            self._qualification_host_sample(), initial=True
+        )
         config = self._config_snapshot()
         host_may_be_started = False
         try:
@@ -6404,7 +6790,9 @@ class HostRelease:
                 .stdout.decode("ascii")
                 .strip()
             )
-            _require_match("Codex capacity host container id", host_container_id, _CONTAINER_ID)
+            _require_match(
+                "Codex capacity host container id", host_container_id, _CONTAINER_ID
+            )
             policy_container_id = (
                 self._compose(
                     bundle=bundle,
@@ -6485,7 +6873,9 @@ class HostRelease:
                     *_CODEX_CAPACITY_CLIENT_COMMAND,
                 )
             )
-            _require_match("Codex capacity canary container id", canary_id, _CONTAINER_ID)
+            _require_match(
+                "Codex capacity canary container id", canary_id, _CONTAINER_ID
+            )
             self._prove_codex_capacity_isolation(
                 canary=_inspect_one(canary_id, "Codex capacity canary inspect"),
                 host_container_id=host_container_id,
@@ -6494,10 +6884,14 @@ class HostRelease:
                 expected_image_id=worker_image_id,
                 expected_name=name,
                 expected_source_sha=source_sha,
-                image_environment=self._codex_agent_image_environment(candidate.images.worker),
+                image_environment=self._codex_agent_image_environment(
+                    candidate.images.worker
+                ),
             )
             host_cgroup = self._codex_capacity_cgroup(host_container_id)
-            sampled: list[tuple[tuple[int, float, float], tuple[int, int, int, int]]] = []
+            sampled: list[
+                tuple[tuple[int, float, float], tuple[int, int, int, int]]
+            ] = []
             sample_failure: list[Exception] = []
             sample_breach: list[CodexCapacityBreach] = []
             sampler_stop = threading.Event()
@@ -6510,7 +6904,9 @@ class HostRelease:
                     # The kernel removes a cgroup with its container, so an
                     # unreadable counter may be the measured host dying under
                     # the envelope rather than a transient read fault.
-                    raise self._classify_codex_host_cgroup_loss(host_container_id, exc) from exc
+                    raise self._classify_codex_host_cgroup_loss(
+                        host_container_id, exc
+                    ) from exc
                 sampled.append((host_sample, cgroup_metrics))
 
             sample_once()
@@ -6521,7 +6917,9 @@ class HostRelease:
                 while not sampler_stop.wait(_CODEX_CAPACITY_SAMPLE_INTERVAL_SECONDS):
                     try:
                         sample_once()
-                    except CodexCapacityBreach as exc:  # a measurement, not a sampler fault
+                    except (
+                        CodexCapacityBreach
+                    ) as exc:  # a measurement, not a sampler fault
                         sample_breach.append(exc)
                         sampler_stop.set()
                     except Exception as exc:  # retained only as a typed failure
@@ -6556,7 +6954,9 @@ class HostRelease:
                 # breach; the proof is retried, not permanently disqualified.
                 raise ExternalCommandFailed("Codex capacity sampler did not stop")
             if sample_failure:
-                raise ReleaseDefect("Codex capacity sampler failed") from sample_failure[0]
+                raise ReleaseDefect(
+                    "Codex capacity sampler failed"
+                ) from sample_failure[0]
             # The controller's own measurements classify first, whatever the
             # canary went on to say: a cgroup peak above the 320 MiB margin, a
             # changed memory.max, an OOM kill, or host headroom/pressure outside
@@ -6569,11 +6969,16 @@ class HostRelease:
             metrics = tuple(item[1] for item in sampled)
             initial_metrics, final_metrics = metrics[0], metrics[-1]
             if (
-                any(metric[0] != _RESOURCE_LIMITS[_CODEX_AGENT_HOST][1] for metric in metrics)
+                any(
+                    metric[0] != _RESOURCE_LIMITS[_CODEX_AGENT_HOST][1]
+                    for metric in metrics
+                )
                 or max(metric[2] for metric in metrics) > 320 * 1024 * 1024
                 or final_metrics[3] - initial_metrics[3] != 0
             ):
-                raise CodexCapacityBreach("Codex capacity qualification cgroup envelope differs")
+                raise CodexCapacityBreach(
+                    "Codex capacity qualification cgroup envelope differs"
+                )
             # Classify by evidence first, never by the exit code alone. Only
             # stdout that parses as the canary's own contract statement is a
             # measurement this run may permanently disqualify a SHA with. A
@@ -6601,7 +7006,9 @@ class HostRelease:
                 # A complete statement carrying a code the contract does not
                 # define is the killed-after-printing case: still retriable,
                 # still never evidence.
-                raise ExternalCommandFailed("Codex capacity canary did not reach a terminal")
+                raise ExternalCommandFailed(
+                    "Codex capacity canary did not reach a terminal"
+                )
             if schema_version != _CODEX_CAPACITY_CANARY_SCHEMA_VERSION:
                 raise CodexCapacityBreach("Codex capacity canary schema differs")
             if result.returncode != _CODEX_CAPACITY_CANARY_EXIT_CODES.get(status):
@@ -6677,7 +7084,9 @@ class HostRelease:
             if proof_error is None:
                 proof_error = ExternalCommandFailed("Codex capacity cleanup failed")
             for cleanup_failure in cleanup_failures:
-                proof_error.add_note(f"Codex capacity cleanup also failed: {cleanup_failure}")
+                proof_error.add_note(
+                    f"Codex capacity cleanup also failed: {cleanup_failure}"
+                )
         if proof_error is not None:
             raise proof_error
         if evidence is None:
@@ -6705,7 +7114,9 @@ class HostRelease:
         _require_match(f"{service} container id", container_id, _CONTAINER_ID)
         inspected = _inspect_one(container_id, f"{service} activated container inspect")
         self._validate_resource_limits(service, inspected)
-        image_id = _require_match(f"{service} image id", inspected.get("Image"), _IMAGE_ID)
+        image_id = _require_match(
+            f"{service} image id", inspected.get("Image"), _IMAGE_ID
+        )
         return image_id
 
     def apply(
@@ -6726,7 +7137,9 @@ class HostRelease:
                     production_host=production_host,
                 )
             except PermanentReleaseFailure:
-                self._terminalize_attempt(source_sha, failure_code="candidate-invariant")
+                self._terminalize_attempt(
+                    source_sha, failure_code="candidate-invariant"
+                )
                 raise
             except ExternalCommandFailed as exc:
                 operation = self._retry_operation(source_sha, exc.operation)
@@ -6751,7 +7164,9 @@ class HostRelease:
     ) -> ReleaseAttempt:
         self.store.assert_no_oracle_attempt()
         if self.paths.caddy_activation.exists():
-            raise ReleaseBlocked("pending Caddy activation must be recovered before release apply")
+            raise ReleaseBlocked(
+                "pending Caddy activation must be recovered before release apply"
+            )
         _require_match("Vercel deployment id", deployment_id, _DEPLOYMENT_ID)
         _require_match("production host", production_host, _HOST)
         self.store.assert_candidate_admissible(source_sha)
@@ -6763,14 +7178,18 @@ class HostRelease:
             source_sha,
             existing=existing,
         )
-        candidate = load_candidate_manifest(self.bundle(source_sha) / "candidate-manifest.json")
+        candidate = load_candidate_manifest(
+            self.bundle(source_sha) / "candidate-manifest.json"
+        )
         if _requires_codex_agent_host(candidate):
             self._require_codex_isolated_gateway_support()
             self._require_codex_state_storage()
             self._validate_codex_state_boot_guard()
         if existing is None or existing.phase is ReleasePhase.Prepared:
             pre_mutation_config = (
-                self._config_snapshot().path if existing is None else Path(existing.config_path)
+                self._config_snapshot().path
+                if existing is None
+                else Path(existing.config_path)
             )
             self._require_caddy_admin_ready(
                 bundle=self.bundle(source_sha),
@@ -7027,7 +7446,9 @@ class HostRelease:
             self.store.replace_attempt(attempt)
 
         if attempt.phase is not ReleasePhase.AwaitingFrontendPromotion:
-            raise ReleaseBlocked(f"host apply cannot continue phase {attempt.phase.value}")
+            raise ReleaseBlocked(
+                f"host apply cannot continue phase {attempt.phase.value}"
+            )
         return attempt
 
     def _terminalize_attempt(self, source_sha: str, *, failure_code: str) -> None:
@@ -7093,9 +7514,13 @@ class HostRelease:
         if attempt is None:
             raise ReleaseBlocked("bound frontend failure requires an existing attempt")
         if attempt.vercel_deployment_id != deployment_id:
-            raise ReleaseBlocked("bound frontend failure must name the exact stored deployment")
+            raise ReleaseBlocked(
+                "bound frontend failure must name the exact stored deployment"
+            )
         if attempt.terminal:
-            raise ReleaseBlocked("bound frontend failure cannot rewrite a terminal attempt")
+            raise ReleaseBlocked(
+                "bound frontend failure cannot rewrite a terminal attempt"
+            )
         self._terminalize_attempt(
             source_sha,
             failure_code=failure_code,
@@ -7210,7 +7635,9 @@ class HostRelease:
                 or exc.headers.get("Location") is not None
                 or exc.headers.get("Set-Cookie") is not None
             ):
-                raise PermanentReleaseFailure("public MCP mount contract differs") from exc
+                raise PermanentReleaseFailure(
+                    "public MCP mount contract differs"
+                ) from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise ExternalCommandFailed(
                 f"public MCP proof failed for {url}",
@@ -7236,7 +7663,9 @@ class HostRelease:
                 if response.headers.get("Location") is not None:
                     raise PermanentReleaseFailure("public proof returned Location")
                 if response.headers.get("Set-Cookie") is not None:
-                    raise PermanentReleaseFailure("public proof mutated authentication state")
+                    raise PermanentReleaseFailure(
+                        "public proof mutated authentication state"
+                    )
                 headers = {
                     key.lower(): ",".join(response.headers.get_all(key, failobj=[]))
                     for key in response.headers.keys()
@@ -7270,7 +7699,9 @@ class HostRelease:
         )
         if _requires_codex_agent_host(candidate):
             self._prove_public_mcp_mount(Path(attempt.config_path))
-        web, web_headers = self._fetch_json(f"https://{attempt.production_host}/version")
+        web, web_headers = self._fetch_json(
+            f"https://{attempt.production_host}/version"
+        )
         expected_web = {
             "source_sha": candidate.source_sha,
             "player_protocol": android_player_protocol_identity(
@@ -7278,7 +7709,9 @@ class HostRelease:
             ).as_json(),
         }
         if web != expected_web:
-            raise ReleaseBlocked("authoritative frontend does not serve the bound candidate")
+            raise ReleaseBlocked(
+                "authoritative frontend does not serve the bound candidate"
+            )
         if web_headers.get("cache-control") != "no-store":
             raise PermanentReleaseFailure("frontend version response is cacheable")
         config = _read_env(Path(attempt.config_path))
@@ -7291,17 +7724,22 @@ class HostRelease:
         try:
             data = _mapping(api.get("data"), "public API version data")
         except ReleaseDefect as exc:
-            raise PermanentReleaseFailure("public API version data is malformed") from exc
+            raise PermanentReleaseFailure(
+                "public API version data is malformed"
+            ) from exc
         if data.keys() != {
             "source_sha",
             "expected_database_revision",
             "expected_oracle_manifest_digest",
             "task_contract_digest",
         }:
-            raise PermanentReleaseFailure("public API version data fields are not closed")
+            raise PermanentReleaseFailure(
+                "public API version data fields are not closed"
+            )
         if (
             data.get("source_sha") != candidate.source_sha
-            or data.get("expected_database_revision") != candidate.expected_database_revision
+            or data.get("expected_database_revision")
+            != candidate.expected_database_revision
             or data.get("expected_oracle_manifest_digest")
             != candidate.expected_oracle_manifest_digest
             or data.get("task_contract_digest") != expected_task_contract_digest
@@ -7330,7 +7768,9 @@ class HostRelease:
                     deployment_id=deployment_id,
                 )
             except PermanentReleaseFailure:
-                self._terminalize_attempt(source_sha, failure_code="candidate-invariant")
+                self._terminalize_attempt(
+                    source_sha, failure_code="candidate-invariant"
+                )
                 raise
             except ExternalCommandFailed as exc:
                 operation = self._retry_operation(source_sha, exc.operation)
@@ -7346,7 +7786,9 @@ class HostRelease:
         if attempt is None:
             raise ReleaseBlocked(f"release attempt {source_sha} does not exist")
         if attempt.vercel_deployment_id != deployment_id:
-            raise ReleaseBlocked("finalize deployment differs from the bound Vercel candidate")
+            raise ReleaseBlocked(
+                "finalize deployment differs from the bound Vercel candidate"
+            )
         bundle = self.bundle(source_sha)
         candidate = load_candidate_manifest(bundle / "candidate-manifest.json")
         self._validate_release_inputs(
@@ -7386,7 +7828,9 @@ class HostRelease:
             attempt = attempt.advance(ReleasePhase.FrontendPromoted, now=_now())
             self.store.replace_attempt(attempt)
         elif attempt.phase is not ReleasePhase.FrontendPromoted:
-            raise ReleaseBlocked(f"finalize cannot continue phase {attempt.phase.value}")
+            raise ReleaseBlocked(
+                f"finalize cannot continue phase {attempt.phase.value}"
+            )
 
         api_image_id, worker_image_id, task_digest = self._prove_backend(
             bundle=bundle,
@@ -7406,7 +7850,9 @@ class HostRelease:
             candidate=candidate,
             api_image_id=api_image_id,
             worker_image_id=worker_image_id,
-            verified_at=(_now() if existing_record is None else existing_record.verified_at),
+            verified_at=(
+                _now() if existing_record is None else existing_record.verified_at
+            ),
         )
         self.store.create_record(record)
         self.store.set_current(source_sha)
@@ -7421,8 +7867,14 @@ class HostRelease:
             raise ReleaseBlocked(f"release {source_sha} is not current")
         attempt = self.store.load_attempt(source_sha)
         record = self.store.load_record(source_sha)
-        if attempt is None or attempt.phase is not ReleasePhase.Succeeded or record is None:
-            raise ReleaseDefect("current release is not a complete immutable publication")
+        if (
+            attempt is None
+            or attempt.phase is not ReleasePhase.Succeeded
+            or record is None
+        ):
+            raise ReleaseDefect(
+                "current release is not a complete immutable publication"
+            )
         bundle = self.bundle(source_sha)
         candidate = load_candidate_manifest(bundle / "candidate-manifest.json")
         if record.manifest_sha256 != _sha256(bundle / "candidate-manifest.json"):
@@ -7474,7 +7926,9 @@ class HostRelease:
             raise ReleaseBlocked(f"release {forward_fix} awaits a forward fix")
         attempt = self.store.load_attempt(source_sha)
         if attempt is None or attempt.phase is not ReleasePhase.Succeeded:
-            raise ReleaseDefect("current release is not a complete immutable publication")
+            raise ReleaseDefect(
+                "current release is not a complete immutable publication"
+            )
         bundle = self.bundle(source_sha)
         candidate = load_candidate_manifest(bundle / "candidate-manifest.json")
         if not _requires_codex_agent_host(candidate):
@@ -7501,7 +7955,9 @@ class HostRelease:
         if container_id:
             _require_match("Codex agent host container id", container_id, _CONTAINER_ID)
             state = _mapping(
-                _inspect_one(container_id, "Codex stopped agent host inspect").get("State"),
+                _inspect_one(container_id, "Codex stopped agent host inspect").get(
+                    "State"
+                ),
                 "Codex stopped agent host state",
             )
             if state.get("Running") is not False:
@@ -7525,7 +7981,9 @@ class HostRelease:
                 stop_host=host_may_be_started,
             )
             for cleanup_failure in cleanup_failures:
-                exc.add_note(f"Codex host stop after failed resume also failed: {cleanup_failure}")
+                exc.add_note(
+                    f"Codex host stop after failed resume also failed: {cleanup_failure}"
+                )
             raise
         return {
             "schema_version": "nexus-codex-agent-host-resume.v1",
@@ -7598,7 +8056,9 @@ class HostOracleReconcile:
 
         status = self._status(target, execution)
         if status.manifest_digest != target.record.expected_oracle_manifest_digest:
-            raise ReleaseDefect("Oracle status differs from the immutable release target")
+            raise ReleaseDefect(
+                "Oracle status differs from the immutable release target"
+            )
         if status.is_exact_publication(target.record.expected_oracle_manifest_digest):
             self._prove_current_runtime(target)
             return OracleReconcileResult.NoOp
@@ -7645,7 +8105,9 @@ class HostOracleReconcile:
             or release_attempt is None
             or release_attempt.phase is not ReleasePhase.Succeeded
         ):
-            raise ReleaseDefect("Oracle reconcile requires one complete immutable current release")
+            raise ReleaseDefect(
+                "Oracle reconcile requires one complete immutable current release"
+            )
         record_path = self.paths.records / f"{source_sha}.json"
         if _read_canonical_json(record_path, "release record") != record.as_json():
             raise ReleaseDefect("current release record canonical value changed")
@@ -7663,7 +8125,8 @@ class HostOracleReconcile:
             or record.api_image != candidate.images.api
             or record.worker_image != candidate.images.worker
             or record.database_revision != candidate.expected_database_revision
-            or record.expected_oracle_manifest_digest != candidate.expected_oracle_manifest_digest
+            or record.expected_oracle_manifest_digest
+            != candidate.expected_oracle_manifest_digest
             or release_attempt.manifest_sha256 != record.manifest_sha256
             or release_attempt.config_path != record.config_path
             or release_attempt.config_sha256 != record.config_sha256
@@ -7687,7 +8150,9 @@ class HostOracleReconcile:
         ):
             raise ReleaseDefect("recorded Oracle config is not immutable release input")
         config = _read_env(resolved_config)
-        owner_user_id = _unquote_env(config.get("NEXUS_ORACLE_CORPUS_OWNER_USER_ID", ""))
+        owner_user_id = _unquote_env(
+            config.get("NEXUS_ORACLE_CORPUS_OWNER_USER_ID", "")
+        )
         if _UUID.fullmatch(owner_user_id) is None:
             raise ReleaseDefect("Oracle corpus owner user id is malformed")
         return OracleReleaseTarget(
@@ -7726,19 +8191,27 @@ class HostOracleReconcile:
             target.record.expected_oracle_manifest_digest,
         )
         if attempt is None:
-            raise ReleaseBlocked("Oracle repair execution requires existing attempt state")
+            raise ReleaseBlocked(
+                "Oracle repair execution requires existing attempt state"
+            )
         if binding is None:
-            raise ReleaseBlocked("Oracle repair execution requires a durable repair binding")
+            raise ReleaseBlocked(
+                "Oracle repair execution requires a durable repair binding"
+            )
         if binding.repair_source_sha != execution_source_sha:
-            raise ReleaseBlocked(f"Oracle repair is immutably bound to {binding.repair_source_sha}")
+            raise ReleaseBlocked(
+                f"Oracle repair is immutably bound to {binding.repair_source_sha}"
+            )
 
         bundle = self.host.bundle(execution_source_sha)
         candidate = load_candidate_manifest(bundle / "candidate-manifest.json")
         if (
             binding.target_source_sha != target.record.source_sha
-            or binding.target_manifest_digest != target.record.expected_oracle_manifest_digest
+            or binding.target_manifest_digest
+            != target.record.expected_oracle_manifest_digest
             or binding.expected_database_revision != target.record.database_revision
-            or binding.repair_manifest_sha256 != _sha256(bundle / "candidate-manifest.json")
+            or binding.repair_manifest_sha256
+            != _sha256(bundle / "candidate-manifest.json")
             or binding.repair_api_image != candidate.images.api
             or binding.repair_worker_image != candidate.images.worker
             or candidate.source_sha != binding.repair_source_sha
@@ -7746,14 +8219,18 @@ class HostOracleReconcile:
             or candidate.expected_oracle_manifest_digest
             != target.record.expected_oracle_manifest_digest
         ):
-            raise ReleaseDefect("Oracle repair execution differs from its durable binding")
+            raise ReleaseDefect(
+                "Oracle repair execution differs from its durable binding"
+            )
         api_image_id = self.host._image_identity(candidate.images.api, candidate)
         worker_image_id = self.host._image_identity(candidate.images.worker, candidate)
         if (
             api_image_id != binding.repair_api_image_id
             or worker_image_id != binding.repair_worker_image_id
         ):
-            raise ReleaseDefect("Oracle repair image identity differs from its durable binding")
+            raise ReleaseDefect(
+                "Oracle repair image identity differs from its durable binding"
+            )
         return OracleExecutionSource(bundle=bundle, candidate=candidate, repair=binding)
 
     def _validate_attempt(
@@ -7763,7 +8240,8 @@ class HostOracleReconcile:
     ) -> None:
         if (
             attempt.source_sha != target.record.source_sha
-            or attempt.expected_manifest_digest != target.record.expected_oracle_manifest_digest
+            or attempt.expected_manifest_digest
+            != target.record.expected_oracle_manifest_digest
             or attempt.config_path != target.record.config_path
             or attempt.config_sha256 != target.record.config_sha256
             or _sha256(Path(attempt.config_path)) != attempt.config_sha256
@@ -7810,10 +8288,14 @@ class HostOracleReconcile:
         timeout_seconds = 2700 if command == "reconcile-support" else 300
         if command in {"unpublish", "reconcile-support", "publish"}:
             execution_suffix = (
-                "" if execution.repair is None else f"-repair-{execution.candidate.source_sha}"
+                ""
+                if execution.repair is None
+                else f"-repair-{execution.candidate.source_sha}"
             )
             return self.host._compose_job(
-                name=(f"nexus-oracle-{target.record.source_sha}{execution_suffix}-{command}"),
+                name=(
+                    f"nexus-oracle-{target.record.source_sha}{execution_suffix}-{command}"
+                ),
                 bundle=target.bundle,
                 candidate=execution.candidate,
                 config_path=Path(target.record.config_path),
@@ -7869,7 +8351,8 @@ class HostOracleReconcile:
             "worker-background": target.record.worker_image_id,
         }
         if any(
-            evidence.image != expected_images[service] for service, evidence in containers.items()
+            evidence.image != expected_images[service]
+            for service, evidence in containers.items()
         ):
             raise PermanentReleaseFailure(
                 "current app containers differ from the immutable release record"
@@ -7881,11 +8364,14 @@ class HostOracleReconcile:
         service: str,
         evidence: ContainerEvidence,
     ) -> dict[str, Any]:
-        item = _inspect_one(evidence.container_id, f"Oracle {service} container inspect")
+        item = _inspect_one(
+            evidence.container_id, f"Oracle {service} container inspect"
+        )
         config = _mapping(item.get("Config"), f"Oracle {service} config")
         if (
             item.get("Image") != evidence.image
-            or hashlib.sha256(_canonical_json(config)).hexdigest() != evidence.config_sha256
+            or hashlib.sha256(_canonical_json(config)).hexdigest()
+            != evidence.config_sha256
         ):
             raise ReleaseDefect(f"Oracle {service} container identity changed")
         return _mapping(item.get("State"), f"Oracle {service} state")
@@ -7900,7 +8386,9 @@ class HostOracleReconcile:
             state = self._inspect_exact_container(service, evidence)
             if state.get("Running") is not running:
                 expected = "running" if running else "stopped"
-                raise ExternalCommandFailed(f"exact Oracle {service} container is not {expected}")
+                raise ExternalCommandFailed(
+                    f"exact Oracle {service} container is not {expected}"
+                )
 
     def _stop_exact_writers(self, attempt: OracleAttempt) -> None:
         running = [
@@ -7929,7 +8417,9 @@ class HostOracleReconcile:
                 .strip()
             )
             if current_id != evidence.container_id:
-                raise ReleaseDefect(f"Compose {service} no longer names the exact Oracle container")
+                raise ReleaseDefect(
+                    f"Compose {service} no longer names the exact Oracle container"
+                )
 
     def _restore_exact_runtime(
         self,
@@ -7961,7 +8451,9 @@ class HostOracleReconcile:
             # justify-polling: Docker health is the bounded runtime readiness source.
             time.sleep(1)
         else:
-            raise ExternalCommandFailed("exact Oracle app containers did not become healthy")
+            raise ExternalCommandFailed(
+                "exact Oracle app containers did not become healthy"
+            )
         self._prove_exact_running_state(attempt, running=True)
         self._prove_compose_container_ids(attempt, target)
         self._prove_current_runtime(target)
@@ -7993,8 +8485,12 @@ class HostOracleReconcile:
         execution: OracleExecutionSource,
     ) -> None:
         status = self._status(target, execution)
-        if not status.is_exact_publication(target.record.expected_oracle_manifest_digest):
-            raise PermanentReleaseFailure("Oracle publication is not exact after publish")
+        if not status.is_exact_publication(
+            target.record.expected_oracle_manifest_digest
+        ):
+            raise PermanentReleaseFailure(
+                "Oracle publication is not exact after publish"
+            )
 
     def _resume(
         self,
@@ -8067,7 +8563,9 @@ class HostOracleReconcile:
             self.store.replace_oracle_attempt(attempt)
 
         if attempt.phase is not OraclePhase.Succeeded:
-            raise ReleaseDefect(f"Oracle reconcile cannot continue phase {attempt.phase.value}")
+            raise ReleaseDefect(
+                f"Oracle reconcile cannot continue phase {attempt.phase.value}"
+            )
         return attempt
 
 
@@ -8092,7 +8590,9 @@ def install_oracle_repair_bundle(
         target.record.expected_oracle_manifest_digest,
     )
     if attempt is None:
-        raise ReleaseBlocked("Oracle repair installation requires existing attempt state")
+        raise ReleaseBlocked(
+            "Oracle repair installation requires existing attempt state"
+        )
     owner._validate_attempt(attempt, target)
     active = owner.store.active_oracle_attempt()
     existing = owner.store.load_oracle_repair(
@@ -8101,16 +8601,22 @@ def install_oracle_repair_bundle(
     )
     if existing is None:
         if active != attempt or attempt.terminal:
-            raise ReleaseBlocked("new Oracle repair installation requires the active attempt")
+            raise ReleaseBlocked(
+                "new Oracle repair installation requires the active attempt"
+            )
         if (
             owner.store.load_attempt(candidate.source_sha) is not None
             or owner.store.load_record(candidate.source_sha) is not None
             or owner.store.current_sha() == candidate.source_sha
             or owner.store.forward_fix_sha() == candidate.source_sha
         ):
-            raise ReleaseBlocked("Oracle repair source must have no application release history")
+            raise ReleaseBlocked(
+                "Oracle repair source must have no application release history"
+            )
     elif existing.repair_source_sha != candidate.source_sha:
-        raise ReleaseBlocked(f"Oracle repair is immutably bound to {existing.repair_source_sha}")
+        raise ReleaseBlocked(
+            f"Oracle repair is immutably bound to {existing.repair_source_sha}"
+        )
 
     if (
         candidate.expected_database_revision != target.record.database_revision
@@ -8150,7 +8656,9 @@ def install_oracle_repair_bundle(
     )
     if existing is not None:
         if proposed != existing:
-            raise ReleaseDefect("installed Oracle repair differs from its durable binding")
+            raise ReleaseDefect(
+                "installed Oracle repair differs from its durable binding"
+            )
         return existing
     owner.store.create_oracle_repair(proposed)
     return proposed
@@ -8196,7 +8704,9 @@ def _parser() -> argparse.ArgumentParser:
     qualify_capacity = commands.add_parser("qualify-codex-capacity")
     qualify_capacity.add_argument("--source-sha", required=True)
 
-    install_codex_state_boot_guard = commands.add_parser("install-codex-state-boot-guard")
+    install_codex_state_boot_guard = commands.add_parser(
+        "install-codex-state-boot-guard"
+    )
     install_codex_state_boot_guard.add_argument("--source-sha", required=True)
 
     activate_caddy_config = commands.add_parser("activate-caddy-config")
@@ -8278,7 +8788,9 @@ def main(argv: list[str] | None = None) -> int:
         attempt = store.load_attempt(args.source_sha)
         current = current_record.source_sha
         forward_fix = store.forward_fix_sha()
-        forward_fix_attempt = None if forward_fix is None else store.load_attempt(forward_fix)
+        forward_fix_attempt = (
+            None if forward_fix is None else store.load_attempt(forward_fix)
+        )
         if forward_fix is not None and forward_fix_attempt is None:
             raise ReleaseDefect("forward-fix pointer has no attempt")
         failed_vercel_deployment_ids = (
@@ -8293,7 +8805,10 @@ def main(argv: list[str] | None = None) -> int:
                         ReleasePhase.ForwardFixPending,
                         ReleasePhase.ForwardFixRequired,
                     }
-                    and (item.source_sha == forward_fix or item.forward_fix_of == forward_fix)
+                    and (
+                        item.source_sha == forward_fix
+                        or item.forward_fix_of == forward_fix
+                    )
                 }
             )
         )
@@ -8316,7 +8831,9 @@ def main(argv: list[str] | None = None) -> int:
                     "forward_fix_sha": forward_fix,
                     "failed_vercel_deployment_ids": failed_vercel_deployment_ids,
                     "phase": None if attempt is None else attempt.phase.value,
-                    "predecessor_sha": (current if attempt is None else attempt.predecessor_sha),
+                    "predecessor_sha": (
+                        current if attempt is None else attempt.predecessor_sha
+                    ),
                     "vercel_deployment_id": (
                         None if attempt is None else attempt.vercel_deployment_id
                     ),
@@ -8333,7 +8850,9 @@ def main(argv: list[str] | None = None) -> int:
                 production_host=args.production_host,
             )
             sys.stdout.buffer.write(
-                _canonical_json({"source_sha": attempt.source_sha, "phase": attempt.phase.value})
+                _canonical_json(
+                    {"source_sha": attempt.source_sha, "phase": attempt.phase.value}
+                )
             )
             return 0
         if args.command == "qualify-codex-capacity":
@@ -8356,7 +8875,9 @@ def main(argv: list[str] | None = None) -> int:
                 deployment_id=args.deployment_id,
             )
             sys.stdout.buffer.write(
-                _canonical_json({"source_sha": attempt.source_sha, "phase": attempt.phase.value})
+                _canonical_json(
+                    {"source_sha": attempt.source_sha, "phase": attempt.phase.value}
+                )
             )
             return 0
         if args.command == "fail-bound-frontend":
@@ -8365,7 +8886,9 @@ def main(argv: list[str] | None = None) -> int:
                 deployment_id=args.deployment_id,
             )
             sys.stdout.buffer.write(
-                _canonical_json({"source_sha": attempt.source_sha, "phase": attempt.phase.value})
+                _canonical_json(
+                    {"source_sha": attempt.source_sha, "phase": attempt.phase.value}
+                )
             )
             return 0
         if args.command == "fail-auth-smoke":
@@ -8374,7 +8897,9 @@ def main(argv: list[str] | None = None) -> int:
                 deployment_id=args.deployment_id,
             )
             sys.stdout.buffer.write(
-                _canonical_json({"source_sha": attempt.source_sha, "phase": attempt.phase.value})
+                _canonical_json(
+                    {"source_sha": attempt.source_sha, "phase": attempt.phase.value}
+                )
             )
             return 0
         if args.command == "verify-current":
@@ -8402,12 +8927,16 @@ def main(argv: list[str] | None = None) -> int:
             )
             record = controller.store.load_record(args.source_sha)
             if record is None:
-                raise ReleaseDefect("successful Oracle reconcile lost its release record")
+                raise ReleaseDefect(
+                    "successful Oracle reconcile lost its release record"
+                )
             sys.stdout.buffer.write(
                 _canonical_json(
                     {
                         "source_sha": args.source_sha,
-                        "expected_manifest_digest": (record.expected_oracle_manifest_digest),
+                        "expected_manifest_digest": (
+                            record.expected_oracle_manifest_digest
+                        ),
                         "result": result.value,
                     }
                 )

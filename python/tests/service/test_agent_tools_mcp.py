@@ -9,11 +9,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import multiprocessing
+import os
+import signal
 import time
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import UUID, uuid4
 from xml.etree import ElementTree
 
@@ -21,8 +25,9 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from llm_tools import ParsedJson, ToolId, canonical_json_bytes, raw_input_digest
 from pydantic import SecretStr
-from sqlalchemy import Engine, select, text
+from sqlalchemy import Engine, event, func, select, text
 from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
@@ -34,12 +39,20 @@ from nexus.db.models import (
     Fragment,
     LibraryEntry,
     Message,
+    MessageRetrieval,
     MessageToolCall,
+    ResourceEdge,
 )
 from nexus.db.session import create_session_factory
-from nexus.jobs.queue import get_job, update_running_job_payload
+from nexus.jobs.queue import (
+    JobExecutionContext,
+    complete_job,
+    fail_job,
+    get_job,
+    update_running_job_payload,
+)
 from nexus.schemas.library import CreateLibraryRequest
-from nexus.schemas.presence import present
+from nexus.schemas.presence import Present, present
 from nexus.services import bootstrap, generation_policy, library_governance
 from nexus.services.agent_tool_grants import (
     AGENT_TOOL_GRANT_AUDIENCE,
@@ -59,8 +72,17 @@ from nexus.services.agent_tools_mcp import (
     create_agent_tools_mcp_app,
 )
 from nexus.services.chat_run_finalize import finalize_cancelled
-from nexus.services.chat_run_steps import ChatStepRuntime, PreparedChatRun, step_fingerprint
-from nexus.services.chat_runs import cancel_chat_run
+from nexus.services.chat_run_steps import (
+    ChatStepRuntime,
+    PreparedChatRun,
+    reconcile_prepared_mcp_admission_not_dispatched,
+    step_fingerprint,
+)
+from nexus.services.chat_runs import (
+    SkippedChatExecution,
+    cancel_chat_run,
+    execute_chat_run,
+)
 from nexus.services.codex_generation_client import CodexGenerationClient
 from nexus.services.codex_generation_contract import (
     ChatOperation,
@@ -70,9 +92,13 @@ from nexus.services.codex_generation_contract import (
 )
 from nexus.services.durable_step_journal import (
     Completed,
+    Prepared,
     StepReplayState,
+    Uncertain,
+    decode_step_states,
     encode_step_result,
     payload_with_step_state,
+    read_step_states,
     stable_generation_id,
 )
 from nexus.services.generation_intent import BearerToolGrant, GenerationIntent, TextOutput
@@ -96,7 +122,7 @@ from tests.testkit.llm_tool_scenarios import (
     compose_keyless_tool_runtime,
     create_readable_media,
 )
-from tests.testkit.unreachable_state import expire_job_claim
+from tests.testkit.unreachable_state import expire_job_claim, make_failed_job_retryable
 
 _SIGNING_KEY = SecretStr("dedicated-chat-tools-hs256-test-key")
 
@@ -156,11 +182,25 @@ class _WriteRace:
     assistant_message_id: UUID
     generation_id: UUID
     media_id: UUID
+    target_media_id: UUID | None
     library_id: UUID
     policy_violations: list[str]
+    worker_id: str
+    admitted_resource_uris: tuple[str, ...]
+    claims: AgentToolGrantClaims
+    operation: Any
+    authority: AgentToolAuthority
+    execution_context: JobExecutionContext
 
 
-def _prepare_write_race(engine: Engine, user: UserRecord, *, label: str) -> _WriteRace:
+def _prepare_write_race(
+    engine: Engine,
+    user: UserRecord,
+    *,
+    label: str,
+    with_uncertain_generation: bool = False,
+    with_edge_target: bool = False,
+) -> _WriteRace:
     worker_id = f"mcp-write-race-{label}"
     generation_id = uuid4()
     with Session(engine, expire_on_commit=False) as db:
@@ -171,6 +211,8 @@ def _prepare_write_race(engine: Engine, user: UserRecord, *, label: str) -> _Wri
         )
         run = db.get(ChatRun, admitted.run_id)
         assert run is not None
+        if with_uncertain_generation:
+            generation_id = stable_generation_id(run.id, "generation/1")
         operation = compose_keyless_tool_runtime().operations["chat"]
         job_context = claim_chat_tool_job(
             db,
@@ -192,6 +234,25 @@ def _prepare_write_race(engine: Engine, user: UserRecord, *, label: str) -> _Wri
             target=ResourceRef(scheme="media", id=media_id),
             origin="user",
         )
+        target_media_id: UUID | None = None
+        admitted_resource_uris = (media_uri,)
+        if with_edge_target:
+            target_media_id = create_readable_media(
+                db,
+                user_id=user.id,
+                default_library_id=user.default_library_id,
+                title=f"MCP edge target {label}",
+                canonical_text="A second admitted resource makes the additive edge observable.",
+            )
+            target_uri = f"media:{target_media_id}"
+            add_context_ref_without_commit(
+                db,
+                viewer_id=user.id,
+                conversation_id=run.conversation_id,
+                target=ResourceRef(scheme="media", id=target_media_id),
+                origin="user",
+            )
+            admitted_resource_uris = (media_uri, target_uri)
         library_id = uuid4()
         library_governance.create_library(
             db,
@@ -208,7 +269,7 @@ def _prepare_write_race(engine: Engine, user: UserRecord, *, label: str) -> _Wri
         )
         prepared = PreparedChatRun(
             generate_intent=intent,
-            admitted_resource_uris=(media_uri,),
+            admitted_resource_uris=admitted_resource_uris,
             initial_citation_ordinal=1,
             initial_tool_call_index=0,
         )
@@ -276,6 +337,18 @@ def _prepare_write_race(engine: Engine, user: UserRecord, *, label: str) -> _Wri
         command = placeholder.model_copy(
             update={"tool_grant": BearerToolGrant(token=SecretStr(bearer))}
         )
+        if with_uncertain_generation:
+            runtime_job = get_job(db, admitted.job_id)
+            assert runtime_job is not None
+            step_runtime = ChatStepRuntime(
+                db,
+                run_id=run.id,
+                job=runtime_job,
+                execution_context=job_context,
+                llm_runtime=CodexGenerationClient(get_settings().codex_agent_socket),
+            )
+            step_runtime.prepare("generation/1", request_fingerprint(placeholder))
+            step_runtime.mark_uncertain("generation/1")
         run_id = run.id
         assistant_message_id = run.assistant_message_id
         job_id = admitted.job_id
@@ -305,7 +378,8 @@ def _prepare_write_race(engine: Engine, user: UserRecord, *, label: str) -> _Wri
         operation=operation,
         worker_id=worker_id,
         generation_id=generation_id,
-        admitted_resource_uris=(media_uri,),
+        grant_jti=claims.jti,
+        admitted_resource_uris=admitted_resource_uris,
     )
     return _WriteRace(
         app=create_agent_tools_mcp_app(
@@ -321,8 +395,15 @@ def _prepare_write_race(engine: Engine, user: UserRecord, *, label: str) -> _Wri
         assistant_message_id=assistant_message_id,
         generation_id=generation_id,
         media_id=media_id,
+        target_media_id=target_media_id,
         library_id=library_id,
         policy_violations=policy_violations,
+        worker_id=worker_id,
+        admitted_resource_uris=admitted_resource_uris,
+        claims=claims,
+        operation=operation,
+        authority=authority,
+        execution_context=job_context,
     )
 
 
@@ -380,6 +461,321 @@ def _library_add(client: TestClient, race: _WriteRace, *, request_id: str) -> ht
             },
         ),
     )
+
+
+def _crash_window_call(
+    race: _WriteRace,
+    *,
+    kind: str,
+) -> tuple[str, dict[str, Any]]:
+    if kind == "read":
+        return "nexus.resource.read", {"uri": f"media:{race.media_id}"}
+    if kind == "write":
+        assert race.target_media_id is not None
+        return (
+            "nexus.edge.create",
+            {
+                "kind": "supports",
+                "rationale": "The crash proof must never redispatch this additive edge.",
+                "source_uri": f"media:{race.media_id}",
+                "target_uri": f"media:{race.target_media_id}",
+            },
+        )
+    raise AssertionError(f"unknown crash-window tool kind {kind!r}")
+
+
+def _run_mcp_until_durable_commit_kills_process(
+    engine: Engine,
+    race: _WriteRace,
+    *,
+    kind: str,
+    committed_phase: str,
+    report: Any,
+) -> None:
+    """Drive real MCP HTTP until the selected committed journal phase SIGKILLs this child.
+
+    ``TestClient`` reaches the public ASGI Streamable HTTP boundary used by the
+    production mount. A loopback listener would add socket scheduling without
+    exercising any additional MCP, authority, transaction, or tool contract.
+    """
+
+    engine.dispose(close=False)
+    step_path = "generation/1/tool/1"
+    armed = True
+
+    def kill_after_owned_commit(_session: Session) -> None:
+        nonlocal armed
+        # This listener is test-process-only and observes a real committed
+        # PostgreSQL boundary. It neither patches Nexus code nor changes the
+        # transaction being proved; SIGKILL prevents any later request phase.
+        if not armed:
+            return
+        with engine.connect() as connection:
+            payload = connection.scalar(
+                text("SELECT payload FROM background_jobs WHERE id = :job_id"),
+                {"job_id": race.job_id},
+            )
+        if not isinstance(payload, dict):
+            return
+        state = decode_step_states(payload).get(step_path)
+        journal = payload.get("_agent_tool_calls")
+        if state is None or not isinstance(journal, dict) or len(journal) != 1:
+            return
+        entry = next(iter(journal.values()))
+        if not isinstance(entry, dict) or entry.get("result") is not None:
+            return
+        phase_matches = (committed_phase == "Prepared" and state.dispatch_phase is Prepared) or (
+            committed_phase == "Completed" and state.dispatch_phase is Completed
+        )
+        if phase_matches:
+            armed = False
+            os.kill(os.getpid(), signal.SIGKILL)
+
+    event.listen(Session, "after_commit", kill_after_owned_commit)
+    try:
+        tool_id, arguments = _crash_window_call(race, kind=kind)
+        with TestClient(race.app, base_url="http://mcp.test") as client:
+            response = client.post(
+                MCP_PATH,
+                headers=_headers(bearer=race.bearer),
+                json=_mcp_request(
+                    "commit-boundary-crash",
+                    "tools/call",
+                    {"name": tool_id, "arguments": arguments},
+                ),
+            )
+        report.send(("request_returned", response.status_code, response.content))
+    except BaseException as exc:
+        report.send(("request_failed", type(exc).__name__, str(exc)))
+        raise
+    finally:
+        event.remove(Session, "after_commit", kill_after_owned_commit)
+        report.close()
+
+
+def _fork_mcp_commit_crash(
+    engine: Engine,
+    race: _WriteRace,
+    *,
+    kind: str,
+    committed_phase: str,
+) -> None:
+    context = multiprocessing.get_context("fork")
+    receiver, sender = context.Pipe(duplex=False)
+    process = context.Process(
+        target=_run_mcp_until_durable_commit_kills_process,
+        args=(engine, race),
+        kwargs={
+            "kind": kind,
+            "committed_phase": committed_phase,
+            "report": sender,
+        },
+    )
+    process.start()
+    sender.close()
+    process.join(15)
+    try:
+        diagnostic = _crash_diagnostic(receiver)
+    finally:
+        receiver.close()
+    if process.is_alive():
+        process.terminate()
+        process.join(5)
+        raise AssertionError(f"MCP {committed_phase} commit never reached its SIGKILL boundary")
+    assert process.exitcode == -signal.SIGKILL, (
+        f"MCP {committed_phase} commit did not kill the request process: "
+        f"exitcode={process.exitcode!r}, diagnostic={diagnostic!r}"
+    )
+
+
+def _run_cancel_until_terminal_commit_kills_process(
+    engine: Engine,
+    race: _WriteRace,
+    *,
+    execution_context: JobExecutionContext,
+    report: Any,
+) -> None:
+    """Execute public Chat cancellation until its durable fold SIGKILLs this child."""
+
+    engine.dispose(close=False)
+    armed = True
+
+    def kill_after_cancel_terminal_commit(_session: Session) -> None:
+        nonlocal armed
+        if not armed:
+            return
+        with engine.connect() as connection:
+            terminal = (
+                connection.execute(
+                    text(
+                        """
+                    SELECT
+                        run.status AS run_status,
+                        assistant.status AS assistant_status,
+                        job.status AS job_status,
+                        job.attempts AS job_attempts,
+                        job.claimed_by AS job_claimed_by,
+                        job.payload AS job_payload,
+                        tool.status AS tool_status,
+                        tool.error_code AS tool_error_code,
+                        (
+                            SELECT count(*)
+                            FROM chat_run_events event
+                            WHERE event.run_id = run.id
+                              AND event.event_type = 'tool_result'
+                        ) AS tool_terminal_count,
+                        (
+                            SELECT count(*)
+                            FROM chat_run_events event
+                            WHERE event.run_id = run.id
+                              AND event.event_type = 'done'
+                        ) AS done_count
+                    FROM chat_runs run
+                    JOIN messages assistant ON assistant.id = run.assistant_message_id
+                    JOIN background_jobs job ON job.id = :job_id
+                    JOIN message_tool_calls tool
+                      ON tool.assistant_message_id = run.assistant_message_id
+                     AND tool.tool_call_index = 1
+                    WHERE run.id = :run_id
+                    """
+                    ),
+                    {"job_id": race.job_id, "run_id": race.run_id},
+                )
+                .mappings()
+                .one_or_none()
+            )
+        if terminal is None:
+            return
+        if (
+            terminal["run_status"] == "cancelled"
+            and terminal["assistant_status"] == "cancelled"
+            and terminal["job_status"] == "running"
+            and terminal["job_attempts"] == execution_context.attempt_no
+            and terminal["job_claimed_by"] == execution_context.worker_id
+            and terminal["job_payload"] == {"run_id": str(race.run_id)}
+            and terminal["tool_status"] == "error"
+            and terminal["tool_error_code"] == "DeadlineExceeded"
+            and terminal["tool_terminal_count"] == 1
+            and terminal["done_count"] == 1
+        ):
+            armed = False
+            os.kill(os.getpid(), signal.SIGKILL)
+
+    event.listen(Session, "after_commit", kill_after_cancel_terminal_commit)
+    try:
+        with Session(engine, expire_on_commit=False) as db:
+            job = get_job(db, race.job_id)
+            if job is None:
+                raise AssertionError("cancel retry job disappeared before execution")
+            outcome = asyncio.run(
+                execute_chat_run(
+                    db,
+                    run_id=race.run_id,
+                    job=job,
+                    execution_context=execution_context,
+                    session_factory=create_session_factory(engine),
+                    runtime=CodexGenerationClient(get_settings().codex_agent_socket),
+                    settings=get_settings(),
+                )
+            )
+        report.send(("execution_returned", repr(outcome)))
+    except BaseException as exc:
+        report.send(("execution_failed", type(exc).__name__, str(exc)))
+        raise
+    finally:
+        event.remove(Session, "after_commit", kill_after_cancel_terminal_commit)
+        report.close()
+
+
+def _fork_cancel_terminal_commit_crash(
+    engine: Engine,
+    race: _WriteRace,
+    *,
+    execution_context: JobExecutionContext,
+) -> None:
+    context = multiprocessing.get_context("fork")
+    receiver, sender = context.Pipe(duplex=False)
+    process = context.Process(
+        target=_run_cancel_until_terminal_commit_kills_process,
+        args=(engine, race),
+        kwargs={"execution_context": execution_context, "report": sender},
+    )
+    process.start()
+    sender.close()
+    process.join(15)
+    try:
+        diagnostic = _crash_diagnostic(receiver)
+    finally:
+        receiver.close()
+    if process.is_alive():
+        process.terminate()
+        process.join(5)
+        raise AssertionError(
+            "Chat cancellation never reached its committed SIGKILL boundary: "
+            f"run_id={race.run_id}, job_id={race.job_id}"
+        )
+    assert process.exitcode == -signal.SIGKILL, (
+        "Chat cancellation commit did not kill the worker before queue completion: "
+        f"run_id={race.run_id}, job_id={race.job_id}, "
+        f"exitcode={process.exitcode!r}, diagnostic={diagnostic!r}"
+    )
+
+
+def _crash_diagnostic(receiver: Any) -> Any:
+    """Read an optional child diagnostic; SIGKILL normally closes the pipe at EOF."""
+
+    if not receiver.poll():
+        return None
+    try:
+        return receiver.recv()
+    except EOFError:
+        return None
+
+
+def _dead_letter_crashed_race(engine: Engine, race: _WriteRace) -> None:
+    with Session(engine) as db:
+        expire_job_claim(db, job_id=race.job_id)
+        db.commit()
+        turnover = claim_chat_tool_job(
+            db,
+            job_id=race.job_id,
+            worker_id=f"{race.worker_id}-turnover",
+        )
+        assert turnover.attempt_no == 2
+        db.commit()
+        assert (
+            fail_job(
+                db,
+                job_id=race.job_id,
+                worker_id=f"{race.worker_id}-turnover",
+                error_code="E_WORKER_INTERRUPTED",
+                error_message="MCP request process was SIGKILLed",
+                retry_delays_seconds=(0, 0),
+            )
+            == "failed"
+        )
+        db.commit()
+        make_failed_job_retryable(db, job_id=race.job_id)
+        db.commit()
+        final_attempt = claim_chat_tool_job(
+            db,
+            job_id=race.job_id,
+            worker_id=f"{race.worker_id}-final",
+        )
+        assert final_attempt.attempt_no == 3
+        db.commit()
+        assert (
+            fail_job(
+                db,
+                job_id=race.job_id,
+                worker_id=f"{race.worker_id}-final",
+                error_code="E_WORKER_INTERRUPTED",
+                error_message="MCP request process was SIGKILLed",
+                retry_delays_seconds=(0, 0),
+            )
+            == "dead"
+        )
+        db.commit()
 
 
 def _cancel_race(engine: Engine, race: _WriteRace) -> bool:
@@ -460,6 +856,686 @@ def test_cancelled_signed_grant_is_bodylessly_denied_and_notifies_host_once(
         (401, b""),
     )
     assert race.policy_violations == [str(race.generation_id)]
+
+
+@pytest.mark.parametrize("kind", ("read", "write"))
+def test_prepared_mcp_admission_survives_sigkill_without_generation_replay(
+    engine: Engine,
+    kind: str,
+) -> None:
+    """A real post-commit SIGKILL leaves one effect-free, explicitly repairable admission."""
+
+    user_id = uuid4()
+    email = f"mcp-prepared-sigkill-{kind}-{user_id}@example.invalid"
+    with Session(engine) as db:
+        default_library_id = bootstrap.ensure_user_and_default_library(db, user_id, email)
+        db.commit()
+    race = _prepare_write_race(
+        engine,
+        UserRecord(id=user_id, email=email, default_library_id=default_library_id),
+        label=f"prepared-sigkill-{kind}",
+        with_uncertain_generation=True,
+        with_edge_target=kind == "write",
+    )
+    tool_id, arguments = _crash_window_call(race, kind=kind)
+
+    _fork_mcp_commit_crash(engine, race, kind=kind, committed_phase="Prepared")
+
+    tool_path = "generation/1/tool/1"
+    with Session(engine) as db:
+        job = get_job(db, race.job_id)
+        assert job is not None and job.status == "running"
+        states = read_step_states(job)
+        assert states["generation/1"].dispatch_phase is Uncertain
+        state = states[tool_path]
+        assert state.dispatch_phase is Prepared
+        assert isinstance(state.tool_execution, Present)
+        execution = state.tool_execution.value
+        assert execution.identity.tool_id == tool_id
+        assert execution.identity.input_digest == raw_input_digest(ParsedJson(arguments))
+        assert isinstance(execution.reservation, Present)
+        grant = race.operation.plan.grant(ToolId(tool_id))
+        assert execution.reservation.value.model_dump(mode="python") == {
+            "calls": 1,
+            "input_bytes": len(canonical_json_bytes({"type": "ParsedJson", "value": arguments})),
+            "max_attempts": grant.limits.max_attempts,
+            "max_output_bytes": grant.limits.max_output_bytes,
+            "accepted": True,
+        }
+        assert not isinstance(execution.dispatch_claim, Present)
+        journal = job.payload.get("_agent_tool_calls")
+        assert isinstance(journal, dict) and len(journal) == 1
+        entry = next(iter(journal.values()))
+        assert isinstance(entry, dict)
+        assert (entry.get("tool_index"), entry.get("citation_ordinal")) == (1, 1)
+        assert "result" not in entry
+        row = db.scalar(
+            select(MessageToolCall).where(
+                MessageToolCall.assistant_message_id == race.assistant_message_id,
+                MessageToolCall.tool_call_index == 1,
+            )
+        )
+        assert row is not None
+        assert (row.status, row.scope) == (
+            "running",
+            "assistant_write" if kind == "write" else "conversation_context",
+        )
+        assert (
+            db.scalar(
+                select(func.count())
+                .select_from(MessageRetrieval)
+                .where(MessageRetrieval.tool_call_id == row.id)
+            )
+            == 0
+        )
+        assert (
+            db.scalar(
+                select(func.count())
+                .select_from(ResourceEdge)
+                .where(
+                    ResourceEdge.user_id == race.user_id,
+                    ResourceEdge.origin == "assistant",
+                )
+            )
+            == 0
+        )
+        assert (
+            db.scalar(
+                select(func.count())
+                .select_from(ChatRunEvent)
+                .where(
+                    ChatRunEvent.run_id == race.run_id,
+                    ChatRunEvent.event_type == "tool_result",
+                )
+            )
+            == 0
+        )
+
+    # Reuse every lease field with a new exact JTI. The killed process's bearer
+    # must fail before its body can route, while the replacement bearer may list.
+    with Session(engine) as db:
+        database_now = db.scalar(text("SELECT clock_timestamp()"))
+    assert isinstance(database_now, datetime)
+    fresh_now = (
+        database_now if database_now.tzinfo is not None else database_now.replace(tzinfo=UTC)
+    ).replace(microsecond=0)
+    fresh_epoch = int(fresh_now.timestamp())
+    fresh_claims = race.claims.model_copy(
+        update={
+            "jti": str(uuid4()),
+            "iat": fresh_epoch,
+            "nbf": fresh_epoch,
+            "exp": fresh_epoch + MAX_AGENT_TOOL_GRANT_TTL_SECONDS,
+        }
+    )
+    fresh_bearer = issue_agent_tool_grant(
+        fresh_claims,
+        signing_key=_SIGNING_KEY,
+        now=fresh_now,
+    ).get_secret_value()
+    replacement_authority = AgentToolAuthority.from_claimed_chat_attempt(
+        session_factory=create_session_factory(engine),
+        run_id=race.run_id,
+        job_id=race.job_id,
+        attempt_no=race.execution_context.attempt_no,
+        resource_class=race.execution_context.resource_class,
+        operation=race.operation,
+        worker_id=race.worker_id,
+        generation_id=race.generation_id,
+        grant_jti=fresh_claims.jti,
+        admitted_resource_uris=race.admitted_resource_uris,
+    )
+    replacement_violations: list[str] = []
+
+    async def replacement_violation(value: UUID) -> None:
+        replacement_violations.append(str(value))
+
+    replacement_app = create_agent_tools_mcp_app(
+        authority=replacement_authority,
+        signing_key=_SIGNING_KEY,
+        on_policy_violation=replacement_violation,
+        mcp_origin="http://mcp.test/internal/agent-tools/mcp",
+    )
+    list_request = _mcp_request("same-lease-new-jti", "tools/list", {})
+    with TestClient(replacement_app, base_url="http://mcp.test") as client:
+        stale = client.post(
+            MCP_PATH,
+            headers=_headers(bearer=race.bearer),
+            json=list_request,
+        )
+        current = client.post(
+            MCP_PATH,
+            headers=_headers(bearer=fresh_bearer),
+            json=list_request,
+        )
+    assert (stale.status_code, stale.content) == (401, b"")
+    assert current.status_code == 200
+    assert replacement_violations == [str(race.generation_id)]
+
+    _dead_letter_crashed_race(engine, race)
+    with Session(engine) as db:
+        reconcile_prepared_mcp_admission_not_dispatched(
+            db,
+            run_id=race.run_id,
+            step_path=tool_path,
+        )
+        job = get_job(db, race.job_id)
+        assert job is not None and job.status == "dead"
+        states = read_step_states(job)
+        assert states["generation/1"].dispatch_phase is Uncertain
+        assert states[tool_path].dispatch_phase is Completed
+        journal = job.payload.get("_agent_tool_calls")
+        assert isinstance(journal, dict) and len(journal) == 1
+        entry = next(iter(journal.values()))
+        assert isinstance(entry, dict)
+        assert (entry["tool_index"], entry["citation_ordinal"], entry["next_citation_ordinal"]) == (
+            1,
+            1,
+            1,
+        )
+        receipt = entry.get("result")
+        assert isinstance(receipt, dict)
+        model_output = receipt.get("model_output")
+        assert isinstance(model_output, dict)
+        assert json.loads(str(model_output["output"])) == {
+            "error": {"type": "DeadlineExceeded"},
+            "type": "Failure",
+        }
+        row = db.scalar(
+            select(MessageToolCall).where(
+                MessageToolCall.assistant_message_id == race.assistant_message_id,
+                MessageToolCall.tool_call_index == 1,
+            )
+        )
+        assert row is not None
+        assert (row.status, row.scope) == (
+            "error",
+            "assistant_write" if kind == "write" else "conversation_context",
+        )
+        assert (
+            db.scalar(
+                select(func.count())
+                .select_from(MessageRetrieval)
+                .where(MessageRetrieval.tool_call_id == row.id)
+            )
+            == 0
+        )
+        assert (
+            db.scalar(
+                select(func.count())
+                .select_from(ResourceEdge)
+                .where(
+                    ResourceEdge.user_id == race.user_id,
+                    ResourceEdge.origin == "assistant",
+                )
+            )
+            == 0
+        )
+        assert (
+            db.scalar(
+                select(func.count())
+                .select_from(ChatRunEvent)
+                .where(
+                    ChatRunEvent.run_id == race.run_id,
+                    ChatRunEvent.event_type == "tool_result",
+                )
+            )
+            == 1
+        )
+        with pytest.raises(ValueError, match="not a prepared MCP admission"):
+            reconcile_prepared_mcp_admission_not_dispatched(
+                db,
+                run_id=race.run_id,
+                step_path=tool_path,
+            )
+
+
+@pytest.mark.parametrize("kind", ("read", "write"), ids=("read", "write"))
+def test_cancelled_prepared_mcp_admission_survives_two_sigkills_once_without_effect(
+    engine: Engine,
+    kind: str,
+) -> None:
+    """Prepared and cancelled-terminal commit crashes replay to one effect-free terminal."""
+
+    user_id = uuid4()
+    email = f"mcp-prepared-sigkill-cancel-{kind}-{user_id}@example.invalid"
+    with Session(engine) as db:
+        default_library_id = bootstrap.ensure_user_and_default_library(db, user_id, email)
+        db.commit()
+    race = _prepare_write_race(
+        engine,
+        UserRecord(id=user_id, email=email, default_library_id=default_library_id),
+        label=f"prepared-sigkill-cancel-{kind}",
+        with_uncertain_generation=True,
+        with_edge_target=kind == "write",
+    )
+    tool_id, _arguments = _crash_window_call(race, kind=kind)
+    tool_path = "generation/1/tool/1"
+    case = f"kind={kind}, run_id={race.run_id}, job_id={race.job_id}"
+
+    _fork_mcp_commit_crash(engine, race, kind=kind, committed_phase="Prepared")
+
+    with Session(engine) as db:
+        crashed_job = get_job(db, race.job_id)
+        assert crashed_job is not None and crashed_job.status == "running"
+        assert read_step_states(crashed_job)[tool_path].dispatch_phase is Prepared
+        crashed_row = db.scalar(
+            select(MessageToolCall).where(
+                MessageToolCall.assistant_message_id == race.assistant_message_id,
+                MessageToolCall.tool_call_index == 1,
+            )
+        )
+        assert crashed_row is not None
+        assert (crashed_row.canonical_tool_id, crashed_row.status) == (tool_id, "running")
+        assert (
+            db.scalar(
+                select(func.count())
+                .select_from(ChatRunEvent)
+                .where(
+                    ChatRunEvent.run_id == race.run_id,
+                    ChatRunEvent.event_type == "tool_result",
+                )
+            )
+            == 0
+        )
+
+    _dead_letter_crashed_race(engine, race)
+
+    with Session(engine) as cancel_db:
+        dead_job = get_job(cancel_db, race.job_id)
+        assert dead_job is not None and dead_job.status == "dead"
+        assert read_step_states(dead_job)[tool_path].dispatch_phase is Prepared
+
+        first_cancel = cancel_chat_run(
+            cancel_db,
+            viewer_id=race.user_id,
+            run_id=race.run_id,
+        )
+        first_cancelled_at = first_cancel.run.cancel_requested_at
+        assert first_cancelled_at is not None
+        requeued_job = get_job(cancel_db, race.job_id)
+        assert requeued_job is not None
+        assert (requeued_job.status, requeued_job.attempts) == ("pending", 0)
+        assert read_step_states(requeued_job)[tool_path].dispatch_phase is Prepared
+
+        retry_cancel = cancel_chat_run(
+            cancel_db,
+            viewer_id=race.user_id,
+            run_id=race.run_id,
+        )
+        assert retry_cancel.run.cancel_requested_at == first_cancelled_at
+        still_requeued_job = get_job(cancel_db, race.job_id)
+        assert still_requeued_job is not None
+        assert (still_requeued_job.status, still_requeued_job.attempts) == ("pending", 0)
+        assert read_step_states(still_requeued_job)[tool_path].dispatch_phase is Prepared
+
+    retry_worker = f"{race.worker_id}-cancel-retry"
+    with Session(engine) as worker_db:
+        retry_context = claim_chat_tool_job(
+            worker_db,
+            job_id=race.job_id,
+            worker_id=retry_worker,
+        )
+        assert retry_context.attempt_no == 1
+        worker_db.commit()
+        retry_job = get_job(worker_db, race.job_id)
+        assert retry_job is not None and retry_job.status == "running"
+
+    _fork_cancel_terminal_commit_crash(
+        engine,
+        race,
+        execution_context=retry_context,
+    )
+
+    with Session(engine) as interrupted_db:
+        terminal_cancel = cancel_chat_run(
+            interrupted_db,
+            viewer_id=race.user_id,
+            run_id=race.run_id,
+        )
+        terminal_cancel_retry = cancel_chat_run(
+            interrupted_db,
+            viewer_id=race.user_id,
+            run_id=race.run_id,
+        )
+        assert (
+            terminal_cancel.run.status,
+            terminal_cancel.run.cancel_requested_at,
+            terminal_cancel_retry.run.status,
+            terminal_cancel_retry.run.cancel_requested_at,
+        ) == (
+            "cancelled",
+            first_cancelled_at,
+            "cancelled",
+            first_cancelled_at,
+        )
+        interrupted_job = get_job(interrupted_db, race.job_id)
+        assert interrupted_job is not None
+        assert (
+            interrupted_job.status,
+            interrupted_job.attempts,
+            interrupted_job.claimed_by,
+            interrupted_job.payload,
+            interrupted_job.finished_at,
+        ) == (
+            "running",
+            1,
+            retry_worker,
+            {"run_id": str(race.run_id)},
+            None,
+        ), f"{case}: cancellation commit crossed the queue-completion crash boundary"
+
+    completion_worker = f"{race.worker_id}-cancel-completion-retry"
+    session_factory = create_session_factory(engine)
+    queue_result = {"kind": "Skipped", "reason": "Terminal"}
+    with Session(engine, expire_on_commit=False) as completion_db:
+        expire_job_claim(completion_db, job_id=race.job_id)
+        completion_db.commit()
+        completion_context = claim_chat_tool_job(
+            completion_db,
+            job_id=race.job_id,
+            worker_id=completion_worker,
+        )
+        assert completion_context.attempt_no == 2
+        completion_db.commit()
+        completion_job = get_job(completion_db, race.job_id)
+        assert completion_job is not None and completion_job.status == "running"
+
+        replay = asyncio.run(
+            execute_chat_run(
+                completion_db,
+                run_id=race.run_id,
+                job=completion_job,
+                execution_context=completion_context,
+                session_factory=session_factory,
+                runtime=CodexGenerationClient(get_settings().codex_agent_socket),
+                settings=get_settings(),
+            )
+        )
+        assert replay == SkippedChatExecution(reason="Terminal"), (
+            f"{case}: reclaimed queue execution did not recognize the durable terminal"
+        )
+        assert complete_job(
+            completion_db,
+            job_id=race.job_id,
+            worker_id=completion_worker,
+            result_payload=queue_result,
+        )
+        completion_db.commit()
+        assert not complete_job(
+            completion_db,
+            job_id=race.job_id,
+            worker_id=completion_worker,
+            result_payload=queue_result,
+        )
+
+    with Session(engine) as db:
+        terminal_cancel = cancel_chat_run(
+            db,
+            viewer_id=race.user_id,
+            run_id=race.run_id,
+        )
+        terminal_cancel_retry = cancel_chat_run(
+            db,
+            viewer_id=race.user_id,
+            run_id=race.run_id,
+        )
+        assert (
+            terminal_cancel.run.status,
+            terminal_cancel.run.cancel_requested_at,
+            terminal_cancel_retry.run.status,
+            terminal_cancel_retry.run.cancel_requested_at,
+        ) == (
+            "cancelled",
+            first_cancelled_at,
+            "cancelled",
+            first_cancelled_at,
+        )
+
+        completed_job = get_job(db, race.job_id)
+        assert completed_job is not None
+        assert (
+            completed_job.status,
+            completed_job.attempts,
+            completed_job.result,
+            completed_job.payload,
+        ) == (
+            "succeeded",
+            2,
+            queue_result,
+            {"run_id": str(race.run_id)},
+        ), f"{case}: reclaimed queue completion did not converge exactly"
+
+        run = db.get(ChatRun, race.run_id)
+        assistant = db.get(Message, race.assistant_message_id)
+        assert run is not None and assistant is not None
+        assert (run.status, run.cancel_requested_at, assistant.status) == (
+            "cancelled",
+            first_cancelled_at,
+            "cancelled",
+        )
+
+        tool_rows = db.scalars(
+            select(MessageToolCall).where(
+                MessageToolCall.assistant_message_id == race.assistant_message_id,
+            )
+        ).all()
+        assert len(tool_rows) == 1, f"{case}: expected one tool position, got {len(tool_rows)}"
+        tool_row = tool_rows[0]
+        assert (
+            tool_row.canonical_tool_id,
+            tool_row.status,
+            tool_row.error_code,
+            tool_row.scope,
+        ) == (
+            tool_id,
+            "error",
+            "DeadlineExceeded",
+            "assistant_write" if kind == "write" else "conversation_context",
+        ), f"{case}: Prepared admission did not project its one non-dispatch terminal"
+
+        tool_events = db.scalars(
+            select(ChatRunEvent).where(
+                ChatRunEvent.run_id == race.run_id,
+                ChatRunEvent.event_type == "tool_result",
+            )
+        ).all()
+        assert len(tool_events) == 1, f"{case}: expected one tool terminal, got {len(tool_events)}"
+        assert (
+            tool_events[0].payload["tool_call_id"],
+            tool_events[0].payload["status"],
+            tool_events[0].payload["error_type"],
+        ) == (
+            str(tool_row.id),
+            "error",
+            "DeadlineExceeded",
+        ), f"{case}: tool terminal differs from the proven non-dispatch result"
+
+        done_events = db.scalars(
+            select(ChatRunEvent).where(
+                ChatRunEvent.run_id == race.run_id,
+                ChatRunEvent.event_type == "done",
+            )
+        ).all()
+        assert len(done_events) == 1, f"{case}: expected one done event, got {len(done_events)}"
+        assert (done_events[0].payload["status"], done_events[0].payload["cancelled"]) == (
+            "cancelled",
+            True,
+        )
+        retrieval_count = db.scalar(
+            select(func.count())
+            .select_from(MessageRetrieval)
+            .where(MessageRetrieval.tool_call_id == tool_row.id)
+        )
+        assert retrieval_count == 0, (
+            f"{case}: never-dispatched read projected {retrieval_count} retrieval effects"
+        )
+        assistant_edge_count = db.scalar(
+            select(func.count())
+            .select_from(ResourceEdge)
+            .where(
+                ResourceEdge.user_id == race.user_id,
+                ResourceEdge.origin == "assistant",
+            )
+        )
+        assert assistant_edge_count == 0, (
+            f"{case}: never-dispatched write projected {assistant_edge_count} edges"
+        )
+
+
+@pytest.mark.parametrize("kind", ("read", "write"))
+def test_completed_mcp_effect_survives_sigkill_and_receipt_repair_never_redispatches(
+    engine: Engine,
+    kind: str,
+) -> None:
+    """A real inner-terminal commit repairs its outer receipt without repeating work."""
+
+    user_id = uuid4()
+    email = f"mcp-completed-sigkill-{kind}-{user_id}@example.invalid"
+    with Session(engine) as db:
+        default_library_id = bootstrap.ensure_user_and_default_library(db, user_id, email)
+        db.commit()
+    race = _prepare_write_race(
+        engine,
+        UserRecord(id=user_id, email=email, default_library_id=default_library_id),
+        label=f"completed-sigkill-{kind}",
+        with_uncertain_generation=True,
+        with_edge_target=kind == "write",
+    )
+    tool_id, _arguments = _crash_window_call(race, kind=kind)
+
+    _fork_mcp_commit_crash(engine, race, kind=kind, committed_phase="Completed")
+
+    tool_path = "generation/1/tool/1"
+    with Session(engine) as db:
+        job = get_job(db, race.job_id)
+        assert job is not None and job.status == "running"
+        states = read_step_states(job)
+        assert states["generation/1"].dispatch_phase is Uncertain
+        assert states[tool_path].dispatch_phase is Completed
+        journal = job.payload.get("_agent_tool_calls")
+        assert isinstance(journal, dict) and len(journal) == 1
+        entry = next(iter(journal.values()))
+        assert isinstance(entry, dict) and "result" not in entry
+        row = db.scalar(
+            select(MessageToolCall).where(
+                MessageToolCall.assistant_message_id == race.assistant_message_id,
+                MessageToolCall.tool_call_index == 1,
+            )
+        )
+        assert row is not None
+        assert (row.canonical_tool_id, row.status, row.scope) == (
+            tool_id,
+            "complete",
+            "assistant_write" if kind == "write" else "conversation_context",
+        )
+        terminal_events = db.scalars(
+            select(ChatRunEvent).where(
+                ChatRunEvent.run_id == race.run_id,
+                ChatRunEvent.event_type == "tool_result",
+            )
+        ).all()
+        assert len(terminal_events) == 1
+        if kind == "read":
+            retrievals = db.scalars(
+                select(MessageRetrieval).where(MessageRetrieval.tool_call_id == row.id)
+            ).all()
+            assert len(retrievals) == 1
+            assert (
+                retrievals[0].ordinal,
+                retrievals[0].citation_candidate_ordinal,
+                retrievals[0].included_in_prompt,
+            ) == (0, None, False)
+        else:
+            assert (
+                db.scalar(
+                    select(func.count())
+                    .select_from(ResourceEdge)
+                    .where(
+                        ResourceEdge.user_id == race.user_id,
+                        ResourceEdge.origin == "assistant",
+                        ResourceEdge.source_id == race.media_id,
+                        ResourceEdge.target_id == race.target_media_id,
+                    )
+                )
+                == 1
+            )
+
+        ChatStepRuntime(
+            db,
+            run_id=race.run_id,
+            job=job,
+            execution_context=race.execution_context,
+            llm_runtime=CodexGenerationClient(get_settings().codex_agent_socket),
+        ).assert_no_uncertain_tool_effect()
+        repaired = get_job(db, race.job_id)
+        assert repaired is not None
+        ChatStepRuntime(
+            db,
+            run_id=race.run_id,
+            job=repaired,
+            execution_context=race.execution_context,
+            llm_runtime=CodexGenerationClient(get_settings().codex_agent_socket),
+        ).assert_no_uncertain_tool_effect()
+
+        repaired = get_job(db, race.job_id)
+        assert repaired is not None
+        states = read_step_states(repaired)
+        assert states["generation/1"].dispatch_phase is Uncertain
+        assert states[tool_path].dispatch_phase is Completed
+        journal = repaired.payload.get("_agent_tool_calls")
+        assert isinstance(journal, dict) and len(journal) == 1
+        entry = next(iter(journal.values()))
+        assert isinstance(entry, dict) and isinstance(entry.get("result"), dict)
+        assert entry["citation_ordinal"] == 1
+        assert entry["next_citation_ordinal"] == (2 if kind == "read" else 1)
+        assert (
+            db.scalar(
+                select(func.count())
+                .select_from(ChatRunEvent)
+                .where(
+                    ChatRunEvent.run_id == race.run_id,
+                    ChatRunEvent.event_type == "tool_result",
+                )
+            )
+            == 1
+        )
+        rows = db.scalars(
+            select(MessageToolCall).where(
+                MessageToolCall.assistant_message_id == race.assistant_message_id,
+            )
+        ).all()
+        assert len(rows) == 1
+        if kind == "read":
+            retrievals = db.scalars(
+                select(MessageRetrieval).where(MessageRetrieval.tool_call_id == rows[0].id)
+            ).all()
+            assert len(retrievals) == 1
+            assert (
+                retrievals[0].ordinal,
+                retrievals[0].citation_candidate_ordinal,
+                retrievals[0].included_in_prompt,
+            ) == (0, 1, True)
+        else:
+            assert (
+                db.scalar(
+                    select(func.count())
+                    .select_from(ResourceEdge)
+                    .where(
+                        ResourceEdge.user_id == race.user_id,
+                        ResourceEdge.origin == "assistant",
+                        ResourceEdge.source_id == race.media_id,
+                        ResourceEdge.target_id == race.target_media_id,
+                    )
+                )
+                == 1
+            )
+
+    _dead_letter_crashed_race(engine, race)
+    with Session(engine) as db:
+        job = get_job(db, race.job_id)
+        assert job is not None and job.status == "dead"
+        assert read_step_states(job)["generation/1"].dispatch_phase is Uncertain
 
 
 def test_mcp_mount_projects_declarations_and_is_sessionless(
@@ -669,6 +1745,7 @@ def test_mcp_mount_projects_declarations_and_is_sessionless(
         operation=operation,
         worker_id="worker-red-proof",
         generation_id=generation_id,
+        grant_jti=claims.jti,
         admitted_resource_uris=(*admitted_uris, missing_uri),
     )
     app = create_agent_tools_mcp_app(

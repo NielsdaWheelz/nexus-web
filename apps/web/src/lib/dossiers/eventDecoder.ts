@@ -17,9 +17,7 @@ import {
   EXECUTION_ADVISORY_EVENT_TYPE,
   type DurableExecutionPhase,
 } from "@/lib/api/executionAdvisory";
-import {
-  decodeFailureCode,
-} from "@/lib/dossiers/dossierWire";
+import { decodeReadDossierBuildFailureCode } from "@/lib/dossiers/dossierWire";
 import type {
   DossierCancelledFacts,
   DossierFailedFacts,
@@ -104,7 +102,7 @@ export function decodeDossierStreamEvent(
       return {
         kind: "Failed",
         facts: {
-          failureCode: decodeFailureCode(data.failure_code),
+          failureCode: decodeReadDossierBuildFailureCode(data.failure_code),
           detail: decodePresence(data.detail, (v) => str(v, "Failed.detail")),
           support: decodePresence(data.support, (v) => {
             if (!isRecord(v)) fail("Failed.support");

@@ -81,10 +81,18 @@ it arrives before or after cancellation.
 The host admits one generation at a time and releases that slot only after the
 runtime closes. It has no application configuration, database credential, API
 key, application data mount, TCP listener, or persistent writable runtime
-state beyond one exact encrypted `auth.json`. Every turn owns a tmpfs root with
-separate empty `workspace/` and ephemeral `state/` directories; the profile's
-auth path is an absolute link to that exact writable bind, and the complete
-turn root is deleted after runtime close. This is qualified only for pinned
+state beyond one exact encrypted `auth.json`. Every turn owns a private root on
+the dedicated `/run/nexus-codex-turns` tmpfs with separate empty `workspace/`,
+ephemeral `state/`, and private `tmp/` directories. That exact mode-`0700`
+tmpfs is executable only because the pinned SDK publishes its private launcher
+beside profile state. The complete bounded turn surface is therefore executable
+at the outer mount; the inner bwrap/seccomp policy still confines model-writable
+paths, general `/tmp` remains `noexec`, and startup exercises the real SDK path
+before serving. The pinned adapter makes the turn `tmp/` the child
+`TMPDIR` and excludes bare `/tmp` from Codex workspace-write policy. The
+profile's auth path is an
+absolute link to the exact writable bind, and the complete turn root is deleted
+after runtime close. This is qualified only for pinned
 Codex `0.144.4` truncate/write refresh persistence; any change to that write
 primitive requires redesign and release qualification. Its only
 application-facing transport is `/run/nexus-codex/agent.sock`.

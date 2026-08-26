@@ -129,7 +129,6 @@ SYNAPSE_MAX_CONNECTIONS_PER_WORK = 2
 SYNAPSE_QUERY_CHAR_BUDGET = 800
 SYNAPSE_DOSSIER_CHAR_BUDGET = 12_000
 _SYNTHESIS_STEP_PATH = "synthesis"
-_CAPACITY_WAIT_DELAYS_SECONDS = (30, 60, 120, 300, 600)
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,7 +189,7 @@ _COMPLETED_SYNAPSE_ADAPTER: TypeAdapter[_CompletedSynapse] = TypeAdapter(_Comple
 
 def _capacity_wait_index(job: JobRow) -> int:
     value = job.payload.get("capacity_wait_index")
-    if type(value) is not int or not 0 <= value <= len(_CAPACITY_WAIT_DELAYS_SECONDS):
+    if type(value) is not int or value < 0:
         raise AssertionError("synapse job has an invalid capacity_wait_index")
     return value
 
@@ -751,7 +750,6 @@ async def run_synapse_scan(
                         lock_dispatch=lock_dispatch,
                     ),
                     capacity_wait_index=_capacity_wait_index(job),
-                    capacity_wait_delays_seconds=_CAPACITY_WAIT_DELAYS_SECONDS,
                 ),
                 session_factory=get_session_factory(),
                 runtime=runtime,

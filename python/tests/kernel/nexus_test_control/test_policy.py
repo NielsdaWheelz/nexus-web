@@ -238,6 +238,14 @@ def _minimal_repository(root: Path) -> None:
         "runs-on: [self-hosted, linux, nexus-codex-nightly]\n"
         "cmp deploy/hetzner/nexus-codex-nightly-bwrap.apparmor "
         "/etc/apparmor.d/nexus-codex-nightly-bwrap\n"
+        "NEXUS_CODEX_HOSTED_TEMPORARY_DIRECTORY\n"
+        'test "$(stat -c \'%d\' "$NEXUS_CODEX_HOSTED_STATE_ROOT")" = '
+        '"$(stat -c \'%d\' "$NEXUS_CODEX_HOSTED_TEMPORARY_DIRECTORY")"\n'
+        'test "$(stat -c \'%d\' "$NEXUS_CODEX_HOSTED_STATE_ROOT")" = '
+        '"$(stat -c \'%d\' "$NEXUS_CODEX_HOSTED_WORKING_DIRECTORY")"\n'
+        "Scrub disposable Codex nightly state\n"
+        'find "$NEXUS_CODEX_HOSTED_TEMPORARY_DIRECTORY" -mindepth 1 -delete\n'
+        'NEXUS_CODEX_WORKING_DIRECTORY_ROOT="$NEXUS_CODEX_HOSTED_WORKING_DIRECTORY" \\\n'
         "python/.venv/bin/python -m apps.codex_agent.sandbox_health\n"
         "run: ./scripts/test codex-nightly\n",
     )
@@ -340,6 +348,66 @@ def test_repository_guard_rejects_retired_product_test_seams(
         violation.rule == "repository-product-test-seam" and violation.path == relative
         for violation in violations
     )
+
+
+def test_repository_guard_keeps_agent_runtime_construction_behind_confinement_owner(
+    tmp_path: Path,
+) -> None:
+    _minimal_repository(tmp_path)
+    _write(
+        tmp_path,
+        "apps/codex_agent/main.py",
+        "from provider_runtime.agent_runtime import AgentRuntime as RawRuntime\n"
+        "Runtime = RawRuntime\n"
+        "def build(config) -> RawRuntime:\n"
+        "    return Runtime(config)\n",
+    )
+    _write(
+        tmp_path,
+        "apps/codex_agent/confined_runtime.py",
+        "from provider_runtime import agent_runtime as runtime\n"
+        "def build(config) -> runtime.AgentRuntime:\n"
+        "    return runtime.AgentRuntime(config)\n",
+    )
+    _write(
+        tmp_path,
+        "apps/codex_agent/host.py",
+        "from provider_runtime.agent_runtime import AgentRuntime\n"
+        "def consume(runtime: AgentRuntime) -> None:\n"
+        "    return None\n",
+    )
+    _write(
+        tmp_path,
+        "apps/codex_agent/deep.py",
+        "from provider_runtime.agent_runtime.runtime import AgentRuntime as DeepRuntime\n"
+        "from provider_runtime.agent_runtime import runtime as runtime_module\n"
+        "\n"
+        "def build_direct(config):\n"
+        "    return DeepRuntime(config)\n"
+        "\n"
+        "def build_module(config):\n"
+        "    return runtime_module.AgentRuntime(config)\n",
+    )
+
+    violations = repository_violations(tmp_path)
+
+    assert [
+        (violation.rule, violation.path, violation.line)
+        for violation in violations
+        if violation.rule == "codex-agent-runtime-confinement"
+    ] == [
+        ("codex-agent-runtime-confinement", "apps/codex_agent/deep.py", 5),
+        ("codex-agent-runtime-confinement", "apps/codex_agent/deep.py", 8),
+        ("codex-agent-runtime-confinement", "apps/codex_agent/main.py", 4),
+    ]
+    assert {
+        violation.message
+        for violation in violations
+        if violation.rule == "codex-agent-runtime-wiring"
+    } == {
+        "runtime_factory must construct only the confined runtime",
+        "_probe_chatgpt_auth must construct only the confined runtime",
+    }
 
 
 def test_repository_guard_rejects_route_drift(tmp_path: Path) -> None:

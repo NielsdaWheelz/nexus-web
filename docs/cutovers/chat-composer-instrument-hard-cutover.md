@@ -4,23 +4,16 @@
 **Scope:** composer presentation and input behavior only · **Doctrine:** hard
 cut; one owner; no compatibility path
 
-> **Generation-surface amendment (2026-08-25):** The Model/Effort controls and
-> variable-effort text below are historical presentation context, not current
-> product authority. The current contract is
-> [`codex-personal-generation-hard-cutover.md`](codex-personal-generation-hard-cutover.md):
-> one three-option chat-profile picker (`fast`, `balanced`, `deep`), no separate
-> effort control, and no arbitrary provider, model, or effort selection.
-
 ## 1. Decision
 
 Make the composer feel like Nexus's inkwell: a quiet, complete writing
 instrument whose craft appears through proportion, material, response, and
 clarity—not extra controls or effects.
 
-This is the 80/20 cut. Keep exactly the existing writing, Model, Effort, Send,
-Stop, and Retry capabilities. Replace their presentation and correct keyboard,
-IME, focus, touch-target, contrast, and long-draft behavior. No blocking product
-question remains.
+This is the 80/20 cut. Keep exactly the existing writing, response-profile,
+Send, Stop, and Retry capabilities. Replace their presentation and correct
+keyboard, IME, focus, touch-target, contrast, and long-draft behavior. No
+blocking product question remains.
 
 Governing contracts: [repository rules](../rules/index.md),
 [testing standards](../local-rules/testing-standards.md),
@@ -34,7 +27,7 @@ domain ownership. Repository rules win on conflict.
 
 - Make writing the visual primary action on desktop and mobile.
 - Give the composer one deliberate, theme-native surface and stable action rail.
-- Preserve exact product-profile, effort, send, cancel, and retry semantics.
+- Preserve exact product-profile, send, cancel, and retry semantics.
 - Make every state legible without moving the primary action.
 - Meet keyboard, IME, focus, contrast, touch, and narrow-viewport requirements.
 - Delete the superseded composer presentation and its tests.
@@ -71,8 +64,7 @@ ChatComposer                         existing behavior owner
    ├─ pending quote?                 unchanged
    ├─ writing field                  2–6 rows, then internal scroll
    └─ action rail
-      ├─ Model                       native product-profile select
-      ├─ Effort?                     native reasoning select when variable
+      ├─ Response profile             Fast | Balanced | Deep
       ├─ quiet catalog/status copy?  only when required
       └─ action socket               Send | Sending | Stop | Stopping | Retry
 ```
@@ -111,19 +103,18 @@ and also inspect the native composing signal, following the existing Nexus input
 precedent. Do not extract a generic keyboard helper: each input owns different
 commands and propagation rules.
 
-### 5.3 Model and Effort
+### 5.3 Response profile
 
-- Keep native `Select` controls.
-- The first control's accessible name is `Model`; visible option copy is the
-  server-owned `LlmProfile.label`. Its value remains the product `profileId`.
-- The second control's accessible name is `Effort`; its options and values remain
-  the selected profile's server-owned reasoning options.
-- Hide Effort when the selected profile exposes one option. Do not render an
-  inert control.
-- A Model change selects that profile's declared default Effort exactly as it
-  does now.
+- Render one `Response profile` radio group with exactly the server-owned
+  `fast`, `balanced`, and `deep` rows, in that order.
+- Each option renders `label`, `description`, and the display-only
+  `model_label · effort_label`; its value is only the product `profileId`.
+- There is no independent model or effort control.
 - The browser never synthesizes labels, targets, ordering, defaults, or
-  availability from provider/model metadata.
+  availability from execution metadata. The fixed plans and API shape are
+  owned by the
+  [Codex generation cutover](codex-personal-generation-hard-cutover.md) and
+  [LLM module](../modules/llms.md).
 
 ### 5.4 Stable action socket
 
@@ -154,20 +145,20 @@ machine.
   duration, and easing tokens. Add no composer-specific color system.
 - `:focus-within` strengthens the complete shell edge/shadow. Interactive
   controls retain an unambiguous `:focus-visible` ring.
-- Model and Effort read as quiet compact capsules. Send is the only accent-filled
-  control when actionable.
+- Response-profile options read as quiet compact choices. Send is the only
+  accent-filled control when actionable.
 - Desktop control height is compact (`36px`). Under `(any-pointer: coarse)`, all
-  selects and the action socket are at least `44×44px`.
+  profile choices and the action socket are at least `44×44px`.
 - The action rail uses one row when space permits. It may wrap status copy, but
-  Model, Effort, and the action socket never overflow or become horizontally
-  scrollable at `320px`.
+  the response-profile group and action socket never overflow or become
+  horizontally scrollable at `320px`.
 - Use short color, border, and shadow transitions only. Never animate layout or
   textarea height. Existing reduced-motion tokens reduce all retained motion.
 
 ## 7. Architecture and ownership
 
 ```text
-llm_profiles.py registry
+generation_policy.py chat catalog
   -> GET /api/llm-profiles
   -> useChatProfiles cache
   -> ChatComposer selection resolution
@@ -184,7 +175,7 @@ ChatSurface/useChatScroll/MobileViewportProvider -> unchanged viewport ownership
 
 | Capability | Sole owner | Rule |
 | --- | --- | --- |
-| catalog/default | `llm_profiles.py` + `useChatProfiles` | unchanged |
+| catalog/default | `generation_policy.py` + `useChatProfiles` | fixed profile-only contract |
 | effective selection | `resolveChatProfileSelection` + `ChatComposer` | unchanged |
 | explicit draft selection | `useChatDraft` | unchanged |
 | send availability | `useConversation` / `ChatSendCapability` | unchanged |
@@ -244,8 +235,8 @@ compatibility branch survives.
 | --- | --- |
 | `apps/web/src/components/chat/ChatComposer.tsx` | IME/mobile keys, focus, stable action projection |
 | `apps/web/src/components/chat/ChatComposer.module.css` | shell, writing field, rail, socket, responsive rules |
-| `apps/web/src/components/chat/ChatProfilePicker.tsx` | Model/Effort names; controlled native rendering |
-| `apps/web/src/components/chat/ChatProfilePicker.module.css` | capsule geometry and containment |
+| `apps/web/src/components/chat/ChatProfilePicker.tsx` | controlled three-profile radio rendering |
+| `apps/web/src/components/chat/ChatProfilePicker.module.css` | profile-option geometry and containment |
 | `apps/web/src/components/chat/useChatProfiles.ts` | remove obsolete `SEND` terminology from owner comments |
 | `apps/web/src/components/ui/Textarea.tsx` | derived capped overflow behavior |
 | `apps/web/src/components/ui/Textarea.module.css` | below-cap/above-cap overflow support |
@@ -256,7 +247,7 @@ compatibility branch survives.
 | `docs/modules/chat.md` | final behavior and ownership |
 | this document | implementation status and final evidence |
 
-Do not modify backend/profile registry, chat request types, `useChatDraft`,
+Do not modify backend generation policy/catalog, chat request types, `useChatDraft`,
 `useConversation`, `ChatSurface`, `useChatScroll`, `MobileViewportProvider`,
 `Button`, `Select`, or global theme files unless implementation proves a stated
 contract impossible. Stop and amend this specification before widening scope.
@@ -272,11 +263,11 @@ contract impossible. Stop and amend this specification before widening scope.
 
 ## 12. Acceptance criteria
 
-- The only routine controls are Model, conditional Effort, and the one action
-  socket; quote/branch/error surfaces appear only when their existing state
-  requires them.
-- Profile and effort selection produce the same product IDs and exact request
-  body as before.
+- The only routine controls are the three-option response-profile group and the
+  one action socket; quote/branch/error surfaces appear only when their existing
+  state requires them.
+- Profile selection produces only the selected product `profile_id`; model and
+  effort remain fixed plan facts and never become request controls.
 - Desktop Enter, Shift+Enter, and Cmd/Ctrl+Enter match §5.2; mobile Return adds a
   newline; IME composition never sends.
 - One user action creates at most one POST. Blocked input creates none and loses
@@ -311,7 +302,7 @@ The former broad-suite counts and removed `e2e/` route are historical only and
 do not establish this cutover. Current evidence is the version-2 summary from
 `./scripts/test prove` for the composer fault, the Chromium component capability,
 and `grounded-chat-citation` through the consolidated journey capability. The
-journey must select a non-default Model/Effort pair, admit one run, finish through
+journey must select a non-default response profile, admit one run, finish through
 the production worker, reload the same answer/citation, and open the exact reader
 evidence. `not_run` remains distinct from pass.
 

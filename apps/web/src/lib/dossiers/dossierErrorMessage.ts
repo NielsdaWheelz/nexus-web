@@ -1,8 +1,8 @@
 // One exhaustive error-copy boundary (A14) for every expected Dossier error,
 // mapped near the screen. Two closed maps:
-//   - `dossierBuildFailureMessage`: the async `DossierBuildFailureCode` union
-//     (A7) that terminalizes a build (surfaced from the head's
-//     `latest_unsuccessful_build` or a `Failed` stream event).
+//   - `dossierBuildFailureMessage`: the current async failure vocabulary plus
+//     read-only historical spellings surfaced from the head's
+//     `latest_unsuccessful_build` or a replayed `Failed` stream event.
 //   - `dossierApiErrorMessage`: the synchronous A9 API error union returned by
 //     Generate/Cancel/Make-current/read (invalid subject, masked not-found,
 //     generation-in-progress, invalid instruction, revision-not-found /
@@ -12,12 +12,12 @@
 // aliases are accepted at this hard-cut boundary.
 import { isApiError } from "@/lib/api/client";
 import type {
-  DossierBuildFailureCode,
   DossierErrorInfo,
+  ReadDossierBuildFailureCode,
 } from "@/lib/dossiers/dossierControllerTypes";
 
 export function dossierBuildFailureMessage(
-  code: DossierBuildFailureCode,
+  code: ReadDossierBuildFailureCode,
 ): string {
   switch (code) {
     case "NoSourceMaterial":
@@ -26,20 +26,36 @@ export function dossierBuildFailureMessage(
       return "The underlying material changed while this was generating. Try again.";
     case "DependencyProjectionFailed":
       return "A required source couldn't be prepared. Try again once it's ready.";
-    case "EntitlementDenied":
-      return "You don't have access to generate this dossier.";
-    case "BudgetExceeded":
-      return "This generation exceeded its budget. Try a narrower instruction.";
     case "ContextTooLarge":
       return "There's too much source material to fit in one dossier.";
-    case "ProviderRefused":
-      return "The model declined to generate this dossier.";
-    case "ProviderIncomplete":
-      return "The model returned an incomplete dossier. Try again.";
+    case "Auth":
+      return "The generation service couldn't authenticate. Try again later.";
+    case "Quota":
+      return "The generation service has reached its usage limit. Try again later.";
+    case "Timeout":
+      return "Dossier generation took too long. Try again.";
+    case "OutputLimit":
+      return "The generated dossier reached its output limit. Try a narrower instruction.";
+    case "InvalidOutput":
+      return "The generated dossier wasn't in the required format. Try again.";
+    case "PolicyViolation":
+      return "This dossier couldn't be generated under the current policy.";
+    case "RuntimeUnavailable":
+      return "Dossier generation is temporarily unavailable. Try again later.";
+    case "CapacityUnavailable":
+      return "Dossier generation is busy. Try again shortly.";
     case "DocumentValidationFailed":
       return "The generated dossier couldn't be validated. Try again.";
     case "CitationValidationFailed":
       return "The generated citations couldn't be verified. Try again.";
+    case "EntitlementDenied":
+      return "You don't have access to generate this dossier.";
+    case "BudgetExceeded":
+      return "This generation exceeded its budget. Try a narrower instruction.";
+    case "ProviderRefused":
+      return "The model declined to generate this dossier.";
+    case "ProviderIncomplete":
+      return "The model returned an incomplete dossier. Try again.";
     default: {
       const exhaustive: never = code;
       throw new Error(`Unhandled dossier failure code: ${String(exhaustive)}`);

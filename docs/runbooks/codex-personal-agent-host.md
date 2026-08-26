@@ -12,12 +12,19 @@ or host-home mount.
   repository-owned bwrap/seccomp launcher. API and migration images do not.
 - The host runs as `10001:10001`, read-only, capability-free, with
   `no-new-privileges`, the named AppArmor profile, a 384 MiB cgroup, and one
-  exact encrypted `auth.json` bind mounted writable. Each turn creates a
-  private runtime-state directory beside its empty cwd in the bounded `/tmp`
-  tmpfs and links only the profile's `auth.json` to that exact bind. Pinned
-  Codex OAuth refresh writes are immediately durable; session, cache, launcher,
-  and every sibling write remain disposable. Both per-turn directories and
-  their enclosing random root are removed after close.
+  exact encrypted `auth.json` bind mounted writable. Each turn creates private
+  `state/`, empty `workspace/`, and `tmp/` directories under one random root in
+  the bounded, mode-`0700` `/run/nexus-codex-turns` tmpfs and links only the
+  profile's `auth.json` to that exact bind. The pinned SDK publishes its
+  content-addressed process supervisor beside the profile state, so this exact
+  tmpfs is executable; general `/tmp` remains a separate `noexec` tmpfs. Host
+  startup rejects any other mount shape and then exercises the real SDK
+  launcher during the subscription-auth probe. The pinned adapter sets
+  `TMPDIR` to that turn's `tmp/` and fixes
+  Codex workspace-write policy to exclude bare `/tmp` while retaining only
+  `TMPDIR`. Pinned Codex OAuth refresh writes are immediately durable; session,
+  cache, launcher, temporary files, and every sibling write remain disposable.
+  The complete per-turn root is removed after close.
 - The host and `codex-egress-policy` are the only members of the internal
   `nexus_codex_private` network. The host has no public-network attachment;
   the policy sidecar is the sole member of `nexus_codex_proxy_egress` and the
@@ -232,9 +239,11 @@ proves that the new public TLS MCP route returns the exact bodyless unauthentica
 Normal release admission installs and parses the exact AppArmor profile before
 writers stop. It verifies the LUKS mapping/mount, boot guard, enrolled-file
 metadata, exact writable file bind,
-container environment, UDS volume, two-network egress topology, fixed private
-addresses and DNS, sidecar isolation, inner sandbox, and exact v2 health
-identity.
+container environment, the private executable runtime tmpfs and general
+`noexec` tmpfs, UDS volume, two-network egress topology, fixed private addresses
+and DNS, sidecar isolation, real SDK launcher/auth startup, the real pinned
+inner-sandbox behavior (`TMPDIR` writable and bare `/tmp` unwritable), and exact
+v2 health identity.
 
 After reboot, unlock and mount the credential state interactively, then use the
 controller. Do not invoke Compose directly:
@@ -327,7 +336,14 @@ domain operation. Synthesis has zero tool events; the MCP result has a bounded
 non-zero count; permission requests are always zero.
 
 The nightly runner has a distinct encrypted Codex profile, no database, no
-Docker authority, and no Nexus process. Its MCP peer is the same
+Docker authority, and no Nexus process. Provision
+`/var/lib/nexus-codex-nightly/{state,tmp,cwd}` on that same encrypted runner
+filesystem, owned by the runner uid and mode `0700`. `state/` is the sole
+persistent subscription profile. `tmp/` is the confined adapter's sibling
+temporary directory and `cwd/` is the model workspace; both must be empty at
+admission and the workflow deletes their complete contents in an `always()`
+step. The workflow refuses until an existing runner is provisioned to this
+hard-cut layout; there is no alternate temporary directory. Its MCP peer is the same
 `mcp==2.1.0` stateless JSON server on wire revision `2025-06-18`, served locally
 with TLS and one static read-only tool. A missing credential, runner, state
 root, or policy pin is `not_run`, never skipped green.

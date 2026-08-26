@@ -1,0 +1,12 @@
+diff --git a/apps/codex_agent/confined_runtime.py b/apps/codex_agent/confined_runtime.py
+--- a/apps/codex_agent/confined_runtime.py
++++ b/apps/codex_agent/confined_runtime.py
+@@ -81,7 +81,7 @@ class ConfinedCodexSdkAdapter(CodexSdkAdapter):
+ 
+     def _confined_environment(self, environment: Mapping[str, str]) -> dict[str, str]:
+         child_environment = dict(environment)
+-        child_environment["TMPDIR"] = str(self._temporary_directory)
++        child_environment["TMPDIR"] = "/tmp"
+         return child_environment
+ 
+     def _codex_config(self, request: AgentSessionRequest) -> dict[str, object]:

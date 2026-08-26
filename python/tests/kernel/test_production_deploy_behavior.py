@@ -112,7 +112,7 @@ def test_codex_agent_host_is_private_worker_image_with_credential_and_socket_iso
     assert "DATABASE_URL" not in host
     assert "OPENAI_API_KEY" not in host
     assert "NEXUS_CODEX_CREDENTIAL_FILE: /run/nexus-codex-credential/auth.json" in host
-    assert "NEXUS_CODEX_WORKING_DIRECTORY_ROOT: /tmp/nexus-codex-turns" in host
+    assert "NEXUS_CODEX_WORKING_DIRECTORY_ROOT: /run/nexus-codex-turns" in host
     assert "working_dir: /tmp" in host
     assert "NEXUS_CODEX_AGENT_SOCKET: /run/nexus-codex/agent.sock" in host
     assert "read_only: true" in host
@@ -125,6 +125,10 @@ def test_codex_agent_host_is_private_worker_image_with_credential_and_socket_iso
     assert "seccomp=unconfined" in host
     assert "apparmor=nexus-codex-agent-host" in host
     assert "systempaths=unconfined" in host
+    assert "- /tmp:rw,noexec,nosuid,nodev,size=16m" in host
+    assert (
+        "- /run/nexus-codex-turns:rw,exec,nosuid,nodev,size=16m,mode=0700,uid=10001,gid=10001"
+    ) in host
     assert "networks:\n      codex_private:" in host
     assert "nexus_codex_state" not in compose
     assert "- type: bind" in host

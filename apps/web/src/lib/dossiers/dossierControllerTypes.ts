@@ -20,31 +20,41 @@ import type { ResourceActivation } from "@/lib/resources/activation";
 /** A9/A15 head-read freshness label (binding `manifests_equal` summary). */
 export type DossierFreshness = "Current" | "Stale";
 
-/** A7 closed failure codes (mirrors `DossierBuildFailureCode` StrEnum). */
-export type DossierBuildFailureCode =
-  | "NoSourceMaterial"
-  | "InputsChanged"
-  | "DependencyProjectionFailed"
-  | "EntitlementDenied"
-  | "BudgetExceeded"
-  | "ContextTooLarge"
-  | "ProviderRefused"
-  | "ProviderIncomplete"
-  | "DocumentValidationFailed"
-  | "CitationValidationFailed";
-
-export const DOSSIER_BUILD_FAILURE_CODES: readonly DossierBuildFailureCode[] = [
+/** The current A7 write vocabulary (`DossierBuildFailureCode` on the backend). */
+export const DOSSIER_BUILD_FAILURE_CODES = [
   "NoSourceMaterial",
   "InputsChanged",
   "DependencyProjectionFailed",
-  "EntitlementDenied",
-  "BudgetExceeded",
   "ContextTooLarge",
-  "ProviderRefused",
-  "ProviderIncomplete",
+  "Auth",
+  "Quota",
+  "Timeout",
+  "OutputLimit",
+  "InvalidOutput",
+  "PolicyViolation",
+  "RuntimeUnavailable",
+  "CapacityUnavailable",
   "DocumentValidationFailed",
   "CitationValidationFailed",
-];
+] as const;
+
+export type DossierBuildFailureCode =
+  (typeof DOSSIER_BUILD_FAILURE_CODES)[number];
+
+/** Retired persisted spellings accepted only by dossier read boundaries. */
+export const HISTORICAL_DOSSIER_BUILD_FAILURE_CODES = [
+  "EntitlementDenied",
+  "BudgetExceeded",
+  "ProviderRefused",
+  "ProviderIncomplete",
+] as const;
+
+export type HistoricalDossierBuildFailureCode =
+  (typeof HISTORICAL_DOSSIER_BUILD_FAILURE_CODES)[number];
+
+export type ReadDossierBuildFailureCode =
+  | DossierBuildFailureCode
+  | HistoricalDossierBuildFailureCode;
 
 /** A decoded same-system API/transport error, kept near the screen boundary
  * for `dossierErrorMessage`. `code` is the `ApiError.code`; `message` the
@@ -177,7 +187,7 @@ export interface DossierRevisionSummary {
 /** Failed{code, detail/support} facts, shared by the head snapshot and the SSE
  * `Failed` event (one shape for one fact). */
 export interface DossierFailedFacts {
-  failureCode: DossierBuildFailureCode;
+  failureCode: ReadDossierBuildFailureCode;
   detail: Presence<string>;
   support: Presence<Record<string, unknown>>;
 }

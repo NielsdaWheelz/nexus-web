@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Final
 from uuid import UUID, uuid4
@@ -119,6 +120,14 @@ class AgentToolGrantClaims(BaseModel):
         return value
 
 
+@dataclass(frozen=True, slots=True)
+class IssuedChatToolGrant:
+    """One issuer-owned bearer and the exact non-reusable authority identity it carries."""
+
+    token: SecretStr
+    jti: str
+
+
 def issue_agent_tool_grant(
     claims: AgentToolGrantClaims,
     *,
@@ -153,15 +162,16 @@ def issue_chat_generation_grant(
     signing_key: SecretStr,
     now: datetime,
     ttl_seconds: int = MAX_AGENT_TOOL_GRANT_TTL_SECONDS,
-) -> SecretStr:
+) -> IssuedChatToolGrant:
     """Issue one exact run/job/generation-bound ChatTools bearer."""
     current = _epoch(now)
+    jti = str(uuid4())
     claims = AgentToolGrantClaims(
         iss=AGENT_TOOL_GRANT_ISSUER,
         aud=AGENT_TOOL_GRANT_AUDIENCE,
         scope=AGENT_TOOL_GRANT_SCOPE,
         sub=str(user_id),
-        jti=str(uuid4()),
+        jti=jti,
         run_id=str(run_id),
         job_id=str(job_id),
         worker_id=worker_id,
@@ -173,7 +183,10 @@ def issue_chat_generation_grant(
         nbf=current,
         exp=current + ttl_seconds,
     )
-    return issue_agent_tool_grant(claims, signing_key=signing_key, now=now)
+    return IssuedChatToolGrant(
+        token=issue_agent_tool_grant(claims, signing_key=signing_key, now=now),
+        jti=jti,
+    )
 
 
 def verify_agent_tool_grant(

@@ -17,6 +17,10 @@ Capability = Literal["Synthesis", "ChatTools"]
 ChatProfile = Literal["fast", "balanced", "deep"]
 
 POLICY_REVISION = "codex-generation.2026-08-24.2"
+# Nexus-side pre-accept dispatch policy. These schedules never cross the host
+# wire boundary and therefore are not part of the host policy fingerprint.
+_BACKGROUND_CAPACITY_WAIT_DELAYS_SECONDS = (30, 60, 120, 300, 600)
+_INTERACTIVE_CAPACITY_WAIT_DELAYS_SECONDS = (5, 10)
 # Exact frozen `llm_tools` Chat plan revision. The MCP composition boundary
 # independently proves its generated plan retains this pin.
 TOOL_PLAN_REVISION = "122bae501ba24887bacd88ba79f6e8108b2c91ca97bb6495747d347ec5a5ac53"
@@ -227,6 +231,17 @@ def resolve_policy(operation: str, *, profile: str | None = None) -> OperationPo
     return operation_policy(operation)
 
 
+def capacity_wait_delays_seconds(operation: str) -> tuple[int, ...]:
+    """Resolve the fixed app-side wait policy for one catalog operation."""
+
+    if operation == "chat":
+        return _INTERACTIVE_CAPACITY_WAIT_DELAYS_SECONDS
+    operation_policy(operation)
+    if operation == "dossier_idea_resolve":
+        return ()
+    return _BACKGROUND_CAPACITY_WAIT_DELAYS_SECONDS
+
+
 def operation_revision(operation: str, *, profile: str | None = None) -> str:
     if operation == "chat":
         if profile is None:
@@ -331,6 +346,7 @@ __all__ = [
     "Plan",
     "StreamBounds",
     "assert_operation_facts",
+    "capacity_wait_delays_seconds",
     "chat_policy",
     "operation_policy",
     "operation_revision",

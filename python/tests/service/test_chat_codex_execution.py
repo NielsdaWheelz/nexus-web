@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session
 from nexus.config import get_settings
 from nexus.db.models import ChatRun, ChatRunEvent, LLMCall, Message
 from nexus.db.session import create_session_factory
-from nexus.jobs.queue import RescheduleRequested, get_job, lock_running_job_claim
+from nexus.jobs.queue import RescheduleRequested, ScheduleAfter, get_job, lock_running_job_claim
 from nexus.services import generation_policy
 from nexus.services.chat_run_event_store import ChatRunEventEmitter
 from nexus.services.chat_runs import (
@@ -361,6 +361,7 @@ def test_prepared_chat_capacity_replay_enters_runtime_without_a_caller_transacti
                 )
             )
             assert isinstance(first, RescheduleRequested)
+            assert first.schedule == ScheduleAfter(5)
 
             replay_job = get_job(db, chat.job_id)
             assert replay_job is not None

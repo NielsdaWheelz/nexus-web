@@ -114,9 +114,13 @@ def test_codex_hosted_canary_plan_requires_dedicated_profile_state_without_an_ap
     """Risk: the subscription canary falls through to the direct API credential lane."""
 
     proof = "python/tests/hosted/nightly/test_codex_personal_generation.py"
-    state_root = tmp_path.parent / "codex-nightly-state"
-    working_directory = tmp_path.parent / "codex-nightly-cwd"
+    hosted_root = tmp_path.parent / f"{tmp_path.name}-codex-nightly"
+    hosted_root.mkdir(mode=0o700)
+    state_root = hosted_root / "state"
+    temporary_directory = hosted_root / "tmp"
+    working_directory = hosted_root / "cwd"
     state_root.mkdir(mode=0o700)
+    temporary_directory.mkdir(mode=0o700)
     working_directory.mkdir(mode=0o700)
     plan = runner.build_codex_hosted_canary_plan(
         repo_root=tmp_path,
@@ -126,6 +130,7 @@ def test_codex_hosted_canary_plan_requires_dedicated_profile_state_without_an_ap
             "NEXUS_CODEX_HOSTED_CANARY": "1",
             "NEXUS_CODEX_HOSTED_PROFILE": "codex-personal",
             "NEXUS_CODEX_HOSTED_STATE_ROOT": str(state_root),
+            "NEXUS_CODEX_HOSTED_TEMPORARY_DIRECTORY": str(temporary_directory),
             "NEXUS_CODEX_HOSTED_WORKING_DIRECTORY": str(working_directory),
             "NEXUS_CODEX_HOSTED_SOURCE_SHA": _HOSTED_SOURCE_SHA,
         },
@@ -143,6 +148,7 @@ def test_codex_hosted_canary_plan_requires_dedicated_profile_state_without_an_ap
     )
     assert plan.environment["NEXUS_CODEX_HOSTED_PROFILE"] == "codex-personal"
     assert plan.environment["NEXUS_CODEX_HOSTED_STATE_ROOT"] == str(state_root)
+    assert plan.environment["NEXUS_CODEX_HOSTED_TEMPORARY_DIRECTORY"] == str(temporary_directory)
     assert plan.environment["NEXUS_CODEX_HOSTED_WORKING_DIRECTORY"] == str(working_directory)
     assert plan.environment["NEXUS_TEST_RUN_ID"] == "0123456789abcdef"
     assert plan.environment["NEXUS_CODEX_HOSTED_SOURCE_SHA"] == _HOSTED_SOURCE_SHA
@@ -157,8 +163,52 @@ def test_codex_hosted_canary_plan_requires_dedicated_profile_state_without_an_ap
                 "NEXUS_CODEX_HOSTED_CANARY": "1",
                 "NEXUS_CODEX_HOSTED_PROFILE": "codex-personal",
                 "NEXUS_CODEX_HOSTED_STATE_ROOT": str(state_root),
+                "NEXUS_CODEX_HOSTED_TEMPORARY_DIRECTORY": str(temporary_directory),
                 "NEXUS_CODEX_HOSTED_WORKING_DIRECTORY": str(working_directory),
                 "OPENAI_API_KEY": "",
+            },
+        )
+
+
+def test_codex_hosted_canary_plan_requires_one_runtime_filesystem(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hosted_root = tmp_path.parent / f"{tmp_path.name}-codex-nightly"
+    hosted_root.mkdir(mode=0o700)
+    state_root = hosted_root / "state"
+    temporary_directory = hosted_root / "tmp"
+    working_directory = hosted_root / "cwd"
+    for directory in (state_root, temporary_directory, working_directory):
+        directory.mkdir(mode=0o700)
+    real_stat = Path.stat
+
+    def cross_device_stat(path: Path, *, follow_symlinks: bool = True) -> os.stat_result:
+        metadata = real_stat(path, follow_symlinks=follow_symlinks)
+        if path != working_directory:
+            return metadata
+        fields = list(metadata)
+        fields[2] += 1
+        return os.stat_result(fields)
+
+    # Filesystem metadata is the external kernel boundary under test. The
+    # Nexus runner admission path itself remains real.
+    monkeypatch.setattr(Path, "stat", cross_device_stat)
+
+    with pytest.raises(ValueError, match="must share one filesystem"):
+        runner.build_codex_hosted_canary_plan(
+            repo_root=tmp_path,
+            run_id="0123456789abcdef",
+            target=(
+                "python/tests/hosted/nightly/test_codex_personal_generation.py::"
+                "test_codex_personal_generation_canary_records_exact_four_plan_pairs"
+            ),
+            environment={
+                "NEXUS_CODEX_HOSTED_CANARY": "1",
+                "NEXUS_CODEX_HOSTED_PROFILE": "codex-personal",
+                "NEXUS_CODEX_HOSTED_STATE_ROOT": str(state_root),
+                "NEXUS_CODEX_HOSTED_TEMPORARY_DIRECTORY": str(temporary_directory),
+                "NEXUS_CODEX_HOSTED_WORKING_DIRECTORY": str(working_directory),
+                "NEXUS_CODEX_HOSTED_SOURCE_SHA": _HOSTED_SOURCE_SHA,
             },
         )
 
@@ -513,8 +563,10 @@ def _run_failing_codex_hosted_workflow(
     (repo_root / "python/.venv").mkdir()
 
     state_root = tmp_path / "state"
+    temporary_directory = tmp_path / "tmp"
     working_directory = tmp_path / "cwd"
     state_root.mkdir(mode=0o700)
+    temporary_directory.mkdir(mode=0o700)
     working_directory.mkdir(mode=0o700)
     sentinel = "PRIVATE-CODEX-CHILD-CONTENT"
     uv = repo_root / "bin/uv"
@@ -546,6 +598,7 @@ def _run_failing_codex_hosted_workflow(
         "NEXUS_CODEX_HOSTED_CANARY": "1",
         "NEXUS_CODEX_HOSTED_PROFILE": "codex-personal",
         "NEXUS_CODEX_HOSTED_STATE_ROOT": str(state_root),
+        "NEXUS_CODEX_HOSTED_TEMPORARY_DIRECTORY": str(temporary_directory),
         "NEXUS_CODEX_HOSTED_WORKING_DIRECTORY": str(working_directory),
         "NEXUS_CODEX_HOSTED_SOURCE_SHA": _HOSTED_SOURCE_SHA,
         "NEXUS_TEST_EVIDENCE_RUN_ID": evidence_run_id,
@@ -1360,13 +1413,15 @@ def test_complete_fast_commands_are_fixed_to_their_final_owners(tmp_path: Path) 
     ]
     assert commands[0]["argv"][-1] == "tests/kernel/nexus_test_control/test_policy.py"
     assert commands[1]["argv"] == ["run", "test:eslint-policy"]
-    assert commands[2]["argv"][-17:] == [
+    assert commands[2]["argv"][-19:] == [
         ".",
         "../apps/api/main.py",
         "../apps/codex_agent/__init__.py",
         "../apps/codex_agent/auth_environment.py",
         "../apps/codex_agent/capacity.py",
         "../apps/codex_agent/capacity_canary.py",
+        "../apps/codex_agent/confined_runtime.py",
+        "../apps/codex_agent/credential_state.py",
         "../apps/codex_agent/egress_policy.py",
         "../apps/codex_agent/enroll.py",
         "../apps/codex_agent/health.py",
@@ -1379,13 +1434,15 @@ def test_complete_fast_commands_are_fixed_to_their_final_owners(tmp_path: Path) 
         "../apps/worker/main.py",
         "../deploy/hetzner/release.py",
     ]
-    assert commands[3]["argv"][-17:] == [
+    assert commands[3]["argv"][-19:] == [
         ".",
         "../apps/api/main.py",
         "../apps/codex_agent/__init__.py",
         "../apps/codex_agent/auth_environment.py",
         "../apps/codex_agent/capacity.py",
         "../apps/codex_agent/capacity_canary.py",
+        "../apps/codex_agent/confined_runtime.py",
+        "../apps/codex_agent/credential_state.py",
         "../apps/codex_agent/egress_policy.py",
         "../apps/codex_agent/enroll.py",
         "../apps/codex_agent/health.py",
@@ -1409,6 +1466,8 @@ def test_complete_fast_commands_are_fixed_to_their_final_owners(tmp_path: Path) 
         "../apps/codex_agent/auth_environment.py",
         "../apps/codex_agent/capacity.py",
         "../apps/codex_agent/capacity_canary.py",
+        "../apps/codex_agent/confined_runtime.py",
+        "../apps/codex_agent/credential_state.py",
         "../apps/codex_agent/egress_policy.py",
         "../apps/codex_agent/enroll.py",
         "../apps/codex_agent/health.py",

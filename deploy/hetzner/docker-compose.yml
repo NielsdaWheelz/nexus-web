@@ -215,7 +215,7 @@ services:
     # The encrypted credential filesystem is unlocked manually after reboot.
     # Never let Docker restart this container against the protected underlay.
     # Pinned Codex 0.144.4 updates only this exact file with truncate/write;
-    # every other Codex state path remains in the per-turn /tmp tree.
+    # every other Codex state and temporary path remains in one per-turn tree.
     restart: "no"
     mem_reservation: 128m
     mem_limit: 384m
@@ -226,7 +226,7 @@ services:
     user: "10001:10001"
     environment:
       NEXUS_CODEX_CREDENTIAL_FILE: /run/nexus-codex-credential/auth.json
-      NEXUS_CODEX_WORKING_DIRECTORY_ROOT: /tmp/nexus-codex-turns
+      NEXUS_CODEX_WORKING_DIRECTORY_ROOT: /run/nexus-codex-turns
       NEXUS_CODEX_AGENT_SOCKET: /run/nexus-codex/agent.sock
       NEXUS_CODEX_MCP_ORIGIN: https://${CADDY_SITE:?set}/internal/agent-tools/mcp
       NEXUS_CODEX_CHAT_NETWORK_ATTESTED: "true"
@@ -256,6 +256,10 @@ services:
     stop_grace_period: 45s
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=16m
+      # provider-runtime publishes the private Codex SDK launcher beside its
+      # profile state. Keep that executable write surface to this 0700 tmpfs;
+      # general-purpose /tmp remains noexec.
+      - /run/nexus-codex-turns:rw,exec,nosuid,nodev,size=16m,mode=0700,uid=10001,gid=10001
     ulimits:
       core: 0
       fsize: 1048576

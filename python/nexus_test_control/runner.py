@@ -216,6 +216,8 @@ _EXTERNAL_PYTHON_OWNERS = (
     "apps/codex_agent/auth_environment.py",
     "apps/codex_agent/capacity.py",
     "apps/codex_agent/capacity_canary.py",
+    "apps/codex_agent/confined_runtime.py",
+    "apps/codex_agent/credential_state.py",
     "apps/codex_agent/egress_policy.py",
     "apps/codex_agent/enroll.py",
     "apps/codex_agent/health.py",
@@ -3281,9 +3283,30 @@ def build_codex_hosted_canary_plan(
     state_root = _hosted_codex_directory(
         repo_root, environment, "NEXUS_CODEX_HOSTED_STATE_ROOT", require_empty=False
     )
+    temporary_directory = _hosted_codex_directory(
+        repo_root,
+        environment,
+        "NEXUS_CODEX_HOSTED_TEMPORARY_DIRECTORY",
+        require_empty=True,
+    )
+    if state_root.name != "state" or temporary_directory != state_root.parent / "tmp":
+        raise ValueError("Codex hosted temporary directory differs from the runtime layout")
     working_directory = _hosted_codex_directory(
         repo_root, environment, "NEXUS_CODEX_HOSTED_WORKING_DIRECTORY", require_empty=True
     )
+    if (
+        len(
+            {
+                _hosted_codex_device(state_root),
+                _hosted_codex_device(temporary_directory),
+                _hosted_codex_device(working_directory),
+            }
+        )
+        != 1
+    ):
+        raise ValueError(
+            "Codex hosted state, temporary, and working directories must share one filesystem"
+        )
     evidence_relative = Path("test-results/runs") / run_id / "hosted-codex-personal-generation.json"
     readiness_relative = Path("test-results/runs") / run_id / "hosted-codex-personal-readiness.json"
     child_environment = _child_environment(environment)
@@ -3292,6 +3315,7 @@ def build_codex_hosted_canary_plan(
             "NEXUS_CODEX_HOSTED_CANARY": "1",
             "NEXUS_CODEX_HOSTED_PROFILE": "codex-personal",
             "NEXUS_CODEX_HOSTED_STATE_ROOT": str(state_root),
+            "NEXUS_CODEX_HOSTED_TEMPORARY_DIRECTORY": str(temporary_directory),
             "NEXUS_CODEX_HOSTED_WORKING_DIRECTORY": str(working_directory),
             "NEXUS_CODEX_HOSTED_EVIDENCE_PATH": str(repo_root / evidence_relative),
             "NEXUS_CODEX_HOSTED_READINESS_PATH": str(repo_root / readiness_relative),
@@ -3342,6 +3366,10 @@ def _hosted_codex_directory(
     if require_empty and any(path.iterdir()):
         raise ValueError(f"Codex hosted canary {name} must be empty")
     return path
+
+
+def _hosted_codex_device(path: Path) -> int:
+    return path.stat().st_dev
 
 
 def _pinned_python_suite_pin(repo_root: Path, suite: _PinnedPythonSuite) -> str:
