@@ -8,9 +8,9 @@ import {
   type PublicationDate,
 } from "@/lib/dates/publicationDate";
 import {
-  LIBRARY_MEDIA_KINDS,
-  type LibraryMediaKind,
-} from "@/lib/libraries/mediaKind";
+  MEDIA_KINDS,
+  type MediaKind,
+} from "@/lib/media/kind";
 import {
   expectBoolean,
   expectExactRecord,
@@ -100,7 +100,7 @@ function decodeEstimate(raw: unknown): ReadingTimeEstimate {
 }
 
 function decodeSourceHost(
-  kind: LibraryMediaKind,
+  kind: MediaKind,
   raw: unknown,
 ): Presence<string> {
   if (kind !== "web_article" || raw === null) return { kind: "Absent" };
@@ -152,7 +152,7 @@ export function decodeLibraryReadingTimeEntry(
   );
   const mediaKind = expectOneOf(
     media.kind,
-    LIBRARY_MEDIA_KINDS,
+    MEDIA_KINDS,
     "Library media kind",
   );
   const sourceHost = decodeSourceHost(mediaKind, media.canonical_source_url);

@@ -32,7 +32,6 @@ import LecternNextPrompt from "@/components/LecternNextPrompt";
 import { useLectern } from "@/lib/lectern/LecternProvider";
 import { useResourceActionCompletionUndo } from "@/lib/actions/resourceActionRuntime";
 import {
-  decodePresentPlayerDescriptor,
   parseMediaId,
   type LecternSnapshot,
   type PlayerDescriptor,
@@ -67,8 +66,8 @@ import { mediaResource } from "@/lib/api/resource";
 import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
 import { useResource } from "@/lib/api/useResource";
 import {
-  paneResourceLoaders,
-  type PaneMediaFragmentsSeed,
+  loadMediaPane,
+  type MediaPaneSeed,
   type PaneSubresourceFailure,
 } from "@/lib/panes/paneResourceLoaders";
 import {
@@ -78,10 +77,8 @@ import {
 } from "@/components/feedback/Feedback";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
-import {
-  useMediaProcessingStatus,
-  type MediaProcessingSnapshot,
-} from "@/lib/media/useMediaProcessingStatus";
+import { useMediaProcessingStatus } from "@/lib/media/useMediaProcessingStatus";
+import type { MediaDetail } from "@/lib/media/mediaDetail";
 import { mediaErrorMessage } from "@/lib/media/mediaErrorMessage";
 import {
   applyHighlightsToHtml,
@@ -249,7 +246,6 @@ import { canReadMediaDocument } from "@/lib/media/documentReadiness";
 import {
   renderDocumentEmbedsInHtml,
   type DocumentEmbed,
-  type DocumentEmbedSummary,
 } from "@/lib/media/documentEmbeds";
 import { useFocusModeTracking } from "@/lib/reader/useFocusModeTracking";
 import ReaderContentsNav from "@/components/reader/ReaderContentsNav";
@@ -282,14 +278,12 @@ import {
   createTranscriptFindAdapter,
   createTranscriptFindSnapshot,
 } from "./transcriptPaneFind";
-import TranscriptStatePanel from "./TranscriptStatePanel";
+import TranscriptStatePanel, {
+  type TranscriptRuntimeUpdate,
+} from "./TranscriptStatePanel";
 import {
   type Fragment,
-  type TranscriptChapter,
-  type TranscriptCoverage,
   type TranscriptFragment,
-  type TranscriptPlaybackSource,
-  type TranscriptState,
   normalizeFragments,
   resolveActiveTranscriptFragment,
 } from "@/lib/media/transcriptView";
@@ -305,7 +299,6 @@ import {
 } from "@/lib/highlights/api";
 import type { Highlight } from "@/lib/highlights/highlightContract";
 import { useHostedTextHighlights } from "./useHostedTextHighlights";
-import type { ContributorCredit } from "@/lib/contributors/types";
 import ResourceCreditsOverlay from "@/components/contributors/ResourceCreditsOverlay";
 import ResourceThumb from "@/components/ui/ResourceThumb";
 import { buildMediaResourceHeader } from "./mediaFormatting";
@@ -337,39 +330,6 @@ import styles from "./page.module.css";
 // =============================================================================
 // Constants
 // =============================================================================
-
-export interface Media extends MediaProcessingSnapshot {
-  id: string;
-  kind: string;
-  title: string;
-  podcast_title?: string | null;
-  podcast_image_url?: string | null;
-  canonical_source_url: string | null;
-  retrieval_status: string | null;
-  retrieval_status_reason: string | null;
-  playback_source?: TranscriptPlaybackSource | null;
-  chapters?: TranscriptChapter[];
-  contributors: ContributorCredit[];
-  author_mode: "automatic" | "manual";
-  published_date?: string | null;
-  publisher?: string | null;
-  language?: string | null;
-  listening_state?: {
-    position_ms: number;
-    duration_ms?: number | null;
-    is_completed?: boolean;
-  } | null;
-  episode_state?: "unplayed" | "in_progress" | "played" | null;
-  read_state?: "unread" | "in_progress" | "finished" | null;
-  progress_resettable: boolean;
-  playerDescriptor: unknown;
-  description?: string | null;
-  description_html?: string | null;
-  description_text?: string | null;
-  document_embed_summary?: DocumentEmbedSummary | null;
-  metadata_enriched_at?: string | null;
-  created_at: string;
-}
 
 interface SelectionState {
   fragmentId: string;
@@ -940,7 +900,7 @@ export default function MediaPaneBody() {
   ]);
 
   // ---- Core data state ----
-  const [media, setMedia] = useState<Media | null>(null);
+  const [media, setMedia] = useState<MediaDetail | null>(null);
   const [loading, setLoading] = useState(media === null);
   const [initialHeaderFailure, setInitialHeaderFailure] = useState<
     "unavailable" | "failed" | null
@@ -2340,23 +2300,11 @@ export default function MediaPaneBody() {
   // Data Fetching — initial load
   // ==========================================================================
 
-  const initialMediaResource = useResource<
-    {
-      media: Media;
-      fragments: PaneMediaFragmentsSeed<Fragment>;
-    },
-    { id: string }
-  >({
+  const initialMediaResource = useResource<MediaPaneSeed, { id: string }>({
     descriptor: mediaResource,
     params: { id },
     load: (params, signal) =>
-      paneResourceLoaders.media!.load(
-        clientResourceFetcher(signal),
-        params,
-      ) as Promise<{
-        media: Media;
-        fragments: PaneMediaFragmentsSeed<Fragment>;
-      }>,
+      loadMediaPane(clientResourceFetcher(signal), params),
   });
 
   useEffect(() => {
@@ -2405,13 +2353,7 @@ export default function MediaPaneBody() {
       capabilities,
       lastErrorCode,
       fragments: nextFragments,
-    }: {
-      transcriptState: TranscriptState;
-      transcriptCoverage: TranscriptCoverage;
-      capabilities: Media["capabilities"] | null;
-      lastErrorCode: string | null;
-      fragments: Fragment[] | null;
-    }) => {
+    }: TranscriptRuntimeUpdate) => {
       setMedia((prev) =>
         prev && prev.id === id
           ? {
@@ -2419,7 +2361,9 @@ export default function MediaPaneBody() {
               transcript_state: nextTranscriptState,
               transcript_coverage: nextTranscriptCoverage,
               last_error_code: lastErrorCode,
-              capabilities: capabilities ?? prev.capabilities,
+              capabilities: capabilities
+                ? { ...prev.capabilities, ...capabilities }
+                : prev.capabilities,
             }
           : prev,
       );
@@ -6507,8 +6451,9 @@ export default function MediaPaneBody() {
 
   const mediaPlayerDescriptor = useMemo<PlayerDescriptor | null>(() => {
     if (media === null) return null;
-    const presence = decodePresentPlayerDescriptor(media.playerDescriptor);
-    return presence.kind === "Present" ? presence.value : null;
+    return media.playerDescriptor.kind === "Present"
+      ? media.playerDescriptor.value
+      : null;
   }, [media]);
 
   useEffect(() => {
@@ -7937,7 +7882,11 @@ export default function MediaPaneBody() {
             <ResourceThumb
               spec={{
                 icon: mediaKindIcon(media.kind),
-                remoteUrl: media.podcast_image_url ?? undefined,
+                remoteUrl:
+                  mediaPlayerDescriptor?.activation.artworkUrl.kind ===
+                  "Present"
+                    ? mediaPlayerDescriptor.activation.artworkUrl.value
+                    : undefined,
               }}
               alt=""
               size="md"

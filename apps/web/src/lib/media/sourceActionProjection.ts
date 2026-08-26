@@ -1,8 +1,8 @@
 import {
   isFailedSourceIngest,
-  type MediaActionCapabilities,
   type SourceActionResult,
 } from "@/lib/media/ingestionClient";
+import type { MediaActionCapabilities } from "@/lib/media/mediaActionCapabilities";
 
 type SourceActionKind = "retry" | "refresh";
 

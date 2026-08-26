@@ -4,9 +4,9 @@
 // docs/cutovers/library-entry-type-filter-and-filter-row-reflow-hard-cutover.md.
 
 import {
-  LIBRARY_MEDIA_KINDS,
-  type LibraryMediaKind,
-} from "@/lib/libraries/mediaKind";
+  MEDIA_KINDS,
+  type MediaKind,
+} from "@/lib/media/kind";
 import { assertNever } from "@/lib/assertNever";
 
 export type SortDirection = "asc" | "desc";
@@ -25,7 +25,7 @@ export type LibraryEntryProjection =
   | { kind: "Unfiled"; completion: Completion }
   | { kind: "InProgress" };
 
-export type LibraryExactEntryType = LibraryMediaKind | "podcast";
+export type LibraryExactEntryType = MediaKind | "podcast";
 
 export type LibraryEntryType =
   | { kind: "AllTypes" }
@@ -67,7 +67,7 @@ function isLibraryExactEntryType(
 ): value is LibraryExactEntryType {
   return (
     value === "podcast" ||
-    LIBRARY_MEDIA_KINDS.some((mediaKind) => mediaKind === value)
+    MEDIA_KINDS.some((mediaKind) => mediaKind === value)
   );
 }
 

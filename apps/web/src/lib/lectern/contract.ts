@@ -39,6 +39,7 @@ import {
   type PauseShorteningMode,
 } from "@/lib/player/pauseShortening";
 import { expectIsoInstant } from "@/lib/validation";
+import { MEDIA_KINDS, type MediaKind } from "@/lib/media/kind";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 
 // --- Branded identities ------------------------------------------------------
@@ -142,7 +143,7 @@ export type Activation =
 export interface LecternItem {
   itemId: LecternItemId;
   mediaId: MediaId;
-  kind: ConsumptionMediaKind;
+  kind: MediaKind;
   title: string;
   subtitle: Presence<string>;
   href: AppHref;
@@ -203,16 +204,6 @@ export function lecternActivityFacts(item: LecternItem): LecternActivityFacts {
 export interface LecternSnapshot {
   items: LecternItem[];
 }
-
-const CONSUMPTION_MEDIA_KINDS = [
-  "web_article",
-  "epub",
-  "pdf",
-  "video",
-  "podcast_episode",
-] as const;
-
-export type ConsumptionMediaKind = (typeof CONSUMPTION_MEDIA_KINDS)[number];
 
 /** Derived from a `LecternItem`/media/podcast DTO whose activation is `FooterAudio`. */
 export interface PlayerDescriptor {
@@ -627,7 +618,7 @@ export function decodeLecternItem(raw: unknown): LecternItem {
   return {
     itemId: decodeLecternItemId(rec.itemId),
     mediaId,
-    kind: asLiteral(rec.kind, CONSUMPTION_MEDIA_KINDS, "LecternItemOut.kind"),
+    kind: asLiteral(rec.kind, MEDIA_KINDS, "LecternItemOut.kind"),
     title: asString(rec.title, "LecternItemOut.title"),
     subtitle: decodePresence(rec.subtitle, (v) => asString(v, "LecternItemOut.subtitle")),
     href,
