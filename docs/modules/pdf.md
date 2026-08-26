@@ -56,9 +56,9 @@ PDF reader apparatus is intentionally conservative.
 - Redistributable scholarly PDFs may be committed as unsupported-adapter
   fixtures to prove this negative behavior. That fixture status is not a claim
   that notes, references, or author-year citations have been extracted.
-- Future scholarly, legal-footnote, or literary-annotation PDF support must be
-  explicit adapter work with its own diagnostics, confidence contract, and
-  fixtures.
+- No dormant scholarly adapter implementation is retained. Future scholarly or
+  literary-annotation PDF support must be explicit adapter work with its own
+  diagnostics, confidence contract, wiring, and fixtures.
 
 ## Bounded Parse
 
