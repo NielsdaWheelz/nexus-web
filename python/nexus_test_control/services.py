@@ -4,6 +4,7 @@ import ctypes
 import errno
 import fcntl
 import json
+import logging
 import mmap
 import os
 import re
@@ -81,6 +82,8 @@ from nexus_test_control.runtime import (
     upgrade_previous_runtime,
 )
 
+_LOGGER = logging.getLogger(__name__)
+
 POSTGRES_IMAGE = (
     "pgvector/pgvector@sha256:bd12d6788a617f4147d5a2ae0b56d07921398adabfe5a033bd3f50c245df55a1"
 )
@@ -127,6 +130,7 @@ _SAFE_CHILD_ENV = ("HOME", "LANG", "LC_ALL", "PATH", "TMPDIR", "TZ", "UV_CACHE_D
 _STATUS_KEYS = frozenset(
     {"API_URL", "ANON_KEY", "PUBLISHABLE_KEY", "SECRET_KEY", "SERVICE_ROLE_KEY"}
 )
+_PROCESS_IDENTITY_GRACE_SECONDS = 2
 _EMBEDDING_PEER_FILES = ("ca.pem", "server-key.pem", "requests.jsonl")
 _CONTROLLER_OWNED_PROCESS_ENV = frozenset(
     {
@@ -1518,7 +1522,10 @@ def _wait_owned_process_url_ready(
     if host != "127.0.0.1":
         raise RuntimeContractError("process readiness endpoint must use exact IPv4 loopback")
     deadline = time.monotonic() + timeout_seconds
-    identity_deadline = min(deadline, time.monotonic() + 2)
+    identity_deadline = min(
+        deadline,
+        time.monotonic() + _PROCESS_IDENTITY_GRACE_SECONDS,
+    )
     with httpx.Client(
         trust_env=False,
         timeout=1,
@@ -1533,7 +1540,7 @@ def _wait_owned_process_url_ready(
                 process.run_id,
                 process.owner_token,
             ):
-                if _startup_identity_pending(
+                if _process_identity_pending(
                     birth_matches=_process_birth_identity_matches(
                         process.process_group_id,
                         process.process_start_token,
@@ -1717,6 +1724,7 @@ def clean_run(
                             process_start_token,
                             run_id,
                             candidate.external_id,
+                            resource.identity,
                         )
                     _remove_process_owner_marker(root, run_id, candidate.external_id)
                 elif resource.kind is ResourceKind.TEMPLATE_BUILD:
@@ -2301,26 +2309,75 @@ def _stop_process_group(
     process_start_token: str | None,
     run_id: str,
     owner_token: str,
+    resource_identity: str,
 ) -> None:
-    owned_groups = _owned_process_group_map(repo_root, run_id, owner_token)
-    try:
-        os.killpg(process_group_id, 0)
-        recorded_group_alive = True
-    except ProcessLookupError:
-        recorded_group_alive = False
-    except PermissionError as exc:
-        raise RuntimeContractError("owned process group could not be verified") from exc
-    if not recorded_group_alive:
-        if process_group_id in owned_groups:
-            raise RuntimeContractError(
-                "owned process identity identifies a group the kernel cannot signal"
+    ledger_phase = _process_ledger_phase(
+        repo_root,
+        process_group_id=process_group_id,
+        process_start_token=process_start_token,
+        run_id=run_id,
+        owner_token=owner_token,
+        resource_identity=resource_identity,
+    )
+    if ledger_phase is None:
+        raise RuntimeContractError("process group no longer belongs to the exact test run")
+    identity_deadline = time.monotonic() + _PROCESS_IDENTITY_GRACE_SECONDS
+    identity_pending_reported = False
+    while True:
+        if ledger_phase is ResourcePhase.CREATED and process_start_token is not None:
+            _reap_exact_created_process_if_exited(
+                process_group_id,
+                process_start_token,
             )
-        # The recorded worker group is already gone; reap any bounded child group
-        # it may have left behind (parent-death teardown races the ledger cleanup).
-        for group_id in sorted(owned_groups):
-            _terminate_process_group(group_id)
-        return
-    if process_group_id not in owned_groups:
+        owned_groups = _owned_process_group_map(repo_root, run_id, owner_token)
+        try:
+            os.killpg(process_group_id, 0)
+            recorded_group_alive = True
+        except ProcessLookupError:
+            recorded_group_alive = False
+        except PermissionError as exc:
+            raise RuntimeContractError("owned process group could not be verified") from exc
+        if not recorded_group_alive:
+            if process_group_id in owned_groups:
+                raise RuntimeContractError(
+                    "owned process identity identifies a group the kernel cannot signal"
+                )
+            # The recorded worker group is already gone; reap any bounded child group
+            # it may have left behind (parent-death teardown races the ledger cleanup).
+            for group_id in sorted(owned_groups):
+                _terminate_process_group(group_id)
+            return
+        if process_group_id in owned_groups:
+            break
+        # The signal-unblocking launcher immediately execs the target. Linux can
+        # expose the immutable birth identity before the new environment becomes
+        # readable, so rescan only while that exact recorded process still exists.
+        identity_pending = (
+            ledger_phase is ResourcePhase.CREATED
+            and process_start_token is not None
+            and _process_identity_pending(
+                birth_matches=_process_birth_identity_matches(
+                    process_group_id,
+                    process_start_token,
+                ),
+                now=time.monotonic(),
+                deadline=identity_deadline,
+            )
+        )
+        if identity_pending:
+            if not identity_pending_reported:
+                _LOGGER.debug(
+                    "exact process birth is awaiting owner visibility",
+                    extra={
+                        "event": "nexus_test.process_owner_visibility_pending",
+                        "process_group_id": process_group_id,
+                        "resource_identity": resource_identity,
+                        "run_id": run_id,
+                    },
+                )
+                identity_pending_reported = True
+            time.sleep(0.01)
+            continue
         raise RuntimeContractError("process group no longer belongs to the exact test run")
     if process_start_token is not None:
         try:
@@ -2339,6 +2396,54 @@ def _stop_process_group(
     # forked into its own session; all carry this run's one secret owner token.
     for group_id in sorted(owned_groups):
         _terminate_process_group(group_id)
+
+
+def _process_ledger_phase(
+    repo_root: Path,
+    *,
+    process_group_id: int,
+    process_start_token: str | None,
+    run_id: str,
+    owner_token: str,
+    resource_identity: str,
+) -> ResourcePhase | None:
+    expected_resource = Resource(ResourceKind.PROCESS, resource_identity)
+    matching = [
+        entry
+        for entry in read_ledger(repo_root, run_id).entries
+        if entry.resource == expected_resource
+    ]
+    if len(matching) != 1 or matching[0].external_id != owner_token:
+        return None
+    entry = matching[0]
+    if entry.phase is ResourcePhase.PLANNED:
+        return (
+            ResourcePhase.PLANNED
+            if entry.process_group_id is None and entry.process_start_token is None
+            else None
+        )
+    if (
+        entry.phase is ResourcePhase.CREATED
+        and process_start_token is not None
+        and entry.process_group_id == process_group_id
+        and entry.process_start_token == process_start_token
+    ):
+        return ResourcePhase.CREATED
+    return None
+
+
+def _reap_exact_created_process_if_exited(
+    process_group_id: int,
+    process_start_token: str,
+) -> None:
+    if not _process_birth_identity_matches(process_group_id, process_start_token):
+        return
+    try:
+        reaped_process_id, _status = os.waitpid(process_group_id, os.WNOHANG)
+    except ChildProcessError:
+        return
+    if reaped_process_id not in {0, process_group_id}:
+        raise AssertionError("waitpid reaped a process outside the exact ledger owner")
 
 
 def _terminate_process_group(process_group_id: int) -> None:
@@ -2431,7 +2536,7 @@ def _process_birth_identity_matches(process_group_id: int, process_start_token: 
     )
 
 
-def _startup_identity_pending(*, birth_matches: bool, now: float, deadline: float) -> bool:
+def _process_identity_pending(*, birth_matches: bool, now: float, deadline: float) -> bool:
     return birth_matches and now < deadline
 
 

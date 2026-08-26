@@ -1,12 +1,14 @@
 import base64
 import hashlib
 import json
+import logging
 import os
 import signal
 import socket
 import subprocess
 import sys
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
@@ -28,6 +30,7 @@ from nexus_test_control.runtime import (
     migration_database_name,
     process_resource_identity,
     read_ledger,
+    read_runtime,
     record_created,
     record_planned,
     run_bucket_name,
@@ -40,7 +43,6 @@ from nexus_test_control.services import (
     _database_url,
     _parse_supabase_status,
     _start_owned_process,
-    _startup_identity_pending,
     _supabase_credentials_from_status,
     _write_supabase_config,
     clean_owned_runtime,
@@ -212,11 +214,210 @@ def test_owned_process_cleanup_rejects_a_different_owner_without_signaling(
                 started.process_start_token,
                 started.run_id,
                 "b" * 32,
+                process_resource_identity(RUN_ID, "api"),
             )
 
         os.kill(started.process_group_id, 0)
     finally:
         clean_run(tmp_path, TEST_ENV, RUN_ID)
+
+
+def test_owned_process_cleanup_waits_for_exact_birth_owner_to_finish_startup(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    initialize_runtime(tmp_path, TEST_ENV, _ports())
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    owner_token = "a" * 32
+    ready_path = tmp_path / "owner-startup-ready"
+    release_path = tmp_path / "owner-startup-release"
+    marker_path: Path | None = None
+    child_environment = {
+        **os.environ,
+        "NEXUS_ENV": "test",
+        "NEXUS_TEST_RUN_ID": RUN_ID,
+    }
+    child_environment.pop("NEXUS_TEST_PROCESS_OWNER", None)
+    child_environment.pop("NEXUS_TEST_PROCESS_OWNER_FD", None)
+    if sys.platform == "darwin":
+        marker_path = services._process_owner_marker(tmp_path, RUN_ID, owner_token)
+        script = (
+            "import os,pathlib,signal,sys,time\n"
+            "pathlib.Path(sys.argv[1]).write_text('ready')\n"
+            "release=pathlib.Path(sys.argv[2])\n"
+            "while not release.is_file():\n"
+            "    time.sleep(0.01)\n"
+            "owner_fd=os.open(sys.argv[3],os.O_RDONLY)\n"
+            "signal.pause()\n"
+        )
+        command = (
+            sys.executable,
+            "-c",
+            script,
+            str(ready_path),
+            str(release_path),
+            str(marker_path),
+        )
+    else:
+        assert sys.platform == "linux"
+        script = (
+            "import os,pathlib,signal,sys,time\n"
+            "pathlib.Path(sys.argv[1]).write_text('ready')\n"
+            "release=pathlib.Path(sys.argv[2])\n"
+            "while not release.is_file():\n"
+            "    time.sleep(0.01)\n"
+            "environment=dict(os.environ)\n"
+            "environment['NEXUS_TEST_PROCESS_OWNER']=sys.argv[3]\n"
+            "os.execvpe(sys.executable,"
+            "(sys.executable,'-c','import signal; signal.pause()'),environment)\n"
+        )
+        command = (
+            sys.executable,
+            "-c",
+            script,
+            str(ready_path),
+            str(release_path),
+            owner_token,
+        )
+    resource = Resource(ResourceKind.PROCESS, process_resource_identity(RUN_ID, "api"))
+    record_planned(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        resource,
+        external_id=owner_token,
+        command=command,
+    )
+    if marker_path is not None:
+        marker_path.parent.mkdir(parents=True, exist_ok=True)
+        marker_path.touch(mode=0o600, exist_ok=False)
+    process = subprocess.Popen(
+        command,
+        cwd=tmp_path,
+        env=child_environment,
+        start_new_session=True,
+    )
+    try:
+        start_token = services._process_start_token(process.pid)
+        record_created(
+            tmp_path,
+            TEST_ENV,
+            RUN_ID,
+            resource,
+            process_group_id=process.pid,
+            process_start_token=start_token,
+        )
+        for _attempt in range(500):
+            if ready_path.is_file():
+                break
+            threading.Event().wait(0.01)
+        assert ready_path.read_text(encoding="utf-8") == "ready"
+        assert process.pid not in services._owned_process_group_map(
+            tmp_path,
+            RUN_ID,
+            owner_token,
+        )
+        assert services._process_birth_identity_matches(process.pid, start_token)
+
+        caplog.set_level(logging.DEBUG, logger=services.__name__)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            cleanup = executor.submit(clean_run, tmp_path, TEST_ENV, RUN_ID)
+            pending_observation = None
+            for _attempt in range(500):
+                pending_observation = next(
+                    (
+                        record
+                        for record in caplog.records
+                        if getattr(record, "event", None)
+                        == "nexus_test.process_owner_visibility_pending"
+                    ),
+                    None,
+                )
+                if pending_observation is not None or cleanup.done():
+                    break
+                threading.Event().wait(0.01)
+            release_path.touch(exist_ok=False)
+            cleanup_error = cleanup.exception(timeout=5)
+
+        assert pending_observation is not None, (
+            "cleanup never observed exact birth while ownership was hidden"
+        )
+        assert getattr(pending_observation, "process_group_id", None) == process.pid
+        assert getattr(pending_observation, "resource_identity", None) == resource.identity
+        assert getattr(pending_observation, "run_id", None) == RUN_ID
+        assert cleanup_error is None, f"cleanup rejected transitional ownership: {cleanup_error}"
+        process.wait(timeout=3)
+        assert not _process_is_running(process.pid)
+        assert read_runtime(tmp_path).owned_run_ids == ()
+    finally:
+        release_path.touch(exist_ok=True)
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+        if marker_path is not None:
+            services._remove_process_owner_marker(tmp_path, RUN_ID, owner_token)
+
+
+def test_clean_reaps_an_exact_created_process_that_exits_before_owner_scan(
+    tmp_path: Path,
+) -> None:
+    initialize_runtime(tmp_path, TEST_ENV, _ports())
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    ready_path = tmp_path / "exiting-owner-ready"
+    release_path = tmp_path / "exiting-owner-release"
+    script = (
+        "import pathlib,sys,time\n"
+        "pathlib.Path(sys.argv[1]).write_text('ready')\n"
+        "release=pathlib.Path(sys.argv[2])\n"
+        "while not release.is_file():\n"
+        "    time.sleep(0.01)\n"
+    )
+    started = _start_owned_process(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        "api",
+        (sys.executable, "-c", script, str(ready_path), str(release_path)),
+        cwd=tmp_path,
+        process_environment={"NEXUS_TEST_RUN_ID": RUN_ID},
+    )
+    try:
+        for _attempt in range(500):
+            if ready_path.is_file():
+                break
+            threading.Event().wait(0.01)
+        assert ready_path.read_text(encoding="utf-8") == "ready"
+        release_path.touch(exist_ok=False)
+        exit_status = None
+        for _attempt in range(500):
+            exit_status = os.waitid(
+                os.P_PID,
+                started.process_group_id,
+                os.WEXITED | os.WNOHANG | os.WNOWAIT,
+            )
+            if exit_status is not None:
+                break
+            threading.Event().wait(0.01)
+        assert exit_status is not None
+
+        clean_run(tmp_path, TEST_ENV, RUN_ID)
+
+        with pytest.raises(ChildProcessError):
+            os.waitid(
+                os.P_PID,
+                started.process_group_id,
+                os.WEXITED | os.WNOHANG | os.WNOWAIT,
+            )
+        assert read_runtime(tmp_path).owned_run_ids == ()
+    finally:
+        try:
+            os.killpg(started.process_group_id, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            os.waitpid(started.process_group_id, 0)
+        except ChildProcessError:
+            pass
 
 
 def test_clean_stops_owned_children_after_the_recorded_group_leader_exits(
@@ -708,10 +909,10 @@ def test_mcp_readiness_rejects_a_relabelled_noninteractive_ledger_process(
         clean_run(tmp_path, TEST_ENV, RUN_ID)
 
 
-def test_readiness_grace_requires_immutable_birth_identity_and_time() -> None:
-    assert _startup_identity_pending(birth_matches=True, now=1, deadline=2)
-    assert not _startup_identity_pending(birth_matches=False, now=1, deadline=2)
-    assert not _startup_identity_pending(birth_matches=True, now=2, deadline=2)
+def test_process_identity_grace_requires_immutable_birth_identity_and_time() -> None:
+    assert services._process_identity_pending(birth_matches=True, now=1, deadline=2)
+    assert not services._process_identity_pending(birth_matches=False, now=1, deadline=2)
+    assert not services._process_identity_pending(birth_matches=True, now=2, deadline=2)
 
 
 def test_caller_resource_configuration_is_rejected_and_secrets_have_safe_reprs() -> None:
