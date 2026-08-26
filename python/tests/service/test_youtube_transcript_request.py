@@ -86,6 +86,15 @@ def test_youtube_caption_dry_run_and_import_use_video_owned_collections(
         viewer_id=test_user.id,
         family=CollectionFamily.PodcastEpisodes,
     )
+    podcast_usage_before = db_session.execute(
+        select(
+            PodcastTranscriptionUsageDaily.usage_date,
+            PodcastTranscriptionUsageDaily.minutes_used,
+            PodcastTranscriptionUsageDaily.minutes_reserved,
+        )
+        .where(PodcastTranscriptionUsageDaily.user_id == test_user.id)
+        .order_by(PodcastTranscriptionUsageDaily.usage_date)
+    ).all()
 
     forecast = authenticated_client.post(
         f"/media/{media_id}/transcript/request",
@@ -179,10 +188,39 @@ def test_youtube_caption_dry_run_and_import_use_video_owned_collections(
         )
         == podcast_revision_before
     )
-    for model in (
-        MediaSourceAttempt,
-        PodcastTranscriptionJob,
-        PodcastTranscriptionUsageDaily,
-        PodcastTranscriptRequestAudit,
-    ):
-        assert db_session.scalar(select(func.count()).select_from(model)) == 0
+    assert (
+        db_session.scalar(
+            select(func.count())
+            .select_from(MediaSourceAttempt)
+            .where(MediaSourceAttempt.media_id == media_id)
+        )
+        == 0
+    )
+    assert (
+        db_session.scalar(
+            select(func.count())
+            .select_from(PodcastTranscriptionJob)
+            .where(PodcastTranscriptionJob.media_id == media_id)
+        )
+        == 0
+    )
+    assert (
+        db_session.scalar(
+            select(func.count())
+            .select_from(PodcastTranscriptRequestAudit)
+            .where(PodcastTranscriptRequestAudit.media_id == media_id)
+        )
+        == 0
+    )
+    assert (
+        db_session.execute(
+            select(
+                PodcastTranscriptionUsageDaily.usage_date,
+                PodcastTranscriptionUsageDaily.minutes_used,
+                PodcastTranscriptionUsageDaily.minutes_reserved,
+            )
+            .where(PodcastTranscriptionUsageDaily.user_id == test_user.id)
+            .order_by(PodcastTranscriptionUsageDaily.usage_date)
+        ).all()
+        == podcast_usage_before
+    )
