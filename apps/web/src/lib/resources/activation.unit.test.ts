@@ -37,11 +37,14 @@ describe("resource activation wire owner", () => {
   });
 
   it.each([
-    [{ ...SNAKE_ROUTE, extra: true }, "extra snake_case field"],
-    [{ ...SNAKE_ROUTE, resource_ref: "media:not-a-uuid" }, "invalid ref"],
-    [{ ...SNAKE_ROUTE, href: null }, "route without href"],
-    [{ ...SNAKE_ROUTE, kind: "none" }, "none with href"],
-  ])("rejects %s (%s)", (raw) => {
+    { raw: { ...SNAKE_ROUTE, extra: true }, name: "extra snake_case field" },
+    {
+      raw: { ...SNAKE_ROUTE, resource_ref: "media:not-a-uuid" },
+      name: "invalid ref",
+    },
+    { raw: { ...SNAKE_ROUTE, href: null }, name: "route without href" },
+    { raw: { ...SNAKE_ROUTE, kind: "none" }, name: "none with href" },
+  ])("rejects $name", ({ raw }) => {
     expect(() => decodeSnakeCaseResourceActivation(raw)).toThrow(TypeError);
   });
 
