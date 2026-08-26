@@ -109,6 +109,50 @@ describe("media evidence resolution wire", () => {
     ).toThrow("highlight identity must match its response");
   });
 
+  it("rejects contradictory resolver kind, state, and span identity", () => {
+    expect(() =>
+      decodeMediaEvidenceResolutionResponse({
+        data: {
+          ...TRANSCRIPT_RESPONSE.data,
+          resolver: {
+            ...TRANSCRIPT_RESPONSE.data.resolver,
+            kind: "web",
+          },
+        },
+      }),
+    ).toThrow("Web evidence requires a web_text highlight");
+    expect(() =>
+      decodeMediaEvidenceResolutionResponse({
+        data: {
+          ...TRANSCRIPT_RESPONSE.data,
+          resolver: {
+            ...TRANSCRIPT_RESPONSE.data.resolver,
+            status: "unresolved",
+          },
+        },
+      }),
+    ).toThrow("Unresolved media evidence must not contain a highlight");
+    expect(() =>
+      decodeMediaEvidenceResolutionResponse({
+        data: {
+          ...TRANSCRIPT_RESPONSE.data,
+          resolver: {
+            ...TRANSCRIPT_RESPONSE.data.resolver,
+            highlight: null,
+          },
+        },
+      }),
+    ).toThrow("Resolved media evidence must contain its typed highlight");
+    expect(() =>
+      decodeMediaEvidenceResolutionResponse({
+        data: {
+          ...TRANSCRIPT_RESPONSE.data,
+          span_text: "Different evidence",
+        },
+      }),
+    ).toThrow("highlight text must match its response span");
+  });
+
   it("strictly decodes PDF geometry", () => {
     const pdfResponse = {
       data: {
@@ -180,5 +224,19 @@ describe("media evidence resolution wire", () => {
         },
       }),
     ).toThrow("page dimensions must be positive");
+    expect(() =>
+      decodeMediaEvidenceResolutionResponse({
+        data: {
+          ...pdfResponse.data,
+          resolver: {
+            ...pdfResponse.data.resolver,
+            highlight: {
+              ...pdfResponse.data.resolver.highlight,
+              geometry: null,
+            },
+          },
+        },
+      }),
+    ).toThrow("Resolved PDF evidence must contain highlight geometry");
   });
 });

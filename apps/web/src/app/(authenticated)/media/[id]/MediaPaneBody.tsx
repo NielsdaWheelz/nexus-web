@@ -50,7 +50,6 @@ import PdfReader, {
   type PdfReaderControlActions,
   type PdfReaderControlsState,
   type PdfReaderResourceState,
-  type PdfTemporaryHighlight,
   type PdfReaderVisibleLockReason,
 } from "@/components/PdfReader";
 import type { PdfHighlightOut } from "@/lib/reader/ReaderDecorations";
@@ -280,6 +279,10 @@ import {
   fetchMediaEvidenceResolution,
   type MediaEvidenceResolutionResponse,
 } from "./mediaEvidenceResolution";
+import {
+  projectMediaEvidenceHighlights,
+  projectMediaEvidenceRoute,
+} from "./mediaEvidenceProjection";
 import TranscriptContentPanel, {
   type TranscriptFindPresentation,
 } from "./TranscriptContentPanel";
@@ -448,76 +451,6 @@ function pulseReaderApparatusElement(element: HTMLElement): void {
   window.setTimeout(() => {
     element.classList.remove(READER_APPARATUS_PULSE_CLASS);
   }, READER_APPARATUS_PULSE_MS);
-}
-
-function parsePositivePageNumber(
-  raw: string | null | undefined,
-): number | null {
-  if (!raw || !/^\d+$/.test(raw)) return null;
-  const parsed = Number.parseInt(raw, 10);
-  return Number.isInteger(parsed) && parsed >= 1 ? parsed : null;
-}
-
-function parseNonnegativeMs(raw: string | null | undefined): number | null {
-  if (!raw || !/^\d+$/.test(raw)) return null;
-  const parsed = Number.parseInt(raw, 10);
-  return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
-}
-
-function parseNonnegativeNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isInteger(value) && value >= 0
-    ? value
-    : null;
-}
-
-function textQuoteField(
-  highlight: Record<string, unknown>,
-  key: string,
-): string | null {
-  const textQuote = highlight.text_quote;
-  if (
-    typeof textQuote !== "object" ||
-    textQuote === null ||
-    Array.isArray(textQuote)
-  ) {
-    return null;
-  }
-  const value = (textQuote as Record<string, unknown>)[key];
-  return typeof value === "string" && value.length > 0 ? value : null;
-}
-
-function temporaryTextEvidenceHighlightFromQuote({
-  activeContent,
-  evidenceSpanId,
-  fallbackExact,
-  exact,
-  prefix,
-  suffix,
-}: {
-  activeContent: ActiveContent;
-  evidenceSpanId: string;
-  fallbackExact?: string | null;
-  exact: string | null;
-  prefix: string | null;
-  suffix: string | null;
-}): HighlightInput | null {
-  const selectedExact = fallbackExact ?? exact;
-  const matchedOffset = findCanonicalOffsetFromQuote(
-    activeContent.canonicalText,
-    selectedExact,
-    prefix,
-    suffix,
-  );
-  if (matchedOffset === null || !selectedExact) {
-    return null;
-  }
-  return {
-    id: `evidence-${evidenceSpanId}`,
-    start_offset: matchedOffset,
-    end_offset: matchedOffset + canonicalCpLength(selectedExact),
-    color: "blue",
-    created_at: "1970-01-01T00:00:00.000Z",
-  };
 }
 
 function evidenceItemSnippet(item: ReaderEvidenceItem): string | null {
@@ -1151,88 +1084,18 @@ export default function MediaPaneBody() {
       ? resolvedHighlightTargetResource.data
       : null;
 
-  const resolvedEvidenceParams = resolvedEvidence?.resolver.params ?? null;
-  const resolvedEvidenceHighlight =
-    resolvedEvidence?.resolver.highlight ?? null;
-  const resolvedEvidenceSelector = resolvedEvidence?.resolver.selector ?? null;
-  const resolvedEvidenceHighlightId = resolvedEvidence
-    ? `evidence-${resolvedEvidence.evidenceSpanId}`
-    : null;
-  const resolvedEvidenceFragmentId =
-    typeof resolvedEvidenceParams?.fragment === "string"
-      ? resolvedEvidenceParams.fragment
-      : null;
-  const resolvedEvidenceReaderLoc =
-    typeof resolvedEvidenceParams?.loc === "string"
-      ? resolvedEvidenceParams.loc
-      : null;
-  const resolvedEvidenceStartMs =
-    parseNonnegativeMs(resolvedEvidenceParams?.t_start_ms) ??
-    (resolvedEvidenceHighlight?.kind === "transcript_time_text" &&
-    resolvedEvidenceHighlight.tStartMs !== null
-      ? resolvedEvidenceHighlight.tStartMs
-      : parseNonnegativeNumber(resolvedEvidenceSelector?.t_start_ms));
-  const resolvedEvidenceEndMs =
-    parseNonnegativeMs(resolvedEvidenceParams?.t_end_ms) ??
-    (resolvedEvidenceHighlight?.kind === "transcript_time_text" &&
-    resolvedEvidenceHighlight.tEndMs !== null
-      ? resolvedEvidenceHighlight.tEndMs
-      : parseNonnegativeNumber(resolvedEvidenceSelector?.t_end_ms));
-  const resolvedEvidenceSpanText = resolvedEvidence?.spanText.trim() || null;
-  const resolvedTranscriptEvidenceFragment = useMemo(() => {
-    if (resolvedEvidence?.resolver.kind !== "transcript") {
-      return null;
-    }
-    if (resolvedEvidenceStartMs !== null) {
-      const timeMatched = fragments.find((fragment) => {
-        if (typeof fragment.t_start_ms !== "number") {
-          return false;
-        }
-        if (typeof fragment.t_end_ms === "number") {
-          return (
-            resolvedEvidenceStartMs >= fragment.t_start_ms &&
-            resolvedEvidenceStartMs <= fragment.t_end_ms
-          );
-        }
-        return fragment.t_start_ms === resolvedEvidenceStartMs;
-      });
-      if (timeMatched) {
-        return timeMatched;
-      }
-    }
-    if (!resolvedEvidenceSpanText) {
-      return null;
-    }
-    const normalizedEvidence = resolvedEvidenceSpanText
-      .replace(/\s+/g, " ")
-      .trim()
-      .toLocaleLowerCase();
-    if (!normalizedEvidence) {
-      return null;
-    }
-    return (
-      fragments.find((fragment) =>
-        fragment.canonical_text
-          .replace(/\s+/g, " ")
-          .trim()
-          .toLocaleLowerCase()
-          .includes(normalizedEvidence),
-      ) ?? null
-    );
-  }, [
-    fragments,
-    resolvedEvidence?.resolver.kind,
-    resolvedEvidenceSpanText,
-    resolvedEvidenceStartMs,
-  ]);
+  const resolvedEvidenceRoute = useMemo(
+    () => projectMediaEvidenceRoute(resolvedEvidence, fragments),
+    [fragments, resolvedEvidence],
+  );
   const activeRequestedFragmentId =
     requestedFragmentId ??
     (resolvedHighlightTarget?.kind === "WebTextOffsets" ||
     resolvedHighlightTarget?.kind === "TranscriptTextOffsets"
       ? resolvedHighlightTarget.fragmentId
       : null) ??
-    resolvedEvidenceFragmentId ??
-    resolvedTranscriptEvidenceFragment?.id ??
+    resolvedEvidenceRoute.fragmentId ??
+    resolvedEvidenceRoute.transcriptFragment?.id ??
     (media?.kind === "web_article" ? readerResumeSource : null) ??
     null;
   const activeRequestedReaderLoc =
@@ -1240,22 +1103,22 @@ export default function MediaPaneBody() {
     (resolvedHighlightTarget?.kind === "EpubTextOffsets"
       ? resolvedHighlightTarget.sectionId
       : null) ??
-    resolvedEvidenceReaderLoc;
+    resolvedEvidenceRoute.readerLoc;
   const activeRequestedStartMs =
     requestedStartMs ??
     (resolvedHighlightTarget?.kind === "TranscriptTextOffsets" &&
     resolvedHighlightTarget.timeRange.kind === "Present"
       ? resolvedHighlightTarget.timeRange.value.startMs
       : null) ??
-    resolvedEvidenceStartMs ??
-    resolvedTranscriptEvidenceFragment?.t_start_ms ??
+    resolvedEvidenceRoute.startMs ??
+    resolvedEvidenceRoute.transcriptFragment?.t_start_ms ??
     null;
   const activeRequestedPdfPageNumber =
     requestedPdfPageNumber ??
     (resolvedHighlightTarget?.kind === "PdfPageGeometry"
       ? resolvedHighlightTarget.pageNumber
       : null) ??
-    parsePositivePageNumber(resolvedEvidenceParams?.page);
+    resolvedEvidenceRoute.pdfPageNumber;
 
   const {
     focusState,
@@ -3226,95 +3089,13 @@ export default function MediaPaneBody() {
   // Highlight Rendering
   // ==========================================================================
 
-  const temporaryTextHighlight = useMemo<HighlightInput | null>(() => {
-    if (!resolvedEvidence || !activeContent) return null;
-    const highlight = resolvedEvidence.resolver.highlight;
-    const selector = resolvedEvidence.resolver.selector;
-    let fragmentId: unknown;
-    let startOffset: unknown;
-    let endOffset: unknown;
-    let exact: string | null;
-    let prefix: string | null;
-    let suffix: string | null;
-    if (
-      highlight?.kind === "web_text" ||
-      highlight?.kind === "epub_text"
-    ) {
-      fragmentId = highlight.fragmentId;
-      startOffset = highlight.startOffset;
-      endOffset = highlight.endOffset;
-      exact = highlight.textQuote.exact;
-      prefix = highlight.textQuote.prefix;
-      suffix = highlight.textQuote.suffix;
-    } else if (highlight !== null) {
-      return null;
-    } else {
-      const kind = selector.kind;
-      if (kind !== "web_text" && kind !== "epub_text") return null;
-      fragmentId = selector.fragment_id;
-      startOffset = selector.start_offset;
-      endOffset = selector.end_offset;
-      exact = textQuoteField(selector, "exact");
-      prefix = textQuoteField(selector, "prefix");
-      suffix = textQuoteField(selector, "suffix");
-    }
-    if (fragmentId !== activeContent.fragmentId) return null;
-    const quoteHighlight = temporaryTextEvidenceHighlightFromQuote({
-      activeContent,
-      evidenceSpanId: resolvedEvidence.evidenceSpanId,
-      fallbackExact: resolvedEvidence.spanText,
-      exact,
-      prefix,
-      suffix,
-    });
-    if (quoteHighlight) return quoteHighlight;
-    if (
-      typeof startOffset !== "number" ||
-      typeof endOffset !== "number" ||
-      endOffset <= startOffset
-    ) {
-      return null;
-    }
-    return {
-      id: `evidence-${resolvedEvidence.evidenceSpanId}`,
-      start_offset: startOffset,
-      end_offset: endOffset,
-      color: "blue",
-      created_at: "1970-01-01T00:00:00.000Z",
-    };
-  }, [activeContent, resolvedEvidence]);
-
-  const resolvedPdfPageNumber = useMemo(() => {
-    const highlight = resolvedEvidence?.resolver.highlight;
-    if (!highlight || highlight.kind !== "pdf_text") {
-      return null;
-    }
-    return highlight.pageNumber;
-  }, [resolvedEvidence]);
-
-  const temporaryPdfHighlight = useMemo<PdfTemporaryHighlight | null>(() => {
-    const highlight = resolvedEvidence?.resolver.highlight;
-    if (highlight) {
-      if (highlight.kind !== "pdf_text") {
-        return null;
-      }
-      const pageNumber = highlight.pageNumber;
-      const geometry = highlight.geometry;
-      if (geometry === null) return null;
-      const quads = parseRawPdfQuads(geometry.quads);
-      if (quads.length === 0) {
-        return null;
-      }
-      return {
-        id: `evidence-${resolvedEvidence.evidenceSpanId}`,
-        pageNumber,
-        quads,
-        color: "blue",
-      };
-    }
-
-    return null;
-  }, [resolvedEvidence]);
+  const resolvedEvidenceHighlights = useMemo(
+    () => projectMediaEvidenceHighlights(resolvedEvidence, activeContent),
+    [activeContent, resolvedEvidence],
+  );
+  const temporaryTextHighlight = resolvedEvidenceHighlights.text;
+  const temporaryPdfHighlight = resolvedEvidenceHighlights.pdf;
+  const resolvedPdfPageNumber = resolvedEvidenceHighlights.pdfPageNumber;
 
   // Hosted decoration port: highlights and inert embed projections are a
   // hosted layer applied over the leaf's undecorated canonical HTML. The
@@ -3906,9 +3687,8 @@ export default function MediaPaneBody() {
   useEffect(() => {
     const textEvidenceHighlightId =
       temporaryTextHighlight?.id ??
-      (resolvedEvidence?.resolver.kind === "transcript"
-        ? resolvedEvidenceHighlightId
-        : null);
+      resolvedEvidenceRoute.transcriptHighlight?.id ??
+      null;
     if (!requestedEvidenceId || !textEvidenceHighlightId) {
       urlEvidenceAppliedRef.current = null;
       return;
@@ -3957,8 +3737,7 @@ export default function MediaPaneBody() {
     mobileChromeVisibleLocks,
     readerScrollPositioner,
     renderedHtml,
-    resolvedEvidence,
-    resolvedEvidenceHighlightId,
+    resolvedEvidenceRoute.transcriptHighlight?.id,
     temporaryTextHighlight,
     markActive,
     textHighlightInitialLoading,
@@ -7637,18 +7416,10 @@ export default function MediaPaneBody() {
       readerSurfaceClassName={readerSurfaceClassName}
       readerSurfaceStyle={readerSurfaceStyle}
       scrollPositioner={readerScrollPositioner}
-      evidenceHighlightId={
-        resolvedEvidence?.resolver.kind === "transcript"
-          ? resolvedEvidenceHighlightId
-          : null
-      }
-      evidenceExactText={
-        resolvedEvidence?.resolver.kind === "transcript"
-          ? resolvedEvidenceSpanText
-          : null
-      }
-      evidenceStartMs={resolvedEvidenceStartMs}
-      evidenceEndMs={resolvedEvidenceEndMs}
+      evidenceHighlightId={resolvedEvidenceRoute.transcriptHighlight?.id}
+      evidenceExactText={resolvedEvidenceRoute.transcriptHighlight?.exactText}
+      evidenceStartMs={resolvedEvidenceRoute.transcriptHighlight?.startMs}
+      evidenceEndMs={resolvedEvidenceRoute.transcriptHighlight?.endMs}
       contentRef={contentRef}
       segmentListRef={transcriptSegmentListRef}
       findPresentation={transcriptFindPresentation}

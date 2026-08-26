@@ -12,7 +12,7 @@ import {
   expectString,
 } from "@/lib/validation";
 
-export interface MediaEvidenceTextQuote {
+interface MediaEvidenceTextQuote {
   exact: string;
   prefix: string;
   suffix: string;
@@ -73,25 +73,50 @@ interface MediaEvidenceTranscriptHighlight {
   textQuote: MediaEvidenceTextQuote;
 }
 
-export type MediaEvidenceHighlight =
+type MediaEvidenceHighlight =
   | MediaEvidenceWebHighlight
   | MediaEvidenceEpubHighlight
   | MediaEvidencePdfHighlight
   | MediaEvidenceTranscriptHighlight;
+
+interface MediaEvidenceResolverBase {
+  route: string;
+  params: Record<string, string>;
+  selector: Record<string, unknown>;
+}
+
+type MediaEvidenceResolverState<Highlight> =
+  | { status: "resolved"; highlight: Highlight }
+  | { status: "unresolved"; highlight: null };
+
+type MediaEvidenceResolver =
+  | (MediaEvidenceResolverBase &
+      { kind: "web" } & MediaEvidenceResolverState<MediaEvidenceWebHighlight>)
+  | (MediaEvidenceResolverBase &
+      { kind: "epub" } & MediaEvidenceResolverState<MediaEvidenceEpubHighlight>)
+  | (MediaEvidenceResolverBase &
+      { kind: "transcript" } & MediaEvidenceResolverState<MediaEvidenceTranscriptHighlight>)
+  | (MediaEvidenceResolverBase &
+      { kind: "pdf" } & (
+        | {
+            status: "resolved";
+            highlight: MediaEvidencePdfHighlight & {
+              geometry: MediaEvidencePdfGeometry;
+            };
+          }
+        | {
+            status: "no_geometry";
+            highlight: MediaEvidencePdfHighlight & { geometry: null };
+          }
+        | { status: "unresolved"; highlight: null }
+      ));
 
 export interface MediaEvidenceResolution {
   evidenceSpanId: string;
   mediaId: string;
   citationLabel: string;
   spanText: string;
-  resolver: {
-    kind: "web" | "epub" | "pdf" | "transcript";
-    route: string;
-    params: Record<string, string>;
-    status: "resolved" | "unresolved" | "no_geometry";
-    selector: Record<string, unknown>;
-    highlight: MediaEvidenceHighlight | null;
-  };
+  resolver: MediaEvidenceResolver;
 }
 
 export interface MediaEvidenceResolutionResponse {
@@ -208,6 +233,19 @@ function decodeHighlight(raw: unknown): MediaEvidenceHighlight | null {
           ],
       "media evidence text highlight",
     );
+    const startOffset = expectNonnegativeInteger(
+      highlight.start_offset,
+      "media evidence text highlight.start_offset",
+    );
+    const endOffset = expectNonnegativeInteger(
+      highlight.end_offset,
+      "media evidence text highlight.end_offset",
+    );
+    if (endOffset <= startOffset) {
+      throw new TypeError(
+        "Media evidence text highlight offsets must form a positive range",
+      );
+    }
     const textHighlight = {
       evidenceSpanId: expectCanonicalUuid(
         highlight.evidence_span_id,
@@ -217,14 +255,8 @@ function decodeHighlight(raw: unknown): MediaEvidenceHighlight | null {
         highlight.fragment_id,
         "media evidence text highlight.fragment_id",
       ),
-      startOffset: expectNonnegativeInteger(
-        highlight.start_offset,
-        "media evidence text highlight.start_offset",
-      ),
-      endOffset: expectNonnegativeInteger(
-        highlight.end_offset,
-        "media evidence text highlight.end_offset",
-      ),
+      startOffset,
+      endOffset,
       textQuote: decodeTextQuote(highlight.text_quote),
     };
     return kind === "epub_text"
@@ -285,20 +317,27 @@ function decodeHighlight(raw: unknown): MediaEvidenceHighlight | null {
       ],
       "media evidence transcript highlight",
     );
+    const tStartMs = expectNullableNonnegativeInteger(
+      highlight.t_start_ms,
+      "media evidence transcript highlight.t_start_ms",
+    );
+    const tEndMs = expectNullableNonnegativeInteger(
+      highlight.t_end_ms,
+      "media evidence transcript highlight.t_end_ms",
+    );
+    if (tStartMs !== null && tEndMs !== null && tEndMs <= tStartMs) {
+      throw new TypeError(
+        "Media evidence transcript highlight times must form a positive range",
+      );
+    }
     return {
       kind,
       evidenceSpanId: expectCanonicalUuid(
         highlight.evidence_span_id,
         "media evidence transcript highlight.evidence_span_id",
       ),
-      tStartMs: expectNullableNonnegativeInteger(
-        highlight.t_start_ms,
-        "media evidence transcript highlight.t_start_ms",
-      ),
-      tEndMs: expectNullableNonnegativeInteger(
-        highlight.t_end_ms,
-        "media evidence transcript highlight.t_end_ms",
-      ),
+      tStartMs,
+      tEndMs,
       textQuote: decodeTextQuote(highlight.text_quote),
     };
   }
@@ -315,6 +354,140 @@ function decodeStringRecord(raw: unknown, name: string): Record<string, string> 
   );
 }
 
+function decodeResolver(raw: unknown): MediaEvidenceResolver {
+  const resolver = expectExactRecord(
+    raw,
+    ["kind", "route", "params", "status", "selector", "highlight"],
+    "media evidence resolver",
+  );
+  const kind = expectOneOf(
+    resolver.kind,
+    ["web", "epub", "pdf", "transcript"] as const,
+    "media evidence resolver.kind",
+  );
+  const status = expectOneOf(
+    resolver.status,
+    ["resolved", "unresolved", "no_geometry"] as const,
+    "media evidence resolver.status",
+  );
+  const highlight = decodeHighlight(resolver.highlight);
+  if (status === "unresolved" && highlight !== null) {
+    throw new TypeError(
+      "Unresolved media evidence must not contain a highlight",
+    );
+  }
+  if (status !== "unresolved" && highlight === null) {
+    throw new TypeError(
+      "Resolved media evidence must contain its typed highlight",
+    );
+  }
+  const common = {
+    route: expectString(resolver.route, "media evidence resolver.route"),
+    params: decodeStringRecord(
+      resolver.params,
+      "media evidence resolver.params",
+    ),
+    selector: expectRecord(
+      resolver.selector,
+      "media evidence resolver.selector",
+    ),
+  };
+  if (kind === "web") {
+    if (status === "no_geometry") {
+      throw new TypeError("Media evidence no_geometry is only valid for PDF");
+    }
+    if (status === "unresolved") {
+      if (highlight !== null) {
+        throw new TypeError(
+          "Unresolved media evidence must not contain a highlight",
+        );
+      }
+      return { ...common, kind, status, highlight };
+    }
+    if (highlight?.kind !== "web_text") {
+      throw new TypeError("Web evidence requires a web_text highlight");
+    }
+    return { ...common, kind, status, highlight };
+  }
+  if (kind === "epub") {
+    if (status === "no_geometry") {
+      throw new TypeError("Media evidence no_geometry is only valid for PDF");
+    }
+    if (status === "unresolved") {
+      if (highlight !== null) {
+        throw new TypeError(
+          "Unresolved media evidence must not contain a highlight",
+        );
+      }
+      return { ...common, kind, status, highlight };
+    }
+    if (highlight?.kind !== "epub_text") {
+      throw new TypeError("EPUB evidence requires an epub_text highlight");
+    }
+    return { ...common, kind, status, highlight };
+  }
+  if (kind === "pdf") {
+    if (status === "unresolved") {
+      if (highlight !== null) {
+        throw new TypeError(
+          "Unresolved media evidence must not contain a highlight",
+        );
+      }
+      return { ...common, kind, status, highlight };
+    }
+    if (highlight?.kind !== "pdf_text") {
+      throw new TypeError("PDF evidence requires a pdf_text highlight");
+    }
+    if (status === "no_geometry") {
+      if (highlight.geometry !== null) {
+        throw new TypeError(
+          "Media evidence no_geometry requires a PDF highlight without geometry",
+        );
+      }
+      return {
+        ...common,
+        kind,
+        status,
+        highlight: { ...highlight, geometry: null },
+      };
+    }
+    const geometry = highlight.geometry;
+    if (geometry === null) {
+      throw new TypeError(
+        "Resolved PDF evidence must contain highlight geometry",
+      );
+    }
+    if (geometry.quads.length === 0) {
+      throw new TypeError(
+        "Resolved PDF evidence must contain highlight geometry quads",
+      );
+    }
+    return {
+      ...common,
+      kind,
+      status,
+      highlight: { ...highlight, geometry },
+    };
+  }
+  if (status === "no_geometry") {
+    throw new TypeError("Media evidence no_geometry is only valid for PDF");
+  }
+  if (status === "unresolved") {
+    if (highlight !== null) {
+      throw new TypeError(
+        "Unresolved media evidence must not contain a highlight",
+      );
+    }
+    return { ...common, kind, status, highlight };
+  }
+  if (highlight?.kind !== "transcript_time_text") {
+    throw new TypeError(
+      "Transcript evidence requires a transcript_time_text highlight",
+    );
+  }
+  return { ...common, kind, status, highlight };
+}
+
 export function decodeMediaEvidenceResolutionResponse(
   raw: unknown,
 ): MediaEvidenceResolutionResponse {
@@ -323,11 +496,6 @@ export function decodeMediaEvidenceResolutionResponse(
     envelope.data,
     ["evidence_span_id", "media_id", "citation_label", "span_text", "resolver"],
     "media evidence response.data",
-  );
-  const resolver = expectExactRecord(
-    data.resolver,
-    ["kind", "route", "params", "status", "selector", "highlight"],
-    "media evidence resolver",
   );
   const response: MediaEvidenceResolutionResponse = {
     data: {
@@ -347,28 +515,7 @@ export function decodeMediaEvidenceResolutionResponse(
         data.span_text,
         "media evidence response.data.span_text",
       ),
-      resolver: {
-        kind: expectOneOf(
-          resolver.kind,
-          ["web", "epub", "pdf", "transcript"] as const,
-          "media evidence resolver.kind",
-        ),
-        route: expectString(resolver.route, "media evidence resolver.route"),
-        params: decodeStringRecord(
-          resolver.params,
-          "media evidence resolver.params",
-        ),
-        status: expectOneOf(
-          resolver.status,
-          ["resolved", "unresolved", "no_geometry"] as const,
-          "media evidence resolver.status",
-        ),
-        selector: expectRecord(
-          resolver.selector,
-          "media evidence resolver.selector",
-        ),
-        highlight: decodeHighlight(resolver.highlight),
-      },
+      resolver: decodeResolver(data.resolver),
     },
   };
   const highlight = response.data.resolver.highlight;
@@ -378,6 +525,14 @@ export function decodeMediaEvidenceResolutionResponse(
   ) {
     throw new TypeError(
       "Media evidence highlight identity must match its response",
+    );
+  }
+  if (
+    highlight !== null &&
+    highlight.textQuote.exact !== response.data.spanText
+  ) {
+    throw new TypeError(
+      "Media evidence highlight text must match its response span",
     );
   }
   return response;
