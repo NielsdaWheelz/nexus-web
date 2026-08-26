@@ -1,0 +1,184 @@
+import { describe, expect, it } from "vitest";
+import { decodeMediaEvidenceResolutionResponse } from "./mediaEvidenceResolution";
+
+const MEDIA_ID = "aaaaaaaa-1111-4111-8111-111111111111";
+const EVIDENCE_ID = "bbbbbbbb-1111-4111-8111-111111111111";
+
+const TRANSCRIPT_RESPONSE = {
+  data: {
+    evidence_span_id: EVIDENCE_ID,
+    media_id: MEDIA_ID,
+    citation_label: "00:01",
+    span_text: "Exact evidence",
+    resolver: {
+      kind: "transcript",
+      route: `/media/${MEDIA_ID}`,
+      params: { t_start_ms: "1000", t_end_ms: "2000" },
+      status: "resolved",
+      selector: { kind: "transcript_time_text", t_start_ms: 1000 },
+      highlight: {
+        kind: "transcript_time_text",
+        evidence_span_id: EVIDENCE_ID,
+        t_start_ms: 1000,
+        t_end_ms: 2000,
+        text_quote: {
+          exact: "Exact evidence",
+          prefix: "",
+          suffix: "",
+        },
+      },
+    },
+  },
+};
+
+describe("media evidence resolution wire", () => {
+  it("decodes the complete exact envelope into domain names", () => {
+    expect(decodeMediaEvidenceResolutionResponse(TRANSCRIPT_RESPONSE)).toEqual({
+      data: {
+        evidenceSpanId: EVIDENCE_ID,
+        mediaId: MEDIA_ID,
+        citationLabel: "00:01",
+        spanText: "Exact evidence",
+        resolver: {
+          kind: "transcript",
+          route: `/media/${MEDIA_ID}`,
+          params: { t_start_ms: "1000", t_end_ms: "2000" },
+          status: "resolved",
+          selector: { kind: "transcript_time_text", t_start_ms: 1000 },
+          highlight: {
+            kind: "transcript_time_text",
+            evidenceSpanId: EVIDENCE_ID,
+            tStartMs: 1000,
+            tEndMs: 2000,
+            textQuote: {
+              exact: "Exact evidence",
+              prefix: "",
+              suffix: "",
+            },
+          },
+        },
+      },
+    });
+  });
+
+  it("rejects incomplete, extra, and malformed nested contracts", () => {
+    expect(() =>
+      decodeMediaEvidenceResolutionResponse({
+        ...TRANSCRIPT_RESPONSE,
+        extra: true,
+      }),
+    ).toThrow("media evidence response must contain exactly");
+    expect(() =>
+      decodeMediaEvidenceResolutionResponse({
+        data: {
+          ...TRANSCRIPT_RESPONSE.data,
+          resolver: {
+            ...TRANSCRIPT_RESPONSE.data.resolver,
+            route: undefined,
+          },
+        },
+      }),
+    ).toThrow("media evidence resolver.route must be a string");
+    expect(() =>
+      decodeMediaEvidenceResolutionResponse({
+        data: {
+          ...TRANSCRIPT_RESPONSE.data,
+          resolver: {
+            ...TRANSCRIPT_RESPONSE.data.resolver,
+            highlight: {
+              ...TRANSCRIPT_RESPONSE.data.resolver.highlight,
+              t_start_ms: -1,
+            },
+          },
+        },
+      }),
+    ).toThrow("must be nonnegative or null");
+    expect(() =>
+      decodeMediaEvidenceResolutionResponse({
+        data: {
+          ...TRANSCRIPT_RESPONSE.data,
+          resolver: {
+            ...TRANSCRIPT_RESPONSE.data.resolver,
+            highlight: {
+              ...TRANSCRIPT_RESPONSE.data.resolver.highlight,
+              evidence_span_id: MEDIA_ID,
+            },
+          },
+        },
+      }),
+    ).toThrow("highlight identity must match its response");
+  });
+
+  it("strictly decodes PDF geometry", () => {
+    const pdfResponse = {
+      data: {
+        ...TRANSCRIPT_RESPONSE.data,
+        resolver: {
+          kind: "pdf",
+          route: `/media/${MEDIA_ID}`,
+          params: { page: "2" },
+          status: "resolved",
+          selector: { kind: "pdf_text", page_number: 2 },
+          highlight: {
+            kind: "pdf_text",
+            evidence_span_id: EVIDENCE_ID,
+            page_number: 2,
+            page_label: null,
+            text_quote: {
+              exact: "Exact evidence",
+              prefix: "",
+              suffix: "",
+            },
+            geometry: {
+              coordinate_space: "pdf_points",
+              page_width: 612,
+              page_height: 792,
+              page_rotation_degrees: 0,
+              page_box: null,
+              projection: null,
+              quads: [
+                {
+                  x1: 1,
+                  y1: 2,
+                  x2: 3,
+                  y2: 4,
+                  x3: 5,
+                  y3: 6,
+                  x4: 7,
+                  y4: 8,
+                },
+              ],
+            },
+          },
+        },
+      },
+    };
+    const decoded = decodeMediaEvidenceResolutionResponse(pdfResponse);
+    expect(decoded.data.resolver.highlight).toMatchObject({
+      kind: "pdf_text",
+      pageNumber: 2,
+      geometry: {
+        coordinateSpace: "pdf_points",
+        pageWidth: 612,
+        pageHeight: 792,
+      },
+    });
+    expect(() =>
+      decodeMediaEvidenceResolutionResponse({
+        data: {
+          ...pdfResponse.data,
+          resolver: {
+            ...pdfResponse.data.resolver,
+            highlight: {
+              ...pdfResponse.data.resolver.highlight,
+              geometry: {
+                ...pdfResponse.data.resolver.highlight.geometry,
+                page_width: 0,
+              },
+            },
+          },
+        },
+      }),
+    ).toThrow("page dimensions must be positive");
+  });
+});

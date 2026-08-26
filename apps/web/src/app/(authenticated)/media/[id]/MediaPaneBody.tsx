@@ -276,6 +276,10 @@ import {
   transcriptSeedErrorMessage,
   type MediaPaneOperation,
 } from "./mediaPaneFeedback";
+import {
+  fetchMediaEvidenceResolution,
+  type MediaEvidenceResolutionResponse,
+} from "./mediaEvidenceResolution";
 import TranscriptContentPanel, {
   type TranscriptFindPresentation,
 } from "./TranscriptContentPanel";
@@ -377,20 +381,6 @@ interface ActiveContent {
   wordCount?: number;
   documentWordStart?: number;
   documentEmbeds: DocumentEmbed[];
-}
-
-interface EvidenceResolutionResponse {
-  data: {
-    evidence_span_id: string;
-    span_text: string;
-    resolver: {
-      kind: "web" | "epub" | "pdf" | "transcript";
-      params: Record<string, string>;
-      status: string;
-      selector?: Record<string, unknown> | null;
-      highlight?: Record<string, unknown> | null;
-    };
-  };
 }
 
 const READER_POSITION_BUCKET_CP = 1024;
@@ -496,39 +486,35 @@ function textQuoteField(
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-function recordOrNull(value: unknown): Record<string, unknown> | null {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
 function temporaryTextEvidenceHighlightFromQuote({
   activeContent,
   evidenceSpanId,
   fallbackExact,
-  highlight,
+  exact,
+  prefix,
+  suffix,
 }: {
   activeContent: ActiveContent;
   evidenceSpanId: string;
   fallbackExact?: string | null;
-  highlight: Record<string, unknown>;
+  exact: string | null;
+  prefix: string | null;
+  suffix: string | null;
 }): HighlightInput | null {
-  const exact = fallbackExact ?? textQuoteField(highlight, "exact");
-  const prefix = textQuoteField(highlight, "prefix");
-  const suffix = textQuoteField(highlight, "suffix");
+  const selectedExact = fallbackExact ?? exact;
   const matchedOffset = findCanonicalOffsetFromQuote(
     activeContent.canonicalText,
-    exact,
+    selectedExact,
     prefix,
     suffix,
   );
-  if (matchedOffset === null || !exact) {
+  if (matchedOffset === null || !selectedExact) {
     return null;
   }
   return {
     id: `evidence-${evidenceSpanId}`,
     start_offset: matchedOffset,
-    end_offset: matchedOffset + canonicalCpLength(exact),
+    end_offset: matchedOffset + canonicalCpLength(selectedExact),
     color: "blue",
     created_at: "1970-01-01T00:00:00.000Z",
   };
@@ -1105,9 +1091,14 @@ export default function MediaPaneBody() {
   const [pdfHighlightNavigation, setPdfHighlightNavigation] =
     useState<PdfHighlightNavigationRequest | null>(null);
 
-  const resolvedEvidenceResource = useResource<EvidenceResolutionResponse>({
+  const resolvedEvidenceResource = useResource<MediaEvidenceResolutionResponse>({
     cacheKey: requestedEvidenceId ? `${id}:${requestedEvidenceId}` : null,
-    path: () => `/api/media/${id}/evidence/${requestedEvidenceId!}`,
+    load: (signal) => {
+      if (requestedEvidenceId === null) {
+        throw new Error("Media evidence load requires an evidence ID");
+      }
+      return fetchMediaEvidenceResolution(id, requestedEvidenceId, signal);
+    },
   });
   const resolvedHighlightTargetResource =
     useResource<ResolvedHighlightReaderTarget>({
@@ -1163,11 +1154,9 @@ export default function MediaPaneBody() {
   const resolvedEvidenceParams = resolvedEvidence?.resolver.params ?? null;
   const resolvedEvidenceHighlight =
     resolvedEvidence?.resolver.highlight ?? null;
-  const resolvedEvidenceSelector = recordOrNull(
-    resolvedEvidence?.resolver.selector,
-  );
+  const resolvedEvidenceSelector = resolvedEvidence?.resolver.selector ?? null;
   const resolvedEvidenceHighlightId = resolvedEvidence
-    ? `evidence-${resolvedEvidence.evidence_span_id}`
+    ? `evidence-${resolvedEvidence.evidenceSpanId}`
     : null;
   const resolvedEvidenceFragmentId =
     typeof resolvedEvidenceParams?.fragment === "string"
@@ -1180,20 +1169,16 @@ export default function MediaPaneBody() {
   const resolvedEvidenceStartMs =
     parseNonnegativeMs(resolvedEvidenceParams?.t_start_ms) ??
     (resolvedEvidenceHighlight?.kind === "transcript_time_text" &&
-    typeof resolvedEvidenceHighlight.t_start_ms === "number" &&
-    Number.isInteger(resolvedEvidenceHighlight.t_start_ms) &&
-    resolvedEvidenceHighlight.t_start_ms >= 0
-      ? resolvedEvidenceHighlight.t_start_ms
+    resolvedEvidenceHighlight.tStartMs !== null
+      ? resolvedEvidenceHighlight.tStartMs
       : parseNonnegativeNumber(resolvedEvidenceSelector?.t_start_ms));
   const resolvedEvidenceEndMs =
     parseNonnegativeMs(resolvedEvidenceParams?.t_end_ms) ??
     (resolvedEvidenceHighlight?.kind === "transcript_time_text" &&
-    typeof resolvedEvidenceHighlight.t_end_ms === "number" &&
-    Number.isInteger(resolvedEvidenceHighlight.t_end_ms) &&
-    resolvedEvidenceHighlight.t_end_ms >= 0
-      ? resolvedEvidenceHighlight.t_end_ms
+    resolvedEvidenceHighlight.tEndMs !== null
+      ? resolvedEvidenceHighlight.tEndMs
       : parseNonnegativeNumber(resolvedEvidenceSelector?.t_end_ms));
-  const resolvedEvidenceSpanText = resolvedEvidence?.span_text.trim() || null;
+  const resolvedEvidenceSpanText = resolvedEvidence?.spanText.trim() || null;
   const resolvedTranscriptEvidenceFragment = useMemo(() => {
     if (resolvedEvidence?.resolver.kind !== "transcript") {
       return null;
@@ -3242,53 +3227,61 @@ export default function MediaPaneBody() {
   // ==========================================================================
 
   const temporaryTextHighlight = useMemo<HighlightInput | null>(() => {
-    const highlight = recordOrNull(resolvedEvidence?.resolver.highlight);
-    const selector = recordOrNull(resolvedEvidence?.resolver.selector);
-    const evidenceSource = highlight ?? selector;
-    if (resolvedEvidence && evidenceSource) {
-      if (!activeContent) {
-        return null;
-      }
-      const kind = evidenceSource.kind;
-      if (
-        kind !== "web_text" &&
-        kind !== "epub_text" &&
-        kind !== "transcript_time_text"
-      ) {
-        return null;
-      }
-      const fragmentId = evidenceSource.fragment_id;
-      const startOffset = evidenceSource.start_offset;
-      const endOffset = evidenceSource.end_offset;
-      if (fragmentId !== activeContent.fragmentId) {
-        return null;
-      }
-      const quoteHighlight = temporaryTextEvidenceHighlightFromQuote({
-        activeContent,
-        evidenceSpanId: resolvedEvidence.evidence_span_id,
-        fallbackExact: resolvedEvidence.span_text,
-        highlight: evidenceSource,
-      });
-      if (quoteHighlight) {
-        return quoteHighlight;
-      }
-      if (
-        typeof startOffset !== "number" ||
-        typeof endOffset !== "number" ||
-        endOffset <= startOffset
-      ) {
-        return quoteHighlight;
-      }
-      return {
-        id: `evidence-${resolvedEvidence.evidence_span_id}`,
-        start_offset: startOffset,
-        end_offset: endOffset,
-        color: "blue",
-        created_at: "1970-01-01T00:00:00.000Z",
-      };
+    if (!resolvedEvidence || !activeContent) return null;
+    const highlight = resolvedEvidence.resolver.highlight;
+    const selector = resolvedEvidence.resolver.selector;
+    let fragmentId: unknown;
+    let startOffset: unknown;
+    let endOffset: unknown;
+    let exact: string | null;
+    let prefix: string | null;
+    let suffix: string | null;
+    if (
+      highlight?.kind === "web_text" ||
+      highlight?.kind === "epub_text"
+    ) {
+      fragmentId = highlight.fragmentId;
+      startOffset = highlight.startOffset;
+      endOffset = highlight.endOffset;
+      exact = highlight.textQuote.exact;
+      prefix = highlight.textQuote.prefix;
+      suffix = highlight.textQuote.suffix;
+    } else if (highlight !== null) {
+      return null;
+    } else {
+      const kind = selector.kind;
+      if (kind !== "web_text" && kind !== "epub_text") return null;
+      fragmentId = selector.fragment_id;
+      startOffset = selector.start_offset;
+      endOffset = selector.end_offset;
+      exact = textQuoteField(selector, "exact");
+      prefix = textQuoteField(selector, "prefix");
+      suffix = textQuoteField(selector, "suffix");
     }
-
-    return null;
+    if (fragmentId !== activeContent.fragmentId) return null;
+    const quoteHighlight = temporaryTextEvidenceHighlightFromQuote({
+      activeContent,
+      evidenceSpanId: resolvedEvidence.evidenceSpanId,
+      fallbackExact: resolvedEvidence.spanText,
+      exact,
+      prefix,
+      suffix,
+    });
+    if (quoteHighlight) return quoteHighlight;
+    if (
+      typeof startOffset !== "number" ||
+      typeof endOffset !== "number" ||
+      endOffset <= startOffset
+    ) {
+      return null;
+    }
+    return {
+      id: `evidence-${resolvedEvidence.evidenceSpanId}`,
+      start_offset: startOffset,
+      end_offset: endOffset,
+      color: "blue",
+      created_at: "1970-01-01T00:00:00.000Z",
+    };
   }, [activeContent, resolvedEvidence]);
 
   const resolvedPdfPageNumber = useMemo(() => {
@@ -3296,12 +3289,7 @@ export default function MediaPaneBody() {
     if (!highlight || highlight.kind !== "pdf_text") {
       return null;
     }
-    const pageNumber = highlight.page_number;
-    return typeof pageNumber === "number" &&
-      Number.isInteger(pageNumber) &&
-      pageNumber >= 1
-      ? pageNumber
-      : null;
+    return highlight.pageNumber;
   }, [resolvedEvidence]);
 
   const temporaryPdfHighlight = useMemo<PdfTemporaryHighlight | null>(() => {
@@ -3310,26 +3298,15 @@ export default function MediaPaneBody() {
       if (highlight.kind !== "pdf_text") {
         return null;
       }
-      const pageNumber = highlight.page_number;
+      const pageNumber = highlight.pageNumber;
       const geometry = highlight.geometry;
-      if (
-        typeof pageNumber !== "number" ||
-        !Number.isInteger(pageNumber) ||
-        pageNumber < 1 ||
-        typeof geometry !== "object" ||
-        geometry === null ||
-        Array.isArray(geometry)
-      ) {
-        return null;
-      }
-      const quads = parseRawPdfQuads(
-        (geometry as Record<string, unknown>).quads,
-      );
+      if (geometry === null) return null;
+      const quads = parseRawPdfQuads(geometry.quads);
       if (quads.length === 0) {
         return null;
       }
       return {
-        id: `evidence-${resolvedEvidence.evidence_span_id}`,
+        id: `evidence-${resolvedEvidence.evidenceSpanId}`,
         pageNumber,
         quads,
         color: "blue",
