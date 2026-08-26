@@ -25,7 +25,6 @@ from dataclasses import dataclass, field, replace
 from datetime import date
 from pathlib import Path
 from typing import TextIO, assert_never
-from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx
@@ -38,6 +37,9 @@ from nexus.release_artifact import (
     ANDROID_RELEASE_TAG,
     AndroidPlayerProtocolIdentity,
     BackendArtifactDefect,
+)
+from nexus.release_artifact import (
+    is_exact_https_origin as _is_exact_https_origin,
 )
 from nexus_test_control import android_visual
 from nexus_test_control.build import StandaloneBuild, ensure_standalone_build
@@ -4258,20 +4260,6 @@ def _production_android_release_operations() -> _AndroidReleaseOperations:
     )
 
 
-def _is_exact_https_origin(value: str) -> bool:
-    parsed = urlsplit(value)
-    return (
-        parsed.scheme == "https"
-        and parsed.hostname is not None
-        and parsed.username is None
-        and parsed.password is None
-        and parsed.path in {"", "/"}
-        and not parsed.query
-        and not parsed.fragment
-        and value == value.rstrip("/")
-    )
-
-
 def _android_release_promotion_arguments(
     environment: Mapping[str, str],
 ) -> tuple[str, ...] | CapabilityResult:
@@ -5135,21 +5123,15 @@ def _android_release_inputs(
             return _fail(capability, "Android release tag does not resolve to HEAD")
     except RuntimeContractError as error:
         return _fail(capability, str(error))
-    base_url = environment["NEXUS_ANDROID_RELEASE_BASE_URL"].rstrip("/")
+    base_url = environment["NEXUS_ANDROID_RELEASE_BASE_URL"]
     owned_host = environment["NEXUS_ANDROID_RELEASE_OWNED_HOST"]
-    parsed = urlsplit(base_url)
     if (
-        parsed.scheme != "https"
-        or parsed.hostname != owned_host
-        or owned_host != _ANDROID_RELEASE_OWNED_HOST
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.path not in {"", "/"}
-        or parsed.query
-        or parsed.fragment
+        owned_host != _ANDROID_RELEASE_OWNED_HOST
+        or base_url != f"https://{owned_host}"
+        or not _is_exact_https_origin(base_url)
     ):
         return _fail(capability, "Android release URL must be the canonical HTTPS origin")
-    api_origin = environment["NEXUS_ANDROID_RELEASE_API_ORIGIN"].rstrip("/")
+    api_origin = environment["NEXUS_ANDROID_RELEASE_API_ORIGIN"]
     if not _is_exact_https_origin(api_origin):
         return _fail(capability, "Android release API origin must be one exact HTTPS origin")
     certificate = environment["NEXUS_ANDROID_RELEASE_CERT_SHA256"].replace(":", "").lower()

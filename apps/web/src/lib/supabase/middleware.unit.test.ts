@@ -124,6 +124,23 @@ describe("authentication middleware page boundary", () => {
     expect(response.headers.get("location")).toBeNull();
   });
 
+  it.each([
+    "/robots.txt",
+    "/manifest.webmanifest",
+    "/opengraph-image",
+    "/twitter-image",
+    "/apple-icon",
+  ])(
+    "passes anonymous metadata request %s without redirecting or setting cookies",
+    (pathname) => {
+      const response = updateSession(request(pathname), "nonce");
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("location")).toBeNull();
+      expect(response.headers.get("set-cookie")).toBeNull();
+    },
+  );
+
   it("sends a missing session directly to login without setting cookies", () => {
     const response = updateSession(request("/browse"), "nonce");
 

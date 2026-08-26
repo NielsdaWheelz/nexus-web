@@ -2528,6 +2528,25 @@ def test_android_release_bootstrap_inputs_attest_no_device_and_require_published
         assert inputs.bootstrap is True
         assert inputs.serial is None
         assert inputs.previous_version_code == 16
+        for variable, value, detail in (
+            (
+                "NEXUS_ANDROID_RELEASE_BASE_URL",
+                "https://nexus.nielseriknandal.com/",
+                "Android release URL must be the canonical HTTPS origin",
+            ),
+            (
+                "NEXUS_ANDROID_RELEASE_API_ORIGIN",
+                "https://api.nexus.nielseriknandal.com/",
+                "Android release API origin must be one exact HTTPS origin",
+            ),
+        ):
+            rejected = runner._android_release_inputs(
+                tmp_path,
+                {**environment, variable: value},
+            )
+            assert isinstance(rejected, CapabilityResult)
+            assert rejected.evidence.status is RunStatus.FAIL
+            assert rejected.detail == detail
     else:
         assert isinstance(inputs, CapabilityResult)
         assert inputs.evidence.status is RunStatus.FAIL

@@ -191,9 +191,13 @@ middleware passes active/refreshable GET
 ```
 
 Middleware redirects only safe page requests. It never sends POST/PUT/PATCH/
-DELETE or a Server Action to an auth route. `/login` never redirects from cookie
-shape to a protected target; active/refreshable shape enters recovery, and
-terminal/malformed cookies are cleared by a response owner.
+DELETE or a Server Action to an auth route, and it never redirects `/login`
+from cookie shape to a protected target. The `/login` clause is superseded by
+`nexus-entry-surfaces-hard-cutover.md`: after parsing the safe return target, the
+Login Server Component uses live DAL verification. `Verified` redirects to that
+target; `Anonymous` renders; `RefreshRequired`, `SessionEnded`, and
+`AuthDependencyError` enter canonical recovery. Only the existing recovery
+response owner may rotate or clear cookies.
 
 ### BFF and mutations
 

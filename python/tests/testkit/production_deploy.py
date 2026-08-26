@@ -90,9 +90,13 @@ def _android_release_manifest(state: dict[str, Any]) -> dict[str, object]:
         "tag": tag,
         "package": "app.nexus.android",
         "version_code": 17,
+        "previous_version_code": 16,
         "version_name": version_name,
         "signer_sha256": "c" * 64,
         "source_apk_sha256": apk_digest,
+        "api_origin": "https://api.nielseriknandal.com",
+        "api_origin_source": "signed_apk_build_config",
+        "target_sdk": 36,
         "player_protocol": {"version": 2, "contract_sha256": protocol_digest},
         "assets": {
             name: (apk_digest if name in names else "b" * 64)
