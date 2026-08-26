@@ -9,7 +9,10 @@ import type {
 } from "@/lib/resources/resourceCapabilities";
 import { isLibraryPlacementMode } from "@/lib/resources/resourceCapabilities";
 import { isShareMode, type ShareMode } from "@/lib/sharing/types";
-import type { ResourceActivation } from "@/lib/resources/activation";
+import {
+  decodeCamelCaseResourceActivation,
+  type ResourceActivation,
+} from "@/lib/resources/activation";
 import {
   isResourceScheme,
   parseResourceRef,
@@ -106,12 +109,6 @@ const RESOURCE_ITEM_KEYS = [
   "capabilities",
   "versionByLane",
 ] as const;
-const RESOURCE_ACTIVATION_KEYS = [
-  "resourceRef",
-  "kind",
-  "href",
-  "unresolvedReason",
-] as const;
 const RESOURCE_CAPABILITY_KEYS = [
   "userRelation",
   "sharing",
@@ -157,44 +154,6 @@ function decodeUserRelation(raw: unknown): ResourceUserRelation {
       "resource user relation.noteReferenceTarget",
     ),
   };
-}
-
-export function decodeResourceActivation(
-  raw: unknown,
-  ref: string,
-): ResourceActivation {
-  const activation = expectExactRecord(
-    raw,
-    RESOURCE_ACTIVATION_KEYS,
-    "resource activation",
-  );
-  const resourceRef = expectString(
-    activation.resourceRef,
-    "resource activation.resourceRef",
-  );
-  if (resourceRef !== ref) {
-    throw new TypeError("resource activation.resourceRef must match resource ref");
-  }
-  const kind = expectOneOf(
-    activation.kind,
-    ["route", "external", "none"] as const,
-    "resource activation.kind",
-  );
-  const href = expectNullableString(
-    activation.href,
-    "resource activation.href",
-  );
-  const unresolvedReason = expectNullableString(
-    activation.unresolvedReason,
-    "resource activation.unresolvedReason",
-  );
-  if ((kind === "route" || kind === "external") && href === null) {
-    throw new TypeError(`${kind} resource activation requires href`);
-  }
-  if (kind === "none" && href !== null) {
-    throw new TypeError("none resource activation requires null href");
-  }
-  return { resourceRef, kind, href, unresolvedReason };
 }
 
 /**
@@ -248,7 +207,15 @@ export function decodeResourceItem(raw: unknown): ResourceItem {
     }),
   );
   const route = expectNullableString(item.route, "resource item.route");
-  const activation = decodeResourceActivation(item.activation, ref);
+  const activation = decodeCamelCaseResourceActivation(
+    item.activation,
+    "resource item.activation",
+  );
+  if (activation.resourceRef !== ref) {
+    throw new TypeError(
+      "resource item.activation.resourceRef must match resource item.ref",
+    );
+  }
   if (
     (activation.kind === "route" && route !== activation.href) ||
     (activation.kind !== "route" && route !== null)

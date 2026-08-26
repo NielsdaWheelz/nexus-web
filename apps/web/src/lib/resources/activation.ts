@@ -1,51 +1,115 @@
-import { isRecord } from "@/lib/validation";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
+import {
+  expectExactRecord,
+  expectNullableString,
+  expectOneOf,
+  expectString,
+} from "@/lib/validation";
 import type {
   WorkspaceTarget,
   WorkspaceTargetDisposition,
 } from "@/lib/workspace/targetActivation";
 
-export interface ResourceActivation {
+interface ResourceActivationBase {
   resourceRef: string;
-  kind: "route" | "external" | "none";
-  href: string | null;
   unresolvedReason: string | null;
 }
 
+export type ResourceActivation =
+  | (ResourceActivationBase & {
+      kind: "route" | "external";
+      href: string;
+    })
+  | (ResourceActivationBase & { kind: "none"; href: null });
+
+const SNAKE_CASE_KEYS = {
+  resourceRef: "resource_ref",
+  kind: "kind",
+  href: "href",
+  unresolvedReason: "unresolved_reason",
+} as const;
+
+const CAMEL_CASE_KEYS = {
+  resourceRef: "resourceRef",
+  kind: "kind",
+  href: "href",
+  unresolvedReason: "unresolvedReason",
+} as const;
+
+type ActivationKeys = typeof SNAKE_CASE_KEYS | typeof CAMEL_CASE_KEYS;
+
+function decodeActivationFields(
+  value: Record<string, unknown>,
+  keys: ActivationKeys,
+  name: string,
+): ResourceActivation {
+  const resourceRef = expectString(
+    value[keys.resourceRef],
+    `${name}.${keys.resourceRef}`,
+  );
+  if (parseResourceRef(resourceRef) === null) {
+    throw new TypeError(
+      `${name}.${keys.resourceRef} must be a canonical ResourceRef`,
+    );
+  }
+  const kind = expectOneOf(
+    value[keys.kind],
+    ["route", "external", "none"] as const,
+    `${name}.${keys.kind}`,
+  );
+  const href = expectNullableString(value[keys.href], `${name}.${keys.href}`);
+  const unresolvedReason = expectNullableString(
+    value[keys.unresolvedReason],
+    `${name}.${keys.unresolvedReason}`,
+  );
+  if (kind === "none") {
+    if (href !== null) {
+      throw new TypeError(`${name}.${keys.href} must be null for none`);
+    }
+    return { resourceRef, kind, href, unresolvedReason };
+  }
+  if (href === null) {
+    throw new TypeError(`${name}.${keys.href} must be a string for ${kind}`);
+  }
+  return { resourceRef, kind, href, unresolvedReason };
+}
+
+/** Strict decoder for same-system snake_case activation wires. */
+export function decodeSnakeCaseResourceActivation(
+  raw: unknown,
+  name = "resource activation",
+): ResourceActivation {
+  const value = expectExactRecord(
+    raw,
+    Object.values(SNAKE_CASE_KEYS),
+    name,
+  );
+  return decodeActivationFields(value, SNAKE_CASE_KEYS, name);
+}
+
+/** Strict decoder for same-system camelCase activation wires. */
+export function decodeCamelCaseResourceActivation(
+  raw: unknown,
+  name = "resource activation",
+): ResourceActivation {
+  const value = expectExactRecord(
+    raw,
+    Object.values(CAMEL_CASE_KEYS),
+    name,
+  );
+  return decodeActivationFields(value, CAMEL_CASE_KEYS, name);
+}
+
+/** Nullable adapter for replayed or independently persisted snake_case data. */
 export function normalizeResourceActivation(
   raw: unknown,
 ): ResourceActivation | null {
-  if (!isRecord(raw)) return null;
-  const keys = Object.keys(raw).sort();
-  const expected = ["href", "kind", "resource_ref", "unresolved_reason"];
-  if (
-    keys.length !== expected.length ||
-    !keys.every((key, index) => key === expected[index])
-  ) {
+  try {
+    return decodeSnakeCaseResourceActivation(raw);
+  } catch (error) {
+    if (!(error instanceof TypeError)) throw error;
     return null;
   }
-  const resourceRef = raw.resource_ref;
-  if (typeof resourceRef !== "string") return null;
-  if (raw.kind !== "route" && raw.kind !== "external" && raw.kind !== "none") {
-    return null;
-  }
-  if (raw.href !== null && typeof raw.href !== "string") return null;
-  const href = raw.href;
-  if (
-    raw.unresolved_reason !== null &&
-    typeof raw.unresolved_reason !== "string"
-  ) {
-    return null;
-  }
-  if ((raw.kind === "route" || raw.kind === "external") && href === null) {
-    return null;
-  }
-  return {
-    resourceRef,
-    kind: raw.kind,
-    href,
-    unresolvedReason:
-      typeof raw.unresolved_reason === "string" ? raw.unresolved_reason : null,
-  };
 }
 
 export function hrefForResourceActivation(
