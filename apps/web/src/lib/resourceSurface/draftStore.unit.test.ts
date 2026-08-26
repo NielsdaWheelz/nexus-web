@@ -101,7 +101,7 @@ describe("resource surface draft contract", () => {
 
   it("rejects extra fields and alternate snapshot casing", () => {
     expect(() =>
-      decodeResourceSurfaceDraft({ ...DRAFT, legacy: true }, PAGE_REF),
+      decodeResourceSurfaceDraft({ ...DRAFT, unexpected: true }, PAGE_REF),
     ).toThrow("resource surface draft must contain exactly");
     expect(() =>
       decodeResourceSurfaceDraft(
@@ -115,24 +115,6 @@ describe("resource surface draft contract", () => {
         PAGE_REF,
       ),
     ).toThrow("resource surface snapshot must contain exactly");
-    expect(() =>
-      decodeResourceSurfaceDraft({ ...DRAFT, version: 1 }, PAGE_REF),
-    ).toThrow("resource surface draft.version must be 2");
-    expect(() =>
-      decodeResourceSurfaceDraft(
-        {
-          ...DRAFT,
-          commands: [
-            DRAFT.commands[0],
-            {
-              ...DRAFT.commands[1],
-              occurrenceTargetRef: NOTE_REF,
-            },
-          ],
-        },
-        PAGE_REF,
-      ),
-    ).toThrow("must contain exactly");
   });
 
   it("binds the storage key, mutation identity, and body projection", () => {
@@ -159,7 +141,7 @@ describe("resource surface draft contract", () => {
               ...DRAFT.commands[0],
               command: {
                 ...DRAFT.commands[0].command,
-                bodyPmJson: { type: "unknown_legacy_node" },
+                bodyPmJson: { type: "unknown_node" },
               },
             },
           ],

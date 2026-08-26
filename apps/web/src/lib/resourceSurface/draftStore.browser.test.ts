@@ -12,7 +12,7 @@ describe("resource surface draft browser boundary", () => {
   it("preserves malformed authored recovery data while surfacing the defect", () => {
     const sourceRef = "page:aaaaaaaa-1111-4111-8111-111111111111";
     const key = resourceSurfaceDraftStorageKey(sourceRef);
-    const malformed = JSON.stringify({ version: 2, legacy: "Keep me" });
+    const malformed = JSON.stringify({ version: 2, unexpected: "Keep me" });
     window.localStorage.setItem(key, malformed);
 
     expect(() => readResourceSurfaceDraft(sourceRef)).toThrow(

@@ -11,7 +11,7 @@ describe("stored note editor draft browser boundary", () => {
 
   it("preserves malformed authored recovery data while surfacing the defect", () => {
     const key = noteEditorDraftStorageKey("highlight:one");
-    const malformed = JSON.stringify({ version: 1, legacyBody: "Keep me" });
+    const malformed = JSON.stringify({ version: 1, unexpected: "Keep me" });
     window.localStorage.setItem(key, malformed);
 
     expect(() => readStoredNoteEditorDraft("highlight:one")).toThrow(
