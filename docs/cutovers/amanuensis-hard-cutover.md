@@ -72,9 +72,9 @@ write caps, a visible trust-trail row per write, and per-write Undo.
 - **P-7.** The daily-note append owner is `notes.quick_capture`
   (notes.py:188-254), which takes `body_pm_json` (notes.py:207), **not** markdown.
   The markdown→pm_json converter is `notes.pm_doc_from_markdown_projection`
-  (notes.py:55, re-exporting `note_bodies.pm_doc_from_markdown_projection`) —
-  `note_block_markdown.py` only renders blocks/pages *to* markdown (opposite
-  direction) and is **not** used here. Note-block reindex is `enqueue_note_reindex`.
+  (notes.py:55, re-exporting `note_bodies.pm_doc_from_markdown_projection`). The
+  unused opposite-direction `note_block_markdown.py` renderer is deleted.
+  Note-block reindex is `enqueue_note_reindex`.
   **There is no single-block deleter** (`notes.py` has `delete_page` at :106 and
   `delete_highlight_note` at :339, but no `delete_note_block`); the `jot_note`
   undo path (§4.4, S4) creates one.
