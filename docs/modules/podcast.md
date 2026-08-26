@@ -221,8 +221,10 @@ fetch or publish transcript content. Only explicit canonical Transcribe enters
 this boundary. Episode Transcribe first tries a valid publisher sidecar through
 `safe_get`; if unavailable it applies entitlement/quota admission and runs
 Deepgram. Both paths normalize segments and call the current transcript writer.
-Transcript chunks flow into the shared `content_chunks` index via
-`content_indexing.rebuild_transcript_content_index`; semantic readiness is keyed by the
+Transcript chunks flow into the shared `content_chunks` index through
+`podcast_reindex_semantic_job`: it builds the immutable snapshot with
+`content_indexing.build_transcript_indexable_blocks` and publishes it through
+`content_indexing.publish_content_index`. Semantic readiness is keyed by the
 current embedding provider/model. `media_transcript_states.transcript_origin`
 records exactly `Publisher`, `Imported`, or `Generated` while transcript state
 is Ready/Partial and is absent otherwise.
