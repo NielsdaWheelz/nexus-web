@@ -95,7 +95,7 @@ def test_structured_synthesis_decodes_terminal_json_and_semantic_failures() -> N
 def test_synthesis_failure_facts_use_the_closed_generation_taxonomy() -> None:
     assert outcome_failure_facts(
         _terminal(status="failed", failure={"kind": "credential_unavailable"})
-    ) == ("auth", "failed")
+    ) == ("auth", "codex generation failed: credential_unavailable")
     assert outcome_failure_facts(_terminal(status="cancelled")) == ("cancelled", None)
 
 
