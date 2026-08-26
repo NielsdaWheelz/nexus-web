@@ -4,6 +4,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -34,13 +35,13 @@ export const E_WALKNOTE_NO_FRAGMENT = "E_WALKNOTE_NO_FRAGMENT";
 export const SESSION_STORAGE_KEY = "nexus.walknotes.session";
 
 export function loadFromSessionStorage(): WalknoteWaypoint[] {
-  const raw = sessionStorage.getItem(SESSION_STORAGE_KEY);
+  const raw = window.sessionStorage.getItem(SESSION_STORAGE_KEY);
   if (raw === null) return [];
   return decodeWalknoteSession(JSON.parse(raw) as unknown);
 }
 
 export function saveToSessionStorage(waypoints: WalknoteWaypoint[]): void {
-  sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(waypoints));
+  window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(waypoints));
 }
 
 export interface WalknoteSessionContextValue {
@@ -55,12 +56,14 @@ export interface WalknoteSessionContextValue {
 const WalknoteSessionContext = createContext<WalknoteSessionContextValue | null>(null);
 
 export function WalknoteSessionProvider({ children }: { children: ReactNode }) {
-  const [waypoints, setWaypoints] = useState<WalknoteWaypoint[]>(() =>
-    loadFromSessionStorage()
-  );
+  const [waypoints, setWaypoints] = useState<WalknoteWaypoint[]>([]);
   // Cache fetched fragments per media_id across materialize calls
   const fragmentsCacheRef = useRef<Map<string, Fragment[]>>(new Map());
   const handleUnauthenticated = useUnauthenticatedApiHandler();
+
+  useEffect(() => {
+    setWaypoints(loadFromSessionStorage());
+  }, []);
 
   const updateAndPersist = useCallback((next: WalknoteWaypoint[]) => {
     setWaypoints(next);
