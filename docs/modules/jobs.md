@@ -264,8 +264,9 @@ metadata failure as completed queue work; `Uncertain` remains suspended for
 operator reconciliation without redispatch.
 
 `dossier_build` is one generic kind for Media, Conversation, Library, Podcast,
-Contributor, Page, Note, and internal Idea subjects. Its binding registry
-selects collection, prompt, operation/profile, coverage, and freshness policy.
+Contributor, Page, Note, and internal Idea subjects. Its immutable registration
+selects one inseparable subject-policy and binding pair for collection, prompt,
+operation/profile, coverage, freshness, identity, and authorization.
 The Idea binding receives one frozen HostTable operation whose sole grant is
 `web.search`; it never inherits Chat's Native catalogue. Stored binding metadata
 owns its BilledOnce replay policy, so an uncertain public-Web search is never
@@ -292,6 +293,9 @@ reimplement their journal protocol. Each binding materializes one fully compiled
 `PublishableDossier`; `_DossierDocumentAcceptance` owns the single primary/repair
 acceptance phase and its document-versus-citation failure precedence, so
 `run_build` composes that phase instead of duplicating compilation branches.
+`services/artifacts/registry.py` is the sole eight-scheme composition owner; it
+constructs one cached immutable registration after module initialization, with
+no mutable policy mirror, package re-export, or lazy fallback lookup.
 
 `chat_run` uses that kernel for preparation, every model/tool turn, and final
 publication. Dead chat jobs are retained because their payload is the in-flight

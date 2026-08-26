@@ -472,7 +472,8 @@ authorize server-side without exposing a private Contributor id.
 - generic build/revision lifecycle;
 - shared read/history/event schemas.
 
-`SubjectPolicyRegistry`, keyed by subject scheme, owns:
+One immutable Dossier registration, keyed by subject scheme, pairs exactly one
+subject policy with exactly one binding. The policy side owns:
 
 - locator resolution and 404-masked read/generate authorization;
 - AudienceScope, collection viewer, requester/billing attribution, and
@@ -481,7 +482,7 @@ authorize server-side without exposing a private Contributor id.
 - subject/audience deletion integration;
 - canonical resource activation.
 
-`DossierBindingRegistry`, keyed by subject scheme, owns:
+The binding side owns:
 
 - input collection and bounded reduction;
 - prompt, operation/profile, reasoning, token/cost budget, and reduction plan;
@@ -494,7 +495,7 @@ Companion/subject-locator entry; the internal Idea binding is entered only by
 Learn or Artifact ref. The typed engine identity distinguishes Resource from
 Idea without fabricating a `ResourceRef`.
 
-One job kind, `dossier_build`, dispatches through the binding registry.
+One job kind, `dossier_build`, dispatches through the singular registration.
 Binding-owned operation policy is exact:
 
 | Binding | LLM operation | Profile | Reasoning |

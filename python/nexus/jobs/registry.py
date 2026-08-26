@@ -162,7 +162,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         ),
         # Universal dossier generation (resource-inspector-and-universal-dossiers
         # hard cutover). One job kind for all eight subject bindings, dispatched
-        # through the DossierBindingRegistry by the durable job body itself
+        # through the Dossier registration owner by the durable job body itself
         # (CONTRACTS.md A19/B1a). Paid + non-idempotent:
         # a moderate retry budget covers a worker crash/restart before the
         # per-step Uncertain checkpoint commits; once a step is Uncertain on

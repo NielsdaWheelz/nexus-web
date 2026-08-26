@@ -973,6 +973,11 @@ The backend separates three owners:
   one primary/repair document-acceptance phase, terminal children, revision
   history, Make current, cancellation, and events.
 
+`services/artifacts/registry.py` composes each policy and binding into one
+immutable eight-scheme registration. Callers perform one correlated lookup;
+there is no second mutable policy map or package-initializer registration side
+effect.
+
 Resource bootstrap/Companion lookup uses
 `GET /artifacts/dossiers/{subject_scheme}/{subject_handle}`,
 `POST /artifacts/dossiers/{subject_scheme}/{subject_handle}/builds`; an
