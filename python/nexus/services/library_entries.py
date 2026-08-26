@@ -66,7 +66,6 @@ from nexus.schemas.library import (
     ReadingTimeEstimateOut,
     SavedInNexusLibraryPlacementDestinationOut,
 )
-from nexus.schemas.podcast import PodcastSubscriptionVisibleLibraryOut
 from nexus.schemas.presence import Presence, absent, presence_from_nullable, present
 from nexus.services import library_governance as governance
 from nexus.services.billing_entitlements import get_effective_entitlements
@@ -2773,18 +2772,6 @@ def _add_media_to_resolved_libraries(
     clear_user_media_deletion(db, viewer_id, media_id)
 
 
-def assign_libraries_for_media(
-    db: Session, viewer_id: UUID, media_id: UUID, library_ids: list[UUID]
-) -> None:
-    """Attach media to the viewer's default library plus selected destinations.
-
-    Standalone assignment owns its transaction. Creation workflows that already
-    own a transaction must call `assign_libraries_for_media_in_current_transaction`.
-    """
-    with transaction(db):
-        assign_libraries_for_media_in_current_transaction(db, viewer_id, media_id, library_ids)
-
-
 def assign_libraries_for_media_in_current_transaction(
     db: Session, viewer_id: UUID, media_id: UUID, library_ids: list[UUID]
 ) -> None:
@@ -2830,42 +2817,6 @@ def ensure_subscription_episode_default_in_current_transaction(
 # ---------------------------------------------------------------------------
 # Catalog-facing reads (podcast subscriptions surfaces)
 # ---------------------------------------------------------------------------
-
-
-def visible_non_default_libraries_for_viewer(
-    db: Session, *, viewer_id: UUID, podcast_ids: Sequence[UUID]
-) -> dict[UUID, list[PodcastSubscriptionVisibleLibraryOut]]:
-    """Map each podcast id to the viewer-visible non-default libraries it belongs to.
-
-    The viewer must be a member of a non-default library for it to surface. Each
-    podcast's libraries are ordered by created_at ASC, id ASC. Podcasts with no visible
-    library are absent. One batched query keyed by the given podcast ids (no N+1).
-    """
-    if not podcast_ids:
-        return {}
-    rows = (
-        db.execute(
-            text("""
-            SELECT le.podcast_id, l.id AS library_id, l.name, l.color
-            FROM library_entries le
-            JOIN libraries l ON l.id = le.library_id AND l.is_default = false
-            JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
-            WHERE le.podcast_id = ANY(:podcast_ids)
-            ORDER BY le.podcast_id, l.created_at ASC, l.id ASC
-        """),
-            {"viewer_id": viewer_id, "podcast_ids": list(podcast_ids)},
-        )
-        .mappings()
-        .all()
-    )
-    result: dict[UUID, list[PodcastSubscriptionVisibleLibraryOut]] = {}
-    for row in rows:
-        result.setdefault(UUID(str(row["podcast_id"])), []).append(
-            PodcastSubscriptionVisibleLibraryOut(
-                id=row["library_id"], name=row["name"], color=row["color"]
-            )
-        )
-    return result
 
 
 def podcast_ids_in_libraries_for_viewer(
