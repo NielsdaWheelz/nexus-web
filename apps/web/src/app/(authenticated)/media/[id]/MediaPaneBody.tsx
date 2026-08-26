@@ -3093,8 +3093,8 @@ export default function MediaPaneBody() {
     () => projectMediaEvidenceHighlights(resolvedEvidence, activeContent),
     [activeContent, resolvedEvidence],
   );
-  const temporaryTextHighlight = resolvedEvidenceHighlights.text;
-  const temporaryPdfHighlight = resolvedEvidenceHighlights.pdf;
+  const evidenceTextHighlight = resolvedEvidenceHighlights.text;
+  const evidencePdfHighlight = resolvedEvidenceHighlights.pdf;
   const resolvedPdfPageNumber = resolvedEvidenceHighlights.pdfPageNumber;
 
   // Hosted decoration port: highlights and inert embed projections are a
@@ -3122,7 +3122,7 @@ export default function MediaPaneBody() {
             color: highlight.color,
             created_at: highlight.created_at,
           })),
-          ...(temporaryTextHighlight ? [temporaryTextHighlight] : []),
+          ...(evidenceTextHighlight ? [evidenceTextHighlight] : []),
         ] as HighlightInput[],
       );
       const output = renderDocumentEmbedsInHtml(
@@ -3147,7 +3147,7 @@ export default function MediaPaneBody() {
       return output;
     };
     return { decorate };
-  }, [activeContent, highlights, temporaryTextHighlight]);
+  }, [activeContent, evidenceTextHighlight, highlights]);
   const renderedHtml = useMemo(
     () =>
       activeContent
@@ -3686,7 +3686,7 @@ export default function MediaPaneBody() {
 
   useEffect(() => {
     const textEvidenceHighlightId =
-      temporaryTextHighlight?.id ??
+      evidenceTextHighlight?.id ??
       resolvedEvidenceRoute.transcriptHighlight?.id ??
       null;
     if (!requestedEvidenceId || !textEvidenceHighlightId) {
@@ -3738,7 +3738,7 @@ export default function MediaPaneBody() {
     readerScrollPositioner,
     renderedHtml,
     resolvedEvidenceRoute.transcriptHighlight?.id,
-    temporaryTextHighlight,
+    evidenceTextHighlight,
     markActive,
     textHighlightInitialLoading,
   ]);
@@ -7639,7 +7639,7 @@ export default function MediaPaneBody() {
                       },
                     })
                   }
-                  temporaryHighlight={temporaryPdfHighlight}
+                  temporaryHighlight={evidencePdfHighlight}
                   navigateToHighlight={pdfHighlightNavigation}
                   onHighlightNavigationComplete={() => {
                     setPdfHighlightNavigation(null);

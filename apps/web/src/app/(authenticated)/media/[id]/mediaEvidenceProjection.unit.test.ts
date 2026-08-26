@@ -44,12 +44,9 @@ describe("media evidence projection", () => {
     };
 
     expect(projectMediaEvidenceRoute(RESOLVED_TRANSCRIPT, [fragment])).toEqual({
-      kind: "transcript",
-      highlightId: `evidence-${EVIDENCE_ID}`,
       fragmentId: null,
       readerLoc: null,
       startMs: 1000,
-      endMs: 2000,
       pdfPageNumber: null,
       transcriptFragment: fragment,
       transcriptHighlight: {
@@ -88,7 +85,6 @@ describe("media evidence projection", () => {
         },
       ]),
     ).toMatchObject({
-      highlightId: null,
       startMs: 1000,
       transcriptFragment: null,
       transcriptHighlight: null,

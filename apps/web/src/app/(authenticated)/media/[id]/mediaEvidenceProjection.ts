@@ -10,7 +10,7 @@ interface ActiveEvidenceTextContent {
   canonicalText: string;
 }
 
-interface TemporaryPdfEvidenceHighlight {
+interface PdfEvidenceHighlightProjection {
   id: string;
   pageNumber: number;
   quads: PdfHighlightQuad[];
@@ -18,12 +18,9 @@ interface TemporaryPdfEvidenceHighlight {
 }
 
 interface MediaEvidenceRouteProjection {
-  kind: MediaEvidenceResolution["resolver"]["kind"] | null;
-  highlightId: string | null;
   fragmentId: string | null;
   readerLoc: string | null;
   startMs: number | null;
-  endMs: number | null;
   pdfPageNumber: number | null;
   transcriptFragment: TranscriptFragment | null;
   transcriptHighlight: {
@@ -36,7 +33,7 @@ interface MediaEvidenceRouteProjection {
 
 interface MediaEvidenceHighlightProjection {
   text: HighlightInput | null;
-  pdf: TemporaryPdfEvidenceHighlight | null;
+  pdf: PdfEvidenceHighlightProjection | null;
   pdfPageNumber: number | null;
 }
 
@@ -85,42 +82,28 @@ export function projectMediaEvidenceRoute(
 ): MediaEvidenceRouteProjection {
   if (evidence === null) {
     return {
-      kind: null,
-      highlightId: null,
       fragmentId: null,
       readerLoc: null,
       startMs: null,
-      endMs: null,
       pdfPageNumber: null,
       transcriptFragment: null,
       transcriptHighlight: null,
     };
   }
   const { resolver } = evidence;
-  const highlightId = resolver.highlight
-    ? `evidence-${evidence.evidenceSpanId}`
-    : null;
   const startMs =
     parseNonnegativeIntegerParam(resolver.params.t_start_ms) ??
     (resolver.kind === "transcript"
       ? (resolver.highlight?.tStartMs ?? null)
-      : null);
-  const endMs =
-    parseNonnegativeIntegerParam(resolver.params.t_end_ms) ??
-    (resolver.kind === "transcript"
-      ? (resolver.highlight?.tEndMs ?? null)
       : null);
   const transcriptFragment =
     resolver.kind === "transcript" && resolver.highlight !== null
       ? findTranscriptFragment(fragments, startMs, evidence.spanText)
       : null;
   return {
-    kind: resolver.kind,
-    highlightId,
     fragmentId: resolver.params.fragment ?? null,
     readerLoc: resolver.params.loc ?? null,
     startMs,
-    endMs,
     pdfPageNumber: parsePositiveIntegerParam(resolver.params.page),
     transcriptFragment,
     transcriptHighlight:
