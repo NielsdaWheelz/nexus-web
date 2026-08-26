@@ -50,20 +50,6 @@ def begin_extraction(db: Session, media: Media) -> None:
     db.flush()
 
 
-def reset_for_reingest(db: Session, media: Media) -> None:
-    """Clear failure metadata, bump attempts, and restart source extraction."""
-    media.processing_status = ProcessingStatus.extracting
-    media.processing_attempts = (media.processing_attempts or 0) + 1
-    media.processing_started_at = func.now()
-    media.processing_completed_at = None
-    media.failure_stage = None
-    media.last_error_code = None
-    media.last_error_message = None
-    media.failed_at = None
-    media.updated_at = func.now()
-    db.flush()
-
-
 def mark_source_queued(db: Session, media: Media) -> None:
     """Clear failure metadata and expose queued source work as active processing.
 
@@ -112,31 +98,6 @@ def mark_ready_for_reading_by_id(db: Session, *, media_id: UUID, now: datetime) 
         {
             "media_id": media_id,
             "processing_status": ProcessingStatus.ready_for_reading.value,
-            "now": now,
-        },
-    )
-
-
-def mark_extraction_started_by_id(db: Session, *, media_id: UUID, now: datetime) -> None:
-    """Expose active source extraction by id without changing attempt accounting."""
-    db.execute(
-        text(
-            """
-            UPDATE media
-            SET processing_status = :processing_status,
-                failure_stage = NULL,
-                last_error_code = NULL,
-                last_error_message = NULL,
-                processing_started_at = :now,
-                processing_completed_at = NULL,
-                failed_at = NULL,
-                updated_at = :now
-            WHERE id = :media_id
-            """
-        ),
-        {
-            "media_id": media_id,
-            "processing_status": ProcessingStatus.extracting.value,
             "now": now,
         },
     )
