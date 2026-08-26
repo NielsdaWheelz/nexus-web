@@ -322,7 +322,11 @@ def retry_serializable[T](db: Session, label: str, op: Callable[[], T], *, retri
 def require_catalog_model(provider: str, model_name: str) -> ModelCatalogEntry              # raises defect
 ```
 
-Task modules shrink to: parse payload → `run_llm_task(SPEC, handler, on_worker_exception=…)`. Registry policies unchanged except `oracle_reading_generate.lease_seconds: 120 → 300`.
+The registry/task boundary narrows each owned payload, then task modules invoke
+`run_llm_task(SPEC, handler, on_worker_exception=…)`. Oracle's registry adapter
+owns its exact canonical `reading_id` carrier and passes a typed UUID to the
+task. Registry policies are unchanged except
+`oracle_reading_generate.lease_seconds: 120 → 300`.
 
 ### 6.4 Stream route table
 

@@ -63,8 +63,9 @@ too, and the job is deliberately not settled, because the worker no longer owns 
 The registry is the source of truth mapping job kind → handler + policy. Each
 kind is a frozen `JobDefinition`:
 
-- `handler` — a thin `tasks/` wrapper that parses the payload and calls a
-  service.
+- `handler_path` — a thin `jobs/registry.py` adapter that hands the job's owned
+  values to a `tasks/` wrapper. Simple carrier fields are parsed at this raw
+  payload boundary; checkpoint-bearing tasks own their structured payload.
 - `max_attempts`, `retry_delays_seconds`, `lease_seconds` — the per-kind retry
   and lease policy.
 - `periodic_interval_seconds` — set only for scheduler-driven background or
@@ -78,6 +79,11 @@ kind is a frozen `JobDefinition`:
 `get_task_contract_digest()` is a stable SHA-256 fingerprint over the registry's
 kind/attempts/delays/lease policy. API `/version` and each worker heartbeat expose
 it for exact release proof. It changes only when that contract changes.
+
+`oracle_reading_generate` has one canonical producer and one exact payload:
+`{"reading_id": "<canonical-lowercase-uuid>"}`. Its registry adapter rejects
+missing, additional, coerced, padded, or noncanonical values and passes a typed
+`UUID` to the Oracle task. The task does not decode the durable carrier again.
 
 ### Lease policy by kind
 
