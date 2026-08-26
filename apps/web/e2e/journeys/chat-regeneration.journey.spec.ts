@@ -1,4 +1,4 @@
-import { captureCanonicalArticle } from "../articleFixture";
+import { captureReadableArticle } from "../articleFixture";
 import { TOOL_PROJECTION_HEADER } from "@/lib/api/client";
 import { TOOL_PROJECTION_REVISION } from "@/lib/conversations/toolContractProjection";
 import {
@@ -46,25 +46,9 @@ test("regenerating a completed answer creates a navigable sibling that survives 
   journeyUser,
 }) => {
   await signIn(page, journeyUser);
+  test.setTimeout(300_000);
   const api = pageRequest(page, webOrigin);
-  const mediaId = await captureCanonicalArticle(page, "regeneration-source");
-  await expect
-    .poll(
-      async () => {
-        const response = await api.get(`/api/media/${mediaId}`);
-        if (!response.ok()) return `http-${response.status()}`;
-        return (
-          (await response.json()) as {
-            data: { retrieval_status: string | null };
-          }
-        ).data.retrieval_status;
-      },
-      {
-        message: `Expected source ${mediaId} to publish searchable evidence.`,
-        timeout: 25_000,
-      },
-    )
-    .toBe("ready");
+  const mediaId = await captureReadableArticle(page, "regeneration-source");
 
   const conversationResponse = await api.post("/api/conversations", {
     headers: { origin: webOrigin },

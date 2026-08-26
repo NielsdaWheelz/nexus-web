@@ -964,9 +964,10 @@ Gate:
   without invented target edges.
 - Noisy PDF fixture does not emit false marker edges.
 
-### S7 - Optional scholarly PDF adapter
+### S7 - Optional scholarly PDF adapter (not implemented)
 
-Implement only if needed after native links:
+No GROBID adapter ships. Implement only if needed after native links; do not
+retain an unwired parser in anticipation of that work:
 
 - Add explicit GROBID adapter.
 - Store adapter version in extractor version or diagnostics.

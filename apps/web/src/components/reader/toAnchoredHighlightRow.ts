@@ -1,4 +1,4 @@
-import type { Highlight } from "@/lib/highlights/api";
+import type { Highlight } from "@/lib/highlights/highlightContract";
 import type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
 import type { AnchoredReaderRow } from "./useAnchoredReaderProjection";
 
@@ -11,14 +11,13 @@ type HighlightMetadata = Pick<
   | "id"
   | "exact"
   | "color"
-  | "linked_note_blocks"
   | "created_at"
   | "updated_at"
   | "prefix"
   | "suffix"
   | "is_owner"
-  | "linked_conversations"
->;
+> &
+  Pick<AnchoredReaderRow, "linked_note_blocks" | "linked_conversations">;
 
 interface TextAnchorFragmentTiming {
   t_start_ms?: number | null;

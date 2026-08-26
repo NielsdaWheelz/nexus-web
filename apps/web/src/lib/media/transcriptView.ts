@@ -1,21 +1,41 @@
 import type { DocumentEmbed } from "@/lib/media/documentEmbeds";
 import { normalizeDocumentEmbeds } from "@/lib/media/documentEmbeds";
 import type { MediaPlaybackSource } from "@/lib/media/playback";
+import { expectOneOf } from "@/lib/validation";
 
 export type TranscriptPlaybackSource = MediaPlaybackSource;
 
-export type TranscriptState =
-  | "not_requested"
-  | "queued"
-  | "running"
-  | "failed_provider"
-  | "failed_quota"
-  | "unavailable"
-  | "ready"
-  | "partial"
-  | null;
+export const TRANSCRIPT_STATES = [
+  "not_requested",
+  "queued",
+  "running",
+  "failed_provider",
+  "failed_quota",
+  "unavailable",
+  "ready",
+  "partial",
+] as const;
 
-export type TranscriptCoverage = "none" | "partial" | "full" | null;
+export type TranscriptState = (typeof TRANSCRIPT_STATES)[number] | null;
+
+export const TRANSCRIPT_COVERAGES = ["none", "partial", "full"] as const;
+
+export type TranscriptCoverage =
+  (typeof TRANSCRIPT_COVERAGES)[number] | null;
+
+export function decodeTranscriptState(
+  raw: unknown,
+  name = "TranscriptState",
+): TranscriptState {
+  return raw === null ? null : expectOneOf(raw, TRANSCRIPT_STATES, name);
+}
+
+export function decodeTranscriptCoverage(
+  raw: unknown,
+  name = "TranscriptCoverage",
+): TranscriptCoverage {
+  return raw === null ? null : expectOneOf(raw, TRANSCRIPT_COVERAGES, name);
+}
 
 export interface TranscriptFragment {
   id: string;

@@ -1,73 +1,45 @@
 "use client";
 
-import { apiFetch } from "@/lib/api/client";
+import { apiFetch, decodeApiPayload } from "@/lib/api/client";
 import { compareStableString } from "@/lib/display/format";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
-import type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
-
-export interface HighlightLinkedNoteBlock {
-  note_block_id: string;
-  body_pm_json?: Record<string, unknown>;
-  body_text: string;
-}
-
-export interface Highlight {
-  id: string;
-  anchor: {
-    type: "fragment_offsets";
-    media_id: string;
-    // Disposable locator cache: null when the cached fragment row vanished
-    // (reindex/refresh) and the quote no longer resolves uniquely. The
-    // highlight stays visible but unresolved — it is never painted at a
-    // wrong location (universal-link-authoring-hard-cutover.md, Highlight
-    // Durability).
-    fragment_id: string | null;
-    start_offset: number | null;
-    end_offset: number | null;
-  };
-  color: HighlightColor;
-  exact: string;
-  prefix: string;
-  suffix: string;
-  created_at: string;
-  updated_at: string;
-  author_user_id: string;
-  is_owner: boolean;
-  linked_conversations?: { conversation_id: string; title: string }[];
-  linked_note_blocks?: HighlightLinkedNoteBlock[];
-}
+import {
+  decodeHighlightEnvelope,
+  decodeHighlightListEnvelope,
+  decodeHighlightNoteEnvelope,
+  decodeMediaHighlightListEnvelope,
+  type Highlight,
+  type HighlightLinkedNoteBlock,
+  type MediaHighlight,
+} from "@/lib/highlights/highlightContract";
 
 export async function fetchHighlights(
   fragmentId: string,
+  signal?: AbortSignal,
 ): Promise<Highlight[]> {
-  const response = await apiFetch<{ data: { highlights: Highlight[] } }>(
+  const response = await apiFetch<unknown>(
     `/api/fragments/${fragmentId}/highlights`,
-    { cache: "no-store" },
+    { cache: "no-store", signal },
   );
-  return response.data.highlights;
+  return decodeApiPayload(
+    response,
+    decodeHighlightListEnvelope,
+    "Highlight list",
+  );
 }
-
-/** A highlight anchored to a PDF page's geometry, as returned by the API. */
-export interface PdfHighlight extends Omit<Highlight, "anchor"> {
-  anchor: {
-    type: "pdf_page_geometry";
-    media_id: string;
-    page_number: number;
-    quads: PdfHighlightQuad[];
-  };
-}
-
-/** A highlight from the media-wide endpoint: fragment-offset or PDF-page anchor. */
-export type MediaHighlight = Highlight | PdfHighlight;
 
 export async function fetchMediaHighlights(
   mediaId: string,
 ): Promise<MediaHighlight[]> {
-  const response = await apiFetch<{ data: { highlights: MediaHighlight[] } }>(
+  const response = await apiFetch<unknown>(
     `/api/media/${mediaId}/highlights?mine_only=false`,
     { cache: "no-store" },
   );
-  return response.data.highlights;
+  return decodeApiPayload(
+    response,
+    decodeMediaHighlightListEnvelope,
+    "Media highlight list",
+  );
 }
 
 /** A null offset (unresolved locator cache) sorts after every resolved one. */
@@ -111,7 +83,7 @@ export async function createHighlight(
   endOffset: number,
   color: HighlightColor,
 ): Promise<Highlight> {
-  const response = await apiFetch<{ data: Highlight }>(
+  const response = await apiFetch<unknown>(
     `/api/fragments/${fragmentId}/highlights`,
     {
       method: "POST",
@@ -122,7 +94,7 @@ export async function createHighlight(
       }),
     },
   );
-  return response.data;
+  return decodeApiPayload(response, decodeHighlightEnvelope, "Highlight");
 }
 
 export async function updateHighlight(
@@ -175,7 +147,7 @@ export async function saveHighlightNote(
   bodyPmJson: Record<string, unknown>,
   clientMutationId: string,
 ): Promise<HighlightLinkedNoteBlock> {
-  const response = await apiFetch<{ data: HighlightLinkedNoteBlock }>(
+  const response = await apiFetch<unknown>(
     `/api/highlights/${highlightId}/note`,
     {
       method: "PUT",
@@ -186,7 +158,11 @@ export async function saveHighlightNote(
       }),
     },
   );
-  return response.data;
+  return decodeApiPayload(
+    response,
+    decodeHighlightNoteEnvelope,
+    "Highlight note",
+  );
 }
 
 export async function deleteHighlightNote(

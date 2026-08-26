@@ -35,7 +35,7 @@ from nexus.services.library_entries import (
     ensure_subscription_episode_default_in_current_transaction,
 )
 from nexus.services.metadata_dispatch import enqueue_metadata_enrichment
-from nexus.services.transcripts.current import ensure_media_transcript_state_row
+from nexus.services.transcripts.state import ensure_media_transcript_state_row
 
 from ._normalize import (
     normalize_language_tag,

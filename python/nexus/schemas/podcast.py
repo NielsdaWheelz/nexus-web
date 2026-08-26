@@ -255,12 +255,6 @@ class PodcastSubscriptionSettingsOut(PodcastSubscriptionStatusOut):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
 
-class PodcastSubscriptionVisibleLibraryOut(BaseModel):
-    id: UUID
-    name: str
-    color: str | None = None
-
-
 class PodcastListItemOut(BaseModel):
     id: UUID
     provider: str

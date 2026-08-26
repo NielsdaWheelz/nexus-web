@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
-import { render, screen } from "@testing-library/react";
-import { userEvent } from "vitest/browser";
+import { render, screen, waitFor } from "@testing-library/react";
+import { page, userEvent } from "vitest/browser";
 import { expect, it, vi } from "vitest";
 import "pdfjs-dist/web/pdf_viewer.css";
 import { MobileViewportProvider } from "@/lib/mobileViewport/MobileViewportProvider";
@@ -106,12 +106,20 @@ function installPdfBff(pdfUrl: string) {
   const reconciliationStarted = deferred<void>();
   const reconciliation = deferred<Response>();
   let highlightMutated = false;
+  let highlightWrite: {
+    exact: string;
+    page_number: number;
+    quads: unknown[];
+  } | null = null;
 
   vi.stubGlobal(
     "fetch",
     async (input: RequestInfo | URL, init?: RequestInit) => {
       const request = input instanceof Request ? input : null;
-      const url = new URL(request?.url ?? String(input), window.location.origin);
+      const url = new URL(
+        request?.url ?? String(input),
+        window.location.origin,
+      );
       const method = (init?.method ?? request?.method ?? "GET").toUpperCase();
 
       if (url.pathname === `/api/media/${MEDIA_ID}` && method === "GET") {
@@ -145,6 +153,10 @@ function installPdfBff(pdfUrl: string) {
         url.pathname === `/api/media/${MEDIA_ID}/pdf-highlights` &&
         method === "POST"
       ) {
+        const body = request
+          ? await request.clone().json()
+          : JSON.parse(String(init?.body));
+        highlightWrite = body as typeof highlightWrite;
         highlightMutated = true;
         return json(committedHighlight());
       }
@@ -156,6 +168,7 @@ function installPdfBff(pdfUrl: string) {
 
   return {
     reconciliationStarted: reconciliationStarted.promise,
+    readHighlightWrite: () => highlightWrite,
     finishReconciliation() {
       reconciliation.resolve(json({ page_number: 1, highlights: [] }));
     },
@@ -243,11 +256,12 @@ function PdfReaderHarness() {
   const isMobile = useIsMobileViewport();
   const locks = useMobileChromeVisibleLocks();
   const scrollPositioner = useReaderScrollPositioner();
-  const additionalViewportRef =
-    useMobileChromeReaderScrollport<HTMLDivElement>({
+  const additionalViewportRef = useMobileChromeReaderScrollport<HTMLDivElement>(
+    {
       sourceKey: MEDIA_ID,
       enabled: false,
-    });
+    },
+  );
   const acquireMobileChromeVisibleLock = useCallback(
     (reason: PdfReaderVisibleLockReason) => locks.acquire(reason),
     [locks],
@@ -282,8 +296,10 @@ function PdfReaderHarness() {
 }
 
 it("keeps a committed PDF highlight visible while BFF reconciliation is pending", async () => {
+  await page.viewport(1_280, 800);
   const pdfUrl = URL.createObjectURL(onePagePdf(`Alpha ${EXACT} Omega`));
   const bff = installPdfBff(pdfUrl);
+  let foreignTextLayer: HTMLDivElement | null = null;
 
   try {
     render(
@@ -314,13 +330,45 @@ it("keeps a committed PDF highlight visible while BFF reconciliation is pending"
     selection.addRange(range);
     document.dispatchEvent(new Event("selectionchange"));
 
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Highlight" }),
-    );
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Green" }),
-    );
+    await screen.findByRole("button", {
+      name: "Highlight",
+    });
+
+    foreignTextLayer = document.createElement("div");
+    foreignTextLayer.className = "textLayer";
+    foreignTextLayer.textContent = "foreign reader quote";
+    document.body.append(foreignTextLayer);
+    const foreignRange = document.createRange();
+    foreignRange.selectNodeContents(foreignTextLayer);
+    selection.removeAllRanges();
+    selection.addRange(foreignRange);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "Highlight" })).toBeNull();
+    });
+    expect(selection.toString()).toBe("foreign reader quote");
+    foreignTextLayer.remove();
+    foreignTextLayer = null;
+
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+    const highlightButton = await screen.findByRole("button", {
+      name: "Highlight",
+    });
+    await page.viewport(1_120, 720);
+    expect(highlightButton).toBeVisible();
+
+    await userEvent.click(highlightButton);
+    await userEvent.click(await screen.findByRole("button", { name: "Green" }));
     await bff.reconciliationStarted;
+
+    const highlightWrite = bff.readHighlightWrite();
+    expect(highlightWrite).not.toBeNull();
+    expect(highlightWrite?.exact).toBe(EXACT);
+    expect(highlightWrite?.page_number).toBe(1);
+    expect(highlightWrite?.quads.length).toBeGreaterThan(0);
 
     const committedOverlay = screen.queryByTestId(
       "pdf-highlight-committed-highlight-0",
@@ -331,6 +379,7 @@ it("keeps a committed PDF highlight visible while BFF reconciliation is pending"
     ).not.toBeNull();
     expect(committedOverlay!).toBeVisible();
   } finally {
+    foreignTextLayer?.remove();
     bff.finishReconciliation();
     URL.revokeObjectURL(pdfUrl);
   }

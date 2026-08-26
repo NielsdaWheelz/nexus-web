@@ -102,6 +102,34 @@ def test_static_dns_can_route_one_canonical_host_to_an_owned_loopback_port(
     assert {address[-1] for address in addresses} == {("127.0.0.1", port)}
 
 
+def test_nested_guards_can_resolve_the_owned_public_dns_fixture_without_allowing_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "NEXUS_TEST_STATIC_DNS",
+        '{"www.nasa.gov":"93.184.216.34"}',
+    )
+    restore_outer = install_network_guard()
+    restore_inner = install_network_guard()
+    try:
+        addresses = socket.getaddrinfo(
+            "www.nasa.gov",
+            443,
+            type=socket.SOCK_STREAM,
+        )
+        with (
+            socket.socket() as external,
+            pytest.raises(PermissionError, match="93.184.216.34"),
+        ):
+            external.connect(("93.184.216.34", 443))
+    finally:
+        restore_inner()
+        restore_outer()
+
+    assert addresses
+    assert {address[-1][0] for address in addresses} == {"93.184.216.34"}
+
+
 @pytest.mark.parametrize(
     "mapping",
     (

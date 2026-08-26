@@ -268,6 +268,17 @@ selection-normalization and Highlight-creation owners. Once created, every
 Highlight surface mounts `ResourceActionMenu`; canonical snapshots and the
 shared planner own membership, labels, order, state, and dispatch.
 
+`useRetainedReaderSelection` is the single lifecycle owner for a fresh reader
+selection's captured snapshot, delayed mobile publication, visible retirement,
+and geometry-refresh fencing. `useRetainedReaderSelectionGeometry` owns the
+shared resize, scroll, visual-viewport, and animation-frame refresh schedule.
+The Web/EPUB reader still owns fragment and canonical-offset normalization;
+`PdfReader` still owns strict current-reader, single-page range admission and
+page-space quad projection. Both readers provide their format-specific semantic
+equality and geometry projector to the shared lifecycle. Actions read only the
+retained capture, so a mutable or foreign native `Selection` cannot replace the
+quote or geometry that the user actually invoked.
+
 ### quick-note composer
 
 the **quick-note composer** (`HighlightQuickNoteComposer`) is the in-context
@@ -407,7 +418,7 @@ through `GET /api/chat-reader-selections/highlights/{id}?media_id=`, and shows
 the pending quote card above the composer.
 
 - the request sends only `reader_selection = { key: {media_id, highlight_id},
-  revision }`; on send the server row-locks the Highlight and captures an
+revision }`; on send the server row-locks the Highlight and captures an
   immutable per-message snapshot (`exact`, `prefix`, `suffix`, source label,
   `locator`) that drives `<reader_selection>` for every current and historical
   turn. Client quote text is rejected, and a later Highlight edit/delete cannot
@@ -626,7 +637,7 @@ the lower one and adds dimming.
 bindings:
 
 - the keyboard binding `cmd/ctrl+shift+f` cycles `off -> distraction_free
-  -> paragraph -> sentence -> off`
+-> paragraph -> sentence -> off`
 - pressing `escape` while a non-off focus mode is active returns to `off`
 - when an active text selection exists in the reader, focus mode
   auto-suspends (renders as `distraction_free`) and resumes the user's

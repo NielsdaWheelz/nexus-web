@@ -534,12 +534,15 @@ The service does not create source snapshots or index runs.
 
 Public commands:
 
-- `rebuild_media_content_index(...)`
-- `rebuild_fragment_content_index(...)`
-- `rebuild_transcript_content_index(...)`
+- `request_media_content_reindex(...)`
+- `prepare_media_content_reindex(...)`
+- `publish_media_content_reindex(...)`
+- `rebuild_content_index(...)` for the synchronous note doorway
+- `build_fragment_indexable_blocks(...)`
+- `build_transcript_indexable_blocks(...)`
 - `build_pdf_indexable_blocks(...)`
-- `mark_content_index_failed(...)`
-- `delete_media_content_index(...)`
+- `deactivate_content_index(...)`
+- `delete_content_index(...)`
 
 #### Transcript owner
 

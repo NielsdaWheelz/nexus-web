@@ -84,8 +84,8 @@ blocked from representing the corpus even if the rendering existed.
   `font-family: var(--font-oracle-body)` for the label text, inside `[data-theme="oracle"]`.
 - **Click**: `requestOpenInAppPane('/media/${media_id}')` opens the work in a new pane. The
   chart does not navigate itself.
-- `/oracle/atlas` **redirects** to `/atlas?layer=readings`. The `oracleAtlas` route id must not
-  exist in any pane registration file (it was never registered; G3 gate enforces absence).
+- `/atlas?layer=readings` is the sole readings-focused Atlas URL. `/oracle/atlas` is absent and
+  resolves unsupported; the `oracleAtlas` route id must not exist in any pane registration file.
 
 ---
 
@@ -106,8 +106,8 @@ blocked from representing the corpus even if the rendering existed.
   (enumerating reused vs rewritten in §7).
 - **G6.** Both CORPUS and READINGS layers on the same celestial-dome canvas. Stars with no
   atlas position (Nebula) appear at a rim-band hash position.
-- **G7.** `/oracle/atlas` redirects to `/atlas?layer=readings`; `oracleAtlas` route id is never
-  registered (it does not exist in pane files; G3 gate enforces absence).
+- **G7.** `/oracle/atlas` and the `oracleAtlas` route id are absent; the canonical readings-focused
+  entry is `/atlas?layer=readings`.
 - **G8.** Negative gates: no numpy in the projection service; sole writer of `media_atlas_positions`
   is `atlas_project_job`; no `oracleAtlas` in the route model.
 
@@ -389,22 +389,17 @@ via `getComputedStyle(canvasRef.current.parentElement)`. Canvas cannot use `var(
 limitation noted in existing `drawCardinal` at `AtlasPaneBody.tsx:144`). Fallback literal values
 given in var() fallbacks for oracle-theme-absent environments.
 
-### 7.5 Redirect from `/oracle/atlas`
+### 7.5 Retire `/oracle/atlas`
 
-This spec absorbs the oracle atlas relocation (oracle-shell-dissolution is not yet built). The
-existing `app/(oracle)/oracle/atlas/page.tsx` becomes:
-```tsx
-import { redirect } from "next/navigation";
-export default function Page() { redirect("/atlas?layer=readings"); }
-```
-`app/(oracle)/oracle/atlas/AtlasPaneBody.tsx` is deleted — its readings-only UI is fully absorbed
-by `GrandAtlasPaneBody.tsx`'s READINGS layer. When oracle-shell-dissolution is subsequently built,
-it should not re-add an atlas pane route; the `oracleAtlas` route id does not exist and must
-not be created.
+The readings-only UI is fully absorbed by `GrandAtlasPaneBody.tsx`'s READINGS layer. Delete the
+legacy `app/(authenticated)/oracle/atlas/page.tsx`; do not redirect or recreate an atlas pane under
+Oracle. Because `/oracle/:readingId` is dynamic, `paneRouteModel.ts` must admit `oracleReading`
+only when `readingId` is a canonical `oracle_reading:<uuid>` resource identifier. Consequently,
+`/oracle/atlas` and malformed reading IDs resolve to the unsupported pane instead of falling
+through as readings.
 
-Also update `app/(oracle)/oracle/OracleLandingPaneBody.tsx` line 102: change
-`href="/oracle/atlas"` to `href="/atlas?layer=readings"` to avoid the redirect on every click
-from the oracle landing page.
+The Oracle landing caller links directly to `/atlas?layer=readings`. The `oracleAtlas` route id
+does not exist and must not be created.
 
 ### 7.6 BFF proxy
 
@@ -494,13 +489,12 @@ constellation — confusing).
 
 - The readings-only oracle atlas as a standalone pane surface — superseded by the READINGS layer
   in GrandAtlasPaneBody
-- `/oracle/atlas` as a pane destination — becomes a redirect to `/atlas?layer=readings`
+- `/oracle/atlas` as a route or pane destination — deleted; `/atlas?layer=readings` is canonical
 
 ### Updated callers
 
-- `app/(oracle)/oracle/OracleLandingPaneBody.tsx` — live link `href="/oracle/atlas"` updated to
-  `href="/atlas?layer=readings"` (§7.5). The redirect makes it functionally correct, but the
-  direct href avoids the redirect on every oracle landing page click.
+- `app/(authenticated)/oracle/OracleLandingPaneBody.tsx` — links directly to
+  `href="/atlas?layer=readings"` (§7.5).
 
 ### Explicitly NOT deleted
 
@@ -680,7 +674,7 @@ are already canonical in `(authenticated)/atlas/`). `OracleThemeWrapper` is defi
 4. Add pane route, destination, and render registry entries (§7.1). Add null stub
    `app/(authenticated)/atlas/page.tsx`.
 
-5. Handle `/oracle/atlas` redirect (§7.5, chosen build order).
+5. Delete `/oracle/atlas` and restrict `/oracle/:readingId` to canonical UUIDs (§7.5).
 
 6. Write `GrandAtlasPaneBody.test.tsx`:
    - Layer toggle: clicking CORPUS when on → corpus stars disappear from draw calls; clicking
@@ -694,9 +688,9 @@ are already canonical in `(authenticated)/atlas/`). `OracleThemeWrapper` is defi
 
 *Verify:* `bun run typecheck && bun run test:unit && bun run test:browser`; navigate to `/atlas` in the app.
 
-### S4 — Edges layer + Nebula polish + redirect
+### S4 — Edges layer + Nebula polish + route retirement
 
-**Scope:** Edge rendering, constellation label, nebula label, redirect, AC pass.
+**Scope:** Edge rendering, constellation label, nebula label, retired-route gates, AC pass.
 
 1. Implement `drawEdges` for synapse context (barely-visible) and contradicts (red-gold via CSS variable read at mount). Constellation label at centroid (IM Fell italic small-caps via canvas font string `"italic small-caps 10px 'IM Fell English', serif"`). Nebula label at 6 o'clock rim.
 
@@ -728,7 +722,8 @@ are already canonical in `(authenticated)/atlas/`). `OracleThemeWrapper` is defi
   `HORIZON_RIM_MARGIN`, hash-stable azimuth per media_id).
 - **AC-7.** The CORPUS and READINGS layer toggles are `aria-pressed` buttons. Pressing CORPUS
   hides all corpus stars + constellation lines + edges; pressing again restores them.
-- **AC-8.** `/oracle/atlas` redirects to `/atlas?layer=readings` (HTTP 307 or Next.js redirect).
+- **AC-8.** `/oracle/atlas` has no App Router page and resolves unsupported in the pane route model;
+  it never redirects or falls through as reading ID `atlas`.
 - **AC-9.** `oracleAtlas` does not appear in `paneRouteModel.ts` `PaneRouteId` union or in
   `paneRenderRegistry.tsx`.
 - **AC-10.** `atlas_project_job` has exactly one entry in `jobs/registry.py`; no other
@@ -756,12 +751,13 @@ if rg -rn "media_atlas_positions" python/nexus/ --include="*.py" \
    | rg -v "atlas_projection\.py|test_|migrations/"; then
   echo "FAIL: non-sole writer of media_atlas_positions"; exit 1; fi
 
-# G3: oracleAtlas route id is dead
-if rg -n '"oracleAtlas"' \
+# G3: retired Oracle Atlas route and pane id are dead
+if rg -n '/oracle/atlas|oracleAtlas' \
+   apps/web/src/app \
    apps/web/src/lib/panes/paneRouteModel.ts \
    apps/web/src/lib/panes/paneRenderRegistry.tsx \
    apps/web/src/lib/panes/paneRouteTable.ts; then
-  echo "FAIL: oracleAtlas route id survives"; exit 1; fi
+  echo "FAIL: retired Oracle Atlas source survives"; exit 1; fi
 
 # G4: atlas pane is registered in the pane render registry
 if ! rg -n '"atlas"' apps/web/src/lib/panes/paneRenderRegistry.tsx; then
@@ -797,7 +793,7 @@ uv run pytest python/tests/test_hetzner_env_sync_validation.py -x
 | **BE integration** | `test_atlas.py`: read model shape + ETag + on-demand enqueue + 304; all-Nebula response (user with library entries but no atlas positions → valid ETag + all stars have `x:null`); `test_atlas_projection.py`: full job run with DB fixture (seeded embeddings → positioned rows) |
 | **Migration** | `make test-migrations`: `media_atlas_positions` shape + constraints (x/y range CHECK; projection_version ≥ 1); downgrade removes table cleanly |
 | **Static** | `cd python && uv run ruff check . && uv run pyright`; `cd apps/web && bun run typecheck && bun run lint` |
-| **E2E** | Deferred (house pattern). Manual smoke: open `/atlas`, verify dome renders; click a positioned star; confirm new pane opens for that media; navigate to `/oracle/atlas`, confirm redirect to `/atlas?layer=readings`. |
+| **E2E** | Deferred (house pattern). Manual smoke: open `/atlas`, verify dome renders; click a positioned star; confirm new pane opens for that media; verify `/oracle/atlas` does not redirect or render as an Oracle reading. |
 
 ---
 
@@ -849,13 +845,10 @@ apps/web/src/app/api/proxy-routes.test.ts          (API_ROUTE_COUNT +2)
 apps/web/src/app/(oracle)/oracle/OracleLandingPaneBody.tsx  (update atlasLink href to /atlas?layer=readings)
 ```
 
-```
-apps/web/src/app/(oracle)/oracle/atlas/page.tsx            (becomes redirect to /atlas?layer=readings)
-```
-
 ### Deleted
 
 ```
+apps/web/src/app/(authenticated)/oracle/atlas/page.tsx          (legacy redirect removed)
 apps/web/src/app/(oracle)/oracle/atlas/AtlasPaneBody.tsx         (oracle-scoped readings-only body, absorbed)
 apps/web/src/app/(oracle)/oracle/atlas/AtlasPaneBody.test.tsx
 ```
@@ -893,11 +886,10 @@ interaction (drag/hover); idle drift can be throttled to 10 fps when `!interacti
 (reduce idle RAF to `setTimeout(requestAnimationFrame, 100)` pattern). The existing
 `reducedMotionRef` stops idle rotation entirely under prefers-reduced-motion.
 
-**R-5. `oracleAtlas` route id inadvertently added by a future spec (LOW).**
-oracle-shell-dissolution is built after this spec; if that spec (or another) adds `oracleAtlas`
-to the pane files, the G3 negative gate (`rg '"oracleAtlas"'`) will fail loudly. The cross-spec
-claim in §10 declares `oracleAtlas` must never be created. No action required at build time of
-this spec.
+**R-5. Retired Oracle Atlas route inadvertently restored (LOW).**
+If a later change adds `/oracle/atlas` or `oracleAtlas` to product source, the repository policy
+and G3 negative gate fail. `oracleReading` also validates the canonical UUID grammar so a removed
+literal route cannot fall through to the dynamic segment.
 
 **R-6. Concurrent agent modifies pane registration files (LOW).**
 Per repo memory, a concurrent agent shares the checkout. The modified files in §15 include

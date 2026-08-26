@@ -128,7 +128,6 @@
       "source_globs": [
         "migrations/alembic/**/*.py",
         "migrations/alembic/versions/0217_llm_tools_cutover.py",
-        "python/nexus/ops/epub_navigation_offsets_cutover.py",
         "python/nexus/db/models.py",
         "python/nexus/services/chat_run_tools.py",
         "python/nexus/services/chat_run_event_store.py",
@@ -144,12 +143,10 @@
         "pytest:python/tests/migrations/test_codex_personal_metadata.py::test_0216_hard_cuts_metadata_calls_and_owns_exact_agent_turn_lifecycle",
         "pytest:python/tests/migrations/test_llm_tools_cutover_migration.py::test_cutover_rewrites_only_closed_historical_variants_and_refuses_live_or_malformed_state",
         "pytest:python/tests/migrations/test_podcast_subscription_lifecycle_events.py",
-        "pytest:python/tests/migrations/test_reader_publications_migration.py::test_0219_backfills_only_ready_documents_without_database_cascade",
-        "pytest:python/tests/kernel/test_epub_navigation_offsets_cutover.py::test_cutover_state_model_admits_only_resumable_media_and_owned_dead_work"
+        "pytest:python/tests/migrations/test_reader_publications_migration.py::test_0219_backfills_only_ready_documents_without_database_cascade"
       ],
       "capabilities": [
-        "migrations",
-        "kernel-python"
+        "migrations"
       ]
     },
     {
@@ -998,6 +995,7 @@
         "apps/web/src/components/reader/document-map/**/*",
         "apps/web/src/components/ui/FloatingActionSurface.tsx",
         "apps/web/src/lib/reader/usePendingDocumentMapPulse.ts",
+        "apps/web/src/lib/reader/useRetainedReaderSelection.ts",
         "apps/web/src/app/(authenticated)/media/*/MediaPaneBody.tsx",
         "apps/web/src/lib/panes/paneRenderRegistry.tsx"
       ],
@@ -1222,6 +1220,7 @@
         "apps/web/src/components/switchboard/NexusButton.tsx",
         "apps/web/src/components/reader/MobileReaderPositionRibbon.tsx",
         "apps/web/src/app/(authenticated)/media/*/MediaPaneBody.tsx",
+        "apps/web/src/lib/reader/useRetainedReaderSelection.ts",
         "apps/web/src/lib/panes/paneRenderRegistry.tsx"
       ],
       "risks": [

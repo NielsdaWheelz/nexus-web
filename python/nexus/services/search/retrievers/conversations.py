@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal, assert_never
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_conversation_ids_cte_sql
+from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services.search.projection import _truncate_snippet
 from nexus.services.search.results import (
@@ -17,8 +18,11 @@ from nexus.services.search.results import (
     _RankedArtifactResult,
     _RankedConversationResult,
     _RankedMessageResult,
+    _SearchScore,
 )
 from nexus.services.search.scope import ScopeUnsupported, scope_filter_sql
+
+ConversationSearchResultType = Literal["conversation", "message", "artifact"]
 
 
 def _search_messages(
@@ -210,6 +214,115 @@ def _search_conversation_artifacts(
         )
         for row in rows
     ]
+
+
+def resolve_conversation_search_result(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    result_type: ConversationSearchResultType,
+    result_id: UUID,
+    score: _SearchScore,
+) -> _RankedConversationResult | _RankedMessageResult | _RankedArtifactResult:
+    """Rematerialize one visible Conversation-domain search row."""
+    if result_type == "conversation":
+        row = db.execute(
+            text(
+                f"""
+                WITH visible_conversations AS ({visible_conversation_ids_cte_sql()})
+                SELECT c.id, c.title
+                FROM conversations c
+                JOIN visible_conversations vc ON vc.conversation_id = c.id
+                WHERE c.id = :id
+                """
+            ),
+            {"viewer_id": viewer_id, "id": result_id},
+        ).first()
+        if row is None:
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
+        return _RankedConversationResult(
+            id=row[0],
+            title=str(row[1] or "Conversation"),
+            snippet=str(row[1] or "Conversation"),
+            score=score,
+        )
+
+    if result_type == "message":
+        row = db.execute(
+            text(
+                f"""
+                WITH visible_conversations AS ({visible_conversation_ids_cte_sql()})
+                SELECT m.id, m.conversation_id, m.seq, m.content
+                FROM messages m
+                JOIN visible_conversations vc ON vc.conversation_id = m.conversation_id
+                WHERE m.id = :id
+                  AND m.status != 'pending'
+                """
+            ),
+            {"viewer_id": viewer_id, "id": result_id},
+        ).first()
+        if row is None or not str(row[3] or ""):
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
+        return _RankedMessageResult(
+            id=row[0],
+            snippet=_truncate_snippet(str(row[3] or "")),
+            conversation_id=row[1],
+            seq=row[2],
+            score=score,
+            locator=retrieval_locator_json(
+                {
+                    "type": "message_offsets",
+                    "conversation_id": str(row[1]),
+                    "message_id": str(row[0]),
+                    "message_seq": int(row[2]),
+                    "start_offset": 0,
+                    "end_offset": len(str(row[3] or "")),
+                }
+            ),
+        )
+
+    if result_type == "artifact":
+        return _resolve_conversation_artifact_result(
+            db,
+            viewer_id=viewer_id,
+            conversation_id=result_id,
+            score=score,
+        )
+
+    assert_never(result_type)
+
+
+def _resolve_conversation_artifact_result(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    conversation_id: UUID,
+    score: _SearchScore,
+) -> _RankedArtifactResult:
+    row = db.execute(
+        text(
+            """
+            SELECT a.subject_id, r.id, r.content_text
+            FROM artifacts a
+            JOIN artifact_revisions r ON r.id = a.current_revision_id
+            JOIN conversations c ON c.id = a.subject_id
+            WHERE a.subject_scheme = 'conversation'
+              AND a.audience_scheme = 'user'
+              AND a.audience_id = c.owner_user_id::text
+              AND c.owner_user_id = :viewer_id
+              AND a.subject_id = :conversation_id
+            """
+        ),
+        {"viewer_id": viewer_id, "conversation_id": conversation_id},
+    ).first()
+    if row is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
+    return _RankedArtifactResult(
+        id=row[0],
+        revision_id=row[1],
+        snippet=_truncate_snippet(str(row[2] or "")),
+        score=score,
+    )
 
 
 def _artifact_scope_filter(conversation_scope_filter: str) -> str:

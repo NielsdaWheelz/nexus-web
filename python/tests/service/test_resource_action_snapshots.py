@@ -34,6 +34,7 @@ from nexus.db.models import (
     Media,
     MediaFile,
     MediaKind,
+    MediaSourceAttempt,
     Membership,
     Message,
     NoteBlock,
@@ -621,6 +622,18 @@ def test_document_media_subtypes_publish_their_exact_action_families(
             )
         )
         db.flush()
+        if kind == MediaKind.web_article:
+            db.add(
+                MediaSourceAttempt(
+                    media_id=media_id,
+                    created_by_user_id=viewer_id,
+                    source_type="browser_article_capture",
+                    attempt_no=1,
+                    status="succeeded",
+                    intent_key=f"capture:{media_id}",
+                    source_payload={"storage_path": f"captures/{media_id}.html"},
+                )
+            )
         ensure_media_in_default_library(db, viewer_id, media_id)
         db.commit()
 
@@ -636,6 +649,9 @@ def test_document_media_subtypes_publish_their_exact_action_families(
         "LibraryPlacement",
         "RemoveMedia",
     } <= kinds
+    assert ("RefreshSource" in kinds) is (kind == MediaKind.web_article)
+    if kind == MediaKind.web_article:
+        assert _availability(snapshot, "RefreshSource") == ("Available", None)
     assert ("OfflineReading" in kinds) is (
         kind in (MediaKind.web_article, MediaKind.epub, MediaKind.pdf)
     )

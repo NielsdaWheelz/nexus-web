@@ -32,10 +32,8 @@ from nexus.auth.permissions import (
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services import library_entries
-from nexus.services.artifacts.subject_policy import (
-    DossierSubjectScheme,
-    visible_persisted_subject,
-)
+from nexus.services.artifacts.registry import visible_persisted_subject
+from nexus.services.artifacts.subject_policy import DossierSubjectScheme
 from nexus.services.contributor_credits import (
     media_author_credits_join_sql,
     media_author_names_agg_sql,

@@ -48,8 +48,10 @@ import {
   paneResourceLoaders,
   type LibraryPaneSeed,
 } from "@/lib/panes/paneResourceLoaders";
-import type { PodcastSubscriptionSettingsResponse } from "@/lib/podcasts/subscriptionSettings";
-import { usePodcastSubscriptionSettingsModal } from "@/app/(authenticated)/podcasts/usePodcastSubscriptionSettingsModal";
+import {
+  subscribePodcastSubscriptionSettingsInstalls,
+  type PodcastSubscriptionSettingsResponse,
+} from "@/lib/podcasts/subscriptionSettings";
 import Button from "@/components/ui/Button";
 import SelectField from "@/components/ui/SelectField";
 import Toggle from "@/components/ui/Toggle";
@@ -548,10 +550,15 @@ export default function LibraryPaneBody() {
     },
     [installEntryCollectionRevision, setEntries],
   );
-  // The settings overlay is owned app-level (ResourceActionOverlays); this hook
-  // is kept only for its install subscription, which keeps the pane's list rows
-  // current after an app-level settings save.
-  usePodcastSubscriptionSettingsModal({ onSaved: handlePodcastSettingsSaved });
+  useEffect(
+    () =>
+      subscribePodcastSubscriptionSettingsInstalls((install) => {
+        if (install.kind === "Settings") {
+          handlePodcastSettingsSaved(install.settings);
+        }
+      }),
+    [handlePodcastSettingsSaved],
+  );
   const typeSelectRef = useRef<HTMLSelectElement | null>(null);
   const viewSelectRef = useRef<HTMLSelectElement | null>(null);
   const sortSelectRef = useRef<HTMLSelectElement | null>(null);

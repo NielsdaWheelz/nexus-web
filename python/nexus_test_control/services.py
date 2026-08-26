@@ -325,6 +325,7 @@ def run_environment(
     )
     expected_bucket = run_bucket_name(run.run_id)
     expected_supabase_url = runtime_endpoint(root, environment, EndpointKind.SUPABASE)
+    expected_external_url = runtime_endpoint(root, environment, EndpointKind.EXTERNAL)
     _require_created_run_resource(
         ledger.entries,
         Resource(ResourceKind.RUN_DATABASE, run_database_name(run.run_id)),
@@ -344,7 +345,7 @@ def run_environment(
         )
     values = {
         "APP_PUBLIC_URL": runtime_endpoint(root, environment, EndpointKind.WEB),
-        "CSP_MEDIA_ORIGINS": runtime_endpoint(root, environment, EndpointKind.EXTERNAL),
+        "CSP_MEDIA_ORIGINS": expected_external_url,
         "DATABASE_URL": expected_database_url,
         "FASTAPI_BASE_URL": runtime_endpoint(root, environment, EndpointKind.API),
         "NEXT_PUBLIC_SUPABASE_ANON_KEY": run.supabase.anon_key,
@@ -353,8 +354,14 @@ def run_environment(
         "NEXUS_ENV": "test",
         "NEXUS_INTERNAL_SECRET": "nexus-test-internal-secret",
         "NEXUS_RUNTIME_IDENTITY_FILE": str(_runtime_identity_path(root)),
+        "NEXUS_TEST_STATIC_DNS": '{"www.nasa.gov":"93.184.216.34"}',
         "NEXUS_TEST_RUN_ID": run.run_id,
+        "OUTBOUND_HTTP_PROXY_URL": expected_external_url,
         "PARSER_TEMP_ROOT": str(root / "test-results" / "runs" / run.run_id / "parser-tmp"),
+        "PODCASTS_ENABLED": "true",
+        "PODCAST_INDEX_API_KEY": "nexus-test-fixture-podcast-key",
+        "PODCAST_INDEX_API_SECRET": "nexus-test-fixture-podcast-secret",
+        "PODCAST_INDEX_BASE_URL": expected_external_url,
         "OPENAI_API_KEY": "nexus-test-fixture-openai-key",
         "R2_ACCESS_KEY_ID": MINIO_ACCESS_KEY,
         "R2_BUCKET": expected_bucket,
@@ -1079,13 +1086,7 @@ def start_python_process(
     process_environment = {
         **run_environment(root, environment, run),
         "NEXUS_TEST_DENY_EXTERNAL_NETWORK": "1",
-        "NEXUS_TEST_STATIC_DNS": '{"www.nasa.gov":"93.184.216.34"}',
         "NODE_OPTIONS": f"--import={root / 'python/tests/testkit/node-network-guard.mjs'}",
-        "OPENAI_API_KEY": "nexus-test-fixture-openai-key",
-        "OUTBOUND_HTTP_PROXY_URL": f"http://127.0.0.1:{runtime.ports.external}",
-        "PODCAST_INDEX_API_KEY": "nexus-test-fixture-podcast-key",
-        "PODCAST_INDEX_API_SECRET": "nexus-test-fixture-podcast-secret",
-        "PODCAST_INDEX_BASE_URL": f"http://127.0.0.1:{runtime.ports.external}",
         "PYTHONPATH": f"{root / 'python' / 'tests' / 'testkit'}:{root / 'python'}:{root}",
         **({"WORKER_LANE": role.removeprefix("worker-")} if role.startswith("worker-") else {}),
         **(user_systemd_environment() if role == "worker-background" else {}),

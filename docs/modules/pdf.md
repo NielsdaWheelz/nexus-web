@@ -10,6 +10,9 @@ PDF source acceptance is owned by `media_source_ingest.py`.
 - `pdf_ingest.py` owns PDF text extraction artifacts, page spans, and plain
   text. Source success atomically requests the revision-fenced
   `media_content_reindex_job`.
+- `media_deletion.py` is the sole production owner for deleting PDF Media. It
+  explicitly removes derived page spans before the parent row; neither the
+  database foreign key nor an ORM relationship cascades that cleanup.
 - `pdf_readiness.py`, `pdf_highlights.py`, and related reader services own PDF
   quote/highlight readiness and locator behavior.
 
@@ -53,9 +56,9 @@ PDF reader apparatus is intentionally conservative.
 - Redistributable scholarly PDFs may be committed as unsupported-adapter
   fixtures to prove this negative behavior. That fixture status is not a claim
   that notes, references, or author-year citations have been extracted.
-- Future scholarly, legal-footnote, or literary-annotation PDF support must be
-  explicit adapter work with its own diagnostics, confidence contract, and
-  fixtures.
+- No dormant scholarly adapter implementation is retained. Future scholarly or
+  literary-annotation PDF support must be explicit adapter work with its own
+  diagnostics, confidence contract, wiring, and fixtures.
 
 ## Bounded Parse
 

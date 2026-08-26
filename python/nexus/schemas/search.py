@@ -11,41 +11,14 @@ Search returns mixed typed results from different content types:
 - messages (content)
 """
 
-from typing import Annotated, Any, Literal, get_args
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 from nexus.schemas.contributors import ContributorCreditOut
 from nexus.schemas.retrieval import RetrievalLocator, validate_locator_for_result_type
-
-# Valid search result types — the canonical result-discriminant authority for the
-# whole codebase (HTTP response union, chat telemetry, retriever dispatch). The
-# runtime tuple/set below are derived from the Literal so the two can never drift.
-SEARCH_RESULT_TYPES = Literal[
-    "media",
-    "podcast",
-    "episode",
-    "video",
-    "content_chunk",
-    "fragment",
-    "contributor",
-    "page",
-    "note_block",
-    "highlight",
-    "message",
-    "evidence_span",
-    "conversation",
-    "artifact",
-    "web_result",
-    "reader_apparatus_item",
-]
-
-# Runtime view of SEARCH_RESULT_TYPES (declaration order preserved) for iteration,
-# default-all expansion, and membership checks. Single authority; do not redefine.
-ALL_RESULT_TYPES: tuple[str, ...] = get_args(SEARCH_RESULT_TYPES)
-VALID_RESULT_TYPES: frozenset[str] = frozenset(ALL_RESULT_TYPES)
-
+from nexus.schemas.search_types import SEARCH_RESULT_TYPES
 
 # =============================================================================
 # Response Schemas

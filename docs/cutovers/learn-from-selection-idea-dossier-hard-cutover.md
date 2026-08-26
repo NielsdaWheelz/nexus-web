@@ -242,8 +242,9 @@ artifact_idea_seeds
 - `services/highlights.delete_highlight_rows` explicitly removes resolution/seed
   and affected Learn-replay rows before deleting a Highlight.
 - Idea Artifact teardown deletes affected Learn replay → seeds → existing
-  Artifact children/head → resolutions → Idea subject. User teardown applies
-  the same owner order across all owned rows.
+  Artifact children/head → resolutions → Idea subject.
+- Account deletion requires a future cross-subsystem account-lifecycle owner;
+  this feature exposes no partial User teardown.
 - No automatic Artifact→Highlight Link is created; no UI falsely claims a
   Connections recovery path.
 
@@ -284,7 +285,7 @@ artifact_learn_failures
   `build_id`. Validate this exact union on every read/write.
 - Replay returns the recorded terminal response, including the original build
   handle after build completion.
-- Highlight/Artifact/User teardown deletes affected replay rows first. The exact
+- Highlight or Artifact teardown deletes affected replay rows first. The exact
   replay promise ends when its target is explicitly deleted. A resolver owner
   or waiter that observes this teardown returns the normal masked not-found
   outcome; it never asserts or recreates the request.
@@ -434,28 +435,39 @@ Rules:
 
 ### 7.1 Coordination machinery
 
-The current engine exposes only one `synthesis` step. Extract its state
-machine/codec from the job adapter, then generalize the job-payload coordination
-map:
+The as-built job payload carries one strict coordination map. The runtime owns
+the claimed job capabilities, the owner-neutral journal owns storage and
+fencing, and the Artifact billed-generation owner applies that journal to the
+two provider steps:
 
 ```text
 DossierBuildRuntime {
   job
   execution_context
   llm_runtime
-  read_step(path, replay_policy)
-  checkpoint_step(path, result)
+  read_step(path)
+  checkpoint_step(db, path, state)
+  refresh_job(db)
   yield_until(deadline)
 }
 
-ReplayPolicy = BilledOnce | ReDispatchable
-
-DossierStepResult =
-  NexusSearchResult | ResourceReadReceipt | WebSearchResult | PageAcceptResult |
-  PageReadyResult | PageReadReceipt | SynthesisResult | DocumentRepairResult
+ArtifactGenerationStep {
+  exact request + sha256 fingerprint
+  replay(runtime)
+  ensure_prepared(db, runtime)
+  claim_dispatch(db, runtime)
+  complete(db, runtime, Accepted | Invalid)
+}
 ```
 
-Re-sign binding collection:
+`services/artifacts/generation_step.py` owns the byte-stable fingerprint recipe,
+the strict `Accepted | Invalid` terminal envelope, and the shared
+Prepared/Uncertain/Completed transitions. `engine.py` retains separate wrappers:
+primary synthesis streams with the live input/cancellation watcher, while the
+single document repair is unary and emits validation progress. There is no
+transport-mode flag or callback-configured generic runner.
+
+Binding collection receives the exact build runtime:
 
 ```text
 collect(db, resolved, audience, runtime: DossierBuildRuntime)
@@ -465,14 +477,17 @@ Policies:
 
 - `BilledOnce`: Idea resolution in the Learn store, plus synthesis and document
   repair in the build store. Commit `Uncertain` before dispatch; never
-  auto-repeat an uncertain billed call.
+  auto-repeat an uncertain billed call. Operator reconciliation accepts both
+  billed build paths and either resets a proven-undispatched call to `Prepared`
+  or stores a recovered schema-valid result as `Completed` before requeueing.
 - `ReDispatchable`: Nexus search, web search, URL acceptance, ready-state poll,
   local Resource read, and page read. Completed results are reused; an
   interrupted non-mutating call may redispatch.
-- Keep the shared coordination state's string terminal envelope. Each Dossier
-  step kind owns one strict JSON encoder/decoder for its `DossierStepResult`;
-  unknown kinds/fields and malformed completed results fail closed. This does
-  not alter Media Intelligence replay payloads.
+- Keep the shared coordination state's string terminal envelope. The Artifact
+  generation owner has one strict JSON encoder/decoder for the identical
+  synthesis/repair result contract; research step kinds retain their own strict
+  result owners. Unknown kinds/fields and malformed completed results fail
+  closed. This does not alter Media Intelligence replay payloads.
 - The build adapter checkpoints this state in the background-job payload. The
   Learn resolver adapter checkpoints the same owner-neutral state machine in
   `artifact_learn_requests.coordination`.
@@ -489,6 +504,17 @@ research/page-read/0..5
 synthesis
 document-repair
 ```
+
+Hard-cut residue requirements:
+
+- `engine.py` contains no second billed-generation fingerprint block, result
+  adapter, direct `StepReplayState` construction, or Completed checkpoint;
+- `synthesis` and `document-repair` remain the exact stored paths, with no dual
+  decoder, alias, migration, or compatibility branch;
+- only `generation_step.py` owns the Artifact generation Accepted/Invalid
+  envelope and the Prepared/Uncertain/Completed transitions;
+- Idea resolution and research keep their distinct replay owners, and the
+  synthesis stream watcher is never collapsed into the unary repair transport.
 
 Store bounded search metadata, canonical URL, read receipts, ResourceRefs, and
 fingerprints in the job payload, never snippets or page bodies. On replay,
@@ -880,7 +906,10 @@ GET  /stream/artifact-builds/{build_handle}/events
 - `POST /artifacts/{ref}/builds` is the sole regeneration route.
 - Existing subject-scoped POST is bootstrap-only and conflicts once a head exists.
 - Subject-scoped GET remains Resource Companion lookup.
-- BFF routes are transport-only.
+- BFF routes are transport-only. The browser adapter accepts only exact
+  `{data: ...}` value envelopes and exact HTTP 204 commands, and delegates the
+  `artifact-builds` stream to the shared generation-run opener. No direct-body
+  compatibility decode or Dossier-owned token/SSE path remains.
 
 ### 9.3 Public head identity
 
@@ -1000,14 +1029,14 @@ Expected owners; do not create parallel abstractions.
 - `python/nexus/api/routes/dossiers.py`
 - `python/nexus/services/highlights.py`
 - `python/nexus/services/llm_{profiles,ledger}.py`
-- `python/nexus/services/artifacts/{definition,dossier_types,coordination,engine,manifests,revisions,subject_policy}.py`
+- `python/nexus/services/artifacts/{definition,dossier_types,coordination,generation_step,engine,manifests,revisions,subject_policy}.py`
 - `python/nexus/services/artifacts/bindings/{base,__init__,_shared,_notes_shared,conversation,contributor,library,media,note_block,page,podcast,idea}.py`
 - new `python/nexus/services/artifacts/{learn,idea_identity,idea_seeds,research,document_html}.py`
 - new `python/nexus/services/agent_tools/web_page_read.py`; existing
   `agent_tools/web_search.py` only if the provider-neutral search result contract
   must be extracted without changing chat behavior
 - `python/nexus/services/{media_source_ingest,web_article_ingest}.py`
-- `python/nexus/services/resource_items/{routing,capabilities,chat_subjects}.py`
+- `python/nexus/services/resource_items/{routing,capabilities}.py`
 - `python/nexus/services/resource_graph/{resolve,cleanup}.py`
 - `python/nexus/services/search/retrievers/{conversations,resource_metadata}.py`
 - `python/nexus/tasks/artifacts.py`

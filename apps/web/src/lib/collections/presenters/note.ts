@@ -2,7 +2,7 @@
 
 import { absent } from "@/lib/api/presence";
 import type { CollectionRowView } from "@/lib/collections/types";
-import type { NotePageSummary } from "@/lib/notes/normalize";
+import type { NotePageSummary } from "@/lib/notes/pageContract";
 
 export function presentNote(item: NotePageSummary): CollectionRowView {
   return {

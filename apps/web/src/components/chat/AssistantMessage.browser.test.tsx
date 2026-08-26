@@ -61,6 +61,7 @@ function completedAnswer(
     created_at: "2026-08-03T00:00:00Z",
     updated_at: "2026-08-03T00:00:00Z",
     ...overrides,
+    reader_selection: overrides.reader_selection ?? { kind: "Absent" },
   };
 }
 

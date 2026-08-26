@@ -20,8 +20,12 @@ import {
   fetchDawnWrite,
   fetchNotePage,
   type DawnWrite,
-  type NotePage,
 } from "@/lib/notes/api";
+import { present, type Presence } from "@/lib/api/presence";
+import type {
+  DailyPageSummary,
+  NotePage,
+} from "@/lib/notes/pageContract";
 import { shiftLocalDate } from "@/lib/localDate";
 import {
   requirePaneRuntime,
@@ -62,6 +66,13 @@ export type PagePaneSource =
       accountId: string;
       localDate: string;
     };
+
+interface PageView {
+  readonly id: string;
+  readonly title: string;
+  readonly actionSubject: NotePage["actionSubject"];
+  readonly dailyPage: Presence<DailyPageSummary>;
+}
 
 function pageLoadErrorMessage(error: unknown): FeedbackContent {
   if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
@@ -199,7 +210,7 @@ export default function PagePaneBody({
     getRowStatus: getFilterStatus,
     activeDomainControlCount: 0,
   });
-  const [page, setPage] = useState<NotePage | null>(
+  const [page, setPage] = useState<PageView | null>(
     source.kind === "PageRef" && initialPage?.id === source.pageId
       ? initialPage
       : null,
@@ -242,7 +253,11 @@ export default function PagePaneBody({
     else if (pending) setFocusBodySerial((current) => current + 1);
   }, [page, ready]);
 
-  const dailyLocalDate = dailySourceDate ?? page?.dailyPage?.localDate ?? null;
+  const pageDailyLocalDate =
+    page?.dailyPage.kind === "Present"
+      ? page.dailyPage.value.localDate
+      : null;
+  const dailyLocalDate = dailySourceDate ?? pageDailyLocalDate;
   const pageId = page?.id ?? (source.kind === "PageRef" ? source.pageId : null);
   type TitleIntent = Extract<PageActionIntent, { kind: "EditPageTitle" }>;
   const titleIntentControllerRef =
@@ -381,7 +396,7 @@ export default function PagePaneBody({
                     id: surface.source.item.id,
                   }),
                 },
-                dailyPage: { localDate: dailySourceDate },
+                dailyPage: present({ localDate: dailySourceDate }),
               }
             : current,
       );
@@ -500,7 +515,7 @@ function PageChrome({
   viewActions,
   activateTarget,
 }: {
-  page: NotePage | null;
+  page: PageView | null;
   search: PaneSearchPublication;
   viewActions: ActionDescriptor[];
   activateTarget: (input: {
@@ -531,7 +546,7 @@ function MaterializedPageChrome({
   viewActions,
   activateTarget,
 }: {
-  page: NotePage;
+  page: PageView;
   search: PaneSearchPublication;
   viewActions: ActionDescriptor[];
   activateTarget: (input: {

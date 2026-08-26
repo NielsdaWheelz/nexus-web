@@ -22,7 +22,8 @@ from nexus.services.content_indexing import (
     publish_content_index,
 )
 from nexus.services.transcript_segments import TranscriptSegmentInput
-from nexus.services.transcripts.current import set_media_transcript_state
+from nexus.services.transcripts.request_reason import TranscriptRequestReason
+from nexus.services.transcripts.state import set_media_transcript_state
 
 _LEASE_SECONDS = 300
 
@@ -30,7 +31,7 @@ _LEASE_SECONDS = 300
 @dataclass(frozen=True)
 class _TranscriptSnapshot:
     media_id: UUID
-    request_reason: str
+    request_reason: TranscriptRequestReason
     transcript_state: str
     transcript_coverage: str
     segments: tuple[TranscriptSegmentInput, ...]
@@ -39,20 +40,16 @@ class _TranscriptSnapshot:
 
 def podcast_reindex_semantic_job(
     media_id: str,
-    requested_by_user_id: str | None = None,
-    request_reason: str = "operator_requeue",
-    request_id: str | None = None,
+    request_reason: TranscriptRequestReason,
     *,
     context: JobExecutionContext,
-    session_factory: sessionmaker[Session] | None = None,
 ) -> dict[str, object]:
     """Prepare a DB snapshot, embed outside a transaction, then publish exactly."""
-    del requested_by_user_id, request_id
     media_uuid = UUID(media_id)
-    factory = session_factory or get_session_factory()
+    session_factory = get_session_factory()
 
     snapshot = _prepare_snapshot(
-        factory,
+        session_factory,
         media_id=media_uuid,
         request_reason=request_reason,
         context=context,
@@ -69,7 +66,7 @@ def podcast_reindex_semantic_job(
         ),
     )
     published = _publish_snapshot(
-        factory,
+        session_factory,
         snapshot=snapshot,
         plan=plan,
         context=context,
@@ -83,7 +80,7 @@ def _prepare_snapshot(
     session_factory: sessionmaker[Session],
     *,
     media_id: UUID,
-    request_reason: str,
+    request_reason: TranscriptRequestReason,
     context: JobExecutionContext,
 ) -> _TranscriptSnapshot | None:
     db = session_factory()
@@ -118,33 +115,19 @@ def _prepare_snapshot(
             ):
                 db.commit()
                 return None
-            normalized_reason = (
-                request_reason
-                if request_reason
-                in {
-                    "episode_open",
-                    "search",
-                    "highlight",
-                    "quote",
-                    "background_warming",
-                    "operator_requeue",
-                    "rss_feed",
-                }
-                else "operator_requeue"
-            )
             set_media_transcript_state(
                 db,
                 media_id=media_id,
                 transcript_state=str(state[0]),
                 transcript_coverage=str(state[1]),
                 semantic_status="pending",
-                last_request_reason=normalized_reason,
+                last_request_reason=request_reason,
                 last_error_code=None,
                 now=datetime.now(UTC),
             )
             snapshot = _TranscriptSnapshot(
                 media_id=media_id,
-                request_reason=normalized_reason,
+                request_reason=request_reason,
                 transcript_state=str(state[0]),
                 transcript_coverage=str(state[1]),
                 segments=tuple(segments),

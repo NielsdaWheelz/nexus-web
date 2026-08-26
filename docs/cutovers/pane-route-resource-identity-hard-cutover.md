@@ -633,16 +633,10 @@ Hard-cutover target:
 
 ### Frontend API Client
 
-Add or extend an API client under one owner:
+The as-built API client has one owner:
 
 ```text
-apps/web/src/lib/resources/resourceItems.ts
-```
-
-or, if existing local patterns require it:
-
-```text
-apps/web/src/lib/api/resource.ts
+apps/web/src/lib/resources/resourceLocators.ts
 ```
 
 The public client should expose:
@@ -654,8 +648,11 @@ resolveResourceLocators(
 ```
 
 The client returns normalized `ResourceItem` objects using the same normalizer as
-`apps/web/src/lib/notes/api.ts` uses for resource-item endpoints. Do not create a
-second `ResourceItemOut` normalizer.
+the other resource-item endpoints. It strictly decodes the echoed locator,
+requires exact response cardinality and request order, and requires
+`canonicalHref === resourceItem.route`. `resolveResourceLocator` is the sole
+single-locator wrapper; callers must not destructure the first row of a batch.
+Do not create a second `ResourceItemOut` normalizer.
 
 ### Pane Runtime
 
@@ -696,10 +693,16 @@ pane href
   -> resolvePaneRouteModel
   -> routeKey
   -> paneResourceLocator(route, render environment)
-  -> resolveResourceLocators
-  -> ResourceItem
+  -> usePaneResourceResolutionRegistry
+  -> Pending | Resolved(ResourceItem) | Failed(ApiError)
   -> PaneRuntimeProvider
 ```
+
+`usePaneResourceResolutionRegistry` owns batching, deduplication, live-key
+pruning, stale-completion fencing, explicit retry, and unmount cleanup.
+`WorkspaceHost` does not maintain parallel item/status maps. `ready` and
+`missing` always carry their decoded item as one tagged state; a same-system
+decoder defect is raised through render instead of becoming `error`.
 
 The host must:
 
@@ -1489,8 +1492,11 @@ Do not support both old and new key semantics in production code.
 - `contributor` global identity must have an explicit visibility decision.
 - Daily note creation must be idempotent and transaction-safe.
 - Timezone input must be validated.
-- Batch locator resolution must preserve request order and isolate individual
-  failures.
+- A successful batch locator resolution must preserve request cardinality and
+  order. The current server aborts the whole request when a contributor-handle
+  locator fails; the frontend must not invent partial rows or per-locator
+  fallback results. Isolated individual failures require a future explicit
+  versioned response contract.
 - The frontend must not render resource actions while resource status is pending
   or failed.
 - The frontend must not silently retry with a weaker locator type.

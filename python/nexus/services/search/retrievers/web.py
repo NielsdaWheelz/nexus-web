@@ -6,17 +6,64 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
+from sqlalchemy.engine import Row
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_conversation_ids_cte_sql
+from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.services.search.projection import _required_locator, _truncate_snippet
 from nexus.services.search.results import (
     InternalSearchResult,
     _build_search_score,
     _RankedWebResult,
+    _SearchScore,
     _web_result_ref_json,
 )
 from nexus.services.search.scope import ScopeUnsupported, scope_filter_sql
+
+_WEB_ROW_COLUMNS = """
+    mr.id,
+    mr.source_id,
+    COALESCE(mr.result_ref->>'result_ref', mr.source_id) AS result_ref,
+    COALESCE(
+        NULLIF(mr.result_ref->>'title', ''),
+        mr.source_title,
+        mr.source_id
+    ) AS title,
+    COALESCE(NULLIF(mr.result_ref->>'url', ''), mr.deep_link) AS url,
+    NULLIF(mr.result_ref->>'display_url', '') AS display_url,
+    mr.result_ref->'extra_snippets' AS extra_snippets,
+    NULLIF(mr.result_ref->>'published_at', '') AS published_at,
+    NULLIF(mr.result_ref->>'source_name', '') AS source_name,
+    CASE
+        WHEN mr.result_ref->>'rank' ~ '^[0-9]+$'
+        THEN CAST(mr.result_ref->>'rank' AS integer)
+        ELSE NULL
+    END AS rank,
+    NULLIF(mr.result_ref->>'provider', '') AS provider,
+    NULLIF(mr.result_ref->>'provider_request_id', '') AS provider_request_id,
+    COALESCE(NULLIF(mr.exact_snippet, ''), mr.result_ref->>'snippet', '') AS exact_snippet,
+    mr.locator,
+    mr.selected,
+    mr.result_ref AS raw_result_ref
+"""
+
+_WEB_VISIBLE_ROWS_SQL = """
+    FROM message_retrievals mr
+    JOIN message_tool_calls mtc ON mtc.id = mr.tool_call_id
+    JOIN visible_conversations vc ON vc.conversation_id = mtc.conversation_id
+    JOIN resource_external_snapshots res
+      ON res.id = CASE
+          WHEN mr.source_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          THEN CAST(mr.source_id AS uuid)
+          ELSE NULL
+      END
+     AND res.user_id = :viewer_id
+    WHERE mr.result_type = 'web_result'
+      AND mr.result_ref->>'type' = 'web_result'
+      AND mr.locator IS NOT NULL
+      AND mr.locator != 'null'::jsonb
+"""
 
 
 def _search_web_results(
@@ -47,30 +94,7 @@ def _search_web_results(
                 visible_conversations AS ({visible_conversation_ids_cte_sql()}),
                 web_rows AS (
                     SELECT
-                        mr.id,
-                        mr.source_id,
-                        COALESCE(mr.result_ref->>'result_ref', mr.source_id) AS result_ref,
-                        COALESCE(
-                            NULLIF(mr.result_ref->>'title', ''),
-                            mr.source_title,
-                            mr.source_id
-                        ) AS title,
-                        COALESCE(NULLIF(mr.result_ref->>'url', ''), mr.deep_link) AS url,
-                        NULLIF(mr.result_ref->>'display_url', '') AS display_url,
-                        mr.result_ref->'extra_snippets' AS extra_snippets,
-                        NULLIF(mr.result_ref->>'published_at', '') AS published_at,
-                        NULLIF(mr.result_ref->>'source_name', '') AS source_name,
-                        CASE
-                            WHEN mr.result_ref->>'rank' ~ '^[0-9]+$'
-                            THEN CAST(mr.result_ref->>'rank' AS integer)
-                            ELSE NULL
-                        END AS rank,
-                        NULLIF(mr.result_ref->>'provider', '') AS provider,
-                        NULLIF(mr.result_ref->>'provider_request_id', '') AS provider_request_id,
-                        COALESCE(NULLIF(mr.exact_snippet, ''), mr.result_ref->>'snippet', '') AS exact_snippet,
-                        mr.locator,
-                        mr.selected,
-                        mr.result_ref AS raw_result_ref,
+                        {_WEB_ROW_COLUMNS},
                         concat_ws(
                             ' ',
                             mr.source_id,
@@ -83,21 +107,8 @@ def _search_web_results(
                             mr.result_ref->>'source_name',
                             mr.result_ref->>'snippet'
                         ) AS search_text
-                    FROM message_retrievals mr
-                    JOIN message_tool_calls mtc ON mtc.id = mr.tool_call_id
-                    JOIN visible_conversations vc ON vc.conversation_id = mtc.conversation_id
-                    JOIN resource_external_snapshots res
-                      ON res.id = CASE
-                          WHEN mr.source_id ~ '^[0-9a-f]{{8}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{12}}$'
-                          THEN CAST(mr.source_id AS uuid)
-                          ELSE NULL
-                      END
-                     AND res.user_id = :viewer_id
-                    WHERE mr.result_type = 'web_result'
-                      AND mr.result_ref->>'type' = 'web_result'
-                      AND mr.locator IS NOT NULL
-                      AND mr.locator != 'null'::jsonb
-                      {scope_filter}
+                    {_WEB_VISIBLE_ROWS_SQL}
+                    {scope_filter}
                 )
             SELECT
                 id,
@@ -139,25 +150,74 @@ def _search_web_results(
 
     results: list[InternalSearchResult] = []
     for row in rows:
-        result_ref = _web_result_ref_json(row[15])
-        results.append(
-            _RankedWebResult(
-                id=str(row[0]),
-                source_id=str(result_ref["source_id"]),
-                result_ref=str(result_ref["result_ref"]),
-                title=str(result_ref["title"]),
-                url=str(result_ref["url"]),
-                display_url=result_ref.get("display_url"),
-                extra_snippets=list(result_ref.get("extra_snippets", [])),
-                published_at=result_ref.get("published_at"),
-                source_name=result_ref.get("source_name"),
-                rank=result_ref.get("rank"),
-                provider=result_ref.get("provider"),
-                provider_request_id=result_ref.get("provider_request_id"),
-                snippet=_truncate_snippet(str(row[17] or row[12] or "")),
-                locator=_required_locator("web_result", result_ref["locator"]),
-                selected=bool(row[14]),
-                score=_build_search_score(row[16]),
-            )
+        result = _web_result_from_row(
+            row,
+            snippet=_truncate_snippet(str(row[17] or row[12] or "")),
+            score=_build_search_score(row[16]),
         )
+        if result is not None:
+            results.append(result)
     return results
+
+
+def resolve_web_search_result(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    result_id: UUID,
+    score: _SearchScore,
+) -> _RankedWebResult:
+    """Rematerialize one visible persisted-Web ledger result."""
+    row = db.execute(
+        text(
+            f"""
+            WITH visible_conversations AS ({visible_conversation_ids_cte_sql()})
+            SELECT {_WEB_ROW_COLUMNS}
+            {_WEB_VISIBLE_ROWS_SQL}
+              AND mr.id = :id
+            """
+        ),
+        {"viewer_id": viewer_id, "id": result_id},
+    ).first()
+    if row is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
+    result = _web_result_from_row(
+        row,
+        snippet=_truncate_snippet(str(row[12] or "")),
+        score=score,
+    )
+    if result is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
+    return result
+
+
+def _web_result_from_row(
+    row: Row[Any],
+    *,
+    snippet: str,
+    score: _SearchScore,
+) -> _RankedWebResult | None:
+    if not row[4]:
+        return None
+    try:
+        result_ref = _web_result_ref_json(row[15])
+    except ValueError:
+        return None
+    return _RankedWebResult(
+        id=str(row[0]),
+        source_id=str(result_ref["source_id"]),
+        result_ref=str(result_ref["result_ref"]),
+        title=str(result_ref["title"]),
+        url=str(result_ref["url"]),
+        display_url=result_ref.get("display_url"),
+        extra_snippets=list(result_ref.get("extra_snippets", [])),
+        published_at=result_ref.get("published_at"),
+        source_name=result_ref.get("source_name"),
+        rank=result_ref.get("rank"),
+        provider=result_ref.get("provider"),
+        provider_request_id=result_ref.get("provider_request_id"),
+        snippet=snippet,
+        locator=_required_locator("web_result", result_ref["locator"]),
+        selected=bool(row[14]),
+        score=score,
+    )
