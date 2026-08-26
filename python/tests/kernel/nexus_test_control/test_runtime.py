@@ -289,6 +289,10 @@ def test_cleanup_uses_only_persisted_exact_resources_and_never_discovers_sentine
         (ResourceKind.RUN_DATABASE, run_database_name(OTHER_RUN_ID)),
         (ResourceKind.BUCKET, "nexus-production"),
         (ResourceKind.SUPABASE_USER, "owner@example.com"),
+        (
+            ResourceKind.EMBEDDING_PEER,
+            f".nexus-test/runs/{OTHER_RUN_ID}/embedding-peer",
+        ),
         (ResourceKind.PROCESS, f"nexus-process-{RUN_ID}-worker"),
         (ResourceKind.TEMPLATE, template_database_name("a" * 40)),
     ],

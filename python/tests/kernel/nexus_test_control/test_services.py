@@ -22,6 +22,7 @@ from nexus_test_control.runtime import (
     RuntimeContractError,
     RuntimePorts,
     claim_run,
+    embedding_peer_state_dir,
     extension_profile_identity,
     initialize_runtime,
     migration_database_name,
@@ -44,7 +45,9 @@ from nexus_test_control.services import (
     _write_supabase_config,
     clean_owned_runtime,
     clean_run,
+    finish_embedding_peer_state,
     new_run_id,
+    prepare_embedding_peer_state,
     run_environment,
     start_python_process,
     start_web_process,
@@ -124,6 +127,19 @@ def _empty_owned_run(tmp_path: Path) -> OwnedRun:
             "http://127.0.0.1:25421", "public-anon-key", "must-not-escape"
         ),
     )
+
+
+def _created_embedding_peer_paths(tmp_path: Path, run: OwnedRun) -> dict[str, Path]:
+    state = prepare_embedding_peer_state(tmp_path, TEST_ENV, run)
+    paths = {
+        "ca.pem": state / "ca.pem",
+        "server-key.pem": state / "server-key.pem",
+        "requests.jsonl": state / "requests.jsonl",
+    }
+    for path in paths.values():
+        path.write_text("owned fixture\n", encoding="utf-8")
+    finish_embedding_peer_state(tmp_path, TEST_ENV, run.run_id)
+    return paths
 
 
 def test_run_ids_are_exact_opaque_test_ownership_ids() -> None:
@@ -1139,6 +1155,73 @@ def test_python_child_rejects_unpersisted_or_public_run_resources_before_spawn(
         entry.resource.kind is ResourceKind.PROCESS
         for entry in read_ledger(tmp_path, RUN_ID).entries
     )
+
+
+@pytest.mark.parametrize(
+    "substituted_name",
+    (
+        "NEXUS_TEST_OPENAI_CERTIFICATE",
+        "NEXUS_TEST_OPENAI_KEY",
+        "NEXUS_TEST_OPENAI_AUDIT",
+    ),
+)
+def test_embedding_peer_rejects_each_substituted_path_before_recording_a_process(
+    tmp_path: Path,
+    substituted_name: str,
+) -> None:
+    run = _empty_owned_run(tmp_path)
+    _created_embedding_peer_paths(tmp_path, run)
+    foreign = tmp_path / f"foreign-{substituted_name.casefold()}"
+    foreign.write_text("foreign fixture\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeContractError, match="environment is controller-owned"):
+        start_python_process(
+            tmp_path,
+            TEST_ENV,
+            run,
+            "provider-openai",
+            overrides={substituted_name: str(foreign)},
+        )
+
+    assert not any(
+        entry.resource.kind is ResourceKind.PROCESS
+        for entry in read_ledger(tmp_path, RUN_ID).entries
+    )
+
+
+@pytest.mark.parametrize("defect", ("missing", "directory", "symlink"))
+def test_embedding_peer_rejects_each_invalid_owned_file_before_recording_a_process(
+    tmp_path: Path,
+    defect: str,
+) -> None:
+    run = _empty_owned_run(tmp_path)
+    certificate = _created_embedding_peer_paths(tmp_path, run)["ca.pem"]
+    certificate.unlink()
+    if defect == "directory":
+        certificate.mkdir()
+    elif defect == "symlink":
+        foreign = tmp_path / "foreign-certificate.pem"
+        foreign.write_text("foreign fixture\n", encoding="utf-8")
+        certificate.symlink_to(foreign)
+
+    with pytest.raises(RuntimeContractError, match="exact files|non-owned file"):
+        start_python_process(tmp_path, TEST_ENV, run, "provider-openai")
+
+    assert not any(
+        entry.resource.kind is ResourceKind.PROCESS
+        for entry in read_ledger(tmp_path, RUN_ID).entries
+    )
+
+
+def test_clean_recovers_an_interrupted_embedding_peer_preparation(tmp_path: Path) -> None:
+    run = _empty_owned_run(tmp_path)
+    state = prepare_embedding_peer_state(tmp_path, TEST_ENV, run)
+    (state / "requests.jsonl").write_text("partial\n", encoding="utf-8")
+
+    clean_run(tmp_path, TEST_ENV, RUN_ID)
+
+    assert not state.exists()
+    assert not embedding_peer_state_dir(tmp_path, RUN_ID).parent.exists()
 
 
 def test_web_child_rejects_public_supabase_before_recording_or_spawning_process(

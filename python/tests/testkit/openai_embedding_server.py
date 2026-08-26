@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import ipaddress
 import json
 import math
 import ssl
@@ -24,7 +25,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
 from nexus_test_control import services as test_services
-from nexus_test_control.runtime import EndpointKind, read_runtime, runtime_state_dir
+from nexus_test_control.runtime import EndpointKind, read_runtime
 from tests.testkit.worker import controller_run, kill_and_forget_process
 
 _API_KEY = "nexus-test-fixture-openai-key"
@@ -40,13 +41,6 @@ class EmbeddingPeer:
     key: Path
     audit: Path
     port: int
-
-    def server_environment(self) -> dict[str, str]:
-        return {
-            "NEXUS_TEST_OPENAI_CERTIFICATE": str(self.certificate),
-            "NEXUS_TEST_OPENAI_KEY": str(self.key),
-            "NEXUS_TEST_OPENAI_AUDIT": str(self.audit),
-        }
 
     def worker_environment(self) -> dict[str, str]:
         return {
@@ -83,7 +77,12 @@ def _write_embedding_peer_certificate(certificate: Path, key_path: Path) -> None
         .not_valid_before(datetime.now(UTC) - timedelta(minutes=1))
         .not_valid_after(datetime.now(UTC) + timedelta(days=1))
         .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
-        .add_extension(x509.SubjectAlternativeName([x509.DNSName(_HOST)]), critical=False)
+        .add_extension(
+            x509.SubjectAlternativeName(
+                [x509.DNSName(_HOST), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]
+            ),
+            critical=False,
+        )
         .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
         .sign(key, hashes.SHA256())
     )
@@ -262,22 +261,21 @@ def running_openai_embedding_server(
     """Start one controller-owned deterministic embedding peer."""
     run = controller_run()
     runtime = read_runtime(root)
-    state = runtime_state_dir(root) / "runs" / run.run_id / "embedding-peer"
-    state.mkdir(parents=False, exist_ok=False)
+    state = test_services.prepare_embedding_peer_state(root, _TEST_ENV, run)
     certificate = state / "ca.pem"
     key = state / "server-key.pem"
     audit = state / "requests.jsonl"
-    audit.touch(mode=0o600, exist_ok=False)
-    _write_embedding_peer_certificate(certificate, key)
-    peer = EmbeddingPeer(state, certificate, key, audit, runtime.ports.provider_openai)
     process: test_services.StartedProcess | None = None
     try:
+        audit.touch(mode=0o600, exist_ok=False)
+        _write_embedding_peer_certificate(certificate, key)
+        test_services.finish_embedding_peer_state(root, _TEST_ENV, run.run_id)
+        peer = EmbeddingPeer(state, certificate, key, audit, runtime.ports.provider_openai)
         process = test_services.start_python_process(
             root,
             _TEST_ENV,
             run,
             "provider-openai",
-            overrides=peer.server_environment(),
         )
         test_services.wait_process_ready(
             root,
@@ -291,9 +289,7 @@ def running_openai_embedding_server(
     finally:
         if process is not None:
             kill_and_forget_process(process)
-        for path in (audit, certificate, key):
-            path.unlink(missing_ok=True)
-        state.rmdir()
+        test_services.release_embedding_peer_state(root, _TEST_ENV, run.run_id)
 
 
 def create_server(

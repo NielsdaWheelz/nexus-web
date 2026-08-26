@@ -51,6 +51,11 @@ Retained matches are intentional and bounded:
 Repository policy, proof-ownership, fault-manifest, JSON, patch-application,
 formatting, lint, and diff diagnostics report no violations.
 
+The confidence pass also exposed a stale embeddings-only test-peer path. The
+controller now owns that peer as one run-scoped semantic resource with exact
+CA, key, and audit files, strict DNS/loopback TLS identity, and recoverable
+PLANNED-to-CREATED cleanup. Production embedding behavior is unchanged.
+
 ## Verification
 
 The 80/20 proof shape is one dominant proof per ownership boundary, sixteen

@@ -193,6 +193,12 @@ def runtime_state_dir(repo_root: Path) -> Path:
     return canonical_repo_root(repo_root) / ".nexus-test"
 
 
+def embedding_peer_state_dir(repo_root: Path, run_id: str) -> Path:
+    """Return the one run-owned state directory for the embeddings-only peer."""
+
+    return canonical_repo_root(repo_root) / embedding_peer_identity(run_id)
+
+
 def runtime_record_path(repo_root: Path) -> Path:
     return runtime_state_dir(repo_root) / "runtime.json"
 
@@ -512,6 +518,11 @@ def extension_profile_identity(run_id: str, scenario_id: str) -> str:
     return f".nexus-test/runs/{run_id}/extension/{scenario_id}"
 
 
+def embedding_peer_identity(run_id: str) -> str:
+    require_run_id(run_id)
+    return f".nexus-test/runs/{run_id}/embedding-peer"
+
+
 def process_resource_identity(run_id: str, role: str) -> str:
     require_run_id(run_id)
     if role not in _PROCESS_ROLES:
@@ -700,6 +711,8 @@ def _validate_resource(resource: Resource, run_id: str, scenario_id: str | None)
         if scenario_id is None:
             raise RuntimeContractError("Supabase user requires scenario metadata")
         expected = supabase_user_email(run_id, scenario_id)
+    elif kind is ResourceKind.EMBEDDING_PEER:
+        expected = embedding_peer_identity(run_id)
     elif kind is ResourceKind.PROCESS:
         if scenario_id is not None:
             raise RuntimeContractError("process must not carry scenario metadata")

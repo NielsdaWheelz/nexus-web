@@ -102,6 +102,7 @@ class ResourceKind(StrEnum):
     MIGRATION_DATABASE = "migration-database"
     BUCKET = "bucket"
     SUPABASE_USER = "supabase-user"
+    EMBEDDING_PEER = "embedding-peer"
     PROCESS = "process"
     EXTENSION_PROFILE = "extension-profile"
     BUILD_ARTIFACT = "build-artifact"

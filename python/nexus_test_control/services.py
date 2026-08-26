@@ -50,6 +50,8 @@ from nexus_test_control.runtime import (
     canonical_repo_root,
     claim_run,
     cleanup_candidates,
+    embedding_peer_identity,
+    embedding_peer_state_dir,
     forget_cleaned,
     initialize_runtime,
     local_docker_host,
@@ -125,6 +127,7 @@ _SAFE_CHILD_ENV = ("HOME", "LANG", "LC_ALL", "PATH", "TMPDIR", "TZ", "UV_CACHE_D
 _STATUS_KEYS = frozenset(
     {"API_URL", "ANON_KEY", "PUBLISHABLE_KEY", "SECRET_KEY", "SERVICE_ROLE_KEY"}
 )
+_EMBEDDING_PEER_FILES = ("ca.pem", "server-key.pem", "requests.jsonl")
 _CONTROLLER_OWNED_PROCESS_ENV = frozenset(
     {
         "NEXUS_AGENT_TOOLS_MCP_LISTEN",
@@ -958,6 +961,116 @@ def cgroup_delegate_failure() -> str | None:
     return None
 
 
+def prepare_embedding_peer_state(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    run: TestRun,
+) -> Path:
+    """Plan and create the exact recoverable state directory for one embedding peer."""
+
+    require_test_environment(environment)
+    root = canonical_repo_root(repo_root)
+    read_ledger(root, run.run_id)
+    resource = Resource(ResourceKind.EMBEDDING_PEER, embedding_peer_identity(run.run_id))
+    record_planned(root, environment, run.run_id, resource)
+    state = embedding_peer_state_dir(root, run.run_id)
+    try:
+        state.mkdir(parents=False, exist_ok=False)
+    except FileExistsError as exc:
+        raise RuntimeContractError("embedding-peer state already exists for this run") from exc
+    return state
+
+
+def finish_embedding_peer_state(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    run_id: str,
+) -> None:
+    """Attest the exact peer files before publishing CREATED ownership."""
+
+    require_test_environment(environment)
+    root = canonical_repo_root(repo_root)
+    _exact_embedding_peer_paths(root, run_id)
+    record_created(
+        root,
+        environment,
+        run_id,
+        Resource(ResourceKind.EMBEDDING_PEER, embedding_peer_identity(run_id)),
+    )
+
+
+def release_embedding_peer_state(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    run_id: str,
+) -> None:
+    """Delete an idle exact peer directory and release its persisted ownership."""
+
+    require_test_environment(environment)
+    root = canonical_repo_root(repo_root)
+    with run_lifecycle_lock(root, environment, run_id):
+        ledger = read_ledger(root, run_id)
+        process = Resource(
+            ResourceKind.PROCESS,
+            process_resource_identity(run_id, "provider-openai"),
+        )
+        if any(entry.resource == process for entry in ledger.entries):
+            raise RuntimeContractError(
+                "embedding-peer state cannot release while its process exists"
+            )
+        resource = Resource(ResourceKind.EMBEDDING_PEER, embedding_peer_identity(run_id))
+        matches = [entry for entry in ledger.entries if entry.resource == resource]
+        if len(matches) != 1:
+            raise RuntimeContractError("embedding-peer state is not uniquely owned by this run")
+        _delete_embedding_peer_state(root, run_id)
+        forget_cleaned(root, environment, run_id, resource)
+
+
+def _exact_embedding_peer_paths(root: Path, run_id: str) -> dict[str, Path]:
+    state = embedding_peer_state_dir(root, run_id)
+    if state.is_symlink() or not state.is_dir() or state.resolve(strict=True) != state:
+        raise RuntimeContractError("embedding-peer state is not its exact owned directory")
+    entries = {entry.name: entry for entry in state.iterdir()}
+    expected_names = set(_EMBEDDING_PEER_FILES)
+    if set(entries) != expected_names:
+        raise RuntimeContractError("embedding-peer state does not contain its exact files")
+    if any(
+        entry.is_symlink() or not entry.is_file() or entry.resolve(strict=True) != entry
+        for entry in entries.values()
+    ):
+        raise RuntimeContractError("embedding-peer state contains a non-owned file")
+    return {file_name: entries[file_name] for file_name in _EMBEDDING_PEER_FILES}
+
+
+def _owned_embedding_peer_paths(
+    root: Path,
+    run_id: str,
+) -> dict[str, Path]:
+    resource = Resource(ResourceKind.EMBEDDING_PEER, embedding_peer_identity(run_id))
+    matches = [entry for entry in read_ledger(root, run_id).entries if entry.resource == resource]
+    if len(matches) != 1 or matches[0].phase is not ResourcePhase.CREATED:
+        raise RuntimeContractError("embedding peer requires its exact created state owner")
+    return _exact_embedding_peer_paths(root, run_id)
+
+
+def _delete_embedding_peer_state(root: Path, run_id: str) -> None:
+    state = embedding_peer_state_dir(root, run_id)
+    if not state.exists() and not state.is_symlink():
+        return
+    if state.is_symlink() or not state.is_dir() or state.resolve(strict=True) != state:
+        raise RuntimeContractError("embedding-peer state is not its exact owned directory")
+    entries = tuple(state.iterdir())
+    expected_names = set(_EMBEDDING_PEER_FILES)
+    if {entry.name for entry in entries} - expected_names or any(
+        entry.is_symlink() or not entry.is_file() or entry.resolve(strict=True) != entry
+        for entry in entries
+    ):
+        raise RuntimeContractError("embedding-peer state contains unexpected contents")
+    for entry in entries:
+        entry.unlink()
+    state.rmdir()
+
+
 def start_python_process(
     repo_root: Path,
     environment: Mapping[str, str],
@@ -975,6 +1088,8 @@ def start_python_process(
             "Python process runtime topology is controller-owned: "
             + ", ".join(sorted(supplied_topology_keys))
         )
+    if role == "provider-openai" and overrides:
+        raise RuntimeContractError("embedding peer process environment is controller-owned")
     owned_role_environment: dict[str, str] = {}
     if role == "external":
         _require_loopback_port_available(runtime.ports.external, role)
@@ -987,12 +1102,7 @@ def start_python_process(
             str(root / "python/tests/fixtures/real_media"),
         )
     elif role == "provider-openai":
-        paths = overrides or {}
-        certificate = paths.get("NEXUS_TEST_OPENAI_CERTIFICATE")
-        key = paths.get("NEXUS_TEST_OPENAI_KEY")
-        audit = paths.get("NEXUS_TEST_OPENAI_AUDIT")
-        if certificate is None or key is None or audit is None:
-            raise RuntimeContractError("embedding peer requires its owned TLS and audit paths")
+        paths = _owned_embedding_peer_paths(root, run.run_id)
         _require_loopback_port_available(runtime.ports.provider_openai, role)
         command = (
             str(root / "python/.venv/bin/python"),
@@ -1000,11 +1110,11 @@ def start_python_process(
             "--port",
             str(runtime.ports.provider_openai),
             "--certificate",
-            certificate,
+            str(paths["ca.pem"]),
             "--key",
-            key,
+            str(paths["server-key.pem"]),
             "--audit",
-            audit,
+            str(paths["requests.jsonl"]),
         )
     elif role == "api":
         _require_loopback_port_available(runtime.ports.api, role)
@@ -1339,14 +1449,14 @@ def wait_process_ready(
         if path != "/internal/agent-tools/mcp":
             raise RuntimeContractError("agent-tools MCP readiness requires its literal path")
         _require_exact_created_process(root, process, "worker-interactive")
+    elif endpoint is EndpointKind.PROVIDER_OPENAI:
+        _require_exact_created_process(root, process, "provider-openai")
     url = runtime_endpoint(root, environment, endpoint) + path
     port = urlsplit(url).port
     if port is None:
         raise RuntimeContractError("process readiness endpoint has no port")
     if endpoint is EndpointKind.PROVIDER_OPENAI:
-        expected_ca = (
-            runtime_state_dir(root) / "runs" / process.run_id / "openai-provider" / "ca.pem"
-        )
+        expected_ca = _owned_embedding_peer_paths(root, process.run_id)["ca.pem"]
         if tls_ca is None or tls_ca.resolve(strict=True) != expected_ca.resolve(strict=True):
             raise RuntimeContractError("OpenAI provider readiness requires its exact owned CA")
         verify: ssl.SSLContext | bool = ssl.create_default_context(cafile=str(expected_ca))
@@ -1632,6 +1742,8 @@ def clean_run(
                         candidate.external_id,
                         supabase,
                     )
+                elif resource.kind is ResourceKind.EMBEDDING_PEER:
+                    _delete_embedding_peer_state(root, run_id)
                 elif resource.kind is ResourceKind.EXTENSION_PROFILE:
                     _delete_extension_profile(root, resource.identity)
                 else:
