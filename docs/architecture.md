@@ -1055,8 +1055,9 @@ capability-owned:
   (GET/PUT, no batch endpoint); position/duration/nullable episode-rate DML is owned by
   `services/consumption/_listening_store.py` (§8.8).
 - `media_file_access.py`: signed original-file download URLs.
-- `media_processing_state.py`: in-process processing transitions, including
-  reingest reset and ready-for-reading completion.
+- `media_processing_state.py`: in-process queued, extraction-start, readiness,
+  failure, and warning transitions. Source retry policy remains singular in
+  `media_source_ingest.py`.
 - `source_attempt_failures.py`: the terminal source-attempt transaction across
   attempt, Media, transcript, Podcast job, reservation, and revisions;
   `media_failure_projection.py` is its lightweight Media failure-field writer.
