@@ -1,9 +1,4 @@
 import { isRecord } from "@/lib/validation";
-import {
-  parseResourceRef,
-  type ResourceRef,
-} from "@/lib/resourceGraph/resourceRef";
-import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
 import type {
   WorkspaceTarget,
   WorkspaceTargetDisposition,
@@ -59,21 +54,6 @@ export function hrefForResourceActivation(
   return activation.href;
 }
 
-export function resourceRefForActivation(
-  activation: ResourceActivation,
-): ResourceRef | null {
-  return parseResourceRef(activation.resourceRef);
-}
-
-export function secondaryActivationForResource(
-  _activation: ResourceActivation,
-): WorkspaceSecondaryActivation | null {
-  // Artifact and Artifact Revision activations now own canonical standalone
-  // `/artifacts/{ref}` routes. Resource Companion revision selection remains a
-  // local `useResourceInspector` concern and is never inferred here.
-  return null;
-}
-
 export function activateResource(
   activation: ResourceActivation,
   input: {
@@ -101,12 +81,10 @@ export function activateResource(
         throw new Error("Cannot adopt an external resource target");
     }
   }
-  const secondaryActivation = secondaryActivationForResource(activation);
   input.activateTarget({
     target: {
       href,
       ...(input.labelHint ? { labelHint: input.labelHint } : {}),
-      ...(secondaryActivation ? { secondaryActivation } : {}),
     },
     disposition: input.disposition,
   });
