@@ -22,21 +22,22 @@ REPO_ROOT = Path(__file__).parents[4]
 
 def test_pure_rename_routes_new_path_and_deletion_routes_owner_not_missing_test() -> None:
     changes = parse_git_name_status(
-        b"R100\0python/tests/kernel/old.py\0python/tests/kernel/new.py\0"
-        b"D\0python/tests/kernel/deleted.py\0"
-        b"R087\0python/tests/kernel/edited_old.py\0python/tests/kernel/edited_new.py\0"
+        b"R100\0python/tests/kernel/test_old.py\0python/tests/kernel/test_new.py\0"
+        b"D\0python/tests/kernel/test_deleted.py\0"
+        b"R087\0python/tests/kernel/test_edited_old.py\0"
+        b"python/tests/kernel/test_edited_new.py\0"
     )
     selections = select_changed(
         changes,
         SelectionIndex(
             routes=(
                 IndexedRoute(
-                    "python/tests/kernel/old.py",
+                    "python/tests/kernel/test_old.py",
                     SelectionTarget(Capability.SERVICE, "old-owner"),
                     SelectionReason.PYTHON_OWNER,
                 ),
                 IndexedRoute(
-                    "python/tests/kernel/deleted.py",
+                    "python/tests/kernel/test_deleted.py",
                     SelectionTarget(Capability.SERVICE, "owner"),
                     SelectionReason.PYTHON_OWNER,
                 ),
@@ -44,18 +45,55 @@ def test_pure_rename_routes_new_path_and_deletion_routes_owner_not_missing_test(
         ),
     )
 
-    assert [selection.path for selection in selections] == [
-        "python/tests/kernel/old.py",
-        "python/tests/kernel/new.py",
-        "python/tests/kernel/deleted.py",
-        "python/tests/kernel/edited_old.py",
-        "python/tests/kernel/edited_new.py",
+    assert [
+        (
+            selection.path,
+            selection.capability,
+            selection.reason,
+            selection.proof,
+            selection.sensitivity_required,
+        )
+        for selection in selections
+    ] == [
+        (
+            "python/tests/kernel/test_old.py",
+            Capability.SERVICE,
+            SelectionReason.PYTHON_OWNER,
+            "old-owner",
+            False,
+        ),
+        (
+            "python/tests/kernel/test_new.py",
+            Capability.KERNEL_PYTHON,
+            SelectionReason.CHANGED_TEST,
+            "pytest:python/tests/kernel/test_new.py",
+            False,
+        ),
+        (
+            "python/tests/kernel/test_deleted.py",
+            Capability.SERVICE,
+            SelectionReason.PYTHON_OWNER,
+            "owner",
+            False,
+        ),
+        (
+            "python/tests/kernel/test_edited_old.py",
+            Capability.POLICY,
+            SelectionReason.PROMOTED_CAPABILITY,
+            None,
+            False,
+        ),
+        (
+            "python/tests/kernel/test_edited_new.py",
+            Capability.KERNEL_PYTHON,
+            SelectionReason.CHANGED_TEST,
+            "pytest:python/tests/kernel/test_edited_new.py",
+            True,
+        ),
     ]
     assert changes[0].requires_sensitivity is False
     assert changes[1].requires_sensitivity is False
     assert changes[2].requires_sensitivity is True
-    assert selections[1].sensitivity_required is False
-    assert selections[4].sensitivity_required is True
 
 
 def test_test_looking_web_source_always_selects_repository_discovery_policy() -> None:
