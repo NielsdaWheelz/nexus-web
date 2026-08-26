@@ -598,7 +598,8 @@ the live Highlight.
 Keep these tests aligned with this module contract:
 
 - `python/tests/service/test_citation_provenance.py`
-- `python/tests/service/test_web_search_identity.py`
+- `python/tests/service/test_agent_tools_mcp.py`
+- `python/tests/service/test_chat_codex_execution.py`
 - `python/tests/service/test_durable_chat_reconciliation.py`
 - `python/tests/service/test_durable_job_replay.py`
 - `python/tests/service/test_auth_privacy.py`

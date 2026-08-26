@@ -402,7 +402,8 @@ Create:
 - `python/tests/service/test_durable_job_replay.py`
 - `python/tests/service/test_chat_execution_privacy.py`
 - `python/tests/service/test_citation_provenance.py`
-- `python/tests/service/test_web_search_identity.py`
+- `python/tests/service/test_agent_tools_mcp.py`
+- `python/tests/service/test_chat_codex_execution.py`
 - `apps/web/src/components/chat/ChatComposer.browser.test.tsx`
 - `apps/web/e2e/journeys/grounded-chat-citation.journey.spec.ts`
 

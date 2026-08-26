@@ -640,34 +640,23 @@ It also owns
 `useChatRunTail.ts` with their focused proofs. The generated revision artifact
 comes from N1; N2 consumes it and must not synthesize another revision.
 
-Tests live with the lane that owns behavior. The mandatory cycle is: behavior
-owner writes the exact target and records meaningful red; R0 registers the
-frozen id/source globs/risk or journey mapping; N0d refreshes only the ownership
-digest and proves policy; the behavior owner proceeds to green/sensitivity.
-Repeat for E0, N1, N2, and N3, then take one final R0/N0d checkpoint. Only R0
-ever edits `testdata/proofs.json`; only N0d edits the matching digest. E0 owns its one named
-fault object/patch/hash. N2 owns the new
-`llm-tool-projection-gate-bypass` objects/patches/hashes. N3 owns
-`llm-write-tool-authorization-bypass`,
-`llm-tool-safety-prompt-bypass`, `web-search-provider-identity-bypass`,
-`llm-tools-legacy-browse-owner-bypass`,
-`nexus-tool-profile-scope-bypass`, `llm-tool-position-replay-bypass`,
-`llm-tool-prepared-documentation-freeze-bypass`,
+The implemented source has one current proof/fault registry. Canonical owners
+are the declaration/projection kernel, real-Postgres read and write services,
+the production MCP service, durable Dossier research, Browse normalization,
+the deterministic safety eval, and backend/browser projection proofs listed in
+§12. Deleted provider-intent, native-tool-profile, and Web-search-identity proof
+owners have no documentary alias.
+
+Current representative sensitivity ids are
+`llm-write-tool-authorization-bypass`, `llm-tool-safety-prompt-bypass`,
 `nexus-tool-declaration-effect-bypass`,
 `nexus-read-empty-admission-scope-bypass`,
-`dossier-uncertain-search-redispatch-bypass`, and the required adaptation of
-`durable-job-fence-bypass`, each at fault-manifest object granularity. N4 never
-edits either registry or a fault patch. Any implementation discovery that
-changes a frozen proof id/source glob reopens R0 and invalidates all later
-evidence; any later proof/fault content change requires `prove` again at the
-final SHA.
-
-N3 explicitly migrates `python/tests/testkit/openai_embedding_server.py`,
-`python/tests/kernel/test_llm_product_intent.py`,
-`python/tests/service/test_tool_authorization.py`,
-`python/tests/service/test_web_search_identity.py`,
-`python/tests/evals/cases/tool_safety.v3.json`, the safety service/eval/hosted
-owners, and their named faults before deleting a legacy definition or handler.
+`dossier-uncertain-search-redispatch-bypass`,
+`llm-tool-projection-gate-bypass`, `agent-tool-grant-scope-bypass`,
+`agent-tool-receipt-lease-fence-bypass`, and
+`llm-tools-legacy-browse-owner-bypass`. `testdata/proofs.json` and
+`testdata/faults/manifest.json` are the executable authorities; this document
+does not preserve a superseded id, path, or ownership map.
 
 ## 12. Red / green / refactor and 80/20 proof
 
@@ -687,14 +676,11 @@ proof has exactly one priority-risk owner. Existing unrelated entries remain.
 | `node-test:node/ingest/test/accepted_url_egress.test.mjs` | `auth-privacy-secrets` | `node/ingest/**/*`; `python/nexus/services/node_ingest.py`; `python/nexus/services/web_article_ingest.py` | `INGEST_NODE` |
 | `pytest:python/tests/release_artifact/test_node_ingest_image_binding.py::test_worker_launches_only_the_image_baked_hardened_ingest_entrypoint` | `production-release-test-control` | `.dockerignore`; `python/nexus/services/node_ingest.py`; `docker/Dockerfile.backend`; `deploy/env/env-prod-worker.example`; `deploy/hetzner/release.py`; `deploy/hetzner/sync-env.sh`; `python/tests/release_artifact/test_node_ingest_image_binding.py` | `release-artifact` |
 | `pytest:python/tests/kernel/test_llm_tool_declarations.py::test_nexus_declarations_and_browser_projection_are_one_closed_semantic_contract` | `llm-tool-safety` | `python/nexus/services/tool_runtime/declarations.py`; `python/nexus/services/tool_runtime/profiles.py`; `python/scripts/generate_tool_contract_projection.py`; `apps/web/src/lib/conversations/toolContractProjection.ts`; `python/tests/kernel/test_llm_tool_declarations.py` | `kernel-python` |
-| `pytest:python/tests/kernel/test_llm_tool_profiles.py::test_bound_families_compile_exact_closed_operation_profiles_without_fallback` | `costly-effects` | `python/nexus/services/tool_runtime/*.py`; `python/tests/kernel/test_llm_tool_profiles.py`; `python/tests/kernel/test_agent_tool_surface.py` | `kernel-python` |
-| `pytest:python/tests/kernel/test_llm_product_intent.py::test_product_intent_freezes_tool_documentation_at_first_prepare` | `costly-effects` | `python/nexus/services/llm_intent_state.py`; `python/nexus/services/chat_runs.py`; `python/tests/kernel/test_llm_product_intent.py` | `kernel-python` |
 | `pytest:python/tests/service/test_llm_tools_reads.py::test_nexus_reads_are_scoped_citable_and_closed` | `auth-privacy-secrets` | `python/nexus/services/tool_runtime/bindings.py`; `python/nexus/services/tool_runtime/execution.py`; `python/tests/service/test_llm_tools_reads.py` | `service` |
 | `pytest:python/tests/service/test_llm_tool_safety.py::test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo` | `llm-tool-safety` | `python/nexus/services/tool_runtime/*.py`; `python/nexus/services/agent_tools/writes.py`; `python/nexus/services/chat_run_tools.py`; `python/nexus/services/message_trust_trails.py`; `python/tests/service/test_llm_tool_safety.py` | `service` |
 | `pytest:python/tests/service/test_agent_tools_mcp.py::test_mcp_mount_projects_declarations_and_is_sessionless` | `durable-job-replay` | `python/nexus/services/tool_runtime/*.py`; `python/nexus/services/chat_runs.py`; `python/nexus/services/chat_run_steps.py`; `python/nexus/services/durable_step_journal.py`; `python/nexus/tasks/chat_run.py`; `python/tests/service/test_agent_tools_mcp.py` | `service` |
 | `pytest:python/tests/evals/test_tool_safety_eval.py::test_injected_requests_cannot_authorize_a_foreign_mutating_tool_call` | `llm-tool-safety` | `python/nexus/services/tool_runtime/*.py`; `python/nexus/services/chat_prompt.py`; `python/tests/evals/test_tool_safety_eval.py`; `python/tests/evals/cases/tool_safety.v3.json` | `llm-eval` |
 | `pytest:python/tests/service/test_llm_tools_availability.py::test_keyless_boot_preserves_plan_and_refuses_required_web_before_dispatch` | `production-release-test-control` | `python/nexus/config.py`; `python/nexus/app.py`; `python/nexus/tasks/artifacts.py`; `python/nexus/tasks/chat_run.py`; `python/tests/service/test_llm_tools_availability.py` | `service` |
-| `pytest:python/tests/service/test_web_search_identity.py::test_web_search_provider_ref_remains_telemetry_behind_one_snapshot_identity` | `citation-provenance-identity` | `python/nexus/services/tool_runtime/bindings.py`; `python/nexus/services/agent_tools/web_search.py`; `python/nexus/services/retrieval_citation.py`; `python/tests/service/test_web_search_identity.py` | `service` |
 | `pytest:python/tests/service/test_llm_tools_dossier.py::test_dossier_freezes_host_plan_and_does_not_automatically_reissue_uncertain_search` | `costly-effects` | `python/nexus/services/artifacts/research.py`; `python/nexus/services/artifacts/coordination.py`; `python/nexus/services/agent_tools/web_page_read.py`; `python/nexus/tasks/artifacts.py`; `python/tests/service/test_llm_tools_dossier.py` | `service` |
 | `pytest:python/tests/service/test_llm_tools_browse.py::test_browse_preserves_normalized_provider_results_after_rename` | `citation-provenance-identity` | `python/nexus/api/routes/browse.py`; `python/nexus/services/browse/brave.py`; `python/nexus/services/browse/service.py`; `python/tests/service/test_llm_tools_browse.py` | `service` |
 | `pytest:python/tests/service/test_llm_tool_projection_protocol.py::test_revision_gates_every_changed_chat_projection_boundary` | `production-release-test-control` | `python/nexus/api/deps.py`; `python/nexus/api/routes/{chat_runs,stream,messages,conversations,conversation_branches}.py`; `python/nexus/middleware/stream_cors.py`; `python/nexus/schemas/conversation.py`; `python/nexus/errors.py`; `python/nexus/services/{chat_run_event_store,chat_run_response,chat_failure,chat_run_candidates,chat_run_citations,context_assembler,message_trust_trails,conversations}.py`; `python/tests/service/test_llm_tool_projection_protocol.py` | `service` |
@@ -714,15 +700,13 @@ duplicate proof owner, unsupported prefix, capability mismatch, or stale digest.
 | exact package/pin | `python/tests/llm_tools_contract/test_pinned_llm_tools.py::test_exact_pins_round_trip_one_canonical_native_tool`: independently materializes exact `llm-tools` and `provider-runtime` commits, imports their public APIs, performs one canonical invocation/returned-name round trip through the public adapter, and rejects developer-head substitution under `Capability.LLM_TOOLS`; it does not oracle provider-native dictionaries |
 | test-control routing | `python/tests/kernel/nexus_test_control/test_llm_tools_capability.py::test_llm_tools_paths_route_to_exact_full_materialization`: the dedicated owner routes its exact path, checks doctor/materializer readiness, and defers complete execution to `full`; it never piggybacks `python/tests/contract/**` / `PROVIDER_RUNTIME` |
 | local declarations/projection | `python/tests/kernel/test_llm_tool_declarations.py::test_nexus_declarations_and_browser_projection_are_one_closed_semantic_contract`: exact declaration/error/effect/limit/presentation table; descriptions and enum order do not change tool contract, semantic enum membership does; generated browser projection byte-matches; no bound publication is attempted |
-| bound catalogue/profile | `python/tests/kernel/test_llm_tool_profiles.py::test_bound_families_compile_exact_closed_operation_profiles_without_fallback`: real bound family composition; exact operation/profile/plan/grant/replay/policy table, scope-policy changes binding policy, unbound publication defects, every Chat-supported engine's production-lowered eleven-tool definitions report per-tool/total bytes and stay at or below 12,288 bytes, and no fallback or Web-read grant exists |
-| prepared presentation | adapt `python/tests/kernel/test_llm_product_intent.py::test_product_intent_freezes_tool_documentation_at_first_prepare`: an admitted-unprepared run takes current documentation; persisted provider intent retains exact descriptions/schema across a documentation-only deploy without changing authority revisions |
+| bound catalogue/profile and presentation | `python/tests/kernel/test_llm_tool_declarations.py::test_nexus_declarations_and_browser_projection_are_one_closed_semantic_contract`: the real composed Chat surface is closed and bounded; semantic, documentation, and browser-projection revisions change only for their owned inputs, with no fallback or `web.read` grant |
 | Nexus reads/evidence | `python/tests/service/test_llm_tools_reads.py::test_nexus_reads_are_scoped_citable_and_closed`: real PostgreSQL, two users, all five read tools, canonical evidence, closed error translation, identical `ResourceUnavailable` envelopes for nonexistent and foreign ids, and only `current_execution` writer output |
 | Nexus writes | adapt `python/tests/service/test_llm_tool_safety.py::test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo`: real PostgreSQL proves owner checks, eight-write cap, one `current_execution` commit, trust trail, duplicate recovery, and Undo |
 | Chat replay | `python/tests/service/test_agent_tools_mcp.py::test_mcp_mount_projects_declarations_and_is_sessionless`: real PostgreSQL plus the production MCP 2.1 HTTP boundary and Chat recorder; completed bounded reads replay byte-identically, a missing outer MCP receipt is repaired only from the durable inner terminal, changed identity/input is rejected, grants and lease identity stay fenced, and no second execution or citation allocation occurs |
 | migration | `python/tests/migrations/test_supported_upgrade.py`: the supported 0221 production snapshot and an empty owned database converge to the single current head; immutable pre-floor migration history is retained without a live compatibility proof. |
 | model/tool safety | preserve `python/tests/evals/test_tool_safety_eval.py::test_injected_requests_cannot_authorize_a_foreign_mutating_tool_call` against canonical declarations and `ToolExecutor`; the exact write and MCP service proofs above cover persistence, Undo, grant scope, and transport authority; the registered deterministic safety faults remain sensitive before legacy deletion |
 | availability | `python/tests/service/test_llm_tools_availability.py::test_keyless_boot_preserves_plan_and_refuses_required_web_before_dispatch`: keyless app/worker boot, exact eleven-tool Chat publication, zero-network `ToolUnavailable`, and pre-enqueue `WebResearchNotConfigured` with no Dossier build/job |
-| Web-search disclosure/provenance | adapt `python/tests/service/test_web_search_identity.py::test_web_search_provider_ref_remains_telemetry_behind_one_snapshot_identity`: owned recording provider sees only bounded query/freshness and no credentials/private-context fields; canonical evidence remains the application identity |
 | Dossier research | `python/tests/service/test_llm_tools_dossier.py::test_dossier_freezes_host_plan_and_does_not_automatically_reissue_uncertain_search`: real worker/PostgreSQL proves the full frozen HostTable plan, exact `(build_id, research/web-search/{query_index})` positions, changed input rejection, the renamed `BilledOnce` search binding, production reconciliation with zero automatic Brave redispatch after uncertain dispatch, and unchanged search-ref/accepted-source/readiness replay; no model eval |
 | accepted-URL egress prerequisite | `node-test:node/ingest/test/accepted_url_egress.test.mjs` covers public-to-private redirect, DNS/private/rebinding, connected destination, MIME, streaming/decompression/timeout ceilings, credential isolation, and zero private-endpoint requests; `python/tests/release_artifact/test_node_ingest_image_binding.py::test_worker_launches_only_the_image_baked_hardened_ingest_entrypoint`, routed by N0a to existing `Capability.RELEASE_ARTIFACT`, proves the candidate image/worker/public adapter reject environment substitution and execute that seam; E0's exact green SHA is release input, not evidence from `web.read` |
 | Browse consumer | `python/tests/service/test_llm_tools_browse.py::test_browse_preserves_normalized_provider_results_after_rename`: public Browse request preserves normalized search results/provenance through the renamed provider |

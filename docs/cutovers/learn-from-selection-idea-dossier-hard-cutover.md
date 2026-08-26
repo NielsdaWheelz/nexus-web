@@ -734,7 +734,7 @@ attributes; `N` is the validated canonical decimal ordinal.
 
 After the first complete synthesis:
 
-1. decode the exact provider-compatible envelope, including citation JSON
+1. decode the exact generation envelope, including citation JSON
    scalar types;
 2. validate the document;
 3. if envelope/document validation fails, run exactly one memoized tool-free
@@ -750,7 +750,7 @@ After the first complete synthesis:
 
 This retries the same final contract; it is not a fallback renderer/format.
 
-Failure precedence after provider success:
+Failure precedence after generation success:
 
 1. witness changed → `InputsChanged`;
 2. unchanged witness + document invalid after repair →
@@ -762,14 +762,17 @@ The final closed `DossierBuildFailureCode` union is:
 
 ```text
 NoSourceMaterial | InputsChanged | DependencyProjectionFailed |
-EntitlementDenied | BudgetExceeded | ContextTooLarge | ProviderRefused |
-ProviderIncomplete | DocumentValidationFailed | CitationValidationFailed
+ContextTooLarge | Auth | Quota | Timeout | OutputLimit | InvalidOutput |
+PolicyViolation | RuntimeUnavailable | CapacityUnavailable |
+DocumentValidationFailed | CitationValidationFailed
 ```
 
 `DocumentValidationFailed` replaces `SchemaRepairExhausted`.
-`MigratedFailure`/`MigratedIncomplete` disappear because the migration deletes
-every old build. Update DB/event/API/frontend unions, precedence tests, and the
-prior Dossier spec in the same cut.
+Immutable rows using `EntitlementDenied`, `BudgetExceeded`, `ProviderRefused`,
+or `ProviderIncomplete` remain readable but cannot be written by a current
+terminal producer. `MigratedFailure`/`MigratedIncomplete` are absent. The
+DB/event/API/frontend write union and precedence tests use only the current
+codes above.
 
 ### 8.5 Runtime frame
 
