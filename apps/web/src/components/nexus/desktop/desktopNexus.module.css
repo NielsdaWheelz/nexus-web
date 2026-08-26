@@ -66,34 +66,6 @@
   font-weight: var(--weight-medium);
 }
 
-.flowGroup {
-  display: block;
-}
-
-.compactRailGroup {
-  overflow-x: auto;
-  white-space: nowrap;
-}
-
-.compactRailGroup .headingRow {
-  position: sticky;
-  left: 0;
-}
-
-.compactRailGroup .row {
-  display: inline-grid;
-  width: min(320px, 75%);
-  vertical-align: top;
-  white-space: normal;
-}
-
-.pinnedGroup {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  background: var(--surface-canvas);
-}
-
 .row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(88px, auto);

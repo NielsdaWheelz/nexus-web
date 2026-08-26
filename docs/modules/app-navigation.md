@@ -31,7 +31,7 @@ opens the existing Nexus task and does not navigate a pane. The mobile Nexus
 Account projection renders that same component and order. Quick Note and Today exist
 only in Nexus. Both Nexus projections expose the same commands, results,
 targets, workflows, history, and dispatch; the shared composer owns section
-membership, order, caps, and the declared desktop/mobile layout policy.
+membership, order, and caps, while each renderer owns platform geometry.
 Search, Authors, settings subpages, and other valid destinations remain
 retrievable without becoming permanent navigation items.
 
@@ -48,15 +48,17 @@ phones through 900 px. Fine-pointer short desktop windows remain desktop.
 Nexus is one typed intent router with platform-native renderers. Its input is
 always labelled and placeholdered **Find anything…**. Blank desktop order is
 Open, optional Continue, Recent, Quick Actions. Blank mobile order is Open,
-Quick Actions, optional Continue, Recent, Places; mobile groups use compact
-rails. Independent caps prevent one group from erasing another. Quick Actions
-are Quick Note, Today, New Chat, New Page, New Library, and Import.
+Quick Actions, optional Continue, Recent, Places; mobile renders every group as
+one sectioned vertical list inside a single content scroller. Independent caps
+prevent one group from erasing another. Quick Actions are Quick Note, Today,
+New Chat, New Page, New Library, and Import.
 
 Typing removes blank groups. The shared composer admits at most eight owned
-results, then exposes Ask Nexus, Add to Today, Browse, Create, and See All as
-one fixed Query Actions group. Reserved verbs and slash aliases compile to
-explicit typed intent; incomplete or unknown command text remains retrieval.
-Selection is always required.
+Results, then reuses the `QuickActions` section labelled **Do with query** for
+Ask Nexus, Add to Today, Browse, Create, and See All. Those actions remain
+outside the Results cap. Reserved verbs and slash aliases compile to explicit
+typed intent; incomplete or unknown command text remains retrieval. Selection
+is always required.
 
 A result has one required primary label. It may add only facts already carried
 by its projection, in this hierarchy:

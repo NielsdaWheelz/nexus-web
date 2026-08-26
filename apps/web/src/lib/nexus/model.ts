@@ -253,13 +253,11 @@ export type NexusSectionId =
   | "Recent"
   | "QuickActions"
   | "Places"
-  | "Results"
-  | "QueryActions";
+  | "Results";
 
 export interface NexusGroup {
   readonly id: NexusSectionId;
   readonly label: string;
-  readonly layout: "Flow" | "CompactRail" | "PinnedBelowInput";
   readonly entries: readonly NexusEntry[];
 }
 

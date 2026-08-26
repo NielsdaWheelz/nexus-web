@@ -97,50 +97,12 @@
   gap: var(--space-2);
 }
 
-.pinnedGroup {
-  display: grid;
-  flex: 0 0 auto;
-  gap: var(--space-2);
-  padding: 0 max(var(--space-4), var(--viewport-safe-right))
-    var(--space-3) max(var(--space-4), var(--viewport-safe-left));
-  background: var(--surface-canvas);
-}
-
-.section h3,
-.pinnedGroup h3 {
+.section h3 {
   color: var(--ink-muted);
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   letter-spacing: var(--tracking-tight);
-}
-
-.section h3,
-.pinnedGroup h3 {
   margin: 0;
-}
-
-.compactRail {
-  display: flex;
-  gap: var(--space-2);
-  padding: 1px;
-  margin: -1px;
-  overflow-x: auto;
-  overscroll-behavior-inline: contain;
-  scroll-snap-type: inline proximity;
-  scrollbar-width: none;
-  list-style: none;
-}
-
-.compactRail::-webkit-scrollbar {
-  display: none;
-}
-
-.compactRail .row {
-  flex: 0 0 clamp(12rem, 64vw, 18rem);
-  border: 1px solid var(--edge-subtle);
-  border-radius: var(--radius-lg);
-  scroll-snap-align: start;
-  overflow: hidden;
 }
 
 .quickNoteHandoffInput {

@@ -63,14 +63,12 @@ function openStateLabel(state: NexusEntry["openState"]): string | undefined {
 export default function SwitchboardRow({
   entry,
   active,
-  compact = false,
   onActive,
   onActivate,
   onUnavailable,
 }: {
   entry: NexusEntry;
   active: boolean;
-  compact?: boolean;
   onActive(): void;
   onActivate(
     action: NexusAction,
@@ -168,7 +166,7 @@ export default function SwitchboardRow({
 
   useEffect(() => {
     if (!active) return;
-    rowRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    rowRef.current?.scrollIntoView({ block: "nearest" });
   }, [active]);
 
   return (
@@ -176,7 +174,6 @@ export default function SwitchboardRow({
       ref={rowRef}
       className={styles.row}
       data-active={active || undefined}
-      data-compact={compact || undefined}
       data-nested={nested || undefined}
       onPointerDownCapture={() => {
         menuModalityRef.current = "Pointer";

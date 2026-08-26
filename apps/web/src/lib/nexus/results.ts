@@ -1119,7 +1119,6 @@ function manageTabsEntry(): NexusEntry {
 function group(input: {
   readonly id: NexusGroup["id"];
   readonly label: string;
-  readonly layout: NexusGroup["layout"];
   readonly entries: readonly NexusEntry[];
 }): NexusGroup[] {
   return input.entries.length === 0 ? [] : [input];
@@ -1134,7 +1133,6 @@ function blankGroups(input: {
   readonly frecencyByHref: Readonly<Record<string, number>>;
   readonly commandShortcutHints: Readonly<Partial<Record<NexusCommandId, string>>>;
 }): NexusGroup[] {
-  const layout = input.surface === "Mobile" ? "CompactRail" : "Flow";
   const allOpen = projectNexusPaneEntries({
     query: "",
     panes: input.panes,
@@ -1185,29 +1183,25 @@ function blankGroups(input: {
     return destinationEntries.get(id)!;
   });
 
-  const openGroup = group({ id: "Open", label: "Open", layout, entries: open });
+  const openGroup = group({ id: "Open", label: "Open", entries: open });
   const continueGroup = group({
     id: "Continue",
     label: "Continue",
-    layout,
     entries: input.currentPlayback ? [input.currentPlayback] : [],
   });
   const recentGroup = group({
     id: "Recent",
     label: "Recent",
-    layout,
     entries: recent,
   });
   const quickGroup = group({
     id: "QuickActions",
     label: "Quick Actions",
-    layout,
     entries: quickActions,
   });
   const placesGroup = group({
     id: "Places",
     label: "Places",
-    layout,
     entries: places,
   });
   return input.surface === "Desktop"
@@ -1247,7 +1241,7 @@ export function composeNexusProjection(input: {
   }
 
   const results = input.results.slice(0, OWNED_RESULT_CAP);
-  const queryActions =
+  const queryAwareActions =
     parsed.intent.kind === "ImportUrl"
       ? []
       : queryActionEntries({
@@ -1258,19 +1252,14 @@ export function composeNexusProjection(input: {
   const resultGroup = group({
     id: "Results",
     label: "Results",
-    layout: "Flow",
     entries: results,
   });
-  const queryGroup = group({
-    id: "QueryActions",
+  const quickActionsGroup = group({
+    id: "QuickActions",
     label: "Do with query",
-    layout: input.surface === "Mobile" ? "PinnedBelowInput" : "Flow",
-    entries: queryActions,
+    entries: queryAwareActions,
   });
-  const groups =
-    input.surface === "Desktop"
-      ? [...resultGroup, ...queryGroup]
-      : [...queryGroup, ...resultGroup];
+  const groups = [...resultGroup, ...quickActionsGroup];
   const orderedEntries = groups.flatMap((group) => group.entries);
   return {
     surface: input.surface,
