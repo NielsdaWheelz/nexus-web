@@ -1,5 +1,5 @@
 import type { Locator, Page } from "playwright/test";
-import { ARTICLE_QUOTE, captureCanonicalArticle } from "../articleFixture";
+import { ARTICLE_QUOTE, captureReadableArticle } from "../articleFixture";
 import {
   expect,
   gotoWithStrictCsp,
@@ -7,7 +7,7 @@ import {
   test,
   webOrigin,
 } from "../fixtures";
-import { matchesResponse, pageRequest } from "../request";
+import { matchesResponse } from "../request";
 
 test.use({ journeyId: "highlight-note-provenance" });
 
@@ -106,36 +106,13 @@ async function scrollDuringSelectionStabilization(
   );
 }
 
-async function ingestArticle(
-  page: Parameters<typeof signIn>[0],
-): Promise<string> {
-  const api = pageRequest(page, webOrigin);
-  const mediaId = await captureCanonicalArticle(page, "highlight-source");
-  await expect
-    .poll(
-      async () => {
-        const mediaResponse = await api.get(`/api/media/${mediaId}`);
-        if (!mediaResponse.ok()) return `http-${mediaResponse.status()}`;
-        const media = (await mediaResponse.json()) as {
-          data: { retrieval_status: string | null };
-        };
-        return media.data.retrieval_status;
-      },
-      {
-        message: `Expected article ${mediaId} to publish its document map before annotation.`,
-        timeout: 25_000,
-      },
-    )
-    .toBe("ready");
-  return mediaId;
-}
-
 test("a highlight note remains attached to the exact canonical passage after a fresh document", async ({
   page,
   journeyUser,
 }) => {
   await signIn(page, journeyUser);
-  const mediaId = await ingestArticle(page);
+  test.setTimeout(300_000);
+  const mediaId = await captureReadableArticle(page, "highlight-source");
   await gotoWithStrictCsp(page, `/media/${mediaId}`);
   await expect(
     page

@@ -1,5 +1,5 @@
 import type { Locator, Page } from "playwright/test";
-import { ARTICLE_TITLE, captureCanonicalArticle } from "../articleFixture";
+import { ARTICLE_TITLE, captureReadableArticle } from "../articleFixture";
 import {
   expect,
   gotoWithStrictCsp,
@@ -255,6 +255,7 @@ test("canonical resources yield identical dropdown semantics across surfaces and
   page,
   journeyUser,
 }) => {
+  test.setTimeout(300_000);
   await page.setViewportSize(DESKTOP_VIEWPORT);
   await signIn(page, journeyUser);
   const api = pageRequest(page, webOrigin);
@@ -272,23 +273,10 @@ test("canonical resources yield identical dropdown semantics across surfaces and
   ).data.default_library_id;
 
   // Seed exactly ONE canonical media resource through the real capture stack.
-  const mediaId = await captureCanonicalArticle(page, "resource-action-parity");
-  await expect
-    .poll(
-      async () => {
-        const response = await api.get(`/api/media/${mediaId}`);
-        if (!response.ok()) return `http-${response.status()}`;
-        const media = (await response.json()) as {
-          data: { processing_status: string; retrieval_status: string | null };
-        };
-        return `${media.data.processing_status}:${media.data.retrieval_status}`;
-      },
-      {
-        message: `Expected seeded media ${mediaId} to become routeable before comparing its dropdown across surfaces.`,
-        timeout: 30_000,
-      },
-    )
-    .toBe("ready_for_reading:ready");
+  const mediaId = await captureReadableArticle(
+    page,
+    "resource-action-parity",
+  );
 
   // ---- Pin the CONSUMPTION fact before ANY surface read ---------------------
   // AC1 parity holds for one facts revision. Reading a web article records a

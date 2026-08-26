@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { APIResponse } from "playwright/test";
 import { TOOL_PROJECTION_HEADER } from "@/lib/api/client";
 import { TOOL_PROJECTION_REVISION } from "@/lib/conversations/toolContractProjection";
-import { captureCanonicalArticle } from "../articleFixture";
+import { captureReadableArticle } from "../articleFixture";
 import {
   adversarialTruncatedPdf,
   boundedCitationPdf,
@@ -220,27 +220,10 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
   const api = pageRequest(page, webOrigin);
   const directApi = pageRequest(page, apiOrigin);
   const objects = pageRequest(page, minioOrigin);
-  const chatEvidenceMediaId = await captureCanonicalArticle(
+  const chatEvidenceMediaId = await captureReadableArticle(
     page,
     "bounded-interactive-proof",
   );
-  await expect
-    .poll(
-      async () => {
-        const response = await api.get(`/api/media/${chatEvidenceMediaId}`);
-        if (!response.ok()) return `http-${response.status()}`;
-        return (
-          (await response.json()) as {
-            data: { retrieval_status: string | null };
-          }
-        ).data.retrieval_status;
-      },
-      {
-        message: `Interactive proof source ${chatEvidenceMediaId} never became searchable before Heavy work began.`,
-        timeout: 90_000,
-      },
-    )
-    .toBe("ready");
   const bounded = await acceptPdfUpload(
     api,
     objects,
