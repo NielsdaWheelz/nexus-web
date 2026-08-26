@@ -65,6 +65,18 @@ export function expectString(raw: unknown, name: string): string {
   return raw;
 }
 
+const CANONICAL_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** Strict decoder for canonical lowercase UUID wire values. */
+export function expectCanonicalUuid(raw: unknown, name: string): string {
+  const value = expectString(raw, name);
+  if (!CANONICAL_UUID_RE.test(value)) {
+    throw new TypeError(`${name} must be a canonical lowercase UUID`);
+  }
+  return value;
+}
+
 /** The one decoder for a wire string whose contract forbids the empty value. */
 export function expectNonemptyString(raw: unknown, name: string): string {
   const value = expectString(raw, name);
