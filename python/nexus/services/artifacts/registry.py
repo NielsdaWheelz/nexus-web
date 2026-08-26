@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import cache
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Mapping, cast
+from typing import TYPE_CHECKING, cast
 from uuid import UUID
 
 from sqlalchemy.orm import Session

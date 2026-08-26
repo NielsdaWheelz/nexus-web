@@ -60,11 +60,11 @@ from nexus.services.artifacts.engine import (
 )
 from nexus.services.artifacts.idea_identity import idea_key_from_selection
 from nexus.services.artifacts.idea_seeds import find_or_create_idea_subject
+from nexus.services.artifacts.registry import visible_persisted_subject
 from nexus.services.artifacts.research import (
     FrozenIdeaEvidence,
     collect_idea_evidence,
 )
-from nexus.services.artifacts.registry import visible_persisted_subject
 from nexus.services.artifacts.subject_policy import ResolvedIdeaSubject
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.bootstrap import ensure_user_and_default_library
