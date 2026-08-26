@@ -36,6 +36,7 @@ from nexus.jobs.queue import (
     JobExecutionContext,
     JobRow,
     claim_job,
+    complete_job,
     dead_letter_expired_job,
     enqueue_job,
     fail_job,
@@ -357,13 +358,24 @@ def _seed_dossier_generation_owner(
         )
 
 
-def _suspend_retained_dossier_claim(db: Session, seeded: _DossierGenerationOwner) -> None:
-    """Release scarce test capacity after assertions without rewriting evidence."""
+def _close_retained_dossier_claim(db: Session, seeded: _DossierGenerationOwner) -> None:
+    """Close the exact fixture claim through the production queue state machine."""
     job = get_job(db, seeded.job.id)
     if job is None or job.status != "running":
         return
-    assert (
-        fail_job(
+    state = read_step_states(job)["synthesis"]
+    if state.dispatch_phase is Completed:
+        assert complete_job(
+            db,
+            job_id=job.id,
+            worker_id=seeded.context.worker_id,
+        )
+        db.commit()
+        return
+    if state.dispatch_phase is not Uncertain:
+        raise AssertionError("retained Dossier claim has no closed queue transition")
+    while True:
+        transition = fail_job(
             db,
             job_id=job.id,
             worker_id=seeded.context.worker_id,
@@ -371,9 +383,20 @@ def _suspend_retained_dossier_claim(db: Session, seeded: _DossierGenerationOwner
             error_message="retained generation proof completed",
             retry_delays_seconds=(),
         )
-        == "dead"
-    )
-    db.commit()
+        assert transition in {"failed", "dead"}
+        db.commit()
+        if transition == "dead":
+            return
+        claimed = claim_job(
+            db,
+            job_id=job.id,
+            worker_id=seeded.context.worker_id,
+            lease_seconds=300,
+            heavy_kinds=("dossier_build",),
+            allowed_kinds=("dossier_build",),
+        )
+        assert claimed is not None
+        db.commit()
 
 
 def _seed_idea_resolution_generation_owner(
@@ -394,6 +417,7 @@ def _seed_idea_resolution_generation_owner(
                 created_by_user_id=user_id,
             )
         )
+        db.flush()
         db.add(
             Highlight(
                 id=highlight_id,
@@ -426,8 +450,8 @@ def _seed_idea_resolution_generation_owner(
                 "policy_revision": generation_policy.POLICY_REVISION,
                 "policy_fingerprint": generation_policy.POLICY_FINGERPRINT,
                 "intent": build_synthesis_intent(
-                    instructions="Resolve one selected phrase.",
-                    input="generation ownership",
+                    system_prompt="Resolve one selected phrase.",
+                    user_content="generation ownership",
                     schema=learn_service.IdeaResolverEnvelope,
                 ),
             }
@@ -868,7 +892,7 @@ def test_dossier_cancellation_closes_only_a_prepared_generation(
                     },
                 ).one()
                 assert job_xmin == cancellation_xmin
-                _suspend_retained_dossier_claim(db, seeded)
+                _close_retained_dossier_claim(db, seeded)
                 return
             assert record is not None
             assert (
@@ -911,7 +935,7 @@ def test_dossier_cancellation_closes_only_a_prepared_generation(
                 record.accepted_at,
                 record.completed_at,
             ) == (None, None, None, None, None)
-        _suspend_retained_dossier_claim(db, seeded)
+        _close_retained_dossier_claim(db, seeded)
 
 
 def test_page_teardown_retries_the_whole_delete_when_dossier_build_membership_drifts(
@@ -1045,7 +1069,7 @@ def test_dossier_subject_teardown_closes_prepared_and_preserves_uncertain_genera
             record.accepted_at,
             record.completed_at,
         ) == (None, None, None, None, None)
-        _suspend_retained_dossier_claim(db, uncertain)
+        _close_retained_dossier_claim(db, uncertain)
 
 
 def test_shared_dossier_requester_teardown_cancels_prepared_and_blocks_uncertain(
@@ -1065,7 +1089,11 @@ def test_shared_dossier_requester_teardown_cancels_prepared_and_blocks_uncertain
 
     with Session(engine, expire_on_commit=False) as db:
         build = db.get(ArtifactBuild, prepared.build_id)
-        cancellation = db.get(ArtifactBuildCancellation, prepared.build_id)
+        cancellation = db.scalar(
+            select(ArtifactBuildCancellation).where(
+                ArtifactBuildCancellation.build_id == prepared.build_id
+            )
+        )
         record = read_generation(db, generation_id=prepared.generation_id)
         assert db.get(SynthesisArtifact, prepared.artifact_id) is not None
         assert build is not None and build.requester_user_id is None
@@ -1111,7 +1139,14 @@ def test_shared_dossier_requester_teardown_cancels_prepared_and_blocks_uncertain
     with Session(engine, expire_on_commit=False) as db:
         build = db.get(ArtifactBuild, uncertain.build_id)
         assert build is not None and build.requester_user_id == uncertain.user_id
-        assert db.get(ArtifactBuildCancellation, uncertain.build_id) is None
+        assert (
+            db.scalar(
+                select(ArtifactBuildCancellation).where(
+                    ArtifactBuildCancellation.build_id == uncertain.build_id
+                )
+            )
+            is None
+        )
         job = get_job(db, uncertain.job.id)
         assert job is not None
         state = read_step_states(job)["synthesis"]
@@ -1126,7 +1161,7 @@ def test_shared_dossier_requester_teardown_cancels_prepared_and_blocks_uncertain
             record.accepted_at,
             record.completed_at,
         ) == (None, None, None, None, None)
-        _suspend_retained_dossier_claim(db, uncertain)
+        _close_retained_dossier_claim(db, uncertain)
 
 
 def test_user_teardown_closes_prepared_idea_resolution_and_blocks_uncertain(
@@ -1257,6 +1292,7 @@ def test_dossier_modeled_failure_closes_prepared_generation_in_the_same_transact
                 },
             ).one()
             assert ledger_xmin == job_xmin == failure_xmin
+            _close_retained_dossier_claim(db, seeded)
     finally:
         set_rate_limiter(previous_limiter)
 
@@ -1282,6 +1318,7 @@ def test_prove_not_dispatched_releases_abandoned_request_scoped_idea_resolution(
                 created_by_user_id=user_id,
             )
         )
+        db.flush()
         db.add(
             Highlight(
                 id=highlight_id,
@@ -1315,8 +1352,8 @@ def test_prove_not_dispatched_releases_abandoned_request_scoped_idea_resolution(
                 "policy_revision": generation_policy.POLICY_REVISION,
                 "policy_fingerprint": generation_policy.POLICY_FINGERPRINT,
                 "intent": build_synthesis_intent(
-                    instructions="Resolve one selected phrase.",
-                    input="bounded rationality",
+                    system_prompt="Resolve one selected phrase.",
+                    user_content="bounded rationality",
                     schema=learn_service.IdeaResolverEnvelope,
                 ),
             }
