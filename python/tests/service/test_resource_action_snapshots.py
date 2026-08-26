@@ -595,36 +595,6 @@ def test_seeded_media_reports_core_media_lectern_and_placement_kinds(engine: Eng
     assert lectern.lectern_item_id is None
 
 
-def test_healthy_browser_capture_reports_refresh_source(engine: Engine) -> None:
-    viewer_id = _new_viewer(engine, "refresh-browser-capture")
-    media_id = _seed_article(
-        engine,
-        viewer_id,
-        source_url="https://example.invalid/captured-article",
-    )
-    with Session(engine) as db:
-        db.add(
-            MediaSourceAttempt(
-                media_id=media_id,
-                created_by_user_id=viewer_id,
-                source_type="browser_article_capture",
-                attempt_no=1,
-                status="succeeded",
-                intent_key=f"capture:{media_id}",
-                source_payload={"storage_path": f"captures/{media_id}.html"},
-            )
-        )
-        db.commit()
-
-    snapshot = _resolve(
-        engine,
-        viewer_id,
-        [ResourceRef(scheme="media", id=media_id)],
-    ).snapshots[0]
-
-    assert _availability(snapshot, "RefreshSource") == ("Available", None)
-
-
 @pytest.mark.parametrize(
     ("kind", "has_transcript"),
     [
@@ -652,6 +622,18 @@ def test_document_media_subtypes_publish_their_exact_action_families(
             )
         )
         db.flush()
+        if kind == MediaKind.web_article:
+            db.add(
+                MediaSourceAttempt(
+                    media_id=media_id,
+                    created_by_user_id=viewer_id,
+                    source_type="browser_article_capture",
+                    attempt_no=1,
+                    status="succeeded",
+                    intent_key=f"capture:{media_id}",
+                    source_payload={"storage_path": f"captures/{media_id}.html"},
+                )
+            )
         ensure_media_in_default_library(db, viewer_id, media_id)
         db.commit()
 
@@ -667,6 +649,9 @@ def test_document_media_subtypes_publish_their_exact_action_families(
         "LibraryPlacement",
         "RemoveMedia",
     } <= kinds
+    assert ("RefreshSource" in kinds) is (kind == MediaKind.web_article)
+    if kind == MediaKind.web_article:
+        assert _availability(snapshot, "RefreshSource") == ("Available", None)
     assert ("OfflineReading" in kinds) is (
         kind in (MediaKind.web_article, MediaKind.epub, MediaKind.pdf)
     )
