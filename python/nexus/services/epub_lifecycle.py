@@ -60,23 +60,6 @@ def _extraction_api_error(plan: EpubExtractionError) -> ApiError:
     return ResourceLimitError(message, dimension=plan.resource_limit_dimension)
 
 
-def retry_epub_ingest_for_viewer(
-    db: Session,
-    viewer_id: UUID,
-    media_id: UUID,
-    *,
-    request_id: str | None = None,
-) -> dict:
-    from nexus.services.media_source_ingest import retry_source_for_viewer
-
-    return retry_source_for_viewer(
-        db=db,
-        viewer_id=viewer_id,
-        media_id=media_id,
-        request_id=request_id,
-    )
-
-
 def prepare_epub_source(
     *,
     session_factory: sessionmaker[Session],
