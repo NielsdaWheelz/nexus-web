@@ -967,9 +967,11 @@ The backend separates three owners:
 - subject policy derives the subject, audience, authorization, deletion, and
   canonical activation;
 - one of eight bindings collects inputs and owns prompt, operation/profile,
-  manifest, coverage, and freshness;
+  manifest, coverage, freshness, citation materialization, and final document
+  compilation;
 - the generic engine owns idempotent build creation, durable execution,
-  terminal children, revision history, Make current, cancellation, and events.
+  one primary/repair document-acceptance phase, terminal children, revision
+  history, Make current, cancellation, and events.
 
 Resource bootstrap/Companion lookup uses
 `GET /artifacts/dossiers/{subject_scheme}/{subject_handle}`,

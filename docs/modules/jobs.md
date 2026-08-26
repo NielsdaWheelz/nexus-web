@@ -288,7 +288,10 @@ result envelope, and exact Prepared/Uncertain/Completed application for both
 `synthesis` and `document-repair`. `services/artifacts/coordination.py` owns the
 Dossier runtime capability and bounded research-yield behavior. The engine owns
 the distinct streaming/cancellation and unary-repair transports; it does not
-reimplement their journal protocol.
+reimplement their journal protocol. Each binding materializes one fully compiled
+`PublishableDossier`; `_DossierDocumentAcceptance` owns the single primary/repair
+acceptance phase and its document-versus-citation failure precedence, so
+`run_build` composes that phase instead of duplicating compilation branches.
 
 `chat_run` uses that kernel for preparation, every model/tool turn, and final
 publication. Dead chat jobs are retained because their payload is the in-flight

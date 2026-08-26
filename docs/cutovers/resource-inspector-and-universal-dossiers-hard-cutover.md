@@ -486,7 +486,7 @@ authorize server-side without exposing a private Contributor id.
 - input collection and bounded reduction;
 - prompt, operation/profile, reasoning, token/cost budget, and reduction plan;
 - input-manifest, freshness, and coverage projection;
-- generated schema and citation materialization;
+- generated schema, citation materialization, and final document compilation;
 - typed empty-input behavior.
 
 Exactly eight bindings exist. Seven public Resource bindings retain
@@ -941,7 +941,8 @@ Generate
   -> collect audience-visible binding inputs
   -> ensure `(media_id, fingerprint)` Media Intelligence dependencies
   -> reduce through binding-owned plan
-  -> validate schema + nonempty materialized citations
+  -> materialize citations + compile one publishable document
+  -> attempt document repair once when schema/document acceptance rejects output
   -> lock head and recheck build/lease/subject/audience/all manifest inputs
   -> atomically create revision + citations + Succeeded + current pointer
 ```
