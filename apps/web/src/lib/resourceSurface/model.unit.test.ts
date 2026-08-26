@@ -7,7 +7,7 @@ import {
   createResourceSurfaceIntent,
   materializeResourceSurfaceIntent,
   projectResourceSurface,
-  projectResourceSurfaceCommand,
+  rebindAcknowledgedResourceSurfaceIntents,
   resourceSurfaceLaneVersion,
 } from "./model";
 
@@ -17,6 +17,8 @@ const NEW_NOTE_ID = "cccccccc-1111-4111-8111-111111111111";
 const FIRST_OCCURRENCE_ID = "dddddddd-1111-4111-8111-111111111111";
 const SECOND_OCCURRENCE_ID = "eeeeeeee-1111-4111-8111-111111111111";
 const MUTATION_ID = "ffffffff-1111-4111-8111-111111111111";
+const NEXT_MUTATION_ID = "99999999-1111-4111-8111-111111111111";
+const ACKNOWLEDGED_OCCURRENCE_ID = "88888888-1111-4111-8111-111111111111";
 const PAGE_REF = `page:${PAGE_ID}`;
 const NOTE_REF = `note_block:${NOTE_ID}`;
 const BODY_PM_JSON = {
@@ -115,26 +117,71 @@ describe("resource surface model", () => {
       "missing body version",
     );
     expect(() =>
-      projectResourceSurfaceCommand(SURFACE, {
-        type: "remove_occurrence",
-        occurrenceId: MUTATION_ID,
+      projectResourceSurface({
+        acknowledgedSurface: SURFACE,
+        intents: [
+          {
+            clientMutationId: MUTATION_ID,
+            command: {
+              type: "remove_occurrence",
+              occurrenceId: MUTATION_ID,
+            },
+            occurrenceAnchor: {
+              kind: "persisted",
+              occurrenceId: MUTATION_ID,
+            },
+          },
+        ],
+        title: undefined,
+        bodies: new Map(),
       }),
-    ).toThrow("occurrence is not in the source");
+    ).toThrow("intent cannot materialize");
     expect(() =>
-      projectResourceSurfaceCommand(SURFACE, {
-        type: "insert_note",
-        noteId: NEW_NOTE_ID,
-        position: { kind: "after", occurrenceId: MUTATION_ID },
-        bodyPmJson: BODY_PM_JSON,
+      projectResourceSurface({
+        acknowledgedSurface: SURFACE,
+        intents: [
+          {
+            clientMutationId: MUTATION_ID,
+            command: {
+              type: "insert_note",
+              noteId: NEW_NOTE_ID,
+              position: { kind: "after", occurrenceId: MUTATION_ID },
+              bodyPmJson: BODY_PM_JSON,
+            },
+            position: {
+              kind: "after",
+              anchor: {
+                kind: "persisted",
+                occurrenceId: MUTATION_ID,
+              },
+            },
+          },
+        ],
+        title: undefined,
+        bodies: new Map(),
       }),
-    ).toThrow("position is not in the source");
+    ).toThrow("intent cannot materialize");
     expect(() =>
-      projectResourceSurfaceCommand(SURFACE, {
-        type: "split_note",
-        occurrenceId: SECOND_OCCURRENCE_ID,
-        noteId: NEW_NOTE_ID,
-        leftBodyPmJson: BODY_PM_JSON,
-        rightBodyPmJson: BODY_PM_JSON,
+      projectResourceSurface({
+        acknowledgedSurface: SURFACE,
+        intents: [
+          {
+            clientMutationId: MUTATION_ID,
+            command: {
+              type: "split_note",
+              occurrenceId: SECOND_OCCURRENCE_ID,
+              noteId: NEW_NOTE_ID,
+              leftBodyPmJson: BODY_PM_JSON,
+              rightBodyPmJson: BODY_PM_JSON,
+            },
+            occurrenceAnchor: {
+              kind: "persisted",
+              occurrenceId: SECOND_OCCURRENCE_ID,
+            },
+          },
+        ],
+        title: undefined,
+        bodies: new Map(),
       }),
     ).toThrow("Only note occurrences can be split");
   });
@@ -153,10 +200,20 @@ describe("resource surface model", () => {
     expect(intent).toEqual({
       clientMutationId: MUTATION_ID,
       command,
-      occurrenceTargetRef: NOTE_REF,
-      position: { kind: "after", targetRef: PAGE_REF },
+      occurrenceAnchor: {
+        kind: "persisted",
+        occurrenceId: FIRST_OCCURRENCE_ID,
+      },
+      position: {
+        kind: "after",
+        anchor: {
+          kind: "persisted",
+          occurrenceId: SECOND_OCCURRENCE_ID,
+        },
+      },
     });
-    expect(materializeResourceSurfaceIntent(SURFACE, intent!)).toEqual(command);
+    if (intent === null) throw new Error("Expected a replay intent");
+    expect(materializeResourceSurfaceIntent(SURFACE, intent)).toEqual(command);
   });
 
   it("projects queued commands, title, and authored bodies in one owner", () => {
@@ -170,9 +227,10 @@ describe("resource surface model", () => {
       },
       clientMutationId: MUTATION_ID,
     });
+    if (intent === null) throw new Error("Expected an insert intent");
     const projected = projectResourceSurface({
       acknowledgedSurface: SURFACE,
-      intents: [intent!],
+      intents: [intent],
       title: { value: "Edited", clientMutationId: MUTATION_ID },
       bodies: new Map([
         [
@@ -190,7 +248,7 @@ describe("resource surface model", () => {
       title: "Edited",
     });
     expect(projected.orderedItems.map((item) => item.occurrenceId)).toEqual([
-      `local:${NEW_NOTE_ID}`,
+      `pending:${MUTATION_ID}`,
       FIRST_OCCURRENCE_ID,
       SECOND_OCCURRENCE_ID,
     ]);
@@ -198,6 +256,99 @@ describe("resource surface model", () => {
       kind: "note_body",
       bodyPmJson: { type: "paragraph" },
       bodyText: "",
+    });
+  });
+
+  it("keeps duplicate targets exact and rebinds queued pending anchors", () => {
+    const duplicateSurface: ResourceSurface = {
+      ...SURFACE,
+      orderedItems: [
+        SURFACE.orderedItems[0]!,
+        {
+          ...SURFACE.orderedItems[0]!,
+          occurrenceId: SECOND_OCCURRENCE_ID,
+        },
+      ],
+    };
+    const exactMove = createResourceSurfaceIntent({
+      surface: duplicateSurface,
+      command: {
+        type: "move_occurrence",
+        occurrenceId: SECOND_OCCURRENCE_ID,
+        position: { kind: "start" },
+      },
+      clientMutationId: NEXT_MUTATION_ID,
+    });
+    if (exactMove === null) throw new Error("Expected an exact move intent");
+    expect(exactMove.occurrenceAnchor).toEqual({
+      kind: "persisted",
+      occurrenceId: SECOND_OCCURRENCE_ID,
+    });
+
+    const insert = createResourceSurfaceIntent({
+      surface: SURFACE,
+      command: {
+        type: "insert_note",
+        noteId: NEW_NOTE_ID,
+        position: { kind: "start" },
+        bodyPmJson: BODY_PM_JSON,
+      },
+      clientMutationId: MUTATION_ID,
+    });
+    if (insert === null) throw new Error("Expected an insert intent");
+    const projected = projectResourceSurface({
+      acknowledgedSurface: SURFACE,
+      intents: [insert],
+      title: undefined,
+      bodies: new Map(),
+    });
+    const movePending = createResourceSurfaceIntent({
+      surface: projected,
+      command: {
+        type: "move_occurrence",
+        occurrenceId: `pending:${MUTATION_ID}`,
+        position: { kind: "after", occurrenceId: SECOND_OCCURRENCE_ID },
+      },
+      clientMutationId: NEXT_MUTATION_ID,
+    });
+    if (movePending === null) throw new Error("Expected a pending move intent");
+    const acknowledgedSurface: ResourceSurface = {
+      ...SURFACE,
+      orderedItems: [
+        {
+          occurrenceId: ACKNOWLEDGED_OCCURRENCE_ID,
+          target: {
+            item: {
+              ...NOTE_ITEM,
+              ref: `note_block:${NEW_NOTE_ID}`,
+              id: NEW_NOTE_ID,
+            },
+            content: {
+              kind: "note_body",
+              bodyPmJson: BODY_PM_JSON,
+              bodyText: "Draft",
+            },
+          },
+        },
+        ...SURFACE.orderedItems,
+      ],
+    };
+    const [rebound] = rebindAcknowledgedResourceSurfaceIntents({
+      previousSurface: SURFACE,
+      acknowledgedSurface,
+      completedIntent: insert,
+      remainingIntents: [movePending],
+    });
+    expect(rebound?.occurrenceAnchor).toEqual({
+      kind: "persisted",
+      occurrenceId: ACKNOWLEDGED_OCCURRENCE_ID,
+    });
+    if (rebound === undefined) throw new Error("Expected a rebound move intent");
+    expect(
+      materializeResourceSurfaceIntent(acknowledgedSurface, rebound),
+    ).toMatchObject({
+      type: "move_occurrence",
+      occurrenceId: ACKNOWLEDGED_OCCURRENCE_ID,
     });
   });
 });

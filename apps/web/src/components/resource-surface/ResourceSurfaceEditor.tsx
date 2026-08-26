@@ -582,19 +582,19 @@ function LoadedResourceSurfaceEditor({
   const insertNote = useCallback(
     (position: { kind: "start" } | { kind: "after"; occurrenceId: string }) => {
       const noteId = createRandomId();
-      session.command({
+      const occurrenceId = session.command({
         type: "insert_note",
         noteId,
         position,
         bodyPmJson: EMPTY_NOTE_BODY,
       });
+      if (occurrenceId === null) return;
       setBodyFocus((current) => ({
-        occurrenceId:
-          daily && !surface ? `daily-provisional:${noteId}` : `local:${noteId}`,
+        occurrenceId,
         serial: current.serial + 1,
       }));
     },
-    [daily, session, setBodyFocus, surface],
+    [session, setBodyFocus],
   );
 
   const splitNote = useCallback(
@@ -604,15 +604,16 @@ function LoadedResourceSurfaceEditor({
       rightBodyPmJson: Record<string, unknown>;
     }) => {
       const noteId = createRandomId();
-      session.command({
+      const occurrenceId = session.command({
         type: "split_note",
         occurrenceId: input.occurrenceId,
         noteId,
         leftBodyPmJson: input.leftBodyPmJson,
         rightBodyPmJson: input.rightBodyPmJson,
       });
+      if (occurrenceId === null) return;
       setBodyFocus((current) => ({
-        occurrenceId: `local:${noteId}`,
+        occurrenceId,
         serial: current.serial + 1,
       }));
     },

@@ -4,6 +4,7 @@ import { decodeResourceSurfaceDraft } from "./draftStore";
 const PAGE_ID = "aaaaaaaa-1111-4111-8111-111111111111";
 const NOTE_ID = "bbbbbbbb-1111-4111-8111-111111111111";
 const MUTATION_ID = "cccccccc-1111-4111-8111-111111111111";
+const NEXT_MUTATION_ID = "dddddddd-1111-4111-8111-111111111111";
 const PAGE_REF = `page:${PAGE_ID}`;
 const NOTE_REF = `note_block:${NOTE_ID}`;
 const BODY_PM_JSON = {
@@ -51,7 +52,7 @@ const PAGE_ITEM = {
 };
 
 const DRAFT = {
-  version: 1,
+  version: 2,
   source_ref: PAGE_REF,
   acknowledged_surface: {
     source: {
@@ -70,6 +71,17 @@ const DRAFT = {
         bodyPmJson: BODY_PM_JSON,
       },
       position: { kind: "start" },
+    },
+    {
+      clientMutationId: NEXT_MUTATION_ID,
+      command: {
+        type: "remove_occurrence",
+        occurrenceId: `pending:${MUTATION_ID}`,
+      },
+      occurrenceAnchor: {
+        kind: "pending",
+        clientMutationId: MUTATION_ID,
+      },
     },
   ],
   title: { value: "Edited", client_mutation_id: MUTATION_ID },
@@ -103,6 +115,24 @@ describe("resource surface draft contract", () => {
         PAGE_REF,
       ),
     ).toThrow("resource surface snapshot must contain exactly");
+    expect(() =>
+      decodeResourceSurfaceDraft({ ...DRAFT, version: 1 }, PAGE_REF),
+    ).toThrow("resource surface draft.version must be 2");
+    expect(() =>
+      decodeResourceSurfaceDraft(
+        {
+          ...DRAFT,
+          commands: [
+            DRAFT.commands[0],
+            {
+              ...DRAFT.commands[1],
+              occurrenceTargetRef: NOTE_REF,
+            },
+          ],
+        },
+        PAGE_REF,
+      ),
+    ).toThrow("must contain exactly");
   });
 
   it("binds the storage key, mutation identity, and body projection", () => {

@@ -19,14 +19,18 @@ import {
 
 const STORAGE_PREFIX = "nexus.resourceSurface:";
 
+export type ResourceSurfaceOccurrenceAnchor =
+  | { kind: "persisted"; occurrenceId: string }
+  | { kind: "pending"; clientMutationId: string };
+
 export type ResourceSurfaceDraftPosition =
   | { kind: "start" }
-  | { kind: "after"; targetRef: string };
+  | { kind: "after"; anchor: ResourceSurfaceOccurrenceAnchor };
 
 export type ResourceSurfaceDraftIntent = {
   clientMutationId: string;
   command: ResourceSurfaceCommand;
-  occurrenceTargetRef?: string;
+  occurrenceAnchor?: ResourceSurfaceOccurrenceAnchor;
   position?: ResourceSurfaceDraftPosition;
 };
 
@@ -42,7 +46,7 @@ export type ResourceSurfacePendingBody = {
 };
 
 export type ResourceSurfaceDraft = {
-  version: 1;
+  version: 2;
   source_ref: string;
   acknowledged_surface: ResourceSurface;
   commands: ResourceSurfaceDraftIntent[];
@@ -68,6 +72,50 @@ function expectResourceRef(raw: unknown, name: string): string {
   return value;
 }
 
+function expectOccurrenceLocator(raw: unknown, name: string): string {
+  const value = expectString(raw, name);
+  if (value.startsWith("pending:")) {
+    expectCanonicalUuid(value.slice("pending:".length), `${name} pending ID`);
+    return value;
+  }
+  return expectCanonicalUuid(value, name);
+}
+
+function decodeOccurrenceAnchor(
+  raw: unknown,
+  name: string,
+): ResourceSurfaceOccurrenceAnchor {
+  const record = expectRecord(raw, name);
+  switch (expectString(record.kind, `${name}.kind`)) {
+    case "persisted": {
+      const anchor = expectExactRecord(raw, ["kind", "occurrenceId"], name);
+      return {
+        kind: "persisted",
+        occurrenceId: expectCanonicalUuid(
+          anchor.occurrenceId,
+          `${name}.occurrenceId`,
+        ),
+      };
+    }
+    case "pending": {
+      const anchor = expectExactRecord(
+        raw,
+        ["kind", "clientMutationId"],
+        name,
+      );
+      return {
+        kind: "pending",
+        clientMutationId: expectCanonicalUuid(
+          anchor.clientMutationId,
+          `${name}.clientMutationId`,
+        ),
+      };
+    }
+    default:
+      throw new TypeError(`${name}.kind is invalid`);
+  }
+}
+
 function decodeSurfacePosition(raw: unknown, name: string): SurfacePosition {
   const record = expectRecord(raw, name);
   switch (expectString(record.kind, `${name}.kind`)) {
@@ -78,7 +126,7 @@ function decodeSurfacePosition(raw: unknown, name: string): SurfacePosition {
       const position = expectExactRecord(raw, ["kind", "occurrenceId"], name);
       return {
         kind: "after",
-        occurrenceId: expectCanonicalUuid(
+        occurrenceId: expectOccurrenceLocator(
           position.occurrenceId,
           `${name}.occurrenceId`,
         ),
@@ -99,10 +147,10 @@ function decodeDraftPosition(
       expectExactRecord(raw, ["kind"], name);
       return { kind: "start" };
     case "after": {
-      const position = expectExactRecord(raw, ["kind", "targetRef"], name);
+      const position = expectExactRecord(raw, ["kind", "anchor"], name);
       return {
         kind: "after",
-        targetRef: expectResourceRef(position.targetRef, `${name}.targetRef`),
+        anchor: decodeOccurrenceAnchor(position.anchor, `${name}.anchor`),
       };
     }
     default:
@@ -149,7 +197,7 @@ function decodeCommand(raw: unknown): ResourceSurfaceCommand {
       );
       return {
         type: "split_note",
-        occurrenceId: expectCanonicalUuid(
+        occurrenceId: expectOccurrenceLocator(
           command.occurrenceId,
           "resource surface draft split_note command.occurrenceId",
         ),
@@ -193,7 +241,7 @@ function decodeCommand(raw: unknown): ResourceSurfaceCommand {
       );
       return {
         type: "move_occurrence",
-        occurrenceId: expectCanonicalUuid(
+        occurrenceId: expectOccurrenceLocator(
           command.occurrenceId,
           "resource surface draft move_occurrence command.occurrenceId",
         ),
@@ -211,7 +259,7 @@ function decodeCommand(raw: unknown): ResourceSurfaceCommand {
       );
       return {
         type: "remove_occurrence",
-        occurrenceId: expectCanonicalUuid(
+        occurrenceId: expectOccurrenceLocator(
           command.occurrenceId,
           "resource surface draft remove_occurrence command.occurrenceId",
         ),
@@ -248,15 +296,15 @@ function decodeIntent(raw: unknown, index: number): ResourceSurfaceDraftIntent {
     case "move_occurrence": {
       const intent = expectExactRecord(
         raw,
-        ["clientMutationId", "command", "occurrenceTargetRef", "position"],
+        ["clientMutationId", "command", "occurrenceAnchor", "position"],
         name,
       );
       return {
         clientMutationId,
         command,
-        occurrenceTargetRef: expectResourceRef(
-          intent.occurrenceTargetRef,
-          `${name}.occurrenceTargetRef`,
+        occurrenceAnchor: decodeOccurrenceAnchor(
+          intent.occurrenceAnchor,
+          `${name}.occurrenceAnchor`,
         ),
         position: decodeDraftPosition(intent.position, `${name}.position`),
       };
@@ -265,15 +313,15 @@ function decodeIntent(raw: unknown, index: number): ResourceSurfaceDraftIntent {
     case "split_note": {
       const intent = expectExactRecord(
         raw,
-        ["clientMutationId", "command", "occurrenceTargetRef"],
+        ["clientMutationId", "command", "occurrenceAnchor"],
         name,
       );
       return {
         clientMutationId,
         command,
-        occurrenceTargetRef: expectResourceRef(
-          intent.occurrenceTargetRef,
-          `${name}.occurrenceTargetRef`,
+        occurrenceAnchor: decodeOccurrenceAnchor(
+          intent.occurrenceAnchor,
+          `${name}.occurrenceAnchor`,
         ),
       };
     }
@@ -331,8 +379,8 @@ export function decodeResourceSurfaceDraft(
         ],
     "resource surface draft",
   );
-  if (draft.version !== 1) {
-    throw new TypeError("resource surface draft.version must be 1");
+  if (draft.version !== 2) {
+    throw new TypeError("resource surface draft.version must be 2");
   }
   const sourceRef = expectResourceRef(
     draft.source_ref,
@@ -398,7 +446,7 @@ export function decodeResourceSurfaceDraft(
     };
   }
   return {
-    version: 1,
+    version: 2,
     source_ref: sourceRef,
     acknowledged_surface: acknowledgedSurface,
     commands: expectArray(
@@ -472,7 +520,7 @@ export function persistResourceSurfaceDraft(input: {
     return false;
   }
   const serialized = JSON.stringify({
-    version: 1,
+    version: 2,
     source_ref: input.sourceRef,
     acknowledged_surface: input.acknowledgedSurface,
     commands: input.commands,

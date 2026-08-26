@@ -25,8 +25,10 @@ import {
   createResourceSurfaceIntent,
   materializeResourceSurfaceIntent,
   projectResourceSurface,
+  rebindAcknowledgedResourceSurfaceIntents,
   resourceSurfaceLaneVersion,
   resourceSurfaceOccurrenceForRef,
+  resourceSurfacePendingOccurrenceId,
   type ResourceSurfaceCommand,
 } from "@/lib/resourceSurface/model";
 import type { MountedEditorMutationLease } from "@/lib/actions/mountedActionHandoff";
@@ -46,7 +48,7 @@ export interface ResourceSurfaceSession {
   updateTitle(title: string): void;
   updateBody(input: { occurrenceId: string; bodyPmJson: Record<string, unknown>; bodyText: string; flush?: boolean }): void;
   updateSourceNoteBody(input: { bodyPmJson: Record<string, unknown>; bodyText: string; flush?: boolean }): void;
-  command(command: ResourceSurfaceCommand): void;
+  command(command: ResourceSurfaceCommand): string | null;
   flush(): void;
   retry(): void;
   reload(): Promise<void>;
@@ -440,8 +442,16 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
     if (command.type === "split_note") { const row = acknowledged.orderedItems.find((item) => item.occurrenceId === command.occurrenceId); if (!row) { stoppedRef.current = true; activeRef.current = false; setStatus("failed"); return; } bases.push({ ref: row.target.item.ref, lane: "body" as const, version: resourceSurfaceLaneVersion(row.target.item, "body") }); }
     void commandResourceSurface({ sourceRef, clientMutationId: intent.clientMutationId, baseVersions: bases, command }).then((next) => {
       if (generation !== generationRef.current) return;
+      const remainingIntents = intentsRef.current.filter(
+        (item) => item !== intent,
+      );
+      intentsRef.current = rebindAcknowledgedResourceSurfaceIntents({
+        previousSurface: acknowledged,
+        acknowledgedSurface: next,
+        completedIntent: intent,
+        remainingIntents,
+      });
       acknowledgedRef.current = next;
-      intentsRef.current = intentsRef.current.filter((item) => item !== intent);
       activeRef.current = false;
       publish();
       store();
@@ -733,21 +743,22 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
   const command = useCallback((next: ResourceSurfaceCommand) => {
     const currentInput = inputRef.current;
     if ("daily" in currentInput && !acknowledgedRef.current && next.type === "insert_note") {
-      if (dailyDraftRef.current) return;
+      if (dailyDraftRef.current) return null;
       dailyDraftRef.current = createDailyDraft(
         currentInput.daily, next.noteId, resourceSurfaceCommandId(), next.bodyPmJson,
       );
       dailyCapturedRef.current = false; captureSnapshotRef.current = null;
       bodiesRef.current.set(draftNoteRef(next.noteId), pendingDailyBody(dailyDraftRef.current, resourceSurfaceCommandId()));
       recoveredPausedRef.current = false; store();
-      return;
+      return `daily-provisional:${next.noteId}`;
     }
     const before = derived();
-    if (!before) return;
+    if (!before) return null;
+    const clientMutationId = resourceSurfaceCommandId();
     const intent = createResourceSurfaceIntent({
       surface: before,
       command: next,
-      clientMutationId: resourceSurfaceCommandId(),
+      clientMutationId,
     });
     if (!intent) {
       const error = new Error(
@@ -756,10 +767,16 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
       stoppedRef.current = true;
       setStatus("failed");
       onErrorRef.current?.(error);
-      return;
+      return null;
     }
-    if (next.type === "split_note" && intent.occurrenceTargetRef) {
-      bodiesRef.current.delete(intent.occurrenceTargetRef);
+    if (next.type === "split_note") {
+      const splitOccurrence = before.orderedItems.find(
+        (item) => item.occurrenceId === next.occurrenceId,
+      );
+      if (splitOccurrence === undefined) {
+        throw new Error("Split note occurrence is not in the projected surface");
+      }
+      bodiesRef.current.delete(splitOccurrence.target.item.ref);
     }
     intentsRef.current = [...intentsRef.current, intent];
     publish();
@@ -767,6 +784,11 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
     setStatus("dirty");
     if (next.type !== "split_note") saveIntrinsics();
     pump();
+    return next.type === "insert_note" ||
+      next.type === "split_note" ||
+      next.type === "insert_resource"
+      ? resourceSurfacePendingOccurrenceId(clientMutationId)
+      : null;
   }, [derived, publish, pump, saveIntrinsics, store]);
   const flush = useCallback(() => saveIntrinsics(), [saveIntrinsics]);
   const reload = useCallback(async () => {
