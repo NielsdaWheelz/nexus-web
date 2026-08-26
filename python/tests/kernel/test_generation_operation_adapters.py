@@ -144,7 +144,7 @@ def test_metadata_job_result_does_not_duplicate_generation_policy_facts() -> Non
     assert enrich_metadata._job_result(enrich_metadata._success_result(["title"])) == {
         "status": "success",
         "fields": ["title"],
-    }
+    }, "metadata job result duplicated generation policy facts"
 
 
 def _successful_structured_terminal(payload: dict[str, object]) -> GenerationTerminal:

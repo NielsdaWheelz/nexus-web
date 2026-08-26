@@ -77,11 +77,12 @@ it for exact release proof. It changes only when that contract changes.
 
 ### Lease policy by kind
 
-Leases are sized to the worst-case wall-clock of one attempt. Notably
-`oracle_reading_generate` carries a **300s** lease — wide enough for retrieval
-plus the structured synthesis call plus the one bounded repair round
-([llms.md](llms.md)); chat and `dossier_build` sit at 900s; the rest default to
-300s.
+Leases are sized to the worst-case wall-clock of one attempt. The generation
+kinds use these exact registry values: `enrich_metadata` and `synapse_scan`,
+300s; `oracle_reading_generate` and `media_unit_build`, 450s;
+`dawn_write_job` and `dossier_build`, 900s; and `chat_run`, 1,200s. Each lease
+exceeds its bounded generation transport deadline, leaving a positive
+terminal-checkpoint margin ([llms.md](llms.md)).
 
 ### Dead-lettering
 

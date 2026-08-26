@@ -345,6 +345,15 @@
       "expected_failure": "empty successful text authorized capacity qualification"
     },
     {
+      "id": "durable-codex-operation-revision-shadow",
+      "patch": "testdata/faults/durable-codex-operation-revision-shadow.patch",
+      "sha256": "3130446b0dbac2ed64f99c37ed3168f61c352abc8d9fcc60940ca80412498362",
+      "proofs": [
+        "pytest:python/tests/kernel/test_generation_operation_adapters.py"
+      ],
+      "expected_failure": "metadata job result duplicated generation policy facts"
+    },
+    {
       "id": "conversation-chat-job-revocation-bypass",
       "patch": "testdata/faults/conversation-chat-job-revocation-bypass.patch",
       "sha256": "c0b7ae8b086a5a6ce850e2bc20da3002b509ea290f2c9f4dc545321519cada12",
