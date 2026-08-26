@@ -34,6 +34,7 @@ from nexus.db.models import (
     Media,
     MediaFile,
     MediaKind,
+    MediaSourceAttempt,
     Membership,
     Message,
     NoteBlock,
@@ -592,6 +593,36 @@ def test_seeded_media_reports_core_media_lectern_and_placement_kinds(engine: Eng
     lectern = _capability(snapshot, "LecternMembership")
     assert lectern.state == "Absent"
     assert lectern.lectern_item_id is None
+
+
+def test_healthy_browser_capture_reports_refresh_source(engine: Engine) -> None:
+    viewer_id = _new_viewer(engine, "refresh-browser-capture")
+    media_id = _seed_article(
+        engine,
+        viewer_id,
+        source_url="https://example.invalid/captured-article",
+    )
+    with Session(engine) as db:
+        db.add(
+            MediaSourceAttempt(
+                media_id=media_id,
+                created_by_user_id=viewer_id,
+                source_type="browser_article_capture",
+                attempt_no=1,
+                status="succeeded",
+                intent_key=f"capture:{media_id}",
+                source_payload={"storage_path": f"captures/{media_id}.html"},
+            )
+        )
+        db.commit()
+
+    snapshot = _resolve(
+        engine,
+        viewer_id,
+        [ResourceRef(scheme="media", id=media_id)],
+    ).snapshots[0]
+
+    assert _availability(snapshot, "RefreshSource") == ("Available", None)
 
 
 @pytest.mark.parametrize(
