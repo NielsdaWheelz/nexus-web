@@ -52,6 +52,7 @@ from nexus_test_control.services import (
 REPO_ROOT = Path(__file__).resolve().parents[4]
 _CANDIDATE_WORKER_IMAGE_ID = "sha256:" + "c" * 64
 _HOSTED_SOURCE_SHA = "a" * 40
+_CANDIDATE_SHA = "a" * 40
 
 
 @pytest.mark.parametrize(
@@ -71,25 +72,6 @@ def test_browser_admission_uses_only_the_supported_playwright_executable_layouts
     expected: tuple[str, str] | None,
 ) -> None:
     assert runner._browser_executable_names(platform_name, machine) == expected
-
-
-@pytest.mark.parametrize(
-    ("platform_name", "environment", "expected"),
-    (
-        ("darwin", {"HOME": "/Users/nexus"}, "/Users/nexus/Library/Caches/ms-playwright"),
-        ("linux", {"HOME": "/home/nexus"}, "/home/nexus/.cache/ms-playwright"),
-        ("linux", {"XDG_CACHE_HOME": "/cache"}, "/cache/ms-playwright"),
-        ("darwin", {"PLAYWRIGHT_BROWSERS_PATH": "/locked"}, "/locked"),
-        ("win32", {"HOME": "C:/Users/nexus"}, None),
-    ),
-)
-def test_browser_admission_resolves_playwrights_platform_cache_contract(
-    platform_name: str,
-    environment: Mapping[str, str],
-    expected: str | None,
-) -> None:
-    resolved = runner._browser_cache_root(environment, platform_name=platform_name)
-    assert resolved == (Path(expected) if expected is not None else None)
 
 
 def test_browser_admission_requires_both_complete_locked_platform_artifacts(
@@ -125,6 +107,97 @@ def test_browser_admission_requires_both_complete_locked_platform_artifacts(
 
     (owners[1] / "INSTALLATION_COMPLETE").unlink()
     assert not runner._browser_installed(tmp_path, environment)
+
+
+def test_browser_admission_accepts_playwright_macos_default_install(
+    tmp_path: Path,
+) -> None:
+    """Risk: a fresh macOS setup installs Chromium where the controller never admits it."""
+
+    repo_root = tmp_path / "repo"
+    revisions = {"chromium": "1217", "chromium-headless-shell": "1217"}
+    _write(
+        repo_root / "apps/web/node_modules/playwright-core/browsers.json",
+        json.dumps(
+            {
+                "browsers": [
+                    {"name": name, "revision": revision} for name, revision in revisions.items()
+                ]
+            }
+        ),
+    )
+    home = tmp_path / "home"
+    cache = home / "Library/Caches/ms-playwright"
+    executables = ("Google Chrome for Testing", "chrome-headless-shell")
+    owners = (
+        cache / f"chromium-{revisions['chromium']}",
+        cache / f"chromium_headless_shell-{revisions['chromium-headless-shell']}",
+    )
+    for owner, executable in zip(owners, executables, strict=True):
+        owner.mkdir(parents=True)
+        (owner / "INSTALLATION_COMPLETE").write_text("", encoding="utf-8")
+        binary = owner / "platform" / executable
+        _write(binary, "browser\n")
+        binary.chmod(0o755)
+
+    assert runner._browser_installed_for_platform(
+        repo_root,
+        {"HOME": str(home)},
+        platform_name="darwin",
+        machine="arm64",
+    )
+
+
+@pytest.mark.parametrize(
+    ("environment", "platform_name", "expected"),
+    (
+        ({"HOME": "/users/owner"}, "darwin", Path("/users/owner/Library/Caches/ms-playwright")),
+        ({"HOME": "/users/owner"}, "linux", Path("/users/owner/.cache/ms-playwright")),
+        (
+            {"HOME": "/users/owner", "XDG_CACHE_HOME": "/cache"},
+            "linux",
+            Path("/cache/ms-playwright"),
+        ),
+        ({"PLAYWRIGHT_BROWSERS_PATH": "/browsers"}, "darwin", Path("/browsers")),
+        ({}, "darwin", None),
+        ({}, "win32", None),
+    ),
+)
+def test_browser_admission_uses_playwright_platform_cache_defaults(
+    environment: dict[str, str], platform_name: str, expected: Path | None
+) -> None:
+    assert runner._browser_cache_directory(environment, platform_name) == expected
+
+
+def test_browser_admission_uses_the_playwright_host_default_cache(tmp_path: Path) -> None:
+    revisions = {"chromium": "1217", "chromium-headless-shell": "1217"}
+    _write(
+        tmp_path / "apps/web/node_modules/playwright-core/browsers.json",
+        json.dumps(
+            {
+                "browsers": [
+                    {"name": name, "revision": revision} for name, revision in revisions.items()
+                ]
+            }
+        ),
+    )
+    home = tmp_path / "home"
+    cache = runner._browser_cache_directory({"HOME": str(home)}, sys.platform)
+    assert cache is not None
+    executables = runner._browser_executable_names(sys.platform, os.uname().machine)
+    assert executables is not None
+    owners = (
+        cache / f"chromium-{revisions['chromium']}",
+        cache / f"chromium_headless_shell-{revisions['chromium-headless-shell']}",
+    )
+    for owner, executable in zip(owners, executables, strict=True):
+        owner.mkdir(parents=True)
+        (owner / "INSTALLATION_COMPLETE").write_text("", encoding="utf-8")
+        binary = owner / "platform" / executable
+        _write(binary, "browser\n")
+        binary.chmod(0o755)
+
+    assert runner._browser_installed(tmp_path, {"HOME": str(home)})
 
 
 def test_codex_hosted_canary_plan_requires_dedicated_profile_state_without_an_api_key(
@@ -1867,7 +1940,12 @@ def test_android_release_control_owns_physical_device_and_exact_signed_methods(
     }
 
     result = run_capability(
-        CapabilityContext(tmp_path, Workflow.RELEASE, ()),
+        CapabilityContext(
+            tmp_path,
+            Workflow.RELEASE,
+            (),
+            candidate_sha=_CANDIDATE_SHA,
+        ),
         Capability.ANDROID_DEVICE,
         environment,
     )
@@ -1901,7 +1979,10 @@ def test_android_device_accepts_the_emulator_only_for_the_bootstrap_release(
     suite — on the emulator every non-release workflow already uses."""
     android_root = tmp_path / "apps/android"
     sdk = tmp_path / "android-sdk"
+    run_id = "0123456789abcdef"
+    results = tmp_path / "test-results/runs" / run_id
     sdk.mkdir()
+    results.mkdir(parents=True)
     _write(
         android_root / "app/src/androidTest/java/app/nexus/android/DeviceTest.kt",
         "package app.nexus.android\nclass DeviceTest\n",
@@ -1918,10 +1999,17 @@ def test_android_device_accepts_the_emulator_only_for_the_bootstrap_release(
         **_tool_environment(tmp_path),
         "ANDROID_HOME": str(sdk),
         "NEXUS_ANDROID_RELEASE_BOOTSTRAP_NO_DEVICE": "true",
+        "NEXUS_TEST_EVIDENCE_RUN_ID": run_id,
+        "NEXUS_TEST_RESULTS_DIR": str(results),
     }
 
     result = run_capability(
-        CapabilityContext(tmp_path, Workflow.RELEASE, ()),
+        CapabilityContext(
+            tmp_path,
+            Workflow.RELEASE,
+            (),
+            candidate_sha=_CANDIDATE_SHA,
+        ),
         Capability.ANDROID_DEVICE,
         environment,
     )
@@ -1975,6 +2063,14 @@ def test_android_device_accepts_the_emulator_only_for_the_bootstrap_release(
             "Android device proof requires exactly one USB-backed physical device",
             id="two-usb-handsets",
         ),
+        pytest.param(
+            "List of devices attached\n"
+            "R5CT1234 device usb:1-2 product:nexus model:Pixel transport_id:1\n"
+            "192.168.1.5:5555 device product:nexus model:Pixel transport_id:2\n",
+            None,
+            "Android device proof requires exactly one authorized device row",
+            id="usb-plus-wireless-adb",
+        ),
     ],
 )
 def test_signed_release_device_attestation_admits_only_one_usb_handset(
@@ -1989,9 +2085,14 @@ def test_signed_release_device_attestation_admits_only_one_usb_handset(
     _write_executable(adb, stdout=inventory.rstrip("\n"))
     environment = {**_tool_environment(tmp_path), "ANDROID_HOME": str(sdk)}
 
-    serial, detail = authorized_usb_physical_device(adb, environment, tmp_path)
+    device, detail = authorized_usb_physical_device(adb, environment, tmp_path)
 
-    assert (serial, detail) == (expected_serial, expected_detail)
+    assert (device.serial if device is not None else None, detail) == (
+        expected_serial,
+        expected_detail,
+    )
+    if device is not None:
+        assert device.adb_devices_row == inventory.splitlines()[1]
 
 
 @pytest.mark.parametrize(
@@ -2025,6 +2126,20 @@ def test_signed_release_device_attestation_admits_only_one_usb_handset(
             "Android device proof requires exactly one local emulator or USB device",
             id="ambiguous-inventory",
         ),
+        pytest.param(
+            "List of devices attached\n"
+            "R5CT1234 device usb:1-2 product:nexus transport_id:1\n"
+            "192.168.1.5:5555 device product:nexus transport_id:2\n",
+            None,
+            "Android device proof requires exactly one authorized device row",
+            id="usb-plus-wireless-adb",
+        ),
+        pytest.param(
+            "emulator-5554 device product:sdk model:sdk transport_id:1\n",
+            None,
+            "Android device inventory could not be read",
+            id="missing-adb-header",
+        ),
     ],
 )
 def test_ordinary_device_attestation_admits_an_emulator_but_never_wireless_adb(
@@ -2039,9 +2154,33 @@ def test_ordinary_device_attestation_admits_an_emulator_but_never_wireless_adb(
     _write_executable(adb, stdout=inventory.rstrip("\n"))
     environment = {**_tool_environment(tmp_path), "ANDROID_HOME": str(sdk)}
 
-    serial, detail = authorized_instrumentation_device(adb, environment, tmp_path)
+    device, detail = authorized_instrumentation_device(adb, environment, tmp_path)
 
-    assert (serial, detail) == (expected_serial, expected_detail)
+    assert (device.serial if device is not None else None, detail) == (
+        expected_serial,
+        expected_detail,
+    )
+    if device is not None:
+        assert device.adb_devices_row == inventory.splitlines()[1]
+
+
+def test_android_device_attestation_rejects_a_tail_truncated_inventory(
+    tmp_path: Path,
+) -> None:
+    sdk = tmp_path / "android-sdk"
+    adb = sdk / "platform-tools/adb"
+    oversized = (
+        "List of devices attached\n"
+        + "transport unavailable product:sdk model:sdk\n" * 2_000
+        + "emulator-5554 device product:sdk model:sdk transport_id:1\n"
+    )
+    _write_executable(adb, stdout=oversized.rstrip("\n"))
+    environment = {**_tool_environment(tmp_path), "ANDROID_HOME": str(sdk)}
+
+    device, detail = authorized_instrumentation_device(adb, environment, tmp_path)
+
+    assert device is None
+    assert detail == "Android device inventory could not be read"
 
 
 def test_android_device_sweep_never_selects_the_signed_promotion_methods(
@@ -2057,7 +2196,10 @@ def test_android_device_sweep_never_selects_the_signed_promotion_methods(
     """
     android_root = tmp_path / "apps/android"
     sdk = tmp_path / "android-sdk"
+    run_id = "fedcba9876543210"
+    results = tmp_path / "test-results/runs" / run_id
     sdk.mkdir()
+    results.mkdir(parents=True)
     _write(
         android_root / "app/src/androidTest/java/app/nexus/android/offline/reading/"
         "OfflineReadingSignedPhysicalPromotionTest.kt",
@@ -2072,10 +2214,20 @@ def test_android_device_sweep_never_selects_the_signed_promotion_methods(
         ),
     )
     _write_executable(android_root / "gradlew")
-    environment = {**_tool_environment(tmp_path), "ANDROID_HOME": str(sdk)}
+    environment = {
+        **_tool_environment(tmp_path),
+        "ANDROID_HOME": str(sdk),
+        "NEXUS_TEST_EVIDENCE_RUN_ID": run_id,
+        "NEXUS_TEST_RESULTS_DIR": str(results),
+    }
 
     result = run_capability(
-        CapabilityContext(tmp_path, Workflow.NIGHTLY, ()),
+        CapabilityContext(
+            tmp_path,
+            Workflow.NIGHTLY,
+            (),
+            candidate_sha=_CANDIDATE_SHA,
+        ),
         Capability.ANDROID_DEVICE,
         environment,
     )
@@ -2357,7 +2509,7 @@ def test_android_release_controller_stages_baseline_before_candidate_install(
     )
     _write(tmp_path / "testdata/android/player-protocol.json", '{"version": 2}\n')
     player_protocol = runner._android_player_protocol_identity(tmp_path)
-    inputs = runner._AndroidReleaseInputs(
+    inputs = runner._AndroidReleaseDeviceInputs(
         "android-v2.1",
         "a" * 40,
         "https://nexus.nielseriknandal.com",
@@ -2368,10 +2520,10 @@ def test_android_release_controller_stages_baseline_before_candidate_install(
         42,
         41,
         "2.1",
-        "R5CT1234",
         tmp_path / "adb",
         tmp_path / "apksigner",
         tmp_path / "apkanalyzer",
+        "R5CT1234",
     )
     commands: list[tuple[str, ...]] = []
     airplane = {"enabled": False}
@@ -2547,7 +2699,7 @@ def test_android_release_refuses_an_emulated_device_that_passes_usb_topology(
     )
     _write(tmp_path / "testdata/android/player-protocol.json", '{"version": 2}\n')
     player_protocol = runner._android_player_protocol_identity(tmp_path)
-    inputs = runner._AndroidReleaseInputs(
+    inputs = runner._AndroidReleaseDeviceInputs(
         "android-v2.1",
         "a" * 40,
         "https://nexus.nielseriknandal.com",
@@ -2558,10 +2710,10 @@ def test_android_release_refuses_an_emulated_device_that_passes_usb_topology(
         42,
         41,
         "2.1",
-        "R5CT1234",
         tmp_path / "adb",
         tmp_path / "apksigner",
         tmp_path / "apkanalyzer",
+        "R5CT1234",
     )
 
     def command(
@@ -2684,10 +2836,29 @@ def test_android_release_bootstrap_inputs_attest_no_device_and_require_published
     inputs = runner._android_release_inputs(tmp_path, environment)
 
     if expected_detail is None:
-        assert isinstance(inputs, runner._AndroidReleaseInputs)
+        assert isinstance(inputs, runner._AndroidReleaseBootstrapInputs)
         assert inputs.bootstrap is True
         assert inputs.serial is None
         assert inputs.previous_version_code == 16
+        for variable, value, detail in (
+            (
+                "NEXUS_ANDROID_RELEASE_BASE_URL",
+                "https://nexus.nielseriknandal.com/",
+                "Android release URL must be the canonical HTTPS origin",
+            ),
+            (
+                "NEXUS_ANDROID_RELEASE_API_ORIGIN",
+                "https://api.nexus.nielseriknandal.com/",
+                "Android release API origin must be one exact HTTPS origin",
+            ),
+        ):
+            rejected = runner._android_release_inputs(
+                tmp_path,
+                {**environment, variable: value},
+            )
+            assert isinstance(rejected, CapabilityResult)
+            assert rejected.evidence.status is RunStatus.FAIL
+            assert rejected.detail == detail
     else:
         assert isinstance(inputs, CapabilityResult)
         assert inputs.evidence.status is RunStatus.FAIL
@@ -2730,7 +2901,7 @@ def test_android_release_bootstrap_skips_device_stages_and_records_explicit_evid
     )
     _write(tmp_path / "testdata/android/player-protocol.json", '{"version": 2}\n')
     player_protocol = runner._android_player_protocol_identity(tmp_path)
-    inputs = runner._AndroidReleaseInputs(
+    inputs = runner._AndroidReleaseBootstrapInputs(
         "android-v2.1",
         "a" * 40,
         "https://nexus.nielseriknandal.com",
@@ -2741,11 +2912,9 @@ def test_android_release_bootstrap_skips_device_stages_and_records_explicit_evid
         42,
         41,
         "2.1",
-        None,
         tmp_path / "adb",
         tmp_path / "apksigner",
         tmp_path / "apkanalyzer",
-        bootstrap=True,
     )
     commands: list[tuple[str, ...]] = []
 

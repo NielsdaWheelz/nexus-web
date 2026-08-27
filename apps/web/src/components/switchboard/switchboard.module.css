@@ -19,6 +19,10 @@
   overflow: hidden;
 }
 
+.taskActivationAdmission {
+  display: contents;
+}
+
 .searchPage > .header {
   flex: 0 0 auto;
   padding-inline: max(var(--space-4), var(--viewport-safe-left))
@@ -360,6 +364,7 @@
   background: transparent;
   color: var(--ink);
   pointer-events: auto;
+  touch-action: pan-y pinch-zoom;
   transform: translateY(
     calc(
       var(--mobile-chrome-collapse) *

@@ -12,7 +12,6 @@ from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import TextIO
 
-from nexus_test_control.android_visual import DEVICE_ALIASES, validate_owned_path
 from nexus_test_control.evidence import (
     EVIDENCE_SCHEMA_VERSION,
     CapabilityEvidence,
@@ -21,6 +20,7 @@ from nexus_test_control.evidence import (
     PeakOwnedMemory,
     ProveEvidence,
     RunEvidence,
+    StandardInvocationInputs,
     diagnostic_evidence_json,
     evidence_json,
     execution_input_fingerprint,
@@ -31,8 +31,10 @@ from nexus_test_control.evidence import (
 )
 from nexus_test_control.memory import OwnedMemorySampler, measure_owned_memory, measured
 from nexus_test_control.model import (
+    ANDROID_VISUAL_DEVICE_ALIASES,
     DEFERRED_CAPABILITY_OWNER,
     WORKFLOW_REGISTRY,
+    AndroidVisualInputs,
     Capability,
     RunStatus,
     Selection,
@@ -65,6 +67,7 @@ from nexus_test_control.sensitivity import (
     canonical_proof,
     declared_fault_for_proof,
     prove_many,
+    workflow_sensitivity_request,
 )
 from nexus_test_control.sensitivity import (
     prove as prove_sensitivity,
@@ -74,18 +77,10 @@ from nexus_test_control.services import clean_owned_runtime, new_run_id, test_en
 _PROOF_RUNNERS = frozenset({"gradle", "node-test", "playwright", "pytest", "static", "vitest"})
 _FAULT_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 _RUN_ID = re.compile(r"[0-9a-f]{16}\Z")
-_HEAD_SHA = re.compile(r"[0-9a-f]{40}\Z")
 
 
 class ControlPlaneError(ValueError):
     pass
-
-
-@dataclass(frozen=True, slots=True)
-class AndroidVisualRequest:
-    sha: str
-    path: str
-    device: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,7 +89,7 @@ class WorkflowCommand:
     base: str | None = None
     focus: tuple[str, ...] = ()
     ui: bool = False
-    android_visual: AndroidVisualRequest | None = None
+    android_visual: AndroidVisualInputs | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,7 +135,9 @@ def parser() -> argparse.ArgumentParser:
     android_visual = workflow_parsers[Workflow.ANDROID_VISUAL]
     android_visual.add_argument("--sha", required=True)
     android_visual.add_argument("--path", required=True)
-    android_visual.add_argument("--device", default="primary", choices=sorted(DEVICE_ALIASES))
+    android_visual.add_argument(
+        "--device", default="primary", choices=sorted(ANDROID_VISUAL_DEVICE_ALIASES)
+    )
 
     prove = commands.add_parser("prove")
     prove.add_argument("--proof", required=True)
@@ -171,15 +168,13 @@ def parse_command(argv: Sequence[str]) -> Command:
         _validate_git_ref(parsed.base, argument_parser)
         return WorkflowCommand(Workflow.CONFIDENCE, parsed.base)
     if command == Workflow.ANDROID_VISUAL.value:
-        if _HEAD_SHA.fullmatch(parsed.sha) is None:
-            argument_parser.error("--sha must be a 40-character lowercase git SHA")
         try:
-            validate_owned_path(parsed.path)
+            inputs = AndroidVisualInputs(parsed.sha, parsed.path, parsed.device)
         except ValueError as error:
             argument_parser.error(str(error))
         return WorkflowCommand(
             Workflow.ANDROID_VISUAL,
-            android_visual=AndroidVisualRequest(parsed.sha, parsed.path, parsed.device),
+            android_visual=inputs,
         )
     if command in {workflow.value for workflow in WORKFLOW_REGISTRY}:
         return WorkflowCommand(Workflow(command))
@@ -296,6 +291,7 @@ def _execute_workflow(
     invocation = InvocationEvidence(
         ui=command.ui,
         input_fingerprint=execution_input_fingerprint(environment),
+        inputs=command.android_visual or StandardInvocationInputs(),
     )
     git_sha: str | None = None
     base_sha: str | None = None
@@ -340,6 +336,7 @@ def _execute_workflow(
                 command.ui,
                 frozenset(item.proof for item in sensitivity),
                 run_context=run_context,
+                candidate_sha=git_sha,
             )
             failure_owner = WORKFLOW_REGISTRY[command.workflow].requirements[0].capability
             workflow_run = run_workflow(
@@ -467,6 +464,7 @@ def _execute_diagnose(
         original.invocation.ui,
         frozenset(item.proof for item in original.sensitivity),
         run_context=run_context,
+        candidate_sha=git_sha,
     )
     owned_environment = {
         **environment,
@@ -475,6 +473,10 @@ def _execute_diagnose(
         "NEXUS_TEST_RUN_ID": run_id,
         "PARSER_TEMP_ROOT": str(absolute_results_directory / "parser-tmp"),
     }
+    if isinstance(original.invocation.inputs, AndroidVisualInputs):
+        owned_environment["NEXUS_ANDROID_VISUAL_SHA"] = original.invocation.inputs.sha
+        owned_environment["NEXUS_ANDROID_VISUAL_PATH"] = original.invocation.inputs.path
+        owned_environment["NEXUS_ANDROID_VISUAL_DEVICE"] = original.invocation.inputs.device
     try:
         workflow_run = run_workflow(
             context,
@@ -770,13 +772,12 @@ def _workflow_sensitivity(
             by_proof.setdefault(item.proof, []).append(item.path)
     requests: list[SensitivityRequest] = []
     for proof, paths in sorted(by_proof.items()):
-        fault_id = declared_fault_for_proof(repo_root, proof)
         requests.append(
-            SensitivityRequest(
+            workflow_sensitivity_request(
+                repo_root,
                 proof=proof,
                 changed_paths=tuple(paths),
-                method=SensitivityMethod.FAULT if fault_id else SensitivityMethod.BASE,
-                against=fault_id or base_sha,
+                base_sha=base_sha,
             )
         )
     return prove_many(

@@ -359,7 +359,11 @@ def test_android_player_protocol_sources_route_the_cross_release_skew_proofs(
         {
             (
                 Capability.KERNEL_WEB,
-                "vitest:apps/web/src/app/android/page.unit.test.tsx",
+                "vitest:apps/web/src/lib/androidReleaseLinks.unit.test.ts",
+            ),
+            (
+                Capability.COMPONENT,
+                "vitest:apps/web/src/app/android/AndroidPage.browser.test.tsx",
             ),
             (
                 Capability.KERNEL_PYTHON,
@@ -705,7 +709,8 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "test_keyless_boot_preserves_plan_and_refuses_required_web_before_dispatch",
                 "pytest:python/tests/migrations/test_oracle_publication_migration.py",
                 "pytest:python/tests/service/test_oracle_publication.py",
-                "vitest:apps/web/src/app/android/page.unit.test.tsx",
+                "vitest:apps/web/src/lib/androidReleaseLinks.unit.test.ts",
+                "vitest:apps/web/src/app/android/AndroidPage.browser.test.tsx",
                 "vitest:apps/web/src/components/chat/toolProjectionProtocol.browser.test.tsx",
                 "pytest:python/tests/service/test_offline_reading_caddy_delivery.py::test_production_caddy_proxy_preserves_exact_package_identity_bytes_without_encoding",
                 "vitest:apps/web/src/components/player/GlobalPlayerSurfaces.browser.test.tsx",

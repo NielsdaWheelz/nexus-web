@@ -6,6 +6,12 @@ import "@/app/globals.css";
 import PasswordUpdateForm from "@/app/account/password/PasswordUpdateForm";
 import ForgotPasswordForm from "@/app/forgot-password/ForgotPasswordForm";
 import LoginPageClient from "@/app/login/LoginPageClient";
+import {
+  AUTH_CALLBACK_CANCELLED_MESSAGE,
+  AUTH_CALLBACK_FAILURE_MESSAGE,
+  OAUTH_START_FAILURE_MESSAGE,
+  SESSION_ENDED_MESSAGE,
+} from "@/lib/auth/messages";
 import { parseAuthReturnTarget } from "@/lib/auth/redirects";
 import EmailActionLanding from "./EmailActionLanding";
 
@@ -50,14 +56,230 @@ class DefectBoundary extends Component<
   }
 }
 
+async function disclosePasswordSignIn() {
+  await userEvent.click(
+    screen.getByRole("button", { name: "Use email and password" }),
+  );
+  return {
+    email: screen.getByRole<HTMLInputElement>("textbox", { name: "Email" }),
+    password: screen.getByLabelText<HTMLInputElement>("Password"),
+  };
+}
+
 describe("password authentication surfaces", () => {
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("projects the fixed browser method hierarchy, disclosures, transport, and footer", async () => {
+    render(
+      <LoginPageClient
+        nextPath={parseAuthReturnTarget("/lectern?mode=focus")}
+        isShell={false}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "Sign in" })).toBeVisible();
+    expect(
+      screen.getByText("Private workspace. No public registration."),
+    ).toBeVisible();
+    expect(screen.queryByRole("textbox", { name: "Email" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Continue with GitHub" }),
+    ).toBeNull();
+    const [, passwordTransport, githubTransport] = screen.getAllByRole("form", {
+      hidden: true,
+    });
+    expect(passwordTransport).toHaveAttribute(
+      "aria-label",
+      "Sign in with email and password",
+    );
+    expect(passwordTransport).not.toBeVisible();
+    expect(githubTransport).toHaveAttribute(
+      "aria-label",
+      "Continue with GitHub",
+    );
+    expect(githubTransport).not.toBeVisible();
+
+    const closedEmail = screen.getByRole("textbox", {
+      name: "Email",
+      hidden: true,
+    });
+    const closedPassword = screen.getByLabelText("Password");
+    const closedGitHub = screen.getByRole("button", {
+      name: "Continue with GitHub",
+      hidden: true,
+    });
+
+    expect(
+      screen
+        .getAllByRole("button")
+        .map((control) => control.textContent?.trim()),
+    ).toEqual([
+      "Continue with Google",
+      "Use email and password",
+      "Other ways to sign in",
+    ]);
+
+    const google = screen.getByRole("button", {
+      name: "Continue with Google",
+    });
+    const googleForm = screen.getByRole<HTMLFormElement>("form", {
+      name: "Continue with Google",
+    });
+    expect(googleForm).toHaveAttribute("action", "/auth/oauth");
+    expect(googleForm).toHaveAttribute("method", "get");
+    expect(google).toHaveAttribute("type", "submit");
+    expect(googleForm).toHaveFormValues({
+      provider: "google",
+      next: "/lectern?mode=focus",
+    });
+    expect(google).toBeEnabled();
+
+    for (const control of [
+      google,
+      screen.getByRole("button", { name: "Use email and password" }),
+      screen.getByRole("button", { name: "Other ways to sign in" }),
+      screen.getByRole("link", { name: "Android" }),
+    ]) {
+      await userEvent.tab();
+      expect(control).toHaveFocus();
+      expect(closedEmail).not.toHaveFocus();
+      expect(closedPassword).not.toHaveFocus();
+      expect(closedGitHub).not.toHaveFocus();
+    }
+
+    await disclosePasswordSignIn();
+    expect(screen.getByRole("textbox", { name: "Email" })).toBeVisible();
+    expect(screen.getByLabelText("Password")).toBeVisible();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Other ways to sign in" }),
+    );
+    const github = screen.getByRole("button", {
+      name: "Continue with GitHub",
+    });
+    expect(github).toBeVisible();
+    expect(
+      screen.getByRole("form", { name: "Continue with GitHub" }),
+    ).toHaveAttribute("action", "/auth/oauth");
+    expect(github).toHaveAttribute("type", "submit");
+
+    const footer = screen.getByRole("navigation", { name: "Login links" });
+    expect(
+      within(footer)
+        .getAllByRole("link")
+        .map((link) => [link.textContent, link.getAttribute("href")]),
+    ).toEqual([
+      ["Android", "/android"],
+      ["Privacy", "/privacy"],
+      ["Terms", "/terms"],
+    ]);
+  });
+
+  it("projects shell-owned provider handoffs without browser-only support or links", async () => {
+    render(
+      <LoginPageClient
+        nextPath={parseAuthReturnTarget("/lectern?mode=focus")}
+        isShell
+      />,
+    );
+
+    expect(
+      screen.getByText("Use the account connected to this Nexus."),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "Continue with Google" }),
+    ).toHaveAttribute(
+      "href",
+      "nexus://auth/native?provider=google&next=%2Flectern%3Fmode%3Dfocus",
+    );
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Other ways to sign in" }),
+    );
+    expect(
+      screen.getByRole("link", { name: "Continue with GitHub" }),
+    ).toHaveAttribute(
+      "href",
+      "nexus://auth/start?provider=github&mode=signin&next=%2Flectern%3Fmode%3Dfocus",
+    );
+
+    const footer = screen.getByRole("navigation", { name: "Login links" });
+    expect(within(footer).queryByRole("link", { name: "Android" })).toBeNull();
+    expect(
+      within(footer)
+        .getAllByRole("link")
+        .map((link) => link.textContent),
+    ).toEqual(["Privacy", "Terms"]);
+  });
+
+  it.each([
+    {
+      message: OAUTH_START_FAILURE_MESSAGE,
+      role: "alert" as const,
+      title: "We couldn't start sign in.",
+      detail: "Please try again.",
+    },
+    {
+      message: AUTH_CALLBACK_FAILURE_MESSAGE,
+      role: "alert" as const,
+      title: "We couldn't complete sign in.",
+      detail: "Please try again.",
+    },
+    {
+      message: SESSION_ENDED_MESSAGE,
+      role: "status" as const,
+      title: "Your session ended.",
+      detail: "Please sign in again.",
+    },
+  ])(
+    "projects the owned login feedback for $message",
+    ({ message, role, title, detail }) => {
+      render(
+        <LoginPageClient
+          initialFeedbackMessage={message}
+          nextPath={parseAuthReturnTarget("/lectern")}
+          isShell={false}
+        />,
+      );
+
+      const feedback = screen.getByRole(role);
+      expect(within(feedback).getByText(title, { exact: true })).toBeVisible();
+      expect(within(feedback).getByText(detail, { exact: true })).toBeVisible();
+    },
+  );
+
+  it("suppresses provider cancellation and leaves every method idle", () => {
+    render(
+      <LoginPageClient
+        initialFeedbackMessage={AUTH_CALLBACK_CANCELLED_MESSAGE}
+        nextPath={parseAuthReturnTarget("/lectern")}
+        isShell={false}
+      />,
+    );
+
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Continue with Google" }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Use email and password" }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Other ways to sign in" }),
+    ).toBeEnabled();
   });
 
   it("keeps sign-in single-purpose and clears only the password after one failed pending submission", async () => {
     const pending = deferredResponse();
-    const fetchStub = vi.fn(() => pending.promise);
+    const retry = deferredResponse();
+    const fetchStub = vi
+      .fn<() => Promise<Response>>()
+      .mockImplementationOnce(() => pending.promise)
+      .mockImplementationOnce(() => retry.promise);
     vi.stubGlobal("fetch", fetchStub);
 
     render(
@@ -67,15 +289,13 @@ describe("password authentication surfaces", () => {
       />,
     );
 
-    expect(
-      screen.getByRole("heading", { name: "Sign in to Nexus" }),
-    ).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Sign in" })).toBeVisible();
     expect(screen.queryByText(/create an account/i)).toBeNull();
 
-    const email = screen.getByRole<HTMLInputElement>("textbox", {
-      name: "Email",
-    });
-    const password = screen.getByLabelText<HTMLInputElement>("Password");
+    const { email, password } = await disclosePasswordSignIn();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Other ways to sign in" }),
+    );
     await userEvent.fill(email, "buddy@example.com");
     await userEvent.fill(password, "correct horse battery staple");
 
@@ -91,6 +311,22 @@ describe("password authentication surfaces", () => {
       name: "Signing in…",
     });
     expect(pendingButton).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Continue with Google" }),
+    ).toBeDisabled();
+    const passwordDisclosure = screen.getByRole("button", {
+      name: "Use email and password",
+    });
+    expect(passwordDisclosure).toHaveAttribute("aria-disabled", "true");
+    expect(passwordDisclosure).toHaveAttribute("tabindex", "-1");
+    const otherDisclosure = screen.getByRole("button", {
+      name: "Other ways to sign in",
+    });
+    expect(otherDisclosure).toHaveAttribute("aria-disabled", "true");
+    expect(otherDisclosure).toHaveAttribute("tabindex", "-1");
+    expect(
+      screen.getByRole("button", { name: "Continue with GitHub" }),
+    ).toBeDisabled();
     pendingButton.click();
     expect(
       fetchStub,
@@ -105,7 +341,178 @@ describe("password authentication surfaces", () => {
     expect(password.value).toBe("");
     expect(password.type).toBe("password");
     expect(screen.getByRole("button", { name: "Show password" })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Continue with Google" }),
+    ).toBeEnabled();
+
+    await userEvent.fill(password, "correct horse battery staple");
+    const google = screen.getByRole("button", {
+      name: "Continue with Google",
+    });
+    const googleTop = google.getBoundingClientRect().top;
+    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await screen.findByRole("button", { name: "Signing in…" });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(
+      google.getBoundingClientRect().top,
+      "hiding stale retry feedback must preserve its occupied layout slot",
+    ).toBeCloseTo(googleTop, 0);
+
+    retry.resolve(outcome({ kind: "InvalidCredentials" }, 401));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Email or password is incorrect.",
+    );
   });
+
+  it("keeps a successful retry terminal while its redirect commits", async () => {
+    const redirected = {
+      redirected: true,
+      url: "#password-sign-in-complete",
+    } as Response;
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(outcome({ kind: "InvalidCredentials" }, 401))
+        .mockResolvedValueOnce(redirected),
+    );
+    render(
+      <LoginPageClient
+        nextPath={parseAuthReturnTarget("/lectern")}
+        isShell={false}
+      />,
+    );
+
+    const { email, password } = await disclosePasswordSignIn();
+    await userEvent.fill(email, "buddy@example.com");
+    await userEvent.fill(password, "incorrect password");
+    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Email or password is incorrect.",
+    );
+
+    await userEvent.fill(password, "correct horse battery staple");
+    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+
+    expect(
+      await screen.findByRole("button", { name: "Signing in…" }),
+    ).toBeDisabled();
+    expect(window.location.hash).toBe("#password-sign-in-complete");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Continue with Google" }),
+    ).toBeDisabled();
+
+    window.history.replaceState(null, "", window.location.pathname);
+  });
+
+  it("validates disclosed password fields without dispatching a request", async () => {
+    const fetchStub = vi.fn();
+    vi.stubGlobal("fetch", fetchStub);
+    render(
+      <LoginPageClient
+        nextPath={parseAuthReturnTarget("/lectern")}
+        isShell={false}
+      />,
+    );
+
+    const { email, password } = await disclosePasswordSignIn();
+    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(await screen.findByText("Enter your email address.")).toBeVisible();
+    expect(email).toHaveFocus();
+
+    await userEvent.fill(email, "not-an-email");
+    await userEvent.fill(password, "correct horse battery staple");
+    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(
+      await screen.findByText("Enter a valid email address."),
+    ).toBeVisible();
+    expect(email).toHaveFocus();
+
+    await userEvent.fill(email, "buddy@example.com");
+    await userEvent.clear(password);
+    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(await screen.findByText("Enter your password.")).toBeVisible();
+    expect(password).toHaveFocus();
+    expect(fetchStub).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      boundary: "rate limiting",
+      response: () => outcome({ kind: "RateLimited" }, 429),
+      title: "Too many sign-in attempts.",
+      message: "Wait a few minutes, then try again.",
+    },
+    {
+      boundary: "authentication dependency failure",
+      response: () => outcome({ kind: "ServiceUnavailable" }, 503),
+      title: "Sign in is temporarily unavailable.",
+      message: "Try again in a moment.",
+    },
+  ])(
+    "projects $boundary without leaking provider detail",
+    async ({ response, title, message }) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => response()),
+      );
+      render(
+        <LoginPageClient
+          nextPath={parseAuthReturnTarget("/lectern")}
+          isShell={false}
+        />,
+      );
+      const { email, password } = await disclosePasswordSignIn();
+      await userEvent.fill(email, "buddy@example.com");
+      await userEvent.fill(password, "correct horse battery staple");
+      await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+
+      const alert = await screen.findByRole("alert");
+      expect(within(alert).getByText(title, { exact: true })).toBeVisible();
+      expect(within(alert).getByText(message, { exact: true })).toBeVisible();
+    },
+  );
+
+  it.each([
+    {
+      online: false,
+      title: "You’re offline.",
+      message: "Reconnect to sign in.",
+    },
+    {
+      online: true,
+      title: "Sign in is temporarily unavailable.",
+      message: "Try again in a moment.",
+    },
+  ])(
+    "distinguishes known offline=$online from an ambiguous transport failure",
+    async ({ online, title, message }) => {
+      const simulatedNavigator = Object.create(window.navigator) as Navigator;
+      Object.defineProperty(simulatedNavigator, "onLine", { value: online });
+      vi.stubGlobal("navigator", simulatedNavigator);
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => {
+          throw new TypeError("synthetic browser transport failure");
+        }),
+      );
+      render(
+        <LoginPageClient
+          nextPath={parseAuthReturnTarget("/lectern")}
+          isShell={false}
+        />,
+      );
+      const { email, password } = await disclosePasswordSignIn();
+      await userEvent.fill(email, "buddy@example.com");
+      await userEvent.fill(password, "correct horse battery staple");
+      await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+
+      const alert = await screen.findByRole("alert");
+      expect(within(alert).getByText(title, { exact: true })).toBeVisible();
+      expect(within(alert).getByText(message, { exact: true })).toBeVisible();
+    },
+  );
 
   it("runs owned short-password validation with inline feedback and focus", async () => {
     const fetchStub = vi.fn();
@@ -140,10 +547,7 @@ describe("password authentication surfaces", () => {
         isShell={false}
       />,
     );
-    const email = screen.getByRole<HTMLInputElement>("textbox", {
-      name: "Email",
-    });
-    const password = screen.getByLabelText<HTMLInputElement>("Password");
+    const { email, password } = await disclosePasswordSignIn();
     email.value = "buddy@example.com";
     password.value = "correct horse battery staple";
     await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
@@ -164,10 +568,7 @@ describe("password authentication surfaces", () => {
         isShell={false}
       />,
     );
-    const email = screen.getByRole<HTMLInputElement>("textbox", {
-      name: "Email",
-    });
-    const password = screen.getByLabelText<HTMLInputElement>("Password");
+    const { email, password } = await disclosePasswordSignIn();
     email.value = "buddy@example.com";
     password.value = "correct horse battery staple";
 
@@ -178,6 +579,17 @@ describe("password authentication surfaces", () => {
     expect(email.value).toBe("buddy@example.com");
     expect(password.value).toBe("correct horse battery staple");
     expect(password.type).toBe("text");
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Use email and password" }),
+    );
+    expect(password).not.toBeVisible();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Use email and password" }),
+    );
+    expect(screen.getByLabelText<HTMLInputElement>("Password").value).toBe(
+      "correct horse battery staple",
+    );
   });
 
   it("submits native recovery and update values without React input events", async () => {

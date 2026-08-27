@@ -36,6 +36,7 @@ from nexus.release_artifact import (
     BackendArtifactDefect,
     CandidateManifest,
     RuntimeIdentity,
+    is_exact_https_origin,
 )
 from nexus.release_artifact import (
     load_candidate_manifest as _load_candidate_manifest,
@@ -434,9 +435,13 @@ _ANDROID_RELEASE_MANIFEST_FIELDS = frozenset(
         "tag",
         "package",
         "version_code",
+        "previous_version_code",
         "version_name",
         "signer_sha256",
         "source_apk_sha256",
+        "api_origin",
+        "api_origin_source",
+        "target_sdk",
         "player_protocol",
         "assets",
     }
@@ -2035,6 +2040,13 @@ def load_android_release_manifest(
         raise ReleaseDefect("Android release manifest package is unsupported")
     if type(manifest.get("version_code")) is not int or manifest["version_code"] < 1:
         raise ReleaseDefect("Android release manifest version code is malformed")
+    previous_version_code = manifest.get("previous_version_code")
+    if (
+        type(previous_version_code) is not int
+        or previous_version_code < 1
+        or previous_version_code >= manifest["version_code"]
+    ):
+        raise ReleaseDefect("Android release manifest previous version code is malformed")
     if manifest.get("version_name") != expected_tag.removeprefix("android-v"):
         raise ReleaseDefect("Android release manifest version name differs from its tag")
     _require_match("Android release manifest git SHA", manifest.get("git_sha"), _SHA)
@@ -2048,6 +2060,13 @@ def load_android_release_manifest(
         manifest.get("source_apk_sha256"),
         _SHA256,
     )
+    if not is_exact_https_origin(manifest.get("api_origin")):
+        raise ReleaseDefect("Android release manifest API origin is malformed")
+    if manifest.get("api_origin_source") != "signed_apk_build_config":
+        raise ReleaseDefect("Android release manifest API origin source is unsupported")
+    target_sdk = manifest.get("target_sdk")
+    if type(target_sdk) is not int or target_sdk < 1:
+        raise ReleaseDefect("Android release manifest target SDK is malformed")
     version_name = expected_tag.removeprefix("android-v")
     apk_names = ("nexus-android.apk", f"nexus-android-{version_name}.apk")
     assets = _closed_mapping(

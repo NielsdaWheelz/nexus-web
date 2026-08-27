@@ -90,9 +90,13 @@ def _android_release_manifest(state: dict[str, Any]) -> dict[str, object]:
         "tag": tag,
         "package": "app.nexus.android",
         "version_code": 17,
+        "previous_version_code": 16,
         "version_name": version_name,
         "signer_sha256": "c" * 64,
         "source_apk_sha256": apk_digest,
+        "api_origin": "https://api.nielseriknandal.com",
+        "api_origin_source": "signed_apk_build_config",
+        "target_sdk": 36,
         "player_protocol": {"version": 2, "contract_sha256": protocol_digest},
         "assets": {
             name: (apk_digest if name in names else "b" * 64)
@@ -530,6 +534,14 @@ def _fake_curl(state: dict[str, Any], arguments: list[str]) -> None:
 
 
 def fake_main(command: str, arguments: list[str]) -> int:
+    if command == "timeout":
+        # The harness process owns the real 30-second deadline. Preserve the
+        # production wrapper's argv and exit behavior without depending on the
+        # GNU-only host binary that macOS does not provide.
+        if len(arguments) < 3 or arguments[0] != "--foreground":
+            raise AssertionError(f"unsupported fake timeout call: {arguments!r}")
+        os.execvp(arguments[2], arguments[2:])
+
     state_path = Path(os.environ["NEXUS_DEPLOY_FAKE_STATE"])
     state = _load_state(state_path)
     _event(state, command, arguments)
@@ -624,7 +636,7 @@ class ProductionDeployHarness:
         fake_bin = root / "bin"
         fake_bin.mkdir()
         helper = Path(__file__).resolve()
-        for command in ("curl", "gh", "git", "node", "scp", "ssh"):
+        for command in ("curl", "gh", "git", "node", "scp", "ssh", "timeout"):
             executable = fake_bin / command
             executable.write_text(
                 f"#!{sys.executable}\n"

@@ -645,7 +645,8 @@ Write ignored `test-results/runs/<run_id>/summary.json`:
   "run_context_artifact": "test-results/runs/<run-id>/run-context.json",
   "invocation": {
     "ui": false,
-    "input_fingerprint": "sha256"
+    "input_fingerprint": "sha256",
+    "inputs": {"kind": "Standard"}
   },
   "selection": [{
     "path": "path",
@@ -707,7 +708,8 @@ first run:
   "status": "fail",
   "invocation": {
     "ui": false,
-    "input_fingerprint": "same sha256"
+    "input_fingerprint": "same sha256",
+    "inputs": {"kind": "Standard"}
   },
   "diagnostic_of": {
     "run_id": "failed 16-hex id",
@@ -724,6 +726,11 @@ first run:
   }
 }
 ```
+
+`inputs` is the closed tagged union `{"kind":"Standard"}` or
+`{"kind":"AndroidVisual","sha":"full sha","path":"/owned-path","device":"primary"}`.
+The formal replay projects recorded Android visual values into its owned
+environment; it never infers them from the current shell.
 
 The v3 hard cut does not parse older summary shapes. One workflow-wide sampler
 covers sensitivity and ordinary capabilities; every red/green attempt records

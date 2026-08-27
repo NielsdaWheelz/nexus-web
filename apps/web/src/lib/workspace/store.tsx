@@ -722,6 +722,12 @@ export type RestoreClosedPaneResult =
   | { kind: "Restored"; paneId: string }
   | { kind: "Rejected"; reason: "PaneLimitReached" };
 
+export type WorkspaceAdjacentPaneDirection = "Previous" | "Next";
+
+export type WorkspaceAdjacentPaneActivationResult =
+  | { readonly kind: "Activated"; readonly paneId: string }
+  | { readonly kind: "Unchanged" };
+
 // ---------------------------------------------------------------------------
 // Store context + provider
 // ---------------------------------------------------------------------------
@@ -739,6 +745,9 @@ interface WorkspaceStoreValue {
   pendingPaneEntryDeliveryByPaneId: ReadonlyMap<string, PaneEntryDelivery>;
   cancelledPaneEntryActivationIds: ReadonlySet<string>;
   activatePane: (paneId: string) => void;
+  activateAdjacentPane: (input: {
+    readonly direction: WorkspaceAdjacentPaneDirection;
+  }) => WorkspaceAdjacentPaneActivationResult;
   activateWorkspaceTarget: (
     request: WorkspaceTargetActivationRequest,
   ) => WorkspaceTargetActivationResult;
@@ -1194,9 +1203,9 @@ export function WorkspaceStoreProvider({
   }, [primaryPanes]);
 
   // --- Converge state → URL ---
-  // Target activations project inside commitTargetActivation below. This
-  // layout owner converges initial state and the remaining workspace commands
-  // before paint.
+  // Exact, adjacent, and target activations project inside
+  // commitWorkspaceAction below. This layout owner converges initial state and
+  // the remaining workspace commands before paint.
   useLayoutEffect(() => {
     if (!mounted) return;
     projectWorkspaceStateToUrl(state);
@@ -1204,9 +1213,72 @@ export function WorkspaceStoreProvider({
 
   // --- Stable callbacks ---
 
+  const commitWorkspaceAction = useCallback(
+    (action: WorkspaceAction): WorkspaceState => {
+      const nextState = workspaceReducer(
+        stateRef.current,
+        action,
+        workspacePrimaryMetrics,
+      );
+      stateRef.current = nextState;
+      projectWorkspaceStateToUrl(nextState);
+      dispatch(action);
+      return nextState;
+    },
+    [dispatch, workspacePrimaryMetrics],
+  );
+
   const activatePane = useCallback(
-    (paneId: string) => dispatch({ type: "activate_pane", paneId }),
-    [dispatch]
+    (paneId: string) => {
+      commitWorkspaceAction({ type: "activate_pane", paneId });
+    },
+    [commitWorkspaceAction],
+  );
+
+  const activateAdjacentPane = useCallback(
+    (input: {
+      readonly direction: WorkspaceAdjacentPaneDirection;
+    }): WorkspaceAdjacentPaneActivationResult => {
+      const currentState = stateRef.current;
+      const visiblePanes = getWorkspacePrimaryPanes(currentState).filter(
+        (pane) => pane.visibility === "visible",
+      );
+      const activePaneIndex = visiblePanes.findIndex(
+        (pane) => pane.id === currentState.activePrimaryPaneId,
+      );
+      if (activePaneIndex < 0) {
+        // justify-defect: ensureActivePaneId, minimize_pane, close_pane, and
+        // persisted-state parsing keep the active pane in the visible sequence.
+        throw new Error(
+          `Active workspace pane is not visible: ${currentState.activePrimaryPaneId}`,
+        );
+      }
+      if (visiblePanes.length < 2) {
+        return { kind: "Unchanged" };
+      }
+
+      let step: -1 | 1;
+      switch (input.direction) {
+        case "Previous":
+          step = -1;
+          break;
+        case "Next":
+          step = 1;
+          break;
+      }
+      const adjacentPaneIndex = activePaneIndex + step;
+      if (
+        adjacentPaneIndex < 0 ||
+        adjacentPaneIndex >= visiblePanes.length
+      ) {
+        return { kind: "Unchanged" };
+      }
+
+      const paneId = visiblePanes[adjacentPaneIndex].id;
+      commitWorkspaceAction({ type: "activate_pane", paneId });
+      return { kind: "Activated", paneId };
+    },
+    [commitWorkspaceAction],
   );
 
   const acknowledgePendingSecondaryActivation = useCallback(
@@ -1288,21 +1360,6 @@ export function WorkspaceStoreProvider({
     ]
   );
 
-  const commitTargetActivation = useCallback(
-    (action: WorkspaceAction): WorkspaceState => {
-      const nextState = workspaceReducer(
-        stateRef.current,
-        action,
-        workspacePrimaryMetrics,
-      );
-      stateRef.current = nextState;
-      projectWorkspaceStateToUrl(nextState);
-      dispatch(action);
-      return nextState;
-    },
-    [dispatch, workspacePrimaryMetrics],
-  );
-
   const activateWorkspaceTarget = useCallback(
     (request: WorkspaceTargetActivationRequest): WorkspaceTargetActivationResult => {
       const currentState = stateRef.current;
@@ -1369,7 +1426,7 @@ export function WorkspaceStoreProvider({
               visitId: pane.currentVisit.id,
             });
           }
-          commitTargetActivation({ type: "restore_pane", paneId: plan.paneId });
+          commitWorkspaceAction({ type: "restore_pane", paneId: plan.paneId });
           return { kind: "ActivatedExisting", paneId: plan.paneId };
 
         case "NavigateOrigin":
@@ -1401,7 +1458,7 @@ export function WorkspaceStoreProvider({
             paneId: pane.id,
             visitId: transition.visit.id,
           });
-          commitTargetActivation(action);
+          commitWorkspaceAction(action);
           return {
             kind:
               plan.kind === "NavigateOrigin"
@@ -1423,7 +1480,7 @@ export function WorkspaceStoreProvider({
             paneId: pane.id,
             visitId: pane.currentVisit.id,
           });
-          commitTargetActivation(action);
+          commitWorkspaceAction(action);
           return { kind: "CreatedPane", paneId: pane.id };
         }
       }
@@ -1434,7 +1491,7 @@ export function WorkspaceStoreProvider({
     },
     [
       feedback,
-      commitTargetActivation,
+      commitWorkspaceAction,
       preparePaneTransition,
       publishPaneLabelHint,
       publishPendingSecondaryActivation,
@@ -1755,6 +1812,7 @@ export function WorkspaceStoreProvider({
       pendingPaneEntryDeliveryByPaneId,
       cancelledPaneEntryActivationIds,
       activatePane,
+      activateAdjacentPane,
       activateWorkspaceTarget,
       acknowledgePendingSecondaryActivation,
       acknowledgePaneEntryDelivery,
@@ -1784,6 +1842,7 @@ export function WorkspaceStoreProvider({
       pendingPaneEntryDeliveryByPaneId,
       cancelledPaneEntryActivationIds,
       activatePane,
+      activateAdjacentPane,
       activateWorkspaceTarget,
       acknowledgePendingSecondaryActivation,
       acknowledgePaneEntryDelivery,
