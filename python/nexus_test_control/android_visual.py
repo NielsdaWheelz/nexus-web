@@ -27,7 +27,7 @@ import time
 from collections.abc import Mapping, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass, field
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from urllib.parse import quote, urlsplit
 from uuid import NAMESPACE_URL, UUID, uuid5
 
@@ -37,7 +37,11 @@ import psycopg
 from nexus_test_control.build import ensure_standalone_build
 from nexus_test_control.evidence import redact_json, redact_text, write_evidence_json
 from nexus_test_control.memory import available_memory_mib
-from nexus_test_control.model import RunStatus
+from nexus_test_control.model import (
+    ANDROID_VISUAL_DEVICE_ALIASES,
+    RunStatus,
+    validate_android_visual_path,
+)
 from nexus_test_control.process import run_command
 from nexus_test_control.runtime import (
     EndpointKind,
@@ -65,7 +69,6 @@ from nexus_test_control.services import (
 
 MANIFEST_VERSION = 2
 APK_CACHE_VERSION = 2
-DEVICE_ALIASES = frozenset({"primary"})
 DEBUG_PACKAGE = "app.nexus.android.debug"
 MAIN_ACTIVITY = "app.nexus.android.MainActivity"
 OWNED_HOST = "127.0.0.1"
@@ -87,7 +90,8 @@ _SESSION_POLL_SECONDS = 1.0
 _SETTLE_SECONDS = 2.0
 _MIN_AVAILABLE_MIB = 2048
 _LOGCAT_TAIL_LINES = 2000
-_OWNED_PATH = re.compile(r"/[A-Za-z0-9._~%!$&'()*+,;=:@/-]*\Z")
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+_GRADLE_FAILURE_DETAIL_LIMIT = 1_800
 _ANDROID_FINGERPRINT_SKIP = frozenset({"build", ".gradle", ".idea", ".cxx"})
 _GIT_OPERATION_MARKERS = ("MERGE_HEAD", "rebase-merge", "rebase-apply", "CHERRY_PICK_HEAD")
 
@@ -132,33 +136,16 @@ class DeviceSession:
 
 def device_account_email(alias: str) -> str:
     """Deterministic, stable, test-namespace account email for a device alias."""
-    if alias not in DEVICE_ALIASES:
+    if alias not in ANDROID_VISUAL_DEVICE_ALIASES:
         raise ValueError(f"unknown device alias: {alias}")
     return f"nexus+android-visual+{alias}@example.invalid"
 
 
 def device_account_id(alias: str) -> UUID:
     """Deterministic, stable Supabase user id for a device alias."""
-    if alias not in DEVICE_ALIASES:
+    if alias not in ANDROID_VISUAL_DEVICE_ALIASES:
         raise ValueError(f"unknown device alias: {alias}")
     return uuid5(_ACCOUNT_NAMESPACE, alias)
-
-
-def validate_owned_path(path: str) -> str:
-    """Accept only an owned same-origin absolute path (no scheme/host/query/..)."""
-    if (
-        not path
-        or not path.startswith("/")
-        or path.startswith("//")
-        or "?" in path
-        or "#" in path
-        or "\\" in path
-        or "'" in path
-        or _OWNED_PATH.fullmatch(path) is None
-        or ".." in PurePosixPath(path).parts
-    ):
-        raise ValueError(f"path must be an owned same-origin path: {path!r}")
-    return path
 
 
 def handoff_challenge(verifier: str) -> str:
@@ -454,12 +441,12 @@ def run_android_visual(
 
 
 def _validate_request(repo_root: Path, requested_sha: str, requested_path: str, alias: str) -> None:
-    if alias not in DEVICE_ALIASES:
+    if alias not in ANDROID_VISUAL_DEVICE_ALIASES:
         raise _Fail(f"unknown device alias: {alias!r}")
     if not requested_sha or not requested_path:
         raise _Fail("android-visual requires --sha and --path")
     try:
-        validate_owned_path(requested_path)
+        validate_android_visual_path(requested_path)
     except ValueError as error:
         raise _Fail(str(error)) from error
     if requested_sha != _git(repo_root, "rev-parse", "HEAD"):
@@ -659,7 +646,17 @@ def _assemble_debug_apk(
         check=False,
     )
     if result.returncode != 0:
-        raise _Fail("debug APK assembly failed")
+        diagnostic = "\n".join(
+            output.strip() for output in (result.stdout, result.stderr) if output and output.strip()
+        )
+        diagnostic = _ANSI_ESCAPE_RE.sub("", diagnostic)
+        marker = diagnostic.rfind("FAILURE: Build failed")
+        if marker >= 0:
+            diagnostic = diagnostic[marker:]
+        if len(diagnostic) > _GRADLE_FAILURE_DETAIL_LIMIT:
+            diagnostic = diagnostic[:1_100] + "\n...[truncated]...\n" + diagnostic[-650:]
+        suffix = diagnostic or "no diagnostic output"
+        raise _Fail(f"debug APK assembly failed (exit {result.returncode}): {suffix}")
 
 
 def _launch(adb: Path, serial: str, uri: str, environment: Mapping[str, str], cwd: Path) -> None:

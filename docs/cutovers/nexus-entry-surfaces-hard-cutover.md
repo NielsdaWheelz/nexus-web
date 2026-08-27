@@ -517,17 +517,22 @@ Modify:
 - `deploy/hetzner/release.py`,
   `python/nexus/release_artifact.py`,
   `python/nexus_test_control/android_visual.py`,
+  `python/nexus_test_control/cli.py`,
+  `python/nexus_test_control/evidence.py`,
   `python/nexus_test_control/runner.py`,
   `python/nexus_test_control/model.py`,
   `python/tests/kernel/test_backend_artifact.py`,
   `python/tests/kernel/nexus_test_control/test_android_visual.py`,
+  `python/tests/kernel/nexus_test_control/test_cli.py`,
   `python/tests/kernel/nexus_test_control/test_runner.py`,
   `python/tests/kernel/nexus_test_control/test_selection.py`,
   `python/tests/kernel/test_android_player_protocol_release_gate.py`, and the
-  canonical fixture in `python/tests/testkit/production_deploy.py`, solely to
+  canonical fixture in `python/tests/testkit/production_deploy.py`, to
   align the closed decoder with the already-emitted manifest-v2 shape, share one
   canonical release-origin predicate with the producer, and atomically refreeze
-  the independently recomputed proof-ownership digest.
+  the independently recomputed proof-ownership digest; the Android visual test
+  control files additionally own exact formal-replay inputs and bounded build
+  failure diagnostics.
 
 Delete:
 

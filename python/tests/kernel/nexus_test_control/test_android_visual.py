@@ -19,14 +19,16 @@ import pytest
 
 from nexus.services.auth_handoff_codes import _hash as server_challenge_hash
 from nexus_test_control import android_visual as av
-from nexus_test_control.cli import AndroidVisualRequest, parse_command
+from nexus_test_control.cli import parse_command
 from nexus_test_control.model import (
     DEFERRED_CAPABILITY_OWNER,
     WORKFLOW_REGISTRY,
+    AndroidVisualInputs,
     Capability,
     RunStatus,
     SelectionScope,
     Workflow,
+    validate_android_visual_path,
 )
 
 HEAD_SHA = "0123456789abcdef0123456789abcdef01234567"
@@ -97,7 +99,7 @@ def test_android_visual_is_absent_from_every_automated_and_deferred_lane() -> No
 def test_cli_parses_head_sha_owned_path_and_defaults_device_to_primary() -> None:
     command = parse_command(["android-visual", "--sha", HEAD_SHA, "--path", "/reader/x"])
     assert command.workflow is Workflow.ANDROID_VISUAL
-    assert command.android_visual == AndroidVisualRequest(HEAD_SHA, "/reader/x", "primary")
+    assert command.android_visual == AndroidVisualInputs(HEAD_SHA, "/reader/x", "primary")
 
 
 def test_cli_rejects_a_sha_that_is_not_forty_lowercase_hex() -> None:
@@ -182,7 +184,7 @@ def test_mint_request_carries_bearer_internal_header_and_the_challenge() -> None
 
 @pytest.mark.parametrize("path", ["/", "/reader/library", "/reader/abc-123_view", "/a%20b"])
 def test_validate_owned_path_accepts_owned_same_origin_paths(path: str) -> None:
-    assert av.validate_owned_path(path) == path
+    assert validate_android_visual_path(path) == path
 
 
 @pytest.mark.parametrize(
@@ -191,7 +193,7 @@ def test_validate_owned_path_accepts_owned_same_origin_paths(path: str) -> None:
 )
 def test_validate_owned_path_rejects_foreign_or_unsafe_paths(path: str) -> None:
     with pytest.raises(ValueError):
-        av.validate_owned_path(path)
+        validate_android_visual_path(path)
 
 
 def test_device_session_established_requires_a_non_login_page_on_the_owned_origin() -> None:
@@ -381,6 +383,31 @@ def test_debug_apk_cache_restores_an_out_of_band_build_and_device_install(tmp_pa
         "input_fingerprint": fingerprint,
         "apk_sha256": digest,
     }
+
+
+def test_debug_apk_assembly_failure_retains_a_bounded_actionable_diagnostic(
+    tmp_path: Path,
+) -> None:
+    android = tmp_path / "apps/android"
+    android.mkdir(parents=True)
+    wrapper = android / "gradlew"
+    wrapper.write_text(
+        "#!/bin/sh\n"
+        "printf '%05000d\\n' 0 >&2\n"
+        "printf '%s\\n' \"Execution failed for task ':app:verifyOfflineReadingAssets'.\" >&2\n"
+        "printf '%s\\n' 'stale offline asset manifest' >&2\n"
+        "exit 7\n",
+        encoding="utf-8",
+    )
+    wrapper.chmod(0o755)
+
+    with pytest.raises(av._Fail) as raised:
+        av._assemble_debug_apk(tmp_path, os.environ, {})
+
+    detail = str(raised.value)
+    assert "Execution failed for task ':app:verifyOfflineReadingAssets'." in detail
+    assert "stale offline asset manifest" in detail
+    assert len(detail) <= 2_000
 
 
 # --- Worktree source identity -----------------------------------------------

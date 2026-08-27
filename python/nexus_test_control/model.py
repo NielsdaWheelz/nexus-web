@@ -8,6 +8,8 @@ from types import MappingProxyType
 
 _GIT_SHA = re.compile(r"[0-9a-f]{40}\Z")
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+_ANDROID_VISUAL_PATH = re.compile(r"/[A-Za-z0-9._~%!$&'()*+,;=:@/-]*\Z")
+ANDROID_VISUAL_DEVICE_ALIASES = frozenset({"primary"})
 
 
 def _repository_relative(value: str) -> bool:
@@ -18,6 +20,36 @@ def _repository_relative(value: str) -> bool:
         and ".." not in path.parts
         and "\\" not in value
     )
+
+
+def validate_android_visual_path(path: str) -> str:
+    if (
+        not path
+        or not path.startswith("/")
+        or path.startswith("//")
+        or "?" in path
+        or "#" in path
+        or "\\" in path
+        or "'" in path
+        or _ANDROID_VISUAL_PATH.fullmatch(path) is None
+        or ".." in PurePosixPath(path).parts
+    ):
+        raise ValueError(f"path must be an owned same-origin path: {path!r}")
+    return path
+
+
+@dataclass(frozen=True, slots=True)
+class AndroidVisualInputs:
+    sha: str
+    path: str
+    device: str
+
+    def __post_init__(self) -> None:
+        if _GIT_SHA.fullmatch(self.sha) is None:
+            raise ValueError("--sha must be a 40-character lowercase git SHA")
+        validate_android_visual_path(self.path)
+        if self.device not in ANDROID_VISUAL_DEVICE_ALIASES:
+            raise ValueError(f"unknown device alias: {self.device!r}")
 
 
 class Workflow(StrEnum):
