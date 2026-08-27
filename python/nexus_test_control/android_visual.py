@@ -21,6 +21,7 @@ import hashlib
 import json
 import re
 import secrets
+import shutil
 import subprocess
 import time
 from collections.abc import Mapping, Sequence
@@ -62,7 +63,8 @@ from nexus_test_control.services import (
     wait_process_ready,
 )
 
-MANIFEST_VERSION = 1
+MANIFEST_VERSION = 2
+APK_CACHE_VERSION = 2
 DEVICE_ALIASES = frozenset({"primary"})
 DEBUG_PACKAGE = "app.nexus.android.debug"
 MAIN_ACTIVITY = "app.nexus.android.MainActivity"
@@ -610,31 +612,29 @@ def _ensure_debug_apk(
     serial: str,
     flags: Mapping[str, str],
 ) -> dict[str, object]:
-    apk = root / APK_RELATIVE
+    shared_apk = root / APK_RELATIVE
     fingerprint = native_input_fingerprint(root, flags)
     state_path = runtime_state_dir(root) / "android-visual" / "apk.json"
     state = _read_apk_state(state_path)
-    built = False
-    if not apk.is_file() or state.get("fingerprint") != fingerprint:
+    cached = _cached_debug_apk(state_path, state, fingerprint)
+    if cached is None:
         if not _android_sdk_available(root, environment):
             raise _NotRun("the Android SDK is required to build the debug APK for the local origin")
         _assemble_debug_apk(root, environment, flags)
-        built = True
-    if not apk.is_file():
-        raise _NotRun("debug APK was not produced")
-    installed = _installed_fingerprints(state)
-    if (
-        built
-        or installed.get(serial) != fingerprint
-        or not _package_installed(adb, serial, environment, root)
-    ):
-        _adb(adb, serial, "install", "-r", str(apk), environment=environment, cwd=root)
-        installed[serial] = fingerprint
-    _write_apk_state(state_path, fingerprint, installed)
+        cached = _snapshot_debug_apk(shared_apk, state_path.parent / "artifacts")
+        _write_apk_state(state_path, fingerprint, cached[1])
+    artifact, apk_sha256 = cached
+
+    # An explicit physical proof always reinstalls the verified artifact. The
+    # device package is mutable outside this controller, so package existence or
+    # an intent cache cannot establish which APK is actually installed.
+    _adb(adb, serial, "install", "-r", str(artifact), environment=environment, cwd=root)
+    if _regular_file_sha256(artifact) != apk_sha256:
+        raise _Fail("cached debug APK changed during installation")
     return {
         "variant": "debug",
         "input_fingerprint": fingerprint,
-        "installed_fingerprint": installed[serial],
+        "apk_sha256": apk_sha256,
     }
 
 
@@ -659,21 +659,6 @@ def _assemble_debug_apk(
     )
     if result.returncode != 0:
         raise _Fail("debug APK assembly failed")
-
-
-def _package_installed(adb: Path, serial: str, environment: Mapping[str, str], cwd: Path) -> bool:
-    result = _adb(
-        adb,
-        serial,
-        "shell",
-        "pm",
-        "path",
-        DEBUG_PACKAGE,
-        environment=environment,
-        cwd=cwd,
-        check=False,
-    )
-    return result.returncode == 0 and result.stdout.strip().startswith("package:")
 
 
 def _launch(adb: Path, serial: str, uri: str, environment: Mapping[str, str], cwd: Path) -> None:
@@ -995,20 +980,80 @@ def _read_apk_state(path: Path) -> dict[str, object]:
     return value if isinstance(value, dict) else {}
 
 
-def _installed_fingerprints(state: Mapping[str, object]) -> dict[str, str]:
-    installed = state.get("installed")
-    if not isinstance(installed, dict):
-        return {}
-    return {key: value for key, value in installed.items() if isinstance(value, str)}
+def _cached_debug_apk(
+    state_path: Path, state: Mapping[str, object], fingerprint: str
+) -> tuple[Path, str] | None:
+    digest = state.get("apk_sha256")
+    if (
+        state.get("version") != APK_CACHE_VERSION
+        or state.get("input_fingerprint") != fingerprint
+        or not isinstance(digest, str)
+        or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+    ):
+        return None
+    artifact = state_path.parent / "artifacts" / "debug.apk"
+    if _regular_file_sha256(artifact) != digest:
+        return None
+    return artifact, digest
 
 
-def _write_apk_state(path: Path, fingerprint: str, installed: Mapping[str, str]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps({"fingerprint": fingerprint, "installed": dict(installed)}, sort_keys=True)
-        + "\n",
-        encoding="utf-8",
-    )
+def _snapshot_debug_apk(shared_apk: Path, artifact_dir: Path) -> tuple[Path, str]:
+    source_digest = _regular_file_sha256(shared_apk)
+    if source_digest is None:
+        raise _Fail("debug APK assembly produced no regular artifact")
+    try:
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        artifact = artifact_dir / "debug.apk"
+        temporary = artifact_dir / f".debug.{secrets.token_hex(8)}.tmp"
+        try:
+            shutil.copyfile(shared_apk, temporary, follow_symlinks=False)
+            if _regular_file_sha256(temporary) != source_digest:
+                raise _Fail("debug APK changed while it was staged")
+            temporary.replace(artifact)
+        finally:
+            temporary.unlink(missing_ok=True)
+    except OSError as error:
+        raise _Fail("debug APK could not be staged") from error
+    if _regular_file_sha256(artifact) != source_digest:
+        raise _Fail("staged debug APK failed digest verification")
+    return artifact, source_digest
+
+
+def _regular_file_sha256(path: Path) -> str | None:
+    if path.is_symlink() or not path.is_file():
+        return None
+    try:
+        digest = hashlib.sha256()
+        with path.open("rb") as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
+
+
+def _write_apk_state(path: Path, fingerprint: str, apk_sha256: str) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
+        try:
+            temporary.write_text(
+                json.dumps(
+                    {
+                        "version": APK_CACHE_VERSION,
+                        "input_fingerprint": fingerprint,
+                        "apk_sha256": apk_sha256,
+                    },
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
+    except OSError as error:
+        raise _Fail("debug APK cache state could not be written") from error
 
 
 def _git(repo_root: Path, *args: str) -> str:
