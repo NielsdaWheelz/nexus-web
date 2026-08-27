@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useRef, useState } from "react";
 import { page, userEvent } from "vitest/browser";
 import { describe, expect, it } from "vitest";
@@ -33,7 +33,50 @@ function StatefulTask() {
   );
 }
 
+function ActiveTask() {
+  const [activationCount, setActivationCount] = useState(0);
+  return (
+    <MobileFullScreenTask
+      active
+      onDismiss={() => undefined}
+      onDismissRequest={() => "rejected"}
+      ariaLabel="Active task"
+      initialFocus={(container) =>
+        container.querySelector<HTMLButtonElement>("button")
+      }
+      focusKey="active-task"
+    >
+      <button
+        type="button"
+        onClick={() => setActivationCount((count) => count + 1)}
+      >
+        Apply ({activationCount})
+      </button>
+    </MobileFullScreenTask>
+  );
+}
+
 describe("MobileFullScreenTask lifecycle", () => {
+  it("rejects pointer clicks whose contact predates the active task", async () => {
+    await page.viewport(390, 800);
+    render(
+      withRenderEnvironment(<ActiveTask />, {
+        initialViewport: "mobile",
+      }),
+    );
+
+    const button = await screen.findByRole("button", { name: "Apply (0)" });
+    fireEvent.click(button, { detail: 1 });
+    expect(button).toHaveAccessibleName("Apply (0)");
+
+    fireEvent.click(button, { detail: 0 });
+    expect(button).toHaveAccessibleName("Apply (1)");
+
+    fireEvent.pointerDown(button, { pointerId: 1, pointerType: "touch" });
+    fireEvent.click(button, { detail: 1 });
+    expect(button).toHaveAccessibleName("Apply (2)");
+  });
+
   it("keeps an opened task mounted but inaccessible while closed, then restores its state and focus contract", async () => {
     await page.viewport(390, 800);
     render(

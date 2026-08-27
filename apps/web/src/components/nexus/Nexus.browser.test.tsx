@@ -487,10 +487,7 @@ function writeAtomicTodayDraft() {
   writeDailyDraft({
     version: 1,
     accountId: ACCOUNT_ID,
-    localDate: resolveDailyLocalDate(
-      { kind: "Today" },
-      CALENDAR_TIME_ZONE,
-    ),
+    localDate: resolveDailyLocalDate({ kind: "Today" }, CALENDAR_TIME_ZONE),
     noteId: "11111111-1111-4111-8111-111111111111",
     clientMutationId: "nexus-browser-atomic-draft",
     bodyPmJson: {
@@ -712,15 +709,9 @@ describe("Nexus product composition", () => {
       within(places).getByRole("button", { name: "Chats" }),
       within(places).getByRole("button", { name: "Notes" }),
     ]);
-    expect(
-      within(places).queryByRole("button", { name: "Stats" }),
-    ).toBeNull();
-    expect(
-      within(places).queryByRole("button", { name: "Atlas" }),
-    ).toBeNull();
-    expect(
-      within(places).queryByRole("button", { name: "Oracle" }),
-    ).toBeNull();
+    expect(within(places).queryByRole("button", { name: "Stats" })).toBeNull();
+    expect(within(places).queryByRole("button", { name: "Atlas" })).toBeNull();
+    expect(within(places).queryByRole("button", { name: "Oracle" })).toBeNull();
 
     await userEvent.click(
       within(places).getByRole("button", { name: "Notes" }),
@@ -831,7 +822,9 @@ describe("Nexus product composition", () => {
             expect(primary).toHaveAccessibleName(
               new RegExp(`^${rowLabel}(?:\\b|$)`),
             );
-            expect(primary!.textContent?.trim().startsWith(rowLabel)).toBe(true);
+            expect(primary!.textContent?.trim().startsWith(rowLabel)).toBe(
+              true,
+            );
             return {
               list,
               row,
@@ -851,7 +844,8 @@ describe("Nexus product composition", () => {
       ).toBe(true);
       expect(
         boxes.every(
-          (box, index) => index === 0 || box.top >= boxes[index - 1]!.bottom - 1,
+          (box, index) =>
+            index === 0 || box.top >= boxes[index - 1]!.bottom - 1,
         ),
         `${name}: rows must form one vertical stream instead of sharing horizontal tracks`,
       ).toBe(true);
@@ -890,7 +884,8 @@ describe("Nexus product composition", () => {
         const rowBox = finalRow.getBoundingClientRect();
         const ownerBox = scrollOwner!.getBoundingClientRect();
         expect(
-          rowBox.top >= ownerBox.top - 1 && rowBox.bottom <= ownerBox.bottom + 1,
+          rowBox.top >= ownerBox.top - 1 &&
+            rowBox.bottom <= ownerBox.bottom + 1,
           `${name}: the final Places row is not reachable in the sole content scroller`,
         ).toBe(true);
       });
@@ -1812,6 +1807,7 @@ describe("Nexus product composition", () => {
     fireEvent.click(button, { detail: 0 });
     expect(await screen.findByRole("dialog", { name: "Nexus" })).toBeVisible();
     await sendTrustedTouchEvent("touchEnd", []);
+    expect(await screen.findByRole("dialog", { name: "Nexus" })).toBeVisible();
     await dismissNexus();
     fireEvent.click(button, { detail: 1 });
     expect(
