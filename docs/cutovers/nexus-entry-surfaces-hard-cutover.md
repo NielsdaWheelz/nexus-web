@@ -513,19 +513,22 @@ Modify:
   `apps/web/src/app/legal.module.css`;
 - `apps/web/e2e/{fixtures.ts,extension/capture.extension.spec.ts,journeys/auth-session.journey.spec.ts,journeys/password-recovery.journey.spec.ts}`;
 - `README.md`, `testdata/proofs.json`, and
-  `docs/cutovers/{auth-session-recovery-hard-cutover.md,android-player-protocol-release-hard-cutover.md,browse-surface-deletion-hard-cutover.md}`;
-- `deploy/hetzner/release.py`,
+  `docs/cutovers/{auth-session-recovery-hard-cutover.md,android-player-protocol-release-hard-cutover.md,browse-surface-deletion-hard-cutover.md,testing-standards-enforcement-hard-cutover.md}`
+  and `docs/local-rules/testing-standards.md`;
+- `deploy/hetzner/{fetch-release-bundle.sh,release.py}`,
   `python/nexus/release_artifact.py`,
   `python/nexus_test_control/android_visual.py`,
   `python/nexus_test_control/cli.py`,
   `python/nexus_test_control/evidence.py`,
   `python/nexus_test_control/runner.py`,
   `python/nexus_test_control/model.py`,
+  `python/nexus_test_control/services.py`,
   `python/tests/kernel/test_backend_artifact.py`,
   `python/tests/kernel/nexus_test_control/test_android_visual.py`,
   `python/tests/kernel/nexus_test_control/test_cli.py`,
   `python/tests/kernel/nexus_test_control/test_runner.py`,
   `python/tests/kernel/nexus_test_control/test_selection.py`,
+  `python/tests/kernel/nexus_test_control/test_services.py`,
   `python/tests/kernel/test_android_player_protocol_release_gate.py`, and the
   canonical fixture in `python/tests/testkit/production_deploy.py`, to
   align the closed decoder with the already-emitted manifest-v2 shape, share one
@@ -549,6 +552,12 @@ refreeze. Live `main` now contains the identical generated closure through PR
 `index-B5ZkvHQQ.js`, and removal of `index-BnFwN24i.js`. PR #204 must not create
 an independent generated-asset delta. This changes no reader source, generator,
 native owner, or asset schema.
+
+Rebased changed-path execution must remain portable and isolated. The release
+bundle allowlist therefore enumerates relative files without GNU-only `find`
+extensions, and the test-port owner must reject an existing dual-stack wildcard
+listener without mutating the foreign workspace that owns it. These integration
+repairs change no release artifact, deployment target, or product port contract.
 
 Keep unchanged:
 
