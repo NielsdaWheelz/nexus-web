@@ -511,7 +511,7 @@ Modify:
 - `apps/web/src/app/{layout.tsx,manifest.ts,opengraph-image.tsx}`;
 - `apps/web/src/app/{privacy,terms}/page.tsx` and
   `apps/web/src/app/legal.module.css`;
-- `apps/web/e2e/{fixtures.ts,journeys/auth-session.journey.spec.ts,journeys/password-recovery.journey.spec.ts}`;
+- `apps/web/e2e/{fixtures.ts,extension/capture.extension.spec.ts,journeys/auth-session.journey.spec.ts,journeys/password-recovery.journey.spec.ts}`;
 - `README.md`, `testdata/proofs.json`, and
   `docs/cutovers/{auth-session-recovery-hard-cutover.md,android-player-protocol-release-hard-cutover.md,browse-surface-deletion-hard-cutover.md}`;
 - `deploy/hetzner/release.py`,
@@ -521,6 +521,7 @@ Modify:
   `python/nexus_test_control/model.py`,
   `python/tests/kernel/test_backend_artifact.py`,
   `python/tests/kernel/nexus_test_control/test_android_visual.py`,
+  `python/tests/kernel/nexus_test_control/test_runner.py`,
   `python/tests/kernel/nexus_test_control/test_selection.py`,
   `python/tests/kernel/test_android_player_protocol_release_gate.py`, and the
   canonical fixture in `python/tests/testkit/production_deploy.py`, solely to
