@@ -44,18 +44,3 @@ export function hasLegacyArtifactIdentityKey(value: unknown): boolean {
       hasLegacyArtifactIdentityKey(child),
   );
 }
-
-export function hasTopLevelLegacyArtifactIdentityKey(
-  value: Record<string, unknown>,
-): boolean {
-  return Object.keys(value).some((key) => LEGACY_ARTIFACT_IDENTITY_KEYS.has(key));
-}
-
-export function assertNoTopLevelLegacyArtifactIdentityKey(
-  value: Record<string, unknown>,
-  label: string,
-): void {
-  if (hasTopLevelLegacyArtifactIdentityKey(value)) {
-    throw new Error(`${label} includes legacy artifact identity`);
-  }
-}

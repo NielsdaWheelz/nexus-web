@@ -10,13 +10,13 @@ import type {
 } from "@/lib/media/activityClient";
 import { UploadSessionError } from "@/lib/media/ingestionClient";
 import type { UploadVerificationCode } from "@/lib/media/uploadVerification";
-import type { LibraryMediaKind } from "@/lib/libraries/mediaKind";
+import type { MediaKind } from "@/lib/media/kind";
 import { assertNever } from "@/lib/assertNever";
 
 /** The exact queue evidence for a reclaimed attempt; never inferred. */
 const WORKER_INTERRUPTED_CODE = "E_WORKER_INTERRUPTED";
 
-export function mediaActivityKindLabel(kind: LibraryMediaKind): string {
+export function mediaActivityKindLabel(kind: MediaKind): string {
   switch (kind) {
     case "web_article":
       return "Web article";

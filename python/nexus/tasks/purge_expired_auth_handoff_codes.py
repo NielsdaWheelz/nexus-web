@@ -9,7 +9,7 @@ from nexus.services.auth_handoff_codes import purge_expired_auth_handoff_codes
 logger = get_logger(__name__)
 
 
-def purge_expired_auth_handoff_codes_job(request_id: str | None = None) -> dict[str, int]:
+def purge_expired_auth_handoff_codes_job(request_id: str) -> dict[str, int]:
     session_factory = get_session_factory()
     with session_factory() as db:
         deleted = purge_expired_auth_handoff_codes(db)

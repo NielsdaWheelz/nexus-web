@@ -1084,19 +1084,18 @@ or retain a compatibility decoder.
 
 ## 9. Migration And Deployment
 
-Use the next free consecutive Alembic revisions at implementation time. Do not
-edit history. The two DB revisions and maintenance command are one stopped-world
-cutover; no application version supports the intermediate schema.
+The historical 0201/0202 Alembic revisions remain immutable. They formed one
+stopped-world cutover; no application version supported the intermediate
+schema. Only the repository's current schema is supported now, so the
+revision-only maintenance program is no longer part of the codebase.
 
 Preflight reports exact active/inactive subscriptions, legacy placements,
 orphans, system/default destinations, duplicates, parent/child collisions,
 unprovable episode identities, transcript-origin ambiguity, and affected rows.
-`python -m nexus.ops.browse_cutover preflight` owns this report.
-It runs against the intact `0200` legacy schema before the prepare revision;
-`apply` is closed until the complete `0201` prepared schema is present.
-The same bounded command owns
-`apply --identity-map <path> --transcript-origin-map <path>` and `enqueue`; no
-unnamed one-off script participates.
+The stopped-world operator owned this report while 0200 was supported and ran
+against that intact schema before the prepare revision. Its apply phase was
+closed until the complete 0201 prepared schema was present. Those operational
+paths are no longer part of the supported codebase.
 
 Identity classification is exact:
 
@@ -1189,7 +1188,6 @@ silently no-op.
 - `python/nexus/services/contributor_observation_seam.py`
 - `python/nexus/services/podcasts/backfill.py`
 - `python/nexus/tasks/podcast_backfill_subscription.py`
-- `python/nexus/ops/browse_cutover.py`
 - `migrations/alembic/versions/<next>_browse_prepare.py`
 - `migrations/alembic/versions/<next+1>_browse_finalize.py`
 - `apps/web/src/app/(authenticated)/browse/BrowsePaneBody.tsx`

@@ -95,7 +95,19 @@ export function useReaderTarget(mediaId: string): ReaderTargetState {
       consumePendingReaderPulse(mediaId, detail);
       const next = targetFromPulse(detail);
       if (!next) return;
-      setState({ target: next, status: "pending" });
+      setState((current) => {
+        // The pulse channel still owns the visual pulse. Preserve a matching
+        // hash target until markActive consumes its canonical URL obligation.
+        if (
+          current.status === "pending" &&
+          current.target?.origin === "hash" &&
+          current.target.kind === next.kind &&
+          current.target.value === next.value
+        ) {
+          return current;
+        }
+        return { target: next, status: "pending" };
+      });
     },
     [mediaId],
   );

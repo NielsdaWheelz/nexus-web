@@ -56,6 +56,10 @@ from nexus.jobs.registry import (
     resolve_job_handler,
 )
 from nexus.logging import get_logger
+from nexus.services.source_attempt_failures import (
+    ResourceLimitedSourceAttempt,
+    publish_resource_limited_source_attempt,
+)
 
 logger = get_logger(__name__)
 
@@ -1161,50 +1165,23 @@ def _settle_abnormal_child_outcome(
         return "SourceProjectionNotSucceeded"
 
     message = {
-        "Memory": "Document processing exceeded its memory resource limit.",
-        "Time": "Document processing exceeded its time resource limit.",
-        "Structure": "Document structure exceeded its processing resource limit.",
-        "Output": "Document output exceeded its processing resource limit.",
+        "Memory": "Background job exceeded its memory resource limit.",
+        "Time": "Background job exceeded its time resource limit.",
+        "Structure": "Background job structure exceeded its processing resource limit.",
+        "Output": "Background job output exceeded its processing resource limit.",
     }[dimension]
     if projection == "SourceAttemptMedia":
         if media_id is None or attempt_id is None:
             # justify-defect: the projection branch above parsed both identities.
             raise AssertionError("source resource projection identities are absent")
-        updated_attempt = db.execute(
-            text(
-                """
-                UPDATE media_source_attempts
-                SET status = 'failed',
-                    error_code = 'E_RESOURCE_LIMIT',
-                    error_message = :message,
-                    retry_after_seconds = NULL,
-                    finished_at = clock_timestamp(),
-                    updated_at = clock_timestamp()
-                WHERE id = :attempt_id
-                RETURNING id
-                """
+        message = publish_resource_limited_source_attempt(
+            db,
+            ResourceLimitedSourceAttempt(
+                media_id=media_id,
+                attempt_id=attempt_id,
+                dimension=dimension,
             ),
-            {"attempt_id": attempt_id, "message": message},
-        ).one_or_none()
-        updated_media = db.execute(
-            text(
-                """
-                UPDATE media
-                SET processing_status = 'failed',
-                    failure_stage = 'extract',
-                    last_error_code = 'E_RESOURCE_LIMIT',
-                    last_error_message = :message,
-                    processing_completed_at = NULL,
-                    failed_at = clock_timestamp(),
-                    updated_at = clock_timestamp()
-                WHERE id = :media_id
-                RETURNING id
-                """
-            ),
-            {"media_id": media_id, "message": message},
-        ).one_or_none()
-        if updated_attempt is None or updated_media is None:
-            raise AssertionError("source resource projection changed while locked")
+        )
 
     terminal = db.execute(
         text(

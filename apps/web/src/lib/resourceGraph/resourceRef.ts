@@ -9,6 +9,8 @@
  * No code outside this module may split a resource ref on `:`.
  */
 
+import { isCanonicalUuid } from "@/lib/validation";
+
 export const RESOURCE_SCHEMES = [
   "media",
   "library",
@@ -40,10 +42,6 @@ export interface ResourceRef {
 
 const RESOURCE_SCHEME_SET = new Set<string>(RESOURCE_SCHEMES);
 
-// Canonical lowercase UUID, matching the backend's `str(UUID(x)) == x` check.
-const CANONICAL_UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-
 export function isResourceScheme(scheme: string): scheme is ResourceScheme {
   return RESOURCE_SCHEME_SET.has(scheme);
 }
@@ -54,7 +52,7 @@ export function parseResourceRef(raw: string): ResourceRef | null {
   if (sep <= 0) return null;
   const scheme = raw.slice(0, sep);
   const id = raw.slice(sep + 1);
-  if (!isResourceScheme(scheme) || !CANONICAL_UUID_RE.test(id)) return null;
+  if (!isResourceScheme(scheme) || !isCanonicalUuid(id)) return null;
   return { scheme, id };
 }
 

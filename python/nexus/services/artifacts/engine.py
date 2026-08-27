@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from collections.abc import AsyncGenerator, Callable, Sequence
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -35,21 +35,17 @@ from provider_runtime import (
     CallOutcome as ProviderCallOutcome,
 )
 from provider_runtime import (
-    Cancelled,
     ContinuationDelta,
-    Incomplete,
     ReasoningLevel,
-    Refused,
     RuntimeStreamEvent,
     StreamStart,
-    StructuredContent,
     Succeeded,
     TerminalEvent,
     TextDelta,
     UsageEvent,
 )
 from provider_runtime.types import CancelSignal
-from pydantic import BaseModel, ConfigDict, TypeAdapter
+from pydantic import BaseModel, TypeAdapter
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -74,14 +70,17 @@ from nexus.schemas.presence import Present, absent, present
 from nexus.services import durable_step_journal as step_journal
 from nexus.services import run_kit
 from nexus.services.artifacts import learn as learn_service
-from nexus.services.artifacts.bindings import BINDINGS, DossierBinding
 from nexus.services.artifacts.bindings._shared import (
     AggregateDependenciesPending,
     CitationValidationError,
     document_repair_system_prompt,
     document_repair_user_content,
 )
-from nexus.services.artifacts.bindings.base import DossierInputTooLarge, MaterializedDossier
+from nexus.services.artifacts.bindings.base import (
+    DossierBinding,
+    DossierInputTooLarge,
+    PublishableDossier,
+)
 from nexus.services.artifacts.coordination import (
     DossierBuildRuntime,
     DossierResearchPending,
@@ -90,7 +89,6 @@ from nexus.services.artifacts.coordination import (
 from nexus.services.artifacts.definition import DOSSIER_DEFINITION
 from nexus.services.artifacts.document_html import (
     DocumentHtmlError,
-    compile_learning_document,
 )
 from nexus.services.artifacts.dossier_types import (
     ArtifactBuildEventType,
@@ -114,22 +112,36 @@ from nexus.services.artifacts.dossier_types import (
     SubjectResource,
     SucceededEventPayload,
 )
+from nexus.services.artifacts.generation_step import (
+    BILLED_GENERATION_STEP_PATHS,
+    DOCUMENT_REPAIR_STEP_PATH,
+    SYNTHESIS_STEP_PATH,
+    ArtifactGenerationCancelled,
+    ArtifactGenerationDispatchRequired,
+    ArtifactGenerationFailure,
+    ArtifactGenerationInputsChanged,
+    ArtifactGenerationInvalid,
+    build_artifact_generation_step,
+    classify_artifact_generation_outcome,
+    decode_artifact_generation_result,
+    encode_reconciled_artifact_generation_result,
+)
 from nexus.services.artifacts.handles import seal_artifact_build
 from nexus.services.artifacts.idea_identity import InvalidIdeaText
 from nexus.services.artifacts.idea_seeds import (
     delete_artifact_idea_rows_before_head,
     delete_idea_subject_after_head,
-    delete_user_idea_rows_after_heads,
-    delete_user_learn_rows_before_heads,
     register_idea_seed,
 )
 from nexus.services.artifacts.manifests import InputManifestV1
+from nexus.services.artifacts.registry import (
+    dossier_registration,
+    visible_persisted_subject,
+)
 from nexus.services.artifacts.research import ResearchInputsChanged
 from nexus.services.artifacts.subject_policy import (
-    SUBJECT_POLICIES,
     ResolvedSubject,
     SubjectPolicy,
-    visible_persisted_subject,
 )
 from nexus.services.llm_execution import (
     DispatchAborted,
@@ -142,10 +154,7 @@ from nexus.services.llm_execution import (
 from nexus.services.llm_ledger import LlmCallOwner
 from nexus.services.llm_profiles import operation_profile
 from nexus.services.rate_limit import get_rate_limiter
-from nexus.services.resource_graph.citations import (
-    rehome_citations_for_output,
-    replace_citations_for_output,
-)
+from nexus.services.resource_graph.citations import replace_citations_for_output
 from nexus.services.resource_graph.refs import RESOURCE_SCHEMES, ResourceRef, ResourceScheme
 from nexus.services.resource_graph.schemas import CitationInput
 from nexus.services.structured_synthesis import (
@@ -175,9 +184,7 @@ __all__ = [
     "lock_cleanup_heads_in_order",
     "make_current",
     "on_audience_visibility_changed",
-    "on_subject_audience_removed",
     "on_subject_deleted",
-    "on_user_deleted",
     "read_head",
     "read_artifact_head",
     "reconcile_uncertain_build",
@@ -186,8 +193,6 @@ __all__ = [
 ]
 
 _MAX_INSTRUCTION_CHARS = 4000
-# The one provider step per build (single synthesis over the reduced inputs, B4).
-_STEP_PATH = "synthesis"
 _IDEA_RESOLUTION_STEP_PATH = "idea-resolution"
 _WEB_SEARCH_STEP_PATHS = frozenset(
     {
@@ -197,7 +202,6 @@ _WEB_SEARCH_STEP_PATHS = frozenset(
     }
 )
 _WEB_SEARCH_TOOL_ID = ToolId("web.search")
-_VISIBLE_SYNTHESIS_FIELD = "content_html"
 _CANCEL_POLL_INTERVAL_SECONDS = 0.25
 _MANIFEST_ADAPTER: TypeAdapter[InputManifestV1] = TypeAdapter(InputManifestV1)
 
@@ -212,27 +216,6 @@ class _UncertainReplayDefect(RuntimeError):
     """A billed provider step is ``Uncertain`` on replay and cannot be reconciled
     without a provider idempotency/reconciliation key — never auto-redispatched
     (A8). Defects for the operator; surfaces as Suspended."""
-
-
-class _SynthesisAccepted(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    kind: Literal["Accepted"] = "Accepted"
-    envelope_json: str
-
-
-class _SynthesisInvalid(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    kind: Literal["Invalid"] = "Invalid"
-    rejected_output: str
-    diagnostic: str
-
-
-type _SynthesisStepResult = _SynthesisAccepted | _SynthesisInvalid
-_SYNTHESIS_STEP_RESULT_ADAPTER: TypeAdapter[_SynthesisStepResult] = TypeAdapter(
-    _SynthesisAccepted | _SynthesisInvalid
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -275,9 +258,10 @@ def reconcile_uncertain_build(
         head = _head_row(db, head_id)
         if head is None:
             raise BuildNotActive()
-        binding = BINDINGS.get(head.subject_scheme)
-        if binding is None:
-            raise AssertionError(f"no binding for subject scheme {head.subject_scheme!r}")
+        registration = dossier_registration(head.subject_scheme)
+        if registration is None:
+            raise AssertionError(f"no registration for subject scheme {head.subject_scheme!r}")
+        binding = registration.binding
         row = (
             db.execute(
                 text(
@@ -310,9 +294,9 @@ def reconcile_uncertain_build(
             raise AssertionError("Dossier build has multiple uncertain provider steps")
         step_path, state = uncertain_states[0]
         is_tool_execution = isinstance(state.tool_execution, Present)
-        if step_path == _STEP_PATH:
+        if step_path in BILLED_GENERATION_STEP_PATHS:
             if is_tool_execution:
-                raise AssertionError("uncertain Dossier synthesis contains tool metadata")
+                raise AssertionError("uncertain Dossier generation contains tool metadata")
         elif step_path in _WEB_SEARCH_STEP_PATHS:
             if not is_tool_execution:
                 raise AssertionError("uncertain Dossier Web position lacks bound tool metadata")
@@ -364,16 +348,16 @@ def reconcile_uncertain_build(
                 if isinstance(resolution.tool_settlement, Present):
                     raise InvalidRequestError(
                         ApiErrorCode.E_INVALID_REQUEST,
-                        "Synthesis reconciliation cannot include a tool settlement",
+                        "Artifact generation reconciliation cannot include a tool settlement",
                     )
-                normalized = binding.schema.model_validate_json(resolution.terminal_result)
                 next_state = state.model_copy(
                     update={
                         "dispatch_phase": step_journal.Completed,
                         "terminal_result": present(
-                            _SynthesisAccepted(
-                                envelope_json=normalized.model_dump_json()
-                            ).model_dump_json()
+                            encode_reconciled_artifact_generation_result(
+                                resolution.terminal_result,
+                                schema=binding.schema,
+                            )
                         ),
                     }
                 )
@@ -1325,6 +1309,79 @@ def _build_ticket_for_idempotency(
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True, slots=True)
+class _DossierDocumentAcceptance:
+    db: Session
+    build_id: UUID
+    binding: DossierBinding
+    collected: object
+    instruction: str | None
+    requester: UUID
+    runtime: DossierBuildRuntime
+    witness: object
+    input_recheck: _TerminalInputRecheck
+
+    async def accept(
+        self,
+        decoded: BaseModel | ArtifactGenerationInvalid,
+    ) -> PublishableDossier | None:
+        if isinstance(decoded, ArtifactGenerationInvalid):
+            rejected_output = decoded.rejected_output
+            diagnostic = decoded.diagnostic
+        else:
+            rejected_output = decoded.model_dump_json()
+            try:
+                return self.binding.materialize(self.collected, decoded, self.witness)
+            except DocumentHtmlError as exc:
+                diagnostic = str(exc)
+            except CitationValidationError as exc:
+                self._terminalize(DossierBuildFailureCode.CitationValidationFailed, str(exc))
+                return None
+
+        repaired = await _run_document_repair_step(
+            self.db,
+            build_id=self.build_id,
+            binding=self.binding,
+            collected=self.collected,
+            instruction=self.instruction,
+            requester=self.requester,
+            runtime=self.runtime,
+            rejected_output=rejected_output,
+            diagnostic=diagnostic,
+            input_recheck=self.input_recheck,
+        )
+        if repaired is None:
+            return None
+        if isinstance(repaired, ArtifactGenerationInvalid):
+            self._terminalize(
+                DossierBuildFailureCode.DocumentValidationFailed,
+                repaired.diagnostic,
+            )
+            return None
+        try:
+            return self.binding.materialize(self.collected, repaired, self.witness)
+        except (DocumentHtmlError, CitationValidationError) as exc:
+            code = (
+                DossierBuildFailureCode.CitationValidationFailed
+                if isinstance(exc, CitationValidationError)
+                else DossierBuildFailureCode.DocumentValidationFailed
+            )
+            self._terminalize(code, str(exc))
+            return None
+
+    def _terminalize(self, code: DossierBuildFailureCode, detail: str) -> None:
+        self.db.commit()
+        _terminal_failure(
+            self.db,
+            build_id=self.build_id,
+            code=code,
+            detail=detail,
+            support=None,
+            ctx=self.runtime.execution_context,
+            input_recheck=self.input_recheck,
+        )
+
+
 async def run_build(
     db: Session,
     *,
@@ -1354,12 +1411,13 @@ async def run_build(
         or str(job.payload.get("build_id")) != str(build_id)
     ):
         raise AssertionError(f"job {job.id} does not own dossier build {build_id}")
-    policy = SUBJECT_POLICIES.get(head.subject_scheme)
-    binding = BINDINGS.get(head.subject_scheme)
-    if policy is None or binding is None:
-        # justify-defect: a persisted build whose subject scheme is not wired to a
-        # policy + binding is an integrator misconfiguration, not a runtime state.
-        raise AssertionError(f"no policy/binding for subject scheme {head.subject_scheme!r}")
+    registration = dossier_registration(head.subject_scheme)
+    if registration is None:
+        # justify-defect: a persisted build whose subject scheme is not wired is
+        # an integrator misconfiguration, not a runtime state.
+        raise AssertionError(f"no registration for subject scheme {head.subject_scheme!r}")
+    policy = registration.policy
+    binding = registration.binding
     # Capture plain values before any commit expires the ORM object.
     requester_user_id = build.requester_user_id
     instruction = build.instruction
@@ -1481,113 +1539,31 @@ async def run_build(
         )
         decoded = await _run_synthesis_step(
             db,
-            ctx=ctx,
-            job=runtime.job,
             build_id=build_id,
             instruction=instruction,
             binding=binding,
             collected=collected,
             requester=requester,
-            runtime=runtime.llm_runtime,
-            active=lambda: _attempt_can_write(db, build_id=build_id, ctx=ctx),
+            runtime=runtime,
             input_recheck=input_recheck,
         )
         if decoded is None:
             return  # the step already terminalized the build (failure) or lost its lease
 
-        rejected_output = ""
-        document_diagnostic: str | None = None
-        materialized: MaterializedDossier | None = None
-        compiled = None
-        if isinstance(decoded, _SynthesisInvalid):
-            rejected_output = decoded.rejected_output
-            document_diagnostic = decoded.diagnostic
-        else:
-            rejected_output = decoded.model_dump_json()
-            try:
-                materialized = binding.materialize(collected, decoded, witness)
-                compiled = compile_learning_document(
-                    materialized.article,
-                    materialized.citations,
-                )
-            except DocumentHtmlError as exc:
-                document_diagnostic = str(exc)
-            except CitationValidationError as exc:
-                db.commit()
-                _terminal_failure(
-                    db,
-                    build_id=build_id,
-                    code=DossierBuildFailureCode.CitationValidationFailed,
-                    detail=str(exc),
-                    support=None,
-                    ctx=ctx,
-                    input_recheck=input_recheck,
-                )
-                return
-
-        if document_diagnostic is not None:
-            repaired = await _run_document_repair_step(
-                db,
-                ctx=ctx,
-                job=get_job(db, ctx.job_id) or runtime.job,
-                build_id=build_id,
-                binding=binding,
-                collected=collected,
-                instruction=instruction,
-                requester=requester,
-                runtime=runtime.llm_runtime,
-                rejected_output=rejected_output,
-                diagnostic=document_diagnostic,
-                input_recheck=input_recheck,
-            )
-            if repaired is None:
-                return
-            if isinstance(repaired, _SynthesisInvalid):
-                db.commit()
-                _terminal_failure(
-                    db,
-                    build_id=build_id,
-                    code=DossierBuildFailureCode.DocumentValidationFailed,
-                    detail=repaired.diagnostic,
-                    support=None,
-                    ctx=ctx,
-                    input_recheck=input_recheck,
-                )
-                return
-            try:
-                materialized = binding.materialize(collected, repaired, witness)
-                compiled = compile_learning_document(
-                    materialized.article,
-                    materialized.citations,
-                )
-            except DocumentHtmlError as exc:
-                db.commit()
-                _terminal_failure(
-                    db,
-                    build_id=build_id,
-                    code=DossierBuildFailureCode.DocumentValidationFailed,
-                    detail=str(exc),
-                    support=None,
-                    ctx=ctx,
-                    input_recheck=input_recheck,
-                )
-                return
-            except CitationValidationError as exc:
-                db.commit()
-                _terminal_failure(
-                    db,
-                    build_id=build_id,
-                    code=DossierBuildFailureCode.CitationValidationFailed,
-                    detail=str(exc),
-                    support=None,
-                    ctx=ctx,
-                    input_recheck=input_recheck,
-                )
-                return
-
-        if materialized is None or compiled is None:
-            raise AssertionError("accepted Dossier output was not compiled")
-        citations = materialized.citations
+        document = await _DossierDocumentAcceptance(
+            db=db,
+            build_id=build_id,
+            binding=binding,
+            collected=collected,
+            instruction=instruction,
+            requester=requester,
+            runtime=runtime,
+            witness=witness,
+            input_recheck=input_recheck,
+        ).accept(decoded)
+        if document is None:
+            return
+        citations = document.citations
         if len(citations) < DOSSIER_DEFINITION.min_materialized_citations:
             raise AssertionError("strict citation materializer accepted too few citations")
         manifest = binding.input_manifest(collected)
@@ -1600,8 +1576,8 @@ async def run_build(
             audience=audience,
             policy=policy,
             binding=binding,
-            content_html=compiled.content_html,
-            content_text=compiled.content_text,
+            content_html=document.content_html,
+            content_text=document.content_text,
             citations=citations,
             manifest=manifest,
             witness=witness,
@@ -1614,123 +1590,50 @@ async def run_build(
 async def _run_synthesis_step(
     db: Session,
     *,
-    ctx: JobExecutionContext,
-    job,  # noqa: ANN001 - queue.JobRow (avoid importing the private view name)
     build_id: UUID,
     instruction: str | None,
     binding: DossierBinding,
     collected: object,
     requester: UUID,
-    runtime: ExecutionRuntime,
-    active: Callable[[], bool],
+    runtime: DossierBuildRuntime,
     input_recheck: _TerminalInputRecheck,
-) -> BaseModel | _SynthesisInvalid | None:
+) -> BaseModel | ArtifactGenerationInvalid | None:
     """Run (or replay) the single coordinated provider step and return the decoded
     output. Returns ``None`` when the step wrote a terminal failure or lost its
     lease (the caller returns). Raises a defect on an uncertain-replay."""
-    gen_id = step_journal.stable_generation_id(build_id, _STEP_PATH)
-    profile = operation_profile(binding.llm_operation)
+    ctx = runtime.execution_context
     user_content = binding.build_user_content(collected, instruction)
-    intent = replace(
-        build_synthesis_intent(
-            profile=profile,
-            system_prompt=binding.system_prompt,
-            user_content=user_content,
-            max_output_tokens=binding.max_output_tokens,
-            schema=binding.schema,
-        ),
-        reasoning=binding.reasoning,
+    step = build_artifact_generation_step(
+        path=SYNTHESIS_STEP_PATH,
+        build_id=build_id,
+        requester=requester,
+        binding=binding,
+        system_prompt=binding.system_prompt,
+        user_content=user_content,
     )
-    request_fingerprint = hashlib.sha256(
-        json.dumps(
-            {
-                "operation": str(binding.llm_operation),
-                "provider": str(profile.target.provider),
-                "model": str(profile.target.model),
-                "system_prompt": binding.system_prompt,
-                "user_content": user_content,
-                "max_output_tokens": binding.max_output_tokens,
-                "reasoning": str(binding.reasoning),
-                "schema": binding.schema.model_json_schema(),
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode()
-    ).hexdigest()
-    states = step_journal.read_step_states(job)
-    st = states.get(_STEP_PATH)
-    if st is not None:
-        if st.generation_id != gen_id:
-            raise AssertionError("dossier synthesis replay generation identity changed")
-        if not isinstance(st.request_fingerprint, Present):
-            raise AssertionError(f"{st.dispatch_phase} synthesis step has no request fingerprint")
-        if st.request_fingerprint.value != request_fingerprint:
-            _terminal_failure(
-                db,
-                build_id=build_id,
-                code=DossierBuildFailureCode.InputsChanged,
-                detail="inputs changed since the provider request was prepared",
-                support=None,
-                ctx=ctx,
-                input_recheck=input_recheck,
-            )
-            return None
-        if st.dispatch_phase in (step_journal.Prepared, step_journal.Uncertain) and isinstance(
-            st.terminal_result, Present
-        ):
-            raise AssertionError(
-                f"{st.dispatch_phase} synthesis step already has a terminal result"
-            )
-    if st is not None and st.dispatch_phase is step_journal.Completed:
-        if not isinstance(st.terminal_result, Present):
-            # justify-defect: a Completed step must carry its memoized result.
-            raise AssertionError("Completed synthesis step has no memoized result")
-        stored = _SYNTHESIS_STEP_RESULT_ADAPTER.validate_json(st.terminal_result.value)
-        if isinstance(stored, _SynthesisInvalid):
-            return stored
-        return binding.schema.model_validate_json(stored.envelope_json)
-    if st is not None and st.dispatch_phase is step_journal.Uncertain:
-        raise _UncertainReplayDefect(f"build {build_id} synthesis step is uncertain on replay")
-
-    # Prepared / absent: commit Uncertain immediately before the network dispatch.
-    prepared = step_journal.StepReplayState(
-        generation_id=gen_id,
-        dispatch_phase=step_journal.Prepared,
-        request_fingerprint=present(request_fingerprint),
-        terminal_result=absent(),
-    )
-    if st is None:
-        if not active():
-            db.rollback()
-            return None
-        if not step_journal.checkpoint_step_state(
+    try:
+        replay = step.replay(runtime)
+    except ArtifactGenerationInputsChanged:
+        _terminal_failure(
             db,
+            build_id=build_id,
+            code=DossierBuildFailureCode.InputsChanged,
+            detail="inputs changed since the provider request was prepared",
+            support=None,
             ctx=ctx,
-            job=job,
-            step_path=_STEP_PATH,
-            state=prepared,
-        ):
-            db.rollback()
-            return None
-        db.commit()
-        job = get_job(db, ctx.job_id)
-        if job is None:
-            return None
-    elif st.dispatch_phase is step_journal.Prepared:
-        pass
-    else:
-        raise AssertionError(f"unknown synthesis dispatch phase {st.dispatch_phase!r}")
+            input_recheck=input_recheck,
+        )
+        return None
+    if not isinstance(replay, ArtifactGenerationDispatchRequired):
+        return replay
+    if not _attempt_can_write(db, build_id=build_id, ctx=ctx):
+        db.rollback()
+        return None
+    if not step.ensure_prepared(db, runtime):
+        return None
 
     terminal_outcome: ProviderCallOutcome | None = None
     guard = _StreamGuard(cancel_signal=asyncio.Event())
-    request = GenerationRequest(
-        generation_id=gen_id,
-        owner=LlmCallOwner(kind="artifact_build", id=build_id, user_id=requester),
-        operation=binding.llm_operation,
-        profile=profile,
-        reasoning=binding.reasoning,
-        intent=intent,
-    )
     progress_result = _append_guarded_stream_event(
         db,
         build_id=build_id,
@@ -1758,35 +1661,21 @@ async def _run_synthesis_step(
         return None
 
     def mark_dispatch_uncertain() -> None:
-        if not active():
+        if not _attempt_can_write(db, build_id=build_id, ctx=ctx):
             db.rollback()
             if not _running_claim_is_current(db, ctx):
                 raise DispatchTransferred
             raise DispatchAborted("dossier build became terminal before dispatch")
-        landed = step_journal.checkpoint_step_state(
-            db,
-            ctx=ctx,
-            job=job,
-            step_path=_STEP_PATH,
-            state=step_journal.StepReplayState(
-                generation_id=gen_id,
-                dispatch_phase=step_journal.Uncertain,
-                request_fingerprint=present(request_fingerprint),
-                terminal_result=absent(),
-            ),
-        )
-        if not landed:
-            db.rollback()
+        if not step.claim_dispatch(db, runtime):
             raise DispatchTransferred
         # A8: this is immediately before the first stream iteration/dispatch.
         # All fallible domain setup and the replay-idempotent Progress append
         # completed while the step was still provably Prepared.
-        db.commit()
 
     stream = execute_generation_stream(
-        request,
+        step.request,
         session_factory=get_session_factory(),
-        runtime=runtime,
+        runtime=runtime.llm_runtime,
         cancel=cast(CancelSignal, guard.cancel_signal),
         before_dispatch=mark_dispatch_uncertain,
     )
@@ -1863,151 +1752,56 @@ async def _run_synthesis_step(
         # justify-defect: execute_generation_stream guarantees one terminal event
         # before normal iterator exhaustion.
         raise AssertionError("dossier provider stream ended without a terminal event")
-    if isinstance(terminal_outcome, Cancelled):
+    normalized = classify_artifact_generation_outcome(
+        terminal_outcome,
+        schema=binding.schema,
+        path=SYNTHESIS_STEP_PATH,
+    )
+    if isinstance(normalized, ArtifactGenerationCancelled):
         return None
-    if not isinstance(terminal_outcome, Succeeded):
-        if isinstance(terminal_outcome, (Incomplete, Refused)):
-            code = (
-                DossierBuildFailureCode.ProviderRefused
-                if isinstance(terminal_outcome, Refused) or terminal_outcome.status == "refused"
-                else DossierBuildFailureCode.ProviderIncomplete
+    if isinstance(normalized, ArtifactGenerationFailure):
+        if normalized.code in {
+            DossierBuildFailureCode.ProviderIncomplete,
+            DossierBuildFailureCode.ProviderRefused,
+        }:
+            logger.warning(
+                "dossier.provider_failure",
+                build_id=str(build_id),
+                failure_code=normalized.code.value,
             )
-        else:
-            failure_code, detail = outcome_failure_facts(terminal_outcome)
-            if failure_code == "context_too_large":
-                code = DossierBuildFailureCode.ContextTooLarge
-            elif failure_code == "invalid_structured_output":
-                invalid = _SynthesisInvalid(
-                    rejected_output="",
-                    diagnostic=detail or "provider returned an invalid structured envelope",
-                )
-                if not _checkpoint_synthesis_result(
-                    db,
-                    ctx=ctx,
-                    job=job,
-                    generation_id=gen_id,
-                    request_fingerprint=request_fingerprint,
-                    result=invalid,
-                ):
-                    return None
-                return invalid
-            else:
-                raise _ProviderDefect(
-                    f"non-modeled provider outcome {type(terminal_outcome).__name__}:{failure_code}"
-                )
-            _terminal_failure(
-                db,
-                build_id=build_id,
-                code=code,
-                detail=detail,
-                support=None,
-                ctx=ctx,
-                input_recheck=input_recheck,
-            )
-            return None
-        _, detail = outcome_failure_facts(terminal_outcome)
-        logger.warning("dossier.provider_failure", build_id=str(build_id), failure_code=code.value)
         _terminal_failure(
             db,
             build_id=build_id,
-            code=code,
-            detail=detail,
+            code=normalized.code,
+            detail=normalized.detail,
             support=None,
             ctx=ctx,
             input_recheck=input_recheck,
         )
         return None
-
-    try:
-        decoded = decode_structured_synthesis(terminal_outcome, schema=binding.schema)
-        expected_visible = getattr(decoded, _VISIBLE_SYNTHESIS_FIELD, None)
-        if not isinstance(expected_visible, str):
-            raise StructuredSynthesisError(
-                f"dossier schema has no string {_VISIBLE_SYNTHESIS_FIELD!r} field"
-            )
-    except StructuredSynthesisError as exc:
-        raw_content = terminal_outcome.response.content
-        rejected_output = (
-            json.dumps(raw_content.payload, ensure_ascii=False, separators=(",", ":"))
-            if isinstance(raw_content, StructuredContent)
-            else ""
-        )
-        invalid = _SynthesisInvalid(
-            rejected_output=rejected_output,
-            diagnostic=str(exc),
-        )
-        if not _checkpoint_synthesis_result(
-            db,
-            ctx=ctx,
-            job=job,
-            generation_id=gen_id,
-            request_fingerprint=request_fingerprint,
-            result=invalid,
-        ):
-            return None
-        return invalid
-
-    accepted = _SynthesisAccepted(envelope_json=decoded.model_dump_json())
-    if not _checkpoint_synthesis_result(
-        db,
-        ctx=ctx,
-        job=job,
-        generation_id=gen_id,
-        request_fingerprint=request_fingerprint,
-        result=accepted,
-    ):
+    if not step.complete(db, runtime, normalized):
         return None
-    return decoded
-
-
-def _checkpoint_synthesis_result(
-    db: Session,
-    *,
-    ctx: JobExecutionContext,
-    job,
-    generation_id: UUID,
-    request_fingerprint: str,
-    result: _SynthesisStepResult,
-) -> bool:
-    fresh_job = get_job(db, ctx.job_id) or job
-    landed = step_journal.checkpoint_step_state(
-        db,
-        ctx=ctx,
-        job=fresh_job,
-        step_path=_STEP_PATH,
-        state=step_journal.StepReplayState(
-            generation_id=generation_id,
-            dispatch_phase=step_journal.Completed,
-            request_fingerprint=present(request_fingerprint),
-            terminal_result=present(result.model_dump_json()),
-        ),
+    return decode_artifact_generation_result(
+        normalized,
+        schema=binding.schema,
     )
-    if not landed:
-        db.rollback()
-        return False
-    db.commit()
-    return True
 
 
 async def _run_document_repair_step(
     db: Session,
     *,
-    ctx: JobExecutionContext,
-    job,
     build_id: UUID,
     binding: DossierBinding,
     collected: object,
     instruction: str | None,
     requester: UUID,
-    runtime: ExecutionRuntime,
+    runtime: DossierBuildRuntime,
     rejected_output: str,
     diagnostic: str,
     input_recheck: _TerminalInputRecheck,
-) -> BaseModel | _SynthesisInvalid | None:
+) -> BaseModel | ArtifactGenerationInvalid | None:
     """Run the one replay-safe, tool-free document repair attempt."""
-    path = "document-repair"
-    generation_id = step_journal.stable_generation_id(build_id, path)
-    profile = operation_profile(binding.llm_operation)
+    ctx = runtime.execution_context
     original_user_content = binding.build_user_content(collected, instruction)
     system_prompt = document_repair_system_prompt(binding.system_prompt)
     user_content = document_repair_user_content(
@@ -2015,87 +1809,34 @@ async def _run_document_repair_step(
         rejected_output=rejected_output,
         diagnostic=diagnostic,
     )
-    intent = replace(
-        build_synthesis_intent(
-            profile=profile,
-            system_prompt=system_prompt,
-            user_content=user_content,
-            max_output_tokens=binding.max_output_tokens,
-            schema=binding.schema,
-        ),
-        reasoning=binding.reasoning,
+    step = build_artifact_generation_step(
+        path=DOCUMENT_REPAIR_STEP_PATH,
+        build_id=build_id,
+        requester=requester,
+        binding=binding,
+        system_prompt=system_prompt,
+        user_content=user_content,
     )
-    fingerprint = hashlib.sha256(
-        json.dumps(
-            {
-                "operation": str(binding.llm_operation),
-                "provider": str(profile.target.provider),
-                "model": str(profile.target.model),
-                "system_prompt": system_prompt,
-                "user_content": user_content,
-                "max_output_tokens": binding.max_output_tokens,
-                "reasoning": str(binding.reasoning),
-                "schema": binding.schema.model_json_schema(),
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode()
-    ).hexdigest()
-    state = step_journal.read_step_states(job).get(path)
-    if state is not None:
-        if state.generation_id != generation_id:
-            raise AssertionError("document-repair generation identity changed")
-        if (
-            not isinstance(state.request_fingerprint, Present)
-            or state.request_fingerprint.value != fingerprint
-        ):
-            _terminal_failure(
-                db,
-                build_id=build_id,
-                code=DossierBuildFailureCode.InputsChanged,
-                detail="inputs changed since document repair was prepared",
-                support=None,
-                ctx=ctx,
-                input_recheck=input_recheck,
-            )
-            return None
-        if state.dispatch_phase is step_journal.Completed:
-            if not isinstance(state.terminal_result, Present):
-                raise AssertionError("completed document-repair step has no result")
-            stored = _SYNTHESIS_STEP_RESULT_ADAPTER.validate_json(state.terminal_result.value)
-            if isinstance(stored, _SynthesisInvalid):
-                return stored
-            return binding.schema.model_validate_json(stored.envelope_json)
-        if state.dispatch_phase is step_journal.Uncertain:
-            raise _UncertainReplayDefect(
-                f"build {build_id} document-repair step is uncertain on replay"
-            )
-
-    prepared = step_journal.StepReplayState(
-        generation_id=generation_id,
-        dispatch_phase=step_journal.Prepared,
-        request_fingerprint=present(fingerprint),
-        terminal_result=absent(),
-    )
-    if state is None:
-        if not _attempt_can_write(db, build_id=build_id, ctx=ctx):
-            db.rollback()
-            return None
-        if not step_journal.checkpoint_step_state(
+    try:
+        replay = step.replay(runtime)
+    except ArtifactGenerationInputsChanged:
+        _terminal_failure(
             db,
+            build_id=build_id,
+            code=DossierBuildFailureCode.InputsChanged,
+            detail="inputs changed since document repair was prepared",
+            support=None,
             ctx=ctx,
-            job=job,
-            step_path=path,
-            state=prepared,
-        ):
-            db.rollback()
-            return None
-        db.commit()
-        job = get_job(db, ctx.job_id)
-        if job is None:
-            return None
-    elif state.dispatch_phase is not step_journal.Prepared:
-        raise AssertionError(f"unexpected document-repair phase {state.dispatch_phase!r}")
+            input_recheck=input_recheck,
+        )
+        return None
+    if not isinstance(replay, ArtifactGenerationDispatchRequired):
+        return replay
+    if not _attempt_can_write(db, build_id=build_id, ctx=ctx):
+        db.rollback()
+        return None
+    if not step.ensure_prepared(db, runtime):
+        return None
 
     progress = _append_guarded_stream_event(
         db,
@@ -2123,41 +1864,20 @@ async def _run_document_repair_step(
     if progress == "inactive":
         return None
 
-    uncertain = prepared.model_copy(update={"dispatch_phase": step_journal.Uncertain})
-
     def mark_dispatch_uncertain() -> None:
         if not _attempt_can_write(db, build_id=build_id, ctx=ctx):
             db.rollback()
             if not _running_claim_is_current(db, ctx):
                 raise DispatchTransferred
             raise DispatchAborted("dossier repair became terminal before dispatch")
-        if not step_journal.checkpoint_step_state(
-            db,
-            ctx=ctx,
-            job=job,
-            step_path=path,
-            state=uncertain,
-        ):
-            db.rollback()
+        if not step.claim_dispatch(db, runtime):
             raise DispatchTransferred
-        db.commit()
 
     try:
         call = await execute_generation(
-            GenerationRequest(
-                generation_id=generation_id,
-                owner=LlmCallOwner(
-                    kind="artifact_build",
-                    id=build_id,
-                    user_id=requester,
-                ),
-                operation=binding.llm_operation,
-                profile=profile,
-                reasoning=binding.reasoning,
-                intent=intent,
-            ),
+            step.request,
             session_factory=get_session_factory(),
-            runtime=runtime,
+            runtime=runtime.llm_runtime,
             before_dispatch=mark_dispatch_uncertain,
         )
     except (DispatchAborted, DispatchTransferred):
@@ -2180,92 +1900,30 @@ async def _run_document_repair_step(
         )
         return None
 
-    if isinstance(call.outcome, Cancelled):
+    normalized = classify_artifact_generation_outcome(
+        call.outcome,
+        schema=binding.schema,
+        path=DOCUMENT_REPAIR_STEP_PATH,
+    )
+    if isinstance(normalized, ArtifactGenerationCancelled):
         return None
-    result: _SynthesisStepResult
-    if isinstance(call.outcome, Succeeded):
-        try:
-            decoded = decode_structured_synthesis(call.outcome, schema=binding.schema)
-            if not isinstance(getattr(decoded, _VISIBLE_SYNTHESIS_FIELD, None), str):
-                raise StructuredSynthesisError(
-                    f"dossier schema has no string {_VISIBLE_SYNTHESIS_FIELD!r} field"
-                )
-        except StructuredSynthesisError as exc:
-            raw_content = call.outcome.response.content
-            result = _SynthesisInvalid(
-                rejected_output=(
-                    json.dumps(
-                        raw_content.payload,
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                    )
-                    if isinstance(raw_content, StructuredContent)
-                    else ""
-                ),
-                diagnostic=str(exc),
-            )
-        else:
-            result = _SynthesisAccepted(envelope_json=decoded.model_dump_json())
-    elif isinstance(call.outcome, (Incomplete, Refused)):
-        code = (
-            DossierBuildFailureCode.ProviderRefused
-            if isinstance(call.outcome, Refused) or call.outcome.status == "refused"
-            else DossierBuildFailureCode.ProviderIncomplete
-        )
-        _, detail = outcome_failure_facts(call.outcome)
+    if isinstance(normalized, ArtifactGenerationFailure):
         _terminal_failure(
             db,
             build_id=build_id,
-            code=code,
-            detail=detail,
+            code=normalized.code,
+            detail=normalized.detail,
             support=None,
             ctx=ctx,
             input_recheck=input_recheck,
         )
         return None
-    else:
-        failure_code, detail = outcome_failure_facts(call.outcome)
-        if failure_code == "invalid_structured_output":
-            result = _SynthesisInvalid(
-                rejected_output="",
-                diagnostic=detail or "provider returned an invalid repaired envelope",
-            )
-        elif failure_code == "context_too_large":
-            _terminal_failure(
-                db,
-                build_id=build_id,
-                code=DossierBuildFailureCode.ContextTooLarge,
-                detail=detail,
-                support=None,
-                ctx=ctx,
-                input_recheck=input_recheck,
-            )
-            return None
-        else:
-            raise _ProviderDefect(
-                f"non-modeled document-repair outcome {type(call.outcome).__name__}:{failure_code}"
-            )
-
-    fresh_job = get_job(db, ctx.job_id) or job
-    landed = step_journal.checkpoint_step_state(
-        db,
-        ctx=ctx,
-        job=fresh_job,
-        step_path=path,
-        state=uncertain.model_copy(
-            update={
-                "dispatch_phase": step_journal.Completed,
-                "terminal_result": present(result.model_dump_json()),
-            }
-        ),
-    )
-    if not landed:
-        db.rollback()
+    if not step.complete(db, runtime, normalized):
         return None
-    db.commit()
-    if isinstance(result, _SynthesisInvalid):
-        return result
-    return binding.schema.model_validate_json(result.envelope_json)
+    return decode_artifact_generation_result(
+        normalized,
+        schema=binding.schema,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2937,9 +2595,10 @@ def _read_head_snapshot(
                 cancelled_at=b["cancelled_at"],
             )
 
+    registration = dossier_registration(resolved.scheme)
     freshness = _freshness(
         db,
-        binding=BINDINGS.get(resolved.scheme),
+        binding=registration.binding if registration is not None else None,
         resolved=resolved,
         audience=audience,
         current_revision_id=current_revision_id,
@@ -3060,34 +2719,6 @@ def on_subject_deleted(db: Session, subject_ref: ResourceRef) -> None:
     _delete_heads(db, head_ids)
 
 
-def on_subject_audience_removed(
-    db: Session,
-    *,
-    subject_ref: ResourceRef,
-    audience: AudienceScope,
-) -> None:
-    """Purge one subject/audience head after that audience loses visibility."""
-    head_ids = [
-        UUID(str(row[0]))
-        for row in db.execute(
-            text(
-                "SELECT id FROM artifacts "
-                "WHERE subject_scheme = :subject_scheme AND subject_id = :subject_id "
-                "AND audience_scheme = :audience_scheme AND audience_id = :audience_id "
-                "FOR UPDATE"
-            ),
-            {
-                "subject_scheme": subject_ref.scheme,
-                "subject_id": subject_ref.id,
-                "audience_scheme": audience.scheme,
-                "audience_id": str(audience.audience_id),
-            },
-        )
-    ]
-    if head_ids:
-        _delete_heads(db, head_ids)
-
-
 def on_audience_visibility_changed(db: Session, *, audience: AudienceScope) -> None:
     """Purge User-audience heads whose subjects are no longer visible.
 
@@ -3124,203 +2755,6 @@ def on_audience_visibility_changed(db: Session, *, audience: AudienceScope) -> N
             lost.append(UUID(str(row["id"])))
     if lost:
         _delete_heads(db, lost)
-
-
-def on_user_deleted(db: Session, *, user_id: UUID) -> None:
-    """Apply the Dossier-owned part of explicit User teardown.
-
-    User-audience history is purged. Surviving Library-audience history keeps
-    its content, rehomes citation graph ownership to the Library's current
-    owner, redacts attribution, and cancels active builds requested by the
-    departing user. The caller owns the surrounding User-deletion transaction.
-    """
-    owned_library = db.execute(
-        text("SELECT id FROM libraries WHERE owner_user_id = :user_id LIMIT 1"),
-        {"user_id": user_id},
-    ).scalar_one_or_none()
-    if owned_library is not None:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Transfer or delete owned libraries before deleting the user",
-        )
-
-    # User teardown composes private-head deletion, shared-build cancellation,
-    # citation re-homing, and attribution redaction. Lock the complete set of
-    # heads those mutations can touch once, before any subset cleanup, using the
-    # same global UUID order as every other composing cleanup.
-    db.execute(
-        text(
-            """
-            SELECT artifact.id
-            FROM artifacts artifact
-            WHERE (
-                artifact.audience_scheme = 'user'
-                AND artifact.audience_id = :user_id_text
-            )
-               OR EXISTS (
-                SELECT 1
-                FROM artifact_builds build
-                WHERE build.artifact_id = artifact.id
-                  AND build.requester_user_id = :user_id
-            )
-               OR EXISTS (
-                SELECT 1
-                FROM artifact_builds build
-                JOIN artifact_revisions revision ON revision.build_id = build.id
-                WHERE build.artifact_id = artifact.id
-                  AND (
-                    revision.citation_owner_user_id = :user_id
-                    OR revision.creator_user_id = :user_id
-                  )
-            )
-               OR EXISTS (
-                SELECT 1
-                FROM artifact_builds build
-                JOIN artifact_build_cancellations cancellation
-                  ON cancellation.build_id = build.id
-                WHERE build.artifact_id = artifact.id
-                  AND cancellation.actor_user_id = :user_id
-            )
-            ORDER BY artifact.id
-            FOR UPDATE OF artifact
-            """
-        ),
-        {"user_id": user_id, "user_id_text": str(user_id)},
-    ).all()
-
-    private_head_ids = [
-        UUID(str(row[0]))
-        for row in db.execute(
-            text(
-                "SELECT id FROM artifacts "
-                "WHERE audience_scheme = 'user' AND audience_id = :user_id "
-                "ORDER BY id"
-            ),
-            {"user_id": str(user_id)},
-        )
-    ]
-    delete_user_learn_rows_before_heads(db, user_id=user_id)
-    if private_head_ids:
-        _delete_heads(db, private_head_ids)
-    delete_user_idea_rows_after_heads(db, user_id=user_id)
-
-    shared_heads = list(
-        db.execute(
-            text(
-                "SELECT a.id "
-                "FROM artifacts a "
-                "WHERE a.audience_scheme = 'library' "
-                "AND EXISTS ("
-                "  SELECT 1 FROM artifact_builds b "
-                "  WHERE b.artifact_id = a.id AND b.requester_user_id = :user_id"
-                ") ORDER BY a.id"
-            ),
-            {"user_id": user_id},
-        ).scalars()
-    )
-    for head_id in shared_heads:
-        active_build_ids = [
-            UUID(str(row[0]))
-            for row in db.execute(
-                text(
-                    "SELECT b.id FROM artifact_builds b "
-                    "WHERE b.artifact_id = :head_id AND b.requester_user_id = :user_id "
-                    "AND NOT EXISTS (SELECT 1 FROM artifact_revisions r WHERE r.build_id = b.id) "
-                    "AND NOT EXISTS ("
-                    "  SELECT 1 FROM artifact_build_failures f WHERE f.build_id = b.id"
-                    ") AND NOT EXISTS ("
-                    "  SELECT 1 FROM artifact_build_cancellations c WHERE c.build_id = b.id"
-                    ") ORDER BY b.created_at, b.id"
-                ),
-                {"head_id": head_id, "user_id": user_id},
-            )
-        ]
-        for build_id in active_build_ids:
-            db.execute(
-                text(
-                    "INSERT INTO artifact_build_cancellations (build_id, actor_user_id) "
-                    "VALUES (:build_id, NULL)"
-                ),
-                {"build_id": build_id},
-            )
-            _append_build_event(
-                db,
-                build_id=build_id,
-                event_type=ArtifactBuildEventType.Cancelled,
-                payload=CancelledEventPayload(
-                    actor=absent(),
-                    at=datetime.now(UTC),
-                ).model_dump(mode="json"),
-            )
-            revoke_jobs_by_dedupe_keys(
-                db,
-                kind=DOSSIER_DEFINITION.job_kind,
-                dedupe_keys=[_dispatch_key(build_id)],
-            )
-
-    revision_owners = list(
-        db.execute(
-            text(
-                "SELECT r.id AS revision_id, l.owner_user_id AS new_owner_id "
-                "FROM artifact_revisions r "
-                "JOIN artifact_builds b ON b.id = r.build_id "
-                "JOIN artifacts a ON a.id = b.artifact_id "
-                "JOIN libraries l ON l.id = a.audience_id::uuid "
-                "WHERE a.audience_scheme = 'library' "
-                "AND r.citation_owner_user_id = :user_id "
-                "ORDER BY r.id"
-            ),
-            {"user_id": user_id},
-        ).mappings()
-    )
-    for row in revision_owners:
-        revision_id = UUID(str(row["revision_id"]))
-        new_owner_id = UUID(str(row["new_owner_id"]))
-        rehome_citations_for_output(
-            db,
-            source=ResourceRef(scheme="artifact_revision", id=revision_id),
-            new_owner_user_id=new_owner_id,
-        )
-        db.execute(
-            text(
-                "UPDATE artifact_revisions SET citation_owner_user_id = :new_owner_id "
-                "WHERE id = :revision_id"
-            ),
-            {"new_owner_id": new_owner_id, "revision_id": revision_id},
-        )
-
-    cancelled_build_ids = [
-        UUID(str(row[0]))
-        for row in db.execute(
-            text(
-                "SELECT build_id FROM artifact_build_cancellations WHERE actor_user_id = :user_id"
-            ),
-            {"user_id": user_id},
-        )
-    ]
-    if cancelled_build_ids:
-        db.execute(
-            text(
-                "UPDATE artifact_build_events "
-                "SET payload = jsonb_set(payload, '{actor}', '{\"kind\":\"Absent\"}'::jsonb) "
-                "WHERE build_id = ANY(:build_ids) AND event_type = 'Cancelled'"
-            ),
-            {"build_ids": cancelled_build_ids},
-        )
-    db.execute(
-        text("UPDATE artifact_builds SET requester_user_id = NULL WHERE requester_user_id = :u"),
-        {"u": user_id},
-    )
-    db.execute(
-        text("UPDATE artifact_revisions SET creator_user_id = NULL WHERE creator_user_id = :u"),
-        {"u": user_id},
-    )
-    db.execute(
-        text(
-            "UPDATE artifact_build_cancellations SET actor_user_id = NULL WHERE actor_user_id = :u"
-        ),
-        {"u": user_id},
-    )
 
 
 def _delete_heads(db: Session, head_ids: list[UUID]) -> None:
@@ -3420,10 +2854,10 @@ class _JobState:
 
 def _policy_for_locator(locator: DossierSubjectLocator) -> SubjectPolicy:
     scheme = _subject_scheme(locator)
-    policy = SUBJECT_POLICIES.get(scheme)
-    if policy is None:
+    registration = dossier_registration(scheme)
+    if registration is None:
         raise InvalidSubjectLocator(f"{scheme!r} is not an eligible dossier subject")
-    return policy
+    return registration.policy
 
 
 def _subject_scheme(locator: DossierSubjectLocator) -> str:

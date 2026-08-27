@@ -37,7 +37,7 @@ from nexus.services.chat_run_idempotency import (
 from nexus.services.chat_run_response import build_chat_run_response
 from nexus.services.chat_run_tools import (
     current_tool_record_identity,
-    persist_write_tool_call,
+    persist_current_tool_record,
 )
 from nexus.services.conversations import regeneratable_assistant_message_ids
 from tests.testkit.chat import create_entitled_chat
@@ -218,18 +218,27 @@ def test_regeneration_is_blocked_and_unprojected_after_an_assistant_write_tool_a
         completed = _complete_chat(db, content="Add a note for me.")
         run = db.get(ChatRun, completed.run_id)
         assert run is not None
-        persist_write_tool_call(
+        persist_current_tool_record(
             db,
-            run=run,
+            conversation_id=run.conversation_id,
+            user_message_id=run.user_message_id,
+            assistant_message_id=run.assistant_message_id,
             tool_call_index=1,
             identity=current_tool_record_identity(
                 canonical_tool_id="nexus.note.create",
                 canonical_input_sha256="a" * 64,
                 binding_policy_revision="b" * 64,
             ),
-            created_refs=[],
+            search_query_fingerprint=None,
+            scope="assistant_write",
+            requested_types=[],
+            result_refs=[],
+            selected_context_refs=[],
+            provider_request_ids=[],
+            latency_ms=None,
             status="complete",
             error_code=None,
+            clear_reverted=True,
         )
         db.commit()
 

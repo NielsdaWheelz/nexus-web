@@ -7,7 +7,7 @@ import {
   RESOURCE_SCHEMES as ORACLE_RESOURCE_SCHEMES,
 } from "../../../e2e/resourceActionProductOracle";
 import { RESOURCE_ACTION_CATALOG } from "@/lib/actions/resourceActions";
-import { LIBRARY_MEDIA_KINDS } from "@/lib/libraries/mediaKind";
+import { MEDIA_KINDS } from "@/lib/media/kind";
 import { RESOURCE_SCHEMES } from "@/lib/resourceGraph/resourceRef";
 
 function confirmationOf(
@@ -29,7 +29,7 @@ describe("RESOURCE_ACTION_CATALOG product oracle", () => {
       "the frontend ResourceRef grammar diverged from the independent 19-scheme oracle",
     ).toEqual(ORACLE_RESOURCE_SCHEMES);
     expect(
-      [...LIBRARY_MEDIA_KINDS].sort(),
+      [...MEDIA_KINDS].sort(),
       "the frontend Media taxonomy does not cover every reviewed subtype",
     ).toEqual([...MEDIA_SUBTYPES].sort());
   });

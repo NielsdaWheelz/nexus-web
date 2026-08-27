@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Locator, Page } from "playwright/test";
-import { captureCanonicalArticle } from "../articleFixture";
+import { captureReadableArticle } from "../articleFixture";
 import {
   expect,
   gotoWithStrictCsp,
@@ -240,36 +240,6 @@ function expectBottomGeometryInvariants(
 }
 
 /**
- * The canonical captured article, not the three-line canonical EPUB: mobile
- * bottom geometry is only observable when reader content actually fills the
- * pane. The short EPUB leaves the mobile media pane content-sized (measured at
- * 600px inside an 844px viewport), so nothing below it can obstruct terminal
- * content and the whole contract goes vacuous.
- */
-async function captureReadableArticle(page: Page): Promise<string> {
-  const api = pageRequest(page, webOrigin);
-  const mediaId = await captureCanonicalArticle(page, "mobile-reader-geometry");
-  await expect
-    .poll(
-      async () => {
-        const response = await api.get(`/api/media/${mediaId}`);
-        if (!response.ok()) return `http-${response.status()}`;
-        return (
-          (await response.json()) as {
-            data: { retrieval_status: string | null };
-          }
-        ).data.retrieval_status;
-      },
-      {
-        message: `Expected article ${mediaId} to publish its document map before mobile geometry is measured.`,
-        timeout: 90_000,
-      },
-    )
-    .toBe("ready");
-  return mediaId;
-}
-
-/**
  * One mobile pane parked on the reader with the Podcast browse place queued
  * ahead of it, so the journey reaches a real player session and returns to the
  * still-owned reader route through the pane's own history — never through a
@@ -436,7 +406,7 @@ test("mobile reader bottom geometry places the ribbon, counts the flow Player on
       secure: false,
     },
   ]);
-  const mediaId = await captureReadableArticle(page);
+  const mediaId = await captureReadableArticle(page, "mobile-reader-geometry");
   await seedReaderPaneWithQueuedBrowse(page, mediaId);
 
   await gotoWithStrictCsp(page, "/");

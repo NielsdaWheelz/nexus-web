@@ -28,7 +28,7 @@ from nexus.schemas.llm import ExpectedChatFailure
 from nexus.schemas.presence import Absent, Presence, Present, absent, present
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.schemas.retrieval import RetrievalContextRef, RetrievalLocator, RetrievalResultRef
-from nexus.schemas.search import SEARCH_RESULT_TYPES
+from nexus.schemas.search_types import SEARCH_RESULT_TYPES
 
 # Valid sharing modes - must match DB constraint
 SHARING_MODES = Literal["private", "library", "public"]

@@ -28,12 +28,15 @@
 .searchScroll {
   display: grid;
   flex: 1 1 auto;
+  min-width: 0;
   min-height: 0;
+  grid-template-columns: minmax(0, 1fr);
   align-content: start;
   gap: var(--space-5);
   padding: var(--space-3) max(var(--space-4), var(--viewport-safe-right))
     max(var(--space-4), var(--viewport-safe-bottom))
     max(var(--space-4), var(--viewport-safe-left));
+  overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -97,50 +100,12 @@
   gap: var(--space-2);
 }
 
-.pinnedGroup {
-  display: grid;
-  flex: 0 0 auto;
-  gap: var(--space-2);
-  padding: 0 max(var(--space-4), var(--viewport-safe-right))
-    var(--space-3) max(var(--space-4), var(--viewport-safe-left));
-  background: var(--surface-canvas);
-}
-
-.section h3,
-.pinnedGroup h3 {
+.section h3 {
   color: var(--ink-muted);
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   letter-spacing: var(--tracking-tight);
-}
-
-.section h3,
-.pinnedGroup h3 {
   margin: 0;
-}
-
-.compactRail {
-  display: flex;
-  gap: var(--space-2);
-  padding: 1px;
-  margin: -1px;
-  overflow-x: auto;
-  overscroll-behavior-inline: contain;
-  scroll-snap-type: inline proximity;
-  scrollbar-width: none;
-  list-style: none;
-}
-
-.compactRail::-webkit-scrollbar {
-  display: none;
-}
-
-.compactRail .row {
-  flex: 0 0 clamp(12rem, 64vw, 18rem);
-  border: 1px solid var(--edge-subtle);
-  border-radius: var(--radius-lg);
-  scroll-snap-align: start;
-  overflow: hidden;
 }
 
 .quickNoteHandoffInput {
@@ -251,9 +216,12 @@
 .rowSnippet,
 .rowUnavailable {
   max-width: 100%;
+  font-size: var(--text-sm);
+}
+
+.rowSnippet {
   overflow: hidden;
   color: var(--ink-muted);
-  font-size: var(--text-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -265,6 +233,8 @@
 
 .rowUnavailable {
   color: var(--danger);
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .rowShortcut {
@@ -309,6 +279,10 @@
 .form p {
   margin: 0;
   color: var(--ink-muted);
+}
+
+.empty {
+  overflow-wrap: anywhere;
 }
 
 .sourceStatus button {

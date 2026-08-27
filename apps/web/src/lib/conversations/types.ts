@@ -4,7 +4,6 @@ import type {
   SearchCitationResultType,
   WebCitationEventData,
 } from "@/lib/api/sse/citations";
-import type { ChatToolStatus } from "@/lib/api/sse/events";
 import type { RetrievalLocator } from "@/lib/api/sse/locators";
 import type { CitationOut } from "@/lib/conversations/citationOut";
 import type { ReaderSelectionOut } from "@/lib/conversations/readerSelection";
@@ -188,6 +187,7 @@ export interface MessageRetrieval {
   source_id: string;
   media_id: string | null;
   evidence_span_id?: string | null;
+  scope?: string;
   context_ref: RetrievalContextRef;
   result_ref: MessageRetrievalResultRef;
   deep_link: string | null;
@@ -223,11 +223,18 @@ export type MessageEvidenceRetrievalStatus =
   | "excluded_by_scope"
   | "web_result";
 
+export const MESSAGE_TOOL_STATUSES = [
+  "pending",
+  "running",
+  "complete",
+  "error",
+  "cancelled",
+] as const;
+
+export type MessageToolStatus = (typeof MESSAGE_TOOL_STATUSES)[number];
+
 export interface MessageToolCall {
   id?: string;
-  conversation_id?: string;
-  user_message_id?: string;
-  assistant_message_id?: string;
   record_kind: ToolRecordKind;
   canonical_tool_id: string | null;
   provider_wire_name: string | null;
@@ -244,7 +251,7 @@ export interface MessageToolCall {
   latency_ms?: number | null;
   result_count?: number;
   selected_count?: number;
-  status: ChatToolStatus;
+  status: MessageToolStatus;
   input_preview?: string;
   // Undo lifecycle for assistant write tool calls; set once reverted (amanuensis).
   reverted_at?: string | null;
@@ -377,7 +384,7 @@ export interface ConversationMessage {
    * The immutable reader-quote snapshot projection, decoded at the message
    * boundary. Present only on a quoted user message; Absent everywhere else.
    */
-  reader_selection?: Presence<ReaderSelectionOut>;
+  reader_selection: Presence<ReaderSelectionOut>;
   status: "pending" | "complete" | "error" | "cancelled";
   can_rerun: boolean;
   /** True only for a currently-eligible completed assistant message; false for

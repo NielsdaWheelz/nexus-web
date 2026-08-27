@@ -14,9 +14,11 @@
 
 import { apiFetch } from "@/lib/api/client";
 import type { ResourceScheme } from "@/lib/resourceGraph/resourceRef";
-import type { ResourceActivation } from "@/lib/resources/activation";
 import {
-  decodeResourceActivation,
+  decodeCamelCaseResourceActivation,
+  type ResourceActivation,
+} from "@/lib/resources/activation";
+import {
   decodeResourceItem,
   type ResourceItem,
 } from "@/lib/resources/resourceItems";
@@ -103,13 +105,22 @@ function decodeResourceTarget(raw: unknown): ResourceTarget {
       record.candidateRef,
       "passage resource target.candidateRef",
     );
+    const activation = decodeCamelCaseResourceActivation(
+      record.activation,
+      "passage resource target.activation",
+    );
+    if (activation.resourceRef !== candidateRef) {
+      throw new TypeError(
+        "passage resource target.activation.resourceRef must match candidateRef",
+      );
+    }
     return {
       kind: "passage",
       candidateRef,
       source: decodeResourceItem(record.source),
       label: expectString(record.label, "passage resource target.label"),
       excerpt: expectString(record.excerpt, "passage resource target.excerpt"),
-      activation: decodeResourceActivation(record.activation, candidateRef),
+      activation,
       existingLinkId: expectNullableString(
         record.existingLinkId,
         "passage resource target.existingLinkId",

@@ -39,10 +39,10 @@ Hard-cutover specs that govern chat work. Each owns one axis; they compose.
   run-event emitter, `run_kit.get_run_events` / `is_run_terminal`). IMPLEMENTED.
 - `docs/cutovers/sota-chat-streaming-hard-cutover.md` — streaming transport,
   event grammar, coalescing, cursor replay, cancellation. IMPLEMENTED.
-- `docs/cutovers/resource-chat-subject-hard-cutover.md` — surface/subject
-  consolidation (one `ResourceRef` chat subject). IMPLEMENTED; the client
-  `chat_subject` send path is superseded by the reader-selection snapshot cutover
-  below.
+- `docs/cutovers/resource-chat-subject-hard-cutover.md` — historical
+  surface/subject consolidation. Its per-run `chat_subject` request and
+  uncalled server resolver are deleted; generic resource chats now attach
+  initial context refs and reader quotes use the snapshot cutover below.
 - `docs/cutovers/reader-highlight-quote-chat-hard-cutover.md` — reader Highlight
   quote-to-chat as an immutable per-message reader-selection snapshot; atomic
   new/existing destination send; removes inline reader chat and the request

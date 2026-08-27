@@ -52,7 +52,7 @@ def _now_utc(db: Session) -> datetime:
 
 
 def storage_orphan_sweep(
-    *, payload: Mapping[str, Any], context: JobExecutionContext
+    *, context: JobExecutionContext
 ) -> Mapping[str, Any] | RescheduleRequested | None:
     """Sweep one page of the media prefix; reschedule to continue, else complete.
 

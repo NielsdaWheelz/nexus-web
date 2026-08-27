@@ -444,7 +444,8 @@ express membership/read semantics. It must not be called from write paths.
 Refactor writes so there is one atomic add-multiple command:
 
 - `ensure_media_in_libraries_for_viewer(db, viewer_id, media_id, library_ids)`
-- `assign_libraries_for_media(db, viewer_id, media_id, library_ids)`
+- `assign_libraries_for_media_in_current_transaction(db, viewer_id, media_id,
+  library_ids)` for intake owners that already own acceptance
 
 Required properties:
 

@@ -922,7 +922,9 @@ interface GlobalPlayerCapability {
 7. Crash at every teardown/write-cleanup checkpoint recovers. Timed-out direct
    and in-process writes receive a final post-drain sweep; failed cleanup/deletion
    stays named, retryable, requeueable, and unpruned. R2 lifecycle plus recurring
-   orphan sweep catch writes completing after expiry or an earlier delete.
+   orphan sweep catch writes completing after expiry or an earlier delete. The
+   sweep reloads its claimed job row for continuation state and receives only
+   `JobExecutionContext`, not a duplicate raw payload argument.
 8. Initial-load failure has Retry; Play/mutation cannot run while Loading. Pending
    suppresses double Remove; reorder is optimistic; deadline exits in-flight state
    and shows same-ID Retry while the lane remains visibly blocked. Failed active

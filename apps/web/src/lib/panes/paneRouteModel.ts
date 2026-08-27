@@ -9,6 +9,7 @@ import {
   type WorkspaceSecondarySurfaceId,
 } from "@/lib/panes/paneSecondaryModel";
 import { RESERVED_CONTRIBUTOR_HANDLE_SEGMENTS } from "@/lib/contributors/handle";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 
 export const MAX_STANDARD_PANE_WIDTH_PX = 1400;
 export const MAX_MEDIA_PANE_WIDTH_PX = 2400;
@@ -592,7 +593,10 @@ function toPathSegments(pathname: string): string[] {
     .filter((segment) => segment.length > 0);
 }
 
-function matchPattern(pathname: string, pattern: RoutePattern): RouteParams | null {
+function matchPattern(
+  pathname: string,
+  pattern: RoutePattern,
+): RouteParams | null {
   const segments = toPathSegments(pathname);
   if (segments.length !== pattern.length) {
     return null;
@@ -640,6 +644,15 @@ export function resolvePaneRouteModel(href: string): ResolvedPaneRouteModel {
     ) {
       continue;
     }
+    // Oracle reading routes are resource routes, not an open-ended slug space.
+    // Requiring the canonical resource-ref grammar keeps retired literal routes
+    // from falling through to `:readingId`.
+    if (
+      definition.id === "oracleReading" &&
+      parseResourceRef(`oracle_reading:${params.readingId ?? ""}`) === null
+    ) {
+      continue;
+    }
     return {
       id: definition.id,
       pathname,
@@ -661,7 +674,9 @@ export function resolvePaneRouteModel(href: string): ResolvedPaneRouteModel {
   };
 }
 
-export function sectionDestinationIdForHref(href: string): DestinationId | null {
+export function sectionDestinationIdForHref(
+  href: string,
+): DestinationId | null {
   const definition = resolvePaneRouteModel(href).definition;
   return definition ? sectionDestinationIdForDefinition(definition) : null;
 }
@@ -681,12 +696,19 @@ export function paneRouteAllowsSecondaryGroup(
   href: string,
   groupId: WorkspaceSecondaryGroupId,
 ): boolean {
-  return resolvePaneRouteModel(href).definition?.secondaryGroups?.includes(groupId) ?? false;
+  return (
+    resolvePaneRouteModel(href).definition?.secondaryGroups?.includes(
+      groupId,
+    ) ?? false
+  );
 }
 
 export function paneRouteAllowsSecondarySurface(
   href: string,
   surfaceId: WorkspaceSecondarySurfaceId,
 ): boolean {
-  return paneRouteAllowsSecondaryGroup(href, getSecondaryGroupForSurface(surfaceId));
+  return paneRouteAllowsSecondaryGroup(
+    href,
+    getSecondaryGroupForSurface(surfaceId),
+  );
 }

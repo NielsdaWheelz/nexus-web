@@ -628,6 +628,26 @@ missing/unknown lanes, registry drift, and raw allowlists on normal lanes.
 `get_task_contract_digest()` fingerprints the registry's per-kind resource
 class and attempt/lease policy for API `/version` and worker release-health proof. See
 [modules/jobs.md](modules/jobs.md).
+Registry shims decode durable same-system payloads without compatibility
+defaults. In particular, the sole note-index and Synapse enqueuers persist a
+canonical, nonempty, unpadded `reason`; omission, coercion, or padding defects at
+dispatch instead of inventing `note_edit` or `manual`. Optional `request_id` and
+`scheduler_identity` carriers are either absent/`null` or the same canonical
+text shape; the registry never stringifies or trims malformed values. The
+scheduler-only Gutenberg sync, job-prune, and auth-handoff purge handlers
+require their scheduler-written `request_id`, and Gutenberg also requires the
+exact `scheduler_identity`; their tasks expose no default or invented identity.
+The note-reindex payload is closed to exactly `note_block_id` plus `reason`.
+Its registry shim passes the claimed `JobExecutionContext`, so task diagnostics
+use the real queue job identity and expose no direct-call `task_id` or unowned
+`request_id` compatibility surface.
+Worker-only task signatures mirror their registry shims without direct-call
+defaults. Nullable request identity remains explicit at the call site, and the
+podcast semantic-index task opens its production session factory internally;
+there is no unused factory-injection seam.
+The periodic storage orphan sweep receives only its claimed job context and
+reloads the fenced continuation payload from that row; the registry does not
+thread a duplicate raw mapping into the task.
 
 Task catalog (each is a thin handler in `tasks/` that wraps a service):
 `ingest_media_source`, `enrich_metadata`, `chat_run`,
@@ -669,7 +689,11 @@ the durable execution boundary — atomically admitting one replay-stable
 `llm_calls` row plus reservation before dispatch, then atomically terminalizing
 and settling admission exactly once. `ProviderRuntime` owns
 provider retries; `BilledOnce` work selects its single-attempt mode. The existing
-Postgres queue, leases, and durable step journal remain unchanged. See
+Postgres queue, leases, and durable step journal remain unchanged. Within
+`dossier_build`, `services/artifacts/generation_step.py` is the sole Artifact
+owner of the exact `synthesis` and `document-repair` request fingerprints,
+memoized result envelope, and Prepared/Uncertain/Completed transitions; the
+engine keeps their streaming and unary transports explicit. See
 [modules/llms.md](modules/llms.md).
 `enrich_metadata` is deliberately outside this direct-provider envelope. It
 uses the private UDS Codex host with the ChatGPT-authenticated `codex-personal`
@@ -756,7 +780,10 @@ edge; the user-facing taxonomy is **six kinds** (Documents, Notes, Highlights,
 Conversations, People, Web) folding the internal result types, with
 operator-backed filter chips (`format:`/`author:`/`role:`/`in:`) — not the raw
 result-type grid. The package owns one concern per module (`kinds`, `query`, `scope`,
-`embedding`, `ranking`, `projection`, `cursor`, `batch`, `retrievers/*`, `service`).
+`embedding`, `ranking`, `projection`, `cursor`, `batch`, `retrievers/*`, `resolver`,
+`service`). `service` owns query execution and page orchestration; `resolver` owns
+validated durable-reference dispatch and the single public projection of the
+resolved internal result. Neither module re-exports the other.
 Ranking/retrieval is extracted below that public projection into one internal
 pre-projection candidate seam (`search/candidates.py`); **resource target
 search** (`services/resource_items/targets.py`, `POST
@@ -789,6 +816,54 @@ owning `owner_resource_ref`. The Highlights profile retrieves saved highlights
 plus only note blocks classified by a visible `resource_edges.origin =
 "highlight_note"` edge before ranking and limiting. Clients never infer owner
 identity or highlight-note origin from result type or URL.
+
+`schemas/search_types.py` is the sole authority for public search-result
+discriminants. The public response union, retrieval contexts, and durable
+retrieval-result references must cover every discriminant. `search/resolver.py`
+validates persisted raw discriminants against that authority, narrows them to the
+exhaustive typed dispatcher, decodes the durable UUID once, delegates semantic
+visibility and reconstruction to the owning retriever, and projects once. The
+conversations retriever owns both candidate retrieval and durable rematerialization for
+Conversation, Message, and Conversation Dossier (`artifact`) results under one
+visibility contract. It excludes pending Messages; Dossier rematerialization is
+owner-only, masks foreign subjects as not found, and returns the current revision
+while keeping the Conversation subject as result identity. The notes retriever
+likewise owns candidate retrieval and durable rematerialization for Page and Note
+Block results: Pages are owner-only, and Note Blocks must be owner-visible,
+nonempty, and backed by a ready content index; highlight-note origin is derived
+from the same visible `highlight_note` edge contract in both paths. The media
+retriever owns candidate retrieval and durable rematerialization for Media,
+Episode, Video, and Podcast results. Rematerialization reuses canonical media or
+Podcast visibility, requires the requested discriminant to match the stored media
+kind exactly, and projects contributor credits through the shared credit decoder.
+Document-occurrence search is split by semantic owner: the content-chunk,
+fragment, and evidence-span retrievers each own candidate retrieval and durable
+rematerialization for their result type. Durable content chunks require visible
+media, a ready index, their primary canonical evidence span, and an exact match
+when the caller supplies evidence-span ids. Fragments reuse the same visibility
+and index-readiness contract and emit only canonical source locators. Evidence
+spans admit visible media or viewer-owned note blocks, require a ready owner
+index, and preserve that media or note block as the canonical owner identity.
+The Highlights retriever owns candidate retrieval and durable rematerialization
+under one visible, ready-indexed typed-anchor row contract. Fragment-offset and
+PDF-geometry hits share one strict locator decoder; stale, cross-media, missing,
+or schema-invalid anchors are omitted from search and masked as not found when a
+durable reference is reopened.
+The Reader Apparatus retriever likewise owns candidate retrieval and durable
+rematerialization under one visible publication-row contract: only `ready` or
+`partial` apparatus states with a non-missing locator participate. Both paths
+decode persisted locator JSON through the canonical retrieval schema, omitting
+or masking malformed rows instead of leaking a projection failure.
+The Web retriever owns persisted public-Web candidate retrieval and durable
+rematerialization through one visible Conversation-ledger row and the canonical
+`WebRetrievalResultRef` decoder. Nexus external-snapshot identity remains
+distinct from provider result identity; foreign snapshots and malformed or
+incomplete ledger refs are omitted or masked as not found.
+The Contributor retriever owns candidate retrieval and durable
+rematerialization. Discovery admits only identities with visible credited
+targets; durable reopening intentionally widens to the canonical Contributor
+visibility contract so a viewer-linked identity with zero current visible
+credits remains resolvable, while unrelated identities stay masked.
 
 - **Indexing** (`services/content_indexing.py`, `semantic_chunks.py`): text-bearing
   media flows `fragment → content_blocks → chunks → embeddings`; note bodies
@@ -892,9 +967,16 @@ The backend separates three owners:
 - subject policy derives the subject, audience, authorization, deletion, and
   canonical activation;
 - one of eight bindings collects inputs and owns prompt, operation/profile,
-  manifest, coverage, and freshness;
+  manifest, coverage, freshness, citation materialization, and final document
+  compilation;
 - the generic engine owns idempotent build creation, durable execution,
-  terminal children, revision history, Make current, cancellation, and events.
+  one primary/repair document-acceptance phase, terminal children, revision
+  history, Make current, cancellation, and events.
+
+`services/artifacts/registry.py` composes each policy and binding into one
+immutable eight-scheme registration. Callers perform one correlated lookup;
+there is no second mutable policy map or package-initializer registration side
+effect.
 
 Resource bootstrap/Companion lookup uses
 `GET /artifacts/dossiers/{subject_scheme}/{subject_handle}`,
@@ -911,8 +993,15 @@ API is
 `POST /artifact-builds/{sealed_handle}/cancel`. Build streaming is
 `GET /stream/artifact-builds/{sealed_handle}/events`; persisted
 `Started | Progress | Succeeded | Failed | Cancelled` events are build-keyed
-and replayable. The browser renders a revision in a sandboxed, Nexus-styled
-document frame; rejected or partial HTML is never emitted as an event. Media
+and replayable. `lib/dossiers/generationAdapter.ts` is the one browser Dossier
+transport boundary: value responses must be the exact `{data: ...}` envelope,
+Make-current and Cancel must be exact HTTP 204 commands, and same-system shape
+violations become `E_INVALID_RESPONSE` defects. Artifact-build streaming is an
+`artifact-builds` generation-run kind and delegates token minting, encoded path
+construction, and SSE lifecycle to `lib/api/useGenerationRun.ts`; no Dossier
+token or direct-SSE path exists beside it. The browser renders a revision in a
+sandboxed, Nexus-styled document frame; rejected or partial HTML is never
+emitted as an event. Media
 Intelligence is separately read through
 `GET /media/{media_handle}/intelligence`; the Media Dossier renders that
 current projection as a compact Abstract and consumes the same fingerprinted
@@ -938,7 +1027,14 @@ capability-owned:
 - `media_ingest.py`: URL transport adapter into `media_source_ingest.py`.
 - `media_source_ingest.py`: accepted source-attempt state machine for generic
   web URLs, X/Twitter URLs, YouTube URLs, remote PDF/EPUB URLs, uploaded
-  PDF/EPUB files, and browser article/file captures.
+  PDF/EPUB files, and browser article/file captures. Its detached acquisition
+  phase is one `_run_source_adapter` dispatch over an immutable run value;
+  `_SourceAuthorshipPhase` owns fenced contributor observation and lets
+  unexpected contributor or database defects remain worker defects;
+  `_SourceTerminalPublication` owns the final fenced Media/attempt/index/embed
+  mutation; `_run_claimed_source_attempt` composes supersession, failure,
+  authorship, terminal, and post-success phases rather than embedding provider
+  dispatch, contributor-failure fallback, or terminal mutation bodies.
 - `x_identity.py`, `x_client.py`, `x_rendering.py`, `x_ingest.py`: official-API
   X/Twitter same-author thread capture. Identity comes from provider author ID
   plus conversation ID; quote posts are separate `post:<post_id>` media; provider
@@ -959,8 +1055,12 @@ capability-owned:
   (GET/PUT, no batch endpoint); position/duration/nullable episode-rate DML is owned by
   `services/consumption/_listening_store.py` (§8.8).
 - `media_file_access.py`: signed original-file download URLs.
-- `media_processing_state.py`: every processing-state transition, including
-  reingest reset and ready-for-reading completion.
+- `media_processing_state.py`: in-process queued, extraction-start, readiness,
+  failure, and warning transitions. Source retry policy remains singular in
+  `media_source_ingest.py`.
+- `source_attempt_failures.py`: the terminal source-attempt transaction across
+  attempt, Media, transcript, Podcast job, reservation, and revisions;
+  `media_failure_projection.py` is its lightweight Media failure-field writer.
 
 **Entity & state machine:** `media.processing_status` runs
 `pending → extracting → ready_for_reading` or `failed`. Search/embedding
@@ -1074,7 +1174,23 @@ selection becomes a stored highlight with a precomputed
 the canonical quote shown to chat. PDF highlights may have empty `exact` (no
 text-layer match) — a first-class geometry-only state Evidence renders with an
 explicit placeholder. The current highlight
-contract lives in [`modules/highlight.md`](modules/highlight.md).
+contract lives in [`modules/highlight.md`](modules/highlight.md). Highlight-note
+persistence has one strict request wire: `note_block_id`,
+`client_mutation_id`, and `body_pm_json`. Camel-case spellings and the generic
+`id` alias are not accepted or emitted.
+
+Hosted inline projection has one owner per reader family:
+`useHostedTextHighlights` owns the active reflowable fragment and
+`useHostedPdfPageHighlights` owns the active PDF page. The text owner uses the
+shared abortable retry policy, treats an empty list as ready, gates optimistic
+mutation projection and authoritative reconciliation with one latest-wins
+generation, and routes expected failures to Retry while same-system response
+defects throw to the render boundary. Highlight HTTP responses are strictly
+decoded once by `lib/highlights/highlightContract.ts`; route components do not
+own fallback envelopes, raw retry timers, or parallel reload paths. Selectable
+canonical text mounts after the first active highlight projection settles, so
+persisted decoration cannot replace a live selection; subsequent refreshes keep
+settled content mounted.
 
 **Source-authored apparatus** (`services/reader_apparatus.py`): web article,
 EPUB, and PDF ingest paths persist document-authored notes, endnotes,
@@ -1207,10 +1323,12 @@ roles, ownership transfer, membership guards, ingest access checks),
 ordering, and all item-in-library commands; it also composes the URL-only
 factual view lenses, the fixed `Unfiled`/`In Progress` entry projections, and
 the hide-finished completion filter for reads — no DML on
-alternate views, positions unchanged), and `services/library_invitations.py` (the
-`library_invitations` table). Visibility itself is enforced by the boolean
-predicates in `auth/permissions.py`; the search/object readers read
-`library_entries` under an explicit Tier-R allowlist.
+  alternate views, positions unchanged), and `services/library_invitations.py` (the
+  `library_invitations` table). Visibility itself is enforced by the boolean
+  predicates in `auth/permissions.py`; the search/object readers read
+  `library_entries` under an explicit Tier-R allowlist. Library list hydration is
+  private and total: the repeatable-read membership query filters visibility,
+  and every admitted Media or Podcast row must produce exactly one response item.
 
 - Every user has one **default library** (special: can't be renamed/deleted/shared
   or receive physical Podcast entries) plus shareable libraries with `memberships`
@@ -1339,7 +1457,11 @@ Credit resolution prefers explicit id → exact stable key → confirmed alias �
 new contributor, and runs inline inside the same fresh SERIALIZABLE-retried
 transaction (`retry_serializable`, D-11 constraint allowlist) that replaces a
 lane's declared observed role slice — there is no separate dedupe job, proposal
-table, or merge contract (§ job registry, below). Visibility predicates
+table, or merge contract (§ job registry, below).
+`media_author_observation_seam.py` is the sole in-memory carrier between source
+adapters and that facade. An absent carrier means no observation; a malformed
+container, tuple, media identity, observation, or source is a same-system defect
+and never degrades to empty authorship. Visibility predicates
 (`visible_podcast_ids_cte_sql`, `visible_content_credit_rows_sql`,
 `visible_contributor_ids_cte_sql`) live solely in `auth/permissions.py`;
 persisted-chat-ref checks live in `chat_context_refs.py`. There is no `/authors`
@@ -1364,6 +1486,14 @@ SERIALIZABLE transaction. Surface activation uses the bounded batch router, so
 heterogeneous rows add no per-occurrence query loop. Intrinsic page-title and
 note-body edits use the resource-item mutation owner. `services/notes.py`
 remains the notes collection, daily-page, dated-capture, and Dawn Write facade.
+A Page list row is exactly `{id,title,updatedAt}`; Page detail adds required
+`dailyPage: Presence<{localDate}>`. `schemas/notes.py` and
+`services/notes.py` own those typed backend shapes and convert nullable daily
+binding state to `Presence` at `_page_out`. On the frontend,
+`lib/notes/pageContract.ts` is the sole exact Page list/detail decoder and owns
+`loadNotePages`; server seed, intent prefetch, and Notes-pane replacement all
+call that same loader. Missing, extra, aliased, or malformed fields are defects,
+not empty-state fallbacks. `dailyPage` remains `Presence` after decoding.
 A daily date is a latent non-mutating locator until its first meaningful Note.
 That first capture creates the ordinary Page, binding, Note, ordered
 occurrence, required versions, and replay receipt in one serializable
@@ -1381,6 +1511,8 @@ Frontend composition is one `PagePaneBody`, one `ResourceSurfaceEditor`, and
 one `useResourceSurfaceSession` for ordinary Page refs and dated daily
 locators, with `NoteBodyEditor` as the sole prose primitive. Pane visit/session
 identity remains stable while a latent date hydrates or adopts `page:{id}`.
+Page and Note body hydration flows through this ResourceSurface owner; no
+frontend Notes block-response client is a competing read path.
 Quick Note adds one provisional final Note immediately; persisted hydration
 merges before it, and acknowledgement cannot erase later local keystrokes.
 `ResourceSurfaceBodyEditor` is a React-owned flat occurrence list, not a second
@@ -1411,6 +1543,82 @@ transcript references only. They never fetch or publish a transcript. Explicit
 Episode Transcribe prefers a publisher sidecar, then the quota-gated Deepgram
 path; explicit Video Transcribe uses the YouTube caption provider. Current
 transcript origin is exactly `Publisher | Imported | Generated`.
+`services/podcasts/transcription.py::request_media_transcript_for_viewer` owns
+authorization, one typed media snapshot, and strict media-kind dispatch only.
+`_request_podcast_episode_transcript` owns the Episode precedence machine:
+publisher sidecar, readable transcript, inflight work, quota rejection, then
+fresh generated admission. A dry-run may append its explicit immutable
+`podcast_transcript_request_audits` forecast fact, but it does not create
+`media_transcript_states`, create/reset a transcription job, reserve usage, or
+bump collection revisions. Transcript work state is materialized only after the
+dry-run return boundary. Explicit admission and durable source requeue both use
+the same transcript-job reset owner; no caller carries a second job upsert.
+Forecast, explicit admission, and durable source requeue derive and reserve
+quota through one typed transcript-budget owner. A quota rejection writes only
+its immutable audit fact for a single request; it does not materialize
+transcript work state or bump collection revisions. A fingerprinted episode
+query is one atomic admission transaction: Media rows lock in deterministic
+selection order, and any stale selection, quota rejection, or enqueue defect
+rolls back every episode's state, reservation, audit, source attempt, queue job,
+and collection revision. Repeated inflight admission is likewise an audit-only
+idempotent fact; Podcast collection revisions advance only when the request
+changes viewer-visible transcript work state.
+The request path locks and reads its media/job/transcript inputs once through
+the typed `_TranscriptRequestMedia` snapshot. Publisher-sidecar forecast and
+admission then live in `_request_rss_podcast_transcript`: they reserve zero
+generated minutes and create one durable transcript source attempt.
+`media_source_ingest.enqueue_podcast_episode_transcript_source_attempt` binds
+the accepted attempt to its durable job inside the transcript caller's current
+transaction; it never commits or converts an enqueue defect into durable failed
+state. That source-attempt owner publishes the all-viewer media-fact revision
+exactly once; the outer transcript controller does not publish a second
+revision for the same accepted attempt.
+Publisher-sidecar fallback admission returns the discriminated domain result
+`Admitted | RejectedQuota` from its fenced publication phase. A quota rejection
+therefore commits its immutable audit before the worker raises the typed error
+and publishes terminal source/transcript failure in the next fenced phase; the
+error is never used as callback control flow that would roll the audit back.
+Generated-fallback and operator-requeue admission mutate only the generated
+budget reservation, transcription job, and immutable audit. Existing current
+segments, fragments, and readable transcript state remain authoritative until
+`transcripts/current.py` atomically installs their replacement; admission never
+deletes or downgrades the current projection and publishes no duplicate
+collection revision.
+`transcripts/request_reason.py` is the sole internal request-reason owner.
+Validated API values and exact durable source/job values enter that type once;
+missing, whitespace-altered, or unknown same-system discriminants defect rather
+than becoming `episode_open` or `operator_requeue`. A transcript semantic job
+persists only `media_id` and that request reason; request/user correlation is
+not a worker input and is not copied into the durable payload.
+Publisher and generated transcript success callbacks publish only source
+artifacts plus their domain ledger. The common source terminal is the sole owner
+of ready-state, semantic admission, and the success media-fact revision; a
+worker beginning an already-admitted `extracting` Episode does not publish an
+unchanged revision. The acquisition operation returns only
+`PodcastTranscriptionCompleted`; every modeled failure raises its typed error,
+so no nullable skipped/failed result fields or downstream variant guard exist.
+Podcast source failure likewise has one terminal publication: the source owner
+settles the attempt, while the Podcast failure owner atomically settles Media,
+the transcription job, reserved usage, transcript state, and one shared
+media-fact revision. `media_fact_revisions.bump_all_media_fact_collections`
+owns the exact `AuthorWorks | LibraryEntries | PodcastEpisodes` family set.
+Podcast budget admission lives in `podcasts/transcription_usage.py`; reservation
+release/commit lives in the supervisor-safe
+`podcasts/transcription_reservation_settlement.py`. Neither terminal owner
+imports provider adapters.
+`services/transcripts/state.py` is the sole persistence owner for
+`media_transcript_states`; `current.py` owns artifact publication, while
+`semantic.py` owns every semantic-job payload plus lock-and-job-inventory repair
+admission. Readable-transcript repair costs zero generated minutes, never bumps
+collection revisions because `semantic_status` is not a collection-row fact,
+and treats a live pending/running/retryable semantic job as idempotent instead
+of dispatching duplicate work. Database enqueue defects propagate and roll back;
+there is no transcript `enqueue_failed` runtime or persisted audit outcome.
+Canonical YouTube Video caption forecast and import live in
+`_request_youtube_video_transcript`. It crosses the provider boundary with no
+database transaction open, reauthorizes before atomic `Imported` transcript
+publication, and advances `LibraryEntries` only; Video import never invalidates
+`PodcastEpisodes`.
 
 The canonical Podcast detail pane observes those two independent owners through
 one viewer-owned subscription-lifecycle snapshot stream. Transactional triggers
@@ -1512,6 +1720,12 @@ and a deterministic Year in Reading view. Exact session Exclude/Restore is the
 only correction lifecycle. Accepted writes publish the
 process-local Consumption revision; focus, activation, visibility, pageshow,
 and online transitions revalidate cross-process state without polling. The
+committed Stats response owns its session-continuation state: the pane delegates
+manual cursor lifecycle to `lib/api/useCursorPagination.ts`, builds continuation
+requests from the committed decoded view, aborts stale generations on a new
+first page, preserves rows across retryable continuation failure, and never
+uses an empty-string cursor as a second absence encoding; wire absence stays
+`Presence<string>` until the pagination adapter unwraps it. The
 full contract is [`modules/consumption-activity.md`](modules/consumption-activity.md).
 
 ### 8.10 Search, Browse, desktop Nexus, and mobile Nexus
@@ -1920,7 +2134,9 @@ The test controller owns a persistent workspace-local PostgreSQL/MinIO and
 Supabase Auth stack, per-run database/bucket state, and per-scenario users. It
 passes the Supabase admin key only to controller-owned user lifecycle code;
 Next.js, FastAPI, worker, and migration processes receive only their explicit
-test allowlists.
+test allowlists. Its canonical run environment also owns the external-protocol
+loopback endpoint, proxy, static DNS fixture, and Podcast fixture credentials
+for both in-process service proof and spawned product processes.
 
 **CI**: `.github/workflows/ci.yml` invokes only `./scripts/test pr` and retains
 the same-run summary even on failure. Protected manual/scheduled workflows own
@@ -2009,7 +2225,7 @@ The things most likely to bite you, distilled:
 | The schema                                                        | `python/nexus/db/models.py` (+ `migrations/alembic/versions/`)                                                                                                                                         |
 | Background jobs / worker                                          | `python/nexus/jobs/`, `python/nexus/tasks/`, `apps/worker/`                                                                                                                                            |
 | Codex personal metadata host (native subscription turn)           | `apps/codex_agent/`, `python/nexus/services/native_agent_*.py`, `python/nexus/services/agent_turn_ledger.py`, [`modules/llms.md`](modules/llms.md), [`runbooks/codex-personal-agent-host.md`](runbooks/codex-personal-agent-host.md) |
-| Media catalog and ingest owners                                   | `python/nexus/services/media.py`, `media_ingest.py`, `media_source_ingest.py`, `x_ingest.py`, `youtube_video_ingest.py`, `remote_file_ingest.py`, `remote_file_client.py`, `media_processing_state.py` |
+| Media catalog and ingest owners                                   | `python/nexus/services/media.py`, `media_ingest.py`, `media_source_ingest.py`, `source_attempt_failures.py`, `media_failure_projection.py`, `media_fact_revisions.py`, `x_ingest.py`, `youtube_video_ingest.py`, `remote_file_ingest.py`, `remote_file_client.py`, `media_processing_state.py` |
 | Reader/highlights backend                                         | `python/nexus/services/{reader,epub_*,pdf_*,fragment_blocks,highlights,passage_anchors,locator_resolver,text_quote,pdf_quote_match}.py`                                                                |
 | Chat / conversations                                              | `python/nexus/services/chat_runs.py` + `chat_run_*`, `context_assembler.py`, `conversations.py`                                                                                                        |
 | Oracle                                                            | `python/nexus/services/oracle.py`, `python/nexus/services/oracle_corpus.py`, `python/nexus/services/oracle_plates.py`                                                                                  |

@@ -1,12 +1,20 @@
+export const DOCUMENT_PROCESSING_STATUSES = [
+  "pending",
+  "extracting",
+  "ready_for_reading",
+  "failed",
+] as const;
+
 export type DocumentProcessingStatus =
-  | "pending"
-  | "extracting"
-  | "ready_for_reading"
-  | "failed";
+  (typeof DOCUMENT_PROCESSING_STATUSES)[number];
+
+export const MEDIA_PROCESSING_PROJECTION_STATUSES = [
+  ...DOCUMENT_PROCESSING_STATUSES,
+  "suspended",
+] as const;
 
 export type MediaProcessingProjectionStatus =
-  | DocumentProcessingStatus
-  | "suspended";
+  (typeof MEDIA_PROCESSING_PROJECTION_STATUSES)[number];
 
 export function requireDocumentProcessingStatus(
   status: string,

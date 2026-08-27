@@ -1,4 +1,4 @@
-import { captureCanonicalArticle } from "../articleFixture";
+import { captureReadableArticle } from "../articleFixture";
 import {
   expect,
   gotoWithStrictCsp,
@@ -20,26 +20,7 @@ test("a link grant exposes only its read-only resource and does not mint an acco
   // backlog) needs materially more wall time than the pre-cutover in-process worker.
   test.setTimeout(300_000);
   const api = pageRequest(page, webOrigin);
-  const mediaId = await captureCanonicalArticle(page, "shared-source");
-  await expect
-    .poll(
-      async () => {
-        const response = await api.get(`/api/media/${mediaId}`);
-        if (!response.ok()) return `http-${response.status()}`;
-        const media = (await response.json()) as {
-          data: {
-            processing_status: string;
-            retrieval_status: string | null;
-          };
-        };
-        return `${media.data.processing_status}:${media.data.retrieval_status}`;
-      },
-      {
-        message: `Expected media ${mediaId} to become publicly projectable before link creation.`,
-        timeout: 90_000,
-      },
-    )
-    .toBe("ready_for_reading:ready");
+  const mediaId = await captureReadableArticle(page, "shared-source");
 
   const shareResponse = await api.post(
     `/api/resource-items/${encodeURIComponent(`media:${mediaId}`)}/shares`,

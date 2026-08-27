@@ -186,7 +186,7 @@ class Settings(BaseSettings):
     signed_url_expiry_s: int = Field(default=300, alias="SIGNED_URL_EXPIRY_S")  # 5 minutes
 
     # Podcast discovery and subscription ingestion policy.
-    podcasts_enabled: bool = Field(default=True, alias="PODCASTS_ENABLED")
+    podcasts_enabled: bool = Field(default=False, alias="PODCASTS_ENABLED")
     podcast_index_api_key: str | None = Field(default=None, alias="PODCAST_INDEX_API_KEY")
     podcast_index_api_secret: str | None = Field(default=None, alias="PODCAST_INDEX_API_SECRET")
     podcast_index_base_url: str = Field(
@@ -499,7 +499,29 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_required_settings(self) -> "Settings":
         """Ensure required settings are set for all environments."""
-        # Supabase auth settings are required in all environments
+        self._validate_supabase_auth()
+        self._validate_retired_supabase_settings()
+        self._validate_database_origin()
+        self._validate_retired_storage_settings()
+        self._validate_database_limits()
+        self._validate_deployed_storage()
+        self._validate_storage_lifecycle()
+        self._validate_archive_safety()
+        self._validate_billing_limits()
+        self._validate_media_provider_limits()
+        self._validate_billing_credentials()
+        self._validate_email_credentials()
+        self._validate_podcast_credentials()
+        self._validate_deployed_browse_provider()
+        self._validate_deployed_llm_runtime()
+        self._validate_ingest_runtime_and_paths()
+        self._validate_worker_lane()
+        self._validate_worker_intervals()
+        self._validate_background_process_limits()
+        self._validate_maintenance_schedules()
+        return self
+
+    def _validate_supabase_auth(self) -> None:
         missing_auth = []
         if not self.supabase_jwks_url:
             missing_auth.append("SUPABASE_JWKS_URL")
@@ -514,6 +536,7 @@ class Settings(BaseSettings):
                 "Run 'make setup' to configure Supabase local, or set these environment variables."
             )
 
+    def _validate_retired_supabase_settings(self) -> None:
         rejected_supabase_service_role_settings = [
             alias
             for alias, value in (
@@ -532,11 +555,13 @@ class Settings(BaseSettings):
                 "Use script-local environment for seed scripts instead."
             )
 
+    def _validate_database_origin(self) -> None:
         if _database_url_looks_like_supabase(self.database_url):
             raise ValueError(
                 "DATABASE_URL must point at standalone Postgres, not Supabase Database."
             )
 
+    def _validate_retired_storage_settings(self) -> None:
         rejected_storage_origin_settings = [
             alias
             for alias, value in (
@@ -555,6 +580,7 @@ class Settings(BaseSettings):
                 "Use R2_S3_API_ORIGIN."
             )
 
+    def _validate_database_limits(self) -> None:
         if self.database_pool_size < 1:
             raise ValueError("DATABASE_POOL_SIZE must be >= 1.")
         if self.database_max_overflow < 0:
@@ -575,41 +601,43 @@ class Settings(BaseSettings):
         ):
             raise ValueError("INGEST_RECONCILE_SCHEDULE_SECONDS must be > 0 in staging and prod.")
 
-        # NEXUS_INTERNAL_SECRET is required only in staging/prod
-        if self.nexus_env in (Environment.STAGING, Environment.PROD):
-            if not self.nexus_internal_secret:
-                raise ValueError(
-                    f"NEXUS_INTERNAL_SECRET is required for NEXUS_ENV={self.nexus_env.value}"
-                )
-            missing_r2 = []
-            if not self.r2_s3_api_origin:
-                missing_r2.append("R2_S3_API_ORIGIN")
-            if not self.r2_access_key_id:
-                missing_r2.append("R2_ACCESS_KEY_ID")
-            if not self.r2_secret_access_key:
-                missing_r2.append("R2_SECRET_ACCESS_KEY")
-            if not self.r2_bucket:
-                missing_r2.append("R2_BUCKET")
-            if missing_r2:
-                raise ValueError(
-                    "Cloudflare R2 storage settings are required in staging/prod: "
-                    f"{', '.join(missing_r2)}"
-                )
-            parsed_r2_origin = urlparse(self.r2_s3_api_origin or "")
-            r2_host = parsed_r2_origin.hostname or ""
-            if (
-                parsed_r2_origin.scheme != "https"
-                or parsed_r2_origin.username
-                or parsed_r2_origin.password
-                or parsed_r2_origin.path not in ("", "/")
-                or parsed_r2_origin.query
-                or parsed_r2_origin.fragment
-                or not r2_host.endswith(".r2.cloudflarestorage.com")
-            ):
-                raise ValueError(
-                    "R2_S3_API_ORIGIN must be the Cloudflare R2 S3 API origin for staging/prod."
-                )
+    def _validate_deployed_storage(self) -> None:
+        if self.nexus_env not in (Environment.STAGING, Environment.PROD):
+            return
+        if not self.nexus_internal_secret:
+            raise ValueError(
+                f"NEXUS_INTERNAL_SECRET is required for NEXUS_ENV={self.nexus_env.value}"
+            )
+        missing_r2 = []
+        if not self.r2_s3_api_origin:
+            missing_r2.append("R2_S3_API_ORIGIN")
+        if not self.r2_access_key_id:
+            missing_r2.append("R2_ACCESS_KEY_ID")
+        if not self.r2_secret_access_key:
+            missing_r2.append("R2_SECRET_ACCESS_KEY")
+        if not self.r2_bucket:
+            missing_r2.append("R2_BUCKET")
+        if missing_r2:
+            raise ValueError(
+                "Cloudflare R2 storage settings are required in staging/prod: "
+                f"{', '.join(missing_r2)}"
+            )
+        parsed_r2_origin = urlparse(self.r2_s3_api_origin or "")
+        r2_host = parsed_r2_origin.hostname or ""
+        if (
+            parsed_r2_origin.scheme != "https"
+            or parsed_r2_origin.username
+            or parsed_r2_origin.password
+            or parsed_r2_origin.path not in ("", "/")
+            or parsed_r2_origin.query
+            or parsed_r2_origin.fragment
+            or not r2_host.endswith(".r2.cloudflarestorage.com")
+        ):
+            raise ValueError(
+                "R2_S3_API_ORIGIN must be the Cloudflare R2 S3 API origin for staging/prod."
+            )
 
+    def _validate_storage_lifecycle(self) -> None:
         if self.r2_connect_timeout_seconds <= 0 or self.r2_connect_timeout_seconds > 10:
             raise ValueError("R2_CONNECT_TIMEOUT_SECONDS must be > 0 and <= 10.")
         if self.r2_read_timeout_seconds <= 0 or self.r2_read_timeout_seconds > 60:
@@ -634,6 +662,7 @@ class Settings(BaseSettings):
         if self.storage_orphan_sweep_min_age_seconds < 0:
             raise ValueError("STORAGE_ORPHAN_SWEEP_MIN_AGE_SECONDS must be >= 0.")
 
+    def _validate_archive_safety(self) -> None:
         for field_name, ceiling in self._EPUB_ARCHIVE_CEILINGS.items():
             value = getattr(self, field_name)
             if value > ceiling:
@@ -654,6 +683,7 @@ class Settings(BaseSettings):
             if value < 1:
                 raise ValueError(f"{field_name.upper()}={value} must be >= 1.")
 
+    def _validate_billing_limits(self) -> None:
         if self.billing_ai_plus_platform_token_limit_monthly < 0:
             raise ValueError("BILLING_AI_PLUS_PLATFORM_TOKEN_LIMIT_MONTHLY must be >= 0.")
         if self.billing_ai_pro_platform_token_limit_monthly < 0:
@@ -662,6 +692,8 @@ class Settings(BaseSettings):
             raise ValueError("BILLING_AI_PLUS_TRANSCRIPTION_MINUTES_MONTHLY must be >= 0.")
         if self.billing_ai_pro_transcription_minutes_monthly < 0:
             raise ValueError("BILLING_AI_PRO_TRANSCRIPTION_MINUTES_MONTHLY must be >= 0.")
+
+    def _validate_media_provider_limits(self) -> None:
         if self.transcript_embedding_dimensions != TRANSCRIPT_EMBEDDING_SCHEMA_DIMENSIONS:
             raise ValueError(
                 "TRANSCRIPT_EMBEDDING_DIMENSIONS must equal "
@@ -683,96 +715,106 @@ class Settings(BaseSettings):
             raise ValueError("X_API_TIMEOUT_SECONDS must be > 0.")
         if self.x_api_author_thread_max_posts < 1:
             raise ValueError("X_API_AUTHOR_THREAD_MAX_POSTS must be >= 1.")
-        if self.nexus_env in (Environment.STAGING, Environment.PROD) and self.billing_enabled:
-            missing_billing: list[str] = []
-            if not self.stripe_secret_key:
-                missing_billing.append("STRIPE_SECRET_KEY")
-            if not self.stripe_webhook_secret:
-                missing_billing.append("STRIPE_WEBHOOK_SECRET")
-            if not self.stripe_plus_price_id:
-                missing_billing.append("STRIPE_PLUS_PRICE_ID")
-            if not self.stripe_ai_plus_price_id:
-                missing_billing.append("STRIPE_AI_PLUS_PRICE_ID")
-            if not self.stripe_ai_pro_price_id:
-                missing_billing.append("STRIPE_AI_PRO_PRICE_ID")
-            if missing_billing:
-                raise ValueError(
-                    "Billing is enabled but required Stripe settings are missing: "
-                    f"{', '.join(missing_billing)}"
-                )
-        if self.nexus_env in (Environment.STAGING, Environment.PROD) and self.email_ingest_enabled:
-            missing_email: list[str] = []
-            if not self.email_ingest_hmac_secret:
-                missing_email.append("EMAIL_INGEST_HMAC_SECRET")
-            if not self.email_ingest_address_slug:
-                missing_email.append("EMAIL_INGEST_ADDRESS_SLUG")
-            if not self.email_ingest_domain:
-                missing_email.append("EMAIL_INGEST_DOMAIN")
-            if not self.email_ingest_owner_user_id:
-                missing_email.append("EMAIL_INGEST_OWNER_USER_ID")
-            if missing_email:
-                raise ValueError(
-                    "Email ingest is enabled but required settings are missing: "
-                    f"{', '.join(missing_email)}"
-                )
-        if self.podcasts_enabled:
-            missing_podcast_provider_settings: list[str] = []
-            if not self.podcast_index_api_key:
-                missing_podcast_provider_settings.append("PODCAST_INDEX_API_KEY")
-            if not self.podcast_index_api_secret:
-                missing_podcast_provider_settings.append("PODCAST_INDEX_API_SECRET")
-            if missing_podcast_provider_settings:
-                if self.nexus_env in (Environment.STAGING, Environment.PROD):
-                    raise ValueError(
-                        "Podcast features are enabled but provider credentials are missing: "
-                        f"{', '.join(missing_podcast_provider_settings)}"
-                    )
-                else:
-                    import logging
 
-                    logging.getLogger(__name__).warning(
-                        "Podcast features auto-disabled: missing %s. "
-                        "Set PODCASTS_ENABLED=false or provide credentials to silence this warning.",
-                        ", ".join(missing_podcast_provider_settings),
-                    )
-                    self.podcasts_enabled = False
-        if self.nexus_env in (Environment.STAGING, Environment.PROD):
-            if not self.youtube_data_api_key:
-                raise ValueError(
-                    "Browse providers are missing required credentials: YOUTUBE_DATA_API_KEY"
-                )
+    def _validate_billing_credentials(self) -> None:
+        if self.nexus_env not in (Environment.STAGING, Environment.PROD):
+            return
+        if not self.billing_enabled:
+            return
+        missing_billing: list[str] = []
+        if not self.stripe_secret_key:
+            missing_billing.append("STRIPE_SECRET_KEY")
+        if not self.stripe_webhook_secret:
+            missing_billing.append("STRIPE_WEBHOOK_SECRET")
+        if not self.stripe_plus_price_id:
+            missing_billing.append("STRIPE_PLUS_PRICE_ID")
+        if not self.stripe_ai_plus_price_id:
+            missing_billing.append("STRIPE_AI_PLUS_PRICE_ID")
+        if not self.stripe_ai_pro_price_id:
+            missing_billing.append("STRIPE_AI_PRO_PRICE_ID")
+        if missing_billing:
+            raise ValueError(
+                "Billing is enabled but required Stripe settings are missing: "
+                f"{', '.join(missing_billing)}"
+            )
 
-        if self.nexus_env in (Environment.STAGING, Environment.PROD):
-            missing_llm_keys: list[str] = []
-            if not self.openai_api_key:
-                missing_llm_keys.append("OPENAI_API_KEY")
-            if not self.anthropic_api_key:
-                missing_llm_keys.append("ANTHROPIC_API_KEY")
-            if not self.gemini_api_key:
-                missing_llm_keys.append("GEMINI_API_KEY")
-            if not self.moonshot_api_key:
-                missing_llm_keys.append("MOONSHOT_API_KEY")
-            if not self.deepseek_api_key:
-                missing_llm_keys.append("DEEPSEEK_API_KEY")
-            if missing_llm_keys:
-                raise ValueError(
-                    "Platform LLM provider keys are required in staging/prod: "
-                    f"{', '.join(missing_llm_keys)}"
-                )
-            if not self.nexus_fable_retention_accepted_at:
-                raise ValueError(
-                    "NEXUS_FABLE_RETENTION_ACCEPTED_AT is required for "
-                    f"NEXUS_ENV={self.nexus_env.value}: Fable requires 30-day retention "
-                    "and is not ZDR-eligible, so a deploy must explicitly record (RFC "
-                    "3339) when that tradeoff was accepted."
-                )
-            try:
-                datetime.fromisoformat(self.nexus_fable_retention_accepted_at)
-            except ValueError as exc:
-                raise ValueError(
-                    "NEXUS_FABLE_RETENTION_ACCEPTED_AT must be an RFC 3339 timestamp, "
-                    f"got {self.nexus_fable_retention_accepted_at!r}"
-                ) from exc
+    def _validate_email_credentials(self) -> None:
+        if self.nexus_env not in (Environment.STAGING, Environment.PROD):
+            return
+        if not self.email_ingest_enabled:
+            return
+        missing_email: list[str] = []
+        if not self.email_ingest_hmac_secret:
+            missing_email.append("EMAIL_INGEST_HMAC_SECRET")
+        if not self.email_ingest_address_slug:
+            missing_email.append("EMAIL_INGEST_ADDRESS_SLUG")
+        if not self.email_ingest_domain:
+            missing_email.append("EMAIL_INGEST_DOMAIN")
+        if not self.email_ingest_owner_user_id:
+            missing_email.append("EMAIL_INGEST_OWNER_USER_ID")
+        if missing_email:
+            raise ValueError(
+                "Email ingest is enabled but required settings are missing: "
+                f"{', '.join(missing_email)}"
+            )
+
+    def _validate_podcast_credentials(self) -> None:
+        if not self.podcasts_enabled:
+            return
+        missing_podcast_provider_settings: list[str] = []
+        if not self.podcast_index_api_key:
+            missing_podcast_provider_settings.append("PODCAST_INDEX_API_KEY")
+        if not self.podcast_index_api_secret:
+            missing_podcast_provider_settings.append("PODCAST_INDEX_API_SECRET")
+        if missing_podcast_provider_settings:
+            raise ValueError(
+                "Podcast features are enabled but provider credentials are missing: "
+                f"{', '.join(missing_podcast_provider_settings)}"
+            )
+
+    def _validate_deployed_browse_provider(self) -> None:
+        if self.nexus_env not in (Environment.STAGING, Environment.PROD):
+            return
+        if not self.youtube_data_api_key:
+            raise ValueError(
+                "Browse providers are missing required credentials: YOUTUBE_DATA_API_KEY"
+            )
+
+    def _validate_deployed_llm_runtime(self) -> None:
+        if self.nexus_env not in (Environment.STAGING, Environment.PROD):
+            return
+        missing_llm_keys: list[str] = []
+        if not self.openai_api_key:
+            missing_llm_keys.append("OPENAI_API_KEY")
+        if not self.anthropic_api_key:
+            missing_llm_keys.append("ANTHROPIC_API_KEY")
+        if not self.gemini_api_key:
+            missing_llm_keys.append("GEMINI_API_KEY")
+        if not self.moonshot_api_key:
+            missing_llm_keys.append("MOONSHOT_API_KEY")
+        if not self.deepseek_api_key:
+            missing_llm_keys.append("DEEPSEEK_API_KEY")
+        if missing_llm_keys:
+            raise ValueError(
+                "Platform LLM provider keys are required in staging/prod: "
+                f"{', '.join(missing_llm_keys)}"
+            )
+        if not self.nexus_fable_retention_accepted_at:
+            raise ValueError(
+                "NEXUS_FABLE_RETENTION_ACCEPTED_AT is required for "
+                f"NEXUS_ENV={self.nexus_env.value}: Fable requires 30-day retention "
+                "and is not ZDR-eligible, so a deploy must explicitly record (RFC "
+                "3339) when that tradeoff was accepted."
+            )
+        try:
+            datetime.fromisoformat(self.nexus_fable_retention_accepted_at)
+        except ValueError as exc:
+            raise ValueError(
+                "NEXUS_FABLE_RETENTION_ACCEPTED_AT must be an RFC 3339 timestamp, "
+                f"got {self.nexus_fable_retention_accepted_at!r}"
+            ) from exc
+
+    def _validate_ingest_runtime_and_paths(self) -> None:
         if self.ingest_stale_extracting_seconds < 1:
             raise ValueError("INGEST_STALE_EXTRACTING_SECONDS must be >= 1.")
         if self.ingest_stale_requeue_max_attempts < 1:
@@ -790,6 +832,8 @@ class Settings(BaseSettings):
             raise ValueError("NEXUS_CODEX_AGENT_SOCKET must be a normalized absolute path.")
         if not self.parser_temp_root.is_absolute():
             raise ValueError("PARSER_TEMP_ROOT must be an absolute path.")
+
+    def _validate_worker_lane(self) -> None:
         if self.worker_lane == "maintenance":
             if not self.nexus_allow_worker_maintenance:
                 raise ValueError(
@@ -825,6 +869,8 @@ class Settings(BaseSettings):
             and self.database_statement_timeout_ms == 0
         ):
             raise ValueError("DATABASE_STATEMENT_TIMEOUT_MS must be bounded for deployed workers.")
+
+    def _validate_worker_intervals(self) -> None:
         if self.worker_poll_interval_seconds <= 0:
             raise ValueError("WORKER_POLL_INTERVAL_SECONDS must be > 0.")
         if self.worker_idle_backoff_max_seconds < self.worker_poll_interval_seconds:
@@ -844,6 +890,8 @@ class Settings(BaseSettings):
                 "WORKER_DB_FAILURE_BACKOFF_MAX_SECONDS must be >= "
                 "WORKER_DB_FAILURE_BACKOFF_SECONDS."
             )
+
+    def _validate_background_process_limits(self) -> None:
         if not self.background_process_cgroup_root.is_absolute():
             raise ValueError("BACKGROUND_PROCESS_CGROUP_ROOT must be an absolute path.")
         if not 0 < self.background_process_wall_timeout_seconds <= 900:
@@ -856,6 +904,8 @@ class Settings(BaseSettings):
             )
         if not 1 <= self.background_process_oom_score_adj <= 1000:
             raise ValueError("BACKGROUND_PROCESS_OOM_SCORE_ADJ must be between 1 and 1000.")
+
+    def _validate_maintenance_schedules(self) -> None:
         if self.sync_gutenberg_catalog_schedule_seconds < 0:
             raise ValueError("SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS must be >= 0.")
         if self.background_job_prune_schedule_seconds < 0:
@@ -868,8 +918,6 @@ class Settings(BaseSettings):
             raise ValueError("BACKGROUND_JOB_PRUNE_DEAD_AFTER_DAYS must be >= 1.")
         if self.background_job_prune_batch_size < 1:
             raise ValueError("BACKGROUND_JOB_PRUNE_BATCH_SIZE must be >= 1.")
-
-        return self
 
     @property
     def requires_internal_header(self) -> bool:

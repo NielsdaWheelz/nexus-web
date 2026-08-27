@@ -110,6 +110,18 @@ _RETIRED_RESOURCE_ACTION_PATHS = (
     "apps/web/src/lib/nexus/actions.ts",
     "apps/web/src/app/(authenticated)/podcasts/usePodcastSubscriptionActions.ts",
 )
+_RETIRED_CLEANUP_PATHS = (
+    "apps/web/src/app/(authenticated)/oracle/atlas/page.tsx",
+    "apps/web/src/lib/conversations/indexView.ts",
+    "apps/web/src/lib/conversations/indexView.unit.test.ts",
+    "apps/web/src/lib/notes/pageIndexView.ts",
+    "apps/web/src/lib/notes/pageIndexView.unit.test.ts",
+    "python/nexus/ops/browse_cutover.py",
+    "python/nexus/ops/epub_navigation_offsets_cutover.py",
+    "python/tests/kernel/test_epub_navigation_offsets_cutover.py",
+    "testdata/faults/epub-cutover-failed-attempt-admission.patch",
+)
+_RETIRED_ORACLE_ATLAS_SOURCE_FRAGMENTS = ("/oracle/atlas", "oracleAtlas")
 _PRODUCT_SOURCE_ROOTS: tuple[tuple[str, frozenset[str]], ...] = (
     ("python/nexus", frozenset({".py"})),
     ("apps/api", frozenset({".py"})),
@@ -984,6 +996,24 @@ def repository_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                     "(ResourceActionMenu + resourceActionRuntime). It must remain absent.",
                 )
             )
+    for relative in _RETIRED_CLEANUP_PATHS:
+        if (repo_root / relative).exists():
+            violations.append(
+                PolicyViolation(
+                    "repository-retired-cleanup-path",
+                    relative,
+                    "hard-cut duplicate or completed revision-only path must remain absent",
+                )
+            )
+    search_package = repo_root / "python/nexus/services/search/__init__.py"
+    if search_package.is_file() and search_package.read_text(encoding="utf-8").strip():
+        violations.append(
+            PolicyViolation(
+                "repository-search-barrel",
+                "python/nexus/services/search/__init__.py",
+                "search symbols must be imported from their defining modules",
+            )
+        )
     active_docs = [repo_root / relative for relative in _ACTIVE_TEST_DOC_FILES]
     for root in _ACTIVE_TEST_DOC_ROOTS:
         directory = repo_root / root
@@ -1015,6 +1045,23 @@ def repository_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
             if _WEB_TEST_LOOKING.search(candidate.name) or "__tests__" in candidate.parts:
                 continue
             text = candidate.read_text(encoding="utf-8")
+            retired_oracle_atlas_fragment = next(
+                (
+                    fragment
+                    for fragment in _RETIRED_ORACLE_ATLAS_SOURCE_FRAGMENTS
+                    if fragment in text
+                ),
+                None,
+            )
+            if retired_oracle_atlas_fragment is not None:
+                violations.append(
+                    PolicyViolation(
+                        "repository-retired-oracle-atlas-source",
+                        relative,
+                        "the Grand Atlas is canonical; the retired Oracle Atlas route and "
+                        f"pane id must stay absent: {retired_oracle_atlas_fragment}",
+                    )
+                )
             retired = tuple(seam for seam in _RETIRED_PRODUCT_TEST_SEAMS if seam in text)
             generic = _PRODUCT_TEST_SEAM.search(text)
             if retired:

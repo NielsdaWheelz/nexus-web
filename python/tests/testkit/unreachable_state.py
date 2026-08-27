@@ -131,6 +131,15 @@ def cleanup_committed_upload_user(engine: Engine, *, user_id: UUID) -> None:
             {"user_id": user_id},
         )
         connection.execute(
+            text(
+                """
+                DELETE FROM pdf_page_text_spans
+                WHERE media_id IN (SELECT id FROM media WHERE created_by_user_id = :user_id)
+                """
+            ),
+            {"user_id": user_id},
+        )
+        connection.execute(
             text("DELETE FROM media WHERE created_by_user_id = :user_id"),
             {"user_id": user_id},
         )
@@ -779,6 +788,10 @@ def delete_source_probe_owners_by_job_kind(db: Session, *, kind: str) -> None:
         )
     if media_ids:
         db.execute(
+            text("DELETE FROM pdf_page_text_spans WHERE media_id = ANY(CAST(:ids AS uuid[]))"),
+            {"ids": media_ids},
+        )
+        db.execute(
             text("DELETE FROM media WHERE id = ANY(CAST(:ids AS uuid[]))"),
             {"ids": media_ids},
         )
@@ -818,6 +831,10 @@ def delete_source_attempts_and_media(
     db.execute(
         text("DELETE FROM media_source_attempts WHERE id = ANY(CAST(:attempt_ids AS uuid[]))"),
         {"attempt_ids": list(attempt_ids)},
+    )
+    db.execute(
+        text("DELETE FROM pdf_page_text_spans WHERE media_id = :media_id"),
+        {"media_id": media_id},
     )
     db.execute(text("DELETE FROM media WHERE id = :media_id"), {"media_id": media_id})
 

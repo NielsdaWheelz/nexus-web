@@ -472,7 +472,8 @@ authorize server-side without exposing a private Contributor id.
 - generic build/revision lifecycle;
 - shared read/history/event schemas.
 
-`SubjectPolicyRegistry`, keyed by subject scheme, owns:
+One immutable Dossier registration, keyed by subject scheme, pairs exactly one
+subject policy with exactly one binding. The policy side owns:
 
 - locator resolution and 404-masked read/generate authorization;
 - AudienceScope, collection viewer, requester/billing attribution, and
@@ -481,12 +482,12 @@ authorize server-side without exposing a private Contributor id.
 - subject/audience deletion integration;
 - canonical resource activation.
 
-`DossierBindingRegistry`, keyed by subject scheme, owns:
+The binding side owns:
 
 - input collection and bounded reduction;
 - prompt, operation/profile, reasoning, token/cost budget, and reduction plan;
 - input-manifest, freshness, and coverage projection;
-- generated schema and citation materialization;
+- generated schema, citation materialization, and final document compilation;
 - typed empty-input behavior.
 
 Exactly eight bindings exist. Seven public Resource bindings retain
@@ -494,7 +495,7 @@ Companion/subject-locator entry; the internal Idea binding is entered only by
 Learn or Artifact ref. The typed engine identity distinguishes Resource from
 Idea without fabricating a `ResourceRef`.
 
-One job kind, `dossier_build`, dispatches through the binding registry.
+One job kind, `dossier_build`, dispatches through the singular registration.
 Binding-owned operation policy is exact:
 
 | Binding | LLM operation | Profile | Reasoning |
@@ -676,12 +677,11 @@ multiple terminal children or multiple revisions for one build is a defect.
   existing citation edges.
 
 Requester, revision creator, and cancellation actor are nullable attribution
-FKs. Explicit User teardown nulls them on surviving shared-Library history and
-the UI renders “Deleted user.” `citation_owner_user_id` is non-null because it
-is graph ownership, not display attribution. Before deleting such a user,
-surviving Library history rehomes its citation edges and revision owner to the
-Library’s current owner. A Library owner must transfer or delete the Library
-before that User becomes unobservable.
+FKs, and the UI renders absent attribution as “Deleted user.”
+`citation_owner_user_id` is non-null because it is graph ownership, not display
+attribution. No product account-deletion composer exists; the non-cascading User
+FKs intentionally block deletion until account lifecycle owns the complete
+cross-subsystem operation.
 
 ### `artifact_build_events`
 
@@ -859,7 +859,10 @@ The head read returns:
 Revision list/read owns history. Build stream resume uses the existing
 last-event sequence contract against the new strict persisted build-event
 schema; unsequenced execution advisories are fresh coordination projections and
-are not replayed as domain events.
+are not replayed as domain events. The frontend generation adapter accepts only
+exact `{data: ...}` value responses and exact HTTP 204 commands. It registers
+`artifact-builds` with the shared generation-run opener; no compatibility body,
+Dossier-owned token mint, or direct-SSE connection survives.
 
 Expected API errors are a closed union including invalid subject locator,
 not-found/unauthorized masking, generation in progress, invalid instruction,
@@ -882,10 +885,11 @@ variants, and creates the Idea/resolution/seed/Learn replay tables.
 There is no compatibility reader, body backfill, migrated failure, or dual
 event/body contract.
 
-Subject and User teardown remains explicit and child-first. It deletes affected
-Learn replay rows, Idea seeds/resolutions, graph/view-state children, build
-children, and heads in the owning service order; no cascade or stale worker may
-recreate state after the head/build lease check fails.
+Subject teardown and audience-visibility cleanup remain explicit and
+child-first. They delete affected Learn replay rows, Idea seeds/resolutions,
+graph/view-state children, build children, and heads in the owning service
+order; no cascade or stale worker may recreate state after the head/build lease
+check fails. Artifact exposes no partial User teardown helper.
 
 ## Freshness, Coverage, And Reingestion
 
@@ -938,7 +942,8 @@ Generate
   -> collect audience-visible binding inputs
   -> ensure `(media_id, fingerprint)` Media Intelligence dependencies
   -> reduce through binding-owned plan
-  -> validate schema + nonempty materialized citations
+  -> materialize citations + compile one publishable document
+  -> attempt document repair once when schema/document acceptance rejects output
   -> lock head and recheck build/lease/subject/audience/all manifest inputs
   -> atomically create revision + citations + Succeeded + current pointer
 ```
@@ -1109,9 +1114,8 @@ No partial state ships.
       without synthesizing a failure.
 - [x] Arrows are view-only; Make current atomically authorizes/repoints and
       recomputes freshness.
-- [x] Subject/audience/User teardown follows the specified queue, graph,
-      attribution, citation-owner, and FK-safe rules; no late worker recreates
-      state.
+- [x] Subject teardown and audience-visibility cleanup follow the specified
+      queue, graph, and FK-safe rules; no late worker recreates state.
 
 ### Migration and hard cut
 

@@ -305,6 +305,65 @@ def test_repository_guard_rejects_resurrected_resource_action_module(
 
 
 @pytest.mark.parametrize(
+    "relative",
+    [
+        "apps/web/src/app/(authenticated)/oracle/atlas/page.tsx",
+        "apps/web/src/lib/conversations/indexView.ts",
+        "apps/web/src/lib/conversations/indexView.unit.test.ts",
+        "apps/web/src/lib/notes/pageIndexView.ts",
+        "apps/web/src/lib/notes/pageIndexView.unit.test.ts",
+        "python/nexus/ops/browse_cutover.py",
+        "python/nexus/ops/epub_navigation_offsets_cutover.py",
+        "python/tests/kernel/test_epub_navigation_offsets_cutover.py",
+        "testdata/faults/epub-cutover-failed-attempt-admission.patch",
+    ],
+)
+def test_repository_guard_rejects_retired_cleanup_path(tmp_path: Path, relative: str) -> None:
+    _minimal_repository(tmp_path)
+    _write(tmp_path, relative, "retired\n")
+
+    violations = repository_violations(tmp_path)
+
+    assert any(
+        violation.rule == "repository-retired-cleanup-path" and violation.path == relative
+        for violation in violations
+    )
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'export const retiredHref = "/oracle/atlas";\n',
+        'export const retiredRouteId = "oracleAtlas";\n',
+    ],
+)
+def test_repository_guard_rejects_retired_oracle_atlas_source(tmp_path: Path, source: str) -> None:
+    _minimal_repository(tmp_path)
+    relative = "apps/web/src/lib/oracleAtlasRoute.ts"
+    _write(tmp_path, relative, source)
+
+    violations = repository_violations(tmp_path)
+
+    assert any(
+        violation.rule == "repository-retired-oracle-atlas-source" and violation.path == relative
+        for violation in violations
+    )
+
+
+def test_repository_guard_rejects_search_package_reexports(tmp_path: Path) -> None:
+    _minimal_repository(tmp_path)
+    relative = "python/nexus/services/search/__init__.py"
+    _write(tmp_path, relative, "from nexus.services.search.service import search\n")
+
+    violations = repository_violations(tmp_path)
+
+    assert any(
+        violation.rule == "repository-search-barrel" and violation.path == relative
+        for violation in violations
+    )
+
+
+@pytest.mark.parametrize(
     ("relative", "source"),
     [
         (

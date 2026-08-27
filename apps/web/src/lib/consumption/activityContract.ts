@@ -1,6 +1,6 @@
 import { decodePresence, type Presence } from "@/lib/api/presence";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
-import { isRecord } from "@/lib/validation";
+import { isCanonicalUuid, isRecord } from "@/lib/validation";
 
 export type ActivityModality = "Reading" | "Listening" | "Viewing";
 export type ActivityDeviceClass = "Desktop" | "Mobile";
@@ -8,9 +8,6 @@ export type MediaRef = string & { readonly __mediaRef: unique symbol };
 export type ActivityCaptureKey = string & {
   readonly __activityCaptureKey: unique symbol;
 };
-
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export function parseMediaRef(value: string): MediaRef {
   const parsed = parseResourceRef(value);
@@ -23,7 +20,7 @@ export function parseMediaRef(value: string): MediaRef {
 }
 
 export function parseActivityCaptureKey(value: string): ActivityCaptureKey {
-  if (!UUID_RE.test(value)) {
+  if (!isCanonicalUuid(value)) {
     throw new Error("captureKey must be a canonical UUID");
   }
   // justify-type-assertion: the canonical UUID grammar above is the complete
@@ -288,10 +285,7 @@ export function decodeActivityRequest(raw: unknown): ActivityRequest {
     ["clientMutationId", "mediaRef", "deviceClass", "batch"],
     "ActivityRequest",
   );
-  if (
-    typeof value.clientMutationId !== "string" ||
-    !UUID_RE.test(value.clientMutationId)
-  ) {
+  if (!isCanonicalUuid(value.clientMutationId)) {
     throw new Error("clientMutationId must be a canonical UUID");
   }
   if (

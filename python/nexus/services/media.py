@@ -121,6 +121,8 @@ _SOURCE_ATTEMPT_STORAGE_ERROR_CODES_SQL = """
 
 def _source_attempt_available_sql(*, failed_only: bool) -> str:
     status_predicate = "AND msa.status = 'failed'" if failed_only else ""
+    # A healthy source has no last_error_code. Collapse that SQL NULL to false
+    # so file-backed attempts remain available unless a storage error exists.
     return f"""EXISTS(
         SELECT 1
         FROM media_source_attempts msa
@@ -129,7 +131,10 @@ def _source_attempt_available_sql(*, failed_only: bool) -> str:
           AND msa.source_type IN ({_SOURCE_ATTEMPT_TYPES_SQL})
           AND NOT (
               msa.source_type IN ({_SOURCE_ATTEMPT_FILE_TYPES_SQL})
-              AND m.last_error_code IN ({_SOURCE_ATTEMPT_STORAGE_ERROR_CODES_SQL})
+              AND COALESCE(
+                  m.last_error_code IN ({_SOURCE_ATTEMPT_STORAGE_ERROR_CODES_SQL}),
+                  FALSE
+              )
           )
           AND msa.id = (
               SELECT latest.id

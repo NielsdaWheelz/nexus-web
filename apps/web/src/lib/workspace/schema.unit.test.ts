@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { normalizePaneLabel } from "./schema";
+import { normalizePaneLabel, parsePaneVisitId } from "./schema";
+
+describe("pane visit identity", () => {
+  it("accepts only the shared lowercase canonical UUID grammar", () => {
+    const paneVisitId = "aaaaaaaa-1111-0111-1111-111111111111";
+
+    expect(parsePaneVisitId(paneVisitId)).toBe(paneVisitId);
+    expect(parsePaneVisitId(paneVisitId.toUpperCase())).toBeNull();
+    expect(parsePaneVisitId(`${paneVisitId}/extra`)).toBeNull();
+  });
+});
 
 /**
  * Risk: the pane label is the canonical route title

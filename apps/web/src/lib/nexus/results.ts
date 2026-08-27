@@ -979,6 +979,7 @@ export function mergeProgressiveNexusEntries(input: {
 }
 
 function queryActionEntries(input: {
+  readonly surface: NexusSurface;
   readonly query: string;
   readonly searchHref: string;
   readonly todayAppend: NexusTodayAppend;
@@ -1009,7 +1010,7 @@ function queryActionEntries(input: {
       historySource: "Ai",
       label: `Ask Nexus about “${input.query}”`,
       typeLabel: "Chat",
-      metadata: "Ask Nexus",
+      metadata: input.surface === "Desktop" ? "Ask Nexus" : undefined,
       icon: MessageSquarePlus,
       primaryAction: action({
         id: "ask",
@@ -1024,7 +1025,7 @@ function queryActionEntries(input: {
       key: { kind: "Continuation", id: "AddToToday" },
       historySource: "Static",
       label: `Add “${input.query}” to Today`,
-      typeLabel: "Today",
+      typeLabel: input.surface === "Desktop" ? "Today" : undefined,
       metadata: "Append note",
       icon: FileText,
       primaryAction: addToToday,
@@ -1035,7 +1036,7 @@ function queryActionEntries(input: {
       key: { kind: "Continuation", id: "Browse" },
       historySource: "Static",
       label: `Browse for “${input.query}”…`,
-      typeLabel: "Browse",
+      typeLabel: input.surface === "Desktop" ? "Browse" : undefined,
       metadata: "Choose a kind",
       icon: Globe,
       primaryAction: action({
@@ -1051,7 +1052,7 @@ function queryActionEntries(input: {
       key: { kind: "Continuation", id: "Create" },
       historySource: "Static",
       label: `Create “${input.query}”…`,
-      typeLabel: "Create",
+      typeLabel: input.surface === "Desktop" ? "Create" : undefined,
       metadata: "Choose a type",
       icon: FilePlus2,
       primaryAction: action({
@@ -1068,7 +1069,7 @@ function queryActionEntries(input: {
       historySource: "Search",
       label: `See all results for “${input.query}”`,
       typeLabel: "Search",
-      metadata: "All results",
+      metadata: input.surface === "Desktop" ? "All results" : undefined,
       icon: Search,
       primaryAction: action({
         id: "see-all",
@@ -1119,7 +1120,6 @@ function manageTabsEntry(): NexusEntry {
 function group(input: {
   readonly id: NexusGroup["id"];
   readonly label: string;
-  readonly layout: NexusGroup["layout"];
   readonly entries: readonly NexusEntry[];
 }): NexusGroup[] {
   return input.entries.length === 0 ? [] : [input];
@@ -1134,21 +1134,26 @@ function blankGroups(input: {
   readonly frecencyByHref: Readonly<Record<string, number>>;
   readonly commandShortcutHints: Readonly<Partial<Record<NexusCommandId, string>>>;
 }): NexusGroup[] {
-  const layout = input.surface === "Mobile" ? "CompactRail" : "Flow";
   const allOpen = projectNexusPaneEntries({
     query: "",
     panes: input.panes,
     frecencyByHref: input.frecencyByHref,
   });
   const open = [
-    ...allOpen.slice(0, OPEN_CAP),
+    ...allOpen.slice(0, OPEN_CAP).map((entry) =>
+      input.surface === "Mobile" ? { ...entry, metadata: undefined } : entry,
+    ),
     ...(allOpen.length > OPEN_CAP ? [manageTabsEntry()] : []),
   ];
   const recent = projectNexusRecentEntries({
     panes: input.panes,
     recent: input.recent,
     frecencyByHref: input.frecencyByHref,
-  }).slice(0, RECENT_CAP);
+  })
+    .slice(0, RECENT_CAP)
+    .map((entry) =>
+      input.surface === "Mobile" ? { ...entry, typeLabel: undefined } : entry,
+    );
   const destinationEntries = new Map(
     projectNexusDestinationEntries({
       query: "",
@@ -1162,15 +1167,20 @@ function blankGroups(input: {
   const today = destinationEntries.get("today");
   if (!today) throw new Error("Missing canonical Nexus destination: today");
   const commandEntries = new Map(
-    QUICK_COMMAND_IDS.map((id) => [
-      id,
-      commandEntry({
+    QUICK_COMMAND_IDS.map((id) => {
+      const entry = commandEntry({
         command: getNexusCommand(id),
         tier: "CurrentContext",
         argument: "",
         shortcutHint: input.commandShortcutHints[id],
-      }),
-    ]),
+      });
+      return [
+        id,
+        input.surface === "Mobile"
+          ? { ...entry, typeLabel: undefined }
+          : entry,
+      ] as const;
+    }),
   );
   const quickActions = [
     commandEntries.get("Nexus.Quick.Note")!,
@@ -1182,32 +1192,31 @@ function blankGroups(input: {
   ];
   const places = MOBILE_PLACE_IDS.map((id) => {
     requiredDestination(input.destinations, id);
-    return destinationEntries.get(id)!;
+    const entry = destinationEntries.get(id)!;
+    return input.surface === "Mobile"
+      ? { ...entry, typeLabel: undefined }
+      : entry;
   });
 
-  const openGroup = group({ id: "Open", label: "Open", layout, entries: open });
+  const openGroup = group({ id: "Open", label: "Open", entries: open });
   const continueGroup = group({
     id: "Continue",
     label: "Continue",
-    layout,
     entries: input.currentPlayback ? [input.currentPlayback] : [],
   });
   const recentGroup = group({
     id: "Recent",
     label: "Recent",
-    layout,
     entries: recent,
   });
   const quickGroup = group({
     id: "QuickActions",
     label: "Quick Actions",
-    layout,
     entries: quickActions,
   });
   const placesGroup = group({
     id: "Places",
     label: "Places",
-    layout,
     entries: places,
   });
   return input.surface === "Desktop"
@@ -1247,10 +1256,11 @@ export function composeNexusProjection(input: {
   }
 
   const results = input.results.slice(0, OWNED_RESULT_CAP);
-  const queryActions =
+  const queryAwareActions =
     parsed.intent.kind === "ImportUrl"
       ? []
       : queryActionEntries({
+          surface: input.surface,
           query: parsed.text,
           searchHref: searchHref(parsed.searchQuery),
           todayAppend: input.todayAppend,
@@ -1258,19 +1268,14 @@ export function composeNexusProjection(input: {
   const resultGroup = group({
     id: "Results",
     label: "Results",
-    layout: "Flow",
     entries: results,
   });
-  const queryGroup = group({
-    id: "QueryActions",
+  const quickActionsGroup = group({
+    id: "QuickActions",
     label: "Do with query",
-    layout: input.surface === "Mobile" ? "PinnedBelowInput" : "Flow",
-    entries: queryActions,
+    entries: queryAwareActions,
   });
-  const groups =
-    input.surface === "Desktop"
-      ? [...resultGroup, ...queryGroup]
-      : [...queryGroup, ...resultGroup];
+  const groups = [...resultGroup, ...quickActionsGroup];
   const orderedEntries = groups.flatMap((group) => group.entries);
   return {
     surface: input.surface,

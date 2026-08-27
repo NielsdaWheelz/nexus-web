@@ -634,7 +634,7 @@ def rebuild_content_index(
     blocks: list[IndexableBlock],
     reason: str,
 ) -> ContentIndexResult:
-    """Synchronous note/transcript doorway; document sources use the durable job."""
+    """Synchronous note doorway; durable media jobs plan and publish separately."""
     if owner.kind == "media":
         db.execute(
             text("SELECT id FROM media WHERE id = :owner_id FOR UPDATE"),
@@ -643,81 +643,6 @@ def rebuild_content_index(
     return publish_content_index(
         db,
         plan=plan_content_index(owner=owner, source_kind=source_kind, blocks=blocks),
-        reason=reason,
-    )
-
-
-def rebuild_fragment_content_index(
-    db: Session,
-    *,
-    media_id: UUID,
-    source_kind: str,
-    fragments: list[Any],
-    reason: str,
-    language: str | None = None,
-) -> ContentIndexResult:
-    media_title: str | None = None
-    if source_kind == "web_article":
-        media_title = db.execute(
-            text("SELECT title FROM media WHERE id = :media_id"),
-            {"media_id": media_id},
-        ).scalar_one_or_none()
-
-    nav_by_fragment_idx: dict[int, dict[str, object]] = {}
-    if source_kind == "epub":
-        for row in db.execute(
-            text(
-                """
-                SELECT DISTINCT ON (fragment_idx)
-                    fragment_idx,
-                    location_id,
-                    href_path,
-                    href_fragment,
-                    label
-                FROM epub_nav_locations
-                WHERE media_id = :media_id
-                ORDER BY fragment_idx ASC, ordinal ASC
-                """
-            ),
-            {"media_id": media_id},
-        ).fetchall():
-            nav_by_fragment_idx[int(row[0])] = {
-                "section_id": row[1],
-                "href_path": row[2],
-                "anchor_id": row[3],
-                "label": row[4],
-            }
-
-    fragment_blocks_by_id: dict[UUID, list[Any]] = {}
-    if source_kind == "epub":
-        fragment_ids = [fragment.id for fragment in fragments]
-        if fragment_ids:
-            for row in db.execute(
-                text(
-                    """
-                    SELECT fragment_id, block_idx, start_offset, end_offset
-                    FROM fragment_blocks
-                    WHERE fragment_id = ANY(:fragment_ids)
-                    ORDER BY fragment_id ASC, block_idx ASC
-                    """
-                ),
-                {"fragment_ids": fragment_ids},
-            ).fetchall():
-                fragment_blocks_by_id.setdefault(row[0], []).append(row)
-
-    blocks = build_fragment_indexable_blocks(
-        media_id=media_id,
-        source_kind=source_kind,
-        fragments=fragments,
-        media_title=media_title,
-        nav_by_fragment_idx=nav_by_fragment_idx,
-        fragment_blocks_by_id=fragment_blocks_by_id,
-    )
-    return rebuild_content_index(
-        db,
-        owner=IndexOwner("media", media_id),
-        source_kind=source_kind,
-        blocks=blocks,
         reason=reason,
     )
 
@@ -849,25 +774,6 @@ def build_fragment_indexable_blocks(
         source_offset += len(fragment_text) + 2
 
     return blocks
-
-
-def rebuild_transcript_content_index(
-    db: Session,
-    *,
-    media_id: UUID,
-    transcript_segments: Sequence[TranscriptSegmentInput],
-    reason: str,
-) -> ContentIndexResult:
-    return rebuild_content_index(
-        db,
-        owner=IndexOwner("media", media_id),
-        source_kind="transcript",
-        blocks=build_transcript_indexable_blocks(
-            media_id=media_id,
-            transcript_segments=transcript_segments,
-        ),
-        reason=reason,
-    )
 
 
 def build_transcript_indexable_blocks(

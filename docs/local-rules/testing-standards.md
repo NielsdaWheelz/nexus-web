@@ -484,7 +484,12 @@ controller's explicit socket flag may contact external providers. Browser
 component globals guard `fetch`, `EventSource`, and `WebSocket`; Playwright
 allows only controller-recorded loopback origins. Node ingest proof runs through
 the controller's `node-network-guard.mjs` and admits only loopback destinations.
-No test may supply product or production resource endpoints.
+The controller's canonical run environment is the single owner of deterministic
+external-protocol loopback endpoints, proxies, static DNS, and fixture
+credentials for in-process and spawned proof. Static DNS may expose the fixed
+public documentation address required by production SSRF validation, including
+through nested guards, but cannot authorize a non-loopback connect. No test may
+supply product or production resource endpoints.
 
 ### Focused changed-proof commands
 

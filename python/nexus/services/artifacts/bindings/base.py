@@ -27,7 +27,6 @@ from sqlalchemy.orm import Session
 from nexus.schemas.artifact import MediaAbstractOut
 from nexus.schemas.presence import Presence, absent
 from nexus.services.artifacts.coordination import DossierBuildRuntime
-from nexus.services.artifacts.document_html import AcceptedModelArticle
 from nexus.services.artifacts.dossier_types import AudienceScope, DossierBuildFailureCode
 from nexus.services.artifacts.manifests import InputManifestV1
 from nexus.services.artifacts.subject_policy import ResolvedResourceSubject, ResolvedSubject
@@ -43,10 +42,11 @@ Coverage = Any
 
 
 @dataclass(frozen=True, slots=True)
-class MaterializedDossier:
-    """An accepted inert article and its exact audience-visible citations."""
+class PublishableDossier:
+    """A fully compiled document and its exact audience-visible citations."""
 
-    article: AcceptedModelArticle
+    content_html: str
+    content_text: str
     citations: tuple[CitationInput, ...]
 
 
@@ -154,8 +154,8 @@ class DossierBinding(Protocol):
         collected: CollectedInputs,
         decoded_output: BaseModel,
         witness: ValidationWitness,
-    ) -> MaterializedDossier:
-        """Accept one article and map every citation to an offered candidate.
+    ) -> PublishableDossier:
+        """Accept and compile one article, mapping citations to offered candidates.
 
         Document acceptance raises ``DocumentHtmlError``. Any citation mismatch
         raises ``CitationValidationError`` so the engine can preserve the failure
