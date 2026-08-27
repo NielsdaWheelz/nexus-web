@@ -330,11 +330,13 @@ describe("Nexus product composition", () => {
     await waitFor(() => expect(search).toHaveFocus());
     const open = within(dialog).getByRole("region", { name: "Open" });
     const currentRow = within(open).getByRole("listitem");
-    expect(
-      within(currentRow).getByRole("button", {
-        name: "Libraries Tab · Current",
-      }),
-    ).toBeVisible();
+    await waitFor(() =>
+      expect(
+        within(currentRow).getByRole("button", {
+          name: "Libraries Tab · Current",
+        }),
+      ).toBeVisible(),
+    );
     const more = within(currentRow).getByRole("button", {
       name: "Actions for Libraries",
     });
