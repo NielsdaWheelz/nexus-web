@@ -29,6 +29,7 @@ from nexus.db.models import (
     SynthesisArtifact,
 )
 from nexus.db.session import create_session_factory
+from nexus.errors import InvalidRequestError
 from nexus.jobs.queue import (
     JobExecutionContext,
     JobRow,
@@ -63,6 +64,7 @@ from nexus.services.codex_generation_contract import (
 )
 from nexus.services.dawn_write import reconcile_uncertain_dawn_write_generation
 from nexus.services.durable_step_journal import (
+    AttachReconciledResult,
     Completed,
     Prepared,
     ProveNotDispatched,
@@ -594,8 +596,10 @@ def test_synapse_terminal_noop_cancels_a_retained_preaccept_start(
         clear_settings_cache()
 
 
+@pytest.mark.parametrize("step_path", ("synthesis", "document-repair"))
 def test_dossier_generation_non_dispatch_proof_requeues_the_same_build(
     engine: Engine,
+    step_path: Literal["synthesis", "document-repair"],
 ) -> None:
     user_id = uuid4()
     media_id = uuid4()
@@ -649,7 +653,6 @@ def test_dossier_generation_non_dispatch_proof_requeues_the_same_build(
             allowed_kinds=("dossier_build",),
         )
         assert claimed is not None
-        step_path = "synthesis"
         generation_id = stable_generation_id(build.id, step_path)
         command = _command(generation_id, operation="dossier_media")
         uncertain = StepReplayState(
@@ -688,6 +691,22 @@ def test_dossier_generation_non_dispatch_proof_requeues_the_same_build(
             == "dead"
         )
         db.commit()
+
+        with pytest.raises(
+            InvalidRequestError,
+            match="requires immutable original command facts",
+        ):
+            reconcile_uncertain_build(
+                db,
+                build_id=build.id,
+                resolution=AttachReconciledResult(
+                    terminal_result='{"kind":"Accepted","envelope_json":"{}"}'
+                ),
+            )
+        db.rollback()
+        unchanged = get_job(db, job.id)
+        assert unchanged is not None and unchanged.status == "dead"
+        assert read_step_states(unchanged)[step_path] == uncertain
 
         reconcile_uncertain_build(
             db,
