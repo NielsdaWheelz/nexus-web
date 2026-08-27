@@ -20,7 +20,7 @@ from nexus.services.artifacts.bindings._shared import (
 from nexus.services.artifacts.bindings.base import (
     DossierBindingBase,
     DossierOperation,
-    MaterializedDossier,
+    PublishableDossier,
 )
 from nexus.services.artifacts.coordination import DossierBuildRuntime
 from nexus.services.artifacts.dossier_types import (
@@ -131,7 +131,7 @@ class IdeaBinding(DossierBindingBase):
         collected: FrozenIdeaEvidence,  # noqa: ARG002
         decoded_output: BaseModel,
         witness: FrozenIdeaEvidence,
-    ) -> MaterializedDossier:
+    ) -> PublishableDossier:
         return materialize_standard(decoded_output, witness.candidates)
 
     def input_manifest(self, collected: FrozenIdeaEvidence) -> InputManifestV1:

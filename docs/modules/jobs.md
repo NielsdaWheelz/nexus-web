@@ -36,6 +36,10 @@ handler in a fresh bounded child through `jobs/process_executor.py`
 (`docs/cutovers/document-import-reliability-hard-cutover.md` §7): the supervisor keeps
 the claim, heartbeat, Heavy-capacity lease, wall timeout, and terminal transition, and
 never imports a parser, provider, or storage client.
+For a `SourceAttemptMedia` resource terminal it preserves the queue/lease fence,
+then delegates domain publication to the lightweight
+`services/source_attempt_failures.py` owner. The supervisor does not mutate
+source, Media, Podcast, transcript, quota, or collection tables itself.
 
 Child lifetime is bound to supervisor lifetime three ways, so an abrupt supervisor
 death cannot leave an orphan holding a live claim: a liveness pipe whose write end only
@@ -59,8 +63,9 @@ too, and the job is deliberately not settled, because the worker no longer owns 
 The registry is the source of truth mapping job kind → handler + policy. Each
 kind is a frozen `JobDefinition`:
 
-- `handler` — a thin `tasks/` wrapper that parses the payload and calls a
-  service.
+- `handler_path` — a thin `jobs/registry.py` adapter that hands the job's owned
+  values to a `tasks/` wrapper. Simple carrier fields are parsed at this raw
+  payload boundary; checkpoint-bearing tasks own their structured payload.
 - `max_attempts`, `retry_delays_seconds`, `lease_seconds` — the per-kind retry
   and lease policy.
 - `periodic_interval_seconds` — set only for scheduler-driven background or
@@ -74,6 +79,11 @@ kind is a frozen `JobDefinition`:
 `get_task_contract_digest()` is a stable SHA-256 fingerprint over the registry's
 kind/attempts/delays/lease policy. API `/version` and each worker heartbeat expose
 it for exact release proof. It changes only when that contract changes.
+
+`oracle_reading_generate` has one canonical producer and one exact payload:
+`{"reading_id": "<canonical-lowercase-uuid>"}`. Its registry adapter rejects
+missing, additional, coerced, padded, or noncanonical values and passes a typed
+`UUID` to the Oracle task. The task does not decode the durable carrier again.
 
 ### Lease policy by kind
 
@@ -249,26 +259,40 @@ decoder. Model, effort, capability, timeouts, and stream bounds come from
 journal, and `llm_calls` path.
 
 `dossier_build` is one generic kind for Media, Conversation, Library, Podcast,
-Contributor, Page, Note, and internal Idea subjects. Its binding registry
-selects collection, prompt, operation, coverage, and freshness policy.
-Research tools remain domain-owned journal steps and never become Codex
-built-ins; synthesis uses the fixed `Synthesis` capability. Stored binding metadata
-owns its BilledOnce replay policy, so an uncertain public-Web search is never
-automatically redispatched. Billed synthesis and document repair likewise stay
-suspended after uncertainty, while direct Nexus-search and page
-accept/readiness/read observations are ReDispatchable and pages awaiting ingest
-yield the worker. The artifact head is the database serialization point; the
-build is the replay identity. Build success, modeled failure, and cancellation
-are terminal children, while exhausted or unreconciled execution remains a
-visible, operator-repairable suspended build. Dead `dossier_build` rows are
-never pruned.
+Contributor, Page, Note, and internal Idea subjects. Its immutable registration
+selects one inseparable subject-policy and binding pair for collection, prompt,
+operation, coverage, freshness, identity, and authorization. The Idea binding
+receives one frozen HostTable operation whose sole grant is `web.search`; it
+never inherits Chat's MCP catalog. Research tools remain domain-owned journal
+steps and never become Codex built-ins; synthesis uses the fixed `Synthesis`
+capability. Stored binding metadata owns its `BilledOnce` replay policy, so an
+uncertain public-Web search is never automatically redispatched. Synthesis and
+document repair likewise stay suspended after uncertainty; the operator can
+prove either dispatch never
+occurred or attach a recovered schema-valid result, and both paths then requeue
+the same build without an automatic generation dispatch. Direct Nexus-search
+and page accept/readiness/read observations are `ReDispatchable`, and pages
+awaiting ingest yield the worker. The artifact head is the database
+serialization point; the build is the replay identity. Build success, modeled
+failure, and cancellation are terminal children, while exhausted or
+unreconciled execution remains a visible, operator-repairable suspended build.
+Dead `dossier_build` rows are never pruned.
 
 `services/durable_step_journal.py` owns the shared strict replay-state codec,
 stable step identity, lease-fenced queue-payload checkpoint, and durable
-execution-phase projection. `services/artifacts/coordination.py` now owns only
-the Dossier runtime capability and bounded research-yield behavior; Dossier,
-Media Intelligence, and page-read consumers import journal primitives directly
-from their shared owner.
+execution-phase projection. `services/artifacts/generation_step.py` owns the
+Dossier-specific generation request fingerprint, strict accepted/invalid result
+envelope, and exact `Prepared | Uncertain | Completed` application for both
+`synthesis` and `document-repair`. `services/artifacts/coordination.py` owns the
+Dossier runtime capability and bounded research-yield behavior. The engine owns
+the distinct streaming/cancellation and unary-repair transports; it does not
+reimplement their journal protocol. Each binding materializes one fully compiled
+`PublishableDossier`; `_DossierDocumentAcceptance` owns the single primary/repair
+acceptance phase and its document-versus-citation failure precedence, so
+`run_build` composes that phase instead of duplicating compilation branches.
+`services/artifacts/registry.py` is the sole eight-scheme composition owner; it
+constructs one cached immutable registration after module initialization, with
+no mutable policy mirror, package re-export, or lazy fallback lookup.
 
 `chat_run` uses that kernel for preparation, every generation/MCP tool turn,
 and final publication. Dead chat jobs are retained because their payload is the in-flight

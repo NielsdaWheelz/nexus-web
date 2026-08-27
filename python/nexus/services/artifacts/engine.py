@@ -29,7 +29,7 @@ from uuid import UUID, uuid4
 
 from llm_tools import ReplayPolicy as PortableReplayPolicy
 from llm_tools import ToolId
-from pydantic import BaseModel, ConfigDict, TypeAdapter
+from pydantic import BaseModel, TypeAdapter
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -52,21 +52,23 @@ from nexus.jobs.queue import (
     requeue_dead_job,
     revoke_jobs_by_dedupe_keys,
     running_job_claim_is_current,
-    update_running_job_payload,
 )
 from nexus.logging import get_logger
 from nexus.schemas.presence import Present, absent, present
 from nexus.services import durable_step_journal as step_journal
 from nexus.services import generation_policy, run_kit
 from nexus.services.artifacts import learn as learn_service
-from nexus.services.artifacts.bindings import BINDINGS, DossierBinding
 from nexus.services.artifacts.bindings._shared import (
     AggregateDependenciesPending,
     CitationValidationError,
     document_repair_system_prompt,
     document_repair_user_content,
 )
-from nexus.services.artifacts.bindings.base import DossierInputTooLarge, MaterializedDossier
+from nexus.services.artifacts.bindings.base import (
+    DossierBinding,
+    DossierInputTooLarge,
+    PublishableDossier,
+)
 from nexus.services.artifacts.coordination import (
     DossierBuildRuntime,
     DossierResearchPending,
@@ -75,7 +77,6 @@ from nexus.services.artifacts.coordination import (
 from nexus.services.artifacts.definition import DOSSIER_DEFINITION
 from nexus.services.artifacts.document_html import (
     DocumentHtmlError,
-    compile_learning_document,
 )
 from nexus.services.artifacts.dossier_types import (
     ArtifactBuildEventType,
@@ -100,22 +101,34 @@ from nexus.services.artifacts.dossier_types import (
     SubjectResource,
     SucceededEventPayload,
 )
+from nexus.services.artifacts.generation_step import (
+    DOCUMENT_REPAIR_STEP_PATH,
+    GENERATION_STEP_PATHS,
+    SYNTHESIS_STEP_PATH,
+    ArtifactGenerationCancelled,
+    ArtifactGenerationDispatchRequired,
+    ArtifactGenerationFailure,
+    ArtifactGenerationInputsChanged,
+    ArtifactGenerationInvalid,
+    ArtifactGenerationUncertain,
+    build_artifact_generation_step,
+)
 from nexus.services.artifacts.handles import seal_artifact_build
 from nexus.services.artifacts.idea_identity import InvalidIdeaText
 from nexus.services.artifacts.idea_seeds import (
     delete_artifact_idea_rows_before_head,
     delete_idea_subject_after_head,
-    delete_user_idea_rows_after_heads,
-    delete_user_learn_rows_before_heads,
     register_idea_seed,
 )
 from nexus.services.artifacts.manifests import InputManifestV1
+from nexus.services.artifacts.registry import (
+    dossier_registration,
+    visible_persisted_subject,
+)
 from nexus.services.artifacts.research import ResearchInputsChanged
 from nexus.services.artifacts.subject_policy import (
-    SUBJECT_POLICIES,
     ResolvedSubject,
     SubjectPolicy,
-    visible_persisted_subject,
 )
 from nexus.services.codex_generation_contract import (
     GenerationCommand,
@@ -133,7 +146,6 @@ from nexus.services.llm_execution import (
     GenerationExecutionRequest,
     GenerationJournal,
     GenerationUncertain,
-    JobGenerationJournal,
     cancel_prepared_generation_without_dispatch_in_current_transaction,
     execute_generation,
     prove_uncertain_generation_not_dispatched_in_current_transaction,
@@ -143,17 +155,13 @@ from nexus.services.llm_ledger import (
     lock_generation_owner_in_current_transaction,
 )
 from nexus.services.rate_limit import get_rate_limiter
-from nexus.services.resource_graph.citations import (
-    rehome_citations_for_output,
-    replace_citations_for_output,
-)
+from nexus.services.resource_graph.citations import replace_citations_for_output
 from nexus.services.resource_graph.refs import RESOURCE_SCHEMES, ResourceRef, ResourceScheme
 from nexus.services.resource_graph.schemas import CitationInput
 from nexus.services.structured_synthesis import (
     StructuredSynthesisError,
     build_synthesis_intent,
     decode_structured_synthesis,
-    outcome_failure_facts,
 )
 from nexus.services.tool_runtime.composition import compose_product_tool_runtime
 from nexus.services.tool_runtime.execution import reconcile_uncertain_tool_completion
@@ -176,9 +184,7 @@ __all__ = [
     "lock_cleanup_heads_in_order",
     "make_current",
     "on_audience_visibility_changed",
-    "on_subject_audience_removed",
     "on_subject_deleted",
-    "on_user_deleted",
     "read_head",
     "read_artifact_head",
     "reconcile_uncertain_build",
@@ -188,8 +194,6 @@ __all__ = [
 ]
 
 _MAX_INSTRUCTION_CHARS = 4000
-# The one generation step per build (single synthesis over the reduced inputs, B4).
-_STEP_PATH = "synthesis"
 _IDEA_RESOLUTION_STEP_PATH = "idea-resolution"
 _WEB_SEARCH_STEP_PATHS = frozenset(
     {
@@ -199,7 +203,6 @@ _WEB_SEARCH_STEP_PATHS = frozenset(
     }
 )
 _WEB_SEARCH_TOOL_ID = ToolId("web.search")
-_VISIBLE_SYNTHESIS_FIELD = "content_html"
 _CANCEL_POLL_INTERVAL_SECONDS = 0.25
 _MANIFEST_ADAPTER: TypeAdapter[InputManifestV1] = TypeAdapter(InputManifestV1)
 _FAILURE_CODE_READ_ADAPTER: TypeAdapter[ReadDossierBuildFailureCode] = TypeAdapter(
@@ -211,198 +214,6 @@ class _UncertainReplayDefect(RuntimeError):
     """An accepted generation step is ``Uncertain`` on replay and cannot be reconciled
     without owner-admissible terminal evidence — never auto-redispatched (A8).
     Defects for the operator; surfaces as Suspended."""
-
-
-class _SynthesisAccepted(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    kind: Literal["Accepted"] = "Accepted"
-    envelope_json: str
-
-
-class _SynthesisInvalid(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    kind: Literal["Invalid"] = "Invalid"
-    rejected_output: str
-    diagnostic: str
-
-
-class _SynthesisFailure(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    kind: Literal["Failure"] = "Failure"
-    code: DossierBuildFailureCode
-    detail: str | None = None
-
-
-class _SynthesisCancelled(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    kind: Literal["Cancelled"] = "Cancelled"
-
-
-type _SynthesisStepResult = (
-    _SynthesisAccepted | _SynthesisInvalid | _SynthesisFailure | _SynthesisCancelled
-)
-_SYNTHESIS_STEP_RESULT_ADAPTER: TypeAdapter[_SynthesisStepResult] = TypeAdapter(
-    _SynthesisStepResult
-)
-
-
-def _dossier_failure_code(code: NormalizedFailureCode) -> DossierBuildFailureCode:
-    if code == "defect":
-        raise AssertionError("a generation contract defect cannot become a dossier failure")
-    mapping: dict[NormalizedFailureCode, DossierBuildFailureCode] = {
-        "auth": DossierBuildFailureCode.Auth,
-        "quota": DossierBuildFailureCode.Quota,
-        "timeout": DossierBuildFailureCode.Timeout,
-        "output_limit": DossierBuildFailureCode.OutputLimit,
-        "invalid_output": DossierBuildFailureCode.InvalidOutput,
-        "policy_violation": DossierBuildFailureCode.PolicyViolation,
-        "runtime_unavailable": DossierBuildFailureCode.RuntimeUnavailable,
-        "capacity_unavailable": DossierBuildFailureCode.CapacityUnavailable,
-        "context_too_large": DossierBuildFailureCode.ContextTooLarge,
-    }
-    return mapping[code]
-
-
-def _generation_command(
-    *,
-    generation_id: UUID,
-    operation: str,
-    system_prompt: str,
-    user_content: str,
-    schema: type[BaseModel],
-) -> GenerationCommand:
-    return GenerationCommand.model_validate(
-        {
-            "request_id": generation_id,
-            "operation": {
-                "kind": operation,
-                "revision": generation_policy.operation_revision(operation),
-            },
-            "policy_revision": generation_policy.POLICY_REVISION,
-            "policy_fingerprint": generation_policy.POLICY_FINGERPRINT,
-            "intent": build_synthesis_intent(
-                system_prompt=system_prompt,
-                user_content=user_content,
-                schema=schema,
-            ),
-        }
-    )
-
-
-def _encode_dossier_terminal(
-    terminal: GenerationTerminal,
-    *,
-    binding: DossierBinding,
-    collected: object,
-    witness: object,
-) -> EncodedGenerationTerminal:
-    accepted_failure: AcceptedGenerationFailure | None = None
-    if terminal.status == "succeeded":
-        try:
-            decoded = decode_structured_synthesis(terminal, schema=binding.schema)
-            if not isinstance(getattr(decoded, _VISIBLE_SYNTHESIS_FIELD, None), str):
-                raise StructuredSynthesisError(
-                    f"dossier schema has no string {_VISIBLE_SYNTHESIS_FIELD!r} field"
-                )
-            materialized = binding.materialize(collected, decoded, witness)
-            compile_learning_document(
-                materialized.article,
-                materialized.citations,
-            )
-            if len(materialized.citations) < DOSSIER_DEFINITION.min_materialized_citations:
-                raise CitationValidationError("dossier output cited no offered evidence")
-        except CitationValidationError as exc:
-            result = _SynthesisFailure(
-                code=DossierBuildFailureCode.CitationValidationFailed,
-                detail=str(exc),
-            )
-            accepted_failure = AcceptedGenerationFailure(
-                code="invalid_output",
-                detail=str(exc),
-            )
-        except (DocumentHtmlError, StructuredSynthesisError) as exc:
-            result: _SynthesisStepResult = _SynthesisInvalid(
-                rejected_output=(
-                    json.dumps(
-                        terminal.structured_output,
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                    )
-                    if terminal.structured_output is not None
-                    else ""
-                ),
-                diagnostic=str(exc),
-            )
-            accepted_failure = AcceptedGenerationFailure(
-                code="invalid_output",
-                detail=str(exc),
-            )
-        else:
-            result = _SynthesisAccepted(envelope_json=decoded.model_dump_json())
-    elif terminal.status == "cancelled":
-        result = _SynthesisCancelled()
-    else:
-        code, detail = outcome_failure_facts(terminal)
-        normalized = cast(NormalizedFailureCode, code)
-        if normalized == "invalid_output":
-            result = _SynthesisInvalid(
-                rejected_output="",
-                diagnostic=detail or "host returned an invalid structured envelope",
-            )
-        else:
-            result = _SynthesisFailure(
-                code=_dossier_failure_code(normalized),
-                detail=detail,
-            )
-    return EncodedGenerationTerminal(
-        terminal_result=result.model_dump_json(),
-        accepted_failure=accepted_failure,
-    )
-
-
-def _encode_dossier_preaccept_failure(
-    code: NormalizedFailureCode,
-    detail: str,
-) -> str:
-    return _SynthesisFailure(
-        code=_dossier_failure_code(code),
-        detail=detail,
-    ).model_dump_json()
-
-
-def _capacity_wait_index(job: JobRow) -> int:
-    value = job.payload.get("capacity_wait_index")
-    if type(value) is not int or value < 0:
-        raise AssertionError("dossier job has an invalid capacity_wait_index")
-    return value
-
-
-def _reset_capacity_wait(
-    db: Session,
-    *,
-    ctx: JobExecutionContext,
-) -> JobRow | None:
-    job = get_job(db, ctx.job_id)
-    if job is None:
-        return None
-    if job.payload.get("capacity_wait_index") == 0:
-        db.commit()
-        return job
-    if not update_running_job_payload(
-        db,
-        job_id=ctx.job_id,
-        worker_id=ctx.worker_id,
-        attempt_no=ctx.attempt_no,
-        payload={**job.payload, "capacity_wait_index": 0},
-    ):
-        db.rollback()
-        return None
-    db.commit()
-    return get_job(db, ctx.job_id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -448,8 +259,9 @@ def reconcile_uncertain_build(
         head = _head_row(db, head_id)
         if head is None:
             raise BuildNotActive()
-        if BINDINGS.get(head.subject_scheme) is None:
-            raise AssertionError(f"no binding for subject scheme {head.subject_scheme!r}")
+        registration = dossier_registration(head.subject_scheme)
+        if registration is None:
+            raise AssertionError(f"no registration for subject scheme {head.subject_scheme!r}")
         row = (
             db.execute(
                 text(
@@ -482,9 +294,9 @@ def reconcile_uncertain_build(
             raise AssertionError("Dossier build has multiple uncertain external steps")
         step_path, state = uncertain_states[0]
         is_tool_execution = isinstance(state.tool_execution, Present)
-        if step_path in {_STEP_PATH, "document-repair"}:
+        if step_path in GENERATION_STEP_PATHS:
             if is_tool_execution:
-                raise AssertionError("uncertain Dossier synthesis contains tool metadata")
+                raise AssertionError("uncertain Dossier generation contains tool metadata")
         elif step_path in _WEB_SEARCH_STEP_PATHS:
             if not is_tool_execution:
                 raise AssertionError("uncertain Dossier Web position lacks bound tool metadata")
@@ -1243,6 +1055,33 @@ def _encode_idea_resolution_preaccept_failure(
     return _unresolved_idea_envelope().model_dump_json()
 
 
+def _idea_resolution_command(
+    *,
+    generation_id: UUID,
+    system_prompt: str,
+    user_content: str,
+) -> GenerationCommand:
+    """Build the request-scoped resolver's sole policy-owned Codex command."""
+
+    operation = "dossier_idea_resolve"
+    return GenerationCommand.model_validate(
+        {
+            "request_id": generation_id,
+            "operation": {
+                "kind": operation,
+                "revision": generation_policy.operation_revision(operation),
+            },
+            "policy_revision": generation_policy.POLICY_REVISION,
+            "policy_fingerprint": generation_policy.POLICY_FINGERPRINT,
+            "intent": build_synthesis_intent(
+                system_prompt=system_prompt,
+                user_content=user_content,
+                schema=learn_service.IdeaResolverEnvelope,
+            ),
+        }
+    )
+
+
 def reconcile_uncertain_idea_resolution(
     db: Session,
     *,
@@ -1341,12 +1180,10 @@ async def _run_idea_resolution_step(
         request.request_id,
         _IDEA_RESOLUTION_STEP_PATH,
     )
-    command = _generation_command(
+    command = _idea_resolution_command(
         generation_id=generation_id,
-        operation="dossier_idea_resolve",
         system_prompt=system_prompt,
         user_content=user_content,
-        schema=learn_service.IdeaResolverEnvelope,
     )
     fingerprint = request_fingerprint(command)
     state = _learn_step_state(request)
@@ -1713,6 +1550,79 @@ def _build_ticket_for_idempotency(
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True, slots=True)
+class _DossierDocumentAcceptance:
+    db: Session
+    build_id: UUID
+    binding: DossierBinding
+    collected: object
+    instruction: str | None
+    runtime: DossierBuildRuntime
+    witness: object
+    input_recheck: _TerminalInputRecheck
+
+    async def accept(
+        self,
+        decoded: BaseModel | ArtifactGenerationInvalid,
+    ) -> PublishableDossier | RescheduleRequested | None:
+        if isinstance(decoded, ArtifactGenerationInvalid):
+            rejected_output = decoded.rejected_output
+            diagnostic = decoded.diagnostic
+        else:
+            rejected_output = decoded.model_dump_json()
+            try:
+                return self.binding.materialize(self.collected, decoded, self.witness)
+            except DocumentHtmlError as exc:
+                diagnostic = str(exc)
+            except CitationValidationError as exc:
+                self._terminalize(DossierBuildFailureCode.CitationValidationFailed, str(exc))
+                return None
+
+        repaired = await _run_document_repair_step(
+            self.db,
+            build_id=self.build_id,
+            binding=self.binding,
+            collected=self.collected,
+            instruction=self.instruction,
+            runtime=self.runtime,
+            rejected_output=rejected_output,
+            diagnostic=diagnostic,
+            input_recheck=self.input_recheck,
+        )
+        if isinstance(repaired, RescheduleRequested):
+            return repaired
+        if repaired is None:
+            return None
+        if isinstance(repaired, ArtifactGenerationInvalid):
+            self._terminalize(
+                DossierBuildFailureCode.DocumentValidationFailed,
+                repaired.diagnostic,
+            )
+            return None
+        try:
+            return self.binding.materialize(self.collected, repaired, self.witness)
+        except (DocumentHtmlError, CitationValidationError) as exc:
+            code = (
+                DossierBuildFailureCode.CitationValidationFailed
+                if isinstance(exc, CitationValidationError)
+                else DossierBuildFailureCode.DocumentValidationFailed
+            )
+            self._terminalize(code, str(exc))
+            return None
+
+    def _terminalize(self, code: DossierBuildFailureCode, detail: str) -> None:
+        self.db.commit()
+        _terminal_failure(
+            self.db,
+            build_id=self.build_id,
+            code=code,
+            detail=detail,
+            support=None,
+            ctx=self.runtime.execution_context,
+            input_recheck=self.input_recheck,
+        )
+
+
 async def run_build(
     db: Session,
     *,
@@ -1742,12 +1652,13 @@ async def run_build(
         or str(job.payload.get("build_id")) != str(build_id)
     ):
         raise AssertionError(f"job {job.id} does not own dossier build {build_id}")
-    policy = SUBJECT_POLICIES.get(head.subject_scheme)
-    binding = BINDINGS.get(head.subject_scheme)
-    if policy is None or binding is None:
-        # justify-defect: a persisted build whose subject scheme is not wired to a
-        # policy + binding is an integrator misconfiguration, not a runtime state.
-        raise AssertionError(f"no policy/binding for subject scheme {head.subject_scheme!r}")
+    registration = dossier_registration(head.subject_scheme)
+    if registration is None:
+        # justify-defect: a persisted build whose subject scheme is not wired is
+        # an integrator misconfiguration, not a runtime state.
+        raise AssertionError(f"no registration for subject scheme {head.subject_scheme!r}")
+    policy = registration.policy
+    binding = registration.binding
     # Capture plain values before any commit expires the ORM object.
     requester_user_id = build.requester_user_id
     instruction = build.instruction
@@ -1870,13 +1781,11 @@ async def run_build(
         )
         decoded = await _run_synthesis_step(
             db,
-            ctx=ctx,
-            job=runtime.job,
             build_id=build_id,
             instruction=instruction,
             binding=binding,
             collected=collected,
-            runtime=runtime.llm_runtime,
+            runtime=runtime,
             input_recheck=input_recheck,
         )
         if isinstance(decoded, RescheduleRequested):
@@ -1884,103 +1793,21 @@ async def run_build(
         if decoded is None:
             return  # the step already terminalized the build (failure) or lost its lease
 
-        rejected_output = ""
-        document_diagnostic: str | None = None
-        materialized: MaterializedDossier | None = None
-        compiled = None
-        if isinstance(decoded, _SynthesisInvalid):
-            rejected_output = decoded.rejected_output
-            document_diagnostic = decoded.diagnostic
-        else:
-            rejected_output = decoded.model_dump_json()
-            try:
-                materialized = binding.materialize(collected, decoded, witness)
-                compiled = compile_learning_document(
-                    materialized.article,
-                    materialized.citations,
-                )
-            except DocumentHtmlError as exc:
-                document_diagnostic = str(exc)
-            except CitationValidationError as exc:
-                db.commit()
-                _terminal_failure(
-                    db,
-                    build_id=build_id,
-                    code=DossierBuildFailureCode.CitationValidationFailed,
-                    detail=str(exc),
-                    support=None,
-                    ctx=ctx,
-                    input_recheck=input_recheck,
-                )
-                return
-
-        if document_diagnostic is not None:
-            repair_job = _reset_capacity_wait(db, ctx=ctx)
-            if repair_job is None:
-                return None
-            repaired = await _run_document_repair_step(
-                db,
-                ctx=ctx,
-                job=repair_job,
-                build_id=build_id,
-                binding=binding,
-                collected=collected,
-                instruction=instruction,
-                runtime=runtime.llm_runtime,
-                rejected_output=rejected_output,
-                diagnostic=document_diagnostic,
-                input_recheck=input_recheck,
-            )
-            if isinstance(repaired, RescheduleRequested):
-                return repaired
-            if repaired is None:
-                return
-            if isinstance(repaired, _SynthesisInvalid):
-                db.commit()
-                _terminal_failure(
-                    db,
-                    build_id=build_id,
-                    code=DossierBuildFailureCode.DocumentValidationFailed,
-                    detail=repaired.diagnostic,
-                    support=None,
-                    ctx=ctx,
-                    input_recheck=input_recheck,
-                )
-                return
-            try:
-                materialized = binding.materialize(collected, repaired, witness)
-                compiled = compile_learning_document(
-                    materialized.article,
-                    materialized.citations,
-                )
-            except DocumentHtmlError as exc:
-                db.commit()
-                _terminal_failure(
-                    db,
-                    build_id=build_id,
-                    code=DossierBuildFailureCode.DocumentValidationFailed,
-                    detail=str(exc),
-                    support=None,
-                    ctx=ctx,
-                    input_recheck=input_recheck,
-                )
-                return
-            except CitationValidationError as exc:
-                db.commit()
-                _terminal_failure(
-                    db,
-                    build_id=build_id,
-                    code=DossierBuildFailureCode.CitationValidationFailed,
-                    detail=str(exc),
-                    support=None,
-                    ctx=ctx,
-                    input_recheck=input_recheck,
-                )
-                return
-
-        if materialized is None or compiled is None:
-            raise AssertionError("accepted Dossier output was not compiled")
-        citations = materialized.citations
+        document = await _DossierDocumentAcceptance(
+            db=db,
+            build_id=build_id,
+            binding=binding,
+            collected=collected,
+            instruction=instruction,
+            runtime=runtime,
+            witness=witness,
+            input_recheck=input_recheck,
+        ).accept(decoded)
+        if isinstance(document, RescheduleRequested):
+            return document
+        if document is None:
+            return
+        citations = document.citations
         if len(citations) < DOSSIER_DEFINITION.min_materialized_citations:
             raise AssertionError("strict citation materializer accepted too few citations")
         manifest = binding.input_manifest(collected)
@@ -1993,8 +1820,8 @@ async def run_build(
             audience=audience,
             policy=policy,
             binding=binding,
-            content_html=compiled.content_html,
-            content_text=compiled.content_text,
+            content_html=document.content_html,
+            content_text=document.content_text,
             citations=citations,
             manifest=manifest,
             witness=witness,
@@ -2009,116 +1836,54 @@ async def run_build(
 async def _run_synthesis_step(
     db: Session,
     *,
-    ctx: JobExecutionContext,
-    job: JobRow,
     build_id: UUID,
     instruction: str | None,
     binding: DossierBinding,
     collected: object,
-    runtime: ExecutionRuntime,
+    runtime: DossierBuildRuntime,
     input_recheck: _TerminalInputRecheck,
-) -> BaseModel | _SynthesisInvalid | RescheduleRequested | None:
-    """Run (or replay) the single coordinated generation step and return the decoded
-    output. Returns ``None`` when the step wrote a terminal failure or lost its
-    lease (the caller returns). Raises a defect on an uncertain-replay."""
-    gen_id = step_journal.stable_generation_id(build_id, _STEP_PATH)
-    user_content = binding.build_user_content(collected, instruction)
-    command = _generation_command(
-        generation_id=gen_id,
-        operation=binding.llm_operation,
+) -> BaseModel | ArtifactGenerationInvalid | RescheduleRequested | None:
+    """Run or replay the one tool-free synthesis generation."""
+
+    ctx = runtime.execution_context
+    step = build_artifact_generation_step(
+        path=SYNTHESIS_STEP_PATH,
+        build_id=build_id,
+        binding=binding,
+        collected=collected,
+        witness=input_recheck.witness,
         system_prompt=binding.system_prompt,
-        user_content=user_content,
-        schema=binding.schema,
+        user_content=binding.build_user_content(collected, instruction),
     )
-    fingerprint = request_fingerprint(command)
-    states = step_journal.read_step_states(job)
-    st = states.get(_STEP_PATH)
-    if st is not None:
-        if st.generation_id != gen_id:
-            raise AssertionError("dossier synthesis replay generation identity changed")
-        if not isinstance(st.request_fingerprint, Present):
-            raise AssertionError(f"{st.dispatch_phase} synthesis step has no request fingerprint")
-        if st.request_fingerprint.value != fingerprint:
-            _terminal_failure(
-                db,
-                build_id=build_id,
-                code=DossierBuildFailureCode.InputsChanged,
-                detail="inputs changed since the generation request was prepared",
-                support=None,
-                ctx=ctx,
-                input_recheck=input_recheck,
-            )
-            return None
-        if st.dispatch_phase in (step_journal.Prepared, step_journal.Uncertain) and isinstance(
-            st.terminal_result, Present
-        ):
-            raise AssertionError(
-                f"{st.dispatch_phase} synthesis step already has a terminal result"
-            )
-    if st is not None and st.dispatch_phase is step_journal.Completed:
-        if not isinstance(st.terminal_result, Present):
-            # justify-defect: a Completed step must carry its memoized result.
-            raise AssertionError("Completed synthesis step has no memoized result")
-        stored = _SYNTHESIS_STEP_RESULT_ADAPTER.validate_json(st.terminal_result.value)
-        if isinstance(stored, _SynthesisInvalid):
-            return stored
-        if isinstance(stored, _SynthesisFailure):
-            _terminal_failure(
-                db,
-                build_id=build_id,
-                code=stored.code,
-                detail=stored.detail,
-                support=None,
-                ctx=ctx,
-                input_recheck=input_recheck,
-            )
-            return None
-        if isinstance(stored, _SynthesisCancelled):
-            _terminal_failure(
-                db,
-                build_id=build_id,
-                code=DossierBuildFailureCode.RuntimeUnavailable,
-                detail="generation was cancelled before a domain terminal existed",
-                support=None,
-                ctx=ctx,
-                input_recheck=input_recheck,
-            )
-            return None
-        return binding.schema.model_validate_json(stored.envelope_json)
-    if st is not None and st.dispatch_phase is step_journal.Uncertain:
-        raise _UncertainReplayDefect(f"build {build_id} synthesis step is uncertain on replay")
-
-    # Prepared / absent: commit Uncertain immediately before the network dispatch.
-    prepared = step_journal.StepReplayState(
-        generation_id=gen_id,
-        dispatch_phase=step_journal.Prepared,
-        request_fingerprint=present(fingerprint),
-        terminal_result=absent(),
-    )
-    if st is None:
-        if not _attempt_can_write(db, build_id=build_id, ctx=ctx):
-            db.rollback()
-            return None
-        if not step_journal.checkpoint_step_state(
+    try:
+        replay = step.replay(runtime)
+    except ArtifactGenerationInputsChanged:
+        _terminal_failure(
             db,
+            build_id=build_id,
+            code=DossierBuildFailureCode.InputsChanged,
+            detail="inputs changed since the generation request was prepared",
+            support=None,
             ctx=ctx,
-            job=job,
-            step_path=_STEP_PATH,
-            state=prepared,
-        ):
-            db.rollback()
-            return None
-        db.commit()
-        refreshed_job = get_job(db, ctx.job_id)
-        if refreshed_job is None:
-            return None
-        job = refreshed_job
-    elif st.dispatch_phase is step_journal.Prepared:
-        pass
-    else:
-        raise AssertionError(f"unknown synthesis dispatch phase {st.dispatch_phase!r}")
+            input_recheck=input_recheck,
+        )
+        return None
+    except ArtifactGenerationUncertain as error:
+        raise _UncertainReplayDefect(str(error)) from error
+    if not isinstance(replay, ArtifactGenerationDispatchRequired):
+        return _consume_artifact_generation_result(
+            db,
+            build_id=build_id,
+            result=replay,
+            ctx=ctx,
+            input_recheck=input_recheck,
+        )
+    if not _attempt_can_write(db, build_id=build_id, ctx=ctx):
+        db.rollback()
+        return None
+    if not step.ensure_prepared(db, runtime):
+        return None
 
-    guard = _StreamGuard(cancel_signal=asyncio.Event())
     progress_result = _append_guarded_stream_event(
         db,
         build_id=build_id,
@@ -2143,71 +1908,39 @@ async def _run_synthesis_step(
         )
         return None
     if progress_result == "inactive":
-        _terminal_failure(
-            db,
+        return None
+
+    guard = _StreamGuard(cancel_signal=asyncio.Event())
+
+    def lock_dispatch(dispatch_db: Session) -> JobRow | None:
+        return _lock_artifact_generation_dispatch(
+            dispatch_db,
             build_id=build_id,
-            code=DossierBuildFailureCode.InputsChanged,
-            detail="generation owner became inactive before host acceptance",
-            support=None,
             ctx=ctx,
             input_recheck=input_recheck,
         )
-        return None
 
-    def lock_dispatch(dispatch_db: Session) -> JobRow | None:
-        if _lock_head_id_for_build(dispatch_db, build_id) is None:
-            return None
-        if _existing_terminal_child(dispatch_db, build_id) is not None:
-            return None
-        if not _stream_visibility_is_current(dispatch_db, input_recheck):
-            return None
-        locked_job = lock_job(dispatch_db, ctx.job_id)
-        if (
-            locked_job is None
-            or locked_job.kind != DOSSIER_DEFINITION.job_kind
-            or locked_job.dedupe_key != _dispatch_key(build_id)
-            or locked_job.payload.get("build_id") != str(build_id)
-        ):
-            return None
-        return locked_job
-
-    try:
-        cancel_watcher = asyncio.create_task(
-            _watch_stream_guard(
-                build_id=build_id,
-                ctx=ctx,
-                input_recheck=input_recheck,
-                guard=guard,
-            )
+    watcher = asyncio.create_task(
+        _watch_stream_guard(
+            build_id=build_id,
+            ctx=ctx,
+            input_recheck=input_recheck,
+            guard=guard,
         )
-        try:
-            execution_result = await execute_generation(
-                GenerationExecutionRequest(
-                    owner=LlmCallOwner(kind="artifact_build", id=build_id),
-                    command=command,
-                    journal=JobGenerationJournal(
-                        context=ctx,
-                        step_path=_STEP_PATH,
-                        capacity_wait_index=_capacity_wait_index(job),
-                        lock_dispatch=lock_dispatch,
-                    ),
-                    capacity_wait_index=_capacity_wait_index(job),
-                    streaming=True,
-                ),
-                session_factory=get_session_factory(),
-                runtime=runtime,
-                encode_terminal=lambda terminal: _encode_dossier_terminal(
-                    terminal,
-                    binding=binding,
-                    collected=collected,
-                    witness=input_recheck.witness,
-                ),
-                encode_preaccept_failure=_encode_dossier_preaccept_failure,
-                cancel_signal=cast(CancellationSignal, guard.cancel_signal),
-            )
-        finally:
-            cancel_watcher.cancel()
-            await asyncio.gather(cancel_watcher, return_exceptions=True)
+    )
+    try:
+        execution_result = await execute_generation(
+            step.execution_request(
+                runtime,
+                lock_dispatch=lock_dispatch,
+                streaming=True,
+            ),
+            session_factory=get_session_factory(),
+            runtime=runtime.llm_runtime,
+            encode_terminal=step.encode_terminal,
+            encode_preaccept_failure=step.encode_preaccept_failure,
+            cancel_signal=cast(CancellationSignal, guard.cancel_signal),
+        )
     except GenerationDispatchAborted:
         _terminal_failure(
             db,
@@ -2219,15 +1952,16 @@ async def _run_synthesis_step(
             input_recheck=input_recheck,
         )
         return None
-    except GenerationUncertain as exc:
-        raise _UncertainReplayDefect(str(exc)) from exc
+    except GenerationUncertain as error:
+        raise _UncertainReplayDefect(str(error)) from error
+    finally:
+        watcher.cancel()
+        await asyncio.gather(watcher, return_exceptions=True)
 
     if isinstance(execution_result, RescheduleRequested):
         return execution_result
     if not isinstance(execution_result, CompletedGeneration):
         raise AssertionError("dossier generation result is not exhaustive")
-    stored = _SYNTHESIS_STEP_RESULT_ADAPTER.validate_json(execution_result.terminal_result)
-
     if guard.stop_reason == "inputs_changed":
         _terminal_failure(
             db,
@@ -2241,145 +1975,74 @@ async def _run_synthesis_step(
         return None
     if guard.stop_reason == "inactive":
         return None
-    if isinstance(stored, _SynthesisFailure):
-        _terminal_failure(
-            db,
-            build_id=build_id,
-            code=stored.code,
-            detail=stored.detail,
-            support=None,
-            ctx=ctx,
-            input_recheck=input_recheck,
-        )
-        return None
-    if isinstance(stored, _SynthesisCancelled):
-        _terminal_failure(
-            db,
-            build_id=build_id,
-            code=DossierBuildFailureCode.RuntimeUnavailable,
-            detail="generation was cancelled without a domain cancellation",
-            support=None,
-            ctx=ctx,
-            input_recheck=input_recheck,
-        )
-        return None
-    if isinstance(stored, _SynthesisInvalid):
-        return stored
-    return binding.schema.model_validate_json(stored.envelope_json)
+    return _consume_artifact_generation_result(
+        db,
+        build_id=build_id,
+        result=step.decode_result(execution_result.terminal_result),
+        ctx=ctx,
+        input_recheck=input_recheck,
+    )
 
 
 async def _run_document_repair_step(
     db: Session,
     *,
-    ctx: JobExecutionContext,
-    job: JobRow,
     build_id: UUID,
     binding: DossierBinding,
     collected: object,
     instruction: str | None,
-    runtime: ExecutionRuntime,
+    runtime: DossierBuildRuntime,
     rejected_output: str,
     diagnostic: str,
     input_recheck: _TerminalInputRecheck,
-) -> BaseModel | _SynthesisInvalid | RescheduleRequested | None:
-    """Run the one replay-safe, tool-free document repair attempt."""
-    path = "document-repair"
-    generation_id = step_journal.stable_generation_id(build_id, path)
+) -> BaseModel | ArtifactGenerationInvalid | RescheduleRequested | None:
+    """Run or replay the one tool-free document-repair generation."""
+
+    ctx = runtime.execution_context
     original_user_content = binding.build_user_content(collected, instruction)
-    system_prompt = document_repair_system_prompt(binding.system_prompt)
-    user_content = document_repair_user_content(
-        original_user_content=original_user_content,
-        rejected_output=rejected_output,
-        diagnostic=diagnostic,
+    step = build_artifact_generation_step(
+        path=DOCUMENT_REPAIR_STEP_PATH,
+        build_id=build_id,
+        binding=binding,
+        collected=collected,
+        witness=input_recheck.witness,
+        system_prompt=document_repair_system_prompt(binding.system_prompt),
+        user_content=document_repair_user_content(
+            original_user_content=original_user_content,
+            rejected_output=rejected_output,
+            diagnostic=diagnostic,
+        ),
     )
-    command = _generation_command(
-        generation_id=generation_id,
-        operation=binding.llm_operation,
-        system_prompt=system_prompt,
-        user_content=user_content,
-        schema=binding.schema,
-    )
-    fingerprint = request_fingerprint(command)
-    state = step_journal.read_step_states(job).get(path)
-    if state is not None:
-        if state.generation_id != generation_id:
-            raise AssertionError("document-repair generation identity changed")
-        if (
-            not isinstance(state.request_fingerprint, Present)
-            or state.request_fingerprint.value != fingerprint
-        ):
-            _terminal_failure(
-                db,
-                build_id=build_id,
-                code=DossierBuildFailureCode.InputsChanged,
-                detail="inputs changed since document repair was prepared",
-                support=None,
-                ctx=ctx,
-                input_recheck=input_recheck,
-            )
-            return None
-        if state.dispatch_phase is step_journal.Completed:
-            if not isinstance(state.terminal_result, Present):
-                raise AssertionError("completed document-repair step has no result")
-            stored = _SYNTHESIS_STEP_RESULT_ADAPTER.validate_json(state.terminal_result.value)
-            if isinstance(stored, _SynthesisInvalid):
-                return stored
-            if isinstance(stored, _SynthesisFailure):
-                _terminal_failure(
-                    db,
-                    build_id=build_id,
-                    code=stored.code,
-                    detail=stored.detail,
-                    support=None,
-                    ctx=ctx,
-                    input_recheck=input_recheck,
-                )
-                return None
-            if isinstance(stored, _SynthesisCancelled):
-                _terminal_failure(
-                    db,
-                    build_id=build_id,
-                    code=DossierBuildFailureCode.RuntimeUnavailable,
-                    detail="document repair generation was cancelled",
-                    support=None,
-                    ctx=ctx,
-                    input_recheck=input_recheck,
-                )
-                return None
-            return binding.schema.model_validate_json(stored.envelope_json)
-        if state.dispatch_phase is step_journal.Uncertain:
-            raise _UncertainReplayDefect(
-                f"build {build_id} document-repair step is uncertain on replay"
-            )
-
-    prepared = step_journal.StepReplayState(
-        generation_id=generation_id,
-        dispatch_phase=step_journal.Prepared,
-        request_fingerprint=present(fingerprint),
-        terminal_result=absent(),
-    )
-    if state is None:
-        if not _attempt_can_write(db, build_id=build_id, ctx=ctx):
-            db.rollback()
-            return None
-        if not step_journal.checkpoint_step_state(
+    try:
+        replay = step.replay(runtime)
+    except ArtifactGenerationInputsChanged:
+        _terminal_failure(
             db,
+            build_id=build_id,
+            code=DossierBuildFailureCode.InputsChanged,
+            detail="inputs changed since document repair was prepared",
+            support=None,
             ctx=ctx,
-            job=job,
-            step_path=path,
-            state=prepared,
-        ):
-            db.rollback()
-            return None
-        db.commit()
-        refreshed_job = get_job(db, ctx.job_id)
-        if refreshed_job is None:
-            return None
-        job = refreshed_job
-    elif state.dispatch_phase is not step_journal.Prepared:
-        raise AssertionError(f"unexpected document-repair phase {state.dispatch_phase!r}")
+            input_recheck=input_recheck,
+        )
+        return None
+    except ArtifactGenerationUncertain as error:
+        raise _UncertainReplayDefect(str(error)) from error
+    if not isinstance(replay, ArtifactGenerationDispatchRequired):
+        return _consume_artifact_generation_result(
+            db,
+            build_id=build_id,
+            result=replay,
+            ctx=ctx,
+            input_recheck=input_recheck,
+        )
+    if not _attempt_can_write(db, build_id=build_id, ctx=ctx):
+        db.rollback()
+        return None
+    if not step.ensure_prepared(db, runtime):
+        return None
 
-    progress = _append_guarded_stream_event(
+    progress_result = _append_guarded_stream_event(
         db,
         build_id=build_id,
         ctx=ctx,
@@ -2391,7 +2054,7 @@ async def _run_document_repair_step(
         ).model_dump(mode="json"),
         idempotent_once=False,
     )
-    if progress == "inputs_changed":
+    if progress_result == "inputs_changed":
         _terminal_failure(
             db,
             build_id=build_id,
@@ -2402,57 +2065,39 @@ async def _run_document_repair_step(
             input_recheck=input_recheck,
         )
         return None
-    if progress == "inactive":
-        _terminal_failure(
-            db,
+    if progress_result == "inactive":
+        return None
+
+    guard = _StreamGuard(cancel_signal=asyncio.Event())
+
+    def lock_dispatch(dispatch_db: Session) -> JobRow | None:
+        return _lock_artifact_generation_dispatch(
+            dispatch_db,
             build_id=build_id,
-            code=DossierBuildFailureCode.InputsChanged,
-            detail="document repair owner became inactive before host acceptance",
-            support=None,
             ctx=ctx,
             input_recheck=input_recheck,
         )
-        return None
 
-    def lock_dispatch(dispatch_db: Session) -> JobRow | None:
-        if _lock_head_id_for_build(dispatch_db, build_id) is None:
-            return None
-        if _existing_terminal_child(dispatch_db, build_id) is not None:
-            return None
-        if not _stream_visibility_is_current(dispatch_db, input_recheck):
-            return None
-        locked_job = lock_job(dispatch_db, ctx.job_id)
-        if (
-            locked_job is None
-            or locked_job.kind != DOSSIER_DEFINITION.job_kind
-            or locked_job.dedupe_key != _dispatch_key(build_id)
-            or locked_job.payload.get("build_id") != str(build_id)
-        ):
-            return None
-        return locked_job
-
+    watcher = asyncio.create_task(
+        _watch_stream_guard(
+            build_id=build_id,
+            ctx=ctx,
+            input_recheck=input_recheck,
+            guard=guard,
+        )
+    )
     try:
         execution_result = await execute_generation(
-            GenerationExecutionRequest(
-                owner=LlmCallOwner(kind="artifact_build", id=build_id),
-                command=command,
-                journal=JobGenerationJournal(
-                    context=ctx,
-                    step_path=path,
-                    capacity_wait_index=_capacity_wait_index(job),
-                    lock_dispatch=lock_dispatch,
-                ),
-                capacity_wait_index=_capacity_wait_index(job),
+            step.execution_request(
+                runtime,
+                lock_dispatch=lock_dispatch,
+                streaming=False,
             ),
             session_factory=get_session_factory(),
-            runtime=runtime,
-            encode_terminal=lambda terminal: _encode_dossier_terminal(
-                terminal,
-                binding=binding,
-                collected=collected,
-                witness=input_recheck.witness,
-            ),
-            encode_preaccept_failure=_encode_dossier_preaccept_failure,
+            runtime=runtime.llm_runtime,
+            encode_terminal=step.encode_terminal,
+            encode_preaccept_failure=step.encode_preaccept_failure,
+            cancel_signal=cast(CancellationSignal, guard.cancel_signal),
         )
     except GenerationDispatchAborted:
         _terminal_failure(
@@ -2465,15 +2110,75 @@ async def _run_document_repair_step(
             input_recheck=input_recheck,
         )
         return None
-    except GenerationUncertain as exc:
-        raise _UncertainReplayDefect(str(exc)) from exc
+    except GenerationUncertain as error:
+        raise _UncertainReplayDefect(str(error)) from error
+    finally:
+        watcher.cancel()
+        await asyncio.gather(watcher, return_exceptions=True)
 
     if isinstance(execution_result, RescheduleRequested):
         return execution_result
     if not isinstance(execution_result, CompletedGeneration):
         raise AssertionError("dossier repair generation result is not exhaustive")
-    result = _SYNTHESIS_STEP_RESULT_ADAPTER.validate_json(execution_result.terminal_result)
-    if isinstance(result, _SynthesisFailure):
+    if guard.stop_reason == "inputs_changed":
+        _terminal_failure(
+            db,
+            build_id=build_id,
+            code=DossierBuildFailureCode.InputsChanged,
+            detail="inputs changed during document repair",
+            support=None,
+            ctx=ctx,
+            input_recheck=input_recheck,
+        )
+        return None
+    if guard.stop_reason == "inactive":
+        return None
+    return _consume_artifact_generation_result(
+        db,
+        build_id=build_id,
+        result=step.decode_result(execution_result.terminal_result),
+        ctx=ctx,
+        input_recheck=input_recheck,
+    )
+
+
+def _lock_artifact_generation_dispatch(
+    db: Session,
+    *,
+    build_id: UUID,
+    ctx: JobExecutionContext,
+    input_recheck: _TerminalInputRecheck,
+) -> JobRow | None:
+    """Lock and revalidate the exact active owner immediately before dispatch."""
+
+    if _lock_head_id_for_build(db, build_id) is None:
+        return None
+    if _existing_terminal_child(db, build_id) is not None:
+        return None
+    if not _stream_visibility_is_current(db, input_recheck):
+        return None
+    job = lock_job(db, ctx.job_id)
+    if (
+        job is None
+        or job.kind != DOSSIER_DEFINITION.job_kind
+        or job.dedupe_key != _dispatch_key(build_id)
+        or job.payload.get("build_id") != str(build_id)
+    ):
+        return None
+    return job
+
+
+def _consume_artifact_generation_result(
+    db: Session,
+    *,
+    build_id: UUID,
+    result: BaseModel | ArtifactGenerationInvalid | ArtifactGenerationFailure | ArtifactGenerationCancelled,
+    ctx: JobExecutionContext,
+    input_recheck: _TerminalInputRecheck,
+) -> BaseModel | ArtifactGenerationInvalid | None:
+    """Apply the closed generation result without duplicating document acceptance."""
+
+    if isinstance(result, ArtifactGenerationFailure):
         _terminal_failure(
             db,
             build_id=build_id,
@@ -2484,22 +2189,18 @@ async def _run_document_repair_step(
             input_recheck=input_recheck,
         )
         return None
-    if isinstance(result, _SynthesisCancelled):
+    if isinstance(result, ArtifactGenerationCancelled):
         _terminal_failure(
             db,
             build_id=build_id,
             code=DossierBuildFailureCode.RuntimeUnavailable,
-            detail="document repair generation was cancelled",
+            detail="generation was cancelled without a Dossier cancellation",
             support=None,
             ctx=ctx,
             input_recheck=input_recheck,
         )
         return None
-    if isinstance(result, _SynthesisInvalid):
-        return result
-    return binding.schema.model_validate_json(result.envelope_json)
-
-
+    return result
 # ---------------------------------------------------------------------------
 # Terminal mutations (RULES 7-8) — each locks the head, checks child existence.
 # ---------------------------------------------------------------------------
@@ -2739,7 +2440,7 @@ def _cancel_prepared_build_generation_in_current_transaction(
         db,
         owner=owner,
         state=state,
-        terminal_result=_SynthesisCancelled().model_dump_json(),
+        terminal_result=ArtifactGenerationCancelled().model_dump_json(),
         reason=reason,
     )
     db.execute(
@@ -2764,7 +2465,7 @@ def _active_build_generation(
     active = [
         (path, state)
         for path, state in step_journal.read_step_states(job).items()
-        if path in {_STEP_PATH, "document-repair"}
+        if path in GENERATION_STEP_PATHS
         and state.dispatch_phase in {step_journal.Prepared, step_journal.Uncertain}
     ]
     if len(active) > 1:
@@ -3283,9 +2984,10 @@ def _read_head_snapshot(
                 cancelled_at=b["cancelled_at"],
             )
 
+    registration = dossier_registration(resolved.scheme)
     freshness = _freshness(
         db,
-        binding=BINDINGS.get(resolved.scheme),
+        binding=registration.binding if registration is not None else None,
         resolved=resolved,
         audience=audience,
         current_revision_id=current_revision_id,
@@ -3694,35 +3396,6 @@ def on_subject_deleted(db: Session, subject_ref: ResourceRef) -> None:
     _delete_heads(db, locked_head_ids)
 
 
-def on_subject_audience_removed(
-    db: Session,
-    *,
-    subject_ref: ResourceRef,
-    audience: AudienceScope,
-) -> None:
-    """Purge one subject/audience head after that audience loses visibility."""
-    head_ids = [
-        UUID(str(row[0]))
-        for row in db.execute(
-            text(
-                "SELECT id FROM artifacts "
-                "WHERE subject_scheme = :subject_scheme AND subject_id = :subject_id "
-                "AND audience_scheme = :audience_scheme AND audience_id = :audience_id "
-                "ORDER BY id"
-            ),
-            {
-                "subject_scheme": subject_ref.scheme,
-                "subject_id": subject_ref.id,
-                "audience_scheme": audience.scheme,
-                "audience_id": str(audience.audience_id),
-            },
-        )
-    ]
-    locked_head_ids = _lock_cleanup_head_ids_in_order(db, head_ids)
-    if locked_head_ids:
-        _delete_heads(db, locked_head_ids)
-
-
 def on_audience_visibility_changed(db: Session, *, audience: AudienceScope) -> None:
     """Purge User-audience heads whose subjects are no longer visible.
 
@@ -3761,258 +3434,6 @@ def on_audience_visibility_changed(db: Session, *, audience: AudienceScope) -> N
         locked_lost = _lock_cleanup_head_ids_in_order(db, lost)
         if locked_lost:
             _delete_heads(db, locked_lost)
-
-
-def on_user_deleted(db: Session, *, user_id: UUID) -> None:
-    """Apply the Dossier-owned part of explicit User teardown.
-
-    User-audience history is purged. Surviving Library-audience history keeps
-    its content, rehomes citation graph ownership to the Library's current
-    owner, redacts attribution, and cancels active builds requested by the
-    departing user. The caller owns the surrounding User-deletion transaction and
-    its whole-operation ``retry_read_committed`` boundary; this hook never retries
-    or commits a partial account deletion.
-    """
-    owned_library = db.execute(
-        text("SELECT id FROM libraries WHERE owner_user_id = :user_id LIMIT 1"),
-        {"user_id": user_id},
-    ).scalar_one_or_none()
-    if owned_library is not None:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Transfer or delete owned libraries before deleting the user",
-        )
-
-    # User teardown composes private-head deletion, shared-build cancellation,
-    # citation re-homing, and attribution redaction. Lock the complete set of
-    # heads those mutations can touch once, before any subset cleanup, using the
-    # same global UUID order as every other composing cleanup.
-    cleanup_head_ids = [
-        UUID(str(head_id))
-        for head_id in db.execute(
-            text(
-                """
-                SELECT artifact.id
-                FROM artifacts artifact
-                WHERE (
-                    artifact.audience_scheme = 'user'
-                    AND artifact.audience_id = :user_id_text
-                )
-                   OR EXISTS (
-                    SELECT 1
-                    FROM artifact_builds build
-                    WHERE build.artifact_id = artifact.id
-                      AND build.requester_user_id = :user_id
-                )
-                   OR EXISTS (
-                    SELECT 1
-                    FROM artifact_builds build
-                    JOIN artifact_revisions revision ON revision.build_id = build.id
-                    WHERE build.artifact_id = artifact.id
-                      AND (
-                        revision.citation_owner_user_id = :user_id
-                        OR revision.creator_user_id = :user_id
-                      )
-                )
-                   OR EXISTS (
-                    SELECT 1
-                    FROM artifact_builds build
-                    JOIN artifact_build_cancellations cancellation
-                      ON cancellation.build_id = build.id
-                    WHERE build.artifact_id = artifact.id
-                      AND cancellation.actor_user_id = :user_id
-                )
-                ORDER BY artifact.id
-                """
-            ),
-            {"user_id": user_id, "user_id_text": str(user_id)},
-        ).scalars()
-    ]
-    user_learn_request_ids = [
-        UUID(str(request_id))
-        for request_id in db.execute(
-            text("SELECT id FROM artifact_learn_requests WHERE user_id = :user_id ORDER BY id"),
-            {"user_id": user_id},
-        ).scalars()
-    ]
-    locked_cleanup_head_ids = _lock_cleanup_head_ids_in_order(
-        db,
-        cleanup_head_ids,
-        learn_request_ids=user_learn_request_ids,
-    )
-
-    private_head_ids = [
-        UUID(str(row[0]))
-        for row in db.execute(
-            text(
-                "SELECT id FROM artifacts "
-                "WHERE id = ANY(:cleanup_head_ids) "
-                "AND audience_scheme = 'user' AND audience_id = :user_id "
-                "ORDER BY id"
-            ),
-            {
-                "cleanup_head_ids": locked_cleanup_head_ids,
-                "user_id": str(user_id),
-            },
-        )
-    ]
-    _assert_no_uncertain_builds_before_purge(
-        db,
-        _build_ids_for_heads(db, private_head_ids),
-    )
-    _cancel_prepared_learn_requests_before_purge(
-        db,
-        user_learn_request_ids,
-        reason="Dossier Idea resolution owner was deleted before host acceptance",
-    )
-    delete_user_learn_rows_before_heads(db, user_id=user_id)
-    if private_head_ids:
-        _delete_heads(db, private_head_ids)
-    delete_user_idea_rows_after_heads(db, user_id=user_id)
-
-    shared_heads = list(
-        db.execute(
-            text(
-                "SELECT a.id "
-                "FROM artifacts a "
-                "WHERE a.id = ANY(:cleanup_head_ids) "
-                "AND a.audience_scheme = 'library' "
-                "AND EXISTS ("
-                "  SELECT 1 FROM artifact_builds b "
-                "  WHERE b.artifact_id = a.id AND b.requester_user_id = :user_id"
-                ") ORDER BY a.id"
-            ),
-            {
-                "cleanup_head_ids": locked_cleanup_head_ids,
-                "user_id": user_id,
-            },
-        ).scalars()
-    )
-    for head_id in shared_heads:
-        active_build_ids = [
-            UUID(str(row[0]))
-            for row in db.execute(
-                text(
-                    "SELECT b.id FROM artifact_builds b "
-                    "WHERE b.artifact_id = :head_id AND b.requester_user_id = :user_id "
-                    "AND NOT EXISTS (SELECT 1 FROM artifact_revisions r WHERE r.build_id = b.id) "
-                    "AND NOT EXISTS ("
-                    "  SELECT 1 FROM artifact_build_failures f WHERE f.build_id = b.id"
-                    ") AND NOT EXISTS ("
-                    "  SELECT 1 FROM artifact_build_cancellations c WHERE c.build_id = b.id"
-                    ") ORDER BY b.created_at, b.id"
-                ),
-                {"head_id": head_id, "user_id": user_id},
-            )
-        ]
-        for build_id in active_build_ids:
-            job = _lock_dossier_jobs_for_builds_in_order(db, [build_id]).get(build_id)
-            active_generation = _active_build_generation(job) if job is not None else None
-            generation_is_uncertain = (
-                active_generation is not None
-                and active_generation[1].dispatch_phase is step_journal.Uncertain
-            )
-            if generation_is_uncertain:
-                # Dispatch may already have been accepted. Deleting its requester
-                # would make the eventual terminal impossible to attribute, so
-                # the whole outer User teardown must roll back unchanged until
-                # the operator reconciles this generation.
-                raise GenerationUncertain(
-                    f"cannot delete requester with uncertain Dossier generation {build_id}"
-                )
-            if not _cancel_prepared_build_generation_in_current_transaction(
-                db,
-                owner=LlmCallOwner(kind="artifact_build", id=build_id),
-                build_id=build_id,
-                ctx=None,
-                reason="dossier requester was deleted before host acceptance",
-            ):
-                raise AssertionError("user teardown lost Dossier queue ownership")
-            db.execute(
-                text(
-                    "INSERT INTO artifact_build_cancellations (build_id, actor_user_id) "
-                    "VALUES (:build_id, NULL)"
-                ),
-                {"build_id": build_id},
-            )
-            _append_build_event(
-                db,
-                build_id=build_id,
-                event_type=ArtifactBuildEventType.Cancelled,
-                payload=CancelledEventPayload(
-                    actor=absent(),
-                    at=datetime.now(UTC),
-                ).model_dump(mode="json"),
-            )
-            revoke_jobs_by_dedupe_keys(
-                db,
-                kind=DOSSIER_DEFINITION.job_kind,
-                dedupe_keys=[_dispatch_key(build_id)],
-            )
-
-    revision_owners = list(
-        db.execute(
-            text(
-                "SELECT r.id AS revision_id, l.owner_user_id AS new_owner_id "
-                "FROM artifact_revisions r "
-                "JOIN artifact_builds b ON b.id = r.build_id "
-                "JOIN artifacts a ON a.id = b.artifact_id "
-                "JOIN libraries l ON l.id = a.audience_id::uuid "
-                "WHERE a.audience_scheme = 'library' "
-                "AND r.citation_owner_user_id = :user_id "
-                "ORDER BY r.id"
-            ),
-            {"user_id": user_id},
-        ).mappings()
-    )
-    for row in revision_owners:
-        revision_id = UUID(str(row["revision_id"]))
-        new_owner_id = UUID(str(row["new_owner_id"]))
-        rehome_citations_for_output(
-            db,
-            source=ResourceRef(scheme="artifact_revision", id=revision_id),
-            new_owner_user_id=new_owner_id,
-        )
-        db.execute(
-            text(
-                "UPDATE artifact_revisions SET citation_owner_user_id = :new_owner_id "
-                "WHERE id = :revision_id"
-            ),
-            {"new_owner_id": new_owner_id, "revision_id": revision_id},
-        )
-
-    cancelled_build_ids = [
-        UUID(str(row[0]))
-        for row in db.execute(
-            text(
-                "SELECT build_id FROM artifact_build_cancellations WHERE actor_user_id = :user_id"
-            ),
-            {"user_id": user_id},
-        )
-    ]
-    if cancelled_build_ids:
-        db.execute(
-            text(
-                "UPDATE artifact_build_events "
-                "SET payload = jsonb_set(payload, '{actor}', '{\"kind\":\"Absent\"}'::jsonb) "
-                "WHERE build_id = ANY(:build_ids) AND event_type = 'Cancelled'"
-            ),
-            {"build_ids": cancelled_build_ids},
-        )
-    db.execute(
-        text("UPDATE artifact_builds SET requester_user_id = NULL WHERE requester_user_id = :u"),
-        {"u": user_id},
-    )
-    db.execute(
-        text("UPDATE artifact_revisions SET creator_user_id = NULL WHERE creator_user_id = :u"),
-        {"u": user_id},
-    )
-    db.execute(
-        text(
-            "UPDATE artifact_build_cancellations SET actor_user_id = NULL WHERE actor_user_id = :u"
-        ),
-        {"u": user_id},
-    )
 
 
 def _delete_heads(db: Session, head_ids: list[UUID]) -> None:
@@ -4123,10 +3544,10 @@ class _JobState:
 
 def _policy_for_locator(locator: DossierSubjectLocator) -> SubjectPolicy:
     scheme = _subject_scheme(locator)
-    policy = SUBJECT_POLICIES.get(scheme)
-    if policy is None:
+    registration = dossier_registration(scheme)
+    if registration is None:
         raise InvalidSubjectLocator(f"{scheme!r} is not an eligible dossier subject")
-    return policy
+    return registration.policy
 
 
 def _subject_scheme(locator: DossierSubjectLocator) -> str:

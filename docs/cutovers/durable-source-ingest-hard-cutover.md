@@ -563,7 +563,10 @@ and `error_code` on the attempt row for specificity.
 - `failed`: source acquisition/materialization failed,
 - `superseded`: a newer attempt replaced this attempt before it ran.
 
-Only `media_source_ingest.py` writes these states.
+`media_source_ingest.py` owns acceptance, queueing, running, success, and
+supersession. `source_attempt_failures.py` owns the sole terminal failure
+transaction, including its source-specific domain projections. No worker or
+source adapter writes attempt failure directly.
 
 ## Canonical Identity and Duplicate Resolution
 
@@ -693,10 +696,10 @@ continues to be the only writer of library entries.
 The source lifecycle owner must call:
 
 - `validate_writable_library_destinations` before durable acceptance,
-- `assign_libraries_for_media_in_current_transaction` in the media creation
-  transaction,
-- `assign_libraries_for_media` when canonical duplicate resolution returns a
-  winner.
+- `assign_libraries_for_media_in_current_transaction` inside the owning media
+  acceptance transaction, including canonical duplicate-winner resolution.
+
+There is no standalone assignment transaction wrapper.
 
 ### Background Jobs
 
@@ -735,8 +738,8 @@ Retry/refresh dispatch is a two-transaction command:
 
 - transaction 1 records the new `media_source_attempts` retry/refresh intent,
 - transaction 2 verifies non-reacquirable source storage when required, resets
-  rewriteable domain artifacts, inserts the `ingest_media_source` job, and marks
-  the attempt queued,
+  source-specific execution state without deleting current readable artifacts,
+  inserts the `ingest_media_source` job, and marks the attempt queued,
 - storage objects collected by transaction 2 are deleted only after that
   transaction commits.
 
@@ -744,12 +747,23 @@ If transaction 2 fails, the cleanup rolls back and the retry/refresh attempt is
 marked failed. The previous artifacts are not destroyed by a queue insertion or
 source-preflight failure.
 
+Source adapters hand typed authorship observations to the contributor facade
+through `media_author_observation_seam.py`. Only an absent carrier means no
+observation; malformed same-system carriers defect instead of silently dropping
+credited provenance and allowing source success.
+
 Podcast transcript source retry is part of the same dispatch contract. Operator
 requeues run transcript quota admission and write
 `podcast_transcript_request_audits` inside transaction 2 before the
 `ingest_media_source` job is visible. Quota or billing rejection is recorded on
 the source attempt and returned as the typed API error; it is not converted into
-a silent non-enqueued success.
+a silent non-enqueued success. Current transcript segments, fragments, and
+readable state survive admission and are replaced only by the fenced current
+transcript writer after successful acquisition. The canonical internal
+request-reason decoder rejects missing and unknown durable source/job values;
+there is no `episode_open` or `operator_requeue` fallback. Transcript acquisition
+returns only its completed artifact result, while every failure raises into the
+typed terminal publication path.
 
 ## File Plan
 
@@ -757,7 +771,14 @@ a silent non-enqueued success.
 
 - `python/nexus/services/media_source_ingest.py`
   - source acceptance, attempts, retry, refresh, job payload construction,
-    canonical duplicate resolution orchestration.
+    canonical duplicate resolution orchestration;
+  - one detached source-adapter dispatch phase, separate from fenced
+    supersession, failure, authorship, and terminal publication;
+  - one immutable authorship phase that applies typed observations under the
+    exact source fence and propagates unexpected contributor defects instead of
+    persisting a generic source failure;
+  - one immutable terminal-publication phase owning the final fenced Media,
+    attempt, content-index, semantic-index, and document-embed mutations.
 - `python/nexus/services/media_source_types.py`
   - canonical source-attempt type constants and policy sets used by dispatch,
     retryability, failure-stage, and cleanup rules.
@@ -896,7 +917,9 @@ Current repeated pattern:
 Canonical owner:
 
 - `media_processing_state.py` for primitive transitions,
-- `media_source_ingest.py` for when transitions occur.
+- `media_source_ingest.py` for active and successful transitions,
+- `source_attempt_failures.py` for terminal failure publication,
+- `media_failure_projection.py` for the lightweight terminal Media tuple.
 
 No source module writes the failure tuple directly.
 

@@ -1,10 +1,7 @@
 "use client";
 
 import { useLayoutEffect } from "react";
-import {
-  nexusEntryKeyValue,
-  type NexusGroup,
-} from "@/lib/nexus/model";
+import { nexusEntryKeyValue } from "@/lib/nexus/model";
 import {
   completeNexusPerformance,
   NEXUS_LOCAL_FIND_PERFORMANCE,
@@ -18,17 +15,6 @@ import type {
   DesktopNexusController,
 } from "./types";
 import styles from "./desktopNexus.module.css";
-
-function groupLayoutClass(layout: NexusGroup["layout"]): string {
-  switch (layout) {
-    case "Flow":
-      return styles.flowGroup;
-    case "CompactRail":
-      return styles.compactRailGroup;
-    case "PinnedBelowInput":
-      return styles.pinnedGroup;
-  }
-}
 
 export default function DesktopNexusResults({
   controller,
@@ -59,7 +45,7 @@ export default function DesktopNexusResults({
     controller.projection.groups.find((group) => group.id === "Results")
       ?.entries.length ?? 0;
   const queryActionCount =
-    controller.projection.groups.find((group) => group.id === "QueryActions")
+    controller.projection.groups.find((group) => group.id === "QuickActions")
       ?.entries.length ?? 0;
   const settledStatus = typed
     ? `${resultCount} ${resultCount === 1 ? "result" : "results"}. ${queryActionCount} ${
@@ -120,7 +106,7 @@ export default function DesktopNexusResults({
               key={group.id}
               role="rowgroup"
               aria-labelledby={headingId}
-              className={`${styles.group} ${groupLayoutClass(group.layout)}`}
+              className={styles.group}
             >
               <div role="row" className={styles.headingRow}>
                 <div role="gridcell" aria-colspan={2}>

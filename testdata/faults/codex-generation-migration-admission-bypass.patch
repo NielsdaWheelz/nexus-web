@@ -1,6 +1,6 @@
-diff --git a/migrations/alembic/versions/0222_codex_personal_generation.py b/migrations/alembic/versions/0222_codex_personal_generation.py
---- a/migrations/alembic/versions/0222_codex_personal_generation.py
-+++ b/migrations/alembic/versions/0222_codex_personal_generation.py
+diff --git a/migrations/alembic/versions/0224_codex_personal_generation.py b/migrations/alembic/versions/0224_codex_personal_generation.py
+--- a/migrations/alembic/versions/0224_codex_personal_generation.py
++++ b/migrations/alembic/versions/0224_codex_personal_generation.py
 @@ -54,7 +54,7 @@ def _preflight(bind: sa.Connection) -> None:
          ),
          {"kinds": list(_GENERATION_JOB_KINDS), "statuses": list(_ACTIVE_JOB_STATUSES)},

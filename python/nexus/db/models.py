@@ -1390,9 +1390,6 @@ class Media(Base):
     source_attempts: Mapped[list["MediaSourceAttempt"]] = relationship(
         "MediaSourceAttempt", back_populates="media"
     )
-    pdf_page_text_spans: Mapped[list["PdfPageTextSpan"]] = relationship(
-        "PdfPageTextSpan", back_populates="media", cascade="all, delete-orphan"
-    )
     podcast_episode: Mapped["PodcastEpisode | None"] = relationship(
         "PodcastEpisode", back_populates="media", cascade="all, delete-orphan", uselist=False
     )
@@ -4120,7 +4117,7 @@ class PodcastTranscriptRequestAudit(Base):
             name="ck_podcast_transcript_request_audits_reason",
         ),
         CheckConstraint(
-            "outcome IN ('forecast', 'queued', 'idempotent', 'rejected_quota', 'enqueue_failed')",
+            "outcome IN ('forecast', 'queued', 'idempotent', 'rejected_quota')",
             name="ck_podcast_transcript_request_audits_outcome",
         ),
         CheckConstraint(
@@ -4366,7 +4363,7 @@ class PdfPageTextSpan(Base):
 
     media_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("media.id", ondelete="CASCADE"),
+        ForeignKey("media.id", name="pdf_page_text_spans_media_id_fkey"),
         primary_key=True,
     )
     page_number: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -4393,8 +4390,6 @@ class PdfPageTextSpan(Base):
             name="ck_ppts_page_rotation",
         ),
     )
-
-    media: Mapped["Media"] = relationship("Media", back_populates="pdf_page_text_spans")
 
 
 # =============================================================================

@@ -1,6 +1,6 @@
 "use client";
 
-import { apiFetch } from "@/lib/api/client";
+import { apiFetch, decodeApiPayload } from "@/lib/api/client";
 import {
   decodeCollectionRevision,
   type CollectionRevision,
@@ -20,6 +20,7 @@ import {
 import {
   expectBoolean,
   expectExactRecord,
+  expectIsoInstant,
   expectNonnegativeInteger,
   expectNullableString,
   expectString,
@@ -57,6 +58,28 @@ export type PodcastSubscriptionSettingsResponse = {
   libraryEntriesCollectionRevision: CollectionRevision;
 };
 
+type PodcastSubscriptionStatus = Omit<
+  PodcastSubscriptionSettingsResponse,
+  "collectionRevision" | "libraryEntriesCollectionRevision"
+>;
+
+const PODCAST_SUBSCRIPTION_STATUS_KEYS = [
+  "user_id",
+  "podcast_id",
+  "default_playback_speed",
+  "pause_shortening_mode",
+  "auto_queue",
+  "sync_status",
+  "sync_error_code",
+  "sync_error_message",
+  "sync_attempts",
+  "sync_started_at",
+  "sync_completed_at",
+  "last_checked_at",
+  "updated_at",
+  "backfill",
+] as const;
+
 export type PodcastSubscriptionSettingsInstall =
   | {
       kind: "Settings";
@@ -93,93 +116,120 @@ async function publishInstall(
   );
 }
 
-function decodePodcastSubscriptionSettingsResponse(
-  raw: unknown,
-): PodcastSubscriptionSettingsResponse {
-  const data = expectExactRecord(
-    expectExactRecord(raw, ["data"], "PodcastSubscriptionSettingsResponse")
-      .data,
-    [
-      "user_id",
-      "podcast_id",
-      "default_playback_speed",
-      "pause_shortening_mode",
-      "auto_queue",
-      "sync_status",
-      "sync_error_code",
-      "sync_error_message",
-      "sync_attempts",
-      "sync_started_at",
-      "sync_completed_at",
-      "last_checked_at",
-      "updated_at",
-      "backfill",
-      "collectionRevision",
-      "libraryEntriesCollectionRevision",
-    ],
-    "PodcastSubscriptionSettingsResponse.data",
-  );
+function decodeNullableIsoInstant(raw: unknown, name: string): string | null {
+  return raw === null ? null : expectIsoInstant(raw, name);
+}
+
+function decodePodcastSubscriptionStatus(
+  data: Record<string, unknown>,
+  context: string,
+  backfillCountKeys: {
+    readonly processed: "processed_count" | "processedCount";
+    readonly added: "added_count" | "addedCount";
+  },
+): PodcastSubscriptionStatus {
   const backfill = expectExactRecord(
     data.backfill,
-    ["id", "state", "processedCount", "addedCount"],
-    "backfill",
+    ["id", "state", backfillCountKeys.processed, backfillCountKeys.added],
+    `${context}.backfill`,
   );
   return {
-    user_id: expectString(data.user_id, "user_id"),
-    podcast_id: expectString(data.podcast_id, "podcast_id"),
+    user_id: expectString(data.user_id, `${context}.user_id`),
+    podcast_id: expectString(data.podcast_id, `${context}.podcast_id`),
     default_playback_speed: decodePresence(
       data.default_playback_speed,
-      (value) => parsePlaybackRate(value, "default_playback_speed.value"),
+      (value) =>
+        parsePlaybackRate(value, `${context}.default_playback_speed.value`),
     ),
     pause_shortening_mode: decodePresence(
       data.pause_shortening_mode,
       (value) =>
-        parsePauseShorteningMode(value, "pause_shortening_mode.value"),
+        parsePauseShorteningMode(
+          value,
+          `${context}.pause_shortening_mode.value`,
+        ),
     ),
-    auto_queue: expectBoolean(data.auto_queue, "auto_queue"),
-    sync_status: decodePodcastSyncStatus(data.sync_status, "sync_status"),
+    auto_queue: expectBoolean(data.auto_queue, `${context}.auto_queue`),
+    sync_status: decodePodcastSyncStatus(
+      data.sync_status,
+      `${context}.sync_status`,
+    ),
     sync_error_code: expectNullableString(
       data.sync_error_code,
-      "sync_error_code",
+      `${context}.sync_error_code`,
     ),
     sync_error_message: expectNullableString(
       data.sync_error_message,
-      "sync_error_message",
+      `${context}.sync_error_message`,
     ),
     sync_attempts: expectNonnegativeInteger(
       data.sync_attempts,
-      "sync_attempts",
+      `${context}.sync_attempts`,
     ),
-    sync_started_at: expectNullableString(
+    sync_started_at: decodeNullableIsoInstant(
       data.sync_started_at,
-      "sync_started_at",
+      `${context}.sync_started_at`,
     ),
-    sync_completed_at: expectNullableString(
+    sync_completed_at: decodeNullableIsoInstant(
       data.sync_completed_at,
-      "sync_completed_at",
+      `${context}.sync_completed_at`,
     ),
-    last_checked_at: expectNullableString(
+    last_checked_at: decodeNullableIsoInstant(
       data.last_checked_at,
-      "last_checked_at",
+      `${context}.last_checked_at`,
     ),
-    updated_at: expectString(data.updated_at, "updated_at"),
+    updated_at: expectIsoInstant(data.updated_at, `${context}.updated_at`),
     backfill: {
-      id: expectString(backfill.id, "backfill.id"),
-      state: decodePodcastBackfillState(backfill.state, "backfill.state"),
+      id: expectString(backfill.id, `${context}.backfill.id`),
+      state: decodePodcastBackfillState(
+        backfill.state,
+        `${context}.backfill.state`,
+      ),
       processedCount: expectNonnegativeInteger(
-        backfill.processedCount,
-        "backfill.processedCount",
+        backfill[backfillCountKeys.processed],
+        `${context}.backfill.${backfillCountKeys.processed}`,
       ),
       addedCount: expectNonnegativeInteger(
-        backfill.addedCount,
-        "backfill.addedCount",
+        backfill[backfillCountKeys.added],
+        `${context}.backfill.${backfillCountKeys.added}`,
       ),
     },
-    collectionRevision: decodeCollectionRevision(data.collectionRevision),
-    libraryEntriesCollectionRevision: decodeCollectionRevision(
-      data.libraryEntriesCollectionRevision,
-    ),
   };
+}
+
+function decodePodcastSubscriptionSettingsResponse(
+  raw: unknown,
+): PodcastSubscriptionSettingsResponse {
+  return decodeApiPayload(
+    raw,
+    (payload) => {
+      const data = expectExactRecord(
+        expectExactRecord(
+          payload,
+          ["data"],
+          "PodcastSubscriptionSettingsResponse",
+        ).data,
+        [
+          ...PODCAST_SUBSCRIPTION_STATUS_KEYS,
+          "collectionRevision",
+          "libraryEntriesCollectionRevision",
+        ],
+        "PodcastSubscriptionSettingsResponse.data",
+      );
+      return {
+        ...decodePodcastSubscriptionStatus(
+          data,
+          "PodcastSubscriptionSettingsResponse.data",
+          { processed: "processedCount", added: "addedCount" },
+        ),
+        collectionRevision: decodeCollectionRevision(data.collectionRevision),
+        libraryEntriesCollectionRevision: decodeCollectionRevision(
+          data.libraryEntriesCollectionRevision,
+        ),
+      };
+    },
+    "Podcast subscription settings command",
+  );
 }
 
 export interface PodcastSubscriptionSettingsSource {
@@ -203,23 +253,31 @@ export async function fetchPodcastSubscriptionSettingsSource(
     `/api/podcasts/subscriptions/${podcastId}`,
     { signal },
   );
-  if (typeof raw !== "object" || raw === null || !("data" in raw)) {
-    throw new TypeError("PodcastSubscriptionSettingsSource envelope is invalid");
-  }
-  const data = (raw as { data: unknown }).data;
-  if (typeof data !== "object" || data === null) {
-    throw new TypeError("PodcastSubscriptionSettingsSource.data is invalid");
-  }
-  const record = data as Record<string, unknown>;
+  const status = decodeApiPayload(
+    raw,
+    (payload) => {
+      const data = expectExactRecord(
+        expectExactRecord(
+          payload,
+          ["data"],
+          "PodcastSubscriptionSettingsSource",
+        ).data,
+        PODCAST_SUBSCRIPTION_STATUS_KEYS,
+        "PodcastSubscriptionSettingsSource.data",
+      );
+      return decodePodcastSubscriptionStatus(
+        data,
+        "PodcastSubscriptionSettingsSource.data",
+        { processed: "processed_count", added: "added_count" },
+      );
+    },
+    "Podcast subscription settings source",
+  );
   return {
-    podcast_id: expectString(record.podcast_id, "podcast_id"),
-    default_playback_speed: decodePresence(record.default_playback_speed, (value) =>
-      parsePlaybackRate(value, "default_playback_speed.value"),
-    ),
-    pause_shortening_mode: decodePresence(record.pause_shortening_mode, (value) =>
-      parsePauseShorteningMode(value, "pause_shortening_mode.value"),
-    ),
-    auto_queue: expectBoolean(record.auto_queue, "auto_queue"),
+    podcast_id: status.podcast_id,
+    default_playback_speed: status.default_playback_speed,
+    pause_shortening_mode: status.pause_shortening_mode,
+    auto_queue: status.auto_queue,
   };
 }
 

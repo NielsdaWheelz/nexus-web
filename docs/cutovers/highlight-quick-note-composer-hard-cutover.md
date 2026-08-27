@@ -134,6 +134,11 @@ existing-highlight ─────┘            │ set QuickNoteSession
                                        → set_highlight_note_body_pm_json / delete_highlight_note
 ```
 
+The save request uses only the canonical snake-case wire fields
+`note_block_id`, `client_mutation_id`, and `body_pm_json`. The server accepts no
+camel-case or generic `id` aliases; component/controller camel-case names stay
+internal and are translated once in `lib/highlights/api.ts`.
+
 State lives in `MediaPaneBody` (the pane owns all highlight surfaces; no route, no
 pane, no URL change — `docs/architecture.md` §9). `PdfReader` raises its entry via
 a new `onAddNote` callback prop, mirroring its quote callbacks.

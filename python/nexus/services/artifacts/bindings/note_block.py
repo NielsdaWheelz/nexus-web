@@ -28,7 +28,7 @@ from nexus.services.artifacts.bindings.base import (
     DossierBindingBase,
     DossierInputTooLarge,
     DossierOperation,
-    MaterializedDossier,
+    PublishableDossier,
     require_resource_subject,
 )
 from nexus.services.artifacts.coordination import DossierBuildRuntime
@@ -126,7 +126,7 @@ class NoteBinding(DossierBindingBase):
         collected: _NoteCollected,  # noqa: ARG002
         decoded_output: BaseModel,
         witness: _NoteWitness,
-    ) -> MaterializedDossier:
+    ) -> PublishableDossier:
         return materialize_standard(decoded_output, witness.candidates)
 
     def input_manifest(self, collected: _NoteCollected) -> InputManifestV1:

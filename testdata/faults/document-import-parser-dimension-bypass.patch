@@ -9,4 +9,4 @@ diff --git a/python/nexus/services/pdf_lifecycle.py b/python/nexus/services/pdf_
 +    return ApiError(code, message)
  
  
- def retry_pdf_ingest_for_viewer(
+ def prepare_pdf_source(

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
 from typing import Any, Literal, cast
+from uuid import UUID
 
 from nexus.config import get_settings
 from nexus.jobs.dead_letter_projections import DeadLetterProjection
@@ -164,7 +165,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         ),
         # Universal dossier generation (resource-inspector-and-universal-dossiers
         # hard cutover). One job kind for all eight subject bindings, dispatched
-        # through the DossierBindingRegistry by the durable job body itself
+        # through the Dossier registration owner by the durable job body itself
         # (CONTRACTS.md A19/B1a). Paid + non-idempotent:
         # a moderate retry budget covers a worker crash/restart before the
         # per-step Uncertain checkpoint commits; once a step is Uncertain on
@@ -300,7 +301,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             max_attempts=3,
             retry_delays_seconds=(60, 300, 900),
             lease_seconds=450,
-            # Provider replay state lives in the job payload. Dead uncertain
+            # Generation replay state lives in the job payload. Dead uncertain
             # transitions stay operator-discoverable.
             never_prune_dead=True,
             child_runtime="Llm",
@@ -391,7 +392,7 @@ def _run_ingest_media_source(
         media_id=str(payload["media_id"]),
         attempt_id=str(payload["attempt_id"]),
         actor_user_id=str(payload["actor_user_id"]),
-        request_id=_optional_str(payload.get("request_id")),
+        request_id=_optional_job_text(payload, "request_id", "ingest_media_source"),
         context=context,
     )
 
@@ -411,7 +412,7 @@ def _run_enrich_metadata(
 
     return enrich_metadata(
         media_id=str(payload["media_id"]),
-        request_id=_optional_str(payload.get("request_id")),
+        request_id=_optional_job_text(payload, "request_id", "enrich_metadata"),
         context=context,
     )
 
@@ -451,13 +452,12 @@ def _run_podcast_backfill_subscription(
 def _run_podcast_reindex_semantic(
     *, payload: Mapping[str, Any], context: JobExecutionContext
 ) -> Mapping[str, Any] | None:
+    from nexus.services.transcripts.request_reason import require_transcript_request_reason
     from nexus.tasks.podcast_reindex_semantic import podcast_reindex_semantic_job
 
     return podcast_reindex_semantic_job(
         media_id=str(payload["media_id"]),
-        requested_by_user_id=_optional_str(payload.get("requested_by_user_id")),
-        request_reason=str(payload.get("request_reason", "operator_requeue")),
-        request_id=_optional_str(payload.get("request_id")),
+        request_reason=require_transcript_request_reason(payload.get("request_reason")),
         context=context,
     )
 
@@ -467,10 +467,15 @@ def _run_note_reindex(
 ) -> Mapping[str, Any] | None:
     from nexus.tasks.note_reindex import note_reindex_job
 
+    if set(payload) - {"note_block_id", "reason"}:
+        # justify-defect: enqueue_note_reindex owns one closed durable payload.
+        raise AssertionError(
+            "note_reindex_job payload keys must be exactly note_block_id and reason"
+        )
     return note_reindex_job(
         note_block_id=str(payload["note_block_id"]),
-        reason=str(payload.get("reason", "note_edit")),
-        request_id=_optional_str(payload.get("request_id")),
+        reason=_require_job_text(payload, "reason", "note_reindex_job"),
+        context=context,
     )
 
 
@@ -496,7 +501,7 @@ def _run_reconcile_stale_ingest_media(
     from nexus.tasks.reconcile_stale_ingest_media import reconcile_stale_ingest_media_job
 
     return reconcile_stale_ingest_media_job(
-        request_id=_optional_str(payload.get("request_id")),
+        request_id=_optional_job_text(payload, "request_id", "reconcile_stale_ingest_media_job"),
     )
 
 
@@ -506,8 +511,10 @@ def _run_sync_gutenberg_catalog(
     from nexus.tasks.sync_gutenberg_catalog import sync_gutenberg_catalog_job
 
     return sync_gutenberg_catalog_job(
-        request_id=_optional_str(payload.get("request_id")),
-        scheduler_identity=_optional_str(payload.get("scheduler_identity")),
+        request_id=_require_job_text(payload, "request_id", "sync_gutenberg_catalog_job"),
+        scheduler_identity=_require_job_text(
+            payload, "scheduler_identity", "sync_gutenberg_catalog_job"
+        ),
     )
 
 
@@ -516,7 +523,9 @@ def _run_prune_background_jobs(
 ) -> Mapping[str, Any] | None:
     from nexus.tasks.prune_background_jobs import prune_background_jobs_job
 
-    return prune_background_jobs_job(request_id=_optional_str(payload.get("request_id")))
+    return prune_background_jobs_job(
+        request_id=_require_job_text(payload, "request_id", "prune_background_jobs_job")
+    )
 
 
 def _run_purge_expired_auth_handoff_codes(
@@ -525,7 +534,7 @@ def _run_purge_expired_auth_handoff_codes(
     from nexus.tasks.purge_expired_auth_handoff_codes import purge_expired_auth_handoff_codes_job
 
     return purge_expired_auth_handoff_codes_job(
-        request_id=_optional_str(payload.get("request_id")),
+        request_id=_require_job_text(payload, "request_id", "purge_expired_auth_handoff_codes"),
     )
 
 
@@ -534,8 +543,13 @@ def _run_oracle_reading_generate(
 ) -> Mapping[str, Any] | RescheduleRequested | None:
     from nexus.tasks.oracle_reading import oracle_reading_generate
 
+    if set(payload) != {"reading_id"}:
+        # justify-defect: Oracle has one canonical same-system producer and one
+        # exact durable carrier. Additional keys are payload corruption, not an
+        # extension surface.
+        raise AssertionError("oracle_reading_generate payload keys must be exactly reading_id")
     return oracle_reading_generate(
-        reading_id=str(payload["reading_id"]),
+        reading_id=_require_job_uuid(payload, "reading_id", "oracle_reading_generate"),
         context=context,
     )
 
@@ -560,7 +574,7 @@ def _run_synapse_scan(
     return synapse_scan(
         user_id=str(payload["user_id"]),
         ref=str(payload["ref"]),
-        reason=str(payload.get("reason", "manual")),
+        reason=_require_job_text(payload, "reason", "synapse_scan"),
         context=context,
     )
 
@@ -602,11 +616,35 @@ def _run_storage_orphan_sweep(
 ) -> Mapping[str, Any] | RescheduleRequested | None:
     from nexus.tasks.storage_orphan_sweep import storage_orphan_sweep
 
-    return storage_orphan_sweep(payload=payload, context=context)
+    return storage_orphan_sweep(context=context)
 
 
-def _optional_str(value: Any) -> str | None:
-    if value is None:
+def _optional_job_text(
+    payload: Mapping[str, Any],
+    key: str,
+    kind: str,
+) -> str | None:
+    if payload.get(key) is None:
         return None
-    normalized = str(value).strip()
-    return normalized or None
+    return _require_job_text(payload, key, kind)
+
+
+def _require_job_text(payload: Mapping[str, Any], key: str, kind: str) -> str:
+    value = payload.get(key)
+    if not isinstance(value, str) or not value or value != value.strip():
+        # justify-defect: canonical job enqueuers always persist exact text or
+        # explicit absence; missing required, coerced, or padded values are
+        # same-system payload corruption.
+        raise AssertionError(f"{kind} payload requires canonical {key}")
+    return value
+
+
+def _require_job_uuid(payload: Mapping[str, Any], key: str, kind: str) -> UUID:
+    value = _require_job_text(payload, key, kind)
+    try:
+        parsed = UUID(value)
+    except ValueError as exc:
+        raise AssertionError(f"{kind} payload requires canonical {key}") from exc
+    if str(parsed) != value:
+        raise AssertionError(f"{kind} payload requires canonical {key}")
+    return parsed

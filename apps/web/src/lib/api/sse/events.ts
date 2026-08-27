@@ -20,11 +20,15 @@ import {
   decodeCitationOut,
   type CitationOut,
 } from "@/lib/conversations/citationOut";
-import type { ChatPublicationWarning } from "@/lib/conversations/types";
+import {
+  MESSAGE_TOOL_STATUSES,
+  type ChatPublicationWarning,
+  type MessageToolStatus,
+} from "@/lib/conversations/types";
 import {
   decodeToolProjectionFields,
   type ToolProjectionFields,
-} from "@/lib/conversations/messageWire";
+} from "@/lib/conversations/toolProjectionWire";
 import { TOOL_CONTRACT_PROJECTION } from "@/lib/conversations/toolContractProjection";
 import {
   decodeContextRef,
@@ -100,9 +104,6 @@ interface SSEDoneEvent {
   };
 }
 
-export type ChatToolStatus =
-  "pending" | "running" | "complete" | "error" | "cancelled";
-
 export interface SSEToolCallEvent {
   type: "tool_call_start";
   data: ToolProjectionFields & {
@@ -136,7 +137,7 @@ export interface SSEToolResultEvent {
     tool_call_id?: string | null;
     assistant_message_id: string;
     tool_call_index: number;
-    status: ChatToolStatus;
+    status: MessageToolStatus;
     scope: string;
     types: string[];
     result_count?: number | null;
@@ -472,7 +473,7 @@ function parseToolResultData(data: unknown): SSEToolResultEvent["data"] {
     typeof data.tool_call_index !== "number" ||
     !Number.isInteger(data.tool_call_index) ||
     data.tool_call_index < 0 ||
-    !isChatToolStatus(data.status) ||
+    !isMessageToolStatus(data.status) ||
     typeof data.scope !== "string" ||
     data.scope.length === 0 ||
     !Array.isArray(data.types) ||
@@ -498,13 +499,10 @@ function parseToolResultData(data: unknown): SSEToolResultEvent["data"] {
   return { ...data, ...projection } as SSEToolResultEvent["data"];
 }
 
-function isChatToolStatus(value: unknown): value is ChatToolStatus {
+function isMessageToolStatus(value: unknown): value is MessageToolStatus {
   return (
-    value === "pending" ||
-    value === "running" ||
-    value === "complete" ||
-    value === "error" ||
-    value === "cancelled"
+    typeof value === "string" &&
+    MESSAGE_TOOL_STATUSES.some((status) => status === value)
   );
 }
 

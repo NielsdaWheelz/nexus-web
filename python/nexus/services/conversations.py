@@ -957,32 +957,6 @@ def visible_conversation_ids(
     return {UUID(str(row[0])) for row in rows}
 
 
-def visible_message_ids(db: Session, *, viewer_id: UUID, message_ids: list[UUID]) -> set[UUID]:
-    """The subset of the supplied message ids the viewer can read, in one set query.
-
-    A message is readable when its parent conversation is visible (the shared
-    :func:`visible_conversation_ids_cte_sql` rule) and the message is not a pending
-    placeholder — matching the per-ref ``status != 'pending'`` + ``can_read_conversation``
-    gate the resolve loader applies. The action-snapshot aggregator uses this instead
-    of a per-ref conversation-readability check (AC9)."""
-    ordered = list(dict.fromkeys(message_ids))
-    if not ordered:
-        return set()
-    rows = db.execute(
-        text(
-            f"""
-            SELECT m.id
-            FROM messages m
-            WHERE m.id = ANY(:message_ids)
-              AND m.status != 'pending'
-              AND m.conversation_id IN ({visible_conversation_ids_cte_sql()})
-            """
-        ),
-        {"viewer_id": viewer_id, "message_ids": ordered},
-    ).all()
-    return {UUID(str(row[0])) for row in rows}
-
-
 @dataclass(frozen=True, slots=True)
 class MessageActionFacts:
     """Closed facts needed to plan one visible Message's resource actions."""

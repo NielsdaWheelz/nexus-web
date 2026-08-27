@@ -1,4 +1,4 @@
-"""0222 RED proof for the irreversible Codex-personal generation cutover."""
+"""0224 RED proof for the irreversible Codex-personal generation cutover."""
 
 from __future__ import annotations
 
@@ -26,8 +26,8 @@ from nexus.services.conversations import (
     rerunnable_assistant_message_ids,
 )
 
-_CUTOVER_REVISION = "0222"
-_PREVIOUS_REVISION = "0221"
+_CUTOVER_REVISION = "0224"
+_PREVIOUS_REVISION = "0223"
 _GENERATION_JOB_KINDS = (
     "enrich_metadata",
     "chat_run",
@@ -104,7 +104,7 @@ def _migration_config() -> Config:
 def _require_cutover_revision(config: Config) -> None:
     scripts = ScriptDirectory.from_config(config)
     revision = scripts.get_revision(_CUTOVER_REVISION)
-    assert revision is not None, "missing successor migration 0222 for the generation hard cutover"
+    assert revision is not None, "missing successor migration 0224 for the generation hard cutover"
     assert revision.down_revision == _PREVIOUS_REVISION
 
 
@@ -204,7 +204,7 @@ def _assert_refused_without_mutation(
     call_id: UUID,
     turn_id: UUID,
     blocker: str,
-    expected_error: str = "0222 preflight",
+    expected_error: str = "0224 preflight",
 ) -> None:
     before = _preflight_fingerprint(engine, call_id=call_id, turn_id=turn_id)
     with pytest.raises(RuntimeError, match=expected_error):
@@ -245,7 +245,7 @@ def _seed_user_conversation(connection: object) -> dict[str, UUID]:
     return ids
 
 
-def test_0222_refuses_every_active_or_uncertain_generation_owner_before_mutation(
+def test_0224_refuses_every_active_or_uncertain_generation_owner_before_mutation(
     empty_migration_database_url: str,
 ) -> None:
     config = _migration_config()
@@ -704,7 +704,7 @@ def _post_cutover_fingerprint(engine: Engine, ids: dict[str, UUID]) -> tuple[obj
         )
 
 
-def test_0222_deletes_old_audit_and_billing_state_but_preserves_domain_outputs(
+def test_0224_deletes_old_audit_and_billing_state_but_preserves_domain_outputs(
     empty_migration_database_url: str,
 ) -> None:
     config = _migration_config()
@@ -825,10 +825,10 @@ def test_0222_deletes_old_audit_and_billing_state_but_preserves_domain_outputs(
             assert rerun_error.value.code is ApiErrorCode.E_RETRY_NOT_ALLOWED
 
         before_downgrade = _post_cutover_fingerprint(engine, ids)
-        with pytest.raises(NotImplementedError, match="0222.*irreversible"):
+        with pytest.raises(NotImplementedError, match="0224.*irreversible"):
             command.downgrade(config, _PREVIOUS_REVISION)
         assert _post_cutover_fingerprint(engine, ids) == before_downgrade, (
-            "0222 downgrade mutated the irreversible cutover before refusing"
+            "0224 downgrade mutated the irreversible cutover before refusing"
         )
     finally:
         engine.dispose()

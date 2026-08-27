@@ -1,4 +1,4 @@
-import { captureCanonicalArticle } from "../articleFixture";
+import { captureReadableArticle } from "../articleFixture";
 import {
   expect,
   gotoWithStrictCsp,
@@ -20,22 +20,7 @@ test("a source-grounded answer publishes a citation that opens its exact reader 
   // backlog) needs materially more wall time than the pre-cutover in-process worker.
   test.setTimeout(300_000);
   const api = pageRequest(page, webOrigin);
-  const mediaId = await captureCanonicalArticle(page, "grounded-source");
-  await expect
-    .poll(
-      async () => {
-        const response = await api.get(`/api/media/${mediaId}`);
-        if (!response.ok()) return `http-${response.status()}`;
-        return ((await response.json()) as {
-          data: { retrieval_status: string | null };
-        }).data.retrieval_status;
-      },
-      {
-        message: `Expected grounded source ${mediaId} to publish searchable evidence.`,
-        timeout: 90_000,
-      },
-    )
-    .toBe("ready");
+  const mediaId = await captureReadableArticle(page, "grounded-source");
 
   const query = "SOFIA water Clavius Crater";
   const searchResponse = await api.get(

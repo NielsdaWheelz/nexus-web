@@ -59,7 +59,6 @@ it("uses the workflow label and keeps virtual selection stable under result refl
           {
             id: "Results",
             label: "Results",
-            layout: "Flow",
             entries: [first, second],
           },
         ],

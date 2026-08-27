@@ -19,6 +19,7 @@ import {
 import { parsePlaybackRate } from "@/lib/player/playbackRate";
 import type { AudioSession, PlayerError } from "@/lib/player/playerSession";
 import {
+  expectCanonicalRfcUuid as canonicalUuid,
   expectExactRecord,
   expectFiniteNumber,
   expectIsoInstant,
@@ -44,9 +45,6 @@ export class AndroidPlayerUpdateRequiredError extends Error {
     this.name = "AndroidPlayerUpdateRequiredError";
   }
 }
-
-const CANONICAL_UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
 export type AndroidPlayerPhase =
   | "Buffering"
@@ -306,14 +304,6 @@ export type AndroidPlayerCommandInput =
       ? Omit<Command, "requestId" | "protocolVersion" | "protocolContractSha256">
       : never
     : never;
-
-function canonicalUuid(raw: unknown, context: string): string {
-  const value = expectString(raw, context);
-  if (!CANONICAL_UUID_RE.test(value)) {
-    throw new TypeError(`${context} must be a canonical UUID`);
-  }
-  return value;
-}
 
 export function androidPlayerProtocolIdentity(): AndroidPlayerProtocolIdentity {
   const protocolContractSha256 =

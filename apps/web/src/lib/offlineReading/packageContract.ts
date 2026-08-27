@@ -1,8 +1,7 @@
 import type { EpubSectionContent } from "@/lib/media/epubFind";
 import type { ReaderNavigation } from "@/lib/reader/ReaderDocumentSource";
+import { expectCanonicalRfcUuid as canonicalUuid } from "@/lib/validation";
 
-const CANONICAL_UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SAFE_ENTRY_PATH_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)*$/;
 const NESTED_ARCHIVE_RE = /\.(?:7z|apk|bz2|epub|gz|jar|rar|tar|xz|zip)$/iu;
 const MAX_READER_JSON_BYTES = 64 * 1024 * 1024;
@@ -204,14 +203,6 @@ function boundedString(raw: unknown, name: string, maximum = MAX_READER_JSON_BYT
     throw new TypeError(`${name} must be bounded text`);
   }
   return raw;
-}
-
-function canonicalUuid(raw: unknown, name: string): string {
-  const value = string(raw, name, 36);
-  if (!CANONICAL_UUID_RE.test(value)) {
-    throw new TypeError(`${name} must be a canonical UUID`);
-  }
-  return value;
 }
 
 function nonnegativeInteger(raw: unknown, name: string): number {

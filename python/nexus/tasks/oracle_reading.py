@@ -18,17 +18,16 @@ _SPEC = LlmTaskSpec(label="oracle_reading")
 
 
 def oracle_reading_generate(
-    reading_id: str,
+    reading_id: UUID,
     *,
     context: JobExecutionContext,
 ) -> dict | RescheduleRequested:
-    reading_uuid = UUID(reading_id)
-    logger.info("oracle_reading_started", reading_id=reading_id)
+    logger.info("oracle_reading_started", reading_id=str(reading_id))
 
     async def _handler(db: Session, runtime: ExecutionRuntime) -> dict | RescheduleRequested:
         return await execute_reading(
             db,
-            reading_id=reading_uuid,
+            reading_id=reading_id,
             context=context,
             runtime=runtime,
         )
@@ -38,5 +37,5 @@ def oracle_reading_generate(
     # generation terminal (notably after accepted stream loss) or overwrite a
     # replayable Completed checkpoint.
     result = run_llm_task(_SPEC, _handler)
-    logger.info("oracle_reading_completed", reading_id=reading_id, result=result)
+    logger.info("oracle_reading_completed", reading_id=str(reading_id), result=result)
     return result

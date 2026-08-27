@@ -22,7 +22,6 @@ import {
 } from "@/components/feedback/Feedback";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
-import { secondaryActivationForResource } from "@/lib/resources/activation";
 
 export default function ReaderCitation({
   index,
@@ -225,8 +224,6 @@ export default function ReaderCitation({
               event,
               runtime: paneRuntime,
               href,
-              secondaryActivation:
-                secondaryActivationForResource(activation) ?? undefined,
               sourceAnchor: event.currentTarget,
             });
           }}
@@ -286,8 +283,6 @@ export default function ReaderCitation({
               runtime: paneRuntime,
               href: targetHref,
               labelHint: activationTarget.label,
-              secondaryActivation:
-                secondaryActivationForResource(activation) ?? undefined,
               sourceAnchor: event.currentTarget,
             });
           }}

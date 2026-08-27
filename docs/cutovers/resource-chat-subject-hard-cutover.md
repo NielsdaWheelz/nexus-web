@@ -17,9 +17,12 @@ legacy document-chat owner and the `reader_context` field are gone. See
 > (`startResourceContextChat`) rather than a per-run `chat_subject` request
 > field. See
 > [`reader-highlight-quote-chat-hard-cutover.md`](reader-highlight-quote-chat-hard-cutover.md).
-> The durable subject/companion `ResourceEdge` spine, the server subject
-> resolver, and stored historical turn subjects remain; `chat_run_turn_contexts`
-> keeps its subject/audit columns but drops its two reader-selection columns.
+> The durable subject/companion `ResourceEdge` spine, capability policy,
+> context-assembler rendering, and stored historical turn subjects remain;
+> `chat_run_turn_contexts` keeps its subject/audit columns but drops its two
+> reader-selection columns. The uncalled server subject resolver is deleted.
+> The implementation sections below record the superseded design rather than
+> current runtime ownership.
 
 ## North Star
 

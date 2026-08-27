@@ -42,6 +42,30 @@ Mobile mode:
 Mobile mode is not a narrow desktop canvas. It is a different composition
 contract.
 
+## Pane Resource Resolution
+
+Pane route identity and pane resource identity are separate. The route remains
+renderable while its resource locator settles.
+
+- `paneResourceLocator.ts` is the sole locator decoder, equality, and key owner.
+- `resourceLocators.ts` is the strict transport owner. A successful batch must
+  return exactly one decoded row per requested locator, in request order, and
+  each `canonicalHref` must equal the decoded resource item's route.
+- `usePaneResourceResolutionRegistry.ts` owns live-locator deduplication,
+  pending/settled state, generation-fenced installation, pruning, retry, and
+  request cleanup for `WorkspaceHost`.
+
+The registry publishes one closed state per locator: `Pending`, `Resolved`
+(`ready` or `missing`, always carrying the `ResourceItem`), or `Failed`
+(`unauthorized`, `invalid`, or `error`, never carrying an item). Decoder drift,
+same-system API defects, and non-API failures are thrown to the pane defect
+boundary; they are not flattened into retryable resource failures.
+
+`WorkspaceHost` only projects that tagged state into `PaneRuntimeProvider`.
+The runtime defects if a resolved status and its item do not arrive together;
+there is no ready-to-pending fallback. Direct one-object workflows use the
+strict singleton transport and never accept the first row positionally.
+
 ## Pane Canvas
 
 `usePaneCanvas` owns desktop horizontal canvas measurement, wheel-to-horizontal

@@ -127,7 +127,6 @@
       "id": "migration-compatibility",
       "source_globs": [
         "migrations/alembic/**/*.py",
-        "python/nexus/ops/epub_navigation_offsets_cutover.py",
         "python/nexus/db/models.py",
         "python/nexus/services/chat_run_tools.py",
         "python/nexus/services/chat_run_event_store.py",
@@ -140,12 +139,10 @@
         "pytest:python/tests/migrations/test_epub_navigation_offsets_migration.py::test_0208_backfills_exact_offsets_and_0209_rejects_unrepaired_projection",
         "pytest:python/tests/migrations/test_codex_generation_cutover.py",
         "pytest:python/tests/migrations/test_podcast_subscription_lifecycle_events.py",
-        "pytest:python/tests/migrations/test_reader_publications_migration.py::test_0219_backfills_only_ready_documents_without_database_cascade",
-        "pytest:python/tests/kernel/test_epub_navigation_offsets_cutover.py::test_cutover_state_model_admits_only_resumable_media_and_owned_dead_work"
+        "pytest:python/tests/migrations/test_reader_publications_migration.py::test_0219_backfills_only_ready_documents_without_database_cascade"
       ],
       "capabilities": [
-        "migrations",
-        "kernel-python"
+        "migrations"
       ]
     },
     {
@@ -1034,6 +1031,7 @@
         "apps/web/src/components/reader/document-map/**/*",
         "apps/web/src/components/ui/FloatingActionSurface.tsx",
         "apps/web/src/lib/reader/usePendingDocumentMapPulse.ts",
+        "apps/web/src/lib/reader/useRetainedReaderSelection.ts",
         "apps/web/src/app/(authenticated)/media/*/MediaPaneBody.tsx",
         "apps/web/src/lib/panes/paneRenderRegistry.tsx"
       ],
@@ -1258,6 +1256,7 @@
         "apps/web/src/components/switchboard/NexusButton.tsx",
         "apps/web/src/components/reader/MobileReaderPositionRibbon.tsx",
         "apps/web/src/app/(authenticated)/media/*/MediaPaneBody.tsx",
+        "apps/web/src/lib/reader/useRetainedReaderSelection.ts",
         "apps/web/src/lib/panes/paneRenderRegistry.tsx"
       ],
       "risks": [

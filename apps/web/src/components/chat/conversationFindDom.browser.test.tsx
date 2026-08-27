@@ -55,6 +55,7 @@ const message: ConversationMessage = {
   },
   trust_trail: null,
   citations: [citationOut],
+  reader_selection: { kind: "Absent" },
   status: "complete",
   can_rerun: false,
   can_regenerate: false,

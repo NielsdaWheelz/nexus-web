@@ -1,6 +1,12 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import type { ReactNode } from "react";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { dispatchReaderPulse } from "@/lib/reader/pulseEvent";
 import { useReaderTarget } from "@/lib/reader/useReaderTarget";
@@ -11,9 +17,13 @@ const noop = () => {};
 
 function ReaderRuntime({
   mediaId,
+  href = `/media/${mediaId}`,
+  onReplacePane = noop,
   children,
 }: {
   mediaId: string;
+  href?: string;
+  onReplacePane?: Parameters<typeof PaneRuntimeProvider>[0]["onReplacePane"];
   children: ReactNode;
 }) {
   return (
@@ -21,12 +31,12 @@ function ReaderRuntime({
       paneId={`pane-${mediaId}`}
       visitId={VISIT_ID}
       isActive
-      href={`/media/${mediaId}`}
+      href={href}
       routeId="media"
       canGoBack={false}
       canGoForward={false}
       onNavigatePane={noop}
-      onReplacePane={noop}
+      onReplacePane={onReplacePane}
       onActivateWorkspaceTarget={() => ({
         kind: "ActivatedExisting",
         paneId: `pane-${mediaId}`,
@@ -40,11 +50,16 @@ function ReaderRuntime({
 }
 
 function ReaderTargetProbe({ mediaId }: { mediaId: string }) {
-  const { status, target } = useReaderTarget(mediaId);
+  const { status, target, markActive } = useReaderTarget(mediaId);
   return (
-    <output aria-label={`Reader target ${mediaId}`}>
-      {status}:{target?.kind ?? "none"}:{target?.value ?? "none"}
-    </output>
+    <>
+      <output aria-label={`Reader target ${mediaId}`}>
+        {status}:{target?.kind ?? "none"}:{target?.value ?? "none"}
+      </output>
+      <button type="button" onClick={markActive}>
+        Mark reader target active
+      </button>
+    </>
   );
 }
 
@@ -80,14 +95,60 @@ it("keeps a pre-mount pulse with its media and consumes it once", async () => {
 
   const { unmount: unmountMatching } = renderReader("media-target");
   await waitFor(() =>
-    expect(screen.getByLabelText("Reader target media-target")).toHaveTextContent(
-      "pending:evidence:span-before-mount",
-    ),
+    expect(
+      screen.getByLabelText("Reader target media-target"),
+    ).toHaveTextContent("pending:evidence:span-before-mount"),
   );
   unmountMatching();
 
   renderReader("media-target");
   expect(screen.getByLabelText("Reader target media-target")).toHaveTextContent(
     "idle:none:none",
+  );
+});
+
+it("consumes a hash target after a matching live pulse", async () => {
+  const mediaId = "media-hash-target";
+  const evidenceSpanId = "span-from-hash";
+  const onReplacePane = vi.fn();
+  render(
+    <ReaderRuntime
+      mediaId={mediaId}
+      href={`/media/${mediaId}#evidence-${evidenceSpanId}`}
+      onReplacePane={onReplacePane}
+    >
+      <ReaderTargetProbe mediaId={mediaId} />
+    </ReaderRuntime>,
+  );
+  await waitFor(() =>
+    expect(screen.getByLabelText(`Reader target ${mediaId}`)).toHaveTextContent(
+      `pending:evidence:${evidenceSpanId}`,
+    ),
+  );
+
+  await act(async () => {
+    dispatchReaderPulse({
+      mediaId,
+      evidenceSpanId,
+      locator: {
+        type: "web_text_offsets",
+        media_id: mediaId,
+        fragment_id: "fragment-1",
+        start_offset: 4,
+        end_offset: 12,
+      },
+      snippet: "Evidence",
+      highlightBehavior: "pulse",
+      focusBehavior: "scroll_into_view",
+    });
+  });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Mark reader target active" }),
+  );
+
+  expect(onReplacePane).toHaveBeenCalledWith(
+    `pane-${mediaId}`,
+    `/media/${mediaId}`,
+    { modality: "Programmatic" },
   );
 });

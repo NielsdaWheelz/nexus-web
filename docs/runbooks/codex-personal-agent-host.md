@@ -397,7 +397,7 @@ the new host passes release admission, then unlink it. Never edit, print,
 restore, or copy credential contents, and never re-enroll while the host runs.
 
 Application rollback is permitted only before database mutation starts. After
-the 0222 migration begins, recovery is forward-fix only. The dedicated encrypted
+the 0224 migration begins, recovery is forward-fix only. The dedicated encrypted
 state remains untouched in either case. Do not bypass health, policy, sandbox,
 environment, MCP-origin, or capacity checks.
 

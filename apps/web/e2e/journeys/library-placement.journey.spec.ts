@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Page, Request, Response } from "playwright/test";
 
-import { ARTICLE_TITLE, captureCanonicalArticle } from "../articleFixture";
+import { ARTICLE_TITLE, captureReadableArticle } from "../articleFixture";
 import {
   expect,
   gotoWithStrictCsp,
@@ -154,6 +154,7 @@ test("canonical placement supports Saved and named Media destinations, awaits re
   page,
   journeyUser,
 }) => {
+  test.setTimeout(300_000);
   await page.setViewportSize({ width: 1_280, height: 900 });
   await signIn(page, journeyUser);
   const api = pageRequest(page, webOrigin);
@@ -169,23 +170,7 @@ test("canonical placement supports Saved and named Media destinations, awaits re
     `Named Library seed failed: ${createNamed.status()} ${createNamedText.slice(0, 500)}`,
   ).toBeTruthy();
 
-  const mediaId = await captureCanonicalArticle(page, "library-placement");
-  await expect
-    .poll(
-      async () => {
-        const response = await api.get(`/api/media/${mediaId}`);
-        if (!response.ok()) return `http-${response.status()}`;
-        const data = (await response.json()) as {
-          data: { processing_status: string; retrieval_status: string | null };
-        };
-        return `${data.data.processing_status}:${data.data.retrieval_status}`;
-      },
-      {
-        message: `Media ${mediaId} never became ready for placement.`,
-        timeout: 30_000,
-      },
-    )
-    .toBe("ready_for_reading:ready");
+  const mediaId = await captureReadableArticle(page, "library-placement");
 
   const initialPlacementResponse = await api.get(
     `/api/media/${mediaId}/libraries`,

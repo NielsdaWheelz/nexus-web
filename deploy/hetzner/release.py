@@ -217,7 +217,7 @@ _CODEX_CAPACITY_CLIENT_ENVIRONMENT = {
     "NEXUS_CODEX_AGENT_SOCKET": "/run/nexus-codex/agent.sock",
 }
 _CODEX_CAPACITY_CLIENT_COMMAND = ("-c", "while :; do sleep 3600; done")
-_CODEX_PERSONAL_GENERATION_REVISION = 222
+_CODEX_PERSONAL_GENERATION_REVISION = 224
 _CAPACITY_SERVICES = (*_SERVICES, "codex-egress-policy", _CODEX_AGENT_HOST)
 _RESOURCE_LIMITS = {
     "postgres": (256 * 1024 * 1024, 512 * 1024 * 1024, 256),
@@ -2627,8 +2627,8 @@ def _requires_codex_agent_host(candidate: CandidateManifest) -> bool:
 
     A 0216 metadata predecessor may use the retired single-container shape.
     Predecessor verification therefore proves its application publication but
-    does not pretend it implements the 0222 sidecar and MCP contract. Every
-    0222 candidate and current release is held to the new contract exactly.
+    does not pretend it implements the 0224 sidecar and MCP contract. Every
+    0224 candidate and current release is held to the new contract exactly.
     """
 
     revision = candidate.expected_database_revision
@@ -6364,7 +6364,7 @@ class HostRelease:
         bundle = self.bundle(source_sha)
         candidate = load_candidate_manifest(bundle / "candidate-manifest.json")
         if not self._requires_first_codex_capacity_qualification(candidate):
-            raise ReleaseBlocked("Codex capacity qualification is only for first 0222 promotion")
+            raise ReleaseBlocked("Codex capacity qualification is only for first 0224 promotion")
         self._require_codex_isolated_gateway_support()
         worker_image_id = self._image_identity(candidate.images.worker, candidate)
         self._admit_codex_capacity_qualification(

@@ -45,7 +45,7 @@ from nexus.services.artifacts.bindings._shared import (
 from nexus.services.artifacts.bindings.base import (
     DossierBindingBase,
     DossierOperation,
-    MaterializedDossier,
+    PublishableDossier,
     require_resource_subject,
 )
 from nexus.services.artifacts.coordination import DossierBuildRuntime
@@ -348,7 +348,7 @@ class MediaBinding(DossierBindingBase):
         collected: _MediaCollected,  # noqa: ARG002 - candidates come from the witness (A10)
         decoded_output: BaseModel,
         witness: _MediaWitness,
-    ) -> MaterializedDossier:
+    ) -> PublishableDossier:
         return materialize_standard(
             decoded_output,
             [_standard_candidate(candidate) for candidate in witness.candidates],

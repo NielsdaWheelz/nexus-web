@@ -12,6 +12,14 @@ not `lectern-hard-cutover.md` (superseded). `queue_add`'s live implementation
 §10/§11/§13's `assistant_queue_add`/S6 sequencing and file pointers describe
 the superseded pre-cutover shape and are retained as historical record only.
 
+**Tool-runtime supersession (2026-08-25):** portable tool execution now stages
+every read and write result through
+`tool_runtime.execution._stage_chat_terminal_projection`, which derives the
+effect-specific `result_refs` and calls
+`chat_run_tools.persist_current_tool_record`. The old
+`persist_tool_call_trace`, `persist_write_tool_call`, `persist_tool_call_error`,
+`tool_trace_event`, and `tool_step_fingerprint` helpers are deleted.
+
 ## One-line
 
 The house agent stops being read-only: five additive, origin-marked, undoable
@@ -72,9 +80,9 @@ write caps, a visible trust-trail row per write, and per-write Undo.
 - **P-7.** The daily-note append owner is `notes.quick_capture`
   (notes.py:188-254), which takes `body_pm_json` (notes.py:207), **not** markdown.
   The markdown→pm_json converter is `notes.pm_doc_from_markdown_projection`
-  (notes.py:55, re-exporting `note_bodies.pm_doc_from_markdown_projection`) —
-  `note_block_markdown.py` only renders blocks/pages *to* markdown (opposite
-  direction) and is **not** used here. Note-block reindex is `enqueue_note_reindex`.
+  (notes.py:55, re-exporting `note_bodies.pm_doc_from_markdown_projection`). The
+  unused opposite-direction `note_block_markdown.py` renderer is deleted.
+  Note-block reindex is `enqueue_note_reindex`.
   **There is no single-block deleter** (`notes.py` has `delete_page` at :106 and
   `delete_highlight_note` at :339, but no `delete_note_block`); the `jot_note`
   undo path (§4.4, S4) creates one.
@@ -211,7 +219,7 @@ exists (`pdf_quote_match.compute_match`) but is bound to PDF page spans, not
 | Note append + single-block delete (assistant path) | `notes.quick_capture` + new `notes.delete_note_block` (via writes.py) | *(quick_capture reused; deleter new — §4.4, F-02)* |
 | Highlight create/delete (assistant path) | `highlights.create_highlight_for_fragment` / `delete_highlight` (via writes.py) | *(reused)* |
 | Queue insert (assistant path) | lectern queue service (via writes.py) | *(reused — lectern owns the table)* |
-| Write-tool call persistence + created-ref record | `chat_run_tools.persist_write_tool_call` (writes created refs into the existing `result_refs`) | *(new sibling of `persist_tool_call_trace`, D-8)* |
+| Write-tool call persistence + created-ref record | `tool_runtime.execution._stage_chat_terminal_projection` → `chat_run_tools.persist_current_tool_record` | shared terminal projection derives created refs for writes and citations for reads (D-8) |
 | Per-tool-call revert + `reverted_at` | `agent_tools/writes.undo_tool_call` + `POST …/tool-calls/{id}/undo` | *(new)* |
 | Write-tool system-prompt block | `chat_prompt.render_system_prompt_block` | *(extended — the sole prompt owner)* |
 | Write trail-row + Undo rendering | `AssistantWriteTrail.tsx` (consumes BUILT trust trail) | *(extended)* |
@@ -409,15 +417,12 @@ only and never a second turn wrapper.
   sole-writer negative gate (§13) a single-file assertion. Tool *definitions*
   (the ToolSpec dicts) live in `writes.py` too, mirroring how `app_search.py`
   co-locates definition + executor.
-- **D-8. `persist_write_tool_call` is a sibling of `persist_tool_call_trace`, not
-  a fork.** Both are thin writers over `message_tool_calls` in `chat_run_tools.py`
-  (the sole lifecycle owner) sharing its `FOR UPDATE` re-arm-on-retry pattern. A
-  separate function — not a call into `persist_tool_call_trace` — is warranted
-  because (a) the write payload is a list of created refs, not the read `result`
-  object (`uri`/`status`/`body_chars`) that function is typed for, and (b)
-  `create_highlight_for_fragment` commits internally, so the write row is recorded
-  **after** an intervening commit (the two-commit window, R-3) — a shape
-  `persist_tool_call_trace` never faces. Any schema change updates both.
+- **D-8. One terminal tool projection owns read and write persistence.**
+  `tool_runtime.execution._stage_chat_terminal_projection` derives
+  `result_refs` from the declared effect—created refs for writes, citation refs
+  for reads—and calls `chat_run_tools.persist_current_tool_record`. The tagged
+  row identity, replay re-arm, event, and retrieval publication therefore
+  cannot drift across effect-specific façades.
 - **D-9. Write tools reuse `result_refs`; no `created_refs` field.**
   `TrustToolCallOut.result_refs` (`list[dict[str, Any]]`, conversation.py:500)
   already carries "what this tool call produced": write rows store created refs as
@@ -505,8 +510,8 @@ writer). No file, symbol, CSS block, table, or route is deleted.
 - **S1 — `writes.py` skeleton + sole-writer edge path + `mint_edge`.** New
   `agent_tools/writes.py`: cap constant, `assistant_mint_edge` calling
   `resource_graph.edges.create_edge(origin='assistant')` with a rationale
-  snapshot; ToolSpec dict; `chat_run_tools.persist_write_tool_call`; new `elif`
-  branch in `chat_runs.py`. Register the ToolSpec behind
+  snapshot; ToolSpec dict; the shared tool-runtime terminal projection; new
+  `elif` branch in `chat_runs.py`. Register the ToolSpec behind
   `ASSISTANT_WRITE_TOOLS_ENABLED`. Add the system-prompt hands block.
   *Verify:* `make test-back-integration -k mint_edge`; BE test: a chat turn calls
   `mint_edge`, an `origin='assistant'` edge exists, trail row carries the edge id.
@@ -656,7 +661,10 @@ rg -n "assistant" python/nexus/db/models.py | rg "ck_llm_calls_owner_kind" \
   re-export (no change).
 - `python/nexus/services/chat_runs.py` — five write-tool `elif` branches (before
   the `else` at 1700); register the ToolSpecs under the flag.
-- `python/nexus/services/chat_run_tools.py` — `persist_write_tool_call` (D-8).
+- `python/nexus/services/chat_run_tools.py` — `persist_current_tool_record`
+  (D-8).
+- `python/nexus/services/tool_runtime/execution.py` —
+  `_stage_chat_terminal_projection` (D-8).
 - `python/nexus/services/chat_prompt.py` — hands block in
   `render_system_prompt_block`.
 - `python/nexus/services/message_trust_trails.py` (`build_assistant_trust_trail`)
@@ -667,7 +675,9 @@ rg -n "assistant" python/nexus/db/models.py | rg "ck_llm_calls_owner_kind" \
 - `apps/web/src/components/chat/AssistantWriteTrail.tsx`,
   `AssistantMessage.tsx`, `apps/web/src/lib/conversations/messageUpdateReducer.ts`.
 
-**Deleted** — none (§9).
+**Deleted by the later portable tool-runtime consolidation:**
+`persist_tool_call_trace`, `persist_write_tool_call`,
+`persist_tool_call_error`, `tool_trace_event`, and `tool_step_fingerprint`.
 
 ---
 

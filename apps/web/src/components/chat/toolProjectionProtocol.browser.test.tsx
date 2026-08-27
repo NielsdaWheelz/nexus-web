@@ -100,9 +100,6 @@ function projectionTool(
 ): MessageToolCall {
   return {
     id: ID,
-    conversation_id: SECOND_ID,
-    user_message_id: ID,
-    assistant_message_id: SECOND_ID,
     record_kind: recordKind,
     canonical_tool_id: fields.canonicalToolId,
     provider_wire_name: fields.providerWireName,
@@ -116,6 +113,7 @@ function projectionTool(
     result_refs: [],
     selected_context_refs: [],
     provider_request_ids: [],
+    latency_ms: null,
     result_count: 0,
     selected_count: 0,
     status: "complete",
@@ -123,7 +121,7 @@ function projectionTool(
     created_at: "2026-08-17T00:00:00Z",
     updated_at: "2026-08-17T00:00:00Z",
     retrievals: [],
-  } as unknown as MessageToolCall;
+  };
 }
 
 function assistantMessage(toolCalls: MessageToolCall[]): ConversationMessage {
@@ -141,6 +139,7 @@ function assistantMessage(toolCalls: MessageToolCall[]): ConversationMessage {
     message_document: { type: "message_document", blocks: [] },
     trust_trail: trustTrail,
     citations: [],
+    reader_selection: { kind: "Absent" },
     status: "pending",
     can_rerun: false,
     can_regenerate: false,
@@ -366,13 +365,11 @@ describe("Chat tool projection protocol", () => {
         assistantMessage([
           {
             ...variants[0],
-            tool_name: "web_search",
-            error_code: "foreign_private_reason",
-            query_hash: "not-replay-identity",
+            unexpected_projection_field: "must not cross the wire",
           } as unknown as MessageToolCall,
         ]),
       ),
-    ).toThrow(/legacy tool projection/);
+    ).toThrow(/must contain exactly/);
 
     const activeTool = {
       ...variants[0],

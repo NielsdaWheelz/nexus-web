@@ -7,9 +7,9 @@ import {
 } from "@/lib/api/client";
 import { decodePresence, type Presence } from "@/lib/api/presence";
 import {
-  LIBRARY_MEDIA_KINDS,
-  type LibraryMediaKind,
-} from "@/lib/libraries/mediaKind";
+  MEDIA_KINDS,
+  type MediaKind,
+} from "@/lib/media/kind";
 import {
   UPLOAD_VERIFICATION_CODES,
   type UploadVerificationCode,
@@ -17,16 +17,13 @@ import {
 import {
   expectArray,
   expectBoolean,
+  expectCanonicalRfcUuid as canonicalUuid,
   expectExactRecord,
   expectIsoInstant,
   expectNonemptyString,
   expectNonnegativeInteger,
   expectOneOf,
-  expectString,
 } from "@/lib/validation";
-
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 export type MediaActivityActiveStatus = "Queued" | "Processing";
 export type MediaActivityStage =
@@ -77,7 +74,7 @@ export interface MediaActivityMediaItem {
   readonly kind: "Media";
   readonly mediaId: string;
   readonly title: string;
-  readonly mediaKind: LibraryMediaKind;
+  readonly mediaKind: MediaKind;
   readonly sourceAttemptId: string;
   readonly state: MediaActivityState;
   readonly requestId: Presence<string>;
@@ -136,14 +133,6 @@ export interface MediaRepairResult {
   readonly mediaId: string;
   readonly scope: MediaRepairScope;
   readonly jobId: string;
-}
-
-function canonicalUuid(raw: unknown, name: string): string {
-  const value = expectString(raw, name);
-  if (!UUID_RE.test(value)) {
-    throw new TypeError(`${name} must be a canonical lowercase UUID`);
-  }
-  return value;
 }
 
 function sourceProgress(raw: unknown): SourceProgress {
@@ -336,7 +325,7 @@ function mediaActivityItem(
     title: expectNonemptyString(item.title, `${name}.title`),
     mediaKind: expectOneOf(
       item.media_kind,
-      LIBRARY_MEDIA_KINDS,
+      MEDIA_KINDS,
       `${name}.media_kind`,
     ),
     sourceAttemptId: canonicalUuid(

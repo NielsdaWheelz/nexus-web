@@ -60,14 +60,12 @@ from nexus.services.artifacts.engine import (
 )
 from nexus.services.artifacts.idea_identity import idea_key_from_selection
 from nexus.services.artifacts.idea_seeds import find_or_create_idea_subject
+from nexus.services.artifacts.registry import visible_persisted_subject
 from nexus.services.artifacts.research import (
     FrozenIdeaEvidence,
     collect_idea_evidence,
 )
-from nexus.services.artifacts.subject_policy import (
-    ResolvedIdeaSubject,
-    visible_persisted_subject,
-)
+from nexus.services.artifacts.subject_policy import ResolvedIdeaSubject
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.codex_generation_contract import (
@@ -78,9 +76,12 @@ from nexus.services.codex_generation_contract import (
 from nexus.services.durable_step_journal import (
     AttachReconciledResult,
     Completed,
+    Prepared,
     ProveNotDispatched,
+    StepReplayState,
     ToolExecutionSettlement,
     Uncertain,
+    checkpoint_step_state,
     read_step_states,
     stable_generation_id,
 )
@@ -847,3 +848,85 @@ def test_dossier_freezes_host_plan_and_does_not_automatically_reissue_uncertain_
     finally:
         set_rate_limiter(previous_limiter)
         clear_settings_cache()
+
+
+@pytest.mark.parametrize("step_path", ("synthesis", "document-repair"))
+@pytest.mark.parametrize("attach_result", (False, True))
+def test_dossier_operator_reconciles_every_uncertain_billed_document_step(
+    engine: Engine,
+    *,
+    step_path: str,
+    attach_result: bool,
+) -> None:
+    """An uncertain synthesis or repair is recoverable without redispatch."""
+
+    with Session(engine, expire_on_commit=False) as db:
+        build = _create_idea_build(
+            db,
+            title=f"Reconcile {step_path} {'result' if attach_result else 'dispatch'}",
+            max_attempts=1,
+        )
+        job, context = _claim_build(
+            db,
+            build=build,
+            worker_id=f"reconcile-{step_path}-{'result' if attach_result else 'dispatch'}",
+        )
+        fingerprint = "a" * 64
+        assert checkpoint_step_state(
+            db,
+            ctx=context,
+            job=job,
+            step_path=step_path,
+            state=StepReplayState(
+                generation_id=stable_generation_id(build.build_id, step_path),
+                dispatch_phase=Uncertain,
+                request_fingerprint=present(fingerprint),
+                terminal_result=absent(),
+            ),
+        )
+        db.commit()
+        assert (
+            fail_job(
+                db,
+                job_id=build.job_id,
+                worker_id=context.worker_id,
+                error_code="E_RECONCILIATION_REQUIRED",
+                error_message="provider dispatch outcome is uncertain",
+                retry_delays_seconds=(0,),
+            )
+            == "dead"
+        )
+        db.commit()
+
+        if attach_result:
+            recovered = json.dumps(
+                {
+                    "content_html": "<article></article>",
+                    "citations": [],
+                },
+                separators=(",", ":"),
+            )
+            resolution = AttachReconciledResult(terminal_result=recovered)
+        else:
+            resolution = ProveNotDispatched()
+        reconcile_uncertain_build(
+            db,
+            build_id=build.build_id,
+            resolution=resolution,
+        )
+
+        reconciled_job = get_job(db, build.job_id)
+        assert reconciled_job is not None and reconciled_job.status == PENDING
+        reconciled = read_step_states(reconciled_job)[step_path]
+        assert reconciled.generation_id == stable_generation_id(build.build_id, step_path)
+        assert reconciled.request_fingerprint == present(fingerprint)
+        if attach_result:
+            assert reconciled.dispatch_phase is Completed
+            assert isinstance(reconciled.terminal_result, Present)
+            assert json.loads(reconciled.terminal_result.value) == {
+                "kind": "Accepted",
+                "envelope_json": recovered,
+            }
+        else:
+            assert reconciled.dispatch_phase is Prepared
+            assert reconciled.terminal_result == absent()

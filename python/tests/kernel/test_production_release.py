@@ -225,14 +225,14 @@ def test_codex_host_is_required_only_after_its_immutable_schema_cutover() -> Non
             }
         )
 
-    predecessor = manifest("0216")
-    cutover = manifest("0222")
+    predecessor = manifest("0223")
+    cutover = manifest("0224")
 
     assert release._requires_codex_agent_host(predecessor) is False
     assert release._requires_codex_agent_host(cutover) is True
 
 
-def test_first_0222_apply_accepts_the_exact_0216_predecessor_shape(tmp_path: Path) -> None:
+def test_first_0224_apply_accepts_the_exact_0216_predecessor_shape(tmp_path: Path) -> None:
     """Risk: release admission requires the new sidecar contract from its predecessor."""
 
     release = _release_module()
@@ -245,7 +245,7 @@ def test_first_0222_apply_accepts_the_exact_0216_predecessor_shape(tmp_path: Pat
         assert attempt.phase is release.ReleasePhase.AwaitingFrontendPromotion
 
 
-def test_existing_vps_capacity_uses_reservations_and_requires_qualification_before_0222(
+def test_existing_vps_capacity_uses_reservations_and_requires_qualification_before_0224(
     host_release_harness: HostReleaseHarness,
 ) -> None:
     """Risk: a nominal 1.9 GiB VPS is rejected by summed hard caps or promoted unqualified."""
@@ -1168,7 +1168,7 @@ def test_host_that_exits_without_an_oom_kill_during_qualification_stays_requalif
     assert json.loads(evidence.read_text(encoding="utf-8"))["status"] == "passed"
 
 
-def test_stale_capacity_evidence_cannot_authorize_the_first_0222_promotion(
+def test_stale_capacity_evidence_cannot_authorize_the_first_0224_promotion(
     host_release_harness: HostReleaseHarness,
 ) -> None:
     """Risk: a weeks-old measurement authorizes promotion onto a drifted host."""

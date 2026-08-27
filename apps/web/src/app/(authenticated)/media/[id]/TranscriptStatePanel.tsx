@@ -38,7 +38,7 @@ type TranscriptCapabilities = {
   can_download_file: boolean;
 };
 
-type TranscriptRuntimeUpdate = {
+export type TranscriptRuntimeUpdate = {
   transcriptState: TranscriptState;
   transcriptCoverage: TranscriptCoverage;
   capabilities: TranscriptCapabilities | null;
