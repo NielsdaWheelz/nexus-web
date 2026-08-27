@@ -58,8 +58,8 @@ _CANDIDATE_WORKER_IMAGE_ID = "sha256:" + "c" * 64
     (
         ("linux", "x86_64", ("chrome", "chrome-headless-shell")),
         ("linux", "aarch64", ("chrome", "headless_shell")),
-        ("darwin", "x86_64", ("Chromium", "chrome-headless-shell")),
-        ("darwin", "arm64", ("Chromium", "chrome-headless-shell")),
+        ("darwin", "x86_64", ("Google Chrome for Testing", "chrome-headless-shell")),
+        ("darwin", "arm64", ("Google Chrome for Testing", "chrome-headless-shell")),
         ("linux", "riscv64", None),
         ("win32", "AMD64", None),
     ),
@@ -105,6 +105,58 @@ def test_browser_admission_requires_both_complete_locked_platform_artifacts(
 
     (owners[1] / "INSTALLATION_COMPLETE").unlink()
     assert not runner._browser_installed(tmp_path, environment)
+
+
+@pytest.mark.parametrize(
+    ("environment", "platform_name", "expected"),
+    (
+        ({"HOME": "/users/owner"}, "darwin", Path("/users/owner/Library/Caches/ms-playwright")),
+        ({"HOME": "/users/owner"}, "linux", Path("/users/owner/.cache/ms-playwright")),
+        (
+            {"HOME": "/users/owner", "XDG_CACHE_HOME": "/cache"},
+            "linux",
+            Path("/cache/ms-playwright"),
+        ),
+        ({"PLAYWRIGHT_BROWSERS_PATH": "/browsers"}, "darwin", Path("/browsers")),
+        ({}, "darwin", None),
+        ({}, "win32", None),
+    ),
+)
+def test_browser_admission_uses_playwright_platform_cache_defaults(
+    environment: dict[str, str], platform_name: str, expected: Path | None
+) -> None:
+    assert runner._browser_cache_directory(environment, platform_name) == expected
+
+
+def test_browser_admission_uses_the_playwright_host_default_cache(tmp_path: Path) -> None:
+    revisions = {"chromium": "1217", "chromium-headless-shell": "1217"}
+    _write(
+        tmp_path / "apps/web/node_modules/playwright-core/browsers.json",
+        json.dumps(
+            {
+                "browsers": [
+                    {"name": name, "revision": revision} for name, revision in revisions.items()
+                ]
+            }
+        ),
+    )
+    home = tmp_path / "home"
+    cache = runner._browser_cache_directory({"HOME": str(home)}, sys.platform)
+    assert cache is not None
+    executables = runner._browser_executable_names(sys.platform, os.uname().machine)
+    assert executables is not None
+    owners = (
+        cache / f"chromium-{revisions['chromium']}",
+        cache / f"chromium_headless_shell-{revisions['chromium-headless-shell']}",
+    )
+    for owner, executable in zip(owners, executables, strict=True):
+        owner.mkdir(parents=True)
+        (owner / "INSTALLATION_COMPLETE").write_text("", encoding="utf-8")
+        binary = owner / "platform" / executable
+        _write(binary, "browser\n")
+        binary.chmod(0o755)
+
+    assert runner._browser_installed(tmp_path, {"HOME": str(home)})
 
 
 def test_codex_hosted_canary_plan_requires_dedicated_profile_state_without_an_api_key(
