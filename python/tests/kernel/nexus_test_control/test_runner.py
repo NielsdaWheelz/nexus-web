@@ -58,8 +58,12 @@ _CANDIDATE_WORKER_IMAGE_ID = "sha256:" + "c" * 64
     (
         ("linux", "x86_64", ("chrome", "chrome-headless-shell")),
         ("linux", "aarch64", ("chrome", "headless_shell")),
-        ("darwin", "x86_64", ("Chromium", "chrome-headless-shell")),
-        ("darwin", "arm64", ("Chromium", "chrome-headless-shell")),
+        (
+            "darwin",
+            "x86_64",
+            ("Google Chrome for Testing", "chrome-headless-shell"),
+        ),
+        ("darwin", "arm64", ("Google Chrome for Testing", "chrome-headless-shell")),
         ("linux", "riscv64", None),
         ("win32", "AMD64", None),
     ),
@@ -105,6 +109,44 @@ def test_browser_admission_requires_both_complete_locked_platform_artifacts(
 
     (owners[1] / "INSTALLATION_COMPLETE").unlink()
     assert not runner._browser_installed(tmp_path, environment)
+
+
+def test_browser_admission_accepts_playwright_macos_default_install(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Risk: a fresh macOS setup installs Chromium where the controller never admits it."""
+
+    repo_root = tmp_path / "repo"
+    revisions = {"chromium": "1217", "chromium-headless-shell": "1217"}
+    _write(
+        repo_root / "apps/web/node_modules/playwright-core/browsers.json",
+        json.dumps(
+            {
+                "browsers": [
+                    {"name": name, "revision": revision} for name, revision in revisions.items()
+                ]
+            }
+        ),
+    )
+    home = tmp_path / "home"
+    cache = home / "Library/Caches/ms-playwright"
+    executables = ("Google Chrome for Testing", "chrome-headless-shell")
+    owners = (
+        cache / f"chromium-{revisions['chromium']}",
+        cache / f"chromium_headless_shell-{revisions['chromium-headless-shell']}",
+    )
+    for owner, executable in zip(owners, executables, strict=True):
+        owner.mkdir(parents=True)
+        (owner / "INSTALLATION_COMPLETE").write_text("", encoding="utf-8")
+        binary = owner / "platform" / executable
+        _write(binary, "browser\n")
+        binary.chmod(0o755)
+
+    monkeypatch.setattr(runner.sys, "platform", "darwin")
+    monkeypatch.setattr(runner.platform, "machine", lambda: "arm64")
+
+    assert runner._browser_installed(repo_root, {"HOME": str(home)})
 
 
 def test_codex_hosted_canary_plan_requires_dedicated_profile_state_without_an_api_key(
