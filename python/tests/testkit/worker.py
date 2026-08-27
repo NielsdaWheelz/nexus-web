@@ -132,9 +132,7 @@ def _process_invocation(process_id: int) -> tuple[tuple[str, ...], dict[str, str
     else:
         raise AssertionError("production worker proof requires Linux or Darwin")
     environment = dict(
-        part.decode("utf-8").split("=", 1)
-        for part in environment_parts
-        if b"=" in part
+        part.decode("utf-8").split("=", 1) for part in environment_parts if b"=" in part
     )
     return command, environment
 

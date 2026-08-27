@@ -2189,7 +2189,10 @@ def _consume_artifact_generation_result(
     db: Session,
     *,
     build_id: UUID,
-    result: BaseModel | ArtifactGenerationInvalid | ArtifactGenerationFailure | ArtifactGenerationCancelled,
+    result: BaseModel
+    | ArtifactGenerationInvalid
+    | ArtifactGenerationFailure
+    | ArtifactGenerationCancelled,
     ctx: JobExecutionContext,
     input_recheck: _TerminalInputRecheck,
 ) -> BaseModel | ArtifactGenerationInvalid | None:
@@ -2218,6 +2221,8 @@ def _consume_artifact_generation_result(
         )
         return None
     return result
+
+
 # ---------------------------------------------------------------------------
 # Terminal mutations (RULES 7-8) — each locks the head, checks child existence.
 # ---------------------------------------------------------------------------

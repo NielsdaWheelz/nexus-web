@@ -49,9 +49,7 @@ from nexus.services.structured_synthesis import (
 
 SYNTHESIS_STEP_PATH: Final = "synthesis"
 DOCUMENT_REPAIR_STEP_PATH: Final = "document-repair"
-GENERATION_STEP_PATHS: Final = frozenset(
-    {SYNTHESIS_STEP_PATH, DOCUMENT_REPAIR_STEP_PATH}
-)
+GENERATION_STEP_PATHS: Final = frozenset({SYNTHESIS_STEP_PATH, DOCUMENT_REPAIR_STEP_PATH})
 _VISIBLE_SYNTHESIS_FIELD: Final = "content_html"
 
 
