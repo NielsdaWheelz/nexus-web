@@ -1,11 +1,12 @@
 import type { MetadataRoute } from "next";
 import { BRAND_BG_DARK } from "@/lib/brand";
+import { PRODUCT_DESCRIPTOR, PRODUCT_NAME } from "@/lib/productIdentity";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Nexus",
-    short_name: "Nexus",
-    description: "A reading and notes platform",
+    name: PRODUCT_NAME,
+    short_name: PRODUCT_NAME,
+    description: PRODUCT_DESCRIPTOR,
     start_url: "/",
     display: "standalone",
     background_color: BRAND_BG_DARK,

@@ -20,6 +20,7 @@ from nexus.release_artifact import (
     CandidateImages,
     CandidateManifest,
     RuntimeIdentity,
+    is_exact_https_origin,
     load_candidate_manifest,
     load_runtime_identity,
     write_candidate_manifest,
@@ -95,6 +96,32 @@ def test_android_player_protocol_identity_is_the_raw_corpus_digest_and_admits_on
             AndroidPlayerProtocolIdentity.from_json(malformed)
     with pytest.raises(BackendArtifactDefect):
         AndroidPlayerProtocolIdentity.of_corpus(tmp_path / "absent.json")
+
+
+def test_release_api_origin_is_one_canonical_https_origin() -> None:
+    assert is_exact_https_origin("https://api.nielseriknandal.com")
+    assert is_exact_https_origin("https://api.example.test:8443")
+
+    for malformed in (
+        None,
+        "http://api.example.test",
+        "HTTPS://api.example.test",
+        "https://API.example.test",
+        "https://user@api.example.test",
+        "https://api_example.test",
+        "https://api.example.test/",
+        "https://api.example.test/path",
+        "https://api.example.test?",
+        "https://api.example.test#",
+        "https://api.example.test?#",
+        "https://api.example.test?channel=stable",
+        "https://api.example.test#latest",
+        "https://api.example.test:garbage",
+        "https://api.example.test:0",
+        "https://api.example%20",
+        "https://api.example.test\t",
+    ):
+        assert not is_exact_https_origin(malformed)
 
 
 def test_candidate_manifest_binds_source_ci_and_matching_image_identities(

@@ -10,6 +10,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 _SOURCE_SHA = re.compile(r"[0-9a-f]{40}")
 _DATABASE_REVISION = re.compile(r"[0-9a-z][0-9a-z_]{0,63}")
@@ -40,11 +41,47 @@ _SHA256 = re.compile(r"[0-9a-f]{64}")
 ANDROID_PLAYER_PROTOCOL_VERSION = 2
 ANDROID_RELEASE_TAG = re.compile(r"android-v[a-zA-Z0-9._-]+")
 _ANDROID_PLAYER_PROTOCOL_FIELDS = frozenset({"version", "contract_sha256"})
+_HTTPS_ORIGIN_HOST = re.compile(
+    r"(?=.{1,253}\Z)"
+    r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+    r"(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\Z"
+)
 
 
 # justify-defect: malformed owned release artifacts are deployment defects, not modeled outcomes.
 class BackendArtifactDefect(RuntimeError):
     """An owned release artifact violated its closed contract."""
+
+
+def is_exact_https_origin(value: object) -> bool:
+    """Accept one canonical lowercase HTTPS origin with an optional valid port."""
+    if (
+        not isinstance(value, str)
+        or not value.startswith("https://")
+        or any(
+            character.isspace() or ord(character) < 32 or ord(character) == 127
+            for character in value
+        )
+    ):
+        return False
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError:
+        return False
+    hostname = parsed.hostname
+    if hostname is None or _HTTPS_ORIGIN_HOST.fullmatch(hostname) is None:
+        return False
+    if port is not None and port < 1:
+        return False
+    expected_netloc = hostname if port is None else f"{hostname}:{port}"
+    return (
+        parsed.scheme == "https"
+        and parsed.netloc == expected_netloc
+        and parsed.username is None
+        and parsed.password is None
+        and value == f"https://{expected_netloc}"
+    )
 
 
 @dataclass(frozen=True, slots=True)

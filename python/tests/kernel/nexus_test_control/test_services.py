@@ -83,6 +83,20 @@ def _process_is_running(process_id: int) -> bool:
     return True
 
 
+def test_port_probe_rejects_an_existing_dual_stack_wildcard_listener() -> None:
+    with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as holder:
+        holder.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        holder.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        holder.bind(("::", 0))
+        holder.listen()
+
+        port = int(holder.getsockname()[1])
+
+        assert not services._port_available(port), (
+            "an existing dual-stack listener was misclassified as an available test port"
+        )
+
+
 def _owned_run(
     tmp_path: Path,
     *,

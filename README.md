@@ -100,14 +100,21 @@ tables and object storage do not use Supabase Database or Supabase Storage.
 
 ## Android Release Distribution
 
-End users install Android from
+The private Android companion is distributed from
 [`nexus.nielseriknandal.com/android`](https://nexus.nielseriknandal.com/android).
+GitHub access to the private release repository is required to download it.
 
-Android self-distribution uses GitHub Releases. The `/android` install page must
-link to the stable latest-release assets:
+The `/android` page projects GitHub Releases' stable latest-release targets and
+does not cache mutable release facts in page copy:
 
-- `https://github.com/<owner>/<repo>/releases/latest/download/nexus-android.apk`
-- `https://github.com/<owner>/<repo>/releases/latest/download/nexus-android.apk.sha256`
+- `https://github.com/NielsdaWheelz/nexus-web/releases/latest/download/nexus-android.apk`
+- `https://github.com/NielsdaWheelz/nexus-web/releases/latest/download/nexus-android.apk.sha256`
+- `https://github.com/NielsdaWheelz/nexus-web/releases/latest/download/release-manifest.json`
+- `https://github.com/NielsdaWheelz/nexus-web/releases/latest`
+
+The checksum lets the operator compare the downloaded APK's SHA-256. The
+release manifest records the source commit, signing-certificate fingerprint,
+and artifact digests accepted by the release gate.
 
 Create an existing `android-v*` tag and run the Protected release verification
 workflow for that tag only after its protected `nexus-android-usb` runner has
@@ -117,8 +124,8 @@ candidate on that same device, requires a strictly increasing version code,
 and verifies the in-place update before draft publication. After a green
 protected run, install the draft APK on the user device, verify App Links and
 login, then rerun with `publish_stable=true`. The workflow uploads stable assets
-for `/android` plus versioned assets such as
-`nexus-android-v0.1.0.apk` for tag `android-v0.1.0`.
+for `/android`, including the release manifest, plus versioned assets such as
+`nexus-android-0.1.0.apk` for tag `android-v0.1.0`.
 
 ## Repository Map
 

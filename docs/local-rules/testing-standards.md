@@ -1009,11 +1009,12 @@ Failure artifacts include, as applicable:
 
 Formal diagnostic evidence names `command: diagnose`, the original failed run
 and summary, and a nested `diagnostic_result`. Its top-level status remains
-`fail` regardless of the replay result. The v3 run summary records UI mode and
-a secret-safe fingerprint of outcome-affecting execution inputs; replay rejects
-any mismatch. Its exclusive attempt record moves durably from `started` to
-`terminal` only after the linked summary exists. Direct runner debugging
-remains unlinked, non-gate evidence.
+`fail` regardless of the replay result. The v3 run summary records UI mode, a
+secret-safe fingerprint of outcome-affecting execution inputs, and the closed
+typed Android visual inputs when that workflow owns them; replay rejects any
+mismatch and reuses those recorded values. Its exclusive attempt record moves
+durably from `started` to `terminal` only after the linked summary exists.
+Direct runner debugging remains unlinked, non-gate evidence.
 
 The v3 hard cut rejects older summary shapes. One sampler spans sensitivity
 and ordinary capabilities; each red/green attempt records duration, owned

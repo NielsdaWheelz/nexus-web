@@ -8,22 +8,23 @@ import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { readThemeCookie } from "@/lib/theme/cookie";
 import { BRAND_BG_DARK, BRAND_BG_LIGHT } from "@/lib/brand";
 import { getEnv } from "@/lib/env";
+import { PRODUCT_DESCRIPTOR, PRODUCT_NAME } from "@/lib/productIdentity";
 
 export const metadata: Metadata = {
   metadataBase: new URL(getEnv().appPublicOrigin),
-  title: "Nexus",
-  description: "A reading and notes platform",
-  applicationName: "Nexus",
+  title: PRODUCT_NAME,
+  description: PRODUCT_DESCRIPTOR,
+  applicationName: PRODUCT_NAME,
   openGraph: {
-    title: "Nexus",
-    description: "A reading and notes platform",
-    siteName: "Nexus",
+    title: PRODUCT_NAME,
+    description: PRODUCT_DESCRIPTOR,
+    siteName: PRODUCT_NAME,
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "Nexus",
-    description: "A reading and notes platform",
+    title: PRODUCT_NAME,
+    description: PRODUCT_DESCRIPTOR,
   },
 };
 
