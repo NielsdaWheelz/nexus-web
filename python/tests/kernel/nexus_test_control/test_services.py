@@ -231,13 +231,16 @@ def test_owned_process_unblocks_sigterm_before_exec_and_stops_gracefully(
 
         clean_run(tmp_path, TEST_ENV, RUN_ID)
 
-        with pytest.raises(ProcessLookupError):
-            os.kill(started.process_group_id, 0)
+        assert not services._process_birth_identity_matches(
+            started.process_group_id,
+            started.process_start_token,
+        ), "the original owned process identity survived graceful cleanup"
     finally:
-        try:
+        if services._process_birth_identity_matches(
+            started.process_group_id,
+            started.process_start_token,
+        ):
             os.killpg(started.process_group_id, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
 
 
 def test_owned_process_cleanup_rejects_a_different_owner_without_signaling(
@@ -495,13 +498,16 @@ def test_clean_uses_immutable_identity_when_owned_process_rewrites_argv(
 
         clean_run(tmp_path, TEST_ENV, RUN_ID)
 
-        with pytest.raises(ProcessLookupError):
-            os.kill(started.process_group_id, 0)
+        assert not services._process_birth_identity_matches(
+            started.process_group_id,
+            started.process_start_token,
+        ), "the original argv-rewriting process identity survived cleanup"
     finally:
-        try:
+        if services._process_birth_identity_matches(
+            started.process_group_id,
+            started.process_start_token,
+        ):
             os.killpg(started.process_group_id, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
 
 
 def test_readiness_rejects_listener_outside_owned_process_group(tmp_path: Path) -> None:
