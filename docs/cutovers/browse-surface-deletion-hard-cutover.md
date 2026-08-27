@@ -178,7 +178,8 @@ export default async function BrowsePage({
 }
 ```
 
-The function is `async` and `searchParams` is typed as `Promise<…>` per the Next.js 15 pattern used throughout the codebase (see `app/login/page.tsx`, `app/sign-up/page.tsx`).
+The function is `async` and `searchParams` is typed as `Promise<…>` per the
+Next.js 15 pattern used by `app/login/page.tsx`.
 
 ---
 
@@ -246,7 +247,6 @@ None. No schema change, no migration file.
 | `lib/launcher/providers.test.ts`              | S0: update import from `@/app/(authenticated)/browse/browseState` to `@/lib/browse/types`; S1: update "browse-web" test to assert `set-lane` target, not an href                                                                                                                                                                                         |
 | `lib/auth/callback.test.ts`                   | Auth fixture uses `/browse` as a next-param URL — stays valid (auth guard fires before the redirect, middleware captures the signal)                                                                                                                                                                                                                     |
 | `lib/auth/client-return-target.test.ts`       | Same — stays valid                                                                                                                                                                                                                                                                                                                                       |
-| `app/sign-up/page.test.ts`                    | Same — stays valid                                                                                                                                                                                                                                                                                                                                       |
 | `e2e/tests/auth.spec.ts`                      | Update the GitHub OAuth round-trip test (lines 115-117): replace `expect(page).toHaveURL(/\/browse/)` with `expect(page).toHaveURL(/lane=browse/)` — Playwright follows the 308 to `/?launcher=1&lane=browse` and the old pattern no longer matches. The unauthenticated-access test (lines 84-100) is unaffected (middleware redirects before routing). |
 | `e2e/tests/workspace-tabs.spec.ts`            | Replace `/browse` pane history fixture (line 156) with a valid pane href (e.g. `"/notes"`)                                                                                                                                                                                                                                                               |
 | `e2e/tests/workspace.ts`                      | Update `EXPLICIT_FALLBACK_HISTORY` (line 19): replace `"/browse"` with a valid pane href (e.g. `"/notes"`) — this constant seeds the back-stack for every `gotoSinglePaneWorkspace("/libraries", …)` call across multiple e2e suites                                                                                                                     |
@@ -431,7 +431,7 @@ if grep -n "x_api_bearer_token" python/nexus/config.py | grep -i "browse"; then
 
 ## 16. Risks
 
-- **R1. `permanentRedirect` in a server component with dynamic search params requires `force-dynamic` and the Next.js 15 async `searchParams` API.** Mitigation: the code snippet in §4.5 includes `export const dynamic = "force-dynamic"`, marks the function `async`, and types `searchParams` as `Promise<…>` — matching the pattern used in `app/login/page.tsx` and `app/sign-up/page.tsx`.
+- **R1. `permanentRedirect` in a server component with dynamic search params requires `force-dynamic` and the Next.js 15 async `searchParams` API.** Mitigation: the code snippet in §4.5 includes `export const dynamic = "force-dynamic"`, marks the function `async`, and types `searchParams` as `Promise<…>` — matching the pattern used in `app/login/page.tsx`.
 - **R2. Launcher `set-lane` close→open flash if the target somehow reaches dispatch.** Mitigation: the controller intercepts `set-lane` before `setOpen(false)` is called — the Launcher never closes. The dispatch no-op case is defense-in-depth only.
 - **R3. The browse `__screenshots__` directory is left behind.** Resolved: `apps/web/src/app/(authenticated)/browse/__screenshots__/` is listed in §9 and §15 for deletion alongside the other browse files.
 - **R4. Auth e2e tests that navigate to `/browse`.** Two distinct cases. Unauthenticated-access test (lines 84-100): auth guard fires before Next.js routing; the `?next=/browse` capture is still valid; no change needed. GitHub OAuth round-trip test (lines 115-117): Playwright follows the 308, URL assertion must be updated — see §7.4 and D-5.

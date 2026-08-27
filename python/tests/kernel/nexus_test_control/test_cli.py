@@ -274,6 +274,65 @@ def test_diagnose_replays_failed_workflow_once_but_keeps_failed_verdict(
     assert "already has a formal diagnostic rerun" in errors.getvalue()
 
 
+def test_diagnose_replays_the_recorded_android_visual_inputs(tmp_path: Path) -> None:
+    _git_repository(tmp_path)
+    git_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    requested_sha = "f" * 40 if git_sha != "f" * 40 else "e" * 40
+    original_output = StringIO()
+
+    assert (
+        main(
+            [
+                "android-visual",
+                "--sha",
+                requested_sha,
+                "--path",
+                "/android",
+                "--device",
+                "primary",
+            ],
+            repo_root=tmp_path,
+            environment={},
+            stdout=original_output,
+        )
+        == 1
+    )
+    original_summary_path = tmp_path / original_output.getvalue().strip().split("summary=", 1)[1]
+    original = json.loads(original_summary_path.read_text(encoding="utf-8"))
+    assert original["capabilities"][0]["detail"] == "--sha must equal the worktree HEAD"
+
+    diagnostic_output = StringIO()
+    assert (
+        main(
+            ["diagnose", "--of", original["run_id"]],
+            repo_root=tmp_path,
+            environment={},
+            stdout=diagnostic_output,
+        )
+        == 1
+    )
+    diagnostic_summary_path = (
+        tmp_path / diagnostic_output.getvalue().strip().split("summary=", 1)[1]
+    )
+    diagnostic = json.loads(diagnostic_summary_path.read_text(encoding="utf-8"))
+    assert diagnostic["diagnostic_result"]["capabilities"][0]["detail"] == (
+        "--sha must equal the worktree HEAD"
+    )
+    assert diagnostic["invocation"] == original["invocation"]
+    assert original["invocation"]["inputs"] == {
+        "kind": "AndroidVisual",
+        "sha": requested_sha,
+        "path": "/android",
+        "device": "primary",
+    }
+
+
 def test_diagnose_requires_the_same_clean_committed_head(tmp_path: Path) -> None:
     _git_repository(tmp_path)
     git_sha = subprocess.run(

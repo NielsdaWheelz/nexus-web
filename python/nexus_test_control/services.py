@@ -1918,7 +1918,9 @@ def _port_available(port: int) -> bool:
     for family, host in ((socket.AF_INET, "127.0.0.1"), (socket.AF_INET6, "::1")):
         try:
             with socket.socket(family, socket.SOCK_STREAM) as listener:
-                listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                # This is an exclusivity probe. SO_REUSEADDR lets Darwin bind
+                # over Docker Desktop's dual-stack wildcard listeners and can
+                # therefore misclassify a foreign published port as available.
                 listener.bind((host, port))
         except OSError as error:
             if family == socket.AF_INET6 and error.errno in {

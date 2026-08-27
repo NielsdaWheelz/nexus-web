@@ -54,9 +54,13 @@ def _stable_manifest(player_protocol: dict[str, object]) -> dict[str, object]:
         "tag": STABLE_TAG,
         "package": "app.nexus.android",
         "version_code": 17,
+        "previous_version_code": 16,
         "version_name": version_name,
         "signer_sha256": "c" * 64,
         "source_apk_sha256": apk_digest,
+        "api_origin": "https://api.nielseriknandal.com",
+        "api_origin_source": "signed_apk_build_config",
+        "target_sdk": 36,
         "player_protocol": player_protocol,
         "assets": {
             name: (apk_digest if name in apk_names else "b" * 64)
@@ -138,6 +142,45 @@ def test_release_manifest_decoder_rejects_noncurrent_or_legacy_manifests(
     )
 
     with pytest.raises(expected, match=message):
+        release.load_android_release_manifest(path, corpus=CORPUS, expected_tag=STABLE_TAG)
+
+
+def test_release_manifest_decoder_rejects_malformed_promotion_fields(
+    tmp_path: Path,
+) -> None:
+    release = _release_module()
+    corpus_identity = {
+        "version": 2,
+        "contract_sha256": hashlib.sha256(CORPUS.read_bytes()).hexdigest(),
+    }
+    malformed_fields = (
+        ("previous_version_code", 17, "previous version code is malformed"),
+        (
+            "api_origin",
+            "https://owner:secret@api.nielseriknandal.com/v1?channel=stable#latest",
+            "API origin is malformed",
+        ),
+        ("api_origin_source", "runtime_environment", "API origin source is unsupported"),
+        ("target_sdk", True, "target SDK is malformed"),
+    )
+
+    for field, value, message in malformed_fields:
+        manifest = _stable_manifest(corpus_identity)
+        manifest[field] = value
+        path = _write_manifest(tmp_path / f"{field}.json", manifest)
+
+        with pytest.raises(release.ReleaseDefect, match=message):
+            release.load_android_release_manifest(path, corpus=CORPUS, expected_tag=STABLE_TAG)
+
+
+def test_release_manifest_decoder_rejects_the_pre_repair_v2_shape(tmp_path: Path) -> None:
+    release = _release_module()
+    manifest = _stable_manifest({"version": 2, "contract_sha256": "a" * 64})
+    for field in ("previous_version_code", "api_origin", "api_origin_source", "target_sdk"):
+        del manifest[field]
+    path = _write_manifest(tmp_path / "release-manifest.json", manifest)
+
+    with pytest.raises(release.ReleaseDefect, match="fields are not the exact supported contract"):
         release.load_android_release_manifest(path, corpus=CORPUS, expected_tag=STABLE_TAG)
 
 

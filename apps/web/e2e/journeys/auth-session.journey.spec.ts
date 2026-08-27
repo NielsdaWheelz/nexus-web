@@ -10,6 +10,7 @@ import {
   gotoWithStrictCsp,
   hasSupabaseAuthCookie,
   inbucketOrigin,
+  openPasswordSignIn,
   signIn,
   signOut,
   supabaseAnonKey,
@@ -57,6 +58,7 @@ async function expectPasswordSignInFailure(
   password: string,
 ): Promise<void> {
   await gotoWithStrictCsp(page, "/login");
+  await openPasswordSignIn(page);
   await page.getByLabel("Email", { exact: true }).fill(email);
   await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
@@ -163,6 +165,16 @@ test("invited user chooses and replaces a password while scanner-safe acceptance
       contract_sha256: PLAYER_PROTOCOL_CONTRACT_SHA256,
     },
   });
+
+  const anonymousLogin = await gotoWithStrictCsp(page, "/login?next=%2Fbrowse");
+  expect(anonymousLogin.status()).toBe(200);
+  await expect(page).toHaveURL(
+    (url) =>
+      url.pathname === "/login" && url.searchParams.get("next") === "/browse",
+  );
+  await expect(page).toHaveTitle("Sign in · Nexus");
+  await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+
   const supabase = pageRequest(page, supabaseOrigin);
   const deniedSignup = await supabase.post("/auth/v1/signup", {
     data: {
@@ -252,6 +264,20 @@ test("invited user chooses and replaces a password while scanner-safe acceptance
   expect(profile.default_library_id).toMatch(
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
   );
+
+  const directLogin = await app.get("/login?next=%2Fbrowse", {
+    maxRedirects: 0,
+  });
+  expect(directLogin.status()).toBe(307);
+  const directTarget = new URL(
+    directLogin.headers()["location"] ?? "",
+    webOrigin,
+  );
+  expect(directTarget.origin).toBe(webOrigin);
+  expect(directTarget.pathname).toBe("/browse");
+  expect(directTarget.search).toBe("");
+  expect(directTarget.hash).toBe("");
+  expect(directLogin.headers()).not.toHaveProperty("set-cookie");
 
   await signOut(page);
   expect(
@@ -433,7 +459,13 @@ test("invited user chooses and replaces a password while scanner-safe acceptance
     (url) =>
       url.pathname === "/login" && url.searchParams.get("next") === "/browse",
   );
-  await expect(page.getByText("Your session ended. Please sign in again.")).toBeVisible();
+  const terminalFeedback = page.getByRole("status");
+  await expect(
+    terminalFeedback.getByText("Your session ended.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    terminalFeedback.getByText("Please sign in again.", { exact: true }),
+  ).toBeVisible();
   expect(resolveRequests).toEqual([
     { method: "POST", origin: webOrigin, header: "Resolve" },
   ]);

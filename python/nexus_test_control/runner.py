@@ -24,8 +24,7 @@ from contextlib import ExitStack, contextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import date
 from pathlib import Path
-from typing import TextIO, assert_never
-from urllib.parse import urlsplit
+from typing import Literal, TextIO, assert_never
 from uuid import UUID
 
 import httpx
@@ -38,6 +37,9 @@ from nexus.release_artifact import (
     ANDROID_RELEASE_TAG,
     AndroidPlayerProtocolIdentity,
     BackendArtifactDefect,
+)
+from nexus.release_artifact import (
+    is_exact_https_origin as _is_exact_https_origin,
 )
 from nexus_test_control import android_visual
 from nexus_test_control.build import StandaloneBuild, ensure_standalone_build
@@ -4224,13 +4226,26 @@ class _AndroidReleaseInputs:
     version_code: int
     previous_version_code: int
     version_name: str
-    # None only in the explicit bootstrap mode: the controller measured no
-    # device, and the retained evidence must record that instead of a serial.
-    serial: str | None
     adb: Path
     apksigner: Path
     apkanalyzer: Path
-    bootstrap: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _AndroidReleaseDeviceInputs(_AndroidReleaseInputs):
+    serial: str
+    bootstrap: Literal[False] = False
+
+
+@dataclass(frozen=True, slots=True)
+class _AndroidReleaseBootstrapInputs(_AndroidReleaseInputs):
+    # The controller measured no device in bootstrap mode; retained evidence
+    # records that absence instead of admitting an optional serial downstream.
+    serial: None = None
+    bootstrap: Literal[True] = True
+
+
+_AndroidReleaseExecutionInputs = _AndroidReleaseDeviceInputs | _AndroidReleaseBootstrapInputs
 
 
 # package, versionCode, versionName, App-Link host, targetSdkVersion, player
@@ -4241,7 +4256,7 @@ _ReleaseManifestFacts = tuple[str, str, str, str, str, str, str]
 
 @dataclass(frozen=True, slots=True)
 class _AndroidReleaseOperations:
-    inputs: Callable[[Path, Mapping[str, str]], _AndroidReleaseInputs | CapabilityResult]
+    inputs: Callable[[Path, Mapping[str, str]], _AndroidReleaseExecutionInputs | CapabilityResult]
     command: Callable[[tuple[str, ...], Path, Mapping[str, str]], subprocess.CompletedProcess[str]]
     manifest_facts: Callable[[str], _ReleaseManifestFacts | None]
     read_apk_api_origin: Callable[[Path, Path, Path, Mapping[str, str]], str | None]
@@ -4255,20 +4270,6 @@ def _production_android_release_operations() -> _AndroidReleaseOperations:
         manifest_facts=_release_manifest_facts,
         read_apk_api_origin=_read_apk_api_origin,
         installed_version_code=_installed_android_version_code,
-    )
-
-
-def _is_exact_https_origin(value: str) -> bool:
-    parsed = urlsplit(value)
-    return (
-        parsed.scheme == "https"
-        and parsed.hostname is not None
-        and parsed.username is None
-        and parsed.password is None
-        and parsed.path in {"", "/"}
-        and not parsed.query
-        and not parsed.fragment
-        and value == value.rstrip("/")
     )
 
 
@@ -4431,7 +4432,7 @@ def _run_android_release(
         ":app:assembleRelease",
         ":app:assembleReleaseAndroidTest",
     )
-    if inputs.serial is not None:
+    if isinstance(inputs, _AndroidReleaseDeviceInputs):
         child_environment["ANDROID_SERIAL"] = inputs.serial
     with _gradle_lock(context.repo_root):
         # The candidate is built and authenticated before touching the baseline,
@@ -4496,7 +4497,7 @@ def _run_android_release(
                 started,
                 "signed release APK API origin differs from the protected deployment origin",
             )
-        if inputs.bootstrap:
+        if isinstance(inputs, _AndroidReleaseBootstrapInputs):
             sha256 = _sha256_file(apk)
             evidence_relative = (
                 Path("test-results/runs") / execution.run_id / "android-release.json"
@@ -5104,7 +5105,7 @@ def _run_release_artifact(
 
 def _android_release_inputs(
     repo_root: Path, environment: Mapping[str, str]
-) -> _AndroidReleaseInputs | CapabilityResult:
+) -> _AndroidReleaseExecutionInputs | CapabilityResult:
     capability = Capability.ANDROID_RELEASE
     names = (
         "ANDROID_RELEASE_TAG",
@@ -5135,21 +5136,15 @@ def _android_release_inputs(
             return _fail(capability, "Android release tag does not resolve to HEAD")
     except RuntimeContractError as error:
         return _fail(capability, str(error))
-    base_url = environment["NEXUS_ANDROID_RELEASE_BASE_URL"].rstrip("/")
+    base_url = environment["NEXUS_ANDROID_RELEASE_BASE_URL"]
     owned_host = environment["NEXUS_ANDROID_RELEASE_OWNED_HOST"]
-    parsed = urlsplit(base_url)
     if (
-        parsed.scheme != "https"
-        or parsed.hostname != owned_host
-        or owned_host != _ANDROID_RELEASE_OWNED_HOST
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.path not in {"", "/"}
-        or parsed.query
-        or parsed.fragment
+        owned_host != _ANDROID_RELEASE_OWNED_HOST
+        or base_url != f"https://{owned_host}"
+        or not _is_exact_https_origin(base_url)
     ):
         return _fail(capability, "Android release URL must be the canonical HTTPS origin")
-    api_origin = environment["NEXUS_ANDROID_RELEASE_API_ORIGIN"].rstrip("/")
+    api_origin = environment["NEXUS_ANDROID_RELEASE_API_ORIGIN"]
     if not _is_exact_https_origin(api_origin):
         return _fail(capability, "Android release API origin must be one exact HTTPS origin")
     certificate = environment["NEXUS_ANDROID_RELEASE_CERT_SHA256"].replace(":", "").lower()
@@ -5195,22 +5190,20 @@ def _android_release_inputs(
                 capability,
                 "Android release version code must be greater than the published stable baseline",
             )
-        return _AndroidReleaseInputs(
-            tag,
-            head_sha,
-            base_url,
-            api_origin,
-            owned_host,
-            certificate,
-            keystore,
-            version_code,
-            previous_version_code,
-            version_name,
-            None,
-            adb,
-            apksigner,
-            apkanalyzer,
-            bootstrap=True,
+        return _AndroidReleaseBootstrapInputs(
+            tag=tag,
+            git_sha=head_sha,
+            base_url=base_url,
+            api_origin=api_origin,
+            owned_host=owned_host,
+            certificate_sha256=certificate,
+            keystore=keystore,
+            version_code=version_code,
+            previous_version_code=previous_version_code,
+            version_name=version_name,
+            adb=adb,
+            apksigner=apksigner,
+            apkanalyzer=apkanalyzer,
         )
     serial, device_error = authorized_usb_physical_device(adb, environment, repo_root)
     if serial is None:
@@ -5232,21 +5225,21 @@ def _android_release_inputs(
             capability,
             "Android release version code must be greater than the installed baseline",
         )
-    return _AndroidReleaseInputs(
-        tag,
-        head_sha,
-        base_url,
-        api_origin,
-        owned_host,
-        certificate,
-        keystore,
-        version_code,
-        previous_version_code,
-        version_name,
-        serial,
-        adb,
-        apksigner,
-        apkanalyzer,
+    return _AndroidReleaseDeviceInputs(
+        tag=tag,
+        git_sha=head_sha,
+        base_url=base_url,
+        api_origin=api_origin,
+        owned_host=owned_host,
+        certificate_sha256=certificate,
+        keystore=keystore,
+        version_code=version_code,
+        previous_version_code=previous_version_code,
+        version_name=version_name,
+        adb=adb,
+        apksigner=apksigner,
+        apkanalyzer=apkanalyzer,
+        serial=serial,
     )
 
 
@@ -5310,7 +5303,7 @@ def _release_command(
 
 
 def _run_android_release_instrumentation(
-    inputs: _AndroidReleaseInputs,
+    inputs: _AndroidReleaseDeviceInputs,
     targets: tuple[str, ...],
     repo_root: Path,
     environment: Mapping[str, str],
@@ -6059,18 +6052,9 @@ def _browser_installed(repo_root: Path, environment: Mapping[str, str]) -> bool:
     executables = _browser_executable_names(sys.platform, platform.machine())
     if executables is None:
         return False
-    browser_root = environment.get("PLAYWRIGHT_BROWSERS_PATH")
-    if browser_root:
-        cache = Path(browser_root)
-    else:
-        cache_home = environment.get("XDG_CACHE_HOME")
-        home = environment.get("HOME")
-        if cache_home:
-            cache = Path(cache_home) / "ms-playwright"
-        elif home:
-            cache = Path(home) / ".cache/ms-playwright"
-        else:
-            return False
+    cache = _browser_cache_directory(environment, sys.platform)
+    if cache is None:
+        return False
     chromium = cache / f"chromium-{revisions['chromium']}"
     headless = cache / f"chromium_headless_shell-{revisions['chromium-headless-shell']}"
     return all(
@@ -6079,6 +6063,21 @@ def _browser_installed(repo_root: Path, environment: Mapping[str, str]) -> bool:
         and any(path.is_file() and os.access(path, os.X_OK) for path in owner.rglob(executable))
         for owner, executable in zip((chromium, headless), executables, strict=True)
     )
+
+
+def _browser_cache_directory(environment: Mapping[str, str], platform_name: str) -> Path | None:
+    browser_root = environment.get("PLAYWRIGHT_BROWSERS_PATH")
+    if browser_root:
+        return Path(browser_root)
+    home = environment.get("HOME")
+    if platform_name == "linux":
+        cache_home = environment.get("XDG_CACHE_HOME")
+        if cache_home:
+            return Path(cache_home) / "ms-playwright"
+        return Path(home) / ".cache/ms-playwright" if home else None
+    if platform_name == "darwin":
+        return Path(home) / "Library/Caches/ms-playwright" if home else None
+    return None
 
 
 def _browser_executable_names(platform_name: str, machine: str) -> tuple[str, str] | None:
@@ -6090,7 +6089,7 @@ def _browser_executable_names(platform_name: str, machine: str) -> tuple[str, st
             return "chrome", "headless_shell"
         return None
     if platform_name == "darwin" and architecture in {"x86_64", "amd64", "arm64", "aarch64"}:
-        return "Chromium", "chrome-headless-shell"
+        return "Google Chrome for Testing", "chrome-headless-shell"
     return None
 
 

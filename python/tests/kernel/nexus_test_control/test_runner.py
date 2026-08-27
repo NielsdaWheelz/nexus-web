@@ -58,8 +58,8 @@ _CANDIDATE_WORKER_IMAGE_ID = "sha256:" + "c" * 64
     (
         ("linux", "x86_64", ("chrome", "chrome-headless-shell")),
         ("linux", "aarch64", ("chrome", "headless_shell")),
-        ("darwin", "x86_64", ("Chromium", "chrome-headless-shell")),
-        ("darwin", "arm64", ("Chromium", "chrome-headless-shell")),
+        ("darwin", "x86_64", ("Google Chrome for Testing", "chrome-headless-shell")),
+        ("darwin", "arm64", ("Google Chrome for Testing", "chrome-headless-shell")),
         ("linux", "riscv64", None),
         ("win32", "AMD64", None),
     ),
@@ -105,6 +105,58 @@ def test_browser_admission_requires_both_complete_locked_platform_artifacts(
 
     (owners[1] / "INSTALLATION_COMPLETE").unlink()
     assert not runner._browser_installed(tmp_path, environment)
+
+
+@pytest.mark.parametrize(
+    ("environment", "platform_name", "expected"),
+    (
+        ({"HOME": "/users/owner"}, "darwin", Path("/users/owner/Library/Caches/ms-playwright")),
+        ({"HOME": "/users/owner"}, "linux", Path("/users/owner/.cache/ms-playwright")),
+        (
+            {"HOME": "/users/owner", "XDG_CACHE_HOME": "/cache"},
+            "linux",
+            Path("/cache/ms-playwright"),
+        ),
+        ({"PLAYWRIGHT_BROWSERS_PATH": "/browsers"}, "darwin", Path("/browsers")),
+        ({}, "darwin", None),
+        ({}, "win32", None),
+    ),
+)
+def test_browser_admission_uses_playwright_platform_cache_defaults(
+    environment: dict[str, str], platform_name: str, expected: Path | None
+) -> None:
+    assert runner._browser_cache_directory(environment, platform_name) == expected
+
+
+def test_browser_admission_uses_the_playwright_host_default_cache(tmp_path: Path) -> None:
+    revisions = {"chromium": "1217", "chromium-headless-shell": "1217"}
+    _write(
+        tmp_path / "apps/web/node_modules/playwright-core/browsers.json",
+        json.dumps(
+            {
+                "browsers": [
+                    {"name": name, "revision": revision} for name, revision in revisions.items()
+                ]
+            }
+        ),
+    )
+    home = tmp_path / "home"
+    cache = runner._browser_cache_directory({"HOME": str(home)}, sys.platform)
+    assert cache is not None
+    executables = runner._browser_executable_names(sys.platform, os.uname().machine)
+    assert executables is not None
+    owners = (
+        cache / f"chromium-{revisions['chromium']}",
+        cache / f"chromium_headless_shell-{revisions['chromium-headless-shell']}",
+    )
+    for owner, executable in zip(owners, executables, strict=True):
+        owner.mkdir(parents=True)
+        (owner / "INSTALLATION_COMPLETE").write_text("", encoding="utf-8")
+        binary = owner / "platform" / executable
+        _write(binary, "browser\n")
+        binary.chmod(0o755)
+
+    assert runner._browser_installed(tmp_path, {"HOME": str(home)})
 
 
 def test_codex_hosted_canary_plan_requires_dedicated_profile_state_without_an_api_key(
@@ -2197,7 +2249,7 @@ def test_android_release_controller_stages_baseline_before_candidate_install(
     )
     _write(tmp_path / "testdata/android/player-protocol.json", '{"version": 2}\n')
     player_protocol = runner._android_player_protocol_identity(tmp_path)
-    inputs = runner._AndroidReleaseInputs(
+    inputs = runner._AndroidReleaseDeviceInputs(
         "android-v2.1",
         "a" * 40,
         "https://nexus.nielseriknandal.com",
@@ -2208,10 +2260,10 @@ def test_android_release_controller_stages_baseline_before_candidate_install(
         42,
         41,
         "2.1",
-        "R5CT1234",
         tmp_path / "adb",
         tmp_path / "apksigner",
         tmp_path / "apkanalyzer",
+        "R5CT1234",
     )
     commands: list[tuple[str, ...]] = []
     airplane = {"enabled": False}
@@ -2387,7 +2439,7 @@ def test_android_release_refuses_an_emulated_device_that_passes_usb_topology(
     )
     _write(tmp_path / "testdata/android/player-protocol.json", '{"version": 2}\n')
     player_protocol = runner._android_player_protocol_identity(tmp_path)
-    inputs = runner._AndroidReleaseInputs(
+    inputs = runner._AndroidReleaseDeviceInputs(
         "android-v2.1",
         "a" * 40,
         "https://nexus.nielseriknandal.com",
@@ -2398,10 +2450,10 @@ def test_android_release_refuses_an_emulated_device_that_passes_usb_topology(
         42,
         41,
         "2.1",
-        "R5CT1234",
         tmp_path / "adb",
         tmp_path / "apksigner",
         tmp_path / "apkanalyzer",
+        "R5CT1234",
     )
 
     def command(
@@ -2524,10 +2576,29 @@ def test_android_release_bootstrap_inputs_attest_no_device_and_require_published
     inputs = runner._android_release_inputs(tmp_path, environment)
 
     if expected_detail is None:
-        assert isinstance(inputs, runner._AndroidReleaseInputs)
+        assert isinstance(inputs, runner._AndroidReleaseBootstrapInputs)
         assert inputs.bootstrap is True
         assert inputs.serial is None
         assert inputs.previous_version_code == 16
+        for variable, value, detail in (
+            (
+                "NEXUS_ANDROID_RELEASE_BASE_URL",
+                "https://nexus.nielseriknandal.com/",
+                "Android release URL must be the canonical HTTPS origin",
+            ),
+            (
+                "NEXUS_ANDROID_RELEASE_API_ORIGIN",
+                "https://api.nexus.nielseriknandal.com/",
+                "Android release API origin must be one exact HTTPS origin",
+            ),
+        ):
+            rejected = runner._android_release_inputs(
+                tmp_path,
+                {**environment, variable: value},
+            )
+            assert isinstance(rejected, CapabilityResult)
+            assert rejected.evidence.status is RunStatus.FAIL
+            assert rejected.detail == detail
     else:
         assert isinstance(inputs, CapabilityResult)
         assert inputs.evidence.status is RunStatus.FAIL
@@ -2570,7 +2641,7 @@ def test_android_release_bootstrap_skips_device_stages_and_records_explicit_evid
     )
     _write(tmp_path / "testdata/android/player-protocol.json", '{"version": 2}\n')
     player_protocol = runner._android_player_protocol_identity(tmp_path)
-    inputs = runner._AndroidReleaseInputs(
+    inputs = runner._AndroidReleaseBootstrapInputs(
         "android-v2.1",
         "a" * 40,
         "https://nexus.nielseriknandal.com",
@@ -2581,11 +2652,9 @@ def test_android_release_bootstrap_skips_device_stages_and_records_explicit_evid
         42,
         41,
         "2.1",
-        None,
         tmp_path / "adb",
         tmp_path / "apksigner",
         tmp_path / "apkanalyzer",
-        bootstrap=True,
     )
     commands: list[tuple[str, ...]] = []
 

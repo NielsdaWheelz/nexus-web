@@ -1,89 +1,184 @@
-/* /android is the public APK landing. It mirrors /login: one centered column,
-   wordmark up top, a single primary action, tertiary trust links, an escape
-   to sign-in. No editorial, no decorative panel. */
-
-.container {
-  min-height: 100vh;
-  background: var(--surface-canvas);
+.page {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-10) var(--space-6);
-}
-
-.frame {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-8);
   width: 100%;
-  max-width: 24rem;
+  min-width: 0;
+  min-height: 100%;
+  max-width: 32rem;
+  margin-inline: auto;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-10);
 }
 
-.heading {
+.identity,
+.identityCopy,
+.release,
+.introduction,
+.verification {
   display: flex;
+  min-width: 0;
   flex-direction: column;
+}
+
+.identity,
+.identityCopy {
   align-items: center;
+}
+
+.identity {
+  gap: var(--space-5);
+}
+
+.identityCopy {
   gap: var(--space-2);
   text-align: center;
 }
 
-.headingMark {
+.brandMark {
+  width: var(--space-12);
+  height: var(--space-12);
+  flex: 0 0 auto;
   color: var(--accent);
-  margin-bottom: var(--space-1);
+}
+
+.wordmark,
+.descriptor,
+.eyebrow,
+.title,
+.support,
+.accessNote,
+.verificationHeading,
+.verificationCopy,
+.installNote {
+  margin: 0;
 }
 
 .wordmark {
-  margin: 0;
   color: var(--ink);
-  font-family: var(--font-sans);
+  font-size: var(--text-3xl);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--leading-tight);
+}
+
+.descriptor {
+  max-width: 24ch;
+  color: var(--ink-muted);
+  font-family: var(--font-serif);
+  font-size: var(--text-lg);
+  line-height: var(--leading-normal);
+}
+
+.release {
+  gap: var(--space-6);
+}
+
+.introduction {
+  gap: var(--space-3);
+}
+
+.eyebrow {
+  color: var(--accent);
+  font-size: var(--text-sm);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+}
+
+.title {
+  color: var(--ink);
   font-size: var(--text-2xl);
   font-weight: var(--weight-semibold);
   letter-spacing: var(--tracking-tight);
   line-height: var(--leading-tight);
 }
 
-.subhead {
-  margin: 0;
+.support,
+.accessNote,
+.verificationCopy,
+.installNote {
   color: var(--ink-muted);
   font-size: var(--text-sm);
-  letter-spacing: var(--tracking-wide);
+  line-height: var(--leading-relaxed);
 }
 
-.links {
-  margin: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.accessNote {
+  font-weight: var(--weight-medium);
+}
+
+.download {
+  width: 100%;
+}
+
+.verification {
   gap: var(--space-3);
+  padding-top: var(--space-6);
+  border-top: 1px solid var(--edge);
+}
+
+.verificationHeading {
+  color: var(--ink);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-snug);
+}
+
+.verificationLinks {
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  list-style: none;
+}
+
+.verificationLink,
+.returnAction,
+.footerLink {
+  min-height: var(--size-xl);
+  align-items: center;
+  text-underline-offset: 3px;
+}
+
+.verificationLink {
+  display: flex;
+  color: var(--ink);
+  font-size: var(--text-sm);
+  text-decoration: underline;
+}
+
+.verificationLink:hover,
+.returnAction:hover,
+.footerLink:hover {
+  color: var(--ink);
+}
+
+.returnNavigation,
+.footerNavigation {
+  display: flex;
+  justify-content: center;
+}
+
+.returnAction,
+.footerLink {
+  display: inline-flex;
   color: var(--ink-muted);
   font-size: var(--text-sm);
-}
-
-.link {
-  color: var(--ink-muted);
   text-decoration: underline;
-  text-underline-offset: 2px;
-  transition: color var(--duration-fast) var(--ease-glide);
 }
 
-.link:hover {
-  color: var(--ink);
+.footer {
+  padding-top: var(--space-2);
 }
 
-.returnLink {
-  margin: 0;
-  color: var(--ink-faint);
-  font-size: var(--text-xs);
-  text-align: center;
+.footerNavigation {
+  gap: var(--space-4);
 }
 
-.returnLink a {
-  color: var(--ink-muted);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  transition: color var(--duration-fast) var(--ease-glide);
+.footerLink {
+  padding-inline: var(--space-2);
 }
 
-.returnLink a:hover {
-  color: var(--ink);
+@media (min-width: 60rem) {
+  .page {
+    gap: var(--space-12);
+  }
 }
