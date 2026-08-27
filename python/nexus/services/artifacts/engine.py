@@ -1962,6 +1962,8 @@ async def _run_synthesis_step(
         return execution_result
     if not isinstance(execution_result, CompletedGeneration):
         raise AssertionError("dossier generation result is not exhaustive")
+    if not _refresh_generation_job_after_landing(db, runtime):
+        return None
     if guard.stop_reason == "inputs_changed":
         _terminal_failure(
             db,
@@ -2120,6 +2122,8 @@ async def _run_document_repair_step(
         return execution_result
     if not isinstance(execution_result, CompletedGeneration):
         raise AssertionError("dossier repair generation result is not exhaustive")
+    if not _refresh_generation_job_after_landing(db, runtime):
+        return None
     if guard.stop_reason == "inputs_changed":
         _terminal_failure(
             db,
@@ -2140,6 +2144,19 @@ async def _run_document_repair_step(
         ctx=ctx,
         input_recheck=input_recheck,
     )
+
+
+def _refresh_generation_job_after_landing(
+    db: Session,
+    runtime: DossierBuildRuntime,
+) -> bool:
+    """Refresh the job snapshot written by the shared generation transaction."""
+
+    try:
+        runtime.refresh_job(db)
+    except ResearchLeaseLost:
+        return False
+    return True
 
 
 def _lock_artifact_generation_dispatch(
