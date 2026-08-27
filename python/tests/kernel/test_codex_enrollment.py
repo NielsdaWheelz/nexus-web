@@ -7,6 +7,8 @@ import os
 import stat
 import subprocess
 import sys
+import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -22,6 +24,15 @@ from apps.codex_agent.credential_state import (
 )
 
 REPO_ROOT = Path(__file__).parents[3]
+
+
+@pytest.fixture
+def enrollment_tmpfs() -> Iterator[Path]:
+    with tempfile.TemporaryDirectory(prefix="nexus-codex-enrollment-", dir="/tmp") as raw:
+        root = Path(raw).resolve()
+        os.chown(root, -1, os.getegid())
+        root.chmod(0o700)
+        yield root
 
 
 def _enrollment_peer(tmp_path: Path) -> tuple[Path, Path]:
@@ -55,12 +66,12 @@ def _enrollment_peer(tmp_path: Path) -> tuple[Path, Path]:
 def _run_enrollment(
     tmp_path: Path,
     *,
+    enrollment_tmpfs: Path,
     forbidden_key: str | None = None,
     preexisting_target: bytes | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path, Path]:
     executable, audit = _enrollment_peer(tmp_path)
-    codex_home = tmp_path / "enrollment-tmpfs" / "codex-home"
-    codex_home.parent.mkdir(mode=0o700)
+    codex_home = enrollment_tmpfs / "codex-home"
     encrypted_state = tmp_path / "encrypted-state"
     encrypted_state.mkdir(mode=0o700)
     target = encrypted_state / "codex" / "codex-personal" / "auth.json"
@@ -98,8 +109,12 @@ def _run_enrollment(
 
 def test_enrollment_requires_its_explicit_codex_home_and_reaches_device_auth(
     tmp_path: Path,
+    enrollment_tmpfs: Path,
 ) -> None:
-    completed, audit, codex_home, target = _run_enrollment(tmp_path)
+    completed, audit, codex_home, target = _run_enrollment(
+        tmp_path,
+        enrollment_tmpfs=enrollment_tmpfs,
+    )
 
     assert completed.returncode == 0, completed.stderr
     assert json.loads(audit.read_text(encoding="utf-8")) == {
@@ -116,9 +131,14 @@ def test_enrollment_requires_its_explicit_codex_home_and_reaches_device_auth(
 @pytest.mark.parametrize("forbidden_key", ["OPENAI_API_KEY", "CODEX_API_KEY"])
 def test_enrollment_refuses_api_key_auth_before_exec(
     tmp_path: Path,
+    enrollment_tmpfs: Path,
     forbidden_key: str,
 ) -> None:
-    completed, audit, _, target = _run_enrollment(tmp_path, forbidden_key=forbidden_key)
+    completed, audit, _, target = _run_enrollment(
+        tmp_path,
+        enrollment_tmpfs=enrollment_tmpfs,
+        forbidden_key=forbidden_key,
+    )
 
     assert completed.returncode != 0
     assert forbidden_key in completed.stderr
@@ -128,9 +148,11 @@ def test_enrollment_refuses_api_key_auth_before_exec(
 
 def test_enrollment_is_one_shot_and_never_replaces_the_durable_credential(
     tmp_path: Path,
+    enrollment_tmpfs: Path,
 ) -> None:
     completed, audit, codex_home, target = _run_enrollment(
         tmp_path,
+        enrollment_tmpfs=enrollment_tmpfs,
         preexisting_target=b"already-enrolled",
     )
 

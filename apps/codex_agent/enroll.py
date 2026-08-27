@@ -15,13 +15,16 @@ from apps.codex_agent.path_environment import required_absolute_path
 
 _CODEX_HOME_ENV = "CODEX_HOME"
 _ENROLLMENT_AUTH_FILE_ENV = "NEXUS_CODEX_ENROLLMENT_AUTH_FILE"
+_ENROLLMENT_TMPFS_ROOT = Path("/tmp").resolve()
 
 
 def main() -> None:
     reject_subscription_api_key_auth()
     codex_home = required_absolute_path(_CODEX_HOME_ENV)
     target = required_absolute_path(_ENROLLMENT_AUTH_FILE_ENV)
-    if codex_home == Path("/tmp") or not codex_home.is_relative_to(Path("/tmp")):
+    if codex_home == _ENROLLMENT_TMPFS_ROOT or not codex_home.is_relative_to(
+        _ENROLLMENT_TMPFS_ROOT
+    ):
         raise RuntimeError("CODEX_HOME must be a dedicated path beneath enrollment tmpfs")
     if codex_home.exists():
         raise RuntimeError("enrollment CODEX_HOME must begin absent")
