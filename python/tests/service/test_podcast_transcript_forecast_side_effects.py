@@ -89,8 +89,6 @@ def _seed_transcription_episode(
         db,
         user_id=user.id,
         plan_tier="ai_pro",
-        platform_token_quota_mode="unlimited",
-        platform_token_limit_monthly=None,
         transcription_quota_mode=(
             "custom" if transcription_limit_minutes is not None else "unlimited"
         ),
