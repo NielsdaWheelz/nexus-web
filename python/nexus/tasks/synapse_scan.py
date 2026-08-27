@@ -47,6 +47,6 @@ def synapse_scan(
             "trigger": reason,
         }
 
-    # No on_worker_exception: there is no head row to fail; the queue's retry
-    # ladder owns unexpected exceptions, and prior edges stay intact (D6).
+    # There is no head row to fail. The queue's retry ladder owns unexpected
+    # exceptions, and prior edges stay intact (D6).
     return run_llm_task(_SPEC, _handler)

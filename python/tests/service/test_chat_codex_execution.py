@@ -41,6 +41,10 @@ from nexus.jobs.queue import (
     reschedule_running_job,
 )
 from nexus.services import chat_run_candidates, generation_policy
+from nexus.services.agent_tools_mcp import (
+    ActiveAgentToolRegistry,
+    set_active_agent_tool_registry,
+)
 from nexus.services.chat_run_event_store import ChatRunEventEmitter
 from nexus.services.chat_runs import (
     CancelledChatExecution,
@@ -71,7 +75,10 @@ from nexus.services.rate_limit import RateLimiter, get_rate_limiter, set_rate_li
 from nexus_test_control import services as test_services
 from nexus_test_control.runtime import EndpointKind
 from tests.testkit.chat import create_entitled_chat
-from tests.testkit.llm_tool_scenarios import claim_chat_tool_job
+from tests.testkit.llm_tool_scenarios import (
+    claim_chat_tool_job,
+    compose_keyless_tool_runtime,
+)
 from tests.testkit.unreachable_state import make_pending_job_due
 from tests.testkit.worker import (
     assert_production_worker,
@@ -91,6 +98,17 @@ _SDK_VERSION = importlib.metadata.version("openai-codex")
 _RUNTIME_VERSION = importlib.metadata.version("openai-codex-cli-bin")
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _TEST_ENV = {"NEXUS_ENV": "test"}
+
+
+@pytest.fixture(autouse=True)
+def _active_agent_tool_registry(engine: Engine) -> Iterator[None]:
+    registry = ActiveAgentToolRegistry(session_factory=create_session_factory(engine))
+    registry.bind_operation(compose_keyless_tool_runtime().operations["chat"])
+    set_active_agent_tool_registry(registry)
+    try:
+        yield
+    finally:
+        set_active_agent_tool_registry(None)
 
 
 @dataclass(frozen=True, slots=True)

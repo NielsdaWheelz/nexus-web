@@ -27,8 +27,6 @@ class LlmTaskSpec:
 def run_llm_task[R](
     spec: LlmTaskSpec,
     handler: Callable[[Session, ExecutionRuntime], Awaitable[R]],
-    *,
-    on_worker_exception: Callable[[Session, Exception], R] | None = None,
 ) -> R:
     """Run one async Codex task with one session and one owned event loop."""
 
@@ -41,13 +39,11 @@ def run_llm_task[R](
     loop = asyncio.new_event_loop()
     try:
         return loop.run_until_complete(_call())
-    # justify-ignore-error: worker boundary — the optional owner callback stores
-    # its safe terminal; without one the durable queue retry policy applies.
-    except Exception as exc:
+    # justify-ignore-error: unexpected defects remain owned by the durable
+    # queue retry and dead-letter policy after this boundary records them.
+    except Exception:
         logger.exception(f"{spec.label}_failed_unexpected")
-        if on_worker_exception is None:
-            raise
-        return on_worker_exception(db, exc)
+        raise
     finally:
         loop.close()
         db.close()

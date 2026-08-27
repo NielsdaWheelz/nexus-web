@@ -80,6 +80,15 @@ _MAX_JSON_RPC_STRING: Final[int] = 256
 type AgentToolRequestAuthorizer = Callable[[AgentToolGrantClaims], Awaitable[bool]]
 
 
+def _job_correlates_to_chat_run(
+    *,
+    kind: object,
+    payload: object,
+    run_id: UUID,
+) -> bool:
+    return kind == "chat_run" and isinstance(payload, dict) and payload.get("run_id") == str(run_id)
+
+
 @dataclass(frozen=True, slots=True)
 class JsonRpcId:
     """Typed JSON-RPC identity preserving integer ``1`` versus string ``"1"``."""
@@ -148,10 +157,7 @@ class ActiveAgentToolRegistry:
     """
 
     session_factory: sessionmaker[Session]
-    _authorities: dict[tuple[str, str, str, str, int, str], AgentToolAuthority] = field(
-        default_factory=dict
-    )
-    _notified: set[UUID] = field(default_factory=set)
+    _authorities: dict[str, AgentToolAuthority] = field(default_factory=dict)
     _registry_lock: Any = field(default_factory=threading.RLock, repr=False)
     _operation: FrozenToolOperation | None = None
 
@@ -188,60 +194,20 @@ class ActiveAgentToolRegistry:
         return operation
 
     def register(self, authority: AgentToolAuthority) -> None:
-        key = (
-            str(authority.run_id),
-            str(authority.job_id),
-            str(authority.generation_id),
-            authority.worker_id,
-            authority.attempt_no,
-            authority.grant_jti,
-        )
         with self._registry_lock:
-            existing = self._authorities.get(key)
+            existing = self._authorities.get(authority.grant_jti)
             if existing is not None and existing is not authority:
-                raise RuntimeError("agent-tool authority identity is already active")
-            self._authorities[key] = authority
+                raise RuntimeError("agent-tool grant JTI is already active")
+            self._authorities[authority.grant_jti] = authority
 
     def unregister(self, authority: AgentToolAuthority) -> None:
-        key = (
-            str(authority.run_id),
-            str(authority.job_id),
-            str(authority.generation_id),
-            authority.worker_id,
-            authority.attempt_no,
-            authority.grant_jti,
-        )
         with self._registry_lock:
-            if self._authorities.get(key) is authority:
-                self._authorities.pop(key, None)
-                self._notified.discard(authority.generation_id)
+            if self._authorities.get(authority.grant_jti) is authority:
+                self._authorities.pop(authority.grant_jti, None)
 
     def resolve(self, claims: AgentToolGrantClaims) -> AgentToolAuthority | None:
         with self._registry_lock:
-            return self._authorities.get(
-                (
-                    claims.run_id,
-                    claims.job_id,
-                    claims.generation_id,
-                    claims.worker_id,
-                    claims.attempt_no,
-                    claims.jti,
-                )
-            )
-
-    async def notify_policy_once(
-        self, generation_id: UUID, callback: Callable[[UUID], Awaitable[None]]
-    ) -> None:
-        with self._registry_lock:
-            if generation_id in self._notified:
-                return
-            self._notified.add(generation_id)
-        try:
-            await callback(generation_id)
-        except BaseException:
-            with self._registry_lock:
-                self._notified.discard(generation_id)
-            raise
+            return self._authorities.get(claims.jti)
 
     def database_now(self) -> datetime:
         with self.session_factory() as db:
@@ -283,10 +249,6 @@ class _AuthorityRouter:
     ) -> bool:
         authority = self.registry.resolve(claims)
         if authority is None:
-            await self.registry.notify_policy_once(
-                UUID(claims.generation_id),
-                on_policy_violation,
-            )
             return False
         return await authority.authorize_request(
             claims=claims,
@@ -297,8 +259,6 @@ class _AuthorityRouter:
         claims = cast(AgentToolGrantClaims, kwargs["claims"])
         authority = self.registry.resolve(claims)
         if authority is None:
-            callback = cast(Callable[[UUID], Awaitable[None]], kwargs["on_policy_violation"])
-            await self.registry.notify_policy_once(UUID(claims.generation_id), callback)
             raise MCPError(
                 code=INVALID_REQUEST,
                 message="MCP call is outside the active generation policy",
@@ -309,8 +269,6 @@ class _AuthorityRouter:
         claims = cast(AgentToolGrantClaims, kwargs["claims"])
         authority = self.registry.resolve(claims)
         if authority is None:
-            callback = cast(Callable[[UUID], Awaitable[None]], kwargs["on_policy_violation"])
-            await self.registry.notify_policy_once(UUID(claims.generation_id), callback)
             raise MCPError(
                 code=INVALID_REQUEST,
                 message="MCP call is outside the active generation policy",
@@ -382,6 +340,7 @@ class AgentToolAuthority:
     job_id: UUID
     attempt_no: int
     resource_class: JobResourceClass
+    registry: ActiveAgentToolRegistry
     operation: FrozenToolOperation
     worker_id: str
     generation_id: UUID
@@ -402,18 +361,9 @@ class AgentToolAuthority:
             raise ValueError("agent-tool authority grant jti must be a canonical UUID") from exc
         self._idle.set()
 
-    def has_tool(self, tool_id: str) -> bool:
-        try:
-            self.operation.plan.catalog_view.binding(ToolId(tool_id))
-        except (KeyError, ValueError):
-            return False
-        return True
-
     def close(self) -> None:
         """Remove this authority after the generation reaches a terminal state."""
-        registry = active_agent_tool_registry()
-        if registry is not None:
-            registry.unregister(self)
+        self.registry.unregister(self)
 
     async def wait_until_idle(self) -> None:
         """Close admission and drain accepted work before folding a host terminal."""
@@ -459,30 +409,39 @@ class AgentToolAuthority:
             job = get_job(db, job_id)
             if run is None or job is None:
                 raise ValueError("claimed Chat attempt does not exist")
-            if job.claimed_by != worker_id or job.attempts != attempt_no:
+            if (
+                not _job_correlates_to_chat_run(
+                    kind=job.kind,
+                    payload=job.payload,
+                    run_id=run.id,
+                )
+                or job.status != "running"
+                or job.claimed_by != worker_id
+                or job.attempts != attempt_no
+            ):
                 raise ValueError("claimed Chat job identity does not match worker attempt")
         from nexus.services.generation_policy import TOOL_PLAN_REVISION
 
         if str(operation.plan.plan_revision) != TOOL_PLAN_REVISION:
             raise ValueError("Chat tool plan is not the pinned generation policy plan")
         registry = active_agent_tool_registry()
-        execution_operation = (
-            registry.operation_for(operation) if registry is not None else operation
-        )
+        if registry is None:
+            raise RuntimeError("active agent-tool registry is not installed")
+        execution_operation = registry.operation_for(operation)
         authority = cls(
             session_factory=session_factory,
             run_id=run_id,
             job_id=job_id,
             attempt_no=attempt_no,
             resource_class=resource_class,
+            registry=registry,
             operation=execution_operation,
             worker_id=worker_id,
             generation_id=generation_id,
             grant_jti=grant_jti,
             admitted_resource_uris=frozenset(admitted_resource_uris),
         )
-        if registry is not None:
-            registry.register(authority)
+        registry.register(authority)
         return authority
 
     async def invoke(
@@ -641,9 +600,7 @@ class AgentToolAuthority:
     def _authorize_in_current_transaction(
         self,
         db: Session,
-        claims: AgentToolGrantClaims | None,
-        *,
-        allow_missing_claim: bool = False,
+        claims: AgentToolGrantClaims,
     ) -> tuple[GenerationRecord, ChatRun, Any]:
         """Lock and validate generation, run, then job in the canonical order."""
 
@@ -672,23 +629,25 @@ class AgentToolAuthority:
             raise _CancellationRequested("Chat run cancellation was requested")
         if (
             run.status != "running"
+            or not _job_correlates_to_chat_run(
+                kind=job.kind,
+                payload=job.payload,
+                run_id=run.id,
+            )
             or job.claimed_by != self.worker_id
             or job.attempts != self.attempt_no
         ):
             raise _PolicyViolation(self.generation_id)
-        if claims is not None:
-            valid = (
-                claims.sub == str(run.owner_user_id)
-                and claims.run_id == str(run.id)
-                and claims.job_id == str(job.id)
-                and claims.worker_id == self.worker_id
-                and claims.attempt_no == self.attempt_no
-                and claims.generation_id == str(self.generation_id)
-                and claims.jti == self.grant_jti
-                and _grant_matches_generation(claims, generation)
-            )
-        else:
-            valid = allow_missing_claim
+        valid = (
+            claims.sub == str(run.owner_user_id)
+            and claims.run_id == str(run.id)
+            and claims.job_id == str(job.id)
+            and claims.worker_id == self.worker_id
+            and claims.attempt_no == self.attempt_no
+            and claims.generation_id == str(self.generation_id)
+            and claims.jti == self.grant_jti
+            and _grant_matches_generation(claims, generation)
+        )
         if not valid:
             raise _PolicyViolation(self.generation_id)
         return generation, run, job
@@ -696,24 +655,16 @@ class AgentToolAuthority:
     def _admit(
         self,
         db: Session,
-        claims: AgentToolGrantClaims | None,
+        claims: AgentToolGrantClaims,
         arguments: Mapping[str, Any],
         digest: str | None,
         request_id: JsonRpcId,
         canonical_tool_id: str | None,
         provider_wire_name: str | None,
-        *,
-        allow_missing_claim: bool = False,
     ) -> tuple[ChatRun, Any, int, dict[str, dict[str, Any]], str, int, int, str]:
-        generation, run, job = self._authorize_in_current_transaction(
-            db,
-            claims,
-            allow_missing_claim=allow_missing_claim,
-        )
+        generation, run, job = self._authorize_in_current_transaction(db, claims)
         payload, journal = self._load_journal(db)
-        journal_key = (
-            f"{claims.jti}:{request_id.key()}" if claims is not None else f"undo:{request_id.key()}"
-        )
+        journal_key = f"{claims.jti}:{request_id.key()}"
         provider_call_id = f"mcp:{request_id.kind}:{request_id.value}"
         citation_ordinal, next_tool_index = self._journal_tail(
             payload=payload,
@@ -1036,15 +987,19 @@ class AgentToolAuthority:
         )
         if (
             job_row is None
-            or job_row["kind"] != "chat_run"
+            or not _job_correlates_to_chat_run(
+                kind=job_row["kind"],
+                payload=job_row["payload"],
+                run_id=self.run_id,
+            )
             or job_row["attempts"] != self.attempt_no
             or job_row["status"] != "running"
             or job_row["claimed_by"] != self.worker_id
         ):
             raise _PolicyViolation(self.generation_id)
         payload = job_row["payload"]
-        if not isinstance(payload, dict) or payload.get("run_id") != str(self.run_id):
-            raise RuntimeError("MCP receipt job payload changed owner identity")
+        if not isinstance(payload, dict):
+            raise _PolicyViolation(self.generation_id)
         journal = payload.get("_agent_tool_calls", {})
         if not isinstance(journal, dict):
             raise RuntimeError("agent-tool journal has an invalid shape")
@@ -1218,23 +1173,6 @@ def _grant_matches_generation(
     )
 
 
-def create_agent_tools_mcp_app(
-    *,
-    authority: AgentToolAuthority,
-    signing_key: SecretStr,
-    on_policy_violation: Callable[[UUID], Awaitable[None]],
-    mcp_origin: str,
-) -> Any:
-    """Build the pinned SDK's stateless Streamable HTTP ASGI application."""
-    return _create_mcp_app_for_authority(
-        authority=authority,
-        signing_key=signing_key,
-        on_policy_violation=on_policy_violation,
-        clock=authority.database_now,
-        mcp_origin=mcp_origin,
-    )
-
-
 def create_active_agent_tools_mcp_app(
     *,
     registry: ActiveAgentToolRegistry,
@@ -1243,14 +1181,32 @@ def create_active_agent_tools_mcp_app(
     settings: Settings,
 ) -> Any:
     """Build the worker listener whose authority is selected per grant."""
+    return create_routed_agent_tools_mcp_app(
+        registry=registry,
+        signing_key=signing_key,
+        on_policy_violation=on_policy_violation,
+        lifespan=_active_listener_lifespan(registry, settings),
+        mcp_origin=settings.agent_tools_mcp_origin,
+    )
+
+
+def create_routed_agent_tools_mcp_app(
+    *,
+    registry: ActiveAgentToolRegistry,
+    signing_key: SecretStr,
+    on_policy_violation: Callable[[UUID], Awaitable[None]],
+    mcp_origin: str,
+    lifespan: Callable[[Any], AbstractAsyncContextManager[Any]] | None = None,
+) -> Any:
+    """Build the sole grant-routed stateless Streamable HTTP application."""
     router = _AuthorityRouter(registry)
     app = _create_mcp_app_for_authority(
         authority=router,
         signing_key=signing_key,
         on_policy_violation=on_policy_violation,
         clock=registry.database_now,
-        lifespan=_active_listener_lifespan(registry, settings),
-        mcp_origin=settings.agent_tools_mcp_origin,
+        lifespan=lifespan,
+        mcp_origin=mcp_origin,
     )
     return app
 

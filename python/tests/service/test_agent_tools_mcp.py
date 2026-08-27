@@ -13,7 +13,7 @@ import multiprocessing
 import os
 import signal
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -67,9 +67,11 @@ from nexus.services.agent_tools_mcp import (
     MCP_PATH,
     MCP_PROTOCOL_VERSION,
     MCP_RATE_BURST,
+    ActiveAgentToolRegistry,
     AgentToolAuthority,
     JsonRpcId,
-    create_agent_tools_mcp_app,
+    create_routed_agent_tools_mcp_app,
+    set_active_agent_tool_registry,
 )
 from nexus.services.chat_run_finalize import finalize_cancelled
 from nexus.services.chat_run_steps import (
@@ -122,11 +124,24 @@ from tests.testkit.llm_tool_scenarios import (
     compose_keyless_tool_runtime,
     create_readable_media,
 )
-from tests.testkit.unreachable_state import expire_job_claim, make_failed_job_retryable
+from tests.testkit.unreachable_state import (
+    expire_job_claim,
+    make_failed_job_retryable,
+    miscorrelate_running_chat_job,
+)
 
 pytestmark = pytest.mark.usefixtures("committed_chat_state_isolation")
 
 _SIGNING_KEY = SecretStr("dedicated-chat-tools-hs256-test-key")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_active_agent_tool_registry() -> Iterator[None]:
+    set_active_agent_tool_registry(None)
+    try:
+        yield
+    finally:
+        set_active_agent_tool_registry(None)
 
 
 def _mcp_request(
@@ -371,6 +386,9 @@ def _prepare_write_race(
     async def policy_violation(value: UUID) -> None:
         policy_violations.append(str(value))
 
+    registry = ActiveAgentToolRegistry(session_factory=session_factory)
+    registry.bind_operation(operation)
+    set_active_agent_tool_registry(registry)
     authority = AgentToolAuthority.from_claimed_chat_attempt(
         session_factory=session_factory,
         run_id=run_id,
@@ -384,8 +402,8 @@ def _prepare_write_race(
         admitted_resource_uris=admitted_resource_uris,
     )
     return _WriteRace(
-        app=create_agent_tools_mcp_app(
-            authority=authority,
+        app=create_routed_agent_tools_mcp_app(
+            registry=registry,
             signing_key=_SIGNING_KEY,
             on_policy_violation=policy_violation,
             mcp_origin="http://mcp.test/internal/agent-tools/mcp",
@@ -860,6 +878,116 @@ def test_cancelled_signed_grant_is_bodylessly_denied_and_notifies_host_once(
     assert race.policy_violations == [str(race.generation_id)]
 
 
+@pytest.mark.parametrize("fault", ("kind", "run_id"))
+def test_miscorrelated_chat_job_is_denied_before_tool_effect(
+    engine: Engine,
+    fault: str,
+) -> None:
+    """A valid grant cannot spend a claimed job correlated to another operation."""
+
+    user_id = uuid4()
+    email = f"mcp-miscorrelated-job-{user_id}@example.invalid"
+    with Session(engine) as db:
+        default_library_id = bootstrap.ensure_user_and_default_library(db, user_id, email)
+        db.commit()
+    race = _prepare_write_race(
+        engine,
+        UserRecord(id=user_id, email=email, default_library_id=default_library_id),
+        label="miscorrelated-job",
+    )
+    with Session(engine) as db:
+        miscorrelate_running_chat_job(
+            db,
+            job_id=race.job_id,
+            foreign_kind="oracle_reading_generate" if fault == "kind" else "chat_run",
+            foreign_run_id=uuid4() if fault == "run_id" else race.run_id,
+        )
+        db.commit()
+        corrupted_job = get_job(db, race.job_id)
+        assert corrupted_job is not None
+        corrupted_identity = (corrupted_job.kind, corrupted_job.payload)
+
+    with TestClient(race.app, base_url="http://mcp.test") as client:
+        denied = _library_add(client, race, request_id="miscorrelated-job")
+
+    with Session(engine) as db:
+        job = get_job(db, race.job_id)
+        assert job is not None
+        assert (job.kind, job.payload) == corrupted_identity
+        assert "_agent_tool_calls" not in job.payload
+        assert (
+            db.scalar(
+                select(LibraryEntry).where(
+                    LibraryEntry.library_id == race.library_id,
+                    LibraryEntry.media_id == race.media_id,
+                )
+            )
+            is None
+        )
+        assert (
+            db.scalar(
+                select(func.count())
+                .select_from(MessageToolCall)
+                .where(MessageToolCall.assistant_message_id == race.assistant_message_id)
+            )
+            == 0
+        )
+        assert (
+            db.scalar(
+                select(func.count())
+                .select_from(ChatRunEvent)
+                .where(
+                    ChatRunEvent.run_id == race.run_id,
+                    ChatRunEvent.event_type.in_(
+                        ("tool_call_start", "tool_call_done", "tool_result")
+                    ),
+                )
+            )
+            == 0
+        )
+    assert (denied.status_code, denied.content) == (401, b"")
+    assert race.policy_violations == [str(race.generation_id)]
+
+
+def test_claimed_chat_authority_requires_and_routes_through_active_registry(
+    engine: Engine,
+) -> None:
+    user_id = uuid4()
+    email = f"mcp-active-registry-{user_id}@example.invalid"
+    with Session(engine) as db:
+        default_library_id = bootstrap.ensure_user_and_default_library(db, user_id, email)
+        db.commit()
+    race = _prepare_write_race(
+        engine,
+        UserRecord(id=user_id, email=email, default_library_id=default_library_id),
+        label="active-registry",
+    )
+
+    request = _mcp_request("active-registry", "tools/list", {})
+    with TestClient(race.app, base_url="http://mcp.test") as client:
+        listed = client.post(MCP_PATH, headers=_headers(bearer=race.bearer), json=request)
+        race.authority.close()
+        denied = client.post(MCP_PATH, headers=_headers(bearer=race.bearer), json=request)
+    assert listed.status_code == 200
+    assert (denied.status_code, denied.content) == (401, b"")
+    assert race.policy_violations == []
+
+    set_active_agent_tool_registry(None)
+    with pytest.raises(RuntimeError, match="active agent-tool registry is not installed"):
+        AgentToolAuthority.from_claimed_chat_attempt(
+            session_factory=create_session_factory(engine),
+            run_id=race.run_id,
+            job_id=race.job_id,
+            attempt_no=race.execution_context.attempt_no,
+            resource_class=race.execution_context.resource_class,
+            operation=race.operation,
+            worker_id=race.worker_id,
+            generation_id=race.generation_id,
+            grant_jti=str(uuid4()),
+            admitted_resource_uris=race.admitted_resource_uris,
+        )
+
+
 @pytest.mark.parametrize("kind", ("read", "write"))
 def test_prepared_mcp_admission_survives_sigkill_without_generation_replay(
     engine: Engine,
@@ -953,6 +1081,10 @@ def test_prepared_mcp_admission_survives_sigkill_without_generation_replay(
             == 0
         )
 
+    # The killed process loses its process-local registry before the replacement
+    # worker admits the same durable lease under a new exact JTI.
+    race.authority.close()
+
     # Reuse every lease field with a new exact JTI. The killed process's bearer
     # must fail before its body can route, while the replacement bearer may list.
     with Session(engine) as db:
@@ -992,8 +1124,8 @@ def test_prepared_mcp_admission_survives_sigkill_without_generation_replay(
     async def replacement_violation(value: UUID) -> None:
         replacement_violations.append(str(value))
 
-    replacement_app = create_agent_tools_mcp_app(
-        authority=replacement_authority,
+    replacement_app = create_routed_agent_tools_mcp_app(
+        registry=replacement_authority.registry,
         signing_key=_SIGNING_KEY,
         on_policy_violation=replacement_violation,
         mcp_origin="http://mcp.test/internal/agent-tools/mcp",
@@ -1012,7 +1144,7 @@ def test_prepared_mcp_admission_survives_sigkill_without_generation_replay(
         )
     assert (stale.status_code, stale.content) == (401, b"")
     assert current.status_code == 200
-    assert replacement_violations == [str(race.generation_id)]
+    assert replacement_violations == []
 
     _dead_letter_crashed_race(engine, race)
     with Session(engine) as db:
@@ -1738,6 +1870,9 @@ def test_mcp_mount_projects_declarations_and_is_sessionless(
     async def policy_violation(generation_id: object) -> None:
         policy_violations.append(str(generation_id))
 
+    registry = ActiveAgentToolRegistry(session_factory=session_factory)
+    registry.bind_operation(operation)
+    set_active_agent_tool_registry(registry)
     authority = AgentToolAuthority.from_claimed_chat_attempt(
         session_factory=session_factory,
         run_id=run.id,
@@ -1750,8 +1885,8 @@ def test_mcp_mount_projects_declarations_and_is_sessionless(
         grant_jti=claims.jti,
         admitted_resource_uris=(*admitted_uris, missing_uri),
     )
-    app = create_agent_tools_mcp_app(
-        authority=authority,
+    app = create_routed_agent_tools_mcp_app(
+        registry=registry,
         signing_key=_SIGNING_KEY,
         on_policy_violation=policy_violation,
         mcp_origin="http://mcp.test/internal/agent-tools/mcp",
@@ -2744,6 +2879,7 @@ def test_mcp_mount_projects_declarations_and_is_sessionless(
             )
 
     asyncio.run(scenario())
+    authority.close()
 
 
 def test_mcp_receipt_landing_refuses_a_lost_job_lease_after_inner_completion(

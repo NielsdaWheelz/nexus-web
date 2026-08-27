@@ -185,6 +185,40 @@ def expire_job_claim(db: Session, *, job_id: UUID) -> None:
     )
 
 
+def miscorrelate_running_chat_job(
+    db: Session,
+    *,
+    job_id: UUID,
+    foreign_kind: str,
+    foreign_run_id: UUID,
+) -> None:
+    """Point a claimed Chat job at another run without changing its lease identity."""
+
+    updated = db.execute(
+        text(
+            """
+            UPDATE background_jobs
+            SET kind = :foreign_kind,
+                payload = jsonb_set(
+                payload,
+                '{run_id}',
+                to_jsonb(CAST(:foreign_run_id AS text))
+            )
+            WHERE id = :job_id
+              AND kind = 'chat_run'
+              AND status = 'running'
+            RETURNING id
+            """
+        ),
+        {
+            "job_id": job_id,
+            "foreign_kind": foreign_kind,
+            "foreign_run_id": str(foreign_run_id),
+        },
+    ).scalar_one()
+    assert updated == job_id
+
+
 def expire_artifact_learn_resolver_lease(db: Session, *, request_id: UUID) -> None:
     """Model an abandoned request-scoped Idea resolver without waiting."""
 

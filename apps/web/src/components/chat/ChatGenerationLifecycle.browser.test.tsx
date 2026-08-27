@@ -299,8 +299,8 @@ describe("Chat generation stream lifecycle", () => {
       }),
     );
 
-    const activeTool = await screen.findByRole("status");
-    expect(activeTool).toHaveTextContent("Searching the web");
+    const activeTool = await screen.findByText("Searching the web");
+    expect(activeTool).toBeVisible();
     await userEvent.click(screen.getByText("Details"));
     expect(
       screen.getByText("#0 Searching the web - running"),
@@ -349,7 +349,7 @@ describe("Chat generation stream lifecycle", () => {
       }),
     );
 
-    await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+    await waitFor(() => expect(activeTool).not.toBeInTheDocument());
     expect(
       await screen.findByText("#0 Searching the web - complete"),
     ).toBeVisible();

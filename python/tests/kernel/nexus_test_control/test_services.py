@@ -355,7 +355,7 @@ def test_owned_process_cleanup_waits_for_exact_birth_owner_to_finish_startup(
             os.killpg(process.pid, signal.SIGKILL)
             process.wait()
         if marker_path is not None:
-            services._remove_process_owner_marker(tmp_path, RUN_ID, owner_token)
+            marker_path.unlink(missing_ok=True)
 
 
 def test_clean_reaps_an_exact_created_process_that_exits_before_owner_scan(

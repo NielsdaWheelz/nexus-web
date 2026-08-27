@@ -251,7 +251,8 @@ Load via `get_owned_edge` (edges.py:59); absent → NotFoundError; origin ≠
 - `python/nexus/tasks/synapse_scan.py` — copy `tasks/media_unit_build.py`:
   `run_llm_task(LlmTaskSpec(label="synapse_scan"), handler)`; handler parses
   `{user_id, ref}`, awaits `run_synapse_scan`, returns `{"status": result}`;
-  `on_worker_exception=None` (queue ladder owns retries; no head row to fail).
+  unexpected defects propagate to the queue ladder (there is no head row to
+  fail).
 - `jobs/registry.py`: `JobDefinition(kind="synapse_scan", handler=<lazy shim>,
   max_attempts=3, lease_seconds=300, failed_result_statuses=("failed",))`;
   `USER_FACING_JOB_KINDS` += `"synapse_scan"`.

@@ -57,9 +57,8 @@ def dossier_build(
 
     ``engine.run_build`` is replay-safe (a no-op once the build already has a
     terminal child) and owns the whole reduce loop + every terminal write.
-    Deliberately no ``on_worker_exception`` boundary: a bare exception here is
-    left to propagate so the queue's normal retry/dead-letter machinery
-    applies (see module docstring).
+    A bare exception propagates to the queue's normal retry/dead-letter
+    machinery (see module docstring).
     """
     build_id = UUID(str(payload["build_id"]))
     spec = LlmTaskSpec(label="dossier_build")

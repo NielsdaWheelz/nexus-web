@@ -39,8 +39,10 @@ from nexus.services.agent_tool_grants import (
 from nexus.services.agent_tools_mcp import (
     MCP_PATH,
     MCP_PROTOCOL_VERSION,
+    ActiveAgentToolRegistry,
     AgentToolAuthority,
-    create_agent_tools_mcp_app,
+    create_routed_agent_tools_mcp_app,
+    set_active_agent_tool_registry,
 )
 from nexus.services.chat_prompt import render_system_prompt_block
 from nexus.services.chat_run_steps import PreparedChatRun, step_fingerprint
@@ -76,6 +78,7 @@ _SIGNING_KEY = SecretStr("dedicated-tool-safety-eval-hs256-key")
 @dataclass(frozen=True, slots=True)
 class _McpSafetyBoundary:
     app: Any
+    authority: AgentToolAuthority
     bearer: str
     foreign_media_id: UUID
     foreign_uri: str
@@ -266,6 +269,9 @@ def _prepare_mcp_safety_boundary(
     async def policy_violation(value: UUID) -> None:
         policy_violations.append(str(value))
 
+    registry = ActiveAgentToolRegistry(session_factory=session_factory)
+    registry.bind_operation(operation)
+    set_active_agent_tool_registry(registry)
     authority = AgentToolAuthority.from_claimed_chat_attempt(
         session_factory=session_factory,
         run_id=run_id,
@@ -279,12 +285,13 @@ def _prepare_mcp_safety_boundary(
         admitted_resource_uris=(foreign_uri,),
     )
     return _McpSafetyBoundary(
-        app=create_agent_tools_mcp_app(
-            authority=authority,
+        app=create_routed_agent_tools_mcp_app(
+            registry=registry,
             signing_key=_SIGNING_KEY,
             on_policy_violation=policy_violation,
             mcp_origin="http://mcp.test/internal/agent-tools/mcp",
         ),
+        authority=authority,
         bearer=bearer,
         foreign_media_id=foreign_media_id,
         foreign_uri=foreign_uri,
@@ -403,6 +410,9 @@ def test_injected_requests_cannot_authorize_a_foreign_mutating_tool_call(
                     "result": outcome,
                     "domain_mutations": after - before,
                 }
+
+    boundary.authority.close()
+    set_active_agent_tool_registry(None)
 
     assert boundary.policy_violations == []
     assert observed_baseline == payload["baseline"], (
