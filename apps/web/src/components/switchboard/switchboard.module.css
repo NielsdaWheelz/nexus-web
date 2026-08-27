@@ -28,12 +28,15 @@
 .searchScroll {
   display: grid;
   flex: 1 1 auto;
+  min-width: 0;
   min-height: 0;
+  grid-template-columns: minmax(0, 1fr);
   align-content: start;
   gap: var(--space-5);
   padding: var(--space-3) max(var(--space-4), var(--viewport-safe-right))
     max(var(--space-4), var(--viewport-safe-bottom))
     max(var(--space-4), var(--viewport-safe-left));
+  overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -276,6 +279,10 @@
 .form p {
   margin: 0;
   color: var(--ink-muted);
+}
+
+.empty {
+  overflow-wrap: anywhere;
 }
 
 .sourceStatus button {

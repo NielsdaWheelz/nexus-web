@@ -669,11 +669,13 @@ describe("Nexus product composition", () => {
       "Returning from a query-owned workflow did not restore its exact active row",
     ).toHaveTextContent(`Create “${trimmedQuery}”…`);
 
-    const unmatchedQuery = "xylophonic semaphore";
+    const unmatchedQuery =
+      "LibrariesWithAnIntentionallyLongQueryForMobilePaletteValidation";
     fireEvent.change(search, { target: { value: unmatchedQuery } });
-    expect(
-      await within(dialog).findByText(`No results for “${unmatchedQuery}”`),
-    ).toBeVisible();
+    const emptyResults = await within(dialog).findByText(
+      `No results for “${unmatchedQuery}”`,
+    );
+    expect(emptyResults).toBeVisible();
     const unmatchedActions = within(dialog).getByRole("region", {
       name: "Do with query",
     });
@@ -685,6 +687,45 @@ describe("Nexus product composition", () => {
     expect(
       within(dialog).queryByRole("region", { name: "Results" }),
     ).toBeNull();
+
+    const queryScrollOwners = [
+      dialog,
+      // justify-eslint-override: the content scroller intentionally has no
+      // ARIA role; browser overflow is the acceptance boundary under test.
+      // eslint-disable-next-line testing-library/no-node-access
+      ...Array.from(dialog.querySelectorAll<HTMLElement>("*")),
+    ].filter((element) => {
+      const style = window.getComputedStyle(element);
+      return [style.overflowX, style.overflowY].some(
+        (overflow) => overflow === "auto" || overflow === "scroll",
+      );
+    });
+    expect(queryScrollOwners).toHaveLength(1);
+    const [queryScrollOwner] = queryScrollOwners;
+    expect(queryScrollOwner).toBeDefined();
+    const dialogBox = dialog.getBoundingClientRect();
+    const queryScrollBox = queryScrollOwner!.getBoundingClientRect();
+    const emptyResultsBox = emptyResults.getBoundingClientRect();
+    expect(
+      queryScrollBox.left >= dialogBox.left - 1 &&
+        queryScrollBox.right <= dialogBox.right + 1,
+      "The vertical results owner expanded beyond the Nexus dialog",
+    ).toBe(true);
+    expect(
+      emptyResultsBox.left >= queryScrollBox.left - 1 &&
+        emptyResultsBox.right <= queryScrollBox.right + 1,
+      "The query-owned empty state expanded beyond its scroll owner",
+    ).toBe(true);
+    expect(
+      queryScrollOwner!.scrollWidth,
+      "An unbroken query made the vertical results owner scroll sideways",
+    ).toBeLessThanOrEqual(queryScrollOwner!.clientWidth + 1);
+    queryScrollOwner!.scrollLeft = 24;
+    expect(queryScrollOwner!.scrollLeft).toBe(0);
+    expect(
+      emptyResults.scrollWidth,
+      "The query-owned empty state does not wrap an unbroken query",
+    ).toBeLessThanOrEqual(emptyResults.clientWidth + 1);
 
     await userEvent.keyboard("{Escape}");
     await waitFor(() => expect(search).toHaveValue(""));
