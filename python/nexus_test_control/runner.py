@@ -5724,7 +5724,7 @@ def _browser_executable_names(platform_name: str, machine: str) -> tuple[str, st
             return "chrome", "headless_shell"
         return None
     if platform_name == "darwin" and architecture in {"x86_64", "amd64", "arm64", "aarch64"}:
-        return "Chromium", "chrome-headless-shell"
+        return "Google Chrome for Testing", "chrome-headless-shell"
     return None
 
 

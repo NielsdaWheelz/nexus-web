@@ -59,8 +59,8 @@ _HOSTED_SOURCE_SHA = "a" * 40
     (
         ("linux", "x86_64", ("chrome", "chrome-headless-shell")),
         ("linux", "aarch64", ("chrome", "headless_shell")),
-        ("darwin", "x86_64", ("Chromium", "chrome-headless-shell")),
-        ("darwin", "arm64", ("Chromium", "chrome-headless-shell")),
+        ("darwin", "x86_64", ("Google Chrome for Testing", "chrome-headless-shell")),
+        ("darwin", "arm64", ("Google Chrome for Testing", "chrome-headless-shell")),
         ("linux", "riscv64", None),
         ("win32", "AMD64", None),
     ),
