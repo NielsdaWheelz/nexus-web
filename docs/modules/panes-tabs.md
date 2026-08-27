@@ -15,6 +15,16 @@ pane activation/minimize/restore/close actions back to `WorkspaceHost`.
 The strip is not part of mobile navigation. Mobile renders the active primary
 pane directly and relies on app-level navigation plus pane chrome actions.
 
+## Sequential Traversal
+
+Across all viewport modes, sequential traversal follows visible panes in stable
+`primaryPaneOrder`, skips minimized panes, clamps at the first and last visible
+pane, and never wraps. The workspace store is its sole owner, and the
+`pane-next` / `pane-previous` keybindings invoke that store command on every
+viewport. Mobile additionally maps a primary-touch horizontal swipe on the
+Nexus control to the same command. No input restores, creates, reorders, or ranks
+panes.
+
 ## Mobile Contract
 
 Mobile workspace mode mounts exactly one active visible primary pane in the main

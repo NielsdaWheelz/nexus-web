@@ -132,6 +132,13 @@ resolved and is dead evidence. `policy` rejects all three shapes
 (`proof-canonical-node`, `fault-proof-owner`, `fault-canonical-proof`) instead
 of letting the workflow abort without a verdict.
 
+For a changed proof file, PR uses BASE when the whole file owns the proof or the
+selected exact module-level Python test plus its imports and non-test module
+support differs from base. Sibling tests are separate owners: changing only a
+sibling retains the selected owner's declared FAULT. Class-qualified nodes,
+non-Python exact nodes, absent owners, duplicate owners, parse failures, and Git
+read failures all fail closed to BASE.
+
 The final work report for a defect or replacement MUST state how sensitivity was
 demonstrated. “Test passes” is insufficient.
 
@@ -722,14 +729,41 @@ are not implied by Chromium success.
 
 Android instrumentation covers native ownership: App Links, auth handoff,
 Credential Manager, WebView bridge, cookies, file chooser, share intents, Media
-Session, background audio, offline behavior, and signing. Do not duplicate web
-behavior.
+Session, background audio, offline behavior, signing, and measured
+system-gesture inset geometry, arbitration preconditions, and WebView pointer
+delivery at owned fixed-control geometry. That fixed-control instrumentation
+owner records only measured OS/WebView preconditions, insets, and delivery. It
+does not assert real SystemUI conflict arbitration; the physical-device operator
+matrix owns Back/Home/quick-switch conflict acceptance. It never asserts
+recognizer semantics, direction resolution, clamping, or click suppression;
+the real-Chromium component proof owns those web behaviors. Do not duplicate web
+behavior outside this enumerated native boundary.
 
-The `android-device` capability accepts exactly one authorized device attested
-from `adb devices -l` — a locally started emulator, or a device carrying adb's
-`usb:` topology fact — and binds Gradle to its serial. A wireless adb transport
-cannot satisfy it. `nightly` uses the hosted emulator; `release` runs on the
-protected USB runner and requires the wired handset there. The debug sweep
+For the mobile Nexus control, the same real-Chromium component owner also proves
+cross-activation click provenance: a pointer-generated click retargeted into the
+newly mounted Nexus task is rejected unless the matching pointerdown began
+inside that already-active task. This guard remains local to `SwitchboardTask`;
+the generic `MobileFullScreenTask`, document, window, and workspace owners gain
+no handler or gesture state. Keyboard and assistive `detail === 0` activation
+remains admitted.
+
+The `android-device` capability accepts exactly one authorized `device` row
+attested from `adb devices -l` — a locally started emulator, or a device
+carrying adb's `usb:` topology fact — and binds Gradle to its serial. A wireless
+adb transport cannot satisfy or coexist with that one-device boundary. Every
+passing exact or complete instrumentation execution
+MUST reference exactly one bounded, redacted
+`test-results/runs/<run-id>/android-device-instrumentation.json` artifact from
+its `CapabilityEvidence`. That artifact retains the exact candidate SHA,
+selected inventory row, bound serial, exact proof/scope and command identity,
+exit code, and successful instrumentation stdout/stderr; inability to retain it is
+`not_run`, never pass. When the Nexus-control gesture owner is selected, its
+successful test emits `NEXUS_CONTROL_GESTURE_DIAGNOSTICS:` through
+`Instrumentation.REPORT_KEY_STREAMRESULT`; absence of that exact marker from
+captured stdout or absence of exactly one fresh passing result for the named
+Nexus method is also `not_run`. `nightly` uses the hosted emulator;
+`release` runs on the protected USB runner and requires the wired handset
+there. The debug sweep
 excludes the signed-promotion annotation, whose scenarios only the signed lane
 can stage. `android-release` is the signed physical-device lane: it builds the
 candidate, refuses an emulated endpoint by reading the device's qemu build

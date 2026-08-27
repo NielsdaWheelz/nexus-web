@@ -125,7 +125,9 @@ make the workflow newly discoverable from the desktop root.
   desktop-owned and supplies only an optional Find ranking boost.
 - No persisted recently-closed stack, exact closed-pane scroll restoration,
   offline index, voice interface, or learned intent classifier.
-- No Nexus swipe/long-press accelerators or other hidden gesture vocabulary.
+- No Nexus gesture vocabulary beyond the redundant primary-touch horizontal
+  adjacent-pane accelerator; no long-press, vertical action, context-menu
+  command, or multitouch command.
 - No openables cursor, infinite scroll, or `Load more`; Switchboard consumes one
   bounded top-result projection.
 - No page/podcast pagination cleanup outside endpoints already consumed here.
@@ -143,8 +145,15 @@ make the workflow newly discoverable from the desktop root.
   or Launcher control.
 - The fixed Nexus control shows the Nexus mark and exact open-pane count. Its
   accessible name is `Open Nexus, 1 tab` or `Open Nexus, {count} tabs`.
-- Tap opens Switchboard Root. The control has no swipe, long-press, context-menu,
-  or multitouch behavior.
+- Tap opens Switchboard Root. A qualified primary-touch horizontal swipe invokes
+  the workspace store's adjacent-pane command without opening Root; the control
+  has no long-press, vertical action, context-menu command, or multitouch
+  command.
+- If Root opens while a physical contact that began outside the inactive task
+  remains down, `SwitchboardTask` rejects the retargeted pointer click unless a
+  matching pointerdown began inside the already-active task. This click-origin
+  admission check has no movement, direction, timing, or command semantics and
+  is not a full-screen-task gesture.
 - The control and every mobile scroll owner consume the shell obstruction
   capability defined below. They never infer clearance from the current
   `--mobile-bottom-obstruction` constant.
@@ -749,7 +758,12 @@ Negative gates:
   `components/switchboard/**`.
 - No `purpose = "open"` in resource-target schemas/services.
 - No openables cursor/refill loop/shared paging extraction.
-- No Nexus swipe/long-press/context-menu gesture handler.
+- No Nexus gesture handler except the specified primary-touch horizontal
+  adjacent-pane recognizer; no long-press, vertical action, context-menu, or
+  full-screen-task gesture handler. The authorized `SwitchboardTask`
+  click-origin admission check is not a recognizer: it retains only a pointer id
+  from pointerdown through click/cancel so a pre-activation compatibility click
+  cannot act on newly mounted content.
 - No second `ResourceItem` decoder, alternate field casing/defaults, or retained
   permissive `normalizeResourceItem`.
 - No new `visualViewport` reader; `MobileSheet` remains the sole keyboard-inset
@@ -791,8 +805,11 @@ old/new path.
 - **AC3.** Any open pane activates/restores in Nexus + row tap; close stays in
   Root; restore atomically normalizes identity, visibility, widths, secondary
   attachment, and global history budget or reports pane-cap rejection.
-- **AC4.** Nexus has a 48px target, no hidden gesture handlers, and announces
-  `1 tab` versus `{count} tabs` correctly.
+- **AC4.** Nexus has a 48px target and announces `1 tab` versus `{count} tabs`
+  correctly. Its primary-touch horizontal swipe is a redundant adjacent-pane
+  accelerator; tap-then-select in Nexus / Manage Tabs remains the visible
+  single-pointer alternative, and native keyboard/assistive-technology button
+  activation remains unchanged.
 - **AC5.** Top chrome contains Back, pane identity, and one pane menu; Forward
   and published actions are reachable from the menu.
 - **AC6.** One-character Find returns openable lexical resources; two-character
@@ -839,8 +856,9 @@ old/new path.
   recent-close normalization, cross-viewport table, and exhaustive dispatch.
 - Browser: Root/Find focus, no initial keyboard focus, one-sheet transitions,
   every dismissal source, Add guard, Today checkpoint/recovery, account menu,
-  absence of gesture handlers, reduced motion, player/Nexus/keyboard clearance,
-  pane overflow, recovery dismissal/reopen, and all projection changes.
+  trusted Pointer Events arbitration and native-button activation preservation,
+  reduced motion, player/Nexus/keyboard clearance, pane overflow, recovery
+  dismissal/reopen, and all projection changes.
 - Backend integration: every admitted scheme, visibility/missing/openability
   masking, route-only exact ref, one-char query, pre-limit dedupe, bounded work,
   no writes; Highlights pre-limit classification and `owner_resource_ref`;

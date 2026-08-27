@@ -51,6 +51,7 @@ from nexus_test_control.services import (
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 _CANDIDATE_WORKER_IMAGE_ID = "sha256:" + "c" * 64
+_CANDIDATE_SHA = "a" * 40
 
 
 @pytest.mark.parametrize(
@@ -105,6 +106,45 @@ def test_browser_admission_requires_both_complete_locked_platform_artifacts(
 
     (owners[1] / "INSTALLATION_COMPLETE").unlink()
     assert not runner._browser_installed(tmp_path, environment)
+
+
+def test_browser_admission_accepts_playwright_macos_default_install(
+    tmp_path: Path,
+) -> None:
+    """Risk: a fresh macOS setup installs Chromium where the controller never admits it."""
+
+    repo_root = tmp_path / "repo"
+    revisions = {"chromium": "1217", "chromium-headless-shell": "1217"}
+    _write(
+        repo_root / "apps/web/node_modules/playwright-core/browsers.json",
+        json.dumps(
+            {
+                "browsers": [
+                    {"name": name, "revision": revision} for name, revision in revisions.items()
+                ]
+            }
+        ),
+    )
+    home = tmp_path / "home"
+    cache = home / "Library/Caches/ms-playwright"
+    executables = ("Google Chrome for Testing", "chrome-headless-shell")
+    owners = (
+        cache / f"chromium-{revisions['chromium']}",
+        cache / f"chromium_headless_shell-{revisions['chromium-headless-shell']}",
+    )
+    for owner, executable in zip(owners, executables, strict=True):
+        owner.mkdir(parents=True)
+        (owner / "INSTALLATION_COMPLETE").write_text("", encoding="utf-8")
+        binary = owner / "platform" / executable
+        _write(binary, "browser\n")
+        binary.chmod(0o755)
+
+    assert runner._browser_installed_for_platform(
+        repo_root,
+        {"HOME": str(home)},
+        platform_name="darwin",
+        machine="arm64",
+    )
 
 
 @pytest.mark.parametrize(
@@ -1759,7 +1799,12 @@ def test_android_release_control_owns_physical_device_and_exact_signed_methods(
     }
 
     result = run_capability(
-        CapabilityContext(tmp_path, Workflow.RELEASE, ()),
+        CapabilityContext(
+            tmp_path,
+            Workflow.RELEASE,
+            (),
+            candidate_sha=_CANDIDATE_SHA,
+        ),
         Capability.ANDROID_DEVICE,
         environment,
     )
@@ -1793,7 +1838,10 @@ def test_android_device_accepts_the_emulator_only_for_the_bootstrap_release(
     suite — on the emulator every non-release workflow already uses."""
     android_root = tmp_path / "apps/android"
     sdk = tmp_path / "android-sdk"
+    run_id = "0123456789abcdef"
+    results = tmp_path / "test-results/runs" / run_id
     sdk.mkdir()
+    results.mkdir(parents=True)
     _write(
         android_root / "app/src/androidTest/java/app/nexus/android/DeviceTest.kt",
         "package app.nexus.android\nclass DeviceTest\n",
@@ -1810,10 +1858,17 @@ def test_android_device_accepts_the_emulator_only_for_the_bootstrap_release(
         **_tool_environment(tmp_path),
         "ANDROID_HOME": str(sdk),
         "NEXUS_ANDROID_RELEASE_BOOTSTRAP_NO_DEVICE": "true",
+        "NEXUS_TEST_EVIDENCE_RUN_ID": run_id,
+        "NEXUS_TEST_RESULTS_DIR": str(results),
     }
 
     result = run_capability(
-        CapabilityContext(tmp_path, Workflow.RELEASE, ()),
+        CapabilityContext(
+            tmp_path,
+            Workflow.RELEASE,
+            (),
+            candidate_sha=_CANDIDATE_SHA,
+        ),
         Capability.ANDROID_DEVICE,
         environment,
     )
@@ -1867,6 +1922,14 @@ def test_android_device_accepts_the_emulator_only_for_the_bootstrap_release(
             "Android device proof requires exactly one USB-backed physical device",
             id="two-usb-handsets",
         ),
+        pytest.param(
+            "List of devices attached\n"
+            "R5CT1234 device usb:1-2 product:nexus model:Pixel transport_id:1\n"
+            "192.168.1.5:5555 device product:nexus model:Pixel transport_id:2\n",
+            None,
+            "Android device proof requires exactly one authorized device row",
+            id="usb-plus-wireless-adb",
+        ),
     ],
 )
 def test_signed_release_device_attestation_admits_only_one_usb_handset(
@@ -1881,9 +1944,14 @@ def test_signed_release_device_attestation_admits_only_one_usb_handset(
     _write_executable(adb, stdout=inventory.rstrip("\n"))
     environment = {**_tool_environment(tmp_path), "ANDROID_HOME": str(sdk)}
 
-    serial, detail = authorized_usb_physical_device(adb, environment, tmp_path)
+    device, detail = authorized_usb_physical_device(adb, environment, tmp_path)
 
-    assert (serial, detail) == (expected_serial, expected_detail)
+    assert (device.serial if device is not None else None, detail) == (
+        expected_serial,
+        expected_detail,
+    )
+    if device is not None:
+        assert device.adb_devices_row == inventory.splitlines()[1]
 
 
 @pytest.mark.parametrize(
@@ -1917,6 +1985,20 @@ def test_signed_release_device_attestation_admits_only_one_usb_handset(
             "Android device proof requires exactly one local emulator or USB device",
             id="ambiguous-inventory",
         ),
+        pytest.param(
+            "List of devices attached\n"
+            "R5CT1234 device usb:1-2 product:nexus transport_id:1\n"
+            "192.168.1.5:5555 device product:nexus transport_id:2\n",
+            None,
+            "Android device proof requires exactly one authorized device row",
+            id="usb-plus-wireless-adb",
+        ),
+        pytest.param(
+            "emulator-5554 device product:sdk model:sdk transport_id:1\n",
+            None,
+            "Android device inventory could not be read",
+            id="missing-adb-header",
+        ),
     ],
 )
 def test_ordinary_device_attestation_admits_an_emulator_but_never_wireless_adb(
@@ -1931,9 +2013,33 @@ def test_ordinary_device_attestation_admits_an_emulator_but_never_wireless_adb(
     _write_executable(adb, stdout=inventory.rstrip("\n"))
     environment = {**_tool_environment(tmp_path), "ANDROID_HOME": str(sdk)}
 
-    serial, detail = authorized_instrumentation_device(adb, environment, tmp_path)
+    device, detail = authorized_instrumentation_device(adb, environment, tmp_path)
 
-    assert (serial, detail) == (expected_serial, expected_detail)
+    assert (device.serial if device is not None else None, detail) == (
+        expected_serial,
+        expected_detail,
+    )
+    if device is not None:
+        assert device.adb_devices_row == inventory.splitlines()[1]
+
+
+def test_android_device_attestation_rejects_a_tail_truncated_inventory(
+    tmp_path: Path,
+) -> None:
+    sdk = tmp_path / "android-sdk"
+    adb = sdk / "platform-tools/adb"
+    oversized = (
+        "List of devices attached\n"
+        + "transport unavailable product:sdk model:sdk\n" * 2_000
+        + "emulator-5554 device product:sdk model:sdk transport_id:1\n"
+    )
+    _write_executable(adb, stdout=oversized.rstrip("\n"))
+    environment = {**_tool_environment(tmp_path), "ANDROID_HOME": str(sdk)}
+
+    device, detail = authorized_instrumentation_device(adb, environment, tmp_path)
+
+    assert device is None
+    assert detail == "Android device inventory could not be read"
 
 
 def test_android_device_sweep_never_selects_the_signed_promotion_methods(
@@ -1949,7 +2055,10 @@ def test_android_device_sweep_never_selects_the_signed_promotion_methods(
     """
     android_root = tmp_path / "apps/android"
     sdk = tmp_path / "android-sdk"
+    run_id = "fedcba9876543210"
+    results = tmp_path / "test-results/runs" / run_id
     sdk.mkdir()
+    results.mkdir(parents=True)
     _write(
         android_root / "app/src/androidTest/java/app/nexus/android/offline/reading/"
         "OfflineReadingSignedPhysicalPromotionTest.kt",
@@ -1964,10 +2073,20 @@ def test_android_device_sweep_never_selects_the_signed_promotion_methods(
         ),
     )
     _write_executable(android_root / "gradlew")
-    environment = {**_tool_environment(tmp_path), "ANDROID_HOME": str(sdk)}
+    environment = {
+        **_tool_environment(tmp_path),
+        "ANDROID_HOME": str(sdk),
+        "NEXUS_TEST_EVIDENCE_RUN_ID": run_id,
+        "NEXUS_TEST_RESULTS_DIR": str(results),
+    }
 
     result = run_capability(
-        CapabilityContext(tmp_path, Workflow.NIGHTLY, ()),
+        CapabilityContext(
+            tmp_path,
+            Workflow.NIGHTLY,
+            (),
+            candidate_sha=_CANDIDATE_SHA,
+        ),
         Capability.ANDROID_DEVICE,
         environment,
     )

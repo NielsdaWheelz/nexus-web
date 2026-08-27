@@ -36,11 +36,19 @@ Mobile mode:
 - renders no fixed primary chrome
 - renders no pane resize handle
 - presents secondary content only through `MobileSecondaryPaneHost`
-- presents global pane switching and recently closed restoration through the
-  shell-mounted full-screen Nexus task and its dedicated Manage Tabs page
+- presents sequential adjacent pane switching through a primary-touch
+  horizontal swipe on the Nexus control
+- presents random pane access, recently closed restoration, and minimized-pane
+  restore through the shell-mounted full-screen Nexus task and its dedicated
+  Manage Tabs page
 
 Mobile mode is not a narrow desktop canvas. It is a different composition
 contract.
+
+The workspace store is the sole owner of sequential traversal. It follows
+visible panes in stable `primaryPaneOrder`, clamps at the first and last pane,
+and never wraps. The Nexus swipe and `pane-next` / `pane-previous` keybindings
+invoke that same store command.
 
 ## Pane Resource Resolution
 

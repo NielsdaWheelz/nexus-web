@@ -1766,6 +1766,10 @@ After its first opening, the portal subtree stays mounted across dismissal so
 controller, focus, and measurement lifecycles are not recreated on every use;
 the inactive projection becomes `hidden` and `inert`, while children continue
 to receive lifecycle updates before the next opening.
+The mobile Nexus control also carries a primary-touch horizontal adjacent-tab
+accelerator over the workspace store's stable `primaryPaneOrder`, visible-only,
+clamped traversal command; tap remains the task entrance and the gesture creates
+no second navigation model.
 The viewport-fixed dialog owns an opaque safe-area- and keyboard-aware canvas;
 it has no scrim, grabber, outside-click target, drag dismissal, or
 primitive-owned toolbar. Guarded Back pops one Nexus level before dismissing

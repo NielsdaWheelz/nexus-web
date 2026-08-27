@@ -128,6 +128,7 @@ import { getWorkspacePrimaryPanes } from "@/lib/workspace/schema";
 import {
   resolveWorkspacePaneLabel,
   useWorkspaceStore,
+  type WorkspaceAdjacentPaneDirection,
 } from "@/lib/workspace/store";
 import type { WorkspaceTarget } from "@/lib/workspace/targetActivation";
 import type {
@@ -191,6 +192,9 @@ export interface NexusController {
   } | null;
   readonly createChoiceActions: readonly NexusAction[];
   readonly browseChoiceActions: readonly NexusAction[];
+  activateAdjacentPane(input: {
+    readonly direction: WorkspaceAdjacentPaneDirection;
+  }): void;
   setQuery(query: string): void;
   setActiveEntry(key: NexusEntryKey): void;
   openEntryActions(entry: NexusEntry): void;
@@ -411,6 +415,7 @@ export function useNexusController(): NexusController {
     state,
     recentlyClosedPanes,
     runtimeLabelByPaneId,
+    activateAdjacentPane,
     activatePane,
     activateWorkspaceTarget,
     closePane,
@@ -1927,6 +1932,7 @@ export function useNexusController(): NexusController {
     managedTabsFeedback,
     createChoiceActions,
     browseChoiceActions,
+    activateAdjacentPane,
     setQuery,
     setActiveEntry,
     openEntryActions,

@@ -466,10 +466,26 @@ def authorized_device_serials(
     )
 
 
+_MAX_ADB_DEVICE_ROW_CHARS = 8_192
+_MAX_ADB_INVENTORY_BYTES = 32 * 1024
+
+
+@dataclass(frozen=True, slots=True)
+class AuthorizedAndroidDevice:
+    serial: str
+    adb_devices_row: str
+
+
+@dataclass(frozen=True, slots=True)
+class _LongDeviceRow:
+    raw: str
+    fields: tuple[str, ...]
+
+
 def _long_device_inventory(
     adb: Path, environment: Mapping[str, str], cwd: Path
-) -> tuple[tuple[str, ...], ...] | None:
-    """The one `adb devices -l` parse: the fields of each authorized row."""
+) -> tuple[_LongDeviceRow, ...] | None:
+    """The one bounded `adb devices -l` parse, retaining each exact device row."""
     try:
         listed = run_command(
             (str(adb), "devices", "-l"),
@@ -482,12 +498,22 @@ def _long_device_inventory(
         return None
     if listed.returncode != 0:
         return None
-    rows: list[tuple[str, ...]] = []
-    for line in listed.stdout.splitlines()[1:]:
+    # `run_command` retains the final 64 KiB. Staying below half that bound
+    # proves this is a complete inventory, not a tail that lost the header or
+    # an earlier authorized candidate.
+    if len(listed.stdout.encode("utf-8")) > _MAX_ADB_INVENTORY_BYTES:
+        return None
+    lines = listed.stdout.splitlines()
+    if not lines or lines[0] != "List of devices attached":
+        return None
+    rows: list[_LongDeviceRow] = []
+    for line in lines[1:]:
+        if len(line) > _MAX_ADB_DEVICE_ROW_CHARS:
+            return None
         fields = tuple(line.split())
         if len(fields) < 2 or fields[1] != "device":
             continue
-        rows.append(fields)
+        rows.append(_LongDeviceRow(line, fields))
     return tuple(rows)
 
 
@@ -499,27 +525,31 @@ def _is_usb_physical_row(fields: Sequence[str]) -> bool:
 
 def authorized_usb_physical_device(
     adb: Path, environment: Mapping[str, str], cwd: Path
-) -> tuple[str | None, str]:
+) -> tuple[AuthorizedAndroidDevice | None, str]:
     """Attest the one USB-backed physical device used by protected device proof.
 
     Emulators and wireless adb transports remain distinct lanes and cannot
-    satisfy this boundary. Other authorized transports may coexist, but exactly
-    one physical row must carry adb's ``usb:`` topology fact.
+    satisfy or coexist with this boundary. The selected physical row must be
+    the inventory's only authorized device and carry adb's ``usb:`` topology
+    fact.
     """
     rows = _long_device_inventory(adb, environment, cwd)
     if rows is None:
         return None, "Android USB device inventory could not be read"
-    candidates = [fields[0] for fields in rows if _is_usb_physical_row(fields)]
+    candidates = [row for row in rows if _is_usb_physical_row(row.fields)]
     if not candidates:
         return None, "no authorized USB-backed physical Android device is attached"
     if len(candidates) != 1:
         return None, "Android device proof requires exactly one USB-backed physical device"
-    return candidates[0], ""
+    if len(rows) != 1:
+        return None, "Android device proof requires exactly one authorized device row"
+    selected = candidates[0]
+    return AuthorizedAndroidDevice(selected.fields[0], selected.raw), ""
 
 
 def authorized_instrumentation_device(
     adb: Path, environment: Mapping[str, str], cwd: Path
-) -> tuple[str | None, str]:
+) -> tuple[AuthorizedAndroidDevice | None, str]:
     """Attest the one device the ordinary `android-device` capability may drive.
 
     Hosted nightly infrastructure supplies a locally started emulator; the
@@ -532,15 +562,18 @@ def authorized_instrumentation_device(
     if rows is None:
         return None, "Android device inventory could not be read"
     candidates = [
-        fields[0]
-        for fields in rows
-        if fields[0].startswith("emulator-") or _is_usb_physical_row(fields)
+        row
+        for row in rows
+        if row.fields[0].startswith("emulator-") or _is_usb_physical_row(row.fields)
     ]
     if not candidates:
         return None, "no authorized local emulator or USB-backed Android device is attached"
     if len(candidates) != 1:
         return None, "Android device proof requires exactly one local emulator or USB device"
-    return candidates[0], ""
+    if len(rows) != 1:
+        return None, "Android device proof requires exactly one authorized device row"
+    selected = candidates[0]
+    return AuthorizedAndroidDevice(selected.fields[0], selected.raw), ""
 
 
 def test_environment(caller_environment: Mapping[str, str]) -> dict[str, str]:
@@ -1021,7 +1054,16 @@ def start_python_process(
 ) -> StartedProcess:
     require_test_environment(environment)
     root = canonical_repo_root(repo_root)
+    if role not in {
+        "external",
+        "provider-openai",
+        "api",
+        "worker-interactive",
+        "worker-background",
+    }:
+        raise RuntimeContractError(f"Python process role is not owned: {role}")
     runtime = read_runtime(root)
+    owned_environment = run_environment(root, environment, run)
     if role == "external":
         _require_loopback_port_available(runtime.ports.external, role)
         command = (
@@ -1033,8 +1075,8 @@ def start_python_process(
             str(root / "python/tests/fixtures/real_media"),
         )
     elif role == "provider-openai":
-        _require_loopback_port_available(runtime.ports.provider_openai, role)
         values = _owned_provider_fixture_paths(root, run.run_id, overrides)
+        _require_loopback_port_available(runtime.ports.provider_openai, role)
         command = (
             str(root / "python/.venv/bin/python"),
             str(root / "python/tests/testkit/openai_embedding_server.py"),
@@ -1084,7 +1126,7 @@ def start_python_process(
     else:
         raise RuntimeContractError(f"Python process role is not owned: {role}")
     process_environment = {
-        **run_environment(root, environment, run),
+        **owned_environment,
         "NEXUS_TEST_DENY_EXTERNAL_NETWORK": "1",
         "NODE_OPTIONS": f"--import={root / 'python/tests/testkit/node-network-guard.mjs'}",
         "PYTHONPATH": f"{root / 'python' / 'tests' / 'testkit'}:{root / 'python'}:{root}",
@@ -1260,12 +1302,12 @@ def start_web_process(
     if expected_builds not in artifact_root.parents or artifact_root not in server.parents:
         raise RuntimeContractError("web process requires a runtime-owned standalone artifact")
     runtime = read_runtime(root)
-    _require_loopback_port_available(runtime.ports.web, "web")
     owned_environment = run_environment(root, environment, run)
     try:
         source_sha = load_runtime_identity(_runtime_identity_path(root)).source_sha
     except BackendArtifactDefect as exc:
         raise RuntimeContractError("web process requires the exact runtime identity") from exc
+    _require_loopback_port_available(runtime.ports.web, "web")
     return _start_owned_process(
         root,
         environment,

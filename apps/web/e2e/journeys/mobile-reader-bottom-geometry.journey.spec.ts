@@ -240,13 +240,6 @@ function expectBottomGeometryInvariants(
 }
 
 /**
- * The canonical captured article, not the three-line canonical EPUB: mobile
- * bottom geometry is only observable when reader content actually fills the
- * pane. The short EPUB leaves the mobile media pane content-sized (measured at
- * 600px inside an 844px viewport), so nothing below it can obstruct terminal
- * content and the whole contract goes vacuous.
- */
-/**
  * One mobile pane parked on the reader with the Podcast browse place queued
  * ahead of it, so the journey reaches a real player session and returns to the
  * still-owned reader route through the pane's own history — never through a
@@ -396,6 +389,9 @@ test("mobile reader bottom geometry places the ribbon, counts the flow Player on
   page,
   journeyUser,
 }) => {
+  // The real ingest/index pipeline shares one background worker with preceding
+  // journeys, so this journey owns the same bounded readiness budget as the
+  // other real-ingest journeys rather than assuming an empty queue.
   test.setTimeout(300_000);
   await page.setViewportSize(SIGN_IN_VIEWPORT);
   await signIn(page, journeyUser);
