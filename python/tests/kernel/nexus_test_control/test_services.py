@@ -1483,7 +1483,7 @@ def test_embedding_peer_rejects_each_invalid_owned_file_before_recording_a_proce
     tmp_path: Path,
     defect: str,
 ) -> None:
-    run = _empty_owned_run(tmp_path)
+    run = _owned_run(tmp_path, migration=False)
     certificate = _created_embedding_peer_paths(tmp_path, run)["ca.pem"]
     certificate.unlink()
     if defect == "directory":
