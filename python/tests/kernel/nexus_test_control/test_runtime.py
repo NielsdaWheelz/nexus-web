@@ -463,14 +463,7 @@ def test_forgetting_cleaned_process_removes_its_exact_owner_marker(tmp_path: Pat
         process_group_id=12345,
         process_start_token="67890",
     )
-    marker = (
-        tmp_path
-        / ".nexus-test"
-        / "runs"
-        / RUN_ID
-        / "process-owners"
-        / owner_token
-    )
+    marker = tmp_path / ".nexus-test" / "runs" / RUN_ID / "process-owners" / owner_token
     marker.parent.mkdir()
     marker.touch()
 
