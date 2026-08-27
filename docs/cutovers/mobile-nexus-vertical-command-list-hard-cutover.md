@@ -326,8 +326,9 @@ physical WebView evidence own the shell boundary.
 5. **Integration:** run `./scripts/test confidence`, then `./scripts/test pr`
    before merge. The existing proof registry may select
    `nexus-search-open-restore`; run it as routed nonregression evidence, but add
-   no new journey and do not duplicate its workspace contract. Add the three
-   mobile renderer owner paths to that existing proof's source globs.
+   no new journey and do not duplicate its workspace contract. Do not route
+   mobile-only Switchboard owners to that desktop journey; their real-Chromium
+   component proof owns the mobile behavior.
 6. **Android focus:** compile the main and instrumentation Kotlin sources; run
    only `MainActivityBackNavigationTest` on the authorized wireless device.
    Verify the offline bundle with its canonical generator and Gradle verifier.

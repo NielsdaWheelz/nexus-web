@@ -1094,9 +1094,6 @@
       "source_globs": [
         "python/nexus/services/workspace_sessions.py",
         "apps/web/src/components/nexus/**/*",
-        "apps/web/src/components/switchboard/SwitchboardSearch.tsx",
-        "apps/web/src/components/switchboard/SwitchboardRow.tsx",
-        "apps/web/src/components/switchboard/switchboard.module.css",
         "apps/web/src/lib/nexus/**/*",
         "apps/web/src/lib/workspace/**/*",
         "apps/web/src/lib/panes/paneRenderRegistry.tsx",
