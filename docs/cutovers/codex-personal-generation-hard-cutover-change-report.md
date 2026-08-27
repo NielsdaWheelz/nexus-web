@@ -60,15 +60,15 @@ PLANNED-to-CREATED cleanup. Production embedding behavior is unchanged.
 
 The 80/20 proof shape is one dominant proof per ownership boundary, sixteen
 representative sensitivity faults, then `changed`, `confidence`, `pr`, `full`,
-`release`, and the protected `codex-nightly` lane. Final clean-SHA receipts are
-recorded here after the source candidate is committed.
+`release`, `nightly`, and the protected `codex-nightly` lane. Final clean-SHA
+receipts are recorded here after the source candidate is committed.
 
 | Gate | Candidate result |
 |---|---|
 | Focused owner proofs | pending final clean-SHA run |
 | Sixteen fault red/green proofs | pending final clean-SHA run |
 | `changed` / `confidence` / `pr` | pending final clean-SHA run |
-| `full` / `release` | pending final clean-SHA run |
+| `full` / `release` / `nightly` | pending final clean-SHA run |
 | Protected four-plan `codex-nightly` | pending enrolled-runner execution |
 | Same-SHA capacity and deployed-host evidence | pending deployment |
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import http.client
 import ipaddress
+import socket
 import ssl
 import struct
 from typing import ClassVar
@@ -33,7 +34,9 @@ def _client_hello(host: str) -> bytes:
     return outgoing.read()
 
 
-def test_codex_egress_allows_only_subscription_auth_and_mcp_sni() -> None:
+def test_codex_egress_allows_only_subscription_auth_and_mcp_sni(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     policy = egress_policy.EgressPolicy(
         ipaddress.IPv4Address("172.30.0.2"), "mcp.nexus.example.com"
     )
@@ -56,6 +59,41 @@ def test_codex_egress_allows_only_subscription_auth_and_mcp_sni() -> None:
         host = egress_policy.client_hello_sni(_client_hello("api.anthropic.com"))
         if not policy.admits(host):
             raise egress_policy.PolicyError("unapproved SNI")
+
+    async def prove_multicast_is_never_a_public_connection() -> None:
+        multicast = {
+            "ipv4-multicast.example": (socket.AF_INET, "224.0.0.1"),
+            "ipv6-multicast.example": (socket.AF_INET6, "ff02::1"),
+        }
+        connector_calls: list[tuple[str, int]] = []
+
+        async def multicast_getaddrinfo(
+            _loop: asyncio.BaseEventLoop,
+            host: str,
+            port: int,
+            *args: object,
+            **kwargs: object,
+        ) -> list[tuple[object, ...]]:
+            del args, kwargs
+            family, address = multicast[host]
+            return [(family, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (address, port))]
+
+        async def reject_multicast_connection(
+            host: str,
+            port: int,
+            **_kwargs: object,
+        ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+            connector_calls.append((host, port))
+            raise AssertionError(f"multicast destination reached connector: {host}:{port}")
+
+        monkeypatch.setattr(asyncio.BaseEventLoop, "getaddrinfo", multicast_getaddrinfo)
+        monkeypatch.setattr(asyncio, "open_connection", reject_multicast_connection)
+        for host in multicast:
+            with pytest.raises(OSError, match="no reachable public address"):
+                await egress_policy._public_connection(host)
+        assert connector_calls == []
+
+    asyncio.run(prove_multicast_is_never_a_public_connection())
 
 
 def test_codex_network_health_proves_the_exact_allowed_mcp_boundary(

@@ -1437,7 +1437,7 @@ def test_provider_child_rejects_missing_owned_fixture_before_port_admission(
             ports=replace(_ports(), provider_openai=provider_port),
         )
 
-        with pytest.raises(RuntimeContractError, match="requires its owned fixture paths"):
+        with pytest.raises(RuntimeContractError, match="requires its exact created state owner"):
             start_python_process(tmp_path, TEST_ENV, run, "provider-openai")
 
     assert not any(

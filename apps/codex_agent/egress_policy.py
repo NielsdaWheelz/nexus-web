@@ -290,7 +290,7 @@ async def _public_connection(host: str) -> tuple[asyncio.StreamReader, asyncio.S
     for family, socket_type, protocol, _canonical, socket_address in addresses:
         del socket_type, protocol, _canonical
         address = ipaddress.ip_address(socket_address[0])
-        if not address.is_global:
+        if not address.is_global or address.is_multicast:
             continue
         try:
             async with asyncio.timeout(_CONNECT_TIMEOUT_SECONDS):
