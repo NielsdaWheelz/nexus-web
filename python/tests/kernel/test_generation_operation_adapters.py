@@ -9,7 +9,7 @@ import pytest
 
 from nexus.services import dawn_write, generation_policy, media_intelligence, oracle, synapse
 from nexus.services.artifacts import engine
-from nexus.services.artifacts import learn as learn_service
+from nexus.services.artifacts.generation_step import build_artifact_generation_step
 from nexus.services.artifacts.registry import dossier_registration
 from nexus.services.codex_generation_contract import (
     GenerationCommand,
@@ -78,22 +78,22 @@ def _dossier_command(operation: str) -> GenerationCommand:
     assert registration is not None
     binding = registration.binding
     assert binding.llm_operation == operation
-    return engine._generation_command(
-        generation_id=_GENERATION_ID,
-        operation=operation,
+    return build_artifact_generation_step(
+        path="synthesis",
+        build_id=_GENERATION_ID,
+        binding=binding,
+        collected=object(),
+        witness=object(),
         system_prompt=binding.system_prompt,
         user_content="A bounded dossier evidence packet.",
-        schema=binding.schema,
-    )
+    ).command
 
 
 def _idea_resolve_command() -> GenerationCommand:
-    return engine._generation_command(
+    return engine._idea_resolution_command(
         generation_id=_GENERATION_ID,
-        operation="dossier_idea_resolve",
         system_prompt="Resolve one phrase to one exact Idea identity.",
         user_content="A bounded Idea candidate packet.",
-        schema=learn_service.IdeaResolverEnvelope,
     )
 
 
