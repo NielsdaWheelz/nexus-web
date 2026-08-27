@@ -71,7 +71,12 @@ timeout --foreground 5m gh run download "$publisher_run_id" \
   --repo "$REPOSITORY" \
   --name "$ARTIFACT_NAME" \
   --dir "$BUNDLE"
-bundle_files="$(cd "$BUNDLE" && find . -type f -printf '%P\n' | LC_ALL=C sort)"
+bundle_files="$(
+  cd "$BUNDLE"
+  find . -type f -print | while IFS= read -r path; do
+    printf '%s\n' "${path#./}"
+  done | LC_ALL=C sort
+)"
 expected_bundle_files=$'Caddyfile\ncandidate-manifest.json\ndocker-compose.yml\nnexus-codex-agent-host.apparmor\nprove-codex-capacity.sh\npython/nexus/__init__.py\npython/nexus/release_artifact.py\nrelease.py\ntestdata/android/player-protocol.json'
 [ "$bundle_files" = "$expected_bundle_files" ] || \
   die "release artifact has an unexpected shape"
