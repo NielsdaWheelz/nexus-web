@@ -534,6 +534,14 @@ def _fake_curl(state: dict[str, Any], arguments: list[str]) -> None:
 
 
 def fake_main(command: str, arguments: list[str]) -> int:
+    if command == "timeout":
+        # The harness process owns the real 30-second deadline. Preserve the
+        # production wrapper's argv and exit behavior without depending on the
+        # GNU-only host binary that macOS does not provide.
+        if len(arguments) < 3 or arguments[0] != "--foreground":
+            raise AssertionError(f"unsupported fake timeout call: {arguments!r}")
+        os.execvp(arguments[2], arguments[2:])
+
     state_path = Path(os.environ["NEXUS_DEPLOY_FAKE_STATE"])
     state = _load_state(state_path)
     _event(state, command, arguments)
@@ -628,7 +636,7 @@ class ProductionDeployHarness:
         fake_bin = root / "bin"
         fake_bin.mkdir()
         helper = Path(__file__).resolve()
-        for command in ("curl", "gh", "git", "node", "scp", "ssh"):
+        for command in ("curl", "gh", "git", "node", "scp", "ssh", "timeout"):
             executable = fake_bin / command
             executable.write_text(
                 f"#!{sys.executable}\n"
