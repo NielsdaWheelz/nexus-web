@@ -560,7 +560,7 @@ describe("Nexus product composition", () => {
     },
   );
 
-  it("puts typed Results before Do with query and restores the exact query-owned row through the Back sequence", async () => {
+  it("preserves typed input and actions through exact query-owned Back restoration", async () => {
     const trimmedQuery = "LiBrArIeS";
     const query = `  ${trimmedQuery}  `;
     const unavailableReason = "Open Today to finish the current embedded draft";
@@ -669,18 +669,44 @@ describe("Nexus product composition", () => {
       "Returning from a query-owned workflow did not restore its exact active row",
     ).toHaveTextContent(`Create “${trimmedQuery}”…`);
 
-    const unmatchedQuery =
-      "LibrariesWithAnIntentionallyLongQueryForMobilePaletteValidation";
-    fireEvent.change(search, { target: { value: unmatchedQuery } });
-    const emptyResults = await within(dialog).findByText(
-      `No results for “${unmatchedQuery}”`,
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(search).toHaveValue(""));
+    expect(search).toHaveFocus();
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Nexus" })).toBeNull(),
     );
-    expect(emptyResults).toBeVisible();
-    const unmatchedActions = within(dialog).getByRole("region", {
+    expect(opener).toHaveFocus();
+    expect(
+      typedSectionOrder,
+      "A typed mobile query must present owned Results before its verb-first actions",
+    ).toEqual(["Results", "Do with query"]);
+  });
+
+  it("contains an unbroken no-results query inside the sole vertical owner", async () => {
+    const query =
+      "LibrariesWithAnIntentionallyLongQueryForMobilePaletteValidation";
+    await page.viewport(320, 800);
+    document.documentElement.style.fontSize = "32px";
+    renderNexus("mobile");
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Open Nexus, 1 tab" }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "Nexus" });
+    const search = within(dialog).getByRole("searchbox", {
+      name: "Find anything…",
+    });
+    fireEvent.change(search, { target: { value: query } });
+
+    const emptyResults = await within(dialog).findByText(
+      `No results for “${query}”`,
+    );
+    const queryActions = within(dialog).getByRole("region", {
       name: "Do with query",
     });
-    expect(within(unmatchedActions).getAllByRole("listitem")).toHaveLength(5);
-    expect(within(unmatchedActions).getAllByRole("button")).toHaveLength(5);
+    expect(within(queryActions).getAllByRole("listitem")).toHaveLength(5);
+    expect(within(queryActions).getAllByRole("button")).toHaveLength(5);
     expect(
       within(dialog).getByRole("status", { name: "Nexus status" }),
     ).toHaveTextContent("0 results");
@@ -726,19 +752,6 @@ describe("Nexus product composition", () => {
       emptyResults.scrollWidth,
       "The query-owned empty state does not wrap an unbroken query",
     ).toBeLessThanOrEqual(emptyResults.clientWidth + 1);
-
-    await userEvent.keyboard("{Escape}");
-    await waitFor(() => expect(search).toHaveValue(""));
-    expect(search).toHaveFocus();
-    await userEvent.keyboard("{Escape}");
-    await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: "Nexus" })).toBeNull(),
-    );
-    expect(opener).toHaveFocus();
-    expect(
-      typedSectionOrder,
-      "A typed mobile query must present owned Results before its verb-first actions",
-    ).toEqual(["Results", "Do with query"]);
   });
 
   it("replays one mutation after foreground work preempts selection persistence", async () => {
