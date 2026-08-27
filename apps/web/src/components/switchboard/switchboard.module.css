@@ -19,6 +19,10 @@
   overflow: hidden;
 }
 
+.taskActivationAdmission {
+  display: contents;
+}
+
 .searchPage > .header {
   flex: 0 0 auto;
   padding-inline: max(var(--space-4), var(--viewport-safe-left))

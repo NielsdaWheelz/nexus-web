@@ -176,6 +176,8 @@ In scope:
   extracted into one workspace-owned keybinding hook with its own proof;
 - one primary-touch Pointer Events recognizer on the inner Nexus button;
 - click suppression for a consumed pointer gesture;
+- one Nexus-task-local activation-admission check for compatibility clicks
+  retargeted across task activation;
 - static discoverability copy in Manage Tabs, on the mobile surface only;
 - one test-only Android WebView pointer-delivery proof at the Player-absent
   worst-case target geometry, plus the two coupled test-control registrations
@@ -480,6 +482,20 @@ Rules:
   touch, or native activation can never inherit stale suppression. Chromium
   fires no click once movement passes its own tap slop, so (b) is the normal
   consumer after a committed swipe on Android.
+- A separate cross-activation case exists when a `detail === 0` native button
+  activation opens Nexus while a physical contact that began on the Nexus
+  button is still down. Current Chromium retargets that contact's subsequent
+  pointer-generated click into the newly mounted task when an actionable row
+  occupies the release coordinate; the button-local flag cannot receive a
+  click whose target is now inside the portal. `SwitchboardTask` therefore
+  admits a pointer-generated task click only when its pointer id matches a
+  `pointerdown` captured inside that already-active task. It clears the retained
+  id on task activation/deactivation, matching `pointercancel`, and every
+  admitted or rejected click. A `detail === 0` keyboard or assistive click is
+  always admitted and clears the retained id. A rejected pre-activation click
+  is prevented and propagation-stopped before the newly mounted row can act.
+  This is click provenance only: it retains no coordinates, direction, timing,
+  pointer type, or gesture state and dispatches no command.
 - A click with `event.detail === 0` (Enter, Space, assistive technology) never
   consults the flag and always opens Nexus.
 - For one tracked stream that stays before slop, receives no additional
@@ -537,6 +553,7 @@ attribute, or style on the button, face, count, or wrapper.
 | Concern | Sole owner | Rule |
 | --- | --- | --- |
 | Physical pointer arbitration | `NexusButton` | Converts one touch stream to semantic direction |
+| Active Nexus task click admission | `SwitchboardTask` | Rejects a pointer-generated click whose matching pointerdown did not begin inside the already-active task; always admits `detail === 0` native activation |
 | Relative-pane semantics | workspace store | Stable visible order, clamp, existing reducer action |
 | Keyboard mapping | `useAdjacentPaneKeybindings` (workspace) | Owns combo matching and guards; calls `preventDefault()` on every matched combo regardless of result; emits `Activated.paneId` to its host |
 | Keyboard focus | `WorkspaceHost` | Requests pane focus for the emitted `paneId` through its existing path |
@@ -549,6 +566,9 @@ attribute, or style on the button, face, count, or wrapper.
 
 `MobileChromeProvider`, `MobileViewportProvider`, pane bodies, and Android
 native code do not receive gesture APIs.
+`MobileFullScreenTask` remains a generic lifecycle/projection primitive and
+receives no click-admission prop or handler; the cross-activation guard is local
+to the one Nexus task whose button can open it during an acquired contact.
 `MobileNexusActivationAdapter` remains the typed quick-note handoff owner; it is
 not a pointer or workspace-command seam and is unchanged.
 `WorkspaceHost`'s render-time active-pane fallback
@@ -626,7 +646,7 @@ Touch Events, dead constants, aliases, deprecated APIs, or tombstone tests.
 | Slice | Owned files | Deliverable |
 | --- | --- | --- |
 | A — workspace semantics | `apps/web/src/lib/workspace/store.tsx`; `apps/web/src/lib/workspace/store.browser.test.tsx`; `apps/web/src/lib/workspace/adjacentPaneKeybindings.ts` (new); `apps/web/src/lib/workspace/adjacentPaneKeybindings.browser.test.tsx` (new); `apps/web/src/__tests__/helpers/workspaceSessionBff.ts` (new); `apps/web/src/components/workspace/WorkspaceHost.tsx`; `python/nexus_test_control/sensitivity.py`; `python/tests/kernel/nexus_test_control/test_sensitivity.py` | Store command/result, commit reuse, clamp/visibility/rapid-command proof, keybinding-hook extraction with its own proof, one narrow shared workspace-session BFF stub and its two-proof-only BASE overlay contract, `WorkspaceHost` focus-request retention (`requestPaneFocus`), retention of the mobile active-pane landmark-focus layout effect, old algorithm deletion |
-| B — Nexus input | `apps/web/src/components/switchboard/NexusButton.tsx`; `apps/web/src/components/switchboard/switchboard.module.css`; `apps/web/src/components/switchboard/SwitchboardTask.tsx`; `apps/web/src/components/nexus/Nexus.tsx`; `apps/web/src/components/nexus/useNexusController.ts`; `apps/web/src/components/nexus/Nexus.browser.test.tsx`; `apps/web/src/components/nexus/ManageTabsPage.tsx` | Pointer arbitration, click preservation/suppression, wiring, discoverability copy, real-Chromium trusted-touch proof |
+| B — Nexus input | `apps/web/src/components/switchboard/NexusButton.tsx`; `apps/web/src/components/switchboard/switchboard.module.css`; `apps/web/src/components/switchboard/SwitchboardTask.tsx`; `apps/web/src/components/nexus/Nexus.tsx`; `apps/web/src/components/nexus/useNexusController.ts`; `apps/web/src/components/nexus/Nexus.browser.test.tsx`; `apps/web/src/components/nexus/ManageTabsPage.tsx` | Pointer arbitration, button-local click suppression, task-local cross-activation click admission, wiring, discoverability copy, real-Chromium trusted-touch proof |
 | C — Android boundary | create `apps/android/app/src/androidTest/java/app/nexus/android/NexusControlGestureTest.kt`; add the node-qualified proof `gradle:apps/android/app/src/androidTest/java/app/nexus/android/NexusControlGestureTest.kt::<testMethod>` to the `native-system-insets` risk in `testdata/proofs.json`; update `PRIORITY_RISK_OWNERSHIP_SHA256` in `python/nexus_test_control/model.py` in the same commit | Real-WebView pointer delivery at the Player-absent worst-case target geometry; system-gesture inset-overlap oracle; no product seam |
 | D — contract integration | this document; `docs/architecture.md`; `docs/modules/workspace.md`; `docs/modules/panes-tabs.md`; `docs/modules/app-navigation.md`; `docs/local-rules/testing-standards.md`; `docs/cutovers/mobile-nexus-control-hard-cutover.md`; `docs/cutovers/mobile-nexus-switchboard-hard-cutover.md`; create `docs/cutovers/mobile-nexus-adjacent-tab-swipe-device-matrix.md` (the operator checklist) | Supersession rewrites, final owner prose (passage-anchored below), operator checklist, residue audit, evidence report |
 

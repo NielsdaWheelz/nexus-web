@@ -149,6 +149,11 @@ make the workflow newly discoverable from the desktop root.
   the workspace store's adjacent-pane command without opening Root; the control
   has no long-press, vertical action, context-menu command, or multitouch
   command.
+- If Root opens while a physical contact that began outside the inactive task
+  remains down, `SwitchboardTask` rejects the retargeted pointer click unless a
+  matching pointerdown began inside the already-active task. This click-origin
+  admission check has no movement, direction, timing, or command semantics and
+  is not a full-screen-task gesture.
 - The control and every mobile scroll owner consume the shell obstruction
   capability defined below. They never infer clearance from the current
   `--mobile-bottom-obstruction` constant.
@@ -755,7 +760,10 @@ Negative gates:
 - No openables cursor/refill loop/shared paging extraction.
 - No Nexus gesture handler except the specified primary-touch horizontal
   adjacent-pane recognizer; no long-press, vertical action, context-menu, or
-  full-screen-task gesture handler.
+  full-screen-task gesture handler. The authorized `SwitchboardTask`
+  click-origin admission check is not a recognizer: it retains only a pointer id
+  from pointerdown through click/cancel so a pre-activation compatibility click
+  cannot act on newly mounted content.
 - No second `ResourceItem` decoder, alternate field casing/defaults, or retained
   permissive `normalizeResourceItem`.
 - No new `visualViewport` reader; `MobileSheet` remains the sole keyboard-inset

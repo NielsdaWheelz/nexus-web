@@ -44,6 +44,11 @@ assistive technology — remains unchanged and is the only way that control open
 the task. Its primary-touch horizontal swipe is only an adjacent-pane
 accelerator over the workspace-store command; it adds no second Nexus ingress,
 navigation event, or full-screen-task gesture.
+When task activation occurs during an already-acquired physical contact,
+`SwitchboardTask` rejects the retargeted pointer click unless the same pointer
+began inside the already-active task. That task-local provenance check carries
+no gesture vocabulary or command and always admits keyboard/assistive native
+activation.
 
 Compact presentation covers widths through 768 px and coarse-pointer landscape
 phones through 900 px. Fine-pointer short desktop windows remain desktop.

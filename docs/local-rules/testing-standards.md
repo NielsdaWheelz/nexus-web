@@ -739,6 +739,14 @@ recognizer semantics, direction resolution, clamping, or click suppression;
 the real-Chromium component proof owns those web behaviors. Do not duplicate web
 behavior outside this enumerated native boundary.
 
+For the mobile Nexus control, the same real-Chromium component owner also proves
+cross-activation click provenance: a pointer-generated click retargeted into the
+newly mounted Nexus task is rejected unless the matching pointerdown began
+inside that already-active task. This guard remains local to `SwitchboardTask`;
+the generic `MobileFullScreenTask`, document, window, and workspace owners gain
+no handler or gesture state. Keyboard and assistive `detail === 0` activation
+remains admitted.
+
 The `android-device` capability accepts exactly one authorized `device` row
 attested from `adb devices -l` — a locally started emulator, or a device
 carrying adb's `usb:` topology fact — and binds Gradle to its serial. A wireless
