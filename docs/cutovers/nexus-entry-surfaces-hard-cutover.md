@@ -499,7 +499,9 @@ Add:
 - `apps/web/src/lib/{androidReleaseLinks.ts,androidReleaseLinks.unit.test.ts}`;
 - `apps/web/src/lib/auth/{login-entry.ts,login-entry.unit.test.ts}`;
 - `apps/web/src/app/robots.ts` and `robots.unit.test.ts`;
-- `apps/web/src/app/android/AndroidPage.browser.test.tsx`.
+- `apps/web/src/app/android/AndroidPage.browser.test.tsx`;
+- the canonically generated offline-reader chunk
+  `apps/android/app/src/main/assets/nexus-offline/assets/index-B5ZkvHQQ.js`.
 
 Modify:
 
@@ -512,6 +514,7 @@ Modify:
 - `apps/web/src/app/{privacy,terms}/page.tsx` and
   `apps/web/src/app/legal.module.css`;
 - `apps/web/e2e/{fixtures.ts,extension/capture.extension.spec.ts,journeys/auth-session.journey.spec.ts,journeys/password-recovery.journey.spec.ts}`;
+- `apps/android/app/src/main/assets/nexus-offline/{asset-manifest.sha256,index.html,source-manifest.sha256}`;
 - `README.md`, `testdata/proofs.json`, and
   `docs/cutovers/{auth-session-recovery-hard-cutover.md,android-player-protocol-release-hard-cutover.md,browse-surface-deletion-hard-cutover.md}`;
 - `deploy/hetzner/release.py`,
@@ -540,7 +543,14 @@ Delete:
   `androidReleaseLinks.unit.test.ts` owns the exact stable URL model and the
   browser proof owns rendered semantics. Atomically replace its exact
   `android-player-protocol-skew` registry entry; no dangling proof path is
-  allowed. Static React rendering is legacy evidence, not a testing pattern.
+  allowed. Static React rendering is legacy evidence, not a testing pattern;
+- the superseded generated offline-reader chunk
+  `apps/android/app/src/main/assets/nexus-offline/assets/index-BnFwN24i.js`.
+
+The offline-reader file delta is a closure-only canonical refreeze: the branch
+inherited stale generated assets from its base, and this cutover must ship an
+installable Android candidate. It changes no reader source, generator, native
+owner, or asset schema.
 
 Keep unchanged:
 
