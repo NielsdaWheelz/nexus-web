@@ -113,7 +113,8 @@ export function sseClientDirect<TEvent>(
 
   let lastEventId = initialLastEventId ?? "";
   let nextAfter = initialAfter ?? "";
-  let reconnectDelayMs = backoff.baseMs;
+  let reconnectBaseMs = backoff.baseMs;
+  let reconnectDelayMs = reconnectBaseMs;
   let reconnects = 0;
   let pendingInitialToken = initialToken ?? null;
   let streamUrl = url ?? null;
@@ -244,13 +245,14 @@ export function sseClientDirect<TEvent>(
             const event = decode(jsonEvent.type, jsonEvent.data, jsonEvent.id);
             onEvent(event);
             reconnects = 0;
-            reconnectDelayMs = backoff.baseMs;
+            reconnectDelayMs = reconnectBaseMs;
             if (isTerminal(event)) terminalEventSeen = true;
           },
           (milliseconds) => {
             // Server `retry:` directive: it becomes the next backoff base and
             // exponential growth resumes from there.
-            reconnectDelayMs = milliseconds;
+            reconnectBaseMs = milliseconds;
+            reconnectDelayMs = reconnectBaseMs;
           },
         );
       } catch (err) {
