@@ -3,6 +3,7 @@ import hashlib
 import json
 import logging
 import os
+import select
 import signal
 import socket
 import subprocess
@@ -403,35 +404,61 @@ def test_clean_reaps_an_exact_created_process_that_exits_before_owner_scan(
         cwd=tmp_path,
         process_environment={"NEXUS_TEST_RUN_ID": RUN_ID},
     )
+    exit_observer = None
     try:
+        if sys.platform == "darwin":
+            exit_observer = select.kqueue()
+            exit_observer.control(
+                [
+                    select.kevent(
+                        started.process_group_id,
+                        filter=select.KQ_FILTER_PROC,
+                        flags=select.KQ_EV_ADD | select.KQ_EV_ENABLE | select.KQ_EV_CLEAR,
+                        fflags=select.KQ_NOTE_EXIT,
+                    )
+                ],
+                0,
+                0,
+            )
         for _attempt in range(500):
             if ready_path.is_file():
                 break
             threading.Event().wait(0.01)
         assert ready_path.read_text(encoding="utf-8") == "ready"
         release_path.touch(exist_ok=False)
-        exit_status = None
         for _attempt in range(500):
-            exit_status = os.waitid(
-                os.P_PID,
-                started.process_group_id,
-                os.WEXITED | os.WNOHANG | os.WNOWAIT,
-            )
-            if exit_status is not None:
+            if exit_observer is not None:
+                exited = bool(exit_observer.control(None, 1, 0))
+            else:
+                exited = (
+                    os.waitid(
+                        os.P_PID,
+                        started.process_group_id,
+                        os.WEXITED | os.WNOHANG | os.WNOWAIT,
+                    )
+                    is not None
+                )
+            if exited:
                 break
             threading.Event().wait(0.01)
-        assert exit_status is not None
+        else:
+            pytest.fail("owned child did not exit without being reaped")
 
         clean_run(tmp_path, TEST_ENV, RUN_ID)
 
-        with pytest.raises(ChildProcessError):
-            os.waitid(
-                os.P_PID,
-                started.process_group_id,
-                os.WEXITED | os.WNOHANG | os.WNOWAIT,
-            )
+        if sys.platform == "linux":
+            with pytest.raises(ChildProcessError):
+                os.waitid(
+                    os.P_PID,
+                    started.process_group_id,
+                    os.WEXITED | os.WNOHANG | os.WNOWAIT,
+                )
+        else:
+            assert not _process_is_running(started.process_group_id)
         assert read_runtime(tmp_path).owned_run_ids == ()
     finally:
+        if exit_observer is not None:
+            exit_observer.close()
         try:
             os.killpg(started.process_group_id, signal.SIGKILL)
         except ProcessLookupError:
