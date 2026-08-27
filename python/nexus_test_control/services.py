@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import errno
 import fcntl
+import ipaddress
 import json
 import logging
 import mmap
@@ -19,6 +20,7 @@ import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 from urllib.parse import urlsplit
@@ -29,6 +31,10 @@ import httpx
 import psycopg
 from botocore.client import BaseClient, Config
 from botocore.exceptions import ClientError
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 from psycopg import sql
 
 from nexus.config import BACKGROUND_WORKER_MEMORY_LIMIT_BYTES
@@ -132,6 +138,9 @@ _STATUS_KEYS = frozenset(
 )
 _PROCESS_IDENTITY_GRACE_SECONDS = 2
 _EMBEDDING_PEER_FILES = ("ca.pem", "server-key.pem", "requests.jsonl")
+TEST_OPENAI_EMBEDDING_API_KEY = "nexus-test-fixture-openai-key"
+TEST_OPENAI_EMBEDDING_HOST = "api.openai.com"
+_BASE_TEST_STATIC_DNS: dict[str, object] = {"www.nasa.gov": "93.184.216.34"}
 _CONTROLLER_OWNED_PROCESS_ENV = frozenset(
     {
         "NEXUS_AGENT_TOOLS_MCP_LISTEN",
@@ -206,6 +215,41 @@ class TestRun:
     migration_database_url: str | None
     bucket: str
     supabase: SupabaseCredentials
+
+
+@dataclass(frozen=True, slots=True)
+class EmbeddingPeer:
+    state: Path
+    certificate: Path
+    key: Path
+    audit: Path
+    port: int
+
+    def client_environment(self) -> dict[str, str]:
+        static_dns = {
+            **_BASE_TEST_STATIC_DNS,
+            TEST_OPENAI_EMBEDDING_HOST: {"address": "127.0.0.1", "port": self.port},
+        }
+        return {
+            "NEXUS_TEST_STATIC_DNS": json.dumps(
+                static_dns,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+            "NEXUS_TEST_TLS_CA_CERT": str(self.certificate),
+        }
+
+    def requests(self) -> tuple[dict[str, object], ...]:
+        rows = tuple(
+            json.loads(line) for line in self.audit.read_text(encoding="utf-8").splitlines() if line
+        )
+        return tuple(
+            row["payload"]
+            for row in rows
+            if isinstance(row, dict)
+            and row.get("path") == "/v1/embeddings"
+            and isinstance(row.get("payload"), dict)
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -317,7 +361,11 @@ def run_environment(
         "NEXUS_ENV": "test",
         "NEXUS_INTERNAL_SECRET": "nexus-test-internal-secret",
         "NEXUS_RUNTIME_IDENTITY_FILE": str(_runtime_identity_path(root)),
-        "NEXUS_TEST_STATIC_DNS": '{"www.nasa.gov":"93.184.216.34"}',
+        "NEXUS_TEST_STATIC_DNS": json.dumps(
+            _BASE_TEST_STATIC_DNS,
+            separators=(",", ":"),
+            sort_keys=True,
+        ),
         "NEXUS_TEST_RUN_ID": run.run_id,
         "OUTBOUND_HTTP_PROXY_URL": expected_external_url,
         "PARSER_TEMP_ROOT": str(root / "test-results" / "runs" / run.run_id / "parser-tmp"),
@@ -325,7 +373,7 @@ def run_environment(
         "PODCAST_INDEX_API_KEY": "nexus-test-fixture-podcast-key",
         "PODCAST_INDEX_API_SECRET": "nexus-test-fixture-podcast-secret",
         "PODCAST_INDEX_BASE_URL": expected_external_url,
-        "OPENAI_API_KEY": "nexus-test-fixture-openai-key",
+        "OPENAI_API_KEY": TEST_OPENAI_EMBEDDING_API_KEY,
         "R2_ACCESS_KEY_ID": MINIO_ACCESS_KEY,
         "R2_BUCKET": expected_bucket,
         "R2_REGION": MINIO_REGION,
@@ -1005,6 +1053,44 @@ def cgroup_delegate_failure() -> str | None:
     return None
 
 
+def _write_embedding_peer_certificate(certificate: Path, key_path: Path) -> None:
+    key = rsa.generate_private_key(public_exponent=65_537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, TEST_OPENAI_EMBEDDING_HOST)])
+    value = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime.now(UTC) - timedelta(minutes=1))
+        .not_valid_after(datetime.now(UTC) + timedelta(days=1))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .add_extension(
+            x509.SubjectAlternativeName(
+                [
+                    x509.DNSName(TEST_OPENAI_EMBEDDING_HOST),
+                    x509.IPAddress(ipaddress.ip_address("127.0.0.1")),
+                ]
+            ),
+            critical=False,
+        )
+        .add_extension(
+            x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]),
+            critical=False,
+        )
+        .sign(key, hashes.SHA256())
+    )
+    certificate.write_bytes(value.public_bytes(serialization.Encoding.PEM))
+    key_path.write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    key_path.chmod(0o600)
+
+
 def prepare_embedding_peer_state(
     repo_root: Path,
     environment: Mapping[str, str],
@@ -1023,6 +1109,26 @@ def prepare_embedding_peer_state(
     except FileExistsError as exc:
         raise RuntimeContractError("embedding-peer state already exists for this run") from exc
     return state
+
+
+def materialize_embedding_peer(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    run: TestRun,
+) -> EmbeddingPeer:
+    """Create the exact run-owned TLS identity and audit state for embeddings."""
+
+    require_test_environment(environment)
+    root = canonical_repo_root(repo_root)
+    runtime = read_runtime(root)
+    state = prepare_embedding_peer_state(root, environment, run)
+    certificate = state / "ca.pem"
+    key = state / "server-key.pem"
+    audit = state / "requests.jsonl"
+    audit.touch(mode=0o600, exist_ok=False)
+    _write_embedding_peer_certificate(certificate, key)
+    finish_embedding_peer_state(root, environment, run.run_id)
+    return EmbeddingPeer(state, certificate, key, audit, runtime.ports.provider_openai)
 
 
 def finish_embedding_peer_state(

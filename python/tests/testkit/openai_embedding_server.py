@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
-import ipaddress
 import json
 import math
 import ssl
@@ -13,88 +12,23 @@ import struct
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, cast
 
-from cryptography import x509
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
-
 from nexus_test_control import services as test_services
-from nexus_test_control.runtime import EndpointKind, read_runtime
+from nexus_test_control.runtime import EndpointKind
+from nexus_test_control.services import (
+    TEST_OPENAI_EMBEDDING_API_KEY,
+    TEST_OPENAI_EMBEDDING_HOST,
+    EmbeddingPeer,
+)
 from tests.testkit.worker import controller_run, kill_and_forget_process
 
-_API_KEY = "nexus-test-fixture-openai-key"
-_HOST = "api.openai.com"
+_API_KEY = TEST_OPENAI_EMBEDDING_API_KEY
+_HOST = TEST_OPENAI_EMBEDDING_HOST
 _MAX_REQUEST_BYTES = 1_048_576
 _TEST_ENV = {"NEXUS_ENV": "test"}
-
-
-@dataclass(frozen=True, slots=True)
-class EmbeddingPeer:
-    state: Path
-    certificate: Path
-    key: Path
-    audit: Path
-    port: int
-
-    def worker_environment(self) -> dict[str, str]:
-        return {
-            "NEXUS_TEST_STATIC_DNS": json.dumps(
-                {"api.openai.com": {"address": "127.0.0.1", "port": self.port}},
-                separators=(",", ":"),
-                sort_keys=True,
-            ),
-            "NEXUS_TEST_TLS_CA_CERT": str(self.certificate),
-        }
-
-    def requests(self) -> tuple[dict[str, object], ...]:
-        rows = tuple(
-            json.loads(line) for line in self.audit.read_text(encoding="utf-8").splitlines() if line
-        )
-        return tuple(
-            row["payload"]
-            for row in rows
-            if isinstance(row, dict)
-            and row.get("path") == "/v1/embeddings"
-            and isinstance(row.get("payload"), dict)
-        )
-
-
-def _write_embedding_peer_certificate(certificate: Path, key_path: Path) -> None:
-    key = rsa.generate_private_key(public_exponent=65_537, key_size=2048)
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, _HOST)])
-    value = (
-        x509.CertificateBuilder()
-        .subject_name(name)
-        .issuer_name(name)
-        .public_key(key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(datetime.now(UTC) - timedelta(minutes=1))
-        .not_valid_after(datetime.now(UTC) + timedelta(days=1))
-        .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
-        .add_extension(
-            x509.SubjectAlternativeName(
-                [x509.DNSName(_HOST), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]
-            ),
-            critical=False,
-        )
-        .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
-        .sign(key, hashes.SHA256())
-    )
-    certificate.write_bytes(value.public_bytes(serialization.Encoding.PEM))
-    key_path.write_bytes(
-        key.private_bytes(
-            serialization.Encoding.PEM,
-            serialization.PrivateFormat.PKCS8,
-            serialization.NoEncryption(),
-        )
-    )
-    key_path.chmod(0o600)
 
 
 class _OpenAIProviderServer(ThreadingHTTPServer):
@@ -260,17 +194,9 @@ def running_openai_embedding_server(
 ) -> Iterator[EmbeddingPeer]:
     """Start one controller-owned deterministic embedding peer."""
     run = controller_run()
-    runtime = read_runtime(root)
-    state = test_services.prepare_embedding_peer_state(root, _TEST_ENV, run)
-    certificate = state / "ca.pem"
-    key = state / "server-key.pem"
-    audit = state / "requests.jsonl"
     process: test_services.StartedProcess | None = None
     try:
-        audit.touch(mode=0o600, exist_ok=False)
-        _write_embedding_peer_certificate(certificate, key)
-        test_services.finish_embedding_peer_state(root, _TEST_ENV, run.run_id)
-        peer = EmbeddingPeer(state, certificate, key, audit, runtime.ports.provider_openai)
+        peer = test_services.materialize_embedding_peer(root, _TEST_ENV, run)
         process = test_services.start_python_process(
             root,
             _TEST_ENV,

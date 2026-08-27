@@ -103,6 +103,7 @@ from nexus_test_control.runtime import (
 from nexus_test_control.services import (
     TEST_EXTENSION_PUBLIC_KEY,
     AuthorizedAndroidDevice,
+    EmbeddingPeer,
     InvitedTestUser,
     StartedProcess,
     SupabaseCredentials,
@@ -116,6 +117,7 @@ from nexus_test_control.services import (
     create_supabase_user,
     grant_scenario_paid_entitlement,
     invite_supabase_user,
+    materialize_embedding_peer,
     new_run_id,
     prepare_run,
     required_platform_process_tools,
@@ -767,6 +769,14 @@ class _RunnerPorts:
         overrides: Mapping[str, str] | None = None,
     ) -> StartedProcess:
         return start_python_process(repo_root, environment, run, role, overrides=overrides)
+
+    def materialize_embedding_peer(
+        self,
+        repo_root: Path,
+        environment: Mapping[str, str],
+        run: TestRun,
+    ) -> EmbeddingPeer:
+        return materialize_embedding_peer(repo_root, environment, run)
 
     def start_web_process(
         self,
@@ -2643,6 +2653,7 @@ def _with_browser_process_logs(
         path.relative_to(context.repo_root).as_posix()
         for role in (
             "external",
+            "provider-openai",
             "api",
             "worker-interactive",
             "worker-background",
@@ -2670,11 +2681,32 @@ def _ensure_browser_processes(
         protocol_failure = execution.ensure_external_protocol(capability, prepared)
         if protocol_failure is not None:
             return protocol_failure
+        embedding_peer = execution.ports.materialize_embedding_peer(
+            context.repo_root,
+            {"NEXUS_ENV": "test"},
+            prepared,
+        )
+        provider_openai = execution.ports.start_python_process(
+            context.repo_root,
+            {"NEXUS_ENV": "test"},
+            prepared,
+            "provider-openai",
+        )
+        execution.ports.wait_process_ready(
+            context.repo_root,
+            {"NEXUS_ENV": "test"},
+            provider_openai,
+            EndpointKind.PROVIDER_OPENAI,
+            "/livez",
+            tls_ca=embedding_peer.certificate,
+        )
+        embedding_environment = embedding_peer.client_environment()
         api = execution.ports.start_python_process(
             context.repo_root,
             {"NEXUS_ENV": "test"},
             prepared,
             "api",
+            overrides=embedding_environment,
         )
         execution.ports.wait_process_ready(
             context.repo_root,
@@ -2688,6 +2720,7 @@ def _ensure_browser_processes(
             {"NEXUS_ENV": "test"},
             prepared,
             "worker-interactive",
+            overrides=embedding_environment,
         )
         execution.ports.wait_process_ready(
             context.repo_root,
@@ -2701,6 +2734,7 @@ def _ensure_browser_processes(
             {"NEXUS_ENV": "test"},
             prepared,
             "worker-background",
+            overrides=embedding_environment,
         )
         web = execution.ports.start_web_process(
             context.repo_root,

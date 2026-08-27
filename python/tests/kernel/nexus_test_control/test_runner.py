@@ -37,6 +37,7 @@ from nexus_test_control.runner import (
 )
 from nexus_test_control.runtime import RuntimeContractError
 from nexus_test_control.services import (
+    EmbeddingPeer,
     StartedProcess,
     SupabaseCredentials,
     authorized_instrumentation_device,
@@ -3830,6 +3831,7 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
     bun.chmod(0o755)
     build_calls: list[str] = []
     process_roles: list[str] = []
+    process_overrides: dict[str, Mapping[str, str] | None] = {}
     readiness_calls: list[tuple[str, runner.EndpointKind, str]] = []
     password_users: list[str] = []
     invited_users: list[str] = []
@@ -3858,6 +3860,21 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
             build_calls.append("build")
             return StandaloneBuild("a" * 64, artifact, artifact / "server.js")
 
+        def materialize_embedding_peer(
+            self,
+            _repo_root: Path,
+            _environment: Mapping[str, str],
+            _run: OwnedTestRun,
+        ) -> EmbeddingPeer:
+            state = tmp_path / "embedding-peer"
+            state.mkdir()
+            certificate = state / "ca.pem"
+            key = state / "server-key.pem"
+            audit = state / "requests.jsonl"
+            for path in (certificate, key, audit):
+                _write(path, "owned\n")
+            return EmbeddingPeer(state, certificate, key, audit, 4443)
+
         def start_python_process(
             self,
             _repo_root: Path,
@@ -3868,6 +3885,7 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
             overrides: Mapping[str, str] | None = None,
         ) -> StartedProcess:
             process_roles.append(role)
+            process_overrides[role] = overrides
             return StartedProcess(
                 role=role,
                 process_group_id=len(process_roles) + 100,
@@ -3966,6 +3984,7 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
     assert build_calls == ["build"]
     assert process_roles == [
         "external",
+        "provider-openai",
         "api",
         "worker-interactive",
         "worker-background",
@@ -3973,6 +3992,7 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
     ]
     assert readiness_calls == [
         ("external", runner.EndpointKind.EXTERNAL, "/livez"),
+        ("provider-openai", runner.EndpointKind.PROVIDER_OPENAI, "/livez"),
         ("api", runner.EndpointKind.API, "/readyz"),
         (
             "worker-interactive",
@@ -3981,6 +4001,19 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
         ),
         ("web", runner.EndpointKind.WEB, "/login"),
     ]
+    embedding_environment = {
+        "NEXUS_TEST_STATIC_DNS": (
+            '{"api.openai.com":{"address":"127.0.0.1","port":4443},"www.nasa.gov":"93.184.216.34"}'
+        ),
+        "NEXUS_TEST_TLS_CA_CERT": str(tmp_path / "embedding-peer/ca.pem"),
+    }
+    assert process_overrides == {
+        "external": None,
+        "provider-openai": None,
+        "api": embedding_environment,
+        "worker-interactive": embedding_environment,
+        "worker-background": embedding_environment,
+    }
     assert invited_users == ["auth-session"]
     assert password_users == [
         "durable-ingest-reader-open",

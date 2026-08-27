@@ -49,6 +49,7 @@ from nexus_test_control.services import (
     clean_owned_runtime,
     clean_run,
     finish_embedding_peer_state,
+    materialize_embedding_peer,
     new_run_id,
     prepare_embedding_peer_state,
     run_environment,
@@ -1374,6 +1375,27 @@ def test_run_environment_contains_only_exact_local_resources_and_no_admin_key(
         "SUPABASE_SERVICE_KEY",
         "SUPABASE_SERVICE_ROLE_KEY",
     }.intersection(environment)
+
+
+def test_embedding_peer_materializes_one_exact_client_identity(tmp_path: Path) -> None:
+    run = _empty_owned_run(tmp_path)
+
+    peer = materialize_embedding_peer(tmp_path, TEST_ENV, run)
+
+    assert peer.state == embedding_peer_state_dir(tmp_path, RUN_ID)
+    assert peer.certificate.read_bytes().startswith(b"-----BEGIN CERTIFICATE-----")
+    assert peer.key.read_bytes().startswith(b"-----BEGIN PRIVATE KEY-----")
+    assert peer.key.stat().st_mode & 0o777 == 0o600
+    assert peer.audit.read_bytes() == b""
+    assert peer.client_environment() == {
+        "NEXUS_TEST_STATIC_DNS": (
+            '{"api.openai.com":{"address":"127.0.0.1","port":19092},"www.nasa.gov":"93.184.216.34"}'
+        ),
+        "NEXUS_TEST_TLS_CA_CERT": str(peer.certificate),
+    }
+
+    clean_run(tmp_path, TEST_ENV, RUN_ID)
+    assert not peer.state.exists()
 
 
 @pytest.mark.parametrize(

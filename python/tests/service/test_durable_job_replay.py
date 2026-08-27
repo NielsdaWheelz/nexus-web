@@ -191,7 +191,7 @@ def test_owned_worker_replays_committed_note_index_after_process_death(
                 _TEST_ENV,
                 run,
                 "worker-background",
-                overrides=provider.worker_environment(),
+                overrides=provider.client_environment(),
             )
 
             claimed = wait_for_job(
@@ -238,7 +238,7 @@ def test_owned_worker_replays_committed_note_index_after_process_death(
                 _TEST_ENV,
                 run,
                 "worker-background",
-                overrides=provider.worker_environment(),
+                overrides=provider.client_environment(),
             )
             terminal = wait_for_job(engine, job_id, status="succeeded", attempts=2)
             assert_production_worker(recovered, run)
