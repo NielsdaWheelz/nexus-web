@@ -137,10 +137,10 @@ def _insert_old_audit_rows(
             """
             INSERT INTO llm_calls (
                 id, owner_kind, owner_id, call_seq, provider, model_name,
-                llm_operation, streaming, requested_reasoning, cost_status
+                llm_operation, streaming, requested_reasoning, cost_status, outcome
             ) VALUES (
                 :id, 'chat_run', :owner_id, 1, 'openai', 'gpt-5.6-luna',
-                'chat', false, 'low', 'missing_usage'
+                'chat', false, 'low', 'missing_usage', 'succeeded'
             )
             """
         ),
@@ -152,12 +152,14 @@ def _insert_old_audit_rows(
             INSERT INTO agent_turns (
                 id, owner_kind, owner_id, turn_seq, operation, operation_revision,
                 backend, transport, auth_profile, model_name, requested_reasoning,
-                request_fingerprint, policy_fingerprint, output_schema_fingerprint
+                request_fingerprint, policy_fingerprint, output_schema_fingerprint,
+                session_ref, outcome, sdk_version, runtime_version, completed_at
             ) VALUES (
                 :id, 'media_enrichment', :owner_id, 1, 'metadata_enrichment',
                 'metadata-enrichment.2026-08-12.4', 'codex', 'sdk', 'codex-personal',
                 'gpt-5.6-luna', 'low', :request_fingerprint, :policy_fingerprint,
-                :output_schema_fingerprint
+                :output_schema_fingerprint, CAST(:session_ref AS jsonb), 'succeeded',
+                '0.144.4', '0.144.4', clock_timestamp()
             )
             """
         ),
@@ -167,6 +169,17 @@ def _insert_old_audit_rows(
             "request_fingerprint": "1" * 64,
             "policy_fingerprint": "2" * 64,
             "output_schema_fingerprint": "3" * 64,
+            "session_ref": _json(
+                {
+                    "schema_version": "agent-session-ref.v1",
+                    "backend": "codex",
+                    "transport": "sdk",
+                    "native_session_id": "terminal-migration-fixture",
+                    "profile_key": "codex-personal",
+                    "state_root_fingerprint": "4" * 64,
+                    "cwd_fingerprint": "5" * 64,
+                }
+            ),
         },
     )
 
@@ -188,8 +201,15 @@ def _preflight_fingerprint(
                 text("SELECT count(*) FROM llm_calls WHERE id = :id"), {"id": call_id}
             ),
             connection.scalar(
+                text("SELECT outcome FROM llm_calls WHERE id = :id"), {"id": call_id}
+            ),
+            connection.scalar(
                 text("SELECT count(*) FROM agent_turns WHERE id = :id"), {"id": turn_id}
             ),
+            connection.execute(
+                text("SELECT outcome, completed_at FROM agent_turns WHERE id = :id"),
+                {"id": turn_id},
+            ).one_or_none(),
             connection.scalar(text("SELECT count(*) FROM background_jobs")),
             connection.scalar(text("SELECT count(*) FROM chat_runs")),
             connection.scalar(text("SELECT count(*) FROM artifact_builds")),
@@ -243,6 +263,71 @@ def _seed_user_conversation(connection: object) -> dict[str, UUID]:
         ids,
     )
     return ids
+
+
+@pytest.mark.parametrize(
+    ("ledger", "make_nonterminal", "expected_error"),
+    (
+        (
+            "llm_calls",
+            "UPDATE llm_calls SET outcome = NULL WHERE id = :id",
+            "legacy llm_calls must be terminal",
+        ),
+        (
+            "agent_turns",
+            "UPDATE agent_turns SET outcome = NULL, completed_at = NULL WHERE id = :id",
+            "legacy agent_turns must be terminal",
+        ),
+        (
+            "agent_turns",
+            "UPDATE agent_turns SET completed_at = NULL WHERE id = :id",
+            "legacy agent_turns must be terminal",
+        ),
+        (
+            "agent_turns",
+            "UPDATE agent_turns SET outcome = NULL WHERE id = :id",
+            "legacy agent_turns must be terminal",
+        ),
+    ),
+    ids=(
+        "llm-call-without-outcome",
+        "agent-turn-without-terminal",
+        "agent-turn-outcome-without-completion",
+        "agent-turn-completion-without-outcome",
+    ),
+)
+def test_0224_refuses_nonterminal_legacy_ledgers_before_mutation(
+    empty_migration_database_url: str,
+    ledger: str,
+    make_nonterminal: str,
+    expected_error: str,
+) -> None:
+    config = _migration_config()
+    _require_cutover_revision(config)
+    command.upgrade(config, _PREVIOUS_REVISION)
+    engine = create_engine(empty_migration_database_url)
+    call_id, turn_id, owner_id = uuid4(), uuid4(), uuid4()
+    try:
+        with engine.begin() as connection:
+            _insert_old_audit_rows(
+                connection,
+                call_id=call_id,
+                turn_id=turn_id,
+                owner_id=owner_id,
+            )
+            row_id = call_id if ledger == "llm_calls" else turn_id
+            connection.execute(text(make_nonterminal), {"id": row_id})
+
+        _assert_refused_without_mutation(
+            config,
+            engine,
+            call_id=call_id,
+            turn_id=turn_id,
+            blocker=f"nonterminal legacy {ledger}",
+            expected_error=rf"{expected_error}.*{row_id}",
+        )
+    finally:
+        engine.dispose()
 
 
 def test_0224_refuses_every_active_or_uncertain_generation_owner_before_mutation(

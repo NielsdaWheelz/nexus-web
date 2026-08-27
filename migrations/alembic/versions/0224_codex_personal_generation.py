@@ -43,6 +43,32 @@ def _ids(rows: Sequence[Row[Any]]) -> list[str]:
 def _preflight(bind: sa.Connection) -> None:
     """Refuse every live or legacy-dispatchable generation before mutation."""
 
+    nonterminal_llm_calls = bind.execute(
+        sa.text(
+            """
+            SELECT id
+            FROM llm_calls
+            WHERE outcome IS NULL
+            ORDER BY id
+            """
+        )
+    ).all()
+    if nonterminal_llm_calls:
+        _fail(f"legacy llm_calls must be terminal: {_ids(nonterminal_llm_calls)}")
+
+    nonterminal_agent_turns = bind.execute(
+        sa.text(
+            """
+            SELECT id
+            FROM agent_turns
+            WHERE outcome IS NULL OR completed_at IS NULL
+            ORDER BY id
+            """
+        )
+    ).all()
+    if nonterminal_agent_turns:
+        _fail(f"legacy agent_turns must be terminal: {_ids(nonterminal_agent_turns)}")
+
     active_jobs = bind.execute(
         sa.text(
             """

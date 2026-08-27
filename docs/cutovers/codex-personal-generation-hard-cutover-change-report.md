@@ -58,17 +58,25 @@ PLANNED-to-CREATED cleanup. Production embedding behavior is unchanged.
 
 ## Verification
 
-The 80/20 proof shape is one dominant proof per ownership boundary, sixteen
-representative sensitivity faults, then `changed`, `confidence`, `pr`, `full`,
-`release`, `nightly`, and the protected `codex-nightly` lane. Final clean-SHA
-receipts are recorded here after the source candidate is committed.
+The 80/20 proof shape is one dominant proof per ownership boundary and sixteen
+representative sensitivity faults, followed serially by
+`./scripts/test changed --base beb8877513de5323bd7f1907712607babbda8721`,
+`./scripts/test confidence --base beb8877513de5323bd7f1907712607babbda8721`,
+`NEXUS_TEST_BASE_SHA=beb8877513de5323bd7f1907712607babbda8721 ./scripts/test pr`,
+`./scripts/test full`, `./scripts/test release`, the ordinary
+`./scripts/test nightly`, and finally the protected `codex-nightly` lane. Final
+clean-SHA receipts are recorded here after the source candidate is committed.
 
 | Gate | Candidate result |
 |---|---|
 | Focused owner proofs | pending final clean-SHA run |
 | Sixteen fault red/green proofs | pending final clean-SHA run |
-| `changed` / `confidence` / `pr` | pending final clean-SHA run |
-| `full` / `release` / `nightly` | pending final clean-SHA run |
+| `./scripts/test changed --base beb8877513de5323bd7f1907712607babbda8721` | pending final clean-SHA run |
+| `./scripts/test confidence --base beb8877513de5323bd7f1907712607babbda8721` | pending final clean-SHA run |
+| `NEXUS_TEST_BASE_SHA=beb8877513de5323bd7f1907712607babbda8721 ./scripts/test pr` | pending final clean-SHA run |
+| `./scripts/test full` | pending final clean-SHA run |
+| `./scripts/test release` | pending final clean-SHA run |
+| Ordinary `./scripts/test nightly` | pending final clean-SHA run |
 | Protected four-plan `codex-nightly` | pending enrolled-runner execution |
 | Same-SHA capacity and deployed-host evidence | pending deployment |
 
