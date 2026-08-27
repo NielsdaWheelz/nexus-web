@@ -5686,18 +5686,9 @@ def _browser_installed(repo_root: Path, environment: Mapping[str, str]) -> bool:
     executables = _browser_executable_names(sys.platform, platform.machine())
     if executables is None:
         return False
-    browser_root = environment.get("PLAYWRIGHT_BROWSERS_PATH")
-    if browser_root:
-        cache = Path(browser_root)
-    else:
-        cache_home = environment.get("XDG_CACHE_HOME")
-        home = environment.get("HOME")
-        if cache_home:
-            cache = Path(cache_home) / "ms-playwright"
-        elif home:
-            cache = Path(home) / ".cache/ms-playwright"
-        else:
-            return False
+    cache = _browser_cache_root(environment, platform_name=sys.platform)
+    if cache is None:
+        return False
     chromium = cache / f"chromium-{revisions['chromium']}"
     headless = cache / f"chromium_headless_shell-{revisions['chromium-headless-shell']}"
     return all(
@@ -5706,6 +5697,22 @@ def _browser_installed(repo_root: Path, environment: Mapping[str, str]) -> bool:
         and any(path.is_file() and os.access(path, os.X_OK) for path in owner.rglob(executable))
         for owner, executable in zip((chromium, headless), executables, strict=True)
     )
+
+
+def _browser_cache_root(environment: Mapping[str, str], *, platform_name: str) -> Path | None:
+    if browser_root := environment.get("PLAYWRIGHT_BROWSERS_PATH"):
+        return Path(browser_root)
+    if platform_name == "darwin":
+        return (
+            Path(home) / "Library/Caches/ms-playwright"
+            if (home := environment.get("HOME"))
+            else None
+        )
+    if platform_name != "linux":
+        return None
+    if cache_home := environment.get("XDG_CACHE_HOME"):
+        return Path(cache_home) / "ms-playwright"
+    return Path(home) / ".cache/ms-playwright" if (home := environment.get("HOME")) else None
 
 
 def _browser_executable_names(platform_name: str, machine: str) -> tuple[str, str] | None:

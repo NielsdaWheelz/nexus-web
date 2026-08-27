@@ -73,6 +73,25 @@ def test_browser_admission_uses_only_the_supported_playwright_executable_layouts
     assert runner._browser_executable_names(platform_name, machine) == expected
 
 
+@pytest.mark.parametrize(
+    ("platform_name", "environment", "expected"),
+    (
+        ("darwin", {"HOME": "/Users/nexus"}, "/Users/nexus/Library/Caches/ms-playwright"),
+        ("linux", {"HOME": "/home/nexus"}, "/home/nexus/.cache/ms-playwright"),
+        ("linux", {"XDG_CACHE_HOME": "/cache"}, "/cache/ms-playwright"),
+        ("darwin", {"PLAYWRIGHT_BROWSERS_PATH": "/locked"}, "/locked"),
+        ("win32", {"HOME": "C:/Users/nexus"}, None),
+    ),
+)
+def test_browser_admission_resolves_playwrights_platform_cache_contract(
+    platform_name: str,
+    environment: Mapping[str, str],
+    expected: str | None,
+) -> None:
+    resolved = runner._browser_cache_root(environment, platform_name=platform_name)
+    assert resolved == (Path(expected) if expected is not None else None)
+
+
 def test_browser_admission_requires_both_complete_locked_platform_artifacts(
     tmp_path: Path,
 ) -> None:
