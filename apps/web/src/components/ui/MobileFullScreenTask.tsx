@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useRef, type ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { DismissDecision } from "@/lib/ui/useHistoryDismiss";
 import type { ReturnFocusTarget } from "@/lib/ui/useReturnFocus";
@@ -44,7 +44,6 @@ export default function MobileFullScreenTask({
   focusKey,
 }: MobileFullScreenTaskProps) {
   const panelRef = useRef<HTMLElement>(null);
-  const pointerStartedInsideRef = useRef(false);
   const hasOpenedRef = useRef(false);
   if (active) {
     hasOpenedRef.current = true;
@@ -59,9 +58,6 @@ export default function MobileFullScreenTask({
     skipReturnFocus,
     focusKey,
   });
-  useLayoutEffect(() => {
-    pointerStartedInsideRef.current = false;
-  }, [active]);
 
   if (!hasOpenedRef.current) return null;
   return createPortal(
@@ -72,26 +68,6 @@ export default function MobileFullScreenTask({
         role="presentation"
         hidden={!active}
         inert={!active ? true : undefined}
-        onPointerDownCapture={() => {
-          pointerStartedInsideRef.current = true;
-        }}
-        onPointerCancelCapture={() => {
-          pointerStartedInsideRef.current = false;
-        }}
-        onClickCapture={(event) => {
-          if (event.detail === 0) {
-            pointerStartedInsideRef.current = false;
-            return;
-          }
-          const pointerStartedInside = pointerStartedInsideRef.current;
-          pointerStartedInsideRef.current = false;
-          if (pointerStartedInside) return;
-          // A contact can predate portal activation and retarget its compatibility
-          // click into the newly mounted task. Only admit pointer activations that
-          // this active task observed from their beginning.
-          event.preventDefault();
-          event.stopPropagation();
-        }}
         style={{
           top: `${lifecycle.visualViewportTopPx}px`,
           bottom: `${lifecycle.keyboardBottomInsetPx}px`,

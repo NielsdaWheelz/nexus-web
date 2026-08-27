@@ -529,8 +529,9 @@ def authorized_usb_physical_device(
     """Attest the one USB-backed physical device used by protected device proof.
 
     Emulators and wireless adb transports remain distinct lanes and cannot
-    satisfy this boundary. Other authorized transports may coexist, but exactly
-    one physical row must carry adb's ``usb:`` topology fact.
+    satisfy or coexist with this boundary. The selected physical row must be
+    the inventory's only authorized device and carry adb's ``usb:`` topology
+    fact.
     """
     rows = _long_device_inventory(adb, environment, cwd)
     if rows is None:
@@ -540,6 +541,8 @@ def authorized_usb_physical_device(
         return None, "no authorized USB-backed physical Android device is attached"
     if len(candidates) != 1:
         return None, "Android device proof requires exactly one USB-backed physical device"
+    if len(rows) != 1:
+        return None, "Android device proof requires exactly one authorized device row"
     selected = candidates[0]
     return AuthorizedAndroidDevice(selected.fields[0], selected.raw), ""
 
@@ -567,6 +570,8 @@ def authorized_instrumentation_device(
         return None, "no authorized local emulator or USB-backed Android device is attached"
     if len(candidates) != 1:
         return None, "Android device proof requires exactly one local emulator or USB device"
+    if len(rows) != 1:
+        return None, "Android device proof requires exactly one authorized device row"
     selected = candidates[0]
     return AuthorizedAndroidDevice(selected.fields[0], selected.raw), ""
 

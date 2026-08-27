@@ -412,6 +412,13 @@ _ANDROID_NEXUS_DIAGNOSTIC_MARKER = "NEXUS_CONTROL_GESTURE_DIAGNOSTICS:"
 _ANDROID_NEXUS_GESTURE_PROOF_PATH = (
     "apps/android/app/src/androidTest/java/app/nexus/android/NexusControlGestureTest.kt"
 )
+_ANDROID_NEXUS_GESTURE_PROOF_METHOD = "nexusControlReceivesHorizontalTouchFromOuterAndInnerHalves"
+_ANDROID_NEXUS_GESTURE_PROOF_ID = (
+    f"gradle:{_ANDROID_NEXUS_GESTURE_PROOF_PATH}::{_ANDROID_NEXUS_GESTURE_PROOF_METHOD}"
+)
+_ANDROID_NEXUS_GESTURE_TEST_TARGET = (
+    f"app.nexus.android.NexusControlGestureTest#{_ANDROID_NEXUS_GESTURE_PROOF_METHOD}"
+)
 _ANDROID_RELEASE_OWNED_HOST = "nexus.nielseriknandal.com"
 _ANDROID_PLAYER_PROTOCOL_CORPUS = Path("testdata/android/player-protocol.json")
 _CRITICAL_JOURNEY_IDS = frozenset(
@@ -512,12 +519,18 @@ class CapabilityContext:
     proof_id: str | None = None
     sensitivity_attempt: str | None = None
     run_context: RunContextRecorder | None = None
+    candidate_sha: str | None = None
 
     def __post_init__(self) -> None:
         if self.sensitivity_attempt not in {None, "red", "green"}:
             raise ValueError("capability sensitivity attempt is unknown")
         if self.sensitivity_attempt is not None and self.proof_id is None:
             raise ValueError("sensitivity capability context must name its proof")
+        if (
+            self.candidate_sha is not None
+            and re.fullmatch(r"[0-9a-f]{40}", self.candidate_sha) is None
+        ):
+            raise ValueError("capability candidate SHA must be canonical")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1173,6 +1186,7 @@ def run_proof(
             proof_id=context.proof_id or proof_id,
             sensitivity_attempt=context.sensitivity_attempt,
             run_context=context.run_context,
+            candidate_sha=context.candidate_sha,
         )
     except ValueError as error:
         return _not_run(Capability.POLICY, f"exact proof is not executable: {error}")
@@ -4228,26 +4242,42 @@ def _run_android_instrumentation(
     android_root: Path,
     environment: Mapping[str, str],
 ) -> CapabilityResult:
+    reports = android_root / "app/build/outputs/androidTest-results"
+    try:
+        if reports.exists():
+            shutil.rmtree(reports)
+    except OSError as error:
+        return _not_run(
+            Capability.ANDROID_DEVICE,
+            f"stale Android instrumentation results could not be cleared: {error}",
+        )
     result, successful = _run_fixed_commands_observed(
         Capability.ANDROID_DEVICE,
         ((argv, android_root),),
         environment,
         ("java",),
         context=context,
+        retained_stdout_markers=(_ANDROID_NEXUS_DIAGNOSTIC_MARKER,),
     )
     if result.evidence.status is not RunStatus.PASS:
         return result
     if successful is None:
         raise AssertionError("passing Android instrumentation command identity is absent")
-    if _android_nexus_diagnostics_required(context) and _ANDROID_NEXUS_DIAGNOSTIC_MARKER not in (
-        successful.completed.stdout or ""
-    ):
-        return _result(
-            Capability.ANDROID_DEVICE,
-            RunStatus.NOT_RUN,
-            result.evidence.duration_ms,
-            "successful Nexus-control instrumentation diagnostics were not retained",
-        )
+    if _android_nexus_diagnostics_required(context):
+        if _ANDROID_NEXUS_DIAGNOSTIC_MARKER not in (successful.completed.stdout or ""):
+            return _result(
+                Capability.ANDROID_DEVICE,
+                RunStatus.NOT_RUN,
+                result.evidence.duration_ms,
+                "successful Nexus-control instrumentation diagnostics were not retained",
+            )
+        if not _gradle_assertion_passed(android_root, _ANDROID_NEXUS_GESTURE_TEST_TARGET):
+            return _result(
+                Capability.ANDROID_DEVICE,
+                RunStatus.NOT_RUN,
+                result.evidence.duration_ms,
+                "successful Nexus-control instrumentation did not retain one passing exact proof result",
+            )
     artifact, detail = _android_device_success_artifact(
         context,
         device,
@@ -4271,6 +4301,14 @@ def _android_nexus_diagnostics_required(context: CapabilityContext) -> bool:
     if context.proof_id is not None:
         return context.proof_id.startswith(f"gradle:{_ANDROID_NEXUS_GESTURE_PROOF_PATH}::")
     return (context.repo_root / _ANDROID_NEXUS_GESTURE_PROOF_PATH).is_file()
+
+
+def _android_device_artifact_proof_id(context: CapabilityContext) -> str | None:
+    if context.proof_id is not None:
+        return context.proof_id
+    if (context.repo_root / _ANDROID_NEXUS_GESTURE_PROOF_PATH).is_file():
+        return _ANDROID_NEXUS_GESTURE_PROOF_ID
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -6242,6 +6280,7 @@ def _run_fixed_commands_observed(
     context: CapabilityContext | None,
     elapsed_ms: int = 0,
     pythonpath: Path | None = None,
+    retained_stdout_markers: tuple[str, ...] = (),
 ) -> tuple[CapabilityResult, _SuccessfulFixedCommand | None]:
     child_environment = _child_environment(environment)
     if pythonpath is not None:
@@ -6272,6 +6311,7 @@ def _run_fixed_commands_observed(
                 env=child_environment,
                 capture_output=True,
                 check=False,
+                retain_stdout_markers=retained_stdout_markers,
             )
         except OSError as error:
             duration_ms = elapsed_ms + (time.monotonic_ns() - started) // 1_000_000
@@ -6540,13 +6580,16 @@ def _android_device_success_artifact(
     except (OSError, ValueError):
         return None, "successful Android instrumentation command left the repository"
     secrets = environment_secrets(environment)
+    if context.candidate_sha is None:
+        return None, "successful Android instrumentation has no exact candidate SHA"
     payload: dict[str, JsonValue] = {
-        "version": 1,
+        "version": 2,
         "capability": Capability.ANDROID_DEVICE.value,
+        "candidate_sha": context.candidate_sha,
         "scope": "exact" if context.proof_id is not None else "complete",
         "authorized_adb_row": device.adb_devices_row,
         "bound_serial": device.serial,
-        "proof_id": context.proof_id,
+        "proof_id": _android_device_artifact_proof_id(context),
         "command": {
             "argv": list(_redacted_command_argv(successful.argv, secrets)),
             "cwd": cwd.as_posix(),

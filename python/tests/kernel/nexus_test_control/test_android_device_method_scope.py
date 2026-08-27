@@ -4,6 +4,17 @@ from pathlib import Path
 from nexus_test_control.model import Capability, RunStatus, Workflow
 from nexus_test_control.runner import CapabilityContext, run_capability, run_proof
 
+CANDIDATE_SHA = "a" * 40
+NEXUS_PROOF = (
+    "gradle:apps/android/app/src/androidTest/java/app/nexus/android/"
+    "NexusControlGestureTest.kt::"
+    "nexusControlReceivesHorizontalTouchFromOuterAndInnerHalves"
+)
+NEXUS_TEST = (
+    "app.nexus.android.NexusControlGestureTest",
+    "nexusControlReceivesHorizontalTouchFromOuterAndInnerHalves",
+)
+
 
 def test_exact_android_device_proof_uses_one_instrumentation_method(tmp_path: Path) -> None:
     android_root = tmp_path / "apps/android"
@@ -44,7 +55,12 @@ def test_exact_android_device_proof_uses_one_instrumentation_method(tmp_path: Pa
     }
     proof = f"gradle:{proof_path}::nativeAuthStartCarriesTheExactHandoffContractToTheOwnedOrigin"
     result = run_proof(
-        CapabilityContext(tmp_path, Workflow.NIGHTLY, ()),
+        CapabilityContext(
+            tmp_path,
+            Workflow.NIGHTLY,
+            (),
+            candidate_sha=CANDIDATE_SHA,
+        ),
         proof,
         environment,
         _available_memory=lambda: 8192,
@@ -73,6 +89,7 @@ def test_exact_android_device_proof_uses_one_instrumentation_method(tmp_path: Pa
         "authorized_adb_row": ("R5CT1234 device usb:1-2 product:nexus model:Pixel transport_id:1"),
         "bound_serial": "R5CT1234",
         "capability": "android-device",
+        "candidate_sha": CANDIDATE_SHA,
         "command": {
             "argv": ["./gradlew", *expected_argv],
             "cwd": "apps/android",
@@ -82,7 +99,7 @@ def test_exact_android_device_proof_uses_one_instrumentation_method(tmp_path: Pa
         "scope": "exact",
         "stderr": "",
         "stdout": diagnostic.replace("hidden-value", "[REDACTED]") + "\n",
-        "version": 1,
+        "version": 2,
     }
 
 
@@ -105,7 +122,11 @@ def test_full_android_device_sweep_retains_attested_success_evidence(tmp_path: P
     )
     diagnostic = "NEXUS_CONTROL_GESTURE_DIAGNOSTICS: navigationMode=2"
     oversized_stdout = "~" * 300_000 + diagnostic
-    _write_executable(android_root / "gradlew", stdout=oversized_stdout)
+    _write_executable(
+        android_root / "gradlew",
+        stdout=oversized_stdout,
+        passing_test=NEXUS_TEST,
+    )
     environment = {
         "PATH": str(tmp_path / "bin"),
         "HOME": str(tmp_path),
@@ -116,7 +137,12 @@ def test_full_android_device_sweep_retains_attested_success_evidence(tmp_path: P
     }
 
     result = run_capability(
-        CapabilityContext(tmp_path, Workflow.NIGHTLY, ()),
+        CapabilityContext(
+            tmp_path,
+            Workflow.NIGHTLY,
+            (),
+            candidate_sha=CANDIDATE_SHA,
+        ),
         Capability.ANDROID_DEVICE,
         environment,
     )
@@ -128,8 +154,10 @@ def test_full_android_device_sweep_retains_attested_success_evidence(tmp_path: P
     retained = json.loads((tmp_path / result.evidence.artifacts[0]).read_text(encoding="utf-8"))
     assert retained["authorized_adb_row"] == adb_row
     assert retained["bound_serial"] == "emulator-5554"
+    assert retained["candidate_sha"] == CANDIDATE_SHA
     assert retained["scope"] == "complete"
-    assert retained["proof_id"] is None
+    assert retained["proof_id"] == NEXUS_PROOF
+    assert retained["version"] == 2
     assert retained["command"] == {
         "argv": [
             "./gradlew",
@@ -182,7 +210,12 @@ def test_exact_nexus_control_proof_rejects_missing_success_diagnostics(
     proof = f"gradle:{proof_path}::nexusControlReceivesHorizontalTouchFromOuterAndInnerHalves"
 
     result = run_proof(
-        CapabilityContext(tmp_path, Workflow.NIGHTLY, ()),
+        CapabilityContext(
+            tmp_path,
+            Workflow.NIGHTLY,
+            (),
+            candidate_sha=CANDIDATE_SHA,
+        ),
         proof,
         environment,
     )
@@ -193,7 +226,74 @@ def test_exact_nexus_control_proof_rejects_missing_success_diagnostics(
     assert not (results / "android-device-instrumentation.json").exists()
 
 
-def _write_executable(path: Path, *, stdout: str = "") -> None:
+def test_full_android_device_sweep_rejects_missing_exact_nexus_result(
+    tmp_path: Path,
+) -> None:
+    android_root = tmp_path / "apps/android"
+    sdk = tmp_path / "android-sdk"
+    run_id = "8899aabbccddeeff"
+    results = tmp_path / "test-results/runs" / run_id
+    sdk.mkdir()
+    results.mkdir(parents=True)
+    _write(
+        android_root / "app/src/androidTest/java/app/nexus/android/NexusControlGestureTest.kt",
+        "package app.nexus.android\nclass NexusControlGestureTest\n",
+    )
+    _write_executable(tmp_path / "bin/java")
+    _write_executable(
+        sdk / "platform-tools/adb",
+        stdout=(
+            "List of devices attached\n"
+            "R5CT1234 device usb:1-2 product:nexus model:Pixel transport_id:1\n"
+        ),
+    )
+    _write_executable(
+        android_root / "gradlew",
+        stdout="NEXUS_CONTROL_GESTURE_DIAGNOSTICS: navigationMode=2",
+    )
+    environment = {
+        "PATH": str(tmp_path / "bin"),
+        "HOME": str(tmp_path),
+        "ANDROID_HOME": str(sdk),
+        "NEXUS_TEST_EVIDENCE_RUN_ID": run_id,
+        "NEXUS_TEST_RESULTS_DIR": str(results),
+    }
+
+    result = run_capability(
+        CapabilityContext(
+            tmp_path,
+            Workflow.NIGHTLY,
+            (),
+            candidate_sha=CANDIDATE_SHA,
+        ),
+        Capability.ANDROID_DEVICE,
+        environment,
+    )
+
+    assert result.evidence.status is RunStatus.NOT_RUN
+    assert result.detail == (
+        "successful Nexus-control instrumentation did not retain one passing exact proof result"
+    )
+    assert not (results / "android-device-instrumentation.json").exists()
+
+
+def _write_executable(
+    path: Path,
+    *,
+    stdout: str = "",
+    passing_test: tuple[str, str] | None = None,
+) -> None:
+    test_report = ""
+    if passing_test is not None:
+        class_name, method = passing_test
+        test_report = (
+            "reports = Path.cwd() / 'app/build/outputs/androidTest-results/connected'\n"
+            "reports.mkdir(parents=True, exist_ok=True)\n"
+            "(reports / 'TEST-device.xml').write_text(\n"
+            f"    {f'<testsuite><testcase classname={class_name!r} name={method!r} /></testsuite>'!r},\n"
+            "    encoding='utf-8',\n"
+            ")\n"
+        )
     _write(
         path,
         "#!/usr/bin/python3\n"
@@ -208,6 +308,7 @@ def _write_executable(path: Path, *, stdout: str = "") -> None:
         "}\n"
         "with (Path(os.environ['HOME']) / 'commands.jsonl').open('a') as handle:\n"
         "    handle.write(json.dumps(record, sort_keys=True) + '\\n')\n"
+        f"{test_report}"
         f"print({stdout!r})\n",
     )
     path.chmod(0o755)

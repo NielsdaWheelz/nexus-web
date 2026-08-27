@@ -51,6 +51,7 @@ from nexus_test_control.services import (
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 _CANDIDATE_WORKER_IMAGE_ID = "sha256:" + "c" * 64
+_CANDIDATE_SHA = "a" * 40
 
 
 @pytest.mark.parametrize(
@@ -1750,7 +1751,12 @@ def test_android_release_control_owns_physical_device_and_exact_signed_methods(
     }
 
     result = run_capability(
-        CapabilityContext(tmp_path, Workflow.RELEASE, ()),
+        CapabilityContext(
+            tmp_path,
+            Workflow.RELEASE,
+            (),
+            candidate_sha=_CANDIDATE_SHA,
+        ),
         Capability.ANDROID_DEVICE,
         environment,
     )
@@ -1809,7 +1815,12 @@ def test_android_device_accepts_the_emulator_only_for_the_bootstrap_release(
     }
 
     result = run_capability(
-        CapabilityContext(tmp_path, Workflow.RELEASE, ()),
+        CapabilityContext(
+            tmp_path,
+            Workflow.RELEASE,
+            (),
+            candidate_sha=_CANDIDATE_SHA,
+        ),
         Capability.ANDROID_DEVICE,
         environment,
     )
@@ -1862,6 +1873,14 @@ def test_android_device_accepts_the_emulator_only_for_the_bootstrap_release(
             None,
             "Android device proof requires exactly one USB-backed physical device",
             id="two-usb-handsets",
+        ),
+        pytest.param(
+            "List of devices attached\n"
+            "R5CT1234 device usb:1-2 product:nexus model:Pixel transport_id:1\n"
+            "192.168.1.5:5555 device product:nexus model:Pixel transport_id:2\n",
+            None,
+            "Android device proof requires exactly one authorized device row",
+            id="usb-plus-wireless-adb",
         ),
     ],
 )
@@ -1917,6 +1936,14 @@ def test_signed_release_device_attestation_admits_only_one_usb_handset(
             None,
             "Android device proof requires exactly one local emulator or USB device",
             id="ambiguous-inventory",
+        ),
+        pytest.param(
+            "List of devices attached\n"
+            "R5CT1234 device usb:1-2 product:nexus transport_id:1\n"
+            "192.168.1.5:5555 device product:nexus transport_id:2\n",
+            None,
+            "Android device proof requires exactly one authorized device row",
+            id="usb-plus-wireless-adb",
         ),
         pytest.param(
             "emulator-5554 device product:sdk model:sdk transport_id:1\n",
@@ -2006,7 +2033,12 @@ def test_android_device_sweep_never_selects_the_signed_promotion_methods(
     }
 
     result = run_capability(
-        CapabilityContext(tmp_path, Workflow.NIGHTLY, ()),
+        CapabilityContext(
+            tmp_path,
+            Workflow.NIGHTLY,
+            (),
+            candidate_sha=_CANDIDATE_SHA,
+        ),
         Capability.ANDROID_DEVICE,
         environment,
     )

@@ -1660,6 +1660,43 @@ describe("Nexus product composition", () => {
     expect(await screen.findByRole("dialog", { name: "Nexus" })).toBeVisible();
   });
 
+  it("preserves Enter, Space, and assistive native button activation", async () => {
+    const pane = workspacePane("only-pane", "/libraries");
+    await page.viewport(390, 800);
+    renderNexus(
+      "mobile",
+      createWorkspaceStateFromPrimaryPanes({
+        activePrimaryPaneId: pane.id,
+        primaryPanes: [pane],
+      }),
+    );
+
+    const button = await screen.findByRole("button", {
+      name: "Open Nexus, 1 tab",
+    });
+    performance.clearMarks(NEXUS_OPEN_PERFORMANCE.start);
+    performance.clearMeasures(NEXUS_OPEN_PERFORMANCE.measure);
+
+    button.focus();
+    await userEvent.keyboard("{Enter}");
+    expect(await screen.findByRole("dialog", { name: "Nexus" })).toBeVisible();
+    await waitFor(() =>
+      expect(
+        performance.getEntriesByName(NEXUS_OPEN_PERFORMANCE.measure),
+      ).toHaveLength(1),
+    );
+    await dismissNexus();
+
+    button.focus();
+    await userEvent.keyboard(" ");
+    expect(await screen.findByRole("dialog", { name: "Nexus" })).toBeVisible();
+    await dismissNexus();
+
+    fireEvent.click(button, { detail: 0 });
+    expect(await screen.findByRole("dialog", { name: "Nexus" })).toBeVisible();
+    expect(activePaneStatus()).toHaveTextContent(pane.id);
+  });
+
   it("cancels trusted multitouch and real browser capture loss without stale click suppression", async () => {
     const firstPane = workspacePane("first-pane", "/libraries");
     const lastPane = workspacePane("last-pane", "/podcasts");

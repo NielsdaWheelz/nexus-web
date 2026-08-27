@@ -22,8 +22,11 @@ owns recognizer semantics. Neither can fill a human result below.
 - Copy the typed command, bound serial, selected inventory row, and retained
   instrumentation diagnostics from the run's controller-owned
   `android-device-instrumentation.json`, never from terminal recollection. The
-  artifact must contain `NEXUS_CONTROL_GESTURE_DIAGNOSTICS:` but does not fill
-  any human result.
+  artifact must bind the candidate SHA and exact Nexus proof, and contain
+  `NEXUS_CONTROL_GESTURE_DIAGNOSTICS:`; it does not fill any human result.
+- Preserve the full `adb devices -l` inventory alongside the selected row.
+  Exactly one authorized `device` row may exist, and it must be the selected
+  `usb:` row. A coexisting emulator or wireless transport invalidates the gate.
 - Stop on an unreachable direction, missing WebView pointer stream, or any
   tap→switch, swipe→Nexus, Nexus→Back/Home, or Back/Home→Nexus ambiguity. Do not
   add an exclusion rectangle, native bridge, or inset schema to make a row pass.
@@ -53,6 +56,24 @@ Capture a fresh row after each orientation, navigation-mode, or sensitivity
 change. Sensitivity is still read back under three-button navigation even when
 the active mode does not consume it.
 
+For each row, first preserve these bound-serial reads in the additional
+operator artifact:
+
+```sh
+adb -s "$ANDROID_SERIAL" shell settings get secure navigation_mode
+adb -s "$ANDROID_SERIAL" shell settings get secure back_gesture_inset_scale_left
+adb -s "$ANDROID_SERIAL" shell settings get secure back_gesture_inset_scale_right
+```
+
+Then run the exact method-scoped `NexusControlGestureTest` command recorded by
+the controller after applying the row's orientation, navigation, and
+sensitivity settings. For C01-C04, copy the complete
+`NEXUS_CONTROL_GESTURE_DIAGNOSTICS:` line from the passing result. For C05-C08,
+the method must stop on its expected fully-gestural-navigation assertion; copy
+the complete diagnostic prefix from that assertion and record no typed pass.
+Any earlier failure, missing field, or diagnostic that does not match the raw
+settings reads makes the row `Fail`, not `Pass`.
+
 | Config | Orientation | Navigation mode | Sensitivity setting | Raw navigation readback | Raw sensitivity readback | WebView version | `systemGestures` R/B px | `mandatorySystemGestures` R/B px | CSS safe-area R/B px | Nexus target screen rect | Target overlap with R/B gesture bands | Diagnostic outcome |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | C01 | Portrait | Gesture | Default | Pending | Pending | Pending | Pending | Pending | Pending | Pending | Pending | Pending |
@@ -67,9 +88,10 @@ the active mode does not consume it.
 ## Core direction and edge-origin matrix
 
 For every row, start within the named third of the 48px button. `Outer` is the
-screen-edge third and `Inner` is the inward third. Expected: the WebView receives
-the complete stream; exactly one adjacent visible pane activates in the named
-direction; Nexus stays closed; and System Back/Home/quick-switch does not fire.
+screen-edge third and `Inner` is the inward third. Swipe left for `Next` and
+right for `Previous`. Expected: the WebView receives the complete stream;
+exactly one adjacent visible pane activates in the named direction; Nexus stays
+closed; and System Back/Home/quick-switch does not fire.
 First establish enough visible panes that both directions have a non-boundary
 target.
 
@@ -116,8 +138,8 @@ replace the 32 core rows.
 
 | Row | Required dimension / action | Expected outcome | Config and observed diagnostics | Observed outcome | Human result |
 | --- | --- | --- | --- | --- | --- |
-| A01 | Nexus visible; native tap | Nexus Root opens once; pane does not switch | Pending | Pending | Pending |
-| A02 | Nexus visible; keyboard or TalkBack activation | Native button path opens Root; pane does not switch | Pending | Pending | Pending |
+| A01 | Nexus control visible and Nexus task closed; native tap | Nexus Root opens once; pane does not switch | Pending | Pending | Pending |
+| A02 | Nexus control visible and Nexus task closed; keyboard or TalkBack activation | Native button path opens Root; pane does not switch | Pending | Pending | Pending |
 | A03 | Nexus retreated; contact at former target geometry | No Nexus or adjacent command; normal system/page ownership | Pending | Pending | Pending |
 | A04 | Player absent; qualifying swipe | Adjacent pane once; Nexus closed; no system gesture | Pending | Pending | Pending |
 | A05 | Player present; qualifying swipe | Adjacent pane once at raised target; Nexus closed; no system gesture | Pending | Pending | Pending |

@@ -739,19 +739,21 @@ recognizer semantics, direction resolution, clamping, or click suppression;
 the real-Chromium component proof owns those web behaviors. Do not duplicate web
 behavior outside this enumerated native boundary.
 
-The `android-device` capability accepts exactly one authorized device attested
-from `adb devices -l` — a locally started emulator, or a device carrying adb's
-`usb:` topology fact — and binds Gradle to its serial. A wireless adb transport
-cannot satisfy it. Every passing exact or complete instrumentation execution
+The `android-device` capability accepts exactly one authorized `device` row
+attested from `adb devices -l` — a locally started emulator, or a device
+carrying adb's `usb:` topology fact — and binds Gradle to its serial. A wireless
+adb transport cannot satisfy or coexist with that one-device boundary. Every
+passing exact or complete instrumentation execution
 MUST reference exactly one bounded, redacted
 `test-results/runs/<run-id>/android-device-instrumentation.json` artifact from
-its `CapabilityEvidence`. That artifact retains the exact selected inventory
-row, bound serial, exact proof/scope and command identity, exit code, and
-successful instrumentation stdout/stderr; inability to retain it is
+its `CapabilityEvidence`. That artifact retains the exact candidate SHA,
+selected inventory row, bound serial, exact proof/scope and command identity,
+exit code, and successful instrumentation stdout/stderr; inability to retain it is
 `not_run`, never pass. When the Nexus-control gesture owner is selected, its
 successful test emits `NEXUS_CONTROL_GESTURE_DIAGNOSTICS:` through
 `Instrumentation.REPORT_KEY_STREAMRESULT`; absence of that exact marker from
-captured stdout is also `not_run`. `nightly` uses the hosted emulator;
+captured stdout or absence of exactly one fresh passing result for the named
+Nexus method is also `not_run`. `nightly` uses the hosted emulator;
 `release` runs on the protected USB runner and requires the wired handset
 there. The debug sweep
 excludes the signed-promotion annotation, whose scenarios only the signed lane

@@ -981,12 +981,15 @@ and the keyboard proof's in-worktree red in the work report.
    android-device-carrying workflow run with every emulator stopped. The
    passing capability evidence references exactly one bounded, redacted
    `test-results/runs/<run-id>/android-device-instrumentation.json`; it retains
-   the exact selected `adb devices -l` row, bound serial, proof/scope and
-   command identity, exit code, and successful instrumentation diagnostics.
+   the exact candidate SHA, selected `adb devices -l` row, bound serial,
+   proof/scope and command identity, exit code, and successful instrumentation
+   diagnostics. The USB row must be the inventory's only authorized `device`
+   row; a coexisting emulator or wireless transport invalidates the run.
    The Nexus proof emits `NEXUS_CONTROL_GESTURE_DIAGNOSTICS:` through
    `Instrumentation.REPORT_KEY_STREAMRESULT`; a selected Nexus owner whose
-   captured stdout lacks that marker is `not_run`. Failure to retain the
-   artifact is likewise `not_run`. `./scripts/test android-visual` runs no
+   captured stdout lacks that marker, or whose fresh Gradle result set does not
+   contain exactly one passing result for the named Nexus method, is `not_run`.
+   Failure to retain the artifact is likewise `not_run`. `./scripts/test android-visual` runs no
    instrumentation and is not this evidence (it may
    capture accompanying screenshots). Any
    emulator-backed execution of this node is recorded `not_run` for this gate,

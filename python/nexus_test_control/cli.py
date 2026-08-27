@@ -341,6 +341,7 @@ def _execute_workflow(
                 command.ui,
                 frozenset(item.proof for item in sensitivity),
                 run_context=run_context,
+                candidate_sha=git_sha,
             )
             failure_owner = WORKFLOW_REGISTRY[command.workflow].requirements[0].capability
             workflow_run = run_workflow(
@@ -468,6 +469,7 @@ def _execute_diagnose(
         original.invocation.ui,
         frozenset(item.proof for item in original.sensitivity),
         run_context=run_context,
+        candidate_sha=git_sha,
     )
     owned_environment = {
         **environment,
