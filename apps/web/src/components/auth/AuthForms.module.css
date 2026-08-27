@@ -144,8 +144,10 @@
 
 .footer a {
   display: inline-flex;
+  min-width: var(--size-xl);
   min-height: var(--size-xl);
   align-items: center;
+  justify-content: center;
   color: var(--ink-muted);
   text-decoration: underline;
   text-underline-offset: 2px;

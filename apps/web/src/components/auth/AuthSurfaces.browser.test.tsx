@@ -102,6 +102,16 @@ describe("password authentication surfaces", () => {
     );
     expect(githubTransport).not.toBeVisible();
 
+    const closedEmail = screen.getByRole("textbox", {
+      name: "Email",
+      hidden: true,
+    });
+    const closedPassword = screen.getByLabelText("Password");
+    const closedGitHub = screen.getByRole("button", {
+      name: "Continue with GitHub",
+      hidden: true,
+    });
+
     expect(
       screen
         .getAllByRole("button")
@@ -126,6 +136,19 @@ describe("password authentication surfaces", () => {
       next: "/lectern?mode=focus",
     });
     expect(google).toBeEnabled();
+
+    for (const control of [
+      google,
+      screen.getByRole("button", { name: "Use email and password" }),
+      screen.getByRole("button", { name: "Other ways to sign in" }),
+      screen.getByRole("link", { name: "Android" }),
+    ]) {
+      await userEvent.tab();
+      expect(control).toHaveFocus();
+      expect(closedEmail).not.toHaveFocus();
+      expect(closedPassword).not.toHaveFocus();
+      expect(closedGitHub).not.toHaveFocus();
+    }
 
     await disclosePasswordSignIn();
     expect(screen.getByRole("textbox", { name: "Email" })).toBeVisible();

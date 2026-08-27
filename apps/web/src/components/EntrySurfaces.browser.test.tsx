@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { page, userEvent } from "vitest/browser";
 import { afterEach, describe, expect, it } from "vitest";
 import "@/app/globals.css";
@@ -27,7 +27,7 @@ const REFLOW_VIEWPORTS = [
   { name: "844x390 short landscape", width: 844, height: 390 },
   { name: "200%-equivalent reflow", width: 720, height: 450 },
 ] as const;
-const ANDROID_VIEWPORTS = [
+const ENTRY_VIEWPORTS = [
   { name: "1440x900 wide", width: 1_440, height: 900 },
   ...REFLOW_VIEWPORTS,
 ] as const;
@@ -70,9 +70,6 @@ function AuthGeometryProbe() {
           <Input id="entry-geometry-email" size="lg" autoComplete="email" />
         </label>
         <Button size="lg">Continue</Button>
-        <Button asChild variant="ghost" size="lg">
-          <a href="/privacy">Privacy</a>
-        </Button>
       </form>
     </AuthSurface>
   );
@@ -185,7 +182,6 @@ describe("entry surface geometry", () => {
     const form = screen.getByRole("form", { name: "Entry geometry" });
     const input = screen.getByRole("textbox", { name: "Email" });
     const continueButton = screen.getByRole("button", { name: "Continue" });
-    const privacyLink = screen.getByRole("link", { name: "Privacy" });
     const wideDescriptor = descriptor.getBoundingClientRect();
     const wideForm = form.getBoundingClientRect();
 
@@ -200,7 +196,6 @@ describe("entry surface geometry", () => {
     expect(wideForm.width).toBeLessThanOrEqual(384);
     expectMinimumTarget(input, "1440x900 email");
     expectMinimumTarget(continueButton, "1440x900 primary action");
-    expectMinimumTarget(privacyLink, "1440x900 footer action");
     expectNoHorizontalOverflow("1440x900");
 
     for (const viewport of REFLOW_VIEWPORTS) {
@@ -228,29 +223,38 @@ describe("entry surface geometry", () => {
       expect(stackedForm.right).toBeLessThanOrEqual(viewport.width);
       expectMinimumTarget(input, `${viewport.name} email`);
       expectMinimumTarget(continueButton, `${viewport.name} primary action`);
-      expectMinimumTarget(privacyLink, `${viewport.name} footer action`);
       expectNoHorizontalOverflow(viewport.name);
     }
   });
 
-  it("aligns the actual login footer with its responsive task column", async () => {
-    await page.viewport(1_440, 900);
-    render(
-      <LoginPageClient
-        nextPath={parseAuthReturnTarget("/lectern")}
-        isShell={false}
-      />,
-    );
+  it("keeps every actual login footer link operable inside its responsive task column", async () => {
+    for (const viewport of ENTRY_VIEWPORTS) {
+      await page.viewport(viewport.width, viewport.height);
+      const view = render(
+        <LoginPageClient
+          nextPath={parseAuthReturnTarget("/lectern")}
+          isShell={false}
+        />,
+      );
 
-    const footer = screen.getByRole("navigation", { name: "Login links" });
-    expect(getComputedStyle(footer).justifyContent).toBe("flex-start");
+      const footer = screen.getByRole("navigation", { name: "Login links" });
+      expect(getComputedStyle(footer).justifyContent).toBe(
+        viewport.width >= 960 ? "flex-start" : "center",
+      );
+      for (const link of within(footer).getAllByRole("link")) {
+        expectMinimumTarget(
+          link,
+          `${viewport.name} login ${link.textContent ?? "footer"} link`,
+        );
+      }
+      expectNoHorizontalOverflow(`${viewport.name} login`);
 
-    await page.viewport(390, 844);
-    expect(getComputedStyle(footer).justifyContent).toBe("center");
+      view.unmount();
+    }
   });
 
   it("keeps the actual Android release column centered, operable, and focus-reachable at every entry viewport", async () => {
-    for (const viewport of ANDROID_VIEWPORTS) {
+    for (const viewport of ENTRY_VIEWPORTS) {
       await page.viewport(viewport.width, viewport.height);
       const view = render(<AndroidPage />);
 
@@ -364,14 +368,20 @@ describe("entry surface geometry", () => {
     async (theme) => {
       document.documentElement.dataset.theme = theme;
       await page.viewport(390, 844);
-      render(<AuthGeometryProbe />);
+      render(
+        <LoginPageClient
+          nextPath={parseAuthReturnTarget("/lectern")}
+          isShell={false}
+        />,
+      );
 
       const descriptor = screen.getByText(
         "A private instrument for attention.",
       );
-      const continueButton = screen.getByRole("button", { name: "Continue" });
+      const continueButton = screen.getByRole("button", {
+        name: "Continue with Google",
+      });
       const privacyLink = screen.getByRole("link", { name: "Privacy" });
-      await userEvent.tab();
       await userEvent.tab();
       expect(continueButton).toHaveFocus();
 
