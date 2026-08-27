@@ -2249,7 +2249,7 @@ def test_android_release_controller_stages_baseline_before_candidate_install(
     )
     _write(tmp_path / "testdata/android/player-protocol.json", '{"version": 2}\n')
     player_protocol = runner._android_player_protocol_identity(tmp_path)
-    inputs = runner._AndroidReleaseInputs(
+    inputs = runner._AndroidReleaseDeviceInputs(
         "android-v2.1",
         "a" * 40,
         "https://nexus.nielseriknandal.com",
@@ -2260,10 +2260,10 @@ def test_android_release_controller_stages_baseline_before_candidate_install(
         42,
         41,
         "2.1",
-        "R5CT1234",
         tmp_path / "adb",
         tmp_path / "apksigner",
         tmp_path / "apkanalyzer",
+        "R5CT1234",
     )
     commands: list[tuple[str, ...]] = []
     airplane = {"enabled": False}
@@ -2439,7 +2439,7 @@ def test_android_release_refuses_an_emulated_device_that_passes_usb_topology(
     )
     _write(tmp_path / "testdata/android/player-protocol.json", '{"version": 2}\n')
     player_protocol = runner._android_player_protocol_identity(tmp_path)
-    inputs = runner._AndroidReleaseInputs(
+    inputs = runner._AndroidReleaseDeviceInputs(
         "android-v2.1",
         "a" * 40,
         "https://nexus.nielseriknandal.com",
@@ -2450,10 +2450,10 @@ def test_android_release_refuses_an_emulated_device_that_passes_usb_topology(
         42,
         41,
         "2.1",
-        "R5CT1234",
         tmp_path / "adb",
         tmp_path / "apksigner",
         tmp_path / "apkanalyzer",
+        "R5CT1234",
     )
 
     def command(
@@ -2576,7 +2576,7 @@ def test_android_release_bootstrap_inputs_attest_no_device_and_require_published
     inputs = runner._android_release_inputs(tmp_path, environment)
 
     if expected_detail is None:
-        assert isinstance(inputs, runner._AndroidReleaseInputs)
+        assert isinstance(inputs, runner._AndroidReleaseBootstrapInputs)
         assert inputs.bootstrap is True
         assert inputs.serial is None
         assert inputs.previous_version_code == 16
@@ -2641,7 +2641,7 @@ def test_android_release_bootstrap_skips_device_stages_and_records_explicit_evid
     )
     _write(tmp_path / "testdata/android/player-protocol.json", '{"version": 2}\n')
     player_protocol = runner._android_player_protocol_identity(tmp_path)
-    inputs = runner._AndroidReleaseInputs(
+    inputs = runner._AndroidReleaseBootstrapInputs(
         "android-v2.1",
         "a" * 40,
         "https://nexus.nielseriknandal.com",
@@ -2652,11 +2652,9 @@ def test_android_release_bootstrap_skips_device_stages_and_records_explicit_evid
         42,
         41,
         "2.1",
-        None,
         tmp_path / "adb",
         tmp_path / "apksigner",
         tmp_path / "apkanalyzer",
-        bootstrap=True,
     )
     commands: list[tuple[str, ...]] = []
 
