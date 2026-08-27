@@ -55,8 +55,9 @@ function-parameters,operation-types,retries}.md` and
 Build:
 
 - one shared command registry and pure intent compiler;
-- one shared `NexusEntry` / `NexusGroup` semantic projection with a declared
-  desktop/mobile layout policy;
+- one shared `NexusEntry` / `NexusGroup` semantic projection whose composer
+  owns surface-specific membership, order, and caps while renderers own
+  geometry;
 - explicit blank-query and typed-query section contracts;
 - query-seeded Today Note, Page, Chat, and Library workflows;
 - typed Browse intent and a Browse-kind chooser;
