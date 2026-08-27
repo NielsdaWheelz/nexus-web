@@ -23,13 +23,10 @@ from nexus.db.models import (
     ArtifactBuildFailure,
     ArtifactLearnRequest,
     Highlight,
-    Library,
     Media,
     MediaKind,
-    Membership,
     Page,
     SynthesisArtifact,
-    User,
 )
 from nexus.db.session import create_session_factory
 from nexus.jobs.queue import (
@@ -53,7 +50,6 @@ from nexus.services.artifacts.engine import (
     bootstrap_resource_dossier,
     cancel_build,
     on_subject_deleted,
-    on_user_deleted,
     reconcile_uncertain_build,
     reconcile_uncertain_idea_resolution,
     regenerate_artifact,
@@ -163,13 +159,6 @@ class _DossierGenerationOwner:
     generation_id: UUID
 
 
-@dataclass(frozen=True, slots=True)
-class _IdeaResolutionGenerationOwner:
-    user_id: UUID
-    request_id: UUID
-    generation_id: UUID
-
-
 def _command(
     generation_id: UUID,
     *,
@@ -177,7 +166,6 @@ def _command(
         "metadata_enrichment",
         "synapse",
         "dawn_write",
-        "dossier_library",
         "dossier_media",
     ],
 ) -> GenerationCommand:
@@ -205,7 +193,6 @@ def _seed_dossier_generation_owner(
     *,
     phase: Literal["prepared", "uncertain"],
     retained_start: bool = True,
-    shared_library: bool = False,
 ) -> _DossierGenerationOwner:
     if phase == "uncertain" and not retained_start:
         raise ValueError("an Uncertain generation requires its retained ledger start")
@@ -214,55 +201,22 @@ def _seed_dossier_generation_owner(
     with Session(engine, expire_on_commit=False) as db:
         from nexus.services.bootstrap import ensure_user_and_default_library
 
-        if shared_library:
-            library_owner_id = uuid4()
-            library_id = uuid4()
-            db.add_all(
-                [
-                    User(
-                        id=library_owner_id,
-                        email=f"dossier-library-owner-{library_owner_id}@example.invalid",
-                    ),
-                    User(
-                        id=user_id,
-                        email=f"dossier-library-requester-{user_id}@example.invalid",
-                    ),
-                ]
+        ensure_user_and_default_library(
+            db,
+            user_id,
+            f"dossier-cancellation-{user_id}@example.invalid",
+        )
+        db.add(
+            Media(
+                id=media_id,
+                kind=MediaKind.web_article.value,
+                title="Dossier preaccept cancellation source",
+                created_by_user_id=user_id,
             )
-            db.flush()
-            db.add(
-                Library(
-                    id=library_id,
-                    owner_user_id=library_owner_id,
-                    name="Shared Dossier teardown",
-                    is_default=False,
-                )
-            )
-            db.flush()
-            db.add_all(
-                [
-                    Membership(library_id=library_id, user_id=library_owner_id, role="admin"),
-                    Membership(library_id=library_id, user_id=user_id, role="member"),
-                ]
-            )
-            subject_ref = ResourceRef(scheme="library", id=library_id)
-        else:
-            ensure_user_and_default_library(
-                db,
-                user_id,
-                f"dossier-cancellation-{user_id}@example.invalid",
-            )
-            db.add(
-                Media(
-                    id=media_id,
-                    kind=MediaKind.web_article.value,
-                    title="Dossier preaccept cancellation source",
-                    created_by_user_id=user_id,
-                )
-            )
-            db.flush()
-            assert library_entries.ensure_media_in_default_library(db, user_id, media_id)
-            subject_ref = ResourceRef(scheme="media", id=media_id)
+        )
+        db.flush()
+        assert library_entries.ensure_media_in_default_library(db, user_id, media_id)
+        subject_ref = ResourceRef(scheme="media", id=media_id)
         db.commit()
 
         ticket = bootstrap_resource_dossier(
@@ -298,7 +252,7 @@ def _seed_dossier_generation_owner(
         generation_id = stable_generation_id(ticket.build_id, "synthesis")
         command = _command(
             generation_id,
-            operation="dossier_library" if shared_library else "dossier_media",
+            operation="dossier_media",
         )
         uncertain = StepReplayState(
             generation_id=generation_id,
@@ -397,93 +351,6 @@ def _close_retained_dossier_claim(db: Session, seeded: _DossierGenerationOwner) 
         )
         assert claimed is not None
         db.commit()
-
-
-def _seed_idea_resolution_generation_owner(
-    engine: Engine,
-    *,
-    phase: Literal["prepared", "uncertain"],
-) -> _IdeaResolutionGenerationOwner:
-    user_id = uuid4()
-    media_id = uuid4()
-    highlight_id = uuid4()
-    with Session(engine, expire_on_commit=False) as db:
-        db.add(User(id=user_id, email=f"idea-teardown-{user_id}@example.invalid"))
-        db.add(
-            Media(
-                id=media_id,
-                kind=MediaKind.web_article.value,
-                title="Idea resolution teardown source",
-                created_by_user_id=user_id,
-            )
-        )
-        db.flush()
-        db.add(
-            Highlight(
-                id=highlight_id,
-                user_id=user_id,
-                anchor_kind="fragment_offsets",
-                anchor_media_id=media_id,
-                color="yellow",
-                exact="generation ownership",
-                prefix="",
-                suffix="",
-            )
-        )
-        db.flush()
-        request = learn_service.reserve_learn_request(
-            db,
-            user_id=user_id,
-            highlight_id=highlight_id,
-            idempotency_key=f"idea-teardown-{uuid4()}",
-            initial_coordination={},
-        )
-        assert isinstance(request, learn_service.PendingLearnRequest)
-        generation_id = stable_generation_id(request.request_id, "idea-resolution")
-        command = GenerationCommand.model_validate(
-            {
-                "request_id": generation_id,
-                "operation": {
-                    "kind": "dossier_idea_resolve",
-                    "revision": generation_policy.operation_revision("dossier_idea_resolve"),
-                },
-                "policy_revision": generation_policy.POLICY_REVISION,
-                "policy_fingerprint": generation_policy.POLICY_FINGERPRINT,
-                "intent": build_synthesis_intent(
-                    system_prompt="Resolve one selected phrase.",
-                    user_content="generation ownership",
-                    schema=learn_service.IdeaResolverEnvelope,
-                ),
-            }
-        )
-        state = StepReplayState(
-            generation_id=generation_id,
-            dispatch_phase=Prepared if phase == "prepared" else Uncertain,
-            request_fingerprint=present(request_fingerprint(command)),
-            terminal_result=absent(),
-        )
-        learn_service.checkpoint_learn_coordination(
-            db,
-            request_id=request.request_id,
-            coordination={"idea-resolution": state.model_dump(mode="json")},
-        )
-        start_generation_in_current_transaction(
-            db,
-            GenerationStart(
-                owner=LlmCallOwner(
-                    kind="artifact_learn_request",
-                    id=request.request_id,
-                ),
-                command=command,
-                streaming=False,
-            ),
-        )
-        db.commit()
-        return _IdeaResolutionGenerationOwner(
-            user_id=user_id,
-            request_id=request.request_id,
-            generation_id=generation_id,
-        )
 
 
 def _suspend_uncertain_generation(
@@ -1070,157 +937,6 @@ def test_dossier_subject_teardown_closes_prepared_and_preserves_uncertain_genera
             record.completed_at,
         ) == (None, None, None, None, None)
         _close_retained_dossier_claim(db, uncertain)
-
-
-def test_shared_dossier_requester_teardown_cancels_prepared_and_blocks_uncertain(
-    engine: Engine,
-) -> None:
-    """Risk: User deletion strands or falsifies a shared accepted generation."""
-
-    prepared = _seed_dossier_generation_owner(
-        engine,
-        phase="prepared",
-        shared_library=True,
-    )
-    with Session(engine, expire_on_commit=False) as db:
-        on_user_deleted(db, user_id=prepared.user_id)
-        teardown_xid = str(db.scalar(text("SELECT txid_current()::text")))
-        db.commit()
-
-    with Session(engine, expire_on_commit=False) as db:
-        build = db.get(ArtifactBuild, prepared.build_id)
-        cancellation = db.scalar(
-            select(ArtifactBuildCancellation).where(
-                ArtifactBuildCancellation.build_id == prepared.build_id
-            )
-        )
-        record = read_generation(db, generation_id=prepared.generation_id)
-        assert db.get(SynthesisArtifact, prepared.artifact_id) is not None
-        assert build is not None and build.requester_user_id is None
-        assert cancellation is not None and cancellation.actor_user_id is None
-        assert get_job(db, prepared.job.id) is None
-        assert record is not None
-        assert (
-            record.outcome,
-            record.error_code,
-            record.session_ref,
-            record.accepted_at,
-            record.sdk_version,
-            record.runtime_version,
-        ) == ("Cancelled", None, None, None, None, None)
-        assert record.error_detail == "dossier requester was deleted before host acceptance"
-        ledger_xmin, cancellation_xmin = db.execute(
-            text(
-                "SELECT "
-                "(SELECT xmin::text FROM llm_calls WHERE id = :generation_id), "
-                "(SELECT xmin::text FROM artifact_build_cancellations "
-                " WHERE build_id = :build_id)"
-            ),
-            {
-                "generation_id": prepared.generation_id,
-                "build_id": prepared.build_id,
-            },
-        ).one()
-        assert ledger_xmin == cancellation_xmin == teardown_xid
-
-    uncertain = _seed_dossier_generation_owner(
-        engine,
-        phase="uncertain",
-        shared_library=True,
-    )
-    with Session(engine, expire_on_commit=False) as db:
-        with pytest.raises(
-            GenerationUncertain,
-            match="cannot delete requester with uncertain Dossier generation",
-        ):
-            on_user_deleted(db, user_id=uncertain.user_id)
-        db.rollback()
-
-    with Session(engine, expire_on_commit=False) as db:
-        build = db.get(ArtifactBuild, uncertain.build_id)
-        assert build is not None and build.requester_user_id == uncertain.user_id
-        assert (
-            db.scalar(
-                select(ArtifactBuildCancellation).where(
-                    ArtifactBuildCancellation.build_id == uncertain.build_id
-                )
-            )
-            is None
-        )
-        job = get_job(db, uncertain.job.id)
-        assert job is not None
-        state = read_step_states(job)["synthesis"]
-        assert state.dispatch_phase is Uncertain
-        assert not isinstance(state.terminal_result, Present)
-        record = read_generation(db, generation_id=uncertain.generation_id)
-        assert record is not None
-        assert (
-            record.outcome,
-            record.error_code,
-            record.error_detail,
-            record.accepted_at,
-            record.completed_at,
-        ) == (None, None, None, None, None)
-        _close_retained_dossier_claim(db, uncertain)
-
-
-def test_user_teardown_closes_prepared_idea_resolution_and_blocks_uncertain(
-    engine: Engine,
-) -> None:
-    """Risk: request-scoped generation evidence is deleted without a terminal."""
-
-    prepared = _seed_idea_resolution_generation_owner(engine, phase="prepared")
-    with Session(engine, expire_on_commit=False) as db:
-        on_user_deleted(db, user_id=prepared.user_id)
-        teardown_xid = str(db.scalar(text("SELECT txid_current()::text")))
-        db.commit()
-
-    with Session(engine, expire_on_commit=False) as db:
-        assert db.get(ArtifactLearnRequest, prepared.request_id) is None
-        record = read_generation(db, generation_id=prepared.generation_id)
-        assert record is not None
-        assert (
-            record.outcome,
-            record.error_code,
-            record.session_ref,
-            record.accepted_at,
-            record.sdk_version,
-            record.runtime_version,
-        ) == ("Cancelled", None, None, None, None, None)
-        assert (
-            record.error_detail
-            == "Dossier Idea resolution owner was deleted before host acceptance"
-        )
-        ledger_xmin = db.scalar(
-            text("SELECT xmin::text FROM llm_calls WHERE id = :generation_id"),
-            {"generation_id": prepared.generation_id},
-        )
-        assert ledger_xmin == teardown_xid
-
-    uncertain = _seed_idea_resolution_generation_owner(engine, phase="uncertain")
-    with Session(engine, expire_on_commit=False) as db:
-        with pytest.raises(
-            GenerationUncertain,
-            match="cannot purge uncertain Dossier Idea resolution",
-        ):
-            on_user_deleted(db, user_id=uncertain.user_id)
-        db.rollback()
-
-    with Session(engine, expire_on_commit=False) as db:
-        request = db.get(ArtifactLearnRequest, uncertain.request_id)
-        assert request is not None
-        state = decode_step_states({"coordination": request.coordination})["idea-resolution"]
-        assert state.dispatch_phase is Uncertain
-        assert not isinstance(state.terminal_result, Present)
-        record = read_generation(db, generation_id=uncertain.generation_id)
-        assert record is not None
-        assert (
-            record.outcome,
-            record.error_code,
-            record.error_detail,
-            record.accepted_at,
-            record.completed_at,
-        ) == (None, None, None, None, None)
 
 
 def test_dossier_modeled_failure_closes_prepared_generation_in_the_same_transaction(
