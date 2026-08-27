@@ -113,7 +113,6 @@ def test_browser_admission_requires_both_complete_locked_platform_artifacts(
 
 def test_browser_admission_accepts_playwright_macos_default_install(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Risk: a fresh macOS setup installs Chromium where the controller never admits it."""
 
@@ -143,10 +142,12 @@ def test_browser_admission_accepts_playwright_macos_default_install(
         _write(binary, "browser\n")
         binary.chmod(0o755)
 
-    monkeypatch.setattr(runner.sys, "platform", "darwin")
-    monkeypatch.setattr(runner.platform, "machine", lambda: "arm64")
-
-    assert runner._browser_installed(repo_root, {"HOME": str(home)})
+    assert runner._browser_installed_for_platform(
+        repo_root,
+        {"HOME": str(home)},
+        platform_name="darwin",
+        machine="arm64",
+    )
 
 
 def test_codex_hosted_canary_plan_requires_dedicated_profile_state_without_an_api_key(

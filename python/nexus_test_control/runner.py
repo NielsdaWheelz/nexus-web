@@ -6125,11 +6125,25 @@ def _gradle_lock(repo_root: Path) -> Iterator[None]:
 
 
 def _browser_installed(repo_root: Path, environment: Mapping[str, str]) -> bool:
+    return _browser_installed_for_platform(
+        repo_root,
+        environment,
+        platform_name=sys.platform,
+        machine=platform.machine(),
+    )
+
+
+def _browser_installed_for_platform(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    *,
+    platform_name: str,
+    machine: str,
+) -> bool:
     revisions = dict(_browser_revisions(repo_root))
     if set(revisions) != {"chromium", "chromium-headless-shell"}:
         return False
-    platform_name = sys.platform
-    executables = _browser_executable_names(platform_name, platform.machine())
+    executables = _browser_executable_names(platform_name, machine)
     if executables is None:
         return False
     cache = _browser_cache_root(environment, platform_name)
