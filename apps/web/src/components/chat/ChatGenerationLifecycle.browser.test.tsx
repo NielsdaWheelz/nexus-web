@@ -57,6 +57,7 @@ function message(
           : [],
     },
     parent_message_id: role === "assistant" ? USER_MESSAGE_ID : null,
+    reader_selection: { kind: "Absent" },
     trust_trail: null,
     citations: [],
     status: role === "user" ? "complete" : "pending",
