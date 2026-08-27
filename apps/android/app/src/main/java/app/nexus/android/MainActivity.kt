@@ -484,8 +484,25 @@ class MainActivity : AppCompatActivity() {
                         webView.goBack()
                         return
                     }
-                    isEnabled = false
-                    onBackPressedDispatcher.onBackPressed()
+                    webView.evaluateJavascript(
+                        "(function(){try{var event=new KeyboardEvent('keydown'," +
+                            "{key:'Escape',bubbles:true,cancelable:true});" +
+                            "document.dispatchEvent(event);return event.defaultPrevented;}" +
+                            "catch(error){return false;}})()",
+                    ) { handledByRenderer ->
+                        if (handledByRenderer == "true") {
+                            return@evaluateJavascript
+                        }
+                        if (this@MainActivity.isFinishing || this@MainActivity.isDestroyed) {
+                            return@evaluateJavascript
+                        }
+                        if (webView.canGoBack()) {
+                            webView.goBack()
+                            return@evaluateJavascript
+                        }
+                        isEnabled = false
+                        onBackPressedDispatcher.onBackPressed()
+                    }
                 }
             }
         )

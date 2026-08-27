@@ -212,6 +212,20 @@ def device_session_established(pages: object, device_origin: str) -> bool:
     return False
 
 
+def nexus_main_activity_is_resumed(activity_dump: str) -> bool:
+    """Whether Android's global top-resumed record names the debug MainActivity."""
+    component = re.escape(f"{DEBUG_PACKAGE}/{MAIN_ACTIVITY}")
+    return (
+        re.search(
+            rf"^[ \t]*ResumedActivity:[ \t]+ActivityRecord\{{[^\n]*[ \t]"
+            rf"{component}(?=[ \t}}])",
+            activity_dump,
+            flags=re.MULTILINE,
+        )
+        is not None
+    )
+
+
 def native_input_fingerprint(repo_root: Path, flags: Mapping[str, str]) -> str:
     """Fingerprint the debug APK's native inputs plus its compiled-in flags."""
     android_root = repo_root / "apps/android"
@@ -517,7 +531,9 @@ def _visual_run(
     api = start_python_process(root, environment, run, "api", overrides=device_overrides)
     wait_process_ready(root, environment, api, EndpointKind.API, "/readyz")
     web = start_web_process(root, environment, run, build, overrides=device_overrides)
-    wait_process_ready(root, environment, web, EndpointKind.WEB, "/")
+    # The protected root redirects before handoff; readiness needs an exact-200
+    # public route while later gates prove the authenticated device session.
+    wait_process_ready(root, environment, web, EndpointKind.WEB, "/login")
 
     reverse = {DEVICE_TCP_WEB: runtime.ports.web, DEVICE_TCP_STREAM: runtime.ports.api}
     stack.callback(lambda: _remove_reverse(adb, serial, reverse, environment, root))
@@ -734,6 +750,44 @@ def _webview_devtools_sockets(
     return tuple(sorted(set(re.findall(r"webview_devtools_remote_\d+", result.stdout))))
 
 
+def _device_session_established_now(
+    adb: Path, serial: str, environment: Mapping[str, str], cwd: Path
+) -> bool:
+    for socket_name in _webview_devtools_sockets(adb, serial, environment, cwd):
+        forwarded = _adb(
+            adb,
+            serial,
+            "forward",
+            "tcp:0",
+            f"localabstract:{socket_name}",
+            environment=environment,
+            cwd=cwd,
+            check=False,
+        )
+        if forwarded.returncode != 0 or not forwarded.stdout.strip().isdigit():
+            continue
+        port = forwarded.stdout.strip()
+        try:
+            with httpx.Client(trust_env=False, timeout=5) as client:
+                pages = client.get(f"http://127.0.0.1:{port}/json").json()
+            if device_session_established(pages, DEVICE_WEB_ORIGIN):
+                return True
+        except (httpx.HTTPError, ValueError):
+            pass
+        finally:
+            _adb(
+                adb,
+                serial,
+                "forward",
+                "--remove",
+                f"tcp:{port}",
+                environment=environment,
+                cwd=cwd,
+                check=False,
+            )
+    return False
+
+
 def _prove_device_session(
     adb: Path, serial: str, environment: Mapping[str, str], cwd: Path
 ) -> None:
@@ -741,42 +795,30 @@ def _prove_device_session(
     transport — the controller's minted token cannot stand in for the device."""
     deadline = time.monotonic() + _SESSION_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
-        for socket_name in _webview_devtools_sockets(adb, serial, environment, cwd):
-            forwarded = _adb(
-                adb,
-                serial,
-                "forward",
-                "tcp:0",
-                f"localabstract:{socket_name}",
-                environment=environment,
-                cwd=cwd,
-                check=False,
-            )
-            if forwarded.returncode != 0 or not forwarded.stdout.strip().isdigit():
-                continue
-            port = forwarded.stdout.strip()
-            try:
-                with httpx.Client(trust_env=False, timeout=5) as client:
-                    pages = client.get(f"http://127.0.0.1:{port}/json").json()
-                if device_session_established(pages, DEVICE_WEB_ORIGIN):
-                    return
-            except (httpx.HTTPError, ValueError):
-                pass
-            finally:
-                _adb(
-                    adb,
-                    serial,
-                    "forward",
-                    "--remove",
-                    f"tcp:{port}",
-                    environment=environment,
-                    cwd=cwd,
-                    check=False,
-                )
+        if _device_session_established_now(adb, serial, environment, cwd):
+            return
         time.sleep(_SESSION_POLL_SECONDS)
     raise _Fail(
         "the device WebView is not authenticated on the owned origin (session not established)"
     )
+
+
+def _require_nexus_main_activity_resumed(
+    adb: Path, serial: str, environment: Mapping[str, str], cwd: Path
+) -> None:
+    result = _adb(
+        adb,
+        serial,
+        "shell",
+        "dumpsys",
+        "activity",
+        "activities",
+        environment=environment,
+        cwd=cwd,
+        check=False,
+    )
+    if result.returncode != 0 or not nexus_main_activity_is_resumed(result.stdout):
+        raise _Fail("capture boundary is not the resumed Nexus MainActivity")
 
 
 def _capture(
@@ -791,11 +833,36 @@ def _capture(
     results.mkdir(parents=True, exist_ok=True)
     device_png = f"/data/local/tmp/nexus-visual-{run_id}.png"
     screenshot = results / "android-visual-screen.png"
-    _adb(adb, serial, "shell", "screencap", "-p", device_png, environment=environment, cwd=root)
-    _adb(adb, serial, "pull", device_png, str(screenshot), environment=environment, cwd=root)
-    _adb(
-        adb, serial, "shell", "rm", "-f", device_png, environment=environment, cwd=root, check=False
-    )
+    if not _device_session_established_now(adb, serial, environment, root):
+        raise _Fail("capture boundary WebView is not authenticated on the owned origin")
+    _require_nexus_main_activity_resumed(adb, serial, environment, root)
+    try:
+        _adb(
+            adb,
+            serial,
+            "shell",
+            "screencap",
+            "-p",
+            device_png,
+            environment=environment,
+            cwd=root,
+        )
+        _require_nexus_main_activity_resumed(adb, serial, environment, root)
+        if not _device_session_established_now(adb, serial, environment, root):
+            raise _Fail("capture boundary WebView is not authenticated on the owned origin")
+        _adb(adb, serial, "pull", device_png, str(screenshot), environment=environment, cwd=root)
+    finally:
+        _adb(
+            adb,
+            serial,
+            "shell",
+            "rm",
+            "-f",
+            device_png,
+            environment=environment,
+            cwd=root,
+            check=False,
+        )
     if not screenshot.is_file() or screenshot.stat().st_size == 0:
         raise _Fail("the device screenshot could not be captured")
     log = _adb(

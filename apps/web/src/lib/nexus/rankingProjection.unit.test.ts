@@ -182,6 +182,82 @@ describe("Nexus ranking and projection", () => {
     },
   );
 
+  it("removes only redundant mobile blank support facts", () => {
+    const input = {
+      panes: [pane("a")],
+      recent: [recent("z")],
+    } as const;
+    const desktop = projection({ surface: "Desktop", ...input });
+    const mobile = projection({ surface: "Mobile", ...input });
+
+    expect(
+      desktop.groups.find((group) => group.id === "Open")?.entries[0],
+    ).toMatchObject({
+      label: "Pane a",
+      typeLabel: "Tab",
+      metadata: "Current tab",
+      openState: "Active",
+    });
+    expect(
+      mobile.groups.find((group) => group.id === "Open")?.entries[0],
+    ).toMatchObject({
+      label: "Pane a",
+      typeLabel: "Tab",
+      openState: "Active",
+    });
+    expect(
+      mobile.groups.find((group) => group.id === "Open")?.entries[0]?.metadata,
+    ).toBeUndefined();
+
+    const desktopRecent = desktop.groups.find(
+      (group) => group.id === "Recent",
+    )?.entries[0];
+    const mobileRecent = mobile.groups.find(
+      (group) => group.id === "Recent",
+    )?.entries[0];
+    expect(desktopRecent).toMatchObject({
+      label: "Recent z",
+      typeLabel: "Recent",
+      metadata: "/pages/recent-z",
+    });
+    expect(mobileRecent).toMatchObject({
+      label: "Recent z",
+      metadata: "/pages/recent-z",
+    });
+    expect(mobileRecent?.typeLabel).toBeUndefined();
+
+    const desktopQuickNote = desktop.groups.find(
+      (group) => group.id === "QuickActions",
+    )?.entries[0];
+    const mobileQuickActions = mobile.groups.find(
+      (group) => group.id === "QuickActions",
+    )?.entries;
+    expect(desktopQuickNote).toMatchObject({
+      label: "Quick Note",
+      typeLabel: "Command",
+      metadata: "Create · /n",
+    });
+    expect(mobileQuickActions?.[0]).toMatchObject({
+      label: "Quick Note",
+      metadata: "Create · /n",
+    });
+    expect(mobileQuickActions?.[0]?.typeLabel).toBeUndefined();
+    expect(mobileQuickActions?.[1]).toMatchObject({
+      label: "Today",
+      typeLabel: "Place",
+    });
+
+    const mobileLectern = mobile.groups
+      .find((group) => group.id === "Places")
+      ?.entries.find(
+        (candidate) =>
+          candidate.key.kind === "Destination" &&
+          candidate.key.destinationId === "lectern",
+      );
+    expect(mobileLectern).toMatchObject({ label: "Lectern" });
+    expect(mobileLectern?.typeLabel).toBeUndefined();
+  });
+
   it.each(["Desktop", "Mobile"] as const)(
     "projects a non-URL %s query as capped Results followed by five Do with query actions",
     (surface) => {
@@ -236,6 +312,28 @@ describe("Nexus ranking and projection", () => {
           (candidate.metadata ?? "").includes(trimmedQuery),
         ),
       ).toEqual([false, false, false, false, false]);
+      expect(
+        queryActions?.entries.map(({ typeLabel, metadata }) => ({
+          typeLabel,
+          metadata,
+        })),
+      ).toEqual(
+        surface === "Desktop"
+          ? [
+              { typeLabel: "Chat", metadata: "Ask Nexus" },
+              { typeLabel: "Today", metadata: "Append note" },
+              { typeLabel: "Browse", metadata: "Choose a kind" },
+              { typeLabel: "Create", metadata: "Choose a type" },
+              { typeLabel: "Search", metadata: "All results" },
+            ]
+          : [
+              { typeLabel: "Chat", metadata: undefined },
+              { typeLabel: undefined, metadata: "Append note" },
+              { typeLabel: undefined, metadata: "Choose a kind" },
+              { typeLabel: undefined, metadata: "Choose a type" },
+              { typeLabel: "Search", metadata: undefined },
+            ],
+      );
 
       const addToToday = view.groups
         .find((group) => group.id === "QuickActions")

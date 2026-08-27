@@ -15,6 +15,8 @@ import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { MediaActivityProvider } from "@/lib/media/MediaActivityProvider";
+import { writeDailyDraft } from "@/lib/notes/dailyDraftStore";
+import { resolveDailyLocalDate } from "@/lib/notes/openDailyPage";
 import { OfflineMediaProvider } from "@/lib/offlineMedia/OfflineMediaProvider";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
@@ -35,6 +37,8 @@ const workspacePrimaryMetrics: WorkspacePrimaryMetrics = {
   primaryMinWidthPx: 684,
   primaryDefaultWidthPx: 684,
 };
+const ACCOUNT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const CALENDAR_TIME_ZONE = "UTC";
 
 interface RecordedRequest {
   readonly pathname: string;
@@ -146,8 +150,8 @@ function renderNexus(initialViewport: "desktop" | "mobile") {
     withRenderEnvironment(
       <AuthenticatedAccountProvider
         account={{
-          accountId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-          calendarTimeZone: "UTC",
+          accountId: ACCOUNT_ID,
+          calendarTimeZone: CALENDAR_TIME_ZONE,
         }}
       >
         <MobileChromeProvider>
@@ -163,7 +167,7 @@ function renderNexus(initialViewport: "desktop" | "mobile") {
                 >
                   <LecternProvider>
                     <OfflineMediaProvider
-                      accountId="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+                      accountId={ACCOUNT_ID}
                       transport={null}
                     >
                       <GlobalPlayerProvider>
@@ -185,6 +189,31 @@ function renderNexus(initialViewport: "desktop" | "mobile") {
       { initialViewport },
     ),
   );
+}
+
+function writeAtomicTodayDraft() {
+  writeDailyDraft({
+    version: 1,
+    accountId: ACCOUNT_ID,
+    localDate: resolveDailyLocalDate(
+      { kind: "Today" },
+      CALENDAR_TIME_ZONE,
+    ),
+    noteId: "11111111-1111-4111-8111-111111111111",
+    clientMutationId: "nexus-browser-atomic-draft",
+    bodyPmJson: {
+      type: "object_embed",
+      attrs: {
+        objectType: "media",
+        objectId: "11111111-1111-4111-8111-111111111111",
+        label: "Attachment",
+        relationType: "embeds",
+        displayMode: "compact",
+      },
+    },
+    bodyText: "",
+    handoff: { kind: "None" },
+  });
 }
 
 function selectionRequests() {
@@ -301,6 +330,11 @@ describe("Nexus product composition", () => {
     await waitFor(() => expect(search).toHaveFocus());
     const open = within(dialog).getByRole("region", { name: "Open" });
     const currentRow = within(open).getByRole("listitem");
+    expect(
+      within(currentRow).getByRole("button", {
+        name: "Libraries Tab · Current",
+      }),
+    ).toBeVisible();
     const more = within(currentRow).getByRole("button", {
       name: "Actions for Libraries",
     });
@@ -314,28 +348,40 @@ describe("Nexus product composition", () => {
     await userEvent.keyboard("{Escape}");
     await waitFor(() => expect(more).toHaveFocus());
 
+    const quickActions = within(dialog).getByRole("region", {
+      name: "Quick Actions",
+    });
+    expect(
+      within(quickActions).getByRole("button", {
+        name: /^Quick Note Create · \/n(?:\s|$)/,
+      }),
+    ).toBeVisible();
+    expect(
+      within(quickActions).getByRole("button", { name: "Today Place" }),
+    ).toBeVisible();
+
     const places = within(dialog).getByRole("region", { name: "Places" });
     const placeButtons = within(places).getAllByRole("button");
     expect(placeButtons).toEqual([
-      within(places).getByRole("button", { name: /^Lectern Place$/ }),
-      within(places).getByRole("button", { name: /^Libraries Place$/ }),
-      within(places).getByRole("button", { name: /^Browse Place$/ }),
-      within(places).getByRole("button", { name: /^Podcasts Place$/ }),
-      within(places).getByRole("button", { name: /^Chats Place$/ }),
-      within(places).getByRole("button", { name: /^Notes Place$/ }),
+      within(places).getByRole("button", { name: "Lectern" }),
+      within(places).getByRole("button", { name: "Libraries" }),
+      within(places).getByRole("button", { name: "Browse" }),
+      within(places).getByRole("button", { name: "Podcasts" }),
+      within(places).getByRole("button", { name: "Chats" }),
+      within(places).getByRole("button", { name: "Notes" }),
     ]);
     expect(
-      within(places).queryByRole("button", { name: /^Stats Place$/ }),
+      within(places).queryByRole("button", { name: "Stats" }),
     ).toBeNull();
     expect(
-      within(places).queryByRole("button", { name: /^Atlas Place$/ }),
+      within(places).queryByRole("button", { name: "Atlas" }),
     ).toBeNull();
     expect(
-      within(places).queryByRole("button", { name: /^Oracle Place$/ }),
+      within(places).queryByRole("button", { name: "Oracle" }),
     ).toBeNull();
 
     await userEvent.click(
-      within(places).getByRole("button", { name: /^Notes Place$/ }),
+      within(places).getByRole("button", { name: "Notes" }),
     );
     expect(
       selectionRequests(),
@@ -515,8 +561,12 @@ describe("Nexus product composition", () => {
   );
 
   it("puts typed Results before Do with query and restores the exact query-owned row through the Back sequence", async () => {
-    const query = "libraries";
-    await page.viewport(390, 800);
+    const trimmedQuery = "LiBrArIeS";
+    const query = `  ${trimmedQuery}  `;
+    const unavailableReason = "Open Today to finish the current embedded draft";
+    await page.viewport(320, 800);
+    document.documentElement.style.fontSize = "32px";
+    writeAtomicTodayDraft();
     renderNexus("mobile");
 
     const opener = await screen.findByRole("button", {
@@ -540,20 +590,73 @@ describe("Nexus product composition", () => {
     const queryActions = within(dialog).getByRole("region", {
       name: "Do with query",
     });
-    const create = within(queryActions).getByRole("button", {
-      name: /^Create “libraries”…/,
+    const results = within(dialog).getByRole("region", { name: "Results" });
+    const resultRows = within(results).getAllByRole("listitem");
+    const status = within(dialog).getByRole("status", { name: "Nexus status" });
+    const ask = within(queryActions).getByRole("button", {
+      name: `Ask Nexus about “${trimmedQuery}” Chat`,
     });
-    expect(create.textContent?.trim().startsWith(`Create “${query}”…`)).toBe(
-      true,
-    );
+    expect(ask).toBeVisible();
+    const addToToday = within(queryActions).getByRole("button", {
+      name: `Add “${trimmedQuery}” to Today. Unavailable. ${unavailableReason}`,
+    });
+    expect(
+      within(addToToday).getByText("Append note"),
+      "The unavailable query action lost its useful nonrepeating metadata",
+    ).toBeVisible();
+    expect(within(addToToday).getByText(unavailableReason)).toBeVisible();
+    expect(
+      within(queryActions).getByRole("button", {
+        name: `Browse for “${trimmedQuery}”… Choose a kind`,
+      }),
+    ).toBeVisible();
+    const create = within(queryActions).getByRole("button", {
+      name: `Create “${trimmedQuery}”… Choose a type`,
+    });
+    expect(
+      within(queryActions).getByRole("button", {
+        name: `See all results for “${trimmedQuery}” Search`,
+      }),
+    ).toBeVisible();
+    expect(create.textContent?.split(trimmedQuery)).toHaveLength(2);
 
-    await userEvent.click(create);
+    fireEvent.compositionStart(search);
+    fireEvent.keyDown(search, { key: "Enter" });
+    expect(dialog).toBeVisible();
+    expect(selectionRequests()).toHaveLength(0);
+    fireEvent.compositionEnd(search);
+
+    for (let index = 0; index < resultRows.length; index += 1) {
+      await userEvent.keyboard("{ArrowDown}");
+    }
+    await waitFor(() =>
+      expect(status).toHaveTextContent(
+        `Ask Nexus about “${trimmedQuery}”. ${resultRows.length + 1} of ${resultRows.length + 5}.`,
+      ),
+    );
+    await userEvent.keyboard("{ArrowUp}");
+    await waitFor(() =>
+      expect(status).toHaveTextContent(
+        `${resultRows.length} of ${resultRows.length + 5}.`,
+      ),
+    );
+    await userEvent.keyboard("{ArrowDown}{ArrowDown}{Enter}");
+    await waitFor(() => expect(status).toHaveTextContent(unavailableReason));
+
+    const unavailableCopy = within(addToToday).getByText(unavailableReason);
+    expect(
+      unavailableCopy.scrollWidth,
+      "The owned unavailable reason is visually clipped at 320px and 200% text",
+    ).toBeLessThanOrEqual(unavailableCopy.clientWidth + 1);
+
+    await userEvent.keyboard("{ArrowDown}{ArrowDown}{Enter}");
+
     expect(
       await screen.findByRole("heading", {
         level: 2,
-        name: `Create “${query}”`,
+        name: `Create “${trimmedQuery}”`,
       }),
-      "One tap on a query action did not enter its owned workflow",
+      "Keyboard Enter on a query action did not enter its owned workflow",
     ).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Back" }));
 
@@ -564,7 +667,7 @@ describe("Nexus product composition", () => {
     expect(
       within(dialog).getByRole("status", { name: "Nexus status" }),
       "Returning from a query-owned workflow did not restore its exact active row",
-    ).toHaveTextContent(`Create “${query}”…`);
+    ).toHaveTextContent(`Create “${trimmedQuery}”…`);
 
     const unmatchedQuery = "xylophonic semaphore";
     fireEvent.change(search, { target: { value: unmatchedQuery } });
@@ -576,6 +679,9 @@ describe("Nexus product composition", () => {
     });
     expect(within(unmatchedActions).getAllByRole("listitem")).toHaveLength(5);
     expect(within(unmatchedActions).getAllByRole("button")).toHaveLength(5);
+    expect(
+      within(dialog).getByRole("status", { name: "Nexus status" }),
+    ).toHaveTextContent("0 results");
     expect(
       within(dialog).queryByRole("region", { name: "Results" }),
     ).toBeNull();
@@ -619,7 +725,7 @@ describe("Nexus product composition", () => {
     let dialog = await screen.findByRole("dialog", { name: "Nexus" });
 
     await userEvent.click(
-      within(dialog).getByRole("button", { name: /^Notes Place$/ }),
+      within(dialog).getByRole("button", { name: "Notes" }),
     );
     await waitFor(() => expect(selectionRequests()).toHaveLength(1));
     const first = selectionRequests()[0];

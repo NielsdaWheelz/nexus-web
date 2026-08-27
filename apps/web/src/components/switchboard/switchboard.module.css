@@ -213,9 +213,12 @@
 .rowSnippet,
 .rowUnavailable {
   max-width: 100%;
+  font-size: var(--text-sm);
+}
+
+.rowSnippet {
   overflow: hidden;
   color: var(--ink-muted);
-  font-size: var(--text-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -227,6 +230,8 @@
 
 .rowUnavailable {
   color: var(--danger);
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .rowShortcut {

@@ -216,6 +216,39 @@ def test_device_session_established_requires_a_non_login_page_on_the_owned_origi
     assert not av.device_session_established("not-a-list", origin)
 
 
+@pytest.mark.parametrize(
+    ("activity_dump", "expected"),
+    [
+        pytest.param(
+            """
+              topResumedActivity=ActivityRecord{81abc u0 app.nexus.android.debug/app.nexus.android.MainActivity t42}
+             ResumedActivity: ActivityRecord{92def u0 com.sec.android.app.launcher/com.sec.android.app.launcher.activities.LauncherActivity t7}
+            """,
+            False,
+            id="nexus-in-history-but-samsung-launcher-resumed",
+        ),
+        pytest.param(
+            """
+             ResumedActivity: ActivityRecord{81abc u0 app.nexus.android.debug/app.nexus.android.MainActivity t42}
+            """,
+            True,
+            id="nexus-main-activity-resumed",
+        ),
+        pytest.param(
+            """
+             ResumedActivity: ActivityRecord{81abc u0 app.nexus.android.debug/app.nexus.android.ShareActivity t42}
+            """,
+            False,
+            id="different-nexus-activity-resumed",
+        ),
+    ],
+)
+def test_capture_requires_nexus_main_activity_as_the_global_resumed_activity(
+    activity_dump: str, expected: bool
+) -> None:
+    assert av.nexus_main_activity_is_resumed(activity_dump) is expected
+
+
 def test_device_session_code_hash_equals_the_servers_stored_code_hash() -> None:
     # The fail-closed 'handoff consumed' gate polls for a row whose code_hash the
     # server wrote with its own _hash(code). If these drift, the gate fails open.
