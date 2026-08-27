@@ -95,7 +95,7 @@ def test_application_validator_only_sequences_owned_checks() -> None:
         "_validate_email_credentials",
         "_validate_podcast_credentials",
         "_validate_deployed_browse_provider",
-        "_validate_deployed_llm_runtime",
+        "_validate_deployed_generation_runtime",
         "_validate_ingest_runtime_and_paths",
         "_validate_worker_lane",
         "_validate_worker_intervals",
