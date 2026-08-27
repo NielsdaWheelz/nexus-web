@@ -299,9 +299,7 @@ def test_proven_nondispatch_replays_the_exact_document_repair_command(engine: En
                 build,
                 worker_id="artifact-repair-replay",
             )
-            replay_runtime = _ScriptedCodexRuntime(
-                (_synthesis_payload(invalid_document=False),)
-            )
+            replay_runtime = _ScriptedCodexRuntime((_synthesis_payload(invalid_document=False),))
             assert (
                 asyncio.run(
                     run_build(
