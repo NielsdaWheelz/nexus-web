@@ -10,7 +10,7 @@ import pytest
 from nexus.services import dawn_write, generation_policy, media_intelligence, oracle, synapse
 from nexus.services.artifacts import engine
 from nexus.services.artifacts import learn as learn_service
-from nexus.services.artifacts.bindings import BINDINGS
+from nexus.services.artifacts.registry import dossier_registration
 from nexus.services.codex_generation_contract import (
     GenerationCommand,
     GenerationSessionRef,
@@ -71,7 +71,13 @@ def _oracle_command() -> GenerationCommand:
 
 
 def _dossier_command(operation: str) -> GenerationCommand:
-    binding = next(binding for binding in BINDINGS.values() if binding.llm_operation == operation)
+    subject_scheme = operation.removeprefix("dossier_")
+    if subject_scheme == "note":
+        subject_scheme = "note_block"
+    registration = dossier_registration(subject_scheme)
+    assert registration is not None
+    binding = registration.binding
+    assert binding.llm_operation == operation
     return engine._generation_command(
         generation_id=_GENERATION_ID,
         operation=operation,
