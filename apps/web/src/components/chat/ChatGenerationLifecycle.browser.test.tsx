@@ -12,7 +12,6 @@ import {
 } from "@/lib/conversations/toolContractProjection";
 import {
   messageUpdateReducer,
-  type MessageUpdateAction,
 } from "@/lib/conversations/messageUpdateReducer";
 import type {
   ChatRunResponse,
@@ -138,7 +137,7 @@ function TranscriptHarness({ initialRun }: { initialRun: ChatRunResponse["data"]
   const [messages, dispatch] = useReducer(messageUpdateReducer, []);
   const started = useRef(false);
   const { abortAll, tailChatRun } = useChatRunTail({
-    dispatch: (action: MessageUpdateAction) => dispatch(action),
+    dispatch,
   });
 
   useEffect(() => {
