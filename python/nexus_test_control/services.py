@@ -1727,7 +1727,6 @@ def clean_run(
                             candidate.external_id,
                             resource.identity,
                         )
-                    _remove_process_owner_marker(root, run_id, candidate.external_id)
                 elif resource.kind is ResourceKind.TEMPLATE_BUILD:
                     if candidate.external_id is None:
                         raise RuntimeContractError("template build lacks its lifecycle fingerprint")
@@ -2741,22 +2740,6 @@ def _process_owner_marker(repo_root: Path, run_id: str, owner_token: str) -> Pat
     if not re.fullmatch(r"[0-9a-f]{32}", owner_token):
         raise RuntimeContractError("process owner marker requires an exact owner token")
     return runtime_state_dir(repo_root) / "runs" / run_id / "process-owners" / owner_token
-
-
-def _remove_process_owner_marker(repo_root: Path, run_id: str, owner_token: str) -> None:
-    if sys.platform != "darwin":
-        return
-    marker = _process_owner_marker(repo_root, run_id, owner_token)
-    marker.unlink(missing_ok=True)
-    try:
-        marker.parent.rmdir()
-    except FileNotFoundError:
-        pass
-    except OSError as exc:
-        if exc.errno != errno.ENOTEMPTY:
-            raise RuntimeContractError(
-                "process owner marker directory could not be removed"
-            ) from exc
 
 
 def _darwin_owner_marker_identities(

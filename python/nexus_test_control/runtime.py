@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import fcntl
 import hashlib
 import json
@@ -428,7 +429,21 @@ def forget_cleaned(
     require_run_id(run_id)
     with _state_lock(repo_root, f"run-{run_id}"):
         ledger = read_ledger(repo_root, run_id)
-        index, _ = _entry(ledger, resource)
+        index, entry = _entry(ledger, resource)
+        if resource.kind is ResourceKind.PROCESS:
+            if entry.external_id is None:
+                raise RuntimeContractError("cleaned process lacks its exact owner token")
+            marker_directory = resource_ledger_path(repo_root, run_id).parent / "process-owners"
+            (marker_directory / entry.external_id).unlink(missing_ok=True)
+            try:
+                marker_directory.rmdir()
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                if exc.errno != errno.ENOTEMPTY:
+                    raise RuntimeContractError(
+                        "process owner marker directory could not be removed"
+                    ) from exc
         entries = (*ledger.entries[:index], *ledger.entries[index + 1 :])
         _write_json(
             resource_ledger_path(repo_root, run_id),

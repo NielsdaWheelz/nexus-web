@@ -440,6 +440,47 @@ def test_interrupted_planned_resources_remain_cleanup_candidates(tmp_path: Path)
     assert cleanup_candidates(tmp_path, TEST_ENV, RUN_ID)[0].resource == building
 
 
+def test_forgetting_cleaned_process_removes_its_exact_owner_marker(tmp_path: Path) -> None:
+    _runtime(tmp_path)
+    process = Resource(
+        ResourceKind.PROCESS,
+        process_resource_identity(RUN_ID, "worker-interactive"),
+    )
+    owner_token = "a" * 32
+    record_planned(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        process,
+        external_id=owner_token,
+        command=("python", "-m", "apps.worker.main"),
+    )
+    record_created(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        process,
+        process_group_id=12345,
+        process_start_token="67890",
+    )
+    marker = (
+        tmp_path
+        / ".nexus-test"
+        / "runs"
+        / RUN_ID
+        / "process-owners"
+        / owner_token
+    )
+    marker.parent.mkdir()
+    marker.touch()
+
+    forget_cleaned(tmp_path, TEST_ENV, RUN_ID, process)
+
+    assert not marker.parent.exists()
+    assert read_ledger(tmp_path, RUN_ID).entries == ()
+    release_run(tmp_path, TEST_ENV, RUN_ID)
+
+
 def test_extension_profile_is_scenario_scoped_and_run_releases_only_when_empty(
     tmp_path: Path,
 ) -> None:
