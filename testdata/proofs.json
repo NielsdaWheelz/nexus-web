@@ -840,6 +840,7 @@
         "pytest:python/tests/llm_tools_contract/test_pinned_llm_tools.py::test_exact_pins_round_trip_one_canonical_native_tool",
         "pytest:python/tests/kernel/nexus_test_control/test_llm_tools_capability.py::test_llm_tools_paths_route_to_exact_full_materialization",
         "pytest:python/tests/kernel/nexus_test_control/test_model.py::test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr",
+        "pytest:python/tests/kernel/nexus_test_control/test_sensitivity.py::test_isolated_worktree_bounds_run_owned_unix_socket_paths",
         "pytest:python/tests/kernel/nexus_test_control/test_policy.py",
         "pytest:python/tests/kernel/test_ci_pr_recovery.py",
         "pytest:python/tests/release_artifact/test_node_ingest_image_binding.py::test_worker_launches_only_the_image_baked_hardened_ingest_entrypoint",
