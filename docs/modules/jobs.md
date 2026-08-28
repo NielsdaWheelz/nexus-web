@@ -73,11 +73,12 @@ kind is a frozen `JobDefinition`:
 - `periodic_priority` — routine scheduler rows use priority 200 so newly
   accepted ordinary work at priority 100 wins before the older periodic slot
   timestamp can break a tie. The stale-ingest reconciler is the sole urgent
-  periodic exception at priority -1000. On every deduped schedule pass, the
-  scheduler locks an existing exact periodic row and applies the current
-  priority to pending, failed, or running work without changing its payload,
-  availability, attempts, lease, claimant, lifecycle, or timestamps. Terminal
-  rows remain immutable history; a noncanonical dedupe collision defects.
+  periodic exception at priority -1000. On every schedule pass, the scheduler
+  locks every active row that claims the kind's periodic namespace, validates
+  its exact aligned slot identity, and applies the current priority without
+  changing payload, availability, attempts, lease, claimant, lifecycle, or
+  timestamps. On-demand rows sharing a kind are untouched. Terminal rows
+  remain immutable history; a noncanonical periodic collision defects.
 - `failed_result_statuses` — see the gotcha below.
 - `dead_letter_projection` — a member of the closed `DeadLetterProjection` union
   applied once retries are exhausted; a projection may finalize domain state,

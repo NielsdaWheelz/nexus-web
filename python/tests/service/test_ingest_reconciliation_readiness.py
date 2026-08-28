@@ -621,6 +621,13 @@ def test_scheduler_reconciles_older_persisted_periodic_priority_before_claim(
                 kind=ordinary_kind,
                 payload={"probe": "new-ordinary-work-after-upgrade"},
             )
+            manual_same_kind = enqueue_job(
+                db,
+                kind=definition.kind,
+                payload={"request_id": "manual-same-kind-operation"},
+                priority=73,
+                dedupe_key="manual-same-kind-operation",
+            )
             older_periodic = enqueue_job(
                 db,
                 kind=definition.kind,
@@ -633,7 +640,7 @@ def test_scheduler_reconciles_older_persisted_periodic_priority_before_claim(
                 available_at=older_slot,
                 dedupe_key=older_dedupe_key,
             )
-            created_job_ids.extend((ordinary.id, older_periodic.id))
+            created_job_ids.extend((ordinary.id, manual_same_kind.id, older_periodic.id))
             db.commit()
 
         worker = JobWorker(
@@ -657,6 +664,20 @@ def test_scheduler_reconciles_older_persisted_periodic_priority_before_claim(
                 {"job_id": older_periodic.id},
             )
             assert older_priority == definition.periodic_priority
+            preserved_manual = (
+                db.execute(
+                    text("SELECT * FROM background_jobs WHERE id = :job_id"),
+                    {"job_id": manual_same_kind.id},
+                )
+                .mappings()
+                .one()
+            )
+            assert int(preserved_manual["priority"]) == manual_same_kind.priority
+            assert dict(preserved_manual["payload"]) == manual_same_kind.payload
+            assert preserved_manual["status"] == manual_same_kind.status
+            assert int(preserved_manual["attempts"]) == manual_same_kind.attempts
+            assert preserved_manual["available_at"] == manual_same_kind.available_at
+            assert preserved_manual["updated_at"] == manual_same_kind.updated_at
 
             claimed = claim_next_job(
                 db,

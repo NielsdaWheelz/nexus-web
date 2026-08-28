@@ -87,11 +87,12 @@ boundary: routine periodic rows shared priority 100 with newly accepted
 ordinary work, so their older slot timestamps could delay a user metadata
 generation behind the entire maintenance set. The registry now admits routine
 periodic rows at priority 200 while preserving the stale-ingest reconciler's
-explicit -1000 urgency. The scheduler also locks an already-admitted exact
-periodic row and reconciles only its nonterminal priority, preserving payload,
-availability, attempts, lease, claimant, lifecycle, and timestamps across an
-upgrade or expired-lease replay. Noncanonical dedupe collisions fail closed,
-and no second fairness mechanism was introduced.
+explicit -1000 urgency. On every pass the scheduler locks every active row in
+the kind's periodic namespace, validates its exact aligned slot identity, and
+reconciles only priority, preserving payload, availability, attempts, lease,
+claimant, lifecycle, and timestamps across an upgrade or expired-lease replay.
+On-demand rows sharing the kind remain untouched, noncanonical periodic
+collisions fail closed, and no second fairness mechanism was introduced.
 
 ## Verification
 
