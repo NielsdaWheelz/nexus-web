@@ -684,6 +684,39 @@ def test_isolated_worktree_cleans_runtime_before_removal_on_proof_exit(
     assert str(checkout) not in _git_output(tmp_path, "worktree", "list", "--porcelain")
 
 
+def test_isolated_worktree_bounds_run_owned_unix_socket_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "proof.txt").write_text("proof\n")
+    _commit(tmp_path, "base")
+    revision = _git_output(tmp_path, "rev-parse", "HEAD")
+    ambient_temp = tmp_path / f"ambient-{'x' * 128}"
+    ambient_temp.mkdir()
+    monkeypatch.setenv("TMPDIR", str(ambient_temp))
+
+    def clean_runtime(
+        _worktree: Path,
+        _environment: Mapping[str, str],
+    ) -> tuple[str, ...]:
+        return ()
+
+    with isolated_worktree(
+        tmp_path,
+        revision,
+        overlays=(),
+        runtime_cleaner=clean_runtime,
+    ) as red_root:
+        representative_socket = (
+            red_root
+            / "test-results/runs"
+            / "0123456789abcdef"
+            / "g12345.sock"
+        )
+        assert red_root.parent.parent == Path("/tmp").resolve(strict=True)
+        assert len(os.fsencode(representative_socket)) < 104
+
+
 def test_isolated_worktree_disables_container_sampling_before_exact_teardown(
     tmp_path: Path,
 ) -> None:
