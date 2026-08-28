@@ -574,6 +574,70 @@ def enqueue_unique_job(
         return _row_to_job(existing_after_conflict), False
 
 
+def reconcile_periodic_job_priority(
+    db: Session,
+    *,
+    job_id: UUID,
+    kind: str,
+    dedupe_key: str,
+    priority: int,
+) -> JobRow:
+    """Apply current scheduler priority to one exact persisted periodic row.
+
+    Periodic dedupe spans worker restarts and deployments, so an existing row
+    can carry the priority policy that admitted it. The scheduler alone owns
+    this narrow reconciliation: it validates the closed periodic identity and
+    changes no execution, retry, lease, availability, payload, or timestamp
+    state. Terminal rows remain immutable history.
+    """
+    row = (
+        db.execute(
+            text("SELECT * FROM background_jobs WHERE id = :job_id FOR UPDATE"),
+            {"job_id": job_id},
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if row is None:
+        raise RuntimeError("Periodic scheduler target is missing")
+
+    payload = dict(row["payload"] or {})
+    scheduler_identity = payload.get("scheduler_identity")
+    if (
+        str(row["kind"]) != kind
+        or str(row["dedupe_key"] or "") != dedupe_key
+        or set(payload) != {"request_id", "scheduler_identity"}
+        or payload.get("request_id") != dedupe_key
+        or not isinstance(scheduler_identity, str)
+        or not scheduler_identity
+        or scheduler_identity != scheduler_identity.strip()
+    ):
+        raise RuntimeError("Periodic scheduler target does not match the exact operation")
+
+    status = str(row["status"])
+    if status in TERMINAL_STATUSES or int(row["priority"]) == int(priority):
+        return _row_to_job(row)
+    if status not in {PENDING, FAILED, RUNNING}:
+        raise RuntimeError("Periodic scheduler target has an unknown lifecycle state")
+
+    updated = (
+        db.execute(
+            text(
+                """
+                UPDATE background_jobs
+                SET priority = :priority
+                WHERE id = :job_id
+                RETURNING *
+                """
+            ),
+            {"job_id": job_id, "priority": int(priority)},
+        )
+        .mappings()
+        .one()
+    )
+    return _row_to_job(updated)
+
+
 def claim_next_job(
     db: Session,
     *,

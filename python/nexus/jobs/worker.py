@@ -45,6 +45,7 @@ from nexus.jobs.queue import (
     fail_job,
     get_job,
     heartbeat_job,
+    reconcile_periodic_job_priority,
     reschedule_running_job,
 )
 from nexus.jobs.registry import (
@@ -619,7 +620,7 @@ class JobWorker:
                         slot_start=slot_start,
                     )
 
-                    _, was_inserted = enqueue_unique_job(
+                    scheduled, was_inserted = enqueue_unique_job(
                         db,
                         kind=definition.kind,
                         payload={
@@ -633,6 +634,14 @@ class JobWorker:
                     )
                     if was_inserted:
                         inserted += 1
+                    else:
+                        reconcile_periodic_job_priority(
+                            db,
+                            job_id=scheduled.id,
+                            kind=definition.kind,
+                            dedupe_key=dedupe_key,
+                            priority=definition.periodic_priority,
+                        )
 
                 db.commit()
                 return inserted
