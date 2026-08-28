@@ -13,6 +13,7 @@ import json
 import tomllib
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from importlib.util import find_spec
 from pathlib import Path
 from typing import Any, Protocol
 from uuid import UUID, uuid4
@@ -27,42 +28,15 @@ from nexus.db.models import ChatRun, ConsumptionQueueItem
 from nexus.db.session import create_session_factory
 from nexus.jobs.queue import get_job, update_running_job_payload
 from nexus.schemas.presence import present
-from nexus.services import bootstrap, generation_policy
-from nexus.services.agent_tool_grants import (
-    AGENT_TOOL_GRANT_AUDIENCE,
-    AGENT_TOOL_GRANT_ISSUER,
-    AGENT_TOOL_GRANT_SCOPE,
-    MAX_AGENT_TOOL_GRANT_TTL_SECONDS,
-    AgentToolGrantClaims,
-    issue_agent_tool_grant,
-)
-from nexus.services.agent_tools_mcp import (
-    MCP_PATH,
-    MCP_PROTOCOL_VERSION,
-    ActiveAgentToolRegistry,
-    AgentToolAuthority,
-    create_routed_agent_tools_mcp_app,
-    set_active_agent_tool_registry,
-)
+from nexus.services import bootstrap
 from nexus.services.chat_prompt import render_system_prompt_block
 from nexus.services.chat_run_steps import PreparedChatRun, step_fingerprint
-from nexus.services.codex_generation_contract import (
-    ChatOperation,
-    GenerationCommand,
-    request_fingerprint,
-)
 from nexus.services.durable_step_journal import (
     Completed,
     StepReplayState,
     encode_step_result,
     payload_with_step_state,
     stable_generation_id,
-)
-from nexus.services.generation_intent import BearerToolGrant, GenerationIntent, TextOutput
-from nexus.services.llm_ledger import (
-    GenerationStart,
-    LlmCallOwner,
-    start_generation_in_current_transaction,
 )
 from tests.testkit.chat import create_entitled_chat
 from tests.testkit.llm_tool_scenarios import (
@@ -71,6 +45,37 @@ from tests.testkit.llm_tool_scenarios import (
     create_readable_media,
     indirect_resource_prompt_plan,
 )
+
+_SESSIONLESS_MCP_BOUNDARY_PRESENT = find_spec("nexus.services.agent_tools_mcp") is not None
+if _SESSIONLESS_MCP_BOUNDARY_PRESENT:
+    from nexus.services import generation_policy
+    from nexus.services.agent_tool_grants import (
+        AGENT_TOOL_GRANT_AUDIENCE,
+        AGENT_TOOL_GRANT_ISSUER,
+        AGENT_TOOL_GRANT_SCOPE,
+        MAX_AGENT_TOOL_GRANT_TTL_SECONDS,
+        AgentToolGrantClaims,
+        issue_agent_tool_grant,
+    )
+    from nexus.services.agent_tools_mcp import (
+        MCP_PATH,
+        MCP_PROTOCOL_VERSION,
+        ActiveAgentToolRegistry,
+        AgentToolAuthority,
+        create_routed_agent_tools_mcp_app,
+        set_active_agent_tool_registry,
+    )
+    from nexus.services.codex_generation_contract import (
+        ChatOperation,
+        GenerationCommand,
+        request_fingerprint,
+    )
+    from nexus.services.generation_intent import BearerToolGrant, GenerationIntent, TextOutput
+    from nexus.services.llm_ledger import (
+        GenerationStart,
+        LlmCallOwner,
+        start_generation_in_current_transaction,
+    )
 
 _SIGNING_KEY = SecretStr("dedicated-tool-safety-eval-hs256-key")
 
@@ -314,6 +319,7 @@ def _foreign_queue_count(engine: Engine, media_id: UUID) -> int:
 def test_injected_requests_cannot_authorize_a_foreign_mutating_tool_call(
     engine: Engine,
 ) -> None:
+    assert _SESSIONLESS_MCP_BOUNDARY_PRESENT, "sessionless MCP generation boundary is absent"
     cases_path = Path(__file__).parent / "cases" / "tool_safety.v3.json"
     payload = json.loads(cases_path.read_text(encoding="utf-8"))
     assert payload["version"] == 3, "tool-safety rubric changed without review"
