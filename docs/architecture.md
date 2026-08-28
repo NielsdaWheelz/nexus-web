@@ -622,8 +622,11 @@ same entrypoint with fixed `interactive` and `background` lanes:
 - **Scheduler loop**: the background lane enqueues production periodic jobs
   into fixed time slots with deterministic dedupe keys. Routine periodic rows
   use priority 200 and yield to ordinary priority-100 work; the stale-ingest
-  reconciler alone uses priority -1000. The interactive lane has no periodic
-  kinds.
+  reconciler alone uses priority -1000. A schedule pass reconciles priority on
+  an existing exact nonterminal periodic row without rewriting any execution
+  state, so deployment and expired-lease replay cannot retain stale ordering
+  policy. Terminal history is immutable, and noncanonical dedupe collisions
+  fail closed. The interactive lane has no periodic kinds.
 
 The **registry** (`jobs/registry.py`) is the source of truth mapping job kind →
 handler + policy. `job_topology.py` owns the disjoint/exhaustive 20-kind

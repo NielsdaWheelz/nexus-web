@@ -87,8 +87,11 @@ boundary: routine periodic rows shared priority 100 with newly accepted
 ordinary work, so their older slot timestamps could delay a user metadata
 generation behind the entire maintenance set. The registry now admits routine
 periodic rows at priority 200 while preserving the stale-ingest reconciler's
-explicit -1000 urgency. A focused real-queue proof fixes the ordering contract
-without rewriting already-admitted rows or adding a second fairness mechanism.
+explicit -1000 urgency. The scheduler also locks an already-admitted exact
+periodic row and reconciles only its nonterminal priority, preserving payload,
+availability, attempts, lease, claimant, lifecycle, and timestamps across an
+upgrade or expired-lease replay. Noncanonical dedupe collisions fail closed,
+and no second fairness mechanism was introduced.
 
 ## Verification
 

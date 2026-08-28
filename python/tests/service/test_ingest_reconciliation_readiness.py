@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from typing import Literal, assert_never
 from uuid import uuid4
 
+import pytest
 from sqlalchemy import Engine, text
 from sqlalchemy.orm import Session
 
@@ -21,6 +23,7 @@ from tests.testkit.unreachable_state import (
     delete_jobs_by_ids,
     delete_jobs_of_kinds,
     delete_source_attempt_and_media,
+    expire_job_claim,
     make_pending_job_due,
 )
 
@@ -587,6 +590,155 @@ def test_scheduler_reconciles_persisted_periodic_priority_without_rewriting_exec
             assert claimed.id == ordinary.id
             assert complete_job(db, job_id=claimed.id, worker_id=worker_id)
             db.commit()
+    finally:
+        with session_factory() as cleanup:
+            delete_jobs_by_ids(cleanup, job_ids=tuple(created_job_ids))
+            cleanup.commit()
+
+
+@pytest.mark.parametrize("lifecycle", ("failed", "expired_running"))
+def test_scheduler_reconciles_persisted_periodic_replay_priority_only(
+    engine: Engine,
+    lifecycle: Literal["failed", "expired_running"],
+) -> None:
+    session_factory = create_session_factory(engine)
+    definition = replace(
+        get_default_registry()["podcast_refresh_due_job"],
+        kind=f"persisted_periodic_{lifecycle}_priority_probe",
+        max_attempts=2,
+    )
+    owner_id = f"persisted-periodic-{lifecycle}-owner"
+    scheduler_now = datetime(2020, 1, 1, tzinfo=UTC)
+    slot_start = periodic_slot_start(
+        now=scheduler_now,
+        interval_seconds=int(definition.periodic_interval_seconds or 0),
+    )
+    dedupe_key = periodic_dedupe_key(kind=definition.kind, slot_start=slot_start)
+    created_job_ids = []
+    try:
+        with session_factory() as db:
+            persisted = enqueue_job(
+                db,
+                kind=definition.kind,
+                payload={
+                    "request_id": dedupe_key,
+                    "scheduler_identity": "pre-upgrade-scheduler",
+                },
+                priority=100,
+                max_attempts=definition.max_attempts,
+                available_at=slot_start,
+                dedupe_key=dedupe_key,
+            )
+            created_job_ids.append(persisted.id)
+            db.commit()
+
+        with session_factory() as db:
+            claimed = claim_job(
+                db,
+                job_id=persisted.id,
+                worker_id=owner_id,
+                lease_seconds=30,
+                allowed_kinds=(definition.kind,),
+                heavy_kinds=(),
+            )
+            assert claimed is not None
+            if lifecycle == "failed":
+                assert (
+                    fail_job(
+                        db,
+                        job_id=persisted.id,
+                        worker_id=owner_id,
+                        error_code="E_PERIODIC_REPLAY_PROBE",
+                        error_message="modeled retry",
+                        retry_delays_seconds=(0,),
+                    )
+                    == "failed"
+                )
+            elif lifecycle == "expired_running":
+                expire_job_claim(db, job_id=persisted.id)
+            else:
+                assert_never(lifecycle)
+            db.commit()
+
+        with session_factory() as db:
+            before = dict(
+                db.execute(
+                    text("SELECT * FROM background_jobs WHERE id = :job_id"),
+                    {"job_id": persisted.id},
+                )
+                .mappings()
+                .one()
+            )
+
+        worker = JobWorker(
+            session_factory=session_factory,
+            worker_id=f"post-upgrade-{lifecycle}-scheduler",
+            registry={definition.kind: definition},
+            allowed_kinds=(definition.kind,),
+        )
+        assert worker.run_scheduler_once(now=scheduler_now) == 0
+
+        with session_factory() as db:
+            after = dict(
+                db.execute(
+                    text("SELECT * FROM background_jobs WHERE id = :job_id"),
+                    {"job_id": persisted.id},
+                )
+                .mappings()
+                .one()
+            )
+        assert int(after.pop("priority")) == definition.periodic_priority
+        assert int(before.pop("priority")) == 100
+        assert after == before
+    finally:
+        with session_factory() as cleanup:
+            delete_jobs_by_ids(cleanup, job_ids=tuple(created_job_ids))
+            cleanup.commit()
+
+
+def test_scheduler_refuses_to_reprioritize_a_nonperiodic_dedupe_collision(
+    engine: Engine,
+) -> None:
+    session_factory = create_session_factory(engine)
+    definition = replace(
+        get_default_registry()["podcast_refresh_due_job"],
+        kind="periodic_priority_identity_collision_probe",
+    )
+    scheduler_now = datetime(2020, 1, 1, tzinfo=UTC)
+    slot_start = periodic_slot_start(
+        now=scheduler_now,
+        interval_seconds=int(definition.periodic_interval_seconds or 0),
+    )
+    dedupe_key = periodic_dedupe_key(kind=definition.kind, slot_start=slot_start)
+    created_job_ids = []
+    try:
+        with session_factory() as db:
+            collision = enqueue_job(
+                db,
+                kind=definition.kind,
+                payload={"request_id": dedupe_key, "origin": "not-the-scheduler"},
+                priority=100,
+                available_at=slot_start,
+                dedupe_key=dedupe_key,
+            )
+            created_job_ids.append(collision.id)
+            db.commit()
+
+        worker = JobWorker(
+            session_factory=session_factory,
+            worker_id="periodic-priority-identity-proof",
+            registry={definition.kind: definition},
+            allowed_kinds=(definition.kind,),
+        )
+        with pytest.raises(RuntimeError, match="does not match the exact operation"):
+            worker.run_scheduler_once(now=scheduler_now)
+
+        with session_factory() as db:
+            unchanged_priority = db.scalar(
+                text("SELECT priority FROM background_jobs WHERE id = :job_id"),
+                {"job_id": collision.id},
+            )
+        assert unchanged_priority == 100
     finally:
         with session_factory() as cleanup:
             delete_jobs_by_ids(cleanup, job_ids=tuple(created_job_ids))
