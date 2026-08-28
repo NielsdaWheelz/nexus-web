@@ -97,6 +97,14 @@ def storage_orphan_sweep(
         next_continuation_token = _accept_next_continuation_token(
             page.next_continuation_token
         )
+        if (
+            next_continuation_token is not None
+            and next_continuation_token == continuation_token
+        ):
+            # justify-defect: a successful page must advance the durable cursor.
+            raise AssertionError(
+                "storage orphan sweep received a non-advancing continuation token"
+            )
 
         now = _now_utc(db)
         deleted = 0
