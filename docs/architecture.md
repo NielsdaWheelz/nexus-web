@@ -625,9 +625,11 @@ same entrypoint with fixed `interactive` and `background` lanes:
   reconciler alone uses priority -1000. A schedule pass locks and validates all
   active aligned slots in that kind's periodic namespace, then reconciles only
   priority, so deployment and expired-lease replay cannot retain stale ordering
-  policy. On-demand rows sharing the kind remain untouched, terminal history is
-  immutable, and noncanonical periodic collisions fail closed. The interactive
-  lane has no periodic kinds.
+  policy. The namespace lookup is cross-kind and locks at most 257 rows: more
+  than 256 active claimants defects the whole transaction before reconciliation.
+  On-demand rows sharing the kind remain untouched, terminal history is
+  immutable, and foreign-kind or noncanonical periodic collisions fail closed.
+  The interactive lane has no periodic kinds.
 
 The **registry** (`jobs/registry.py`) is the source of truth mapping job kind →
 handler + policy. `job_topology.py` owns the disjoint/exhaustive 20-kind

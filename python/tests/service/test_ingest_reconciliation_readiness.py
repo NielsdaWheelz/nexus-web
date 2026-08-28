@@ -12,7 +12,14 @@ from sqlalchemy.orm import Session
 from nexus.config import get_settings
 from nexus.db.models import Media, MediaKind, MediaSourceAttempt, ProcessingStatus
 from nexus.db.session import create_session_factory
-from nexus.jobs.queue import claim_job, claim_next_job, complete_job, enqueue_job, fail_job
+from nexus.jobs.queue import (
+    PERIODIC_PRIORITY_RECONCILIATION_LIMIT,
+    claim_job,
+    claim_next_job,
+    complete_job,
+    enqueue_job,
+    fail_job,
+)
 from nexus.jobs.registry import get_default_registry, periodic_dedupe_key, periodic_slot_start
 from nexus.jobs.worker import JobWorker
 from nexus.runtime_health import is_database_ready
@@ -838,7 +845,12 @@ def test_scheduler_refuses_to_reprioritize_a_nonperiodic_dedupe_collision(
                 text("SELECT priority FROM background_jobs WHERE id = :job_id"),
                 {"job_id": collision.id},
             )
+            inserted_owner_rows = db.scalar(
+                text("SELECT count(*) FROM background_jobs WHERE kind = :kind"),
+                {"kind": definition.kind},
+            )
         assert unchanged_priority == 100
+        assert inserted_owner_rows == 0
     finally:
         with session_factory() as cleanup:
             delete_jobs_by_ids(cleanup, job_ids=tuple(created_job_ids))
@@ -900,7 +912,6 @@ def test_scheduler_refuses_an_older_cross_kind_periodic_namespace_collision(
 def test_scheduler_refuses_unbounded_periodic_priority_reconciliation(
     engine: Engine,
 ) -> None:
-    reconciliation_limit = 256
     session_factory = create_session_factory(engine)
     definition = replace(
         get_default_registry()["podcast_refresh_due_job"],
@@ -913,7 +924,7 @@ def test_scheduler_refuses_unbounded_periodic_priority_reconciliation(
     )
     try:
         with session_factory() as db:
-            for slot_offset in range(1, reconciliation_limit + 2):
+            for slot_offset in range(1, PERIODIC_PRIORITY_RECONCILIATION_LIMIT + 2):
                 slot_start = current_slot - timedelta(
                     seconds=slot_offset * int(definition.periodic_interval_seconds or 0)
                 )
@@ -942,7 +953,7 @@ def test_scheduler_refuses_unbounded_periodic_priority_reconciliation(
         )
         with pytest.raises(
             RuntimeError,
-            match=f"active slot limit exceeds {reconciliation_limit}",
+            match=(f"active slot limit exceeds {PERIODIC_PRIORITY_RECONCILIATION_LIMIT}"),
         ):
             worker.run_scheduler_once(now=scheduler_now)
 
@@ -951,7 +962,7 @@ def test_scheduler_refuses_unbounded_periodic_priority_reconciliation(
                 text("SELECT priority FROM background_jobs WHERE kind = :kind"),
                 {"kind": definition.kind},
             ).all()
-        assert len(priorities) == reconciliation_limit + 1
+        assert len(priorities) == PERIODIC_PRIORITY_RECONCILIATION_LIMIT + 1
         assert set(priorities) == {100}
     finally:
         with session_factory() as cleanup:

@@ -77,8 +77,10 @@ kind is a frozen `JobDefinition`:
   locks every active row that claims the kind's periodic namespace, validates
   its exact aligned slot identity, and applies the current priority without
   changing payload, availability, attempts, lease, claimant, lifecycle, or
-  timestamps. On-demand rows sharing a kind are untouched. Terminal rows
-  remain immutable history; a noncanonical periodic collision defects.
+  timestamps. Namespace selection is global across kinds and bounded to 256
+  active rows; a foreign-kind claimant, noncanonical identity, or overflow
+  defects the whole transaction before any durable mutation. On-demand rows
+  sharing a kind are untouched, and terminal rows remain immutable history.
 - `failed_result_statuses` — see the gotcha below.
 - `dead_letter_projection` — a member of the closed `DeadLetterProjection` union
   applied once retries are exhausted; a projection may finalize domain state,

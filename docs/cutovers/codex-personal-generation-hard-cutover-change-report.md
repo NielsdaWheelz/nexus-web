@@ -91,8 +91,10 @@ explicit -1000 urgency. On every pass the scheduler locks every active row in
 the kind's periodic namespace, validates its exact aligned slot identity, and
 reconciles only priority, preserving payload, availability, attempts, lease,
 claimant, lifecycle, and timestamps across an upgrade or expired-lease replay.
-On-demand rows sharing the kind remain untouched, noncanonical periodic
-collisions fail closed, and no second fairness mechanism was introduced.
+The namespace lookup is global across kinds and reads at most 257 claimants;
+foreign-kind ownership, a noncanonical identity, or more than 256 active rows
+defects the whole transaction before durable mutation. On-demand rows sharing
+the kind remain untouched, and no second fairness mechanism was introduced.
 
 ## Verification
 
