@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
+from datetime import UTC, datetime
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import pytest
@@ -10,17 +11,24 @@ from sqlalchemy import Engine
 
 import nexus.tasks.storage_orphan_sweep as storage_orphan_sweep_module
 from nexus.db.session import create_session_factory
-from nexus.jobs.queue import JobExecutionContext, claim_job, enqueue_job
-from nexus.storage.client import ObjectPage
+from nexus.jobs.queue import JobExecutionContext, claim_job, enqueue_job, get_job
+from nexus.storage.client import ObjectPage, StorageClientBase, StorageObjectEntry
 from tests.testkit.unreachable_state import delete_jobs_by_ids
 
 _ABSENT = object()
 
 
 class _ListingStorage:
-    def __init__(self, *, next_continuation_token: Any) -> None:
+    def __init__(
+        self,
+        *,
+        objects: tuple[StorageObjectEntry, ...],
+        next_continuation_token: Any,
+    ) -> None:
+        self.objects = objects
         self.next_continuation_token = next_continuation_token
         self.received_continuation_tokens: list[str | None] = []
+        self.deleted_paths: list[str] = []
 
     def list_objects(
         self,
@@ -31,23 +39,23 @@ class _ListingStorage:
         assert prefix == "media/"
         self.received_continuation_tokens.append(continuation_token)
         return ObjectPage(
-            objects=(),
+            objects=self.objects,
             next_continuation_token=self.next_continuation_token,
         )
 
     def delete_object(self, path: str) -> None:
-        raise AssertionError(f"empty storage page attempted to delete {path}")
+        self.deleted_paths.append(path)
 
 
 @pytest.mark.parametrize(
-    ("persisted_token", "provider_token", "expected_storage_calls"),
+    ("persisted_token", "provider_token", "expected_storage_calls", "expected_error"),
     (
-        ("", None, 0),
-        (" padded", None, 0),
-        (7, None, 0),
-        (_ABSENT, "", 1),
-        (_ABSENT, "padded ", 1),
-        (_ABSENT, 7, 1),
+        ("", None, 0, "has"),
+        (" padded", None, 0, "has"),
+        (7, None, 0, "has"),
+        (_ABSENT, "", 1, "received"),
+        (_ABSENT, "padded ", 1, "received"),
+        (_ABSENT, 7, 1, "received"),
     ),
     ids=(
         "empty-persisted-token",
@@ -60,10 +68,10 @@ class _ListingStorage:
 )
 def test_storage_orphan_sweep_defects_before_replaying_a_malformed_page_token(
     engine: Engine,
-    monkeypatch: pytest.MonkeyPatch,
     persisted_token: object,
     provider_token: Any,
     expected_storage_calls: int,
+    expected_error: str,
 ) -> None:
     session_factory = create_session_factory(engine)
     worker_id = f"storage-orphan-page-token-proof-{uuid4()}"
@@ -101,21 +109,33 @@ def test_storage_orphan_sweep_defects_before_replaying_a_malformed_page_token(
                 resource_class="Light",
             )
             db.commit()
+            before = get_job(db, claimed.id)
+            assert before is not None
 
-        storage = _ListingStorage(next_continuation_token=provider_token)
-        monkeypatch.setattr(
-            storage_orphan_sweep_module,
-            "get_storage_client",
-            lambda: storage,
+        storage = _ListingStorage(
+            objects=(
+                StorageObjectEntry(
+                    path=f"media/{uuid4()}/orphan.bin",
+                    last_modified=datetime(2000, 1, 1, tzinfo=UTC),
+                    size_bytes=1,
+                ),
+            ),
+            next_continuation_token=provider_token,
         )
 
         with pytest.raises(
             AssertionError,
-            match="storage orphan sweep requires a canonical continuation token",
+            match=rf"storage orphan sweep {expected_error} an invalid continuation token",
         ):
-            storage_orphan_sweep_module.storage_orphan_sweep(context=context)
+            storage_orphan_sweep_module.storage_orphan_sweep(
+                context=context,
+                storage_client=cast(StorageClientBase, storage),
+            )
 
         assert len(storage.received_continuation_tokens) == expected_storage_calls
+        assert storage.deleted_paths == []
+        with session_factory() as db:
+            assert get_job(db, context.job_id) == before
     finally:
         with session_factory() as cleanup:
             delete_jobs_by_ids(cleanup, job_ids=job_ids)
