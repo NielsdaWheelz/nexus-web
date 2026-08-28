@@ -1,13 +1,15 @@
 import json
+from importlib.util import find_spec
 from pathlib import Path
 
 from nexus.ops.codex_hosted_evidence import codex_hosted_evidence_is_valid
-from nexus.services import generation_policy
 
 _SOURCE_SHA = "a" * 40
 
 
 def _evidence() -> dict[str, object]:
+    from nexus.services import generation_policy
+
     plans = (
         ("routine", "metadata_enrichment", None, "structured", "gpt-5.6-luna", "low", 0),
         ("standard", "dawn_write", None, "text", "gpt-5.6-terra", "medium", 0),
@@ -57,6 +59,9 @@ def _evidence() -> dict[str, object]:
 
 
 def test_hosted_canary_accepts_exact_four_plan_v3_receipt(tmp_path: Path) -> None:
+    assert find_spec("nexus.services.generation_policy") is not None, (
+        "fixed Codex generation policy owner is absent"
+    )
     path = tmp_path / "hosted.json"
     evidence = _evidence()
     path.write_text(json.dumps(evidence), encoding="utf-8")
