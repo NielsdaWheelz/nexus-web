@@ -48,6 +48,7 @@ def test_reviewed_generation_plan_corpus_replays_the_shipped_policy_without_a_li
     corpus = json.loads(_CASES_PATH.read_text(encoding="utf-8"))
     assert corpus["version"] == 1, "generation-plan corpus changed without a reviewed revision"
     assert corpus["corpus_revision"] == "generation-plans.v1"
+    assert corpus["corpus_revision"] == generation_policy.PLAN_EVAL_PIN["corpus_revision"]
     assert corpus["reviewed_rubric_revision"] == "generation-plan-rubric.v1"
     assert corpus["max_hosted_calls"] == 0, "deterministic eval acquired a hosted-call budget"
     assert corpus["live_qualification"] == "model_effort_runtime_wire_required_before_production"
@@ -61,14 +62,17 @@ def test_reviewed_generation_plan_corpus_replays_the_shipped_policy_without_a_li
     }
 
     pins = corpus["consumer_pins"]
+    policy_consumer_pins = {
+        key: value
+        for key, value in generation_policy.PLAN_EVAL_PIN.items()
+        if key != "corpus_revision"
+    }
     assert set(pins) == {
-        *generation_policy.PLAN_EVAL_PIN,
+        *policy_consumer_pins,
         "mcp_version",
         "mcp_wire_revision",
     }, "generation-plan corpus consumer pins changed without review"
-    assert {
-        key: pins[key] for key in generation_policy.PLAN_EVAL_PIN
-    } == generation_policy.PLAN_EVAL_PIN
+    assert {key: pins[key] for key in policy_consumer_pins} == policy_consumer_pins
     assert pins["mcp_wire_revision"] == "2025-06-18"
 
     project = tomllib.loads(_PYPROJECT_PATH.read_text(encoding="utf-8"))
