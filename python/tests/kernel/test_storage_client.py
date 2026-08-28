@@ -61,3 +61,27 @@ def test_storage_client_rejects_a_truncated_page_without_a_canonical_next_token(
         _storage_client(peer).list_objects("media/")
 
     assert peer.requests == [{"Bucket": "bucket", "Prefix": "media/"}]
+
+
+def test_storage_client_rejects_a_non_advancing_next_continuation_token() -> None:
+    peer = _ListingS3Peer(
+        response={
+            "IsTruncated": True,
+            "NextContinuationToken": "same-page",
+            "Contents": [],
+        }
+    )
+
+    with pytest.raises(StorageError, match="non-advancing next continuation token"):
+        _storage_client(peer).list_objects(
+            "media/",
+            continuation_token="same-page",
+        )
+
+    assert peer.requests == [
+        {
+            "Bucket": "bucket",
+            "Prefix": "media/",
+            "ContinuationToken": "same-page",
+        }
+    ]
