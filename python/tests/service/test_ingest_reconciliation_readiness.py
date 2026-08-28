@@ -447,3 +447,57 @@ def test_reconciler_scheduler_priority_preempts_older_ordinary_background_backlo
         with session_factory() as cleanup:
             delete_jobs_by_ids(cleanup, job_ids=tuple(created_job_ids))
             cleanup.commit()
+
+
+def test_default_periodic_work_yields_to_new_ordinary_background_work(
+    engine: Engine,
+) -> None:
+    session_factory = create_session_factory(engine)
+    definition = replace(
+        get_default_registry()["podcast_refresh_due_job"],
+        kind="periodic_fairness_schedule_probe",
+    )
+    ordinary_kind = "periodic_fairness_ordinary_probe"
+    created_job_ids = []
+    worker_id = "periodic-fairness-proof"
+    try:
+        with session_factory() as db:
+            ordinary = enqueue_job(
+                db,
+                kind=ordinary_kind,
+                payload={"probe": "new-ordinary-work"},
+            )
+            created_job_ids.append(ordinary.id)
+            db.commit()
+
+        worker = JobWorker(
+            session_factory=session_factory,
+            worker_id=worker_id,
+            registry={definition.kind: definition},
+            allowed_kinds=(definition.kind,),
+        )
+        assert worker.run_scheduler_once(now=datetime(2020, 1, 1, tzinfo=UTC)) == 1
+
+        with session_factory() as db:
+            scheduled_id = db.scalar(
+                text("SELECT id FROM background_jobs WHERE kind = :kind"),
+                {"kind": definition.kind},
+            )
+            assert scheduled_id is not None
+            created_job_ids.append(scheduled_id)
+            claimed = claim_next_job(
+                db,
+                worker_id=worker_id,
+                lease_seconds=30,
+                allowed_kinds=(ordinary_kind, definition.kind),
+                heavy_kinds=(),
+            )
+            assert claimed is not None
+            assert claimed.id == ordinary.id
+            assert definition.periodic_priority > ordinary.priority
+            assert complete_job(db, job_id=claimed.id, worker_id=worker_id)
+            db.commit()
+    finally:
+        with session_factory() as cleanup:
+            delete_jobs_by_ids(cleanup, job_ids=tuple(created_job_ids))
+            cleanup.commit()
