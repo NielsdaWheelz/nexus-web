@@ -27,8 +27,6 @@ the facade (single / batch / bounded-many) and STOP reading ``media_summaries`` 
 
 from __future__ import annotations
 
-import hashlib
-import json
 from dataclasses import dataclass
 from enum import Enum
 from typing import Annotated, Any, Literal, assert_never, cast
@@ -52,12 +50,10 @@ from nexus.jobs.queue import (
     JobExecutionContext,
     JobRow,
     RescheduleRequested,
-    enqueue_unique_job,
     get_job,
     lock_jobs_for_payload,
     replace_dead_job_payload,
     requeue_dead_job,
-    revoke_jobs_by_dedupe_keys,
     running_job_claim_is_current,
 )
 from nexus.logging import get_logger
@@ -94,6 +90,12 @@ from nexus.services.llm_ledger import (
     LlmCallOwner,
     lock_generation_owner_in_current_transaction,
 )
+from nexus.services.media_intelligence_lifecycle import (
+    MEDIA_UNIT_JOB_KIND as _MEDIA_UNIT_JOB_KIND,
+    MEDIA_UNIT_OPERATION,
+    current_content_fingerprint,
+    ensure_media_unit,
+)
 from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.structured_synthesis import (
@@ -109,8 +111,6 @@ from nexus.services.structured_synthesis import (
 
 logger = get_logger(__name__)
 
-MEDIA_UNIT_OPERATION = "media_summary"
-_MEDIA_UNIT_JOB_KIND = "media_unit_build"
 _MEDIA_UNIT_STEP_PATH = "synthesis"
 # Budget the candidate context to leave output headroom inside the model window.
 # Approximated in characters (~4 chars/token); chunks past the budget are dropped
@@ -125,17 +125,6 @@ ENSURE_CURRENT_MANY_DEFAULT_CONCURRENCY = 8
 
 
 # ---------- public contract -------------------------------------------------
-
-
-@dataclass(frozen=True)
-class MediaUnitRef:
-    """The find-or-create outcome of ``ensure_media_unit``."""
-
-    media_id: UUID
-    summary_id: UUID
-    status: MediaUnitStatus
-    content_fingerprint: str
-    enqueued: bool
 
 
 @dataclass(frozen=True)
@@ -220,77 +209,6 @@ class MediaOmission:
 MediaProjectionOrOmission = MediaProjection | MediaOmission
 
 
-def ensure_media_unit(db: Session, *, media_id: UUID) -> MediaUnitRef:
-    """Find-or-create the current unit head and enqueue a build when needed.
-
-    Standalone entry (the on-demand route): owns the SERIALIZABLE transaction +
-    commit + bounded serialization retry. Idempotent on ``content_fingerprint``:
-    a head already at the current fingerprint and in ('ready', 'building') is
-    returned untouched (``enqueued=False``). Otherwise the head is (re)set to
-    ``building`` at the new fingerprint, prior claims are cleared, and a deduped
-    build job is enqueued.
-    """
-
-    def op() -> MediaUnitRef:
-        ref = _ensure_media_unit_core(db, media_id=media_id)
-        db.commit()
-        return ref
-
-    return retry_serializable(db, "ensure_media_unit", op)
-
-
-def ensure_media_unit_in_tx(db: Session, *, media_id: UUID) -> MediaUnitRef:
-    """Find-or-create the unit head inside the caller's open transaction.
-
-    The ingest hook: flushes but does not commit and does not switch isolation,
-    so the unit (re)build enqueue is committed atomically with the caller's
-    content-index writes (per concurrency.md, do not widen/split a caller-owned
-    transaction). The enqueue is a DB-only insert + ``pg_notify``.
-    """
-    return _ensure_media_unit_core(db, media_id=media_id)
-
-
-def clear_media_claims_for_reindex(db: Session, *, media_id: UUID) -> None:
-    """Delete this media's unit claims so its evidence spans can be re-extracted.
-
-    Called by the content-index teardown (sole owner of the chunk/span lifecycle)
-    inside its transaction, before it deletes the ``evidence_spans`` the claims
-    reference (the FK is non-cascading). The summary head is left in place; the
-    re-ingest hook re-points it to ``building`` at the new fingerprint.
-    """
-    db.execute(
-        text(
-            """
-            DELETE FROM media_claims
-            WHERE summary_id IN (
-                SELECT id FROM media_summaries WHERE media_id = :media_id
-            )
-            """
-        ),
-        {"media_id": media_id},
-    )
-
-
-def delete_media_unit(db: Session, *, media_id: UUID) -> None:
-    """Tear down this media's whole unit (claims then head) inside the caller's tx.
-
-    The canonical unit teardown for media deletion: claims (child, FK the head and
-    ``evidence_spans``) are deleted before the ``media_summaries`` head, and both
-    must run before the ``media`` row and the media's ``evidence_spans`` go (both
-    FKs are non-cascading per database.md). Idempotent: a no-op when no unit
-    exists. The sole writer of these tables; media_deletion calls this rather than
-    deleting the owned tables directly (cleanliness.md).
-    """
-    db.execute(
-        text("DELETE FROM media_claims WHERE media_id = :media_id"),
-        {"media_id": media_id},
-    )
-    db.execute(
-        text("DELETE FROM media_summaries WHERE media_id = :media_id"),
-        {"media_id": media_id},
-    )
-
-
 def media_summary_orm_or_none(db: Session, *, media_id: UUID) -> MediaSummary | None:
     """Load the unit head ORM by media id (the single home for head-ORM access)."""
     return db.scalars(
@@ -298,108 +216,6 @@ def media_summary_orm_or_none(db: Session, *, media_id: UUID) -> MediaSummary | 
         .where(MediaSummary.media_id == media_id)
         .execution_options(populate_existing=True)
     ).first()
-
-
-def _ensure_media_unit_core(db: Session, *, media_id: UUID) -> MediaUnitRef:
-    fingerprint = current_content_fingerprint(db, media_id=media_id)
-    summary = (
-        db.execute(
-            text("SELECT * FROM media_summaries WHERE media_id = :media_id"),
-            {"media_id": media_id},
-        )
-        .mappings()
-        .first()
-    )
-
-    if summary is not None:
-        summary_id = UUID(str(summary["id"]))
-        if summary["content_fingerprint"] == fingerprint and summary["status"] in (
-            "ready",
-            "building",
-        ):
-            return MediaUnitRef(
-                media_id=media_id,
-                summary_id=summary_id,
-                status=cast("MediaUnitStatus", summary["status"]),
-                content_fingerprint=fingerprint,
-                enqueued=False,
-            )
-        db.execute(
-            text(
-                """
-                UPDATE media_summaries
-                SET content_fingerprint = :fingerprint,
-                    summary_md = '',
-                    model_name = :model_name,
-                    status = 'building',
-                    error_code = NULL,
-                    error_detail = NULL,
-                    updated_at = now()
-                WHERE id = :summary_id
-                """
-            ),
-            {
-                "fingerprint": fingerprint,
-                "model_name": generation_policy.operation_policy(MEDIA_UNIT_OPERATION).model,
-                "summary_id": summary_id,
-            },
-        )
-        db.execute(
-            text("DELETE FROM media_claims WHERE summary_id = :summary_id"),
-            {"summary_id": summary_id},
-        )
-    else:
-        summary_id = db.execute(
-            text(
-                """
-                INSERT INTO media_summaries (
-                    media_id, content_fingerprint, summary_md, model_name, status
-                )
-                VALUES (:media_id, :fingerprint, '', :model_name, 'building')
-                RETURNING id
-                """
-            ),
-            {
-                "media_id": media_id,
-                "fingerprint": fingerprint,
-                "model_name": generation_policy.operation_policy(MEDIA_UNIT_OPERATION).model,
-            },
-        ).scalar_one()
-        summary_id = UUID(str(summary_id))
-
-    dedupe_key = f"media_unit_build:{media_id}:{fingerprint}"
-    # Drop any terminal/stale build row holding this dedupe_key so enqueue_unique_job
-    # inserts a fresh runnable row. A unit failure completes its background_jobs row
-    # as SUCCEEDED (or FAILED/DEAD), which would otherwise own the partial-unique key
-    # and make enqueue_unique_job no-op, leaving the re-set 'building' head stuck.
-    # No-op for the new-head branch (no prior row) and the changed-fingerprint case
-    # (the old row's key differs). An in-flight build never reaches here: a head in
-    # ('ready', 'building') at the current fingerprint short-circuits above.
-    revoke_jobs_by_dedupe_keys(
-        db,
-        kind="media_unit_build",
-        dedupe_keys=[dedupe_key],
-    )
-    _, inserted = enqueue_unique_job(
-        db,
-        kind=_MEDIA_UNIT_JOB_KIND,
-        dedupe_key=dedupe_key,
-        payload={
-            "media_id": str(media_id),
-            "summary_id": str(summary_id),
-            "content_fingerprint": fingerprint,
-            "capacity_wait_index": 0,
-            "coordination": {},
-        },
-    )
-    db.flush()
-    return MediaUnitRef(
-        media_id=media_id,
-        summary_id=summary_id,
-        status="building",
-        content_fingerprint=fingerprint,
-        enqueued=inserted,
-    )
 
 
 def get_media_unit(db: Session, *, media_id: UUID) -> MediaUnit | NotReady:
@@ -1488,68 +1304,6 @@ def _map_claims_to_spans(
 
 
 # ---------- internal: fingerprint / candidates / persistence ----------------
-
-
-def current_content_fingerprint(db: Session, *, media_id: UUID) -> str:
-    """Public, no-LLM content fingerprint: the current staleness signal for a media.
-
-    SHA-256 of the active embedding model plus the ordered chunk-text hashes.
-    Changes whenever the media is re-extracted (chunk set or active index run
-    changes), which is the staleness signal for units and every Dossier that
-    depends on the media. Works for not-ready media (an empty content index hashes
-    to a stable value). Sole reader/definer of this fingerprint; callers (freshness
-    checks, publish fencing, aggregate dedup) MUST route through here rather than
-    reading the stored ``media_summaries.content_fingerprint`` column.
-    """
-    index_state = (
-        db.execute(
-            text(
-                """
-            SELECT active_embedding_provider, active_embedding_model, updated_at
-            FROM content_index_states
-            WHERE owner_kind = 'media' AND owner_id = :media_id
-            """
-            ),
-            {"media_id": media_id},
-        )
-        .mappings()
-        .first()
-    )
-    provider = (index_state or {}).get("active_embedding_provider")
-    model = (index_state or {}).get("active_embedding_model")
-    index_generation = (index_state or {}).get("updated_at")
-
-    chunk_rows = (
-        db.execute(
-            text(
-                """
-            SELECT chunk_idx, chunk_text
-            FROM content_chunks
-            WHERE owner_kind = 'media' AND owner_id = :media_id
-            ORDER BY chunk_idx
-            """
-            ),
-            {"media_id": media_id},
-        )
-        .mappings()
-        .all()
-    )
-    canonical = {
-        "active_embedding_provider": provider,
-        "active_embedding_model": model,
-        "active_index_generation": (
-            index_generation.isoformat() if index_generation is not None else None
-        ),
-        "chunks": [
-            [
-                int(row["chunk_idx"]),
-                hashlib.sha256(str(row["chunk_text"]).encode("utf-8")).hexdigest(),
-            ]
-            for row in chunk_rows
-        ],
-    }
-    serialized = json.dumps(canonical, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
 def _load_candidates(db: Session, *, media_id: UUID) -> list[_Candidate]:

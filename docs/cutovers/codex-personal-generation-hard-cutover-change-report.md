@@ -11,9 +11,13 @@ execution boundary, one `llm_calls` ledger, and one scoped HTTPS MCP tool path.
 The cut is atomic: no provider, API-key, compatibility, or redispatch fallback
 remains for generation. Embeddings, transcription, Brave retrieval,
 deterministic authors, and abstract projection remain outside the cutover.
-The local controller's v4 runtime owns a distinct MCP port and proves the real
-interactive worker's exact `127.0.0.1` listener, literal mount, persisted
-process identity, and grantless `401` before Chat dispatch.
+The local controller's v4 runtime owns a distinct MCP port and one strict,
+run-scoped Codex v2 UDS peer. Browser journeys therefore exercise the real
+generation client, durable owner, worker, and ledger wiring while the peer
+deterministically supplies only protocol-valid terminals. The controller proves
+the interactive worker's exact `127.0.0.1` listener, literal mount, persisted
+process identity, and grantless `401` before Chat dispatch. Synthesis commands
+remain grantless and tool-free; Chat commands require the scoped bearer grant.
 
 ## One-time deletion audit
 
@@ -55,6 +59,20 @@ The confidence pass also exposed a stale embeddings-only test-peer path. The
 controller now owns that peer as one run-scoped semantic resource with exact
 CA, key, and audit files, strict DNS/loopback TLS identity, and recoverable
 PLANNED-to-CREATED cleanup. Production embedding behavior is unchanged.
+
+The integrated browser portfolio also exposed excess import memory in the
+bounded source-ingest child. DB-only media-unit lifecycle state now has one
+narrow owner that can be imported by content indexing and media deletion
+without preloading generation, tool, or provider runtimes. Those runtimes are
+loaded only at the execution boundary that uses them; no capacity limit was
+weakened.
+
+That same red proof exposed a merge regression in the pre-existing worker
+boundary: Light/Base background handlers were running inline despite the jobs
+contract requiring every background handler to use a fresh bounded child. An
+installed background process executor is now the sole dispatch signal for that
+boundary. `Light | Heavy` remains queue-capacity policy and no longer changes
+where a background handler imports or executes.
 
 ## Verification
 

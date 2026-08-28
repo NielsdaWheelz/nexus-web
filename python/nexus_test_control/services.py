@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import ctypes
 import errno
 import fcntl
@@ -57,6 +58,8 @@ from nexus_test_control.runtime import (
     canonical_repo_root,
     claim_run,
     cleanup_candidates,
+    codex_generation_peer_identity,
+    codex_generation_peer_state_dir,
     embedding_peer_identity,
     embedding_peer_state_dir,
     forget_cleaned,
@@ -138,6 +141,8 @@ _STATUS_KEYS = frozenset(
 )
 _PROCESS_IDENTITY_GRACE_SECONDS = 2
 _EMBEDDING_PEER_FILES = ("ca.pem", "server-key.pem", "requests.jsonl")
+_CODEX_GENERATION_PEER_AUDIT = "requests.jsonl"
+_CODEX_GENERATION_PEER_SOCKET = "agent.sock"
 TEST_OPENAI_EMBEDDING_API_KEY = "nexus-test-fixture-openai-key"
 TEST_OPENAI_EMBEDDING_HOST = "api.openai.com"
 _BASE_TEST_STATIC_DNS: dict[str, object] = {"www.nasa.gov": "93.184.216.34"}
@@ -250,6 +255,16 @@ class EmbeddingPeer:
             and row.get("path") == "/v1/embeddings"
             and isinstance(row.get("payload"), dict)
         )
+
+
+@dataclass(frozen=True, slots=True)
+class CodexGenerationPeer:
+    state: Path
+    socket: Path
+    audit: Path
+
+    def client_environment(self) -> dict[str, str]:
+        return {"NEXUS_CODEX_AGENT_SOCKET": str(self.socket)}
 
 
 @dataclass(frozen=True, slots=True)
@@ -1221,6 +1236,113 @@ def _delete_embedding_peer_state(root: Path, run_id: str) -> None:
     state.rmdir()
 
 
+def materialize_codex_generation_peer(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    run: TestRun,
+) -> CodexGenerationPeer:
+    """Create one recoverable, secret-free Codex v2 test-peer state owner."""
+
+    require_test_environment(environment)
+    root = canonical_repo_root(repo_root)
+    read_ledger(root, run.run_id)
+    resource = Resource(
+        ResourceKind.CODEX_GENERATION_PEER,
+        codex_generation_peer_identity(run.run_id),
+    )
+    record_planned(root, environment, run.run_id, resource)
+    state = codex_generation_peer_state_dir(root, run.run_id)
+    try:
+        state.mkdir(parents=False, exist_ok=False)
+    except FileExistsError as exc:
+        raise RuntimeContractError(
+            "Codex generation peer state already exists for this run"
+        ) from exc
+    audit = state / _CODEX_GENERATION_PEER_AUDIT
+    audit.touch(mode=0o600, exist_ok=False)
+    socket_path = state / _CODEX_GENERATION_PEER_SOCKET
+    _exact_codex_generation_peer_paths(root, run.run_id, require_socket=False)
+    record_created(root, environment, run.run_id, resource)
+    return CodexGenerationPeer(state, socket_path, audit)
+
+
+def _exact_codex_generation_peer_paths(
+    root: Path,
+    run_id: str,
+    *,
+    require_socket: bool | None,
+) -> dict[str, Path]:
+    state = codex_generation_peer_state_dir(root, run_id)
+    if state.is_symlink() or not state.is_dir() or state.resolve(strict=True) != state:
+        raise RuntimeContractError("Codex generation peer state is not its exact owned directory")
+    entries = {entry.name: entry for entry in state.iterdir()}
+    allowed_names = {_CODEX_GENERATION_PEER_AUDIT, _CODEX_GENERATION_PEER_SOCKET}
+    if set(entries) - allowed_names:
+        raise RuntimeContractError("Codex generation peer state contains unexpected files")
+    audit = entries.get(_CODEX_GENERATION_PEER_AUDIT)
+    if (
+        audit is None
+        or audit.is_symlink()
+        or not audit.is_file()
+        or audit.resolve(strict=True) != audit
+    ):
+        raise RuntimeContractError("Codex generation peer audit is not its exact owned file")
+    socket_path = entries.get(_CODEX_GENERATION_PEER_SOCKET)
+    if socket_path is None:
+        if require_socket:
+            raise RuntimeContractError("Codex generation peer socket is absent")
+    elif (
+        socket_path.is_symlink()
+        or not socket_path.is_socket()
+        or socket_path.resolve(strict=True) != socket_path
+    ):
+        raise RuntimeContractError("Codex generation peer socket is not its exact owned socket")
+    elif require_socket is False:
+        raise RuntimeContractError("Codex generation peer socket exists before process startup")
+    return {
+        _CODEX_GENERATION_PEER_AUDIT: audit,
+        _CODEX_GENERATION_PEER_SOCKET: state / _CODEX_GENERATION_PEER_SOCKET,
+    }
+
+
+def _owned_codex_generation_peer_paths(
+    root: Path,
+    run_id: str,
+    *,
+    require_socket: bool | None,
+) -> dict[str, Path]:
+    resource = Resource(
+        ResourceKind.CODEX_GENERATION_PEER,
+        codex_generation_peer_identity(run_id),
+    )
+    matches = [entry for entry in read_ledger(root, run_id).entries if entry.resource == resource]
+    if len(matches) != 1 or matches[0].phase is not ResourcePhase.CREATED:
+        raise RuntimeContractError("Codex generation peer requires its exact created state owner")
+    return _exact_codex_generation_peer_paths(root, run_id, require_socket=require_socket)
+
+
+def _delete_codex_generation_peer_state(root: Path, run_id: str) -> None:
+    state = codex_generation_peer_state_dir(root, run_id)
+    if not state.exists() and not state.is_symlink():
+        return
+    if state.is_symlink() or not state.is_dir() or state.resolve(strict=True) != state:
+        raise RuntimeContractError("Codex generation peer state is not its exact owned directory")
+    entries = tuple(state.iterdir())
+    allowed_names = {_CODEX_GENERATION_PEER_AUDIT, _CODEX_GENERATION_PEER_SOCKET}
+    if {entry.name for entry in entries} - allowed_names:
+        raise RuntimeContractError("Codex generation peer state contains unexpected files")
+    for entry in entries:
+        if entry.is_symlink() or entry.resolve(strict=True) != entry:
+            raise RuntimeContractError("Codex generation peer state contains a substituted path")
+        if entry.name == _CODEX_GENERATION_PEER_AUDIT and not entry.is_file():
+            raise RuntimeContractError("Codex generation peer audit is not a file")
+        if entry.name == _CODEX_GENERATION_PEER_SOCKET and not entry.is_socket():
+            raise RuntimeContractError("Codex generation peer socket is not a Unix socket")
+    for entry in entries:
+        entry.unlink()
+    state.rmdir()
+
+
 def start_python_process(
     repo_root: Path,
     environment: Mapping[str, str],
@@ -1234,6 +1356,7 @@ def start_python_process(
     if role not in {
         "external",
         "provider-openai",
+        "codex-generation-peer",
         "api",
         "worker-interactive",
         "worker-background",
@@ -1248,6 +1371,8 @@ def start_python_process(
         )
     if role == "provider-openai" and overrides:
         raise RuntimeContractError("embedding peer process environment is controller-owned")
+    if role == "codex-generation-peer" and overrides:
+        raise RuntimeContractError("Codex generation peer environment is controller-owned")
     owned_role_environment: dict[str, str] = {}
     owned_environment = run_environment(root, environment, run)
     if role == "external":
@@ -1274,6 +1399,16 @@ def start_python_process(
             str(paths["server-key.pem"]),
             "--audit",
             str(paths["requests.jsonl"]),
+        )
+    elif role == "codex-generation-peer":
+        paths = _owned_codex_generation_peer_paths(root, run.run_id, require_socket=False)
+        command = (
+            str(root / "python/.venv/bin/python"),
+            str(root / "python/tests/testkit/codex_generation_server.py"),
+            "--socket",
+            str(paths[_CODEX_GENERATION_PEER_SOCKET]),
+            "--audit",
+            str(paths[_CODEX_GENERATION_PEER_AUDIT]),
         )
     elif role == "api":
         _require_loopback_port_available(runtime.ports.api, role)
@@ -1321,16 +1456,25 @@ def start_python_process(
             )
     else:
         raise RuntimeContractError(f"Python process role is not owned: {role}")
-    process_environment = {
-        **owned_environment,
+    shared_process_environment = {
+        "NEXUS_ENV": "test",
         "NEXUS_TEST_DENY_EXTERNAL_NETWORK": "1",
-        "NODE_OPTIONS": f"--import={root / 'python/tests/testkit/node-network-guard.mjs'}",
+        "NEXUS_TEST_RUN_ID": run.run_id,
         "PYTHONPATH": f"{root / 'python' / 'tests' / 'testkit'}:{root / 'python'}:{root}",
-        **(overrides or {}),
-        **({"WORKER_LANE": role.removeprefix("worker-")} if role.startswith("worker-") else {}),
-        **(user_systemd_environment() if role == "worker-background" else {}),
-        **owned_role_environment,
     }
+    process_environment = (
+        shared_process_environment
+        if role == "codex-generation-peer"
+        else {
+            **owned_environment,
+            **shared_process_environment,
+            "NODE_OPTIONS": f"--import={root / 'python/tests/testkit/node-network-guard.mjs'}",
+            **(overrides or {}),
+            **({"WORKER_LANE": role.removeprefix("worker-")} if role.startswith("worker-") else {}),
+            **(user_systemd_environment() if role == "worker-background" else {}),
+            **owned_role_environment,
+        }
+    )
     return _start_owned_process(
         root,
         environment,
@@ -1629,6 +1773,85 @@ def wait_process_ready(
     )
 
 
+def wait_codex_generation_peer_ready(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    process: StartedProcess,
+    socket_path: Path,
+    *,
+    timeout_seconds: float = 30,
+) -> None:
+    """Require exact UDS health from the run-owned strict-v2 generation peer."""
+
+    require_test_environment(environment)
+    root = canonical_repo_root(repo_root)
+    _require_exact_created_process(root, process, "codex-generation-peer")
+    expected_socket = codex_generation_peer_state_dir(root, process.run_id) / (
+        _CODEX_GENERATION_PEER_SOCKET
+    )
+    if socket_path != expected_socket:
+        raise RuntimeContractError("Codex generation peer readiness requires its exact socket")
+    deadline = time.monotonic() + timeout_seconds
+    identity_deadline = min(deadline, time.monotonic() + _PROCESS_IDENTITY_GRACE_SECONDS)
+    while time.monotonic() < deadline:
+        if not _owned_process_identity_matches(
+            root,
+            process.process_group_id,
+            process.process_start_token,
+            process.run_id,
+            process.owner_token,
+        ):
+            if _process_identity_pending(
+                birth_matches=_process_birth_identity_matches(
+                    process.process_group_id,
+                    process.process_start_token,
+                ),
+                now=time.monotonic(),
+                deadline=identity_deadline,
+            ):
+                time.sleep(0.01)
+                continue
+            raise RuntimeContractError(
+                "owned codex-generation-peer process exited or changed identity before readiness"
+            )
+        paths = _owned_codex_generation_peer_paths(
+            root,
+            process.run_id,
+            require_socket=None,
+        )
+        owned_socket = paths[_CODEX_GENERATION_PEER_SOCKET]
+        if owned_socket.is_socket():
+            try:
+                from nexus.services.codex_generation_client import (
+                    CodexGenerationClient,
+                    CodexGenerationClientError,
+                    CodexGenerationProtocolDefect,
+                    CodexGenerationUnavailable,
+                )
+
+                asyncio.run(CodexGenerationClient(owned_socket).health())
+            except CodexGenerationUnavailable:
+                pass
+            except (CodexGenerationClientError, CodexGenerationProtocolDefect) as error:
+                raise RuntimeContractError(
+                    "Codex generation peer returned an invalid health identity"
+                ) from error
+            else:
+                if _process_group_owns_unix_listener(
+                    process.process_group_id,
+                    owned_socket,
+                ) and _owned_process_identity_matches(
+                    root,
+                    process.process_group_id,
+                    process.process_start_token,
+                    process.run_id,
+                    process.owner_token,
+                ):
+                    return
+        time.sleep(0.05)
+    raise RuntimeContractError("owned codex-generation-peer process did not become ready")
+
+
 def wait_offline_reading_caddy_ready(
     repo_root: Path,
     environment: Mapping[str, str],
@@ -1900,6 +2123,8 @@ def clean_run(
                     )
                 elif resource.kind is ResourceKind.EMBEDDING_PEER:
                     _delete_embedding_peer_state(root, run_id)
+                elif resource.kind is ResourceKind.CODEX_GENERATION_PEER:
+                    _delete_codex_generation_peer_state(root, run_id)
                 elif resource.kind is ResourceKind.EXTENSION_PROFILE:
                     _delete_extension_profile(root, resource.identity)
                 else:
@@ -2718,6 +2943,73 @@ def _process_group_owns_listener(process_group_id: int, host: str, port: int) ->
         columns = row.split()
         if len(columns) > 9 and columns[1].upper() == expected_address and columns[3] == "0A":
             listener_inodes.add(columns[9])
+    if not listener_inodes:
+        return False
+    for process_root in Path("/proc").iterdir():
+        if not process_root.name.isdecimal():
+            continue
+        process_id = int(process_root.name)
+        try:
+            if (
+                process_root.stat().st_uid != os.getuid()
+                or os.getpgid(process_id) != process_group_id
+            ):
+                continue
+            for descriptor in (process_root / "fd").iterdir():
+                target = descriptor.readlink().as_posix()
+                if target.startswith("socket:[") and target[8:-1] in listener_inodes:
+                    return True
+        except (OSError, ProcessLookupError):
+            continue
+    return False
+
+
+def _process_group_owns_unix_listener(process_group_id: int, socket_path: Path) -> bool:
+    try:
+        if socket_path.is_symlink() or not socket_path.is_socket():
+            return False
+        exact_socket = socket_path.resolve(strict=True)
+    except OSError:
+        return False
+    if exact_socket != socket_path:
+        return False
+    if sys.platform == "darwin":
+        try:
+            result = subprocess.run(
+                (
+                    _DARWIN_LSOF,
+                    "-nP",
+                    "-Fn",
+                    "-a",
+                    "-U",
+                    "-p",
+                    str(process_group_id),
+                ),
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=1,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        return result.returncode == 0 and f"n{exact_socket}" in result.stdout.splitlines()
+    if sys.platform != "linux":
+        return False
+    listener_inodes: set[str] = set()
+    try:
+        rows = Path("/proc/net/unix").read_text(encoding="ascii").splitlines()[1:]
+    except OSError:
+        return False
+    for row in rows:
+        columns = row.split(maxsplit=7)
+        if (
+            len(columns) == 8
+            and columns[3] == "00010000"
+            and columns[4] == "0001"
+            and columns[5] == "01"
+            and columns[7] == str(exact_socket)
+        ):
+            listener_inodes.add(columns[6])
     if not listener_inodes:
         return False
     for process_root in Path("/proc").iterdir():

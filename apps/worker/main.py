@@ -11,7 +11,6 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, cast
 from uuid import UUID
 
-import uvicorn
 from apps.worker.health import (
     WORKER_HEALTH_PROGRESS_INTERVAL_SECONDS,
     WorkerHeartbeatPublisher,
@@ -47,6 +46,8 @@ from nexus.runtime_health import get_runtime_identity, is_database_ready
 logger = get_logger(__name__)
 
 if TYPE_CHECKING:
+    import uvicorn
+
     from nexus.services.agent_tools_mcp import ActiveAgentToolRegistry
 
 _MCP_LISTENER_START_TIMEOUT_SECONDS = 10.0
@@ -119,6 +120,8 @@ def _start_agent_tools_listener(
     Authorities are registered by the active generation owner; the listener
     itself owns no ORM state and remains usable across worker jobs.
     """
+    import uvicorn
+
     from nexus.services.agent_tools_mcp import (
         ActiveAgentToolRegistry,
         create_active_agent_tools_mcp_app,

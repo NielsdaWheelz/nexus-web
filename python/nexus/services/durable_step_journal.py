@@ -11,7 +11,6 @@ from enum import StrEnum
 from typing import Final, Self
 from uuid import UUID, uuid5
 
-from llm_tools import ToolId
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from sqlalchemy.orm import Session
 
@@ -71,6 +70,8 @@ class ToolExecutionIdentity(BaseModel):
 
     @model_validator(mode="after")
     def validate_identity(self) -> Self:
+        from llm_tools import ToolId
+
         try:
             ToolId(self.tool_id)
         except ValueError as exc:

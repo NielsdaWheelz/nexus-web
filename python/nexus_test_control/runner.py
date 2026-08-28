@@ -103,6 +103,7 @@ from nexus_test_control.runtime import (
 from nexus_test_control.services import (
     TEST_EXTENSION_PUBLIC_KEY,
     AuthorizedAndroidDevice,
+    CodexGenerationPeer,
     EmbeddingPeer,
     InvitedTestUser,
     StartedProcess,
@@ -118,6 +119,7 @@ from nexus_test_control.services import (
     grant_scenario_paid_entitlement,
     invite_supabase_user,
     materialize_embedding_peer,
+    materialize_codex_generation_peer,
     new_run_id,
     prepare_run,
     required_platform_process_tools,
@@ -126,6 +128,7 @@ from nexus_test_control.services import (
     start_python_process,
     start_web_process,
     wait_process_ready,
+    wait_codex_generation_peer_ready,
 )
 
 _SENSITIVE_ENV_PARTS = (
@@ -778,6 +781,14 @@ class _RunnerPorts:
     ) -> EmbeddingPeer:
         return materialize_embedding_peer(repo_root, environment, run)
 
+    def materialize_generation_peer(
+        self,
+        repo_root: Path,
+        environment: Mapping[str, str],
+        run: TestRun,
+    ) -> CodexGenerationPeer:
+        return materialize_codex_generation_peer(repo_root, environment, run)
+
     def start_web_process(
         self,
         repo_root: Path,
@@ -798,6 +809,20 @@ class _RunnerPorts:
         tls_ca: Path | None = None,
     ) -> None:
         wait_process_ready(repo_root, environment, process, endpoint, path, tls_ca=tls_ca)
+
+    def wait_generation_peer_ready(
+        self,
+        repo_root: Path,
+        environment: Mapping[str, str],
+        process: StartedProcess,
+        socket_path: Path,
+    ) -> None:
+        wait_codex_generation_peer_ready(
+            repo_root,
+            environment,
+            process,
+            socket_path,
+        )
 
 
 @dataclass(slots=True)
@@ -2654,6 +2679,7 @@ def _with_browser_process_logs(
         for role in (
             "external",
             "provider-openai",
+            "codex-generation-peer",
             "api",
             "worker-interactive",
             "worker-background",
@@ -2701,12 +2727,33 @@ def _ensure_browser_processes(
             tls_ca=embedding_peer.certificate,
         )
         embedding_environment = embedding_peer.client_environment()
+        generation_peer = execution.ports.materialize_generation_peer(
+            context.repo_root,
+            {"NEXUS_ENV": "test"},
+            prepared,
+        )
+        codex_generation_peer = execution.ports.start_python_process(
+            context.repo_root,
+            {"NEXUS_ENV": "test"},
+            prepared,
+            "codex-generation-peer",
+        )
+        execution.ports.wait_generation_peer_ready(
+            context.repo_root,
+            {"NEXUS_ENV": "test"},
+            codex_generation_peer,
+            generation_peer.socket,
+        )
+        app_environment = {
+            **embedding_environment,
+            **generation_peer.client_environment(),
+        }
         api = execution.ports.start_python_process(
             context.repo_root,
             {"NEXUS_ENV": "test"},
             prepared,
             "api",
-            overrides=embedding_environment,
+            overrides=app_environment,
         )
         execution.ports.wait_process_ready(
             context.repo_root,
@@ -2720,7 +2767,7 @@ def _ensure_browser_processes(
             {"NEXUS_ENV": "test"},
             prepared,
             "worker-interactive",
-            overrides=embedding_environment,
+            overrides=app_environment,
         )
         execution.ports.wait_process_ready(
             context.repo_root,
@@ -2734,7 +2781,7 @@ def _ensure_browser_processes(
             {"NEXUS_ENV": "test"},
             prepared,
             "worker-background",
-            overrides=embedding_environment,
+            overrides=app_environment,
         )
         web = execution.ports.start_web_process(
             context.repo_root,

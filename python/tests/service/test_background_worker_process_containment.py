@@ -7,6 +7,7 @@ import os
 import signal
 import subprocess
 from pathlib import Path
+from typing import Any, cast
 from uuid import uuid4
 
 import pytest
@@ -14,7 +15,11 @@ from sqlalchemy import Engine, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ProcessingStatus
-from nexus.jobs.queue import complete_job
+from nexus.db.session import create_session_factory
+from nexus.jobs.process_executor import BackgroundProcessExecutor, ChildSucceeded
+from nexus.jobs.queue import complete_job, enqueue_job, get_job
+from nexus.jobs.registry import JobDefinition
+from nexus.jobs.worker import JobWorker
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.ingest_recovery import get_ingest_recovery_health
 from tests.testkit.background_process_containment_probe import (
@@ -34,9 +39,19 @@ from tests.testkit.background_worker_supervisor import (
     supervisor_command,
     supervisor_environment,
 )
+from tests.testkit.unreachable_state import delete_jobs_by_ids
 
 _RESOURCE_FAILURE_WALL_TIMEOUT_SECONDS = 3.0
 _SUPERVISOR_RUN_TIMEOUT_SECONDS = 45.0
+
+
+class _RecordingProcessExecutor:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def execute(self, **kwargs: Any) -> ChildSucceeded:
+        self.calls.append(kwargs)
+        return ChildSucceeded(payload={"execution": "child"})
 
 
 def _assert_process_absent(pid_path: Path) -> int:
@@ -44,6 +59,48 @@ def _assert_process_absent(pid_path: Path) -> int:
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
     return pid
+
+
+def test_background_supervisor_dispatches_light_base_handler_to_fresh_child(
+    engine: Engine,
+) -> None:
+    """Risk: inline Light imports consume the memory reserved for later Heavy children."""
+    kind = "background_light_process_boundary_probe"
+    executor = _RecordingProcessExecutor()
+    with Session(engine) as db:
+        job = enqueue_job(db, kind=kind, payload={"probe": "light-base"})
+        db.commit()
+
+    try:
+        worker = JobWorker(
+            session_factory=create_session_factory(engine),
+            worker_id="background-light-process-boundary-proof",
+            registry={
+                kind: JobDefinition(
+                    kind=kind,
+                    handler_path="tests.invalid:must_not_run_in_supervisor",
+                    resource_class="Light",
+                )
+            },
+            allowed_kinds=(kind,),
+            process_executor=cast("BackgroundProcessExecutor", executor),
+        )
+
+        assert worker.run_once() is True
+        assert len(executor.calls) == 1
+        assert executor.calls[0]["handler_path"] == "tests.invalid:must_not_run_in_supervisor"
+        assert executor.calls[0]["runtime"] == "Base"
+        with Session(engine) as oracle:
+            persisted = get_job(oracle, job.id)
+            assert persisted is not None
+            assert (persisted.status, persisted.result) == (
+                "succeeded",
+                {"execution": "child"},
+            )
+    finally:
+        with Session(engine) as cleanup:
+            delete_jobs_by_ids(cleanup, job_ids=(job.id,))
+            cleanup.commit()
 
 
 def test_kernel_oom_and_timeout_are_terminally_fenced_before_next_fresh_child(

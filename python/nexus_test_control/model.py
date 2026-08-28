@@ -136,6 +136,7 @@ class ResourceKind(StrEnum):
     BUCKET = "bucket"
     SUPABASE_USER = "supabase-user"
     EMBEDDING_PEER = "embedding-peer"
+    CODEX_GENERATION_PEER = "codex-generation-peer"
     PROCESS = "process"
     EXTENSION_PROFILE = "extension-profile"
     BUILD_ARTIFACT = "build-artifact"

@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from nexus.errors import ApiErrorCode
 from nexus.jobs.queue import JobExecutionContext
-from nexus.services import media_intelligence
+from nexus.services import media_intelligence_lifecycle
 from nexus.services.parser_temp import utf8_byte_length
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.refs import ResourceRef
@@ -618,7 +618,7 @@ def publish_content_index(
     # transaction so the enqueue commits atomically with the content-index write.
     # Page indexes carry no media unit, so this is gated to media owners only.
     if plan.owner.kind == "media":
-        media_intelligence.ensure_media_unit_in_tx(db, media_id=plan.owner.id)
+        media_intelligence_lifecycle.ensure_media_unit_in_tx(db, media_id=plan.owner.id)
     return ContentIndexResult(
         owner=plan.owner,
         status="ready",
@@ -1501,7 +1501,7 @@ def replace_content_index_materialization(db: Session, *, owner: IndexOwner) -> 
     # non-cascading FK; clear them through their sole owner before the spans go.
     # Pages carry no media unit, so this is gated to media owners only.
     if owner.kind == "media":
-        media_intelligence.clear_media_claims_for_reindex(db, media_id=owner.id)
+        media_intelligence_lifecycle.clear_media_claims_for_reindex(db, media_id=owner.id)
     db.execute(
         text(
             """

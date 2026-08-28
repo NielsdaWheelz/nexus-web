@@ -37,7 +37,7 @@ from nexus.services import (
     contributors,
     library_entries,
     library_governance,
-    media_intelligence,
+    media_intelligence_lifecycle,
     passage_anchors,
     resource_grants,
 )
@@ -612,7 +612,7 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
     # Tear down the per-media intelligence unit through its sole owner before the
     # content index removes this media's evidence_spans (media_claims FK them) and
     # before the media row goes (both unit tables FK media, non-cascading).
-    media_intelligence.delete_media_unit(db, media_id=media_id)
+    media_intelligence_lifecycle.delete_media_unit(db, media_id=media_id)
     delete_media_apparatus(db, media_id)
     delete_content_index(db, owner=IndexOwner("media", media_id))
     db.execute(

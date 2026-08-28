@@ -13,11 +13,14 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
+from uuid import UUID
 
 import httpx
 import pytest
 
 import nexus_test_control.services as services
+from nexus.services import media_intelligence
+from nexus.tasks import enrich_metadata
 from nexus_test_control.build import StandaloneBuild
 from nexus_test_control.model import Resource, ResourceKind
 from nexus_test_control.runtime import (
@@ -25,6 +28,7 @@ from nexus_test_control.runtime import (
     RuntimeContractError,
     RuntimePorts,
     claim_run,
+    codex_generation_peer_state_dir,
     embedding_peer_state_dir,
     extension_profile_identity,
     initialize_runtime,
@@ -49,6 +53,7 @@ from nexus_test_control.services import (
     clean_owned_runtime,
     clean_run,
     finish_embedding_peer_state,
+    materialize_codex_generation_peer,
     materialize_embedding_peer,
     new_run_id,
     prepare_embedding_peer_state,
@@ -64,6 +69,7 @@ from nexus_test_control.services import (
 from nexus_test_control.services import (
     test_environment as local_test_environment,
 )
+from tests.testkit.codex_generation_server import deterministic_synthesis_output
 
 TEST_ENV = {"NEXUS_ENV": "test"}
 RUN_ID = "0123456789abcdef"
@@ -1396,6 +1402,53 @@ def test_embedding_peer_materializes_one_exact_client_identity(tmp_path: Path) -
 
     clean_run(tmp_path, TEST_ENV, RUN_ID)
     assert not peer.state.exists()
+
+
+def test_codex_generation_peer_materializes_one_exact_secret_free_client_identity(
+    tmp_path: Path,
+) -> None:
+    run = _empty_owned_run(tmp_path)
+
+    peer = materialize_codex_generation_peer(tmp_path, TEST_ENV, run)
+
+    assert peer.state == codex_generation_peer_state_dir(tmp_path, RUN_ID)
+    assert not peer.socket.exists()
+    assert len(os.fsencode(peer.socket)) < 104
+    assert peer.audit.read_bytes() == b""
+    assert peer.audit.stat().st_mode & 0o777 == 0o600
+    assert peer.client_environment() == {
+        "NEXUS_CODEX_AGENT_SOCKET": str(peer.socket),
+    }
+
+    clean_run(tmp_path, TEST_ENV, RUN_ID)
+    assert not peer.state.exists()
+
+
+def test_codex_generation_peer_answers_journey_synthesis_without_tool_authority() -> None:
+    generation_id = UUID("37fec309-e196-5c82-ac03-095414384ca4")
+    metadata = enrich_metadata._metadata_generation_command(
+        generation_id=generation_id,
+        input="A bounded journey metadata packet.",
+    )
+    media_summary = media_intelligence._media_unit_command(
+        generation_id=generation_id,
+        user_content="[0] A bounded journey evidence passage.",
+    )
+
+    assert metadata.tool_grant is None
+    assert deterministic_synthesis_output(metadata) == {
+        "title": None,
+        "authors": None,
+        "publisher": None,
+        "description": None,
+        "published_date": None,
+        "language": "en",
+    }
+    assert media_summary.tool_grant is None
+    assert deterministic_synthesis_output(media_summary) == {
+        "summary_md": "A bounded journey evidence passage.",
+        "claims": [],
+    }
 
 
 @pytest.mark.parametrize(

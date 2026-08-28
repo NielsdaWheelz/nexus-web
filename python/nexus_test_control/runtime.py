@@ -33,6 +33,7 @@ _PROCESS_ROLES = frozenset(
     {
         "api",
         "caddy",
+        "codex-generation-peer",
         "external",
         "offline-caddy",
         "offline-caddy-origin",
@@ -198,6 +199,13 @@ def embedding_peer_state_dir(repo_root: Path, run_id: str) -> Path:
     """Return the one run-owned state directory for the embeddings-only peer."""
 
     return canonical_repo_root(repo_root) / embedding_peer_identity(run_id)
+
+
+def codex_generation_peer_state_dir(repo_root: Path, run_id: str) -> Path:
+    root = canonical_repo_root(repo_root)
+    require_run_id(run_id)
+    temporary_root = Path("/tmp").resolve(strict=True)
+    return temporary_root / f"nexus-codex-{repo_id_for(root)}-{run_id}"
 
 
 def runtime_record_path(repo_root: Path) -> Path:
@@ -538,6 +546,11 @@ def embedding_peer_identity(run_id: str) -> str:
     return f".nexus-test/runs/{run_id}/embedding-peer"
 
 
+def codex_generation_peer_identity(run_id: str) -> str:
+    require_run_id(run_id)
+    return f".nexus-test/runs/{run_id}/codex-generation-peer"
+
+
 def process_resource_identity(run_id: str, role: str) -> str:
     require_run_id(run_id)
     if role not in _PROCESS_ROLES:
@@ -728,6 +741,8 @@ def _validate_resource(resource: Resource, run_id: str, scenario_id: str | None)
         expected = supabase_user_email(run_id, scenario_id)
     elif kind is ResourceKind.EMBEDDING_PEER:
         expected = embedding_peer_identity(run_id)
+    elif kind is ResourceKind.CODEX_GENERATION_PEER:
+        expected = codex_generation_peer_identity(run_id)
     elif kind is ResourceKind.PROCESS:
         if scenario_id is not None:
             raise RuntimeContractError("process must not carry scenario metadata")

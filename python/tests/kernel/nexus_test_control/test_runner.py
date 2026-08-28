@@ -3833,6 +3833,7 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
     process_roles: list[str] = []
     process_overrides: dict[str, Mapping[str, str] | None] = {}
     readiness_calls: list[tuple[str, runner.EndpointKind, str]] = []
+    generation_readiness_calls: list[str] = []
     password_users: list[str] = []
     invited_users: list[str] = []
     entitlements: list[str] = []
@@ -3874,6 +3875,25 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
             for path in (certificate, key, audit):
                 _write(path, "owned\n")
             return EmbeddingPeer(state, certificate, key, audit, 4443)
+
+        def materialize_generation_peer(
+            self,
+            _repo_root: Path,
+            _environment: Mapping[str, str],
+            _run: OwnedTestRun,
+        ) -> SimpleNamespace:
+            state = tmp_path / "generation-peer"
+            state.mkdir()
+            socket_path = state / "agent.sock"
+            audit = state / "requests.jsonl"
+            _write(audit, "")
+            return SimpleNamespace(
+                socket=socket_path,
+                audit=audit,
+                client_environment=lambda: {
+                    "NEXUS_CODEX_AGENT_SOCKET": str(socket_path),
+                },
+            )
 
         def start_python_process(
             self,
@@ -3926,6 +3946,16 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
             if _endpoint is runner.EndpointKind.PROVIDER_OPENAI:
                 assert tls_ca is not None
             return
+
+        def wait_generation_peer_ready(
+            self,
+            _repo_root: Path,
+            _environment: Mapping[str, str],
+            _process: StartedProcess,
+            _socket_path: Path,
+        ) -> None:
+            assert _socket_path == tmp_path / "generation-peer/agent.sock"
+            generation_readiness_calls.append(_process.role)
 
         def create_supabase_user(
             self,
@@ -3985,6 +4015,7 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
     assert process_roles == [
         "external",
         "provider-openai",
+        "codex-generation-peer",
         "api",
         "worker-interactive",
         "worker-background",
@@ -4001,18 +4032,24 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
         ),
         ("web", runner.EndpointKind.WEB, "/login"),
     ]
+    assert generation_readiness_calls == ["codex-generation-peer"]
     embedding_environment = {
         "NEXUS_TEST_STATIC_DNS": (
             '{"api.openai.com":{"address":"127.0.0.1","port":4443},"www.nasa.gov":"93.184.216.34"}'
         ),
         "NEXUS_TEST_TLS_CA_CERT": str(tmp_path / "embedding-peer/ca.pem"),
     }
+    app_environment = {
+        **embedding_environment,
+        "NEXUS_CODEX_AGENT_SOCKET": str(tmp_path / "generation-peer/agent.sock"),
+    }
     assert process_overrides == {
         "external": None,
         "provider-openai": None,
-        "api": embedding_environment,
-        "worker-interactive": embedding_environment,
-        "worker-background": embedding_environment,
+        "codex-generation-peer": None,
+        "api": app_environment,
+        "worker-interactive": app_environment,
+        "worker-background": app_environment,
     }
     assert invited_users == ["auth-session"]
     assert password_users == [

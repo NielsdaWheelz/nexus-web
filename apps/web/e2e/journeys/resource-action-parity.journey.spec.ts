@@ -230,6 +230,28 @@ async function readContextualResourceMenu(
   expectedCanonical?: readonly ResourceMenuSignatureItem[],
 ): Promise<readonly ResourceMenuSignatureItem[]> {
   const { menu, menuItems } = await openActionMenu(page, trigger, surface);
+  await expect
+    .poll(
+      () =>
+        menuItems.evaluateAll((elements, localPrefixLength) => {
+          const ids = elements.map((element) =>
+            element.getAttribute("data-action-id"),
+          );
+          return {
+            prefix: ids.slice(0, localPrefixLength),
+            hasCanonicalSuffix: ids.length > localPrefixLength,
+            incompleteActionCount: ids.filter((id) => id === null).length,
+          };
+        }, expectedLocalPrefix.length),
+      {
+        message: `${surface}: its local prefix and canonical resource suffix did not settle before sampling.`,
+      },
+    )
+    .toEqual({
+      prefix: expectedLocalPrefix,
+      hasCanonicalSuffix: true,
+      incompleteActionCount: 0,
+    });
   const actionIds = await menuItems.evaluateAll((elements) =>
     elements.map((element) => element.getAttribute("data-action-id")),
   );

@@ -42,6 +42,7 @@ _FORBIDDEN_MODULE_NAMES = frozenset(
         "openai",
         "provider_runtime",
         "tests.testkit.background_process_probe_handler",
+        "uvicorn",
     }
 )
 
