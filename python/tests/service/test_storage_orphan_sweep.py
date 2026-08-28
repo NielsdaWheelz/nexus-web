@@ -12,6 +12,7 @@ from nexus.db.session import create_session_factory
 from nexus.jobs.queue import JobExecutionContext, claim_job, enqueue_job, get_job
 from tests.testkit.unreachable_state import delete_jobs_by_ids
 
+
 @pytest.mark.parametrize(
     "persisted_token",
     ("", " padded", 7),
