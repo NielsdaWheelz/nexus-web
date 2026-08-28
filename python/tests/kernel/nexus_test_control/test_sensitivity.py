@@ -707,12 +707,7 @@ def test_isolated_worktree_bounds_run_owned_unix_socket_paths(
         overlays=(),
         runtime_cleaner=clean_runtime,
     ) as red_root:
-        representative_socket = (
-            red_root
-            / "test-results/runs"
-            / "0123456789abcdef"
-            / "g12345.sock"
-        )
+        representative_socket = red_root / "test-results/runs" / "0123456789abcdef" / "g12345.sock"
         assert red_root.parent.parent == Path("/tmp").resolve(strict=True)
         assert len(os.fsencode(representative_socket)) < 104
 
