@@ -348,7 +348,13 @@ class StorageClient(StorageClientBase):
         continuation_token: str | None = None,
     ) -> ObjectPage:
         params: dict[str, str] = {"Bucket": self._bucket, "Prefix": prefix}
-        if continuation_token:
+        if continuation_token is not None:
+            if (
+                not isinstance(continuation_token, str)
+                or not continuation_token
+                or continuation_token != continuation_token.strip()
+            ):
+                raise StorageError("Storage list request has an invalid continuation token")
             params["ContinuationToken"] = continuation_token
         try:
             response = self._client.list_objects_v2(**params)
@@ -364,7 +370,16 @@ class StorageClient(StorageClientBase):
             for item in response.get("Contents", [])
         )
         is_truncated = bool(response.get("IsTruncated", False))
-        next_token = response.get("NextContinuationToken") if is_truncated else None
+        next_token = None
+        if is_truncated:
+            candidate = response.get("NextContinuationToken")
+            if (
+                not isinstance(candidate, str)
+                or not candidate
+                or candidate != candidate.strip()
+            ):
+                raise StorageError("Storage listing returned an invalid next continuation token")
+            next_token = candidate
         return ObjectPage(objects=objects, next_continuation_token=next_token)
 
 
