@@ -19,6 +19,7 @@ from nexus.jobs.queue import (
     complete_job,
     enqueue_job,
     fail_job,
+    update_running_job_payload,
 )
 from nexus.jobs.registry import get_default_registry, periodic_dedupe_key, periodic_slot_start
 from nexus.jobs.worker import JobWorker
@@ -906,6 +907,108 @@ def test_scheduler_refuses_an_older_cross_kind_periodic_namespace_collision(
     finally:
         with session_factory() as cleanup:
             delete_jobs_of_kinds(cleanup, kinds=(definition.kind, foreign_kind))
+            cleanup.commit()
+
+
+@pytest.mark.parametrize(
+    ("production_kind", "checkpoint_payload"),
+    (
+        (
+            "dawn_write_job",
+            {
+                "capacity_wait_index": 0,
+                "coordination": {},
+                "dawn_write_worklist": [],
+            },
+        ),
+        ("storage_orphan_sweep", {"continuationToken": "next-page"}),
+    ),
+    ids=("dawn-worklist", "storage-page"),
+)
+def test_scheduler_revisits_terminal_periodic_jobs_with_registry_owned_checkpoints(
+    engine: Engine,
+    production_kind: str,
+    checkpoint_payload: dict[str, object],
+) -> None:
+    session_factory = create_session_factory(engine)
+    definition = replace(
+        get_default_registry()[production_kind],
+        kind=f"{production_kind}_checkpoint_revisit_probe",
+    )
+    scheduler_now = datetime(2020, 1, 1, tzinfo=UTC)
+    slot_start = periodic_slot_start(
+        now=scheduler_now,
+        interval_seconds=int(definition.periodic_interval_seconds or 0),
+    )
+    dedupe_key = periodic_dedupe_key(kind=definition.kind, slot_start=slot_start)
+    worker_id = f"{production_kind}-checkpoint-revisit-proof"
+    try:
+        with session_factory() as db:
+            scheduled = enqueue_job(
+                db,
+                kind=definition.kind,
+                payload={
+                    "request_id": dedupe_key,
+                    "scheduler_identity": "original-scheduler",
+                },
+                priority=definition.periodic_priority,
+                max_attempts=definition.max_attempts,
+                available_at=slot_start,
+                dedupe_key=dedupe_key,
+            )
+            db.commit()
+
+        with session_factory() as db:
+            claimed = claim_job(
+                db,
+                job_id=scheduled.id,
+                worker_id=worker_id,
+                lease_seconds=30,
+                allowed_kinds=(definition.kind,),
+                heavy_kinds=(),
+            )
+            assert claimed is not None
+            assert update_running_job_payload(
+                db,
+                job_id=claimed.id,
+                worker_id=worker_id,
+                attempt_no=claimed.attempts,
+                payload={**claimed.payload, **checkpoint_payload},
+            )
+            assert complete_job(db, job_id=claimed.id, worker_id=worker_id)
+            db.commit()
+
+        with session_factory() as db:
+            terminal_before = dict(
+                db.execute(
+                    text("SELECT * FROM background_jobs WHERE id = :job_id"),
+                    {"job_id": scheduled.id},
+                )
+                .mappings()
+                .one()
+            )
+
+        worker = JobWorker(
+            session_factory=session_factory,
+            worker_id=f"post-{worker_id}",
+            registry={definition.kind: definition},
+            allowed_kinds=(definition.kind,),
+        )
+        assert worker.run_scheduler_once(now=scheduler_now) == 0
+
+        with session_factory() as db:
+            terminal_after = dict(
+                db.execute(
+                    text("SELECT * FROM background_jobs WHERE id = :job_id"),
+                    {"job_id": scheduled.id},
+                )
+                .mappings()
+                .one()
+            )
+        assert terminal_after == terminal_before
+    finally:
+        with session_factory() as cleanup:
+            delete_jobs_of_kinds(cleanup, kinds=(definition.kind,))
             cleanup.commit()
 
 
