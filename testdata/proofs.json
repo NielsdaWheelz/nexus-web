@@ -365,6 +365,7 @@
         "python/nexus/services/highlights.py",
         "python/nexus/services/media_deletion.py",
         "python/nexus/services/media_intelligence.py",
+        "python/nexus/services/media_intelligence_lifecycle.py",
         "python/nexus/services/notes.py",
         "python/nexus/services/oracle.py",
         "python/nexus/services/resource_graph/user_relations.py",

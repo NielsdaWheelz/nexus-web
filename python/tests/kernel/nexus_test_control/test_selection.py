@@ -576,6 +576,20 @@ def test_generation_error_sources_route_durable_journal_proofs() -> None:
     )
 
 
+def test_media_unit_lifecycle_routes_generation_reconciliation_fairness_proof() -> None:
+    path = "python/nexus/services/media_intelligence_lifecycle.py"
+    selections = select_changed(
+        (ChangedPath(GitChangeKind.MODIFIED, path),),
+        load_selection_index(REPO_ROOT),
+    )
+
+    assert "pytest:python/tests/service/test_oracle_media_generation_reconciliation.py" in {
+        selection.proof
+        for selection in selections
+        if selection.reason is SelectionReason.PRIORITY_RISK
+    }
+
+
 def test_unreachable_state_testkit_routes_to_the_durable_replay_proofs() -> None:
     """Risk: edits to the raw-SQL unreachable-state owner run no durability proof."""
 
@@ -665,6 +679,7 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/kernel/nexus_test_control/test_android_device_method_scope.py::test_exact_android_device_proof_uses_one_instrumentation_method",
                 "pytest:python/tests/kernel/nexus_test_control/test_hosted_canary_semantics.py::test_hosted_canary_accepts_exact_four_plan_v3_receipt",
                 "pytest:python/tests/kernel/nexus_test_control/test_provider_runtime_pin.py::test_provider_runtime_is_materialized_from_the_pin_without_retargeting_source",
+                "pytest:python/tests/kernel/nexus_test_control/test_runner.py",
                 "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape",
                 "pytest:python/tests/kernel/test_android_player_protocol_release_gate.py",
                 "pytest:python/tests/llm_tools_contract/test_pinned_llm_tools.py::"
@@ -731,6 +746,7 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/kernel/test_runtime_health.py",
                 "pytest:python/tests/kernel/test_worker_runtime_health.py",
                 "pytest:python/tests/migrations/test_document_import_reliability_migration.py::test_0220_0221_backfill_is_resumable_fail_closed_and_hard_contracts_schema",
+                "pytest:python/tests/service/test_background_worker_process_containment.py",
                 "pytest:python/tests/service/test_background_worker_process_containment.py::test_kernel_oom_and_timeout_are_terminally_fenced_before_next_fresh_child",
                 "pytest:python/tests/service/test_bounded_media_extraction.py",
                 "pytest:python/tests/service/test_ingest_reconciliation_readiness.py",
@@ -763,6 +779,7 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/kernel/test_runtime_health.py",
                 "pytest:python/tests/kernel/test_worker_runtime_health.py",
                 "pytest:python/tests/migrations/test_document_import_reliability_migration.py::test_0220_0221_backfill_is_resumable_fail_closed_and_hard_contracts_schema",
+                "pytest:python/tests/service/test_background_worker_process_containment.py",
                 "pytest:python/tests/service/test_background_worker_process_containment.py::test_kernel_oom_and_timeout_are_terminally_fenced_before_next_fresh_child",
                 "pytest:python/tests/service/test_bounded_media_extraction.py",
                 "pytest:python/tests/service/test_ingest_reconciliation_readiness.py",
@@ -813,6 +830,7 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/kernel/nexus_test_control/test_llm_tools_capability.py::test_llm_tools_paths_route_to_exact_full_materialization",
                 "pytest:python/tests/kernel/nexus_test_control/test_model.py::test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr",
                 "pytest:python/tests/kernel/nexus_test_control/test_policy.py",
+                "pytest:python/tests/kernel/nexus_test_control/test_runner.py",
                 "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape",
                 "pytest:python/tests/kernel/nexus_test_control/test_hosted_canary_semantics.py::test_hosted_canary_accepts_exact_four_plan_v3_receipt",
                 "pytest:python/tests/kernel/nexus_test_control/test_provider_runtime_pin.py::test_provider_runtime_is_materialized_from_the_pin_without_retargeting_source",
