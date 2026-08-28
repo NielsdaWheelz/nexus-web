@@ -688,6 +688,8 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "test_llm_tools_paths_route_to_exact_full_materialization",
                 "pytest:python/tests/kernel/nexus_test_control/test_model.py::"
                 "test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr",
+                "pytest:python/tests/kernel/nexus_test_control/test_sensitivity.py::"
+                "test_isolated_worktree_bounds_run_owned_unix_socket_paths",
                 "pytest:python/tests/kernel/nexus_test_control/test_policy.py",
                 "pytest:python/tests/kernel/test_backend_artifact.py",
                 "pytest:python/tests/kernel/test_codex_nightly_workflow_artifact_contract.py::test_codex_nightly_stages_only_one_run_bound_bounded_json_artifact",
@@ -829,6 +831,7 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/llm_tools_contract/test_pinned_llm_tools.py::test_exact_pins_round_trip_one_canonical_native_tool",
                 "pytest:python/tests/kernel/nexus_test_control/test_llm_tools_capability.py::test_llm_tools_paths_route_to_exact_full_materialization",
                 "pytest:python/tests/kernel/nexus_test_control/test_model.py::test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr",
+                "pytest:python/tests/kernel/nexus_test_control/test_sensitivity.py::test_isolated_worktree_bounds_run_owned_unix_socket_paths",
                 "pytest:python/tests/kernel/nexus_test_control/test_policy.py",
                 "pytest:python/tests/kernel/nexus_test_control/test_runner.py",
                 "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape",
