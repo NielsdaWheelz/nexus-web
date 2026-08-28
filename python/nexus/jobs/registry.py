@@ -43,7 +43,7 @@ class JobDefinition:
     retry_delays_seconds: tuple[int, ...] = (60, 300, 900)
     lease_seconds: int = 300
     periodic_interval_seconds: int | None = None
-    periodic_priority: int = 100
+    periodic_priority: int = 200
     failed_result_statuses: tuple[str, ...] = ()
     dead_letter_projection: DeadLetterProjection = "None"
     wall_timeout_seconds: float = 900.0

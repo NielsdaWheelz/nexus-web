@@ -620,8 +620,10 @@ same entrypoint with fixed `interactive` and `background` lanes:
   Dossier, Media teardown, Podcast live-sync, and Podcast-backfill state without
   overwriting newer lifecycle facts.
 - **Scheduler loop**: the background lane enqueues production periodic jobs
-  into fixed time slots with deterministic dedupe keys. The interactive lane
-  has no periodic kinds.
+  into fixed time slots with deterministic dedupe keys. Routine periodic rows
+  use priority 200 and yield to ordinary priority-100 work; the stale-ingest
+  reconciler alone uses priority -1000. The interactive lane has no periodic
+  kinds.
 
 The **registry** (`jobs/registry.py`) is the source of truth mapping job kind →
 handler + policy. `job_topology.py` owns the disjoint/exhaustive 20-kind
