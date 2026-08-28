@@ -96,11 +96,17 @@ jobs:
           printf '%s\n' \
             "{\"schema_version\":\"nexus-hosted-codex-canary-failure.v1\",\"github_run_id\":${GITHUB_RUN_ID},\"status\":\"failed\"}" \
             > "$ARTIFACT"
-          mapfile -t evidence_files < <(
+          evidence_files=()
+          while IFS= read -r evidence_file; do
+            evidence_files[${#evidence_files[@]}]="$evidence_file"
+          done < <(
             find test-results/runs -type f -name hosted-codex-personal-generation.json -print 2>/dev/null \
               | LC_ALL=C sort
           )
-          mapfile -t readiness_files < <(
+          readiness_files=()
+          while IFS= read -r readiness_file; do
+            readiness_files[${#readiness_files[@]}]="$readiness_file"
+          done < <(
             find test-results/runs -type f -name hosted-codex-personal-readiness.json -print 2>/dev/null \
               | LC_ALL=C sort
           )
