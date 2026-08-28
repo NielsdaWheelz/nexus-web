@@ -909,6 +909,77 @@ def test_scheduler_refuses_an_older_cross_kind_periodic_namespace_collision(
             cleanup.commit()
 
 
+def test_scheduler_ignores_cross_kind_work_that_only_correlates_to_a_periodic_request(
+    engine: Engine,
+) -> None:
+    session_factory = create_session_factory(engine)
+    definition = replace(
+        get_default_registry()["podcast_refresh_due_job"],
+        kind="periodic_request_correlation_owner_probe",
+    )
+    child_kind = "periodic_request_correlation_child_probe"
+    scheduler_now = datetime(2020, 1, 1, tzinfo=UTC)
+    slot_start = periodic_slot_start(
+        now=scheduler_now,
+        interval_seconds=int(definition.periodic_interval_seconds or 0),
+    )
+    periodic_request_id = periodic_dedupe_key(
+        kind=definition.kind,
+        slot_start=slot_start,
+    )
+    try:
+        with session_factory() as db:
+            correlated_child = enqueue_job(
+                db,
+                kind=child_kind,
+                payload={
+                    "request_id": periodic_request_id,
+                    "origin": "downstream-correlation",
+                },
+                priority=73,
+                dedupe_key="downstream-correlation",
+            )
+            db.commit()
+
+        with session_factory() as db:
+            child_before = dict(
+                db.execute(
+                    text("SELECT * FROM background_jobs WHERE id = :job_id"),
+                    {"job_id": correlated_child.id},
+                )
+                .mappings()
+                .one()
+            )
+
+        worker = JobWorker(
+            session_factory=session_factory,
+            worker_id="periodic-request-correlation-proof",
+            registry={definition.kind: definition},
+            allowed_kinds=(definition.kind,),
+        )
+        assert worker.run_scheduler_once(now=scheduler_now) == 1
+
+        with session_factory() as db:
+            child_after = dict(
+                db.execute(
+                    text("SELECT * FROM background_jobs WHERE id = :job_id"),
+                    {"job_id": correlated_child.id},
+                )
+                .mappings()
+                .one()
+            )
+            inserted_owner_rows = db.scalar(
+                text("SELECT count(*) FROM background_jobs WHERE kind = :kind"),
+                {"kind": definition.kind},
+            )
+        assert child_after == child_before
+        assert inserted_owner_rows == 1
+    finally:
+        with session_factory() as cleanup:
+            delete_jobs_of_kinds(cleanup, kinds=(definition.kind, child_kind))
+            cleanup.commit()
+
+
 def test_scheduler_refuses_unbounded_periodic_priority_reconciliation(
     engine: Engine,
 ) -> None:
