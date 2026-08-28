@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Literal, assert_never
 from uuid import UUID
 
@@ -574,12 +574,54 @@ def enqueue_unique_job(
         return _row_to_job(existing_after_conflict), False
 
 
+def _validate_periodic_scheduler_row(
+    row: Mapping[Any, Any],
+    *,
+    kind: str,
+    interval_seconds: int,
+    expected_dedupe_key: str | None = None,
+) -> None:
+    interval = int(interval_seconds)
+    if interval <= 0:
+        raise ValueError("Periodic scheduler interval must be positive")
+
+    prefix = f"periodic:{kind}:"
+    dedupe_key = row["dedupe_key"]
+    payload = dict(row["payload"] or {})
+    request_id = payload.get("request_id")
+    scheduler_identity = payload.get("scheduler_identity")
+    if (
+        str(row["kind"]) != kind
+        or not isinstance(dedupe_key, str)
+        or not dedupe_key.startswith(prefix)
+        or (expected_dedupe_key is not None and dedupe_key != expected_dedupe_key)
+        or set(payload) != {"request_id", "scheduler_identity"}
+        or request_id != dedupe_key
+        or not isinstance(scheduler_identity, str)
+        or not scheduler_identity
+        or scheduler_identity != scheduler_identity.strip()
+    ):
+        raise RuntimeError("Periodic scheduler target does not match the exact operation")
+
+    try:
+        slot_start = datetime.fromisoformat(dedupe_key.removeprefix(prefix))
+    except ValueError as exc:
+        raise RuntimeError("Periodic scheduler target does not match the exact operation") from exc
+    if (
+        slot_start.tzinfo is not UTC
+        or slot_start.isoformat() != dedupe_key.removeprefix(prefix)
+        or int(slot_start.timestamp()) % interval != 0
+    ):
+        raise RuntimeError("Periodic scheduler target does not match the exact operation")
+
+
 def reconcile_periodic_job_priority(
     db: Session,
     *,
     job_id: UUID,
     kind: str,
     dedupe_key: str,
+    interval_seconds: int,
     priority: int,
 ) -> JobRow:
     """Apply current scheduler priority to one exact persisted periodic row.
@@ -601,18 +643,12 @@ def reconcile_periodic_job_priority(
     if row is None:
         raise RuntimeError("Periodic scheduler target is missing")
 
-    payload = dict(row["payload"] or {})
-    scheduler_identity = payload.get("scheduler_identity")
-    if (
-        str(row["kind"]) != kind
-        or str(row["dedupe_key"] or "") != dedupe_key
-        or set(payload) != {"request_id", "scheduler_identity"}
-        or payload.get("request_id") != dedupe_key
-        or not isinstance(scheduler_identity, str)
-        or not scheduler_identity
-        or scheduler_identity != scheduler_identity.strip()
-    ):
-        raise RuntimeError("Periodic scheduler target does not match the exact operation")
+    _validate_periodic_scheduler_row(
+        row,
+        kind=kind,
+        interval_seconds=interval_seconds,
+        expected_dedupe_key=dedupe_key,
+    )
 
     status = str(row["status"])
     if status in TERMINAL_STATUSES or int(row["priority"]) == int(priority):
@@ -636,6 +672,76 @@ def reconcile_periodic_job_priority(
         .one()
     )
     return _row_to_job(updated)
+
+
+def reconcile_periodic_job_priorities(
+    db: Session,
+    *,
+    kind: str,
+    interval_seconds: int,
+    priority: int,
+) -> int:
+    """Apply current priority to every active canonical slot for one kind.
+
+    The prefix query leaves on-demand rows of a shared kind untouched. A row
+    that claims the periodic namespace through either durable identity field
+    must satisfy the full scheduler identity and aligned slot contract before
+    any priority is changed.
+    """
+    prefix = f"periodic:{kind}:"
+    rows = (
+        db.execute(
+            text(
+                """
+                SELECT *
+                FROM background_jobs
+                WHERE kind = :kind
+                  AND status IN ('pending', 'failed', 'running')
+                  AND (
+                      left(COALESCE(dedupe_key, ''), char_length(:prefix)) = :prefix
+                      OR left(
+                          COALESCE(payload->>'request_id', ''),
+                          char_length(:prefix)
+                      ) = :prefix
+                  )
+                ORDER BY created_at ASC, id ASC
+                FOR UPDATE
+                """
+            ),
+            {"kind": kind, "prefix": prefix},
+        )
+        .mappings()
+        .all()
+    )
+    for row in rows:
+        _validate_periodic_scheduler_row(
+            row,
+            kind=kind,
+            interval_seconds=interval_seconds,
+        )
+
+    stale_job_ids = [UUID(str(row["id"])) for row in rows if int(row["priority"]) != int(priority)]
+    if not stale_job_ids:
+        return 0
+    updated_ids = set(
+        db.execute(
+            text(
+                """
+                UPDATE background_jobs
+                SET priority = :priority
+                WHERE id = ANY(CAST(:job_ids AS uuid[]))
+                RETURNING id
+                """
+            ),
+            {
+                "job_ids": [str(job_id) for job_id in stale_job_ids],
+                "priority": int(priority),
+            },
+        ).scalars()
+    )
+    if updated_ids != set(stale_job_ids):
+        raise AssertionError("Periodic scheduler priority reconciliation lost a locked row")
+    return len(updated_ids)
 
 
 def claim_next_job(

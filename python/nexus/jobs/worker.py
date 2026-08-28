@@ -45,6 +45,7 @@ from nexus.jobs.queue import (
     fail_job,
     get_job,
     heartbeat_job,
+    reconcile_periodic_job_priorities,
     reconcile_periodic_job_priority,
     reschedule_running_job,
 )
@@ -640,8 +641,15 @@ class JobWorker:
                             job_id=scheduled.id,
                             kind=definition.kind,
                             dedupe_key=dedupe_key,
+                            interval_seconds=int(definition.periodic_interval_seconds or 0),
                             priority=definition.periodic_priority,
                         )
+                    reconcile_periodic_job_priorities(
+                        db,
+                        kind=definition.kind,
+                        interval_seconds=int(definition.periodic_interval_seconds or 0),
+                        priority=definition.periodic_priority,
+                    )
 
                 db.commit()
                 return inserted
