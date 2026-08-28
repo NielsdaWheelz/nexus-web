@@ -2,7 +2,7 @@
 
 **Status:** SOURCE VERIFICATION IN PROGRESS; PRODUCTION ACCEPTANCE PENDING
 
-**Base:** `beb8877513de5323bd7f1907712607babbda8721`
+**Base:** `42f33dc4fc896d0e01287f68ef1d300d47440db1`
 
 ## Result
 
@@ -74,13 +74,21 @@ installed background process executor is now the sole dispatch signal for that
 boundary. `Light | Heavy` remains queue-capacity policy and no longer changes
 where a background handler imports or executes.
 
+The final changed portfolio then exposed queue starvation across journeys: an
+older backlog of derived media-unit synthesis could keep a newly published
+source in `extracting`. The media lifecycle owner now schedules derived
+`media_unit_build` work at background priority 200, behind the ordinary
+priority-100 user-blocking ingest lane. Queue ordering remains centralized in
+the existing durable job owner; no second scheduler or timeout concession was
+introduced.
+
 ## Verification
 
 The 80/20 proof shape is one dominant proof per ownership boundary and sixteen
 representative sensitivity faults, followed serially by
-`./scripts/test changed --base beb8877513de5323bd7f1907712607babbda8721`,
-`./scripts/test confidence --base beb8877513de5323bd7f1907712607babbda8721`,
-`NEXUS_TEST_BASE_SHA=beb8877513de5323bd7f1907712607babbda8721 ./scripts/test pr`,
+`./scripts/test changed --base 42f33dc4fc896d0e01287f68ef1d300d47440db1`,
+`./scripts/test confidence --base 42f33dc4fc896d0e01287f68ef1d300d47440db1`,
+`NEXUS_TEST_BASE_SHA=42f33dc4fc896d0e01287f68ef1d300d47440db1 ./scripts/test pr`,
 `./scripts/test full`, `./scripts/test release`, the ordinary
 `./scripts/test nightly`, and finally the protected `codex-nightly` lane. Final
 clean-SHA receipts are recorded here after the source candidate is committed.
@@ -89,9 +97,9 @@ clean-SHA receipts are recorded here after the source candidate is committed.
 |---|---|
 | Focused owner proofs | pending final clean-SHA run |
 | Sixteen fault red/green proofs | pending final clean-SHA run |
-| `./scripts/test changed --base beb8877513de5323bd7f1907712607babbda8721` | pending final clean-SHA run |
-| `./scripts/test confidence --base beb8877513de5323bd7f1907712607babbda8721` | pending final clean-SHA run |
-| `NEXUS_TEST_BASE_SHA=beb8877513de5323bd7f1907712607babbda8721 ./scripts/test pr` | pending final clean-SHA run |
+| `./scripts/test changed --base 42f33dc4fc896d0e01287f68ef1d300d47440db1` | pending final clean-SHA run |
+| `./scripts/test confidence --base 42f33dc4fc896d0e01287f68ef1d300d47440db1` | pending final clean-SHA run |
+| `NEXUS_TEST_BASE_SHA=42f33dc4fc896d0e01287f68ef1d300d47440db1 ./scripts/test pr` | pending final clean-SHA run |
 | `./scripts/test full` | pending final clean-SHA run |
 | `./scripts/test release` | pending final clean-SHA run |
 | Ordinary `./scripts/test nightly` | pending final clean-SHA run |

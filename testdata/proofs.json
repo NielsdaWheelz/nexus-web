@@ -4,6 +4,7 @@
     {
       "id": "test-environment-isolation",
       "source_globs": [
+        "python/nexus_test_control/model.py",
         "python/nexus_test_control/runtime.py",
         "python/nexus_test_control/services.py",
         "python/nexus_test_control/process.py",
@@ -13,6 +14,8 @@
         "pytest:python/tests/kernel/nexus_test_control/test_isolation.py::test_environment_isolation_rejects_production_and_cleans_only_the_exact_run",
         "pytest:python/tests/kernel/nexus_test_control/test_port_allocation.py::test_port_candidates_exclude_the_host_ephemeral_client_range",
         "pytest:python/tests/kernel/nexus_test_control/test_process.py::test_captured_child_output_is_drained_without_retaining_unbounded_logs",
+        "pytest:python/tests/kernel/nexus_test_control/test_services.py",
+        "pytest:python/tests/kernel/nexus_test_control/test_services.py::test_caller_resource_configuration_is_rejected_and_secrets_have_safe_reprs",
         "pytest:python/tests/kernel/testkit/test_network_guard.py"
       ],
       "capabilities": [
@@ -398,6 +401,7 @@
         "python/uv.lock"
       ],
       "proofs": [
+        "pytest:python/tests/kernel/nexus_test_control/test_runner.py",
         "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape",
         "pytest:python/tests/kernel/nexus_test_control/test_hosted_canary_semantics.py::test_hosted_canary_accepts_exact_four_plan_v3_receipt",
         "pytest:python/tests/kernel/nexus_test_control/test_provider_runtime_pin.py::test_provider_runtime_is_materialized_from_the_pin_without_retargeting_source",
@@ -517,6 +521,7 @@
         "pytest:python/tests/service/test_media_activity_upload_badge_bound.py",
         "pytest:python/tests/service/test_epub2_doctype_entities_extraction.py",
         "pytest:python/tests/service/test_background_worker_supervisor_liveness.py",
+        "pytest:python/tests/service/test_background_worker_process_containment.py",
         "pytest:python/tests/service/test_background_worker_process_containment.py::test_kernel_oom_and_timeout_are_terminally_fenced_before_next_fresh_child",
         "pytest:python/tests/service/test_bounded_media_extraction.py",
         "pytest:python/tests/service/test_media_activity.py::test_activity_projects_only_upload_obligations_with_strict_precedence",
@@ -700,6 +705,14 @@
         "python/nexus/job_topology.py",
         "python/nexus/release_artifact.py",
         "python/nexus/runtime_health.py",
+        "python/nexus/services/content_indexing.py",
+        "python/nexus/services/durable_step_journal.py",
+        "python/nexus/services/media_deletion.py",
+        "python/nexus/services/media_intelligence_lifecycle.py",
+        "python/nexus/services/media_source_ingest.py",
+        "python/nexus/services/semantic_chunks.py",
+        "python/nexus/tasks/enrich_metadata.py",
+        "python/nexus/tasks/ingest_media_source.py",
         "python/tests/testkit/external_server.py"
       ],
       "proofs": [

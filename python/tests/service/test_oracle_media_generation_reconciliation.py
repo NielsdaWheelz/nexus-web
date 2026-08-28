@@ -370,6 +370,16 @@ def test_media_terminal_attachment_atomically_terminalizes_ledger_and_same_job(
         set_rate_limiter(previous_limiter)
 
 
+def test_media_unit_build_yields_to_user_blocking_background_work(
+    engine: Engine,
+) -> None:
+    """Risk: derived synthesis backlog delays a newly published source ingest."""
+
+    seeded = _seed_media_build(engine)
+
+    assert seeded.job.priority == 200
+
+
 def test_oracle_prove_not_dispatched_requeues_only_the_same_job_without_input_requery(
     engine: Engine,
 ) -> None:

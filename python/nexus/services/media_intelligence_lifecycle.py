@@ -22,6 +22,7 @@ from nexus.schemas.media import MediaUnitStatus
 
 MEDIA_UNIT_OPERATION = "media_summary"
 MEDIA_UNIT_JOB_KIND = "media_unit_build"
+MEDIA_UNIT_BACKGROUND_PRIORITY = 200
 
 
 @dataclass(frozen=True)
@@ -231,6 +232,7 @@ def _ensure_media_unit_core(db: Session, *, media_id: UUID) -> MediaUnitRef:
         db,
         kind=MEDIA_UNIT_JOB_KIND,
         dedupe_key=dedupe_key,
+        priority=MEDIA_UNIT_BACKGROUND_PRIORITY,
         payload={
             "media_id": str(media_id),
             "summary_id": str(summary_id),
@@ -258,6 +260,7 @@ def _media_unit_model_name() -> str:
 
 
 __all__ = [
+    "MEDIA_UNIT_BACKGROUND_PRIORITY",
     "MEDIA_UNIT_OPERATION",
     "MEDIA_UNIT_JOB_KIND",
     "MediaUnitRef",
