@@ -552,10 +552,14 @@ def test_scheduler_reconciles_persisted_periodic_priority_without_rewriting_exec
         assert worker.run_scheduler_once(now=scheduler_now) == 0
 
         with session_factory() as db:
-            reconciled = db.execute(
-                text("SELECT * FROM background_jobs WHERE id = :job_id"),
-                {"job_id": persisted_periodic.id},
-            ).mappings().one()
+            reconciled = (
+                db.execute(
+                    text("SELECT * FROM background_jobs WHERE id = :job_id"),
+                    {"job_id": persisted_periodic.id},
+                )
+                .mappings()
+                .one()
+            )
             assert int(reconciled["priority"]) == definition.periodic_priority
             assert dict(reconciled["payload"]) == persisted_periodic.payload
             assert reconciled["status"] == persisted_periodic.status
