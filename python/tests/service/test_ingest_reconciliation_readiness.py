@@ -845,12 +845,7 @@ def test_scheduler_refuses_to_reprioritize_a_nonperiodic_dedupe_collision(
                 text("SELECT priority FROM background_jobs WHERE id = :job_id"),
                 {"job_id": collision.id},
             )
-            inserted_owner_rows = db.scalar(
-                text("SELECT count(*) FROM background_jobs WHERE kind = :kind"),
-                {"kind": definition.kind},
-            )
         assert unchanged_priority == 100
-        assert inserted_owner_rows == 0
     finally:
         with session_factory() as cleanup:
             delete_jobs_by_ids(cleanup, job_ids=tuple(created_job_ids))
@@ -902,7 +897,12 @@ def test_scheduler_refuses_an_older_cross_kind_periodic_namespace_collision(
                 text("SELECT priority FROM background_jobs WHERE id = :job_id"),
                 {"job_id": collision.id},
             )
+            inserted_owner_rows = db.scalar(
+                text("SELECT count(*) FROM background_jobs WHERE kind = :kind"),
+                {"kind": definition.kind},
+            )
         assert unchanged_priority == 100
+        assert inserted_owner_rows == 0
     finally:
         with session_factory() as cleanup:
             delete_jobs_of_kinds(cleanup, kinds=(definition.kind, foreign_kind))
