@@ -379,6 +379,10 @@ class StorageClient(StorageClientBase):
                 or candidate != candidate.strip()
             ):
                 raise StorageError("Storage listing returned an invalid next continuation token")
+            if candidate == continuation_token:
+                raise StorageError(
+                    "Storage listing returned a non-advancing next continuation token"
+                )
             next_token = candidate
         return ObjectPage(objects=objects, next_continuation_token=next_token)
 
