@@ -625,7 +625,7 @@ def test_scheduler_reconciles_older_persisted_periodic_priority_before_claim(
                 db,
                 kind=definition.kind,
                 payload={"request_id": "manual-same-kind-operation"},
-                priority=73,
+                priority=173,
                 dedupe_key="manual-same-kind-operation",
             )
             older_periodic = enqueue_job(
