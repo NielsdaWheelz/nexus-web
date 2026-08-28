@@ -843,3 +843,117 @@ def test_scheduler_refuses_to_reprioritize_a_nonperiodic_dedupe_collision(
         with session_factory() as cleanup:
             delete_jobs_by_ids(cleanup, job_ids=tuple(created_job_ids))
             cleanup.commit()
+
+
+def test_scheduler_refuses_an_older_cross_kind_periodic_namespace_collision(
+    engine: Engine,
+) -> None:
+    session_factory = create_session_factory(engine)
+    definition = replace(
+        get_default_registry()["podcast_refresh_due_job"],
+        kind="cross_kind_periodic_namespace_owner_probe",
+    )
+    foreign_kind = "cross_kind_periodic_namespace_foreign_probe"
+    scheduler_now = datetime(2020, 1, 1, 1, tzinfo=UTC)
+    current_slot = periodic_slot_start(
+        now=scheduler_now,
+        interval_seconds=int(definition.periodic_interval_seconds or 0),
+    )
+    older_slot = current_slot - timedelta(seconds=int(definition.periodic_interval_seconds or 0))
+    claimed_dedupe_key = periodic_dedupe_key(kind=definition.kind, slot_start=older_slot)
+    try:
+        with session_factory() as db:
+            collision = enqueue_job(
+                db,
+                kind=foreign_kind,
+                payload={
+                    "request_id": claimed_dedupe_key,
+                    "scheduler_identity": "foreign-kind-scheduler",
+                },
+                priority=100,
+                available_at=older_slot,
+                dedupe_key=claimed_dedupe_key,
+            )
+            db.commit()
+
+        worker = JobWorker(
+            session_factory=session_factory,
+            worker_id="cross-kind-periodic-namespace-proof",
+            registry={definition.kind: definition},
+            allowed_kinds=(definition.kind,),
+        )
+        with pytest.raises(RuntimeError, match="does not match the exact operation"):
+            worker.run_scheduler_once(now=scheduler_now)
+
+        with session_factory() as db:
+            unchanged_priority = db.scalar(
+                text("SELECT priority FROM background_jobs WHERE id = :job_id"),
+                {"job_id": collision.id},
+            )
+        assert unchanged_priority == 100
+    finally:
+        with session_factory() as cleanup:
+            delete_jobs_of_kinds(cleanup, kinds=(definition.kind, foreign_kind))
+            cleanup.commit()
+
+
+def test_scheduler_refuses_unbounded_periodic_priority_reconciliation(
+    engine: Engine,
+) -> None:
+    reconciliation_limit = 256
+    session_factory = create_session_factory(engine)
+    definition = replace(
+        get_default_registry()["podcast_refresh_due_job"],
+        kind="bounded_periodic_priority_reconciliation_probe",
+    )
+    scheduler_now = datetime(2020, 1, 4, tzinfo=UTC)
+    current_slot = periodic_slot_start(
+        now=scheduler_now,
+        interval_seconds=int(definition.periodic_interval_seconds or 0),
+    )
+    try:
+        with session_factory() as db:
+            for slot_offset in range(1, reconciliation_limit + 2):
+                slot_start = current_slot - timedelta(
+                    seconds=slot_offset * int(definition.periodic_interval_seconds or 0)
+                )
+                dedupe_key = periodic_dedupe_key(
+                    kind=definition.kind,
+                    slot_start=slot_start,
+                )
+                enqueue_job(
+                    db,
+                    kind=definition.kind,
+                    payload={
+                        "request_id": dedupe_key,
+                        "scheduler_identity": "bounded-priority-predecessor",
+                    },
+                    priority=100,
+                    available_at=slot_start,
+                    dedupe_key=dedupe_key,
+                )
+            db.commit()
+
+        worker = JobWorker(
+            session_factory=session_factory,
+            worker_id="bounded-periodic-priority-proof",
+            registry={definition.kind: definition},
+            allowed_kinds=(definition.kind,),
+        )
+        with pytest.raises(
+            RuntimeError,
+            match=f"active slot limit exceeds {reconciliation_limit}",
+        ):
+            worker.run_scheduler_once(now=scheduler_now)
+
+        with session_factory() as db:
+            priorities = db.scalars(
+                text("SELECT priority FROM background_jobs WHERE kind = :kind"),
+                {"kind": definition.kind},
+            ).all()
+        assert len(priorities) == reconciliation_limit + 1
+        assert set(priorities) == {100}
+    finally:
+        with session_factory() as cleanup:
+            delete_jobs_of_kinds(cleanup, kinds=(definition.kind,))
+            cleanup.commit()
