@@ -58,6 +58,8 @@ class SensitivityExecutionError(SensitivityError):
 
 RuntimeCleaner = Callable[[Path, Mapping[str, str]], tuple[str, ...]]
 
+_SENSITIVITY_TEMP_ROOT = Path("/tmp").resolve(strict=True)
+
 
 @dataclass(frozen=True, slots=True)
 class FaultDefinition:
@@ -578,7 +580,12 @@ def isolated_worktree(
     runtime_cleaner: RuntimeCleaner = clean_owned_runtime,
     memory_sampler: OwnedMemorySampler | None = None,
 ) -> Iterator[Path]:
-    temporary = Path(tempfile.mkdtemp(prefix="nexus-test-sensitivity-")).resolve(strict=True)
+    # Keep isolated checkouts below the Unix-domain socket path ceiling.  The
+    # platform default temporary directory is too deep on macOS for proofs
+    # whose run-owned sockets live below the checkout.
+    temporary = Path(
+        tempfile.mkdtemp(prefix="nexus-sensitivity-", dir=_SENSITIVITY_TEMP_ROOT)
+    ).resolve(strict=True)
     checkout = temporary / "checkout"
     _git(repo_root, "worktree", "add", "--detach", str(checkout), revision)
     try:
