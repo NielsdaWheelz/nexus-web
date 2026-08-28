@@ -92,6 +92,8 @@ from nexus.services.llm_ledger import (
 )
 from nexus.services.media_intelligence_lifecycle import (
     MEDIA_UNIT_JOB_KIND as _MEDIA_UNIT_JOB_KIND,
+)
+from nexus.services.media_intelligence_lifecycle import (
     MEDIA_UNIT_OPERATION,
     current_content_fingerprint,
     ensure_media_unit,

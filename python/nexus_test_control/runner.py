@@ -118,8 +118,8 @@ from nexus_test_control.services import (
     create_supabase_user,
     grant_scenario_paid_entitlement,
     invite_supabase_user,
-    materialize_embedding_peer,
     materialize_codex_generation_peer,
+    materialize_embedding_peer,
     new_run_id,
     prepare_run,
     required_platform_process_tools,
@@ -127,8 +127,8 @@ from nexus_test_control.services import (
     run_environment,
     start_python_process,
     start_web_process,
-    wait_process_ready,
     wait_codex_generation_peer_ready,
+    wait_process_ready,
 )
 
 _SENSITIVE_ENV_PARTS = (
