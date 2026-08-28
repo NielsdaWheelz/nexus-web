@@ -373,11 +373,7 @@ class StorageClient(StorageClientBase):
         next_token = None
         if is_truncated:
             candidate = response.get("NextContinuationToken")
-            if (
-                not isinstance(candidate, str)
-                or not candidate
-                or candidate != candidate.strip()
-            ):
+            if not isinstance(candidate, str) or not candidate or candidate != candidate.strip():
                 raise StorageError("Storage listing returned an invalid next continuation token")
             if candidate == continuation_token:
                 raise StorageError(
