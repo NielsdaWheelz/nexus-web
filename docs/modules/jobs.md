@@ -74,13 +74,21 @@ kind is a frozen `JobDefinition`:
   accepted ordinary work at priority 100 wins before the older periodic slot
   timestamp can break a tie. The stale-ingest reconciler is the sole urgent
   periodic exception at priority -1000. On every schedule pass, the scheduler
-  locks every active row that claims the kind's periodic namespace, validates
-  its exact aligned slot identity, and applies the current priority without
-  changing payload, availability, attempts, lease, claimant, lifecycle, or
-  timestamps. Namespace selection is global across kinds and bounded to 256
-  active rows; a foreign-kind claimant, noncanonical identity, or overflow
-  defects the whole transaction before any durable mutation. On-demand rows
-  sharing a kind are untouched, and terminal rows remain immutable history.
+  locks every active row that claims the kind's global periodic dedupe
+  namespace, validates its exact aligned slot identity, and applies the current
+  priority without changing payload, availability, attempts, lease, claimant,
+  lifecycle, or timestamps. Propagated `request_id` values remain correlation
+  and do not claim that namespace.
+- `periodic_checkpoint_keys` — the closed set of optional top-level checkpoint
+  keys a periodic handler may persist alongside immutable scheduler identity.
+  Dawn declares its frozen-worklist/generation keys and the storage orphan
+  sweep declares its continuation token; all other periodic jobs declare none.
+  The scheduler rejects undeclared keys while each handler-owned strict codec
+  validates checkpoint values. Namespace selection is global across kinds and
+  bounded to 256 active rows; a foreign-kind claimant, noncanonical identity,
+  undeclared checkpoint, or overflow defects the whole transaction before any
+  durable mutation. On-demand rows sharing a kind are untouched, and terminal
+  rows remain immutable history.
 - `failed_result_statuses` — see the gotcha below.
 - `dead_letter_projection` — a member of the closed `DeadLetterProjection` union
   applied once retries are exhausted; a projection may finalize domain state,

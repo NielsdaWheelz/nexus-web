@@ -935,6 +935,7 @@ def test_scheduler_revisits_terminal_periodic_jobs_with_registry_owned_checkpoin
         get_default_registry()[production_kind],
         kind=f"{production_kind}_checkpoint_revisit_probe",
     )
+    assert definition.periodic_checkpoint_keys == frozenset(checkpoint_payload)
     scheduler_now = datetime(2020, 1, 1, tzinfo=UTC)
     slot_start = periodic_slot_start(
         now=scheduler_now,
@@ -1006,6 +1007,64 @@ def test_scheduler_revisits_terminal_periodic_jobs_with_registry_owned_checkpoin
                 .one()
             )
         assert terminal_after == terminal_before
+    finally:
+        with session_factory() as cleanup:
+            delete_jobs_of_kinds(cleanup, kinds=(definition.kind,))
+            cleanup.commit()
+
+
+def test_scheduler_refuses_an_undeclared_periodic_checkpoint_key(
+    engine: Engine,
+) -> None:
+    session_factory = create_session_factory(engine)
+    definition = replace(
+        get_default_registry()["dawn_write_job"],
+        kind="undeclared_periodic_checkpoint_probe",
+    )
+    scheduler_now = datetime(2020, 1, 1, tzinfo=UTC)
+    slot_start = periodic_slot_start(
+        now=scheduler_now,
+        interval_seconds=int(definition.periodic_interval_seconds or 0),
+    )
+    dedupe_key = periodic_dedupe_key(kind=definition.kind, slot_start=slot_start)
+    try:
+        with session_factory() as db:
+            scheduled = enqueue_job(
+                db,
+                kind=definition.kind,
+                payload={
+                    "request_id": dedupe_key,
+                    "scheduler_identity": "original-scheduler",
+                    "undeclared_checkpoint": {},
+                },
+                priority=definition.periodic_priority,
+                max_attempts=definition.max_attempts,
+                available_at=slot_start,
+                dedupe_key=dedupe_key,
+            )
+            db.commit()
+
+        worker = JobWorker(
+            session_factory=session_factory,
+            worker_id="undeclared-periodic-checkpoint-proof",
+            registry={definition.kind: definition},
+            allowed_kinds=(definition.kind,),
+        )
+        with pytest.raises(RuntimeError, match="does not match the exact operation"):
+            worker.run_scheduler_once(now=scheduler_now)
+
+        with session_factory() as db:
+            unchanged = dict(
+                db.execute(
+                    text("SELECT * FROM background_jobs WHERE id = :job_id"),
+                    {"job_id": scheduled.id},
+                )
+                .mappings()
+                .one()
+            )
+        assert unchanged["status"] == scheduled.status
+        assert unchanged["priority"] == scheduled.priority
+        assert dict(unchanged["payload"]) == scheduled.payload
     finally:
         with session_factory() as cleanup:
             delete_jobs_of_kinds(cleanup, kinds=(definition.kind,))

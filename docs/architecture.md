@@ -623,13 +623,17 @@ same entrypoint with fixed `interactive` and `background` lanes:
   into fixed time slots with deterministic dedupe keys. Routine periodic rows
   use priority 200 and yield to ordinary priority-100 work; the stale-ingest
   reconciler alone uses priority -1000. A schedule pass locks and validates all
-  active aligned slots in that kind's periodic namespace, then reconciles only
-  priority, so deployment and expired-lease replay cannot retain stale ordering
-  policy. The namespace lookup is cross-kind and locks at most 257 rows: more
-  than 256 active claimants defects the whole transaction before reconciliation.
+  active aligned slots in that kind's global dedupe namespace, then reconciles
+  only priority, so deployment and expired-lease replay cannot retain stale
+  ordering policy. Immutable scheduler identity stays exact while the registry
+  declares the optional checkpoint keys that Dawn and the storage orphan sweep
+  may persist; their owning codecs remain responsible for checkpoint values.
+  The namespace lookup is cross-kind and locks at most 257 rows: more than 256
+  active claimants defects the whole transaction before reconciliation.
+  Propagated `request_id` values are correlation, not namespace ownership.
   On-demand rows sharing the kind remain untouched, terminal history is
-  immutable, and foreign-kind or noncanonical periodic collisions fail closed.
-  The interactive lane has no periodic kinds.
+  immutable, and foreign-kind, undeclared-checkpoint, or noncanonical periodic
+  collisions fail closed. The interactive lane has no periodic kinds.
 
 The **registry** (`jobs/registry.py`) is the source of truth mapping job kind →
 handler + policy. `job_topology.py` owns the disjoint/exhaustive 20-kind

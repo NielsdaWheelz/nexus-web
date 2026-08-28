@@ -24,6 +24,7 @@ DEAD = "dead"
 TERMINAL_STATUSES = frozenset({SUCCEEDED, DEAD})
 
 PERIODIC_PRIORITY_RECONCILIATION_LIMIT = 256
+_PERIODIC_IDENTITY_PAYLOAD_KEYS = frozenset({"request_id", "scheduler_identity"})
 
 _CHAT_GENERATION_ADMISSION_LOCK_KEY = "codex-personal-generation-chat-admission.v1"
 
@@ -581,6 +582,7 @@ def _validate_periodic_scheduler_row(
     *,
     kind: str,
     interval_seconds: int,
+    checkpoint_keys: Collection[str],
     expected_dedupe_key: str | None = None,
 ) -> None:
     interval = int(interval_seconds)
@@ -592,12 +594,23 @@ def _validate_periodic_scheduler_row(
     payload = dict(row["payload"] or {})
     request_id = payload.get("request_id")
     scheduler_identity = payload.get("scheduler_identity")
+    checkpoint_key_set = frozenset(checkpoint_keys)
+    if any(
+        not isinstance(key, str)
+        or not key
+        or key != key.strip()
+        or key in _PERIODIC_IDENTITY_PAYLOAD_KEYS
+        for key in checkpoint_key_set
+    ):
+        raise ValueError("Periodic scheduler checkpoint keys must be canonical and disjoint")
+    allowed_payload_keys = _PERIODIC_IDENTITY_PAYLOAD_KEYS | checkpoint_key_set
     if (
         str(row["kind"]) != kind
         or not isinstance(dedupe_key, str)
         or not dedupe_key.startswith(prefix)
         or (expected_dedupe_key is not None and dedupe_key != expected_dedupe_key)
-        or set(payload) != {"request_id", "scheduler_identity"}
+        or not _PERIODIC_IDENTITY_PAYLOAD_KEYS.issubset(payload)
+        or not set(payload).issubset(allowed_payload_keys)
         or request_id != dedupe_key
         or not isinstance(scheduler_identity, str)
         or not scheduler_identity
@@ -625,14 +638,16 @@ def reconcile_periodic_job_priority(
     dedupe_key: str,
     interval_seconds: int,
     priority: int,
+    checkpoint_keys: Collection[str],
 ) -> JobRow:
     """Apply current scheduler priority to one exact persisted periodic row.
 
     Periodic dedupe spans worker restarts and deployments, so an existing row
     can carry the priority policy that admitted it. The scheduler alone owns
     this narrow reconciliation: it validates the closed periodic identity and
-    changes no execution, retry, lease, availability, payload, or timestamp
-    state. Terminal rows remain immutable history.
+    registry-declared checkpoint envelope, then changes no execution, retry,
+    lease, availability, payload, or timestamp state. Terminal rows remain
+    immutable history.
     """
     row = (
         db.execute(
@@ -649,6 +664,7 @@ def reconcile_periodic_job_priority(
         row,
         kind=kind,
         interval_seconds=interval_seconds,
+        checkpoint_keys=checkpoint_keys,
         expected_dedupe_key=dedupe_key,
     )
 
@@ -682,14 +698,17 @@ def reconcile_periodic_job_priorities(
     kind: str,
     interval_seconds: int,
     priority: int,
+    checkpoint_keys: Collection[str],
 ) -> int:
     """Apply current priority to every active canonical slot for one kind.
 
-    The bounded prefix query leaves on-demand rows of a shared kind untouched
-    while finding claimants globally so a foreign kind cannot occupy this
-    namespace. Every selected row must satisfy the full scheduler identity and
-    aligned slot contract before any priority is changed. Overflow fails the
-    whole scheduling transaction instead of partially converging a backlog.
+    The bounded dedupe-prefix query leaves on-demand rows and downstream work
+    that only carries the periodic request correlation untouched while finding
+    namespace claimants globally so a foreign kind cannot occupy the dedupe
+    namespace. Every selected row must satisfy the full scheduler identity,
+    declared checkpoint envelope, and aligned slot contract before any priority
+    is changed. Overflow fails the whole scheduling transaction instead of
+    partially converging a backlog.
     """
     prefix = f"periodic:{kind}:"
     rows = (
@@ -699,13 +718,7 @@ def reconcile_periodic_job_priorities(
                 SELECT *
                 FROM background_jobs
                 WHERE status IN ('pending', 'failed', 'running')
-                  AND (
-                      left(COALESCE(dedupe_key, ''), char_length(:prefix)) = :prefix
-                      OR left(
-                          COALESCE(payload->>'request_id', ''),
-                          char_length(:prefix)
-                      ) = :prefix
-                )
+                  AND left(COALESCE(dedupe_key, ''), char_length(:prefix)) = :prefix
                 ORDER BY created_at ASC, id ASC
                 LIMIT :scan_limit
                 FOR UPDATE
@@ -728,6 +741,7 @@ def reconcile_periodic_job_priorities(
             row,
             kind=kind,
             interval_seconds=interval_seconds,
+            checkpoint_keys=checkpoint_keys,
         )
 
     stale_job_ids = [UUID(str(row["id"])) for row in rows if int(row["priority"]) != int(priority)]

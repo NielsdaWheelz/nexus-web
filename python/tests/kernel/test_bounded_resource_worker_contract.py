@@ -171,6 +171,7 @@ def test_worker_topology_and_task_digest_cover_resource_class(
                 "resource_failure_projection": definition.resource_failure_projection,
                 "child_runtime": definition.child_runtime,
                 "periodic_priority": definition.periodic_priority,
+                "periodic_checkpoint_keys": sorted(definition.periodic_checkpoint_keys),
                 "child_exit_cleanup": definition.child_exit_cleanup,
             }
             for definition in sorted(registry.values(), key=lambda item: item.kind)

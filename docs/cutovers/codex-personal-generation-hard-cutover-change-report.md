@@ -88,13 +88,18 @@ ordinary work, so their older slot timestamps could delay a user metadata
 generation behind the entire maintenance set. The registry now admits routine
 periodic rows at priority 200 while preserving the stale-ingest reconciler's
 explicit -1000 urgency. On every pass the scheduler locks every active row in
-the kind's periodic namespace, validates its exact aligned slot identity, and
-reconciles only priority, preserving payload, availability, attempts, lease,
-claimant, lifecycle, and timestamps across an upgrade or expired-lease replay.
-The namespace lookup is global across kinds and reads at most 257 claimants;
-foreign-kind ownership, a noncanonical identity, or more than 256 active rows
-defects the whole transaction before durable mutation. On-demand rows sharing
-the kind remain untouched, and no second fairness mechanism was introduced.
+the kind's global periodic dedupe namespace, validates its exact aligned slot
+identity, and reconciles only priority, preserving payload, availability,
+attempts, lease, claimant, lifecycle, and timestamps across an upgrade or
+expired-lease replay. The registry separates immutable scheduler identity from
+the closed checkpoint-key sets owned by Dawn and the storage orphan sweep;
+their strict codecs continue to validate checkpoint values. A propagated
+`request_id` remains correlation and does not claim the periodic namespace. The
+namespace lookup is global across kinds and reads at most 257 claimants;
+foreign-kind ownership, a noncanonical identity, an undeclared checkpoint, or
+more than 256 active rows defects the whole transaction before durable mutation.
+On-demand rows sharing the kind remain untouched, and no second fairness
+mechanism was introduced.
 
 ## Verification
 

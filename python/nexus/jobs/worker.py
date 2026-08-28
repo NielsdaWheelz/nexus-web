@@ -643,12 +643,14 @@ class JobWorker:
                             dedupe_key=dedupe_key,
                             interval_seconds=int(definition.periodic_interval_seconds or 0),
                             priority=definition.periodic_priority,
+                            checkpoint_keys=definition.periodic_checkpoint_keys,
                         )
                     reconcile_periodic_job_priorities(
                         db,
                         kind=definition.kind,
                         interval_seconds=int(definition.periodic_interval_seconds or 0),
                         priority=definition.periodic_priority,
+                        checkpoint_keys=definition.periodic_checkpoint_keys,
                     )
 
                 db.commit()

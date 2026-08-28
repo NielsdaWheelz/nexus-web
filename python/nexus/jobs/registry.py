@@ -44,6 +44,7 @@ class JobDefinition:
     lease_seconds: int = 300
     periodic_interval_seconds: int | None = None
     periodic_priority: int = 200
+    periodic_checkpoint_keys: frozenset[str] = frozenset()
     failed_result_statuses: tuple[str, ...] = ()
     dead_letter_projection: DeadLetterProjection = "None"
     wall_timeout_seconds: float = 900.0
@@ -92,6 +93,7 @@ def get_task_contract_digest() -> str:
             "resource_failure_projection": definition.resource_failure_projection,
             "child_runtime": definition.child_runtime,
             "periodic_priority": definition.periodic_priority,
+            "periodic_checkpoint_keys": sorted(definition.periodic_checkpoint_keys),
             "child_exit_cleanup": definition.child_exit_cleanup,
         }
         for definition in sorted(definitions.values(), key=lambda item: item.kind)
@@ -328,6 +330,9 @@ def _build_default_registry() -> dict[str, JobDefinition]:
                 if settings.dawn_write_schedule_seconds > 0
                 else None
             ),
+            periodic_checkpoint_keys=frozenset(
+                {"capacity_wait_index", "coordination", "dawn_write_worklist"}
+            ),
             child_runtime="Llm",
         ),
         "atlas_project_job": JobDefinition(
@@ -378,6 +383,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             retry_delays_seconds=(300, 900, 3600),
             lease_seconds=300,
             periodic_interval_seconds=int(settings.storage_orphan_sweep_interval_seconds),
+            periodic_checkpoint_keys=frozenset({"continuationToken"}),
             never_prune_dead=True,
         ),
     }
