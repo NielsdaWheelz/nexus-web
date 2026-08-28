@@ -50,12 +50,23 @@ class _ListingStorage:
 @pytest.mark.parametrize(
     ("persisted_token", "provider_token", "expected_storage_calls", "expected_error"),
     (
-        ("", None, 0, "has"),
-        (" padded", None, 0, "has"),
-        (7, None, 0, "has"),
-        (_ABSENT, "", 1, "received"),
-        (_ABSENT, "padded ", 1, "received"),
-        (_ABSENT, 7, 1, "received"),
+        ("", None, 0, "storage orphan sweep has an invalid continuation token"),
+        (" padded", None, 0, "storage orphan sweep has an invalid continuation token"),
+        (7, None, 0, "storage orphan sweep has an invalid continuation token"),
+        (_ABSENT, "", 1, "storage orphan sweep received an invalid continuation token"),
+        (
+            _ABSENT,
+            "padded ",
+            1,
+            "storage orphan sweep received an invalid continuation token",
+        ),
+        (_ABSENT, 7, 1, "storage orphan sweep received an invalid continuation token"),
+        (
+            "same-page",
+            "same-page",
+            1,
+            "storage orphan sweep received a non-advancing continuation token",
+        ),
     ),
     ids=(
         "empty-persisted-token",
@@ -64,6 +75,7 @@ class _ListingStorage:
         "empty-provider-token",
         "padded-provider-token",
         "non-text-provider-token",
+        "repeated-provider-token",
     ),
 )
 def test_storage_orphan_sweep_defects_before_replaying_a_malformed_page_token(
@@ -125,7 +137,7 @@ def test_storage_orphan_sweep_defects_before_replaying_a_malformed_page_token(
 
         with pytest.raises(
             AssertionError,
-            match=rf"storage orphan sweep {expected_error} an invalid continuation token",
+            match=expected_error,
         ):
             storage_orphan_sweep_module.storage_orphan_sweep(
                 context=context,
