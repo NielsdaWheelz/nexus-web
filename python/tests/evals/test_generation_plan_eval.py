@@ -10,11 +10,10 @@ from __future__ import annotations
 
 import json
 import tomllib
+from importlib.util import find_spec
 from pathlib import Path
 
 from jsonschema import Draft202012Validator
-
-from nexus.services import generation_policy
 
 _CASES_PATH = Path(__file__).parent / "cases" / "generation_plans.v1.json"
 _PYPROJECT_PATH = Path(__file__).parents[2] / "pyproject.toml"
@@ -41,6 +40,11 @@ def _locked_package_version(lock: dict[str, object], name: str) -> str | None:
 
 
 def test_reviewed_generation_plan_corpus_replays_the_shipped_policy_without_a_live_model() -> None:
+    assert find_spec("nexus.services.generation_policy") is not None, (
+        "fixed Codex generation policy owner is absent"
+    )
+    from nexus.services import generation_policy
+
     corpus = json.loads(_CASES_PATH.read_text(encoding="utf-8"))
     assert corpus["version"] == 1, "generation-plan corpus changed without a reviewed revision"
     assert corpus["corpus_revision"] == "generation-plans.v1"
