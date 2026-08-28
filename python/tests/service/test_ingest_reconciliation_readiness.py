@@ -11,7 +11,7 @@ from nexus.config import get_settings
 from nexus.db.models import Media, MediaKind, MediaSourceAttempt, ProcessingStatus
 from nexus.db.session import create_session_factory
 from nexus.jobs.queue import claim_job, claim_next_job, complete_job, enqueue_job, fail_job
-from nexus.jobs.registry import get_default_registry
+from nexus.jobs.registry import get_default_registry, periodic_dedupe_key, periodic_slot_start
 from nexus.jobs.worker import JobWorker
 from nexus.runtime_health import is_database_ready
 from nexus.services.bootstrap import ensure_user_and_default_library
@@ -495,6 +495,92 @@ def test_default_periodic_work_yields_to_new_ordinary_background_work(
             assert claimed is not None
             assert claimed.id == ordinary.id
             assert definition.periodic_priority > ordinary.priority
+            assert complete_job(db, job_id=claimed.id, worker_id=worker_id)
+            db.commit()
+    finally:
+        with session_factory() as cleanup:
+            delete_jobs_by_ids(cleanup, job_ids=tuple(created_job_ids))
+            cleanup.commit()
+
+
+def test_scheduler_reconciles_persisted_periodic_priority_without_rewriting_execution(
+    engine: Engine,
+) -> None:
+    session_factory = create_session_factory(engine)
+    definition = replace(
+        get_default_registry()["podcast_refresh_due_job"],
+        kind="persisted_periodic_fairness_schedule_probe",
+    )
+    ordinary_kind = "persisted_periodic_fairness_ordinary_probe"
+    worker_id = "persisted-periodic-fairness-proof"
+    scheduler_now = datetime(2020, 1, 1, tzinfo=UTC)
+    slot_start = periodic_slot_start(
+        now=scheduler_now,
+        interval_seconds=int(definition.periodic_interval_seconds or 0),
+    )
+    dedupe_key = periodic_dedupe_key(kind=definition.kind, slot_start=slot_start)
+    periodic_payload = {
+        "request_id": dedupe_key,
+        "scheduler_identity": "pre-upgrade-scheduler",
+    }
+    created_job_ids = []
+    try:
+        with session_factory() as db:
+            ordinary = enqueue_job(
+                db,
+                kind=ordinary_kind,
+                payload={"probe": "new-ordinary-work-after-upgrade"},
+            )
+            persisted_periodic = enqueue_job(
+                db,
+                kind=definition.kind,
+                payload=periodic_payload,
+                priority=100,
+                max_attempts=definition.max_attempts,
+                available_at=slot_start,
+                dedupe_key=dedupe_key,
+            )
+            created_job_ids.extend((ordinary.id, persisted_periodic.id))
+            db.commit()
+
+        worker = JobWorker(
+            session_factory=session_factory,
+            worker_id=worker_id,
+            registry={definition.kind: definition},
+            allowed_kinds=(definition.kind,),
+        )
+        assert worker.run_scheduler_once(now=scheduler_now) == 0
+
+        with session_factory() as db:
+            reconciled = db.execute(
+                text("SELECT * FROM background_jobs WHERE id = :job_id"),
+                {"job_id": persisted_periodic.id},
+            ).mappings().one()
+            assert int(reconciled["priority"]) == definition.periodic_priority
+            assert dict(reconciled["payload"]) == persisted_periodic.payload
+            assert reconciled["status"] == persisted_periodic.status
+            assert int(reconciled["attempts"]) == persisted_periodic.attempts
+            assert int(reconciled["max_attempts"]) == persisted_periodic.max_attempts
+            assert reconciled["available_at"] == persisted_periodic.available_at
+            assert reconciled["lease_expires_at"] == persisted_periodic.lease_expires_at
+            assert reconciled["claimed_by"] == persisted_periodic.claimed_by
+            assert reconciled["error_code"] == persisted_periodic.error_code
+            assert reconciled["last_error"] == persisted_periodic.last_error
+            assert reconciled["result"] == persisted_periodic.result
+            assert reconciled["started_at"] == persisted_periodic.started_at
+            assert reconciled["finished_at"] == persisted_periodic.finished_at
+            assert reconciled["created_at"] == persisted_periodic.created_at
+            assert reconciled["updated_at"] == persisted_periodic.updated_at
+
+            claimed = claim_next_job(
+                db,
+                worker_id=worker_id,
+                lease_seconds=30,
+                allowed_kinds=(ordinary_kind, definition.kind),
+                heavy_kinds=(),
+            )
+            assert claimed is not None
+            assert claimed.id == ordinary.id
             assert complete_job(db, job_id=claimed.id, worker_id=worker_id)
             db.commit()
     finally:
