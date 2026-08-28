@@ -435,6 +435,7 @@
         "python/nexus/storage/**/*.py",
         "python/nexus/services/media_deletion.py",
         "python/nexus/tasks/storage_object_cleanup.py",
+        "python/nexus/tasks/storage_orphan_sweep.py",
         "python/nexus/api/routes/offline_reading.py",
         "python/nexus/services/offline_reading_delivery.py",
         "python/nexus/services/offline_reading_packages.py",
@@ -450,11 +451,14 @@
         "python/nexus/services/x_ingest.py"
       ],
       "proofs": [
+        "pytest:python/tests/kernel/test_storage_client.py",
         "pytest:python/tests/service/test_database_object_convergence.py::test_owned_object_write_and_document_delete_converge_across_postgres_and_minio",
         "pytest:python/tests/service/test_reader_publication.py::test_capture_restarts_once_without_mixing_database_and_minio_publications",
-        "pytest:python/tests/service/test_reader_publication_ownership.py"
+        "pytest:python/tests/service/test_reader_publication_ownership.py",
+        "pytest:python/tests/service/test_storage_orphan_sweep.py::test_storage_orphan_sweep_defects_on_a_malformed_persisted_page_token"
       ],
       "capabilities": [
+        "kernel-python",
         "service"
       ]
     },

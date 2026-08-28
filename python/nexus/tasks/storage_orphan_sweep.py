@@ -32,7 +32,7 @@ from nexus.config import get_settings
 from nexus.db.session import get_session_factory
 from nexus.jobs.queue import JobExecutionContext, RescheduleRequested, ScheduleAt, get_job
 from nexus.logging import get_logger
-from nexus.storage.client import StorageClientBase, get_storage_client
+from nexus.storage.client import get_storage_client
 from nexus.tasks.storage_object_cleanup import (
     _armed_writers_for_path,
     path_has_live_db_owner,
@@ -62,19 +62,8 @@ def _read_continuation_token(payload: Mapping[str, Any]) -> str | None:
     return value
 
 
-def _accept_next_continuation_token(value: object) -> str | None:
-    if value is None:
-        return None
-    if not isinstance(value, str) or not value or value != value.strip():
-        # justify-defect: StorageClientBase returns the owned page representation.
-        raise AssertionError("storage orphan sweep received an invalid continuation token")
-    return value
-
-
 def storage_orphan_sweep(
-    *,
-    context: JobExecutionContext,
-    storage_client: StorageClientBase | None = None,
+    *, context: JobExecutionContext
 ) -> Mapping[str, Any] | RescheduleRequested | None:
     """Sweep one page of the media prefix; reschedule to continue, else complete.
 
@@ -92,19 +81,8 @@ def storage_orphan_sweep(
             raise RuntimeError("storage_orphan_sweep job row vanished after claim")
         continuation_token = _read_continuation_token(job.payload)
 
-        client = storage_client if storage_client is not None else get_storage_client()
+        client = get_storage_client()
         page = client.list_objects(_MEDIA_PREFIX, continuation_token=continuation_token)
-        next_continuation_token = _accept_next_continuation_token(
-            page.next_continuation_token
-        )
-        if (
-            next_continuation_token is not None
-            and next_continuation_token == continuation_token
-        ):
-            # justify-defect: a successful page must advance the durable cursor.
-            raise AssertionError(
-                "storage orphan sweep received a non-advancing continuation token"
-            )
 
         now = _now_utc(db)
         deleted = 0
@@ -132,10 +110,13 @@ def storage_orphan_sweep(
                 worker_id=context.worker_id,
             )
 
-        if next_continuation_token is not None:
+        if page.next_continuation_token is not None:
             return RescheduleRequested(
                 schedule=ScheduleAt(datetime.now(UTC)),
-                payload={**job.payload, _CONTINUATION_TOKEN_KEY: next_continuation_token},
+                payload={
+                    **job.payload,
+                    _CONTINUATION_TOKEN_KEY: page.next_continuation_token,
+                },
             )
         return {"disposition": "SweepComplete", "deleted": deleted, "scanned": scanned}
     finally:
