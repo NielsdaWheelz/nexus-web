@@ -23,6 +23,8 @@ DEAD = "dead"
 
 TERMINAL_STATUSES = frozenset({SUCCEEDED, DEAD})
 
+PERIODIC_PRIORITY_RECONCILIATION_LIMIT = 256
+
 _CHAT_GENERATION_ADMISSION_LOCK_KEY = "codex-personal-generation-chat-admission.v1"
 
 type JobResourceClass = Literal["Light", "Heavy"]
@@ -683,10 +685,11 @@ def reconcile_periodic_job_priorities(
 ) -> int:
     """Apply current priority to every active canonical slot for one kind.
 
-    The prefix query leaves on-demand rows of a shared kind untouched. A row
-    that claims the periodic namespace through either durable identity field
-    must satisfy the full scheduler identity and aligned slot contract before
-    any priority is changed.
+    The bounded prefix query leaves on-demand rows of a shared kind untouched
+    while finding claimants globally so a foreign kind cannot occupy this
+    namespace. Every selected row must satisfy the full scheduler identity and
+    aligned slot contract before any priority is changed. Overflow fails the
+    whole scheduling transaction instead of partially converging a backlog.
     """
     prefix = f"periodic:{kind}:"
     rows = (
@@ -695,24 +698,31 @@ def reconcile_periodic_job_priorities(
                 """
                 SELECT *
                 FROM background_jobs
-                WHERE kind = :kind
-                  AND status IN ('pending', 'failed', 'running')
+                WHERE status IN ('pending', 'failed', 'running')
                   AND (
                       left(COALESCE(dedupe_key, ''), char_length(:prefix)) = :prefix
                       OR left(
                           COALESCE(payload->>'request_id', ''),
                           char_length(:prefix)
                       ) = :prefix
-                  )
+                )
                 ORDER BY created_at ASC, id ASC
+                LIMIT :scan_limit
                 FOR UPDATE
                 """
             ),
-            {"kind": kind, "prefix": prefix},
+            {
+                "prefix": prefix,
+                "scan_limit": PERIODIC_PRIORITY_RECONCILIATION_LIMIT + 1,
+            },
         )
         .mappings()
         .all()
     )
+    if len(rows) > PERIODIC_PRIORITY_RECONCILIATION_LIMIT:
+        raise RuntimeError(
+            f"Periodic scheduler active slot limit exceeds {PERIODIC_PRIORITY_RECONCILIATION_LIMIT}"
+        )
     for row in rows:
         _validate_periodic_scheduler_row(
             row,
