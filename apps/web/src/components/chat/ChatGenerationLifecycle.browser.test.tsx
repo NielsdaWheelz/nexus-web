@@ -257,7 +257,7 @@ describe("Chat generation stream lifecycle", () => {
     );
 
     const firstBlock = await screen.findByText("Hel");
-    expect(firstBlock).toBeVisible();
+    await expect.element(firstBlock).toBeVisible();
 
     await waitFor(() => expect(firstController).toBeDefined());
     const first = firstController;
