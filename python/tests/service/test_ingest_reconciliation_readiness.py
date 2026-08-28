@@ -596,6 +596,85 @@ def test_scheduler_reconciles_persisted_periodic_priority_without_rewriting_exec
             cleanup.commit()
 
 
+def test_scheduler_reconciles_older_persisted_periodic_priority_before_claim(
+    engine: Engine,
+) -> None:
+    session_factory = create_session_factory(engine)
+    definition = replace(
+        get_default_registry()["podcast_refresh_due_job"],
+        kind="older_persisted_periodic_fairness_schedule_probe",
+    )
+    ordinary_kind = "older_persisted_periodic_fairness_ordinary_probe"
+    worker_id = "older-persisted-periodic-fairness-proof"
+    scheduler_now = datetime(2020, 1, 1, 1, tzinfo=UTC)
+    current_slot = periodic_slot_start(
+        now=scheduler_now,
+        interval_seconds=int(definition.periodic_interval_seconds or 0),
+    )
+    older_slot = current_slot - timedelta(seconds=int(definition.periodic_interval_seconds or 0))
+    older_dedupe_key = periodic_dedupe_key(kind=definition.kind, slot_start=older_slot)
+    created_job_ids = []
+    try:
+        with session_factory() as db:
+            ordinary = enqueue_job(
+                db,
+                kind=ordinary_kind,
+                payload={"probe": "new-ordinary-work-after-upgrade"},
+            )
+            older_periodic = enqueue_job(
+                db,
+                kind=definition.kind,
+                payload={
+                    "request_id": older_dedupe_key,
+                    "scheduler_identity": "pre-upgrade-scheduler",
+                },
+                priority=100,
+                max_attempts=definition.max_attempts,
+                available_at=older_slot,
+                dedupe_key=older_dedupe_key,
+            )
+            created_job_ids.extend((ordinary.id, older_periodic.id))
+            db.commit()
+
+        worker = JobWorker(
+            session_factory=session_factory,
+            worker_id=worker_id,
+            registry={definition.kind: definition},
+            allowed_kinds=(definition.kind,),
+        )
+        assert worker.run_scheduler_once(now=scheduler_now) == 1
+
+        with session_factory() as db:
+            scheduled_ids = db.scalars(
+                text("SELECT id FROM background_jobs WHERE kind = :kind"),
+                {"kind": definition.kind},
+            ).all()
+            created_job_ids.extend(
+                job_id for job_id in scheduled_ids if job_id not in created_job_ids
+            )
+            older_priority = db.scalar(
+                text("SELECT priority FROM background_jobs WHERE id = :job_id"),
+                {"job_id": older_periodic.id},
+            )
+            assert older_priority == definition.periodic_priority
+
+            claimed = claim_next_job(
+                db,
+                worker_id=worker_id,
+                lease_seconds=30,
+                allowed_kinds=(ordinary_kind, definition.kind),
+                heavy_kinds=(),
+            )
+            assert claimed is not None
+            assert claimed.id == ordinary.id
+            assert complete_job(db, job_id=claimed.id, worker_id=worker_id)
+            db.commit()
+    finally:
+        with session_factory() as cleanup:
+            delete_jobs_by_ids(cleanup, job_ids=tuple(created_job_ids))
+            cleanup.commit()
+
+
 @pytest.mark.parametrize("lifecycle", ("failed", "expired_running"))
 def test_scheduler_reconciles_persisted_periodic_replay_priority_only(
     engine: Engine,
