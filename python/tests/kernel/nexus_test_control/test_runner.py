@@ -4,6 +4,7 @@ import subprocess
 import sys
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from importlib.util import find_spec
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,7 +15,6 @@ import pytest
 import nexus_test_control.memory as memory
 import nexus_test_control.runner as runner
 from nexus.ops.codex_hosted_evidence import codex_hosted_evidence_is_valid
-from nexus.services import generation_policy
 from nexus_test_control.build import StandaloneBuild
 from nexus_test_control.evidence import CapabilityEvidence
 from nexus_test_control.model import (
@@ -311,6 +311,9 @@ def test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape(
 ) -> None:
     """Risk: uploaded evidence retains unbounded, ambiguous, or noncanonical data."""
 
+    assert find_spec("nexus.services.generation_policy") is not None, (
+        "fixed Codex generation policy owner is absent"
+    )
     evidence_path = tmp_path / "hosted-codex-personal-generation.json"
     run_id = "0123456789abcdef"
     valid = _codex_hosted_canary_evidence(run_id)
@@ -446,6 +449,8 @@ def test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape(
 
 
 def _codex_hosted_canary_evidence(run_id: str) -> dict[str, object]:
+    from nexus.services import generation_policy
+
     return {
         "schema_version": "nexus-hosted-codex-canary.v3",
         "run_id": run_id,
