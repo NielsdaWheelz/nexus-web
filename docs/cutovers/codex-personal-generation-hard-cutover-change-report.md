@@ -101,6 +101,20 @@ more than 256 active rows defects the whole transaction before durable mutation.
 On-demand rows sharing the kind remain untouched, and no second fairness
 mechanism was introduced.
 
+The exact integrated changed run also exposed a browser-portfolio isolation
+defect: an optional `synapse_scan` left by an earlier journey could occupy the
+single shared background worker while the reader-progress journey waited for
+its newly published EPUB. The EPUB remained durably pending and the worker
+released the interrupted Synapse claim correctly; the failure was not job loss,
+scheduler drift, or an ingest-latency contract. The required formal diagnostic
+replay passed while preserving the original failed verdict. The controller now
+passes the existing `SYNAPSE_ENABLED=false` product setting to the browser
+portfolio's API and both workers, so scenarios cannot leak unowned optional
+synthesis work through their shared queue. Focused Synapse service and eval
+owners remain enabled and unchanged. One exact controller contract proves the
+three-process environment; no retry, test reordering, queue deletion, priority
+change, or timeout widening was introduced.
+
 ## Verification
 
 The 80/20 proof shape is one dominant proof per ownership boundary and sixteen
