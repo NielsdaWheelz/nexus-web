@@ -367,7 +367,8 @@ def test_android_player_protocol_sources_route_the_cross_release_skew_proofs(
             ),
             (
                 Capability.KERNEL_PYTHON,
-                "pytest:python/tests/kernel/test_android_player_protocol_release_gate.py",
+                "pytest:python/tests/kernel/test_android_player_protocol_release_gate.py::"
+                "test_release_manifest_decoder_rejects_noncurrent_or_legacy_manifests",
             ),
             (
                 Capability.ANDROID_HOST,
@@ -681,7 +682,8 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/kernel/nexus_test_control/test_provider_runtime_pin.py::test_provider_runtime_is_materialized_from_the_pin_without_retargeting_source",
                 "pytest:python/tests/kernel/nexus_test_control/test_runner.py",
                 "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape",
-                "pytest:python/tests/kernel/test_android_player_protocol_release_gate.py",
+                "pytest:python/tests/kernel/test_android_player_protocol_release_gate.py::"
+                "test_release_manifest_decoder_rejects_noncurrent_or_legacy_manifests",
                 "pytest:python/tests/llm_tools_contract/test_pinned_llm_tools.py::"
                 "test_exact_pins_round_trip_one_canonical_native_tool",
                 "pytest:python/tests/kernel/nexus_test_control/test_llm_tools_capability.py::"
