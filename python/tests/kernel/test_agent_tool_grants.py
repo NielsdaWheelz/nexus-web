@@ -5,21 +5,25 @@ from __future__ import annotations
 import base64
 import json
 from datetime import UTC, datetime, timedelta
+from importlib.util import find_spec
 from uuid import uuid4
 
 import pytest
 from pydantic import SecretStr
 
-from nexus.services import generation_policy
-from nexus.services.agent_tool_grants import (
-    AGENT_TOOL_GRANT_AUDIENCE,
-    AGENT_TOOL_GRANT_ISSUER,
-    AGENT_TOOL_GRANT_SCOPE,
-    MAX_AGENT_TOOL_GRANT_TTL_SECONDS,
-    AgentToolGrantClaims,
-    issue_agent_tool_grant,
-    verify_agent_tool_grant,
+_AGENT_TOOL_GRANT_BOUNDARY_PRESENT = (
+    find_spec("nexus.services.agent_tool_grants") is not None
 )
+if _AGENT_TOOL_GRANT_BOUNDARY_PRESENT:
+    from nexus.services.agent_tool_grants import (
+        AGENT_TOOL_GRANT_AUDIENCE,
+        AGENT_TOOL_GRANT_ISSUER,
+        AGENT_TOOL_GRANT_SCOPE,
+        MAX_AGENT_TOOL_GRANT_TTL_SECONDS,
+        AgentToolGrantClaims,
+        issue_agent_tool_grant,
+        verify_agent_tool_grant,
+    )
 
 _SIGNING_KEY = SecretStr("dedicated-chat-tools-hs256-test-key")
 
@@ -46,6 +50,11 @@ def _claims(now: datetime) -> AgentToolGrantClaims:
 
 
 def test_grant_is_strict_hs256_bearer_and_does_not_leak_secret() -> None:
+    assert _AGENT_TOOL_GRANT_BOUNDARY_PRESENT, (
+        "dedicated agent-tool grant boundary is absent"
+    )
+    from nexus.services import generation_policy
+
     now = datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
     claims = _claims(now)
     bearer = issue_agent_tool_grant(claims, signing_key=_SIGNING_KEY, now=now)
@@ -95,6 +104,9 @@ def test_grant_is_strict_hs256_bearer_and_does_not_leak_secret() -> None:
 
 
 def test_grant_rejects_clock_skew_and_missing_or_extra_claims() -> None:
+    assert _AGENT_TOOL_GRANT_BOUNDARY_PRESENT, (
+        "dedicated agent-tool grant boundary is absent"
+    )
     now = datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
     claims = _claims(now)
 
