@@ -28,8 +28,6 @@ from nexus_test_control.runtime import (
     RuntimeContractError,
     RuntimePorts,
     claim_run,
-    codex_generation_peer_state_dir,
-    embedding_peer_state_dir,
     extension_profile_identity,
     initialize_runtime,
     migration_database_name,
@@ -52,11 +50,7 @@ from nexus_test_control.services import (
     _write_supabase_config,
     clean_owned_runtime,
     clean_run,
-    finish_embedding_peer_state,
-    materialize_codex_generation_peer,
-    materialize_embedding_peer,
     new_run_id,
-    prepare_embedding_peer_state,
     run_environment,
     start_python_process,
     start_web_process,
@@ -69,7 +63,6 @@ from nexus_test_control.services import (
 from nexus_test_control.services import (
     test_environment as local_test_environment,
 )
-from tests.testkit.codex_generation_server import deterministic_synthesis_output
 
 TEST_ENV = {"NEXUS_ENV": "test"}
 RUN_ID = "0123456789abcdef"
@@ -159,6 +152,11 @@ def _empty_owned_run(tmp_path: Path) -> OwnedRun:
 
 
 def _created_embedding_peer_paths(tmp_path: Path, run: OwnedRun) -> dict[str, Path]:
+    from nexus_test_control.services import (
+        finish_embedding_peer_state,
+        prepare_embedding_peer_state,
+    )
+
     state = prepare_embedding_peer_state(tmp_path, TEST_ENV, run)
     paths = {
         "ca.pem": state / "ca.pem",
@@ -1384,6 +1382,9 @@ def test_run_environment_contains_only_exact_local_resources_and_no_admin_key(
 
 
 def test_embedding_peer_materializes_one_exact_client_identity(tmp_path: Path) -> None:
+    from nexus_test_control.runtime import embedding_peer_state_dir
+    from nexus_test_control.services import materialize_embedding_peer
+
     run = _empty_owned_run(tmp_path)
 
     peer = materialize_embedding_peer(tmp_path, TEST_ENV, run)
@@ -1407,6 +1408,9 @@ def test_embedding_peer_materializes_one_exact_client_identity(tmp_path: Path) -
 def test_codex_generation_peer_materializes_one_exact_secret_free_client_identity(
     tmp_path: Path,
 ) -> None:
+    from nexus_test_control.runtime import codex_generation_peer_state_dir
+    from nexus_test_control.services import materialize_codex_generation_peer
+
     run = _empty_owned_run(tmp_path)
 
     peer = materialize_codex_generation_peer(tmp_path, TEST_ENV, run)
@@ -1425,6 +1429,8 @@ def test_codex_generation_peer_materializes_one_exact_secret_free_client_identit
 
 
 def test_codex_generation_peer_answers_journey_synthesis_without_tool_authority() -> None:
+    from tests.testkit.codex_generation_server import deterministic_synthesis_output
+
     generation_id = UUID("37fec309-e196-5c82-ac03-095414384ca4")
     metadata = enrich_metadata._metadata_generation_command(
         generation_id=generation_id,
@@ -1578,6 +1584,9 @@ def test_embedding_peer_rejects_each_invalid_owned_file_before_recording_a_proce
 
 
 def test_clean_recovers_an_interrupted_embedding_peer_preparation(tmp_path: Path) -> None:
+    from nexus_test_control.runtime import embedding_peer_state_dir
+    from nexus_test_control.services import prepare_embedding_peer_state
+
     run = _empty_owned_run(tmp_path)
     state = prepare_embedding_peer_state(tmp_path, TEST_ENV, run)
     (state / "requests.jsonl").write_text("partial\n", encoding="utf-8")
