@@ -19,8 +19,6 @@ import httpx
 import pytest
 
 import nexus_test_control.services as services
-from nexus.services import media_intelligence
-from nexus.tasks import enrich_metadata
 from nexus_test_control.build import StandaloneBuild
 from nexus_test_control.model import Resource, ResourceKind
 from nexus_test_control.runtime import (
@@ -1429,6 +1427,8 @@ def test_codex_generation_peer_materializes_one_exact_secret_free_client_identit
 
 
 def test_codex_generation_peer_answers_journey_synthesis_without_tool_authority() -> None:
+    from nexus.services import media_intelligence
+    from nexus.tasks import enrich_metadata
     from tests.testkit.codex_generation_server import deterministic_synthesis_output
 
     generation_id = UUID("37fec309-e196-5c82-ac03-095414384ca4")
