@@ -11,9 +11,7 @@ from uuid import uuid4
 import pytest
 from pydantic import SecretStr
 
-_AGENT_TOOL_GRANT_BOUNDARY_PRESENT = (
-    find_spec("nexus.services.agent_tool_grants") is not None
-)
+_AGENT_TOOL_GRANT_BOUNDARY_PRESENT = find_spec("nexus.services.agent_tool_grants") is not None
 if _AGENT_TOOL_GRANT_BOUNDARY_PRESENT:
     from nexus.services.agent_tool_grants import (
         AGENT_TOOL_GRANT_AUDIENCE,
@@ -50,9 +48,7 @@ def _claims(now: datetime) -> AgentToolGrantClaims:
 
 
 def test_grant_is_strict_hs256_bearer_and_does_not_leak_secret() -> None:
-    assert _AGENT_TOOL_GRANT_BOUNDARY_PRESENT, (
-        "dedicated agent-tool grant boundary is absent"
-    )
+    assert _AGENT_TOOL_GRANT_BOUNDARY_PRESENT, "dedicated agent-tool grant boundary is absent"
     from nexus.services import generation_policy
 
     now = datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
@@ -104,9 +100,7 @@ def test_grant_is_strict_hs256_bearer_and_does_not_leak_secret() -> None:
 
 
 def test_grant_rejects_clock_skew_and_missing_or_extra_claims() -> None:
-    assert _AGENT_TOOL_GRANT_BOUNDARY_PRESENT, (
-        "dedicated agent-tool grant boundary is absent"
-    )
+    assert _AGENT_TOOL_GRANT_BOUNDARY_PRESENT, "dedicated agent-tool grant boundary is absent"
     now = datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
     claims = _claims(now)
 
