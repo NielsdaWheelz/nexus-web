@@ -2747,6 +2747,9 @@ def _ensure_browser_processes(
         app_environment = {
             **embedding_environment,
             **generation_peer.client_environment(),
+            # Journeys share one background queue. Unowned optional Synapse
+            # work must not leak executor capacity between isolated scenarios.
+            "SYNAPSE_ENABLED": "false",
         }
         api = execution.ports.start_python_process(
             context.repo_root,
