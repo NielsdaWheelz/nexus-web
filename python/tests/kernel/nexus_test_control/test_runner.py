@@ -8,7 +8,7 @@ from importlib.util import find_spec
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -37,7 +37,6 @@ from nexus_test_control.runner import (
 )
 from nexus_test_control.runtime import RuntimeContractError
 from nexus_test_control.services import (
-    EmbeddingPeer,
     StartedProcess,
     SupabaseCredentials,
     authorized_instrumentation_device,
@@ -49,6 +48,9 @@ from nexus_test_control.services import (
 from nexus_test_control.services import (
     TestUser as OwnedTestUser,
 )
+
+if TYPE_CHECKING:
+    from nexus_test_control.services import EmbeddingPeer
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 _CANDIDATE_WORKER_IMAGE_ID = "sha256:" + "c" * 64
@@ -3871,7 +3873,9 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
             _repo_root: Path,
             _environment: Mapping[str, str],
             _run: OwnedTestRun,
-        ) -> EmbeddingPeer:
+        ) -> "EmbeddingPeer":
+            from nexus_test_control.services import EmbeddingPeer
+
             state = tmp_path / "embedding-peer"
             state.mkdir()
             certificate = state / "ca.pem"
