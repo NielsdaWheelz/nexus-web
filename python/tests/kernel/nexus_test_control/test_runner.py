@@ -4051,6 +4051,7 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
     app_environment = {
         **embedding_environment,
         "NEXUS_CODEX_AGENT_SOCKET": str(tmp_path / "generation-peer/agent.sock"),
+        "SYNAPSE_ENABLED": "false",
     }
     assert process_overrides == {
         "external": None,
