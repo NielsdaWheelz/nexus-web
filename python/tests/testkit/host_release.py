@@ -123,13 +123,13 @@ def _codex_host_privilege_config() -> dict[str, object]:
         ],
         "Tmpfs": {
             "/run/nexus-codex-turns": (
-                "rw,exec,nosuid,nodev,size=16m,mode=0700,uid=10001,gid=10001"
+                "rw,exec,nosuid,nodev,size=180m,mode=0700,uid=10001,gid=10001"
             ),
             "/tmp": "rw,noexec,nosuid,nodev,size=16m",
         },
         "Ulimits": [
             {"Name": "core", "Soft": 0, "Hard": 0},
-            {"Name": "fsize", "Soft": 1_048_576, "Hard": 1_048_576},
+            {"Name": "fsize", "Soft": 77_594_624, "Hard": 77_594_624},
             {"Name": "nofile", "Soft": 64, "Hard": 64},
         ],
     }

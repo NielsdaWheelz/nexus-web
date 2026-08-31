@@ -13,6 +13,7 @@ import type {
 import { isAssistantPrimaryBodyVisible } from "@/lib/conversations/conversationPresentation";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import type { ResourceActivation } from "@/lib/resources/activation";
+import type { ChatConnectionRecovery } from "@/lib/conversations/chatConnectionRecovery";
 import { toReaderCitationData } from "@/lib/conversations/citations";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import AssistantSelectionPopover from "./AssistantSelectionPopover";
@@ -35,8 +36,10 @@ export default function AssistantMessage({
   onSelectFork,
   onReplyToAssistant,
   onCitationActivate,
-  connectionLost,
+  connectionRecovery,
   onReconnectAssistant,
+  onRerun,
+  rerunning,
   timestampLabel,
 }: {
   message: ConversationMessage;
@@ -50,8 +53,10 @@ export default function AssistantMessage({
     target: ReaderSourceTarget | null,
     event?: React.MouseEvent,
   ) => void;
-  connectionLost?: boolean;
+  connectionRecovery?: ChatConnectionRecovery;
   onReconnectAssistant?: (assistantMessageId: string) => void;
+  onRerun?: () => void;
+  rerunning?: boolean;
   timestampLabel: string;
 }) {
   const toolCalls = message.trust_trail?.tool_calls ?? [];
@@ -65,7 +70,7 @@ export default function AssistantMessage({
   // The one card-bearing failure read: the failure folds onto the run inside the
   // trust trail (null when no representable failure is stored → the generic
   // card). A terminal message status is what shows the card; any rehydrated
-  // terminal status replaces the client-only ConnectionLostStatusUnknown card.
+  // terminal status replaces client-only connection recovery.
   const trustRun = message.trust_trail?.run;
   const failure = trustRun?.failure ?? null;
   const supportId = trustRun?.support_id ?? absent();
@@ -82,7 +87,7 @@ export default function AssistantMessage({
       : null;
   const showSuspendedCard = !isTerminal && executionPhase === "Suspended";
   const showReconnectCard =
-    Boolean(connectionLost) && !isTerminal && !showSuspendedCard;
+    connectionRecovery !== undefined && !isTerminal && !showSuspendedCard;
 
   const {
     answerRef,
@@ -156,12 +161,19 @@ export default function AssistantMessage({
         />
       ) : null}
       {showFailureCard ? (
-        <ChatFailureCard failure={failure} supportId={supportId} />
+        <ChatFailureCard
+          failure={failure}
+          supportId={supportId}
+          canRerun={message.can_rerun}
+          onRerun={onRerun}
+          rerunning={rerunning}
+        />
       ) : showSuspendedCard ? (
         <ChatFailureCard mode="suspended" />
-      ) : showReconnectCard ? (
+      ) : showReconnectCard && connectionRecovery ? (
         <ChatFailureCard
           mode="reconnect"
+          recovery={connectionRecovery}
           onReconnect={() => onReconnectAssistant?.(message.id)}
         />
       ) : null}

@@ -127,8 +127,9 @@ def test_codex_agent_host_is_private_worker_image_with_credential_and_socket_iso
     assert "systempaths=unconfined" in host
     assert "- /tmp:rw,noexec,nosuid,nodev,size=16m" in host
     assert (
-        "- /run/nexus-codex-turns:rw,exec,nosuid,nodev,size=16m,mode=0700,uid=10001,gid=10001"
+        "- /run/nexus-codex-turns:rw,exec,nosuid,nodev,size=180m,mode=0700,uid=10001,gid=10001"
     ) in host
+    assert "fsize: 77594624" in host
     assert "networks:\n      codex_private:" in host
     assert "nexus_codex_state" not in compose
     assert "- type: bind" in host

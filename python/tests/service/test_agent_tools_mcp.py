@@ -66,7 +66,7 @@ from nexus.services.agent_tools_mcp import (
     MAX_MCP_REQUEST_BODY_BYTES,
     MCP_PATH,
     MCP_PROTOCOL_VERSION,
-    MCP_RATE_BURST,
+    MCP_SOURCE_RATE_BURST,
     ActiveAgentToolRegistry,
     AgentToolAuthority,
     JsonRpcId,
@@ -340,6 +340,7 @@ def _prepare_write_race(
             worker_id=worker_id,
             attempt_no=job_context.attempt_no,
             generation_id=str(generation_id),
+            admission_id=str(uuid4()),
             tool_plan_revision=str(operation.plan.plan_revision),
             request_fingerprint=request_fingerprint(placeholder),
             iat=issued_at,
@@ -398,6 +399,7 @@ def _prepare_write_race(
         operation=operation,
         worker_id=worker_id,
         generation_id=generation_id,
+        admission_id=UUID(claims.admission_id),
         grant_jti=claims.jti,
         admitted_resource_uris=admitted_resource_uris,
     )
@@ -983,6 +985,7 @@ def test_claimed_chat_authority_requires_and_routes_through_active_registry(
             operation=race.operation,
             worker_id=race.worker_id,
             generation_id=race.generation_id,
+            admission_id=UUID(race.claims.admission_id),
             grant_jti=str(uuid4()),
             admitted_resource_uris=race.admitted_resource_uris,
         )
@@ -1116,6 +1119,7 @@ def test_prepared_mcp_admission_survives_sigkill_without_generation_replay(
         operation=race.operation,
         worker_id=race.worker_id,
         generation_id=race.generation_id,
+        admission_id=UUID(fresh_claims.admission_id),
         grant_jti=fresh_claims.jti,
         admitted_resource_uris=race.admitted_resource_uris,
     )
@@ -1836,6 +1840,7 @@ def test_mcp_mount_projects_declarations_and_is_sessionless(
         worker_id="worker-red-proof",
         attempt_no=job_context.attempt_no,
         generation_id=str(generation_id),
+        admission_id=str(uuid4()),
         tool_plan_revision=str(operation.plan.plan_revision),
         request_fingerprint=command_fingerprint,
         iat=issued_at,
@@ -1882,6 +1887,7 @@ def test_mcp_mount_projects_declarations_and_is_sessionless(
         operation=operation,
         worker_id="worker-red-proof",
         generation_id=generation_id,
+        admission_id=UUID(claims.admission_id),
         grant_jti=claims.jti,
         admitted_resource_uris=(*admitted_uris, missing_uri),
     )
@@ -2764,6 +2770,7 @@ def test_mcp_mount_projects_declarations_and_is_sessionless(
                 ("cross-user", {"sub": str(uuid4())}, read_args),
                 ("cross-run", {"run_id": str(uuid4())}, read_args),
                 ("cross-generation", {"generation_id": str(uuid4())}, read_args),
+                ("cross-admission", {"admission_id": str(uuid4())}, read_args),
                 ("wrong-worker", {"worker_id": "other-worker"}, read_args),
                 ("wrong-attempt", {"attempt_no": job_context.attempt_no + 1}, read_args),
             )
@@ -2783,6 +2790,40 @@ def test_mcp_mount_projects_declarations_and_is_sessionless(
                 )
                 assert (response.status_code, response.content) == (401, b"")
             assert policy_violations == [str(generation_id)]
+
+            attacker_transport = httpx.ASGITransport(
+                app=app,
+                client=("172.20.0.2", 41_234),
+            )
+            async with httpx.AsyncClient(
+                transport=attacker_transport,
+                base_url="http://mcp.test",
+            ) as attacker:
+                attacker_headers = _headers(bearer="invalid-source-grant") | {
+                    "X-Forwarded-For": "203.0.113.77"
+                }
+                for index in range(MCP_SOURCE_RATE_BURST):
+                    rejected = await attacker.post(
+                        MCP_PATH,
+                        headers=attacker_headers,
+                        json=_mcp_request(index, "tools/list", {}),
+                    )
+                    assert rejected.status_code == 401
+                throttled = await attacker.post(
+                    MCP_PATH,
+                    headers=attacker_headers,
+                    json=_mcp_request("throttled-source", "tools/list", {}),
+                )
+                assert (throttled.status_code, throttled.content) == (429, b"")
+
+            # The hostile source exhausted only its trusted single-hop window;
+            # it cannot spend this active grant's separately keyed capacity.
+            valid_after_attack = await client.post(
+                MCP_PATH,
+                headers=_headers(bearer=bearer),
+                json=_mcp_request("valid-after-source-attack", "tools/list", {}),
+            )
+            assert valid_after_attack.status_code == 200
 
             with session_factory() as stale_db:
                 expire_job_claim(stale_db, job_id=admitted.job_id)
@@ -2857,26 +2898,6 @@ def test_mcp_mount_projects_declarations_and_is_sessionless(
             )
             assert expired_response.status_code == exposed_without_grant.status_code
             assert policy_violations == [str(generation_id)]
-
-            saturated = False
-            for index in range(MCP_RATE_BURST + 1):
-                throttled = await client.post(
-                    MCP_PATH,
-                    headers=_headers(bearer=f"invalid-{index}"),
-                    json=_mcp_request(index, "tools/list", {}),
-                )
-                if throttled.status_code == 429:
-                    saturated = True
-                    break
-            assert saturated
-            saturated_unauthenticated_probe = await client.post(MCP_PATH, content=b"")
-            assert (
-                saturated_unauthenticated_probe.status_code,
-                saturated_unauthenticated_probe.content,
-            ) == (
-                429,
-                b"",
-            )
 
     asyncio.run(scenario())
     authority.close()

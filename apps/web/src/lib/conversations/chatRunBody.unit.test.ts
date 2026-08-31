@@ -8,7 +8,7 @@ import type { BranchDraft } from "@/lib/conversations/types";
 
 const scalars = {
   content: "why?",
-  profileId: "fast",
+  profileId: "fast" as const,
 };
 
 describe("buildChatRunBody", () => {

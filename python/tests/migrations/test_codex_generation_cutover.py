@@ -214,6 +214,8 @@ def _preflight_fingerprint(
             connection.scalar(text("SELECT count(*) FROM chat_runs")),
             connection.scalar(text("SELECT count(*) FROM artifact_builds")),
             connection.scalar(text("SELECT count(*) FROM artifact_learn_requests")),
+            connection.scalar(text("SELECT count(*) FROM oracle_readings")),
+            connection.scalar(text("SELECT count(*) FROM oracle_reading_events")),
         )
 
 
@@ -450,6 +452,66 @@ def test_0224_refuses_every_active_or_uncertain_generation_owner_before_mutation
             connection.execute(text("DELETE FROM artifact_builds WHERE id = :id"), {"id": build_id})
             connection.execute(text("DELETE FROM artifacts WHERE id = :id"), {"id": artifact_id})
 
+        malformed_oracle_id = uuid4()
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO oracle_readings (
+                        id, user_id, folio_number, question_text, status,
+                        error_code, failed_at
+                    ) VALUES (
+                        :id, :user_id, 1, 'Missing historical terminal', 'failed',
+                        'provider_unavailable', clock_timestamp()
+                    )
+                    """
+                ),
+                {"id": malformed_oracle_id, "user_id": ids["user"]},
+            )
+        _assert_refused_without_mutation(
+            config,
+            engine,
+            call_id=call_id,
+            turn_id=turn_id,
+            blocker="Oracle failure without a matching terminal",
+            expected_error=rf"Oracle failures require.*{malformed_oracle_id}",
+        )
+        with engine.begin() as connection:
+            connection.execute(
+                text("DELETE FROM oracle_readings WHERE id = :id"),
+                {"id": malformed_oracle_id},
+            )
+
+        unsupported_oracle_id = uuid4()
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO oracle_readings (
+                        id, user_id, folio_number, question_text, status,
+                        error_code, failed_at
+                    ) VALUES (
+                        :id, :user_id, 1, 'Unsupported historical failure', 'failed',
+                        'unknown_provider_failure', clock_timestamp()
+                    )
+                    """
+                ),
+                {"id": unsupported_oracle_id, "user_id": ids["user"]},
+            )
+        _assert_refused_without_mutation(
+            config,
+            engine,
+            call_id=call_id,
+            turn_id=turn_id,
+            blocker="Oracle failure with an unsupported code",
+            expected_error=rf"unsupported cutover codes.*{unsupported_oracle_id}",
+        )
+        with engine.begin() as connection:
+            connection.execute(
+                text("DELETE FROM oracle_readings WHERE id = :id"),
+                {"id": unsupported_oracle_id},
+            )
+
         uncertain_job_id = uuid4()
         with engine.begin() as connection:
             connection.execute(
@@ -623,6 +685,17 @@ def _seed_drained_cutover(connection: object) -> dict[str, UUID]:
             "dawn_write": uuid4(),
             "old_call": uuid4(),
             "old_turn": uuid4(),
+            "dossier_artifact": uuid4(),
+            "historical_build": uuid4(),
+            "historical_failure": uuid4(),
+            "historical_event": uuid4(),
+            "current_build": uuid4(),
+            "current_failure": uuid4(),
+            "current_event": uuid4(),
+            "historical_oracle": uuid4(),
+            "historical_oracle_event": uuid4(),
+            "current_oracle": uuid4(),
+            "current_oracle_event": uuid4(),
         }
     )
     connection.execute(
@@ -638,6 +711,43 @@ def _seed_drained_cutover(connection: object) -> dict[str, UUID]:
                 'preserved-run', 'preserved-payload', 'complete', 'balanced', 'medium',
                 'openai', 'gpt-5.6-terra', 'medium', 'provider_response'
             )
+            """
+        ),
+        ids,
+    )
+    connection.execute(
+        text(
+            """
+            INSERT INTO oracle_readings (
+                id, user_id, folio_number, question_text, status,
+                error_code, failed_at
+            ) VALUES
+                (
+                    :historical_oracle, :user, 1, 'Preserve earlier failure',
+                    'failed', 'provider_unavailable', clock_timestamp()
+                ),
+                (
+                    :current_oracle, :user, 2, 'Preserve current failure',
+                    'failed', 'timeout', clock_timestamp()
+                )
+            """
+        ),
+        ids,
+    )
+    connection.execute(
+        text(
+            """
+            INSERT INTO oracle_reading_events (
+                id, reading_id, seq, event_type, payload
+            ) VALUES
+                (
+                    :historical_oracle_event, :historical_oracle, 1, 'done',
+                    '{"status":"failed","error_code":"provider_unavailable"}'::jsonb
+                ),
+                (
+                    :current_oracle_event, :current_oracle, 1, 'done',
+                    '{"status":"failed","error_code":"timeout"}'::jsonb
+                )
             """
         ),
         ids,
@@ -679,6 +789,63 @@ def _seed_drained_cutover(connection: object) -> dict[str, UUID]:
         call_id=ids["old_call"],
         turn_id=ids["old_turn"],
         owner_id=ids["chat_run"],
+    )
+    connection.execute(
+        text(
+            """
+            INSERT INTO artifacts (
+                id, subject_scheme, subject_id, audience_scheme, audience_id
+            ) VALUES (
+                :dossier_artifact, 'media', :subject_id, 'user', :audience_id
+            )
+            """
+        ),
+        {
+            **ids,
+            "subject_id": uuid4(),
+            "audience_id": str(ids["user"]),
+        },
+    )
+    connection.execute(
+        text(
+            """
+            INSERT INTO artifact_builds (
+                id, artifact_id, requester_user_id, idempotency_key
+            ) VALUES
+                (:historical_build, :dossier_artifact, :user, 'historical-failure'),
+                (:current_build, :dossier_artifact, :user, 'current-failure')
+            """
+        ),
+        ids,
+    )
+    connection.execute(
+        text(
+            """
+            INSERT INTO artifact_build_failures (id, build_id, failure_code)
+            VALUES
+                (:historical_failure, :historical_build, 'ProviderRefused'),
+                (:current_failure, :current_build, 'Timeout')
+            """
+        ),
+        ids,
+    )
+    connection.execute(
+        text(
+            """
+            INSERT INTO artifact_build_events (
+                id, build_id, seq, event_type, payload
+            ) VALUES
+                (
+                    :historical_event, :historical_build, 1, 'Failed',
+                    '{"failure_code":"ProviderRefused","detail":{"kind":"Absent"},"support":{"kind":"Absent"}}'::jsonb
+                ),
+                (
+                    :current_event, :current_build, 1, 'Failed',
+                    '{"failure_code":"Timeout","detail":{"kind":"Absent"},"support":{"kind":"Absent"}}'::jsonb
+                )
+            """
+        ),
+        ids,
     )
     connection.execute(
         text(
@@ -786,6 +953,26 @@ def _post_cutover_fingerprint(engine: Engine, ids: dict[str, UUID]) -> tuple[obj
                 text("SELECT reserved_output_tokens FROM chat_prompt_assemblies WHERE id = :id"),
                 {"id": ids["prompt"]},
             ),
+            connection.execute(
+                text(
+                    """
+                    SELECT id, event_type FROM artifact_build_events
+                    WHERE id IN (:historical_event, :current_event)
+                    ORDER BY id
+                    """
+                ),
+                ids,
+            ).all(),
+            connection.execute(
+                text(
+                    """
+                    SELECT id, event_type FROM oracle_reading_events
+                    WHERE id IN (:historical_oracle_event, :current_oracle_event)
+                    ORDER BY id
+                    """
+                ),
+                ids,
+            ).all(),
         )
 
 
@@ -822,6 +1009,19 @@ def test_0224_deletes_old_audit_and_billing_state_but_preserves_domain_outputs(
         assert "reserved_output_tokens" in prompt_columns
         assert prompt_columns["reserved_output_tokens"]["nullable"] is False
 
+        event_type_check = next(
+            item
+            for item in inspector.get_check_constraints("artifact_build_events")
+            if item["name"] == "ck_artifact_build_events_type"
+        )
+        assert "HistoricalFailed" in event_type_check["sqltext"]
+        oracle_event_type_check = next(
+            item
+            for item in inspector.get_check_constraints("oracle_reading_events")
+            if item["name"] == "ck_oracle_reading_events_type"
+        )
+        assert "historical_done" in oracle_event_type_check["sqltext"]
+
         _assert_final_ledger_schema(engine)
         with engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
@@ -841,6 +1041,74 @@ def test_0224_deletes_old_audit_and_billing_state_but_preserves_domain_outputs(
                 text("SELECT role, content FROM messages WHERE conversation_id = :id ORDER BY seq"),
                 {"id": ids["conversation"]},
             ).all() == [("user", "Preserve question"), ("assistant", "Preserve answer")]
+            assert connection.execute(
+                text(
+                    """
+                    SELECT id, event_type, payload ->> 'failure_code'
+                    FROM artifact_build_events
+                    WHERE id IN (:historical_event, :current_event)
+                    ORDER BY id
+                    """
+                ),
+                ids,
+            ).all() == sorted(
+                [
+                    (ids["historical_event"], "HistoricalFailed", "ProviderRefused"),
+                    (ids["current_event"], "Failed", "Timeout"),
+                ]
+            )
+            assert connection.execute(
+                text(
+                    """
+                    SELECT id, event_type, payload ->> 'error_code'
+                    FROM oracle_reading_events
+                    WHERE id IN (:historical_oracle_event, :current_oracle_event)
+                    ORDER BY id
+                    """
+                ),
+                ids,
+            ).all() == sorted(
+                [
+                    (
+                        ids["historical_oracle_event"],
+                        "historical_done",
+                        "provider_unavailable",
+                    ),
+                    (ids["current_oracle_event"], "done", "timeout"),
+                ]
+            )
+            assert connection.execute(
+                text(
+                    """
+                    SELECT id, error_code
+                    FROM oracle_readings
+                    WHERE id IN (:historical_oracle, :current_oracle)
+                    ORDER BY id
+                    """
+                ),
+                ids,
+            ).all() == sorted(
+                [
+                    (ids["historical_oracle"], "provider_unavailable"),
+                    (ids["current_oracle"], "timeout"),
+                ]
+            )
+            assert connection.execute(
+                text(
+                    """
+                    SELECT id, failure_code
+                    FROM artifact_build_failures
+                    WHERE id IN (:historical_failure, :current_failure)
+                    ORDER BY id
+                    """
+                ),
+                ids,
+            ).all() == sorted(
+                [
+                    (ids["historical_failure"], "ProviderRefused"),
+                    (ids["current_failure"], "Timeout"),
+                ]
+            )
             assert (
                 connection.scalar(
                     text("SELECT body_md FROM dawn_writes WHERE id = :id"),

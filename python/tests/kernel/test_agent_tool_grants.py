@@ -20,6 +20,7 @@ if _AGENT_TOOL_GRANT_BOUNDARY_PRESENT:
         MAX_AGENT_TOOL_GRANT_TTL_SECONDS,
         AgentToolGrantClaims,
         issue_agent_tool_grant,
+        issue_chat_generation_grant,
         verify_agent_tool_grant,
     )
 
@@ -39,6 +40,7 @@ def _claims(now: datetime) -> AgentToolGrantClaims:
         worker_id="worker-red-proof",
         attempt_no=3,
         generation_id=str(uuid4()),
+        admission_id=str(uuid4()),
         tool_plan_revision="a" * 64,
         request_fingerprint="a" * 64,
         iat=issued_at,
@@ -133,11 +135,55 @@ def test_grant_rejects_clock_skew_and_missing_or_extra_claims() -> None:
             now=now,
         )
 
-    wire = claims.model_dump(mode="json")
-    wire.pop("generation_id")
-    with pytest.raises(ValueError):
-        AgentToolGrantClaims.model_validate(wire)
+    for required_claim in ("generation_id", "admission_id"):
+        wire = claims.model_dump(mode="json")
+        wire.pop(required_claim)
+        with pytest.raises(ValueError):
+            AgentToolGrantClaims.model_validate(wire)
     with pytest.raises(ValueError):
         AgentToolGrantClaims.model_validate(
             {**claims.model_dump(mode="json"), "session_id": "nope"}
+        )
+
+
+def test_chat_grant_uses_host_admission_as_its_non_extensible_900_second_clock() -> None:
+    admitted_at = datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
+    issued_at = admitted_at + timedelta(seconds=17)
+    issued = issue_chat_generation_grant(
+        user_id=uuid4(),
+        run_id=uuid4(),
+        job_id=uuid4(),
+        worker_id="worker-admission-clock",
+        attempt_no=1,
+        generation_id=uuid4(),
+        admission_id=uuid4(),
+        tool_plan_revision="a" * 64,
+        request_fingerprint="b" * 64,
+        signing_key=_SIGNING_KEY,
+        admitted_at=admitted_at,
+        now=issued_at,
+    )
+    claims = verify_agent_tool_grant(
+        issued.token,
+        signing_key=_SIGNING_KEY,
+        now=issued_at,
+    )
+    assert claims.iat == claims.nbf == int(issued_at.timestamp())
+    assert claims.exp == int(admitted_at.timestamp()) + 900
+    assert claims.exp - claims.iat == 883
+
+    with pytest.raises(ValueError, match="expired before"):
+        issue_chat_generation_grant(
+            user_id=uuid4(),
+            run_id=uuid4(),
+            job_id=uuid4(),
+            worker_id="worker-admission-clock",
+            attempt_no=1,
+            generation_id=uuid4(),
+            admission_id=uuid4(),
+            tool_plan_revision="a" * 64,
+            request_fingerprint="b" * 64,
+            signing_key=_SIGNING_KEY,
+            admitted_at=admitted_at,
+            now=admitted_at + timedelta(seconds=900),
         )

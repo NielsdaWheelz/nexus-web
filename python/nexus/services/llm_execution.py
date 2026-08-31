@@ -6,10 +6,10 @@ import asyncio
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
-from typing import Literal, Protocol, Self
+from typing import Literal, Protocol
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -26,6 +26,8 @@ from nexus.jobs.queue import (
 from nexus.schemas.presence import Present, absent, present
 from nexus.services import generation_policy
 from nexus.services.codex_generation_contract import (
+    ChatOperation,
+    GenerationAdmission,
     GenerationCommand,
     GenerationFrame,
     GenerationHealth,
@@ -63,6 +65,7 @@ type EncodePreacceptFailure = Callable[[NormalizedFailureCode, str], str]
 type ObserveFrame = Callable[[GenerationFrame], Awaitable[None]]
 type BeforeTerminal = Callable[[], Awaitable[None]]
 type ResolveTerminal = Callable[[Session, GenerationTerminal], GenerationTerminal]
+type BindAdmission = Callable[[GenerationAdmission], Awaitable[GenerationCommand]]
 
 
 def _capacity_wait_delays_seconds(command: GenerationCommand) -> tuple[int, ...]:
@@ -76,7 +79,12 @@ class ExecutionRuntime(Protocol):
 
     async def health(self) -> GenerationHealth: ...
 
-    def stream(self, command: GenerationCommand) -> AsyncIterator[GenerationFrame]: ...
+    def stream(
+        self,
+        command: GenerationCommand,
+        *,
+        bind_admission: BindAdmission | None = None,
+    ) -> AsyncIterator[GenerationFrame]: ...
 
     async def cancel(self, request_id: UUID) -> None: ...
 
@@ -229,27 +237,25 @@ class GenerationExecutionRequest:
     journal: GenerationJournal
     capacity_wait_index: int
     streaming: bool = False
+    bind_admission: BindAdmission | None = None
 
     def __post_init__(self) -> None:
         if self.capacity_wait_index < 0:
             raise ValueError("generation capacity_wait_index must not be negative")
         if self.capacity_wait_index > len(_capacity_wait_delays_seconds(self.command)):
             raise ValueError("generation capacity_wait_index exceeds its schedule")
+        if isinstance(self.command.operation, ChatOperation) != (self.bind_admission is not None):
+            raise ValueError("ChatTools alone requires an admission-bound command factory")
 
 
 class AttachReconciledGenerationTerminal(BaseModel):
-    """One exact host terminal recovered from operator-owned evidence."""
+    """Digest-bound raw host transcript captured by the operator."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-    frame: GenerationFrame
+    raw_stream: bytes = Field(min_length=1)
+    raw_stream_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     latency_ms: int = Field(ge=0)
-
-    @model_validator(mode="after")
-    def _requires_terminal_frame(self) -> Self:
-        if not isinstance(self.frame.event, GenerationTerminal):
-            raise ValueError("generation reconciliation requires a terminal frame")
-        return self
 
 
 type GenerationUncertainResolution = ProveNotDispatched | AttachReconciledGenerationTerminal
@@ -542,9 +548,15 @@ def reconcile_uncertain_generation_in_current_transaction(
 
     # Import at the repair boundary for the same reason execute_generation imports
     # the concrete client lazily: orchestration remains acyclic for operation adapters.
-    from nexus.services.codex_generation_client import validate_generation_terminal_frame
+    from nexus.services.codex_generation_client import (
+        decode_reconciled_generation_terminal_evidence,
+    )
 
-    terminal = validate_generation_terminal_frame(resolution.frame, request.command)
+    terminal = decode_reconciled_generation_terminal_evidence(
+        raw_stream=resolution.raw_stream,
+        raw_stream_sha256=resolution.raw_stream_sha256,
+        command=request.command,
+    )
     maximum_latency_ms = command_policy(request.command).transport_deadline_seconds * 1_000
     if resolution.latency_ms > maximum_latency_ms:
         raise ValueError("reconciled generation latency exceeds its transport deadline")
@@ -930,7 +942,12 @@ async def _consume_generation(
 ) -> GenerationTerminal | None:
     async def consume() -> GenerationTerminal | None:
         terminal: GenerationTerminal | None = None
-        async for frame in runtime.stream(request.command):
+        frames = (
+            runtime.stream(request.command)
+            if request.bind_admission is None
+            else runtime.stream(request.command, bind_admission=request.bind_admission)
+        )
+        async for frame in frames:
             if observe_frame is not None:
                 await observe_frame(frame)
             if isinstance(frame.event, GenerationTerminal):
@@ -1018,6 +1035,7 @@ def _assert_expected_state(
 __all__ = [
     "AcceptedGenerationFailure",
     "AttachReconciledGenerationTerminal",
+    "BindAdmission",
     "CancellationSignal",
     "CompletedGeneration",
     "EncodedGenerationTerminal",

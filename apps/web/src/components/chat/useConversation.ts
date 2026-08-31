@@ -32,6 +32,7 @@ import {
 import type { MutableRefObject, RefObject } from "react";
 import {
   apiFetch,
+  decodeApiPayload,
   isApiError,
   isSameSystemApiDefect,
   isToolProjectionReloadRequired,
@@ -50,10 +51,12 @@ import {
   selectedPathMessageIds,
 } from "@/lib/conversations/branching";
 import type { InheritedChatProfileSelection } from "@/lib/conversations/chatProfileSelection";
+import type { ChatConnectionRecoveries } from "@/lib/conversations/chatConnectionRecovery";
 import type { SSEContextRefAddedEvent } from "@/lib/api/sse/events";
 import { messageUpdateReducer } from "@/lib/conversations/messageUpdateReducer";
 import {
-  decodeChatRunData,
+  decodeChatRunListResponse,
+  decodeChatRunResponse,
   decodeConversationMessages,
   decodeConversationTree,
 } from "@/lib/conversations/messageWire";
@@ -214,6 +217,7 @@ interface UseConversation {
   rerunAssistantResponse: (
     assistantMessageId: string,
   ) => Promise<MessageActionMutationOutcome>;
+  rerunningAssistantMessageIds: ReadonlySet<string>;
 
   // regenerate (a new sibling candidate from an eligible completed answer)
   regenerateAssistantResponse: (
@@ -221,8 +225,8 @@ interface UseConversation {
   ) => Promise<MessageActionMutationOutcome>;
   deleteMessage: DeleteMessageMutation;
 
-  // client-only connection-lost recovery (ConnectionLostStatusUnknown, §10)
-  connectionLostAssistantIds: Set<string>;
+  // client-only connection recovery; server failure/status remains canonical.
+  connectionRecoveries: ChatConnectionRecoveries;
   reconnectAssistantResponse: (assistantMessageId: string) => void;
 
   // branching (present only when options.branching === true)
@@ -380,7 +384,7 @@ export function useConversation(
     tailChatRun,
     abortAll,
     cancelRun,
-    lostConnections,
+    connectionRecoveries,
     reconnectRun,
   } = useChatRunTail(
     branching
@@ -390,6 +394,7 @@ export function useConversation(
           onContextRefAdded,
           onConversationAvailable: onConversationCreated,
           onProjectionReloadRequired: reportProjectionReload,
+          onDefect: reportAsyncDefect,
           shouldStartRun: shouldStartRunForCurrentConversation,
           shouldApplyRun: shouldApplyRunToSelectedPath,
         }
@@ -398,6 +403,7 @@ export function useConversation(
           onContextRefAdded,
           onConversationAvailable: onConversationCreated,
           onProjectionReloadRequired: reportProjectionReload,
+          onDefect: reportAsyncDefect,
           shouldStartRun: shouldStartRunForCurrentConversation,
         },
   );
@@ -426,22 +432,35 @@ export function useConversation(
         conversation_id: id,
         status: "active",
       })}` as ApiPath;
-      const activeRuns = signal
-        ? await apiFetch<ChatRunListResponse>(path, { signal })
-        : await (activeRunsRequestRef.current ??
-            (activeRunsRequestRef.current = apiFetch<ChatRunListResponse>(
-              path,
-            ).finally(() => {
+      let activeRuns: ChatRunListResponse;
+      if (signal) {
+        const raw = await apiFetch<unknown>(path, { signal });
+        activeRuns = decodeApiPayload(
+          raw,
+          decodeChatRunListResponse,
+          "Active chat runs",
+        );
+      } else {
+        activeRuns = await (activeRunsRequestRef.current ??
+          (activeRunsRequestRef.current = apiFetch<unknown>(path)
+            .then((response) =>
+              decodeApiPayload(
+                response,
+                decodeChatRunListResponse,
+                "Active chat runs",
+              ),
+            )
+            .finally(() => {
               activeRunsRequestRef.current = null;
             })));
+      }
       return activeRuns.data
         .filter(
           (runData) =>
             runData.conversation.id === id &&
             (visibleMessageIds.has(runData.user_message.id) ||
               visibleMessageIds.has(runData.assistant_message.id)),
-        )
-        .map(decodeChatRunData);
+        );
     },
     [],
   );
@@ -459,10 +478,19 @@ export function useConversation(
       } catch (err) {
         if (reportProjectionReload(err)) return;
         if (handleUnauthenticatedApiError(err)) return;
+        if (!isApiError(err) || isSameSystemApiDefect(err)) {
+          reportAsyncDefect(err);
+          return;
+        }
         console.error("Failed to load active chat runs:", err);
       }
     },
-    [conversationId, loadVisibleActiveRuns, reportProjectionReload],
+    [
+      conversationId,
+      loadVisibleActiveRuns,
+      reportAsyncDefect,
+      reportProjectionReload,
+    ],
   );
 
   const applyConversationTree = useCallback(
@@ -561,6 +589,7 @@ export function useConversation(
           if (isAbortError(err) || signal.aborted) throw err;
           if (isToolProjectionReloadRequired(err)) throw err;
           if (handleUnauthenticatedApiError(err)) throw err;
+          if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
           console.error("Failed to load active chat runs:", err);
         }
         return {
@@ -581,7 +610,11 @@ export function useConversation(
       return {
         kind: "linear",
         conversationId: id,
-        messages: decodeConversationMessages(history.data),
+        messages: decodeApiPayload(
+          history.data,
+          decodeConversationMessages,
+          "Conversation messages",
+        ),
         olderCursor: history.page.before_cursor ?? null,
       };
     },
@@ -758,15 +791,29 @@ export function useConversation(
       scrollRef.current?.captureAnchor(null);
       dispatchMessages({
         type: "prepend_older",
-        messages: decodeConversationMessages(response.data),
+        messages: decodeApiPayload(
+          response.data,
+          decodeConversationMessages,
+          "Older conversation messages",
+        ),
       });
       setOlderCursor(response.page.before_cursor ?? null);
     } catch (err) {
       if (reportProjectionReload(err)) return;
       if (handleUnauthenticatedApiError(err)) return;
+      if (!isApiError(err) || isSameSystemApiDefect(err)) {
+        reportAsyncDefect(err);
+        return;
+      }
       console.error("Failed to load older messages:", err);
     }
-  }, [branching, conversationId, olderCursor, reportProjectionReload]);
+  }, [
+    branching,
+    conversationId,
+    olderCursor,
+    reportAsyncDefect,
+    reportProjectionReload,
+  ]);
 
   // --------------------------------------------------------------------------
   // Run created (optimistic seed + tail)
@@ -837,12 +884,17 @@ export function useConversation(
       busy.add(assistantMessageId);
       setError(null);
       try {
-        const response = await apiFetch<ChatRunResponse>(endpoint, {
+        const rawResponse = await apiFetch<unknown>(endpoint, {
           method: "POST",
           headers: { "Idempotency-Key": idempotencyKey },
         });
+        const response = decodeApiPayload(
+          rawResponse,
+          decodeChatRunResponse,
+          `${operation} assistant response`,
+        );
         keysRef.current.delete(assistantMessageId);
-        onChatRunCreated(decodeChatRunData(response.data));
+        onChatRunCreated(response.data);
         return "Committed";
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return "Failed";
@@ -995,11 +1047,6 @@ export function useConversation(
       reportOperationError,
       rerunningAssistantMessageIds,
     ],
-  );
-
-  const connectionLostAssistantIds = useMemo(
-    () => new Set(Object.keys(lostConnections)),
-    [lostConnections],
   );
 
   const reconnectAssistantResponse = useCallback(
@@ -1285,9 +1332,10 @@ export function useConversation(
     activeRunId,
     cancelActiveRun,
     rerunAssistantResponse,
+    rerunningAssistantMessageIds: rerunningAssistantMessageIds.ids,
     regenerateAssistantResponse,
     deleteMessage,
-    connectionLostAssistantIds,
+    connectionRecoveries,
     reconnectAssistantResponse,
     branch,
     scrollRef,

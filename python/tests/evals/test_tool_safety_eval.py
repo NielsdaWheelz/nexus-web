@@ -240,6 +240,7 @@ def _prepare_mcp_safety_boundary(
             worker_id=worker_id,
             attempt_no=job_context.attempt_no,
             generation_id=str(generation_id),
+            admission_id=str(uuid4()),
             tool_plan_revision=str(operation.plan.plan_revision),
             request_fingerprint=request_fingerprint(placeholder),
             iat=issued_at,
@@ -286,6 +287,7 @@ def _prepare_mcp_safety_boundary(
         operation=operation,
         worker_id=worker_id,
         generation_id=generation_id,
+        admission_id=UUID(claims.admission_id),
         grant_jti=claims.jti,
         admitted_resource_uris=(foreign_uri,),
     )

@@ -15,8 +15,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { apiFetch } from "@/lib/api/client";
-import type { LlmProfile, LlmProfilesOut } from "@/lib/conversations/types";
+import { apiFetch, decodeApiPayload } from "@/lib/api/client";
+import {
+  decodeLlmProfilesResponse,
+  type LlmProfile,
+  type LlmProfilesOut,
+} from "@/lib/conversations/chatProfileContract";
 import { useResource } from "@/lib/api/useResource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 
@@ -40,14 +44,17 @@ function loadChatProfiles(): Promise<LlmProfilesOut> {
   }
   if (!profilesLoadPromise) {
     const requestEpoch = profilesCacheEpoch;
-    profilesLoadPromise = apiFetch<{ data: LlmProfilesOut }>(
-      "/api/llm-profiles",
-    )
+    profilesLoadPromise = apiFetch<unknown>("/api/llm-profiles")
       .then((response) => {
+        const profiles = decodeApiPayload(
+          response,
+          decodeLlmProfilesResponse,
+          "LLM profiles",
+        );
         if (requestEpoch === profilesCacheEpoch) {
-          cachedProfiles = response.data;
+          cachedProfiles = profiles;
         }
-        return response.data;
+        return profiles;
       })
       .catch((error: unknown) => {
         // A 401 here means the session expired mid-session — route it to the
@@ -66,8 +73,8 @@ function loadChatProfiles(): Promise<LlmProfilesOut> {
 }
 
 export interface UseChatProfiles {
-  profiles: LlmProfile[];
-  defaultProfileId: string | null;
+  profiles: readonly LlmProfile[];
+  defaultProfileId: "balanced" | null;
   isLoading: boolean;
   error: Error | null;
 }

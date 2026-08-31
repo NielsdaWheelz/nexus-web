@@ -45,11 +45,13 @@ from provider_runtime.agent_runtime import (
 
 from nexus.services import generation_policy
 from nexus.services.codex_generation_contract import (
+    GenerationAdmission,
     GenerationCommand,
     GenerationFrame,
     GenerationHealth,
     GenerationTerminal,
     GenerationToolUse,
+    generation_admission_request,
 )
 from nexus.services.tool_runtime.declarations import CHAT_TOOL_DECLARATIONS
 
@@ -165,7 +167,19 @@ def _wire_command(command: GenerationCommand) -> bytes:
     return json.dumps(payload, separators=(",", ":")).encode()
 
 
-def _generation_scope(body: bytes) -> dict[str, Any]:
+def _generation_scope(
+    body: bytes,
+    *,
+    admission_id: UUID | None = None,
+) -> dict[str, Any]:
+    headers = [
+        (b"host", b"nexus-codex"),
+        (b"accept", b"application/x-ndjson"),
+        (b"content-type", b"application/json"),
+        (b"content-length", str(len(body)).encode("ascii")),
+    ]
+    if admission_id is not None:
+        headers.append((b"nexus-generation-admission", str(admission_id).encode("ascii")))
     return {
         "type": "http",
         "asgi": {"version": "3.0", "spec_version": "2.3"},
@@ -176,12 +190,7 @@ def _generation_scope(body: bytes) -> dict[str, Any]:
         "raw_path": b"/v2/generations",
         "query_string": b"",
         "root_path": "",
-        "headers": [
-            (b"host", b"nexus-codex"),
-            (b"accept", b"application/x-ndjson"),
-            (b"content-type", b"application/json"),
-            (b"content-length", str(len(body)).encode("ascii")),
-        ],
+        "headers": headers,
         "client": ("127.0.0.1", 41234),
         "server": ("nexus-codex", 80),
         "state": {},
@@ -774,12 +783,27 @@ async def _post(
     client: httpx.AsyncClient,
     command: GenerationCommand,
 ) -> tuple[int, str, bytes]:
+    headers = {
+        "accept": "application/x-ndjson",
+        "content-type": "application/json",
+    }
+    if command.operation.kind == "chat":
+        admission_response = await client.post(
+            "http://nexus-codex/v2/generation-admissions",
+            headers={"accept": "application/json", "content-type": "application/json"},
+            content=generation_admission_request(command).model_dump_json().encode("utf-8"),
+        )
+        if admission_response.status_code != 200:
+            return (
+                admission_response.status_code,
+                admission_response.headers.get("content-type", ""),
+                admission_response.content,
+            )
+        admission = GenerationAdmission.model_validate_json(admission_response.content)
+        headers["nexus-generation-admission"] = str(admission.admission_id)
     response = await client.post(
         "http://nexus-codex/v2/generations",
-        headers={
-            "accept": "application/x-ndjson",
-            "content-type": "application/json",
-        },
+        headers=headers,
         content=_wire_command(command),
     )
     return (
@@ -787,6 +811,109 @@ async def _post(
         response.headers.get("content-type", ""),
         response.content,
     )
+
+
+def test_chat_admission_is_replay_stable_command_bound_and_consumed_once(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        working_root = tmp_path / "runtime"
+        working_root.mkdir()
+        credential_file = tmp_path / "auth.json"
+        credential_file.write_bytes(_ENROLLED_AUTH)
+        credential_file.chmod(0o600)
+        command = _command(60, "admission-bound-chat", chat=True)
+        other = _command(61, "different-chat", chat=True)
+        app = create_codex_agent_app(
+            runtime_factory=lambda _config: ScriptedAgentRuntime(
+                sessions=(AgentSession(_session_ref(60)),),
+                stream_scripts=((_runtime_terminal(60),),),
+            ),
+            working_directory_root=working_root,
+            credential_file=credential_file,
+            versions=_VERSIONS,
+            mcp_origin=_MCP_ORIGIN,
+            chat_network_attested=True,
+            capacity_paths=_capacity_paths(tmp_path),
+        )
+        transport = httpx.ASGITransport(app=app)
+        admission_headers = {
+            "accept": "application/json",
+            "content-type": "application/json",
+        }
+        generation_headers = {
+            "accept": "application/x-ndjson",
+            "content-type": "application/json",
+        }
+        async with httpx.AsyncClient(transport=transport, timeout=5) as client:
+            missing = await client.post(
+                "http://nexus-codex/v2/generations",
+                headers=generation_headers,
+                content=_wire_command(command),
+            )
+            assert missing.status_code == 409
+
+            admission_body = generation_admission_request(command).model_dump_json().encode()
+            first = await client.post(
+                "http://nexus-codex/v2/generation-admissions",
+                headers=admission_headers,
+                content=admission_body,
+            )
+            replay = await client.post(
+                "http://nexus-codex/v2/generation-admissions",
+                headers=admission_headers,
+                content=admission_body,
+            )
+            admitted = GenerationAdmission.model_validate_json(first.content)
+            assert replay.content == first.content
+            assert admitted.request_id == command.request_id
+            assert admitted.runtime_deadline_seconds == 900
+
+            conflicting = await client.post(
+                "http://nexus-codex/v2/generation-admissions",
+                headers=admission_headers,
+                content=generation_admission_request(other).model_dump_json().encode(),
+            )
+            assert (conflicting.status_code, conflicting.content) == (
+                503,
+                b'{"schema_version":"nexus-generation-rejection.v2","kind":"capacity_unavailable"}',
+            )
+
+            mismatched = await client.post(
+                "http://nexus-codex/v2/generations",
+                headers=generation_headers
+                | {"nexus-generation-admission": str(admitted.admission_id)},
+                content=_wire_command(other),
+            )
+            assert mismatched.status_code == 409
+
+            replacement_response = await client.post(
+                "http://nexus-codex/v2/generation-admissions",
+                headers=admission_headers,
+                content=admission_body,
+            )
+            replacement = GenerationAdmission.model_validate_json(replacement_response.content)
+            assert replacement.admission_id != admitted.admission_id
+            accepted = await client.post(
+                "http://nexus-codex/v2/generations",
+                headers=generation_headers
+                | {"nexus-generation-admission": str(replacement.admission_id)},
+                content=_wire_command(command),
+            )
+            frames = _frames(command, accepted.content)
+            assert accepted.status_code == 200
+            assert _terminal(frames).accepted_at == replacement.admitted_at
+
+            consumed = await client.post(
+                "http://nexus-codex/v2/generations",
+                headers=generation_headers
+                | {"nexus-generation-admission": str(replacement.admission_id)},
+                content=_wire_command(command),
+            )
+            assert consumed.status_code == 409
+        assert not tuple(working_root.iterdir())
+
+    asyncio.run(scenario())
 
 
 def test_response_start_failure_reclaims_owner_slot_and_ephemeral_root(
@@ -1005,6 +1132,18 @@ def test_failed_runtime_reap_during_cancellation_makes_host_unready(
         )
         command = _command(34, "cancel-while-runtime-close-fails", chat=True)
         body = _wire_command(command)
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, timeout=5) as client:
+            admission_response = await client.post(
+                "http://nexus-codex/v2/generation-admissions",
+                headers={
+                    "accept": "application/json",
+                    "content-type": "application/json",
+                },
+                content=generation_admission_request(command).model_dump_json().encode(),
+            )
+        assert admission_response.status_code == 200
+        admission = GenerationAdmission.model_validate_json(admission_response.content)
         request_delivered = False
         never_disconnect = asyncio.Event()
         first_body_sent = asyncio.Event()
@@ -1021,7 +1160,13 @@ def test_failed_runtime_reap_during_cancellation_makes_host_unready(
             if message["type"] == "http.response.body" and message.get("body"):
                 first_body_sent.set()
 
-        request = asyncio.create_task(app(_generation_scope(body), receive, send))
+        request = asyncio.create_task(
+            app(
+                _generation_scope(body, admission_id=admission.admission_id),
+                receive,
+                send,
+            )
+        )
         await asyncio.wait_for(stream_started.wait(), timeout=1)
         await asyncio.wait_for(first_body_sent.wait(), timeout=1)
         request.cancel()
@@ -1398,12 +1543,23 @@ def test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot(
                 policy_close_started.clear()
                 policy_close_release.clear()
                 policy_close_finished.clear()
+                disconnect_admission_response = await client.post(
+                    "http://nexus-codex/v2/generation-admissions",
+                    headers={"accept": "application/json", "content-type": "application/json"},
+                    content=generation_admission_request(commands[10])
+                    .model_dump_json()
+                    .encode("utf-8"),
+                )
+                disconnect_admission = GenerationAdmission.model_validate_json(
+                    disconnect_admission_response.content
+                )
                 async with client.stream(
                     "POST",
                     "http://nexus-codex/v2/generations",
                     headers={
                         "accept": "application/x-ndjson",
                         "content-type": "application/json",
+                        "nexus-generation-admission": str(disconnect_admission.admission_id),
                     },
                     content=_wire_command(commands[10]),
                 ) as disconnected:

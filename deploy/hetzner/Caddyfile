@@ -19,7 +19,11 @@
 	route {
 		@agent_tools_mcp path /internal/agent-tools/mcp
 		handle @agent_tools_mcp {
-			reverse_proxy worker-interactive:8001
+			reverse_proxy worker-interactive:8001 {
+				# The worker trusts exactly this single-hop source value for abuse
+				# partitioning; it is never an authorization credential.
+				header_up X-Forwarded-For {http.request.remote.host}
+			}
 		}
 
 		@offline_reading_package path_regexp ^/offline-reading/packages/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -255,7 +256,7 @@ def _seed_media_build(engine: Engine) -> _MediaBuild:
 def _media_terminal_frame(generation_id: UUID) -> GenerationFrame:
     return GenerationFrame(
         request_id=generation_id,
-        sequence=3,
+        sequence=0,
         event=GenerationTerminal(
             status="succeeded",
             failure=None,
@@ -284,6 +285,19 @@ def _media_terminal_frame(generation_id: UUID) -> GenerationFrame:
             sdk_version="0.144.4",
             runtime_version="0.144.4",
         ),
+    )
+
+
+def _raw_terminal_attachment(
+    frame: GenerationFrame,
+    *,
+    latency_ms: int,
+) -> AttachReconciledGenerationTerminal:
+    raw_stream = (frame.model_dump_json() + "\n").encode("utf-8")
+    return AttachReconciledGenerationTerminal(
+        raw_stream=raw_stream,
+        raw_stream_sha256=hashlib.sha256(raw_stream).hexdigest(),
+        latency_ms=latency_ms,
     )
 
 
@@ -332,8 +346,8 @@ def test_media_terminal_attachment_atomically_terminalizes_ledger_and_same_job(
                 db,
                 media_id=seeded.media_id,
                 content_fingerprint=seeded.content_fingerprint,
-                resolution=AttachReconciledGenerationTerminal(
-                    frame=_media_terminal_frame(generation_id),
+                resolution=_raw_terminal_attachment(
+                    _media_terminal_frame(generation_id),
                     latency_ms=1_234,
                 ),
             )
@@ -458,8 +472,8 @@ def test_oracle_prove_not_dispatched_requeues_only_the_same_job_without_input_re
                 reconcile_uncertain_oracle_reading(
                     db,
                     reading_id=reading.id,
-                    resolution=AttachReconciledGenerationTerminal(
-                        frame=_media_terminal_frame(generation_id),
+                    resolution=_raw_terminal_attachment(
+                        _media_terminal_frame(generation_id),
                         latency_ms=1,
                     ),
                 )
@@ -554,8 +568,8 @@ def test_oracle_terminal_noop_cancels_a_retained_preaccept_start(
                 db,
                 stream=run_kit.oracle_reading_stream(reading),
                 status="failed",
-                done_payload=oracle_done_payload(status="failed", error_code="E_INTERNAL"),
-                error_code="E_INTERNAL",
+                done_payload=oracle_done_payload(status="failed", error_code="E_APP_SEARCH_FAILED"),
+                error_code="E_APP_SEARCH_FAILED",
                 error_detail="terminalized before host dispatch",
             )
             db.commit()

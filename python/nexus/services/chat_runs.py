@@ -12,7 +12,7 @@ import dataclasses
 import time
 from contextlib import suppress
 from datetime import UTC, datetime
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 from uuid import UUID, uuid4
 
 from llm_tools import WebSearchProvider
@@ -110,6 +110,7 @@ from nexus.services.chat_run_steps import (
 from nexus.services.chat_run_validation import validate_pre_phase
 from nexus.services.codex_generation_contract import (
     ChatOperation,
+    GenerationAdmission,
     GenerationCommand,
     GenerationFrame,
     GenerationTerminal,
@@ -158,6 +159,9 @@ from nexus.services.tool_runtime.composition import (
     FrozenToolOperation,
     compose_product_tool_runtime,
 )
+
+if TYPE_CHECKING:
+    from nexus.services.agent_tools_mcp import AgentToolAuthority
 
 logger = get_logger(__name__)
 
@@ -967,23 +971,6 @@ async def _dispatch_generation_step(
     """Execute one app-owned ChatTools command; MCP owns tool execution."""
     draft = _chat_command_draft(intent, profile, generation_state_id=generation_id)
     request_fp = request_fingerprint(draft)
-    with session_factory() as clock_db:
-        now = clock_db.scalar(text("SELECT clock_timestamp()"))
-    if not isinstance(now, datetime):
-        raise AssertionError("database clock did not return a timestamp")
-    issued_grant = issue_chat_generation_grant(
-        user_id=run.owner_user_id,
-        run_id=run.id,
-        job_id=steps.execution_context.job_id,
-        worker_id=steps.execution_context.worker_id,
-        attempt_no=steps.execution_context.attempt_no,
-        generation_id=generation_id,
-        tool_plan_revision=generation_policy.TOOL_PLAN_REVISION,
-        request_fingerprint=request_fp,
-        signing_key=settings.effective_agent_tool_grant_signing_key,
-        now=now if now.tzinfo is not None else now.replace(tzinfo=UTC),
-    )
-    command = draft.model_copy(update={"tool_grant": BearerToolGrant(token=issued_grant.token)})
 
     capacity_wait_index = _chat_capacity_wait_index(steps.job)
     observed_text_parts: list[str] = []
@@ -1011,20 +998,50 @@ async def _dispatch_generation_step(
         elif isinstance(frame.event, GenerationUsageEvent):
             observed_usage = frame.event.usage.model_dump(mode="json")
 
-    from nexus.services.agent_tools_mcp import AgentToolAuthority
+    authority: AgentToolAuthority | None = None
 
-    authority = AgentToolAuthority.from_claimed_chat_attempt(
-        session_factory=session_factory,
-        run_id=run.id,
-        job_id=steps.execution_context.job_id,
-        attempt_no=steps.execution_context.attempt_no,
-        resource_class=steps.execution_context.resource_class,
-        operation=operation,
-        worker_id=steps.execution_context.worker_id,
-        generation_id=generation_id,
-        grant_jti=issued_grant.jti,
-        admitted_resource_uris=admitted_resource_uris,
-    )
+    async def bind_admission(admission: GenerationAdmission) -> GenerationCommand:
+        nonlocal authority
+        with session_factory() as clock_db:
+            now = clock_db.scalar(text("SELECT clock_timestamp()"))
+        if not isinstance(now, datetime):
+            raise AssertionError("database clock did not return a timestamp")
+        issued_grant = issue_chat_generation_grant(
+            user_id=run.owner_user_id,
+            run_id=run.id,
+            job_id=steps.execution_context.job_id,
+            worker_id=steps.execution_context.worker_id,
+            attempt_no=steps.execution_context.attempt_no,
+            generation_id=generation_id,
+            admission_id=admission.admission_id,
+            tool_plan_revision=generation_policy.TOOL_PLAN_REVISION,
+            request_fingerprint=request_fp,
+            signing_key=settings.effective_agent_tool_grant_signing_key,
+            admitted_at=datetime.fromisoformat(admission.admitted_at[:-1] + "+00:00"),
+            now=now if now.tzinfo is not None else now.replace(tzinfo=UTC),
+        )
+        from nexus.services.agent_tools_mcp import AgentToolAuthority
+
+        authority = AgentToolAuthority.from_claimed_chat_attempt(
+            session_factory=session_factory,
+            run_id=run.id,
+            job_id=steps.execution_context.job_id,
+            attempt_no=steps.execution_context.attempt_no,
+            resource_class=steps.execution_context.resource_class,
+            operation=operation,
+            worker_id=steps.execution_context.worker_id,
+            generation_id=generation_id,
+            admission_id=admission.admission_id,
+            grant_jti=issued_grant.jti,
+            admitted_resource_uris=admitted_resource_uris,
+        )
+        return draft.model_copy(update={"tool_grant": BearerToolGrant(token=issued_grant.token)})
+
+    async def wait_for_tool_authority() -> None:
+        if authority is None:
+            raise AssertionError("accepted Chat generation has no admission-bound tool authority")
+        await authority.wait_until_idle()
+
     cancel_signal = asyncio.Event()
     cancel_watcher: asyncio.Task[None] | None = None
 
@@ -1064,7 +1081,7 @@ async def _dispatch_generation_step(
         result = await execute_generation(
             GenerationExecutionRequest(
                 owner=LlmCallOwner(kind="chat_run", id=run.id),
-                command=command,
+                command=draft,
                 journal=JobGenerationJournal(
                     context=steps.execution_context,
                     step_path=path,
@@ -1073,12 +1090,13 @@ async def _dispatch_generation_step(
                 ),
                 capacity_wait_index=capacity_wait_index,
                 streaming=True,
+                bind_admission=bind_admission,
             ),
             session_factory=session_factory,
             runtime=steps.llm_runtime,
             observe_frame=observe,
             cancel_signal=cancel_signal,
-            before_terminal=authority.wait_until_idle,
+            before_terminal=wait_for_tool_authority,
             resolve_terminal=resolve_terminal,
             encode_terminal=lambda terminal: EncodedGenerationTerminal(
                 terminal_result=encode_step_result(
@@ -1110,9 +1128,11 @@ async def _dispatch_generation_step(
                         await cancel_watcher
             finally:
                 try:
-                    await authority.wait_until_idle()
+                    if authority is not None:
+                        await authority.wait_until_idle()
                 finally:
-                    authority.close()
+                    if authority is not None:
+                        authority.close()
 
     # The host terminal cannot discharge a tool effect whose worker-owned
     # journal remained ambiguous. Preserve that journal and suspend the job

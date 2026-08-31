@@ -34,22 +34,14 @@ export interface ConversationListItem {
 }
 
 /**
- * A product-facing generation preset from GET /llm-profiles. The browser
- * renders this catalog verbatim and owns no model or effort selection enum.
+ * Product-facing generation presets are owned and decoded by the atomic
+ * `/llm-profiles` boundary; this module only re-exports their trusted types.
  */
-export interface LlmProfile {
-  id: string;
-  label: string;
-  description: string;
-  model_label: string;
-  effort_label: string;
-}
-
-/** Response schema for GET /llm-profiles. */
-export interface LlmProfilesOut {
-  default_profile_id: string;
-  profiles: LlmProfile[];
-}
+export type {
+  ChatProfileId,
+  LlmProfile,
+  LlmProfilesOut,
+} from "@/lib/conversations/chatProfileContract";
 
 export type ChatSendCapability =
   | { readonly kind: "Available" }
@@ -86,8 +78,8 @@ export interface InvalidOutputChatFailure extends ExpectedChatFailureBase {
   can_rerun: false;
 }
 
-/** Provider-declared incomplete completion, or local truncation folded to the
- * same closed code. */
+/** A completion that ended early, or local truncation folded to the same
+ * closed code. */
 export interface IncompleteChatFailure extends ExpectedChatFailureBase {
   code: "incomplete";
   can_rerun: boolean;

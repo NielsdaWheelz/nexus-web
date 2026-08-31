@@ -924,9 +924,10 @@ export default function Conversation() {
             onSelectFork={branch ? handleSelectFork : undefined}
             onReplyToAssistant={branch ? handleReplyToAssistant : undefined}
             onRerunAssistantResponse={convo.rerunAssistantResponse}
+            rerunningAssistantMessageIds={convo.rerunningAssistantMessageIds}
             onRegenerateAssistantResponse={convo.regenerateAssistantResponse}
             onDeleteMessage={convo.deleteMessage}
-            connectionLostAssistantIds={convo.connectionLostAssistantIds}
+            connectionRecoveries={convo.connectionRecoveries}
             onReconnectAssistant={convo.reconnectAssistantResponse}
             composer={
               <ChatComposer

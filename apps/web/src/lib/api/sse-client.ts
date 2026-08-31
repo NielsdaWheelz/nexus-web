@@ -237,13 +237,16 @@ export function sseClientDirect<TEvent>(
         await parseSSEJsonStream(
           response.body,
           (jsonEvent) => {
+            const event = decode(jsonEvent.type, jsonEvent.data, jsonEvent.id);
+            onEvent(event);
+            // A cursor acknowledges an accepted event, not merely a parsed SSE
+            // frame. Advancing before the domain decoder/onEvent succeeds can
+            // permanently skip a malformed same-system event on recovery.
             if (jsonEvent.id) {
               lastEventId = jsonEvent.id;
               nextAfter = "";
               onLastEventId?.(lastEventId);
             }
-            const event = decode(jsonEvent.type, jsonEvent.data, jsonEvent.id);
-            onEvent(event);
             reconnects = 0;
             reconnectDelayMs = reconnectBaseMs;
             if (isTerminal(event)) terminalEventSeen = true;

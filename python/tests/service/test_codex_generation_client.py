@@ -28,6 +28,8 @@ from nexus.services.codex_generation_client import (
     CodexGenerationUnavailable,
 )
 from nexus.services.codex_generation_contract import (
+    GenerationAdmission,
+    GenerationAdmissionRequest,
     GenerationCommand,
     GenerationFrame,
     GenerationHealth,
@@ -44,6 +46,7 @@ _LINUX_SUN_PATH_BYTES = 108
 _EXACT_CAPACITY_REJECTION = (
     b'{"schema_version":"nexus-generation-rejection.v2","kind":"capacity_unavailable"}'
 )
+_ACCEPTED_AT = "2026-08-24T12:34:56.123456Z"
 
 
 def _short_socket_path() -> Path:
@@ -67,6 +70,31 @@ def _command(mode: str) -> GenerationCommand:
                 "instructions": "Return the bounded result.",
                 "input": mode,
                 "output": {"kind": "Text"},
+            },
+        }
+    )
+
+
+def _chat_command(mode: str) -> GenerationCommand:
+    return GenerationCommand.model_validate(
+        {
+            "schema_version": "nexus-generation-command.v2",
+            "request_id": str(_REQUEST_ID),
+            "operation": {
+                "kind": "chat",
+                "profile": "balanced",
+                "revision": generation_policy.operation_revision("chat", profile="balanced"),
+            },
+            "policy_revision": generation_policy.POLICY_REVISION,
+            "policy_fingerprint": generation_policy.POLICY_FINGERPRINT,
+            "intent": {
+                "instructions": "Return the bounded result.",
+                "input": mode,
+                "output": {"kind": "Text"},
+            },
+            "tool_grant": {
+                "kind": "Bearer",
+                "token": "client-admission-proof-grant-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
             },
         }
     )
@@ -139,6 +167,7 @@ def _run_protocol_peer(
     ready: multiprocessing.connection.Connection,
 ) -> None:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    admissions: dict[str, GenerationAdmission] = {}
 
     @app.get("/health")
     async def health(request: Request) -> Response:
@@ -155,6 +184,15 @@ def _run_protocol_peer(
         payload = json.loads(await request.body())
         mode = payload["intent"]["input"]
         report.send(("generation", request.url.path, mode))
+        if mode == "accepted-capacity":
+            admission_id = request.headers.get("nexus-generation-admission")
+            if admission_id is None or admission_id not in admissions:
+                return Response(status_code=409)
+            return Response(
+                _EXACT_CAPACITY_REJECTION,
+                status_code=503,
+                media_type="application/json",
+            )
         if mode == "capacity-exact":
             return Response(
                 _EXACT_CAPACITY_REJECTION,
@@ -202,6 +240,22 @@ def _run_protocol_peer(
             raise AssertionError(f"unknown protocol-peer mode {mode!r}")
 
         return StreamingResponse(frames(), media_type="application/x-ndjson")
+
+    @app.post("/v2/generation-admissions")
+    async def admit(request: Request) -> Response:
+        admission_request = GenerationAdmissionRequest.model_validate_json(await request.body())
+        admission = GenerationAdmission(
+            request_id=admission_request.request_id,
+            admission_id=uuid4(),
+            admitted_at=_ACCEPTED_AT,
+            runtime_deadline_seconds=generation_policy.CHAT_ADMISSION_RUNTIME_SECONDS,
+        )
+        admissions[str(admission.admission_id)] = admission
+        report.send(("admission", request.url.path, str(admission_request.request_id)))
+        return Response(
+            admission.model_dump_json().encode(),
+            media_type="application/json",
+        )
 
     @app.post("/v2/generations/{request_id}/cancel")
     async def cancel(request_id: str, request: Request) -> Response:
@@ -347,6 +401,18 @@ def test_v2_client_preflights_and_classifies_only_strict_incremental_streams() -
                 with pytest.raises(CodexGenerationRequestRejected):
                     await _drain(client, mode)
 
+            chat_command = _chat_command("accepted-capacity")
+
+            async def bind_admission(_admission: GenerationAdmission) -> GenerationCommand:
+                return chat_command
+
+            with pytest.raises(CodexGenerationTransportAmbiguous):
+                async for _frame_value in client.stream(
+                    chat_command,
+                    bind_admission=bind_admission,
+                ):
+                    pass
+
             await client.cancel(_REQUEST_ID)
             await client.cancel(_REQUEST_ID)
             await client.policy_violation(_REQUEST_ID)
@@ -356,7 +422,9 @@ def test_v2_client_preflights_and_classifies_only_strict_incremental_streams() -
         asyncio.run(exercise())
         messages = tuple(_messages(report))
         generation_paths = [item[1] for item in messages if item[0] == "generation"]
-        assert generation_paths == ["/v2/generations"] * 8
+        assert generation_paths == ["/v2/generations"] * 9
+        admission_paths = [item[1] for item in messages if item[0] == "admission"]
+        assert admission_paths == ["/v2/generation-admissions"]
         cancel_paths = [item[1] for item in messages if item[0] == "cancel"]
         assert cancel_paths == [f"/v2/generations/{_REQUEST_ID}/cancel"] * 2
         policy_controls = [item for item in messages if item[0] == "policy_violation"]

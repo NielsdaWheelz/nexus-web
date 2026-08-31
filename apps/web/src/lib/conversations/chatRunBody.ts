@@ -4,6 +4,7 @@ import type {
   ChatRunCreateRequest,
   ReaderSelectionInput,
 } from "@/lib/api/sse/requests";
+import type { ChatProfileId } from "@/lib/conversations/chatProfileContract";
 import type { BranchAnchor, BranchDraft } from "@/lib/conversations/types";
 
 /**
@@ -21,7 +22,7 @@ import type { BranchAnchor, BranchDraft } from "@/lib/conversations/types";
 export function buildChatRunBody(input: {
   conversationId: string | null;
   content: string;
-  profileId: string;
+  profileId: ChatProfileId;
   branchDraft: BranchDraft | null;
   parentMessageId: string | null;
   readerSelection?: ReaderSelectionInput | null;

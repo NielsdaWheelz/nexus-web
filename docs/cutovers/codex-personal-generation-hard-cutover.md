@@ -265,6 +265,13 @@ Ownership laws:
   slot, host/cgroup capacity parsing and pre-accept admission, runtime close
   and session cleanup, and `AgentEvent`-to-wire normalization. It has no
   database or generation API credentials.
+- The disposable Codex root is 180 MiB and its `RLIMIT_FSIZE` is 74 MiB
+  (77,594,624 bytes). The file limit is derived from the largest 64 MiB runtime
+  output plus the largest admitted input/instructions and 8 MiB serialization
+  headroom; the root admits two such files plus 32 MiB launcher/cache/cleanup
+  headroom. Release preflight proves these exact values against
+  `generation_policy.py` and keeps the root at no more than half of the 384 MiB
+  host cgroup so filesystem allocation cannot silently escape memory ownership.
 - The host is a distinct process and a distinct image command; it is not a
   distinct package. It imports the policy and contract modules from the shared
   image and nothing that opens a database, provider, or object-store handle.
@@ -344,10 +351,13 @@ Rules:
   `thorough` row's timeout is validated against measured live turns at its
   exact plan before the switch; never ship a bound its own plan predictably
   exceeds. `dawn_write` bounds one user's generation, not the sweep; the
-  sweep's lease covers the population. Chat retains its 900-second `RunLimits`
-  tool-run ceiling, has a 1,035-second derived transport deadline, and uses a
-  1,200-second `chat_run` lease so the terminal checkpoint remains inside
-  ownership.
+  sweep's lease covers the population. Chat retains a 1,035-second client
+  transport envelope and a 1,200-second `chat_run` lease, but its host-owned
+  admission deadline is the stricter 900-second ceiling described in §6. That
+  ceiling includes command handoff and session open; consequently the native
+  provider turn receives the remainder rather than a fresh 900 seconds. This
+  deliberately trades a small amount of maximum provider time for the security
+  invariant that an MCP grant can never outlive or extend its admitted turn.
 - `dossier_idea_resolve` is request-scoped — it executes inside
   `POST /artifacts/dossiers/learn` — and never waits on host capacity: a busy
   host or capacity refusal fails fast to the caller as the existing
@@ -390,8 +400,24 @@ Rules:
 
 ### Private host API
 
-Replace metadata-only `POST /v1/turns` with `POST /v2/generations`; retain
-`GET /health`. Both remain HTTP over `/run/nexus-codex/agent.sock`, never TCP.
+Replace metadata-only `POST /v1/turns` with `POST /v2/generations`; Chat also
+uses `POST /v2/generation-admissions` before its secret-bearing command is
+materialized. Retain `GET /health`. All remain HTTP over
+`/run/nexus-codex/agent.sock`, never TCP.
+
+Chat admission is two-phase. Nexus first submits the closed, grant-free
+identity `{schema_version, request_id, operation, policy_revision,
+policy_fingerprint, request_fingerprint}`. The host reserves the sole turn
+slot only after readiness, policy, cgroup, and network-attestation checks and
+returns `{request_id, admission_id, admitted_at,
+runtime_deadline_seconds: 900}`. Exact replay returns the same pending
+reservation; a different identity cannot consume it. Nexus then issues the
+JWT bound to that `admission_id` and immediately submits the full command with
+the canonical `Nexus-Generation-Admission` header. The host accepts only an
+exact request/operation/policy/fingerprint match and consumes the reservation
+once. An unconsumed reservation expires after a 15-second handoff bound and is
+released; cancellation releases it idempotently. Synthesis remains a direct
+single-phase command because it carries no delegated tool authority.
 
 ```json
 {
@@ -467,12 +493,16 @@ holding no accepted turn and before runtime/session construction. The client
 recognizes capacity only when status, content type, schema, and body match
 exactly; every other non-200 is a closed-contract rejection. No memory, PSI,
 process, or credential fact crosses the response. This exact response is what
-§7 means by a proven pre-accept refusal.
+§7 means by a proven pre-accept refusal. For Chat this response belongs to the
+admission request; after a reservation is returned, any transport failure is
+accepted/ambiguous and cannot be classified as a safe retry.
 
-Admission ownership is explicit. The request handler owns the claimed slot and
-per-turn tmpfs root until the owner task executes its first statement inside an
-installed `try/finally`; a start handshake transfers both or makes the handler
-reclaim both after a pre-start cancellation. The response callable then owns
+Admission ownership is explicit. The admission handler owns the claimed slot
+until the exact command consumes it or the bounded handoff timer releases it.
+The command handler then creates and owns the per-turn tmpfs root until the
+owner task executes its first statement inside an installed `try/finally`; a
+start handshake transfers both or makes the handler reclaim both after a
+pre-start cancellation. The response callable then owns
 the independent task across response-start, send, iterator, disconnect, and
 repeated-cancellation failure. It cancels and awaits the owner before returning,
 never blocks an abandoned one-item relay, and does not release the slot until
@@ -497,11 +527,12 @@ bounds; the 33 ms / 512-char / 2 KiB SSE flush cadence stays Nexus-owned and
 is applied once, over host `text` frames.
 
 The terminal frame carries `accepted_at` — the host's monotonic-to-wall
-resource-ownership acceptance instant, taken after slot/capacity admission and
-the per-turn root are secured but before runtime/session construction. It is
-not evidence that a native session reference was established. Nexus persists
-it at the terminal checkpoint. No Nexus write occurs between the `Uncertain`
-checkpoint and the terminal.
+resource-ownership acceptance instant. For Chat it is exactly the two-phase
+admission instant; the 900-second absolute runtime deadline begins there and
+is never restarted by command delivery, JWT issuance, session open, or the
+native turn. It is not evidence that a native session reference was
+established. Nexus persists it at the terminal checkpoint. No Nexus write
+occurs between the `Uncertain` checkpoint and the terminal.
 
 `GET /health` gains `command_schema_version`, `policy_revision`,
 `sdk_version`, and `runtime_version`. The client asserts these against its own
@@ -569,8 +600,14 @@ origin is expressible). The path is therefore publicly routable, and its sole
 application boundary is the run-scoped grant plus per-call revalidation — a
 deliberate decision matching the existing public bearer-scoped stream routes,
 not an oversight. Every request without a valid grant receives an
-unauthenticated rejection with no body distinguishing the route's existence,
-and the path is rate-limited before bearer/body parsing.
+unauthenticated rejection with no body distinguishing the route's existence.
+Caddy overwrites (never appends) `X-Forwarded-For` with the direct public peer.
+The mount first applies a fixed 120/minute window per trusted source before
+bearer/body parsing, then applies a separate fixed 120/minute window keyed by
+the verified active grant JTI after authorization. Invalid traffic can spend
+only its source window and cannot consume another source's or an active
+grant's capacity. The source map has a fixed cardinality bound; verified-grant
+windows are pruned once their fixed minute expires.
 
 The host has no public-network attachment. Its only network peer is a
 credential-free policy sidecar on an internal bridge. That sidecar owns the
@@ -591,11 +628,16 @@ back to any other key. Required claims are:
 
 ```text
 iss, aud, scope, sub, jti, run_id, job_id, worker_id, attempt_no,
-generation_id, tool_plan_revision, request_fingerprint, iat, nbf, exp
+generation_id, admission_id, tool_plan_revision, request_fingerprint, iat, nbf, exp
 ```
 
-`exp` is at most the chat run ceiling. The token is multi-use for exactly one
-generation. Every tool call independently revalidates signature with `alg`
+`iat` and `nbf` are the actual database issuance clock. `exp` is the host
+admission epoch plus 900 seconds, and issuance is rejected once that absolute
+deadline has elapsed; the remaining token lifetime is therefore always less
+than or equal to 900 seconds. The host's absolute deadline already runs, so
+the token covers but can never extend the admitted turn. The token is
+multi-use for exactly one generation and one admission. Every tool call
+independently revalidates signature with `alg`
 pinned to HS256, exact `iss`/`aud`/`scope`, `nbf`/`exp` against the database
 clock with no skew allowance, the active job lease/fence, run/user ownership,
 generation, plan revision, cancellation, declared tool, and admitted resource
@@ -803,7 +845,19 @@ the same change: `synapse._TRANSIENT_SCAN_CODES` is re-cut to the transient
 members of the new narrowing (capacity/runtime unavailable, quota);
 `DossierBuildFailureCode` drops `ProviderRefused`, `ProviderIncomplete`, and
 `BudgetExceeded` in favour of the new codes; historical
-`artifact_build_failures` rows stay readable and are never rewritten.
+`artifact_build_failures` rows stay readable and are never rewritten. Migration
+0224 provenance-tags their matching replay rows from `Failed` to
+`HistoricalFailed`; its payload accepts only the retired read vocabulary, while
+post-cutover `Failed` writers and readers accept only the current vocabulary.
+This one-time event-discriminator rewrite preserves the immutable failure fact
+and prevents a live producer from borrowing the historical read path.
+The same boundary preserves pre-cutover Oracle failures, including the former
+product-visible defect spellings: their reading-row
+facts remain unchanged, while migration 0224 retags the matching terminal event
+as `historical_done`. The preflight refuses a historical failed reading without
+an exact matching terminal and refuses any failure code outside the complete
+current-plus-historical vocabulary; current `done` rejects the retired
+vocabulary, and new Oracle writers cannot emit the migration tag.
 `ExpectedChatFailure` is re-cut per §6: the transient variants and their
 `attempts` field, `BudgetExceededChatFailure`, and
 `InvalidToolArgumentsChatFailure` are deleted; rerun eligibility keys on the
@@ -848,8 +902,12 @@ owner journal:
   reads no mutable prompt input and performs no host I/O.
 - `AttachReconciledResult` is narrower by design. An owner may expose it only
   when immutable, version-fenced durable facts reconstruct and fingerprint the
-  exact original command and the recovered terminal can pass the same decoder
-  and ledger landing path as a live terminal. Owners without those facts remain
+  exact original command and the recovered raw NDJSON transcript plus its
+  SHA-256 pass the same raw-byte stream validator used by live transport:
+  aggregate/frame bounds, contiguous sequence, capability rules,
+  terminal-last, terminal validation, and ledger landing. A typed model
+  serialized again by the repair caller is not evidence. Owners without those
+  facts remain
   suspended until non-dispatch is proven or the work is explicitly cancelled;
   they never re-query mutable retrieval, persist raw prompts, accept an
   operator-supplied command, or fabricate ledger facts merely to enable
@@ -1054,16 +1112,16 @@ owned real-UDS process under `python/tests/service/`, not a separate level.
 | Policy | every operation and three chat profiles resolve to one exact complete plan with bounds; arbitrary model/effort is unrepresentable; a plan-table edit without matching reviewed pins fails | kernel-python / PR |
 | Plan policy eval | corpus version, baselines, and pins match the shipped policy revision | llm-eval / FULL |
 | Intent + wire algebra | strict tagged round trip; unknown fields/revisions/operations/events and a missing terminal are rejected | kernel-python / PR |
-| UDS transport | bounded NDJSON, contiguous sequence, terminal-last, capability gating, per-capability frame budgets; synthesis rejects tool events | service / PR |
+| UDS transport | two-phase admission for Chat plus bounded NDJSON, contiguous sequence, terminal-last, capability gating, and per-capability frame budgets; admission identity is replay-stable and command-bound, the absolute 900-second clock never restarts, and synthesis rejects tool events | service / PR |
 | Host lifecycle | one session/turn, exact private executable runtime mount plus general `noexec` `/tmp`, real SDK startup, correct auth root, built-ins off, exact MCP config/headers, monotonic policy abort, cancel endpoint, pre-start and response-start ownership, cancellation-resistant bounded close, credential-sync fail-closed, and cleanup on every terminal/disconnect | kernel-python + service + release / PR and release |
 | Host contention | a background dispatch behind a full-length chat turn reschedules within budget, never hard-fails; a chat dispatch against a busy host surfaces `capacity_unavailable` with rerun; an interactive-lane dispatch reaches the host socket | service / PR |
 | Execution + ledger | real Postgres and the real worker process prove dispatch-once, completed replay, pre-accept reschedule, accepted-loss uncertainty, and exactly one ledger row, with the Codex peer as a protocol-valid loopback process behind the production client | service / PR |
 | Journal coverage | every catalog operation checkpoints `Uncertain` before dispatch and refuses a second dispatch under a replayed identity | service / PR |
 | Uncertainty discharge | every catalog owner can return an uncertain generation to `Prepared` from an exact journal/ledger non-dispatch proof without reconstructing its prompt; owners with immutable command facts may attach a proven terminal through the live decoder/ledger path; neither path dispatches, commits independently, or double-publishes | service / PR |
 | Operation portfolio | the parameterized catalog proves every operation renders a valid intent/schema within its bounds and cannot choose runtime policy; representative real-Postgres Metadata and Dawn owners prove terminal-before-publication, transaction ownership, and replay without claiming a success matrix for every catalog operation | kernel-python + service / PR |
-| Bounds | the ChatTools bounds admit a maximal admitted transcript and a maximal streamed 900-second turn; overrun is the typed `output_limit_exceeded` terminal | service / PR |
+| Bounds | the ChatTools bounds admit a maximal admitted transcript and a maximal streamed turn inside the absolute 900-second admission; the derived 74 MiB file and 180 MiB aggregate tmpfs limits are release-attested against the 384 MiB cgroup; overrun is the typed `output_limit_exceeded` terminal | service + release / PR and release |
 | MCP authority + tools | real Postgres and local MCP transport prove one read and one reversible write; every request carries the grant, initialize names `2025-06-18`, every later request carries that exact `MCP-Protocol-Version`, all POSTs advertise the exact JSON/SSE accept pair, and neither side emits or accepts `Mcp-Session-Id`; omitted/wrong later versions, other revisions, stateful traffic, dual-era retries, and transport fallback defect; expired/cross-user/cross-run/cross-generation grants fail; integer and string request ids remain distinct; an exact protocol replay at the same identity returns the journaled receipt without re-executing, and a changed payload at that identity defects | service / PR |
-| MCP exposure | a grantless or invalid-grant request to `/internal/agent-tools/mcp` is rejected without tool execution; the grant is accepted only at this mount; no other path changes route or gains an exemption | service / PR |
+| MCP exposure | a grantless or invalid-grant request to `/internal/agent-tools/mcp` is rejected without tool execution; trusted-source pre-auth and verified-JTI post-auth rate windows are disjoint, so one unauthenticated source cannot consume active-grant capacity; the grant is accepted only at this mount; no other path changes route or gains an exemption | service / PR |
 | Secret and capability confinement | the grant never appears in repr, logs, ledger rows, fingerprints, or evidence; built-ins/web search stay off; ChatTools lowering is exactly §5's | service / PR |
 | Tool-authority containment | injected resource text, forged tool results, and cross-account requests cannot authorize a mutating MCP tool; deterministic corpus and rubric | llm-eval + service / PR |
 | Chat tool budget + cancellation | the call after budget exhaustion is refused as a declared failure; a cancel during an in-flight tool call ends the run `Cancelled` with no further effect | service / PR |

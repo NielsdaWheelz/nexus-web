@@ -2393,7 +2393,8 @@ class ArtifactBuildEvent(Base):
     """One sequenced, replayable build-event (the dossier run stream, D-3).
 
     Build-keyed; the strict, ``extra='forbid'`` payload union lives in the
-    schema layer. ``event_type`` is the closed 5-value build union; the
+    schema layer. ``event_type`` is the five-value current-write union plus the
+    migration-only ``HistoricalFailed`` replay tag; the
     ``(build_id, seq)`` unique + head-lock seq allocation prevent writer
     collisions and crash-replay duplicates.
     """
@@ -2422,7 +2423,9 @@ class ArtifactBuildEvent(Base):
     __table_args__ = (
         CheckConstraint("seq >= 1", name="ck_artifact_build_events_seq_positive"),
         CheckConstraint(
-            "event_type IN ('Started', 'Progress', 'Succeeded', 'Failed', 'Cancelled')",
+            "event_type IN ("
+            "'Started', 'Progress', 'Succeeded', 'Failed', 'HistoricalFailed', 'Cancelled'"
+            ")",
             name="ck_artifact_build_events_type",
         ),
         CheckConstraint(
@@ -6914,7 +6917,8 @@ class OracleReadingEvent(Base):
         CheckConstraint("seq >= 1", name="ck_oracle_reading_events_seq_positive"),
         CheckConstraint(
             "event_type IN ("
-            "'meta', 'bind', 'argument', 'plate', 'passage', 'delta', 'omens', 'done'"
+            "'meta', 'bind', 'argument', 'plate', 'passage', 'delta', 'omens', 'done', "
+            "'historical_done'"
             ")",
             name="ck_oracle_reading_events_type",
         ),

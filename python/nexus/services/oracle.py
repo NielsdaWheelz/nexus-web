@@ -53,11 +53,20 @@ from nexus.schemas.oracle import (
     ConcordanceEntryOut,
     OracleReadingDetailOut,
     OracleReadingEventOut,
+    OracleReadingFailureCode,
     OracleReadingImageOut,
     OracleReadingPassageOut,
     OracleReadingSummaryOut,
     oracle_done_payload,
+    oracle_event_payload,
+    oracle_folio_theme,
     oracle_passage_payload,
+    oracle_read_failure_code,
+    oracle_reading_event_type,
+    oracle_reading_failure_code,
+    oracle_reading_phase,
+    oracle_reading_source_kind,
+    oracle_reading_status,
 )
 from nexus.schemas.presence import Present, absent, present
 from nexus.services import (
@@ -371,11 +380,15 @@ def get_reading_detail(
             f"oracle folio (reading {row.reading_id}, phase {row.phase}) "
             f"lost its citation edge {row.edge_id}"
         )
+        # justify-defect: Oracle writes each folio from a non-empty selected
+        # candidate snippet in the same transaction as its citation snapshot.
+        if not edge.snapshot.excerpt:
+            raise AssertionError("oracle folio citation snapshot lost its exact snippet")
         passages.append(
             OracleReadingPassageOut(
-                phase=row.phase,
-                source_kind=row.source_kind,
-                exact_snippet=edge.snapshot.excerpt or "",
+                phase=oracle_reading_phase(row.phase),
+                source_kind=oracle_reading_source_kind(row.source_kind),
+                exact_snippet=edge.snapshot.excerpt,
                 locator_label=row.locator_label,
                 attribution_text=row.attribution_text,
                 marginalia_text=row.marginalia_text,
@@ -388,15 +401,19 @@ def get_reading_detail(
         folio_number=reading.folio_number,
         folio_motto=reading.folio_motto,
         folio_motto_gloss=reading.folio_motto_gloss,
-        folio_theme=reading.folio_theme,
+        folio_theme=(
+            None if reading.folio_theme is None else oracle_folio_theme(reading.folio_theme)
+        ),
         argument_text=reading.argument_text,
         question_text=reading.question_text,
-        status=reading.status,
+        status=oracle_reading_status(reading.status),
         image=image_out,
         passages=passages,
         events=[
             OracleReadingEventOut(
-                seq=row.seq, event_type=row.event_type, payload=dict(row.payload or {})
+                seq=row.seq,
+                event_type=oracle_reading_event_type(row.event_type),
+                payload=dict(row.payload or {}),
             )
             for row in event_rows
         ],
@@ -404,7 +421,9 @@ def get_reading_detail(
         started_at=reading.started_at,
         completed_at=reading.completed_at,
         failed_at=reading.failed_at,
-        error_code=reading.error_code,
+        error_code=(
+            None if reading.error_code is None else oracle_read_failure_code(reading.error_code)
+        ),
     )
 
 
@@ -456,11 +475,15 @@ def list_all_readings(db: Session, *, viewer_id: UUID) -> list[OracleReadingSumm
                 folio_number=row["folio_number"],
                 folio_motto=row["folio_motto"],
                 folio_motto_gloss=row["folio_motto_gloss"],
-                folio_theme=row["folio_theme"],
+                folio_theme=(
+                    None
+                    if row["folio_theme"] is None
+                    else oracle_folio_theme(str(row["folio_theme"]))
+                ),
                 plate_thumbnail_url=plate_thumbnail_url,
                 plate_alt_text=plate_alt_text,
                 question_text=row["question_text"],
-                status=row["status"],
+                status=oracle_reading_status(str(row["status"])),
                 created_at=row["created_at"],
                 completed_at=row["completed_at"],
                 failed_at=row["failed_at"],
@@ -706,7 +729,7 @@ class _CompletedOracleFailure(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     outcome: Literal["failure"] = "failure"
-    error_code: str
+    error_code: OracleReadingFailureCode
     error_detail: str | None = None
 
 
@@ -768,7 +791,7 @@ def _encode_oracle_terminal(
     if terminal.status != "succeeded":
         code, detail = outcome_failure_facts(terminal)
         completed: _CompletedOracle = _CompletedOracleFailure(
-            error_code=code,
+            error_code=oracle_reading_failure_code(code),
             error_detail=detail,
         )
         return EncodedGenerationTerminal(
@@ -838,7 +861,10 @@ def _encode_oracle_preaccept_failure(
     detail: str,
 ) -> str:
     return _COMPLETED_ORACLE_ADAPTER.dump_json(
-        _CompletedOracleFailure(error_code=code, error_detail=detail)
+        _CompletedOracleFailure(
+            error_code=oracle_reading_failure_code(code),
+            error_detail=detail,
+        )
     ).decode("utf-8")
 
 
@@ -934,32 +960,38 @@ def _apply_completed_oracle(
             db,
             stream=stream,
             event_type="meta",
-            payload={
-                "question": reading.question_text,
-                "folio_number": reading.folio_number,
-            },
+            payload=oracle_event_payload(
+                "meta",
+                {
+                    "question": reading.question_text,
+                    "folio_number": reading.folio_number,
+                },
+            ),
         )
         run_kit.append_event(
             db,
             stream=stream,
             event_type="bind",
-            payload={
-                "folio_motto": completed.folio_motto,
-                "folio_motto_gloss": completed.folio_motto_gloss,
-                "folio_theme": completed.folio_theme,
-            },
+            payload=oracle_event_payload(
+                "bind",
+                {
+                    "folio_motto": completed.folio_motto,
+                    "folio_motto_gloss": completed.folio_motto_gloss,
+                    "folio_theme": completed.folio_theme,
+                },
+            ),
         )
         run_kit.append_event(
             db,
             stream=stream,
             event_type="argument",
-            payload={"text": completed.argument},
+            payload=oracle_event_payload("argument", {"text": completed.argument}),
         )
         run_kit.append_event(
             db,
             stream=stream,
             event_type="plate",
-            payload=_completed_oracle_plate_payload(completed.plate),
+            payload=oracle_event_payload("plate", _completed_oracle_plate_payload(completed.plate)),
         )
 
         reading_ref = ResourceRef(scheme="oracle_reading", id=reading_id)
@@ -1026,13 +1058,13 @@ def _apply_completed_oracle(
             db,
             stream=stream,
             event_type="delta",
-            payload={"text": completed.interpretation},
+            payload=oracle_event_payload("delta", {"text": completed.interpretation}),
         )
         run_kit.append_event(
             db,
             stream=stream,
             event_type="omens",
-            payload={"lines": list(completed.omens)},
+            payload=oracle_event_payload("omens", {"lines": list(completed.omens)}),
         )
         run_kit.mark_terminal(
             db,
@@ -1057,7 +1089,7 @@ def _stage_oracle_terminal_without_dispatch(
     reading_id: UUID,
     context: JobExecutionContext,
     reason: str,
-    error_code: str | None = None,
+    error_code: OracleReadingFailureCode | None = None,
     error_detail: str | None = None,
 ) -> dict[str, Any] | None:
     """Stage Oracle's journal, ledger, and domain terminal; caller commits."""
@@ -1199,13 +1231,15 @@ async def execute_reading(
             rate_limiter.acquire_inflight_slot(viewer_id)
             inflight_acquired = True
         except ApiError as exc:
+            if exc.code is not ApiErrorCode.E_RATE_LIMITED:
+                raise
             db.rollback()
             result = _stage_oracle_terminal_without_dispatch(
                 db,
                 reading_id=reading_id,
                 context=context,
                 reason="oracle concurrency admission failed before dispatch",
-                error_code=exc.code.value,
+                error_code=oracle_reading_failure_code(exc.code.value),
                 error_detail=exc.message,
             )
             if result is None:
@@ -1227,7 +1261,7 @@ async def execute_reading(
                 reading_id=reading_id,
                 context=context,
                 reason="oracle corpus was not ready before dispatch",
-                error_code=E_ORACLE_CORPUS_NOT_READY,
+                error_code=oracle_reading_failure_code(E_ORACLE_CORPUS_NOT_READY),
                 error_detail=detail,
             )
             if result is None:
@@ -1269,13 +1303,15 @@ async def execute_reading(
                 ]
             plate = _pick_plate(db, question=question, candidates=candidates)
         except ApiError as exc:
+            if exc.code is not ApiErrorCode.E_APP_SEARCH_FAILED:
+                raise
             db.rollback()
             result = _stage_oracle_terminal_without_dispatch(
                 db,
                 reading_id=reading_id,
                 context=context,
                 reason="oracle retrieval failed before dispatch",
-                error_code=exc.code.value,
+                error_code=oracle_reading_failure_code(exc.code.value),
                 error_detail=exc.message,
             )
             if result is None:
@@ -1286,19 +1322,10 @@ async def execute_reading(
 
         if len(candidates) < 3:
             db.rollback()
-            result = _stage_oracle_terminal_without_dispatch(
-                db,
-                reading_id=reading_id,
-                context=context,
-                reason="oracle retrieved too few passages before dispatch",
-                error_code="E_INTERNAL",
-                error_detail="fewer than 3 candidate passages retrieved",
-            )
-            if result is None:
-                db.rollback()
-                return {"status": "pending", "noop": True}
-            db.commit()
-            return result
+            # justify-defect: a ready Oracle corpus is required to yield three
+            # candidates; persisting E_INTERNAL as a user-facing reading would
+            # conceal a broken retrieval/corpus invariant.
+            raise AssertionError("ready Oracle corpus yielded fewer than three candidates")
         if requires_user_content and not _candidate_set_includes_user_media(candidates):
             detail = "user content is searchable but yielded no user_media candidate"
             db.rollback()
@@ -1307,7 +1334,7 @@ async def execute_reading(
                 reading_id=reading_id,
                 context=context,
                 reason="oracle user content was unavailable before dispatch",
-                error_code=ApiErrorCode.E_APP_SEARCH_FAILED.value,
+                error_code=oracle_reading_failure_code(ApiErrorCode.E_APP_SEARCH_FAILED.value),
                 error_detail=detail,
             )
             if result is None:
@@ -1350,7 +1377,9 @@ async def execute_reading(
                 reading_id=reading_id,
                 context=context,
                 reason="oracle input changed before dispatch",
-                error_code=ApiErrorCode.E_GENERATION_SOURCE_CHANGED.value,
+                error_code=oracle_reading_failure_code(
+                    ApiErrorCode.E_GENERATION_SOURCE_CHANGED.value
+                ),
                 error_detail="Oracle input changed after the generation was prepared",
             )
             if result is None:

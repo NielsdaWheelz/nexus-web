@@ -18,6 +18,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowUp, RotateCcw, Square } from "lucide-react";
 import {
   apiFetch,
+  decodeApiPayload,
   isApiError,
   isSameSystemApiDefect,
   isToolProjectionReloadRequired,
@@ -34,7 +35,7 @@ import {
   type InheritedChatProfileSelection,
   type ResolvedChatProfileSelection,
 } from "@/lib/conversations/chatProfileSelection";
-import { decodeChatRunData } from "@/lib/conversations/messageWire";
+import { decodeChatRunResponse } from "@/lib/conversations/messageWire";
 import type { PendingTurnContext } from "@/lib/conversations/pendingTurnContext";
 import {
   decodeReaderSelectionPreview,
@@ -136,6 +137,16 @@ function chatRunErrorMessage(
   operation: "Start" | "Stop",
 ): FeedbackContent {
   switch (error.code) {
+    case "E_NETWORK":
+      return {
+        tone: "Danger",
+        requestId: error.requestId,
+        title:
+          operation === "Start"
+            ? "This message couldn’t be sent."
+            : "This response couldn’t be stopped.",
+        message: "Check your connection and try again.",
+      };
     case "E_BAD_REQUEST":
       return {
         tone: "Danger",
@@ -221,6 +232,11 @@ export default function ChatComposer({
     error: profilesError,
   } = useChatProfiles();
 
+  if (profilesError !== null && isSameSystemApiDefect(profilesError)) {
+    // Same-system catalog skew is a defect, not a temporary model outage.
+    throw profilesError;
+  }
+
   let resolvedProfileSelection: ResolvedChatProfileSelection | null = null;
   if (!isLoading && profilesError === null) {
     if (defaultProfileId === null) {
@@ -288,15 +304,20 @@ export default function ChatComposer({
       setError(null);
       onSendStarted?.();
       try {
-        const runResponse = await apiFetch<ChatRunResponse>("/api/chat-runs", {
+        const rawResponse = await apiFetch<unknown>("/api/chat-runs", {
           method: "POST",
           body: JSON.stringify(command.request),
           headers: { "Idempotency-Key": command.idempotencyKey },
         });
+        const runResponse = decodeApiPayload(
+          rawResponse,
+          decodeChatRunResponse,
+          "Create chat run",
+        );
         // Delete the complete draft record before canonical route replacement.
         resolveSuccess();
         restoreFocusAfterSendRef.current = true;
-        onChatRunCreated?.(decodeChatRunData(runResponse.data));
+        onChatRunCreated?.(runResponse.data);
         onIntentConsumed?.();
         onMessageSent?.();
         onClearBranchDraft?.();
@@ -465,7 +486,8 @@ export default function ChatComposer({
       if (
         err.code !== "E_BAD_REQUEST" &&
         err.code !== "E_FORBIDDEN" &&
-        err.code !== "E_NOT_FOUND"
+        err.code !== "E_NOT_FOUND" &&
+        err.code !== "E_NETWORK"
       ) {
         setAsyncDefect({ error: err });
         return;
@@ -594,7 +616,7 @@ export default function ChatComposer({
         <div className={styles.composerActionRow}>
           {profilesError ? (
             <span className={styles.profileStatus} role="status">
-              Models unavailable
+              Response options unavailable
             </span>
           ) : isLoading ? (
             <span className={styles.profileStatus} role="status">

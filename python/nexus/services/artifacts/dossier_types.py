@@ -139,7 +139,17 @@ class ArtifactBuildEventType(StrEnum):
     Progress = "Progress"
     Succeeded = "Succeeded"
     Failed = "Failed"
+    HistoricalFailed = "HistoricalFailed"
     Cancelled = "Cancelled"
+
+
+type WritableArtifactBuildEventType = Literal[
+    ArtifactBuildEventType.Started,
+    ArtifactBuildEventType.Progress,
+    ArtifactBuildEventType.Succeeded,
+    ArtifactBuildEventType.Failed,
+    ArtifactBuildEventType.Cancelled,
+]
 
 
 # ---------------------------------------------------------------------------
@@ -184,9 +194,24 @@ class FailedEventPayload(_StrictModel):
     shape is code-owned (migration supports live in ``manifests.py``), so it stays
     an opaque owned-absence JSON object here to avoid a layering cycle."""
 
-    failure_code: ReadDossierBuildFailureCode
+    failure_code: DossierBuildFailureCode
     detail: Presence[str]
     support: Presence[dict[str, Any]]
+
+
+class HistoricalFailedEventPayload(_StrictModel):
+    """Migration-tagged replay of a terminal written before the hard cut.
+
+    The distinct event type is the provenance proof: current producers cannot
+    emit or accidentally accept retired provider/billing vocabulary.
+    """
+
+    failure_code: HistoricalDossierBuildFailureCode
+    detail: Presence[str]
+    support: Presence[dict[str, Any]]
+
+
+type ReadFailedEventPayload = FailedEventPayload | HistoricalFailedEventPayload
 
 
 class CancelledEventPayload(_StrictModel):

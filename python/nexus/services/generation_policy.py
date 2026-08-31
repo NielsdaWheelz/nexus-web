@@ -200,6 +200,38 @@ _CHAT_POLICIES: dict[ChatProfile, OperationPolicy] = {
     for profile, plan_id in _CHAT_PLAN.items()
 }
 
+# Admission is the authority lifetime for ChatTools: it begins only after the
+# host has reserved the sole slot and includes command delivery, SDK session
+# open, and the provider turn. The bearer is minted after admission with expiry
+# anchored to this deadline, so handoff time shortens rather than extends it.
+CHAT_ADMISSION_RUNTIME_SECONDS = max(
+    policy.turn_timeout_seconds for policy in _CHAT_POLICIES.values()
+)
+
+
+def _round_up_mib(value: int) -> int:
+    mib = 1024 * 1024
+    return ((value + mib - 1) // mib) * mib
+
+
+# Codex persists one thread rollout beneath the disposable profile. Size the
+# per-file limit from the largest runtime output plus admitted input and bounded
+# serialization overhead, then give the aggregate root space for two such files
+# (rollout plus atomic/cache peer) and fixed launcher/temporary headroom.
+_CODEX_STATE_SERIALIZATION_OVERHEAD_BYTES = 8 * 1024 * 1024
+_CODEX_STATE_ROOT_FIXED_HEADROOM_BYTES = 32 * 1024 * 1024
+CODEX_EPHEMERAL_FILE_LIMIT_BYTES = _round_up_mib(
+    max(bounds.runtime_output_bytes for bounds in MODEL_BOUNDS.values())
+    + max(policy.input_max_bytes for policy in (*OPERATIONS.values(), *_CHAT_POLICIES.values()))
+    + max(
+        policy.instructions_max_bytes for policy in (*OPERATIONS.values(), *_CHAT_POLICIES.values())
+    )
+    + _CODEX_STATE_SERIALIZATION_OVERHEAD_BYTES
+)
+CODEX_EPHEMERAL_ROOT_BYTES = (
+    2 * CODEX_EPHEMERAL_FILE_LIMIT_BYTES + _CODEX_STATE_ROOT_FIXED_HEADROOM_BYTES
+)
+
 OPERATION_REVISIONS: dict[str, str] = {
     **_REVISION_BY_OPERATION,
 }
@@ -213,10 +245,11 @@ def operation_policy(operation: str) -> OperationPolicy:
 
 
 def chat_policy(profile: str) -> OperationPolicy:
-    try:
-        return _CHAT_POLICIES[profile]  # type: ignore[index]
-    except KeyError as error:
-        raise ValueError(f"unknown chat profile {profile!r}") from error
+    match profile:
+        case "fast" | "balanced" | "deep":
+            return _CHAT_POLICIES[profile]
+        case _:
+            raise ValueError(f"unknown chat profile {profile!r}")
 
 
 def resolve_policy(operation: str, *, profile: str | None = None) -> OperationPolicy:
@@ -328,10 +361,21 @@ def validate_policy() -> None:
     for model, bounds in MODEL_BOUNDS.items():
         if bounds != ModelBounds(1_050_000, 128_000, 64 * 1024 * 1024):
             raise AssertionError(f"model bounds drifted for {model}")
+    if CHAT_ADMISSION_RUNTIME_SECONDS != 900:
+        raise AssertionError("Chat admission runtime must remain the bounded 900-second ceiling")
+    if CODEX_EPHEMERAL_FILE_LIMIT_BYTES <= max(
+        bounds.runtime_output_bytes for bounds in MODEL_BOUNDS.values()
+    ):
+        raise AssertionError("Codex ephemeral file limit lacks serialized-turn headroom")
+    if CODEX_EPHEMERAL_ROOT_BYTES <= 2 * CODEX_EPHEMERAL_FILE_LIMIT_BYTES:
+        raise AssertionError("Codex ephemeral root lacks aggregate cleanup headroom")
 
 
 __all__ = [
+    "CHAT_ADMISSION_RUNTIME_SECONDS",
     "CHAT_PROFILES",
+    "CODEX_EPHEMERAL_FILE_LIMIT_BYTES",
+    "CODEX_EPHEMERAL_ROOT_BYTES",
     "MODEL_BOUNDS",
     "OPERATIONS",
     "OPERATION_REVISIONS",

@@ -76,9 +76,12 @@ from starlette.types import Receive, Scope, Send
 
 from nexus.services import generation_policy
 from nexus.services.codex_generation_contract import (
+    MAX_ADMISSION_BODY_BYTES,
     MAX_COMMAND_BODY_BYTES,
     ChatOperation,
     FailureKind,
+    GenerationAdmission,
+    GenerationAdmissionRequest,
     GenerationCommand,
     GenerationEvent,
     GenerationFailure,
@@ -94,6 +97,7 @@ from nexus.services.codex_generation_contract import (
     GenerationUsageEvent,
     capacity_rejection_bytes,
     command_policy,
+    request_fingerprint,
 )
 from nexus.services.codex_generation_operations import (
     CHAT_MCP_SERVER_NAME,
@@ -106,6 +110,7 @@ _SDK_DISTRIBUTION = "openai-codex"
 _RUNTIME_DISTRIBUTION = "openai-codex-cli-bin"
 _PINNED_CODEX_VERSION = "0.144.4"
 _SYNTHESIS_TEXT_RUN_BYTES = 32 * 1024
+_CHAT_ADMISSION_START_GRACE_SECONDS = 15.0
 CODEX_AGENT_HOST_REQUEST_DRAIN_SECONDS = 10.0
 CODEX_AGENT_HOST_TEARDOWN_DEADLINE_SECONDS = float(
     max(
@@ -173,6 +178,99 @@ class _TurnSlot:
         if not self._claimed:
             raise RuntimeError("Codex generation slot released while free")
         self._claimed = False
+
+
+@dataclass(frozen=True, slots=True)
+class _ReservedAdmission:
+    request: GenerationAdmissionRequest
+    response: GenerationAdmission
+    runtime_deadline: float
+
+
+class _AdmissionLifecycle:
+    """Own one short-lived, replay-stable Chat admission before command delivery."""
+
+    def __init__(self, slot: _TurnSlot) -> None:
+        self._slot = slot
+        self._pending: _ReservedAdmission | None = None
+        self._expiry_task: asyncio.Task[None] | None = None
+
+    def reserve(self, request: GenerationAdmissionRequest) -> GenerationAdmission | None:
+        pending = self._pending
+        if pending is not None:
+            if pending.request == request:
+                return pending.response
+            return None
+        if not self._slot.try_acquire():
+            return None
+        loop = asyncio.get_running_loop()
+        admitted_at = _utc_now()
+        response = GenerationAdmission(
+            request_id=request.request_id,
+            admission_id=uuid4(),
+            admitted_at=admitted_at,
+            runtime_deadline_seconds=generation_policy.CHAT_ADMISSION_RUNTIME_SECONDS,
+        )
+        reserved = _ReservedAdmission(
+            request=request,
+            response=response,
+            runtime_deadline=loop.time() + generation_policy.CHAT_ADMISSION_RUNTIME_SECONDS,
+        )
+        self._pending = reserved
+        self._expiry_task = asyncio.create_task(
+            self._expire_after(response.admission_id, _CHAT_ADMISSION_START_GRACE_SECONDS)
+        )
+        return response
+
+    def replay(self, request: GenerationAdmissionRequest) -> GenerationAdmission | None:
+        pending = self._pending
+        if pending is not None and pending.request == request:
+            return pending.response
+        return None
+
+    def consume(self, admission_id: UUID, command: GenerationCommand) -> _ReservedAdmission:
+        pending = self._pending
+        if pending is None or pending.response.admission_id != admission_id:
+            raise ValueError("Chat generation admission is unavailable")
+        if (
+            pending.request.request_id != command.request_id
+            or pending.request.operation != command.operation
+            or pending.request.policy_revision != command.policy_revision
+            or pending.request.policy_fingerprint != command.policy_fingerprint
+            or pending.request.request_fingerprint != request_fingerprint(command)
+        ):
+            self._release_pending()
+            raise ValueError("Chat generation command differs from its admission")
+        self._pending = None
+        expiry = self._expiry_task
+        self._expiry_task = None
+        if expiry is not None:
+            expiry.cancel()
+        return pending
+
+    def cancel(self, request_id: UUID) -> None:
+        pending = self._pending
+        if pending is not None and pending.request.request_id == request_id:
+            self._release_pending()
+
+    async def _expire_after(self, admission_id: UUID, delay_seconds: float) -> None:
+        try:
+            await asyncio.sleep(delay_seconds)
+        except asyncio.CancelledError:
+            return
+        pending = self._pending
+        if pending is not None and pending.response.admission_id == admission_id:
+            self._release_pending()
+
+    def _release_pending(self) -> None:
+        if self._pending is None:
+            return
+        self._pending = None
+        expiry = self._expiry_task
+        self._expiry_task = None
+        if expiry is not None and expiry is not asyncio.current_task():
+            expiry.cancel()
+        self._slot.release()
 
 
 @dataclass(slots=True)
@@ -290,6 +388,7 @@ def create_codex_agent_app(
     validate_enrolled_auth_file(credential_file)
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     slot = _TurnSlot()
+    admissions = _AdmissionLifecycle(slot)
     lifecycle = TurnLifecycle()
     app.state.turn_lifecycle = lifecycle
 
@@ -303,6 +402,27 @@ def create_codex_agent_app(
             runtime_version=versions.runtime,
         )
 
+    @app.post("/v2/generation-admissions", response_model=GenerationAdmission)
+    async def admit_generation(request: Request) -> Response | GenerationAdmission:
+        if _content_type(request) != "application/json":
+            raise HTTPException(status_code=415, detail="content type must be application/json")
+        if request.headers.get("accept", "").strip().lower() != "application/json":
+            raise HTTPException(status_code=406, detail="accept must be application/json")
+        admission_request = await _read_admission_request(request)
+        if not chat_network_attested:
+            raise HTTPException(status_code=422, detail="ChatTools network is not attested")
+        if not lifecycle.ready:
+            raise HTTPException(status_code=503, detail="Codex generation host is not ready")
+        replay = admissions.replay(admission_request)
+        if replay is not None:
+            return replay
+        if not capacity_is_available(capacity_paths):
+            return _capacity_rejection()
+        admission = admissions.reserve(admission_request)
+        if admission is None:
+            return _capacity_rejection()
+        return admission
+
     @app.post("/v2/generations")
     async def generation(request: Request) -> Response:
         if _content_type(request) != "application/json":
@@ -314,12 +434,31 @@ def create_codex_agent_app(
             raise HTTPException(status_code=422, detail="ChatTools network is not attested")
         if not lifecycle.ready:
             raise HTTPException(status_code=503, detail="Codex generation host is not ready")
-
-        if not slot.try_acquire():
-            return _capacity_rejection()
-        if not capacity_is_available(capacity_paths):
-            slot.release()
-            return _capacity_rejection()
+        reserved: _ReservedAdmission | None = None
+        admission_header = request.headers.get("nexus-generation-admission")
+        if isinstance(command.operation, ChatOperation):
+            if admission_header is None:
+                raise HTTPException(status_code=409, detail="Chat generation admission is required")
+            try:
+                admission_id = UUID(admission_header)
+                if str(admission_id) != admission_header:
+                    raise ValueError
+                reserved = admissions.consume(admission_id, command)
+            except ValueError as error:
+                raise HTTPException(
+                    status_code=409, detail="Chat generation admission does not match"
+                ) from error
+        else:
+            if admission_header is not None:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Synthesis generation forbids an admission header",
+                )
+            if not slot.try_acquire():
+                return _capacity_rejection()
+            if not capacity_is_available(capacity_paths):
+                slot.release()
+                return _capacity_rejection()
 
         try:
             runtime_paths = create_ephemeral_runtime_paths(
@@ -329,7 +468,7 @@ def create_codex_agent_app(
         except Exception:
             slot.release()
             raise
-        accepted_at = _utc_now()
+        accepted_at = reserved.response.admitted_at if reserved is not None else _utc_now()
         control = _TurnControl(command.request_id, asyncio.Event())
         relay: asyncio.Queue[_RelayedFrame] = asyncio.Queue(maxsize=1)
         owner_started = asyncio.Event()
@@ -345,6 +484,7 @@ def create_codex_agent_app(
             owner_started,
             execution_released,
             relay_abandoned,
+            runtime_deadline=reserved.runtime_deadline if reserved is not None else None,
             runtime_factory=runtime_factory,
             runtime_paths=runtime_paths,
             working_directory_root=working_directory_root,
@@ -388,12 +528,14 @@ def create_codex_agent_app(
     @app.post("/v2/generations/{request_id}/cancel")
     async def cancel(request_id: UUID, request: Request) -> Response:
         await _require_empty_body(request)
+        admissions.cancel(request_id)
         lifecycle.interrupt(request_id, "cancelled")
         return Response(status_code=204)
 
     @app.post("/v2/generations/{request_id}/policy-violation")
     async def policy_violation(request_id: UUID, request: Request) -> Response:
         await _require_empty_body(request)
+        admissions.cancel(request_id)
         lifecycle.interrupt(request_id, "policy_violation")
         return Response(status_code=204)
 
@@ -464,6 +606,7 @@ async def _own_admitted_turn(
     execution_released: asyncio.Event,
     relay_abandoned: asyncio.Event,
     *,
+    runtime_deadline: float | None,
     runtime_factory: AgentRuntimeFactory,
     runtime_paths: EphemeralRuntimePaths,
     working_directory_root: Path,
@@ -474,13 +617,11 @@ async def _own_admitted_turn(
     credential_identity: CredentialFileIdentity | None = None
     execution_released_observed = False
     runtime_close_unproven = asyncio.Event()
-    try:
-        owner_started.set()
-        # Cleanup ownership is established before any credential or runtime work.
-        # The endpoint releases execution only after the streaming response exists,
-        # leaving a deterministic cancellation point at the ownership handoff.
-        await execution_released.wait()
-        execution_released_observed = True
+    emitted_frames = 0
+    emitted_bytes = 0
+
+    async def execute_and_relay() -> None:
+        nonlocal credential_identity, emitted_frames, emitted_bytes
         credential_identity = enrolled_auth_identity(credential_file)
         async for line in _run_turn(
             command,
@@ -495,6 +636,49 @@ async def _own_admitted_turn(
             versions=versions,
         ):
             await relay.put(line)
+            emitted_frames += 1
+            emitted_bytes += len(line)
+
+    try:
+        owner_started.set()
+        # Cleanup ownership is established before any credential or runtime work.
+        # The endpoint releases execution only after the streaming response exists,
+        # leaving a deterministic cancellation point at the ownership handoff.
+        await execution_released.wait()
+        execution_released_observed = True
+        if runtime_deadline is None:
+            await execute_and_relay()
+        else:
+            try:
+                async with asyncio.timeout_at(runtime_deadline):
+                    await execute_and_relay()
+            except TimeoutError as error:
+                terminal = _failed_terminal(
+                    "turn_timeout",
+                    session=None,
+                    accepted_at=accepted_at,
+                    versions=versions,
+                    diagnostics=_diagnostics("turn_stream", "admission deadline expired"),
+                )
+                line = (
+                    GenerationFrame(
+                        request_id=command.request_id,
+                        sequence=emitted_frames,
+                        event=terminal,
+                    ).model_dump_json()
+                    + "\n"
+                ).encode()
+                bounds = command_policy(command).stream
+                if (
+                    emitted_frames >= bounds.max_frames
+                    or len(line) > bounds.max_frame_bytes
+                    or emitted_bytes + len(line) > bounds.max_stream_bytes
+                ):
+                    lifecycle.fail("turn_admission_deadline_terminal_unrepresentable")
+                    raise RuntimeError(
+                        "Codex admission deadline terminal exceeded the reserved stream budget"
+                    ) from error
+                await relay.put(line)
     finally:
         if runtime_close_unproven.is_set():
             lifecycle.fail("turn_runtime_close_unproven")
@@ -603,6 +787,23 @@ async def _read_command(request: Request) -> GenerationCommand:
         return GenerationCommand.model_validate_json(bytes(payload))
     except ValidationError as error:
         raise HTTPException(status_code=422, detail="invalid generation command") from error
+
+
+async def _read_admission_request(request: Request) -> GenerationAdmissionRequest:
+    declared = request.headers.get("content-length", "")
+    if not declared.isdigit():
+        raise HTTPException(status_code=411, detail="content length is required")
+    if int(declared) > MAX_ADMISSION_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="admission exceeds its byte bound")
+    payload = bytearray()
+    async for chunk in request.stream():
+        payload.extend(chunk)
+        if len(payload) > MAX_ADMISSION_BODY_BYTES:
+            raise HTTPException(status_code=413, detail="admission exceeds its byte bound")
+    try:
+        return GenerationAdmissionRequest.model_validate_json(bytes(payload))
+    except ValidationError as error:
+        raise HTTPException(status_code=422, detail="invalid generation admission") from error
 
 
 async def _require_empty_body(request: Request) -> None:

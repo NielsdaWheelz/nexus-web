@@ -100,6 +100,7 @@ from nexus.services.artifacts.dossier_types import (
     StartedEventPayload,
     SubjectResource,
     SucceededEventPayload,
+    WritableArtifactBuildEventType,
 )
 from nexus.services.artifacts.generation_step import (
     DOCUMENT_REPAIR_STEP_PATH,
@@ -2526,7 +2527,7 @@ def _append_guarded_stream_event(
     build_id: UUID,
     ctx: JobExecutionContext,
     input_recheck: _TerminalInputRecheck,
-    event_type: ArtifactBuildEventType,
+    event_type: Literal[ArtifactBuildEventType.Progress],
     payload: dict,
     idempotent_once: bool = False,
 ) -> _StreamEventWriteResult:
@@ -3867,11 +3868,15 @@ def _append_build_event(
     db: Session,
     *,
     build_id: UUID,
-    event_type: ArtifactBuildEventType,
+    event_type: WritableArtifactBuildEventType,
     payload: dict,
 ) -> None:
     """Append one strict build event under the caller-held head lock (the seq is
     allocated + inserted together, so no writer collides — A5 §673)."""
+    if event_type is ArtifactBuildEventType.HistoricalFailed:
+        # justify-defect: this value exists only for rows provenance-tagged by
+        # migration 0224; no post-cutover producer may emit it.
+        raise AssertionError("HistoricalFailed is a migration-only event type")
     build_orm = db.get(ArtifactBuild, build_id)
     if build_orm is None:
         # justify-defect: an event append targets a build the caller just locked.

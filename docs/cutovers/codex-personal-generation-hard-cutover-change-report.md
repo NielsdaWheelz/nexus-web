@@ -45,8 +45,15 @@ Retained matches are intentional and bounded:
   negative decoder tests.
 - `provider-runtime` remains pinned only for embeddings and its Codex
   `AgentRuntime` extra. `llm_calls` is the unified generation ledger.
-- Four historical dossier failure spellings remain readable for immutable
-  domain rows and SSE replay, but are excluded from the current write enum.
+- Four historical dossier failure spellings remain readable from unchanged
+  failure rows and migration-tagged `HistoricalFailed` SSE events. Current
+  `Failed` events reject them, and current producers cannot emit the migration
+  tag.
+- Pre-cutover Oracle failure facts, including the former product-visible defect
+  spellings, likewise remain unchanged and readable only
+  through migration-tagged `historical_done` events; malformed historical
+  terminals and unknown preserved codes block the migration, and current `done`
+  events reject retired codes.
 - `max_output_tokens` remains only as an internal context-admission calculation,
   not caller policy or provider billing.
 - Immutable database migration history may name removed columns and tables; no

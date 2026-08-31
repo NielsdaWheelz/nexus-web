@@ -92,16 +92,27 @@ _CODEX_AGENT_SECURITY_OPTIONS = {
 # The host's published graceful-stop budget (apps/codex_agent/host.py): request drain,
 # interrupted-turn runtime close, and exit margin. Every stop of the host grants it.
 _CODEX_AGENT_STOP_GRACE_SECONDS = 45
+_CODEX_AGENT_MEMORY_LIMIT_BYTES = 384 * 1024 * 1024
+_CODEX_AGENT_EPHEMERAL_FILE_LIMIT_BYTES = 77_594_624
+_CODEX_AGENT_EPHEMERAL_ROOT_BYTES = 188_743_680
 # The private executable tmpfs exists only because the pinned SDK launches a
 # content-addressed supervisor beside its profile state. General /tmp remains
 # noexec; a live container that differs is not the proven host.
 _CODEX_AGENT_TMPFS = {
-    "/run/nexus-codex-turns": ("rw,exec,nosuid,nodev,size=16m,mode=0700,uid=10001,gid=10001"),
+    "/run/nexus-codex-turns": ("rw,exec,nosuid,nodev,size=180m,mode=0700,uid=10001,gid=10001"),
     "/tmp": "rw,noexec,nosuid,nodev,size=16m",
 }
 _CODEX_EGRESS_POLICY_TMPFS = {"/tmp": "rw,noexec,nosuid,nodev,size=8m"}
 _CODEX_AGENT_ULIMITS = frozenset(
-    {("core", 0, 0), ("fsize", 1_048_576, 1_048_576), ("nofile", 64, 64)}
+    {
+        ("core", 0, 0),
+        (
+            "fsize",
+            _CODEX_AGENT_EPHEMERAL_FILE_LIMIT_BYTES,
+            _CODEX_AGENT_EPHEMERAL_FILE_LIMIT_BYTES,
+        ),
+        ("nofile", 64, 64),
+    }
 )
 _CODEX_AGENT_RUNTIME_ENVIRONMENT = {
     "NEXUS_CODEX_CREDENTIAL_FILE": "/run/nexus-codex-credential/auth.json",
@@ -3480,6 +3491,7 @@ class HostRelease:
 
     def _preflight_codex_agent_host_security(self, bundle: Path) -> None:
         self._require_codex_agent_host_kernel_boundary()
+        self._require_codex_generation_resource_contract()
         _run(
             (
                 "apparmor_parser",
@@ -3488,6 +3500,23 @@ class HostRelease:
             ),
             timeout_seconds=10,
         )
+
+    @staticmethod
+    def _require_codex_generation_resource_contract() -> None:
+        # Lazy by design: base-sensitivity overlays can import the release owner
+        # before the new generation module exists, while a Codex release must
+        # prove the exact candidate policy/deploy relationship before mutation.
+        from nexus.services import generation_policy
+
+        if (
+            _CODEX_AGENT_EPHEMERAL_FILE_LIMIT_BYTES
+            != generation_policy.CODEX_EPHEMERAL_FILE_LIMIT_BYTES
+            or _CODEX_AGENT_EPHEMERAL_ROOT_BYTES != generation_policy.CODEX_EPHEMERAL_ROOT_BYTES
+            or _CODEX_AGENT_EPHEMERAL_ROOT_BYTES * 2 > _CODEX_AGENT_MEMORY_LIMIT_BYTES
+        ):
+            raise PermanentReleaseFailure(
+                "Codex ephemeral storage limits differ from the generation policy or cgroup"
+            )
 
     def _revalidate_attempt_host_capacity(
         self,

@@ -68,8 +68,11 @@ const HISTORICAL_FAILURE_MESSAGES = {
 
 const ABSENT = { kind: "Absent" } as const;
 
-function decodeFailedEvent(failureCode: string) {
-  const event = decodeDossierStreamEvent("Failed", {
+function decodeFailedEvent(
+  failureCode: string,
+  eventType: "Failed" | "HistoricalFailed" = "Failed",
+) {
+  const event = decodeDossierStreamEvent(eventType, {
     failure_code: failureCode,
     detail: ABSENT,
     support: ABSENT,
@@ -141,9 +144,13 @@ describe("Dossier failure browser contract", () => {
         `head snapshot rejected historical failure ${code}`,
       ).toEqual({ failureCode: code, detail: ABSENT, support: ABSENT });
       expect(
-        decodeFailedEvent(code),
-        `SSE replay rejected historical failure ${code}`,
+        decodeFailedEvent(code, "HistoricalFailed"),
+        `tagged SSE replay rejected historical failure ${code}`,
       ).toEqual({ failureCode: code, detail: ABSENT, support: ABSENT });
+      expect(
+        () => decodeFailedEvent(code),
+        `current Failed SSE event admitted historical failure ${code}`,
+      ).toThrow("unknown current failure code");
       expect(
         dossierBuildFailureMessage(code),
         `historical failure copy missing for ${code}`,

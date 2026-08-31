@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import ipaddress
 import json
 import threading
 import time
+from collections import OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
@@ -72,7 +74,9 @@ _MCP_JSON_CONTENT_TYPE: Final[bytes] = b"application/json"
 _MCP_STREAMABLE_HTTP_ACCEPT: Final[bytes] = b"application/json, text/event-stream"
 MAX_MCP_REQUEST_BODY_BYTES: Final[int] = 512 * 1024
 MCP_RATE_WINDOW_SECONDS: Final[float] = 60.0
-MCP_RATE_BURST: Final[int] = 120
+MCP_SOURCE_RATE_BURST: Final[int] = 120
+MCP_GRANT_RATE_BURST: Final[int] = 120
+_MAX_MCP_SOURCE_WINDOWS: Final[int] = 4_096
 MCP_TOOL_DRAIN_TIMEOUT_SECONDS: Final[float] = 35.0
 _MAX_JSON_RPC_INTEGER: Final[int] = 2**63 - 1
 _MAX_JSON_RPC_STRING: Final[int] = 256
@@ -344,6 +348,7 @@ class AgentToolAuthority:
     operation: FrozenToolOperation
     worker_id: str
     generation_id: UUID
+    admission_id: UUID
     grant_jti: str
     admitted_resource_uris: frozenset[str]
     _notified_policy_violations: set[UUID] = field(default_factory=set)
@@ -401,6 +406,7 @@ class AgentToolAuthority:
         operation: FrozenToolOperation,
         worker_id: str,
         generation_id: UUID,
+        admission_id: UUID,
         grant_jti: str,
         admitted_resource_uris: tuple[str, ...],
     ) -> AgentToolAuthority:
@@ -438,6 +444,7 @@ class AgentToolAuthority:
             operation=execution_operation,
             worker_id=worker_id,
             generation_id=generation_id,
+            admission_id=admission_id,
             grant_jti=grant_jti,
             admitted_resource_uris=frozenset(admitted_resource_uris),
         )
@@ -645,6 +652,7 @@ class AgentToolAuthority:
             and claims.worker_id == self.worker_id
             and claims.attempt_no == self.attempt_no
             and claims.generation_id == str(self.generation_id)
+            and claims.admission_id == str(self.admission_id)
             and claims.jti == self.grant_jti
             and _grant_matches_generation(claims, generation)
         )
@@ -958,6 +966,7 @@ class AgentToolAuthority:
             or claims.worker_id != self.worker_id
             or claims.attempt_no != self.attempt_no
             or claims.generation_id != str(self.generation_id)
+            or claims.admission_id != str(self.admission_id)
             or claims.jti != self.grant_jti
             or not _grant_matches_generation(claims, generation)
         ):
@@ -1274,6 +1283,7 @@ def _create_mcp_app_for_authority(
             on_policy_violation=on_policy_violation,
         )
 
+    app.add_middleware(_AuthenticatedGrantRateGate)
     app.add_middleware(
         _GrantGate,
         signing_key=signing_key,
@@ -1281,7 +1291,7 @@ def _create_mcp_app_for_authority(
         authorize_request=authorize_request,
         max_body_bytes=MAX_MCP_REQUEST_BODY_BYTES,
     )
-    app.add_middleware(_McpRequestRateGate)
+    app.add_middleware(_McpSourceRateGate)
     return app
 
 
@@ -1296,34 +1306,97 @@ def _transport_security(mcp_origin: str) -> TransportSecuritySettings:
     )
 
 
-class _McpRequestRateGate(BaseHTTPMiddleware):
-    """Bound every MCP request before authorization or body inspection.
+@dataclass(slots=True)
+class _RateWindow:
+    started: float
+    requests: int = 0
 
-    The interactive worker is one process-owned listener. A fixed global
-    window is deliberately identity-blind across presented credentials. The
-    gate is path-wide so missing or invalid credentials cannot evade the
-    process bound; below saturation the inner grant gate still owns the
-    indistinguishable bodyless 401.
-    """
+
+class _McpSourceRateGate(BaseHTTPMiddleware):
+    """Apply a bounded source window before bearer parsing or body inspection."""
 
     def __init__(self, app: Any) -> None:
         super().__init__(app)
-        self._window_started = time.monotonic()
-        self._requests = 0
+        self._windows: OrderedDict[str, _RateWindow] = OrderedDict()
         self._lock = asyncio.Lock()
 
     async def dispatch(self, request: Request, call_next: Callable[[Request], Any]) -> Response:
         if request.url.path != MCP_PATH:
             return await call_next(request)
+        source = _trusted_mcp_source(request)
+        if source is None:
+            return Response(status_code=400)
         now = time.monotonic()
         async with self._lock:
-            if now - self._window_started >= MCP_RATE_WINDOW_SECONDS:
-                self._window_started = now
-                self._requests = 0
-            if self._requests >= MCP_RATE_BURST:
+            window = self._windows.get(source)
+            if window is None or now - window.started >= MCP_RATE_WINDOW_SECONDS:
+                window = _RateWindow(started=now)
+                self._windows[source] = window
+            self._windows.move_to_end(source)
+            if window.requests >= MCP_SOURCE_RATE_BURST:
                 return Response(status_code=429)
-            self._requests += 1
+            window.requests += 1
+            self._prune()
         return await call_next(request)
+
+    def _prune(self) -> None:
+        while len(self._windows) > _MAX_MCP_SOURCE_WINDOWS:
+            self._windows.popitem(last=False)
+
+
+class _AuthenticatedGrantRateGate(BaseHTTPMiddleware):
+    """Reserve a distinct fixed window for each already-authorized active grant."""
+
+    def __init__(self, app: Any) -> None:
+        super().__init__(app)
+        self._windows: dict[str, _RateWindow] = {}
+        self._lock = asyncio.Lock()
+
+    async def dispatch(self, request: Request, call_next: Callable[[Request], Any]) -> Response:
+        if request.url.path != MCP_PATH:
+            return await call_next(request)
+        claims = getattr(request.state, "agent_tool_grant", None)
+        if not isinstance(claims, AgentToolGrantClaims):
+            raise RuntimeError("authenticated MCP rate gate received no verified grant")
+        now = time.monotonic()
+        async with self._lock:
+            window = self._windows.get(claims.jti)
+            if window is None or now - window.started >= MCP_RATE_WINDOW_SECONDS:
+                window = _RateWindow(started=now)
+                self._windows[claims.jti] = window
+            if window.requests >= MCP_GRANT_RATE_BURST:
+                return Response(status_code=429)
+            window.requests += 1
+            self._windows = {
+                jti: candidate
+                for jti, candidate in self._windows.items()
+                if now - candidate.started < MCP_RATE_WINDOW_SECONDS
+            }
+        return await call_next(request)
+
+
+def _trusted_mcp_source(request: Request) -> str | None:
+    """Resolve Caddy's single-hop source without trusting a public-supplied chain."""
+
+    client = request.client
+    if client is None:
+        return None
+    try:
+        peer = ipaddress.ip_address(client.host)
+    except ValueError:
+        # Starlette's in-process test transport uses a non-address sentinel and
+        # cannot supply a spoofable network header.
+        return f"local:{client.host}"
+    forwarded_values = request.headers.getlist("x-forwarded-for")
+    if peer.is_private and not peer.is_loopback:
+        if len(forwarded_values) != 1 or "," in forwarded_values[0]:
+            return None
+        try:
+            return ipaddress.ip_address(forwarded_values[0].strip()).compressed
+        except ValueError:
+            return None
+    # Direct public and loopback callers cannot select another rate identity.
+    return peer.compressed
 
 
 def _sdk_tool(
@@ -1354,7 +1427,9 @@ def _sdk_tool(
         )
         for name, field in fields.items()
     ]
-    dispatch.__signature__ = inspect.Signature(parameters, return_annotation=CallToolResult)  # type: ignore[attr-defined]
+    cast(Any, dispatch).__signature__ = inspect.Signature(
+        parameters, return_annotation=CallToolResult
+    )
     dispatch.__annotations__ = {
         "ctx": Context,
         **{field.alias or name: field.annotation for name, field in fields.items()},
@@ -1481,7 +1556,7 @@ async def _read_bounded_body(request: Request, *, max_bytes: int) -> bytes | Non
     body = bytes(payload)
     # BaseHTTPMiddleware supplies a cached Request. Setting its body after the
     # bounded stream makes the exact bytes replayable to the pinned MCP app.
-    request._body = body  # type: ignore[attr-defined]  # Starlette's replay cache.
+    cast(Any, request)._body = body
     return body
 
 

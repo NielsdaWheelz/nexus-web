@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from uuid import UUID, uuid4
 
@@ -64,7 +65,7 @@ def _command(generation_id: UUID) -> GenerationCommand:
 def _terminal_frame(generation_id: UUID) -> GenerationFrame:
     return GenerationFrame(
         request_id=generation_id,
-        sequence=7,
+        sequence=0,
         event=GenerationTerminal(
             status="succeeded",
             failure=None,
@@ -91,7 +92,7 @@ def _terminal_frame(generation_id: UUID) -> GenerationFrame:
 def _failed_terminal_frame(generation_id: UUID) -> GenerationFrame:
     return GenerationFrame(
         request_id=generation_id,
-        sequence=7,
+        sequence=0,
         event=GenerationTerminal(
             status="failed",
             failure=GenerationFailure(kind="backend_failed"),
@@ -104,6 +105,19 @@ def _failed_terminal_frame(generation_id: UUID) -> GenerationFrame:
             sdk_version="0.144.4",
             runtime_version="0.144.4",
         ),
+    )
+
+
+def _raw_terminal_attachment(
+    frame: GenerationFrame,
+    *,
+    latency_ms: int = 1_234,
+) -> AttachReconciledGenerationTerminal:
+    raw_stream = (frame.model_dump_json() + "\n").encode("utf-8")
+    return AttachReconciledGenerationTerminal(
+        raw_stream=raw_stream,
+        raw_stream_sha256=hashlib.sha256(raw_stream).hexdigest(),
+        latency_ms=latency_ms,
     )
 
 
@@ -124,10 +138,7 @@ def test_operator_terminal_reconciliation_lands_once_without_owning_the_commit(
         command=command,
         state=uncertain,
         streaming=False,
-        resolution=AttachReconciledGenerationTerminal(
-            frame=_terminal_frame(generation_id),
-            latency_ms=1_234,
-        ),
+        resolution=_raw_terminal_attachment(_terminal_frame(generation_id)),
     )
 
     with Session(engine) as db:
@@ -210,10 +221,7 @@ def test_reconciled_terminal_cannot_persist_operator_supplied_diagnostics(
             terminal_result=absent(),
         ),
         streaming=False,
-        resolution=AttachReconciledGenerationTerminal(
-            frame=_failed_terminal_frame(generation_id),
-            latency_ms=1_234,
-        ),
+        resolution=_raw_terminal_attachment(_failed_terminal_frame(generation_id)),
     )
 
     with Session(engine) as db:
@@ -250,7 +258,10 @@ def test_reconciled_terminal_cannot_persist_operator_supplied_diagnostics(
         db.commit()
 
 
-@pytest.mark.parametrize("drift", ["request_id", "sdk_version", "runtime_version"])
+@pytest.mark.parametrize(
+    "drift",
+    ["request_id", "sdk_version", "runtime_version", "raw_digest", "sequence", "stream"],
+)
 def test_reconciled_terminal_reuses_live_terminal_validation(
     engine: Engine,
     *,
@@ -262,11 +273,25 @@ def test_reconciled_terminal_reuses_live_terminal_validation(
     frame = _terminal_frame(generation_id)
     if drift == "request_id":
         frame = frame.model_copy(update={"request_id": uuid4()})
-    else:
+    elif drift in {"sdk_version", "runtime_version"}:
         terminal = frame.event
         assert isinstance(terminal, GenerationTerminal)
         frame = frame.model_copy(
             update={"event": terminal.model_copy(update={drift: "drifted-runtime"})}
+        )
+    resolution = _raw_terminal_attachment(frame)
+    if drift == "raw_digest":
+        resolution = resolution.model_copy(update={"raw_stream_sha256": "0" * 64})
+    elif drift == "sequence":
+        resolution = _raw_terminal_attachment(frame.model_copy(update={"sequence": 1}))
+    elif drift == "stream":
+        maximum = generation_policy.operation_policy("metadata_enrichment").stream.max_stream_bytes
+        oversized = b"x" * (maximum + 1)
+        resolution = resolution.model_copy(
+            update={
+                "raw_stream": oversized,
+                "raw_stream_sha256": hashlib.sha256(oversized).hexdigest(),
+            }
         )
     request = GenerationReconciliationRequest(
         owner=owner,
@@ -278,7 +303,7 @@ def test_reconciled_terminal_reuses_live_terminal_validation(
             terminal_result=absent(),
         ),
         streaming=False,
-        resolution=AttachReconciledGenerationTerminal(frame=frame, latency_ms=1_234),
+        resolution=resolution,
     )
 
     with Session(engine) as db:

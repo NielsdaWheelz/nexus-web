@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ConversationMessage } from "@/lib/conversations/types";
-import { decodeConversationMessage } from "./messageWire";
+import { decodeChatRunData, decodeConversationMessage } from "./messageWire";
 
 const MEDIA_ID = "11111111-1111-4111-8111-111111111111";
 const HIGHLIGHT_ID = "22222222-2222-4222-8222-222222222222";
@@ -19,6 +19,49 @@ function message(): ConversationMessage {
     can_regenerate: false,
     created_at: "2026-08-25T00:00:00Z",
     updated_at: "2026-08-25T00:00:00Z",
+  };
+}
+
+function chatRunData() {
+  return {
+    run: {
+      id: "run-1",
+      status: "running",
+      conversation_id: "conversation-1",
+      user_message_id: "user-1",
+      assistant_message_id: "assistant-1",
+      profile_id: "balanced",
+      model_name: "gpt-5.6-terra",
+      reasoning_effort: "medium",
+      support_id: { kind: "Absent" },
+      publication_warning: { kind: "Absent" },
+      failure: null,
+      execution: { kind: "Present", value: { phase: "Running" } },
+      cancel_requested_at: null,
+      started_at: "2026-08-25T00:00:00Z",
+      completed_at: null,
+      error_code: null,
+      created_at: "2026-08-25T00:00:00Z",
+      updated_at: "2026-08-25T00:00:00Z",
+    },
+    conversation: { id: "conversation-1", title: "Chat" },
+    user_message: { ...message(), id: "user-1" },
+    assistant_message: {
+      ...message(),
+      id: "assistant-1",
+      role: "assistant",
+      status: "pending",
+    },
+    stream_state: {
+      status: "running",
+      last_event_seq: 0,
+      folded_event_seq: 0,
+      assistant_current_text: "",
+      tool_calls: [],
+      activity: { phase: "thinking", label: null },
+      reconnectable: true,
+      terminal: false,
+    },
   };
 }
 
@@ -79,5 +122,129 @@ describe("conversation message reader-selection wire", () => {
     expect(() =>
       decodeConversationMessage(candidate as unknown as ConversationMessage),
     ).toThrow("Invalid Presence");
+  });
+
+  it("rejects retired generation fields at message ingress", () => {
+    expect(() =>
+      decodeConversationMessage({ ...message(), provider: "anthropic" }),
+    ).toThrow("conversation message contains retired field provider");
+  });
+
+  it("strictly rejects retired trust-run selectors, pricing, and failures", () => {
+    const candidate = {
+      ...message(),
+      role: "assistant",
+      status: "error",
+      can_rerun: true,
+      trust_trail: {
+        schema_version: "assistant_trust_trail.v1",
+        assistant_message_id: "assistant-1",
+        conversation_id: "conversation-1",
+        chat_run_id: "run-1",
+        status: "error",
+        run: {
+          run_id: "run-1",
+          profile_id: "balanced",
+          plan_id: "chat_balanced",
+          plan_revision: "codex-personal.v1",
+          model_name: "gpt-5.6-terra",
+          reasoning_effort: { kind: "Present", value: "medium" },
+          status: "error",
+          usage: null,
+          error_code: "E_GENERATION_RUNTIME_UNAVAILABLE",
+          support_id: { kind: "Present", value: "support-1" },
+          publication_warning: { kind: "Absent" },
+          failure: { code: "assistant_unavailable", can_rerun: true },
+          execution: { kind: "Absent" },
+          final_chars: 0,
+          started_at: "2026-08-25T00:00:00Z",
+          completed_at: "2026-08-25T00:00:01Z",
+        },
+        prompt: null,
+        tool_calls: [],
+        citations: [],
+        context_refs_added: [],
+        integrity_notices: [],
+        created_at: "2026-08-25T00:00:00Z",
+        updated_at: "2026-08-25T00:00:01Z",
+      },
+    };
+
+    expect(decodeConversationMessage(candidate).trust_trail?.run).toMatchObject({
+      profile_id: "balanced",
+      failure: { code: "assistant_unavailable", can_rerun: true },
+    });
+
+    for (const retired of [
+      ["provider", "anthropic"],
+      ["reasoning_option_id", "high"],
+      ["total_cost_usd_micros", 42],
+    ] as const) {
+      const run = {
+        ...candidate.trust_trail.run,
+        [retired[0]]: retired[1],
+      };
+      expect(() =>
+        decodeConversationMessage({
+          ...candidate,
+          trust_trail: { ...candidate.trust_trail, run },
+        }),
+      ).toThrow("assistant trust run must contain exactly");
+    }
+
+    expect(() =>
+      decodeConversationMessage({
+        ...candidate,
+        trust_trail: {
+          ...candidate.trust_trail,
+          run: {
+            ...candidate.trust_trail.run,
+            failure: {
+              code: "assistant_unavailable",
+              can_rerun: true,
+              attempts: 2,
+            },
+          },
+        },
+      }),
+    ).toThrow("expected chat failure must contain exactly");
+  });
+
+  it("strictly rejects retired active-run fields and profile ids", () => {
+    expect(decodeChatRunData(chatRunData()).run.profile_id).toBe("balanced");
+
+    for (const retired of [
+      ["provider", "anthropic"],
+      ["reasoning_option_id", "high"],
+      ["total_cost_usd_micros", 42],
+    ] as const) {
+      const candidate = chatRunData();
+      const run = { ...candidate.run, [retired[0]]: retired[1] };
+      expect(() => decodeChatRunData({ ...candidate, run })).toThrow(
+        "chat run must contain exactly",
+      );
+    }
+
+    const retiredProfile = chatRunData();
+    retiredProfile.run.profile_id = "claude";
+    expect(() => decodeChatRunData(retiredProfile)).toThrow(
+      "chat run.profile_id must be one of",
+    );
+
+    const current = chatRunData();
+    const oldFailure = {
+      ...current,
+      run: {
+        ...current.run,
+        failure: {
+          code: "provider_unavailable",
+          can_rerun: true,
+          attempts: 2,
+        },
+      },
+    };
+    expect(() => decodeChatRunData(oldFailure)).toThrow(
+      "expected chat failure must contain exactly",
+    );
   });
 });

@@ -22,6 +22,11 @@ export interface ChatFailureMessage {
   body: string;
 }
 
+function unsupportedChatFailure(failure: never): never {
+  const code = (failure as { code?: unknown }).code;
+  throw new Error(`Unsupported chat failure code: ${JSON.stringify(code)}`);
+}
+
 /** The generic, non-rerunnable card shown for an operator defect or when the
  * run/message has no representable stored failure code. */
 const GENERIC_DEFECT_MESSAGE: ChatFailureMessage = {
@@ -64,11 +69,9 @@ export function chatFailureMessage(
       };
     case "operator_defect":
       return GENERIC_DEFECT_MESSAGE;
-    default: {
+    default:
       // Exhaustiveness guard: if a variant is added to ExpectedChatFailure
       // without a case above, this line fails to compile.
-      const _exhaustive: never = failure;
-      return _exhaustive;
-    }
+      return unsupportedChatFailure(failure);
   }
 }

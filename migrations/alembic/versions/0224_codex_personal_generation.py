@@ -30,6 +30,41 @@ _GENERATION_JOB_KINDS = (
     "dawn_write_job",
 )
 _ACTIVE_JOB_STATUSES = ("pending", "running", "failed", "dead")
+_HISTORICAL_DOSSIER_FAILURE_CODES = (
+    "EntitlementDenied",
+    "BudgetExceeded",
+    "ProviderRefused",
+    "ProviderIncomplete",
+)
+_HISTORICAL_ORACLE_FAILURE_CODES = (
+    "defect",
+    "E_INTERNAL",
+    "E_BILLING_REQUIRED",
+    "E_TOKEN_BUDGET_EXCEEDED",
+    "budget_exceeded",
+    "invalid_structured_output",
+    "refused",
+    "incomplete",
+    "rate_limited",
+    "provider_unavailable",
+    "stream_interrupted",
+)
+_CURRENT_ORACLE_FAILURE_CODES = (
+    "auth",
+    "quota",
+    "timeout",
+    "output_limit",
+    "invalid_output",
+    "policy_violation",
+    "runtime_unavailable",
+    "capacity_unavailable",
+    "context_too_large",
+    "cancelled",
+    "E_ORACLE_CORPUS_NOT_READY",
+    "E_APP_SEARCH_FAILED",
+    "E_GENERATION_SOURCE_CHANGED",
+    "E_RATE_LIMITED",
+)
 
 
 def _fail(message: str) -> None:
@@ -95,6 +130,57 @@ def _preflight(bind: sa.Connection) -> None:
     ).all()
     if active_chat_runs:
         _fail(f"chat runs must be terminal: {_ids(active_chat_runs)}")
+
+    unsupported_oracle_failures = bind.execute(
+        sa.text(
+            """
+            SELECT id
+            FROM oracle_readings
+            WHERE status = 'failed'
+              AND error_code != ALL(CAST(:codes AS text[]))
+            ORDER BY id
+            """
+        ),
+        {
+            "codes": list(
+                _CURRENT_ORACLE_FAILURE_CODES + _HISTORICAL_ORACLE_FAILURE_CODES
+            )
+        },
+    ).all()
+    if unsupported_oracle_failures:
+        _fail(
+            "Oracle failures use unsupported cutover codes: "
+            f"{_ids(unsupported_oracle_failures)}"
+        )
+
+    malformed_oracle_failures = bind.execute(
+        sa.text(
+            """
+            SELECT readings.id
+            FROM oracle_readings AS readings
+            LEFT JOIN LATERAL (
+                SELECT events.event_type, events.payload
+                FROM oracle_reading_events AS events
+                WHERE events.reading_id = readings.id
+                ORDER BY events.seq DESC
+                LIMIT 1
+            ) AS terminal ON true
+            WHERE readings.status = 'failed'
+              AND (
+                  terminal.event_type IS DISTINCT FROM 'done'
+                  OR terminal.payload ->> 'status' IS DISTINCT FROM 'failed'
+                  OR terminal.payload ->> 'error_code'
+                      IS DISTINCT FROM readings.error_code
+              )
+            ORDER BY readings.id
+            """
+        ),
+    ).all()
+    if malformed_oracle_failures:
+        _fail(
+            "Oracle failures require a matching terminal event: "
+            f"{_ids(malformed_oracle_failures)}"
+        )
 
     active_builds = bind.execute(
         sa.text(
@@ -231,9 +317,69 @@ def _create_generation_ledger() -> None:
     )
 
 
+def _tag_historical_dossier_failure_events(bind: sa.Connection) -> None:
+    """Give immutable pre-cutover failure replay explicit wire provenance."""
+
+    op.drop_constraint(
+        "ck_artifact_build_events_type",
+        "artifact_build_events",
+        type_="check",
+    )
+    bind.execute(
+        sa.text(
+            """
+            UPDATE artifact_build_events
+            SET event_type = 'HistoricalFailed'
+            WHERE event_type = 'Failed'
+              AND payload ->> 'failure_code' = ANY(CAST(:codes AS text[]))
+            """
+        ),
+        {"codes": list(_HISTORICAL_DOSSIER_FAILURE_CODES)},
+    )
+    op.create_check_constraint(
+        "ck_artifact_build_events_type",
+        "artifact_build_events",
+        "event_type IN ("
+        "'Started', 'Progress', 'Succeeded', 'Failed', 'HistoricalFailed', 'Cancelled'"
+        ")",
+    )
+
+
+def _tag_historical_oracle_failure_events(bind: sa.Connection) -> None:
+    """Separate preserved provider-era failures from current Oracle writes."""
+
+    op.drop_constraint(
+        "ck_oracle_reading_events_type",
+        "oracle_reading_events",
+        type_="check",
+    )
+    bind.execute(
+        sa.text(
+            """
+            UPDATE oracle_reading_events
+            SET event_type = 'historical_done'
+            WHERE event_type = 'done'
+              AND payload ->> 'status' = 'failed'
+              AND payload ->> 'error_code' = ANY(CAST(:codes AS text[]))
+            """
+        ),
+        {"codes": list(_HISTORICAL_ORACLE_FAILURE_CODES)},
+    )
+    op.create_check_constraint(
+        "ck_oracle_reading_events_type",
+        "oracle_reading_events",
+        "event_type IN ("
+        "'meta', 'bind', 'argument', 'plate', 'passage', 'delta', 'omens', "
+        "'done', 'historical_done'"
+        ")",
+    )
+
+
 def upgrade() -> None:
     bind = op.get_bind()
     _preflight(bind)
+    _tag_historical_dossier_failure_events(bind)
+    _tag_historical_oracle_failure_events(bind)
 
     op.execute("DELETE FROM llm_calls")
     op.drop_table("llm_calls")

@@ -1,4 +1,5 @@
 import type { Presence } from "@/lib/api/presence";
+import type { ChatProfileId } from "@/lib/conversations/chatProfileContract";
 import type { BranchAnchor } from "@/lib/conversations/types";
 
 /** The reader quote piece of a send: durable key + compare-on-send revision
@@ -20,6 +21,6 @@ export type ChatDestinationInput =
 export interface ChatRunCreateRequest {
   destination: ChatDestinationInput;
   content: string;
-  profile_id: string;
+  profile_id: ChatProfileId;
   reader_selection: Presence<ReaderSelectionInput>;
 }

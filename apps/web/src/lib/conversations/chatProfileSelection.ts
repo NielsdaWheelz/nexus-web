@@ -1,11 +1,15 @@
-import type { LlmProfile } from "@/lib/conversations/types";
+import {
+  decodeChatProfileId,
+  type ChatProfileId,
+  type LlmProfile,
+} from "@/lib/conversations/chatProfileContract";
 
 export interface ChatProfileSelection {
-  readonly profileId: string;
+  readonly profileId: ChatProfileId;
 }
 
 export interface InheritedChatProfileSelection {
-  readonly selection: ChatProfileSelection;
+  readonly selection: { readonly profileId: string };
   readonly assistantMessageId: string;
   readonly runId: string;
 }
@@ -22,7 +26,7 @@ export type ResolvedChatProfileSelection =
   | {
       readonly kind: "UnavailableReplacement";
       readonly source: "Draft" | "Inherited";
-      readonly unavailableSelection: ChatProfileSelection;
+      readonly unavailableSelection: { readonly profileId: string };
       readonly selection: ChatProfileSelection;
     };
 
@@ -30,29 +34,41 @@ interface ResolveChatProfileSelectionInput {
   readonly draftSelection: ChatProfileSelection | null;
   readonly inheritedSelection: InheritedChatProfileSelection | null;
   readonly profiles: readonly LlmProfile[];
-  readonly defaultProfileId: string;
+  readonly defaultProfileId: ChatProfileId;
 }
 
-export function isChatProfileSelection(value: unknown): value is ChatProfileSelection {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+export function isChatProfileSelection(
+  value: unknown,
+): value is ChatProfileSelection {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
   const keys = Object.keys(value);
   if (keys.length !== 1 || !Object.hasOwn(value, "profileId")) {
     return false;
   }
   const selection = value as Record<string, unknown>;
-  return typeof selection.profileId === "string";
+  try {
+    decodeChatProfileId(
+      selection.profileId,
+      "chat profile selection.profileId",
+    );
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function isAvailable(
-  selection: ChatProfileSelection,
+  selection: { readonly profileId: string },
   profiles: readonly LlmProfile[],
-): boolean {
-  return profiles.some((item) => item.id === selection.profileId);
+): LlmProfile | undefined {
+  return profiles.find((item) => item.id === selection.profileId);
 }
 
 function productDefaultSelection(
   profiles: readonly LlmProfile[],
-  defaultProfileId: string,
+  defaultProfileId: ChatProfileId,
 ): ChatProfileSelection {
   const profile = profiles.find((item) => item.id === defaultProfileId);
   if (profile === undefined) {
@@ -73,8 +89,9 @@ export function resolveChatProfileSelection({
   const productDefault = productDefaultSelection(profiles, defaultProfileId);
 
   if (draftSelection !== null) {
-    if (isAvailable(draftSelection, profiles)) {
-      return { kind: "Draft", selection: draftSelection };
+    const profile = isAvailable(draftSelection, profiles);
+    if (profile) {
+      return { kind: "Draft", selection: { profileId: profile.id } };
     }
     return {
       kind: "UnavailableReplacement",
@@ -85,10 +102,11 @@ export function resolveChatProfileSelection({
   }
 
   if (inheritedSelection !== null) {
-    if (isAvailable(inheritedSelection.selection, profiles)) {
+    const profile = isAvailable(inheritedSelection.selection, profiles);
+    if (profile) {
       return {
         kind: "Inherited",
-        selection: inheritedSelection.selection,
+        selection: { profileId: profile.id },
         assistantMessageId: inheritedSelection.assistantMessageId,
         runId: inheritedSelection.runId,
       };

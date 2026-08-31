@@ -34,6 +34,7 @@ _CLAIM_NAMES: Final[tuple[str, ...]] = (
     "worker_id",
     "attempt_no",
     "generation_id",
+    "admission_id",
     "tool_plan_revision",
     "request_fingerprint",
     "iat",
@@ -57,6 +58,7 @@ class AgentToolGrantClaims(BaseModel):
     worker_id: str
     attempt_no: int
     generation_id: str
+    admission_id: str
     tool_plan_revision: str
     request_fingerprint: str
     iat: int
@@ -95,7 +97,7 @@ class AgentToolGrantClaims(BaseModel):
             raise ValueError("attempt_no must be positive")
         return value
 
-    @field_validator("sub", "jti", "run_id", "job_id", "generation_id")
+    @field_validator("sub", "jti", "run_id", "job_id", "generation_id", "admission_id")
     @classmethod
     def _uuid_claim(cls, value: str) -> str:
         try:
@@ -145,8 +147,7 @@ def issue_agent_tool_grant(
             "grant lifetime must be positive and at most "
             f"{MAX_AGENT_TOOL_GRANT_TTL_SECONDS} seconds"
         )
-    encoded = jwt.encode(checked.model_dump(mode="json"), key, algorithm=_ALGORITHM)
-    return SecretStr(encoded)
+    return _encode_claims(checked, key=key)
 
 
 def issue_chat_generation_grant(
@@ -157,14 +158,24 @@ def issue_chat_generation_grant(
     worker_id: str,
     attempt_no: int,
     generation_id: UUID,
+    admission_id: UUID,
     tool_plan_revision: str,
     request_fingerprint: str,
     signing_key: SecretStr,
+    admitted_at: datetime,
     now: datetime,
     ttl_seconds: int = MAX_AGENT_TOOL_GRANT_TTL_SECONDS,
 ) -> IssuedChatToolGrant:
-    """Issue one exact run/job/generation-bound ChatTools bearer."""
+    """Issue one exact admission-bound bearer without restarting its deadline."""
+    admission_epoch = _epoch(admitted_at)
     current = _epoch(now)
+    if type(ttl_seconds) is not int or not 1 <= ttl_seconds <= MAX_AGENT_TOOL_GRANT_TTL_SECONDS:
+        raise ValueError("Chat grant lifetime must be a positive bounded integer")
+    expires = admission_epoch + ttl_seconds
+    if current < admission_epoch:
+        raise ValueError("Chat grant cannot be issued before host admission")
+    if current >= expires:
+        raise ValueError("Chat admission expired before its grant was issued")
     jti = str(uuid4())
     claims = AgentToolGrantClaims(
         iss=AGENT_TOOL_GRANT_ISSUER,
@@ -177,11 +188,12 @@ def issue_chat_generation_grant(
         worker_id=worker_id,
         attempt_no=attempt_no,
         generation_id=str(generation_id),
+        admission_id=str(admission_id),
         tool_plan_revision=tool_plan_revision,
         request_fingerprint=request_fingerprint,
         iat=current,
         nbf=current,
-        exp=current + ttl_seconds,
+        exp=expires,
     )
     return IssuedChatToolGrant(
         token=issue_agent_tool_grant(claims, signing_key=signing_key, now=now),
@@ -254,3 +266,8 @@ def _epoch(value: datetime) -> int:
 
 def _checked_claims(claims: AgentToolGrantClaims) -> AgentToolGrantClaims:
     return AgentToolGrantClaims.model_validate(claims.model_dump(mode="json"))
+
+
+def _encode_claims(claims: AgentToolGrantClaims, *, key: str) -> SecretStr:
+    encoded = jwt.encode(claims.model_dump(mode="json"), key, algorithm=_ALGORITHM)
+    return SecretStr(encoded)

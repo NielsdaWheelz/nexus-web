@@ -19,6 +19,7 @@ import {
   type DossierCancelledFacts,
   type DossierFailedFacts,
   type DossierFreshness,
+  type HistoricalDossierBuildFailureCode,
   type DossierInputManifest,
   type DossierMediaDisposition,
   type DossierMediaManifestEntry,
@@ -73,10 +74,19 @@ export function decodeFailureCode(value: unknown): DossierBuildFailureCode {
 export function decodeReadDossierBuildFailureCode(
   value: unknown,
 ): ReadDossierBuildFailureCode {
+  return isListedString(value, HISTORICAL_DOSSIER_BUILD_FAILURE_CODES)
+    ? value
+    : decodeFailureCode(value);
+}
+
+/** Decode only migration-tagged, read-only historical failure vocabulary. */
+export function decodeHistoricalDossierBuildFailureCode(
+  value: unknown,
+): HistoricalDossierBuildFailureCode {
   if (isListedString(value, HISTORICAL_DOSSIER_BUILD_FAILURE_CODES)) {
     return value;
   }
-  return decodeFailureCode(value);
+  return fail(`unknown historical failure code ${JSON.stringify(value)}`);
 }
 
 function decodeFreshness(value: unknown): DossierFreshness {

@@ -20,6 +20,7 @@ _ARTIFACT_NAME = f"nexus-codex-nightly-{_RUN_ID}.json"
 _VALID_EVIDENCE_RUN_ID = "0123456789abcdef"
 _SECOND_EVIDENCE_RUN_ID = "fedcba9876543210"
 _SOURCE_SHA = "a" * 40
+_MINIMUM_JOB_FINALIZATION_MARGIN_SECONDS = 10 * 60
 
 
 def _valid_evidence(run_id: str) -> bytes:
@@ -392,6 +393,43 @@ def test_codex_nightly_enforces_the_exact_per_plan_live_turn_ceiling() -> None:
     assert len(enforced_turns) == 1, "the hosted turn ceiling is only observed after the effect"
 
 
+def test_codex_nightly_job_budget_covers_every_turn_and_finalization() -> None:
+    hosted_proof = Path(__file__).parents[1] / "hosted/nightly/test_codex_personal_generation.py"
+    tree = ast.parse(hosted_proof.read_text(encoding="utf-8"), filename=str(hosted_proof))
+    assignments = {
+        target.id: node.value
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance((target := node.targets[0]), ast.Name)
+    }
+    plans = assignments.get("_PLANS")
+    plan_ceiling = assignments.get("_MAX_PLAN_ELAPSED_SECONDS")
+    _require(isinstance(plans, ast.Tuple), "hosted plan portfolio is not a fixed tuple")
+    _require(
+        isinstance(plan_ceiling, ast.Constant)
+        and isinstance(plan_ceiling.value, int)
+        and not isinstance(plan_ceiling.value, bool)
+        and plan_ceiling.value > 0,
+        "hosted per-plan ceiling is not a positive integer",
+    )
+    timeout_minutes = _workflow_job().get("timeout-minutes")
+    _require(
+        isinstance(timeout_minutes, int)
+        and not isinstance(timeout_minutes, bool)
+        and timeout_minutes > 0,
+        "Codex nightly job timeout is not a positive integer",
+    )
+
+    required_seconds = (
+        len(plans.elts) * plan_ceiling.value + _MINIMUM_JOB_FINALIZATION_MARGIN_SECONDS
+    )
+    assert timeout_minutes * 60 >= required_seconds, (
+        "Codex nightly job timeout cannot cover every legal plan duration plus "
+        "locked setup, artifact delivery, and state scrubbing"
+    )
+
+
 def test_codex_nightly_readiness_is_emitted_only_by_zero_turn_preflight() -> None:
     hosted_proof = Path(__file__).parents[1] / "hosted/nightly/test_codex_personal_generation.py"
     tree = ast.parse(hosted_proof.read_text(encoding="utf-8"), filename=str(hosted_proof))
@@ -451,6 +489,10 @@ def _workflow_job() -> dict[str, object]:
     _require(isinstance(workflow, dict), "Codex nightly workflow is not a mapping")
     jobs = workflow.get("jobs")
     _require(isinstance(jobs, dict), "Codex nightly workflow jobs are absent")
+    _require(
+        set(jobs) == {"codex-personal-generation"},
+        "Codex nightly workflow is not owned exclusively by the generation job",
+    )
     job = jobs.get("codex-personal-generation")
     _require(
         isinstance(job, dict),

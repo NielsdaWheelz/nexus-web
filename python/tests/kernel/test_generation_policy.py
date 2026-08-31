@@ -10,11 +10,9 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import replace
+from importlib.util import find_spec
 
 import pytest
-
-from nexus.jobs.registry import CHAT_RUN_LEASE_SECONDS
-from nexus.services import generation_policy
 
 _MODEL_BOUNDS = {
     "gpt-5.6-luna": (1_050_000, 128_000, 64 * 1024 * 1024),
@@ -40,6 +38,12 @@ _OPERATION_EXPECTATIONS = {
 }
 
 
+def _require_generation_policy() -> None:
+    assert find_spec("nexus.services.generation_policy") is not None, (
+        "Codex Personal generation policy is absent"
+    )
+
+
 def _facts(entry: object) -> tuple[object, ...]:
     return (
         entry.plan_id,
@@ -51,6 +55,9 @@ def _facts(entry: object) -> tuple[object, ...]:
 
 
 def _assert_fixed_plans_have_one_complete_model_effort_pair() -> None:
+    _require_generation_policy()
+    from nexus.services import generation_policy
+
     generation_policy.validate_policy()
 
     assert set(generation_policy.PLANS) == {"routine", "standard", "thorough", "deep"}
@@ -67,6 +74,9 @@ def _assert_fixed_plans_have_one_complete_model_effort_pair() -> None:
 
 
 def test_policy_facts_pin_is_external_to_a_plan_table_edit() -> None:
+    _require_generation_policy()
+    from nexus.services import generation_policy
+
     payload = generation_policy._policy_facts_payload()
     plans = dict(payload["plans"])
     plans["routine"] = {**plans["routine"], "model": "gpt-5.6-terra"}
@@ -79,6 +89,9 @@ def test_policy_facts_pin_is_external_to_a_plan_table_edit() -> None:
 
 
 def _assert_model_bounds_are_shared_and_fixed_for_all_codex_targets() -> None:
+    _require_generation_policy()
+    from nexus.services import generation_policy
+
     assert {
         model: (
             bounds.context_tokens,
@@ -91,6 +104,9 @@ def _assert_model_bounds_are_shared_and_fixed_for_all_codex_targets() -> None:
 
 
 def _assert_operation_catalog_has_exact_plans_capabilities_timeouts_and_input_bounds() -> None:
+    _require_generation_policy()
+    from nexus.services import generation_policy
+
     assert set(generation_policy.OPERATIONS) == set(_OPERATION_EXPECTATIONS)
     for operation, expected in _OPERATION_EXPECTATIONS.items():
         entry = generation_policy.operation_policy(operation)
@@ -107,6 +123,10 @@ def _assert_operation_catalog_has_exact_plans_capabilities_timeouts_and_input_bo
 
 
 def _assert_chat_is_three_typed_profiles_with_chat_tools_limits() -> None:
+    _require_generation_policy()
+    from nexus.jobs import registry
+    from nexus.services import generation_policy
+
     assert set(generation_policy.CHAT_PROFILES) == {"fast", "balanced", "deep"}
     assert generation_policy.capacity_wait_delays_seconds("chat") == (5, 10)
     assert {
@@ -133,8 +153,9 @@ def _assert_chat_is_three_typed_profiles_with_chat_tools_limits() -> None:
         assert entry.stream.text_flush_interval_ms == 100
         assert entry.stream.text_flush_bytes == 8 * 1024
         assert entry.transport_deadline_seconds == 90 + 900 + 30 + 15
-    assert CHAT_RUN_LEASE_SECONDS == 1_200
-    assert CHAT_RUN_LEASE_SECONDS > max(
+    assert hasattr(registry, "CHAT_RUN_LEASE_SECONDS"), "Chat lease policy is absent"
+    assert registry.CHAT_RUN_LEASE_SECONDS == 1_200
+    assert registry.CHAT_RUN_LEASE_SECONDS > max(
         generation_policy.chat_policy(profile).transport_deadline_seconds
         for profile in generation_policy.CHAT_PROFILES
     )
@@ -147,8 +168,38 @@ def test_fixed_generation_policy_catalog_is_complete_and_closed() -> None:
     _assert_chat_is_three_typed_profiles_with_chat_tools_limits()
 
 
+def test_codex_ephemeral_limits_cover_the_largest_admitted_serialized_turn() -> None:
+    _require_generation_policy()
+    from nexus.services import generation_policy
+
+    largest_runtime_output = max(
+        bound.runtime_output_bytes for bound in generation_policy.MODEL_BOUNDS.values()
+    )
+    policies = tuple(generation_policy.OPERATIONS.values()) + tuple(
+        generation_policy.chat_policy(profile) for profile in generation_policy.CHAT_PROFILES
+    )
+    largest_admitted_turn = (
+        largest_runtime_output
+        + max(policy.input_max_bytes for policy in policies)
+        + max(policy.instructions_max_bytes for policy in policies)
+    )
+
+    assert generation_policy.CODEX_EPHEMERAL_FILE_LIMIT_BYTES == 74 * 1024 * 1024
+    assert (
+        generation_policy.CODEX_EPHEMERAL_FILE_LIMIT_BYTES - largest_admitted_turn
+        >= 8 * 1024 * 1024
+    )
+    assert generation_policy.CODEX_EPHEMERAL_ROOT_BYTES == 180 * 1024 * 1024
+    assert generation_policy.CODEX_EPHEMERAL_ROOT_BYTES >= (
+        2 * generation_policy.CODEX_EPHEMERAL_FILE_LIMIT_BYTES + 32 * 1024 * 1024
+    )
+
+
 def test_policy_catalog_rejects_a_wrong_plan_instead_of_accepting_catalog_drift() -> None:
     """Sensitivity fault: moving oracle to routine must be observable as red."""
+
+    _require_generation_policy()
+    from nexus.services import generation_policy
 
     oracle = generation_policy.operation_policy("oracle")
     wrong = replace(oracle, plan_id="routine", model="gpt-5.6-luna", effort="low")

@@ -96,4 +96,28 @@ describe("Chat failure cards", () => {
       );
     }
   });
+
+  it("shows a scoped non-retryable reconnect failure with no dead action", () => {
+    render(
+      <ChatFailureCard
+        mode="reconnect"
+        recovery={{
+          kind: "Failed",
+          runId: "run-1",
+          lastCursor: "7",
+          message: "Reload the page to reconnect safely.",
+          requestId: "request-1",
+          retryable: false,
+        }}
+        onReconnect={() => {
+          throw new Error("Non-retryable recovery must not be actionable");
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Couldn’t reconnect")).toBeVisible();
+    expect(screen.getByText("Reload the page to reconnect safely.")).toBeVisible();
+    expect(screen.getByText("Request ID: request-1")).toBeVisible();
+    expect(screen.queryByRole("button")).toBeNull();
+  });
 });

@@ -32,11 +32,13 @@ from nexus.services.generation_intent import (
 )
 
 COMMAND_SCHEMA_VERSION = "nexus-generation-command.v2"
+ADMISSION_SCHEMA_VERSION = "nexus-generation-admission.v1"
 EVENT_SCHEMA_VERSION = "nexus-generation-event.v2"
 HEALTH_SCHEMA_VERSION = "nexus-generation-health.v2"
 REJECTION_SCHEMA_VERSION = "nexus-generation-rejection.v2"
 MAX_OUTPUT_SCHEMA_BYTES = 64 * 1024
 MAX_TOOL_GRANT_BYTES = 16 * 1024
+MAX_ADMISSION_BODY_BYTES = 4 * 1024
 COMMAND_ENVELOPE_BYTES = 4 * 1024
 MAX_COMMAND_BODY_BYTES = (
     6 * (32 * 1024 + 1024 * 1024 + MAX_OUTPUT_SCHEMA_BYTES + MAX_TOOL_GRANT_BYTES)
@@ -195,6 +197,34 @@ class GenerationCommand(_WireModel):
         return self
 
 
+class GenerationAdmissionRequest(_WireModel):
+    """Grant-free immutable identity used to reserve the sole host slot."""
+
+    schema_version: Literal["nexus-generation-admission-request.v1"] = (
+        "nexus-generation-admission-request.v1"
+    )
+    request_id: UUID
+    operation: GenerationOperation
+    policy_revision: Annotated[str, StringConstraints(min_length=1, max_length=128)]
+    policy_fingerprint: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+    request_fingerprint: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+
+    @model_validator(mode="after")
+    def _matches_policy(self) -> Self:
+        if not isinstance(self.operation, ChatOperation):
+            raise ValueError("two-phase admission is valid only for ChatTools")
+        expected_revision = generation_policy.operation_revision(
+            "chat", profile=self.operation.profile
+        )
+        if self.operation.revision != expected_revision:
+            raise ValueError("admission operation revision does not match the policy catalog")
+        if self.policy_revision != generation_policy.POLICY_REVISION:
+            raise ValueError("admission policy revision does not match the host policy")
+        if self.policy_fingerprint != generation_policy.POLICY_FINGERPRINT:
+            raise ValueError("admission policy fingerprint does not match the host policy")
+        return self
+
+
 FailureKind = Literal[
     "quota_exhausted",
     "backend_failed",
@@ -289,6 +319,36 @@ AcceptedAt = Annotated[
         pattern=r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$",
     ),
 ]
+
+
+class GenerationAdmission(_WireModel):
+    """One replay-stable pre-provider acceptance of the sole host slot."""
+
+    schema_version: Literal["nexus-generation-admission.v1"] = ADMISSION_SCHEMA_VERSION
+    request_id: UUID
+    admission_id: UUID
+    admitted_at: AcceptedAt
+    runtime_deadline_seconds: int = Field(gt=0)
+
+    @field_validator("admitted_at")
+    @classmethod
+    def _admitted_at_is_utc(cls, value: str) -> str:
+        try:
+            parsed = datetime.fromisoformat(value[:-1] + "+00:00")
+        except ValueError as error:
+            raise ValueError("admitted_at must be a real UTC RFC3339 instant") from error
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ValueError("admitted_at must be UTC")
+        return value
+
+    @field_validator("runtime_deadline_seconds")
+    @classmethod
+    def _runtime_deadline_matches_policy(cls, value: int) -> int:
+        if value != generation_policy.CHAT_ADMISSION_RUNTIME_SECONDS:
+            raise ValueError("admission runtime deadline differs from Chat policy")
+        return value
+
+
 Diagnostic = Annotated[str, StringConstraints(min_length=1, max_length=1_000)]
 
 
@@ -389,7 +449,7 @@ class GenerationContractDefect(RuntimeError):
     """A host/contract defect that must not become a product terminal."""
 
 
-FAILURE_KIND_TO_NORMALIZED: MappingProxyType[str, str] = MappingProxyType(
+FAILURE_KIND_TO_NORMALIZED: MappingProxyType[str, NormalizedFailureCode] = MappingProxyType(
     {
         "credential_unavailable": "auth",
         "credential_rejected": "auth",
@@ -413,7 +473,7 @@ def normalized_failure(kind: str) -> NormalizedFailureCode:
     if kind in {"invalid_request", "runtime_defect"}:
         raise GenerationContractDefect(f"{kind} is a host defect")
     try:
-        return FAILURE_KIND_TO_NORMALIZED[kind]  # type: ignore[return-value]
+        return FAILURE_KIND_TO_NORMALIZED[kind]
     except KeyError as error:
         raise GenerationContractDefect(f"unknown host failure kind {kind!r}") from error
 
@@ -483,17 +543,33 @@ def request_fingerprint(command: GenerationCommand) -> str:
     )
 
 
+def generation_admission_request(command: GenerationCommand) -> GenerationAdmissionRequest:
+    """Project a command onto its grant-free, replay-stable admission identity."""
+
+    return GenerationAdmissionRequest(
+        request_id=command.request_id,
+        operation=command.operation,
+        policy_revision=command.policy_revision,
+        policy_fingerprint=command.policy_fingerprint,
+        request_fingerprint=request_fingerprint(command),
+    )
+
+
 __all__ = [
+    "ADMISSION_SCHEMA_VERSION",
     "COMMAND_SCHEMA_VERSION",
     "COMMAND_ENVELOPE_BYTES",
     "EVENT_SCHEMA_VERSION",
     "MAX_COMMAND_BODY_BYTES",
+    "MAX_ADMISSION_BODY_BYTES",
     "MAX_OUTPUT_SCHEMA_BYTES",
     "MAX_TOOL_GRANT_BYTES",
     "FAILURE_KIND_TO_NORMALIZED",
     "NormalizedOutcome",
     "NormalizedFailureCode",
     "GenerationCapacityRejection",
+    "GenerationAdmission",
+    "GenerationAdmissionRequest",
     "GenerationCommand",
     "GenerationContractDefect",
     "GenerationEvent",
@@ -514,4 +590,5 @@ __all__ = [
     "normalized_failure",
     "retained_terminal_error_detail",
     "request_fingerprint",
+    "generation_admission_request",
 ]

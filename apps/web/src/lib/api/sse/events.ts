@@ -21,6 +21,10 @@ import {
   type CitationOut,
 } from "@/lib/conversations/citationOut";
 import {
+  decodeChatProfileId,
+  type ChatProfileId,
+} from "@/lib/conversations/chatProfileContract";
+import {
   MESSAGE_TOOL_STATUSES,
   type ChatPublicationWarning,
   type MessageToolStatus,
@@ -45,7 +49,7 @@ interface SSEMetaEvent {
     conversation_id: string;
     user_message_id: string;
     assistant_message_id: string;
-    profile_id: string;
+    profile_id: ChatProfileId;
     chat_subject: {
       requested_resource_ref: string;
       resource_ref: string;
@@ -200,14 +204,24 @@ function parseMetaData(data: unknown): SSEMetaEvent["data"] {
     typeof data.conversation_id !== "string" ||
     typeof data.user_message_id !== "string" ||
     typeof data.assistant_message_id !== "string" ||
-    typeof data.profile_id !== "string" ||
     (data.chat_subject !== null && !isMetaSubject(data.chat_subject))
   ) {
     throw new Error("Invalid SSE payload for meta");
   }
-  // justify-type-assertion: the guard above exhaustively validated every
-  // field of the meta payload.
-  return data as SSEMetaEvent["data"];
+  let profileId: ChatProfileId;
+  try {
+    profileId = decodeChatProfileId(data.profile_id, "SSE meta.profile_id");
+  } catch {
+    throw new Error("Invalid SSE payload for meta.profile_id");
+  }
+  return {
+    run_id: data.run_id,
+    conversation_id: data.conversation_id,
+    user_message_id: data.user_message_id,
+    assistant_message_id: data.assistant_message_id,
+    profile_id: profileId,
+    chat_subject: data.chat_subject,
+  };
 }
 
 function isMetaSubject(

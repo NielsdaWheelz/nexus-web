@@ -653,6 +653,14 @@ def test_caddy_runtime_logs_redact_sensitive_request_headers() -> None:
     assert "request>headers>X-Nexus-Internal delete" in caddyfile
 
 
+def test_caddy_mcp_route_overwrites_forwarded_source_at_the_trusted_hop() -> None:
+    caddyfile = (REPO_ROOT / "deploy/hetzner/Caddyfile").read_text(encoding="utf-8")
+
+    assert "@agent_tools_mcp path /internal/agent-tools/mcp" in caddyfile
+    assert "reverse_proxy worker-interactive:8001" in caddyfile
+    assert "header_up X-Forwarded-For {http.request.remote.host}" in caddyfile
+
+
 def test_caddy_offline_package_lane_matches_only_one_canonical_uuid_path() -> None:
     """The unencoded long-timeout proxy exemption is exact, not a prefix grant."""
     caddyfile = (REPO_ROOT / "deploy/hetzner/Caddyfile").read_text(encoding="utf-8")

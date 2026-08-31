@@ -13,6 +13,7 @@ import {
 } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
+import { decodeOracleCreateResponse } from "@/lib/oracle/oracleReadingWire";
 import {
   requirePaneRuntime,
   usePaneReturnReady,
@@ -20,7 +21,6 @@ import {
 } from "@/lib/panes/paneRuntime";
 import OracleAlephGrid from "./OracleAlephGrid";
 import OracleThemeWrapper from "./OracleThemeWrapper";
-import type { OracleCreateResponse } from "./types";
 import styles from "./oracle.module.css";
 
 const QUESTION_MAX = 280;
@@ -86,13 +86,14 @@ export default function OracleLandingPaneBody() {
       setSubmitting(true);
       setSubmitError(null);
       try {
-        const body = await apiFetch<{ data: OracleCreateResponse }>("/api/oracle/readings", {
+        const raw = await apiFetch<unknown>("/api/oracle/readings", {
           method: "POST",
           headers: { "Idempotency-Key": createRandomId("oracle-read") },
           body: JSON.stringify({ question: cleaned }),
         });
+        const body = decodeOracleCreateResponse(raw);
         activateTarget({
-          target: { href: `/oracle/${body.data.reading_id}` },
+          target: { href: `/oracle/${body.reading_id}` },
           disposition: { kind: "Follow" },
         });
       } catch (error) {

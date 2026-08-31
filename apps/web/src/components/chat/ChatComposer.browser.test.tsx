@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@/app/globals.css";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
+import { ApiError } from "@/lib/api/client";
 import type { ChatDraftKey } from "@/lib/conversations/chatDraftKey";
 import type { PaneVisitId } from "@/lib/workspace/schema";
 import ChatComposerComponent from "./ChatComposer";
@@ -414,5 +415,32 @@ describe("ChatComposer browser contract", () => {
       expect(screen.getByRole("button", { name: "Stop response" })).toBeVisible(),
     );
     expect(calls).toHaveLength(0);
+  });
+
+  it("surfaces a scoped cancellation transport failure", async () => {
+    const calls: ChatRunCall[] = [];
+    installBff(calls);
+    render(
+      withRenderEnvironment(
+        <Composer
+          activeRunId="00000000-0000-4000-8000-000000000002"
+          onCancelRun={() =>
+            Promise.reject(
+              new ApiError(0, "E_NETWORK", "Synthetic cancellation loss"),
+            )
+          }
+        />,
+      ),
+    );
+
+    await screen.findByRole("radio", { name: /Fast/ });
+    await userEvent.click(
+      screen.getByRole("button", { name: "Stop response" }),
+    );
+    expect(
+      await screen.findByText("This response couldn’t be stopped."),
+    ).toBeVisible();
+    expect(screen.getByText("Check your connection and try again.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Stop response" })).toBeEnabled();
   });
 });

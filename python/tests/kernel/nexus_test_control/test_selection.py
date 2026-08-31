@@ -407,6 +407,38 @@ def test_release_controller_sources_keep_routing_the_immutable_release_suites(
     )
 
 
+@pytest.mark.parametrize(
+    ("path", "expected_proof"),
+    [
+        (
+            ".env.example",
+            "pytest:python/tests/kernel/test_successor_release_contract.py",
+        ),
+        (
+            "deploy/hetzner/nexus-codex-agent-host.apparmor",
+            "pytest:python/tests/kernel/test_production_deploy_behavior.py",
+        ),
+        (
+            "deploy/hetzner/nexus-codex-nightly-bwrap.apparmor",
+            "pytest:python/tests/kernel/test_production_deploy_behavior.py",
+        ),
+    ],
+)
+def test_codex_environment_and_apparmor_sources_route_their_release_owner(
+    path: str,
+    expected_proof: str,
+) -> None:
+    selections = select_changed(
+        (ChangedPath(GitChangeKind.MODIFIED, path),),
+        load_selection_index(REPO_ROOT),
+    )
+
+    assert any(
+        selection.proof == expected_proof and selection.reason is SelectionReason.PRIORITY_RISK
+        for selection in selections
+    )
+
+
 @pytest.mark.parametrize("path", ["python/pyproject.toml", "python/uv.lock"])
 def test_codex_dependency_changes_route_release_proofs_without_duplicate_host_ownership(
     path: str,
@@ -558,6 +590,55 @@ def test_codex_generation_sources_route_to_the_exact_contract_and_host_proofs(
     )
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "python/nexus/schemas/llm.py",
+        "python/nexus/services/structured_synthesis.py",
+    ],
+)
+def test_generation_schema_and_synthesis_route_their_product_contract(path: str) -> None:
+    selections = select_changed(
+        (ChangedPath(GitChangeKind.MODIFIED, path),),
+        load_selection_index(REPO_ROOT),
+    )
+
+    assert "pytest:python/tests/kernel/test_structured_synthesis_contract.py" in {
+        selection.proof
+        for selection in selections
+        if selection.reason is SelectionReason.PRIORITY_RISK
+    }
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "python/nexus/services/artifacts/bindings/base.py",
+        "python/nexus/services/artifacts/engine.py",
+        "python/nexus/services/artifacts/generation_step.py",
+        "python/nexus/services/artifacts/registry.py",
+        "python/nexus/services/dawn_write.py",
+        "python/nexus/services/media_intelligence.py",
+        "python/nexus/services/oracle.py",
+        "python/nexus/services/synapse.py",
+        "python/nexus/tasks/enrich_metadata.py",
+    ],
+)
+def test_non_chat_command_composition_sources_route_the_closed_adapter_portfolio(
+    path: str,
+) -> None:
+    selections = select_changed(
+        (ChangedPath(GitChangeKind.MODIFIED, path),),
+        load_selection_index(REPO_ROOT),
+    )
+
+    assert "pytest:python/tests/kernel/test_generation_operation_adapters.py" in {
+        selection.proof
+        for selection in selections
+        if selection.reason is SelectionReason.PRIORITY_RISK
+    }
+
+
 def test_generation_error_sources_route_durable_journal_proofs() -> None:
     selections = select_changed(
         (ChangedPath(GitChangeKind.MODIFIED, "python/nexus/errors.py"),),
@@ -698,6 +779,7 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/kernel/test_generation_contract.py",
                 "pytest:python/tests/kernel/test_generation_operation_adapters.py",
                 "pytest:python/tests/kernel/test_generation_policy.py::test_fixed_generation_policy_catalog_is_complete_and_closed",
+                "pytest:python/tests/kernel/test_structured_synthesis_contract.py",
                 "pytest:python/tests/kernel/test_oracle_host_release.py",
                 "pytest:python/tests/kernel/test_oracle_manifest.py",
                 "pytest:python/tests/kernel/test_oracle_reconcile_contract.py",
@@ -844,6 +926,7 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/kernel/test_generation_contract.py",
                 "pytest:python/tests/kernel/test_generation_operation_adapters.py",
                 "pytest:python/tests/kernel/test_generation_policy.py::test_fixed_generation_policy_catalog_is_complete_and_closed",
+                "pytest:python/tests/kernel/test_structured_synthesis_contract.py",
                 "pytest:python/tests/kernel/test_ci_pr_recovery.py",
                 "pytest:python/tests/service/test_codex_generation_client.py",
                 "pytest:python/tests/service/test_codex_runtime_confinement.py::"

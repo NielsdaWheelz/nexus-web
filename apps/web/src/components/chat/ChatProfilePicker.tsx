@@ -9,7 +9,7 @@
 
 import { useId } from "react";
 import type { ChatProfileSelection } from "@/lib/conversations/chatProfileSelection";
-import type { LlmProfile } from "@/lib/conversations/types";
+import type { LlmProfile } from "@/lib/conversations/chatProfileContract";
 import styles from "./ChatProfilePicker.module.css";
 
 interface ChatProfilePickerProps {

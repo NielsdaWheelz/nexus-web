@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useRef } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -137,7 +137,8 @@ function requestUrl(input: RequestInfo | URL): URL {
 function TranscriptHarness({ initialRun }: { initialRun: ChatRunResponse["data"] }) {
   const [messages, dispatch] = useReducer(messageUpdateReducer, []);
   const started = useRef(false);
-  const { abortAll, tailChatRun } = useChatRunTail({
+  const { abortAll, connectionRecoveries, reconnectRun, tailChatRun } =
+    useChatRunTail({
     dispatch,
   });
 
@@ -158,9 +159,63 @@ function TranscriptHarness({ initialRun }: { initialRun: ChatRunResponse["data"]
       message={assistant}
       messageOrdinal={1}
       forkOptions={[]}
+      connectionRecovery={connectionRecoveries[assistant.id]}
+      onReconnectAssistant={(messageId) => {
+        void reconnectRun(messageId);
+      }}
       timestampLabel=""
     />
   );
+}
+
+function CancelHarness() {
+  const [messages, dispatch] = useReducer(messageUpdateReducer, []);
+  const [outcome, setOutcome] = useState("Idle");
+  const { cancelRun } = useChatRunTail({ dispatch });
+  const cancel = async () => {
+    try {
+      await cancelRun(RUN_ID);
+      setOutcome("Resolved");
+    } catch {
+      setOutcome("Rejected");
+    }
+  };
+  return (
+    <>
+      <button type="button" onClick={() => void cancel()}>
+        Cancel response
+      </button>
+      <output aria-label="Cancel outcome">{outcome}</output>
+      <output aria-label="Assistant status">
+        {messages.find((item) => item.id === ASSISTANT_MESSAGE_ID)?.status ??
+          "Missing"}
+      </output>
+    </>
+  );
+}
+
+function cancelledRunData(): ChatRunResponse["data"] {
+  const current = runData("", 4);
+  return {
+    ...current,
+    run: {
+      ...current.run,
+      status: "cancelled",
+      failure: { code: "cancelled", can_rerun: true },
+      completed_at: CREATED_AT,
+    },
+    assistant_message: {
+      ...current.assistant_message,
+      status: "cancelled",
+      can_rerun: true,
+    },
+    stream_state: {
+      ...current.stream_state,
+      status: "cancelled",
+      reconnectable: false,
+      terminal: true,
+    },
+  };
 }
 
 describe("Chat generation stream lifecycle", () => {
@@ -375,5 +430,122 @@ describe("Chat generation stream lifecycle", () => {
     ]);
 
     view.unmount();
+  });
+
+  it("retains tagged recovery through a failed manual reconnect", async () => {
+    let runReads = 0;
+    let rejectReconnect: (() => void) | undefined;
+
+    vi.stubGlobal(
+      "fetch",
+      async (input: RequestInfo | URL) => {
+        const url = requestUrl(input);
+        if (url.pathname === "/api/stream-token") {
+          return json({
+            data: {
+              token: "stream-token",
+              stream_base_url: "https://stream.nexus.test",
+              expires_at: "2026-08-25T12:01:00Z",
+            },
+          });
+        }
+        if (url.pathname === `/api/chat-runs/${RUN_ID}`) {
+          runReads += 1;
+          if (runReads === 1) {
+            return json({ data: runData("Partial response", 3) });
+          }
+          return await new Promise<Response>((_resolve, reject) => {
+            rejectReconnect = () => reject(new TypeError("offline"));
+          });
+        }
+        if (url.pathname === STREAM_PATH) {
+          return new Response(
+            JSON.stringify({
+              error: {
+                code: "E_NOT_FOUND",
+                message: "Synthetic lost stream",
+              },
+            }),
+            {
+              status: 404,
+              headers: { "Content-Type": "application/json" },
+            },
+          );
+        }
+        throw new Error(`Unexpected recovery request: ${url.pathname}`);
+      },
+    );
+
+    render(
+      withRenderEnvironment(
+        <FeedbackProvider>
+          <TranscriptHarness initialRun={runData("", 0)} />
+        </FeedbackProvider>,
+      ),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText("Connection lost")).toBeVisible(),
+    );
+    expect(screen.getByText("Partial response")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Reconnect" }));
+
+    expect(await screen.findByText("Reconnecting")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Reconnect" })).toBeDisabled();
+    await waitFor(() => expect(rejectReconnect).toBeDefined());
+    rejectReconnect?.();
+
+    expect(await screen.findByText("Couldn’t reconnect")).toBeVisible();
+    expect(
+      screen.getByText(/Check your connection, then reconnect again/),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Try reconnecting" }),
+    ).toBeEnabled();
+    expect(screen.getByText("Partial response")).toBeVisible();
+    expect(runReads).toBe(2);
+  });
+
+  it("decodes and merges a cancellation response, while transport failure rejects", async () => {
+    let failCancellation = false;
+    vi.stubGlobal(
+      "fetch",
+      async (input: RequestInfo | URL) => {
+        const url = requestUrl(input);
+        if (url.pathname !== `/api/chat-runs/${RUN_ID}/cancel`) {
+          throw new Error(`Unexpected cancellation request: ${url.pathname}`);
+        }
+        if (failCancellation) throw new TypeError("offline");
+        return json({ data: cancelledRunData() });
+      },
+    );
+
+    const view = render(<CancelHarness />);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Cancel response" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("status", { name: "Cancel outcome" })).toHaveTextContent(
+        "Resolved",
+      ),
+    );
+    expect(
+      screen.getByRole("status", { name: "Assistant status" }),
+    ).toHaveTextContent("cancelled");
+    view.unmount();
+
+    failCancellation = true;
+    render(<CancelHarness />);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Cancel response" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("status", { name: "Cancel outcome" })).toHaveTextContent(
+        "Rejected",
+      ),
+    );
+    expect(
+      screen.getByRole("status", { name: "Assistant status" }),
+    ).toHaveTextContent("Missing");
   });
 });

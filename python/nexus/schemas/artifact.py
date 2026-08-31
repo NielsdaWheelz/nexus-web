@@ -28,7 +28,9 @@ from nexus.services.artifacts.dossier_types import (
     ArtifactBuildEventType,
     CancelledEventPayload,
     FailedEventPayload,
+    HistoricalFailedEventPayload,
     ProgressEventPayload,
+    ReadFailedEventPayload,
     StartedEventPayload,
     SucceededEventPayload,
 )
@@ -112,7 +114,7 @@ class DossierBuildSummary(ArtifactSchemaModel):
     instruction: Presence[_InstructionText]
     created_at: datetime
     execution: Presence[DossierBuildExecution]
-    failure: Presence[FailedEventPayload]
+    failure: Presence[ReadFailedEventPayload]
     cancellation: Presence[CancelledEventPayload]
 
 
@@ -320,6 +322,7 @@ _BUILD_EVENT_PAYLOAD_TYPES: dict[ArtifactBuildEventType, type[BaseModel]] = {
     ArtifactBuildEventType.Progress: ProgressEventPayload,
     ArtifactBuildEventType.Succeeded: SucceededEventPayload,
     ArtifactBuildEventType.Failed: FailedEventPayload,
+    ArtifactBuildEventType.HistoricalFailed: HistoricalFailedEventPayload,
     ArtifactBuildEventType.Cancelled: CancelledEventPayload,
 }
 
@@ -330,6 +333,7 @@ BuildEventPayload = (
     | ProgressEventPayload
     | SucceededEventPayload
     | FailedEventPayload
+    | HistoricalFailedEventPayload
     | CancelledEventPayload
 )
 

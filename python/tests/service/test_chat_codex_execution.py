@@ -17,6 +17,7 @@ from collections.abc import AsyncIterator, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from multiprocessing.connection import Connection
 from pathlib import Path
 from typing import Any, Literal
@@ -60,8 +61,11 @@ from nexus.services.codex_generation_client import (
     CodexGenerationClient,
 )
 from nexus.services.codex_generation_contract import (
+    MAX_ADMISSION_BODY_BYTES,
     MAX_COMMAND_BODY_BYTES,
     ChatOperation,
+    GenerationAdmission,
+    GenerationAdmissionRequest,
     GenerationCommand,
     GenerationFailure,
     GenerationFrame,
@@ -71,6 +75,7 @@ from nexus.services.codex_generation_contract import (
     GenerationText,
     GenerationUsage,
 )
+from nexus.services.llm_execution import BindAdmission
 from nexus.services.rate_limit import RateLimiter, get_rate_limiter, set_rate_limiter
 from nexus_test_control import services as test_services
 from nexus_test_control.runtime import EndpointKind
@@ -98,6 +103,12 @@ _SDK_VERSION = importlib.metadata.version("openai-codex")
 _RUNTIME_VERSION = importlib.metadata.version("openai-codex-cli-bin")
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _TEST_ENV = {"NEXUS_ENV": "test"}
+
+
+def _current_admission_instant() -> str:
+    """Return the host admission clock in the contract's canonical UTC shape."""
+
+    return datetime.now(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
 @pytest.fixture(autouse=True)
@@ -142,22 +153,38 @@ class _CapacityThenSuccessfulChatRuntime:
             runtime_version=_RUNTIME_VERSION,
         )
 
-    def stream(self, command: GenerationCommand) -> AsyncIterator[GenerationFrame]:
+    def stream(
+        self,
+        command: GenerationCommand,
+        *,
+        bind_admission: BindAdmission | None = None,
+    ) -> AsyncIterator[GenerationFrame]:
         self._observe_entry("stream")
         self.commands.append(command)
 
         async def frames() -> AsyncIterator[GenerationFrame]:
             if len(self.commands) == 1:
                 raise CodexGenerationCapacityUnavailable("controlled capacity refusal")
+            if bind_admission is None:
+                raise AssertionError("Chat runtime received no admission binder")
+            dispatched = await bind_admission(
+                GenerationAdmission(
+                    request_id=command.request_id,
+                    admission_id=uuid4(),
+                    admitted_at=_current_admission_instant(),
+                    runtime_deadline_seconds=generation_policy.CHAT_ADMISSION_RUNTIME_SECONDS,
+                )
+            )
+            self.commands[-1] = dispatched
             yield GenerationFrame(
-                request_id=command.request_id,
+                request_id=dispatched.request_id,
                 sequence=0,
                 event=GenerationText(text=_PARTIAL_TEXT),
             )
             yield GenerationFrame(
-                request_id=command.request_id,
+                request_id=dispatched.request_id,
                 sequence=1,
-                event=_terminal(command, "succeeded"),
+                event=_terminal(dispatched, "succeeded"),
             )
 
         return frames()
@@ -177,7 +204,12 @@ class _CapacityRefusalFrames:
 class _AlwaysCapacityChatRuntime(_CapacityThenSuccessfulChatRuntime):
     """Strict host boundary that refuses every generation before acceptance."""
 
-    def stream(self, command: GenerationCommand) -> AsyncIterator[GenerationFrame]:
+    def stream(
+        self,
+        command: GenerationCommand,
+        *,
+        bind_admission: BindAdmission | None = None,
+    ) -> AsyncIterator[GenerationFrame]:
         self._observe_entry("stream")
         self.commands.append(command)
         return _CapacityRefusalFrames()
@@ -244,6 +276,8 @@ def _run_generation_peer(
     release_response: Any,
     response_text: str,
 ) -> None:
+    admissions: dict[str, GenerationAdmissionRequest] = {}
+
     class Handler(socketserver.StreamRequestHandler):
         def handle(self) -> None:
             request_line = self.rfile.readline()
@@ -259,7 +293,12 @@ def _run_generation_peer(
                     return
                 headers[name.casefold()] = value.strip()
             content_length = int(headers.get("content-length", "0"))
-            if content_length > MAX_COMMAND_BODY_BYTES:
+            maximum_body_bytes = (
+                MAX_ADMISSION_BODY_BYTES
+                if request_line == b"POST /v2/generation-admissions HTTP/1.1\r\n"
+                else MAX_COMMAND_BODY_BYTES
+            )
+            if content_length > maximum_body_bytes:
                 self._respond(b"413 Payload Too Large", b"application/json", b"{}")
                 return
             body = self.rfile.read(content_length)
@@ -283,6 +322,22 @@ def _run_generation_peer(
                 self._respond(b"204 No Content", b"application/json", b"")
                 return
 
+            if request_line == b"POST /v2/generation-admissions HTTP/1.1\r\n":
+                admission_request = GenerationAdmissionRequest.model_validate_json(body)
+                admission = GenerationAdmission(
+                    request_id=admission_request.request_id,
+                    admission_id=uuid4(),
+                    admitted_at=_current_admission_instant(),
+                    runtime_deadline_seconds=generation_policy.CHAT_ADMISSION_RUNTIME_SECONDS,
+                )
+                admissions[str(admission.admission_id)] = admission_request
+                self._respond(
+                    b"200 OK",
+                    b"application/json",
+                    admission.model_dump_json().encode("utf-8"),
+                )
+                return
+
             if (
                 request_line != b"POST /v2/generations HTTP/1.1\r\n"
                 or headers.get("content-type") != "application/json"
@@ -292,6 +347,11 @@ def _run_generation_peer(
             command = GenerationCommand.model_validate_json(body)
             if command.operation.kind != "chat":
                 self._respond(b"400 Bad Request", b"application/json", b"{}")
+                return
+            admission_id = headers.get("nexus-generation-admission")
+            admission_request = admissions.pop(admission_id or "", None)
+            if admission_request is None or admission_request.request_id != command.request_id:
+                self._respond(b"409 Conflict", b"application/json", b"{}")
                 return
             with Path(audit_path).open("a", encoding="utf-8") as audit:
                 audit.write(json.dumps(json.loads(body), sort_keys=True) + "\n")

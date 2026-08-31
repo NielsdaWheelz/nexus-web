@@ -17,6 +17,7 @@ import type {
 } from "@/lib/conversations/types";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import type { ResourceActivation } from "@/lib/resources/activation";
+import type { ChatConnectionRecoveries } from "@/lib/conversations/chatConnectionRecovery";
 import type {
   DeleteMessageMutation,
   MessageActionMutationOutcome,
@@ -49,11 +50,12 @@ interface ChatSurfaceProps {
   onRerunAssistantResponse?: (
     assistantMessageId: string,
   ) => Promise<MessageActionMutationOutcome>;
+  rerunningAssistantMessageIds?: ReadonlySet<string>;
   onRegenerateAssistantResponse?: (
     assistantMessageId: string,
   ) => Promise<MessageActionMutationOutcome>;
   onDeleteMessage?: DeleteMessageMutation;
-  connectionLostAssistantIds?: Set<string>;
+  connectionRecoveries?: ChatConnectionRecoveries;
   onReconnectAssistant?: (assistantMessageId: string) => void;
   onReaderSourceActivate?: (
     activation: ResourceActivation,
@@ -79,9 +81,10 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
       onSelectFork,
       onReplyToAssistant,
       onRerunAssistantResponse,
+      rerunningAssistantMessageIds,
       onRegenerateAssistantResponse,
       onDeleteMessage,
-      connectionLostAssistantIds,
+      connectionRecoveries,
       onReconnectAssistant,
       onReaderSourceActivate,
     },
@@ -206,9 +209,10 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
                 onSelectFork={onSelectFork}
                 onReplyToAssistant={onReplyToAssistant}
                 onRerunAssistantResponse={onRerunAssistantResponse}
+                rerunning={rerunningAssistantMessageIds?.has(msg.id) === true}
                 onRegenerateAssistantResponse={onRegenerateAssistantResponse}
                 onDeleteMessage={onDeleteMessage}
-                connectionLostAssistantIds={connectionLostAssistantIds}
+                connectionRecovery={connectionRecoveries?.[msg.id]}
                 onReconnectAssistant={onReconnectAssistant}
                 onReaderSourceActivate={onReaderSourceActivate}
                 onStartWalk={onStartWalk}

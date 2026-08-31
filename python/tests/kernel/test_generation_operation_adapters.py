@@ -3,22 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from importlib.util import find_spec
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 import pytest
 
-from nexus.services import dawn_write, generation_policy, media_intelligence, oracle, synapse
-from nexus.services.artifacts import engine
-from nexus.services.artifacts.generation_step import build_artifact_generation_step
-from nexus.services.artifacts.registry import dossier_registration
-from nexus.services.codex_generation_contract import (
-    GenerationCommand,
-    GenerationSessionRef,
-    GenerationTerminal,
-    request_fingerprint,
-)
-from nexus.services.resource_graph.refs import ResourceRef
-from nexus.tasks import enrich_metadata
+if TYPE_CHECKING:
+    from nexus.services.codex_generation_contract import GenerationCommand, GenerationTerminal
 
 _GENERATION_ID = UUID("13825d92-5b95-5e1c-8d0f-a4176006b41d")
 _FORBIDDEN_POLICY_KEYS = frozenset(
@@ -35,7 +27,15 @@ _FORBIDDEN_POLICY_KEYS = frozenset(
 )
 
 
+def _require_cutover_adapters() -> None:
+    assert find_spec("nexus.services.generation_policy") is not None, (
+        "Codex Personal generation adapters are absent"
+    )
+
+
 def _metadata_command() -> GenerationCommand:
+    from nexus.tasks import enrich_metadata
+
     return enrich_metadata._metadata_generation_command(
         generation_id=_GENERATION_ID,
         input="A bounded metadata source.",
@@ -43,6 +43,8 @@ def _metadata_command() -> GenerationCommand:
 
 
 def _media_command() -> GenerationCommand:
+    from nexus.services import media_intelligence
+
     return media_intelligence._media_unit_command(
         generation_id=_GENERATION_ID,
         user_content="A bounded media evidence packet.",
@@ -50,6 +52,8 @@ def _media_command() -> GenerationCommand:
 
 
 def _synapse_command() -> GenerationCommand:
+    from nexus.services import synapse
+
     return synapse._synapse_command(
         generation_id=_GENERATION_ID,
         user_content="A bounded resonance candidate packet.",
@@ -57,6 +61,8 @@ def _synapse_command() -> GenerationCommand:
 
 
 def _dawn_command() -> GenerationCommand:
+    from nexus.services import dawn_write
+
     return dawn_write._dawn_write_command(
         generation_id=_GENERATION_ID,
         user_content="A bounded morning signal packet.",
@@ -64,6 +70,8 @@ def _dawn_command() -> GenerationCommand:
 
 
 def _oracle_command() -> GenerationCommand:
+    from nexus.services import oracle
+
     return oracle._oracle_command(
         generation_id=_GENERATION_ID,
         user_content="A bounded grounded oracle packet.",
@@ -71,6 +79,9 @@ def _oracle_command() -> GenerationCommand:
 
 
 def _dossier_command(operation: str) -> GenerationCommand:
+    from nexus.services.artifacts.generation_step import build_artifact_generation_step
+    from nexus.services.artifacts.registry import dossier_registration
+
     subject_scheme = operation.removeprefix("dossier_")
     if subject_scheme == "note":
         subject_scheme = "note_block"
@@ -90,6 +101,8 @@ def _dossier_command(operation: str) -> GenerationCommand:
 
 
 def _idea_resolve_command() -> GenerationCommand:
+    from nexus.services.artifacts import engine
+
     return engine._idea_resolution_command(
         generation_id=_GENERATION_ID,
         system_prompt="Resolve one phrase to one exact Idea identity.",
@@ -130,6 +143,10 @@ def _all_keys(value: object) -> set[str]:
 
 @pytest.mark.parametrize("operation", sorted(_COMMANDS))
 def test_non_chat_operation_owns_content_but_cannot_choose_runtime_policy(operation: str) -> None:
+    _require_cutover_adapters()
+    from nexus.services import generation_policy
+    from nexus.services.codex_generation_contract import request_fingerprint
+
     command = _COMMANDS[operation]()
     policy = generation_policy.operation_policy(operation)
 
@@ -143,10 +160,16 @@ def test_non_chat_operation_owns_content_but_cannot_choose_runtime_policy(operat
 
 
 def test_non_chat_operation_portfolio_is_exactly_the_policy_catalog() -> None:
+    _require_cutover_adapters()
+    from nexus.services import generation_policy
+
     assert set(_COMMANDS) == set(generation_policy.OPERATIONS)
 
 
 def test_metadata_job_result_does_not_duplicate_generation_policy_facts() -> None:
+    _require_cutover_adapters()
+    from nexus.tasks import enrich_metadata
+
     assert enrich_metadata._job_result(enrich_metadata._success_result(["title"])) == {
         "status": "success",
         "fields": ["title"],
@@ -154,6 +177,8 @@ def test_metadata_job_result_does_not_duplicate_generation_policy_facts() -> Non
 
 
 def _successful_structured_terminal(payload: dict[str, object]) -> GenerationTerminal:
+    from nexus.services.codex_generation_contract import GenerationSessionRef, GenerationTerminal
+
     return GenerationTerminal.model_validate(
         {
             "status": "succeeded",
@@ -179,6 +204,10 @@ def _successful_structured_terminal(payload: dict[str, object]) -> GenerationTer
 
 
 def test_grounded_adapters_override_host_success_when_an_index_was_not_offered() -> None:
+    _require_cutover_adapters()
+    from nexus.services import media_intelligence, synapse
+    from nexus.services.resource_graph.refs import ResourceRef
+
     media_terminal = media_intelligence._encode_media_unit_terminal(
         _successful_structured_terminal(
             {
