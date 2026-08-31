@@ -13,8 +13,6 @@ from typing import cast
 import pytest
 import yaml
 
-from nexus.services import generation_policy
-
 _RUN_ID = "1234567890"
 _EVIDENCE_NAME = "hosted-codex-personal-generation.json"
 _READINESS_NAME = "hosted-codex-personal-readiness.json"
@@ -25,6 +23,8 @@ _SOURCE_SHA = "a" * 40
 
 
 def _valid_evidence(run_id: str) -> bytes:
+    from nexus.services import generation_policy
+
     return (
         json.dumps(
             {
@@ -110,9 +110,6 @@ def _valid_evidence(run_id: str) -> bytes:
     )
 
 
-_VALID_EVIDENCE = _valid_evidence(_VALID_EVIDENCE_RUN_ID)
-
-
 def _failure_marker() -> bytes:
     return (
         json.dumps(
@@ -128,53 +125,59 @@ def _failure_marker() -> bytes:
 
 
 @pytest.mark.parametrize(
-    ("case", "canary_outcome", "evidence", "expected_returncode", "expected_artifact"),
+    (
+        "case",
+        "canary_outcome",
+        "evidence_specs",
+        "expected_returncode",
+        "expected_artifact_kind",
+    ),
     (
         (
             "valid-success",
             "success",
-            ((_VALID_EVIDENCE_RUN_ID, _VALID_EVIDENCE),),
+            ((_VALID_EVIDENCE_RUN_ID, "valid"),),
             0,
-            _VALID_EVIDENCE,
+            "valid",
         ),
         (
             "failed-canary",
             "failure",
-            ((_VALID_EVIDENCE_RUN_ID, _VALID_EVIDENCE),),
+            ((_VALID_EVIDENCE_RUN_ID, "valid"),),
             0,
-            _failure_marker(),
+            "failure",
         ),
         (
             "sibling-exclusion",
             "success",
-            ((_VALID_EVIDENCE_RUN_ID, _VALID_EVIDENCE),),
+            ((_VALID_EVIDENCE_RUN_ID, "valid"),),
             0,
-            _VALID_EVIDENCE,
+            "valid",
         ),
         (
             "malformed-success",
             "success",
-            ((_VALID_EVIDENCE_RUN_ID, b"{not-json\n"),),
+            ((_VALID_EVIDENCE_RUN_ID, "malformed"),),
             1,
-            _failure_marker(),
+            "failure",
         ),
         (
             "oversized-success",
             "success",
-            ((_VALID_EVIDENCE_RUN_ID, b"x" * (16 * 1024 + 1)),),
+            ((_VALID_EVIDENCE_RUN_ID, "oversized"),),
             1,
-            _failure_marker(),
+            "failure",
         ),
-        ("missing-success", "success", (), 1, _failure_marker()),
+        ("missing-success", "success", (), 1, "failure"),
         (
             "multiple-success",
             "success",
             (
-                (_VALID_EVIDENCE_RUN_ID, _VALID_EVIDENCE),
-                (_SECOND_EVIDENCE_RUN_ID, _valid_evidence(_SECOND_EVIDENCE_RUN_ID)),
+                (_VALID_EVIDENCE_RUN_ID, "valid"),
+                (_SECOND_EVIDENCE_RUN_ID, "valid"),
             ),
             1,
-            _failure_marker(),
+            "failure",
         ),
     ),
     ids=(
@@ -191,9 +194,9 @@ def test_codex_nightly_stages_only_one_run_bound_bounded_json_artifact(
     tmp_path: Path,
     case: str,
     canary_outcome: str,
-    evidence: tuple[tuple[str, bytes], ...],
+    evidence_specs: tuple[tuple[str, str], ...],
     expected_returncode: int,
-    expected_artifact: bytes,
+    expected_artifact_kind: str,
 ) -> None:
     """Risk: the live workflow stages malformed or excess hosted output."""
 
@@ -202,10 +205,10 @@ def test_codex_nightly_stages_only_one_run_bound_bounded_json_artifact(
     _assert_artifact_delivery_contract(
         stage, _workflow_step("Upload bounded Codex nightly artifact")
     )
-    for source_run_id, payload in evidence:
+    for source_run_id, payload_kind in evidence_specs:
         evidence_path = tmp_path / "test-results/runs" / source_run_id / _EVIDENCE_NAME
         evidence_path.parent.mkdir(parents=True, exist_ok=True)
-        evidence_path.write_bytes(payload)
+        evidence_path.write_bytes(_evidence_payload(payload_kind, source_run_id))
     sentinel = b"unrelated-hosted-sentinel-65c8e80d"
     if case == "sibling-exclusion":
         sibling = tmp_path / "test-results/runs/sibling/unrelated.json"
@@ -242,6 +245,7 @@ def test_codex_nightly_stages_only_one_run_bound_bounded_json_artifact(
         "nightly artifact staging did not produce exactly its fixed filename",
     )
     artifact = artifacts[0].read_bytes()
+    expected_artifact = _artifact_payload(expected_artifact_kind)
     _require(
         artifact == expected_artifact,
         "nightly artifact staging did not produce its bounded exact artifact",
@@ -311,35 +315,31 @@ def test_codex_nightly_stages_a_bounded_not_run_receipt_for_unavailable_subscrip
 
 
 @pytest.mark.parametrize(
-    ("canary_outcome", "artifact", "expected_returncode"),
+    ("canary_outcome", "artifact_kind", "expected_returncode"),
     (
-        ("success", _VALID_EVIDENCE, 0),
-        ("failure", _VALID_EVIDENCE, 1),
-        ("success", _failure_marker(), 1),
-        (
-            "success",
-            b'{"schema_version":"nexus-hosted-codex-canary-not-run.v1",'
-            b'"github_run_id":1234567890,"status":"subscription_unavailable"}\n',
-            1,
-        ),
+        ("success", "valid", 0),
+        ("failure", "valid", 1),
+        ("success", "failure", 1),
+        ("success", "not-run", 1),
     ),
     ids=("qualified", "controller-failed", "failed-receipt", "not-run-receipt"),
 )
 def test_codex_nightly_final_gate_accepts_only_a_successful_qualification(
     tmp_path: Path,
     canary_outcome: str,
-    artifact: bytes,
+    artifact_kind: str,
     expected_returncode: int,
 ) -> None:
+    gate_command = _gate_command()
     runner_temp = tmp_path / "runner-temp"
     runner_temp.mkdir()
-    (runner_temp / _ARTIFACT_NAME).write_bytes(artifact)
+    (runner_temp / _ARTIFACT_NAME).write_bytes(_artifact_payload(artifact_kind))
     workflow_python = tmp_path / "python/.venv/bin/python"
     workflow_python.parent.mkdir(parents=True)
     workflow_python.symlink_to(Path(sys.executable))
 
     result = subprocess.run(
-        ("bash", "-c", _gate_command()),
+        ("bash", "-c", gate_command),
         cwd=tmp_path,
         env={
             "CANARY_OUTCOME": canary_outcome,
@@ -448,7 +448,42 @@ def _workflow_step(name: str) -> dict[str, object]:
 def _workflow_job() -> dict[str, object]:
     workflow_path = Path(__file__).parents[3] / ".github/workflows/codex-personal-nightly.yml"
     workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
-    return cast(dict[str, object], workflow["jobs"]["codex-personal-generation"])
+    _require(isinstance(workflow, dict), "Codex nightly workflow is not a mapping")
+    jobs = workflow.get("jobs")
+    _require(isinstance(jobs, dict), "Codex nightly workflow jobs are absent")
+    job = jobs.get("codex-personal-generation")
+    _require(
+        isinstance(job, dict),
+        "Codex nightly workflow has no generation-owned job",
+    )
+    return cast(dict[str, object], job)
+
+
+def _evidence_payload(kind: str, run_id: str) -> bytes:
+    match kind:
+        case "valid":
+            return _valid_evidence(run_id)
+        case "malformed":
+            return b"{not-json\n"
+        case "oversized":
+            return b"x" * (16 * 1024 + 1)
+        case _:
+            raise AssertionError(f"unknown evidence payload kind: {kind!r}")
+
+
+def _artifact_payload(kind: str) -> bytes:
+    match kind:
+        case "valid":
+            return _valid_evidence(_VALID_EVIDENCE_RUN_ID)
+        case "failure":
+            return _failure_marker()
+        case "not-run":
+            return (
+                b'{"schema_version":"nexus-hosted-codex-canary-not-run.v1",'
+                b'"github_run_id":1234567890,"status":"subscription_unavailable"}\n'
+            )
+        case _:
+            raise AssertionError(f"unknown artifact payload kind: {kind!r}")
 
 
 def _assert_runner_security_contract() -> None:
