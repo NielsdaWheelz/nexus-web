@@ -19,6 +19,15 @@ the interactive worker's exact `127.0.0.1` listener, literal mount, persisted
 process identity, and grantless `401` before Chat dispatch. Synthesis commands
 remain grantless and tool-free; Chat commands require the scoped bearer grant.
 
+`Tool-free synthesis` names the final Codex turn, not the complete application
+workflow. Background owners may finish durably checkpointed Nexus/Brave
+retrieval before dispatching frozen evidence to Codex. Chat alone delegates
+live model-planned calls during the Codex turn; Codex performs the MCP JSON-RPC
+round trip and continues with the structured result. The retained Idea-dossier
+research planner remains deliberately bounded and non-adaptive; adaptive query
+planning would be a separately versioned durable workflow change, not a reason
+to grant final synthesis the Chat tool set.
+
 ## One-time deletion audit
 
 The final candidate was searched across active application, worker, host,

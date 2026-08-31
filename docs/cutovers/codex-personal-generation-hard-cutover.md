@@ -21,12 +21,17 @@ Make the private `codex-personal` ChatGPT login the sole inference backend for
 all Nexus text and structured-output generation. Keep one isolated Codex host,
 one product policy catalog, one execution boundary, and one generation ledger.
 
-This means one inference/auth channel, not one transport:
+This means one inference/auth channel, not one transport. Every generative
+operation below uses Codex Personal; the `chat only` label applies to live tool
+authority inside the Codex turn, not to use of Codex itself:
 
 ```text
-Nexus operation -> durable generation -> private UDS -> Codex host -> ChatGPT subscription
-                                                        |
-chat only                                               +-> scoped HTTPS MCP -> Nexus tools
+Nexus workflow -> app-owned preparation -> durable generation -> private UDS
+                                                               -> Codex host
+                                                                  -> ChatGPT subscription
+                                                                  |
+chat Codex turn only                                              +-> scoped HTTPS MCP
+                                                                      -> Nexus ToolExecutor
 ```
 
 Hard-cut every direct generation provider, key, profile, retry, price, and
@@ -44,8 +49,10 @@ Approved scope assumptions:
 - Authors remain deterministic where they are deterministic; model-proposed
   authors are part of metadata enrichment. Abstracts remain projections of the
   media summary, not a second generation.
-- Existing host-planned retrieval remains app-owned. Chat alone exposes
-  model-planned Nexus tools through MCP.
+- Existing host-planned retrieval remains app-owned. Background workflows may
+  execute durable Nexus/Brave retrieval steps before their final Codex turn;
+  Chat alone exposes live, model-planned Nexus tools inside that turn through
+  MCP.
 - One-user, low-volume, operator-paid subscription usage is the product
   boundary. A multi-user or externally billed service would require a new
   design.
@@ -201,14 +208,30 @@ model-planned chat:
   Codex -> run-scoped Nexus MCP -> canonical ToolExecutor -> Codex continues
 ```
 
-- Synthesis operations receive no tools and no tool network.
+- `Tool-free synthesis` describes only the final Codex turn. It does not mean
+  the surrounding Nexus workflow performs no reads or tool calls. Synthesis
+  operations receive a complete, bounded, frozen input and no live model tools
+  or tool network; any required retrieval has already crossed an app-owned,
+  replay-safe boundary.
 - Idea-dossier research keeps its current `HostTable` Brave loop; only final
   synthesis moves to Codex. The `HostTable` plan and its snapshot/validation
   helpers stay owned by `tool_runtime`; the adapters consume them unchanged.
+- The retained Idea-dossier planner is durable but deliberately mechanical: it
+  derives three bounded queries before retrieval and cannot reformulate them
+  from intermediate findings. Adaptive research would require a separately
+  versioned, model-assisted planning step whose proposed queries are executed
+  and checkpointed by the existing host-owned research workflow. Granting the
+  final synthesis turn the Chat tool set would not provide equivalent replay,
+  evidence-freeze, or citation guarantees.
 - Chat receives exactly `CHAT_TOOL_DECLARATIONS`. MCP delegates to the existing
   `ToolExecutor`; it contains no copied domain logic or schemas.
   `CHAT_TOOL_DECLARATIONS` includes the Brave-backed `web.search`; it is a
   Nexus tool over MCP, not a Codex built-in.
+- Chat does not encode a tool request as XML or tool-like assistant text for
+  Nexus to parse. The Codex runtime owns the MCP JSON-RPC loop: the model
+  selects a declared tool, Codex calls the scoped Nexus MCP endpoint, the
+  canonical executor returns a structured result, and Codex continues the same
+  native turn.
 - The model-planned loop is bounded server-side by the existing chat
   `RunLimits` (64 calls, 900-second elapsed), enforced by the run-scoped
   `ToolExecutor` behind MCP; `MAX_TOOL_ITERATIONS` is deleted with the
@@ -1222,8 +1245,11 @@ no prompts, model output, grants, or credentials.
    per-binding or per-profile effort override survives.
 3. Metadata uses the same intent, UDS, execution, failure, and ledger contracts
    as every other generation; no metadata-special runtime survives.
-4. Synthesis has zero model tools. Chat sees only the canonical Nexus MCP tool
-   set; host-planned retrieval behavior is unchanged.
+4. The final Codex turn for Synthesis has zero model tools; its surrounding
+   workflow may complete app-owned, durably checkpointed retrieval before
+   dispatch. Chat sees only the canonical Nexus MCP tool set and receives each
+   structured result inside the same Codex turn; host-planned retrieval
+   behavior is unchanged.
 5. Each MCP call is run-scoped, lease-fenced, owner-authorized, bounded,
    auditable, replay-safe at its protocol identity, and executed by the
    existing `ToolExecutor` in the lease-holding worker process.

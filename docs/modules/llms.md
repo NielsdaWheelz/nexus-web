@@ -54,13 +54,18 @@ revision per product profile and the `ChatTools` capability. The policy also
 owns instruction/input bounds, turn timeout, stream bounds, close timeout, and
 the full transport deadline.
 
-Synthesis runs read-only with network disabled, built-ins and web search off,
-no MCP servers, and no tool grant. Chat runs with workspace-write,
-unrestricted network, explicit unsafe-network confirmation, built-ins and web
-search off, and exactly one required Streamable HTTP MCP server named `nexus`.
-Its exact tool allowlist comes from the canonical chat declarations. The MCP
-client/server pins are Codex SDK/CLI `0.144.4`, `mcp==2.1.0`, and wire revision
-`2025-06-18`; no other protocol revision is negotiable.
+The final Codex turn for Synthesis runs read-only with network disabled,
+built-ins and web search off, no MCP servers, and no tool grant. This is not a
+claim that the surrounding workflow is tool-free: Nexus may complete durable,
+app-owned search and retrieval first, then freeze that evidence into the turn's
+input. Chat runs with workspace-write, unrestricted network, explicit
+unsafe-network confirmation, built-ins and web search off, and exactly one
+required Streamable HTTP MCP server named `nexus`. Its exact tool allowlist
+comes from the canonical chat declarations. Codex sends each declared MCP call
+to Nexus, receives the structured result, and continues the same native turn;
+Nexus does not parse tool-like text. The MCP client/server pins are Codex
+SDK/CLI `0.144.4`, `mcp==2.1.0`, and wire revision `2025-06-18`; no other
+protocol revision is negotiable.
 
 ## Private v2 host protocol
 
