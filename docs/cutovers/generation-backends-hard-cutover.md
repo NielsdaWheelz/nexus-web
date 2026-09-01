@@ -12,6 +12,12 @@
 [`codex-personal-generation-hard-cutover.md`](codex-personal-generation-hard-cutover.md)
 and its change report. Those documents describe the rejected Codex-only source
 state and are deleted when this cutover turns green.
+This specification also supersedes every statement in
+[`nexus-tool-runtime-hard-cutover.md`](nexus-tool-runtime-hard-cutover.md) that
+restricts Native/model-callable exposure, grants, bearers, journal ownership,
+rollout, proof, or acceptance to Chat, or says background models receive no
+grants. Its tool declarations, executor, evidence, authorization, replay, and
+effect contracts remain authoritative.
 
 ## 1. Decision
 
@@ -21,6 +27,10 @@ For each Chat run, users may instead select any currently Chat-eligible model
 and reasoning value in the complete configured `llm-calling` catalog.
 Background operations use exact developer-owned selections. There are no user
 generation defaults or generation controls in AI Settings.
+Every generation operation may also own a closed model-callable tool policy;
+each admitted run freezes one exact plan from it. Foreground/background context
+and model selection never grant tools; the developer-owned operation policy
+does.
 
 There are no generation-selection profiles, presets, intent tiers, or
 Fast/Balanced/Deep shortcuts.
@@ -74,12 +84,13 @@ survives.
   operation; expose no user-editable generation defaults.
 - Freeze the exact selection and catalog evidence before dispatch so later
   policy or catalog drift cannot change a run.
-- Give eligible Codex and API Chat targets identical canonical Nexus tool
-  authority.
-- Keep background final synthesis tool-free where its evidence contract is
-  frozen; model choice does not widen operation authority.
-- Split read authority from additive-write authority. Writes require a fresh
-  explicit per-run grant and remain bounded, audited, idempotent, and undoable.
+- Give eligible Codex and API targets identical canonical Nexus tool semantics
+  for every operation-owned model tool plan.
+- Let background operations use bounded model-callable tools where their exact
+  policy grants them; keep closed-evidence operations tool-free.
+- Split read authority from additive-write authority. Chat writes require a
+  fresh explicit per-run grant. The shipped background plans are read-only;
+  every effect remains bounded, audited, idempotent, and undoable.
 - Preserve prompts, evidence selection, output validation, citations,
   cancellation, publication transactions, and deterministic host retrieval.
 - Preserve crash/replay truth across multi-call API tool loops.
@@ -100,9 +111,11 @@ survives.
   dynamic App Server tools, or approval-requiring built-ins.
 - Provider-native Web search. `web.search` remains the sole model-facing Web
   search and stays Brave-backed.
-- Live model tools in frozen-evidence synthesis.
-- Adaptive Idea-research planning. Existing durable host-planned research and
-  tool-free final synthesis remain unchanged.
+- Publishing live model tools for a `NoModelTools` run; that mode has none by
+  definition.
+- Replacing Idea Dossier's existing durable host-planned research. It remains
+  the deterministic baseline; a separate bounded read-only model plan may
+  perform follow-up retrieval.
 - A new workflow engine, one lowest-common-denominator agent/API runtime,
   multi-user billing, price estimation, or zero-downtime compatibility.
 
@@ -163,7 +176,9 @@ owned by the exact model/reasoning pair. It exposes:
 - source-observed input facts and source-default reasoning, which must name one
   present, transport-supported reasoning row; and
 - Nexus qualification for streaming, strict structured output, continuation,
-  and the canonical Chat tool plan.
+  and route-neutral model-tool transport. The product-facing `chat_state`
+  composes both `ChatRead` and its `ChatReadAdditiveWrite` extension; background
+  plan eligibility composes server-internally from the same receipts.
 
 Codex native visibility and upgrade/retirement metadata are typed source facts;
 API rows carry equivalent curated facts. `UpgradeFacts(target_key)` and
@@ -286,34 +301,64 @@ revision, one Chat seed, and a total
 generation Settings page, preference API, or user generation-preference
 persistence.
 
-| Product label | Operation key | Shipped exact selection |
-|---|---|---|
-| Metadata enrichment | `metadata_enrichment` | Codex Personal / `gpt-5.6-luna` / `low` |
-| Media summary | `media_summary` | Codex Personal / `gpt-5.6-luna` / `low` |
-| Synapse | `synapse` | Codex Personal / `gpt-5.6-luna` / `low` |
-| Dawn | `dawn_write` | Codex Personal / `gpt-5.6-terra` / `medium` |
-| Oracle | `oracle` | Codex Personal / `gpt-5.6-terra` / `medium` |
-| Page dossier | `dossier_page` | Codex Personal / `gpt-5.6-luna` / `low` |
-| Note dossier | `dossier_note` | Codex Personal / `gpt-5.6-luna` / `low` |
-| Media dossier | `dossier_media` | Codex Personal / `gpt-5.6-terra` / `medium` |
-| Conversation dossier | `dossier_conversation` | Codex Personal / `gpt-5.6-terra` / `medium` |
-| Library dossier | `dossier_library` | Codex Personal / `gpt-5.6-terra` / `high` |
-| Podcast dossier | `dossier_podcast` | Codex Personal / `gpt-5.6-terra` / `high` |
-| Contributor dossier | `dossier_contributor` | Codex Personal / `gpt-5.6-terra` / `high` |
-| Idea dossier | `dossier_idea` | Codex Personal / `gpt-5.6-terra` / `high` |
-| Idea resolution | `dossier_idea_resolve` | Codex Personal / `gpt-5.6-luna` / `low` |
+| Product label | Operation key | Shipped exact selection | Host preparation | Model tool plan |
+|---|---|---|---|---|
+| Metadata enrichment | `metadata_enrichment` | Codex Personal / `gpt-5.6-luna` / `low` | none | `NoModelTools` |
+| Media summary | `media_summary` | Codex Personal / `gpt-5.6-luna` / `low` | none | `NoModelTools` |
+| Synapse | `synapse` | Codex Personal / `gpt-5.6-luna` / `low` | none | `NoModelTools` |
+| Dawn | `dawn_write` | Codex Personal / `gpt-5.6-terra` / `medium` | none | `NoModelTools` |
+| Oracle | `oracle` | Codex Personal / `gpt-5.6-terra` / `medium` | none | `NoModelTools` |
+| Page dossier | `dossier_page` | Codex Personal / `gpt-5.6-luna` / `low` | none | `NoModelTools` |
+| Note dossier | `dossier_note` | Codex Personal / `gpt-5.6-luna` / `low` | none | `NoModelTools` |
+| Media dossier | `dossier_media` | Codex Personal / `gpt-5.6-terra` / `medium` | none | `NoModelTools` |
+| Conversation dossier | `dossier_conversation` | Codex Personal / `gpt-5.6-terra` / `medium` | none | `NoModelTools` |
+| Library dossier | `dossier_library` | Codex Personal / `gpt-5.6-terra` / `high` | none | `LibraryDossierRead` |
+| Podcast dossier | `dossier_podcast` | Codex Personal / `gpt-5.6-terra` / `high` | none | `NoModelTools` |
+| Contributor dossier | `dossier_contributor` | Codex Personal / `gpt-5.6-terra` / `high` | none | `NoModelTools` |
+| Idea dossier | `dossier_idea` | Codex Personal / `gpt-5.6-terra` / `high` | existing `IdeaHostResearch` | `IdeaDossierRead` |
+| Idea resolution | `dossier_idea_resolve` | Codex Personal / `gpt-5.6-luna` / `low` | none | `NoModelTools` |
 
-The Chat seed is Codex Personal / `gpt-5.6-terra` / `medium`. The policy values
-are exact selections, not `routine`, `standard`, `thorough`, `deep`, `fast`, or
-`balanced` aliases. Developers change them only through reviewed source and a
-deployment.
+`LibraryDossierRead` grants `nexus.search`, `nexus.resource.read`,
+`nexus.document.search`, `nexus.resource.inspect`, and
+`nexus.relations.list`. Its scope contains the admitted Library subject and the
+exact viewer-visible ResourceRefs in the frozen Library input manifest. Search
+is filtered to those refs, and relation results omit endpoints outside them.
+Its exact `RunLimits` are 16 calls, zero external attempts, 256 KiB cumulative
+input, 4 MiB cumulative output, one call in flight, and 120 seconds elapsed.
+
+`IdeaDossierRead` grants the same five Nexus read tools over the admitted Idea
+subject and the exact viewer-visible ResourceRefs in the frozen Idea evidence
+ledger. Search is filtered to those refs, and relation results omit endpoints
+outside them. Its exact limits are 12 calls, zero external attempts, 128 KiB
+cumulative input, 2 MiB cumulative output, one call in flight, and 120 seconds
+elapsed. The existing
+`IdeaHostResearch` independently owns exactly three Brave-backed `web.search`
+steps: six maximum external attempts, 12,288 cumulative input bytes, 98,304
+cumulative output bytes, one call in flight, and 60 seconds elapsed. An
+unattended model turn never holds private Nexus reads and external-Web egress in
+the same plan.
+
+`NoModelTools` publishes no model-callable tool schema or MCP configuration.
+The two named read plans are internal capability identities, not product
+profiles or defaults. Each freezes exact grants, declaration/binding revisions,
+per-tool limits, run limits, exposure, effect mode, scope derivation, and the set
+of bindings required at admission. All five bindings are required for each
+named background read plan. No background plan grants a write.
+
+The Chat seed is Codex Personal / `gpt-5.6-terra` / `medium`. Selection and tool
+policy values are exact, not `routine`, `standard`, `thorough`, `deep`, `fast`,
+or `balanced` aliases. Developers change them only through reviewed source and
+a deployment.
 
 Release/startup validation requires every policy selection to exist and be
-qualified for its operation. A missing, unsupported, retired, or ineligible
-pair is a configuration defect; temporary unavailability leaves the service up
-but blocks that operation at admission. Admission reads one immutable policy
-object, resolves and validates its exact selection outside the database
-transaction, then atomically persists the parent `GenerationSpec` and enqueue.
+qualified for its operation's output and every policy-permitted model tool
+plan, and every tool plan to compose from current declarations and bindings. A
+missing, unsupported, retired, ineligible, or invalid pair/plan is a
+configuration defect; temporary selection or required-tool unavailability
+leaves the service up but blocks that operation at admission. Admission reads
+one immutable policy object, resolves and validates its exact selection and tool
+authority outside the database transaction, then atomically persists the parent
+`GenerationSpec` and enqueues it.
 Workers never reread process policy. Concurrent old/new deployments therefore
 admit a complete old or new revision; neither can alter queued or running work.
 A manual background rerun/rebuild is a fresh admission under the current
@@ -381,13 +426,16 @@ state directory.
 
 `GenerationPolicy` owns its revision, the Chat seed, and each background
 operation's exact selection plus `OperationWorkflowSpec`: bounds, output
-contract, timeout, optional host-research plan, and model-tool capability. It
-contains no model tiers, aliases, user overrides, or fallback. Both Chat and
-background admission read one immutable `GenerationPolicy`; workflow and
-policy revision come from that object, and background selection does too.
-Catalog validation uses one catalog snapshot. `GenerationService` freezes one
-`GenerationSpec` and rechecks volatile readiness immediately before dispatch
-without changing that spec.
+contract, timeout, optional host preparation, closed model tool policy, effect
+mode, limits, and scope derivation. It contains no model tiers, aliases, user
+overrides, or fallback. Both Chat and background admission read one immutable
+`GenerationPolicy`; workflow and policy revision come from that object, and
+background selection does too. Catalog validation uses one catalog snapshot;
+tool composition uses one immutable tool-runtime snapshot. `GenerationService`
+resolves the permitted policy arm, freezes one exact `GenerationSpec`, and
+rechecks volatile readiness immediately before dispatch without changing that
+spec. A worker constructs authority only from the frozen spec and admitted
+domain scope, never current process policy.
 
 ### Primary files
 
@@ -410,6 +458,7 @@ without changing that spec.
       provider_generation_*.py
       llm_credentials.py
       tool_authority.py
+      agent_tool_grants.py
       tool_runtime/**
       agent_tools_mcp.py
 
@@ -464,18 +513,57 @@ Policy first resolves route-neutral workflow authority:
       bounds
       output_contract
       host_tool_plan: Presence<HostResearchPlan>
-      model_tool_capability:
-        FrozenSynthesis
-        | ModelTools(FrozenToolPlan, ReadOnly | AdditiveWrites)
+      model_tool_policy:
+        NoModelTools
+        | ExactModelTools(
+            plan: FrozenToolPlan,
+            effect_mode: ReadOnly | AdditiveWrites,
+            scope_derivation: ToolScopeDerivation
+          )
+        | ChatPerRunTools(
+            read_plan: FrozenToolPlan,
+            additive_write_plan: FrozenToolPlan,
+            scope_derivation: ChatAdmittedContext
+          )
+
+    ToolScopeDerivation
+      ChatAdmittedContext
+      | LibraryDossierManifest
+      | IdeaDossierEvidenceLedger
+
+Admission resolves that policy to one closed runtime mode:
+
+    ResolvedModelToolMode
+      NoModelTools
+      | ModelTools(
+          plan: FrozenToolPlanSnapshot,
+          effect_mode: ReadOnly | AdditiveWrites,
+          scope: FrozenToolScope
+        )
 
 `GenerationPolicy.revision` hashes the canonical `ChatPolicy` and complete
 ordered background map, including every selection and workflow fact. It
 excludes catalog definitions, readiness, and runtime health.
 
-`dossier_idea` alone retains the current bounded `HostResearchPlan` for three
-host-executed `web.search` steps and then uses `FrozenSynthesis`. No host tool
-plan is exposed to the model. All other background operations have no host tool
-plan and use `FrozenSynthesis`; Chat has no host plan and uses `ModelTools`.
+Host preparation and model-callable tools are separate explicit axes because
+Idea Dossier legitimately uses both. A host plan is never exposed to the model.
+`dossier_idea` retains the current bounded `IdeaHostResearch` and then receives
+exact `IdeaDossierRead`; `dossier_library` receives exact
+`LibraryDossierRead`; the other twelve background rows receive `NoModelTools`.
+Chat has no host plan. `ChatPerRunTools` resolves only to `ChatRead`/`ReadOnly`
+or, after an explicit request, the complete
+`ChatReadAdditiveWrite`/`AdditiveWrites` plan. Every operation passes through
+the same tool-capable generation service even when its frozen policy publishes
+no model tools.
+
+The domain owner completes or replays any host preparation and freezes its
+evidence/manifest before generation admission. Scope derivation consumes only
+that immutable domain input: Chat's admitted context, Library Dossier's exact
+revision manifest, or Idea Dossier's frozen research evidence. It returns one
+bounded, data-only `FrozenToolScope` containing canonical admitted refs and
+closed predicate descriptors plus its digest. It never persists executable code.
+Dispatch-time authorization may narrow that scope after access loss; it can
+never add a resource or relation that admission did not authorize.
 
 `GenerationService` freezes:
 
@@ -485,18 +573,27 @@ plan and use `FrozenSynthesis`; Chat has no host plan and uses `ModelTools`.
       selection_source: ChatRun | BackgroundPolicy
       bounds
       output_contract
-      model_tool_capability
+      host_tool_plan_snapshot: Presence<FrozenHostToolPlan>
       host_evidence_revision: Presence<HostEvidenceRevision>
+      model_tool_plan_snapshot: Presence<FrozenToolPlanSnapshot>
+      tool_effect_mode: Presence<ReadOnly | AdditiveWrites>
+      admitted_tool_scope: Presence<FrozenToolScope>
+      admitted_tool_scope_digest: Presence<ToolScopeDigest>
       catalog_definition_revision
       policy_revision
       backend_contract_revision
       provider_registry_revision: Presence<RegistryRevision>
       fingerprint
 
-The structured selection itself is persisted, not only a mutable catalog key.
-The fingerprint includes the exact selection, both catalog-definition and
-policy revisions, and every other dispatch-affecting fact. Credentials and
-opaque continuations are never part of the spec.
+The structured selection and resolved tool authority snapshot are persisted,
+not only mutable catalog or plan keys. `NoModelTools` maps every tool field to
+owned `Absent`; either tool-bearing policy arm resolves to one exact plan and
+maps every field to `Present`. A `ChatPerRunTools` admission cannot combine or
+partially project its two alternatives. The fingerprint includes the exact
+selection, catalog-definition and policy revisions, host/model plans, effect
+mode, canonical scope plus digest, budgets, and every other dispatch-affecting
+fact. Credentials, bearer values, and opaque continuations are never part of the
+spec.
 
 The backend event boundary remains a closed union:
 
@@ -509,7 +606,8 @@ The backend event boundary remains a closed union:
 
 `ToolProposed` means an API call awaits Nexus execution.
 `ToolObserved` means an SDK/MCP path already executed through the server.
-Route-specific terminals retain their complete native evidence.
+Both variants are operation-neutral. Route-specific terminals retain their
+complete native evidence.
 
 ### 5.2 Catalog and Chat API
 
@@ -635,26 +733,46 @@ inheritance fields are deleted with no aliases.
 
 | Authority/plan | Exact grants |
 |---|---|
-| `FrozenSynthesis` | none |
-| `HostResearchPlan` | existing HostTable `web.search` only; outside the final model turn |
-| `ModelRead` | `web.search`, `nexus.search`, `nexus.resource.read`, `nexus.document.search`, `nexus.resource.inspect`, `nexus.relations.list` |
-| `ModelReadAdditiveWrite` | `ModelRead` plus `nexus.library.add`, `nexus.note.create`, `nexus.highlight.create`, `nexus.edge.create`, `nexus.queue.add` |
+| `NoModelTools` | none; no schemas or MCP configuration are published |
+| `IdeaHostResearch` | existing HostTable `web.search` only; outside the model turn |
+| `LibraryDossierRead` | `nexus.search`, `nexus.resource.read`, `nexus.document.search`, `nexus.resource.inspect`, `nexus.relations.list` |
+| `IdeaDossierRead` | `nexus.search`, `nexus.resource.read`, `nexus.document.search`, `nexus.resource.inspect`, `nexus.relations.list` |
+| `ChatRead` | `web.search` plus the five Nexus reads above |
+| `ChatReadAdditiveWrite` | `ChatRead` plus `nexus.library.add`, `nexus.note.create`, `nexus.highlight.create`, `nexus.edge.create`, `nexus.queue.add` |
 
 Model selection never selects tools. The operation selects its reviewed host
-plan and model capability independently. Every Chat-eligible exact selection
-must be qualified for the canonical plan; every exact selection named by
-developer background policy must be qualified for that operation's text or
-strict structured-output contract.
+and model plans independently. Every Chat-eligible exact selection must be
+qualified for both `ChatRead` and `ChatReadAdditiveWrite`; a read-only run
+publishes only the former. Every exact selection named by developer background
+policy must be qualified for that operation's text or strict structured-output
+contract and exact model plan; `NoModelTools` requires no tool-wire
+qualification. Background eligibility stays internal and does not create a
+settings or catalog API.
 
 `ToolAuthority` binds a frozen plan to user, generation, run/attempt, worker
 lease, admitted resources, budgets, invocation position, and effect mode. MCP
 bearers and API function execution are adapters to this same authority. Tool
 output cannot widen it.
 
-Reads execute automatically. `ModelReadAdditiveWrite` exists only after an
-explicit `AdditiveWrites` request; only Chat selects model tools in this
-cutover. No destructive, external-message, purchase, share, credential, or
-access-control tool may reuse that grant.
+Reads execute automatically. Chat receives `ChatRead` at admission and can
+receive `ChatReadAdditiveWrite` only after an explicit `AdditiveWrites` request.
+Background admission automatically authorizes only the exact developer-owned
+read plan in section 3.4; no background run pauses for approval or gains a
+write. The same authenticated MCP mount and bearer shape serve every Codex
+`ModelTools` run, and the same function-call executor serves every API
+`ModelTools` run. There is no Chat-only tool executor, endpoint, or journal.
+
+Every successful model read becomes immutable tool evidence tied to its durable
+position and may become a citation candidate only through the owning domain's
+existing evidence adapter. Output validation and final publication remain with
+the domain owner. For Dossiers, that adapter deduplicates the read against the
+existing build evidence ledger and returns its stable candidate identity before
+the model continues; output validation accepts only registered candidates.
+Known unavailability of a plan-required binding blocks admission; an
+unavailability first observed mid-turn is returned as the typed tool result.
+Neither case drops the plan, substitutes a tool, or switches the model. No
+destructive, external-message, purchase, share, credential, or access-control
+tool may reuse any grant.
 
 ### 5.4 `llm-calling` additions
 
@@ -700,8 +818,11 @@ access-control tool may reuse that grant.
 
   The Codex arm validates all catalog-bound facts and resolves
   `dispatch_model` inside AgentRuntime before billable work; free-form Codex
-  pass-through is impossible. The Claude arm does not require an unsupported
-  catalog, and Nexus can construct only the Codex arm.
+  pass-through is impossible. Its optional validated MCP configuration is
+  operation-neutral: absent means `NoModelTools`, present means the exact
+  plan-derived allowlist and bearer. No `chat` literal controls SDK tool access.
+  The Claude arm does not require an unsupported catalog, and Nexus can
+  construct only the Codex arm.
 - Add one immutable ProviderRuntime query:
 
       ApiModelCatalog
@@ -738,8 +859,9 @@ access-control tool may reuse that grant.
 - Keep readiness and Nexus capability qualification outside both source
   catalogs. Native model-list or registry presence and credential presence are
   not proof of successful generation, strict output, tools, or quota.
-- Keep the existing function-tool adapter and add an adjacent plan-derived MCP
-  publication/observation adapter.
+- Keep the existing operation-neutral function-tool adapter and add an adjacent
+  plan-derived MCP publication/observation adapter. Both accept only the frozen
+  canonical plan; neither chooses tools from product operation names.
 - Add an additive event projection that preserves API proposals and MCP
   observations as distinct states.
 - Preserve full route-specific terminal evidence as a tagged union.
@@ -758,10 +880,19 @@ API function-tool loop has one child per provider call. Tools retain separate
 journaled positions.
 
 Each generation snapshots selection, resolved server dispatch target, source,
-catalog/policy/backend revisions, host-evidence and model capability, bounds,
-safe dispatch-time display/disclosure, rerun reconstructability, and fingerprint.
-Each child records route-native dispatch state, request identity,
-usage/billability, and tagged terminal evidence.
+catalog/policy/backend revisions, host preparation, exact model tool plan,
+effect mode, admitted scope and digest, limits, bounds, safe dispatch-time
+display/disclosure, rerun reconstructability, and fingerprint. Each child
+records route-native dispatch state, request identity, usage/billability, and
+tagged terminal evidence. Each tool position records canonical id/input digest,
+plan/binding revisions, scope and budget identity, result evidence, effect
+identity where applicable, settlement, and replay status.
+
+After a background worker owns the admitted attempt and lease, it mints a
+short-lived bearer solely from that frozen snapshot. A bearer cannot outlive the
+worker lease or transport deadline. Chat and background use the same claim
+schema; their different authority comes only from the frozen plan, effect mode,
+scope, and budgets. `NoModelTools` mints no bearer.
 
 Provider continuation artifacts are bounded, target/codec-bound, sealed with
 AES-256-GCM, never logged/rendered, and deleted when consumed or terminal.
@@ -774,14 +905,20 @@ compatibility reader ships.
 - no database transaction spans UDS, SDK, MCP, provider HTTP, or Brave I/O;
 - record uncertainty before dispatch and terminal evidence before publication;
 - completed children and tool positions replay without redispatch;
+- API model/tool/model continuation may resume only from its sealed next-child
+  state; Codex MCP observations remain positions inside its single native turn;
 - pre-accept refusal reschedules only under the existing bounded policy;
 - after semantic output, accepted/uncertain dispatch, or a tool effect, never
   automatically repeat or switch selection;
 - ProviderRuntime alone owns retry inside one API call; Nexus owns durable
   continuation between calls;
 - Codex turns are not retried after acceptance;
-- a transiently unavailable background policy selection blocks only that
-  operation and never falls back;
+- a transiently unavailable background selection or required tool blocks only
+  that operation and never falls back to another selection, tool, plan, or
+  `NoModelTools`;
+- a background run is noninteractive: an approval request, out-of-plan call,
+  widened scope, expired lease, or exhausted budget is refused rather than
+  suspended for user input;
 - manual rerun is a new generation, not recovery evidence.
 
 ### Configuration
@@ -851,9 +988,10 @@ developer policy or new per-user state.
 
 The migration is deterministic and performs no network or catalog lookup.
 Release/startup preflight reads the composed catalog and proves the Chat seed
-and every section 3.4 background policy pair exist and are semantically
-eligible. Missing qualification aborts deployment/startup rather than choosing
-a replacement; account creation has no generation seeding behavior.
+and every section 3.4 background selection/tool-plan pair exist, compose, and
+are semantically eligible. Missing qualification aborts deployment/startup
+rather than choosing a replacement or deleting tools; account creation has no
+generation seeding behavior.
 
 The table above exists only inside the rewritten migration and is never
 imported by runtime code. There is no downgrade, old-row reader, dual writer,
@@ -863,7 +1001,7 @@ coercion.
 Prefer semantic undelete over reimplementation for:
 
 - provider labels, privacy/retention copy, startup validation, and fixtures;
-- provider-native Chat continuation/tool-loop mechanics;
+- provider-native continuation/tool-loop mechanics;
 - credential construction and bounded hosted certification;
 - prior model/reasoning selector UI primitives whose behavior fits the new
   catalog;
@@ -893,6 +1031,10 @@ Delete:
 - `ChatProfilePicker`, `useChatProfiles`, `chatProfileContract`,
   `chatProfileSelection`, the three-card CSS, and silent
   `UnavailableReplacement`;
+- the `ChatTools` capability discriminant and every `operation == chat` check
+  that controls MCP configuration, bearer minting, tool publication, or tool
+  observation; replace them atomically with frozen `ModelTools` plan presence,
+  with no compatibility literal or alias;
 - Codex-only route literals in shared policy, API, ledger, product-health, and UI
   owners; retain exact Codex backend/SDK/auth/process facts only inside its
   private adapter and host-health owner, then project them to shared readiness;
@@ -910,12 +1052,12 @@ Unrelated application Settings surfaces are out of scope. Do not replace
 | Lane | Exclusive paths/concern | Depends on | Exit |
 |---|---|---|---|
 | U | sibling `llm-calling`: agent/provider catalog projection, selection validation, tool lowering, event projection, public Codex sandbox option, tests/docs | none | exact immutable pin and conformance green |
-| S | Nexus selection/catalog/developer-policy services, config, schemas, pure proofs | U contract | complete catalog plus total exact policy green |
+| S | Nexus selection/catalog/developer-policy services, config, schemas, pure proofs | U contract | complete catalog plus total exact selection/tool policy green |
 | L | models, rewritten `0224`, ledger, continuations, reconciliation and migration/service proofs | S | replay, sealed continuation, migration green |
-| T | route-neutral tool authority, tool runtime, grants, MCP adapter and proof | S, U | one frozen plan works through both transports |
-| C | Codex host/adapter, confinement, deployment/runbook proof | S, T, U | Codex catalog/dispatch and MCP green |
+| T | route-neutral tool authority, tool runtime, grants, MCP adapter and proof | S, U | any operation-owned frozen plan works through both transports |
+| C | Codex host/adapter, confinement, deployment/runbook proof | S, T, U | Codex catalog/dispatch and operation-neutral MCP green |
 | A | API adapter, credentials, provider fixtures/canaries; no domain callers | S, L, T, U | API multi-turn adapter green |
-| D | all background owners and Chat orchestration call sites | L, C, A | complete operation portfolio uses GenerationService |
+| D | all background owners and Chat orchestration call sites | L, C, A | complete portfolio uses GenerationService and its frozen tool mode |
 | W | FastAPI catalog/Chat routes and Web picker/disclosure/history UX | S, D | service and Chromium contracts green |
 | V | shared proof registries, workflows, module docs, residue audit, final integration | all | sensitivity, PR, full, hosted, release evidence |
 
@@ -933,15 +1075,15 @@ meaningful RED before GREEN.
 |---|---|
 | `llm-calling` catalog | every source row and reasoning value survives each public immutable catalog; canonical order/default/fingerprint invariants and malformed, hidden, retired, or unsupported values fail correctly |
 | Nexus catalog/selection | Codex rows equal the complete authenticated observation and API rows equal `api_model_catalog()` filtered only by configured provider; exact reasoning rows own eligibility; the all-provider fixture includes OpenRouter/xAI; semantic revisions ignore health |
-| Developer selection policy | pure proof establishes one exact Chat seed, a total fourteen-operation map, content revision, and fail-closed semantic validation; real PostgreSQL + worker prove admission snapshots the exact selection and matching catalog-definition and policy revisions, while replay never rereads policy |
-| Transport projection | one frozen plan lowers reversibly to function aliases and MCP allowlists; API proposal and MCP observation remain distinct |
-| Backend adapters | deterministic protocol transcripts prove text, tools, continuation, usage, cancellation, and route-specific terminals |
-| Durable execution | real PostgreSQL + real worker prove API model/tool/model crash replay, uncertainty, ordered children, and no duplicate bill/effect/fallback |
-| Tool authority | real PostgreSQL proves one read and one additive write through both transports, including scope/lease/grant rejection, replay, receipt, and Undo |
+| Developer selection policy | pure proof establishes one exact Chat seed, a total fourteen-operation selection/host/model-tool map, content revision, and fail-closed semantic validation; real PostgreSQL + worker prove admission snapshots matching catalog/policy/tool facts while replay never rereads policy |
+| Transport projection | one operation-owned frozen plan lowers reversibly to function aliases and MCP allowlists; `NoModelTools` publishes neither; API proposal and MCP observation remain distinct |
+| Backend adapters | deterministic protocol transcripts prove text, strict output, operation-neutral tools, continuation, usage, cancellation, and route-specific terminals |
+| Durable execution | real PostgreSQL + real worker prove API background model/tool/model crash replay, Codex MCP observation, uncertainty, ordered children/positions, and no duplicate bill/effect/fallback |
+| Tool authority | real PostgreSQL proves one Library Dossier read through Codex MCP and API functions plus one Chat additive write through both transports, including stable Dossier candidate registration, scope/lease/grant rejection, replay, receipt, and Undo |
 | Credential/sensitive-data isolation | sentinel-secret process tests prove route-specific injection and rejection/redaction from the other adapter, catalog/API, evidence, and logs; sealed continuations never render; protected deployment evidence proves exact-SHA env/mount/confinement wiring |
-| Operation portfolio | every background owner consumes its admitted policy selection plus `FrozenSynthesis`; Idea alone proves separate host research; representative Metadata and Dawn owners prove terminal-before-publication |
+| Operation portfolio | every background owner consumes its admitted selection, host plan, and model plan; Library proves scoped model reads, Idea proves host research plus bounded model follow-up, every `NoModelTools` row publishes no tools, and representative Metadata/Dawn owners prove terminal-before-publication |
 | Migration | empty and supported production snapshots reach one final schema with no preference/default owner; policy qualifies before release; every historical id maps exactly, unknown terminal history becomes ineligible, and active incompatible work refuses |
-| Product API/UI | real FastAPI + Chromium prove complete catalog, atomic developer seed/current state, server-owned Chat states and failures, exact create/history/SSE selection, picker disclosures, catalog/seed load and unavailable states, write grant, activity, unchanged/replacement/ineligible reruns, keyboard, focus, announcements, and mobile behavior; no generation Settings surface exists |
+| Product API/UI | real FastAPI + Chromium prove complete catalog, atomic developer seed/current state, server-owned Chat states and failures, exact create/history/SSE selection, picker disclosures, catalog/seed load and unavailable states, write grant, activity, unchanged/replacement/ineligible reruns, background selection/tool-plan/activity read detail, keyboard, focus, announcements, and mobile behavior; no generation Settings surface exists |
 | Public wiring | adapt the existing grounded-chat journey for one Codex read and one API read; add no duplicate journey |
 | Hard-cut residue | type/import graph, production build, strict API/browser decoders, rewritten schema, and one deletion-manifest audit prove legacy selection owners are absent without retaining source-grep tests as behavioral oracles |
 | External reality | bounded per-target Codex and provider certification proves current model/auth/reasoning/strict-output/tool wires at the exact candidate SHA |
@@ -953,8 +1095,10 @@ RED:
 - register one canonical owner per boundary and one representative fault for
   each critical/replacement proof;
 - require sensitivity faults for partial-provider filtering, unsupported
-  reasoning, unavailable-policy fallback, a worker rereading revised policy,
-  an API key crossed into Codex, and a continuation emitted to evidence/logs;
+  reasoning, unavailable-policy fallback, an unqualified tool-bearing target,
+  wrong background scope, an unregistered Dossier citation, duplicate tool or
+  candidate creation after replay, a worker rereading revised policy, an API key
+  crossed into Codex, and a continuation emitted to evidence/logs;
 - keep new production imports lazy in base-sensitivity overlays.
 
 GREEN:
@@ -977,8 +1121,10 @@ Live proof is linear, not Cartesian:
 
 - one bounded canonical read-tool continuation for every Chat-eligible model
   target;
+- one bounded real Library and Idea background model-tool turn through their
+  selected Codex target, plus the existing bounded Idea HostTable research;
 - one appropriate text/strict-structured turn for each distinct target actually
-  selected by developer background policy;
+  selected by developer background policy when not already covered above;
 - one additional minimal turn for each distinct reasoning wire encoding not
   already exercised by those target calls; and
 - no model-by-operation matrix.
@@ -1006,39 +1152,46 @@ selection and operation mapping without model x reasoning x operation calls.
    history, and SSE project the immutable run selection or typed historical
    ineligibility for reload and rerun.
 4. Developer policy owns a content-revisioned Chat seed and total exact
-   selection map for all fourteen background operations. The shipped values are
-   section 3.4, require review/deployment to change, and are not profiles or
-   tiers.
+   selection/host/model-tool map for all fourteen background operations. The
+   shipped values are section 3.4, require review/deployment to change, and are
+   not generation profiles, defaults, or tiers.
 5. No Fast, Balanced, Deep, Auto, Recommended, generation-selection profile,
    preset, tier, fixed model/effort shortcut, old API, compatibility ID, or
    fallback remains. Legitimate runtime auth-profile identity is unaffected.
-6. One immutable GenerationSpec snapshots exact selection, source, operation
-   model capability, host-evidence revision, bounds, revisions, and fingerprint
-   before dispatch.
+6. One immutable GenerationSpec snapshots exact selection, source, host/model
+   plans, effect mode, admitted scope plus digest, limits, host-evidence
+   revision, bounds, revisions, and fingerprint before dispatch.
 7. Background admission snapshots one complete developer-policy selection and
-   revision before atomically persisting/enqueuing the generation. Workers never
-   reread policy; a manual rebuild is a fresh admission under current policy.
+   tool authority before atomically persisting/enqueuing the generation. Workers
+   never reread policy; a manual rebuild is a fresh admission under current
+   policy.
 8. An unavailable Chat seed leaves the picker usable but requires an explicit
-   per-run replacement. An unavailable background policy selection blocks only
-   that operation with an operator-facing failure. Neither substitutes another
-   route/model/reasoning.
-9. Codex and API Chat execute the same frozen canonical read or read/write plan
-   through one ToolAuthority, executor, journal, citation, trust, effect, and
-   Undo path.
-10. Writes require a fresh per-run grant. Rerun/regenerate never inherit it.
-11. Frozen synthesis has no live model tools. Existing Idea research remains
-    host-planned and its final synthesis remains tool-free.
+   per-run replacement. An unavailable background selection or required tool
+   blocks only that operation with an operator-facing failure. Neither
+   substitutes another route/model/reasoning/tool/plan.
+9. Every tool-enabled Codex or API Chat/background run executes its frozen
+   canonical plan through one ToolAuthority, executor, journal, citation,
+   trust, effect, and Undo path; only transport lowering differs.
+10. Chat writes require a fresh per-run grant and rerun/regenerate never inherit
+    it. Shipped background model plans are read-only, noninteractive, and gain
+    no user or worker override.
+11. `NoModelTools` publishes no live model tools. Library Dossier and Idea
+    Dossier receive exactly their section 3.4 read plans; Idea independently
+    retains its bounded host research. A Dossier can cite model-read evidence
+    only through a stable registered build candidate. No failure silently drops
+    either plan.
 12. One parent generation records every independently accepted model turn and
     tool position. Crash/replay cannot duplicate billing or effects.
 13. No accepted/uncertain call automatically repeats or changes selection.
 14. Codex subscription state and API credentials remain isolated. Secrets,
-    continuations, prompts, and private tool data never enter catalog APIs,
-    evidence, logs, or the wrong process.
+    continuations, prompts, and raw private tool payloads never enter catalog
+    APIs, hosted evidence bundles, logs, or the wrong process. Accepted bounded
+    tool-result evidence remains only in its authorized product ledger.
 15. Before Chat confirmation, the picker discloses effective
     route/provider/model/reasoning, processor chain, privacy/retention, billing
     class, readiness, last check, and actionable recovery. Background run detail
-    exposes the admitted selection read-only, without browser credential entry
-    or fabricated prices.
+    exposes the admitted selection, tool plan, and tool activity read-only,
+    without browser controls, credential entry, or fabricated prices.
 16. The rewritten migration reaches one final schema, maps every supported
     historical legacy ID exactly, drops preference-only state, marks unknown
     terminal history ineligible, and refuses incompatible active work; runtime
@@ -1083,13 +1236,26 @@ selection and operation mapping without model x reasoning x operation calls.
   cached Chat seed even though it does not stale the explicit Chat selection;
   that small cache churn avoids a split revision vector.
 - Authenticated policy preflight adds release/startup ordering. It prevents an
-  impossible developer selection from shipping without putting network access
-  inside schema migration.
+  impossible developer selection/tool-plan pair from shipping without putting
+  network access inside schema migration.
 - Claude Code subscription remains unconfigured. Adding it now would require a
   second enrolled local account, host image/SDK, security qualification, and
   tool proof unrelated to the approved Codex Personal plus API goal.
 - Capability-scoped tools limit autonomy. They preserve evidence contracts,
   least privilege, replay identity, and prompt-injection containment.
+- Model tools make Library and Idea Dossiers more adaptive but add model turns,
+  latency, cost variance, and replay states. Exact scopes/limits and durable
+  evidence accept that cost where retrieval can improve the result. Their tools
+  can search and navigate only already admitted source refs, so they improve
+  in-turn retrieval but do not discover a new corpus; the other twelve
+  backgrounds keep their complete frozen-evidence contracts.
+- Unattended background models receive read authority only. Keeping publication
+  in domain-owned validated transactions gives up autonomous background writes
+  to avoid invisible approvals, duplicate effects, and a second mutation path.
+- Idea's deterministic HostTable owns external research while its model plan
+  owns private Nexus follow-up. Forbidding private reads and external egress in
+  one unattended model plan limits free-form research but materially reduces
+  prompt-injection exfiltration risk.
 - MCP remains the Codex tool transport. Dynamic App Server callbacks are absent
   from the pinned `llm-calling` contract and would create a second effect
   boundary.
@@ -1105,7 +1271,7 @@ selection and operation mapping without model x reasoning x operation calls.
 ## 12. Authoritative references
 
 - [Nexus testing standards](../local-rules/testing-standards.md)
-- [Nexus tool runtime](nexus-tool-runtime-hard-cutover.md)
+- [Nexus tool runtime primitives; Chat-only limits superseded in this spec](nexus-tool-runtime-hard-cutover.md)
 - [LLM tools library](llm-tools-library-hard-cutover.md)
 - [Generation runtime composition](generation-run-harness-hard-cutover.md)
 - [LLM module](../modules/llms.md)
