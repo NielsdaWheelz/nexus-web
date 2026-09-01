@@ -15,11 +15,12 @@ state and are deleted when this cutover turns green.
 
 ## 1. Decision
 
-Codex Personal is the seeded default for every Nexus generation operation.
-Users may instead select any currently eligible model and reasoning value in the
-complete configured `llm-calling` catalog. Chat owns an exact selection for
-each run. AI Settings owns one exact Chat default and one exact default for
-every background operation.
+Codex Personal supplies the developer-owned initial Chat seed and shipped
+background selections.
+For each Chat run, users may instead select any currently Chat-eligible model
+and reasoning value in the complete configured `llm-calling` catalog.
+Background operations use exact developer-owned selections. There are no user
+generation defaults or generation controls in AI Settings.
 
 There are no generation-selection profiles, presets, intent tiers, or
 Fast/Balanced/Deep shortcuts.
@@ -32,7 +33,7 @@ generation ledger, and one canonical tool authority. Codex Personal and API
 providers remain separate transport adapters below that waist.
 
     domain owner -> GenerationIntent -> GenerationService -> frozen GenerationSpec
-                               selection/default |
+                            run/policy selection |
                                                  v
                                       GenerationCatalog
                                                  |
@@ -64,14 +65,15 @@ survives.
 
 ### Goals
 
-- Keep Codex Personal as the initial Chat and background default.
+- Keep Codex Personal as the developer-owned initial Chat seed and background
+  selection.
 - Expose every model and supported reasoning value from every Nexus-configured
   `llm-calling` route, including OpenRouter and xAI.
 - Let the user choose the exact selection for each Chat run.
-- Persist a Chat default and a complete default map for all background
-  operations in AI Settings.
+- Keep one typed, source-controlled exact selection for each background
+  operation; expose no user-editable generation defaults.
 - Freeze the exact selection and catalog evidence before dispatch so later
-  settings or catalog drift cannot change a run.
+  policy or catalog drift cannot change a run.
 - Give eligible Codex and API Chat targets identical canonical Nexus tool
   authority.
 - Keep background final synthesis tool-free where its evidence contract is
@@ -81,7 +83,7 @@ survives.
 - Preserve prompts, evidence selection, output validation, citations,
   cancellation, publication transactions, and deterministic host retrieval.
 - Preserve crash/replay truth across multi-call API tool loops.
-- Reuse current Codex, provider, ledger, tool, settings, and proof primitives
+- Reuse current Codex, provider, ledger, tool, policy, and proof primitives
   where their semantics fit; delete superseded owners.
 
 ### Non-goals
@@ -121,8 +123,8 @@ eligibility; it does not maintain a second model list.
 The Codex list is account- and time-dependent. It is fetched through
 `llm-calling`; Nexus must not read `models_cache.json`, scrape CLI output,
 or hard-code a second Codex list. Retired, unavailable, or no-longer-visible
-targets remain representable in stored settings and generation history, but
-cannot start a new run.
+targets remain representable in developer-policy diagnostics and generation
+history, but cannot start a new run.
 
 At the pinned `llm-calling` revision, the ProviderRuntime catalog is exactly:
 
@@ -155,9 +157,9 @@ owned by the exact model/reasoning pair. It exposes:
   processor chain, route readiness, reason, recovery action, and last check;
 - per model: stable key, label, `Active | Retiring | Retired` lifecycle, and
   model readiness with reason, recovery action, and last check;
-- per reasoning row: key, label, readiness, a complete tagged selection state
-  for Chat and every background operation, and references to its
-  target-capability and reasoning-wire qualification evidence;
+- per reasoning row: key, label, readiness, a product-facing Chat selection
+  state, and references to its target-capability and reasoning-wire
+  qualification evidence;
 - source-observed input facts and source-default reasoning, which must name one
   present, transport-supported reasoning row; and
 - Nexus qualification for streaming, strict structured output, continuation,
@@ -173,7 +175,7 @@ never implies a deadline. The lifecycle truth table is exact:
 | visible; no explicit `retires_at` | `Active` |
 | visible; explicit future `retires_at` | `Retiring` |
 | visible; `retires_at` reached | `Retired` |
-| no longer visible | absent from live catalog; stored-unavailable/history only |
+| no longer visible | absent from live catalog; history-only unavailable state |
 
 `Retiring` remains selectable while ready and before its boundary; `Retired`
 never does. The catalog observation expires at the nearest retirement instant,
@@ -183,15 +185,17 @@ volatile readiness data.
 
 A source-present target that becomes unready or retired remains focusable,
 visible, and explained in the catalog but is not selectable. A source-absent or
-unconfigured saved/run selection remains a contextual unavailable row in
-Settings or Chat history, not a general browse choice. It is never normalized
-or used as a fallback. No pair is operation-eligible unless both its
+unconfigured run selection remains a contextual unavailable row in Chat
+history, not a general browse choice; a matching developer-policy selection is
+a configuration failure. Neither is normalized or used as a fallback. No pair
+is operation-eligible unless both its
 target-capability proof and reasoning-wire proof are current for the catalog
 definition.
 
 ### 3.2 Exact selections, not profiles
 
-An exact `GenerationSelectionSpec` is the only user-selectable value:
+Within Chat—the only user-selectable generation surface—an exact
+`GenerationSelectionSpec` is the only selectable value:
 
     CodexPersonalSelection
       model: AgentModelKey
@@ -213,18 +217,19 @@ under the product catalog definition. The browser submits only the key.
 
 The browser never submits labels, native wire IDs, credentials, engine IDs,
 capability claims, defaults, or fallback order. Nexus validates the complete
-selection against the named catalog definition and the operation's eligibility
-before creating durable work. Unsupported combinations fail as
+Chat selection against the named catalog definition and Chat eligibility before
+creating durable work; background selection is exclusively policy-resolved.
+Unsupported combinations fail as
 `InvalidGenerationSelection`; a known but non-runnable choice fails as
 `GenerationSelectionUnavailable`.
 
 ### 3.3 Chat
 
-- A new conversation seeds its composer from the saved Chat default.
+- An empty new-conversation draft seeds its composer from the catalog's
+  developer-owned `chat_seed`; refresh never overwrites an existing draft.
 - The composer always shows the exact backend/provider, model, and reasoning.
 - The user may change all three before every run.
-- A dispatched run freezes that exact selection; it does not change the saved
-  default.
+- A dispatched run freezes that exact selection; it writes no preference.
 - The next draft starts from the last selection used in that conversation.
 - Rerun/regenerate starts from the source run's exact selection, permits an
   explicit replacement, and always creates a new generation.
@@ -247,18 +252,21 @@ model's source default. If that row is not ready and eligible for Chat, it stays
 visible but confirmation remains disabled until the user explicitly chooses a
 runnable row. Confirm is enabled only for the server-projected `Selectable`
 state; the browser does not reconstruct policy. The compound choice is not used
-or saved until confirmation.
+until confirmation.
 
-Initial catalog/default failure preserves the draft, disables Send, and shows
-an inline Retry. A refresh failure after one valid decode preserves that exact
-semantic catalog, labels its readiness observation stale, and offers Retry;
-dispatch still performs the server readiness check. A refresh-required result
-preserves the uncommitted selection, reloads and revalidates it, and requires a
-new confirmation. No failure path selects a seed or another model.
+Catalog-load failure preserves the draft, disables Send, and shows inline
+Retry. A temporarily unavailable `chat_seed` does not block the picker: it is
+focusable, explained, and announced, while Send requires an explicit
+`Selectable` replacement. A refresh failure after one valid decode preserves
+that exact semantic catalog, labels its readiness observation stale, and offers
+Retry; dispatch still performs the server readiness check. A refresh-required
+result preserves the uncommitted selection, reloads and revalidates it, and
+requires a new confirmation. No failure path resets the draft to the seed or
+another model.
 
 Rerun opens the same picker preselected to the source selection. Confirming it
 unchanged is allowed only while ready; an unavailable source blocks until an
-explicit replacement is confirmed. The global Chat default is never consulted.
+explicit replacement is confirmed. `chat_seed` is never consulted.
 Both unchanged and replacement reruns reset write authority.
 
 The trigger names its current selection and implements `aria-haspopup`,
@@ -270,23 +278,15 @@ is a labelled radio group or select. Unavailable rows remain focusable for their
 explanation, status changes are announced, and Confirm stays disabled until a
 complete ready pair exists.
 
-### 3.4 AI Settings
+### 3.4 Developer-owned generation policy
 
-AI Settings contains:
+`generation_policy.py` owns one typed, source-controlled, content-derived policy
+revision, one Chat seed, and a total
+`BackgroundOperationKey -> BackgroundOperationPolicy` map. There is no
+generation Settings page, preference API, or user generation-preference
+persistence.
 
-1. one **Chat default**;
-2. one explicit default for each background operation;
-3. route readiness, last checked, privacy/retention, and API/subscription
-   disclosure.
-
-It is a normal `/settings/ai` child and reuses the Chat picker. Operations may
-be grouped visually (for example, Dossiers), but grouping creates no shared
-default or inheritance. Saving, typed failure, retry, and revision-conflict
-states stay beside the edited control.
-
-The background keys are the complete closed operation set:
-
-| Product label | Operation key | Seeded selection |
+| Product label | Operation key | Shipped exact selection |
 |---|---|---|
 | Metadata enrichment | `metadata_enrichment` | Codex Personal / `gpt-5.6-luna` / `low` |
 | Media summary | `media_summary` | Codex Personal / `gpt-5.6-luna` / `low` |
@@ -303,48 +303,30 @@ The background keys are the complete closed operation set:
 | Idea dossier | `dossier_idea` | Codex Personal / `gpt-5.6-terra` / `high` |
 | Idea resolution | `dossier_idea_resolve` | Codex Personal / `gpt-5.6-luna` / `low` |
 
-The Chat seed is Codex Personal / `gpt-5.6-terra` / `medium`. These values
-are migration/account-creation seeds, not named plans or immutable policy.
-`routine`, `standard`, `thorough`, `deep`, `fast`, and `balanced`
-selection aliases are deleted.
+The Chat seed is Codex Personal / `gpt-5.6-terra` / `medium`. The policy values
+are exact selections, not `routine`, `standard`, `thorough`, `deep`, `fast`, or
+`balanced` aliases. Developers change them only through reviewed source and a
+deployment.
 
-Settings persists a complete pre-seeded map but mutates one default at a time.
-Each mutation atomically replaces its model and reasoning. A stale
-settings/catalog definition, invalid combination, or unavailable selection
-fails only that edit. A missing or duplicate persisted operation is a defect,
-never sparse preference behavior.
-
-Each Settings trigger is named by operation. Initial load failure leaves the
-pane unavailable with Retry; a failed refresh retains the last strictly decoded
-value, marks readiness stale, and never fabricates a default. A revision
-conflict keeps the uncommitted selection, reloads and revalidates the catalog,
-and requires explicit reconfirmation. Catalog and settings values compose only
-when their catalog revisions match. A mismatch preserves local state and
-refetches both once; continued churn becomes an explicit Retry state.
-
-Preference changes affect future admissions only. In the same PostgreSQL
-transaction that admits/enqueues background work, the service locks the
-settings revision, validates the operation default, and creates the parent
-generation with its exact selection and catalog/policy evidence. A later worker
-uses only that admitted snapshot and never rereads Settings. A concurrent
-settings write therefore linearizes wholly before or after admission and cannot
-alter queued or running work.
-
-If a saved default becomes unavailable, Settings preserves and marks it. New
-work for that operation refuses with `GenerationSelectionUnavailable` until
-the user chooses a runnable selection. There is no implicit product default
-after initial seeding and no database default. The API presents an active row
-from the current catalog or a typed stored-unavailable value containing the
-exact saved selection, saved labels and billing/privacy/processor disclosure,
-and the current unavailability reason. This display snapshot is not dispatch
-authority, a compatibility alias, or a fallback.
+Release/startup validation requires every policy selection to exist and be
+qualified for its operation. A missing, unsupported, retired, or ineligible
+pair is a configuration defect; temporary unavailability leaves the service up
+but blocks that operation at admission. Admission reads one immutable policy
+object, resolves and validates its exact selection outside the database
+transaction, then atomically persists the parent `GenerationSpec` and enqueue.
+Workers never reread process policy. Concurrent old/new deployments therefore
+admit a complete old or new revision; neither can alter queued or running work.
+A manual background rerun/rebuild is a fresh admission under the current
+developer policy; users cannot replace its selection. Run/activity detail may
+show the effective background selection and disclosure read-only.
 
 ## 4. Architecture and ownership
 
 ### Nexus owns
 
 - configured route composition and product-facing catalog projection;
-- user settings, exact run selection, readiness, privacy, and billing copy;
+- developer generation policy, exact Chat-run selection, readiness, privacy,
+  and billing copy;
 - operation bounds and capability policy;
 - credentials and process wiring;
 - durable generation, model-turn, tool-position, and effect identity;
@@ -365,7 +347,7 @@ authority, a compatibility alias, or a fallback.
 - public Codex sandbox controls required by Nexus.
 
 AgentRuntime never accepts API credentials. ProviderRuntime never reads Codex
-subscription state. Neither chooses Nexus defaults, operation authority,
+subscription state. Neither chooses Nexus policy selections, operation authority,
 credentials, durable identity, effects, or fallback.
 
 ### Composition
@@ -377,28 +359,35 @@ credentials, durable identity, effects, or fallback.
 - the normalized `api_model_catalog()` rows for configured providers and
   their row fingerprints;
 - Nexus enabled-provider configuration;
-- Nexus lifecycle mapping, operation capability, target/reasoning qualification,
-  and disclosure revisions.
+- Nexus lifecycle mapping, catalog-visible Chat eligibility/capability,
+  target/reasoning qualification, and disclosure revisions.
 
 The semantic `definition_revision` fingerprints those facts. It does not hash
 the global provider-registry revision, so an unconfigured provider change
 cannot invalidate an open form; that global revision remains ledger
 provenance. Readiness and health are volatile observations with their own
 `observed_at`; they do not change the definition revision. Dispatch rechecks
-semantic validity and current readiness. This is the only catalog consumed by
-API schemas, Settings, Chat, policy resolution, and ledger creation.
+semantic validity and current readiness. `definition_revision` excludes
+`GenerationPolicy.revision`, `chat_seed`, and exact background mappings. A
+policy change affects it only when it changes a projected `chat_state` or
+another catalog fact; seed- or background-only changes do not stale an explicit
+Chat selection. This is the only catalog consumed by API schemas, Chat, policy
+resolution, and ledger creation.
 
 The Codex adapter obtains `AgentModelCatalog` through a typed command on the
 existing confined host/UDS boundary; only its normalized, non-secret facts
 cross into Nexus. The web/API process never opens the Codex SDK or reads its
 state directory.
 
-`GenerationPolicy` owns each `OperationWorkflowSpec`: bounds, output contract,
-timeout, optional host-research plan, and model-tool capability. It contains no
-model tiers or route defaults. `AiGenerationSettings` owns defaults.
-`GenerationService` accepts a Chat selection or transactionally resolves a
-background default at admission, freezes one `GenerationSpec`, and rechecks
-volatile readiness immediately before dispatch without changing that spec.
+`GenerationPolicy` owns its revision, the Chat seed, and each background
+operation's exact selection plus `OperationWorkflowSpec`: bounds, output
+contract, timeout, optional host-research plan, and model-tool capability. It
+contains no model tiers, aliases, user overrides, or fallback. Both Chat and
+background admission read one immutable `GenerationPolicy`; workflow and
+policy revision come from that object, and background selection does too.
+Catalog validation uses one catalog snapshot. `GenerationService` freezes one
+`GenerationSpec` and rechecks volatile readiness immediately before dispatch
+without changing that spec.
 
 ### Primary files
 
@@ -412,7 +401,6 @@ volatile readiness immediately before dispatch without changing that spec.
     python/nexus/services/
       generation_catalog.py
       generation_selection.py
-      ai_generation_settings.py
       generation_intent.py
       generation_policy.py
       llm_execution.py
@@ -433,7 +421,6 @@ volatile readiness immediately before dispatch without changing that spec.
       db/migrations/versions/0224_*.py
 
     apps/web/src/
-      app/(authenticated)/settings/ai/**
       components/chat/**
       lib/llm/**
 
@@ -458,6 +445,20 @@ failure union, retry owner, or generation ledger.
 
 Policy first resolves route-neutral workflow authority:
 
+    GenerationPolicy
+      revision
+      chat: ChatPolicy
+      background_operations:
+        BackgroundOperationKey -> BackgroundOperationPolicy
+
+    ChatPolicy
+      seed: GenerationSelectionSpec
+      workflow: OperationWorkflowSpec
+
+    BackgroundOperationPolicy
+      selection: GenerationSelectionSpec
+      workflow: OperationWorkflowSpec
+
     OperationWorkflowSpec
       operation
       bounds
@@ -466,7 +467,10 @@ Policy first resolves route-neutral workflow authority:
       model_tool_capability:
         FrozenSynthesis
         | ModelTools(FrozenToolPlan, ReadOnly | AdditiveWrites)
-      policy_revision
+
+`GenerationPolicy.revision` hashes the canonical `ChatPolicy` and complete
+ordered background map, including every selection and workflow fact. It
+excludes catalog definitions, readiness, and runtime health.
 
 `dossier_idea` alone retains the current bounded `HostResearchPlan` for three
 host-executed `web.search` steps and then uses `FrozenSynthesis`. No host tool
@@ -478,7 +482,7 @@ plan and use `FrozenSynthesis`; Chat has no host plan and uses `ModelTools`.
     GenerationSpec
       operation
       selection: GenerationSelectionSpec
-      selection_source: ChatRun | UserOperationDefault
+      selection_source: ChatRun | BackgroundPolicy
       bounds
       output_contract
       model_tool_capability
@@ -490,8 +494,9 @@ plan and use `FrozenSynthesis`; Chat has no host plan and uses `ModelTools`.
       fingerprint
 
 The structured selection itself is persisted, not only a mutable catalog key.
-The fingerprint includes every dispatch-affecting fact. Credentials and opaque
-continuations are never part of the spec.
+The fingerprint includes the exact selection, both catalog-definition and
+policy revisions, and every other dispatch-affecting fact. Credentials and
+opaque continuations are never part of the spec.
 
 The backend event boundary remains a closed union:
 
@@ -506,13 +511,18 @@ The backend event boundary remains a closed union:
 `ToolObserved` means an SDK/MCP path already executed through the server.
 Route-specific terminals retain their complete native evidence.
 
-### 5.2 Catalog and settings API
+### 5.2 Catalog and Chat API
 
 `GET /api/llm/catalog` returns one strict object:
 
     GenerationCatalog
       definition_revision
       observed_at
+      chat_seed:
+        policy_revision
+        selection: GenerationSelectionSpec
+        state: SelectionState
+        presentation: labels, billing, privacy, processor_chain
       routes[]
         route: CodexPersonal | ProviderApi(provider)
         label
@@ -534,9 +544,7 @@ Route-specific terminals retain their complete native evidence.
             key
             label
             readiness: Readiness
-            operation_states[]
-              operation: GenerationOperationKey
-              state: SelectionState
+            chat_state: SelectionState
             target_qualification_revision
             reasoning_wire_qualification_revision
 
@@ -555,52 +563,24 @@ Route-specific terminals retain their complete native evidence.
       | TemporarilyUnavailable(code, explanation, action, last_checked)
       | Retired(explanation, upgrade_target: Presence<GenerationSelectionSpec>)
 
-Routes, models, reasoning rows, and operation keys use canonical server order
-and contain no duplicates. Every reasoning row has exactly one state for Chat
-and each of the fourteen background operations. Each source default equals
-exactly one reasoning key in its model. `Selectable` already incorporates route,
-model, reasoning, lifecycle, qualification, and operation policy; the browser
-derives none of them.
+Routes, models, and reasoning rows use canonical server order and contain no
+duplicates. Each source default equals exactly one reasoning key in its model.
+`chat_seed` names one exact catalog pair and is returned atomically with its
+current state and disclosure. `chat_seed.policy_revision` is exactly the
+enclosing `GenerationPolicy.revision` from the immutable policy snapshot that
+supplied the seed; it is not a seed-only or catalog revision. That revision is
+separate from the semantic catalog definition, so a policy-only deployment does
+not stale an open choice; caches key both revisions. `Selectable` already
+incorporates route, model, reasoning, lifecycle, qualification, and Chat policy;
+the browser derives none of them. Background operation eligibility remains
+server-internal. The seed initializes only a new composer. `POST /api/chat-runs`
+always requires an explicit exact selection and never interprets omission as the
+seed; it intentionally omits a policy revision because admission reads current
+workflow policy and the request supplies an explicit selection.
 
 No credential, native continuation, price estimate, internal engine, hidden
-model, private account fact, or raw health diagnostic crosses this API.
-
-`GET /api/me/ai-settings` returns:
-
-    AiGenerationSettings
-      revision
-      catalog_definition_revision
-      chat_default: GenerationDefaultOut
-      background_defaults[]
-        operation: BackgroundOperationKey
-        default: GenerationDefaultOut
-
-    GenerationDefaultOut
-      selection: GenerationSelectionSpec
-      presentation:
-        ActiveCatalogSelection(current labels, billing, privacy, processor_chain)
-        | StoredUnavailableSelection(
-            saved labels, saved billing, saved privacy, saved processor_chain,
-            unavailability reason and action
-          )
-
-The persisted typed disclosure snapshot is refreshed on a successful setting
-write and exists only to explain an exact saved choice after its source row
-disappears. It contains no credential or dispatch fact and cannot make a choice
-runnable.
-
-The browser joins catalog and settings only when their catalog definition
-revisions are equal. No best-effort cross-revision composition is valid.
-
-`PATCH /api/me/ai-settings` accepts one strict command plus
-`expected_settings_revision` and `catalog_definition_revision`:
-
-    SetChatDefault(selection)
-    | SetBackgroundDefault(operation, selection)
-
-The command atomically replaces one complete selection and returns the complete
-new settings value. It cannot create/delete operation keys or write a partial
-model/reasoning pair.
+model, private account fact, raw health diagnostic, or background-policy
+selection crosses this API. There is no generation-settings query or mutation.
 
 `POST /api/chat-runs` accepts the existing message/context fields plus:
 
@@ -640,7 +620,6 @@ The existing canonical API failure owner gains these strict variants:
     InvalidGenerationSelection(code, field: Presence<Field>, explanation)
     | GenerationSelectionUnavailable(selection, state: NonSelectableState)
     | CatalogDefinitionStale(current_definition_revision)
-    | SettingsRevisionConflict(current_settings_revision)
     | RerunIneligible(reason, action)
 
 Invalid ingress maps to HTTP 422; the other variants map to HTTP 409. API and
@@ -663,9 +642,9 @@ inheritance fields are deleted with no aliases.
 
 Model selection never selects tools. The operation selects its reviewed host
 plan and model capability independently. Every Chat-eligible exact selection
-must be qualified for the canonical plan; every background-eligible exact
-selection must be qualified for that operation's text or strict structured
-output contract.
+must be qualified for the canonical plan; every exact selection named by
+developer background policy must be qualified for that operation's text or
+strict structured-output contract.
 
 `ToolAuthority` binds a frozen plan to user, generation, run/attempt, worker
 lease, admitted resources, budgets, invocation position, and effect mode. MCP
@@ -771,15 +750,7 @@ access-control tool may reuse that grant.
 
 ## 6. Persistence, execution, and security
 
-### Preferences and ledger
-
-`ai_generation_settings` owns one user revision. Child
-`ai_generation_defaults` rows own exactly one `Chat` key and one row per
-background operation. Each row persists the structured tagged selection in
-route-specific columns plus a typed, non-authoritative disclosure snapshot in
-explicit fields; no generic dispatch descriptor, database default, or profile
-foreign key is added. The service validates the complete set and tagged union
-on every read/write.
+### Ledger
 
 `llm_calls` is one product generation. Child `llm_model_turns` records each
 independently accepted/billable model call. Codex normally has one child; an
@@ -809,7 +780,8 @@ compatibility reader ships.
 - ProviderRuntime alone owns retry inside one API call; Nexus owns durable
   continuation between calls;
 - Codex turns are not retried after acceptance;
-- unavailable saved defaults block new work and never fall back;
+- a transiently unavailable background policy selection blocks only that
+  operation and never falls back;
 - manual rerun is a new generation, not recovery evidence.
 
 ### Configuration
@@ -845,9 +817,8 @@ not stack a corrective migration over an unshipped shape.
 
 The migration:
 
-- creates the final settings/default and parent/child ledger owners;
-- seeds the explicit Chat and fourteen background selections for every
-  existing user from section 3.4;
+- creates only the final parent/child ledger owners; it creates no generation
+  preference/default schema and seeds no user selection;
 - upgrades the supported pre-PR production snapshot directly;
 - translates only known legacy selection facts through this immutable table:
 
@@ -874,17 +845,20 @@ The migration:
   rerun; and
 - refuses affected nonterminal work.
 
+The immutable tables above apply only to persisted generation/run history.
+Preference-only legacy columns or rows are dropped, never translated into
+developer policy or new per-user state.
+
 The migration is deterministic and performs no network or catalog lookup.
-Before any production migration, release preflight must read the authenticated
-AgentRuntime catalog and prove every section 3.4 Codex seed exists with its
-reasoning and operation eligibility; account creation enforces the same gate.
-Missing seed qualification aborts deployment/account creation rather than
-choosing a replacement.
+Release/startup preflight reads the composed catalog and proves the Chat seed
+and every section 3.4 background policy pair exist and are semantically
+eligible. Missing qualification aborts deployment/startup rather than choosing
+a replacement; account creation has no generation seeding behavior.
 
 The table above exists only inside the rewritten migration and is never
 imported by runtime code. There is no downgrade, old-row reader, dual writer,
-runtime profile translation, compatibility selector, missing-preference
-fallback, or coercion.
+runtime profile translation, compatibility selector, preference fallback, or
+coercion.
 
 Prefer semantic undelete over reimplementation for:
 
@@ -898,8 +872,8 @@ Prefer semantic undelete over reimplementation for:
 Fold reused behavior into the new owners. Do not restore the old provider
 ledger, provider-specific tools, domain-direct dispatch, legacy Nexus-private,
 cache/CLI, or provider-marketplace discovery, automatic routing/fallback,
-sparse preference behavior, or compatibility decoders. The new authenticated
-AgentRuntime catalog is the sole Codex discovery path.
+generation preference/default behavior, or compatibility decoders. The new
+authenticated AgentRuntime catalog is the sole Codex discovery path.
 
 Delete:
 
@@ -913,6 +887,9 @@ Delete:
 - generation `profile_id`, `default_profile_id`,
   `profile_catalog_revision`, `/api/llm/profiles`, `/llm-profiles`, and
   their frontend decoder, cache, draft, SSE, fixture, and persistence fields;
+- any generation `/settings/ai` navigation/page, `/api/me/ai-settings` route,
+  settings hook/cache/decoder, `AiGenerationSettings`, settings/default table,
+  ORM/repository/service, disclosure snapshot, revision, fixture, and test;
 - `ChatProfilePicker`, `useChatProfiles`, `chatProfileContract`,
   `chatProfileSelection`, the three-card CSS, and silent
   `UnavailableReplacement`;
@@ -925,19 +902,21 @@ Delete:
   source-grep tombstones.
 
 Historical Git objects are history, not compatibility.
+Unrelated application Settings surfaces are out of scope. Do not replace
+`default_profile_id` or another deleted generation preference with a new one.
 
 ## 8. Non-overlapping implementation lanes
 
 | Lane | Exclusive paths/concern | Depends on | Exit |
 |---|---|---|---|
 | U | sibling `llm-calling`: agent/provider catalog projection, selection validation, tool lowering, event projection, public Codex sandbox option, tests/docs | none | exact immutable pin and conformance green |
-| S | Nexus selection/catalog/settings services, config, schemas, pure proofs | U contract | complete catalog plus atomic defaults green |
-| L | models, rewritten `0224`, ledger, continuations, reconciliation and migration/service proofs | S | preferences, replay, sealed continuation, migration green |
+| S | Nexus selection/catalog/developer-policy services, config, schemas, pure proofs | U contract | complete catalog plus total exact policy green |
+| L | models, rewritten `0224`, ledger, continuations, reconciliation and migration/service proofs | S | replay, sealed continuation, migration green |
 | T | route-neutral tool authority, tool runtime, grants, MCP adapter and proof | S, U | one frozen plan works through both transports |
 | C | Codex host/adapter, confinement, deployment/runbook proof | S, T, U | Codex catalog/dispatch and MCP green |
 | A | API adapter, credentials, provider fixtures/canaries; no domain callers | S, L, T, U | API multi-turn adapter green |
 | D | all background owners and Chat orchestration call sites | L, C, A | complete operation portfolio uses GenerationService |
-| W | FastAPI catalog/settings/chat routes and Web Settings/picker/disclosure UX | S, D | service and Chromium contracts green |
+| W | FastAPI catalog/Chat routes and Web picker/disclosure/history UX | S, D | service and Chromium contracts green |
 | V | shared proof registries, workflows, module docs, residue audit, final integration | all | sensitivity, PR, full, hosted, release evidence |
 
 Lane V alone edits shared proof/fault registries and workflow routing. If a file
@@ -954,15 +933,15 @@ meaningful RED before GREEN.
 |---|---|
 | `llm-calling` catalog | every source row and reasoning value survives each public immutable catalog; canonical order/default/fingerprint invariants and malformed, hidden, retired, or unsupported values fail correctly |
 | Nexus catalog/selection | Codex rows equal the complete authenticated observation and API rows equal `api_model_catalog()` filtered only by configured provider; exact reasoning rows own eligibility; the all-provider fixture includes OpenRouter/xAI; semantic revisions ignore health |
-| Settings/default resolution | real PostgreSQL + API prove one Chat plus all fourteen defaults exist, one-row changes are atomic and isolated, invalid/stale writes fail, and an enqueue-vs-settings race freezes exactly the before-or-after value at admission |
+| Developer selection policy | pure proof establishes one exact Chat seed, a total fourteen-operation map, content revision, and fail-closed semantic validation; real PostgreSQL + worker prove admission snapshots the exact selection and matching catalog-definition and policy revisions, while replay never rereads policy |
 | Transport projection | one frozen plan lowers reversibly to function aliases and MCP allowlists; API proposal and MCP observation remain distinct |
 | Backend adapters | deterministic protocol transcripts prove text, tools, continuation, usage, cancellation, and route-specific terminals |
 | Durable execution | real PostgreSQL + real worker prove API model/tool/model crash replay, uncertainty, ordered children, and no duplicate bill/effect/fallback |
 | Tool authority | real PostgreSQL proves one read and one additive write through both transports, including scope/lease/grant rejection, replay, receipt, and Undo |
 | Credential/sensitive-data isolation | sentinel-secret process tests prove route-specific injection and rejection/redaction from the other adapter, catalog/API, evidence, and logs; sealed continuations never render; protected deployment evidence proves exact-SHA env/mount/confinement wiring |
-| Operation portfolio | every background owner consumes its admitted exact selection plus `FrozenSynthesis`; Idea alone proves separate host research; representative Metadata and Dawn owners prove terminal-before-publication |
-| Migration | empty and supported production snapshots reach one final schema; seeds qualify before migration; every legacy id maps exactly, unknown terminal history becomes ineligible, and active incompatible work refuses |
-| Product API/UI | real FastAPI + Chromium prove complete catalog, server-owned operation states and failures, catalog/settings revision coherence, exact create/history/SSE selection, picker disclosures, all Settings rows, load/refresh failures, saved unavailable state, write grant, activity, unchanged/replacement/ineligible reruns, keyboard, focus, announcements, and mobile behavior |
+| Operation portfolio | every background owner consumes its admitted policy selection plus `FrozenSynthesis`; Idea alone proves separate host research; representative Metadata and Dawn owners prove terminal-before-publication |
+| Migration | empty and supported production snapshots reach one final schema with no preference/default owner; policy qualifies before release; every historical id maps exactly, unknown terminal history becomes ineligible, and active incompatible work refuses |
+| Product API/UI | real FastAPI + Chromium prove complete catalog, atomic developer seed/current state, server-owned Chat states and failures, exact create/history/SSE selection, picker disclosures, catalog/seed load and unavailable states, write grant, activity, unchanged/replacement/ineligible reruns, keyboard, focus, announcements, and mobile behavior; no generation Settings surface exists |
 | Public wiring | adapt the existing grounded-chat journey for one Codex read and one API read; add no duplicate journey |
 | Hard-cut residue | type/import graph, production build, strict API/browser decoders, rewritten schema, and one deletion-manifest audit prove legacy selection owners are absent without retaining source-grep tests as behavioral oracles |
 | External reality | bounded per-target Codex and provider certification proves current model/auth/reasoning/strict-output/tool wires at the exact candidate SHA |
@@ -974,8 +953,8 @@ RED:
 - register one canonical owner per boundary and one representative fault for
   each critical/replacement proof;
 - require sensitivity faults for partial-provider filtering, unsupported
-  reasoning, unavailable-default fallback, the enqueue/settings race, an API
-  key crossed into Codex, and a continuation emitted to evidence/logs;
+  reasoning, unavailable-policy fallback, a worker rereading revised policy,
+  an API key crossed into Codex, and a continuation emitted to evidence/logs;
 - keep new production imports lazy in base-sensitivity overlays.
 
 GREEN:
@@ -998,7 +977,8 @@ Live proof is linear, not Cartesian:
 
 - one bounded canonical read-tool continuation for every Chat-eligible model
   target;
-- one strict-structured turn for every background-eligible model target;
+- one appropriate text/strict-structured turn for each distinct target actually
+  selected by developer background policy;
 - one additional minimal turn for each distinct reasoning wire encoding not
   already exercised by those target calls; and
 - no model-by-operation matrix.
@@ -1016,27 +996,31 @@ selection and operation mapping without model x reasoning x operation calls.
    model/reasoning pair and exactly every `api_model_catalog()` row belonging to
    a configured provider. The all-seven-provider fixture contains all eleven
    API rows, including OpenRouter and xAI, exactly once.
-2. Users can select any server-projected `Selectable` exact pair.
+2. For each Chat run, users can select any server-projected `Selectable` exact
+   pair.
    Unknown, unsupported, stale, retired, and unavailable choices fail
    explicitly; unavailable choices remain visible and explained.
-3. Chat accepts an exact selection per run. AI Settings persists one Chat
-   default and exactly one default for every background operation. Create,
+3. An empty new Chat draft initializes from the read-only developer seed; every
+   dispatch still submits an exact selection. There is no user generation
+   default, preference API, persistence, or AI Settings surface. Create,
    history, and SSE project the immutable run selection or typed historical
    ineligibility for reload and rerun.
-4. Codex Personal seeds every default using section 3.4. Seed values are
-   qualified before migration/account creation and remain ordinary editable
-   selections, not generation profiles or policy tiers.
+4. Developer policy owns a content-revisioned Chat seed and total exact
+   selection map for all fourteen background operations. The shipped values are
+   section 3.4, require review/deployment to change, and are not profiles or
+   tiers.
 5. No Fast, Balanced, Deep, Auto, Recommended, generation-selection profile,
    preset, tier, fixed model/effort shortcut, old API, compatibility ID, or
    fallback remains. Legitimate runtime auth-profile identity is unaffected.
 6. One immutable GenerationSpec snapshots exact selection, source, operation
    model capability, host-evidence revision, bounds, revisions, and fingerprint
    before dispatch.
-7. Background admission and Settings writes linearize in PostgreSQL. A worker
-   never rereads Settings; queued/running work and historical reruns preserve
-   their exact selection, and rerun may explicitly choose a replacement.
-8. A missing/unavailable saved default blocks new work with an actionable
-   failure, remains honestly presentable, and never silently substitutes another
+7. Background admission snapshots one complete developer-policy selection and
+   revision before atomically persisting/enqueuing the generation. Workers never
+   reread policy; a manual rebuild is a fresh admission under current policy.
+8. An unavailable Chat seed leaves the picker usable but requires an explicit
+   per-run replacement. An unavailable background policy selection blocks only
+   that operation with an operator-facing failure. Neither substitutes another
    route/model/reasoning.
 9. Codex and API Chat execute the same frozen canonical read or read/write plan
    through one ToolAuthority, executor, journal, citation, trust, effect, and
@@ -1050,13 +1034,15 @@ selection and operation mapping without model x reasoning x operation calls.
 14. Codex subscription state and API credentials remain isolated. Secrets,
     continuations, prompts, and private tool data never enter catalog APIs,
     evidence, logs, or the wrong process.
-15. The product discloses effective route/provider/model/reasoning,
-    processor chain, privacy/retention, billing class, readiness, last check, and
-    actionable recovery before confirmation, without browser credential entry
+15. Before Chat confirmation, the picker discloses effective
+    route/provider/model/reasoning, processor chain, privacy/retention, billing
+    class, readiness, last check, and actionable recovery. Background run detail
+    exposes the admitted selection read-only, without browser credential entry
     or fabricated prices.
 16. The rewritten migration reaches one final schema, maps every supported
-    legacy ID exactly, marks unknown terminal history ineligible, and refuses
-    incompatible active work; runtime compatibility code does not survive.
+    historical legacy ID exactly, drops preference-only state, marks unknown
+    terminal history ineligible, and refuses incompatible active work; runtime
+    compatibility code does not survive.
 17. Every ownership boundary has one independent, sensitive behavior proof and
     exact-SHA evidence in its named gate; the deletion-manifest proof confirms
     superseded selection owners are absent.
@@ -1067,31 +1053,38 @@ selection and operation mapping without model x reasoning x operation calls.
 ## 11. Explicit trade-offs
 
 - Exact model/reasoning control increases cognitive load and makes model names
-  product surface. Search, provider grouping, honest defaults, and progressive
-  disclosure contain the cost; user control is the chosen priority.
+  product surface. Search, provider grouping, a clear initial seed, and
+  progressive disclosure contain the cost; per-run user control is the chosen
+  priority.
 - A dynamic Codex catalog can drift independently of Nexus. Revisioned
   validation, persisted structured selections, lifecycle states, and
-  fail-closed dispatch preserve truth, at the cost of occasionally requiring
-  the user to update a saved default.
+  fail-closed dispatch preserve truth, at the cost of occasionally requiring a
+  different per-run Chat choice or developer policy change.
 - A source that supplies an upgrade hint without a retirement instant gets no
-  invented countdown; it may disappear directly into stored-unavailable state.
+  invented countdown; it may disappear directly into history-only unavailable
+  state.
   Less advance warning is preferable to false lifecycle precision.
-- Settings and run history duplicate small typed label/disclosure snapshots.
-  That denormalized presentation data is accepted so removed and historical
-  choices remain explainable; it is barred from validation and dispatch.
-- Server-projected per-operation states and closed failure variants enlarge the
-  catalog/API slightly, and revision churn can require one extra read. This
-  removes browser policy inference and cross-revision composition.
+- Run history duplicates a small typed label/disclosure snapshot. That
+  denormalized presentation data keeps historical choices explainable and is
+  barred from validation and dispatch.
+- Server-projected Chat states and closed failure variants enlarge the catalog
+  slightly. This removes browser policy inference; background states stay
+  server-internal.
 - Exposing every configured API row adds credential, privacy, qualification,
   and hosted-canary work. This is accepted to preserve the complete configured
   `llm-calling` value rather than an arbitrary curated subset; all-provider
   deployments therefore expose all eleven rows.
-- Per-operation defaults add a settings table and fourteen choices. They avoid
-  hidden global policy and let expensive or specialist models be assigned
-  deliberately; there is no inheritance shortcut.
-- Authenticated seed preflight adds release ordering before a deterministic
-  migration. It prevents a fresh account from starting with impossible Codex
-  defaults without putting network access inside schema migration.
+- Removing generation preferences eliminates all generation-default controls,
+  a settings API, tables, migration, concurrency, and unavailable-preference
+  UX. The cost is deliberate: each new conversation starts from the developer
+  seed, and background tuning requires review and deployment.
+- One content-derived policy revision atomically covers Chat and every
+  background operation. A background-only policy deployment may refresh the
+  cached Chat seed even though it does not stale the explicit Chat selection;
+  that small cache churn avoids a split revision vector.
+- Authenticated policy preflight adds release/startup ordering. It prevents an
+  impossible developer selection from shipping without putting network access
+  inside schema migration.
 - Claude Code subscription remains unconfigured. Adding it now would require a
   second enrolled local account, host image/SDK, security qualification, and
   tool proof unrelated to the approved Codex Personal plus API goal.
