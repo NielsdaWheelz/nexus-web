@@ -7,7 +7,8 @@ The approved target contract is
 Until that atomic cutover turns green, source still implements
 [`codex-personal-generation-hard-cutover.md`](codex-personal-generation-hard-cutover.md).
 The older document describes current code only; it is not authority for target
-behavior and is deleted with its change report at cutover.
+behavior. Its normative spec is deleted after live contracts migrate; its
+change report remains historical evidence.
 
 The stable module views are [`../modules/llms.md`](../modules/llms.md) and
 [`../modules/chat.md`](../modules/chat.md). They continue to describe shipped
@@ -30,6 +31,10 @@ catalog validation, immutable admission, durable ambiguity, capacity,
 continuation, transport, and normalized terminal facts. `llm-calling` owns the
 Codex AgentRuntime and API ProviderRuntime adapters below that boundary.
 
+Pre-admission subscription quota is durable `CapacityPaused`, not the ordinary
+defect retry ladder, an admitted generation, a dead letter, or permission to
+spend through an API fallback.
+
 Every operation resolves an explicit model tool mode. `NoModelTools` publishes
 nothing. `ModelTools` lowers the same frozen canonical plan to authenticated
 Codex MCP or API function calls, both backed by the same Nexus authority,
@@ -44,9 +49,11 @@ ambiguous-acceptance replay, or parallel generation ledger.
 
 ## Composition with durable Chat
 
-Chat conversation state, citations, trust trails, stream folding, reversible
-write receipts, and the durable tool journal remain app-owned. A backend session
-owns one admitted generation, not conversation history. See
+Post-cutover Chat conversation state, citations, trust trails, stream folding,
+reversible write receipts, and the durable tool journal remain app-owned. The
+legacy Chat aggregate and all historical generation/metering ledgers are
+deleted atomically while users and knowledge-domain data remain. A backend
+session owns one admitted generation, not conversation history. See
 [`chat-durable-agent-step-journal-hard-cutover.md`](chat-durable-agent-step-journal-hard-cutover.md)
 for the durable Chat protocol; the approved target generation contract owns
 model selection, tool-plan lowering, grants, cancellation, and qualification.

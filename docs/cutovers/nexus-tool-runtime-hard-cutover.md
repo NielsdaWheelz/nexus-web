@@ -9,6 +9,14 @@ E0 R0/N0d checkpoint `325a8eb1` preceded N1–N3; the §7 connection-seam proof
 and `accepted-url-private-redirect-bypass` sensitivity are green. Candidate-image
 binding remains required by the final protected release gate.
 
+**Generation-backend target amendment (2026-08-31):** when
+[`generation-backends-hard-cutover.md`](generation-backends-hard-cutover.md)
+turns green, its operation-owned `NoModelTools | ModelTools` policy supersedes
+the Chat-only exposure/profile assumptions in this document. The amendments
+below are part of that same atomic cutover; this document remains authoritative
+for declarations, bindings, execution, evidence, replay, effects, trust, and
+Undo.
+
 ## 1. Decision
 
 Build one Nexus-owned tool runtime from the portable `llm_tools` declaration,
@@ -25,12 +33,14 @@ profile revision is published before composition.
 
 The target product surface is:
 
-- Chat: eleven direct native tools—today's nine under canonical ids, plus
-  `nexus.document.search` and `nexus.relations.list`.
-- Idea Dossier: its existing durable application-owned research flow, using the
-  imported `web.search` binding where it already searches the Web.
-- Other background work: its current direct domain reads and writes, with no
-  new model-callable tool grants.
+- Chat read-only runs: exactly six tools (`web.search` plus five Nexus reads).
+- Chat additive-write runs: exactly those six plus the five existing writes,
+  with the current eight-live-write cap, trust trail, and Undo.
+- Idea Dossier: existing durable `idea_dossier_research` plus its separate
+  bounded `IdeaDossierRead` model plan.
+- Library Dossier: bounded `LibraryDossierRead` model plan.
+- Other background work: `NoModelTools` unless a later reviewed operation
+  policy grants a closed plan.
 
 Keep general `web.read`, `tool.search`, and `tool.read` in `llm_tools`, but do
 not publish them in a Nexus v1 profile. Nexus's accepted-source ingest is a
@@ -56,7 +66,8 @@ Non-goals:
   separate prerequisite, not permission to redesign that workflow here;
 - PTC, provider-native Tool Search, a guest code runtime, or provider engine,
   model-registry, continuation, or retry changes;
-- remote Nexus tool transport, credentials, authorization, or client product;
+- public/general Nexus tool transport, remote user principals, or client
+  product; the private authenticated Codex-worker MCP mount below is allowed;
 - a new search index, graph traversal engine, capability registry, citation
   store, write service, queue, journal, or worker;
 - renaming `app_search_scope` / `appSearchScope` or any product capability that
@@ -241,33 +252,34 @@ snapshot contains `profile_id`, `profile_revision`, `plan_revision`, `exposure`,
 grants, effective limits, tool revisions, and binding-policy revisions; it
 contains no prose hash or provider alias.
 
-`chat_runs.profile_id` remains the existing LLM/model-selection snapshot and is
-never repurposed. Add `tool_profile_id`, `tool_profile_revision`, and closed
-`tool_profile_snapshot` JSONB, written atomically before Chat admission. New
-runs require all three; the revision equals the snapshot's `profile_revision`,
-whose grant entries contain every tool contract revision. Workers execute only
-that snapshot. Terminal pre-cutover runs may leave them null and are never
-executable; refuse every nonterminal old run. Do not add a generic profile
-table. Idea research stores one complete frozen `HostTable` plan snapshot in
-the existing durable-step journal before its first Web-search position:
+After the generation-backend cutover, the parent ledger's frozen
+`GenerationSpec.model_tool_plan_snapshot` is the sole model-tool-plan owner.
+`chat_runs.profile_id`, `tool_profile_id`, `tool_profile_revision`, and
+`tool_profile_snapshot` are deleted with the reset; no parallel Chat snapshot
+or compatibility reader survives. Workers execute only the frozen spec. Do not
+add a generic profile table. `idea_dossier_research` stores one complete frozen
+`HostTable` plan snapshot in the existing durable-step journal before its first
+Web-search position:
 profile/plan ids and revisions, HostTable exposure, run/effective limits, the
 `web.search` grant, tool revision, binding-policy revision, and replay policy.
 
 | Operation | Exposure | Exact grants | Rule |
 |---|---|---|---|
-| Chat | Native | `web.search` plus all ten `nexus.*` ids above | Eleven eager tools; `web.search` is tightened to the current six results/five selected/12,000 context chars; current read/write behavior plus the two new reads; no `web.read` or discovery tools |
-| Idea Dossier research | HostTable | `web.search` at the existing research step | Keep current sequential durable selection, accepted-source ingest, readiness, and citation behavior; no PTC |
+| Chat read | Native/MCP or API functions | `web.search` plus the five Nexus reads | Exactly six eager tools; no write grant |
+| Chat additive write | Native/MCP or API functions | Chat read plus five writes | Exactly eleven; fresh per-run consent, eight live writes, trust and Undo |
+| `idea_dossier_research` | HostTable | `web.search` at the existing research step | Keep current sequential durable selection, accepted-source ingest, readiness, and citation behavior; no PTC |
+| Library/Idea model read | MCP or API functions | the five Nexus reads | Exact admitted refs; unattended, read-only, zero external attempts |
 
-The exact provider-published Chat definition list—provider-safe names,
+Each exact published Chat definition list—provider-safe names,
 descriptions, and strict presentation input schemas after the production
-`provider-runtime` lowering—must be at most 12,288 canonical UTF-8 JSON bytes
-for every Chat-supported engine.
+transport lowering—must be at most 12,288 canonical UTF-8 JSON bytes for every
+Chat-supported target, for both the six- and eleven-tool shapes.
 N1 records only the declaration baseline; N3's final bound-publication proof
 records the existing nine-tool baseline plus final per-tool and total bytes;
 the ceiling is a deterministic prompt-cost guard, not a token or latency claim.
 
-The following remain direct, operation-owned behavior and receive no generic
-model-callable profile in this cutover:
+The following retain their direct domain algorithms and use the model plan from
+the generation policy; all currently resolve to `NoModelTools`:
 
 - non-Idea Dossier deterministic membership/MI work;
 - Synapse's single 48-hit search, relation/exclusion logic, and sole replace-set
@@ -277,21 +289,26 @@ model-callable profile in this cutover:
 - `media_unit_build`, `enrich_metadata`, metadata, summaries, abstracts,
   authors, linking, and other structured synthesis jobs.
 
-Tool availability is not authority. Do not route these jobs through Chat limits,
-grant every background model a catalogue, or create empty persisted profile
-state solely for uniformity. A later job gets a profile only when its model
-actually chooses tools.
+Tool availability is not authority. Do not route jobs through Chat limits or
+create empty persisted profile state. A background model gets only its exact
+operation-owned frozen plan.
 
 The public Browse feature keeps its product query contract and directly adapts
 to the renamed low-level Brave provider. It is not a model tool profile.
 
 `BRAVE_SEARCH_API_KEY` remains optional at process boot. When it is absent,
-Chat still publishes the exact eleven-tool plan; `web.search` uses an explicitly
-unavailable binding and returns `ToolUnavailable` before network dispatch.
+Chat still publishes its exact selected six- or eleven-tool plan; `web.search`
+uses an explicitly unavailable binding and returns `ToolUnavailable` before
+network dispatch.
 Because Idea research requires Web search, its request boundary returns a
 closed `WebResearchNotConfigured` admission error before creating or enqueueing
 a build. Invalid explicitly configured credentials remain a deployment defect,
 not a model-visible failure. No alternate provider or fallback is added.
+
+No Chat binding is admission-required. All five Nexus-read bindings are
+admission-required for `LibraryDossierRead` and `IdeaDossierRead`; known
+unavailability blocks those background admissions rather than silently
+shrinking their plan.
 
 ## 7. Web and write security
 
@@ -360,19 +377,25 @@ v1. Commit the tool result before dispatching the next provider turn.
 
 ## 8. Position-aware durable execution
 
-For Chat, invocation identity reuses the shipped journal owner:
+For every model-tool generation, invocation identity uses the shared generation
+ledger:
 
 ```text
-InvocationPosition = (run_id, durable_step_path)
-durable_step_path = turn/{turn_index}/tool/{global_tool_index}
+InvocationPosition = (generation_owner_id, durable_step_path)
+durable_step_path = generation/{generation_seq}/tool/{n}
 
 InvocationPosition ->
   (canonical_tool_id, canonical_input_sha256)
 
 ExecutionContext.effect_id =
   StepReplayState.generation_id =
-  durable_step_journal.stable_generation_id(run_id, durable_step_path)
+  durable_step_journal.stable_generation_id(generation_owner_id, durable_step_path)
 ```
+
+`n` is one-based, globally monotonic within the parent generation, and
+allocated under its durable fence. An API model/tool/model loop never restarts
+the ordinal at an `llm_model_turns` child; a Codex MCP observation uses the same
+grammar inside its one native child. `turn/{i}/tool/{j}` is retired.
 
 Idea Dossier uses the same journal contract with its own stable owner path:
 
@@ -386,8 +409,9 @@ plan, never an attempt count or a result id. Recovery rejects a changed query
 digest at an occupied position and reads replay behavior from the bound
 `web.search` metadata, not from the path prefix.
 
-Adapt `message_tool_calls`, `chat_run_events`, and the existing durable step
-journal; do not add a parallel generic invocation ledger. Before execution,
+The final generation/tool ledger supersedes the reset legacy
+`message_tool_calls`/`chat_run_events` history and adapts the existing durable
+step journal; do not add a parallel invocation ledger. Before execution,
 persist the stable generation/effect id, lock/admit the position, and reserve
 limits. A completed position returns its stored terminal result. The same
 position with a different id or input digest defects before dispatch. Provider
@@ -396,9 +420,8 @@ A binding derives stable child ids only from `(effect_id, component_key)`. A
 write position is fenced by the current worker lease and existing
 single-mutation/Undo owners.
 
-This replay identity applies only to newly admitted executable positions.
-Terminal pre-cutover audit rows with null tool-profile state never enter replay
-admission and may retain the explicitly nullable historical fields in §10.
+This replay identity applies only to post-reset admitted positions; no
+pre-cutover Chat or generation audit row survives.
 
 For Nexus database writes, the domain mutation, tool row, strict result event,
 and journal completion remain one transaction exactly as today; there is no
@@ -452,20 +475,30 @@ domain-cancels affected nonterminal tool-bearing work, migrates, and then starts
 the new code. Binding-policy changes use the same path. Documentation-only edits
 do not drain work.
 
-## 9. Deferred remote transport
+## 9. Private Codex MCP transport; public transport deferred
 
-Nexus v1 ships no MCP endpoint, transport projection, remote principal,
-access-token schema/CLI, SDK dependency, client configuration, or canary.
-Remote Nexus tool access requires a separate product/security cutover after one
-named deployed consumer owns its end-to-end behavior and Native/HostTable
-adoption is proven.
+The generation-backend cutover ships one authenticated HTTPS MCP mount at
+`/internal/agent-tools/mcp`, `mcp==2.1.0`, protocol `2025-06-18`, solely for
+confined Codex workers. It publishes only the frozen operation plan and uses the
+route-neutral, short-lived generation/attempt/lease/plan/scope/budget/effect
+claims defined by the generation spec. It creates no remote user principal,
+general access token, CLI, client configuration, or public discovery surface.
 
-## 10. Hard-cut migration
+Any additional/public Nexus MCP endpoint or consumer still requires a separate
+product/security cutover with its own principal, end-to-end behavior, and
+canary.
 
-The deployment gate stops Chat and Idea-Dossier admission and refuses the data
-migration before mutation while any Chat run or Idea-Dossier research build is
-nonterminal. Other background jobs are unaffected because they do not decode
-the replaced tool/profile state.
+## 10. Hard-cut migration and generation-reset amendment
+
+The original rules below describe the implemented tool-runtime transition.
+For PR #203's final migration, generation-backends §7 has precedence: all
+legacy Chat/tool audit rows and historical generation/metering ledgers are
+deleted, while preserved domain objects remain. No old record-kind/profile
+translation is needed for deleted rows.
+
+The generation cutover stops all Chat and generation admission and refuses the
+data migration while any affected run, job, or Artifact resolver is
+nonterminal. Unrelated non-generation jobs remain untouched.
 
 Rewrite only these executable ids:
 
@@ -483,11 +516,10 @@ Rewrite only these executable ids:
 
 Migration rules:
 
-1. Keep `chat_runs.profile_id` as the LLM/model snapshot. Add nullable
-   `tool_profile_id`, `tool_profile_revision`, and strict
-   `tool_profile_snapshot`. Refuse nonterminal old runs; terminal old runs keep
-   these fields null and are never executable. New admission requires and
-   persists all three atomically before enqueue. Journal the Idea research
+1. Delete `chat_runs.profile_id`, `tool_profile_id`,
+   `tool_profile_revision`, and `tool_profile_snapshot` with the complete Chat
+   reset. Final admission persists the sole frozen model-tool snapshot in
+   `GenerationSpec` before enqueue. Journal `idea_dossier_research`'s
    complete HostTable plan snapshot from §6 before its first Web-search
    position; a grant alone is insufficient for `ExecutionContext`.
 2. Rename `message_tool_calls.tool_name` to nullable `canonical_tool_id`; add
@@ -706,7 +738,7 @@ duplicate proof owner, unsupported prefix, capability mismatch, or stale digest.
 | Chat replay | `python/tests/service/test_agent_tools_mcp.py::test_mcp_mount_projects_declarations_and_is_sessionless`: real PostgreSQL plus the production MCP 2.1 HTTP boundary and Chat recorder; completed bounded reads replay byte-identically, a missing outer MCP receipt is repaired only from the durable inner terminal, changed identity/input is rejected, grants and lease identity stay fenced, and no second execution or citation allocation occurs |
 | migration | `python/tests/migrations/test_supported_upgrade.py`: the supported 0221 production snapshot and an empty owned database converge to the single current head; immutable pre-floor migration history is retained without a live compatibility proof. |
 | model/tool safety | preserve `python/tests/evals/test_tool_safety_eval.py::test_injected_requests_cannot_authorize_a_foreign_mutating_tool_call` against canonical declarations and `ToolExecutor`; the exact write and MCP service proofs above cover persistence, Undo, grant scope, and transport authority; the registered deterministic safety faults remain sensitive before legacy deletion |
-| availability | `python/tests/service/test_llm_tools_availability.py::test_keyless_boot_preserves_plan_and_refuses_required_web_before_dispatch`: keyless app/worker boot, exact eleven-tool Chat publication, zero-network `ToolUnavailable`, and pre-enqueue `WebResearchNotConfigured` with no Dossier build/job |
+| availability | adapt `python/tests/service/test_llm_tools_availability.py::test_keyless_boot_preserves_plan_and_refuses_required_web_before_dispatch`: keyless app/worker boot, exact six-/eleven-tool Chat publication with zero-network `ToolUnavailable`, plus required-binding refusal for Library/Idea background reads and `idea_dossier_research` |
 | Dossier research | `python/tests/service/test_llm_tools_dossier.py::test_dossier_freezes_host_plan_and_does_not_automatically_reissue_uncertain_search`: real worker/PostgreSQL proves the full frozen HostTable plan, exact `(build_id, research/web-search/{query_index})` positions, changed input rejection, the renamed `BilledOnce` search binding, production reconciliation with zero automatic Brave redispatch after uncertain dispatch, and unchanged search-ref/accepted-source/readiness replay; no model eval |
 | accepted-URL egress prerequisite | `node-test:node/ingest/test/accepted_url_egress.test.mjs` covers public-to-private redirect, DNS/private/rebinding, connected destination, MIME, streaming/decompression/timeout ceilings, credential isolation, and zero private-endpoint requests; `python/tests/release_artifact/test_node_ingest_image_binding.py::test_worker_launches_only_the_image_baked_hardened_ingest_entrypoint`, routed by N0a to existing `Capability.RELEASE_ARTIFACT`, proves the candidate image/worker/public adapter reject environment substitution and execute that seam; E0's exact green SHA is release input, not evidence from `web.read` |
 | Browse consumer | `python/tests/service/test_llm_tools_browse.py::test_browse_preserves_normalized_provider_results_after_rename`: public Browse request preserves normalized search results/provenance through the renamed provider |
@@ -771,14 +803,15 @@ testing standard; this spec does not create exceptions.
 2. All ten Nexus tools are declared locally with strict semantic/presentation
    schemas, closed errors, replay policy, measured limits, and existing domain
    owners; no global `ApiErrorCode` leaks through the tool boundary.
-3. Chat publishes exactly the eleven approved native tools; no `web.read`,
-   discovery, PTC, fallback, or approval path exists. Keyless boot keeps that
-   exact plan and fails `web.search` before dispatch. Its exact production-
-   lowered definition list is at most 12,288 canonical UTF-8 JSON bytes for
-   every Chat-supported engine.
-4. Idea Dossier and Browse preserve shipped behavior; all other named background
-   operations preserve their actual direct algorithms and limits. Required
-   keyless Idea research refuses before enqueue.
+3. Chat publishes exactly six tools in read mode or eleven after fresh
+   additive-write consent; no `web.read`, discovery, PTC, fallback, or approval
+   path exists. Keyless boot keeps the selected complete plan and fails
+   `web.search` before dispatch. Either lowered list is at most 12,288 canonical
+   UTF-8 JSON bytes for every Chat-supported target.
+4. Idea Dossier and Browse preserve shipped behavior; Library/Idea receive only
+   their exact background read plans and all other named background operations
+   preserve their algorithms under `NoModelTools`. Required background
+   bindings refuse admission.
 5. Catalogue/profile/principal/resource admission all fail closed, and a
    profile cannot widen declaration limits.
 6. Canonical ids flow through every executable call, storage, event, API/SSE,
@@ -803,17 +836,16 @@ testing standard; this spec does not create exceptions.
     `reload_required`. The current bundle renders stale-revision recovery; the
     one-user maintenance procedure closes/reloads pre-cutover tabs rather than
     claiming they understand the new outcome.
-12. The migration refuses affected live work before mutation; preserves
-    all four record kinds, pre-0167 null digests, rejected-provider and
-    attached-context audit variants, model profile, opaque facts, and edge Undo;
-    rewrites every executable identity/event/journal fingerprint; and leaves
-    one head with no old decoder.
+12. The generation reset refuses all active generation work before mutation,
+    deletes the legacy Chat/tool audit aggregate and generation/metering
+    ledgers, preserves the domain-data families named by generation-backends
+    §7, and leaves one empty final schema with no old decoder.
 13. Replacement proofs satisfy the Nexus testing standards, demonstrate
     sensitivity in proportion to risk, and pass the intended deterministic,
     full, and protected release gates.
-14. No MCP endpoint, token model, SDK dependency, CLI, transport adapter, client
-    configuration, canary, duplicate registry/search/read/write service,
-    background workflow, approval system, or speculative provider/runtime
+14. No MCP endpoint other than the private authenticated Codex-worker mount,
+    public token model, CLI/client configuration, duplicate registry/search/
+    read/write service, approval system, or speculative provider/runtime
     feature ships.
 
 ## 15. References

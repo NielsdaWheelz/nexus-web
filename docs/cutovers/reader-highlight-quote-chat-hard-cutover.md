@@ -1,5 +1,10 @@
 # Reader Highlight Quote-To-Chat Hard Cutover
 
+> **Generation target amendment (2026-08-31):**
+> [`generation-backends-hard-cutover.md`](generation-backends-hard-cutover.md)
+> supersedes `profile_id` in quote-to-Chat launch/send payloads. The destination
+> composer resolves and submits its exact per-run selection.
+
 Status: SPECIFICATION
 Author: SME council synthesis
 Type: hard cutover

@@ -1,5 +1,11 @@
 # Chat Composer Instrument Hard Cutover
 
+> **Generation target amendment (2026-08-31):**
+> [`generation-backends-hard-cutover.md`](generation-backends-hard-cutover.md)
+> supersedes the response-profile radio/cards, Fast/Balanced/Deep vocabulary,
+> `ChatProfilePicker`, and `/api/llm-profiles` contract here. The composer owns
+> one exact per-run picker and the separate write-consent control instead.
+
 **Status:** IMPLEMENTED · DEVICE ACCEPTANCE PENDING · **Date:** 2026-07-31 ·
 **Scope:** composer presentation and input behavior only · **Doctrine:** hard
 cut; one owner; no compatibility path

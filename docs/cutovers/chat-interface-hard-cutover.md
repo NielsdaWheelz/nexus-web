@@ -1,5 +1,11 @@
 # Chat Interface Hard Cutover
 
+> **Generation target amendment (2026-08-31):**
+> [`generation-backends-hard-cutover.md`](generation-backends-hard-cutover.md)
+> supersedes every response-profile, `profile_id`, fixed-model picker, and
+> `/llm-profiles` statement here. Chat submits one exact per-run
+> model/reasoning selection plus per-run tool authority.
+
 > **Finite-list update (2026-07-29):**
 > [`complete-collection-lists-hard-cutover.md`](complete-collection-lists-hard-cutover.md)
 > replaces the conversation-index continuation envelope and automatic
