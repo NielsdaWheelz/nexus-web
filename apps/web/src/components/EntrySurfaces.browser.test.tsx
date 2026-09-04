@@ -363,7 +363,7 @@ describe("entry surface geometry", () => {
     },
   );
 
-  it.each(["dark", "light"] as const)(
+  it.each(["dark", "light", "elvish"] as const)(
     "keeps required identity, action, link, and focus colors above WCAG contrast floors in $theme",
     async (theme) => {
       document.documentElement.dataset.theme = theme;

@@ -40,6 +40,75 @@
   transform: translateX(-50%);
 }
 
+/* === The Solar — living marginalia (final-direction §10, wildcard 1) ===
+   The rail's three widgets collapsed into one drawing: a vine grown to the
+   furthest point you have ever reached, the groove your dwelling wore into the
+   step, and a brass bud where you are now. The host is `display: none` outside
+   the Solar, so the Study and the Press keep a byte-identical rail and no new
+   box enters their layout; inside it, the drawing sits below the band and the
+   marker layer and is inert to the pointer, so no marker's role, label or
+   activation is touched. */
+.marginalia {
+  display: none;
+}
+
+:global([data-theme="elvish"]) .marginalia {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: block;
+  overflow: visible;
+  pointer-events: none;
+}
+
+/* The stroke is drawn to the furthest position, never the current one:
+   `pathLength="1"` makes --vine-reach a plain fraction and the trailing `1`
+   gap swallows the document past it. Growth here is data, not motion — there
+   is no transition to withdraw under reduced motion, and nothing loops. */
+:global([data-theme="elvish"]) .vine {
+  fill: none;
+  stroke: var(--gilt-b);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-dasharray: var(--vine-reach) 1;
+  opacity: calc(0.9 * var(--ornament));
+}
+
+/* The wood remembers where you walk. One path per strength, its dash pattern
+   exposing every stretch worn to that strength, so the groove lies under the
+   vine exactly rather than beside it. Butt caps keep neighbouring runs abutting
+   instead of overlapping into a brighter seam. */
+:global([data-theme="elvish"]) .worn {
+  fill: none;
+  stroke: color-mix(in srgb, var(--edge), var(--ink) 6%);
+  stroke-width: 3;
+  stroke-linecap: butt;
+}
+
+:global([data-theme="elvish"]) .wornFaint {
+  opacity: calc(0.35 * var(--ornament));
+}
+
+:global([data-theme="elvish"]) .wornMid {
+  opacity: calc(0.6 * var(--ornament));
+}
+
+:global([data-theme="elvish"]) .wornDeep {
+  opacity: calc(0.9 * var(--ornament));
+}
+
+:global([data-theme="elvish"]) .bud {
+  fill: var(--accent);
+  opacity: calc(1 * var(--ornament));
+}
+
+:global([data-theme="elvish"]) .budRing {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1;
+  opacity: calc(0.28 * var(--ornament));
+}
+
 .markerSlot {
   position: absolute;
   top: var(--position);
@@ -93,6 +162,25 @@
   height: 8px;
   background: currentcolor;
   transform: rotate(45deg);
+}
+
+/* A leaf sprouts where you marked the page. Only the highlight glyph changes —
+   the other five kinds keep their shapes, because shape is what encodes kind —
+   and it changes shape only: the button, its role, its label, its colour and
+   its activation are untouched, and the 24px grid cell it is centred in does
+   not move, so nothing outside the button can shift. */
+:global([data-theme="elvish"]) .markerHighlight {
+  width: 10px;
+  height: 10px;
+  mask-image: var(--elvish-leaf);
+  mask-repeat: no-repeat;
+  mask-size: 10px 10px;
+  mask-position: center;
+  -webkit-mask-image: var(--elvish-leaf);
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-size: 10px 10px;
+  -webkit-mask-position: center;
+  transform: rotate(-8deg);
 }
 
 .markerCitation {
@@ -303,5 +391,26 @@
   .destinationList button:hover,
   .destinationList button:focus-visible {
     outline-color: Highlight;
+  }
+
+  /* Both degradation contexts zero `--ornament`, which silences the drawing but
+     cannot un-mask a glyph — the leaf has to hand its diamond back explicitly
+     so the marker returns to the shape the other two rooms show. */
+  :global([data-theme="elvish"]) .markerHighlight {
+    width: 8px;
+    height: 8px;
+    mask-image: none;
+    -webkit-mask-image: none;
+    transform: rotate(45deg);
+  }
+}
+
+@media (prefers-contrast: more) {
+  :global([data-theme="elvish"]) .markerHighlight {
+    width: 8px;
+    height: 8px;
+    mask-image: none;
+    -webkit-mask-image: none;
+    transform: rotate(45deg);
   }
 }

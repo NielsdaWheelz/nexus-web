@@ -7216,6 +7216,7 @@ export default function MediaPaneBody() {
                 markers={documentMapMarkers}
                 visibleRange={readerDocumentVisibleRange!}
                 onActivateMarker={activateDocumentMapMarker}
+                resourceId={id}
               />
             ),
           }
@@ -7224,6 +7225,7 @@ export default function MediaPaneBody() {
       activateDocumentMapMarker,
       desktopDocumentMapRailWidthPx,
       documentMapMarkers,
+      id,
       readerDocumentVisibleRange,
       showDesktopDocumentMapRail,
     ],

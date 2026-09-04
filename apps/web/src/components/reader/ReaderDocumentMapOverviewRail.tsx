@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useEffect,
   useId,
   useLayoutEffect,
   useMemo,
@@ -16,11 +17,18 @@ import { nextRovingIndexForKey } from "@/lib/ui/rovingIndex";
 import styles from "./ReaderDocumentMapOverviewRail.module.css";
 
 const MARKER_TARGET_SIZE_PX = 24;
+/* Must equal `.rail`'s width in the module stylesheet: the marginalia viewBox
+   is authored in CSS pixels so the vine is drawn 1:1 and its stroke needs no
+   non-scaling-stroke correction. */
+const RAIL_WIDTH_PX = 28;
 
 interface ReaderDocumentMapOverviewRailProps {
   markers: ReaderDocumentMapMarker[];
   visibleRange: ReaderDocumentOverviewRange;
   onActivateMarker: (marker: ReaderDocumentMapMarker) => void;
+  /* Keys the local marginalia store. Omitted, the rail still draws a vine to
+     the furthest point of this sitting but remembers nothing between them. */
+  resourceId?: string;
 }
 
 interface MarkerCluster {
@@ -30,11 +38,13 @@ interface MarkerCluster {
 }
 
 type PositionedStyle = CSSProperties & { "--position": string };
+type VineStyle = CSSProperties & { "--vine-reach": string };
 
 export default function ReaderDocumentMapOverviewRail({
   markers,
   visibleRange,
   onActivateMarker,
+  resourceId,
 }: ReaderDocumentMapOverviewRailProps) {
   const listId = useId();
   const trackRef = useRef<HTMLDivElement | null>(null);
@@ -43,6 +53,15 @@ export default function ReaderDocumentMapOverviewRail({
   const [trackHeight, setTrackHeight] = useState(0);
   const [activeIndex, setActiveIndex] = useState(0);
   const [openClusterKey, setOpenClusterKey] = useState<string | null>(null);
+  const [storedFurthest, setStoredFurthest] = useState(0);
+  const [wornStrokes, setWornStrokes] = useState<WornStroke[]>([]);
+  /* The dwell clock reads the reading position off refs so that scrolling —
+     which already re-renders this component through `visibleRange` — costs
+     nothing extra, and so the interval never captures a stale range. */
+  const positionRef = useRef(visibleRange.start);
+  const reachRef = useRef(visibleRange.end);
+  positionRef.current = visibleRange.start;
+  reachRef.current = visibleRange.end;
 
   useLayoutEffect(() => {
     const track = trackRef.current;
@@ -68,10 +87,82 @@ export default function ReaderDocumentMapOverviewRail({
     };
   }, []);
 
+  /* The wear-marks are local by construction: no request, no cookie, no
+     server, and nothing here is ever surfaced as a number. Loading on mount
+     rather than during render keeps first paint identical on both sides of
+     hydration — the vine starts at this sitting's reach and lengthens to the
+     remembered one a frame later. */
+  useEffect(() => {
+    if (resourceId === undefined) return;
+
+    const store = readMarginalia(resourceId);
+    setStoredFurthest(store.furthest);
+    setWornStrokes(toWornStrokes(store.worn));
+
+    let lastBucket = -1;
+    let ticks = 0;
+    let changed = false;
+    const timer = window.setInterval(() => {
+      /* A backgrounded tab is not a reader: an unattended sitting wears no
+         groove, and the tick it spanned is not one a position survived. */
+      if (document.visibilityState !== "visible") {
+        lastBucket = -1;
+        return;
+      }
+
+      const reach = clampUnit(reachRef.current);
+      if (reach > store.furthest) {
+        store.furthest = reach;
+        changed = true;
+      }
+      const bucket = wornBucket(positionRef.current);
+      /* Credit only a position that survived a whole tick, so scrolling past a
+         page leaves no groove and stopping to read one does. */
+      if (bucket === lastBucket) {
+        const seconds = Math.min(
+          (store.worn[bucket] ?? 0) + WORN_TICK_MS / 1000,
+          WORN_BUCKET_CAP_SECONDS,
+        );
+        if (seconds !== store.worn[bucket]) {
+          store.worn[bucket] = seconds;
+          changed = true;
+        }
+      }
+      lastBucket = bucket;
+      /* Storage is synchronous: a tick that recorded nothing — a capped bucket,
+         a reader who has not moved — must not reach it at all. */
+      if (changed) {
+        persistMarginalia(resourceId, store);
+        changed = false;
+      }
+
+      ticks += 1;
+      if (ticks % WORN_REFRESH_TICKS === 0) {
+        setWornStrokes((current) => {
+          const next = toWornStrokes(store.worn);
+          return sameWornStrokes(current, next) ? current : next;
+        });
+      }
+    }, WORN_TICK_MS);
+
+    return () => {
+      window.clearInterval(timer);
+      const reach = clampUnit(reachRef.current);
+      if (reach > store.furthest) {
+        store.furthest = reach;
+        changed = true;
+      }
+      if (changed) persistMarginalia(resourceId, store);
+    };
+  }, [resourceId]);
+
   const clusters = useMemo(
     () => clusterMarkers(markers, trackHeight),
     [markers, trackHeight],
   );
+  const vineD = useMemo(() => vinePath(trackHeight), [trackHeight]);
+  const vineReach = Math.max(storedFurthest, clampUnit(visibleRange.end));
+  const budY = clampUnit(visibleRange.start) * trackHeight;
   const rovingIndex = activeIndex < clusters.length ? activeIndex : 0;
   const openClusterIndex = clusters.findIndex(
     (cluster) => cluster.key === openClusterKey,
@@ -125,6 +216,39 @@ export default function ReaderDocumentMapOverviewRail({
         aria-orientation="vertical"
         aria-label="Document Map destinations"
       >
+        {trackHeight > 0 ? (
+          <svg
+            className={styles.marginalia}
+            viewBox={`0 0 ${RAIL_WIDTH_PX} ${trackHeight}`}
+            preserveAspectRatio="none"
+            aria-hidden="true"
+            focusable="false"
+          >
+            {wornStrokes.map((stroke) => (
+              <path
+                key={stroke.level}
+                className={cx(styles.worn, wornLevelClass(stroke.level))}
+                d={vineD}
+                pathLength={WORN_BUCKETS}
+                style={{ strokeDasharray: stroke.dashArray }}
+              />
+            ))}
+            <path
+              className={styles.vine}
+              d={vineD}
+              pathLength={1}
+              style={{ "--vine-reach": vineReach.toFixed(3) } as VineStyle}
+            />
+            <circle
+              className={styles.budRing}
+              cx={vineX(budY)}
+              cy={budY}
+              r={5}
+            />
+            <circle className={styles.bud} cx={vineX(budY)} cy={budY} r={2.4} />
+          </svg>
+        ) : null}
+
         <div
           className={styles.band}
           data-testid="reader-document-map-band"
@@ -235,6 +359,225 @@ export default function ReaderDocumentMapOverviewRail({
       </div>
     </div>
   );
+}
+
+/* === Living marginalia (final-direction §10, wildcard 1) ===
+   One drawing that is at once the progress bar, the wear-mark and the
+   highlight map. Two sines of incommensurate wavelength, exactly the language
+   of the `--elvish-vine` tile: asymmetric S-curves that never resolve into a
+   sine, an amplitude that keeps the stroke clear of the 24px marker buttons.
+   Closed-form so the bud can sit on the curve without ever measuring the DOM. */
+const VINE_CENTER_X = RAIL_WIDTH_PX / 2;
+const VINE_AMPLITUDE_A = 3.4;
+const VINE_WAVELENGTH_A = 96;
+const VINE_AMPLITUDE_B = 1.8;
+const VINE_WAVELENGTH_B = 158;
+const VINE_PHASE_B = 1.1;
+const VINE_SAMPLE_PX = 16;
+
+function vineX(y: number): number {
+  return (
+    VINE_CENTER_X +
+    VINE_AMPLITUDE_A * Math.sin((2 * Math.PI * y) / VINE_WAVELENGTH_A) +
+    VINE_AMPLITUDE_B *
+      Math.sin((2 * Math.PI * y) / VINE_WAVELENGTH_B + VINE_PHASE_B)
+  );
+}
+
+function vineSlope(y: number): number {
+  return (
+    ((2 * Math.PI * VINE_AMPLITUDE_A) / VINE_WAVELENGTH_A) *
+      Math.cos((2 * Math.PI * y) / VINE_WAVELENGTH_A) +
+    ((2 * Math.PI * VINE_AMPLITUDE_B) / VINE_WAVELENGTH_B) *
+      Math.cos((2 * Math.PI * y) / VINE_WAVELENGTH_B + VINE_PHASE_B)
+  );
+}
+
+/* Hermite-to-Bézier per sample interval: the analytic tangent at both ends is
+   what keeps a 16px step from reading as a polyline. */
+function vinePath(height: number): string {
+  if (height <= 0) return "";
+
+  const steps = Math.max(2, Math.round(height / VINE_SAMPLE_PX));
+  const step = height / steps;
+  let path = `M${vineX(0).toFixed(2)} 0`;
+  for (let index = 0; index < steps; index += 1) {
+    const startY = index * step;
+    const endY = startY + step;
+    const startControlX = vineX(startY) + (vineSlope(startY) * step) / 3;
+    const endControlX = vineX(endY) - (vineSlope(endY) * step) / 3;
+    path += `C${startControlX.toFixed(2)} ${(startY + step / 3).toFixed(2)} ${endControlX.toFixed(2)} ${(endY - step / 3).toFixed(2)} ${vineX(endY).toFixed(2)} ${endY.toFixed(2)}`;
+  }
+  return path;
+}
+
+const MARGINALIA_STORAGE_PREFIX = "nx-solar:";
+const WORN_BUCKETS = 96;
+const WORN_TICK_MS = 5000;
+const WORN_REFRESH_TICKS = 6;
+const WORN_BUCKET_CAP_SECONDS = 600;
+const WORN_LEVEL_SECONDS = [15, 60, 240];
+
+interface MarginaliaStore {
+  furthest: number;
+  worn: number[];
+}
+
+/* Half-open, in bucket indices. */
+interface WornRun {
+  start: number;
+  end: number;
+}
+
+interface WornStroke {
+  level: number;
+  dashArray: string;
+}
+
+function emptyMarginalia(): MarginaliaStore {
+  return { furthest: 0, worn: new Array<number>(WORN_BUCKETS).fill(0) };
+}
+
+function readMarginalia(resourceId: string): MarginaliaStore {
+  const store = emptyMarginalia();
+  try {
+    const raw = window.localStorage.getItem(
+      `${MARGINALIA_STORAGE_PREFIX}${resourceId}`,
+    );
+    if (raw === null) return store;
+
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) return store;
+
+    const { furthest, worn } = parsed as Partial<MarginaliaStore>;
+    if (typeof furthest === "number" && Number.isFinite(furthest)) {
+      store.furthest = clampUnit(furthest);
+    }
+    if (Array.isArray(worn)) {
+      for (let index = 0; index < WORN_BUCKETS; index += 1) {
+        const seconds = worn[index];
+        store.worn[index] =
+          typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0
+            ? Math.min(seconds, WORN_BUCKET_CAP_SECONDS)
+            : 0;
+      }
+    }
+    return store;
+  } catch {
+    return store;
+  }
+}
+
+function writeMarginalia(resourceId: string, store: MarginaliaStore): void {
+  try {
+    window.localStorage.setItem(
+      `${MARGINALIA_STORAGE_PREFIX}${resourceId}`,
+      JSON.stringify(store),
+    );
+  } catch {
+    // A blocked or full store costs the reader nothing but this drawing.
+  }
+}
+
+/* Two panes can hold one document open, each with its own copy of the store, so
+   writing a copy whole would drop whatever the other pane recorded since this
+   one loaded. Re-read, take the larger of every field — furthest and each
+   bucket only ever grow — and keep the merge in this copy, so the other pane's
+   wear shows up in the next refresh instead of being overwritten by the next
+   tick. */
+function persistMarginalia(resourceId: string, store: MarginaliaStore): void {
+  const stored = readMarginalia(resourceId);
+  store.furthest = Math.max(store.furthest, stored.furthest);
+  for (let index = 0; index < WORN_BUCKETS; index += 1) {
+    store.worn[index] = Math.max(
+      store.worn[index] ?? 0,
+      stored.worn[index] ?? 0,
+    );
+  }
+  writeMarginalia(resourceId, store);
+}
+
+function wornBucket(position: number): number {
+  return Math.min(
+    WORN_BUCKETS - 1,
+    Math.max(0, Math.floor(clampUnit(position) * WORN_BUCKETS)),
+  );
+}
+
+function wornLevel(seconds: number): number {
+  let level = 0;
+  for (const threshold of WORN_LEVEL_SECONDS) {
+    if (seconds >= threshold) level += 1;
+  }
+  return level;
+}
+
+/* Quantising to three authored strengths puts the groove's opacity in the
+   stylesheet where `--ornament` can reach it, and collecting every run of a
+   strength into that strength's own dash pattern puts the whole drawing in
+   three elements whatever the reading looks like — not the 96 a bucket-per-run
+   emitter reaches when no two neighbours agree. */
+function toWornStrokes(worn: number[]): WornStroke[] {
+  const runsByLevel = new Map<number, WornRun[]>();
+  let index = 0;
+  while (index < WORN_BUCKETS) {
+    const level = wornLevel(worn[index] ?? 0);
+    let end = index + 1;
+    while (end < WORN_BUCKETS && wornLevel(worn[end] ?? 0) === level) end += 1;
+    if (level > 0) {
+      const runs = runsByLevel.get(level) ?? [];
+      runs.push({ start: index, end });
+      runsByLevel.set(level, runs);
+    }
+    index = end;
+  }
+
+  return [...runsByLevel].map(([level, runs]) => ({
+    level,
+    dashArray: wornDashArray(runs),
+  }));
+}
+
+/* The path is measured in buckets — `pathLength={WORN_BUCKETS}` — so the dash
+   cycle is a list of whole buckets and one element can expose several stretches
+   of the same curve exactly: a zero-length dash, then gap-and-run per stretch,
+   then a trailing gap of a whole path length so the cycle never repeats. Runs
+   arrive in ascending order, which is what lets each gap be the plain distance
+   from the previous run's end. */
+function wornDashArray(runs: WornRun[]): string {
+  const parts = ["0"];
+  let cursor = 0;
+  for (const run of runs) {
+    parts.push(String(run.start - cursor), String(run.end - run.start));
+    cursor = run.end;
+  }
+  parts.push(String(WORN_BUCKETS));
+  return parts.join(" ");
+}
+
+/* The refresh runs on a clock, not on a change, and a reader who stopped moving
+   recomputes the same three strokes forever. Returning the current array keeps
+   React from re-rendering the rail in every room. */
+function sameWornStrokes(current: WornStroke[], next: WornStroke[]): boolean {
+  return (
+    current.length === next.length &&
+    current.every(
+      (stroke, index) =>
+        stroke.level === next[index]!.level &&
+        stroke.dashArray === next[index]!.dashArray,
+    )
+  );
+}
+
+function wornLevelClass(level: number): string {
+  if (level >= 3) return styles.wornDeep;
+  if (level === 2) return styles.wornMid;
+  return styles.wornFaint;
+}
+
+function clampUnit(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(1, Math.max(0, value));
 }
 
 function clusterMarkers(
