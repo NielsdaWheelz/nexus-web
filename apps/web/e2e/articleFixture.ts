@@ -92,15 +92,21 @@ export async function captureReadableArticle(
           data: {
             processing_status: string;
             retrieval_status: string | null;
+            last_error_code: string | null;
           };
         };
-        return `${media.data.processing_status}:${media.data.retrieval_status}`;
+        // The error code rides the polled string so a readiness failure names
+        // its ingest-stage cause in the assertion output instead of dying as
+        // an anonymous "failed".
+        return `${media.data.processing_status}:${media.data.retrieval_status}:${
+          media.data.last_error_code ?? ""
+        }`;
       },
       {
         message: `Expected captured article ${mediaId} to become readable and searchable.`,
         timeout: ARTICLE_READINESS_TIMEOUT_MS,
       },
     )
-    .toBe("ready_for_reading:ready");
+    .toBe("ready_for_reading:ready:");
   return mediaId;
 }
