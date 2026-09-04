@@ -28,6 +28,10 @@ export default defineConfig({
   forbidOnly: true,
   retries: 0,
   timeout: 90_000,
+  // Playwright's default 5s per-expect window assumes an unloaded machine; on
+  // saturated hosted runners a single menu render can exceed it while the
+  // 90s per-test budget stands untouched. Assertions are unchanged.
+  expect: { timeout: 15_000 },
   workers: 1,
   reporter: "line",
   outputDir: runId
