@@ -182,10 +182,7 @@ def test_provider_diagnostic_content_neither_crosses_the_host_nor_reaches_persis
                 "WORKER_POLL_INTERVAL_SECONDS": "0.1",
             },
         )
-        # The budget covers a cold worker-process boot on a saturated CI
-        # runner; the default 30s has been observed expiring with the job
-        # claimed, lease valid, and still running.
-        wait_for_job(engine, job_id, status="succeeded", attempts=1, timeout_seconds=120)
+        wait_for_job(engine, job_id, status="succeeded", attempts=1)
     finally:
         if worker is not None:
             kill_and_forget_process(worker)
