@@ -128,23 +128,40 @@ it("preserves Follow and deliberate Fork citation disposition across the documen
   ]);
 });
 
-it("seals the document in night dress inside the Solar", () => {
+it("seals the document in night dress inside the Solar even when the system prefers light", () => {
   document.documentElement.dataset.theme = "elvish";
-  render(
-    <DossierDocumentFrame
-      title="Solar dossier"
-      revisionRef="artifact_revision:revision-1"
-      contentHtml="<article><p>Evidence.</p></article>"
-      onCitation={() => undefined}
-      onFindCapabilityChange={() => undefined}
-      onFindRequested={() => undefined}
-    />,
-  );
-  const frame = screen.getByTitle(
-    "Learning dossier: Solar dossier",
-  ) as HTMLIFrameElement;
-  expect(
-    frame.getAttribute("srcdoc"),
-    "the Solar must not open a white document",
-  ).toContain('class="theme-dark"');
+  // The OS preference is the boundary under test: without the elvish→dark
+  // mapping the frame falls through to prefers-color-scheme, so a
+  // light-preferring system is the environment where the defect exists.
+  const systemMatchMedia = window.matchMedia;
+  window.matchMedia = ((query: string) =>
+    query === "(prefers-color-scheme: light)"
+      ? ({
+          matches: true,
+          media: query,
+          addEventListener: () => undefined,
+          removeEventListener: () => undefined,
+        } as unknown as MediaQueryList)
+      : systemMatchMedia.call(window, query)) as typeof window.matchMedia;
+  try {
+    render(
+      <DossierDocumentFrame
+        title="Solar dossier"
+        revisionRef="artifact_revision:revision-1"
+        contentHtml="<article><p>Evidence.</p></article>"
+        onCitation={() => undefined}
+        onFindCapabilityChange={() => undefined}
+        onFindRequested={() => undefined}
+      />,
+    );
+    const frame = screen.getByTitle(
+      "Learning dossier: Solar dossier",
+    ) as HTMLIFrameElement;
+    expect(
+      frame.getAttribute("srcdoc"),
+      "the Solar must not open a white document",
+    ).toContain('class="theme-dark"');
+  } finally {
+    window.matchMedia = systemMatchMedia;
+  }
 });
