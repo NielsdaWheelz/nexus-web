@@ -3607,6 +3607,16 @@ def _fail_source_attempt_and_media(
     stage: str,
 ) -> None:
     error_code, error_message = _source_error_fields(exc)
+    # The failure record lives only in the attempt row; without this line a
+    # terminally failed capture leaves no trace in any captured log stream.
+    logger.warning(
+        "source_attempt_failed",
+        media_id=str(media_id),
+        attempt_id=str(attempt_id),
+        stage=stage,
+        error_code=error_code,
+        error_message=error_message,
+    )
     publish_source_attempt_failure(
         db,
         SourceAttemptFailure(
