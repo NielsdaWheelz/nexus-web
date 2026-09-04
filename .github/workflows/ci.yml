@@ -163,6 +163,18 @@ jobs:
       contents: read
 
     steps:
+      # The full stack fills the hosted runner's ~14GB to MinIO's minimum
+      # free-drive threshold by the journeys phase (XMinioStorageFull refusing
+      # captures). Shed preinstalled toolchains the gate never uses — the
+      # Android SDK stays, android-host needs it. Preinstalled docker images
+      # are pruned before any project container exists.
+      - name: Free hosted-runner disk for the full stack
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/.ghcup /opt/hostedtoolcache/CodeQL \
+            /usr/share/swift /usr/local/share/powershell /usr/local/julia*
+          sudo docker image prune --all --force >/dev/null
+          df -h /
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
