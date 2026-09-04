@@ -16,7 +16,7 @@ Make the composer feel like Nexus's inkwell: a quiet, complete writing
 instrument whose craft appears through proportion, material, response, and
 clarity—not extra controls or effects.
 
-This is the 80/20 cut. Keep exactly the existing writing, response-profile,
+This is the 80/20 cut. Keep exactly the existing writing, generation-selection,
 Send, Stop, and Retry capabilities. Replace their presentation and correct
 keyboard, IME, focus, touch-target, contrast, and long-draft behavior. No
 blocking product question remains.
@@ -25,7 +25,7 @@ Governing contracts: [repository rules](../rules/index.md),
 [testing standards](../local-rules/testing-standards.md),
 [chat module](../modules/chat.md),
 [chat interface cutover](chat-interface-hard-cutover.md), and
-[Codex generation cutover](codex-personal-generation-hard-cutover.md).
+[generation backends cutover](generation-backends-hard-cutover.md).
 This document narrows their composer presentation; it does not replace their
 domain ownership. Repository rules win on conflict.
 
@@ -33,7 +33,7 @@ domain ownership. Repository rules win on conflict.
 
 - Make writing the visual primary action on desktop and mobile.
 - Give the composer one deliberate, theme-native surface and stable action rail.
-- Preserve exact product-profile, send, cancel, and retry semantics.
+- Preserve exact per-run selection, send, cancel, and retry semantics.
 - Make every state legible without moving the primary action.
 - Meet keyboard, IME, focus, contrast, touch, and narrow-viewport requirements.
 - Delete the superseded composer presentation and its tests.
@@ -42,7 +42,7 @@ domain ownership. Repository rules win on conflict.
 
 In scope:
 
-- `ChatComposer`, `ChatProfilePicker`, and their CSS;
+- `ChatComposer`, `GenerationSelectionPicker`, and their CSS;
 - the shared `Textarea` auto-grow overflow defect;
 - focused browser tests, the existing real-stack conversation journey, and chat
   module documentation.
@@ -50,10 +50,10 @@ In scope:
 Non-goals:
 
 - no database, endpoint, request, response, SSE, or persistence change;
-- no change to profile resolution, send availability, idempotency, branching,
+- no change to exact-selection resolution, send availability, idempotency, branching,
   quote hydration, cancellation, reconciliation, or scroll ownership;
-- no raw provider/model selector, Auto routing, remembered global preference,
-  searchable/custom picker, sheet, recents, favorites, or provider logos;
+- no Auto routing, remembered global preference, recents, favorites, or
+  provider logos;
 - no attachment, voice, haptic, notification, command, or shortcut-discovery
   feature;
 - no global `Button` or `Select` redesign, new theme, dependency, animation
@@ -70,7 +70,7 @@ ChatComposer                         existing behavior owner
    ├─ pending quote?                 unchanged
    ├─ writing field                  2–6 rows, then internal scroll
    └─ action rail
-      ├─ Response profile             Fast | Balanced | Deep
+      ├─ Model and reasoning          exact catalog selection
       ├─ quiet catalog/status copy?  only when required
       └─ action socket               Send | Sending | Stop | Stopping | Retry
 ```
@@ -109,17 +109,16 @@ and also inspect the native composing signal, following the existing Nexus input
 precedent. Do not extract a generic keyboard helper: each input owns different
 commands and propagation rules.
 
-### 5.3 Response profile
+### 5.3 Model and reasoning
 
-- Render one `Response profile` radio group with exactly the server-owned
-  `fast`, `balanced`, and `deep` rows, in that order.
-- Each option renders `label`, `description`, and the display-only
-  `model_label · effort_label`; its value is only the product `profileId`.
-- There is no independent model or effort control.
-- The browser never synthesizes labels, targets, ordering, defaults, or
-  availability from execution metadata. The fixed plans and API shape are
-  owned by the
-  [Codex generation cutover](codex-personal-generation-hard-cutover.md) and
+- Render one compact trigger for `GenerationSelectionPicker` plus the separate
+  off-by-default **Allow this reply to add to Nexus** checkbox.
+- The picker renders the complete configured catalog as one searchable model
+  list and one reasoning choice for the active model. Only a ready `Selectable`
+  pair commits.
+- The browser never synthesizes providers, models, reasoning values, defaults,
+  qualification, or fallback. The strict API shape is owned by the
+  [generation backends cutover](generation-backends-hard-cutover.md) and
   [LLM module](../modules/llms.md).
 
 ### 5.4 Stable action socket
@@ -151,12 +150,12 @@ machine.
   duration, and easing tokens. Add no composer-specific color system.
 - `:focus-within` strengthens the complete shell edge/shadow. Interactive
   controls retain an unambiguous `:focus-visible` ring.
-- Response-profile options read as quiet compact choices. Send is the only
+- Generation controls read as quiet compact choices. Send is the only
   accent-filled control when actionable.
 - Desktop control height is compact (`36px`). Under `(any-pointer: coarse)`, all
-  profile choices and the action socket are at least `44×44px`.
+  selection/write controls and the action socket are at least `44×44px`.
 - The action rail uses one row when space permits. It may wrap status copy, but
-  the response-profile group and action socket never overflow or become
+  the selection controls and action socket never overflow or become
   horizontally scrollable at `320px`.
 - Use short color, border, and shadow transitions only. Never animate layout or
   textarea height. Existing reduced-motion tokens reduce all retained motion.
@@ -164,11 +163,11 @@ machine.
 ## 7. Architecture and ownership
 
 ```text
-generation_policy.py chat catalog
-  -> GET /api/llm-profiles
-  -> useChatProfiles cache
+generation_catalog.py
+  -> GET /api/llm-catalog
+  -> useGenerationCatalog cache
   -> ChatComposer selection resolution
-  -> ChatProfilePicker native controls
+  -> GenerationSelectionPicker
 
 useConversation -> ChatSendCapability ┐
 useChatDraft -> draft/send attempt     ├-> ChatComposer -> POST /api/chat-runs
@@ -181,8 +180,8 @@ ChatSurface/useChatScroll/MobileViewportProvider -> unchanged viewport ownership
 
 | Capability | Sole owner | Rule |
 | --- | --- | --- |
-| catalog/default | `generation_policy.py` + `useChatProfiles` | fixed profile-only contract |
-| effective selection | `resolveChatProfileSelection` + `ChatComposer` | unchanged |
+| catalog/seed | `generation_catalog.py` + `useGenerationCatalog` | complete configured catalog; seed is not a user default |
+| effective selection | `ChatComposer` | explicit draft, causal parent, then developer seed |
 | explicit draft selection | `useChatDraft` | unchanged |
 | send availability | `useConversation` / `ChatSendCapability` | unchanged |
 | send/retry/cancel wiring | `ChatComposer` | unchanged behavior; new projection |
@@ -193,14 +192,13 @@ ChatSurface/useChatScroll/MobileViewportProvider -> unchanged viewport ownership
 
 ## 8. Capability and API contract
 
-No public component prop, TypeScript domain type, API shape, or schema changes.
-Retain:
+The generation-backend amendment replaces the former profile API. Retain:
 
 - `ChatComposerProps`;
 - `ChatSendCapability`;
-- `ChatProfileSelection` and `ResolvedChatProfileSelection`;
-- `LlmProfile` / `LlmProfilesOut`;
-- `GET /api/llm-profiles`;
+- `GenerationSelectionSpec` and `RunSelectionOut`;
+- `GenerationCatalog`;
+- `GET /api/llm-catalog`;
 - `POST /api/chat-runs` and its idempotency key;
 - `buildChatRunBody` as the sole request assembler.
 
@@ -241,9 +239,9 @@ compatibility branch survives.
 | --- | --- |
 | `apps/web/src/components/chat/ChatComposer.tsx` | IME/mobile keys, focus, stable action projection |
 | `apps/web/src/components/chat/ChatComposer.module.css` | shell, writing field, rail, socket, responsive rules |
-| `apps/web/src/components/chat/ChatProfilePicker.tsx` | controlled three-profile radio rendering |
-| `apps/web/src/components/chat/ChatProfilePicker.module.css` | profile-option geometry and containment |
-| `apps/web/src/components/chat/useChatProfiles.ts` | remove obsolete `SEND` terminology from owner comments |
+| `apps/web/src/components/chat/GenerationSelectionPicker.tsx` | controlled complete-catalog compound picker |
+| `apps/web/src/components/chat/GenerationSelectionPicker.module.css` | picker geometry and containment |
+| `apps/web/src/components/chat/useGenerationCatalog.ts` | decoded catalog loading and refresh |
 | `apps/web/src/components/ui/Textarea.tsx` | derived capped overflow behavior |
 | `apps/web/src/components/ui/Textarea.module.css` | below-cap/above-cap overflow support |
 | `apps/web/src/components/chat/ChatComposer.browser.test.tsx` | real-Chromium keyboard, selection, action, and containment contract |
@@ -269,11 +267,12 @@ contract impossible. Stop and amend this specification before widening scope.
 
 ## 12. Acceptance criteria
 
-- The only routine controls are the three-option response-profile group and the
-  one action socket; quote/branch/error surfaces appear only when their existing
-  state requires them.
-- Profile selection produces only the selected product `profile_id`; model and
-  effort remain fixed plan facts and never become request controls.
+- The only routine controls are the compact exact-selection trigger, the
+  off-by-default per-run write checkbox, and the one action socket;
+  quote/branch/error surfaces appear only when their existing state requires
+  them.
+- Selection produces one exact tagged route/model/reasoning value plus catalog
+  revision; the browser invents no default, qualification, or fallback.
 - Desktop Enter, Shift+Enter, and Cmd/Ctrl+Enter match §5.2; mobile Return adds a
   newline; IME composition never sends.
 - One user action creates at most one POST. Blocked input creates none and loses
@@ -308,7 +307,7 @@ The former broad-suite counts and removed `e2e/` route are historical only and
 do not establish this cutover. Current evidence is the version-2 summary from
 `./scripts/test prove` for the composer fault, the Chromium component capability,
 and `grounded-chat-citation` through the consolidated journey capability. The
-journey must select a non-default response profile, admit one run, finish through
+journey must select a non-seed exact selection, admit one run, finish through
 the production worker, reload the same answer/citation, and open the exact reader
 evidence. `not_run` remains distinct from pass.
 

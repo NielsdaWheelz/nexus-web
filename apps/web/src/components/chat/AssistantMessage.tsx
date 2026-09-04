@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import { absent } from "@/lib/api/presence";
@@ -14,6 +14,7 @@ import { isAssistantPrimaryBodyVisible } from "@/lib/conversations/conversationP
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import type { ChatConnectionRecovery } from "@/lib/conversations/chatConnectionRecovery";
+import type { GenerationSelectionSpec } from "@/lib/conversations/generationCatalog";
 import { toReaderCitationData } from "@/lib/conversations/citations";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import AssistantSelectionPopover from "./AssistantSelectionPopover";
@@ -22,6 +23,7 @@ import AssistantDetails from "./AssistantDetails";
 import AssistantWriteTrail from "./AssistantWriteTrail";
 import ChatFailureCard from "./ChatFailureCard";
 import ChatPublicationNotice from "./ChatPublicationNotice";
+import CandidateGenerationPicker from "./CandidateGenerationPicker";
 import MessageSourcesDisclosure from "./MessageSourcesDisclosure";
 import ForkStrip from "./ForkStrip";
 import StreamingGutterCue from "./StreamingGutterCue";
@@ -39,6 +41,8 @@ export default function AssistantMessage({
   connectionRecovery,
   onReconnectAssistant,
   onRerun,
+  onRerunWithSelection,
+  onRegenerateWithSelection,
   rerunning,
   timestampLabel,
 }: {
@@ -56,6 +60,14 @@ export default function AssistantMessage({
   connectionRecovery?: ChatConnectionRecovery;
   onReconnectAssistant?: (assistantMessageId: string) => void;
   onRerun?: () => void;
+  onRerunWithSelection?: (
+    selection: GenerationSelectionSpec,
+    catalogDefinitionRevision: string,
+  ) => Promise<boolean>;
+  onRegenerateWithSelection?: (
+    selection: GenerationSelectionSpec,
+    catalogDefinitionRevision: string,
+  ) => Promise<boolean>;
   rerunning?: boolean;
   timestampLabel: string;
 }) {
@@ -74,6 +86,8 @@ export default function AssistantMessage({
   const trustRun = message.trust_trail?.run;
   const failure = trustRun?.failure ?? null;
   const supportId = trustRun?.support_id ?? absent();
+  const [replacementOpenRequestVersion, setReplacementOpenRequestVersion] =
+    useState(0);
   const isTerminalFailure =
     message.status === "error" || message.status === "cancelled";
   const showFailureCard = isTerminalFailure;
@@ -105,6 +119,15 @@ export default function AssistantMessage({
     scheme: "message",
     id: message.id,
   });
+  const rerunNeedsReplacement =
+    isTerminalFailure &&
+    message.can_rerun &&
+    trustRun?.run_selection !== undefined &&
+    !trustRun.run_selection.rerun_eligibility;
+  const rerunFromFailureCard = rerunNeedsReplacement
+    ? () =>
+        setReplacementOpenRequestVersion((currentVersion) => currentVersion + 1)
+    : onRerun;
 
   return (
     <div
@@ -165,7 +188,7 @@ export default function AssistantMessage({
           failure={failure}
           supportId={supportId}
           canRerun={message.can_rerun}
-          onRerun={onRerun}
+          onRerun={rerunFromFailureCard}
           rerunning={rerunning}
         />
       ) : showSuspendedCard ? (
@@ -179,6 +202,28 @@ export default function AssistantMessage({
       ) : null}
       {message.status !== "pending" ? (
         <div className={styles.messageActions}>
+          {trustRun?.run_selection &&
+          ((isTerminalFailure && message.can_rerun && onRerunWithSelection) ||
+            (message.status === "complete" && onRegenerateWithSelection)) ? (
+            <CandidateGenerationPicker
+              operation={isTerminalFailure ? "Rerun" : "Regenerate"}
+              runSelection={trustRun.run_selection}
+              disabled={rerunning}
+              openRequestVersion={replacementOpenRequestVersion}
+              onConfirm={(selection, catalogDefinitionRevision) => {
+                if (isTerminalFailure) {
+                  return onRerunWithSelection!(
+                    selection,
+                    catalogDefinitionRevision,
+                  );
+                }
+                return onRegenerateWithSelection!(
+                  selection,
+                  catalogDefinitionRevision,
+                );
+              }}
+            />
+          ) : null}
           <ResourceActionMenu
             actionSubject={{ ref: actionRef }}
             label="Actions for this answer"

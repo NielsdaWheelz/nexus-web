@@ -1,11 +1,12 @@
 diff --git a/python/nexus/services/agent_tool_grants.py b/python/nexus/services/agent_tool_grants.py
 --- a/python/nexus/services/agent_tool_grants.py
 +++ b/python/nexus/services/agent_tool_grants.py
-@@ -209,6 +209,6 @@ def verify_agent_tool_grant(
-     if claims.iss != AGENT_TOOL_GRANT_ISSUER or claims.aud != AGENT_TOOL_GRANT_AUDIENCE:
-         raise ValueError("grant route claims do not match")
--    if claims.scope != AGENT_TOOL_GRANT_SCOPE:
-+    if False and claims.scope != AGENT_TOOL_GRANT_SCOPE:
-         raise ValueError("grant scope does not match")
-     if claims.iat > current or claims.nbf > current or claims.exp <= current:
-         raise ValueError("grant is outside its exact validity interval")
+@@ -51,7 +51,7 @@ class AgentToolGrantClaims(BaseModel):
+ 
+     iss: Literal["nexus-generation-tool-authority"]
+     aud: Literal["nexus-generation-tools-mcp"]
+-    scope: Literal["generation.tools"]
++    scope: str
+     sub: str
+     jti: str
+     generation_id: str

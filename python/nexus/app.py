@@ -32,8 +32,9 @@ Actual execution order per request:
 
 Outbound client lifecycle:
 - httpx.AsyncClient is created at startup, stored in app.state, and shared by
-  the Brave-backed Nexus tool runtime. Generation uses the private Codex UDS.
-- validate_policy() runs at startup to fail fast on drift in the fixed Codex
+  the Brave-backed Nexus tool runtime. Generation catalogs compose the private
+  Codex UDS with configured API-provider rows.
+- validate_policy() runs at startup to fail fast on drift in the developer
   plans, operation catalog, bounds, or eval pin (mirrors worker startup).
 - Client is closed gracefully at shutdown
 """
@@ -75,6 +76,7 @@ from nexus.responses import (
 )
 from nexus.runtime_health import get_runtime_identity
 from nexus.services.bootstrap import ensure_user_and_default_library
+from nexus.services.generation_catalog import build_generation_catalog_service
 from nexus.services.generation_policy import validate_policy
 from nexus.services.tool_runtime.composition import (
     compose_configured_web_search_provider,
@@ -86,7 +88,7 @@ logger = get_logger(__name__)
 # Exact private response paths. These responses carry per-viewer state or
 # private source capabilities and must never be retained by an intermediary.
 PRIVATE_NO_STORE_PATH_RE = re.compile(
-    r"/media/activity|/media/[^/]+/(reader-state|offline-reader-state|offline-download-spec)"
+    r"/llm-catalog|/media/activity|/media/[^/]+/(reader-state|offline-reader-state|offline-download-spec)"
     r"|/internal/offline-reading/account-binding"
     r"|/internal/media/[^/]+/offline-reading-token"
     r"|/me/reader-profile|/consumption/(activity|activity-exclusions|stats|sessions)"
@@ -173,7 +175,7 @@ async def lifespan(app: FastAPI):
     """Manage application lifecycle resources.
 
     Lifecycle behavior:
-    - Fails fast on any drift in the fixed Codex generation policy; config.py
+    - Fails fast on any drift in the developer generation policy; config.py
       separately enforces retained non-generation service credentials
     - Creates shared httpx.AsyncClient for connection pooling (web search)
     - Cleans up on shutdown
@@ -183,6 +185,10 @@ async def lifespan(app: FastAPI):
     get_task_contract_digest()
 
     validate_policy()
+
+    app.state.generation_catalog_service = build_generation_catalog_service(settings)
+    if settings.nexus_env in (Environment.STAGING, Environment.PROD):
+        await app.state.generation_catalog_service.startup()
 
     # Create shared HTTP client for outbound calls (web search).
     app.state.httpx_client = httpx.AsyncClient(
@@ -262,6 +268,7 @@ def create_app(
     # validation failures (author-dedup spec §6 / D-10); the rest of the wire
     # keeps its established 400 convention.
     author_surface_422_re = re.compile(r"^/contributors(?:/|$)|^/media/[^/]+/authors$")
+    chat_selection_route_re = re.compile(r"^/chat-runs$|^/messages/[^/]+/(?:rerun|regenerate)$")
 
     # Handle JSON parsing errors specifically
     @app.exception_handler(RequestValidationError)
@@ -283,10 +290,27 @@ def create_app(
                 for err in exc.errors()
             ],
         )
-        status_code = 422 if author_surface_422_re.search(request.url.path) else 400
+        invalid_chat_selection = (
+            request.method == "POST"
+            and bool(chat_selection_route_re.fullmatch(request.url.path))
+            and any(
+                len(error.get("loc", ())) >= 2
+                and error["loc"][0] == "body"
+                and error["loc"][1] in {"selection", "catalog_definition_revision"}
+                for error in exc.errors()
+            )
+        )
+        status_code = (
+            422 if invalid_chat_selection or author_surface_422_re.search(request.url.path) else 400
+        )
+        code = (
+            ApiErrorCode.E_INVALID_GENERATION_SELECTION
+            if invalid_chat_selection
+            else ApiErrorCode.E_INVALID_REQUEST
+        )
         return JSONResponse(
             status_code=status_code,
-            content=error_response(ApiErrorCode.E_INVALID_REQUEST, "Invalid request body"),
+            content=error_response(code, "Invalid request body"),
         )
 
     # Handle JSON decode errors from malformed JSON bodies

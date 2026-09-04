@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
 from typing import Any
+from uuid import UUID
 
 _BACKUP = b"fake-postgres-custom-backup\n"
 _SERVICES = (
@@ -141,6 +142,58 @@ def _canonical_json(value: object) -> bytes:
     ).encode()
 
 
+def _capacity_canary_input() -> dict[str, object]:
+    """Build the valid candidate-owned output the fake Compose one-off emits."""
+
+    from apps.codex_agent.capacity_canary import (
+        CANARY_INPUT,
+        CANARY_INSTRUCTIONS,
+        CANARY_PROMPT_TEMPLATE_REVISION,
+    )
+
+    from tests.testkit.codex_generation import codex_generation_draft
+
+    draft = codex_generation_draft(
+        request_id=UUID(int=100),
+        operation="dawn_write",
+        instructions=CANARY_INSTRUCTIONS,
+        input_text=CANARY_INPUT,
+        model="gpt-5.6-terra",
+        reasoning="medium",
+        turn_timeout_seconds=180,
+    )
+    spec = draft.spec.model_dump(mode="json", by_alias=True)
+    spec["prompt_template_revision"] = CANARY_PROMPT_TEMPLATE_REVISION
+    spec["effective_context_budget_tokens"] = 128_000
+    spec["effective_output_budget_tokens"] = 16_000
+    prompt_ref = spec["prompt_payload_ref"]
+    if not isinstance(prompt_ref, dict):
+        raise AssertionError("fake capacity prompt reference is malformed")
+    prompt_ref.update(
+        {
+            "owner_kind": "CodexCapacityCanary",
+            "owner_id": "production-capacity",
+            "revision": "dawn-write.v1",
+        }
+    )
+    fingerprint_facts = dict(spec)
+    fingerprint_facts.pop("fingerprint")
+    spec["fingerprint"] = hashlib.sha256(
+        json.dumps(
+            fingerprint_facts,
+            ensure_ascii=True,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    return {
+        "schema_version": "nexus-codex-capacity-canary-input.v1",
+        "spec": spec,
+        "intent": draft.intent.model_dump(mode="json", by_alias=True),
+    }
+
+
 def _load_state(path: Path) -> dict[str, Any]:
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
@@ -255,10 +308,10 @@ def write_codex_capacity_qualification(
                     [
                         {
                             "phase": phase,
-                            "operation": "dossier_library",
-                            "plan_id": "thorough",
-                            "plan_revision": "codex-generation.2026-08-24.2",
-                            "capability": "Synthesis",
+                            "operation": "dawn_write",
+                            "generation_spec_fingerprint": "9" * 64,
+                            "model": "gpt-5.6-terra",
+                            "reasoning": "medium",
                             "terminal_status": "succeeded",
                             "failure_kind": None,
                             "usage_present": True,
@@ -1649,6 +1702,19 @@ def _handle_compose(state: dict[str, Any], operation: list[str]) -> None:
                 float(state["candidate_health_failure_delay_seconds"]) * remaining
             )
         return
+    if operation == [
+        "run",
+        "--rm",
+        "--no-deps",
+        "--entrypoint",
+        "python",
+        "worker-background",
+        "-m",
+        "apps.codex_agent.capacity_canary",
+        "materialize-input",
+    ]:
+        _write_json(_capacity_canary_input())
+        return
     if operation[:3] == ["exec", "-T", "postgres"]:
         command = " ".join(operation[3:])
         if "pg_dump -Fc" in command:
@@ -1828,8 +1894,7 @@ def _handle_compose(state: dict[str, Any], operation: list[str]) -> None:
                     "schema_version": "nexus-generation-health.v2",
                     "status": "ready",
                     "transport": "sdk",
-                    "command_schema_version": "nexus-generation-command.v2",
-                    "policy_revision": "codex-generation.2026-08-24.2",
+                    "command_schema_version": "nexus-generation-command.v3",
                     "sdk_version": "0.144.4",
                     "runtime_version": "0.144.4",
                 }
@@ -1977,6 +2042,16 @@ def fake_docker_main() -> int:
             name = arguments[3]
             reservation, memory, pids = _RESOURCE_LIMITS["nexus-codex-agent-host"]
             source_sha = name.removeprefix("nexus-codex-capacity-")
+            input_mount_prefix = "type=bind,src="
+            input_mount_suffix = ",dst=/run/nexus-capacity-input.json,readonly"
+            input_mounts = [
+                argument
+                for argument in arguments
+                if argument.startswith(input_mount_prefix) and argument.endswith(input_mount_suffix)
+            ]
+            if len(input_mounts) != 1:
+                raise AssertionError("Codex capacity canary lacks one exact input mount")
+            input_source = Path(input_mounts[0][len(input_mount_prefix) : -len(input_mount_suffix)])
             expected = [
                 "run",
                 "--detach",
@@ -2005,8 +2080,12 @@ def fake_docker_main() -> int:
                 "10001:10001",
                 "--env",
                 "NEXUS_CODEX_AGENT_SOCKET=/run/nexus-codex/agent.sock",
+                "--env",
+                "NEXUS_CODEX_CAPACITY_GENERATION_SPEC_FILE=/run/nexus-capacity-input.json",
                 "--mount",
                 "type=volume,src=nexus_nexus_codex_run,dst=/run/nexus-codex,readonly",
+                "--mount",
+                input_mounts[0],
                 "--entrypoint",
                 "sh",
                 state["candidate_worker_image"],
@@ -2015,6 +2094,16 @@ def fake_docker_main() -> int:
             ]
             if not name.startswith("nexus-codex-capacity-") or arguments != expected:
                 raise AssertionError("Codex capacity canary differs from fixed contract")
+            input_metadata = input_source.lstat()
+            if (
+                not input_source.is_absolute()
+                or input_source.resolve(strict=True) != input_source
+                or input_metadata.st_uid != 10001
+                or input_metadata.st_gid != 10001
+                or input_metadata.st_mode & 0o7777 != 0o444
+                or input_source.read_bytes() != _canonical_json(_capacity_canary_input())
+            ):
+                raise AssertionError("Codex capacity input is not exact immutable input")
             if state["codex_capacity_canary_run_name_race"] is True:
                 state["capacity_canary"] = {
                     "id": "d" * 64,
@@ -2033,6 +2122,7 @@ def fake_docker_main() -> int:
                 "name": name,
                 "label": source_sha,
                 "running": True,
+                "input_source": str(input_source),
             }
             sys.stdout.write("c" * 64 + "\n")
         elif "cat" in arguments and "/app/runtime-identity.json" in arguments:
@@ -2203,17 +2293,30 @@ def fake_docker_main() -> int:
                 else status
             )
             terminal_status = "succeeded" if authored_status == "passed" else "failed"
+            canary_state = state.get("capacity_canary")
+            if not isinstance(canary_state, dict) or not isinstance(
+                canary_state.get("input_source"), str
+            ):
+                raise AssertionError("fake capacity canary lost its frozen input source")
+            frozen_input = json.loads(
+                Path(canary_state["input_source"]).read_text(encoding="utf-8")
+            )
+            if not isinstance(frozen_input, dict) or not isinstance(frozen_input.get("spec"), dict):
+                raise AssertionError("fake capacity canary input is malformed")
+            generation_spec_fingerprint = frozen_input["spec"].get("fingerprint")
+            if not isinstance(generation_spec_fingerprint, str):
+                raise AssertionError("fake capacity canary input lacks a fingerprint")
             _write_json(
                 {
-                    "schema_version": "nexus-codex-capacity-canary.v3",
+                    "schema_version": "nexus-codex-capacity-canary.v4",
                     "status": authored_status,
                     "turns": [
                         {
                             "phase": phase,
-                            "operation": "dossier_library",
-                            "plan_id": "thorough",
-                            "plan_revision": "codex-generation.2026-08-24.2",
-                            "capability": "Synthesis",
+                            "operation": "dawn_write",
+                            "generation_spec_fingerprint": generation_spec_fingerprint,
+                            "model": "gpt-5.6-terra",
+                            "reasoning": "medium",
                             "terminal_status": terminal_status,
                             "failure_kind": None
                             if authored_status == "passed"
@@ -2263,6 +2366,9 @@ def fake_docker_main() -> int:
             if isinstance(canary, dict) and target == canary.get("id"):
                 reservation, memory, pids = _RESOURCE_LIMITS["nexus-codex-agent-host"]
                 isolation_drift = state["codex_capacity_canary_isolation_drift"]
+                input_source = canary.get("input_source", "/foreign/capacity-input.json")
+                if not isinstance(input_source, str):
+                    raise AssertionError("fake capacity canary input mount source is malformed")
                 _write_json(
                     [
                         {
@@ -2272,6 +2378,8 @@ def fake_docker_main() -> int:
                                 "Env": [
                                     *_CODEX_IMAGE_ENVIRONMENT,
                                     "NEXUS_CODEX_AGENT_SOCKET=/run/nexus-codex/agent.sock",
+                                    "NEXUS_CODEX_CAPACITY_GENERATION_SPEC_FILE="
+                                    "/run/nexus-capacity-input.json",
                                 ],
                                 "Image": state["candidate_worker_image"],
                                 "Labels": {
@@ -2306,6 +2414,12 @@ def fake_docker_main() -> int:
                                         "Source": "/var/lib/docker/volumes/nexus_nexus_codex_run/_data",
                                         "Type": "volume",
                                     },
+                                    {
+                                        "Destination": "/run/nexus-capacity-input.json",
+                                        "RW": False,
+                                        "Source": input_source,
+                                        "Type": "bind",
+                                    },
                                 ]
                                 if isolation_drift == "credential_mount_and_network_peer"
                                 else [
@@ -2315,7 +2429,13 @@ def fake_docker_main() -> int:
                                         "RW": False,
                                         "Source": "/var/lib/docker/volumes/nexus_nexus_codex_run/_data",
                                         "Type": "volume",
-                                    }
+                                    },
+                                    {
+                                        "Destination": "/run/nexus-capacity-input.json",
+                                        "RW": False,
+                                        "Source": input_source,
+                                        "Type": "bind",
+                                    },
                                 ]
                             ),
                             "Name": f"/{canary['name']}",

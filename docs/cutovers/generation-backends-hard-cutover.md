@@ -1,6 +1,7 @@
 # Generation Backends Hard Cutover
 
-**Status:** APPROVED IMPLEMENTATION SPECIFICATION; NOT IMPLEMENTED
+**Status:** IMPLEMENTATION CANDIDATE; EXACT-SHA VERIFICATION AND
+EXTERNAL ACCEPTANCE PENDING; NOT ACCEPTED
 
 **Date:** 2026-08-31
 
@@ -9,12 +10,10 @@ reset; no compatibility period
 
 **Open questions:** none
 
-**Authority:** this specification supersedes the generation-selection,
-generation-plan, profile, and generation-ledger target in
-[`codex-personal-generation-hard-cutover.md`](codex-personal-generation-hard-cutover.md).
-Its change report remains historical evidence. Delete the normative Codex-only
-spec only after its still-live MCP, capacity, confinement, and run-limit
-contracts have moved to the surviving owners named here.
+**Authority:** this specification is the sole current generation-backend
+cutover owner. The superseded normative Codex-only cutover has been deleted
+after its live MCP, capacity, confinement, and run-limit contracts moved to the
+surviving owners named here; its change report remains historical evidence.
 
 This specification and the same-commit amendment to
 [`nexus-tool-runtime-hard-cutover.md`](nexus-tool-runtime-hard-cutover.md)
@@ -24,13 +23,15 @@ profile-column ownership, and section 14.3 exactly-eleven-tool rule. Its
 declaration, binding, executor, evidence, authorization, replay, effect, and
 Undo contracts otherwise remain authoritative.
 
-The generation-profile statements in
+The generation-profile and generation-selection statements in
 [`chat-interface-hard-cutover.md`](chat-interface-hard-cutover.md),
 [`chat-composer-instrument-hard-cutover.md`](chat-composer-instrument-hard-cutover.md),
+[`reader-highlight-quote-chat-hard-cutover.md`](reader-highlight-quote-chat-hard-cutover.md),
 and
-[`reader-highlight-quote-chat-hard-cutover.md`](reader-highlight-quote-chat-hard-cutover.md)
-are also superseded. Their same-commit target-amendment banners prevent a stale
-profile contract from remaining an apparent owner.
+[`resource-chat-subject-hard-cutover.md`](resource-chat-subject-hard-cutover.md)
+are also superseded. Their same-commit target-
+amendment banners prevent a stale profile contract from remaining an apparent
+owner.
 
 ## 1. Decision
 
@@ -170,8 +171,8 @@ or hard-code a second Codex list. Retired, unavailable, or no-longer-visible
 targets remain representable in developer-policy diagnostics and generation
 history, but cannot start a new run.
 
-At source-audit pin `llm-calling`
-`a5d9c8e0c1c851daee0731554e0a4a326d3c2819`, the ProviderRuntime catalog is
+At the implemented immutable `llm-calling` dependency and conformance pin
+`b4e05e030b0f2fe8f36f479e8bec320bdc797e20`, the ProviderRuntime catalog is
 exactly:
 
 | Provider | Model reference | Supported reasoning | Source default |
@@ -202,7 +203,9 @@ owned by the exact model/reasoning pair. It exposes:
 - route/provider identity, human label, billing class, privacy/retention and
   processor chain, route readiness, reason, recovery action, and last check;
 - per model: stable key, source label, Nexus-authored one-line description,
-  `context_window`, `max_output_tokens`, `Active | Retiring | Retired`
+  `source_context_window: Presence<TokenCount>`,
+  `source_max_output_tokens: Presence<TokenCount>`,
+  `Active | Retiring | Retired`
   lifecycle, and model readiness with reason, recovery action, and last check;
 - per reasoning row: key, label, readiness, a product-facing Chat selection
   state, and references to its target-capability and reasoning-wire
@@ -319,8 +322,9 @@ region. An option's accessible name contains only its model label, lifecycle,
 and readiness. The details region, referenced by `aria-describedby`, contains
 the source/Nexus description, exact route/provider/model/reasoning,
 subscription or metered billing, processor chain, privacy/retention,
-`context_window`, `max_output_tokens`, lifecycle/retirement instant, readiness,
-last check, and recovery. A retired row with a valid upgrade target offers
+source-reported context/output capacity or `Not reported`, the effective Chat
+request budget, lifecycle/retirement instant, readiness, last check, and
+recovery. A retired row with a valid upgrade target offers
 `Switch to <target>`; that action merely preselects the target and still
 requires confirmation.
 
@@ -341,6 +345,9 @@ and links to the trust/Undo detail. It is always visible while armed, its change
 is announced, and every successfully admitted dispatch or rerun/regenerate
 re-arms it to off.
 The rerun surface states **Writes are off for reruns** beside the off control.
+Each successful concrete write target is visibly labelled as assistant-created
+and linked in trust detail to its canonical `generation/{generation_seq}/tool/{n}`
+position. A legitimate idempotent no-op shows no fabricated target attribution.
 
 Primary **Rerun** is one click with the source run's exact selection when its
 current state is `Selectable`. Secondary **Rerun with a different model** opens
@@ -525,9 +532,16 @@ another catalog fact; seed- or background-only changes do not stale an explicit
 Chat selection. This is the only catalog consumed by API schemas, Chat, policy
 resolution, and ledger creation.
 
-Prompt budgeting is catalog-owned. `context_assembler.py` reads
-`context_window` and `max_output_tokens` frozen into `GenerationSpec`; it never
-consults a model-name map or a newer observation.
+Prompt budgeting is policy-owned and source-constrained. Each
+`OperationWorkflowSpec` declares conservative Nexus request budgets. For an API
+row, admission requires source capacity facts and clamps the effective budgets
+to them. Codex's public `model/list` contract publishes neither context window
+nor maximum output, so those source facts are `Absent`; absence does not make a
+visible Codex row ineligible. Nexus freezes its operation-owned effective
+budgets, and the Codex runtime remains the final context authority with one
+explicit capacity failure—never truncation, substitution, a private-cache read,
+or a guessed model table. `context_assembler.py` reads only effective budgets
+frozen into `GenerationSpec`.
 
 The Codex adapter obtains `AgentModelCatalog` through a typed command on the
 existing confined host/UDS boundary; only its normalized, non-secret facts
@@ -561,9 +575,15 @@ the admitted-host set is a separate security cutover.
 ### Primary files
 
     sibling llm-calling/
+      .github/workflows/ci.yml
+      pyproject.toml
+      src/provider_runtime/continuation.py
       src/provider_runtime/registry.py
+      src/provider_runtime/runtime.py
       src/provider_runtime/types.py
+      src/provider_runtime/agent_runtime/__init__.py
       src/provider_runtime/agent_runtime/model_catalog.py
+      src/provider_runtime/agent_runtime/runtime.py
       src/provider_runtime/agent_runtime/types.py
       src/provider_runtime/agent_runtime/tool_projection.py
       src/provider_runtime/tool_adapter.py
@@ -572,7 +592,12 @@ the admitted-host set is a separate security cutover.
       generation_catalog.py
       generation_selection.py
       generation_intent.py
+      generation_admission.py
+      generation_backend.py
       generation_policy.py
+      generation_runtime.py
+      generation_service.py
+      generation_spec.py
       llm_execution.py
       llm_ledger.py
       generation_events.py
@@ -584,15 +609,19 @@ the admitted-host set is a separate security cutover.
       agent_tool_grants.py
       tool_runtime/**
       agent_tools_mcp.py
+      assistant_write_authorship.py
       context_assembler.py
       chat_run_idempotency.py
       chat_failure.py
+      artifacts/model_tools.py
+      artifacts/revisions.py
 
     apps/codex_agent/
       confined_runtime.py
 
     python/nexus/
       schemas/llm.py
+      schemas/machine_authorship.py
       api/routes/llm.py
       api/routes/chat*.py
       db/models.py
@@ -601,8 +630,13 @@ the admitted-host set is a separate security cutover.
       0224_codex_personal_generation.py
 
     apps/web/src/
+      app/api/llm-catalog/route.ts
+      app/privacy/page.tsx
+      app/(authenticated)/settings/billing/SettingsBillingPaneBody.tsx
       components/chat/**
       lib/llm/**
+      lib/conversations/generationCatalog.ts
+      lib/conversations/trustToolCallWire.ts
 
     docs/
       modules/llms.md
@@ -657,7 +691,8 @@ Policy first resolves route-neutral workflow authority:
 
     OperationWorkflowSpec
       operation
-      bounds
+      bounds                         # byte/time/stream limits
+      request_budget                 # Nexus max context and reserved output
       output_contract
       host_tool_plan: Presence<HostResearchPlan>
       model_tool_policy:
@@ -706,6 +741,28 @@ no model tools.
 `NoModelTools` plus a `Present` host plan is legal: host preparation is
 domain-owned and never becomes a model declaration.
 
+`NoModelTools` publishes no model-callable declarations. `ModelTools` derives
+every declaration, model-visible tool document, limit, and transport alias from
+the exact frozen plan; a domain prompt cannot introduce another tool authority.
+Chat additionally renders its write-safety instructions from the same typed
+per-run authority before hashing or persisting the prompt: `ReadOnly` names no
+additive-write tool, while `AdditiveWrites` names all five. The prompt revision,
+payload digest, and instruction digest therefore cover the user-consent clause.
+Background Dossiers do not duplicate the read-tool catalog in prose; the
+canonical declarations own model guidance, and only operation-owned
+`dossier_citation_candidates` reconstructed from successful durable reads may
+extend the initially supplied candidate set.
+
+Output/tool composition remains route-specific rather than collapsing to a
+lowest common denominator. Codex Personal may combine strict structured output
+with an exact MCP plan; the shipped Library and Idea Dossier policies use that
+qualified composition. ProviderRuntime refuses strict structured output plus
+function tools in one model call, so API qualification never advertises that
+pair. Shipped API Chat is Text and all shipped strict tool-bearing backgrounds
+are Codex Personal. A future API background needing both must use an explicit
+multi-generation workflow or first add and qualify an upstream provider
+contract; it may not silently drop tools or downgrade strict output.
+
 The domain owner completes or replays any host preparation and freezes its
 evidence/manifest before generation admission. Scope derivation consumes only
 that immutable domain input: Chat's admitted context, Library Dossier's exact
@@ -725,8 +782,10 @@ never add a resource or relation that admission did not authorize.
       source_catalog_definition_revision
       source_row_fingerprint
       agent_definition_revision: Presence<AgentDefinitionRevision>
-      context_window
-      max_output_tokens
+      source_context_window: Presence<TokenCount>
+      source_max_output_tokens: Presence<TokenCount>
+      effective_context_budget_tokens
+      effective_output_budget_tokens
       bounds
       prompt_template_revision
       prompt_payload_ref: ImmutablePromptPayloadRef
@@ -813,8 +872,8 @@ FastAPI `GET /llm-catalog` returns one strict object. The Web BFF is
           key
           label
           description
-          context_window
-          max_output_tokens
+          source_context_window: Presence<TokenCount>
+          source_max_output_tokens: Presence<TokenCount>
           lifecycle: Active | Retiring | Retired
           retires_at: Presence<RetiresAt>
           upgrade_selection: Presence<GenerationSelectionSpec>
@@ -980,10 +1039,12 @@ Reads execute automatically. Chat receives `ChatRead` at admission and can
 receive `ChatReadAdditiveWrite` only after an explicit `AdditiveWrites` request.
 Background admission automatically authorizes only the exact developer-owned
 read plan in section 3.4; no background run pauses for approval or gains a
-write. For Chat plans, no binding is admission-required: an unavailable binding
-stays declared and terminalizes `ToolUnavailable` before its dispatch. All five
-Nexus-read bindings are admission-required for `LibraryDossierRead` and
-`IdeaDossierRead`; a known missing binding blocks those unattended admissions.
+write. Every binding in a frozen Chat plan is admission-required: known
+unavailable bindings refuse the request before any durable Chat state is
+committed. All five Nexus-read bindings are likewise admission-required for
+`LibraryDossierRead` and `IdeaDossierRead`; a known missing binding blocks those
+unattended admissions. A binding that becomes unavailable only after admission
+remains declared and terminalizes `ToolUnavailable` before its dispatch.
 The same authenticated MCP mount and bearer shape serve every Codex
 `ModelTools` run, and the same function-call executor serves every API
 `ModelTools` run. There is no Chat-only tool executor, endpoint, or journal.
@@ -1000,11 +1061,25 @@ Neither case drops the plan, substitutes a tool, or switches the model. No
 destructive, external-message, purchase, share, credential, or access-control
 tool may reuse any grant.
 
-Every domain object created by a model write carries machine-authorship
-provenance—creating generation and tool-position identity—in retrieval evidence
-and user-visible trust detail. Later prompts and UI can attribute or filter it;
-deleting legacy Chat provenance during the reset does not delete the durable
-object itself.
+Every concrete target created by the five additive Chat tools is atomically
+associated with its canonical generation, tool position, and stable effect.
+Created-target cardinality is exact: `nexus.library.add` and `nexus.queue.add`
+associate either zero targets for a legitimate idempotent no-op or exactly one
+`library_entry`/`queue_item`; `nexus.note.create` associates exactly one
+`note_block`; `nexus.edge.create` associates exactly one `resource_edge`; and
+`nexus.highlight.create` associates exactly one `highlight` plus zero or one
+attached `note_block` according to its request. A second target of any permitted
+kind is extra. Missing, extra, duplicate, foreign, or mismatched associations
+are integrity defects and fail closed. Later model reads expose bounded
+provenance for notes, highlights, and relations; trust detail visibly attributes
+assistant-created targets; Undo preserves the provenance fact.
+
+The closed projection is `target_kind`, `target_id`, `generation_id`,
+`generation_seq`, `tool_position`, `position_path`, and `effect_id`.
+`generation_seq` and `tool_position` are strict integers in
+`[1, 2_147_483_647]`, and `position_path` must equal
+`generation/{generation_seq}/tool/{tool_position}`. Undoing the effect does not
+rewrite this audit fact.
 
 ### 5.4 `llm-calling` additions
 
@@ -1021,8 +1096,8 @@ object itself.
         key: AgentModelKey             # stable native id
         dispatch_model                 # server-only SDK value
         label
-        context_window
-        max_output_tokens
+        source_context_window: Presence<TokenCount>
+        source_max_output_tokens: Presence<TokenCount>
         input_modalities[]
         reasoning[]: AgentReasoningFacts(key, label, native_wire_value)
         source_default_reasoning: Presence<AgentReasoningKey>
@@ -1044,7 +1119,8 @@ object itself.
 
   `definition_revision` is a domain-separated hash of the canonical ordered
   row fingerprints and is stable for identical observations. Each row
-  fingerprint covers key, dispatch value, label, bounds, ordered reasoning
+  fingerprint covers key, dispatch value, label, both capacity `Presence`
+  values, ordered reasoning
   keys/native values/default, modalities, and exact upgrade source facts. It
   excludes `observed_at` and the optional opaque native revision, which are
   provenance only.
@@ -1119,8 +1195,12 @@ object itself.
   catalogs. Native model-list or registry presence and credential presence are
   not proof of successful generation, strict output, tools, or quota.
 - Keep the existing operation-neutral function-tool adapter and add an adjacent
-  plan-derived MCP publication/observation adapter. Both accept only the frozen
-  canonical plan; neither chooses tools from product operation names.
+  plan-derived MCP publication/observation adapter. The MCP adapter remains the
+  deep optional module `provider_runtime.agent_runtime.tool_projection`; it is
+  not re-exported from the dependency-light AgentRuntime root. A clean base wheel
+  imports without `llm_tools`, `openai_codex`, or `claude_agent_sdk`. Both
+  adapters accept only the frozen canonical plan; neither chooses tools from
+  product operation names.
 - Keep lane-local API proposal projection in ProviderRuntime and canonical MCP
   observation projection in AgentRuntime. Nexus alone composes them into
   `BackendEvent`.
@@ -1150,6 +1230,12 @@ records route-native dispatch state, request identity, usage/billability, and
 tagged terminal evidence. Each tool position records canonical id/input digest,
 plan/binding revisions, scope and budget identity, result evidence, effect
 identity where applicable, settlement, and replay status.
+
+`assistant_write_authorships` has a deterministic identity and one true unique
+key on `(target_kind, target_id)`. It links only to the canonical tool position;
+it deliberately has no target FK so deletion or Undo cannot erase authorship
+history. Application validation owns its closed target vocabulary, exact
+cardinality, target visibility/ownership, and correspondence to the tool receipt.
 
 The sole durable tool-position grammar is:
 
@@ -1232,10 +1318,13 @@ Codex host, product API, evidence bundle, or logs.
 The cutover rotates/renames the five deployed generation credentials and adds
 OpenRouter and xAI before application rollout. Startup refuses any retired
 generation `*_API_KEY` name; embedding-only `OPENAI_API_KEY` is the sole
-exception. `deploy/hetzner/sync-env.sh`, `deploy/vercel/sync-env.sh`, and both
-production env examples remove the retired refusal entries and sync exactly the
-seven `*_GENERATION_API_KEY` names plus
-`GENERATION_CONTINUATION_ENCRYPTION_KEY`. No half-configured Codex-only
+exception. `deploy/hetzner/sync-env.sh` and the backend production env example
+publish `GENERATION_API_PROVIDERS`, exactly the credentials named by that set,
+`GENERATION_CONTINUATION_ENCRYPTION_KEY`, and conditional Fable acceptance;
+unconfigured credentials are refused. `deploy/vercel/sync-env.sh` removes and
+rejects every provider-generation key, continuation key, provider list, and
+retention acceptance because the BFF never owns provider execution. Frontend
+and worker examples contain none of them. No half-configured Codex-only
 production catalog is accepted.
 
 ## 7. Hard-cut migration and deletion
@@ -1311,8 +1400,10 @@ child-first deletes rather than broad cascade:
 3. Empty `chat_run_events`, `chat_prompt_assemblies`,
    `chat_run_turn_contexts`, `message_retrievals`, `message_tool_calls`,
    `conversation_active_paths`, `conversation_branches`, `conversation_shares`,
-   `chat_runs`, `messages`, and `conversations`, plus any run-bound trust/effect
-   journal whose sole identity is among those deleted IDs.
+   `chat_runs`, `messages`, and `conversations`. This removes every legacy Chat
+   tool receipt, result-ref association, trust projection, and effect/Undo state
+   owned by `message_tool_calls` and `message_retrievals`; 0223 has no separate
+   machine-authorship table.
 4. Delete generation-kind `background_jobs` and their coordination journals;
    leave unrelated queue rows byte-for-byte unchanged.
 5. Drop legacy `llm_calls`, `agent_turns`, `token_budget_charges`,
@@ -1322,14 +1413,16 @@ child-first deletes rather than broad cascade:
    preserved Artifact and Oracle domain event unions. Retagging preserves those
    domain outcomes; it does not preserve their model-call history.
 7. Create only the final parent generation, child model-turn, sealed
-   continuation, and tool-position schema. Rebuild the empty Chat tables into
-   their final exact-selection/authority shape. `GenerationSpec` subsumes
+   continuation, tool-position, and empty `assistant_write_authorships` schema.
+   Rebuild the empty Chat tables into their final exact-selection/authority
+   shape. `GenerationSpec` subsumes
    `chat_runs.profile_id`, `tool_profile_id`, `tool_profile_revision`, and
    `tool_profile_snapshot`; those columns and `llm_calls.capability_kind` do not
    survive.
-8. Assert zero rows in every reset set, no dangling conversation/message
-   polymorphic refs, equality of all preservation digests, and one final schema
-   with no legacy column/table/constraint.
+8. Assert zero rows in every reset set and in the new authorship association,
+   no dangling conversation/message polymorphic refs, equality of all
+   preservation digests, and one final schema with no legacy
+   column/table/constraint.
 
 There is no downgrade, network/catalog lookup, backup reader, dual writer,
 translation function, compatibility selector, or coercion. Release/startup
@@ -1353,7 +1446,7 @@ Prefer semantic undelete over reimplementation for:
 
 - provider labels, privacy/retention copy, startup validation, and fixtures;
 - provider-native continuation/tool-loop mechanics;
-- credential construction and bounded hosted certification;
+- credential construction and bounded deterministic provider conformance;
 - prior model/reasoning selector UI primitives whose behavior fits the new
   catalog;
 - proofs whose independent oracle still matches this target.
@@ -1440,8 +1533,8 @@ discriminant exists between commits.
 | A | API adapter, credentials and provider transcripts; no domain callers | S, L, T, U, V0 | API multi-turn/strict/tool adapter green only through `PROVIDER_API_PEER` |
 | D | all background owners and Chat orchestration call sites | L, C, A | complete portfolio uses GenerationService and its frozen tool mode |
 | W | FastAPI catalog/Chat routes, v3 draft reset, Web picker/consent/disclosure/history UX | S, D | service and Chromium contracts green |
-| E | `generation_plans.v2`, `tool_safety.v4`, unattended prompt-injection evals and hosted receipt schemas | S, T, D | `llm-eval`, Codex nightly and provider-hosted evidence green |
-| V | final registry/digest/workflow reconciliation, cross-doc banners, residue audit and integration | all | sensitivity, `pr`, `full`, hosted and `release` evidence |
+| E | `generation_plans.v2`, `tool_safety.v4`, unattended prompt-injection evals and Codex hosted receipt schema | S, T, D | `llm-eval` and Codex nightly evidence green |
+| V | final registry/digest/workflow reconciliation, cross-doc banners, residue audit and integration | all | sensitivity, `pr`, `full`, Codex nightly, and `release` evidence |
 
 Each lane owns and lands the proof-registry rows and fault patches for files it
 creates/deletes in the same commit; otherwise intermediate `changed` gates are
@@ -1461,82 +1554,142 @@ Follow [Nexus testing standards](../local-rules/testing-standards.md).
 asserts behavior through the highest useful public boundary, and records a
 meaningful RED before GREEN.
 
-| Ownership boundary | One canonical proof owner | Named scenarios |
+| Ownership boundary | Canonical proof owner | Named scenarios |
 |---|---|---|
-| `llm-calling` catalogs | library conformance suites at the pinned commit | two-page/repeated-cursor Codex catalog; exact API rows/default Presence/private registry; tagged request/continuation round trip |
-| Nexus catalog/selection | `pytest:python/tests/service/test_generation_catalog.py::test_complete_catalog_and_selection_contract` | complete configured set; semantic-vs-readiness revision; stale/invalid exact pair |
-| Developer policy/admission | `pytest:python/tests/service/test_generation_policy.py::test_total_policy_and_frozen_admission_contract` | seed plus fourteen rows; content revision; replay never rereads policy; `CapacityPaused` |
+| `llm-calling` model catalogs | `llm-calling@b4e05e030b0f2fe8f36f479e8bec320bdc797e20` `pytest:tests/test_model_catalogs.py` | two-page/repeated-cursor Codex catalog; incomplete-source refusal; exact immutable API rows/default Presence/private registry |
+| `llm-calling` authenticated catalog query | `llm-calling@b4e05e030b0f2fe8f36f479e8bec320bdc797e20` `pytest:tests/test_agent_runtime.py::test_model_catalog_is_an_authenticated_route_query_without_session_effects` | authenticated query; no session-open effect |
+| `llm-calling` tagged Agent request | `llm-calling@b4e05e030b0f2fe8f36f479e8bec320bdc797e20` `pytest:tests/test_agent_runtime.py::test_open_session_rejects_values_outside_the_tagged_request_union` | closed request union; foreign value refused before auth or adapter effect |
+| `llm-calling` continuation codec | `llm-calling@b4e05e030b0f2fe8f36f479e8bec320bdc797e20` `pytest:tests/test_continuation.py::test_continuation_round_trip_is_canonical_bound_and_recursively_immutable` | canonical round trip; recursive immutability |
+| `llm-calling` continuation binding | `llm-calling@b4e05e030b0f2fe8f36f479e8bec320bdc797e20` `pytest:tests/test_continuation.py::test_continuation_decode_rejects_target_codec_and_noncanonical_bytes` | target/codec mismatch and noncanonical bytes refuse |
+| `llm-calling` package surface | `llm-calling@b4e05e030b0f2fe8f36f479e8bec320bdc797e20` hosted `test` and `test-without-optional-sdk` jobs | clean base wheel imports AgentRuntime without `llm_tools` or either SDK; each optional extra remains independently installable |
+| Nexus catalog/selection | `pytest:python/tests/service/test_generation_catalog.py` | complete configured set; source-controlled qualification binding; private HTTP projection; semantic-vs-readiness revision; stale/invalid exact pair |
+| Developer policy facts | `pytest:python/tests/kernel/test_generation_policy.py::test_exact_generation_policy_is_total_content_derived_and_profile_free` | exact seed and fourteen rows; content-derived revision; no profile vocabulary |
+| Developer policy/admission | `pytest:python/tests/service/test_generation_policy.py::test_total_policy_and_frozen_admission_contract` | exact frozen selections/specs/policy revision/tool modes |
+| Background capacity admission | `pytest:python/tests/service/test_generation_capacity_pause.py` | exact durable `CapacityPaused`; ready admission clears it; reschedule preserves retry budget |
 | Transport projection | `pytest:python/tests/kernel/test_generation_transport_projection.py::test_one_plan_lowers_to_both_transport_contracts` | function alias reversal; MCP allowlist; `NoModelTools`; proposal vs observation |
-| Backend adapters | `pytest:python/tests/provider_runtime/test_generation_backends.py::test_route_local_transcripts_preserve_terminal_truth` | text/strict output; tools/continuation; usage/cancel/terminal |
+| Route-neutral backend runtime | `pytest:python/tests/kernel/test_generation_backend_runtime.py` | closed event projection; pre-admission capacity; Codex cancellation; API child/tool/successor ordering and resume; strict-plus-tools route difference |
+| ProviderApi qualification | `pytest:python/tests/service/test_provider_generation_backend.py::test_route_local_transcripts_preserve_terminal_truth` | all eleven targets and 47 reasoning wires; seven strict engine shapes; fourteen qualified tool continuations; usage and succeeded terminals |
 | Durable execution | `pytest:python/tests/service/test_generation_execution.py::test_parent_child_tool_replay_is_exactly_once` | API crash after child; atomic successor continuation; Codex observation; no duplicate bill/effect |
-| Tool authority | `pytest:python/tests/service/test_generation_tool_authority.py::test_frozen_plan_is_transport_neutral_and_fenced` | background reads; Chat write/Undo; scope narrowing; binding availability; machine authorship |
-| Secrets/confinement | `pytest:python/tests/service/test_generation_secret_isolation.py::test_route_secrets_and_continuations_never_cross_boundaries` | sentinel credentials; sealed output redaction; MCP bearer/lease; egress allowlist |
+| Tool authority | `pytest:python/tests/service/test_generation_tool_authority.py::test_frozen_plan_is_transport_neutral_and_fenced` | transport-neutral read execution; durable position order and exact replay; scope, foreign-generation, bearer, and lease fences |
+| Chat write/Undo authority | `pytest:python/tests/service/test_llm_tool_safety.py::test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo` | persisted `ReadOnly`/`AdditiveWrites` prompts match the frozen authority; five additive write tools; owner persistence; idempotent Undo |
+| Machine-authorship lifecycle | `pytest:python/tests/service/test_machine_authorship.py::test_all_additive_writes_publish_durable_authorship_into_later_model_reads` | all five creating writes; highlight plus note; exact persisted targets; later note/highlight/relation reads; Undo; missing/stable-identity corruption refused |
+| Machine-authorship wire | `vitest:apps/web/src/lib/conversations/trustToolCallWire.unit.test.ts` | exact closed decode; missing/extra fields, nonpositive or int32-overflow positions, and incoherent path refused |
+| Chat write/Undo presentation | `vitest:apps/web/src/components/chat/AssistantWriteTrail.browser.test.tsx` | visible attribution and owned Undo; no-target and unhydrated states |
+| Artifact generation provenance | `pytest:python/tests/service/test_artifact_revision_generation_provenance.py::test_revision_reads_project_retired_frozen_generation_identity_without_mutation` | immutable retired-generation identity is projected without mutating the revision |
+| Secrets/confinement | `pytest:python/tests/service/test_generation_secret_isolation.py::test_route_secrets_and_continuations_never_cross_boundaries` | cross-route credential projection; sealed-continuation non-disclosure; terminal redaction; ProviderApi header/body observation; native process, bearer/lease, and egress stay with their existing named owners |
 | Provider loopback control | `pytest:python/tests/kernel/nexus_test_control/test_provider_api_peer.py::test_provider_peer_is_controller_owned_and_recovered` | resource/port/credentials; TLS/base URL; recovery/cleanup; no fixture branch |
-| Operation portfolio | `pytest:python/tests/service/test_generation_operation_portfolio.py::test_all_operations_use_generation_service_policy` | all fourteen mappings; Library/Idea reads; twelve no-model-tool rows; publication ordering |
-| Reset migration | `pytest:python/tests/migrations/test_generation_backends_cutover.py::test_0223_aggregate_reset_preserves_domain_data` | empty DB; synthetic 0223; active-work refusal; preservation digests; zero legacy refs |
-| Product API | `pytest:python/tests/service/test_generation_chat_api.py::test_exact_selection_and_authority_cross_every_chat_projection` | catalog/create/rerun/regenerate/history/SSE/trust; idempotency; strict failures |
-| Product UI | `vitest:apps/web/src/components/chat/GenerationSelection.browser.test.tsx` | picker/a11y; write consent; v2 notice/v3 draft; no-selectable and rerun paths |
-| Public wiring | existing `grounded-chat-citation` journey | one Codex MCP read; one API model/tool/model read; reconnect/trust citation |
+| Operation portfolio | `pytest:python/tests/kernel/test_generation_operation_adapters.py` | exact fourteen intent/policy rows; exactly Library/Idea `ExactModelTools`; exactly twelve `NoModelTools`; Dawn, Media Unit, Oracle, and Synapse task adapters delegate one frozen route-neutral generation; content owners cannot choose runtime policy |
+| Reset migration admission | `pytest:python/tests/migrations/test_generation_backends_cutover_admission.py::test_0224_refuses_the_only_undrained_generation_job_before_history_reset` | otherwise-empty 0223; one pending generation job is the sole violated preflight invariant; exact refusal before mutation |
+| Reset migration convergence | `pytest:python/tests/migrations/test_generation_backends_cutover.py::test_0223_aggregate_reset_preserves_domain_data` | empty DB; synthetic 0223; domain-reference refusal; preservation digests; empty final authorship table; zero legacy refs |
+| Product Chat API | `pytest:python/tests/service/test_generation_chat_api.py` | create/idempotency/frozen spec/history/trust; rerun/regenerate authority; strict legacy/bodyless ingress; typed selection failures; pre-durable binding refusal |
+| Product catalog API | `pytest:python/tests/service/test_generation_catalog.py` | strict private catalog projection and typed source failure |
+| Product SSE selection wire | `vitest:apps/web/src/lib/api/sse/events.selection.unit.test.ts` | complete immutable selection decode; incomplete/widened projection refusal |
+| Product UI | `vitest:apps/web/src/components/chat/GenerationSelection.browser.test.tsx` | provider/model/reasoning dispatch; billing/privacy/processor disclosure; retired-row refusal; one-run write consent/reset; stale/no-selectable draft retention; desktop Escape/focus return; unavailable rerun replacement |
+| Billing disclosure | `vitest:apps/web/src/app/(authenticated)/settings/billing/GenerationBillingDisclosure.browser.test.tsx` | Codex subscription and metered Provider API facts; no generation controls |
+| Privacy disclosure | `vitest:apps/web/src/app/privacy/PrivacyPage.browser.test.tsx` | all configurable Provider API processors/routes and background Codex statement |
+| Catalog public wiring | `playwright:apps/web/e2e/journeys/durable-ingest-reader-open.journey.spec.ts` | browser to `/api/llm-catalog` BFF to FastAPI catalog boundary |
+| Chat public wiring | `playwright:apps/web/e2e/journeys/grounded-chat-citation.journey.spec.ts` | one admission; admitted catalog-revision shape; durable citation; reload; exact reader activation |
+| Oracle/Dossier failure wire | `pytest:python/tests/kernel/test_oracle_wire_contract.py`; `pytest:python/tests/kernel/test_dossier_failure_wire_contract.py`; `vitest:apps/web/src/lib/oracle/oracleReadingWire.unit.test.ts`; `vitest:apps/web/src/lib/dossiers/dossierFailureContract.unit.test.ts` | current and preserved historical failure unions remain exact across backend/Web codecs |
 | LLM evaluation | `pytest:python/tests/evals/test_tool_safety_eval.py::test_generation_tool_plans_refuse_untrusted_escalation` | poisoned Library scope widening; Idea Web-egress attempt; zero mutation |
 | Hard-cut residue | `pytest:python/tests/kernel/test_generation_cutover_residue.py::test_only_final_generation_owners_remain` | deletion manifest; strict decoders/build/import graph; zero stale doc references |
-| External reality | Codex nightly plus release `provider-hosted` receipts | target × capability class; reasoning-wire exceptions; exact candidate SHA |
+| External reality | `pytest:python/tests/hosted/nightly/test_codex_personal_generation.py` | subscription-authenticated Codex target set; bounded tool use; exact candidate SHA |
 
-R0 registers each Nexus owner exactly once under an existing priority risk. Add
-no parallel risk portfolio.
+Each implementation lane registers the files and proof owners it changes under
+the existing priority risks below in the same commit, as section 8 requires.
+Lane V only reconciles duplicate ownership and freezes the final routing digest.
+Add no parallel risk portfolio. `testdata/proofs.json` is the sole source-glob
+authority; duplicating its path lists here would create a second routing owner.
+It routes at risk granularity, so every source glob selects every proof owner in
+its risk row.
 
-| Exact proof id | Existing risk | Literal source-glob additions | Capability |
-|---|---|---|---|
-| `pytest:python/tests/service/test_generation_catalog.py::test_complete_catalog_and_selection_contract` | `costly-effects` | `python/nexus/services/generation_catalog.py`; `python/nexus/services/generation_selection.py`; `python/nexus/schemas/llm.py`; `python/tests/service/test_generation_catalog.py` | `service` |
-| `pytest:python/tests/service/test_generation_policy.py::test_total_policy_and_frozen_admission_contract` | `generation-ledger-contract` | `python/nexus/services/generation_policy.py`; `python/nexus/services/generation_intent.py`; `python/nexus/services/llm_execution.py`; `python/tests/service/test_generation_policy.py` | `service` |
-| `pytest:python/tests/kernel/test_generation_transport_projection.py::test_one_plan_lowers_to_both_transport_contracts` | `llm-tool-safety` | `python/nexus/services/tool_runtime/*.py`; `python/tests/kernel/test_generation_transport_projection.py` | `kernel-python` |
-| `pytest:python/tests/provider_runtime/test_generation_backends.py::test_route_local_transcripts_preserve_terminal_truth` | `costly-effects` | `python/nexus/services/codex_generation_*.py`; `python/nexus/services/provider_generation_*.py`; `python/tests/provider_runtime/test_generation_backends.py` | `provider-runtime` |
-| `pytest:python/tests/service/test_generation_execution.py::test_parent_child_tool_replay_is_exactly_once` | `durable-job-replay` | `python/nexus/services/llm_execution.py`; `python/nexus/services/llm_ledger.py`; `python/nexus/services/generation_continuations.py`; `python/tests/service/test_generation_execution.py` | `service` |
-| `pytest:python/tests/service/test_generation_tool_authority.py::test_frozen_plan_is_transport_neutral_and_fenced` | `llm-tool-safety` | `python/nexus/services/tool_authority.py`; `python/nexus/services/agent_tool_grants.py`; `python/nexus/services/agent_tools_mcp.py`; `python/nexus/services/tool_runtime/*.py`; `python/tests/service/test_generation_tool_authority.py` | `service` |
-| `pytest:python/tests/service/test_generation_secret_isolation.py::test_route_secrets_and_continuations_never_cross_boundaries` | `auth-privacy-secrets` | `python/nexus/services/llm_credentials.py`; `apps/codex_agent/confined_runtime.py`; `deploy/**/*.sh`; `python/tests/service/test_generation_secret_isolation.py` | `service` |
-| `pytest:python/tests/kernel/nexus_test_control/test_provider_api_peer.py::test_provider_peer_is_controller_owned_and_recovered` | `production-release-test-control` | `python/nexus_test_control/model.py`; `python/nexus_test_control/runner.py`; `python/tests/kernel/nexus_test_control/test_provider_api_peer.py` | `kernel-python` |
-| `pytest:python/tests/service/test_generation_operation_portfolio.py::test_all_operations_use_generation_service_policy` | `costly-effects` | `python/nexus/services/artifacts/**/*.py`; `python/nexus/services/dawn_write.py`; `python/nexus/services/metadata_enrichment.py`; `python/nexus/services/media_intelligence.py`; `python/tests/service/test_generation_operation_portfolio.py` | `service` |
-| `pytest:python/tests/migrations/test_generation_backends_cutover.py::test_0223_aggregate_reset_preserves_domain_data` | `migration-compatibility` | `migrations/alembic/versions/0224_codex_personal_generation.py`; `python/nexus/db/models.py`; `python/tests/migrations/test_generation_backends_cutover.py` | `migrations` |
-| `pytest:python/tests/service/test_generation_chat_api.py::test_exact_selection_and_authority_cross_every_chat_projection` | `costly-effects` | `python/nexus/api/routes/llm.py`; `python/nexus/api/routes/chat*.py`; `python/nexus/services/chat_run_idempotency.py`; `python/tests/service/test_generation_chat_api.py` | `service` |
-| `vitest:apps/web/src/components/chat/GenerationSelection.browser.test.tsx` | `costly-effects` | `apps/web/src/components/chat/**/*`; `apps/web/src/lib/llm/**/*`; `apps/web/src/lib/conversations/chatDraftKey.ts`; `apps/web/src/components/chat/GenerationSelection.browser.test.tsx` | `component` |
-| `pytest:python/tests/evals/test_tool_safety_eval.py::test_generation_tool_plans_refuse_untrusted_escalation` | `llm-tool-safety` | `python/tests/evals/test_tool_safety_eval.py`; `python/tests/evals/cases/generation_plans.v2.json`; `python/tests/evals/cases/tool_safety.v4.json` | `llm-eval` |
-| `pytest:python/tests/kernel/test_generation_cutover_residue.py::test_only_final_generation_owners_remain` | `production-release-test-control` | `docs/cutovers/*.md`; `docs/modules/llms.md`; `docs/modules/chat.md`; `testdata/proofs.json`; `testdata/faults/**`; `python/tests/kernel/test_generation_cutover_residue.py` | `kernel-python` |
-
-The route map is JSON-ready. Each row's named scenarios are separate test cases/fixtures
-inside the canonical owner, not one mega-scenario.
+The final manifest registers these boundaries under the existing
+`auth-privacy-secrets`, `citation-provenance-identity`, `codex-generation-host`,
+`costly-effects`, `durable-job-replay`, `generation-ledger-contract`,
+`generation-reconciliation`, `llm-tool-safety`, `migration-compatibility`, and
+`production-release-test-control` risks. Its exact proofs and capabilities are
+not duplicated here: `testdata/proofs.json` is authoritative and its normalized
+priority-risk ownership digest is frozen by `nexus_test_control.model`.
 
 RED:
 
 - Every registered canonical proof must reach a controller-classified
-  `behavioral_assertion_failure` at the base SHA. A collection/import/setup
-  error is rejected evidence. New-owner proofs use no module-scope import of the
-  new owner: assert an absent `find_spec`, absent public route/schema field, or
-  old public behavior first, then import inside the scenario after that
-  assertion. Existing-owner adaptations use a registered fault. Record the
-  exact failing assertion fingerprint before green.
-- Base RED owns catalog/selection, policy, new ledger schema, new API/UI route,
-  provider peer, and residue nodes. Fault RED owns replay, authority, secret
-  isolation, operation portfolio, eval, and migrated journey owners.
+  `behavioral_assertion_failure`. A collection/import/setup error is rejected
+  evidence. Automatic PR sensitivity follows the repository's fail-closed
+  owner rule: a new owner or a materially changed exact owner/support graph uses
+  BASE even when a fault is registered; only an unchanged exact owner may use
+  its registered FAULT automatically. The sole typed exception is an exact
+  module-level Python owner whose one registered fault explicitly declares
+  `changed_owner_red: coherent-fault`. That declaration is allowed only when a
+  hard-cut interface or behavior-preserving ownership refactor makes BASE an
+  incoherent witness; policy validates its exact owner, version-stable
+  source-slice owner/support digest, patch, checksum, and assertion fingerprint,
+  while this spec and the work report own the rationale. Any exact-owner or
+  shared-support drift invalidates the exception until it is reviewed and
+  repinned. The exception controller has its own standalone canonical BASE
+  sensitivity proof.
+  The three cutover-selected exceptions are the durable same-worker attempt
+  fence, process-containment dimension, and ingest-readiness owners. All three
+  candidate proofs call the hard-cut terminal queue API with required
+  `attempt_no`, while BASE lacks that signature and therefore cannot complete or
+  falsify their retained scenarios. The durable and process-containment owners
+  fail before their target assertion; readiness reaches its pre-success
+  assertion, then fails before the success/freshness transitions under test.
+  The parser-dimension owner does not use the exception because its exact owner
+  remains coherent on BASE. A BASE proof checks an absent
+  `find_spec`, absent public route/schema field, or old public behavior before
+  candidate code executes. Candidate-only imports are either inside the
+  post-assertion scenario or guarded by `TYPE_CHECKING or _CUTOVER_PRESENT`, so
+  BASE collection cannot import them. Record the exact failing assertion
+  fingerprint before green.
+- A materially adapted pre-existing owner needs both witnesses when BASE can
+  prove only the new setup/cutover dependency: automatic BASE red/green plus an
+  explicit governed FAULT red/green against the coherent candidate. The FAULT
+  is supplemental and never replaces BASE unless the exact owner uses the
+  policy-validated coherent-fault exception above. This keeps proof rewrites
+  fail-closed while demonstrating that the retained privacy, revocation,
+  replay, authority, confinement, operation, evaluation, and hosted-evidence
+  assertions still detect their production defect.
+- Base RED owns new catalog/selection, policy/capacity, route-neutral backend,
+  ProviderApi qualification, ledger, API/UI, secret-isolation, provider-peer,
+  and residue owners. Registered fault RED owns adaptations of existing replay,
+  authority, confinement, operation, evaluation, and hosted Codex evidence
+  owners.
 - Register each exact fault patch, SHA-256, layer, expected assertion, and
   canonical node in `testdata/faults/manifest.json`:
 
   | Fault id | Layer / expected behavioral failure |
   |---|---|
-  | `generation-partial-provider-filter-bypass` | catalog: configured public row-set inequality |
-  | `generation-unsupported-reasoning-bypass` | selection: unsupported exact pair admitted |
-  | `generation-unavailable-fallback-bypass` | service: selected target silently changes |
-  | `generation-unqualified-tool-target-bypass` | catalog: Chat/background eligibility appears without receipt |
-  | `generation-background-scope-bypass` | authority: resource outside frozen manifest becomes readable |
-  | `generation-unregistered-dossier-citation-bypass` | publication: unregistered candidate accepted |
-  | `generation-duplicate-child-replay-bypass` | real worker: second billable child appears after replay |
-  | `generation-bearer-outlives-lease-bypass` | authority: expired/lost lease executes a tool |
-  | `generation-rerun-write-grant-bypass` | service/UI: rerun inherits additive authority |
-  | `generation-stale-catalog-reinterpretation-bypass` | FastAPI: stale pair dispatches as a different pair |
-  | `generation-no-tools-bearer-bypass` | service: `NoModelTools` publishes/mints anything |
-  | `generation-dispatch-scope-widening-bypass` | authority: dispatch narrowing adds a ref |
-  | `generation-current-policy-replay-bypass` | worker: current policy changes frozen work |
-  | `generation-route-secret-crossing-bypass` | process: API key reaches Codex or reverse |
-  | `generation-continuation-disclosure-bypass` | evidence/log: sealed/plain continuation renders |
-  | `generation-unattended-injection-bypass` | eval: poisoned content widens scope, reaches Web, or mutates |
+  | `auth-chat-run-ownership-bypass` | privacy: a stranger can read another owner's Chat run |
+  | `conversation-chat-job-revocation-bypass` | deletion: a deleted conversation retains its private Chat job journal |
+  | `codex-generation-migration-admission-bypass` | migration: active work reaches the destructive reset |
+  | `durable-generation-accepted-loss-redispatch` | replay: accepted model work is automatically reissued |
+  | `agent-tool-receipt-lease-fence-bypass` | authority: a lost lease can land a tool receipt |
+  | `generation-reconciliation-fingerprint-bypass` | reconciliation: a mismatched immutable request is accepted |
+  | `agent-tool-grant-scope-bypass` | authority: a bearer can widen its frozen scope |
+  | `llm-tool-safety-prompt-bypass` | eval: reviewed prompt-injection containment disappears |
+  | `codex-generation-policy-plan-bypass` | policy: the exact generation portfolio drifts |
+  | `durable-codex-operation-revision-shadow` | adapters: a domain owner shadows runtime policy |
+  | `codex-temporary-confinement-bypass` | process: the confined temporary/workspace policy weakens |
+  | `durable-codex-diagnostic-retention-bypass` | evidence: raw Codex diagnostics survive redaction |
+  | `codex-egress-allowlist-bypass` | process: Codex egress escapes the reviewed allowlist |
+  | `codex-hosted-evidence-size-bound-bypass` | evidence: the hosted Codex artifact becomes unbounded |
+  | `hosted-semantic-evidence-bypass` | evidence: unsafe hosted semantics are accepted |
+  | `durable-job-fence-bypass` | replay: an expired attempt settles a reclaimed attempt under the same worker identity |
+  | `document-import-time-dimension-bypass` | process: a resource-limited child loses its exact time dimension |
+  | `document-import-parser-dimension-bypass` | parser: a resource failure loses its typed dimension carrier |
+  | `document-import-reconciler-readiness-bypass` | readiness: a database is admitted without a fresh reconciler success |
+
+  When either adapted Chat owner routes to BASE, retain these additional
+  exact-SHA acceptance receipts:
+
+  ```text
+  ./scripts/test prove --proof pytest:python/tests/service/test_chat_execution_privacy.py::test_suspended_chat_exposes_only_phase_and_masks_its_private_journal --against fault:auth-chat-run-ownership-bypass
+  ./scripts/test prove --proof pytest:python/tests/service/test_conversation_deletion.py::test_conversation_delete_removes_its_dead_chat_journal_only --against fault:conversation-chat-job-revocation-bypass
+  ```
+
+  Every registered fault patch must pass checksum, product-owner, canonical
+  node, and current-tree applicability policy before either automatic or
+  supplemental evidence is admissible.
 
 GREEN:
 
@@ -1557,73 +1710,42 @@ REFACTOR:
 - run only real workflows: `./scripts/test full`, `codex-nightly`, and
   `release` at the exact candidate SHA. `Capability.MIGRATIONS` is owned by
   `pr`/`full`; it is not a standalone gate.
-- Add `Capability.PROVIDER_HOSTED` to the existing `release` workflow and
-  deferred-capability registry, plus its exact routing digest, protected
-  environment, seven credentials, continuation key, receipt validator, and
-  source-SHA consumer. This is a capability/control-plane change, not a new
-  “provider certification” workflow. A required `generation-evidence` job in
-  the existing release workflow downloads and validates both target-set
-  artifacts before release-artifact publication or deployment can start;
-  `release` refuses when either receipt is absent, stale, malformed, or bound
-  to another SHA.
-- A sanctioned rerun of `not_run` hosted evidence is `workflow_dispatch` of the
-  exact hosted workflow at the candidate ref. `diagnose` and lower-lane
+- A sanctioned rerun of Codex hosted evidence is `workflow_dispatch` of
+  `codex-nightly` at the exact candidate ref. `diagnose` and lower-lane
   artifacts never satisfy promotion.
 
 Ordinary `pr` remains network-free with less than ten minutes intended added
 runtime inside its existing 90-minute ceiling; order is static/kernel, service,
-component, journey, sensitivity. Hosted evidence uses bounded target-set
-receipts, not the old exact-four-plan schema:
+component, journey, sensitivity. Codex nightly keeps its bounded target-set
+artifact: at most 16 turns, 600 seconds per turn, 120 minutes total, 64 KiB,
+exact `source_sha` and revisions, bounded redacted summaries, and no prompt,
+private tool payload, or secret.
 
-- Codex nightly: at most 16 turns, 600 seconds per turn, 120 minutes total, and
-  a 64 KiB artifact;
-- provider-hosted release: at most 24 turns, 180 seconds per turn, 60 minutes,
-  USD 25 hard spend ceiling, and a 64 KiB artifact; and
-- every artifact contains exact `source_sha`, catalog/policy/tool/runtime
-  revisions, target set, capability-class receipts, reasoning-wire receipts,
-  bounded redacted summaries, and no prompt/private tool payload/secret.
+ProviderApi qualification is deliberately deterministic. A source-controlled
+manifest binds every pinned `api_model_catalog()` row fingerprint, exact
+reasoning set, capability class, and eligible tool-plan revision to the pinned
+`llm-calling` conformance suites and the controller-owned TLS peer. The peer
+exercises every provider engine/request shape, every declared reasoning wire
+selection, strict structured output, and each qualified function-tool/
+continuation shape. Any source fingerprint, reasoning set, or authority
+revision drift leaves the row visible but ineligible until review updates the
+manifest. Credential presence is readiness only.
 
-A target set that cannot fit its declared ceiling fails the gate and requires a
-reviewed budget/schema change; it is never truncated. Live proof is linear in
-targets, not Cartesian:
-
-- for every Chat-eligible Codex target, one bounded native turn publishing the
-  full eleven-tool declaration set and executing one read through MCP;
-- for every Chat-eligible API target, one bounded model/tool/model continuation
-  publishing the full eleven-tool function set, executing one read, and sealing
-  one successor state;
-- one bounded real Library and Idea background model-tool turn through their
-  selected Codex target, plus existing bounded `idea_dossier_research`;
-- receipts per `(target, capability class)` for `text`, `strict-structured`, and
-  `tools-continuation`, at most three turns per target and with one turn allowed
-  to discharge several classes; every `JsonMode` row gets a live strict-output
-  receipt; and
-- reasoning-wire identity is the exact `(provider, engine, base_url, fragment
-  key path)` tuple. Scalar values may share evidence only within one target
-  when all fragments are identical modulo that scalar. Both DeepSeek rows'
-  `none` values and every OpenRouter level under `require_parameters` receive
-  their own live turn; equal Moonshot/xAI fragment shapes never share evidence;
-- one appropriate receipt for each exact target selected by background policy
-  when the earlier turns did not cover its required output class; and
-- no model-by-operation matrix.
-
-One call may satisfy multiple bullets. Each exact selection's eligibility
-composes a current target-capability receipt with a current reasoning-wire
-receipt. Uniform Chat eligibility additionally requires deterministic proof
-that both six- and eleven-declaration plans lower from the same canonical set;
-the live turn publishes all eleven while executing only a read. Absent evidence
-means absent eligibility. Deterministic catalog/policy proofs own the full
-cross-product. This is the 80/20 boundary: each external target and wire
-mechanism is proven once; owned proofs cover every selection and operation map
-without model × reasoning × operation calls.
+No paid provider-hosted capability or release job is added. The local proof
+does not certify a provider account's live quota, entitlement, regional route,
+or transient service health. That omission is the explicit 80/20 boundary for
+this one-user prototype; a future multi-user or billed launch must add a
+protected, spend-capped, exact-SHA provider canary before promotion.
 
 ## 10. Acceptance criteria
 
 1. The complete configured catalog contains every visible authenticated Codex
    model/reasoning pair and exactly every `api_model_catalog()` row belonging to
    a configured provider. The all-seven-provider fixture contains all eleven
-   API rows, including OpenRouter and xAI, exactly once; bounds, optional
-   defaults, lifecycle and fingerprints come only from their source catalogs.
+   API rows, including OpenRouter and xAI, exactly once; source-reported capacity
+   presence, optional defaults, lifecycle and fingerprints come only from their
+   source catalogs. Nexus request budgets are separately policy-owned and never
+   presented as source capacity.
 2. For each Chat run, users can select any server-projected `Selectable` exact
    pair.
    Unknown, unsupported, stale, retired, and unavailable choices fail
@@ -1656,11 +1778,25 @@ without model × reasoning × operation calls.
    substitutes another route/model/reasoning/tool/plan or dead-letters a normal
    quota window.
 9. Every tool-enabled Codex or API Chat/background run executes its frozen
-   canonical plan through one ToolAuthority, executor, journal, citation,
-   trust, effect, and Undo path; only transport lowering differs.
+   canonical plan through one `ToolAuthority`, `GenerationToolExecutor`, and
+   durable position journal. Transport lowering and operation-owned evidence or
+   presentation adapters may differ; citations, trust, effects, and Undo are
+   produced only by the relevant domain adapter. Canonical model-visible
+   declarations derive from the frozen plan and cannot contradict its
+   authority. Chat alone renders the additional write-safety clause before
+   prompt hashing: its persisted prompt names no write tools for `ReadOnly` and
+   all five for `AdditiveWrites`. Every concrete successful Chat
+   write target is atomically
+   associated with its exact generation, tool position, and stable effect;
+   missing, extra, duplicate, foreign, or mismatched associations fail closed.
+   Authorship generation and tool positions are strict positive int32 values,
+   and the position path is derived coherently from both.
 10. Chat writes require a fresh per-run grant and rerun/regenerate never inherit
     it. The visible, off-by-default composer control names all five writes,
     announces changes, remains visible while armed, and resets after dispatch.
+    Trust detail visibly attributes assistant-created targets; later note,
+    highlight, and relation model reads carry bounded authorship; Undo preserves
+    that provenance. Legitimate idempotent no-op writes fabricate no target.
     Shipped background model plans are read-only, noninteractive, and gain no
     user or worker override.
 11. `NoModelTools` publishes no live model tools. Library Dossier and Idea
@@ -1686,18 +1822,22 @@ without model × reasoning × operation calls.
     controls, credential entry, or fabricated prices.
 16. Rewritten `0224` refuses active work, wipes the complete legacy Chat
     aggregate plus generation/metering ledgers, drops all conversation Dossiers
-    and conversation/message graph refs, and reaches one empty final Chat/
-    generation schema. Preservation-family counts/digests match exactly; users,
-    media, libraries, knowledge content, non-conversation outputs, and durable
+    and conversation/message graph refs, deletes every legacy Chat tool receipt,
+    result-ref association, trust projection, and effect/Undo state from
+    `message_tool_calls` and `message_retrievals`, and reaches one empty final
+    Chat/generation schema plus the empty final `assistant_write_authorships`
+    table. Preservation-family counts/digests match exactly; users, media,
+    libraries, knowledge content, non-conversation outputs, and durable
     Chat-created domain effects remain. V2 drafts are visibly discarded and
     only v3 is read.
 17. Every ownership boundary has one independent, sensitive behavior proof and
     exact-SHA evidence in its named gate; the deletion-manifest proof confirms
     superseded selection owners are absent.
 18. `changed`, `confidence`, `pr` (including migrations), `full` (including
-    `llm-eval`), `codex-nightly`, and `release` (including new
-    `provider-hosted`) are green at one exact SHA. A required `not_run` is never
-    acceptance.
+    `llm-eval`), the existing `codex-nightly`, and `release` are green at one
+    exact SHA. A required `not_run` is never acceptance. ProviderApi
+    conformance is owned by the network-free pinned-library and
+    controller-loopback proofs; no provider-hosted capability is claimed.
 
 ## 11. Explicit trade-offs
 
@@ -1719,6 +1859,12 @@ without model × reasoning × operation calls.
 - The durable Codex model key is native `id`; the SDK does not promise its
   stability. An upstream ID change fails closed as an unavailable historical
   selection rather than dispatching a guessed model.
+- Codex's public model list does not report context or maximum-output capacity.
+  The product therefore displays those source facts as `Not reported` and uses
+  conservative operation-owned request budgets, while the native runtime owns
+  final capacity refusal. This can reject an oversized request later than an API
+  route would; the alternative would depend on an undocumented private cache or
+  fabricate per-model facts.
 - A source that supplies an upgrade hint without a retirement instant gets no
   invented countdown; it may disappear directly into history-only unavailable
   state.
@@ -1729,10 +1875,10 @@ without model × reasoning × operation calls.
 - Server-projected Chat states and closed failure variants enlarge the catalog
   slightly. This removes browser policy inference; background states stay
   server-internal.
-- Exposing every configured API row adds credential, privacy, qualification,
-  and hosted-canary work. This is accepted to preserve the complete configured
-  `llm-calling` value rather than an arbitrary curated subset; all-provider
-  deployments therefore expose all eleven rows.
+- Exposing every configured API row adds credential, privacy, and qualification
+  work. This is accepted to preserve the complete configured `llm-calling`
+  value rather than an arbitrary curated subset; all-provider deployments
+  therefore expose all eleven rows.
 - OpenRouter Kimi has no verified default at the pin, so selecting it requires
   one extra reasoning choice. An honest `Absent` is preferable to laundering a
   Nexus preference as a provider fact.
@@ -1770,9 +1916,21 @@ without model × reasoning × operation calls.
   can search and navigate only already admitted source refs, so they improve
   in-turn retrieval but do not discover a new corpus; the other twelve
   backgrounds keep their complete frozen-evidence contracts.
+- Codex can enforce strict structured output while using the two background MCP
+  plans; ProviderRuntime intentionally cannot combine strict output and
+  function tools in one call. This route-specific capability keeps the shipped
+  Codex backgrounds strong without falsely advertising provider parity. The
+  cost is that a future developer policy cannot move those two operations to an
+  API route without an explicit split-generation design or a newly qualified
+  upstream contract.
 - Unattended background models receive read authority only. Keeping publication
   in domain-owned validated transactions gives up autonomous background writes
   to avoid invisible approvals, duplicate effects, and a second mutation path.
+- Background read-tool guidance lives in canonical model-visible tool
+  declarations rather than a second prose catalog in each Dossier prompt. This
+  avoids drift and keeps prompts focused, at the cost of not giving background
+  models a redundant natural-language summary; Chat alone duplicates the five
+  write names because visible per-run user consent is a distinct safety fact.
 - Idea's deterministic HostTable owns external research while its model plan
   owns private Nexus follow-up. Forbidding private reads and external egress in
   one unattended model plan limits free-form research but materially reduces
@@ -1799,9 +1957,11 @@ without model × reasoning × operation calls.
   billing, tool, and effect truth. Durable `CapacityPaused` accepts delayed
   background work instead of turning predictable quota into dead letters or API
   spend.
-- Live certification grows with the number of advertised models but not with
-  model × reasoning × operation. That is the smallest proof shape that does
-  not advertise an untested external target.
+- Deterministic ProviderApi qualification grows with catalog rows and reasoning
+  wire shapes, not model × reasoning × operation. It catches application and
+  pinned-library drift without paid calls. It does not prove live provider
+  quota or account entitlement; adding that launch-grade assurance requires a
+  separately approved, spend-capped hosted capability.
 
 ## 12. Authoritative references
 

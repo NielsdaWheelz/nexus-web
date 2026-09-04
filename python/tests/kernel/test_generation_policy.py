@@ -1,9 +1,4 @@
-"""Red contract for the Codex-personal generation policy catalog.
-
-The cutover document is the oracle for this table.  These assertions deliberately
-spell out the complete expected catalog so a plan or bound cannot silently drift
-by changing the implementation's own defaults.
-"""
+"""Independent oracle for the exact developer-owned generation policy."""
 
 from __future__ import annotations
 
@@ -14,195 +9,193 @@ from importlib.util import find_spec
 
 import pytest
 
-_MODEL_BOUNDS = {
-    "gpt-5.6-luna": (1_050_000, 128_000, 64 * 1024 * 1024),
-    "gpt-5.6-terra": (1_050_000, 128_000, 64 * 1024 * 1024),
-    "gpt-5.6-sol": (1_050_000, 128_000, 64 * 1024 * 1024),
+_GENERATION_POLICY_CUTOVER_PRESENT = find_spec("nexus.services.generation_selection") is not None
+if _GENERATION_POLICY_CUTOVER_PRESENT:
+    from nexus.services import generation_policy
+    from nexus.services.generation_selection import CodexPersonalSelection
+    from nexus.services.tool_runtime.profiles import TOOL_PLAN_DEFINITIONS_BY_ID
+
+_EXPECTED_SELECTIONS = {
+    "metadata_enrichment": ("gpt-5.6-luna", "low"),
+    "media_summary": ("gpt-5.6-luna", "low"),
+    "synapse": ("gpt-5.6-luna", "low"),
+    "dawn_write": ("gpt-5.6-terra", "medium"),
+    "oracle": ("gpt-5.6-terra", "medium"),
+    "dossier_page": ("gpt-5.6-luna", "low"),
+    "dossier_note": ("gpt-5.6-luna", "low"),
+    "dossier_media": ("gpt-5.6-terra", "medium"),
+    "dossier_conversation": ("gpt-5.6-terra", "medium"),
+    "dossier_library": ("gpt-5.6-terra", "high"),
+    "dossier_podcast": ("gpt-5.6-terra", "high"),
+    "dossier_contributor": ("gpt-5.6-terra", "high"),
+    "dossier_idea": ("gpt-5.6-terra", "high"),
+    "dossier_idea_resolve": ("gpt-5.6-luna", "low"),
 }
 
-_OPERATION_EXPECTATIONS = {
-    "metadata_enrichment": ("routine", "gpt-5.6-luna", "low", 120, 32 * 1024),
-    "media_summary": ("routine", "gpt-5.6-luna", "low", 120, 256 * 1024),
-    "synapse": ("routine", "gpt-5.6-luna", "low", 120, 256 * 1024),
-    "dawn_write": ("standard", "gpt-5.6-terra", "medium", 180, 256 * 1024),
-    "oracle": ("standard", "gpt-5.6-terra", "medium", 180, 256 * 1024),
-    "dossier_page": ("routine", "gpt-5.6-luna", "low", 120, 1024 * 1024),
-    "dossier_note": ("routine", "gpt-5.6-luna", "low", 120, 1024 * 1024),
-    "dossier_media": ("standard", "gpt-5.6-terra", "medium", 180, 1024 * 1024),
-    "dossier_conversation": ("standard", "gpt-5.6-terra", "medium", 180, 1024 * 1024),
-    "dossier_library": ("thorough", "gpt-5.6-terra", "high", 300, 1024 * 1024),
-    "dossier_podcast": ("thorough", "gpt-5.6-terra", "high", 300, 1024 * 1024),
-    "dossier_contributor": ("thorough", "gpt-5.6-terra", "high", 300, 1024 * 1024),
-    "dossier_idea": ("thorough", "gpt-5.6-terra", "high", 300, 1024 * 1024),
-    "dossier_idea_resolve": ("routine", "gpt-5.6-luna", "low", 60, 256 * 1024),
+_EXPECTED_WORKFLOW = {
+    "metadata_enrichment": (120, 32 * 1024, 64_000, 8_000, "StrictJson"),
+    "media_summary": (120, 256 * 1024, 128_000, 16_000, "StrictJson"),
+    "synapse": (120, 256 * 1024, 128_000, 16_000, "StrictJson"),
+    "dawn_write": (180, 256 * 1024, 128_000, 16_000, "Text"),
+    "oracle": (180, 256 * 1024, 128_000, 16_000, "StrictJson"),
+    "dossier_page": (120, 1024 * 1024, 400_000, 32_000, "StrictJson"),
+    "dossier_note": (120, 1024 * 1024, 400_000, 32_000, "StrictJson"),
+    "dossier_media": (180, 1024 * 1024, 400_000, 32_000, "StrictJson"),
+    "dossier_conversation": (180, 1024 * 1024, 400_000, 32_000, "StrictJson"),
+    "dossier_library": (300, 1024 * 1024, 400_000, 32_000, "StrictJson"),
+    "dossier_podcast": (300, 1024 * 1024, 400_000, 32_000, "StrictJson"),
+    "dossier_contributor": (300, 1024 * 1024, 400_000, 32_000, "StrictJson"),
+    "dossier_idea": (300, 1024 * 1024, 400_000, 32_000, "StrictJson"),
+    "dossier_idea_resolve": (60, 256 * 1024, 128_000, 16_000, "StrictJson"),
 }
 
 
-def _require_generation_policy() -> None:
-    assert find_spec("nexus.services.generation_policy") is not None, (
-        "Codex Personal generation policy is absent"
+def _require_generation_policy_cutover() -> None:
+    assert _GENERATION_POLICY_CUTOVER_PRESENT, "the exact generation policy is absent"
+
+
+def _selection_facts(selection: CodexPersonalSelection) -> tuple[str, str]:
+    assert selection.route == "CodexPersonal"
+    return selection.model, selection.reasoning
+
+
+def test_exact_generation_policy_is_total_content_derived_and_profile_free() -> None:
+    _require_generation_policy_cutover()
+    policy = generation_policy.GENERATION_POLICY
+
+    assert tuple(policy.background_operations) == tuple(_EXPECTED_SELECTIONS)
+    assert _selection_facts(policy.chat.seed) == ("gpt-5.6-terra", "medium")
+    assert policy.chat.workflow.operation == "chat"
+    assert policy.chat.workflow.output_contract.kind == "Text"
+    assert policy.chat.workflow.request_budget.max_context_tokens == 400_000
+    assert policy.chat.workflow.request_budget.max_output_tokens == 32_000
+    assert policy.chat.workflow.model_tool_policy.kind == "ChatPerRunTools"
+    assert policy.chat.workflow.model_tool_policy.read_plan_id == "ChatRead"
+    assert policy.chat.workflow.model_tool_policy.additive_write_plan_id == "ChatReadAdditiveWrite"
+
+    for operation, expected_selection in _EXPECTED_SELECTIONS.items():
+        entry = generation_policy.background_operation_policy(operation)
+        workflow = entry.workflow
+        assert _selection_facts(entry.selection) == expected_selection
+        timeout, input_bytes, context_tokens, output_tokens, output_kind = _EXPECTED_WORKFLOW[
+            operation
+        ]
+        assert workflow.operation == operation
+        assert workflow.bounds.turn_timeout_seconds == timeout
+        assert workflow.bounds.input_max_bytes == input_bytes
+        assert workflow.request_budget.max_context_tokens == context_tokens
+        assert workflow.request_budget.max_output_tokens == output_tokens
+        assert workflow.output_contract.kind == output_kind
+
+    assert policy.background_operations["dossier_library"].workflow.model_tool_policy == (
+        generation_policy.ExactModelTools(
+            plan_id="LibraryDossierRead",
+            authority_revision=TOOL_PLAN_DEFINITIONS_BY_ID["LibraryDossierRead"].authority_revision,
+            effect_mode="ReadOnly",
+            scope_derivation="LibraryDossierManifest",
+        )
     )
-
-
-def _facts(entry: object) -> tuple[object, ...]:
-    return (
-        entry.plan_id,
-        entry.model,
-        entry.effort,
-        entry.turn_timeout_seconds,
-        entry.input_max_bytes,
+    assert policy.background_operations["dossier_idea"].workflow.model_tool_policy == (
+        generation_policy.ExactModelTools(
+            plan_id="IdeaDossierRead",
+            authority_revision=TOOL_PLAN_DEFINITIONS_BY_ID["IdeaDossierRead"].authority_revision,
+            effect_mode="ReadOnly",
+            scope_derivation="IdeaDossierEvidenceLedger",
+        )
     )
+    assert policy.background_operations["dossier_idea"].workflow.host_tool_plan.kind == (
+        "ExactHostToolPlan"
+    )
+    for operation, entry in policy.background_operations.items():
+        if operation not in {"dossier_library", "dossier_idea"}:
+            assert entry.workflow.model_tool_policy.kind == "NoModelTools"
+        if operation != "dossier_idea":
+            assert entry.workflow.host_tool_plan.kind == "NoHostToolPlan"
 
+    assert policy.revision == generation_policy.policy_revision_from_facts(
+        generation_policy.policy_facts()
+    )
+    assert generation_policy.validate_policy() is None
 
-def _assert_fixed_plans_have_one_complete_model_effort_pair() -> None:
-    _require_generation_policy()
-    from nexus.services import generation_policy
-
-    generation_policy.validate_policy()
-
-    assert set(generation_policy.PLANS) == {"routine", "standard", "thorough", "deep"}
-    assert generation_policy.PLAN_EVAL_PIN["policy_revision"] == generation_policy.POLICY_REVISION
-    assert generation_policy.PLAN_EVAL_PIN["corpus_revision"] == "generation-plans.v1"
-    assert {
-        plan_id: (plan.model, plan.effort) for plan_id, plan in generation_policy.PLANS.items()
-    } == {
-        "routine": ("gpt-5.6-luna", "low"),
-        "standard": ("gpt-5.6-terra", "medium"),
-        "thorough": ("gpt-5.6-terra", "high"),
-        "deep": ("gpt-5.6-sol", "high"),
+    removed = {
+        "PlanId",
+        "Plan",
+        "PLANS",
+        "MODEL_BOUNDS",
+        "ChatProfile",
+        "CHAT_PROFILES",
+        "_CHAT_PLAN",
+        "_CHAT_POLICIES",
+        "chat_policy",
     }
+    assert removed.isdisjoint(vars(generation_policy))
+    encoded = json.dumps(generation_policy.policy_facts(), sort_keys=True)
+    for legacy in ("routine", "standard", "thorough", "balanced", '"fast"'):
+        assert legacy not in encoded
 
 
-def test_policy_facts_pin_is_external_to_a_plan_table_edit() -> None:
-    _require_generation_policy()
-    from nexus.services import generation_policy
+def test_policy_revision_changes_for_any_exact_selection_or_workflow_fact() -> None:
+    _require_generation_policy_cutover()
+    facts = generation_policy.policy_facts()
+    changed = json.loads(json.dumps(facts))
+    changed["background_operations"]["oracle"]["selection"]["model"] = "gpt-5.6-luna"
+    assert generation_policy.policy_revision_from_facts(changed) != (
+        generation_policy.GENERATION_POLICY.revision
+    )
 
-    payload = generation_policy._policy_facts_payload()
-    plans = dict(payload["plans"])
-    plans["routine"] = {**plans["routine"], "model": "gpt-5.6-terra"}
-    changed = {**payload, "plans": plans}
-    changed_digest = hashlib.sha256(
-        json.dumps(changed, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
-
-    assert changed_digest != generation_policy.POLICY_FACTS_FINGERPRINT
-
-
-def _assert_model_bounds_are_shared_and_fixed_for_all_codex_targets() -> None:
-    _require_generation_policy()
-    from nexus.services import generation_policy
-
-    assert {
-        model: (
-            bounds.context_tokens,
-            bounds.model_output_tokens,
-            bounds.runtime_output_bytes,
-        )
-        for model, bounds in generation_policy.MODEL_BOUNDS.items()
-    } == _MODEL_BOUNDS
-    assert generation_policy.policy_fingerprint() == generation_policy.POLICY_FINGERPRINT
-
-
-def _assert_operation_catalog_has_exact_plans_capabilities_timeouts_and_input_bounds() -> None:
-    _require_generation_policy()
-    from nexus.services import generation_policy
-
-    assert set(generation_policy.OPERATIONS) == set(_OPERATION_EXPECTATIONS)
-    for operation, expected in _OPERATION_EXPECTATIONS.items():
-        entry = generation_policy.operation_policy(operation)
-        assert _facts(entry) == expected
-        assert generation_policy.capacity_wait_delays_seconds(operation) == (
-            () if operation == "dossier_idea_resolve" else (30, 60, 120, 300, 600)
-        )
-        assert entry.instructions_max_bytes == 32 * 1024
-        assert entry.capability == "Synthesis"
-        assert entry.stream.max_frames == 1_024
-        assert entry.stream.max_frame_bytes == 256 * 1024
-        assert entry.stream.max_stream_bytes == 1024 * 1024
-        assert entry.transport_deadline_seconds == 90 + expected[3] + 30 + 15
-
-
-def _assert_chat_is_three_typed_profiles_with_chat_tools_limits() -> None:
-    _require_generation_policy()
-    from nexus.jobs import registry
-    from nexus.services import generation_policy
-
-    assert set(generation_policy.CHAT_PROFILES) == {"fast", "balanced", "deep"}
-    assert generation_policy.capacity_wait_delays_seconds("chat") == (5, 10)
-    assert {
-        profile_id: generation_policy.chat_policy(profile_id).plan_id
-        for profile_id in generation_policy.CHAT_PROFILES
-    } == {
-        "fast": "routine",
-        "balanced": "standard",
-        "deep": "deep",
-    }
-    for profile_id in generation_policy.CHAT_PROFILES:
-        entry = generation_policy.chat_policy(profile_id)
-        assert entry.capability == "ChatTools"
-        assert entry.instructions_max_bytes == 32 * 1024
-        assert entry.input_max_bytes == 512 * 1024
-        assert entry.turn_timeout_seconds == 900
-        assert entry.stream.max_frames == 16_384
-        assert entry.stream.max_frame_bytes == 8 * 1024 * 1024
-        assert entry.stream.max_stream_bytes == 16 * 1024 * 1024
-        assert (
-            entry.stream.max_stream_bytes
-            <= generation_policy.MODEL_BOUNDS[entry.model].runtime_output_bytes
-        )
-        assert entry.stream.text_flush_interval_ms == 100
-        assert entry.stream.text_flush_bytes == 8 * 1024
-        assert entry.transport_deadline_seconds == 90 + 900 + 30 + 15
-    assert hasattr(registry, "CHAT_RUN_LEASE_SECONDS"), "Chat lease policy is absent"
-    assert registry.CHAT_RUN_LEASE_SECONDS == 1_200
-    assert registry.CHAT_RUN_LEASE_SECONDS > max(
-        generation_policy.chat_policy(profile).transport_deadline_seconds
-        for profile in generation_policy.CHAT_PROFILES
+    changed = json.loads(json.dumps(facts))
+    changed["chat"]["workflow"]["request_budget"]["max_output_tokens"] += 1
+    assert generation_policy.policy_revision_from_facts(changed) != (
+        generation_policy.GENERATION_POLICY.revision
     )
 
 
-def test_fixed_generation_policy_catalog_is_complete_and_closed() -> None:
-    _assert_fixed_plans_have_one_complete_model_effort_pair()
-    _assert_model_bounds_are_shared_and_fixed_for_all_codex_targets()
-    _assert_operation_catalog_has_exact_plans_capabilities_timeouts_and_input_bounds()
-    _assert_chat_is_three_typed_profiles_with_chat_tools_limits()
-
-
-def test_codex_ephemeral_limits_cover_the_largest_admitted_serialized_turn() -> None:
-    _require_generation_policy()
-    from nexus.services import generation_policy
-
-    largest_runtime_output = max(
-        bound.runtime_output_bytes for bound in generation_policy.MODEL_BOUNDS.values()
+def test_policy_catalog_rejects_drift_and_unknown_operations() -> None:
+    _require_generation_policy_cutover()
+    oracle = generation_policy.background_operation_policy("oracle")
+    wrong = replace(
+        oracle,
+        selection=CodexPersonalSelection(
+            route="CodexPersonal", model="gpt-5.6-luna", reasoning="low"
+        ),
     )
-    policies = tuple(generation_policy.OPERATIONS.values()) + tuple(
-        generation_policy.chat_policy(profile) for profile in generation_policy.CHAT_PROFILES
-    )
-    largest_admitted_turn = (
-        largest_runtime_output
-        + max(policy.input_max_bytes for policy in policies)
-        + max(policy.instructions_max_bytes for policy in policies)
-    )
+    with pytest.raises(AssertionError, match="oracle"):
+        generation_policy.assert_background_operation_facts("oracle", wrong)
+    with pytest.raises(ValueError, match="unknown background generation operation"):
+        generation_policy.background_operation_policy("unknown")
 
+
+def test_codex_ephemeral_limits_are_operation_owned_not_model_name_bounds() -> None:
+    _require_generation_policy_cutover()
+    policies = (
+        generation_policy.GENERATION_POLICY.chat.workflow,
+        *(
+            entry.workflow
+            for entry in generation_policy.GENERATION_POLICY.background_operations.values()
+        ),
+    )
+    largest_admitted_serialized_turn = (
+        generation_policy.CODEX_RUNTIME_STATE_OUTPUT_LIMIT_BYTES
+        + max(entry.bounds.input_max_bytes for entry in policies)
+        + max(entry.bounds.instructions_max_bytes for entry in policies)
+    )
     assert generation_policy.CODEX_EPHEMERAL_FILE_LIMIT_BYTES == 74 * 1024 * 1024
     assert (
-        generation_policy.CODEX_EPHEMERAL_FILE_LIMIT_BYTES - largest_admitted_turn
-        >= 8 * 1024 * 1024
+        generation_policy.CODEX_EPHEMERAL_FILE_LIMIT_BYTES - largest_admitted_serialized_turn
+        >= (8 * 1024 * 1024)
     )
     assert generation_policy.CODEX_EPHEMERAL_ROOT_BYTES == 180 * 1024 * 1024
-    assert generation_policy.CODEX_EPHEMERAL_ROOT_BYTES >= (
-        2 * generation_policy.CODEX_EPHEMERAL_FILE_LIMIT_BYTES + 32 * 1024 * 1024
-    )
 
 
-def test_policy_catalog_rejects_a_wrong_plan_instead_of_accepting_catalog_drift() -> None:
-    """Sensitivity fault: moving oracle to routine must be observable as red."""
-
-    _require_generation_policy()
-    from nexus.services import generation_policy
-
-    oracle = generation_policy.operation_policy("oracle")
-    wrong = replace(oracle, plan_id="routine", model="gpt-5.6-luna", effort="low")
-    assert _facts(wrong) != _OPERATION_EXPECTATIONS["oracle"]
-    with pytest.raises(AssertionError, match="oracle"):
-        generation_policy.assert_operation_facts("oracle", wrong)
+def test_policy_revision_hash_is_domain_separated_and_canonical() -> None:
+    _require_generation_policy_cutover()
+    facts = generation_policy.policy_facts()
+    canonical = json.dumps(
+        facts,
+        ensure_ascii=True,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    raw = hashlib.sha256(b"nexus.generation-policy.v2\0" + canonical).hexdigest()
+    assert generation_policy.GENERATION_POLICY.revision == f"generation-policy.v2.{raw}"

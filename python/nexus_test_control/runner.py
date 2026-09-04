@@ -106,6 +106,7 @@ from nexus_test_control.services import (
     CodexGenerationPeer,
     EmbeddingPeer,
     InvitedTestUser,
+    ProviderApiPeer,
     StartedProcess,
     SupabaseCredentials,
     TestRun,
@@ -120,6 +121,7 @@ from nexus_test_control.services import (
     invite_supabase_user,
     materialize_codex_generation_peer,
     materialize_embedding_peer,
+    materialize_provider_api_peer,
     new_run_id,
     prepare_run,
     required_platform_process_tools,
@@ -409,6 +411,12 @@ _LOCAL_RUNTIME_CAPABILITIES = frozenset(
     }
 )
 _EXTERNAL_PROTOCOL_CAPABILITIES = frozenset(
+    {
+        Capability.SERVICE,
+        Capability.LLM_EVAL,
+    }
+)
+_PROVIDER_API_PROTOCOL_CAPABILITIES = frozenset(
     {
         Capability.SERVICE,
         Capability.LLM_EVAL,
@@ -781,6 +789,14 @@ class _RunnerPorts:
     ) -> EmbeddingPeer:
         return materialize_embedding_peer(repo_root, environment, run)
 
+    def materialize_provider_api_peer(
+        self,
+        repo_root: Path,
+        environment: Mapping[str, str],
+        run: TestRun,
+    ) -> ProviderApiPeer:
+        return materialize_provider_api_peer(repo_root, environment, run)
+
     def materialize_generation_peer(
         self,
         repo_root: Path,
@@ -835,6 +851,7 @@ class _WorkflowExecution:
     run: TestRun | None = None
     build: StandaloneBuild | None = None
     external_protocol_started: bool = False
+    provider_api_peer: ProviderApiPeer | None = None
     journey_runtime_started: bool = False
     preparation_attempted: bool = False
     preparation_failure: CapabilityResult | None = None
@@ -868,6 +885,43 @@ class _WorkflowExecution:
         except RuntimeContractError as error:
             return _fail(capability, f"owned external protocol failed: {error}")
         self.external_protocol_started = True
+        return None
+
+    def ensure_provider_api_protocol(
+        self,
+        capability: Capability,
+        prepared: TestRun,
+    ) -> CapabilityResult | None:
+        if self.provider_api_peer is not None:
+            return None
+        try:
+            peer = self.ports.materialize_provider_api_peer(
+                self.context.repo_root,
+                {"NEXUS_ENV": "test"},
+                prepared,
+            )
+            process = self.ports.start_python_process(
+                self.context.repo_root,
+                {"NEXUS_ENV": "test"},
+                prepared,
+                "provider-api-peer",
+            )
+            self.ports.wait_process_ready(
+                self.context.repo_root,
+                {"NEXUS_ENV": "test"},
+                process,
+                EndpointKind.PROVIDER_API,
+                "/livez",
+                tls_ca=peer.certificate,
+            )
+        except OSError as error:
+            return _not_run(
+                capability,
+                f"owned provider API protocol could not start: {error.strerror or error}",
+            )
+        except RuntimeContractError as error:
+            return _fail(capability, f"owned provider API protocol failed: {error}")
+        self.provider_api_peer = peer
         return None
 
     def prepare(self, capability: Capability) -> TestRun | CapabilityResult:
@@ -2081,6 +2135,10 @@ def _run_python_heavy(
         return prepared
     if execution is None:
         raise AssertionError("prepared run exists without workflow execution")
+    if capability in _PROVIDER_API_PROTOCOL_CAPABILITIES:
+        provider_failure = execution.ensure_provider_api_protocol(capability, prepared)
+        if provider_failure is not None:
+            return provider_failure
     if capability in _EXTERNAL_PROTOCOL_CAPABILITIES:
         protocol_failure = execution.ensure_external_protocol(capability, prepared)
         if protocol_failure is not None:
@@ -2678,6 +2736,7 @@ def _with_browser_process_logs(
         path.relative_to(context.repo_root).as_posix()
         for role in (
             "external",
+            "provider-api-peer",
             "provider-openai",
             "codex-generation-peer",
             "api",
@@ -2707,6 +2766,9 @@ def _ensure_browser_processes(
         protocol_failure = execution.ensure_external_protocol(capability, prepared)
         if protocol_failure is not None:
             return protocol_failure
+        provider_failure = execution.ensure_provider_api_protocol(capability, prepared)
+        if provider_failure is not None:
+            return provider_failure
         embedding_peer = execution.ports.materialize_embedding_peer(
             context.repo_root,
             {"NEXUS_ENV": "test"},
@@ -3235,6 +3297,9 @@ def _run_audit(
         protocol_failure = execution.ensure_external_protocol(capability, prepared)
         if protocol_failure is not None:
             return protocol_failure
+        provider_failure = execution.ensure_provider_api_protocol(capability, prepared)
+        if provider_failure is not None:
+            return provider_failure
         child_environment = _heavy_environment(
             context,
             environment,

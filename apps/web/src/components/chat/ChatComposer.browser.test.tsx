@@ -1,7 +1,17 @@
+/// <reference types="vite/client" />
+
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { Component, type ComponentProps, type ReactNode } from "react";
+import type { ComponentProps } from "react";
 import { cdp, page, userEvent } from "vitest/browser";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import "@/app/globals.css";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
@@ -10,55 +20,37 @@ import type { ChatDraftKey } from "@/lib/conversations/chatDraftKey";
 import type { PaneVisitId } from "@/lib/workspace/schema";
 import ChatComposerComponent from "./ChatComposer";
 
-const PROFILES = {
-  default_profile_id: "balanced",
-  profiles: [
-    {
-      id: "fast",
-      label: "Fast",
-      description: "Quick responses for everyday questions.",
-      model_label: "GPT-5.6 Luna",
-      effort_label: "Low",
-    },
-    {
-      id: "balanced",
-      label: "Balanced",
-      description: "The default profile: strong general-purpose reasoning.",
-      model_label: "GPT-5.6 Terra",
-      effort_label: "Medium",
-    },
-    {
-      id: "deep",
-      label: "Deep",
-      description: "Slower, deeper reasoning for hard problems.",
-      model_label: "GPT-5.6 Sol",
-      effort_label: "High",
-    },
-  ],
-};
-
 interface ChatRunCall {
   body: ChatRunCreateRequest;
   key: string;
 }
 
-class DraftDefectBoundary extends Component<
-  { children: ReactNode },
-  { failed: boolean }
-> {
-  state = { failed: false };
+interface GenerationFixtureModule {
+  readonly GENERATION_CATALOG_RESPONSE: unknown;
+}
 
-  static getDerivedStateFromError() {
-    return { failed: true };
-  }
+interface CutoverSupport {
+  readonly fixtures: GenerationFixtureModule;
+  readonly invalidateGenerationCatalogCache: () => void;
+}
 
-  render() {
-    return this.state.failed ? (
-      <p role="alert">Persisted draft rejected</p>
-    ) : (
-      this.props.children
-    );
+// Vite returns an empty map at BASE instead of failing import analysis on files
+// that exist only in the candidate. The scenarios then own behavioral RED.
+const cutoverModules = import.meta.glob([
+  "../../__tests__/helpers/generationCatalog.ts",
+  "./useGenerationCatalog.ts",
+]);
+let cutoverSupport: CutoverSupport | null = null;
+
+function requireCutoverSupport(): CutoverSupport {
+  if (cutoverSupport === null) {
+    expect(
+      cutoverSupport,
+      "the final exact-generation Chat composer owners are absent",
+    ).not.toBeNull();
+    throw new Error("unreachable after the BASE sensitivity assertion");
   }
+  return cutoverSupport;
 }
 
 const pathKey = (targetId: string): ChatDraftKey => ({
@@ -82,15 +74,16 @@ function requestPath(input: RequestInfo | URL): string {
   return new URL(value, window.location.origin).pathname;
 }
 
-// The BFF is stubbed at the fetch boundary: profiles resolve, and every chat-run
+// The BFF is stubbed at the fetch boundary: the strict catalog resolves, and every chat-run
 // POST records its exact request + idempotency key, then throws a synthetic
 // network loss to drive the reconciliation ("Retry send") path.
 function installBff(calls: ChatRunCall[]) {
+  const { GENERATION_CATALOG_RESPONSE } = requireCutoverSupport().fixtures;
   vi.stubGlobal(
     "fetch",
     async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = requestPath(input);
-      if (path === "/api/llm-profiles") return json({ data: PROFILES });
+      if (path === "/api/llm-catalog") return json(GENERATION_CATALOG_RESPONSE);
       if (path === "/api/chat-runs" && init?.method === "POST") {
         const headers = new Headers(init.headers);
         calls.push({
@@ -111,7 +104,7 @@ function Composer(
     <ChatComposerComponent
       conversationId="00000000-0000-4000-8000-000000000001"
       draftKey={pathKey("00000000-0000-4000-8000-000000000001")}
-      inheritedProfileSelection={null}
+      inheritedRunSelection={null}
       sendCapability={{ kind: "Available" }}
       {...props}
     />
@@ -119,8 +112,29 @@ function Composer(
 }
 
 describe("ChatComposer browser contract", () => {
+  beforeAll(async () => {
+    const loadFixtures =
+      cutoverModules["../../__tests__/helpers/generationCatalog.ts"];
+    const loadCatalogOwner = cutoverModules["./useGenerationCatalog.ts"];
+    if (loadFixtures === undefined || loadCatalogOwner === undefined) return;
+    const [fixtures, catalogOwner] = await Promise.all([
+      loadFixtures(),
+      loadCatalogOwner(),
+    ]);
+    cutoverSupport = {
+      fixtures: fixtures as GenerationFixtureModule,
+      invalidateGenerationCatalogCache: (
+        catalogOwner as {
+          readonly invalidateGenerationCatalogCache: () => void;
+        }
+      ).invalidateGenerationCatalogCache,
+    };
+  });
+
   beforeEach(async () => {
+    cutoverSupport?.invalidateGenerationCatalogCache();
     sessionStorage.clear();
+    cutoverSupport?.invalidateGenerationCatalogCache();
     await page.viewport(1_024, 768);
   });
 
@@ -136,9 +150,14 @@ describe("ChatComposer browser contract", () => {
     const calls: ChatRunCall[] = [];
     installBff(calls);
     const view = render(withRenderEnvironment(<Composer />));
-    const deep = await screen.findByRole("radio", { name: /Deep/ });
-    await userEvent.click(deep);
-    expect(deep).toBeChecked();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Change model/u }),
+    );
+    const high = await screen.findByRole("radio", { name: "High" });
+    fireEvent.click(high);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Confirm selection" }),
+    );
 
     const input = screen.getByRole<HTMLTextAreaElement>("textbox", {
       name: "Ask anything",
@@ -152,7 +171,13 @@ describe("ChatComposer browser contract", () => {
     ).toHaveLength(1);
     expect(calls[0].body).toMatchObject({
       content: "First\nSecond",
-      profile_id: "deep",
+      catalog_definition_revision: "a".repeat(64),
+      selection: {
+        route: "CodexPersonal",
+        model: "gpt-5.6-terra",
+        reasoning: "high",
+      },
+      tool_authority: "ReadOnly",
     });
     view.unmount();
 
@@ -164,7 +189,7 @@ describe("ChatComposer browser contract", () => {
         { initialViewport: "mobile" },
       ),
     );
-    await screen.findByRole("radio", { name: /Fast/ });
+    await screen.findByRole("button", { name: /Change model/u });
     const mobileInput = screen.getByRole<HTMLTextAreaElement>("textbox", {
       name: "Ask anything",
     });
@@ -184,6 +209,7 @@ describe("ChatComposer browser contract", () => {
   });
 
   it("restores a persisted draft after the hydrated browser boundary", async () => {
+    installBff([]);
     const draftKey = newConversationKey("hydration-draft-proof");
     const view = render(
       withRenderEnvironment(
@@ -214,10 +240,15 @@ describe("ChatComposer browser contract", () => {
     const calls: ChatRunCall[] = [];
     installBff(calls);
     const lockedKey = pathKey("00000000-0000-4000-8000-00000000000b");
-    const lockedStorageKey = "nx_chat_draft.v2:path:00000000-0000-4000-8000-00000000000b";
+    const lockedStorageKey = "nx_chat_draft.v3:path:00000000-0000-4000-8000-00000000000b";
     const persisted = {
       text: "in-flight message",
-      profile: null,
+      selection: {
+        route: "CodexPersonal",
+        model: "gpt-5.6-terra",
+        reasoning: "medium",
+      },
+      toolAuthority: "ReadOnly",
       operation: {
         kind: "ReconcileRequired",
         command: {
@@ -236,7 +267,13 @@ describe("ChatComposer browser contract", () => {
               },
             },
             content: "in-flight message",
-            profile_id: "balanced",
+            catalog_definition_revision: "a".repeat(64),
+            selection: {
+              route: "CodexPersonal",
+              model: "gpt-5.6-terra",
+              reasoning: "medium",
+            },
+            tool_authority: "ReadOnly",
             reader_selection: { kind: "Absent" },
           },
         },
@@ -278,42 +315,32 @@ describe("ChatComposer browser contract", () => {
     ).toEqual(persisted.operation);
   });
 
-  it("surfaces a widened persisted v2 request as a browser defect", async () => {
+  it("purges a v2 draft without decoding it and shows the reset", async () => {
+    installBff([]);
     const draftKey = newConversationKey(
       "3f2504e0-4f89-41d3-9a0c-0305e82c3302",
     );
     sessionStorage.setItem(
       "nx_chat_draft.v2:new:3f2504e0-4f89-41d3-9a0c-0305e82c3302",
       JSON.stringify({
-        text: "do not silently replay this",
-        profile: { profileId: "fast" },
-        operation: {
-          kind: "ReconcileRequired",
-          command: {
-            idempotencyKey: "selector-smuggling-key",
-            request: {
-              destination: { kind: "New" },
-              content: "do not silently replay this",
-              profile_id: "fast",
-              reasoning_option_id: "high",
-              reader_selection: { kind: "Absent" },
-            },
-          },
-        },
+        opaque_legacy_payload: "must not be decoded or replayed",
       }),
     );
 
     render(
       withRenderEnvironment(
-        <DraftDefectBoundary>
-          <Composer conversationId={null} draftKey={draftKey} />
-        </DraftDefectBoundary>,
+        <Composer conversationId={null} draftKey={draftKey} />,
       ),
     );
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Persisted draft rejected",
-    );
+    expect(
+      await screen.findByText(/A legacy Chat draft was discarded/u),
+    ).toBeVisible();
+    expect(
+      sessionStorage.getItem(
+        "nx_chat_draft.v2:new:3f2504e0-4f89-41d3-9a0c-0305e82c3302",
+      ),
+    ).toBeNull();
     expect(screen.queryByRole("button", { name: "Retry send" })).toBeNull();
   });
 
@@ -329,7 +356,15 @@ describe("ChatComposer browser contract", () => {
         <Composer conversationId={null} draftKey={draftKey} />,
       ),
     );
-    await userEvent.click(await screen.findByRole("radio", { name: /Deep/ }));
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Change model/u }),
+    );
+    const high = await screen.findByRole("radio", { name: "High" });
+    fireEvent.click(high);
+    await waitFor(() => expect(high).toHaveAttribute("aria-checked", "true"));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Confirm selection" }),
+    );
     const input = screen.getByRole<HTMLTextAreaElement>("textbox", {
       name: "Ask anything",
     });
@@ -339,7 +374,11 @@ describe("ChatComposer browser contract", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0].body.destination).toEqual({ kind: "New" });
     expect(calls[0].body).toMatchObject({
-      profile_id: "deep",
+      selection: {
+        route: "CodexPersonal",
+        model: "gpt-5.6-terra",
+        reasoning: "high",
+      },
     });
 
     // Simulate a full reload: unmount and remount a FRESH composer on the same
@@ -396,11 +435,13 @@ describe("ChatComposer browser contract", () => {
         { initialViewport: "mobile" },
       ),
     );
-    const fast = await screen.findByRole("radio", { name: /Fast/ });
+    const modelTrigger = await screen.findByRole("button", {
+      name: /Change model/u,
+    });
     const stop = screen.getByRole("button", { name: "Stop response" });
     const socketWidth = stop.getBoundingClientRect().width;
 
-    expect(fast.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
+    expect(modelTrigger.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
     expect(stop.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
 
@@ -433,7 +474,7 @@ describe("ChatComposer browser contract", () => {
       ),
     );
 
-    await screen.findByRole("radio", { name: /Fast/ });
+    await screen.findByRole("button", { name: /Change model/u });
     await userEvent.click(
       screen.getByRole("button", { name: "Stop response" }),
     );

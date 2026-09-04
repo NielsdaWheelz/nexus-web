@@ -1,60 +1,45 @@
-"""The single product-owned policy catalog for Codex generation.
+"""Exact developer-owned generation selections and workflow authority.
 
-This module contains no provider credentials or provider-registry lookup.  A
-plan is only a model/effort pair; capability is selected by the resolved
-operation (or typed chat profile) and is therefore part of that policy entry.
+The policy is deliberately model-catalog agnostic: it names exact route-tagged
+selections and conservative Nexus request budgets, while catalog admission
+proves that those facts are currently runnable. It contains no tier, profile,
+fallback, or model-capacity table.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict, dataclass
-from typing import Literal
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass, is_dataclass
+from types import MappingProxyType
+from typing import Literal, cast
 
-PlanId = Literal["routine", "standard", "thorough", "deep"]
-Capability = Literal["Synthesis", "ChatTools"]
-ChatProfile = Literal["fast", "balanced", "deep"]
+from pydantic import BaseModel
 
-POLICY_REVISION = "codex-generation.2026-08-24.2"
-# Nexus-side pre-accept dispatch policy. These schedules never cross the host
-# wire boundary and therefore are not part of the host policy fingerprint.
-_BACKGROUND_CAPACITY_WAIT_DELAYS_SECONDS = (30, 60, 120, 300, 600)
-_INTERACTIVE_CAPACITY_WAIT_DELAYS_SECONDS = (5, 10)
-# Exact frozen `llm_tools` Chat plan revision. The MCP composition boundary
-# independently proves its generated plan retains this pin.
-TOOL_PLAN_REVISION = "122bae501ba24887bacd88ba79f6e8108b2c91ca97bb6495747d347ec5a5ac53"
-PLAN_EVAL_PIN = {
-    "corpus_revision": "generation-plans.v1",
-    "policy_revision": POLICY_REVISION,
-    "policy_facts_fingerprint": "08179b82769191a0d0ebc5871f3e15f16fea5c01fd86db5dd6e1d1e3fd879273",
-    "provider_runtime_revision": "a5d9c8e0c1c851daee0731554e0a4a326d3c2819",
-    "codex_sdk_version": "0.144.4",
-}
-_PINNED_PLAN_EVAL_PIN = {
-    "corpus_revision": "generation-plans.v1",
-    "policy_revision": "codex-generation.2026-08-24.2",
-    "policy_facts_fingerprint": "08179b82769191a0d0ebc5871f3e15f16fea5c01fd86db5dd6e1d1e3fd879273",
-    "provider_runtime_revision": "a5d9c8e0c1c851daee0731554e0a4a326d3c2819",
-    "codex_sdk_version": "0.144.4",
-}
-_PINNED_POLICY_FACTS_FINGERPRINT = (
-    "08179b82769191a0d0ebc5871f3e15f16fea5c01fd86db5dd6e1d1e3fd879273"
+from nexus.services.generation_selection import (
+    CodexPersonalSelection,
+    GenerationSelectionSpec,
+    ProviderApiSelection,
 )
+from nexus.services.generation_spec import BackgroundOperationKey
+from nexus.services.tool_runtime.authority import tool_plan_authority_revision
+
+type GenerationSelection = CodexPersonalSelection | ProviderApiSelection
+type EffectMode = Literal["ReadOnly", "AdditiveWrites"]
+type ToolScopeDerivation = Literal[
+    "ChatAdmittedContext",
+    "LibraryDossierManifest",
+    "IdeaDossierEvidenceLedger",
+]
 
 
 @dataclass(frozen=True, slots=True)
-class Plan:
-    id: PlanId
-    model: str
-    effort: str
+class RequestBudget:
+    """Policy-owned maximum prompt context and reserved model output."""
 
-
-@dataclass(frozen=True, slots=True)
-class ModelBounds:
-    context_tokens: int
-    model_output_tokens: int
-    runtime_output_bytes: int
+    max_context_tokens: int
+    max_output_tokens: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,39 +52,105 @@ class StreamBounds:
 
 
 @dataclass(frozen=True, slots=True)
-class OperationPolicy:
-    operation: str
-    revision: str
-    plan_id: PlanId
-    model: str
-    effort: str
-    capability: Capability
+class OperationBounds:
     instructions_max_bytes: int
     input_max_bytes: int
     turn_timeout_seconds: int
     stream: StreamBounds
-    tool_plan_revision: str | None = None
     session_open_timeout_seconds: int = 90
     runtime_close_timeout_seconds: int = 30
     transport_margin_seconds: int = 15
     transport_deadline_seconds: int = 0
 
 
-PLANS: dict[PlanId, Plan] = {
-    "routine": Plan("routine", "gpt-5.6-luna", "low"),
-    "standard": Plan("standard", "gpt-5.6-terra", "medium"),
-    "thorough": Plan("thorough", "gpt-5.6-terra", "high"),
-    "deep": Plan("deep", "gpt-5.6-sol", "high"),
-}
+@dataclass(frozen=True, slots=True)
+class TextOutputContract:
+    kind: Literal["Text"] = "Text"
 
-MODEL_BOUNDS: dict[str, ModelBounds] = {
-    model: ModelBounds(
-        context_tokens=1_050_000,
-        model_output_tokens=128_000,
-        runtime_output_bytes=64 * 1024 * 1024,
-    )
-    for model in ("gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol")
-}
+
+@dataclass(frozen=True, slots=True)
+class StrictJsonOutputContract:
+    kind: Literal["StrictJson"] = "StrictJson"
+
+
+type OutputContract = TextOutputContract | StrictJsonOutputContract
+
+
+@dataclass(frozen=True, slots=True)
+class NoHostToolPlan:
+    kind: Literal["NoHostToolPlan"] = "NoHostToolPlan"
+
+
+@dataclass(frozen=True, slots=True)
+class ExactHostToolPlan:
+    plan_id: str
+    authority_revision: str
+    kind: Literal["ExactHostToolPlan"] = "ExactHostToolPlan"
+
+
+type HostToolPlan = NoHostToolPlan | ExactHostToolPlan
+
+
+@dataclass(frozen=True, slots=True)
+class NoModelTools:
+    kind: Literal["NoModelTools"] = "NoModelTools"
+
+
+@dataclass(frozen=True, slots=True)
+class ExactModelTools:
+    plan_id: str
+    authority_revision: str
+    effect_mode: EffectMode
+    scope_derivation: ToolScopeDerivation
+    kind: Literal["ExactModelTools"] = "ExactModelTools"
+
+
+@dataclass(frozen=True, slots=True)
+class ChatPerRunTools:
+    read_plan_id: str
+    read_plan_authority_revision: str
+    additive_write_plan_id: str
+    additive_write_plan_authority_revision: str
+    scope_derivation: Literal["ChatAdmittedContext"]
+    kind: Literal["ChatPerRunTools"] = "ChatPerRunTools"
+
+
+type ModelToolPolicy = NoModelTools | ExactModelTools | ChatPerRunTools
+
+_NO_HOST_TOOL_PLAN = NoHostToolPlan()
+_NO_MODEL_TOOLS = NoModelTools()
+_STRICT_JSON_OUTPUT = StrictJsonOutputContract()
+
+
+@dataclass(frozen=True, slots=True)
+class OperationWorkflowSpec:
+    operation: str
+    revision: str
+    bounds: OperationBounds
+    request_budget: RequestBudget
+    output_contract: OutputContract
+    host_tool_plan: HostToolPlan
+    model_tool_policy: ModelToolPolicy
+
+
+@dataclass(frozen=True, slots=True)
+class ChatPolicy:
+    seed: GenerationSelection
+    workflow: OperationWorkflowSpec
+
+
+@dataclass(frozen=True, slots=True)
+class BackgroundOperationPolicy:
+    selection: GenerationSelection
+    workflow: OperationWorkflowSpec
+
+
+@dataclass(frozen=True, slots=True)
+class GenerationPolicy:
+    revision: str
+    chat: ChatPolicy
+    background_operations: Mapping[BackgroundOperationKey, BackgroundOperationPolicy]
+
 
 _SYNTHESIS_STREAM = StreamBounds(
     max_frames=1_024,
@@ -108,105 +159,351 @@ _SYNTHESIS_STREAM = StreamBounds(
 )
 _CHAT_STREAM = StreamBounds(
     max_frames=16_384,
-    # Chat text is streamed in small frames, while the terminal repeats the
-    # final fold. Reserving one 8 MiB terminal inside a 16 MiB stream bounds
-    # user-visible text below the worker/host cgroup headroom.
     max_frame_bytes=8 * 1024 * 1024,
     max_stream_bytes=16 * 1024 * 1024,
     text_flush_interval_ms=100,
     text_flush_bytes=8 * 1024,
 )
 
-_REVISION_BY_OPERATION = {
-    "metadata_enrichment": "metadata-enrichment.2026-08-12.4",
-    "media_summary": "media-summary.2026-08-24.1",
-    "synapse": "synapse.2026-08-24.1",
-    "dawn_write": "dawn-write.2026-08-24.1",
-    "oracle": "oracle.2026-08-24.1",
-    "dossier_page": "dossier-page.2026-08-24.1",
-    "dossier_note": "dossier-note.2026-08-24.1",
-    "dossier_media": "dossier-media.2026-08-24.1",
-    "dossier_conversation": "dossier-conversation.2026-08-24.1",
-    "dossier_library": "dossier-library.2026-08-24.1",
-    "dossier_podcast": "dossier-podcast.2026-08-24.1",
-    "dossier_contributor": "dossier-contributor.2026-08-24.1",
-    "dossier_idea": "dossier-idea.2026-08-24.1",
-    "dossier_idea_resolve": "dossier-idea-resolve.2026-08-24.1",
-}
 
-_BACKGROUND_PLAN: dict[str, tuple[PlanId, int, int]] = {
-    "metadata_enrichment": ("routine", 120, 32 * 1024),
-    "media_summary": ("routine", 120, 256 * 1024),
-    "synapse": ("routine", 120, 256 * 1024),
-    "dawn_write": ("standard", 180, 256 * 1024),
-    "oracle": ("standard", 180, 256 * 1024),
-    "dossier_page": ("routine", 120, 1024 * 1024),
-    "dossier_note": ("routine", 120, 1024 * 1024),
-    "dossier_media": ("standard", 180, 1024 * 1024),
-    "dossier_conversation": ("standard", 180, 1024 * 1024),
-    "dossier_library": ("thorough", 300, 1024 * 1024),
-    "dossier_podcast": ("thorough", 300, 1024 * 1024),
-    "dossier_contributor": ("thorough", 300, 1024 * 1024),
-    "dossier_idea": ("thorough", 300, 1024 * 1024),
-    "dossier_idea_resolve": ("routine", 60, 256 * 1024),
-}
+def _codex(model: str, reasoning: str) -> CodexPersonalSelection:
+    return CodexPersonalSelection(
+        route="CodexPersonal",
+        model=model,
+        reasoning=reasoning,
+    )
 
 
-def _synthesis_policy(
-    operation: str, plan_id: PlanId, timeout: int, input_bytes: int
-) -> OperationPolicy:
-    plan = PLANS[plan_id]
-    return OperationPolicy(
+def _tool_authority_revision(plan_id: str) -> str:
+    try:
+        return tool_plan_authority_revision(plan_id)
+    except ValueError as error:
+        raise AssertionError(
+            f"generation policy references unknown tool plan {plan_id!r}"
+        ) from error
+
+
+def _bounds(
+    *,
+    input_max_bytes: int,
+    turn_timeout_seconds: int,
+    stream: StreamBounds = _SYNTHESIS_STREAM,
+) -> OperationBounds:
+    return OperationBounds(
+        instructions_max_bytes=32 * 1024,
+        input_max_bytes=input_max_bytes,
+        turn_timeout_seconds=turn_timeout_seconds,
+        stream=stream,
+        transport_deadline_seconds=90 + turn_timeout_seconds + 30 + 15,
+    )
+
+
+def _canonical_value(value: object) -> object:
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json")
+    if is_dataclass(value) and not isinstance(value, type):
+        return {key: _canonical_value(child) for key, child in asdict(value).items()}
+    if isinstance(value, Mapping):
+        return {str(key): _canonical_value(child) for key, child in value.items()}
+    if isinstance(value, tuple | list):
+        return [_canonical_value(child) for child in value]
+    return value
+
+
+def _canonical(value: object) -> bytes:
+    return json.dumps(
+        _canonical_value(value),
+        ensure_ascii=True,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _workflow_revision(facts: Mapping[str, object]) -> str:
+    digest = hashlib.sha256(b"nexus.operation-workflow.v2\0" + _canonical(facts)).hexdigest()
+    return f"operation-workflow.v2.{digest}"
+
+
+def _workflow(
+    operation: str,
+    *,
+    bounds: OperationBounds,
+    request_budget: RequestBudget,
+    output_contract: OutputContract,
+    host_tool_plan: HostToolPlan = _NO_HOST_TOOL_PLAN,
+    model_tool_policy: ModelToolPolicy = _NO_MODEL_TOOLS,
+) -> OperationWorkflowSpec:
+    facts = {
+        "operation": operation,
+        "bounds": _canonical_value(bounds),
+        "request_budget": _canonical_value(request_budget),
+        "output_contract": _canonical_value(output_contract),
+        "host_tool_plan": _canonical_value(host_tool_plan),
+        "model_tool_policy": _canonical_value(model_tool_policy),
+    }
+    return OperationWorkflowSpec(
         operation=operation,
-        revision=_REVISION_BY_OPERATION[operation],
-        plan_id=plan_id,
-        model=plan.model,
-        effort=plan.effort,
-        capability="Synthesis",
-        instructions_max_bytes=32 * 1024,
-        input_max_bytes=input_bytes,
-        turn_timeout_seconds=timeout,
-        stream=_SYNTHESIS_STREAM,
-        transport_deadline_seconds=90 + timeout + 30 + 15,
+        revision=_workflow_revision(facts),
+        bounds=bounds,
+        request_budget=request_budget,
+        output_contract=output_contract,
+        host_tool_plan=host_tool_plan,
+        model_tool_policy=model_tool_policy,
     )
 
 
-OPERATIONS: dict[str, OperationPolicy] = {
-    operation: _synthesis_policy(operation, plan_id, timeout, input_bytes)
-    for operation, (plan_id, timeout, input_bytes) in _BACKGROUND_PLAN.items()
-}
-
-CHAT_PROFILES: tuple[ChatProfile, ...] = ("fast", "balanced", "deep")
-_CHAT_PLAN: dict[ChatProfile, PlanId] = {
-    "fast": "routine",
-    "balanced": "standard",
-    "deep": "deep",
-}
-_CHAT_POLICIES: dict[ChatProfile, OperationPolicy] = {
-    profile: OperationPolicy(
-        operation="chat",
-        revision=f"chat.{profile}.2026-08-24.2",
-        plan_id=plan_id,
-        model=PLANS[plan_id].model,
-        effort=PLANS[plan_id].effort,
-        capability="ChatTools",
-        instructions_max_bytes=32 * 1024,
-        input_max_bytes=512 * 1024,
-        turn_timeout_seconds=900,
-        stream=_CHAT_STREAM,
-        tool_plan_revision=TOOL_PLAN_REVISION,
-        transport_deadline_seconds=90 + 900 + 30 + 15,
+def _background(
+    operation: BackgroundOperationKey,
+    *,
+    model: str,
+    reasoning: str,
+    timeout: int,
+    input_bytes: int,
+    context_tokens: int,
+    output_tokens: int,
+    output_contract: OutputContract = _STRICT_JSON_OUTPUT,
+    host_tool_plan: HostToolPlan = _NO_HOST_TOOL_PLAN,
+    model_tool_policy: ModelToolPolicy = _NO_MODEL_TOOLS,
+) -> BackgroundOperationPolicy:
+    return BackgroundOperationPolicy(
+        selection=_codex(model, reasoning),
+        workflow=_workflow(
+            operation,
+            bounds=_bounds(
+                input_max_bytes=input_bytes,
+                turn_timeout_seconds=timeout,
+            ),
+            request_budget=RequestBudget(
+                max_context_tokens=context_tokens,
+                max_output_tokens=output_tokens,
+            ),
+            output_contract=output_contract,
+            host_tool_plan=host_tool_plan,
+            model_tool_policy=model_tool_policy,
+        ),
     )
-    for profile, plan_id in _CHAT_PLAN.items()
+
+
+_BACKGROUND_OPERATIONS: dict[BackgroundOperationKey, BackgroundOperationPolicy] = {
+    "metadata_enrichment": _background(
+        "metadata_enrichment",
+        model="gpt-5.6-luna",
+        reasoning="low",
+        timeout=120,
+        input_bytes=32 * 1024,
+        context_tokens=64_000,
+        output_tokens=8_000,
+    ),
+    "media_summary": _background(
+        "media_summary",
+        model="gpt-5.6-luna",
+        reasoning="low",
+        timeout=120,
+        input_bytes=256 * 1024,
+        context_tokens=128_000,
+        output_tokens=16_000,
+    ),
+    "synapse": _background(
+        "synapse",
+        model="gpt-5.6-luna",
+        reasoning="low",
+        timeout=120,
+        input_bytes=256 * 1024,
+        context_tokens=128_000,
+        output_tokens=16_000,
+    ),
+    "dawn_write": _background(
+        "dawn_write",
+        model="gpt-5.6-terra",
+        reasoning="medium",
+        timeout=180,
+        input_bytes=256 * 1024,
+        context_tokens=128_000,
+        output_tokens=16_000,
+        output_contract=TextOutputContract(),
+    ),
+    "oracle": _background(
+        "oracle",
+        model="gpt-5.6-terra",
+        reasoning="medium",
+        timeout=180,
+        input_bytes=256 * 1024,
+        context_tokens=128_000,
+        output_tokens=16_000,
+    ),
+    "dossier_page": _background(
+        "dossier_page",
+        model="gpt-5.6-luna",
+        reasoning="low",
+        timeout=120,
+        input_bytes=1024 * 1024,
+        context_tokens=400_000,
+        output_tokens=32_000,
+    ),
+    "dossier_note": _background(
+        "dossier_note",
+        model="gpt-5.6-luna",
+        reasoning="low",
+        timeout=120,
+        input_bytes=1024 * 1024,
+        context_tokens=400_000,
+        output_tokens=32_000,
+    ),
+    "dossier_media": _background(
+        "dossier_media",
+        model="gpt-5.6-terra",
+        reasoning="medium",
+        timeout=180,
+        input_bytes=1024 * 1024,
+        context_tokens=400_000,
+        output_tokens=32_000,
+    ),
+    "dossier_conversation": _background(
+        "dossier_conversation",
+        model="gpt-5.6-terra",
+        reasoning="medium",
+        timeout=180,
+        input_bytes=1024 * 1024,
+        context_tokens=400_000,
+        output_tokens=32_000,
+    ),
+    "dossier_library": _background(
+        "dossier_library",
+        model="gpt-5.6-terra",
+        reasoning="high",
+        timeout=300,
+        input_bytes=1024 * 1024,
+        context_tokens=400_000,
+        output_tokens=32_000,
+        model_tool_policy=ExactModelTools(
+            plan_id="LibraryDossierRead",
+            authority_revision=_tool_authority_revision("LibraryDossierRead"),
+            effect_mode="ReadOnly",
+            scope_derivation="LibraryDossierManifest",
+        ),
+    ),
+    "dossier_podcast": _background(
+        "dossier_podcast",
+        model="gpt-5.6-terra",
+        reasoning="high",
+        timeout=300,
+        input_bytes=1024 * 1024,
+        context_tokens=400_000,
+        output_tokens=32_000,
+    ),
+    "dossier_contributor": _background(
+        "dossier_contributor",
+        model="gpt-5.6-terra",
+        reasoning="high",
+        timeout=300,
+        input_bytes=1024 * 1024,
+        context_tokens=400_000,
+        output_tokens=32_000,
+    ),
+    "dossier_idea": _background(
+        "dossier_idea",
+        model="gpt-5.6-terra",
+        reasoning="high",
+        timeout=300,
+        input_bytes=1024 * 1024,
+        context_tokens=400_000,
+        output_tokens=32_000,
+        host_tool_plan=ExactHostToolPlan(
+            plan_id="idea_dossier_research",
+            authority_revision=_tool_authority_revision("idea_dossier_research"),
+        ),
+        model_tool_policy=ExactModelTools(
+            plan_id="IdeaDossierRead",
+            authority_revision=_tool_authority_revision("IdeaDossierRead"),
+            effect_mode="ReadOnly",
+            scope_derivation="IdeaDossierEvidenceLedger",
+        ),
+    ),
+    "dossier_idea_resolve": _background(
+        "dossier_idea_resolve",
+        model="gpt-5.6-luna",
+        reasoning="low",
+        timeout=60,
+        input_bytes=256 * 1024,
+        context_tokens=128_000,
+        output_tokens=16_000,
+    ),
 }
 
-# Admission is the authority lifetime for ChatTools: it begins only after the
-# host has reserved the sole slot and includes command delivery, SDK session
-# open, and the provider turn. The bearer is minted after admission with expiry
-# anchored to this deadline, so handoff time shortens rather than extends it.
-CHAT_ADMISSION_RUNTIME_SECONDS = max(
-    policy.turn_timeout_seconds for policy in _CHAT_POLICIES.values()
+_CHAT = ChatPolicy(
+    seed=_codex("gpt-5.6-terra", "medium"),
+    workflow=_workflow(
+        "chat",
+        bounds=_bounds(
+            input_max_bytes=512 * 1024,
+            turn_timeout_seconds=900,
+            stream=_CHAT_STREAM,
+        ),
+        request_budget=RequestBudget(
+            max_context_tokens=400_000,
+            max_output_tokens=32_000,
+        ),
+        output_contract=TextOutputContract(),
+        model_tool_policy=ChatPerRunTools(
+            read_plan_id="ChatRead",
+            read_plan_authority_revision=_tool_authority_revision("ChatRead"),
+            additive_write_plan_id="ChatReadAdditiveWrite",
+            additive_write_plan_authority_revision=_tool_authority_revision(
+                "ChatReadAdditiveWrite"
+            ),
+            scope_derivation="ChatAdmittedContext",
+        ),
+    ),
 )
+
+
+def _policy_facts(
+    *,
+    chat: ChatPolicy,
+    background_operations: Mapping[BackgroundOperationKey, BackgroundOperationPolicy],
+) -> dict[str, object]:
+    return cast(
+        dict[str, object],
+        _canonical_value(
+            {
+                "chat": chat,
+                "background_operations": background_operations,
+            }
+        ),
+    )
+
+
+def policy_revision_from_facts(facts: Mapping[str, object]) -> str:
+    digest = hashlib.sha256(b"nexus.generation-policy.v2\0" + _canonical(facts)).hexdigest()
+    return f"generation-policy.v2.{digest}"
+
+
+_IMMUTABLE_BACKGROUND_OPERATIONS = MappingProxyType(_BACKGROUND_OPERATIONS)
+_INITIAL_POLICY_FACTS = _policy_facts(
+    chat=_CHAT,
+    background_operations=_IMMUTABLE_BACKGROUND_OPERATIONS,
+)
+GENERATION_POLICY = GenerationPolicy(
+    revision=policy_revision_from_facts(_INITIAL_POLICY_FACTS),
+    chat=_CHAT,
+    background_operations=_IMMUTABLE_BACKGROUND_OPERATIONS,
+)
+POLICY_REVISION = GENERATION_POLICY.revision
+POLICY_FINGERPRINT = hashlib.sha256(
+    b"nexus.generation-policy-envelope.v2\0" + _canonical(_INITIAL_POLICY_FACTS)
+).hexdigest()
+
+# Durable capacity pauses recheck at a low-frequency fallback only when the
+# provider supplies no reset instant. They are not ordinary generation retries.
+BACKGROUND_CAPACITY_PROBE_SECONDS = 15 * 60
+
+# This is a route-independent serialized-state allocation, not a model capacity
+# claim. It bounds private Codex rollout files while leaving SDK bookkeeping
+# headroom beyond the public event-stream ceiling.
+CODEX_RUNTIME_STATE_OUTPUT_LIMIT_BYTES = 64 * 1024 * 1024
+_CODEX_STATE_SERIALIZATION_OVERHEAD_BYTES = 8 * 1024 * 1024
+_CODEX_STATE_ROOT_FIXED_HEADROOM_BYTES = 32 * 1024 * 1024
 
 
 def _round_up_mib(value: int) -> int:
@@ -214,188 +511,196 @@ def _round_up_mib(value: int) -> int:
     return ((value + mib - 1) // mib) * mib
 
 
-# Codex persists one thread rollout beneath the disposable profile. Size the
-# per-file limit from the largest runtime output plus admitted input and bounded
-# serialization overhead, then give the aggregate root space for two such files
-# (rollout plus atomic/cache peer) and fixed launcher/temporary headroom.
-_CODEX_STATE_SERIALIZATION_OVERHEAD_BYTES = 8 * 1024 * 1024
-_CODEX_STATE_ROOT_FIXED_HEADROOM_BYTES = 32 * 1024 * 1024
+_ALL_WORKFLOWS = (
+    GENERATION_POLICY.chat.workflow,
+    *(entry.workflow for entry in GENERATION_POLICY.background_operations.values()),
+)
 CODEX_EPHEMERAL_FILE_LIMIT_BYTES = _round_up_mib(
-    max(bounds.runtime_output_bytes for bounds in MODEL_BOUNDS.values())
-    + max(policy.input_max_bytes for policy in (*OPERATIONS.values(), *_CHAT_POLICIES.values()))
-    + max(
-        policy.instructions_max_bytes for policy in (*OPERATIONS.values(), *_CHAT_POLICIES.values())
-    )
+    CODEX_RUNTIME_STATE_OUTPUT_LIMIT_BYTES
+    + max(workflow.bounds.input_max_bytes for workflow in _ALL_WORKFLOWS)
+    + max(workflow.bounds.instructions_max_bytes for workflow in _ALL_WORKFLOWS)
     + _CODEX_STATE_SERIALIZATION_OVERHEAD_BYTES
 )
 CODEX_EPHEMERAL_ROOT_BYTES = (
     2 * CODEX_EPHEMERAL_FILE_LIMIT_BYTES + _CODEX_STATE_ROOT_FIXED_HEADROOM_BYTES
 )
-
-OPERATION_REVISIONS: dict[str, str] = {
-    **_REVISION_BY_OPERATION,
-}
-
-
-def operation_policy(operation: str) -> OperationPolicy:
-    try:
-        return OPERATIONS[operation]
-    except KeyError as error:
-        raise ValueError(f"unknown synthesis operation {operation!r}") from error
+MODEL_TOOL_ADMISSION_RUNTIME_SECONDS = max(
+    workflow.bounds.turn_timeout_seconds
+    for workflow in _ALL_WORKFLOWS
+    if not isinstance(workflow.model_tool_policy, NoModelTools)
+)
 
 
-def chat_policy(profile: str) -> OperationPolicy:
-    match profile:
-        case "fast" | "balanced" | "deep":
-            return _CHAT_POLICIES[profile]
-        case _:
-            raise ValueError(f"unknown chat profile {profile!r}")
+def policy_facts() -> dict[str, object]:
+    """Return a fresh canonical facts tree suitable for audit and evaluation."""
 
-
-def resolve_policy(operation: str, *, profile: str | None = None) -> OperationPolicy:
-    """Resolve the complete host policy from the typed operation identity."""
-
-    if operation == "chat":
-        if profile is None:
-            raise ValueError("chat operation requires profile")
-        return chat_policy(profile)
-    if profile is not None:
-        raise ValueError("non-chat operation cannot carry profile")
-    return operation_policy(operation)
-
-
-def capacity_wait_delays_seconds(operation: str) -> tuple[int, ...]:
-    """Resolve the fixed app-side wait policy for one catalog operation."""
-
-    if operation == "chat":
-        return _INTERACTIVE_CAPACITY_WAIT_DELAYS_SECONDS
-    operation_policy(operation)
-    if operation == "dossier_idea_resolve":
-        return ()
-    return _BACKGROUND_CAPACITY_WAIT_DELAYS_SECONDS
-
-
-def operation_revision(operation: str, *, profile: str | None = None) -> str:
-    if operation == "chat":
-        if profile is None:
-            raise ValueError("chat operation requires profile")
-        return chat_policy(profile).revision
-    if profile is not None:
-        raise ValueError("non-chat operation cannot carry profile")
-    return operation_policy(operation).revision
-
-
-def assert_operation_facts(operation: str, observed: OperationPolicy) -> None:
-    expected = operation_policy(operation)
-    if observed != expected:
-        raise AssertionError(
-            f"{operation} policy facts drifted: expected {expected}, got {observed}"
-        )
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value, ensure_ascii=True, allow_nan=False, sort_keys=True, separators=(",", ":")
-    ).encode()
-
-
-def _policy_facts_payload() -> dict[str, object]:
-    return {
-        "plans": {key: asdict(value) for key, value in sorted(PLANS.items())},
-        "model_bounds": {key: asdict(value) for key, value in sorted(MODEL_BOUNDS.items())},
-        "operations": {key: asdict(value) for key, value in sorted(OPERATIONS.items())},
-        "chat_profiles": {key: asdict(value) for key, value in sorted(_CHAT_POLICIES.items())},
-        "tool_plan_revision": TOOL_PLAN_REVISION,
-    }
-
-
-def _policy_facts_digest() -> str:
-    return hashlib.sha256(_canonical(_policy_facts_payload())).hexdigest()
-
-
-POLICY_FACTS_FINGERPRINT = _PINNED_POLICY_FACTS_FINGERPRINT
-
-
-def _policy_payload() -> dict[str, object]:
-    return {
-        "revision": POLICY_REVISION,
-        "policy_facts_fingerprint": POLICY_FACTS_FINGERPRINT,
-        "plan_eval_pin": dict(PLAN_EVAL_PIN),
-    }
-
-
-POLICY_FINGERPRINT = hashlib.sha256(_canonical(_policy_payload())).hexdigest()
+    return _policy_facts(
+        chat=GENERATION_POLICY.chat,
+        background_operations=GENERATION_POLICY.background_operations,
+    )
 
 
 def policy_fingerprint() -> str:
     return POLICY_FINGERPRINT
 
 
-def policy_facts_fingerprint() -> str:
-    return POLICY_FACTS_FINGERPRINT
+def background_operation_policy(operation: str) -> BackgroundOperationPolicy:
+    try:
+        return GENERATION_POLICY.background_operations[cast(BackgroundOperationKey, operation)]
+    except KeyError as error:
+        raise ValueError(f"unknown background generation operation {operation!r}") from error
+
+
+def workflow_for_operation(operation: str) -> OperationWorkflowSpec:
+    if operation == "chat":
+        return GENERATION_POLICY.chat.workflow
+    return background_operation_policy(operation).workflow
+
+
+def operation_revision(operation: str) -> str:
+    return workflow_for_operation(operation).revision
+
+
+def assert_background_operation_facts(
+    operation: str,
+    observed: BackgroundOperationPolicy,
+) -> None:
+    expected = background_operation_policy(operation)
+    if observed != expected:
+        raise AssertionError(
+            f"{operation} policy facts drifted: expected {expected}, got {observed}"
+        )
 
 
 def validate_policy() -> None:
-    if _policy_facts_digest() != _PINNED_POLICY_FACTS_FINGERPRINT:
-        raise AssertionError("policy facts fingerprint does not match the pinned catalog")
-    if PLAN_EVAL_PIN != _PINNED_PLAN_EVAL_PIN:
-        raise AssertionError("plan eval pin drifted")
-    if set(PLANS) != {"routine", "standard", "thorough", "deep"}:
-        raise AssertionError("policy plan set drifted")
-    if set(OPERATIONS) != set(_BACKGROUND_PLAN):
-        raise AssertionError("background operation catalog drifted")
-    if set(CHAT_PROFILES) != {"fast", "balanced", "deep"}:
-        raise AssertionError("chat profile catalog drifted")
-    if PLAN_EVAL_PIN["policy_revision"] != POLICY_REVISION:
-        raise AssertionError("plan eval pin does not qualify this policy revision")
-    for operation, (plan_id, timeout, input_bytes) in _BACKGROUND_PLAN.items():
-        expected = _synthesis_policy(operation, plan_id, timeout, input_bytes)
-        if OPERATIONS[operation] != expected:
-            raise AssertionError(f"{operation} policy facts drifted")
-    for profile, plan_id in _CHAT_PLAN.items():
-        entry = _CHAT_POLICIES[profile]
-        if entry.plan_id != plan_id or entry.capability != "ChatTools":
-            raise AssertionError(f"chat profile {profile} policy facts drifted")
-        if entry.stream.max_stream_bytes > MODEL_BOUNDS[entry.model].runtime_output_bytes:
-            raise AssertionError(f"chat profile {profile} exceeds its model runtime bound")
-    for model, bounds in MODEL_BOUNDS.items():
-        if bounds != ModelBounds(1_050_000, 128_000, 64 * 1024 * 1024):
-            raise AssertionError(f"model bounds drifted for {model}")
-    if CHAT_ADMISSION_RUNTIME_SECONDS != 900:
-        raise AssertionError("Chat admission runtime must remain the bounded 900-second ceiling")
-    if CODEX_EPHEMERAL_FILE_LIMIT_BYTES <= max(
-        bounds.runtime_output_bytes for bounds in MODEL_BOUNDS.values()
+    # Load executable tool definitions only while validating complete process
+    # composition. Domain workers may import policy facts without loading tools.
+    from nexus.services.tool_runtime.profiles import tool_plan_policy_facts
+
+    expected_operations = (
+        "metadata_enrichment",
+        "media_summary",
+        "synapse",
+        "dawn_write",
+        "oracle",
+        "dossier_page",
+        "dossier_note",
+        "dossier_media",
+        "dossier_conversation",
+        "dossier_library",
+        "dossier_podcast",
+        "dossier_contributor",
+        "dossier_idea",
+        "dossier_idea_resolve",
+    )
+    if tuple(GENERATION_POLICY.background_operations) != expected_operations:
+        raise AssertionError("background operation policy is not exact and total")
+    if policy_revision_from_facts(policy_facts()) != GENERATION_POLICY.revision:
+        raise AssertionError("generation policy revision is not its content digest")
+    if GENERATION_POLICY.chat.seed != _codex("gpt-5.6-terra", "medium"):
+        raise AssertionError("Chat seed drifted")
+    for operation, entry in GENERATION_POLICY.background_operations.items():
+        workflow = entry.workflow
+        if workflow.operation != operation:
+            raise AssertionError(f"{operation} workflow identity drifted")
+        if workflow.revision != _workflow_revision(
+            {
+                "operation": workflow.operation,
+                "bounds": _canonical_value(workflow.bounds),
+                "request_budget": _canonical_value(workflow.request_budget),
+                "output_contract": _canonical_value(workflow.output_contract),
+                "host_tool_plan": _canonical_value(workflow.host_tool_plan),
+                "model_tool_policy": _canonical_value(workflow.model_tool_policy),
+            }
+        ):
+            raise AssertionError(f"{operation} workflow revision drifted")
+        if not isinstance(entry.selection, CodexPersonalSelection):
+            raise AssertionError(f"{operation} must ship through Codex Personal")
+        if workflow.request_budget.max_context_tokens <= 0:
+            raise AssertionError(f"{operation} context budget must be positive")
+        if workflow.request_budget.max_output_tokens <= 0:
+            raise AssertionError(f"{operation} output budget must be positive")
+        bounds = workflow.bounds
+        if bounds.transport_deadline_seconds != (
+            bounds.session_open_timeout_seconds
+            + bounds.turn_timeout_seconds
+            + bounds.runtime_close_timeout_seconds
+            + bounds.transport_margin_seconds
+        ):
+            raise AssertionError(f"{operation} transport deadline drifted")
+        if isinstance(workflow.model_tool_policy, ExactModelTools):
+            if workflow.model_tool_policy.effect_mode != "ReadOnly":
+                raise AssertionError(f"{operation} background tools must be read-only")
+    if not isinstance(GENERATION_POLICY.chat.workflow.model_tool_policy, ChatPerRunTools):
+        raise AssertionError("Chat must own per-run read and additive-write plans")
+    referenced_model_plans = {
+        GENERATION_POLICY.chat.workflow.model_tool_policy.read_plan_id: (
+            GENERATION_POLICY.chat.workflow.model_tool_policy.read_plan_authority_revision
+        ),
+        GENERATION_POLICY.chat.workflow.model_tool_policy.additive_write_plan_id: (
+            GENERATION_POLICY.chat.workflow.model_tool_policy.additive_write_plan_authority_revision
+        ),
+        **{
+            workflow.model_tool_policy.plan_id: workflow.model_tool_policy.authority_revision
+            for workflow in (
+                entry.workflow for entry in GENERATION_POLICY.background_operations.values()
+            )
+            if isinstance(workflow.model_tool_policy, ExactModelTools)
+        },
+    }
+    current_model_plans = {
+        facts.plan_id: facts.authority_revision for facts in tool_plan_policy_facts()
+    }
+    if referenced_model_plans != current_model_plans:
+        raise AssertionError("generation policy model-tool authority drifted")
+    idea_host = GENERATION_POLICY.background_operations["dossier_idea"].workflow.host_tool_plan
+    if not isinstance(idea_host, ExactHostToolPlan) or idea_host.authority_revision != (
+        _tool_authority_revision(idea_host.plan_id)
     ):
-        raise AssertionError("Codex ephemeral file limit lacks serialized-turn headroom")
-    if CODEX_EPHEMERAL_ROOT_BYTES <= 2 * CODEX_EPHEMERAL_FILE_LIMIT_BYTES:
-        raise AssertionError("Codex ephemeral root lacks aggregate cleanup headroom")
+        raise AssertionError("Idea Dossier host-tool authority drifted")
+    if MODEL_TOOL_ADMISSION_RUNTIME_SECONDS != 900:
+        raise AssertionError("model-tool admission runtime must remain bounded to 900 seconds")
+    if CODEX_EPHEMERAL_FILE_LIMIT_BYTES != 74 * 1024 * 1024:
+        raise AssertionError("Codex serialized-state file allocation drifted")
+    if CODEX_EPHEMERAL_ROOT_BYTES != 180 * 1024 * 1024:
+        raise AssertionError("Codex serialized-state root allocation drifted")
 
 
 __all__ = [
-    "CHAT_ADMISSION_RUNTIME_SECONDS",
-    "CHAT_PROFILES",
+    "BACKGROUND_CAPACITY_PROBE_SECONDS",
     "CODEX_EPHEMERAL_FILE_LIMIT_BYTES",
     "CODEX_EPHEMERAL_ROOT_BYTES",
-    "MODEL_BOUNDS",
-    "OPERATIONS",
-    "OPERATION_REVISIONS",
-    "PLAN_EVAL_PIN",
-    "POLICY_FACTS_FINGERPRINT",
+    "CODEX_RUNTIME_STATE_OUTPUT_LIMIT_BYTES",
+    "GENERATION_POLICY",
+    "MODEL_TOOL_ADMISSION_RUNTIME_SECONDS",
     "POLICY_FINGERPRINT",
     "POLICY_REVISION",
-    "PLANS",
-    "TOOL_PLAN_REVISION",
-    "ModelBounds",
-    "OperationPolicy",
-    "Plan",
+    "BackgroundOperationPolicy",
+    "ChatPerRunTools",
+    "ChatPolicy",
+    "EffectMode",
+    "ExactHostToolPlan",
+    "ExactModelTools",
+    "GenerationPolicy",
+    "GenerationSelectionSpec",
+    "HostToolPlan",
+    "ModelToolPolicy",
+    "NoHostToolPlan",
+    "NoModelTools",
+    "OperationBounds",
+    "OperationWorkflowSpec",
+    "OutputContract",
+    "RequestBudget",
     "StreamBounds",
-    "assert_operation_facts",
-    "capacity_wait_delays_seconds",
-    "chat_policy",
-    "operation_policy",
+    "StrictJsonOutputContract",
+    "TextOutputContract",
+    "ToolScopeDerivation",
+    "assert_background_operation_facts",
+    "background_operation_policy",
     "operation_revision",
+    "policy_facts",
     "policy_fingerprint",
-    "policy_facts_fingerprint",
-    "resolve_policy",
+    "policy_revision_from_facts",
     "validate_policy",
+    "workflow_for_operation",
 ]

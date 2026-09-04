@@ -53,7 +53,7 @@ from nexus.jobs.queue import (
     requeue_dead_job,
 )
 from nexus.logging import get_logger
-from nexus.schemas.presence import Present, absent, present
+from nexus.schemas.presence import Present
 from nexus.schemas.search import (
     SearchResultContentChunkOut,
     SearchResultNoteBlockOut,
@@ -62,22 +62,24 @@ from nexus.schemas.search import (
 from nexus.services import durable_step_journal as step_journal
 from nexus.services import generation_policy
 from nexus.services.codex_generation_contract import (
-    GenerationCommand,
     GenerationTerminal,
     NormalizedFailureCode,
-    request_fingerprint,
 )
+from nexus.services.generation_intent import GenerationIntent
+from nexus.services.generation_spec import ImmutablePromptPayloadRef, generation_fact_digest
 from nexus.services.llm_execution import (
     AcceptedGenerationFailure,
     CompletedGeneration,
     EncodedGenerationTerminal,
     ExecutionRuntime,
+    GenerationAdmissionInputsChanged,
     GenerationDispatchAborted,
-    GenerationExecutionRequest,
     GenerationUncertain,
     GenerationUncertainResolution,
     JobGenerationJournal,
+    admit_job_generation,
     cancel_prepared_generation_without_dispatch_in_current_transaction,
+    codex_terminal_evidence,
     execute_generation,
     prove_uncertain_generation_not_dispatched_in_current_transaction,
 )
@@ -187,29 +189,11 @@ type _CompletedSynapse = Annotated[
 _COMPLETED_SYNAPSE_ADAPTER: TypeAdapter[_CompletedSynapse] = TypeAdapter(_CompletedSynapse)
 
 
-def _capacity_wait_index(job: JobRow) -> int:
-    value = job.payload.get("capacity_wait_index")
-    if type(value) is not int or value < 0:
-        raise AssertionError("synapse job has an invalid capacity_wait_index")
-    return value
-
-
-def _synapse_command(*, generation_id: UUID, user_content: str) -> GenerationCommand:
-    return GenerationCommand.model_validate(
-        {
-            "request_id": generation_id,
-            "operation": {
-                "kind": SYNAPSE_OPERATION,
-                "revision": generation_policy.operation_revision(SYNAPSE_OPERATION),
-            },
-            "policy_revision": generation_policy.POLICY_REVISION,
-            "policy_fingerprint": generation_policy.POLICY_FINGERPRINT,
-            "intent": build_synthesis_intent(
-                system_prompt=_SYNAPSE_SYSTEM_PROMPT,
-                user_content=user_content,
-                schema=SynapseSynthesis,
-            ),
-        }
+def _synapse_intent(*, user_content: str) -> GenerationIntent:
+    return build_synthesis_intent(
+        system_prompt=_SYNAPSE_SYSTEM_PROMPT,
+        user_content=user_content,
+        schema=SynapseSynthesis,
     )
 
 
@@ -511,7 +495,6 @@ def queue_synapse_scan(db: Session, *, user_id: UUID, ref: ResourceRef, reason: 
                     "user_id": str(user_id),
                     "ref": ref.uri,
                     "reason": reason,
-                    "capacity_wait_index": 0,
                     "coordination": {},
                 },
                 dedupe_key=dedupe_key,
@@ -688,45 +671,7 @@ async def run_synapse_scan(
             )
 
         user_content = _build_synapse_user_content(dossier.text, candidates)
-        command = _synapse_command(
-            generation_id=generation_id,
-            user_content=user_content,
-        )
-        fingerprint = request_fingerprint(command)
-        if state is None:
-            current_job = get_job(db, context.job_id)
-            if current_job is None:
-                raise AssertionError(f"synapse job {context.job_id} disappeared at prepare")
-            if not step_journal.checkpoint_step_state(
-                db,
-                ctx=context,
-                job=current_job,
-                step_path=_SYNTHESIS_STEP_PATH,
-                state=step_journal.StepReplayState(
-                    generation_id=generation_id,
-                    dispatch_phase=step_journal.Prepared,
-                    request_fingerprint=present(fingerprint),
-                    terminal_result=absent(),
-                ),
-            ):
-                db.rollback()
-                return ScanResult("skipped")
-            db.commit()
-            job = get_job(db, context.job_id)
-            if job is None:
-                raise AssertionError(f"synapse job {context.job_id} disappeared after prepare")
-        elif not isinstance(state.request_fingerprint, Present):
-            raise AssertionError("Prepared synapse generation has no fingerprint")
-        elif state.request_fingerprint.value != fingerprint:
-            db.rollback()
-            return _apply_completed_synapse(
-                db,
-                user_id=user_id,
-                ref=ref,
-                context=context,
-                completed=_CompletedSynapseSkipped(reason="input_changed"),
-                preaccept_reason="synapse input changed before dispatch",
-            )
+        intent = _synapse_intent(user_content=user_content)
 
         def lock_dispatch(dispatch_db: Session) -> JobRow | None:
             try:
@@ -738,26 +683,47 @@ async def run_synapse_scan(
         # A first dispatch reloads the prepared job; a replay may retain an earlier
         # read snapshot. Neither may cross the generation host I/O boundary.
         db.commit()
+        journal = JobGenerationJournal(
+            context=context,
+            step_path=_SYNTHESIS_STEP_PATH,
+            lock_dispatch=lock_dispatch,
+        )
         try:
-            execution_result = await execute_generation(
-                GenerationExecutionRequest(
-                    owner=LlmCallOwner(kind="synapse_scan", id=ref.id),
-                    command=command,
-                    journal=JobGenerationJournal(
-                        context=context,
-                        step_path=_SYNTHESIS_STEP_PATH,
-                        capacity_wait_index=_capacity_wait_index(job),
-                        lock_dispatch=lock_dispatch,
-                    ),
-                    capacity_wait_index=_capacity_wait_index(job),
+            execution_request = await admit_job_generation(
+                owner=LlmCallOwner(kind="synapse_scan", id=ref.id),
+                generation_id=generation_id,
+                operation="synapse",
+                intent=intent,
+                prompt_template_revision=generation_policy.operation_revision(SYNAPSE_OPERATION),
+                prompt_payload_ref=ImmutablePromptPayloadRef(
+                    owner_kind="synapse_scan",
+                    owner_id=str(ref.id),
+                    revision=generation_policy.operation_revision(SYNAPSE_OPERATION),
+                    payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
                 ),
+                journal=journal,
+                session_factory=get_session_factory(),
+                runtime=runtime,
+            )
+            execution_result = await execute_generation(
+                execution_request,
                 session_factory=get_session_factory(),
                 runtime=runtime,
                 encode_terminal=lambda terminal: _encode_synapse_terminal(
-                    terminal,
+                    codex_terminal_evidence(terminal),
                     candidates=candidates,
                 ),
                 encode_preaccept_failure=_encode_synapse_preaccept_failure,
+            )
+        except GenerationAdmissionInputsChanged:
+            db.rollback()
+            return _apply_completed_synapse(
+                db,
+                user_id=user_id,
+                ref=ref,
+                context=context,
+                completed=_CompletedSynapseSkipped(reason="input_changed"),
+                preaccept_reason="synapse input changed before dispatch",
             )
         except GenerationDispatchAborted:
             return _apply_completed_synapse(

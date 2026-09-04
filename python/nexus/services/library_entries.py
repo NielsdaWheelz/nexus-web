@@ -564,6 +564,25 @@ def podcast_target(podcast_id: UUID) -> EntryTarget:
     return EntryTarget("podcast", podcast_id)
 
 
+def entry_id_for_target_in_current_transaction(
+    db: Session,
+    *,
+    library_id: UUID,
+    target: EntryTarget,
+) -> UUID | None:
+    """Resolve one exact filing identity inside its caller-owned transaction."""
+
+    column = _TARGET_COLUMN[target.kind]
+    value = db.scalar(
+        text(
+            f"SELECT id FROM library_entries "
+            f"WHERE library_id = :library_id AND {column} = :target_id"
+        ),
+        {"library_id": library_id, "target_id": target.id},
+    )
+    return UUID(str(value)) if value is not None else None
+
+
 @dataclass(frozen=True)
 class PodcastLibraryRemovalResult:
     removed_from_library_count: int

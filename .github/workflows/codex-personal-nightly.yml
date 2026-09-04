@@ -17,10 +17,10 @@ jobs:
     # This label is a private VM runner with its own pre-enrolled `codex-personal`
     # state root. Authentication never enters GitHub secrets or workflow output.
     runs-on: [self-hosted, linux, nexus-codex-nightly]
-    # Four sequential turns may each consume their declared 600-second ceiling.
-    # Keep ten additional minutes for locked setup, bounded artifact delivery,
-    # and disposable-state scrubbing.
-    timeout-minutes: 50
+    # Nine bounded target/background turns may each consume their declared
+    # 600-second ceiling. Keep thirty additional minutes for locked setup,
+    # bounded artifact delivery, and disposable-state scrubbing.
+    timeout-minutes: 120
     environment: nexus-codex-nightly
     env:
       NEXUS_CODEX_HOSTED_CANARY: "1"

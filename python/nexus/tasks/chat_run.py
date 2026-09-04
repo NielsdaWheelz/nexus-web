@@ -56,9 +56,6 @@ def chat_run(run_id: str, *, context: JobExecutionContext) -> dict[str, Any] | R
             session_factory=get_session_factory(),
             runtime=runtime,
             settings=settings,
-            # The dedicated MCP listener owns the configured Brave client and
-            # swaps in the same-plan execution binding on its own event loop.
-            web_search_provider=None,
         )
 
     # Defects escape this handler unchanged. The queue owns retries and durable

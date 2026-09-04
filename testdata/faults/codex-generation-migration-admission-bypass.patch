@@ -1,7 +1,7 @@
 diff --git a/migrations/alembic/versions/0224_codex_personal_generation.py b/migrations/alembic/versions/0224_codex_personal_generation.py
 --- a/migrations/alembic/versions/0224_codex_personal_generation.py
 +++ b/migrations/alembic/versions/0224_codex_personal_generation.py
-@@ -54,7 +54,7 @@ def _preflight(bind: sa.Connection) -> None:
+@@ -262,7 +262,7 @@ def _preflight(bind: sa.Connection) -> None:
          ),
          {"kinds": list(_GENERATION_JOB_KINDS), "statuses": list(_ACTIVE_JOB_STATUSES)},
      ).all()
@@ -9,4 +9,4 @@ diff --git a/migrations/alembic/versions/0224_codex_personal_generation.py b/mig
 +    if False and active_jobs:
          _fail(f"generation jobs must be drained: {_ids(active_jobs)}")
  
-     active_chat_runs = bind.execute(
+     generation_jobs_with_domain_attempts = bind.execute(

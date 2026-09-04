@@ -330,9 +330,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
                 if settings.dawn_write_schedule_seconds > 0
                 else None
             ),
-            periodic_checkpoint_keys=frozenset(
-                {"capacity_wait_index", "coordination", "dawn_write_worklist"}
-            ),
+            periodic_checkpoint_keys=frozenset({"coordination", "dawn_write_worklist"}),
             child_runtime="Llm",
         ),
         "atlas_project_job": JobDefinition(

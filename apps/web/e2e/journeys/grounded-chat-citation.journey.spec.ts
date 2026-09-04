@@ -86,7 +86,6 @@ test("a source-grounded answer publishes a citation that opens its exact reader 
   await gotoWithStrictCsp(page, `/conversations/${conversationId}`);
   const input = page.getByRole("textbox", { name: /ask anything/i });
   await expect(input).toBeVisible();
-  await page.getByRole("radio", { name: /^Fast\b/ }).check();
   let chatAdmissions = 0;
   page.on("request", (request) => {
     const url = new URL(request.url());
@@ -118,11 +117,18 @@ test("a source-grounded answer publishes a citation that opens its exact reader 
     `Chat admission for conversation ${conversationId} failed: ${runResponse.status()} ${runText}`,
   ).toBeTruthy();
   const admitted = JSON.parse(runText) as {
-    data: { run: { profile_id: string } };
+    data: {
+      run: {
+        run_selection: {
+          selection: unknown;
+          catalog_definition_revision: string;
+        };
+      };
+    };
   };
-  expect(admitted.data.run).toMatchObject({
-    profile_id: "fast",
-  });
+  expect(admitted.data.run.run_selection.catalog_definition_revision).toMatch(
+    /^[0-9a-f]{64}$/u,
+  );
 
   const chatLog = page.getByRole("log", { name: "Chat messages" });
   const citation = chatLog

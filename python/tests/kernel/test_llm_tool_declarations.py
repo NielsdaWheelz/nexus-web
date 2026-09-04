@@ -64,7 +64,7 @@ EXPECTED_DECLARATIONS: dict[str, dict[str, Any]] = {
         "success_keys": ("matches", "total_candidates"),
         "errors": COMMON_ERRORS | {"ResourceUnavailable"},
         "evidence_path": ("matches", "items", "evidence"),
-        "limits": ToolLimits(20480, 102400, 0, 30.0),
+        "limits": ToolLimits(20480, 106496, 0, 30.0),
     },
     "nexus.resource.read": {
         "effect": ToolEffect.Read,
@@ -84,7 +84,7 @@ EXPECTED_DECLARATIONS: dict[str, dict[str, Any]] = {
         "success_keys": ("matches", "uri"),
         "errors": COMMON_ERRORS | {"ResourceUnavailable", "Unreadable"},
         "evidence_path": ("matches", "items", "evidence"),
-        "limits": ToolLimits(4096, 212992, 0, 30.0),
+        "limits": ToolLimits(4096, 217088, 0, 30.0),
     },
     "nexus.resource.inspect": {
         "effect": ToolEffect.Read,
@@ -94,7 +94,7 @@ EXPECTED_DECLARATIONS: dict[str, dict[str, Any]] = {
         "success_keys": ("evidence", "media_kind", "sections", "title", "total_sections", "uri"),
         "errors": COMMON_ERRORS | {"ResourceUnavailable", "Uninspectable"},
         "evidence_path": ("evidence",),
-        "limits": ToolLimits(4096, 1716224, 0, 30.0),
+        "limits": ToolLimits(4096, 1720320, 0, 30.0),
     },
     "nexus.relations.list": {
         "effect": ToolEffect.Read,
@@ -104,7 +104,7 @@ EXPECTED_DECLARATIONS: dict[str, dict[str, Any]] = {
         "success_keys": ("evidence", "relations", "uri"),
         "errors": COMMON_ERRORS | {"ResourceUnavailable"},
         "evidence_path": ("evidence",),
-        "limits": ToolLimits(4096, 507904, 0, 30.0),
+        "limits": ToolLimits(4096, 544768, 0, 30.0),
     },
     "nexus.library.add": {
         "effect": ToolEffect.Write,
@@ -260,6 +260,7 @@ EXPECTED_EVIDENCE_KEYS = (
     "context_ref",
     "excerpt_id",
     "locator",
+    "machine_authorship",
     "observed_at",
     "resource_uri",
     "snapshot_revision",
@@ -269,6 +270,9 @@ _FINITE_STRING_FORMAT_VALUES = {
     "date": "9999-12-31",
     "date-time": "9999-12-31T23:59:59.999999+23:59",
     "uuid": "ffffffff-ffff-4fff-bfff-ffffffffffff",
+}
+_MAXIMAL_PATTERN_STRING_VALUES = {
+    r"^generation/[1-9][0-9]*/tool/[1-9][0-9]*$": ("generation/2147483647/tool/2147483647"),
 }
 
 
@@ -384,6 +388,16 @@ def _maximal_schema_value(schema: dict[str, Any], *, path: str) -> Any:
     if schema_type == "string":
         max_length = schema.get("maxLength")
         if isinstance(max_length, int):
+            pattern = schema.get("pattern")
+            if isinstance(pattern, str):
+                value = _MAXIMAL_PATTERN_STRING_VALUES.get(pattern)
+                assert isinstance(value, str) and len(value) == max_length, (
+                    f"{path} patterned example does not exercise its length bound"
+                )
+                assert re.search(pattern, value) is not None, (
+                    f"{path} patterned example is not valid"
+                )
+                return value
             # A control character consumes six canonical JSON bytes per code point.
             return "\u0001" * max_length
         string_format = schema.get("format")
@@ -505,6 +519,9 @@ def _revision_probe(input_type: type[BaseModel]) -> ToolSpec[Any, Any, Any]:
 
 
 def test_nexus_declarations_and_browser_projection_are_one_closed_semantic_contract() -> None:
+    assert importlib.util.find_spec("nexus.services.generation_spec") is not None, (
+        "the final generation tool-plan contract is absent"
+    )
     from nexus.schemas.highlights import HIGHLIGHT_COLORS
     from nexus.schemas.library import CreateLibraryRequest
     from nexus.schemas.resource_graph import ConnectionQueryRequest
@@ -529,10 +546,17 @@ def test_nexus_declarations_and_browser_projection_are_one_closed_semantic_contr
         tool_surface_documentation_revision,
     )
     from nexus.services.tool_runtime.profiles import (
-        CHAT_TOOL_PLAN,
-        CHAT_TOOL_PROFILE,
+        CHAT_READ_ADDITIVE_WRITE_TOOL_DEFINITION,
+        CHAT_READ_ADDITIVE_WRITE_TOOL_PLAN,
+        CHAT_READ_ADDITIVE_WRITE_TOOL_PROFILE,
+        CHAT_READ_TOOL_PLAN,
+        CHAT_READ_TOOL_PROFILE,
+        IDEA_DOSSIER_READ_TOOL_PLAN,
+        IDEA_DOSSIER_READ_TOOL_PROFILE,
         IDEA_DOSSIER_RESEARCH_TOOL_PLAN,
         IDEA_DOSSIER_RESEARCH_TOOL_PROFILE,
+        LIBRARY_DOSSIER_READ_TOOL_PLAN,
+        LIBRARY_DOSSIER_READ_TOOL_PROFILE,
     )
 
     nexus_ids = tuple(EXPECTED_DECLARATIONS)[1:]
@@ -641,14 +665,41 @@ def test_nexus_declarations_and_browser_projection_are_one_closed_semantic_contr
         library_name_max
     )
 
-    assert CHAT_TOOL_PROFILE == CapabilityProfile(
-        id=ProfileId("chat"),
+    read_tool_ids = ("web.search", *nexus_ids[:5])
+    nexus_read_tool_ids = nexus_ids[:5]
+    assert CHAT_READ_TOOL_PROFILE == CapabilityProfile(
+        id=ProfileId("chat_read"),
+        grants=tuple(ToolGrant(id=ToolId(tool_id), limits=None) for tool_id in read_tool_ids),
+        run_limits=CHAT_RUN_LIMITS,
+    )
+    assert CHAT_READ_TOOL_PLAN == ToolPlan(profile=ProfileId("chat_read"), exposure=Native())
+    assert CHAT_READ_ADDITIVE_WRITE_TOOL_PROFILE == CapabilityProfile(
+        id=ProfileId("chat_read_additive_write"),
         grants=tuple(
             ToolGrant(id=ToolId(tool_id), limits=None) for tool_id in EXPECTED_DECLARATIONS
         ),
         run_limits=CHAT_RUN_LIMITS,
     )
-    assert CHAT_TOOL_PLAN == ToolPlan(profile=ProfileId("chat"), exposure=Native())
+    assert CHAT_READ_ADDITIVE_WRITE_TOOL_PLAN == ToolPlan(
+        profile=ProfileId("chat_read_additive_write"), exposure=Native()
+    )
+    assert CHAT_READ_ADDITIVE_WRITE_TOOL_DEFINITION.max_live_writes == 8
+    assert LIBRARY_DOSSIER_READ_TOOL_PROFILE == CapabilityProfile(
+        id=ProfileId("library_dossier_read"),
+        grants=tuple(ToolGrant(id=ToolId(tool_id), limits=None) for tool_id in nexus_read_tool_ids),
+        run_limits=RunLimits(16, 0, 262_144, 4_194_304, 1, 120.0),
+    )
+    assert LIBRARY_DOSSIER_READ_TOOL_PLAN == ToolPlan(
+        profile=ProfileId("library_dossier_read"), exposure=Native()
+    )
+    assert IDEA_DOSSIER_READ_TOOL_PROFILE == CapabilityProfile(
+        id=ProfileId("idea_dossier_read"),
+        grants=tuple(ToolGrant(id=ToolId(tool_id), limits=None) for tool_id in nexus_read_tool_ids),
+        run_limits=RunLimits(12, 0, 131_072, 2_097_152, 1, 120.0),
+    )
+    assert IDEA_DOSSIER_READ_TOOL_PLAN == ToolPlan(
+        profile=ProfileId("idea_dossier_read"), exposure=Native()
+    )
     assert IDEA_DOSSIER_RESEARCH_TOOL_PROFILE == CapabilityProfile(
         id=ProfileId("idea_dossier_research"),
         grants=(ToolGrant(id=ToolId("web.search"), limits=None),),

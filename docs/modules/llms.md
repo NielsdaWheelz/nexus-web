@@ -2,202 +2,177 @@
 
 ## Scope
 
-All Nexus text and structured-output generation uses the isolated Codex
-Personal host. Transcript embedding remains a separate, narrow OpenAI API
-operation, and transcription remains outside this module. Product billing
-does not meter or entitle generation tokens; the operator-paid ChatGPT
-subscription is the generation account boundary.
+Every Nexus text or structured-output generation runs through one Nexus
+`GenerationService`, backed only by the two separate `llm-calling` lanes:
 
-The product side owns intent, policy, durable coordination, and publication.
-The host owns the pinned Codex SDK/runtime session and the private Unix-socket
-transport. Domain owners still build prompts, validate semantic output, and
-commit their own final writes.
+- Codex Personal through `AgentRuntime` and the isolated Codex host;
+- configured metered APIs through `ProviderRuntime`.
 
-The primary owners are:
+The shipped developer policy selects Codex Personal for every background
+operation. Chat alone lets the user choose an exact route, model, and reasoning
+value for each run from the complete configured `llm-calling` catalog. There is
+no generation profile, Fast/Balanced/Deep preset, user default, AI Settings
+surface, fallback, or compatibility route. Embeddings and transcription remain
+separate non-generation capabilities.
 
-- `generation_policy.py`: immutable operation/profile-to-plan policy;
-- `generation_intent.py`: execution-route-free instructions, input, and output;
-- `codex_generation_contract.py`: closed v2 command, frame, terminal, health,
-  capacity, cancel, and policy-violation contracts;
-- `codex_generation_client.py`: bounded HTTP-over-UDS client;
-- `codex_generation_operations.py`: host-side lowering to pinned
-  `AgentRuntime` types;
-- `llm_ledger.py`: the sole staged writer and typed reader for `llm_calls`;
-- `apps/codex_agent/`: the one-slot generation host.
+The product owns intent, exact selection, operation policy, tool authority,
+durable coordination, and publication. `llm-calling` owns source catalog facts,
+route-local lowering, provider continuations, and provider/agent protocol
+events. Domain owners build prompts, accept generated output, and commit final
+domain writes.
 
-Queue ownership is documented in [jobs.md](jobs.md).
+Primary owners:
 
-## Product profiles
+- `generation_catalog.py`: composed configured catalog and readiness;
+- `generation_policy.py`: one reviewed Chat seed and the total background map;
+- `generation_service.py`: catalog validation, policy resolution, admission,
+  and route composition;
+- `generation_spec.py`: immutable admitted selection, budgets, output, and tool
+  authority;
+- `generation_backend.py`: route-neutral execution result;
+- `codex_generation_*`: private Codex transport adapter;
+- `provider_generation_*`: ProviderRuntime adapter and continuation loop;
+- `llm_execution.py` and `llm_ledger.py`: parent/child/tool lifecycle and replay;
+- `tool_authority.py`, `tool_runtime/`, and `agent_tools_mcp.py`: one canonical
+  tool executor with API-function and Codex-MCP adapters;
+- `apps/codex_agent/`: isolated subscription-backed Codex host.
 
-`GET /llm-profiles` returns exactly these presets in this order; `balanced` is
-the default:
+Queue ownership is documented in [jobs.md](jobs.md). The full cutover contract
+is [Generation Backends Hard Cutover](../cutovers/generation-backends-hard-cutover.md).
 
-| id | label | product description | display target |
-|---|---|---|---|
-| `fast` | Fast | Quick responses for everyday questions. | GPT-5.6 Luna · Low |
-| `balanced` | Balanced | The default profile: strong general-purpose reasoning. | GPT-5.6 Terra · Medium |
-| `deep` | Deep | Slower, deeper reasoning for hard problems. | GPT-5.6 Sol · High |
+## Catalog and exact selection
 
-The response carries only `id`, `label`, `description`, `model_label`, and
-`effort_label`. The browser sends only `profile_id`; there is no independent
-route, model, or effort selector. Rerun and regenerate inherit the source
-run's profile and accept no replacement selection.
+`GET /llm-catalog` is the only product catalog API. It composes the authenticated
+Codex model catalog with `api_model_catalog()` rows for exactly the API providers
+present in `GENERATION_API_PROVIDERS`. Nexus neither reads Codex cache files nor
+maintains a second model/reasoning allowlist. A model exposes every reasoning
+value the source catalog reports; unavailable or unqualified pairs remain
+visible with their typed readiness state but are not selectable.
 
-`generation_policy.py` is the authority for the resolved plan. The UI labels
-are presentation, not an execution instruction. Startup validates the complete
-policy catalog and its pinned evaluation fingerprint.
+The strict Chat selection is one tagged value:
 
-## Operation policy
+```text
+CodexPersonalSelection(model_key, reasoning_key)
+| ProviderApiSelection(model_ref, reasoning)
+```
 
-Every synthesis operation has one revision and one fixed plan. Chat has one
-revision per product profile and the `ChatTools` capability. The policy also
-owns instruction/input bounds, turn timeout, stream bounds, close timeout, and
-the full transport deadline.
+The tag prevents same-named models on different routes from aliasing. The
+browser submits the exact selection plus the catalog-definition revision and
+never submits dispatch strings, credentials, capabilities, defaults, or
+fallback order. The developer-owned Codex Personal / GPT-5.6 Terra / medium
+seed initializes a new composer only; it is not a saved user preference and
+does not override a causal or explicit per-run selection.
 
-The final Codex turn for Synthesis runs read-only with network disabled,
-built-ins and web search off, no MCP servers, and no tool grant. This is not a
-claim that the surrounding workflow is tool-free: Nexus may complete durable,
-app-owned search and retrieval first, then freeze that evidence into the turn's
-input. Chat runs with workspace-write, unrestricted network, explicit
-unsafe-network confirmation, built-ins and web search off, and exactly one
-required Streamable HTTP MCP server named `nexus`. Its exact tool allowlist
-comes from the canonical chat declarations. Codex sends each declared MCP call
-to Nexus, receives the structured result, and continues the same native turn;
-Nexus does not parse tool-like text. The MCP client/server pins are Codex
-SDK/CLI `0.144.4`, `mcp==2.1.0`, and wire revision `2025-06-18`; no other
-protocol revision is negotiable.
+Background operations resolve their exact Codex selection only from the total
+source-controlled policy. Users can inspect the effective selection but cannot
+edit background generation policy.
 
-## Private v2 host protocol
+## Operation and tool policy
 
-`CodexGenerationClient.health()` validates the exact command schema, policy
-revision, SDK version, and runtime version before dispatch. `stream(command)`
-performs that health check and then posts once to `/v2/generations`. The host
-returns bounded NDJSON frames with a contiguous zero-based sequence and exactly
-one last terminal frame.
+Every admitted run freezes one `GenerationSpec`: exact selection and dispatch
+target, source/catalog/policy/backend revisions, prompt reference, conservative
+budgets, output contract, timeout, host preparation, and model-tool authority.
+Workers execute that snapshot and never reread mutable process policy.
 
-HTTP 503 is capacity only when its status, content type, and body exactly match
-the versioned capacity response. A loss before acceptance is unavailable; a
-loss after HTTP acceptance is ambiguous. An accepted stream without a terminal
-is never reclassified as a known failure. Cancel and policy violation are
-idempotent private controls. Policy violation is monotonic and terminalizes a
-matching active turn as `Failed(policy_violation)`, never `Cancelled`, whether
-it arrives before or after cancellation.
+Model selection does not grant tools. The operation policy independently
+resolves one of:
 
-The host admits one generation at a time and releases that slot only after the
-runtime closes. It has no application configuration, database credential, API
-key, application data mount, TCP listener, or persistent writable runtime
-state beyond one exact encrypted `auth.json`. Every turn owns a private root on
-the dedicated `/run/nexus-codex-turns` tmpfs with separate empty `workspace/`,
-ephemeral `state/`, and private `tmp/` directories. That exact mode-`0700`
-tmpfs is executable only because the pinned SDK publishes its private launcher
-beside profile state. The complete bounded turn surface is therefore executable
-at the outer mount; the inner bwrap/seccomp policy still confines model-writable
-paths, general `/tmp` remains `noexec`, and startup exercises the real SDK path
-before serving. The pinned adapter makes the turn `tmp/` the child
-`TMPDIR` and excludes bare `/tmp` from Codex workspace-write policy. The
-profile's auth path is an
-absolute link to the exact writable bind, and the complete turn root is deleted
-after runtime close. This is qualified only for pinned
-Codex `0.144.4` truncate/write refresh persistence; any change to that write
-primitive requires redesign and release qualification. Its only
-application-facing transport is `/run/nexus-codex/agent.sock`.
+- `NoModelTools`;
+- `ChatRead` or `ChatReadAdditiveWrite` from fresh per-run Chat authority;
+- `LibraryDossierRead`;
+- `IdeaDossierRead`.
 
-## Chat MCP authority
+Chat read mode grants `web.search` and the five Nexus reads. The additive-write
+extension grants the five existing owner-gated writes only after the composer
+control labelled **Allow this reply to add to Nexus** is explicitly enabled for
+that run. It is off by default and never inherited. The two Dossier plans grant
+only the five Nexus reads over their exact frozen evidence scope; no background
+plan grants a write. The remaining background operations publish no model-tool
+schema or MCP configuration. Idea host research remains a separate bounded,
+durable three-search preparation plan.
 
-The interactive worker serves `mcp==2.1.0` as a stateless, JSON-response
-Streamable HTTP app at exactly `/internal/agent-tools/mcp` on its dedicated
-listener. Caddy routes only that exact path. All other traffic keeps its
-existing route.
+Codex MCP observations and Provider API function proposals reach the same
+canonical `GenerationToolExecutor`, authority checks, receipts, evidence,
+citations, trust, and Undo. The sole tool-position grammar is
+`generation/{generation_seq}/tool/{n}`, with a one-based ordinal monotonic
+across the parent generation. An API model/tool/model loop never restarts it at
+a child call; Codex uses the same grammar inside its native child.
 
-The production client is exactly `openai-codex==0.144.4` plus
-`openai-codex-cli-bin==0.144.4`, speaking only MCP `2025-06-18`. Every POST
-carries `Authorization: Bearer <generation grant>`,
-`Content-Type: application/json`, and
-`Accept: application/json, text/event-stream`. `initialize` declares
-`protocolVersion: 2025-06-18` in its JSON body and omits the
-`MCP-Protocol-Version` header; the mount accepts only that omission or the same
-exact version on initialize. Every later POST must carry
-`MCP-Protocol-Version: 2025-06-18`. Another revision, a missing later revision,
-or any `Mcp-Session-Id` is rejected.
+Untrusted tool arguments or output cannot widen the frozen plan, principal,
+scope, limits, or effect authority. There is no tool-shaped text parser,
+provider-native Web search, alternate executor, or transport fallback.
 
-The advertised event-stream media type is a client compatibility header, not
-a Nexus response mode. The server returns JSON for JSON-RPC requests and a
-bodyless notification acknowledgement. It emits no session id, owns no GET
-event stream, DELETE-session lifecycle, event store, resume cursor, OAuth
-fallback, protocol downgrade, or dual-era path. Durable tool replay is keyed
-only by the generation grant `jti` and typed JSON-RPC request id.
+## Backend composition
 
-The host receives the public HTTPS MCP origin from deployment configuration and
-admits `ChatTools` only when the deployment's explicit network attestation is
-true. Each turn receives a short-lived, run/lease/generation-scoped bearer
-grant signed by the dedicated `AGENT_TOOL_GRANT_SIGNING_KEY`; it never reuses a
-stream token. The grant is resolved into an ephemeral header reference and is
-removed with the per-turn state.
+Codex Personal uses one private UDS command/NDJSON stream. The adapter binds the
+catalog-validated native model key before dispatch and supplies MCP only for a
+present frozen model-tool plan. The host has no database credential,
+application secret, generation API key, product data mount, or TCP listener. It
+owns one private per-turn root and deletes it after the pinned runtime closes.
 
-The MCP owner revalidates the live claimed job, attempt, generation, declared
-tool, canonical input, and admitted resources for every call. Tool replay uses
-the durable journal identity. A later authorization failure invokes the host's
-policy-violation control for that active generation.
+The private authenticated MCP mount is exactly
+`/internal/agent-tools/mcp`, `mcp==2.1.0`, protocol `2025-06-18`. It is
+stateless and JSON-response only. Every Codex tool-bearing generation receives
+a short-lived bearer bound to its generation, attempt, worker lease, frozen
+plan, scope, budgets, and effect mode. The mount publishes only that plan and
+creates no public MCP principal or general client surface.
 
-## Durable ownership and ledger
+Provider API execution uses `ProviderRuntime` with the selected configured
+credential. Each independently accepted provider call is a child model turn.
+Tool proposals are executed only after durable admission; the sealed,
+target-bound continuation advances only after the child terminal and tool
+result are persisted. Unsupported strict-output-plus-tool combinations are
+ineligible at catalog qualification rather than silently losing strictness or
+tools.
 
-Each durable owner chooses a stable `request_id`, constructs one bounded intent,
-stores its fingerprint, and uses the shared
-`Prepared -> Uncertain -> Completed` journal. Raw prompts are not persisted for
-repair. The owner stages the `llm_calls` start beside its `Uncertain` checkpoint
-and the terminal beside `Completed`, in the same caller-owned transaction;
-`llm_ledger.py` never commits.
+Both lanes project into the route-neutral `GenerationEvent` family without
+importing one another. No cross-lane dispatcher shares credentials or protocol
+state.
 
-One ledger row records the owner/generation sequence, operation, plan and policy
-revision, fixed Codex route, model/effort, capability, request/output/tool
-fingerprints, session reference, normalized outcome/failure, usage,
-SDK/runtime versions, acceptance time, latency, and completion. It stores no
-price, cost estimate, generation credential, or raw response.
+## Durable ownership and replay
 
-An owner may redispatch only when its journal replay policy permits it. An
-accepted generation that reached `Uncertain` stays suspended until
-reconciliation or explicit cancellation; transport ambiguity is not automatic
-retry authority. Every generation owner supports an operator's externally
-established `ProveNotDispatched` decision against the exact journal/ledger
-identity. Recovered-terminal attachment exists only where immutable durable
-inputs can reconstruct the original command and reuse the live decoder.
+One parent generation row records the frozen spec and terminal truth. One child
+row records each independently accepted model call: normally one for Codex and
+one per ProviderRuntime call in an API tool loop. Tool positions and their
+effect receipts are separate durable children. Credentials, MCP bearers, raw
+prompts, and decrypted continuation bytes never enter catalog, history,
+evidence, or logs.
 
-## API and historical eligibility
+Completed children and tool positions replay without redispatch. A provider
+loop may resume only from its sealed next-child continuation. Accepted or
+uncertain dispatch never becomes automatic retry authority. Only externally
+established `ProveNotDispatched` may reset an exact non-dispatched child;
+otherwise reconciliation attaches independently recovered terminal evidence or
+the operation remains suspended/terminal according to its owner contract.
 
-`POST /chat-runs` accepts `destination`, `content`, `profile_id`, and
-`reader_selection`. Meta SSE carries the profile snapshot but no execution
-route choice. `ChatRunOut` exposes the profile plus resolved model/effort; the
-trust trail additionally exposes plan id/revision, usage, and runtime audit
-facts. Neither surface exposes route or cost.
+Subscription quota observed before Codex acceptance is capacity, not ordinary
+failure. Background work enters durable `CapacityPaused`, waits for the known
+reset or a bounded low-frequency recheck, and neither spends API money nor
+switches models. Chat reports the typed capacity refusal directly. A capacity
+error after acceptance is terminal because replay could duplicate billing or
+effects.
 
-Historical conversations remain readable. Rerun/regenerate eligibility is
-fail-closed: a source without a post-cutover profile/plan snapshot, or whose
-recorded plan id/revision no longer equals the active policy, is ineligible.
-The check uses the typed ledger accessor and never probes raw ledger columns.
+## Product API and reset boundary
 
-## Deployment invariants
+`POST /chat-runs`, rerun, and regenerate carry an explicit selection,
+`catalog_definition_revision`, and `tool_authority: ReadOnly | AdditiveWrites`.
+Chat history, SSE meta, and trust projections expose the same immutable
+selection and authority plus safe execution disclosure. They never expose
+credentials, dispatch aliases, continuation bytes, or a generation default.
 
-- The host environment contains no `CODEX_HOME` or `OPENAI_API_KEY`.
-- The API and both worker lanes mount the Codex UDS read-only and are
-  start-ordered after the host without a health dependency. The API needs it
-  only for request-scoped dossier idea resolution; no client receives the
-  credential bind.
-- Only the interactive worker listens for MCP, on `0.0.0.0:8001` inside the
-  Compose network.
-- The host has only the internal `nexus_codex_private` attachment. Its sole
-  peer is the credential-free `codex-egress-policy` DNS/TLS-SNI sidecar; only
-  that sidecar joins `nexus_codex_proxy_egress`. The release gate proves the
-  exact two-network membership, fixed private addresses, DNS owner, and
-  ChatGPT/auth/MCP hostname policy. TLS remains end-to-end.
-- The MCP origin is HTTPS with the exact path, a lowercase public DNS hostname,
-  and no userinfo, query, or fragment.
-- AppArmor and the inner bwrap/seccomp proof remain release gates.
+The hard-cut migration deletes the complete legacy Chat aggregate and all
+historical generation/metering rows. Users, media, libraries, knowledge,
+resource graph data not owned by conversations, and non-conversation artifacts
+remain. Consequently every surviving Chat run was admitted under this contract;
+there is no legacy eligibility decoder or historical selection translation.
 
 ## Invariants
 
-- One policy catalog resolves every operation and chat profile.
-- One private v2 client owns transport classification and bounds.
-- One host owns SDK/runtime sessions and one-slot capacity.
-- One staged ledger owns generation audit.
-- Domain owners alone validate and publish semantic output.
-- Every generation reaches the one Codex Personal boundary.
+- One configured catalog is the source of every selectable Chat pair.
+- One developer policy owns the Chat seed and all background selections.
+- One frozen `GenerationSpec` owns selection, budgets, output, and tool policy.
+- One parent/child ledger owns generation truth across both routes.
+- One canonical tool authority serves eligible Chat and background operations.
+- Domain owners alone accept model output and publish semantic results.
+- No user generation defaults, profiles, presets, fallback, or compatibility
+  path exists.

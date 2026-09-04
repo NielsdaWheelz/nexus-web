@@ -52,12 +52,13 @@ def test_activity_composes_queue_progress_index_and_viewer_visibility(
     retry_job = enqueue_source_job(
         db_session, media_id=retry_id, attempt=retry_attempt, max_attempts=2
     )
-    claim_heavy_job(db_session, retry_job.id, "retry-worker")
+    retry_claim = claim_heavy_job(db_session, retry_job.id, "retry-worker")
     assert (
         fail_job(
             db_session,
             job_id=retry_job.id,
             worker_id="retry-worker",
+            attempt_no=retry_claim.attempts,
             error_code="E_WORKER_INTERRUPTED",
             error_message="worker interrupted",
             retry_delays_seconds=(300,),
@@ -75,12 +76,13 @@ def test_activity_composes_queue_progress_index_and_viewer_visibility(
         db_session, media_id=dead_id, attempt=dead_attempt, max_attempts=1
     )
     dead_attempt.request_id = "request-dead-source"
-    claim_heavy_job(db_session, dead_job.id, "dead-worker")
+    dead_claim = claim_heavy_job(db_session, dead_job.id, "dead-worker")
     assert (
         fail_job(
             db_session,
             job_id=dead_job.id,
             worker_id="dead-worker",
+            attempt_no=dead_claim.attempts,
             error_code="E_WORKER_INTERRUPTED",
             error_message="worker interrupted",
             retry_delays_seconds=(),
@@ -474,12 +476,13 @@ def test_ingest_health_projects_upload_publication_and_resource_facts(
         attempt=limited_attempt,
         max_attempts=1,
     )
-    claim_heavy_job(db_session, limited_job.id, "resource-worker")
+    limited_claim = claim_heavy_job(db_session, limited_job.id, "resource-worker")
     assert (
         fail_job(
             db_session,
             job_id=limited_job.id,
             worker_id="resource-worker",
+            attempt_no=limited_claim.attempts,
             error_code="E_RESOURCE_LIMIT",
             error_message="bounded child exceeded memory",
             retry_delays_seconds=(),
@@ -557,7 +560,7 @@ def test_failed_index_state_without_exact_current_dead_job_is_invariant_defect(
             payload={"media_id": str(media_id), "revision": 1},
         )
         if exact_status == "failed":
-            claim_heavy_job(
+            failed_claim = claim_heavy_job(
                 db_session,
                 job.id,
                 "index-failed-worker",
@@ -568,6 +571,7 @@ def test_failed_index_state_without_exact_current_dead_job_is_invariant_defect(
                     db_session,
                     job_id=job.id,
                     worker_id="index-failed-worker",
+                    attempt_no=failed_claim.attempts,
                     error_code="E_INDEX_RETRY",
                     error_message="retryable index failure",
                     retry_delays_seconds=(300,),
@@ -582,7 +586,7 @@ def test_failed_index_state_without_exact_current_dead_job_is_invariant_defect(
                 allowed_kinds=("media_content_reindex_job",),
             )
         elif exact_status == "succeeded":
-            claim_heavy_job(
+            completed_claim = claim_heavy_job(
                 db_session,
                 job.id,
                 "index-complete-worker",
@@ -592,6 +596,7 @@ def test_failed_index_state_without_exact_current_dead_job_is_invariant_defect(
                 db_session,
                 job_id=job.id,
                 worker_id="index-complete-worker",
+                attempt_no=completed_claim.attempts,
             )
     db_session.flush()
 
@@ -651,12 +656,13 @@ def test_published_attempt_ignores_stale_source_failure_without_in_flight_progre
     attempt.status = "succeeded"
     attempt.processing_stage = "Finalize"
     job = enqueue_source_job(db_session, media_id=media_id, attempt=attempt, max_attempts=1)
-    claim_heavy_job(db_session, job.id, "publication-worker")
+    publication_claim = claim_heavy_job(db_session, job.id, "publication-worker")
     assert (
         fail_job(
             db_session,
             job_id=job.id,
             worker_id="publication-worker",
+            attempt_no=publication_claim.attempts,
             error_code="E_WORKER_INTERRUPTED",
             error_message="worker interrupted",
             retry_delays_seconds=(),
@@ -690,12 +696,13 @@ def test_repair_requeues_only_exact_current_dead_source_work(
         attempt_no=1,
     )
     job = enqueue_source_job(db_session, media_id=media_id, attempt=attempt, max_attempts=1)
-    claim_heavy_job(db_session, job.id, "failed-worker")
+    failed_claim = claim_heavy_job(db_session, job.id, "failed-worker")
     assert (
         fail_job(
             db_session,
             job_id=job.id,
             worker_id="failed-worker",
+            attempt_no=failed_claim.attempts,
             error_code="E_WORKER_INTERRUPTED",
             error_message="worker interrupted",
             retry_delays_seconds=(),
@@ -775,7 +782,7 @@ def test_repair_exact_search_and_rejects_stale_or_foreign_source_work(
         payload={"media_id": str(searchable_id), "revision": 11},
         max_attempts=1,
     )
-    claim_heavy_job(
+    search_claim = claim_heavy_job(
         db_session,
         search_job.id,
         "index-worker",
@@ -786,6 +793,7 @@ def test_repair_exact_search_and_rejects_stale_or_foreign_source_work(
             db_session,
             job_id=search_job.id,
             worker_id="index-worker",
+            attempt_no=search_claim.attempts,
             error_code="E_WORKER_INTERRUPTED",
             error_message="worker interrupted",
             retry_delays_seconds=(),
@@ -828,12 +836,13 @@ def test_repair_exact_search_and_rejects_stale_or_foreign_source_work(
         attempt=stale_attempt,
         max_attempts=1,
     )
-    claim_heavy_job(db_session, stale_job.id, "stale-worker")
+    stale_claim = claim_heavy_job(db_session, stale_job.id, "stale-worker")
     assert (
         fail_job(
             db_session,
             job_id=stale_job.id,
             worker_id="stale-worker",
+            attempt_no=stale_claim.attempts,
             error_code="E_WORKER_INTERRUPTED",
             error_message="worker interrupted",
             retry_delays_seconds=(),

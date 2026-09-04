@@ -7,6 +7,7 @@ import type {
 import type { RetrievalLocator } from "@/lib/api/sse/locators";
 import type { CitationOut } from "@/lib/conversations/citationOut";
 import type { ReaderSelectionOut } from "@/lib/conversations/readerSelection";
+import type { RunSelectionOut } from "@/lib/conversations/generationCatalog";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import type { Presence } from "@/lib/api/presence";
 import type { DurableExecution } from "@/lib/api/executionAdvisory";
@@ -32,16 +33,6 @@ export interface ConversationListItem {
   message_count: number;
   updated_at: string;
 }
-
-/**
- * Product-facing generation presets are owned and decoded by the atomic
- * `/llm-profiles` boundary; this module only re-exports their trusted types.
- */
-export type {
-  ChatProfileId,
-  LlmProfile,
-  LlmProfilesOut,
-} from "@/lib/conversations/chatProfileContract";
 
 export type ChatSendCapability =
   | { readonly kind: "Available" }
@@ -162,6 +153,21 @@ export const MESSAGE_TOOL_STATUSES = [
 
 export type MessageToolStatus = (typeof MESSAGE_TOOL_STATUSES)[number];
 
+export interface MachineAuthorship {
+  target_kind:
+    | "library_entry"
+    | "note_block"
+    | "highlight"
+    | "resource_edge"
+    | "queue_item";
+  target_id: string;
+  generation_id: string;
+  generation_seq: number;
+  tool_position: number;
+  position_path: string;
+  effect_id: string;
+}
+
 export interface MessageToolCall {
   id?: string;
   record_kind: ToolRecordKind;
@@ -176,6 +182,7 @@ export interface MessageToolCall {
   requested_types?: string[];
   result_refs: Array<Record<string, unknown>>;
   selected_context_refs: Array<Record<string, unknown>>;
+  machine_authorships?: MachineAuthorship[];
   provider_request_ids: string[];
   latency_ms?: number | null;
   result_count?: number;
@@ -206,16 +213,12 @@ export interface AssistantTrustTrail {
   status: "pending" | "running" | "complete" | "error" | "cancelled";
   run: {
     run_id: string;
-    profile_id: string | null;
-    plan_id: string | null;
-    plan_revision: string | null;
-    model_name: string | null;
+    run_selection: RunSelectionOut;
     status: "pending" | "running" | "complete" | "error" | "cancelled";
     usage: Record<string, unknown> | null;
     error_code: string | null;
     failure: ExpectedChatFailure | null;
     execution: Presence<DurableExecution>;
-    reasoning_effort: Presence<string>;
     support_id: Presence<string>;
     publication_warning: Presence<ChatPublicationWarning>;
     final_chars: number | null;
@@ -448,12 +451,8 @@ export interface ChatRun {
   conversation_id: string;
   user_message_id: string;
   assistant_message_id: string;
-  /** Product-selection snapshot taken at creation; null only before the run
-   * record has been fully hydrated. */
-  profile_id: string | null;
-  /** Resolved operator facts filled from runtime execution — null until then. */
-  model_name: string | null;
-  reasoning_effort: string | null;
+  /** Immutable dispatch projection plus separately refreshed current state. */
+  run_selection: RunSelectionOut;
   support_id: Presence<string>;
   publication_warning: Presence<ChatPublicationWarning>;
   /** The one chat_failure_projection read. Null for a run that is not a

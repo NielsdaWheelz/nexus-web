@@ -22,7 +22,18 @@ from sqlalchemy.orm import Session
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.citation import CitationOut
 from nexus.services.artifacts.registry import visible_persisted_subject
-from nexus.services.llm_ledger import LlmCallOwner, read_latest_generations_for_owners
+from nexus.services.generation_selection import CodexPersonalSelection, ProviderApiSelection
+from nexus.services.generation_spec import (
+    ProviderDispatchTargetSnapshot,
+    decode_generation_spec_document,
+)
+from nexus.services.llm_ledger import (
+    GenerationRecord,
+    LlmCallOwner,
+    ModelTurnRecord,
+    read_latest_generations_for_owners,
+    read_model_turns_for_generations,
+)
 from nexus.services.resource_graph.citations import build_citation_outs_for_sources
 from nexus.services.resource_graph.refs import ResourceRef
 
@@ -99,11 +110,19 @@ def list_revisions(db: Session, *, viewer_id: UUID, artifact_id: UUID) -> list[R
         owners=[LlmCallOwner(kind="artifact_build", id=UUID(str(row["build_id"]))) for row in rows],
         outcome="Succeeded",
     )
+    turns_by_generation = read_model_turns_for_generations(
+        db,
+        generation_ids=[generation.id for generation in generations_by_owner.values()],
+    )
     summaries: list[RevisionSummary] = []
     for row in rows:
         revision_id = UUID(str(row["id"]))
         generation = generations_by_owner.get(
             LlmCallOwner(kind="artifact_build", id=UUID(str(row["build_id"])))
+        )
+        provider, model, total_tokens = _generation_provenance(
+            generation,
+            () if generation is None else turns_by_generation.get(generation.id, ()),
         )
         summaries.append(
             RevisionSummary(
@@ -123,9 +142,9 @@ def list_revisions(db: Session, *, viewer_id: UUID, artifact_id: UUID) -> list[R
                     if row["creator_user_id"] is not None
                     else None
                 ),
-                model_provider=generation.backend if generation is not None else None,
-                model_name=generation.model_name if generation is not None else None,
-                total_tokens=generation.total_tokens if generation is not None else None,
+                model_provider=provider,
+                model_name=model,
+                total_tokens=total_tokens,
             )
         )
     return summaries
@@ -169,6 +188,14 @@ def get_revision(db: Session, *, viewer_id: UUID, revision_id: UUID) -> Revision
         owners=[build_owner],
         outcome="Succeeded",
     ).get(build_owner)
+    turns = (
+        ()
+        if generation is None
+        else read_model_turns_for_generations(db, generation_ids=[generation.id]).get(
+            generation.id, ()
+        )
+    )
+    provider, model, total_tokens = _generation_provenance(generation, turns)
     citation_owner = UUID(str(row["citation_owner_user_id"]))
     source = ResourceRef(scheme="artifact_revision", id=revision_id)
     citations = build_citation_outs_for_sources(
@@ -195,10 +222,41 @@ def get_revision(db: Session, *, viewer_id: UUID, revision_id: UUID) -> Revision
         creator_user_id=(
             UUID(str(row["creator_user_id"])) if row["creator_user_id"] is not None else None
         ),
-        model_provider=generation.backend if generation is not None else None,
-        model_name=generation.model_name if generation is not None else None,
-        total_tokens=generation.total_tokens if generation is not None else None,
+        model_provider=provider,
+        model_name=model,
+        total_tokens=total_tokens,
     )
+
+
+def _generation_provenance(
+    generation: GenerationRecord | None,
+    turns: tuple[ModelTurnRecord, ...],
+) -> tuple[str | None, str | None, int | None]:
+    """Project route/model and complete child usage from immutable ledger facts."""
+
+    if generation is None:
+        return None, None, None
+    spec = decode_generation_spec_document(generation.spec.value)
+    if isinstance(spec.selection, CodexPersonalSelection):
+        provider = "codex-personal"
+        model = spec.selection.model
+    elif isinstance(spec.selection, ProviderApiSelection):
+        target = spec.resolved_dispatch_target
+        if not isinstance(target, ProviderDispatchTargetSnapshot):
+            raise AssertionError("ProviderApi generation lost its provider target")
+        provider = str(target.provider)
+        model = spec.selection.model_ref
+    else:
+        raise AssertionError("generation selection is not exhaustive")
+    totals: list[int] = []
+    for turn in turns:
+        if turn.usage is None:
+            return provider, model, None
+        value = turn.usage.get("total_tokens")
+        if type(value) is not int or value < 0:
+            return provider, model, None
+        totals.append(value)
+    return provider, model, sum(totals) if totals else None
 
 
 def assert_revision_viewer(db: Session, *, viewer_id: UUID, revision_id: UUID) -> None:

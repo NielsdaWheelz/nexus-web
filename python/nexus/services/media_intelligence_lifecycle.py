@@ -237,7 +237,6 @@ def _ensure_media_unit_core(db: Session, *, media_id: UUID) -> MediaUnitRef:
             "media_id": str(media_id),
             "summary_id": str(summary_id),
             "content_fingerprint": fingerprint,
-            "capacity_wait_index": 0,
             "coordination": {},
         },
     )
@@ -255,8 +254,12 @@ def _media_unit_model_name() -> str:
     # Bounded indexing children may import this owner but must not preload the
     # generation/tool/provider graph merely to publish or tear down an index.
     from nexus.services import generation_policy
+    from nexus.services.generation_selection import CodexPersonalSelection
 
-    return generation_policy.operation_policy(MEDIA_UNIT_OPERATION).model
+    selection = generation_policy.background_operation_policy(MEDIA_UNIT_OPERATION).selection
+    if not isinstance(selection, CodexPersonalSelection):
+        raise AssertionError("media summary must ship through Codex Personal")
+    return selection.model
 
 
 __all__ = [

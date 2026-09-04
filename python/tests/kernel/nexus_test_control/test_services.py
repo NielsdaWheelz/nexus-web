@@ -68,7 +68,19 @@ RUN_ID = "0123456789abcdef"
 
 def _ports() -> RuntimePorts:
     return RuntimePorts(
-        15432, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 18001, 13000, 19091, 19092
+        15432,
+        19000,
+        25421,
+        25422,
+        25423,
+        25424,
+        25425,
+        18000,
+        18001,
+        13000,
+        19091,
+        19092,
+        19093,
     )
 
 
@@ -986,6 +998,10 @@ def test_caller_resource_configuration_is_rejected_and_secrets_have_safe_reprs()
         {"WORKER_LANE": "interactive"},
         {"OUTBOUND_HTTP_PROXY_URL": "https://production.example"},
         {"PODCAST_INDEX_BASE_URL": "https://production.example"},
+        {"GENERATION_API_PROVIDERS": ""},
+        {"GENERATION_API_BASE_URLS": "{}"},
+        {"OPENAI_GENERATION_API_KEY": "production-generation-key"},
+        {"GENERATION_CONTINUATION_ENCRYPTION_KEY": "production-continuation-key"},
         {"NEXUS_TEST_STATIC_DNS": '{"production.example":"93.184.216.34"}'},
         {"NODE_OPTIONS": "--import=/tmp/foreign.mjs"},
         {"DOCKER_HOST": "tcp://production.example:2376"},
@@ -1355,6 +1371,7 @@ def test_run_environment_contains_only_exact_local_resources_and_no_admin_key(
     assert environment["NEXT_PUBLIC_SUPABASE_URL"] == "http://127.0.0.1:25421"
     assert environment["NEXT_PUBLIC_SUPABASE_ANON_KEY"] == "public-anon-key"
     assert environment["OPENAI_API_KEY"] == "nexus-test-fixture-openai-key"
+    assert environment["GENERATION_API_PROVIDERS"] == ""
     assert environment["NEXUS_RUNTIME_IDENTITY_FILE"] == str(
         tmp_path / ".nexus-test/runtime-identity.json"
     )
@@ -1427,19 +1444,44 @@ def test_codex_generation_peer_materializes_one_exact_secret_free_client_identit
 
 
 def test_codex_generation_peer_answers_journey_synthesis_without_tool_authority() -> None:
-    from nexus.services import media_intelligence
+    from nexus.services import generation_policy, media_intelligence
+    from nexus.services.codex_generation_contract import GenerationCommand
+    from nexus.services.generation_intent import GenerationIntent, JsonSchemaOutput
+    from nexus.services.generation_selection import CodexPersonalSelection
+    from nexus.services.generation_spec import GenerationOperation
     from nexus.tasks import enrich_metadata
+    from tests.testkit.codex_generation import codex_generation_command
     from tests.testkit.codex_generation_server import deterministic_synthesis_output
 
     generation_id = UUID("37fec309-e196-5c82-ac03-095414384ca4")
-    metadata = enrich_metadata._metadata_generation_command(
-        generation_id=generation_id,
-        input="A bounded journey metadata packet.",
+    metadata_intent = enrich_metadata._metadata_generation_intent(
+        input="A bounded journey metadata packet."
     )
-    media_summary = media_intelligence._media_unit_command(
-        generation_id=generation_id,
-        user_content="[0] A bounded journey evidence passage.",
+    media_intent = media_intelligence._media_unit_intent(
+        user_content="[0] A bounded journey evidence passage."
     )
+    assert isinstance(metadata_intent.output, JsonSchemaOutput)
+    assert isinstance(media_intent.output, JsonSchemaOutput)
+
+    def command(operation: GenerationOperation, intent: GenerationIntent) -> GenerationCommand:
+        operation_policy = generation_policy.background_operation_policy(operation)
+        selection = operation_policy.selection
+        assert isinstance(selection, CodexPersonalSelection)
+        output = intent.output
+        assert isinstance(output, JsonSchemaOutput)
+        return codex_generation_command(
+            request_id=generation_id,
+            operation=operation,
+            instructions=intent.instructions,
+            input_text=intent.input,
+            model=selection.model,
+            reasoning=selection.reasoning,
+            turn_timeout_seconds=operation_policy.workflow.bounds.turn_timeout_seconds,
+            structured_schema=output.schema_,
+        )
+
+    metadata = command("metadata_enrichment", metadata_intent)
+    media_summary = command("media_summary", media_intent)
 
     assert metadata.tool_grant is None
     assert deterministic_synthesis_output(metadata) == {
@@ -1749,8 +1791,8 @@ def test_clean_upgrades_then_removes_the_exact_previous_runtime(
     runtime = initialize_runtime(tmp_path, TEST_ENV, _ports())
     runtime_path = tmp_path / ".nexus-test/runtime.json"
     previous = json.loads(runtime_path.read_text(encoding="utf-8"))
-    previous["version"] = 3
-    del previous["ports"]["agent_tools_mcp"]
+    previous["version"] = 4
+    del previous["ports"]["provider_api"]
     runtime_path.write_text(json.dumps(previous), encoding="utf-8")
     commands: list[tuple[str, ...]] = []
 
@@ -1764,7 +1806,7 @@ def test_clean_upgrades_then_removes_the_exact_previous_runtime(
             tmp_path,
             TEST_ENV,
             command_runner=run_command,
-            port_available=lambda port: port == 18001,
+            port_available=lambda port: port == 19093,
         )
         == ()
     )

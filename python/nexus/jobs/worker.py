@@ -193,6 +193,7 @@ class JobWorker:
                     db,
                     job_id=claimed.id,
                     worker_id=self.worker_id,
+                    attempt_no=claimed.attempts,
                     error_code="E_JOB_KIND_UNKNOWN",
                     error_message=f"Unsupported job kind: {claimed.kind}",
                     retry_delays_seconds=(),
@@ -378,6 +379,7 @@ class JobWorker:
                         db,
                         job_id=claimed.id,
                         worker_id=self.worker_id,
+                        attempt_no=claimed.attempts,
                         error_code=error_code,
                         error_message=reason,
                         retry_delays_seconds=definition.retry_delays_seconds,
@@ -411,6 +413,7 @@ class JobWorker:
                     db,
                     job_id=claimed.id,
                     worker_id=self.worker_id,
+                    attempt_no=claimed.attempts,
                     result_payload=result_payload,
                 )
                 db.commit()
@@ -444,6 +447,7 @@ class JobWorker:
                     db,
                     job_id=claimed.id,
                     worker_id=self.worker_id,
+                    attempt_no=claimed.attempts,
                     error_code=_derive_error_code(exc),
                     error_message=str(exc),
                     retry_delays_seconds=definition.retry_delays_seconds,

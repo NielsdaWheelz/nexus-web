@@ -1,0 +1,104 @@
+{
+  "version": 2,
+  "corpus_revision": "generation-plans.v2",
+  "reviewed_rubric_revision": "generation-plan-rubric.v2",
+  "max_hosted_calls": 0,
+  "live_qualification": "model_effort_runtime_wire_required_before_production",
+  "consumer_pins": {
+    "policy_revision": "generation-policy.v2.0d24533c6d6185d1a1a0d28b654ec8cdfee1fc4f48097b31769bc50e11d4f789",
+    "policy_facts_fingerprint": "bba771639692232e1639d554b9ccbcbbdaa081f3e93e88db816feebfb79a08f5",
+    "provider_runtime_revision": "b4e05e030b0f2fe8f36f479e8bec320bdc797e20",
+    "llm_tools_revision": "8df458a199703120005296ae12f997b39d208fed",
+    "agent_backend_contract_revision": "provider-runtime.agent-model-catalog.v1",
+    "codex_sdk_version": "0.144.4",
+    "mcp_version": "2.1.0",
+    "mcp_wire_revision": "2025-06-18"
+  },
+  "chat": {
+    "selection": {
+      "route": "CodexPersonal",
+      "model": "gpt-5.6-terra",
+      "reasoning": "medium"
+    },
+    "model_tool_plans": [
+      "ChatRead",
+      "ChatReadAdditiveWrite"
+    ]
+  },
+  "background_operations": {
+    "metadata_enrichment": {
+      "selection": {"route": "CodexPersonal", "model": "gpt-5.6-luna", "reasoning": "low"},
+      "model_tool_plan": null
+    },
+    "media_summary": {
+      "selection": {"route": "CodexPersonal", "model": "gpt-5.6-luna", "reasoning": "low"},
+      "model_tool_plan": null
+    },
+    "synapse": {
+      "selection": {"route": "CodexPersonal", "model": "gpt-5.6-luna", "reasoning": "low"},
+      "model_tool_plan": null
+    },
+    "dawn_write": {
+      "selection": {"route": "CodexPersonal", "model": "gpt-5.6-terra", "reasoning": "medium"},
+      "model_tool_plan": null
+    },
+    "oracle": {
+      "selection": {"route": "CodexPersonal", "model": "gpt-5.6-terra", "reasoning": "medium"},
+      "model_tool_plan": null
+    },
+    "dossier_page": {
+      "selection": {"route": "CodexPersonal", "model": "gpt-5.6-luna", "reasoning": "low"},
+      "model_tool_plan": null
+    },
+    "dossier_note": {
+      "selection": {"route": "CodexPersonal", "model": "gpt-5.6-luna", "reasoning": "low"},
+      "model_tool_plan": null
+    },
+    "dossier_media": {
+      "selection": {"route": "CodexPersonal", "model": "gpt-5.6-terra", "reasoning": "medium"},
+      "model_tool_plan": null
+    },
+    "dossier_conversation": {
+      "selection": {"route": "CodexPersonal", "model": "gpt-5.6-terra", "reasoning": "medium"},
+      "model_tool_plan": null
+    },
+    "dossier_library": {
+      "selection": {"route": "CodexPersonal", "model": "gpt-5.6-terra", "reasoning": "high"},
+      "model_tool_plan": "LibraryDossierRead"
+    },
+    "dossier_podcast": {
+      "selection": {"route": "CodexPersonal", "model": "gpt-5.6-terra", "reasoning": "high"},
+      "model_tool_plan": null
+    },
+    "dossier_contributor": {
+      "selection": {"route": "CodexPersonal", "model": "gpt-5.6-terra", "reasoning": "high"},
+      "model_tool_plan": null
+    },
+    "dossier_idea": {
+      "selection": {"route": "CodexPersonal", "model": "gpt-5.6-terra", "reasoning": "high"},
+      "model_tool_plan": "IdeaDossierRead"
+    },
+    "dossier_idea_resolve": {
+      "selection": {"route": "CodexPersonal", "model": "gpt-5.6-luna", "reasoning": "low"},
+      "model_tool_plan": null
+    }
+  },
+  "tool_plans": {
+    "ChatRead": {
+      "authority_revision": "dc584f4320765dd8b08e65976380411abe010aca0fbeef4814ca3530512429d1",
+      "effect_mode": "ReadOnly"
+    },
+    "ChatReadAdditiveWrite": {
+      "authority_revision": "3fc34933d27eeb7518984e1274a3be5001902dfb8d4a3669bc83160302d2ceff",
+      "effect_mode": "AdditiveWrites"
+    },
+    "LibraryDossierRead": {
+      "authority_revision": "b6b91ec256ef4113aee8aff329affdfeff08f855eb71cbcce6bf05d1bed93902",
+      "effect_mode": "ReadOnly"
+    },
+    "IdeaDossierRead": {
+      "authority_revision": "35ae7ab9ab1b2da96b3c7809b93c1cce8122e9a4eb7ef146d14aec0b2ca34d8b",
+      "effect_mode": "ReadOnly"
+    }
+  }
+}

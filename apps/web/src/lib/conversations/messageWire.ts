@@ -30,7 +30,7 @@ import {
 } from "@/lib/conversations/citationOut";
 import { decodeTrustToolCall } from "@/lib/conversations/trustToolCallWire";
 import { decodeNullableExpectedChatFailure } from "@/lib/conversations/chatFailureContract";
-import { decodeChatProfileId } from "@/lib/conversations/chatProfileContract";
+import { decodeRunSelectionOut } from "@/lib/conversations/generationCatalog";
 import type {
   AssistantTrustTrail,
   ChatPublicationWarning,
@@ -84,9 +84,7 @@ const CHAT_RUN_KEYS = [
   "conversation_id",
   "user_message_id",
   "assistant_message_id",
-  "profile_id",
-  "model_name",
-  "reasoning_effort",
+  "run_selection",
   "support_id",
   "publication_warning",
   "failure",
@@ -117,11 +115,7 @@ const TRUST_TRAIL_KEYS = [
 
 const TRUST_RUN_KEYS = [
   "run_id",
-  "profile_id",
-  "plan_id",
-  "plan_revision",
-  "model_name",
-  "reasoning_effort",
+  "run_selection",
   "status",
   "usage",
   "error_code",
@@ -221,14 +215,9 @@ function decodeChatRun(raw: unknown): ChatRun {
       run.assistant_message_id,
       "chat run.assistant_message_id",
     ),
-    profile_id:
-      run.profile_id === null
-        ? null
-        : decodeChatProfileId(run.profile_id, "chat run.profile_id"),
-    model_name: expectNullableString(run.model_name, "chat run.model_name"),
-    reasoning_effort: expectNullableString(
-      run.reasoning_effort,
-      "chat run.reasoning_effort",
+    run_selection: decodeRunSelectionOut(
+      run.run_selection,
+      "chat run.run_selection",
     ),
     support_id: decodePresence(run.support_id, (value) =>
       expectString(value, "chat run.support_id.value"),
@@ -261,23 +250,9 @@ function decodeTrustRun(
   const usage = decodeNullableRecord(run.usage, "assistant trust run.usage");
   return {
     run_id: expectString(run.run_id, "assistant trust run.run_id"),
-    // Historical messages may name a retired profile, but the old selector,
-    // provider, cost, and retry fields are rejected by TRUST_RUN_KEYS.
-    profile_id: expectNullableString(
-      run.profile_id,
-      "assistant trust run.profile_id",
-    ),
-    plan_id: expectNullableString(run.plan_id, "assistant trust run.plan_id"),
-    plan_revision: expectNullableString(
-      run.plan_revision,
-      "assistant trust run.plan_revision",
-    ),
-    model_name: expectNullableString(
-      run.model_name,
-      "assistant trust run.model_name",
-    ),
-    reasoning_effort: decodePresence(run.reasoning_effort, (value) =>
-      expectString(value, "assistant trust run.reasoning_effort.value"),
+    run_selection: decodeRunSelectionOut(
+      run.run_selection,
+      "assistant trust run.run_selection",
     ),
     status: expectOneOf(
       run.status,

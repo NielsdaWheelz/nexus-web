@@ -4,13 +4,16 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal, assert_never
 
 from nexus.services.prompt_budget import (
     ContextBudgetError,
     PromptBlock,
     estimate_block_tokens,
 )
+
+if TYPE_CHECKING:
+    from nexus.services.generation_service import ChatToolAuthority
 
 MAX_PROMPT_CHARS = 100_000
 
@@ -49,10 +52,10 @@ class PromptPlan:
         }
 
 
-def render_system_prompt_block() -> str:
-    """Render invariant assistant instructions for the exact published tool set."""
+def render_system_prompt_block(*, tool_authority: ChatToolAuthority) -> str:
+    """Render assistant instructions for the exact per-run published tool set."""
 
-    return (
+    read_instructions = (
         "You are a reading assistant for the user's saved articles, books, podcasts, "
         "videos, and PDFs. "
         "A <subject> block, when present, is the primary resource the user is asking "
@@ -85,11 +88,16 @@ def render_system_prompt_block() -> str:
         "read the sections you need. "
         "Use nexus__document__search to find passages inside one admitted document and "
         "nexus__relations__list to inspect its admitted one-hop connections."
-    ) + _render_write_tools_block()
+    )
+    if tool_authority == "ReadOnly":
+        return read_instructions
+    if tool_authority == "AdditiveWrites":
+        return read_instructions + _render_write_tools_block()
+    assert_never(tool_authority)
 
 
 def _render_write_tools_block() -> str:
-    """Render the fixed Chat profile's write-safety instructions."""
+    """Render instructions for an explicitly authorized additive-write run."""
     return (
         " You can also act on the user's library when they explicitly ask you to file, "
         "annotate, connect, or queue — never on your own initiative. "

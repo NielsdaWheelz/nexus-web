@@ -18,12 +18,13 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
 
-from nexus.api.deps import require_tool_projection_revision
+from nexus.api.deps import get_generation_catalog_service, require_tool_projection_revision
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.responses import ok
 from nexus.schemas.conversation import RenameBranchRequest, SetActivePathRequest
 from nexus.services import conversation_branches as conversation_branches_service
+from nexus.services.generation_catalog import GenerationCatalogService
 
 router = APIRouter(tags=["conversation-branches"])
 
@@ -32,15 +33,18 @@ router = APIRouter(tags=["conversation-branches"])
     "/conversations/{conversation_id}/tree",
     dependencies=[Depends(require_tool_projection_revision)],
 )
-def get_conversation_tree(
+async def get_conversation_tree(
     conversation_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
+    catalog: Annotated[GenerationCatalogService, Depends(get_generation_catalog_service)],
 ) -> dict:
+    catalog_snapshot = await catalog.read_chat()
     result = conversation_branches_service.get_conversation_tree(
         db=db,
         viewer_id=viewer.user_id,
         conversation_id=conversation_id,
+        catalog_snapshot=catalog_snapshot,
     )
     return ok(result)
 
@@ -49,17 +53,20 @@ def get_conversation_tree(
     "/conversations/{conversation_id}/active-path",
     dependencies=[Depends(require_tool_projection_revision)],
 )
-def set_conversation_active_path(
+async def set_conversation_active_path(
     conversation_id: UUID,
     body: SetActivePathRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
+    catalog: Annotated[GenerationCatalogService, Depends(get_generation_catalog_service)],
 ) -> dict:
+    catalog_snapshot = await catalog.read_chat()
     result = conversation_branches_service.set_active_path(
         db=db,
         viewer_id=viewer.user_id,
         conversation_id=conversation_id,
         active_leaf_message_id=body.active_leaf_message_id,
+        catalog_snapshot=catalog_snapshot,
     )
     return ok(result)
 

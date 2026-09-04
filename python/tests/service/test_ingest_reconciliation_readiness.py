@@ -12,8 +12,8 @@ from sqlalchemy.orm import Session
 from nexus.config import get_settings
 from nexus.db.models import Media, MediaKind, MediaSourceAttempt, ProcessingStatus
 from nexus.db.session import create_session_factory
+from nexus.jobs import queue as job_queue
 from nexus.jobs.queue import (
-    PERIODIC_PRIORITY_RECONCILIATION_LIMIT,
     claim_job,
     claim_next_job,
     complete_job,
@@ -60,7 +60,7 @@ def test_deployed_database_readiness_requires_the_latest_reconciler_to_succeed_f
         database_url=get_settings().database_url,
         expected_revision=revision,
         reconciler_max_age_seconds=120,
-    )
+    ), "database readiness admitted no successful reconciler cycle"
 
     with session_factory() as db:
         make_pending_job_due(db, job_id=job.id)
@@ -77,6 +77,7 @@ def test_deployed_database_readiness_requires_the_latest_reconciler_to_succeed_f
             db,
             job_id=job.id,
             worker_id="readiness-proof-worker",
+            attempt_no=claimed.attempts,
         )
         db.commit()
 
@@ -146,6 +147,7 @@ def test_ingest_health_uses_last_success_while_pending_and_surfaces_later_dead_c
                 db,
                 job_id=succeeded.id,
                 worker_id="operator-health-success-worker",
+                attempt_no=claimed.attempts,
             )
             pending = enqueue_job(
                 db,
@@ -185,6 +187,7 @@ def test_ingest_health_uses_last_success_while_pending_and_surfaces_later_dead_c
                     db,
                     job_id=failed.id,
                     worker_id="operator-health-failed-worker",
+                    attempt_no=claimed_failed.attempts,
                     error_code="E_RECONCILE_PROBE",
                     error_message="later completed cycle failed",
                     retry_delays_seconds=(),
@@ -267,6 +270,7 @@ def test_deployed_readiness_requires_one_exact_owned_nonsucceeded_source_job(
                 db,
                 job_id=reconciler.id,
                 worker_id="readiness-owner-worker",
+                attempt_no=claimed_reconciler.attempts,
             )
             db.commit()
 
@@ -307,7 +311,12 @@ def test_deployed_readiness_requires_one_exact_owned_nonsucceeded_source_job(
                 heavy_kinds=("ingest_media_source",),
             )
             assert claimed_exact is not None
-            assert complete_job(db, job_id=exact.id, worker_id="readiness-source-worker")
+            assert complete_job(
+                db,
+                job_id=exact.id,
+                worker_id="readiness-source-worker",
+                attempt_no=claimed_exact.attempts,
+            )
             db.commit()
 
         assert not is_database_ready(
@@ -347,6 +356,7 @@ def test_deployed_readiness_requires_one_exact_owned_nonsucceeded_source_job(
                     db,
                     job_id=dead.id,
                     worker_id="readiness-dead-worker",
+                    attempt_no=claimed_dead.attempts,
                     error_code="E_RESOURCE_LIMIT",
                     error_message="bounded",
                     retry_delays_seconds=(),
@@ -385,6 +395,7 @@ def test_deployed_readiness_requires_one_exact_owned_nonsucceeded_source_job(
                 db,
                 job_id=duplicate.id,
                 worker_id="readiness-succeeded-worker",
+                attempt_no=claimed_duplicate.attempts,
                 result_payload={"kind": "UnexpectedDuplicateSuccess"},
             )
             db.commit()
@@ -452,7 +463,12 @@ def test_reconciler_scheduler_priority_preempts_older_ordinary_background_backlo
             created_job_ids.append(claimed.id)
             assert claimed.kind == definition.kind
             assert claimed.priority == definition.periodic_priority
-            assert complete_job(db, job_id=claimed.id, worker_id=worker_id)
+            assert complete_job(
+                db,
+                job_id=claimed.id,
+                worker_id=worker_id,
+                attempt_no=claimed.attempts,
+            )
             db.commit()
     finally:
         with session_factory() as cleanup:
@@ -506,7 +522,12 @@ def test_default_periodic_work_yields_to_new_ordinary_background_work(
             assert claimed is not None
             assert claimed.id == ordinary.id
             assert definition.periodic_priority > ordinary.priority
-            assert complete_job(db, job_id=claimed.id, worker_id=worker_id)
+            assert complete_job(
+                db,
+                job_id=claimed.id,
+                worker_id=worker_id,
+                attempt_no=claimed.attempts,
+            )
             db.commit()
     finally:
         with session_factory() as cleanup:
@@ -596,7 +617,12 @@ def test_scheduler_reconciles_persisted_periodic_priority_without_rewriting_exec
             )
             assert claimed is not None
             assert claimed.id == ordinary.id
-            assert complete_job(db, job_id=claimed.id, worker_id=worker_id)
+            assert complete_job(
+                db,
+                job_id=claimed.id,
+                worker_id=worker_id,
+                attempt_no=claimed.attempts,
+            )
             db.commit()
     finally:
         with session_factory() as cleanup:
@@ -696,7 +722,12 @@ def test_scheduler_reconciles_older_persisted_periodic_priority_before_claim(
             )
             assert claimed is not None
             assert claimed.id == ordinary.id
-            assert complete_job(db, job_id=claimed.id, worker_id=worker_id)
+            assert complete_job(
+                db,
+                job_id=claimed.id,
+                worker_id=worker_id,
+                attempt_no=claimed.attempts,
+            )
             db.commit()
     finally:
         with session_factory() as cleanup:
@@ -756,6 +787,7 @@ def test_scheduler_reconciles_persisted_periodic_replay_priority_only(
                         db,
                         job_id=persisted.id,
                         worker_id=owner_id,
+                        attempt_no=claimed.attempts,
                         error_code="E_PERIODIC_REPLAY_PROBE",
                         error_message="modeled retry",
                         retry_delays_seconds=(0,),
@@ -916,7 +948,6 @@ def test_scheduler_refuses_an_older_cross_kind_periodic_namespace_collision(
         (
             "dawn_write_job",
             {
-                "capacity_wait_index": 0,
                 "coordination": {},
                 "dawn_write_worklist": [],
             },
@@ -976,7 +1007,12 @@ def test_scheduler_revisits_terminal_periodic_jobs_with_registry_owned_checkpoin
                 attempt_no=claimed.attempts,
                 payload={**claimed.payload, **checkpoint_payload},
             )
-            assert complete_job(db, job_id=claimed.id, worker_id=worker_id)
+            assert complete_job(
+                db,
+                job_id=claimed.id,
+                worker_id=worker_id,
+                attempt_no=claimed.attempts,
+            )
             db.commit()
 
         with session_factory() as db:
@@ -1145,6 +1181,11 @@ def test_scheduler_ignores_cross_kind_work_that_only_correlates_to_a_periodic_re
 def test_scheduler_refuses_unbounded_periodic_priority_reconciliation(
     engine: Engine,
 ) -> None:
+    assert hasattr(job_queue, "PERIODIC_PRIORITY_RECONCILIATION_LIMIT"), (
+        "bounded periodic priority reconciliation is absent"
+    )
+    limit = job_queue.PERIODIC_PRIORITY_RECONCILIATION_LIMIT
+    assert isinstance(limit, int) and not isinstance(limit, bool) and limit > 0
     session_factory = create_session_factory(engine)
     definition = replace(
         get_default_registry()["podcast_refresh_due_job"],
@@ -1157,7 +1198,7 @@ def test_scheduler_refuses_unbounded_periodic_priority_reconciliation(
     )
     try:
         with session_factory() as db:
-            for slot_offset in range(1, PERIODIC_PRIORITY_RECONCILIATION_LIMIT + 2):
+            for slot_offset in range(1, limit + 2):
                 slot_start = current_slot - timedelta(
                     seconds=slot_offset * int(definition.periodic_interval_seconds or 0)
                 )
@@ -1186,7 +1227,7 @@ def test_scheduler_refuses_unbounded_periodic_priority_reconciliation(
         )
         with pytest.raises(
             RuntimeError,
-            match=(f"active slot limit exceeds {PERIODIC_PRIORITY_RECONCILIATION_LIMIT}"),
+            match=(f"active slot limit exceeds {limit}"),
         ):
             worker.run_scheduler_once(now=scheduler_now)
 
@@ -1195,7 +1236,7 @@ def test_scheduler_refuses_unbounded_periodic_priority_reconciliation(
                 text("SELECT priority FROM background_jobs WHERE kind = :kind"),
                 {"kind": definition.kind},
             ).all()
-        assert len(priorities) == PERIODIC_PRIORITY_RECONCILIATION_LIMIT + 1
+        assert len(priorities) == limit + 1
         assert set(priorities) == {100}
     finally:
         with session_factory() as cleanup:

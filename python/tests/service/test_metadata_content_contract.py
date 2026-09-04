@@ -15,9 +15,12 @@ from nexus.services.metadata_enrichment import (
     metadata_prompt_budget,
 )
 
-_METADATA_INPUT_MAX_BYTES = generation_policy.operation_policy(
-    "metadata_enrichment"
-).input_max_bytes
+
+def _metadata_input_max_bytes() -> int:
+    assert hasattr(generation_policy, "workflow_for_operation"), (
+        "the route-neutral background generation policy is absent"
+    )
+    return generation_policy.workflow_for_operation("metadata_enrichment").bounds.input_max_bytes
 
 
 def _string_branch(schema: Mapping[str, object], name: str) -> Mapping[str, object]:
@@ -145,7 +148,7 @@ def test_metadata_prompt_budget_closes_over_the_wire_bound() -> None:
     finds a negative hint or source budget at runtime instead of at review."""
 
     budget = metadata_prompt_budget()
-    assert budget.wire_bound_bytes == _METADATA_INPUT_MAX_BYTES
+    assert budget.wire_bound_bytes == _metadata_input_max_bytes()
     assert (
         budget.hint_total_max_bytes + budget.source_reserved_bytes + budget.framing_reserved_bytes
         == budget.wire_bound_bytes

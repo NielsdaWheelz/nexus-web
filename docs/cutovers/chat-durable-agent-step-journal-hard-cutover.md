@@ -1,5 +1,12 @@
 # Chat Durable Agent-Step Journal Hard Cutover
 
+> **Generation-ledger amendment (2026-08-31):**
+> [`generation-backends-hard-cutover.md`](generation-backends-hard-cutover.md)
+> supersedes the Chat-specific generation-step and Codex-only ledger details
+> below. This document remains authoritative for the owner-neutral durable-step
+> replay laws that do not conflict with the parent/child generation ledger or
+> the sole `generation/{generation_seq}/tool/{n}` grammar.
+
 Status: Implemented
 Date: 2026-07-31
 Type: hard cutover; no legacy path, fallback, compatibility decoder, dual write, or backfill
@@ -102,11 +109,12 @@ crash -> queue retry -> replay Completed prefix -> continue
 ambiguous effect -> dead job -> Suspended -> operator requeue or user cancel
 ```
 
-Chat has one Codex native generation. Its model-planned MCP loop journals tools
-under that generation; it does not create a second generation step per
-tool iteration. The fixed plan, v2 UDS command/frames, terminal algebra, and
-single `llm_calls` row are owned by
-[`codex-personal-generation-hard-cutover.md`](codex-personal-generation-hard-cutover.md).
+Chat has one parent generation. Codex normally contributes one native child;
+an API model/tool/model loop may contribute multiple accepted child calls.
+Every tool position journals under the parent and never restarts at a child.
+Exact selection, route-local frames, parent/child generation
+ledger, provider continuation, and terminal algebra are owned by
+[`generation-backends-hard-cutover.md`](generation-backends-hard-cutover.md).
 
 ### Ownership
 

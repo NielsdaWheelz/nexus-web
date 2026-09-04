@@ -196,9 +196,7 @@ class ApiErrorCode(str, Enum):
     E_INGEST_TIMEOUT = "E_INGEST_TIMEOUT"  # 504
     E_SOURCE_ACCESS_DENIED = "E_SOURCE_ACCESS_DENIED"  # 422
     E_SOURCE_NOT_READABLE = "E_SOURCE_NOT_READABLE"  # 422
-    # Unified Codex generation failures. The first ten names mirror the
-    # ledger's closed Failed narrowing; the final three are owner lifecycle
-    # outcomes that are not fabricated generation failures.
+    # Route-neutral generation failures and admission refusals.
     E_GENERATION_AUTH = "E_GENERATION_AUTH"  # 503
     E_GENERATION_QUOTA = "E_GENERATION_QUOTA"  # 429
     E_GENERATION_TIMEOUT = "E_GENERATION_TIMEOUT"  # 504
@@ -212,6 +210,9 @@ class ApiErrorCode(str, Enum):
     E_GENERATION_CANCELLED = "E_GENERATION_CANCELLED"  # 499
     E_GENERATION_SOURCE_CHANGED = "E_GENERATION_SOURCE_CHANGED"  # 409
     E_GENERATION_UNCERTAIN = "E_GENERATION_UNCERTAIN"  # 409
+    E_CATALOG_DEFINITION_STALE = "E_CATALOG_DEFINITION_STALE"  # 409
+    E_GENERATION_SELECTION_UNAVAILABLE = "E_GENERATION_SELECTION_UNAVAILABLE"  # 409
+    E_INVALID_GENERATION_SELECTION = "E_INVALID_GENERATION_SELECTION"  # 422
 
     # Image proxy errors (400/403/413/502/504)
     E_SSRF_BLOCKED = "E_SSRF_BLOCKED"  # 403 - URL violates SSRF rules
@@ -400,6 +401,9 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_GENERATION_CANCELLED: 499,
     ApiErrorCode.E_GENERATION_SOURCE_CHANGED: 409,
     ApiErrorCode.E_GENERATION_UNCERTAIN: 409,
+    ApiErrorCode.E_CATALOG_DEFINITION_STALE: 409,
+    ApiErrorCode.E_GENERATION_SELECTION_UNAVAILABLE: 409,
+    ApiErrorCode.E_INVALID_GENERATION_SELECTION: 422,
     # Image proxy errors
     ApiErrorCode.E_SSRF_BLOCKED: 403,
     ApiErrorCode.E_IMAGE_FETCH_FAILED: 502,

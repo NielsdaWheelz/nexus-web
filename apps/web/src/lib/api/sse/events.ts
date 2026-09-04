@@ -21,9 +21,9 @@ import {
   type CitationOut,
 } from "@/lib/conversations/citationOut";
 import {
-  decodeChatProfileId,
-  type ChatProfileId,
-} from "@/lib/conversations/chatProfileContract";
+  decodeRunSelectionOut,
+  type RunSelectionOut,
+} from "@/lib/conversations/generationCatalog";
 import {
   MESSAGE_TOOL_STATUSES,
   type ChatPublicationWarning,
@@ -41,7 +41,7 @@ import {
 import { hasOnlyKeys, isOptionalString } from "./guards";
 import { isCitationEventData, type CitationEventData } from "./citations";
 
-/** Meta event: initial IDs and product-profile snapshot. */
+/** Meta event: initial IDs and immutable dispatch selection snapshot. */
 interface SSEMetaEvent {
   type: "meta";
   data: {
@@ -49,7 +49,7 @@ interface SSEMetaEvent {
     conversation_id: string;
     user_message_id: string;
     assistant_message_id: string;
-    profile_id: ChatProfileId;
+    run_selection: RunSelectionOut;
     chat_subject: {
       requested_resource_ref: string;
       resource_ref: string;
@@ -197,7 +197,7 @@ function parseMetaData(data: unknown): SSEMetaEvent["data"] {
       "conversation_id",
       "user_message_id",
       "assistant_message_id",
-      "profile_id",
+      "run_selection",
       "chat_subject",
     ]) ||
     typeof data.run_id !== "string" ||
@@ -208,18 +208,21 @@ function parseMetaData(data: unknown): SSEMetaEvent["data"] {
   ) {
     throw new Error("Invalid SSE payload for meta");
   }
-  let profileId: ChatProfileId;
+  let runSelection: RunSelectionOut;
   try {
-    profileId = decodeChatProfileId(data.profile_id, "SSE meta.profile_id");
+    runSelection = decodeRunSelectionOut(
+      data.run_selection,
+      "SSE meta.run_selection",
+    );
   } catch {
-    throw new Error("Invalid SSE payload for meta.profile_id");
+    throw new Error("Invalid SSE payload for meta.run_selection");
   }
   return {
     run_id: data.run_id,
     conversation_id: data.conversation_id,
     user_message_id: data.user_message_id,
     assistant_message_id: data.assistant_message_id,
-    profile_id: profileId,
+    run_selection: runSelection,
     chat_subject: data.chat_subject,
   };
 }

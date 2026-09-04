@@ -81,7 +81,7 @@ describe("Chat failure cards", () => {
       expect(card.queryByRole("button", { name: "Reconnect" })).toBeNull();
     }
 
-    expect(screen.getAllByRole("button", { name: "Run again" })).toHaveLength(
+    expect(screen.getAllByRole("button", { name: "Rerun" })).toHaveLength(
       3,
     );
     for (const code of [
@@ -90,7 +90,7 @@ describe("Chat failure cards", () => {
       "assistant_unavailable",
     ] as const) {
       const card = within(screen.getByRole("region", { name: code }));
-      await userEvent.click(card.getByRole("button", { name: "Run again" }));
+      await userEvent.click(card.getByRole("button", { name: "Rerun" }));
       expect(screen.getByRole("status", { name: "Selected rerun" })).toHaveTextContent(
         code,
       );

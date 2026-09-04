@@ -8,6 +8,8 @@ import re
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from importlib.util import find_spec
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 import pytest
@@ -22,7 +24,7 @@ from llm_tools import (
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from nexus.config import clear_settings_cache
+from nexus.config import clear_settings_cache, get_settings
 from nexus.db.models import (
     ArtifactBuildFailure,
     ArtifactIdeaSubject,
@@ -68,11 +70,6 @@ from nexus.services.artifacts.research import (
 from nexus.services.artifacts.subject_policy import ResolvedIdeaSubject
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.bootstrap import ensure_user_and_default_library
-from nexus.services.codex_generation_contract import (
-    GenerationCommand,
-    GenerationFrame,
-    GenerationHealth,
-)
 from nexus.services.durable_step_journal import (
     AttachReconciledResult,
     Completed,
@@ -95,6 +92,14 @@ from tests.testkit.unreachable_state import (
 
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _WEB_URL = "https://example.com/durable-dossier-evidence"
+_GENERATION_CUTOVER_PRESENT = find_spec("nexus.services.generation_selection") is not None
+
+if TYPE_CHECKING or _GENERATION_CUTOVER_PRESENT:
+    from nexus.services.codex_generation_contract import (
+        GenerationCommand,
+        GenerationFrame,
+        GenerationHealth,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -299,6 +304,7 @@ def _runtime(
         research_tool_operation=compose_dossier_tool_runtime(web_search_provider).operations[
             "idea_dossier_research"
         ],
+        settings=get_settings(),
     )
 
 
@@ -343,6 +349,7 @@ def _assert_exact_host_plan(snapshot: dict[str, object]) -> None:
     assert set(snapshot) == {
         "exposure",
         "grants",
+        "max_live_writes",
         "plan_id",
         "plan_revision",
         "profile_id",
@@ -352,6 +359,7 @@ def _assert_exact_host_plan(snapshot: dict[str, object]) -> None:
     assert snapshot["plan_id"] == "idea_dossier_research"
     assert snapshot["profile_id"] == "idea_dossier_research"
     assert snapshot["exposure"] == {"type": "HostTable"}
+    assert snapshot["max_live_writes"] is None
     assert snapshot["run_limits"] == {
         "max_calls": 3,
         "max_elapsed_seconds": 60.0,
@@ -452,6 +460,7 @@ def test_dossier_freezes_host_plan_and_does_not_automatically_reissue_uncertain_
 ) -> None:
     """Protect paid research, accepted sources, and readiness across worker replay."""
 
+    assert _GENERATION_CUTOVER_PRESENT, "the exact-generation cutover is absent"
     monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "dossier-tool-replay-test-key")
     clear_settings_cache()
     session_factory = create_session_factory(engine)
@@ -494,6 +503,7 @@ def test_dossier_freezes_host_plan_and_does_not_automatically_reissue_uncertain_
                     db,
                     job_id=crossed.job_id,
                     worker_id=crossed_context.worker_id,
+                    attempt_no=crossed_context.attempt_no,
                     error_code="E_WORKER_INTERRUPTED",
                     error_message="paid search may have crossed the provider boundary",
                     retry_delays_seconds=(0,),
@@ -530,6 +540,7 @@ def test_dossier_freezes_host_plan_and_does_not_automatically_reissue_uncertain_
                     db,
                     job_id=crossed.job_id,
                     worker_id=crossed_retry_context.worker_id,
+                    attempt_no=crossed_retry_context.attempt_no,
                     error_code="E_RECONCILIATION_REQUIRED",
                     error_message="operator evidence is required",
                     retry_delays_seconds=(0,),
@@ -675,6 +686,7 @@ def test_dossier_freezes_host_plan_and_does_not_automatically_reissue_uncertain_
                     db,
                     job_id=replay.job_id,
                     worker_id=replay_context.worker_id,
+                    attempt_no=replay_context.attempt_no,
                     error_code="E_WORKER_INTERRUPTED",
                     error_message="search adapter proved zero transport dispatch",
                     retry_delays_seconds=(0,),
@@ -839,6 +851,7 @@ def test_dossier_freezes_host_plan_and_does_not_automatically_reissue_uncertain_
                 db,
                 job_id=replay.job_id,
                 worker_id=ready_context.worker_id,
+                attempt_no=ready_context.attempt_no,
                 result_payload={"status": "modeled_failure"},
             )
             db.commit()

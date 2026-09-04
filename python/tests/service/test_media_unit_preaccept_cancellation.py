@@ -4,52 +4,64 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
-from typing import Literal
+from importlib.util import find_spec
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from nexus.db.models import (
-    ContentBlock,
-    ContentChunk,
-    ContentIndexState,
-    EvidenceSpan,
-    Media,
-    MediaSummary,
-    ProcessingStatus,
-)
-from nexus.db.session import create_session_factory
-from nexus.jobs.queue import (
-    JobExecutionContext,
-    JobRow,
-    RescheduleRequested,
-    claim_job,
-    find_nonterminal_jobs_for_payload,
-    get_job,
-)
-from nexus.schemas.presence import Present
-from nexus.services import generation_policy
-from nexus.services.bootstrap import ensure_user_and_default_library
-from nexus.services.codex_generation_client import CodexGenerationCapacityUnavailable
-from nexus.services.codex_generation_contract import (
-    GenerationCommand,
-    GenerationFrame,
-    GenerationHealth,
-)
-from nexus.services.durable_step_journal import (
-    Completed,
-    Prepared,
-    read_step_states,
-    stable_generation_id,
-)
-from nexus.services.llm_execution import ExecutionRuntime
-from nexus.services.llm_ledger import read_generation
-from nexus.services.media_intelligence import ensure_media_unit, run_media_unit_build
-from nexus.services.rate_limit import RateLimiter, get_rate_limiter, set_rate_limiter
+_CUTOVER_PRESENT = find_spec("nexus.services.codex_generation_contract") is not None
+
+if TYPE_CHECKING or _CUTOVER_PRESENT:
+    from nexus.db.models import (
+        ContentBlock,
+        ContentChunk,
+        ContentIndexState,
+        EvidenceSpan,
+        Media,
+        MediaSummary,
+        ProcessingStatus,
+    )
+    from nexus.db.session import create_session_factory
+    from nexus.jobs.queue import (
+        JobExecutionContext,
+        JobRow,
+        RescheduleRequested,
+        claim_job,
+        find_nonterminal_jobs_for_payload,
+        get_job,
+    )
+    from nexus.schemas.presence import Present
+    from nexus.services.bootstrap import ensure_user_and_default_library
+    from nexus.services.codex_generation_client import CodexGenerationCapacityUnavailable
+    from nexus.services.codex_generation_contract import (
+        GenerationAdmission,
+        GenerationCommand,
+        GenerationCommandDraft,
+        GenerationFrame,
+    )
+    from nexus.services.durable_step_journal import (
+        Completed,
+        Prepared,
+        read_step_states,
+        stable_generation_id,
+    )
+    from nexus.services.llm_ledger import read_generation
+    from nexus.services.media_intelligence import ensure_media_unit, run_media_unit_build
+    from nexus.services.rate_limit import RateLimiter, get_rate_limiter, set_rate_limiter
+    from nexus.services.tool_runtime.composition import compose_product_tool_runtime
+    from tests.testkit.codex_generation import (
+        bind_test_codex_admission,
+        compose_codex_execution_runtime,
+    )
+
+
+def _require_cutover() -> None:
+    assert _CUTOVER_PRESENT, "the durable Codex generation owner is absent"
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,68 +74,70 @@ class _SeededBuild:
     content_fingerprint: str
 
 
-class _CapacityRuntime(ExecutionRuntime):
+class _CapacityTransport:
     def __init__(self) -> None:
         self.dispatches = 0
 
-    async def health(self) -> GenerationHealth:
-        return GenerationHealth(
-            policy_revision=generation_policy.POLICY_REVISION,
-            sdk_version="0.144.4",
-            runtime_version="0.144.4",
-        )
+    def stream(
+        self,
+        draft: GenerationCommandDraft,
+        *,
+        bind_admission: Callable[[GenerationAdmission], Awaitable[GenerationCommand]],
+    ) -> AsyncIterator[GenerationFrame]:
+        _ = draft, bind_admission
 
-    async def stream(self, command: GenerationCommand) -> AsyncIterator[GenerationFrame]:
-        del command
-        self.dispatches += 1
-        raise CodexGenerationCapacityUnavailable("test host is at capacity")
-        if False:
-            yield
+        async def frames() -> AsyncIterator[GenerationFrame]:
+            self.dispatches += 1
+            raise CodexGenerationCapacityUnavailable("test host is at capacity")
+            yield GenerationFrame.model_construct()
+
+        return frames()
 
     async def cancel(self, request_id: UUID) -> None:
         del request_id
         raise AssertionError("preaccept capacity refusal cannot be cancelled")
 
 
-class _NoDispatchRuntime(ExecutionRuntime):
-    async def health(self) -> GenerationHealth:
+class _NoDispatchTransport:
+    def stream(
+        self,
+        draft: GenerationCommandDraft,
+        *,
+        bind_admission: Callable[[GenerationAdmission], Awaitable[GenerationCommand]],
+    ) -> AsyncIterator[GenerationFrame]:
+        del draft, bind_admission
         raise AssertionError("owner cancellation must precede host health and dispatch")
-
-    async def stream(self, command: GenerationCommand) -> AsyncIterator[GenerationFrame]:
-        del command
-        raise AssertionError("owner cancellation must not dispatch")
-        if False:
-            yield
 
     async def cancel(self, request_id: UUID) -> None:
         del request_id
         raise AssertionError("owner cancellation has no accepted turn to cancel")
 
 
-class _AbortAtOwnerFenceRuntime(ExecutionRuntime):
+class _AbortAtOwnerFenceTransport:
     def __init__(self, engine: Engine, summary_id: UUID) -> None:
         self._engine = engine
         self._summary_id = summary_id
         self.dispatches = 0
 
-    async def health(self) -> GenerationHealth:
+    def stream(
+        self,
+        draft: GenerationCommandDraft,
+        *,
+        bind_admission: Callable[[GenerationAdmission], Awaitable[GenerationCommand]],
+    ) -> AsyncIterator[GenerationFrame]:
         with Session(self._engine) as db:
             summary = db.get(MediaSummary, self._summary_id)
             assert summary is not None
             summary.status = "ready"
             db.commit()
-        return GenerationHealth(
-            policy_revision=generation_policy.POLICY_REVISION,
-            sdk_version="0.144.4",
-            runtime_version="0.144.4",
-        )
 
-    async def stream(self, command: GenerationCommand) -> AsyncIterator[GenerationFrame]:
-        del command
-        self.dispatches += 1
-        raise AssertionError("an invalidated owner fence must prevent dispatch")
-        if False:
-            yield
+        async def frames() -> AsyncIterator[GenerationFrame]:
+            await bind_test_codex_admission(draft, bind_admission)
+            self.dispatches += 1
+            raise AssertionError("an invalidated owner fence must prevent dispatch")
+            yield GenerationFrame.model_construct()
+
+        return frames()
 
     async def cancel(self, request_id: UUID) -> None:
         del request_id
@@ -243,7 +257,7 @@ def _seed_build(engine: Engine) -> _SeededBuild:
 
 
 def _restore_prepared(engine: Engine, seeded: _SeededBuild) -> None:
-    capacity = _CapacityRuntime()
+    capacity = _CapacityTransport()
     with Session(engine) as db:
         result = asyncio.run(
             run_media_unit_build(
@@ -251,7 +265,10 @@ def _restore_prepared(engine: Engine, seeded: _SeededBuild) -> None:
                 media_id=seeded.media_id,
                 content_fingerprint=seeded.content_fingerprint,
                 ctx=seeded.context,
-                runtime=capacity,
+                runtime=compose_codex_execution_runtime(
+                    capacity,
+                    tools=compose_product_tool_runtime(None),
+                ),
             )
         )
         assert isinstance(result, RescheduleRequested)
@@ -261,7 +278,7 @@ def _restore_prepared(engine: Engine, seeded: _SeededBuild) -> None:
         record = read_generation(db, generation_id=seeded.generation_id)
         assert job is not None
         assert read_step_states(job)["synthesis"].dispatch_phase is Prepared
-        assert record is not None and record.outcome is None
+        assert record is None
 
 
 def _mutate_owner_precondition(
@@ -334,14 +351,15 @@ def _mutate_owner_precondition(
         ("inflight_rejected", "failed", "failure"),
     ],
 )
-def test_prepared_media_owner_exit_cancels_retained_start_without_dispatch(
+def test_prepared_media_owner_exit_closes_without_dispatch_or_ledger(
     engine: Engine,
     case: str,
     expected_result: Literal["ok", "failed"],
     expected_memo_outcome: Literal["skip", "failure"],
 ) -> None:
-    """Risk: a capacity-restored media start remains open after an owner exit."""
+    """Risk: a capacity-restored admission fabricates model-call evidence."""
 
+    _require_cutover()
     seeded = _seed_build(engine)
     previous_limiter = get_rate_limiter()
     set_rate_limiter(RateLimiter(session_factory=create_session_factory(engine)))
@@ -359,7 +377,10 @@ def test_prepared_media_owner_exit_cancels_retained_start_without_dispatch(
                     media_id=seeded.media_id,
                     content_fingerprint=seeded.content_fingerprint,
                     ctx=seeded.context,
-                    runtime=_NoDispatchRuntime(),
+                    runtime=compose_codex_execution_runtime(
+                        _NoDispatchTransport(),
+                        tools=compose_product_tool_runtime(None),
+                    ),
                 )
             )
         assert result == expected_result
@@ -371,32 +392,24 @@ def test_prepared_media_owner_exit_cancels_retained_start_without_dispatch(
             completed = read_step_states(job)["synthesis"]
             assert completed.dispatch_phase is Completed
             assert isinstance(completed.terminal_result, Present)
-            assert record is not None
-            assert (
-                record.outcome,
-                record.error_code,
-                record.session_ref,
-                record.accepted_at,
-                record.sdk_version,
-                record.runtime_version,
-            ) == ("Cancelled", None, None, None, None, None)
-            assert record.completed_at is not None
+            assert record is None
             assert json.loads(completed.terminal_result.value)["outcome"] == expected_memo_outcome
     finally:
         set_rate_limiter(previous_limiter)
 
 
-def test_prepared_media_dispatch_abort_cancels_without_fabricating_host_terminal(
+def test_prepared_media_dispatch_abort_closes_without_fabricating_a_ledger(
     engine: Engine,
 ) -> None:
-    """Risk: an owner-fence abort strands the retained preaccept ledger start."""
+    """Risk: an owner-fence abort fabricates an accepted model call."""
 
+    _require_cutover()
     seeded = _seed_build(engine)
     previous_limiter = get_rate_limiter()
     set_rate_limiter(RateLimiter(session_factory=create_session_factory(engine)))
     try:
         _restore_prepared(engine, seeded)
-        runtime = _AbortAtOwnerFenceRuntime(engine, seeded.summary_id)
+        transport = _AbortAtOwnerFenceTransport(engine, seeded.summary_id)
         with Session(engine) as db:
             result = asyncio.run(
                 run_media_unit_build(
@@ -404,11 +417,14 @@ def test_prepared_media_dispatch_abort_cancels_without_fabricating_host_terminal
                     media_id=seeded.media_id,
                     content_fingerprint=seeded.content_fingerprint,
                     ctx=seeded.context,
-                    runtime=runtime,
+                    runtime=compose_codex_execution_runtime(
+                        transport,
+                        tools=compose_product_tool_runtime(None),
+                    ),
                 )
             )
         assert result == "ok"
-        assert runtime.dispatches == 0
+        assert transport.dispatches == 0
 
         with Session(engine) as db:
             job = get_job(db, seeded.job.id)
@@ -421,9 +437,6 @@ def test_prepared_media_dispatch_abort_cancels_without_fabricating_host_terminal
                 "outcome": "skip",
                 "reason": "dispatch_aborted",
             }
-            assert record is not None
-            assert record.outcome == "Cancelled"
-            assert record.accepted_at is None
-            assert record.session_ref is None
+            assert record is None
     finally:
         set_rate_limiter(previous_limiter)

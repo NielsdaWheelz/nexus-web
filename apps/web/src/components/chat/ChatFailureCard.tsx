@@ -7,7 +7,7 @@
  *   - `failure` mode: an `ExpectedChatFailure | null` folded onto the run (null
  *     is the generic DEFECT card). Copy comes exclusively from
  *     `chatFailureMessage`; the run-owned support occurrence is supplied
- *     independently, and the card shows AT MOST one action — `Run again`, only
+ *     independently, and the card shows AT MOST one action — `Rerun`, only
  *     when `canRerun`.
  *   - `reconnect` mode: the neutral CLIENT-ONLY recovery state owned by
  *     useChatRunTail.ts. It never calls /rerun; its single action resumes the
@@ -145,8 +145,12 @@ export default function ChatFailureCard(props: ChatFailureCardProps) {
             loading={rerunning}
             onClick={onRerun}
           >
-            Run again
+            Rerun
           </Button>
+          <label className={styles.rerunWritesOff}>
+            <input type="checkbox" checked={false} disabled readOnly />
+            <span>Writes are off for reruns</span>
+          </label>
         </div>
       ) : null}
     </div>

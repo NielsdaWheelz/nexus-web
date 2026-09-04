@@ -1,12 +1,12 @@
 diff --git a/apps/codex_agent/confined_runtime.py b/apps/codex_agent/confined_runtime.py
 --- a/apps/codex_agent/confined_runtime.py
 +++ b/apps/codex_agent/confined_runtime.py
-@@ -81,7 +81,7 @@ class ConfinedCodexSdkAdapter(CodexSdkAdapter):
- 
-     def _confined_environment(self, environment: Mapping[str, str]) -> dict[str, str]:
-         child_environment = dict(environment)
--        child_environment["TMPDIR"] = str(self._temporary_directory)
-+        child_environment["TMPDIR"] = "/tmp"
-         return child_environment
- 
-     def _codex_config(self, request: AgentSessionRequest) -> dict[str, object]:
+@@ -53,7 +53,7 @@ def _controls_for_state_root(state_root_base: Path) -> CodexSandboxControls:
+     _require_private_directory(state_root_base, label="state root")
+     _require_private_directory(temporary_directory, label="temporary directory")
+     return CodexSandboxControls(
+-        child_tmpdir=str(temporary_directory),
++        child_tmpdir="/tmp",
+         exclude_slash_tmp=_EXCLUDE_SLASH_TMP,
+         exclude_tmpdir_env_var=_EXCLUDE_TMPDIR_ENV_VAR,
+     )

@@ -270,6 +270,7 @@ def _assert_current_position(
     *,
     identity: CurrentToolRecordIdentity,
     provider_wire_name: str | None,
+    tool_position_id: UUID | None,
 ) -> None:
     if (
         row["canonical_tool_id"] != identity.canonical_tool_id
@@ -278,6 +279,7 @@ def _assert_current_position(
         or row["canonical_input_sha256"] != identity.canonical_input_sha256
         or row["tool_contract_revision"] != identity.tool_contract_revision
         or row["binding_policy_revision"] != identity.binding_policy_revision
+        or row["tool_position_id"] != tool_position_id
     ):
         raise AssertionError("occupied tool position changed canonical replay identity")
 
@@ -289,6 +291,7 @@ def persist_current_tool_record(
     user_message_id: UUID,
     assistant_message_id: UUID,
     tool_call_index: int,
+    tool_position_id: UUID | None,
     identity: CurrentToolRecordIdentity,
     provider_wire_name: str | None = None,
     search_query_fingerprint: str | None,
@@ -312,6 +315,7 @@ def persist_current_tool_record(
         "user_message_id": user_message_id,
         "assistant_message_id": assistant_message_id,
         "tool_call_index": tool_call_index,
+        "tool_position_id": tool_position_id,
         "canonical_tool_id": identity.canonical_tool_id,
         "provider_wire_name": provider_wire_name,
         "canonical_input_sha256": identity.canonical_input_sha256,
@@ -334,7 +338,7 @@ def persist_current_tool_record(
                 """
                 SELECT id, canonical_tool_id, record_kind, provider_wire_name,
                        canonical_input_sha256, tool_contract_revision,
-                       binding_policy_revision
+                       binding_policy_revision, tool_position_id
                 FROM message_tool_calls
                 WHERE assistant_message_id = :assistant_message_id
                   AND tool_call_index = :tool_call_index
@@ -360,6 +364,7 @@ def persist_current_tool_record(
                     canonical_input_sha256,
                     tool_contract_revision,
                     binding_policy_revision,
+                    tool_position_id,
                     tool_call_index,
                     search_query_fingerprint,
                     scope,
@@ -380,6 +385,7 @@ def persist_current_tool_record(
                     :canonical_input_sha256,
                     :tool_contract_revision,
                     :binding_policy_revision,
+                    :tool_position_id,
                     :tool_call_index,
                     :search_query_fingerprint,
                     :scope,
@@ -406,6 +412,7 @@ def persist_current_tool_record(
         existing,
         identity=identity,
         provider_wire_name=provider_wire_name,
+        tool_position_id=tool_position_id,
     )
     tool_call_id = existing["id"]
     db.execute(
@@ -442,6 +449,7 @@ def persist_tool_call_start(
     *,
     run: ChatRun,
     tool_call_index: int,
+    tool_position_id: UUID | None,
     identity: CurrentToolRecordIdentity,
     provider_wire_name: str | None = None,
     scope: str,
@@ -453,6 +461,7 @@ def persist_tool_call_start(
         user_message_id=run.user_message_id,
         assistant_message_id=run.assistant_message_id,
         tool_call_index=tool_call_index,
+        tool_position_id=tool_position_id,
         identity=identity,
         provider_wire_name=provider_wire_name,
         search_query_fingerprint=None,

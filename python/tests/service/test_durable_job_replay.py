@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import NoteBlock, User
 from nexus.db.session import create_session_factory
-from nexus.jobs.queue import claim_job, complete_job, enqueue_job
+from nexus.jobs.queue import claim_job, complete_job, enqueue_job, fail_job
 from nexus.jobs.registry import get_default_registry
 from nexus.jobs.worker import JobWorker
 from nexus.services.auth_handoff_codes import create_auth_handoff_code
@@ -137,6 +137,7 @@ def test_expired_claim_replays_once_and_fences_the_crashed_worker(engine: Engine
             oracle,
             job_id=job.id,
             worker_id="crashed-worker",
+            attempt_no=crashed_claim.attempts,
             result_payload={"deleted_count": 999},
         )
 
@@ -145,6 +146,99 @@ def test_expired_claim_replays_once_and_fences_the_crashed_worker(engine: Engine
     )
     assert remaining_codes == 0, f"replayed purge left {remaining_codes} expired code(s)"
     assert stale_completion is False, "expired claimant mutated the recovered terminal job"
+
+
+def test_reused_worker_identity_cannot_settle_a_reclaimed_attempt(engine: Engine) -> None:
+    worker_id = "stable-worker-identity"
+    with Session(engine) as db:
+        job = enqueue_job(
+            db,
+            kind=_KIND,
+            payload={"request_id": "same-worker-attempt-fence-proof"},
+            priority=0,
+            max_attempts=3,
+        )
+        db.commit()
+        expired = claim_job(
+            db,
+            job_id=job.id,
+            worker_id=worker_id,
+            lease_seconds=300,
+            heavy_kinds=(),
+            allowed_kinds=(_KIND,),
+        )
+        assert expired is not None, "first attempt did not acquire its synthetic claim"
+        expire_job_claim(db, job_id=job.id)
+        db.commit()
+        reclaimed = claim_job(
+            db,
+            job_id=job.id,
+            worker_id=worker_id,
+            lease_seconds=300,
+            heavy_kinds=(),
+            allowed_kinds=(_KIND,),
+        )
+        assert reclaimed is not None, "same worker identity did not reclaim the expired job"
+        assert reclaimed.attempts == expired.attempts + 1
+        db.commit()
+
+    with Session(engine) as db:
+        stale_failure = fail_job(
+            db,
+            job_id=job.id,
+            worker_id=worker_id,
+            attempt_no=expired.attempts,
+            error_code="E_STALE_ATTEMPT",
+            error_message="an expired attempt must not settle its successor",
+            retry_delays_seconds=(0,),
+        )
+        assert stale_failure is None, "expired attempt failed the reclaimed live attempt"
+        stale_completion = complete_job(
+            db,
+            job_id=job.id,
+            worker_id=worker_id,
+            attempt_no=expired.attempts,
+            result_payload={"settled_by": "expired-attempt"},
+        )
+        assert stale_completion is False, "expired attempt completed the reclaimed live attempt"
+        running = db.execute(
+            text(
+                """
+                SELECT status, attempts, claimed_by, result
+                FROM background_jobs
+                WHERE id = :job_id
+                """
+            ),
+            {"job_id": job.id},
+        ).one()
+        assert running == ("running", reclaimed.attempts, worker_id, None)
+        assert complete_job(
+            db,
+            job_id=job.id,
+            worker_id=worker_id,
+            attempt_no=reclaimed.attempts,
+            result_payload={"settled_by": "reclaimed-attempt"},
+        )
+        db.commit()
+
+    with Session(engine) as oracle:
+        terminal = oracle.execute(
+            text(
+                """
+                SELECT status, attempts, claimed_by, lease_expires_at, result
+                FROM background_jobs
+                WHERE id = :job_id
+                """
+            ),
+            {"job_id": job.id},
+        ).one()
+    assert terminal == (
+        "succeeded",
+        reclaimed.attempts,
+        None,
+        None,
+        {"settled_by": "reclaimed-attempt"},
+    )
 
 
 def test_owned_worker_replays_committed_note_index_after_process_death(

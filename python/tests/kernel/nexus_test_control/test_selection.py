@@ -462,7 +462,7 @@ def test_codex_dependency_changes_route_release_proofs_without_duplicate_host_ow
     [
         "python/pyproject.toml",
         "python/uv.lock",
-        "python/tests/evals/cases/tool_safety.v3.json",
+        "python/tests/evals/cases/tool_safety.v4.json",
     ],
 )
 def test_provider_runtime_pin_and_tool_safety_corpus_route_to_deterministic_eval(
@@ -470,7 +470,7 @@ def test_provider_runtime_pin_and_tool_safety_corpus_route_to_deterministic_eval
 ) -> None:
     proof = (
         "pytest:python/tests/evals/test_tool_safety_eval.py::"
-        "test_injected_requests_cannot_authorize_a_foreign_mutating_tool_call"
+        "test_generation_tool_plans_refuse_untrusted_escalation"
     )
 
     selections = select_changed(
@@ -490,7 +490,7 @@ def test_provider_runtime_pin_and_tool_safety_corpus_route_to_deterministic_eval
     "path",
     [
         "python/nexus/services/generation_policy.py",
-        "python/tests/evals/cases/generation_plans.v1.json",
+        "python/tests/evals/cases/generation_plans.v2.json",
     ],
 )
 def test_generation_plan_policy_and_corpus_route_to_the_fixture_only_eval(path: str) -> None:
@@ -548,7 +548,7 @@ def test_codex_generation_sources_route_to_the_exact_contract_and_host_proofs(
                 Capability.KERNEL_PYTHON,
                 "pytest:python/tests/kernel/nexus_test_control/"
                 "test_hosted_canary_semantics.py::"
-                "test_hosted_canary_accepts_exact_four_plan_v3_receipt",
+                "test_hosted_canary_accepts_bounded_target_set_v4_receipt",
             ),
             (
                 Capability.KERNEL_PYTHON,
@@ -705,7 +705,7 @@ def test_unreachable_state_testkit_routes_to_the_durable_replay_proofs() -> None
             "pytest:python/tests/kernel/test_production_release.py",
         ),
         (
-            "docs/cutovers/codex-personal-generation-hard-cutover.md",
+            "docs/cutovers/generation-backends-hard-cutover.md",
             "pytest:python/tests/kernel/test_production_delivery_contract.py",
         ),
         (
@@ -759,7 +759,7 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "playwright:apps/web/e2e/journeys/auth-session.journey.spec.ts",
                 "pytest:python/tests/hosted/nightly/test_codex_personal_generation.py",
                 "pytest:python/tests/kernel/nexus_test_control/test_android_device_method_scope.py::test_exact_android_device_proof_uses_one_instrumentation_method",
-                "pytest:python/tests/kernel/nexus_test_control/test_hosted_canary_semantics.py::test_hosted_canary_accepts_exact_four_plan_v3_receipt",
+                "pytest:python/tests/kernel/nexus_test_control/test_hosted_canary_semantics.py::test_hosted_canary_accepts_bounded_target_set_v4_receipt",
                 "pytest:python/tests/kernel/nexus_test_control/test_provider_runtime_pin.py::test_provider_runtime_is_materialized_from_the_pin_without_retargeting_source",
                 "pytest:python/tests/kernel/nexus_test_control/test_runner.py",
                 "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape",
@@ -773,17 +773,23 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr",
                 "pytest:python/tests/kernel/nexus_test_control/test_sensitivity.py::"
                 "test_isolated_worktree_bounds_run_owned_unix_socket_paths",
+                "pytest:python/tests/kernel/nexus_test_control/test_coherent_fault_contract.py::"
+                "test_bound_coherent_fault_is_admitted_routed_and_invalidated_on_owner_drift",
                 "pytest:python/tests/kernel/nexus_test_control/test_policy.py",
                 "pytest:python/tests/kernel/test_backend_artifact.py",
                 "pytest:python/tests/kernel/test_codex_nightly_workflow_artifact_contract.py::test_codex_nightly_stages_only_one_run_bound_bounded_json_artifact",
                 "pytest:python/tests/kernel/test_generation_contract.py",
                 "pytest:python/tests/kernel/test_generation_operation_adapters.py",
-                "pytest:python/tests/kernel/test_generation_policy.py::test_fixed_generation_policy_catalog_is_complete_and_closed",
+                "pytest:python/tests/kernel/test_generation_policy.py::"
+                "test_exact_generation_policy_is_total_content_derived_and_profile_free",
+                "pytest:python/tests/kernel/nexus_test_control/test_provider_api_peer.py::test_provider_peer_is_controller_owned_and_recovered",
+                "pytest:python/tests/kernel/test_generation_cutover_residue.py::test_only_final_generation_owners_remain",
                 "pytest:python/tests/kernel/test_structured_synthesis_contract.py",
                 "pytest:python/tests/kernel/test_oracle_host_release.py",
                 "pytest:python/tests/kernel/test_oracle_manifest.py",
                 "pytest:python/tests/kernel/test_oracle_reconcile_contract.py",
                 "pytest:python/tests/service/test_codex_generation_client.py",
+                "pytest:python/tests/service/test_codex_model_catalog_uds.py::test_catalog_client_reads_the_authenticated_catalog_over_private_uds",
                 "pytest:python/tests/service/test_codex_runtime_confinement.py::"
                 "test_confined_runtime_owns_startup_and_workspace_write_tmp_policy_at_sdk_boundary",
                 "pytest:python/tests/service/test_codex_egress_policy.py::"
@@ -796,7 +802,7 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/kernel/test_production_release.py::test_codex_capacity_requires_exact_encrypted_state_before_starting_runtime",
                 "pytest:python/tests/kernel/test_release_bundle_fetch.py",
                 "pytest:python/tests/service/test_codex_generation_host.py::test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot",
-                "pytest:python/tests/service/test_codex_generation_lowering.py::test_operation_identity_lowers_to_one_exact_capability_and_tool_surface",
+                "pytest:python/tests/service/test_codex_generation_lowering.py::test_frozen_spec_lowers_catalog_identity_and_exact_mcp_aliases",
                 "pytest:python/tests/service/test_codex_generation_redaction.py::test_failed_runtime_terminal_retains_only_the_bounded_host_diagnostic",
                 "pytest:python/tests/service/test_codex_capacity_canary_contract.py",
                 "pytest:python/tests/service/test_codex_capacity_canary_contract.py::test_capacity_canary_rejects_succeeded_terminal_without_bounded_text",
@@ -835,10 +841,14 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/service/test_background_worker_process_containment.py",
                 "pytest:python/tests/service/test_background_worker_process_containment.py::test_kernel_oom_and_timeout_are_terminally_fenced_before_next_fresh_child",
                 "pytest:python/tests/service/test_bounded_media_extraction.py",
+                "pytest:python/tests/service/test_bounded_media_extraction.py::test_lifecycle_preserves_declared_resource_dimension_on_api_error",
                 "pytest:python/tests/service/test_ingest_reconciliation_readiness.py",
+                "pytest:python/tests/service/test_ingest_reconciliation_readiness.py::test_deployed_database_readiness_requires_the_latest_reconciler_to_succeed_freshly",
                 "pytest:python/tests/service/test_media_activity.py::test_activity_projects_only_upload_obligations_with_strict_precedence",
                 "pytest:python/tests/service/test_media_upload_sessions.py",
                 "pytest:python/tests/service/test_background_worker_supervisor_liveness.py",
+                "pytest:python/tests/service/test_background_worker_process_dispatch.py::"
+                "test_background_supervisor_dispatches_light_base_handler_to_fresh_child",
                 "pytest:python/tests/service/test_epub2_doctype_entities_extraction.py",
                 "pytest:python/tests/service/test_media_activity_published_upload_silence.py",
                 "pytest:python/tests/service/test_media_activity_upload_badge_bound.py",
@@ -868,10 +878,14 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/service/test_background_worker_process_containment.py",
                 "pytest:python/tests/service/test_background_worker_process_containment.py::test_kernel_oom_and_timeout_are_terminally_fenced_before_next_fresh_child",
                 "pytest:python/tests/service/test_bounded_media_extraction.py",
+                "pytest:python/tests/service/test_bounded_media_extraction.py::test_lifecycle_preserves_declared_resource_dimension_on_api_error",
                 "pytest:python/tests/service/test_ingest_reconciliation_readiness.py",
+                "pytest:python/tests/service/test_ingest_reconciliation_readiness.py::test_deployed_database_readiness_requires_the_latest_reconciler_to_succeed_freshly",
                 "pytest:python/tests/service/test_media_activity.py::test_activity_projects_only_upload_obligations_with_strict_precedence",
                 "pytest:python/tests/service/test_media_upload_sessions.py",
                 "pytest:python/tests/service/test_background_worker_supervisor_liveness.py",
+                "pytest:python/tests/service/test_background_worker_process_dispatch.py::"
+                "test_background_supervisor_dispatches_light_base_handler_to_fresh_child",
                 "pytest:python/tests/service/test_epub2_doctype_entities_extraction.py",
                 "pytest:python/tests/service/test_media_activity_published_upload_silence.py",
                 "pytest:python/tests/service/test_media_activity_upload_badge_bound.py",
@@ -916,19 +930,24 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/kernel/nexus_test_control/test_llm_tools_capability.py::test_llm_tools_paths_route_to_exact_full_materialization",
                 "pytest:python/tests/kernel/nexus_test_control/test_model.py::test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr",
                 "pytest:python/tests/kernel/nexus_test_control/test_sensitivity.py::test_isolated_worktree_bounds_run_owned_unix_socket_paths",
+                "pytest:python/tests/kernel/nexus_test_control/test_coherent_fault_contract.py::test_bound_coherent_fault_is_admitted_routed_and_invalidated_on_owner_drift",
                 "pytest:python/tests/kernel/nexus_test_control/test_policy.py",
                 "pytest:python/tests/kernel/nexus_test_control/test_runner.py",
                 "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape",
-                "pytest:python/tests/kernel/nexus_test_control/test_hosted_canary_semantics.py::test_hosted_canary_accepts_exact_four_plan_v3_receipt",
+                "pytest:python/tests/kernel/nexus_test_control/test_hosted_canary_semantics.py::test_hosted_canary_accepts_bounded_target_set_v4_receipt",
                 "pytest:python/tests/kernel/nexus_test_control/test_provider_runtime_pin.py::test_provider_runtime_is_materialized_from_the_pin_without_retargeting_source",
                 "pytest:python/tests/kernel/nexus_test_control/test_android_device_method_scope.py::test_exact_android_device_proof_uses_one_instrumentation_method",
                 "pytest:python/tests/kernel/test_codex_nightly_workflow_artifact_contract.py::test_codex_nightly_stages_only_one_run_bound_bounded_json_artifact",
                 "pytest:python/tests/kernel/test_generation_contract.py",
                 "pytest:python/tests/kernel/test_generation_operation_adapters.py",
-                "pytest:python/tests/kernel/test_generation_policy.py::test_fixed_generation_policy_catalog_is_complete_and_closed",
+                "pytest:python/tests/kernel/test_generation_policy.py::"
+                "test_exact_generation_policy_is_total_content_derived_and_profile_free",
+                "pytest:python/tests/kernel/nexus_test_control/test_provider_api_peer.py::test_provider_peer_is_controller_owned_and_recovered",
+                "pytest:python/tests/kernel/test_generation_cutover_residue.py::test_only_final_generation_owners_remain",
                 "pytest:python/tests/kernel/test_structured_synthesis_contract.py",
                 "pytest:python/tests/kernel/test_ci_pr_recovery.py",
                 "pytest:python/tests/service/test_codex_generation_client.py",
+                "pytest:python/tests/service/test_codex_model_catalog_uds.py::test_catalog_client_reads_the_authenticated_catalog_over_private_uds",
                 "pytest:python/tests/service/test_codex_runtime_confinement.py::"
                 "test_confined_runtime_owns_startup_and_workspace_write_tmp_policy_at_sdk_boundary",
                 "pytest:python/tests/service/test_codex_egress_policy.py::"
@@ -937,7 +956,7 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "test_node_ingest_image_binding.py::"
                 "test_worker_launches_only_the_image_baked_hardened_ingest_entrypoint",
                 "pytest:python/tests/service/test_codex_generation_host.py::test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot",
-                "pytest:python/tests/service/test_codex_generation_lowering.py::test_operation_identity_lowers_to_one_exact_capability_and_tool_surface",
+                "pytest:python/tests/service/test_codex_generation_lowering.py::test_frozen_spec_lowers_catalog_identity_and_exact_mcp_aliases",
                 "pytest:python/tests/service/test_codex_generation_redaction.py::test_failed_runtime_terminal_retains_only_the_bounded_host_diagnostic",
                 "pytest:python/tests/service/test_codex_capacity_canary_contract.py",
                 "pytest:python/tests/service/test_codex_capacity_canary_contract.py::test_capacity_canary_rejects_succeeded_terminal_without_bounded_text",

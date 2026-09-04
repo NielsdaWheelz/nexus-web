@@ -236,7 +236,7 @@ async def run_synapse_scan(
    Structured/terminal failure leaves prior edges intact. Synapse supports
    command-free `ProveNotDispatched`; recovered-terminal attachment is absent
    because the mutable dossier/candidate set is not durable command truth. See
-   [`codex-personal-generation-hard-cutover.md`](codex-personal-generation-hard-cutover.md)
+   [`generation-backends-hard-cutover.md`](generation-backends-hard-cutover.md)
    and [`../modules/llms.md`](../modules/llms.md).
 
 ```python

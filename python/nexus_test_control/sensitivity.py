@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 import hashlib
 import json
 import os
@@ -16,6 +15,7 @@ from pathlib import Path, PurePosixPath
 from nexus_test_control.evidence import compute_proof_digest, redact_text
 from nexus_test_control.memory import OwnedMemorySampler
 from nexus_test_control.model import (
+    ChangedOwnerRedStrategy,
     PeakOwnedMemory,
     RunStatus,
     Sensitivity,
@@ -27,6 +27,7 @@ from nexus_test_control.model import (
     Workflow,
 )
 from nexus_test_control.policy import fault_manifest_violations
+from nexus_test_control.proof_owner import python_exact_proof_owner
 from nexus_test_control.runner import (
     CapabilityContext,
     CapabilityResult,
@@ -68,6 +69,8 @@ class FaultDefinition:
     sha256: str
     proofs: tuple[str, ...]
     expected_failure: str
+    changed_owner_red: ChangedOwnerRedStrategy | None
+    changed_owner_sha256: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -458,6 +461,12 @@ def fault_definition(repo_root: Path, fault_id: str, proof: str) -> FaultDefinit
             sha256=item["sha256"],
             proofs=tuple(item["proofs"]),
             expected_failure=item["expected_failure"],
+            changed_owner_red=(
+                ChangedOwnerRedStrategy(item["changed_owner_red"])
+                if "changed_owner_red" in item
+                else None
+            ),
+            changed_owner_sha256=item.get("changed_owner_sha256"),
         )
     raise SensitivityError(f"unknown fault id: {fault_id}")
 
@@ -483,10 +492,31 @@ def workflow_sensitivity_request(
     changed_paths: Sequence[str],
     base_sha: str,
 ) -> SensitivityRequest:
-    """Use BASE for a changed proof owner; retain faults for unchanged owners."""
+    """Use BASE for changed owners unless one exact proof opts into coherent FAULT."""
     exact_changed_paths = tuple(dict.fromkeys(changed_paths))
     proof_path = _proof_path(proof)
     fault_id = declared_fault_for_proof(repo_root, proof)
+    if fault_id is not None:
+        fault = fault_definition(repo_root, fault_id, proof)
+        if (
+            fault.changed_owner_red is ChangedOwnerRedStrategy.COHERENT_FAULT
+            and _valid_exact_python_owner(repo_root, proof)
+        ):
+            try:
+                _git_sha(repo_root, base_sha)
+            except SensitivityError:
+                return SensitivityRequest(
+                    proof=proof,
+                    changed_paths=exact_changed_paths,
+                    method=SensitivityMethod.BASE,
+                    against=base_sha,
+                )
+            return SensitivityRequest(
+                proof=proof,
+                changed_paths=exact_changed_paths,
+                method=SensitivityMethod.FAULT,
+                against=fault_id,
+            )
     if proof_path in exact_changed_paths and (
         fault_id is None or _proof_owner_materially_changed(repo_root, proof, base_sha)
     ):
@@ -505,6 +535,18 @@ def workflow_sensitivity_request(
     )
 
 
+def _valid_exact_python_owner(repo_root: Path, proof: str) -> bool:
+    runner, _, identity = proof.partition(":")
+    path, separator, node = identity.partition("::")
+    if runner != "pytest" or not separator or not node:
+        return False
+    try:
+        source = (repo_root / path).read_text(encoding="utf-8")
+        return python_exact_proof_owner(source, node) is not None
+    except (OSError, UnicodeError, SyntaxError):
+        return False
+
+
 def _proof_owner_materially_changed(repo_root: Path, proof: str, base_sha: str) -> bool:
     """Fail closed unless one exact Python proof and its shared support are unchanged."""
     runner, _, identity = proof.partition(":")
@@ -514,34 +556,11 @@ def _proof_owner_materially_changed(repo_root: Path, proof: str, base_sha: str) 
     try:
         candidate = (repo_root / path).read_text(encoding="utf-8")
         baseline = _git(repo_root, "show", f"{base_sha}:{path}", capture=True).stdout
-        candidate_owner = _python_exact_proof_owner(candidate, node)
-        baseline_owner = _python_exact_proof_owner(baseline, node)
+        candidate_owner = python_exact_proof_owner(candidate, node)
+        baseline_owner = python_exact_proof_owner(baseline, node)
     except (OSError, UnicodeError, SyntaxError, SensitivityError):
         return True
     return candidate_owner is None or candidate_owner != baseline_owner
-
-
-def _python_exact_proof_owner(source: str, node: str) -> tuple[str, ...] | None:
-    """Fingerprint one module test plus all shared and import-time support."""
-    module = ast.parse(source)
-    owner = tuple(node.split("::"))
-    if len(owner) != 1 or not owner[0]:
-        return None
-
-    retained: list[str] = []
-    selected = 0
-    for statement in module.body:
-        if isinstance(
-            statement, (ast.FunctionDef, ast.AsyncFunctionDef)
-        ) and statement.name.startswith("test_"):
-            if owner == (statement.name,):
-                retained.append(ast.dump(statement, include_attributes=False))
-                selected += 1
-            continue
-        if isinstance(statement, ast.ClassDef) and statement.name.startswith("Test"):
-            continue
-        retained.append(ast.dump(statement, include_attributes=False))
-    return tuple(retained) if selected == 1 else None
 
 
 def canonical_proof(repo_root: Path, proof: str) -> str:
@@ -624,8 +643,7 @@ def _base_overlays(proof_path: str) -> tuple[str, ...]:
             (
                 "python/tests/conftest.py",
                 "python/tests/testkit",
-                "python/pyproject.toml",
-                "python/uv.lock",
+                "python/nexus_test_control/provider_api_contract.py",
             )
         )
     elif proof_path.startswith("apps/web/"):

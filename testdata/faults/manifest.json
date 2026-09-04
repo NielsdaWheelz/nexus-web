@@ -23,7 +23,7 @@
     {
       "id": "test-control-output-bounds-bypass",
       "patch": "testdata/faults/test-control-output-bounds-bypass.patch",
-      "sha256": "e32af9f60e815bd923346b82fd874e369b8db27644cdc5d4f793cfd6a0a0356b",
+      "sha256": "ef0990a8f12b7b5aa852009755caf0b6392864d55f46842c8082356e31cf3039",
       "proofs": [
         "pytest:python/tests/kernel/nexus_test_control/test_process.py::test_captured_child_output_is_drained_without_retaining_unbounded_logs"
       ],
@@ -77,7 +77,7 @@
     {
       "id": "auth-chat-run-ownership-bypass",
       "patch": "testdata/faults/auth-chat-run-ownership-bypass.patch",
-      "sha256": "eba2ac65bd74ee7a9e901892be62ead4e03bf7c524830f5755b007b2a7bf3c5e",
+      "sha256": "6ecf70f7da867ec7d37423c37babe9d829ee86ba7defe7af77566dcedfa7b119",
       "proofs": [
         "pytest:python/tests/service/test_chat_execution_privacy.py::test_suspended_chat_exposes_only_phase_and_masks_its_private_journal"
       ],
@@ -95,11 +95,11 @@
     {
       "id": "codex-generation-migration-admission-bypass",
       "patch": "testdata/faults/codex-generation-migration-admission-bypass.patch",
-      "sha256": "e136dbf033ef630d80e10cda3a20376b8a17d654eb363597f81b0c9a0080ad46",
+      "sha256": "09dd94e5c1c0aa53e925c7363f14002e194667eb297bd36d67805ed8d4ad9e45",
       "proofs": [
-        "pytest:python/tests/migrations/test_codex_generation_cutover.py"
+        "pytest:python/tests/migrations/test_generation_backends_cutover_admission.py::test_0224_refuses_the_only_undrained_generation_job_before_history_reset"
       ],
-      "expected_failure": "DID NOT RAISE"
+      "expected_failure": "0224 accepted an undrained generation job into the destructive history reset"
     },
     {
       "id": "migration-head-schema-omission",
@@ -248,65 +248,49 @@
     {
       "id": "durable-job-fence-bypass",
       "patch": "testdata/faults/durable-job-fence-bypass.patch",
-      "sha256": "ce64236642a3d35b6d538b193717765778080fc4b26c6f358fad3284a2f31434",
+      "sha256": "1555c81a98289e5e2ade13e741d25fefd1f514af30c3d31374a8e30f0239237a",
       "proofs": [
-        "pytest:python/tests/service/test_durable_job_replay.py::test_expired_claim_replays_once_and_fences_the_crashed_worker"
+        "pytest:python/tests/service/test_durable_job_replay.py::test_reused_worker_identity_cannot_settle_a_reclaimed_attempt"
       ],
-      "expected_failure": "expired claimant mutated the recovered terminal job"
-    },
-    {
-      "id": "durable-chat-uncertain-checkpoint-bypass",
-      "patch": "testdata/faults/durable-chat-uncertain-checkpoint-bypass.patch",
-      "sha256": "a8af3f77bb335513e5fc373234f142a28119d3b67679f88bf6ecbe311f58209b",
-      "proofs": [
-        "pytest:python/tests/service/test_durable_chat_reconciliation.py::test_uncertain_chat_dispatch_suspends_then_reconciles_the_same_job"
-      ],
-      "expected_failure": "the Uncertain checkpoint was not durably committed before dispatch"
+      "expected_failure": "expired attempt failed the reclaimed live attempt",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "a0a3c95e3a5298fc7a9f91549b0b2ffeadcad5ed9986a7291f76cd7ed180fe1a"
     },
     {
       "id": "durable-generation-accepted-loss-redispatch",
       "patch": "testdata/faults/durable-generation-accepted-loss-redispatch.patch",
-      "sha256": "a2a6ffc7c3ab4ad568b21820b73b88286cf4105549a86e703644973f1be21ddd",
+      "sha256": "87682fc6b16c82a27728e2fb1a54eaa6d8e22f156699d953cb0cc05c28d9cbd3",
       "proofs": [
-        "pytest:python/tests/service/test_generation_execution.py::test_accepted_generation_loss_remains_uncertain_and_never_redispatches"
+        "pytest:python/tests/service/test_generation_execution.py::test_parent_child_tool_replay_is_exactly_once"
       ],
       "expected_failure": "generation dispatch did not persist the Uncertain checkpoint atomically"
     },
     {
       "id": "generation-reconciliation-fingerprint-bypass",
       "patch": "testdata/faults/generation-reconciliation-fingerprint-bypass.patch",
-      "sha256": "29025962a7efebd5e000ab0edcbe69ce0b298bad41ab3eb5b332b6892f583930",
+      "sha256": "939db3593ac0d1195e237d712a18bb1137f042482e9424790ef064d6079e36a0",
       "proofs": [
         "pytest:python/tests/service/test_generation_reconciliation.py"
       ],
       "expected_failure": "DID NOT RAISE"
     },
     {
-      "id": "codex-generation-capability-lowering-bypass",
-      "patch": "testdata/faults/codex-generation-capability-lowering-bypass.patch",
-      "sha256": "be0dd5ed17ced877de402995e2b23e5443f442123eb689361fe669b462bb110d",
-      "proofs": [
-        "pytest:python/tests/service/test_codex_generation_lowering.py::test_operation_identity_lowers_to_one_exact_capability_and_tool_surface"
-      ],
-      "expected_failure": "ChatTools lowering lost its exact capability"
-    },
-    {
       "id": "codex-generation-policy-plan-bypass",
       "patch": "testdata/faults/codex-generation-policy-plan-bypass.patch",
-      "sha256": "b053902ca04d33c097d353a704f127f4ca21be1a0854d60c7e29ef6a8341c481",
+      "sha256": "cf8c971adbcfa3b6bfad663b1d644dfdaad25148f04f24823778fda8400825cc",
       "proofs": [
-        "pytest:python/tests/kernel/test_generation_policy.py::test_fixed_generation_policy_catalog_is_complete_and_closed"
+        "pytest:python/tests/kernel/test_generation_policy.py::test_exact_generation_policy_is_total_content_derived_and_profile_free"
       ],
-      "expected_failure": "policy facts fingerprint does not match the pinned catalog"
+      "expected_failure": "gpt-5.6-luna"
     },
     {
       "id": "codex-temporary-confinement-bypass",
       "patch": "testdata/faults/codex-temporary-confinement-bypass.patch",
-      "sha256": "cb0898e7043cc3bea63b0e7e0a8b75cc7161ed5a08e4168618472ab68964772d",
+      "sha256": "4fbb5b17b3280fdc99b14e1b6685fdfd92a216a0f868b044df5eaec9a381774a",
       "proofs": [
         "pytest:python/tests/service/test_codex_runtime_confinement.py::test_confined_runtime_owns_startup_and_workspace_write_tmp_policy_at_sdk_boundary"
       ],
-      "expected_failure": "Codex child TMPDIR escaped its turn root"
+      "expected_failure": "AssertionError: assert CodexSandboxC"
     },
     {
       "id": "durable-codex-host-capacity-admission-bypass",
@@ -374,7 +358,7 @@
     {
       "id": "agent-tool-grant-scope-bypass",
       "patch": "testdata/faults/agent-tool-grant-scope-bypass.patch",
-      "sha256": "5ab7029c766f14e5091f76a24f0e6be909ec5cd562a09f9f6b2d950e13eeb679",
+      "sha256": "e65bd023a2a89f792b5cff66ab9ba6ef734edba1f522857e1e0ae05ea10881e4",
       "proofs": [
         "pytest:python/tests/kernel/test_agent_tool_grants.py::test_grant_is_strict_hs256_bearer_and_does_not_leak_secret"
       ],
@@ -383,9 +367,9 @@
     {
       "id": "agent-tool-receipt-lease-fence-bypass",
       "patch": "testdata/faults/agent-tool-receipt-lease-fence-bypass.patch",
-      "sha256": "3f3ae2fef4df85c61014a75af391249685e9e292985474a2e00d340b5abafc02",
+      "sha256": "7dcb6e8ca3dfa35cee9c233c68c8dbebecf1150dccf1fdeb38e5060e91d429b2",
       "proofs": [
-        "pytest:python/tests/service/test_agent_tools_mcp.py::test_mcp_receipt_landing_refuses_a_lost_job_lease_after_inner_completion"
+        "pytest:python/tests/service/test_generation_tool_authority.py::test_frozen_plan_is_transport_neutral_and_fenced"
       ],
       "expected_failure": "lost job lease still authorized an MCP receipt"
     },
@@ -403,7 +387,7 @@
       "patch": "testdata/faults/llm-tool-safety-prompt-bypass.patch",
       "sha256": "ec4e995b8aeb1b8aa5c17bece91e61f549f2c2b2e1f573baa311afd667be4b1d",
       "proofs": [
-        "pytest:python/tests/evals/test_tool_safety_eval.py::test_injected_requests_cannot_authorize_a_foreign_mutating_tool_call"
+        "pytest:python/tests/evals/test_tool_safety_eval.py::test_generation_tool_plans_refuse_untrusted_escalation"
       ],
       "expected_failure": "production prompt lost a reviewed tool-safety instruction"
     },
@@ -446,11 +430,11 @@
     {
       "id": "codex-hosted-evidence-size-bound-bypass",
       "patch": "testdata/faults/codex-hosted-evidence-size-bound-bypass.patch",
-      "sha256": "412a5f15a9e35ae49a3547c9c9f69ab47991f935a81baeb33d688699986c8f1a",
+      "sha256": "99819b93c24730af11f0c075a756a6db75227040b0a8442acb6fb32ce2057599",
       "proofs": [
         "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape"
       ],
-      "expected_failure": "evidence exceeds 16 KiB"
+      "expected_failure": "evidence exceeds 64 KiB"
     },
     {
       "id": "codex-egress-allowlist-bypass",
@@ -464,9 +448,9 @@
     {
       "id": "hosted-semantic-evidence-bypass",
       "patch": "testdata/faults/hosted-semantic-evidence-bypass.patch",
-      "sha256": "b80873af418062b51556e193784c62b2d172f83576f933fdc42312cf081e0057",
+      "sha256": "20af083bffb155a0cb881c855e84af9931071acb53bc48fd92354bf2d76a125f",
       "proofs": [
-        "pytest:python/tests/kernel/nexus_test_control/test_hosted_canary_semantics.py::test_hosted_canary_accepts_exact_four_plan_v3_receipt"
+        "pytest:python/tests/kernel/nexus_test_control/test_hosted_canary_semantics.py::test_hosted_canary_accepts_bounded_target_set_v4_receipt"
       ],
       "expected_failure": "permission-request evidence turned an unsafe semantic result green"
     },
@@ -702,14 +686,16 @@
       "proofs": [
         "pytest:python/tests/service/test_background_worker_process_containment.py::test_kernel_oom_and_timeout_are_terminally_fenced_before_next_fresh_child"
       ],
-      "expected_failure": "resource-limited source settlement lost its exact dimension"
+      "expected_failure": "resource-limited source settlement lost its exact dimension",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "ceac20dbd48dae933cb35ce446c73551b84faf05c6c764b51dc6d161defab4ba"
     },
     {
       "id": "document-import-parser-dimension-bypass",
       "patch": "testdata/faults/document-import-parser-dimension-bypass.patch",
       "sha256": "732edcefa94f66270e78c463218907b9fc1fd6556a3927c66edd7d26b5b03bae",
       "proofs": [
-        "pytest:python/tests/service/test_bounded_media_extraction.py"
+        "pytest:python/tests/service/test_bounded_media_extraction.py::test_lifecycle_preserves_declared_resource_dimension_on_api_error"
       ],
       "expected_failure": "PDF resource-limit projection lost its typed carrier"
     },
@@ -727,9 +713,11 @@
       "patch": "testdata/faults/document-import-reconciler-readiness-bypass.patch",
       "sha256": "6745f440dd18b8424b582891df4639b0d6fb51e5ba0ddd5ec8fe5a2181e42254",
       "proofs": [
-        "pytest:python/tests/service/test_ingest_reconciliation_readiness.py"
+        "pytest:python/tests/service/test_ingest_reconciliation_readiness.py::test_deployed_database_readiness_requires_the_latest_reconciler_to_succeed_freshly"
       ],
-      "expected_failure": "assert not True"
+      "expected_failure": "database readiness admitted no successful reconciler cycle",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "510e674dc061dcf7a9363450221f6723c6ab571eda5e1c42f7fecf5a814631b3"
     },
     {
       "id": "document-import-upload-retry-ui-bypass",

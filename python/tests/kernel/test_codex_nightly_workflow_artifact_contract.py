@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+from importlib.util import find_spec
 from pathlib import Path
 from typing import cast
 
@@ -24,87 +25,11 @@ _MINIMUM_JOB_FINALIZATION_MARGIN_SECONDS = 10 * 60
 
 
 def _valid_evidence(run_id: str) -> bytes:
-    from nexus.services import generation_policy
+    from tests.testkit.codex_hosted_evidence import codex_hosted_evidence_fixture
 
     return (
         json.dumps(
-            {
-                "schema_version": "nexus-hosted-codex-canary.v3",
-                "run_id": run_id,
-                "source_sha": _SOURCE_SHA,
-                "policy_revision": generation_policy.POLICY_REVISION,
-                "policy_fingerprint": generation_policy.POLICY_FINGERPRINT,
-                "policy_facts_fingerprint": generation_policy.POLICY_FACTS_FINGERPRINT,
-                "provider_runtime_revision": generation_policy.PLAN_EVAL_PIN[
-                    "provider_runtime_revision"
-                ],
-                "codex_sdk_version": generation_policy.PLAN_EVAL_PIN["codex_sdk_version"],
-                "codex_cli_version": generation_policy.PLAN_EVAL_PIN["codex_sdk_version"],
-                "qualification_scope": "model_effort_runtime_wire",
-                "qualified_plan_ids": ["routine", "standard", "thorough", "deep"],
-                "subscription_turns": 4,
-                "results": [
-                    *[
-                        {
-                            "backend": "codex",
-                            "transport": "sdk",
-                            "auth_profile": "codex-personal",
-                            "terminal_status": "succeeded",
-                            "plan_id": plan_id,
-                            "operation": operation,
-                            "profile": profile,
-                            "operation_revision": generation_policy.operation_revision(
-                                operation, profile=profile
-                            ),
-                            "case_shape": case_shape,
-                            "model": model,
-                            "reasoning": reasoning,
-                            "structured_output_valid": case_shape == "structured",
-                            "session_ref_schema_version": "agent-session-ref.v1",
-                            "usage": {
-                                "input_tokens": 1,
-                                "output_tokens": 2,
-                                "total_tokens": 3,
-                            },
-                            "sdk_version": generation_policy.PLAN_EVAL_PIN["codex_sdk_version"],
-                            "runtime_version": generation_policy.PLAN_EVAL_PIN["codex_sdk_version"],
-                            "tool_events": tool_events,
-                            "elapsed_ms": 1,
-                            "permission_requests": 0,
-                        }
-                        for plan_id, operation, profile, case_shape, model, reasoning, tool_events in (
-                            (
-                                "routine",
-                                "metadata_enrichment",
-                                None,
-                                "structured",
-                                "gpt-5.6-luna",
-                                "low",
-                                0,
-                            ),
-                            (
-                                "standard",
-                                "dawn_write",
-                                None,
-                                "text",
-                                "gpt-5.6-terra",
-                                "medium",
-                                0,
-                            ),
-                            (
-                                "thorough",
-                                "dossier_library",
-                                None,
-                                "structured",
-                                "gpt-5.6-terra",
-                                "high",
-                                0,
-                            ),
-                            ("deep", "chat", "deep", "mcp_read", "gpt-5.6-sol", "high", 1),
-                        )
-                    ]
-                ],
-            },
+            codex_hosted_evidence_fixture(run_id=run_id, source_sha=_SOURCE_SHA),
             separators=(",", ":"),
         ).encode()
         + b"\n"
@@ -201,6 +126,9 @@ def test_codex_nightly_stages_only_one_run_bound_bounded_json_artifact(
 ) -> None:
     """Risk: the live workflow stages malformed or excess hosted output."""
 
+    assert find_spec("nexus.services.generation_catalog") is not None, (
+        "the final generation-catalog owner is absent"
+    )
     _assert_runner_security_contract()
     stage = _workflow_step("Stage bounded Codex nightly artifact")
     _assert_artifact_delivery_contract(
@@ -403,9 +331,14 @@ def test_codex_nightly_job_budget_covers_every_turn_and_finalization() -> None:
         and len(node.targets) == 1
         and isinstance((target := node.targets[0]), ast.Name)
     }
-    plans = assignments.get("_PLANS")
+    turn_ceiling = assignments.get("_MAX_SUBSCRIPTION_TURNS")
     plan_ceiling = assignments.get("_MAX_PLAN_ELAPSED_SECONDS")
-    _require(isinstance(plans, ast.Tuple), "hosted plan portfolio is not a fixed tuple")
+    _require(
+        isinstance(turn_ceiling, ast.Constant)
+        and type(turn_ceiling.value) is int
+        and turn_ceiling.value > 0,
+        "hosted target-set turn ceiling is not a fixed positive integer",
+    )
     _require(
         isinstance(plan_ceiling, ast.Constant)
         and isinstance(plan_ceiling.value, int)
@@ -422,7 +355,7 @@ def test_codex_nightly_job_budget_covers_every_turn_and_finalization() -> None:
     )
 
     required_seconds = (
-        len(plans.elts) * plan_ceiling.value + _MINIMUM_JOB_FINALIZATION_MARGIN_SECONDS
+        turn_ceiling.value * plan_ceiling.value + _MINIMUM_JOB_FINALIZATION_MARGIN_SECONDS
     )
     assert timeout_minutes * 60 >= required_seconds, (
         "Codex nightly job timeout cannot cover every legal plan duration plus "
@@ -455,7 +388,7 @@ def test_codex_nightly_readiness_is_emitted_only_by_zero_turn_preflight() -> Non
     assert any(
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id == "_probe_subscription_auth"
+        and node.func.id == "_read_authenticated_catalog"
         for statement in preflight_try.body
         for node in ast.walk(statement)
     ), "readiness is no longer owned by subscription preflight"
@@ -464,7 +397,7 @@ def test_codex_nightly_readiness_is_emitted_only_by_zero_turn_preflight() -> Non
         for node in ast.walk(tree)
         if isinstance(node, ast.For)
         and any(
-            isinstance(candidate, ast.Name) and candidate.id == "_PLANS"
+            isinstance(candidate, ast.Attribute) and candidate.attr == "cases"
             for candidate in ast.walk(node.iter)
         )
     ]

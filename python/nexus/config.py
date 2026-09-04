@@ -16,7 +16,10 @@ Local/test environments use Supabase local, staging/prod use cloud.
 Supabase service-role keys are not application runtime settings.
 """
 
+import base64
+import binascii
 import os
+from datetime import datetime
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
@@ -127,6 +130,17 @@ class Environment(str, Enum):
     TEST = "test"
     STAGING = "staging"
     PROD = "prod"
+
+
+type GenerationApiProvider = Literal[
+    "openai",
+    "anthropic",
+    "gemini",
+    "moonshot",
+    "openrouter",
+    "deepseek",
+    "xai",
+]
 
 
 class Settings(BaseSettings):
@@ -423,10 +437,90 @@ class Settings(BaseSettings):
         alias="MAX_LATEX_SOURCE_ARCHIVE_COMPRESSION_RATIO",
     )
 
-    # Narrow embedding credential. OpenAI is used only by the transcript
-    # embedding client. Interactive and
-    # background generation uses the dedicated Codex host/client boundary.
+    # OpenAI's unqualified key remains embedding-only. Generation credentials
+    # are route-specific so no provider secret can cross into the Codex host.
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
+    generation_api_providers_raw: str = Field(default="", alias="GENERATION_API_PROVIDERS")
+    openai_generation_api_key: SecretStr | None = Field(
+        default=None,
+        alias="OPENAI_GENERATION_API_KEY",
+        repr=False,
+    )
+    anthropic_generation_api_key: SecretStr | None = Field(
+        default=None,
+        alias="ANTHROPIC_GENERATION_API_KEY",
+        repr=False,
+    )
+    gemini_generation_api_key: SecretStr | None = Field(
+        default=None,
+        alias="GEMINI_GENERATION_API_KEY",
+        repr=False,
+    )
+    moonshot_generation_api_key: SecretStr | None = Field(
+        default=None,
+        alias="MOONSHOT_GENERATION_API_KEY",
+        repr=False,
+    )
+    openrouter_generation_api_key: SecretStr | None = Field(
+        default=None,
+        alias="OPENROUTER_GENERATION_API_KEY",
+        repr=False,
+    )
+    deepseek_generation_api_key: SecretStr | None = Field(
+        default=None,
+        alias="DEEPSEEK_GENERATION_API_KEY",
+        repr=False,
+    )
+    xai_generation_api_key: SecretStr | None = Field(
+        default=None,
+        alias="XAI_GENERATION_API_KEY",
+        repr=False,
+    )
+    generation_continuation_encryption_key: SecretStr | None = Field(
+        default=None,
+        alias="GENERATION_CONTINUATION_ENCRYPTION_KEY",
+        repr=False,
+    )
+    fable_retention_accepted_at: datetime | None = Field(
+        default=None,
+        alias="NEXUS_FABLE_RETENTION_ACCEPTED_AT",
+    )
+    anthropic_api_key_rejected: SecretStr | None = Field(
+        default=None,
+        alias="ANTHROPIC_API_KEY",
+        exclude=True,
+        repr=False,
+    )
+    gemini_api_key_rejected: SecretStr | None = Field(
+        default=None,
+        alias="GEMINI_API_KEY",
+        exclude=True,
+        repr=False,
+    )
+    moonshot_api_key_rejected: SecretStr | None = Field(
+        default=None,
+        alias="MOONSHOT_API_KEY",
+        exclude=True,
+        repr=False,
+    )
+    openrouter_api_key_rejected: SecretStr | None = Field(
+        default=None,
+        alias="OPENROUTER_API_KEY",
+        exclude=True,
+        repr=False,
+    )
+    deepseek_api_key_rejected: SecretStr | None = Field(
+        default=None,
+        alias="DEEPSEEK_API_KEY",
+        exclude=True,
+        repr=False,
+    )
+    xai_api_key_rejected: SecretStr | None = Field(
+        default=None,
+        alias="XAI_API_KEY",
+        exclude=True,
+        repr=False,
+    )
     agent_tool_grant_signing_key: SecretStr | None = Field(
         default=None,
         alias="AGENT_TOOL_GRANT_SIGNING_KEY",
@@ -833,8 +927,101 @@ class Settings(BaseSettings):
             )
 
     def _validate_deployed_generation_runtime(self) -> None:
+        configured = self.generation_api_provider_list
+        rejected = [
+            alias
+            for alias, value in (
+                ("ANTHROPIC_API_KEY", self.anthropic_api_key_rejected),
+                ("GEMINI_API_KEY", self.gemini_api_key_rejected),
+                ("MOONSHOT_API_KEY", self.moonshot_api_key_rejected),
+                ("OPENROUTER_API_KEY", self.openrouter_api_key_rejected),
+                ("DEEPSEEK_API_KEY", self.deepseek_api_key_rejected),
+                ("XAI_API_KEY", self.xai_api_key_rejected),
+            )
+            if value is not None
+        ]
+        if rejected:
+            raise ValueError(
+                "Retired generation credential names are forbidden: " + ", ".join(rejected)
+            )
+
+        credential_by_provider: dict[GenerationApiProvider, tuple[str, SecretStr | None]] = {
+            "openai": ("OPENAI_GENERATION_API_KEY", self.openai_generation_api_key),
+            "anthropic": (
+                "ANTHROPIC_GENERATION_API_KEY",
+                self.anthropic_generation_api_key,
+            ),
+            "gemini": ("GEMINI_GENERATION_API_KEY", self.gemini_generation_api_key),
+            "moonshot": (
+                "MOONSHOT_GENERATION_API_KEY",
+                self.moonshot_generation_api_key,
+            ),
+            "openrouter": (
+                "OPENROUTER_GENERATION_API_KEY",
+                self.openrouter_generation_api_key,
+            ),
+            "deepseek": (
+                "DEEPSEEK_GENERATION_API_KEY",
+                self.deepseek_generation_api_key,
+            ),
+            "xai": ("XAI_GENERATION_API_KEY", self.xai_generation_api_key),
+        }
+        missing: list[str] = []
+        for provider in configured:
+            name, credential = credential_by_provider[provider]
+            if credential is None or not credential.get_secret_value().strip():
+                missing.append(name)
+        if missing:
+            raise ValueError(
+                "Configured generation providers are missing credentials: " + ", ".join(missing)
+            )
+        stale = [
+            name
+            for provider, (name, credential) in credential_by_provider.items()
+            if provider not in configured
+            and credential is not None
+            and credential.get_secret_value() != ""
+        ]
+        if stale:
+            raise ValueError(
+                "Generation credentials are forbidden for unconfigured provider "
+                + ", ".join(name.removesuffix("_GENERATION_API_KEY").lower() for name in stale)
+            )
+        if configured:
+            if self.generation_continuation_encryption_key is None:
+                raise ValueError(
+                    "GENERATION_CONTINUATION_ENCRYPTION_KEY is required when an API provider "
+                    "is configured"
+                )
+            encoded_key = self.generation_continuation_encryption_key.get_secret_value()
+            try:
+                decoded_key = base64.b64decode(encoded_key, validate=True)
+            except (binascii.Error, ValueError) as exc:
+                raise ValueError(
+                    "GENERATION_CONTINUATION_ENCRYPTION_KEY must be canonical base64 for a "
+                    "32-byte key"
+                ) from exc
+            if len(decoded_key) != 32 or base64.b64encode(decoded_key).decode() != encoded_key:
+                raise ValueError(
+                    "GENERATION_CONTINUATION_ENCRYPTION_KEY must be canonical base64 for a "
+                    "32-byte key"
+                )
+        if "anthropic" in configured:
+            if self.fable_retention_accepted_at is None:
+                raise ValueError(
+                    "NEXUS_FABLE_RETENTION_ACCEPTED_AT is required when Anthropic is configured"
+                )
+            if self.fable_retention_accepted_at.utcoffset() is None:
+                raise ValueError("NEXUS_FABLE_RETENTION_ACCEPTED_AT must include a timezone")
+        elif self.fable_retention_accepted_at is not None:
+            raise ValueError(
+                "NEXUS_FABLE_RETENTION_ACCEPTED_AT is forbidden while Anthropic is unconfigured"
+            )
+
         if self.nexus_env not in (Environment.STAGING, Environment.PROD):
             return
+        if not configured:
+            raise ValueError("GENERATION_API_PROVIDERS must be nonempty in staging/prod")
         if not self.openai_api_key:
             raise ValueError("OPENAI_API_KEY is required for transcript embeddings")
         if not self.agent_tool_grant_signing_key:
@@ -999,6 +1186,48 @@ class Settings(BaseSettings):
         if self.nexus_env in (Environment.LOCAL, Environment.TEST):
             return SecretStr("test-agent-tools-grant-signing-key-32-bytes!")
         raise ValueError("AGENT_TOOL_GRANT_SIGNING_KEY is required in staging/prod")
+
+    @property
+    def effective_generation_continuation_encryption_key(self) -> SecretStr:
+        """Return the deployment key, or an unused deterministic local/test key."""
+
+        if self.generation_continuation_encryption_key is not None:
+            return self.generation_continuation_encryption_key
+        if self.nexus_env in (Environment.LOCAL, Environment.TEST) and not (
+            self.generation_api_provider_list
+        ):
+            return SecretStr(base64.b64encode(b"nexus-local-continuation-key-v1!").decode("ascii"))
+        raise ValueError("GENERATION_CONTINUATION_ENCRYPTION_KEY is required")
+
+    @property
+    def generation_api_provider_list(self) -> tuple[GenerationApiProvider, ...]:
+        """Parse the required deployment-owned provider list once at ingress."""
+
+        if self.generation_api_providers_raw == "":
+            return ()
+        providers: list[GenerationApiProvider] = []
+        for raw_provider in self.generation_api_providers_raw.split(","):
+            provider = raw_provider.strip()
+            match provider:
+                case (
+                    "openai"
+                    | "anthropic"
+                    | "gemini"
+                    | "moonshot"
+                    | "openrouter"
+                    | "deepseek"
+                    | "xai"
+                ):
+                    providers.append(provider)
+                case "":
+                    raise ValueError("GENERATION_API_PROVIDERS contains an empty provider")
+                case _:
+                    raise ValueError(
+                        f"GENERATION_API_PROVIDERS contains unknown provider {provider!r}"
+                    )
+        if len(set(providers)) != len(providers):
+            raise ValueError("GENERATION_API_PROVIDERS contains a duplicate provider")
+        return tuple(providers)
 
 
 @lru_cache

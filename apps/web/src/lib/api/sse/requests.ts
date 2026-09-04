@@ -1,6 +1,6 @@
 import type { Presence } from "@/lib/api/presence";
-import type { ChatProfileId } from "@/lib/conversations/chatProfileContract";
 import type { BranchAnchor } from "@/lib/conversations/types";
+import type { GenerationSelectionSpec } from "@/lib/conversations/generationCatalog";
 
 /** The reader quote piece of a send: durable key + compare-on-send revision
  *  only. The server derives exact/prefix/suffix/source/locator from the locked
@@ -21,6 +21,14 @@ export type ChatDestinationInput =
 export interface ChatRunCreateRequest {
   destination: ChatDestinationInput;
   content: string;
-  profile_id: ChatProfileId;
+  catalog_definition_revision: string;
+  selection: GenerationSelectionSpec;
+  tool_authority: "ReadOnly" | "AdditiveWrites";
   reader_selection: Presence<ReaderSelectionInput>;
+}
+
+export interface ChatRunCandidateRequest {
+  catalog_definition_revision: string;
+  selection: GenerationSelectionSpec;
+  tool_authority: "ReadOnly" | "AdditiveWrites";
 }

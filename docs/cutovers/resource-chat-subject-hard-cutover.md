@@ -24,6 +24,13 @@ legacy document-chat owner and the `reader_context` field are gone. See
 > The implementation sections below record the superseded design rather than
 > current runtime ownership.
 
+> **Generation-selection supersession (2026-08-31):** every `profile_id`,
+> fixed-model, and implicit-default statement below is historical. Current Chat
+> admission requires one exact per-run model/reasoning selection and catalog
+> definition revision under
+> [`generation-backends-hard-cutover.md`](generation-backends-hard-cutover.md).
+> No runtime compatibility reader accepts the historical selection fields.
+
 ## North Star
 
 Nexus can start, list, continue, search, cite, open, and inspect a conversation
@@ -342,10 +349,10 @@ subject substitute.
 Rules:
 
 - `chat_subject` is optional for ordinary continuation chat.
-- `profile_id` is the sole generation selection. It resolves through the fixed
-  Fast/Balanced/Deep policy in
-  [`codex-personal-generation-hard-cutover.md`](codex-personal-generation-hard-cutover.md);
-  no route, model, effort, credential, or retry option is accepted.
+- The superseded request used `profile_id`. Current Chat admission instead uses
+  the exact selection contract in
+  [`generation-backends-hard-cutover.md`](generation-backends-hard-cutover.md);
+  no runtime accepts this historical field.
 - When present, it is parsed at the FastAPI boundary into a canonical
   `ResourceRef`.
 - The subject resource must be visible and chat-subject-capable.
@@ -1380,9 +1387,10 @@ trust trail or branch semantics.
 
 ## Acceptance Criteria
 
-AC1. `ChatRunCreateRequest` accepts `chat_subject.resource_ref`, rejects
-malformed refs with `E_INVALID_REQUEST`, and accepts only `profile_id` for
-generation selection; `model_id`, reasoning, and key-mode fields are absent.
+AC1 (historical, superseded). `ChatRunCreateRequest` accepted
+`chat_subject.resource_ref` and `profile_id`. Neither field is a current Chat
+admission contract; current selection is the exact per-run contract linked
+above.
 
 AC2. `reader_context` is absent from backend schemas, frontend request types,
 request-body assembly, queue payloads, prompt assembly, tests, and docs.

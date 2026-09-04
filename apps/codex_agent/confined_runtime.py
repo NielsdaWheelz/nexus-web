@@ -1,144 +1,89 @@
-"""Nexus-owned confinement for the pinned Codex AgentRuntime adapter."""
+"""Nexus-owned turn layout for the public AgentRuntime Codex sandbox controls."""
 
 from __future__ import annotations
 
+import os
 import stat
-from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
-from types import MappingProxyType
 
 from provider_runtime.agent_runtime import (
     AgentRuntime,
     AgentRuntimeConfig,
-    AgentSession,
-    AgentSessionRef,
-    AgentSessionRequest,
+    CodexSandboxControls,
     ProtocolDefect,
-    SessionPage,
-    SessionQuery,
-    SessionReadOptions,
-    SessionSnapshot,
 )
-from provider_runtime.agent_runtime.codex_sdk import CodexSdkAdapter
 
-CODEX_TMP_SANDBOX_CONFIG: Mapping[str, bool] = MappingProxyType(
-    {
-        "exclude_slash_tmp": True,
-        "exclude_tmpdir_env_var": False,
-    }
-)
-CODEX_TMP_SANDBOX_OVERRIDES = tuple(
-    f"sandbox_workspace_write.{key}={str(value).lower()}"
-    for key, value in CODEX_TMP_SANDBOX_CONFIG.items()
-)
+_STATE_DIRECTORY_NAME = "state"
+_TEMPORARY_DIRECTORY_NAME = "tmp"
+_PRIVATE_DIRECTORY_MODE = 0o700
+_EXCLUDE_SLASH_TMP = True
+_EXCLUDE_TMPDIR_ENV_VAR = False
+
+# The startup health probe invokes the pinned Codex executable directly. Keep
+# its arguments derived from the same typed values passed to AgentRuntime.
 CODEX_SANDBOX_HEALTH_OVERRIDES = (
     'sandbox_mode="workspace-write"',
-    *CODEX_TMP_SANDBOX_OVERRIDES,
+    f"sandbox_workspace_write.exclude_slash_tmp={str(_EXCLUDE_SLASH_TMP).lower()}",
+    f"sandbox_workspace_write.exclude_tmpdir_env_var={str(_EXCLUDE_TMPDIR_ENV_VAR).lower()}",
 )
-
-
-class ConfinedCodexSdkAdapter(CodexSdkAdapter):
-    """Keep the pinned Codex process and workspace sandbox inside one turn root."""
-
-    def __init__(self, temporary_directory: Path) -> None:
-        super().__init__()
-        self._temporary_directory = _validate_temporary_directory(temporary_directory)
-
-    async def list_sessions(
-        self,
-        query: SessionQuery,
-        *,
-        environment: Mapping[str, str],
-    ) -> SessionPage:
-        return await super().list_sessions(
-            query,
-            environment=self._confined_environment(environment),
-        )
-
-    async def read_session(
-        self,
-        ref: AgentSessionRef,
-        options: SessionReadOptions,
-        *,
-        environment: Mapping[str, str],
-    ) -> SessionSnapshot:
-        return await super().read_session(
-            ref,
-            options,
-            environment=self._confined_environment(environment),
-        )
-
-    async def open_session(
-        self,
-        request: AgentSessionRequest,
-        *,
-        environment: Mapping[str, str],
-    ) -> AgentSession:
-        return await super().open_session(
-            request,
-            environment=self._confined_environment(environment),
-        )
-
-    def _confined_environment(self, environment: Mapping[str, str]) -> dict[str, str]:
-        child_environment = dict(environment)
-        child_environment["TMPDIR"] = str(self._temporary_directory)
-        return child_environment
-
-    def _codex_config(self, request: AgentSessionRequest) -> dict[str, object]:
-        # provider-runtime@a5d9c8e owns this lowering hook but does not expose the
-        # Codex 0.144.4 /tmp exclusions publicly. The exact dependency pin plus
-        # the bundled-sandbox readiness proof below make this narrow override an
-        # upgrade gate rather than an open-ended compatibility layer.
-        config = super()._codex_config(request)
-        workspace_write = config.get("sandbox_workspace_write")
-        if request.policy.filesystem != "workspace_write":
-            return config
-        if not isinstance(workspace_write, dict):
-            raise ProtocolDefect(
-                "pinned Codex workspace-write config changed shape",
-                code="codex_sandbox_config_defect",
-            )
-        config["sandbox_workspace_write"] = {
-            **workspace_write,
-            **CODEX_TMP_SANDBOX_CONFIG,
-        }
-        return config
 
 
 def create_confined_runtime(config: AgentRuntimeConfig) -> AgentRuntime:
-    if config.state_root_base.name != "state":
+    """Apply the one validated TMPDIR/sandbox policy on every runtime path."""
+
+    controls = _controls_for_state_root(config.state_root_base)
+    if config.codex_sandbox is not None and config.codex_sandbox != controls:
+        raise ProtocolDefect(
+            "Codex sandbox controls differ from the confined turn layout",
+            code="codex_temporary_directory_defect",
+        )
+    return AgentRuntime(replace(config, codex_sandbox=controls))
+
+
+def _controls_for_state_root(state_root_base: Path) -> CodexSandboxControls:
+    if state_root_base.name != _STATE_DIRECTORY_NAME:
         raise ProtocolDefect(
             "Codex state root does not match the turn layout",
             code="codex_temporary_directory_defect",
         )
-    temporary_directory = config.state_root_base.parent / "tmp"
-    return AgentRuntime(
-        config,
-        adapters=(ConfinedCodexSdkAdapter(temporary_directory),),
+    runtime_root = state_root_base.parent
+    temporary_directory = runtime_root / _TEMPORARY_DIRECTORY_NAME
+    _require_private_directory(runtime_root, label="turn root")
+    _require_private_directory(state_root_base, label="state root")
+    _require_private_directory(temporary_directory, label="temporary directory")
+    return CodexSandboxControls(
+        child_tmpdir=str(temporary_directory),
+        exclude_slash_tmp=_EXCLUDE_SLASH_TMP,
+        exclude_tmpdir_env_var=_EXCLUDE_TMPDIR_ENV_VAR,
     )
 
 
-def _validate_temporary_directory(path: Path) -> Path:
-    if path.name != "tmp":
+def _require_private_directory(path: Path, *, label: str) -> None:
+    if not path.is_absolute() or Path(os.path.normpath(str(path))) != path:
         raise ProtocolDefect(
-            "Codex temporary directory is outside the turn layout",
+            f"Codex {label} must be normalized and absolute",
             code="codex_temporary_directory_defect",
         )
     try:
         metadata = path.lstat()
-        resolved = path.resolve()
+        resolved = path.resolve(strict=True)
     except OSError:
         raise ProtocolDefect(
-            "Codex temporary directory is unavailable",
+            f"Codex {label} is unavailable",
             code="codex_temporary_directory_defect",
         ) from None
     if (
         not stat.S_ISDIR(metadata.st_mode)
-        or stat.S_IMODE(metadata.st_mode) != 0o700
+        or stat.S_IMODE(metadata.st_mode) != _PRIVATE_DIRECTORY_MODE
+        or metadata.st_uid != os.geteuid()
+        or metadata.st_gid != os.getegid()
         or resolved != path
     ):
         raise ProtocolDefect(
-            "Codex temporary directory is not private",
+            f"Codex {label} is not a private owned directory",
             code="codex_temporary_directory_defect",
         )
-    return path
+
+
+__all__ = ["CODEX_SANDBOX_HEALTH_OVERRIDES", "create_confined_runtime"]

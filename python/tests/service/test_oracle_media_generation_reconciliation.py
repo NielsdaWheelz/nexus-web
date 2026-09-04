@@ -5,8 +5,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from typing import Never
 from uuid import UUID, uuid4
 
 import pytest
@@ -29,18 +29,18 @@ from nexus.jobs.queue import (
     claim_job,
     fail_job,
     get_job,
+    update_running_job_payload,
 )
 from nexus.schemas.oracle import oracle_done_payload
 from nexus.schemas.presence import Present, absent, present
-from nexus.services import generation_policy, run_kit
+from nexus.services import media_intelligence as media_intelligence_service
+from nexus.services import run_kit
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.codex_generation_contract import (
-    GenerationCommand,
+    GenerationCommandDraft,
     GenerationFrame,
-    GenerationHealth,
     GenerationSessionRef,
     GenerationTerminal,
-    request_fingerprint,
 )
 from nexus.services.durable_step_journal import (
     Completed,
@@ -49,23 +49,27 @@ from nexus.services.durable_step_journal import (
     StepReplayState,
     Uncertain,
     checkpoint_step_state,
+    payload_with_step_state,
     read_step_states,
     stable_generation_id,
 )
-from nexus.services.llm_execution import (
-    AttachReconciledGenerationTerminal,
-    ExecutionRuntime,
+from nexus.services.generation_intent import GenerationIntent, JsonSchemaOutput
+from nexus.services.generation_spec import (
+    GenerationOperation,
+    GenerationSpec,
+    GenerationSpecFacts,
+    StrictJsonOutputSnapshot,
+    generation_fact_digest,
 )
+from nexus.services.llm_execution import AttachReconciledGenerationTerminal
 from nexus.services.llm_ledger import (
-    GenerationStart,
     LlmCallOwner,
     read_generation,
-    start_generation_in_current_transaction,
+    read_model_turns,
 )
 from nexus.services.media_intelligence import (
     ensure_media_unit,
     reconcile_uncertain_media_unit,
-    run_media_unit_build,
 )
 from nexus.services.oracle import (
     create_reading,
@@ -73,6 +77,10 @@ from nexus.services.oracle import (
     reconcile_uncertain_oracle_reading,
 )
 from nexus.services.rate_limit import RateLimiter, get_rate_limiter, set_rate_limiter
+from tests.testkit.codex_generation import (
+    codex_generation_draft,
+    stage_uncertain_codex_generation,
+)
 from tests.testkit.unreachable_state import set_pending_job_max_attempts
 
 
@@ -86,45 +94,70 @@ class _MediaBuild:
     context: JobExecutionContext
 
 
-class _NoTerminalRuntime(ExecutionRuntime):
+class _NeverExecutionRuntime:
     def __init__(self) -> None:
         self.dispatches = 0
 
-    async def health(self) -> GenerationHealth:
-        return GenerationHealth(
-            policy_revision=generation_policy.POLICY_REVISION,
-            sdk_version="0.144.4",
-            runtime_version="0.144.4",
-        )
+    @property
+    def continuation_cipher(self) -> Never:
+        raise AssertionError("pre-dispatch terminalization reached continuation authority")
 
-    async def stream(self, command: GenerationCommand) -> AsyncIterator[GenerationFrame]:
-        del command
+    @property
+    def admission(self) -> Never:
+        raise AssertionError("pre-dispatch terminalization reached generation admission")
+
+    async def execute(self, execution: object) -> Never:
+        del execution
         self.dispatches += 1
-        if False:
-            yield _media_terminal_frame(uuid4())
-
-    async def cancel(self, request_id: UUID) -> None:
-        del request_id
-        raise AssertionError("media reconciliation setup never cancels")
+        raise AssertionError("pre-dispatch terminalization reached backend execution")
 
 
-def _command(generation_id: UUID, *, operation: str) -> GenerationCommand:
-    return GenerationCommand.model_validate(
-        {
-            "schema_version": "nexus-generation-command.v2",
-            "request_id": generation_id,
-            "operation": {
-                "kind": operation,
-                "revision": generation_policy.operation_revision(operation),
-            },
-            "policy_revision": generation_policy.POLICY_REVISION,
-            "policy_fingerprint": generation_policy.POLICY_FINGERPRINT,
-            "intent": {
-                "instructions": "Return one bounded result.",
-                "input": "operator reconciliation proof",
-                "output": {"kind": "Text"},
-            },
-        }
+def _draft(
+    generation_id: UUID,
+    *,
+    operation: GenerationOperation,
+    intent: GenerationIntent | None = None,
+) -> GenerationCommandDraft:
+    seed = codex_generation_draft(
+        request_id=generation_id,
+        operation=operation,
+        instructions=(intent.instructions if intent is not None else "Return one bounded result."),
+        input_text=(intent.input if intent is not None else "operator reconciliation proof"),
+        model="gpt-5.6-terra",
+        reasoning="high",
+        turn_timeout_seconds=180,
+        structured_schema=(
+            intent.output.schema_
+            if intent is not None and isinstance(intent.output, JsonSchemaOutput)
+            else None
+        ),
+    )
+    if intent is None:
+        return seed
+    if not isinstance(intent.output, JsonSchemaOutput):
+        raise AssertionError("exact reconciliation fixture expected structured output")
+    output_contract = StrictJsonOutputSnapshot(
+        name=intent.output.name,
+        schema=intent.output.schema_,
+    )
+    facts: dict[str, object] = {
+        name: getattr(seed.spec, name) for name in GenerationSpecFacts.model_fields
+    }
+    facts.update(
+        prompt_payload_ref=seed.spec.prompt_payload_ref.model_copy(
+            update={"payload_digest": generation_fact_digest(intent.model_dump(mode="json"))}
+        ),
+        instructions_digest=hashlib.sha256(intent.instructions.encode()).hexdigest(),
+        input_digest=hashlib.sha256(intent.input.encode()).hexdigest(),
+        output_contract=output_contract,
+        output_contract_fingerprint=generation_fact_digest(
+            output_contract.model_dump(mode="json", by_alias=True)
+        ),
+    )
+    return GenerationCommandDraft(
+        request_id=generation_id,
+        spec=GenerationSpec.freeze(facts),
+        intent=intent,
     )
 
 
@@ -307,81 +340,115 @@ def test_media_terminal_attachment_atomically_terminalizes_ledger_and_same_job(
     """Risk: encoded domain output repairs the journal without the billed ledger fact."""
 
     seeded = _seed_media_build(engine)
-    runtime = _NoTerminalRuntime()
-    previous_limiter = get_rate_limiter()
-    set_rate_limiter(RateLimiter(session_factory=create_session_factory(engine)))
-    try:
-        with Session(engine) as db:
-            with pytest.raises(RuntimeError, match="stream ended without terminal"):
-                asyncio.run(
-                    run_media_unit_build(
-                        db,
-                        media_id=seeded.media_id,
-                        content_fingerprint=seeded.content_fingerprint,
-                        ctx=seeded.context,
-                        runtime=runtime,
-                    )
-                )
-            assert runtime.dispatches == 1
-            assert (
-                fail_job(
-                    db,
-                    job_id=seeded.job.id,
-                    worker_id=seeded.context.worker_id,
-                    error_code="E_RECONCILIATION_REQUIRED",
-                    error_message="accepted Media Intelligence generation is ambiguous",
-                    retry_delays_seconds=(0,),
-                )
-                == "dead"
-            )
-            db.commit()
-
-            dead = get_job(db, seeded.job.id)
-            assert dead is not None
-            uncertain = read_step_states(dead)["synthesis"]
-            assert uncertain.dispatch_phase is Uncertain
-            generation_id = uncertain.generation_id
-
-            reconcile_uncertain_media_unit(
-                db,
-                media_id=seeded.media_id,
-                content_fingerprint=seeded.content_fingerprint,
-                resolution=_raw_terminal_attachment(
-                    _media_terminal_frame(generation_id),
-                    latency_ms=1_234,
-                ),
-            )
-
-            repaired = get_job(db, seeded.job.id)
-            record = read_generation(db, generation_id=generation_id)
-            assert repaired is not None and repaired.status == "pending"
-            assert repaired.id == seeded.job.id
-            completed = read_step_states(repaired)["synthesis"]
-            assert completed.dispatch_phase is Completed
-            assert isinstance(completed.terminal_result, Present)
-            assert json.loads(completed.terminal_result.value) == {
-                "claims": [
-                    {
-                        "claim_text": "The passage was durably recovered.",
-                        "evidence_span_id": str(seeded.evidence_span_id),
-                        "ordinal": 0,
+    with Session(engine) as db:
+        job = get_job(db, seeded.job.id)
+        assert job is not None
+        candidates = media_intelligence_service._load_candidates(
+            db,
+            media_id=seeded.media_id,
+        )
+        intent = media_intelligence_service._media_unit_intent(
+            user_content=media_intelligence_service._build_media_unit_user_content(candidates)
+        )
+        generation_id = stable_generation_id(
+            seeded.media_id,
+            f"{seeded.content_fingerprint}:synthesis",
+        )
+        draft = _draft(generation_id, operation="media_summary", intent=intent)
+        uncertain = StepReplayState(
+            generation_id=generation_id,
+            dispatch_phase=Uncertain,
+            request_fingerprint=present(draft.spec.fingerprint),
+            terminal_result=absent(),
+        )
+        payload = payload_with_step_state(
+            {
+                **job.payload,
+                "generation_admissions": {
+                    "synthesis": {
+                        "spec": draft.spec.model_dump(mode="json", by_alias=True),
+                        "intent": draft.intent.model_dump(mode="json", by_alias=True),
                     }
-                ],
-                "outcome": "success",
-                "summary_md": "Recovered media summary.",
-            }
-            assert record is not None
-            assert (record.owner_kind, record.owner_id) == (
-                "media_summary",
-                seeded.summary_id,
+                },
+            },
+            step_path="synthesis",
+            state=uncertain,
+        )
+        assert update_running_job_payload(
+            db,
+            job_id=job.id,
+            worker_id=seeded.context.worker_id,
+            attempt_no=seeded.context.attempt_no,
+            payload=payload,
+        )
+        stage_uncertain_codex_generation(
+            db,
+            owner=LlmCallOwner(kind="media_summary", id=seeded.summary_id),
+            draft=draft,
+        )
+        assert (
+            fail_job(
+                db,
+                job_id=seeded.job.id,
+                worker_id=seeded.context.worker_id,
+                attempt_no=seeded.context.attempt_no,
+                error_code="E_RECONCILIATION_REQUIRED",
+                error_message="accepted Media Intelligence generation is ambiguous",
+                retry_delays_seconds=(0,),
             )
-            assert (record.outcome, record.latency_ms, record.sdk_version) == (
-                "Succeeded",
-                1_234,
-                "0.144.4",
-            )
-    finally:
-        set_rate_limiter(previous_limiter)
+            == "dead"
+        )
+        db.commit()
+
+        reconcile_uncertain_media_unit(
+            db,
+            media_id=seeded.media_id,
+            content_fingerprint=seeded.content_fingerprint,
+            resolution=_raw_terminal_attachment(
+                _media_terminal_frame(generation_id),
+                latency_ms=1_234,
+            ),
+        )
+
+        repaired = get_job(db, seeded.job.id)
+        record = read_generation(db, generation_id=generation_id)
+        turns = read_model_turns(db, generation_id=generation_id)
+        assert repaired is not None and repaired.status == "pending"
+        assert repaired.id == seeded.job.id
+        completed = read_step_states(repaired)["synthesis"]
+        assert completed.dispatch_phase is Completed
+        assert isinstance(completed.terminal_result, Present)
+        assert json.loads(completed.terminal_result.value) == {
+            "claims": [
+                {
+                    "claim_text": "The passage was durably recovered.",
+                    "evidence_span_id": str(seeded.evidence_span_id),
+                    "ordinal": 0,
+                }
+            ],
+            "outcome": "success",
+            "summary_md": "Recovered media summary.",
+        }
+        assert record is not None
+        assert record.owner == LlmCallOwner(kind="media_summary", id=seeded.summary_id)
+        assert record.outcome == "Succeeded"
+        assert len(turns) == 1
+        assert turns[0].accepted_at is not None
+        assert turns[0].terminal is not None
+        evidence = turns[0].terminal["evidence"]
+        assert isinstance(evidence, dict)
+        assert evidence["sdk_version"] == "0.144.4"
+        ledger_xmin, child_xmin, job_xmin = db.execute(
+            text(
+                "SELECT "
+                "(SELECT xmin::text FROM llm_calls WHERE id = :generation_id), "
+                "(SELECT xmin::text FROM llm_model_turns "
+                " WHERE generation_id = :generation_id), "
+                "(SELECT xmin::text FROM background_jobs WHERE id = :job_id)"
+            ),
+            {"generation_id": generation_id, "job_id": seeded.job.id},
+        ).one()
+        assert ledger_xmin == child_xmin == job_xmin
 
 
 def test_media_unit_build_yields_to_user_blocking_background_work(
@@ -432,20 +499,17 @@ def test_oracle_prove_not_dispatched_requeues_only_the_same_job_without_input_re
                 worker_id="oracle-reconciliation-first",
             )
             generation_id = stable_generation_id(reading.id, "synthesis")
-            command = _command(generation_id, operation="oracle")
+            draft = _draft(generation_id, operation="oracle")
             state = StepReplayState(
                 generation_id=generation_id,
                 dispatch_phase=Uncertain,
-                request_fingerprint=present(request_fingerprint(command)),
+                request_fingerprint=present(draft.spec.fingerprint),
                 terminal_result=absent(),
             )
-            start_generation_in_current_transaction(
+            stage_uncertain_codex_generation(
                 db,
-                GenerationStart(
-                    owner=LlmCallOwner(kind="oracle_reading", id=reading.id),
-                    command=command,
-                    streaming=False,
-                ),
+                owner=LlmCallOwner(kind="oracle_reading", id=reading.id),
+                draft=draft,
             )
             assert checkpoint_step_state(
                 db,
@@ -460,6 +524,7 @@ def test_oracle_prove_not_dispatched_requeues_only_the_same_job_without_input_re
                     db,
                     job_id=job_id,
                     worker_id=context.worker_id,
+                    attempt_no=context.attempt_no,
                     error_code="E_RECONCILIATION_REQUIRED",
                     error_message="accepted Oracle generation is ambiguous",
                     retry_delays_seconds=(0,),
@@ -486,11 +551,10 @@ def test_oracle_prove_not_dispatched_requeues_only_the_same_job_without_input_re
             )
 
             repaired = get_job(db, job_id)
-            record = read_generation(db, generation_id=generation_id)
             assert repaired is not None and repaired.status == "pending"
             assert repaired.id == job_id
             assert read_step_states(repaired)["synthesis"].dispatch_phase is Prepared
-            assert record is not None and record.outcome is None
+            assert read_generation(db, generation_id=generation_id) is None
             job_count = db.execute(
                 text(
                     "SELECT COUNT(*) FROM background_jobs "
@@ -504,13 +568,13 @@ def test_oracle_prove_not_dispatched_requeues_only_the_same_job_without_input_re
         set_rate_limiter(previous_limiter)
 
 
-def test_oracle_terminal_noop_cancels_a_retained_preaccept_start(
+def test_oracle_terminal_noop_completes_prepared_without_ledger_evidence(
     engine: Engine,
 ) -> None:
-    """Risk: a terminal reading completes its job beside an open generation ledger."""
+    """Risk: a terminal reading leaves its pre-dispatch job journal open."""
 
     user_id = uuid4()
-    runtime = _NoTerminalRuntime()
+    runtime = _NeverExecutionRuntime()
     previous_limiter = get_rate_limiter()
     set_rate_limiter(RateLimiter(session_factory=create_session_factory(engine)))
     try:
@@ -543,15 +607,7 @@ def test_oracle_terminal_noop_cancels_a_retained_preaccept_start(
                 worker_id="oracle-cancellation",
             )
             generation_id = stable_generation_id(reading.id, "synthesis")
-            command = _command(generation_id, operation="oracle")
-            start_generation_in_current_transaction(
-                db,
-                GenerationStart(
-                    owner=LlmCallOwner(kind="oracle_reading", id=reading.id),
-                    command=command,
-                    streaming=False,
-                ),
-            )
+            draft = _draft(generation_id, operation="oracle")
             assert checkpoint_step_state(
                 db,
                 ctx=context,
@@ -560,7 +616,7 @@ def test_oracle_terminal_noop_cancels_a_retained_preaccept_start(
                 state=StepReplayState(
                     generation_id=generation_id,
                     dispatch_phase=Prepared,
-                    request_fingerprint=present(request_fingerprint(command)),
+                    request_fingerprint=present(draft.spec.fingerprint),
                     terminal_result=absent(),
                 ),
             )
@@ -583,7 +639,6 @@ def test_oracle_terminal_noop_cancels_a_retained_preaccept_start(
                 )
             )
             persisted = get_job(db, job_id)
-            record = read_generation(db, generation_id=generation_id)
             assert result == {"status": "failed", "noop": True}
             assert runtime.dispatches == 0
             assert persisted is not None
@@ -594,6 +649,6 @@ def test_oracle_terminal_noop_cancels_a_retained_preaccept_start(
                 "outcome": "noop",
                 "status": "failed",
             }
-            assert record is not None and record.outcome == "Cancelled"
+            assert read_generation(db, generation_id=generation_id) is None
     finally:
         set_rate_limiter(previous_limiter)

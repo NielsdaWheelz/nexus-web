@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import select, text
@@ -14,7 +15,11 @@ from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.schemas.chat_reader_selection import ReaderSelectionKey
 from nexus.schemas.conversation import ChatDestination
+from nexus.services.generation_selection import CodexPersonalSelection, ProviderApiSelection
 from nexus.services.redact import safe_kv
+
+type ChatGenerationSelection = CodexPersonalSelection | ProviderApiSelection
+type ChatToolAuthority = Literal["ReadOnly", "AdditiveWrites"]
 
 logger = get_logger(__name__)
 
@@ -23,13 +28,15 @@ def compute_payload_hash(
     *,
     destination: ChatDestination,
     content: str,
-    profile_id: str,
+    catalog_definition_revision: str,
+    selection: ChatGenerationSelection,
+    tool_authority: ChatToolAuthority,
     reader_selection_key: ReaderSelectionKey | None,
 ) -> str:
     """Canonical send-idempotency digest over answer-determining identity only.
 
-    Uses the canonical destination/insertion, content, complete profile
-    selection, and the durable ``ReaderSelectionKey``. It never hashes the live
+    Uses the canonical destination/insertion, content, complete exact generation
+    selection and authority, and the durable ``ReaderSelectionKey``. It never hashes the live
     ``ReaderSelectionRevision`` or any live-resolved quote field — the server
     re-resolves and snapshots under the Highlight row lock at send, so hashing
     those would create false replay mismatches (breaking replay-after-source-
@@ -39,7 +46,9 @@ def compute_payload_hash(
     payload = {
         "destination": destination.model_dump(mode="json"),
         "content": content,
-        "profile_id": profile_id,
+        "catalog_definition_revision": catalog_definition_revision,
+        "selection": selection.model_dump(mode="json"),
+        "tool_authority": tool_authority,
         "reader_selection_key": (
             {
                 "media_id": str(reader_selection_key.media_id),
@@ -58,6 +67,9 @@ def compute_rerun_payload_hash(
     source_assistant_message_id: UUID,
     source_run: ChatRun,
     source_user_message: Message,
+    catalog_definition_revision: str,
+    selection: ChatGenerationSelection,
+    tool_authority: Literal["ReadOnly"],
 ) -> str:
     payload = {
         "operation": "chat_response_rerun",
@@ -78,7 +90,9 @@ def compute_rerun_payload_hash(
         "source_user_branch_anchor_kind": source_user_message.branch_anchor_kind,
         "source_user_branch_anchor": source_user_message.branch_anchor or {},
         "source_prompt_content": source_user_message.content,
-        "source_profile_id": source_run.profile_id,
+        "catalog_definition_revision": catalog_definition_revision,
+        "selection": selection.model_dump(mode="json"),
+        "tool_authority": tool_authority,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(encoded.encode()).hexdigest()
@@ -89,6 +103,9 @@ def compute_regeneration_payload_hash(
     source_assistant_message_id: UUID,
     source_run: ChatRun,
     source_user_message: Message,
+    catalog_definition_revision: str,
+    selection: ChatGenerationSelection,
+    tool_authority: Literal["ReadOnly"],
 ) -> str:
     """The regeneration counterpart of ``compute_rerun_payload_hash``: identical
     immutable source facts, distinguished only by the ``operation`` tag so a
@@ -113,7 +130,9 @@ def compute_regeneration_payload_hash(
         "source_user_branch_anchor_kind": source_user_message.branch_anchor_kind,
         "source_user_branch_anchor": source_user_message.branch_anchor or {},
         "source_prompt_content": source_user_message.content,
-        "source_profile_id": source_run.profile_id,
+        "catalog_definition_revision": catalog_definition_revision,
+        "selection": selection.model_dump(mode="json"),
+        "tool_authority": tool_authority,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(encoded.encode()).hexdigest()

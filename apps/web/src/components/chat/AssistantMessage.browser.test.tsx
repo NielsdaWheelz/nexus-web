@@ -272,17 +272,17 @@ describe("Assistant Message canonical actions", () => {
     );
     renderInRuntime(<RerunnableFailure onRerun={onRerun} />);
 
-    const runAgain = screen.getByRole("button", { name: "Run again" });
+    const runAgain = screen.getByRole("button", { name: "Rerun" });
     await userEvent.click(runAgain);
     expect(onRerun).toHaveBeenCalledTimes(1);
     expect(onRerun).toHaveBeenCalledWith(MESSAGE_ID);
 
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Run again" })).toBeDisabled(),
+      expect(screen.getByRole("button", { name: "Rerun" })).toBeDisabled(),
     );
     settle?.("Committed");
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled(),
+      expect(screen.getByRole("button", { name: "Rerun" })).toBeEnabled(),
     );
   });
 });

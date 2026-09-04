@@ -1,4 +1,4 @@
-"""Pre-phase validation for chat run creation: input, profile, rate limits, branch parents.
+"""Pre-phase validation for chat run creation: input, rate limits, branch parents.
 
 Reader-selection identity is not validated here: the send derives and locks the
 Highlight inside the create transaction (after the idempotency replay check), so
@@ -21,7 +21,6 @@ from nexus.schemas.conversation import (
     ExistingChatDestination,
     ReplyInsertion,
 )
-from nexus.services import generation_policy
 from nexus.services.conversation_branches import branch_anchor_for_message
 from nexus.services.rate_limit import get_rate_limiter
 
@@ -32,9 +31,8 @@ def validate_pre_phase(
     *,
     destination: ChatDestination,
     content: str,
-    profile_id: str,
 ) -> None:
-    validate_model_pre_phase(db, viewer_id=viewer_id, content=content, profile_id=profile_id)
+    validate_model_pre_phase(db, viewer_id=viewer_id, content=content)
     if isinstance(destination, ExistingChatDestination):
         _validate_existing_destination(db, viewer_id, destination)
 
@@ -44,16 +42,12 @@ def validate_model_pre_phase(
     *,
     viewer_id: UUID,
     content: str,
-    profile_id: str,
 ) -> None:
     if len(content) > MAX_MESSAGE_CONTENT_LENGTH:
         raise ApiError(
             ApiErrorCode.E_MESSAGE_TOO_LONG,
             f"Message exceeds {MAX_MESSAGE_CONTENT_LENGTH} character limit",
         )
-
-    if profile_id not in generation_policy.CHAT_PROFILES:
-        raise ApiError(ApiErrorCode.E_MODEL_NOT_AVAILABLE, "Profile not found or not available")
 
     rate_limiter = get_rate_limiter()
     rate_limiter.check_rpm_limit(viewer_id)

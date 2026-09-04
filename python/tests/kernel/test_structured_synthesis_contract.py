@@ -5,9 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
-from nexus.schemas.conversation import ChatRunCreateRequest
-from nexus.schemas.llm import ExpectedChatFailure, LlmProfilesOut
-from nexus.services import generation_policy
+from nexus.schemas.llm import ExpectedChatFailure
 from nexus.services.codex_generation_contract import GenerationTerminal
 from nexus.services.generation_intent import GenerationIntent, JsonSchemaOutput
 from nexus.services.structured_synthesis import (
@@ -97,49 +95,6 @@ def test_synthesis_failure_facts_use_the_closed_generation_taxonomy() -> None:
         _terminal(status="failed", failure={"kind": "credential_unavailable"})
     ) == ("auth", "codex generation failed: credential_unavailable")
     assert outcome_failure_facts(_terminal(status="cancelled")) == ("cancelled", None)
-
-
-def test_product_profiles_are_exactly_the_three_fixed_chat_presets() -> None:
-    response = LlmProfilesOut.from_profiles()
-
-    assert response.default_profile_id == "balanced"
-    assert [profile.id for profile in response.profiles] == ["fast", "balanced", "deep"]
-    assert {tuple(profile.model_dump(mode="json")) for profile in response.profiles} == {
-        ("id", "label", "description", "model_label", "effort_label")
-    }
-    assert [profile.label for profile in response.profiles] == ["Fast", "Balanced", "Deep"]
-    model_labels = {
-        "gpt-5.6-luna": "GPT-5.6 Luna",
-        "gpt-5.6-terra": "GPT-5.6 Terra",
-        "gpt-5.6-sol": "GPT-5.6 Sol",
-    }
-    effort_labels = {"low": "Low", "medium": "Medium", "high": "High"}
-    for profile in response.profiles:
-        policy = generation_policy.chat_policy(profile.id)
-        assert profile.model_label == model_labels[policy.model]
-        assert profile.effort_label == effort_labels[policy.effort]
-
-    for profiles in (
-        list(response.profiles[:2]),
-        [response.profiles[2], response.profiles[1], response.profiles[0]],
-        [response.profiles[0], response.profiles[0], response.profiles[2]],
-    ):
-        with pytest.raises(ValidationError):
-            LlmProfilesOut.model_validate({"default_profile_id": "balanced", "profiles": profiles})
-
-
-def test_chat_run_creation_refuses_profiles_outside_the_fixed_catalog() -> None:
-    request = {
-        "destination": {"kind": "New"},
-        "content": "Explain entropy simply.",
-        "reader_selection": {"kind": "Absent"},
-    }
-    assert (
-        ChatRunCreateRequest.model_validate({**request, "profile_id": "balanced"}).profile_id
-        == "balanced"
-    )
-    with pytest.raises(ValidationError):
-        ChatRunCreateRequest.model_validate({**request, "profile_id": "custom"})
 
 
 def test_chat_failure_union_is_the_closed_post_cutover_card_set() -> None:

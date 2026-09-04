@@ -5,13 +5,18 @@ import hashlib
 import importlib.util
 import json
 import re
+import subprocess
 import tomllib
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from nexus_test_control.model import TEST_ROUTING_SHA256
+from nexus_test_control.model import (
+    TEST_ROUTING_SHA256,
+    ChangedOwnerRedStrategy,
+)
+from nexus_test_control.proof_owner import python_exact_proof_owner_sha256
 
 
 @dataclass(frozen=True)
@@ -134,6 +139,8 @@ _PRODUCT_SOURCE_ROOTS: tuple[tuple[str, frozenset[str]], ...] = (
 )
 _PRODUCT_SOURCE_FILES = frozenset({"deploy/hetzner/release.py"})
 _RETIRED_PRODUCT_TEST_SEAMS = (
+    "GENERATION_API_BASE_URLS",
+    "PROVIDER_API_PEER",
     "REAL_MEDIA_PROVIDER_FIXTURES",
     "REAL_MEDIA_FIXTURE_DIR",
     "RealMediaFixtureExecutionRuntime",
@@ -1261,6 +1268,23 @@ def _safe_relative(value: str, *, glob: bool = False) -> bool:
     return glob or not any(character in value for character in "*?[]")
 
 
+def _resolved_repository_file(repo_root: Path, relative: str) -> Path | None:
+    if not _safe_relative(relative):
+        return None
+    try:
+        root = repo_root.resolve(strict=True)
+        candidate = root
+        for part in PurePosixPath(relative).parts:
+            candidate /= part
+            if candidate.is_symlink():
+                return None
+        candidate = candidate.resolve(strict=True)
+        candidate.relative_to(root)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return candidate if candidate.is_file() else None
+
+
 def _string_list(value: Any, *, allow_empty: bool) -> bool:
     return (
         isinstance(value, list)
@@ -1809,13 +1833,26 @@ def fault_manifest_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
     canonical_nodes = _registered_canonical_nodes(repo_root)
     for index, fault in enumerate(data["faults"]):
         location = f"{relative}#faults[{index}]"
-        if not isinstance(fault, dict) or set(fault) != {
+        required_fault_fields = {
             "id",
             "patch",
             "sha256",
             "proofs",
             "expected_failure",
-        }:
+        }
+        allowed_fault_fields = required_fault_fields | {
+            "changed_owner_red",
+            "changed_owner_sha256",
+        }
+        if (
+            not isinstance(fault, dict)
+            or not required_fault_fields.issubset(fault)
+            or not set(fault).issubset(allowed_fault_fields)
+            or (
+                "changed_owner_red" in fault
+                and fault["changed_owner_red"] != ChangedOwnerRedStrategy.COHERENT_FAULT
+            )
+        ):
             violations.append(PolicyViolation("fault-schema", location, "invalid fault shape"))
             continue
         if (
@@ -1830,6 +1867,75 @@ def fault_manifest_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                 PolicyViolation("fault-schema", location, "invalid or duplicate fault identity")
             )
         proofs = fault.get("proofs")
+        coherent_fault = fault.get("changed_owner_red") == ChangedOwnerRedStrategy.COHERENT_FAULT
+        if coherent_fault:
+            coherent_proof = (
+                proofs[0]
+                if isinstance(proofs, list) and len(proofs) == 1 and isinstance(proofs[0], str)
+                else None
+            )
+            coherent_identity = (
+                coherent_proof.partition(":")[2] if coherent_proof is not None else ""
+            )
+            coherent_path, coherent_separator, coherent_node = coherent_identity.partition("::")
+            coherent_owner_path = _resolved_repository_file(repo_root, coherent_path)
+            coherent_shape = (
+                coherent_proof is not None
+                and coherent_proof.startswith("pytest:")
+                and coherent_identity.count("::") == 1
+                and bool(coherent_separator)
+                and bool(coherent_node)
+                and coherent_path.endswith(".py")
+                and coherent_owner_path is not None
+            )
+            if not coherent_shape:
+                violations.append(
+                    PolicyViolation(
+                        "fault-coherent-owner",
+                        location,
+                        "changed-owner coherent fault requires one exact module-level pytest proof",
+                    )
+                )
+            else:
+                assert coherent_proof is not None
+                assert coherent_owner_path is not None
+                if canonical_nodes.get(coherent_path) != coherent_proof:
+                    violations.append(
+                        PolicyViolation(
+                            "fault-coherent-owner",
+                            location,
+                            "changed-owner coherent fault requires its registered canonical proof",
+                        )
+                    )
+                owner_sha256 = fault.get("changed_owner_sha256")
+                try:
+                    owner_source = coherent_owner_path.read_text(encoding="utf-8")
+                    actual_owner_sha256 = python_exact_proof_owner_sha256(
+                        owner_source,
+                        coherent_node,
+                    )
+                except (OSError, UnicodeError, SyntaxError):
+                    actual_owner_sha256 = None
+                if (
+                    not isinstance(owner_sha256, str)
+                    or _SHA256.fullmatch(owner_sha256) is None
+                    or actual_owner_sha256 != owner_sha256
+                ):
+                    violations.append(
+                        PolicyViolation(
+                            "fault-coherent-owner-drift",
+                            location,
+                            "changed-owner coherent fault must pin its exact proof and module-support SHA-256",
+                        )
+                    )
+        elif "changed_owner_sha256" in fault:
+            violations.append(
+                PolicyViolation(
+                    "fault-schema",
+                    location,
+                    "changed_owner_sha256 requires changed_owner_red=coherent-fault",
+                )
+            )
         if isinstance(proofs, list):
             for proof in proofs:
                 if not isinstance(proof, str):
@@ -1840,8 +1946,7 @@ def fault_manifest_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                     not separator
                     or runner
                     not in {"gradle", "node-test", "playwright", "pytest", "static", "vitest"}
-                    or not _safe_relative(proof_path)
-                    or not (repo_root / proof_path).is_file()
+                    or _resolved_repository_file(repo_root, proof_path) is None
                 ):
                     violations.append(
                         PolicyViolation(
@@ -1917,6 +2022,14 @@ def fault_manifest_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                                 f"fault patch may change product code only: {changed_path}",
                             )
                         )
+                if (repo_root / ".git").exists() and not _fault_patch_applies(repo_root, path):
+                    violations.append(
+                        PolicyViolation(
+                            "fault-applicability",
+                            location,
+                            "fault patch does not apply cleanly to the current product tree",
+                        )
+                    )
     faults_root = repo_root / "testdata/faults"
     if faults_root.is_dir():
         for path in faults_root.glob("*.patch"):
@@ -1930,6 +2043,28 @@ def fault_manifest_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
     return _sorted(violations)
 
 
+def _fault_patch_applies(repo_root: Path, patch: Path) -> bool:
+    """Require every registered mutant to remain executable at the reviewed tree."""
+    try:
+        result = subprocess.run(
+            (
+                "git",
+                "apply",
+                "--check",
+                "--whitespace=error-all",
+                str(patch),
+            ),
+            cwd=repo_root,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
 def _registered_canonical_nodes(repo_root: Path) -> dict[str, str]:
     """The single priority node registered for each proof owner path, if any."""
     manifest = repo_root / "testdata/proofs.json"
@@ -1940,20 +2075,23 @@ def _registered_canonical_nodes(repo_root: Path) -> dict[str, str]:
         risks = data["priority_risks"]
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError):
         return {}
-    nodes: dict[str, str] = {}
-    ambiguous: set[str] = set()
+    proofs_by_path: dict[str, set[str]] = {}
     for risk in risks:
         for proof in risk.get("proofs", []) if isinstance(risk, dict) else []:
             if not isinstance(proof, str):
                 continue
             path = proof.partition(":")[2].split("::", 1)[0]
-            if path in nodes and nodes[path] != proof:
-                ambiguous.add(path)
-            nodes.setdefault(path, proof)
-    # An ambiguous owner is reported by `proof-canonical-node`; do not compound
-    # it with a derived fault violation here.
-    for path in ambiguous:
-        nodes.pop(path, None)
+            proofs_by_path.setdefault(path, set()).add(proof)
+    nodes: dict[str, str] = {}
+    for path, proofs in proofs_by_path.items():
+        exact = {proof for proof in proofs if "::" in proof.partition(":")[2]}
+        candidates = exact or proofs
+        # Competing exact owners are reported by `proof-canonical-node`; do not
+        # compound that ambiguity with a derived fault violation here. A
+        # whole-file route plus one exact node resolves to the exact node, just
+        # as `canonical_proof` does at execution time.
+        if len(candidates) == 1:
+            nodes[path] = next(iter(candidates))
     return nodes
 
 

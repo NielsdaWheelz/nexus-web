@@ -4,6 +4,15 @@
 browser send recovery, and assistant candidate actions only · **Doctrine:** hard
 cut; one owner; exact replay; immutable history; no compatibility path
 
+**Generation-backend target amendment (2026-09-01):**
+[`generation-backends-hard-cutover.md`](generation-backends-hard-cutover.md)
+supersedes every profile/default/implicit-repeat-selection statement below.
+Draft v3 stores an exact `GenerationSelectionSpec` plus `ReadOnly |
+AdditiveWrites`; rerun and regeneration require a fresh exact selection in the
+request body and always freeze `ReadOnly`. The source selection is preserved as
+history, never inherited as current authority. All identity, idempotency,
+branching, and immutable-source rules below remain authoritative.
+
 ## 1. Decision
 
 Hard-cut the global provisional `path:new` draft/attempt model. A new-chat visit
@@ -29,7 +38,7 @@ Repository rules and this document win on conflict.
 - Unknown send outcome is recoverable across remount and reload without drift.
 - Completed answers can produce preserved, navigable sibling candidates.
 - Retry, reconnect, rerun, regenerate, fork, and suspension stay distinct.
-- Reuse existing pane, branch, message, run, event, and profile primitives.
+- Reuse existing pane, branch, message, run, event, and exact-selection primitives.
 - Delete superseded keys, attempt shapes, routes, helpers, tests, and prose.
 
 ## 3. Scope And Non-Goals
@@ -49,8 +58,8 @@ Non-goals:
 - no provider, prompt, tool-loop, SSE, worker, queue, journal, or event change;
 - no conversation tree, branch schema, message schema, or database migration;
 - no side chats, answer comparison, merge, branch map, new lineage table, or DAG;
-- no model override on rerun/regeneration;
-- no replay of any source run that attempted an assistant-write tool;
+- no implicit or inherited model selection on rerun/regeneration;
+- no inheritance of source write authority; every repeat is read-only;
 - no regeneration of pending, failed, cancelled, suspended, user, or system rows;
 - no collaborative drafts, offline queue, cross-device recovery, or generic
   client-operation framework;
@@ -114,7 +123,8 @@ type ChatSendOperation =
 
 type ChatDraftRecord = Readonly<{
   text: string;
-  profile: ChatProfileSelection | null;
+  selection: GenerationSelectionSpec | null;
+  toolAuthority: "ReadOnly" | "AdditiveWrites";
   operation: ChatSendOperation;
 }>;
 ```
@@ -128,15 +138,16 @@ Rules:
 - Reload/remount promotes persisted `Submitting` to `ReconcileRequired`.
 - `E_NETWORK` transitions `Submitting -> ReconcileRequired` without mutation.
 - **Retry send** posts the stored request and key; current route/UI is irrelevant.
-- Known API rejection transitions to `Absent`, retaining editable text/profile;
+- Known API rejection transitions to `Absent`, retaining editable text,
+  selection, and tool authority;
   a later explicit send assembles a new command and key.
 - Success deletes the complete draft record before canonical route replacement.
 - Switching `ChatDraftKey` selects the new record synchronously; no effect-driven
   stale record may render or mutate under another key.
 
-The persisted record contains no `payloadIdentity`, duplicated profile snapshot,
-standalone revision, or mutable reconstruction inputs. Those values already live
-inside the canonical request.
+The persisted record contains no `payloadIdentity`, duplicated selection
+snapshot, standalone catalog revision, or mutable reconstruction inputs. Those
+values already live inside the canonical request.
 
 ### 5.4 Assistant Candidate Actions
 
@@ -146,13 +157,15 @@ inside the canonical request.
 | eligible completed | **Regenerate** | new sibling candidate through `/regenerate` |
 | connection lost | **Reconnect** | same run and cursor |
 | suspended | none | same journal requires operator recovery |
-| write attempted/profile unavailable or drifted | none | mutation also rejects |
+| exact replacement unavailable or drifted | none | mutation also rejects |
 
 Regeneration:
 
 - preserves the original user and assistant messages;
 - clones the source user’s canonical content/document, parent, branch root,
-  branch anchor, reader-selection snapshot, turn context, profile, and reasoning;
+  branch anchor, reader-selection snapshot, and turn context;
+- freezes the newly requested exact selection and `ReadOnly` authority; it never
+  inherits source selection or write authority;
 - creates a new user sibling and pending assistant child in one transaction;
 - persists branch metadata and selects the new assistant as active leaf;
 - creates/enqueues one normal durable `ChatRun` and returns `ChatRunResponse`;
@@ -231,7 +244,11 @@ Add:
 Browser: POST /api/messages/{assistant_message_id}/regenerate
 BFF proxy: POST /messages/{assistant_message_id}/regenerate
 Idempotency-Key: <required, 1..128 chars>
-Body: none
+Body: {
+  catalog_definition_revision: <sha256>,
+  selection: { route, model_ref, reasoning },
+  tool_authority: "ReadOnly"
+}
 
 200 { data: ChatRunResponse }
 ```
@@ -241,8 +258,8 @@ Mutation preconditions:
 - owned assistant message and owned conversation;
 - message and source run are both `complete`;
 - exactly one source run exists;
-- source profile/reasoning remains active and resolves to its historical target;
-- source run has no attempted assistant-write tool;
+- requested exact selection is current and selectable at mutation time;
+- source write authority and effects are never replayed;
 - same key and source returns the existing generated run;
 - same key with another source/operation returns replay mismatch;
 - violated product eligibility returns new `E_REGENERATION_NOT_ALLOWED`;
@@ -264,7 +281,7 @@ Reuse:
 
 - `PaneRuntime.visitId`, `WorkspaceTargetDisposition`, `Fork`, and `Adopt`;
 - `readerHighlightChatIntentHref`, `buildChatRunBody`, and `createRandomId`;
-- current strict profile/target-drift and write-attempt policies;
+- current strict exact-selection drift and read-only repeat policies;
 - rerun’s message/context clone, event-emission, enqueue, response, and branch flow;
 - `useStringIdSet`, `messageUpdateReducer`, run tailing, and `ForkStrip`;
 - `Button` and existing message-action styling.
@@ -336,7 +353,7 @@ If a stated contract proves impossible, stop and amend this spec before widening
 - **AC-3:** Two new-chat pane visits have different structured draft keys.
 - **AC-4:** Reloading an in-flight send renders locked **Retry send** and posts
   byte-for-byte equivalent canonical request data with the same key.
-- **AC-5:** Current route, quote, draft, profile, branch, or catalog cannot mutate
+- **AC-5:** Current route, quote, draft, selection, branch, or catalog cannot mutate
   a reconcile-required command.
 - **AC-6:** No code path can send one key with different fingerprint inputs.
 - **AC-7:** Known rejection retains editable draft and next send uses a new key.
@@ -346,8 +363,8 @@ If a stated contract proves impossible, stop and amend this spec before widening
   selected sibling while original content remains navigable after reload.
 - **AC-10:** Failed **Run again**, connection **Reconnect**, suspended state, and
   assistant **Fork** retain their exact distinct semantics.
-- **AC-11:** Regeneration is unavailable and mutation-rejected after any write
-  attempt, target drift, or unavailable profile.
+- **AC-11:** Regeneration requires a current selectable replacement and is
+  mutation-rejected on catalog drift; source write authority is never inherited.
 - **AC-12:** Exact regeneration replay returns one run; changed-source key reuse
   conflicts; concurrent fresh keys create distinct serialized siblings.
 - **AC-13:** Plain send, quote snapshot, branch anchor, profile inheritance,

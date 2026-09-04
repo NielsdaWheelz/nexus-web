@@ -1,5 +1,12 @@
 # SOTA Chat Streaming Hard Cutover
 
+> **Generation-backend amendment (2026-08-31):**
+> [`generation-backends-hard-cutover.md`](generation-backends-hard-cutover.md)
+> supersedes every Codex-only wire, fixed profile/plan, `ChatTools`, and
+> single-call ledger statement below. This document remains authoritative only
+> for browser-facing Chat event coalescing, SSE cursor replay, cancellation,
+> reconnect, and smooth rendering of route-neutral generation events.
+
 Status: BUILT - 2026-06-20
 Author altitude: SME / staff
 Date: 2026-06-18 (spec) / 2026-06-20 (built)
@@ -143,8 +150,9 @@ the contracts remain the contracts a larger system would keep.
 - No WebSocket parallel path.
 - No fallback or automatic redispatch after host acceptance. A stream loss
   without a terminal leaves the durable generation `Uncertain`.
-- No product structured-output stream for chat; the fixed `ChatTools` plan emits
-  text/tool/usage/native/terminal frames under the generation contract.
+- No product structured-output stream for chat. The admitted route-neutral
+  generation emits text/tool/usage/native/terminal frames under the current
+  generation contract.
 - No compatibility migrations that preserve old event rows as first-class data.
   If local/dev rows exist, the migration can delete or normalize them as a
   one-time hard cutover.
@@ -156,10 +164,10 @@ contract. Keeping an old name as a second accepted payload shape is not allowed.
 
 ## 4. Goals
 
-G1. One generation stream seam. Chat consumes the strict v2 `GenerationFrame`
-iterator from `codex_generation_client`; the fixed plan, bounds, UDS wire,
+G1. One generation stream seam. Chat consumes route-neutral `GenerationEvent`
+values from the exact admitted backend; selection, bounds, route-local wire,
 terminal, and uncertainty rules stay owned by the
-[Codex generation cutover](codex-personal-generation-hard-cutover.md).
+[generation backends cutover](generation-backends-hard-cutover.md).
 
 G2. Smooth durable chat text. Nexus coalesces host text frames into bounded,
 low-latency durable events instead of committing every host frame.
@@ -252,22 +260,22 @@ Definition of "all chats":
 
 ## 7. Final Architecture
 
-### 7.1 Private generation stream seam
+### 7.1 Generation stream seam
 
-Chat calls `codex_generation_client.stream(command)` once. It receives bounded
-`GenerationFrame` values with contiguous zero-based sequence and exactly one
-last terminal from `POST /v2/generations` over the private UDS. The closed host
-event union is `text | tool_use | usage | permission_request | native |
-terminal`; ChatTools alone admits tool use, approvals are never granted, and
+Chat executes the persisted `GenerationSpec` through `GenerationService` and
+receives bounded route-neutral `GenerationEvent` values from either backend.
+The adapter owns route-specific continuity and validates exactly one terminal;
+Chat owns only their projection into durable product events. A frozen
+`ModelTools` plan alone admits tool use, approvals are never granted, and
 unknown/gapped/missing-terminal streams fail closed.
 
 This document owns only the mapping into durable chat events. Command shape,
-fixed profile-to-plan resolution, frame bounds, cancellation, normalized
-terminal failures, `Prepared | Uncertain | Completed`, and the one price-free
-`llm_calls` row are defined by
-[`codex-personal-generation-hard-cutover.md`](codex-personal-generation-hard-cutover.md)
-and [`../modules/llms.md`](../modules/llms.md). No direct-provider stream,
-capability catalog, key, route, fallback, or retry policy exists here.
+exact-selection resolution, frame bounds, cancellation, normalized terminal
+failures, parent/child generation replay, and tool-loop continuations are
+defined by
+[`generation-backends-hard-cutover.md`](generation-backends-hard-cutover.md)
+and [`../modules/llms.md`](../modules/llms.md). This streaming document owns no
+catalog, credential, route, fallback, or retry policy.
 
 ### 7.2 Nexus durable chat event grammar
 
@@ -391,9 +399,9 @@ Backend execution:
 
 ### 7.6 Timeout policy
 
-Chat timeout is fixed by the selected versioned plan. `generation_policy.py`
-owns the 900s ChatTools turn ceiling plus session-open, runtime-close, transport,
-and stream bounds; the browser and chat caller cannot tune them. A closed typed
+Chat timeout is frozen in the admitted `GenerationSpec`. `generation_policy.py`
+owns the 900-second Chat tool-plan ceiling plus session-open, runtime-close,
+transport, and stream bounds; the browser and chat caller cannot tune them. A closed typed
 timeout/output-limit terminal becomes the corresponding product failure. Loss
 after host acceptance without a terminal preserves partial durable text and the
 `Uncertain` generation; it is not a timeout card or automatic redispatch.
@@ -496,13 +504,12 @@ surface-level parser is allowed.
 
 ## 9. Capability Contract
 
-The selected Fast/Balanced/Deep profile resolves to one fixed `ChatTools` plan.
-That plan always owns incremental text, the exact Nexus MCP tool set, explicit
-cancel, stream/timeout bounds, and one closed terminal. The frontend receives
-safe durable activity and tool projections only; it has no generation
-capability negotiation, model/effort switch, route inference, or fallback. A
-partial tool input renders only when the strict chat event carries a safe
-projection and is never executable truth.
+The exact per-run generation selection and independently admitted Chat tool plan
+own incremental text, route-neutral tool execution, explicit cancel,
+stream/timeout bounds, and one closed terminal. The frontend receives safe
+durable activity and tool projections only; it never infers a route or fallback
+from stream events. A partial tool input renders only when the strict Chat event
+carries a safe projection and is never executable truth.
 
 ---
 
@@ -937,11 +944,12 @@ be reviewable, but main must never contain a dual public stream contract.
   result.
 - Citation chips survive terminal reconcile.
 
-### 17.5 Protected Codex smoke
+### 17.5 Protected route smoke
 
-The enrolled-host smoke proves the fixed Fast/Balanced/Deep plans through the
-same v2 UDS client. One chat case additionally proves incremental text,
-Codex/MCP tool use and continuation, cancellation, and redacted ledger facts.
+The enrolled-host smoke proves the Codex Personal route through the same v2 UDS
+client. Provider certification separately proves each Chat-eligible API route.
+One Chat case additionally proves incremental text, route-neutral tool use and
+continuation, cancellation, and redacted ledger facts.
 
 ---
 
@@ -987,8 +995,8 @@ append-only event delivery.
 ### Adopt AI SDK end to end
 
 Rejected as a substrate. AI SDK is a useful reference for typed data streams and
-tool-call streaming UI, but Nexus needs Python/FastAPI, the fixed private Codex
-boundary, durable ChatRun, citations, and resource graph composition. A
+tool-call streaming UI, but Nexus needs Python/FastAPI, the private Codex and
+configured API route boundaries, durable ChatRun, citations, and resource graph composition. A
 wholesale adoption would move ownership to the wrong layer.
 
 ### Client-only smoothing

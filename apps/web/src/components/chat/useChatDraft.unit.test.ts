@@ -17,6 +17,16 @@ import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
 // the documented operation FSM — one immutable command per idempotency key,
 // replayed verbatim on an unknown outcome, consumed on a definite rejection.
 
+const generation = {
+  catalog_definition_revision: "a".repeat(64),
+  selection: {
+    route: "CodexPersonal" as const,
+    model: "gpt-5.6",
+    reasoning: "high",
+  },
+  tool_authority: "ReadOnly" as const,
+};
+
 const request: ChatRunCreateRequest = {
   destination: {
     kind: "Existing",
@@ -31,7 +41,7 @@ const request: ChatRunCreateRequest = {
     },
   },
   content: "why?",
-  profile_id: "fast",
+  ...generation,
   reader_selection: { kind: "Absent" },
 };
 
@@ -39,7 +49,8 @@ const command: ChatSendCommand = { idempotencyKey: "key-1", request };
 
 const draft: ChatDraftRecord = {
   text: "why?",
-  profile: { profileId: "fast" },
+  selection: generation.selection,
+  toolAuthority: "ReadOnly",
   operation: { kind: "Absent" },
 };
 
@@ -57,11 +68,12 @@ describe("chat draft rendering boundary", () => {
 });
 
 describe("chat send-operation transitions", () => {
-  it("withSubmitting persists the exact command and preserves text/profile", () => {
+  it("withSubmitting persists the exact command and preserves draft choices", () => {
     const next = withSubmitting(draft, command);
     expect(next.operation).toEqual({ kind: "Submitting", command });
     expect(next.text).toBe("why?");
-    expect(next.profile).toEqual({ profileId: "fast" });
+    expect(next.selection).toEqual(generation.selection);
+    expect(next.toolAuthority).toBe("ReadOnly");
   });
 
   it("withReconcileRequired locks the same command for exact replay", () => {
@@ -76,11 +88,12 @@ describe("chat send-operation transitions", () => {
     ).toThrow();
   });
 
-  it("withClearedOperation consumes the command but keeps editable text/profile", () => {
+  it("withClearedOperation consumes the command but keeps editable choices", () => {
     const cleared = withClearedOperation(withSubmitting(draft, command));
     expect(cleared.operation).toEqual({ kind: "Absent" });
     expect(cleared.text).toBe("why?");
-    expect(cleared.profile).toEqual({ profileId: "fast" });
+    expect(cleared.selection).toEqual(generation.selection);
+    expect(cleared.toolAuthority).toBe("ReadOnly");
   });
 });
 
@@ -113,12 +126,12 @@ describe("decodeChatDraftRecord", () => {
     );
   });
 
-  it("decodes every closed destination, anchor, presence, and profile variant", () => {
+  it("decodes every closed destination, anchor, presence, and selection variant", () => {
     const variants: ChatRunCreateRequest[] = [
       {
         destination: { kind: "New" },
         content: "new question",
-        profile_id: "balanced",
+        ...generation,
         reader_selection: { kind: "Absent" },
       },
       {
@@ -128,7 +141,7 @@ describe("decodeChatDraftRecord", () => {
           insertion: { kind: "Empty" },
         },
         content: "quoted question",
-        profile_id: "deep",
+        ...generation,
         reader_selection: {
           kind: "Present",
           value: {
@@ -161,7 +174,7 @@ describe("decodeChatDraftRecord", () => {
           },
         },
         content: "mapped branch",
-        profile_id: "fast",
+        ...generation,
         reader_selection: { kind: "Absent" },
       },
       {
@@ -183,7 +196,7 @@ describe("decodeChatDraftRecord", () => {
           },
         },
         content: "unmapped branch",
-        profile_id: "balanced",
+        ...generation,
         reader_selection: { kind: "Absent" },
       },
     ];
@@ -201,13 +214,13 @@ describe("decodeChatDraftRecord", () => {
     const valid = {
       destination: { kind: "New" },
       content: "question",
-      profile_id: "fast",
+      ...generation,
       reader_selection: { kind: "Absent" },
     };
     const invalidRequests: unknown[] = [
       { ...valid, reasoning_option_id: "high" },
-      { destination: { kind: "New" }, content: "question", profile_id: "fast" },
-      { ...valid, profile_id: "turbo" },
+      { destination: { kind: "New" }, content: "question" },
+      { ...valid, selection: { route: "ProviderApi", model_ref: "x", reasoning: "turbo" } },
       { ...valid, content: "   " },
       { ...valid, destination: { kind: "New", conversation_id: "surplus" } },
       {
@@ -269,23 +282,23 @@ describe("decodeChatDraftRecord", () => {
     expect(() => decodeChatDraftRecord("not json")).toThrow();
     expect(() => decodeChatDraftRecord("{}")).toThrow();
     expect(() =>
-      decodeChatDraftRecord(JSON.stringify({ text: "x", profile: null })),
+      decodeChatDraftRecord(JSON.stringify({ text: "x", selection: null })),
     ).toThrow();
     expect(() =>
       decodeChatDraftRecord(
-        JSON.stringify({ text: "x", profile: null, operation: { kind: "Submitting" } }),
+        JSON.stringify({ text: "x", selection: null, operation: { kind: "Submitting" } }),
       ),
     ).toThrow();
     expect(() =>
       decodeChatDraftRecord(
-        JSON.stringify({ text: "x", profile: null, operation: { kind: "Bogus" } }),
+        JSON.stringify({ text: "x", selection: null, operation: { kind: "Bogus" } }),
       ),
     ).toThrow();
     expect(() =>
       decodeChatDraftRecord(
         JSON.stringify({
           text: "x",
-          profile: null,
+          selection: null,
           operation: { kind: "Submitting", command: { idempotencyKey: "k" } },
         }),
       ),

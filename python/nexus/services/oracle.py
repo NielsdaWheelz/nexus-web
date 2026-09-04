@@ -68,7 +68,7 @@ from nexus.schemas.oracle import (
     oracle_reading_source_kind,
     oracle_reading_status,
 )
-from nexus.schemas.presence import Present, absent, present
+from nexus.schemas.presence import Present
 from nexus.services import (
     durable_step_journal as step_journal,
 )
@@ -78,22 +78,24 @@ from nexus.services import (
     run_kit,
 )
 from nexus.services.codex_generation_contract import (
-    GenerationCommand,
     GenerationTerminal,
     NormalizedFailureCode,
-    request_fingerprint,
 )
+from nexus.services.generation_intent import GenerationIntent
+from nexus.services.generation_spec import ImmutablePromptPayloadRef, generation_fact_digest
 from nexus.services.llm_execution import (
     AcceptedGenerationFailure,
     CompletedGeneration,
     EncodedGenerationTerminal,
     ExecutionRuntime,
+    GenerationAdmissionInputsChanged,
     GenerationDispatchAborted,
-    GenerationExecutionRequest,
     GenerationUncertain,
     GenerationUncertainResolution,
     JobGenerationJournal,
+    admit_job_generation,
     cancel_prepared_generation_without_dispatch_in_current_transaction,
+    codex_terminal_evidence,
     execute_generation,
     prove_uncertain_generation_not_dispatched_in_current_transaction,
 )
@@ -279,7 +281,6 @@ def _insert_reading_with_next_folio(
         kind="oracle_reading_generate",
         payload={
             "reading_id": str(reading.id),
-            "capacity_wait_index": 0,
             "coordination": {},
         },
     )
@@ -747,22 +748,11 @@ type _CompletedOracle = Annotated[
 _COMPLETED_ORACLE_ADAPTER: TypeAdapter[_CompletedOracle] = TypeAdapter(_CompletedOracle)
 
 
-def _oracle_command(*, generation_id: UUID, user_content: str) -> GenerationCommand:
-    return GenerationCommand.model_validate(
-        {
-            "request_id": generation_id,
-            "operation": {
-                "kind": ORACLE_OPERATION,
-                "revision": generation_policy.operation_revision(ORACLE_OPERATION),
-            },
-            "policy_revision": generation_policy.POLICY_REVISION,
-            "policy_fingerprint": generation_policy.POLICY_FINGERPRINT,
-            "intent": build_synthesis_intent(
-                system_prompt=_ORACLE_SYSTEM_PROMPT,
-                user_content=user_content,
-                schema=_OracleSynthesisOutput,
-            ),
-        }
+def _oracle_intent(*, user_content: str) -> GenerationIntent:
+    return build_synthesis_intent(
+        system_prompt=_ORACLE_SYSTEM_PROMPT,
+        user_content=user_content,
+        schema=_OracleSynthesisOutput,
     )
 
 
@@ -1178,9 +1168,6 @@ async def execute_reading(
         raise AssertionError(f"oracle job {context.job_id} disappeared")
     if job.kind != "oracle_reading_generate" or job.payload.get("reading_id") != str(reading_id):
         raise AssertionError("oracle job payload identity changed")
-    capacity_wait_index = job.payload.get("capacity_wait_index")
-    if type(capacity_wait_index) is not int or capacity_wait_index < 0:
-        raise AssertionError("oracle job has an invalid capacity_wait_index")
     generation_id = step_journal.stable_generation_id(
         reading_id,
         _SYNTHESIS_STEP_PATH,
@@ -1344,49 +1331,7 @@ async def execute_reading(
             return result
 
         user_content = _build_oracle_user_content(question=question, candidates=candidates)
-        command = _oracle_command(
-            generation_id=generation_id,
-            user_content=user_content,
-        )
-        fingerprint = request_fingerprint(command)
-        if state is None:
-            if not step_journal.checkpoint_step_state(
-                db,
-                ctx=context,
-                job=job,
-                step_path=_SYNTHESIS_STEP_PATH,
-                state=step_journal.StepReplayState(
-                    generation_id=generation_id,
-                    dispatch_phase=step_journal.Prepared,
-                    request_fingerprint=present(fingerprint),
-                    terminal_result=absent(),
-                ),
-            ):
-                db.rollback()
-                return {"status": "pending", "noop": True}
-            db.commit()
-            job = get_job(db, context.job_id)
-            if job is None:
-                raise AssertionError(f"oracle job {context.job_id} disappeared after prepare")
-        elif not isinstance(state.request_fingerprint, Present):
-            raise AssertionError("Prepared oracle generation has no fingerprint")
-        elif state.request_fingerprint.value != fingerprint:
-            db.rollback()
-            result = _stage_oracle_terminal_without_dispatch(
-                db,
-                reading_id=reading_id,
-                context=context,
-                reason="oracle input changed before dispatch",
-                error_code=oracle_reading_failure_code(
-                    ApiErrorCode.E_GENERATION_SOURCE_CHANGED.value
-                ),
-                error_detail="Oracle input changed after the generation was prepared",
-            )
-            if result is None:
-                db.rollback()
-                return {"status": "pending", "noop": True}
-            db.commit()
-            return result
+        intent = _oracle_intent(user_content=user_content)
 
         def lock_dispatch(dispatch_db: Session) -> JobRow | None:
             locked_reading = dispatch_db.scalar(
@@ -1406,29 +1351,57 @@ async def execute_reading(
         # A first dispatch reloads the prepared job; a replay may retain an earlier
         # read snapshot. Neither may cross the generation host I/O boundary.
         db.commit()
+        journal = JobGenerationJournal(
+            context=context,
+            step_path=_SYNTHESIS_STEP_PATH,
+            lock_dispatch=lock_dispatch,
+        )
         try:
-            execution_result = await execute_generation(
-                GenerationExecutionRequest(
-                    owner=LlmCallOwner(kind="oracle_reading", id=reading_id),
-                    command=command,
-                    journal=JobGenerationJournal(
-                        context=context,
-                        step_path=_SYNTHESIS_STEP_PATH,
-                        capacity_wait_index=capacity_wait_index,
-                        lock_dispatch=lock_dispatch,
-                    ),
-                    capacity_wait_index=capacity_wait_index,
+            execution_request = await admit_job_generation(
+                owner=LlmCallOwner(kind="oracle_reading", id=reading_id),
+                generation_id=generation_id,
+                operation="oracle",
+                intent=intent,
+                prompt_template_revision=generation_policy.operation_revision(ORACLE_OPERATION),
+                prompt_payload_ref=ImmutablePromptPayloadRef(
+                    owner_kind="oracle_reading",
+                    owner_id=str(reading_id),
+                    revision=generation_policy.operation_revision(ORACLE_OPERATION),
+                    payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
                 ),
+                journal=journal,
+                session_factory=get_session_factory(),
+                runtime=runtime,
+            )
+            execution_result = await execute_generation(
+                execution_request,
                 session_factory=get_session_factory(),
                 runtime=runtime,
                 encode_terminal=lambda terminal: _encode_oracle_terminal(
-                    terminal,
+                    codex_terminal_evidence(terminal),
                     candidates=candidates,
                     plate=plate,
                     requires_user_content=requires_user_content,
                 ),
                 encode_preaccept_failure=_encode_oracle_preaccept_failure,
             )
+        except GenerationAdmissionInputsChanged:
+            db.rollback()
+            result = _stage_oracle_terminal_without_dispatch(
+                db,
+                reading_id=reading_id,
+                context=context,
+                reason="oracle input changed before dispatch",
+                error_code=oracle_reading_failure_code(
+                    ApiErrorCode.E_GENERATION_SOURCE_CHANGED.value
+                ),
+                error_detail="Oracle input changed after the generation was prepared",
+            )
+            if result is None:
+                db.rollback()
+                return {"status": "pending", "noop": True}
+            db.commit()
+            return result
         except GenerationDispatchAborted:
             result = _stage_oracle_terminal_without_dispatch(
                 db,

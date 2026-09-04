@@ -12,6 +12,7 @@ import type {
 } from "@/lib/conversations/types";
 import type { CitationOut } from "@/lib/conversations/citationOut";
 import type { ChatConnectionRecovery } from "@/lib/conversations/chatConnectionRecovery";
+import type { GenerationSelectionSpec } from "@/lib/conversations/generationCatalog";
 import {
   settleMessageActionMutation,
   useMessageActionIntentOwner,
@@ -38,9 +39,19 @@ interface MessageRowProps {
     assistantMessageId: string,
   ) => Promise<MessageActionMutationOutcome>;
   rerunning?: boolean;
+  onRerunAssistantResponseWithSelection?: (
+    assistantMessageId: string,
+    selection: GenerationSelectionSpec,
+    catalogDefinitionRevision: string,
+  ) => Promise<MessageActionMutationOutcome>;
   /** One durable regeneration from an eligible completed assistant answer. */
   onRegenerateAssistantResponse?: (
     assistantMessageId: string,
+  ) => Promise<MessageActionMutationOutcome>;
+  onRegenerateAssistantResponseWithSelection?: (
+    assistantMessageId: string,
+    selection: GenerationSelectionSpec,
+    catalogDefinitionRevision: string,
   ) => Promise<MessageActionMutationOutcome>;
   onDeleteMessage?: DeleteMessageMutation;
   /** Client-only recovery for this assistant's interrupted live tail. */
@@ -66,7 +77,9 @@ export const MessageRow = memo(function MessageRow({
   onReplyToAssistant,
   onRerunAssistantResponse,
   rerunning = false,
+  onRerunAssistantResponseWithSelection,
   onRegenerateAssistantResponse,
+  onRegenerateAssistantResponseWithSelection,
   onDeleteMessage,
   connectionRecovery,
   onReconnectAssistant,
@@ -207,6 +220,26 @@ export const MessageRow = memo(function MessageRow({
               : undefined
           }
           rerunning={rerunning}
+          onRerunWithSelection={
+            onRerunAssistantResponseWithSelection
+              ? async (selection, revision) =>
+                  (await onRerunAssistantResponseWithSelection(
+                    message.id,
+                    selection,
+                    revision,
+                  )) === "Committed"
+              : undefined
+          }
+          onRegenerateWithSelection={
+            onRegenerateAssistantResponseWithSelection
+              ? async (selection, revision) =>
+                  (await onRegenerateAssistantResponseWithSelection(
+                    message.id,
+                    selection,
+                    revision,
+                  )) === "Committed"
+              : undefined
+          }
           timestampLabel={timestampLabel}
         />
       );

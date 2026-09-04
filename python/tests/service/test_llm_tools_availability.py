@@ -44,18 +44,13 @@ from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.rate_limit import get_rate_limiter, set_rate_limiter
 from tests.testkit.auth import StaticTokenVerifier, UserRecord
 
-_CHAT_TOOL_IDS = (
+_CHAT_READ_TOOL_IDS = (
     "web.search",
     "nexus.search",
     "nexus.resource.read",
     "nexus.document.search",
     "nexus.resource.inspect",
     "nexus.relations.list",
-    "nexus.library.add",
-    "nexus.note.create",
-    "nexus.highlight.create",
-    "nexus.edge.create",
-    "nexus.queue.add",
 )
 
 
@@ -228,10 +223,9 @@ def test_configured_brave_provider_factory_is_shared_by_app_mcp_and_dossier(
             for keyword in execute_chat_calls[0].keywords
             if keyword.arg == "web_search_provider"
         ]
-        assert len(delegated_providers) == 1
-        assert isinstance(delegated_providers[0], ast.Constant)
-        assert delegated_providers[0].value is None, (
-            "Chat must delegate configured Web execution to its scoped MCP listener"
+        assert delegated_providers == [], (
+            "Chat must not retain the retired Web-provider injection seam; "
+            "its composed execution runtime and scoped MCP listener own tool execution"
         )
 
         constructor_arguments: list[tuple[object, str, str, float]] = []
@@ -267,7 +261,7 @@ def test_keyless_boot_preserves_plan_and_refuses_required_web_before_dispatch(
     test_user: UserRecord,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Missing Brave credentials preserve Chat but refuse Web and Idea work."""
+    """Missing Brave credentials preserve exact plans but refuse their unavailable work."""
     monkeypatch.delenv("BRAVE_SEARCH_API_KEY", raising=False)
     monkeypatch.delenv("WORKER_LANE", raising=False)
     monkeypatch.delenv("WORKER_ALLOWED_JOB_KINDS", raising=False)
@@ -285,14 +279,16 @@ def test_keyless_boot_preserves_plan_and_refuses_required_web_before_dispatch(
                 "the keyless app booted without publishing its immutable tool runtime"
             )
             app_runtime = app.state.tool_runtime
-            app_chat = app_runtime.operations["chat"]
-            assert _tool_ids(app_chat) == _CHAT_TOOL_IDS
+            app_chat = app_runtime.operations.get("ChatRead")
+            assert app_chat is not None, "the keyless app omitted its frozen ChatRead operation"
+            assert _tool_ids(app_chat) == _CHAT_READ_TOOL_IDS
 
             from nexus.tasks.artifacts import compose_dossier_tool_runtime
 
             task_runtime = compose_dossier_tool_runtime(None)
-            task_chat = task_runtime.operations["chat"]
-            assert _tool_ids(task_chat) == _CHAT_TOOL_IDS
+            task_chat = task_runtime.operations.get("ChatRead")
+            assert task_chat is not None, "the keyless worker omitted its frozen ChatRead operation"
+            assert _tool_ids(task_chat) == _CHAT_READ_TOOL_IDS
             assert task_chat.profile.profile_revision == app_chat.profile.profile_revision
             assert task_chat.plan.plan_revision == app_chat.plan.plan_revision
 

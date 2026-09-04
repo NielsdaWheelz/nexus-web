@@ -27,16 +27,11 @@ from nexus.jobs.queue import (
 )
 from nexus.logging import get_logger
 from nexus.schemas.presence import Presence, Present, absent, present
-from nexus.services import generation_policy
 from nexus.services.codex_generation_contract import (
-    GenerationCommand,
     GenerationTerminal,
     NormalizedFailureCode,
     normalized_failure,
     retained_terminal_error_detail,
-)
-from nexus.services.codex_generation_contract import (
-    request_fingerprint as generation_request_fingerprint,
 )
 from nexus.services.collection_revisions import (
     CollectionFamily,
@@ -59,22 +54,30 @@ from nexus.services.durable_step_journal import (
     read_step_states,
     stable_generation_id,
 )
+from nexus.services.generation_intent import GenerationIntent, JsonSchemaOutput
+from nexus.services.generation_spec import (
+    GenerationSpec,
+    ImmutablePromptPayloadRef,
+    decode_generation_spec_document,
+    generation_fact_digest,
+)
 from nexus.services.llm_execution import (
     AcceptedGenerationFailure,
     CompletedGeneration,
     EncodedGenerationTerminal,
     ExecutionRuntime,
+    GenerationAdmissionInputsChanged,
     GenerationDispatchAborted,
-    GenerationExecutionRequest,
     GenerationUncertain,
     GenerationUncertainResolution,
     JobGenerationJournal,
+    admit_job_generation,
+    codex_terminal_evidence,
     execute_generation,
     prove_uncertain_generation_not_dispatched_in_current_transaction,
 )
 from nexus.services.llm_ledger import (
     LlmCallOwner,
-    cancel_preaccept_generation_if_started_in_current_transaction,
     lock_generation_owner_in_current_transaction,
 )
 from nexus.services.metadata_dispatch import METADATA_STEP_PATH
@@ -252,30 +255,19 @@ def reconcile_uncertain_metadata_generation(
     retry_serializable(db, "reconcile_uncertain_metadata_generation", op)
 
 
-def _metadata_generation_command(*, generation_id: UUID, input: str) -> GenerationCommand:
+def _metadata_generation_intent(*, input: str) -> GenerationIntent:
     instructions, output_schema = metadata_enrichment_agent_definition()
-    return GenerationCommand.model_validate(
-        {
-            "schema_version": "nexus-generation-command.v2",
-            "request_id": generation_id,
-            "operation": {
-                "kind": "metadata_enrichment",
-                "revision": generation_policy.operation_revision("metadata_enrichment"),
-            },
-            "policy_revision": generation_policy.POLICY_REVISION,
-            "policy_fingerprint": generation_policy.POLICY_FINGERPRINT,
-            "intent": {
-                "instructions": instructions,
-                "input": input,
-                "output": {
-                    "kind": "JsonSchema",
-                    "name": "media_metadata_enrichment",
-                    "schema": output_schema,
-                    "strict": True,
-                },
-            },
-            "tool_grant": None,
-        }
+    return GenerationIntent(
+        instructions=instructions,
+        input=input,
+        output=JsonSchemaOutput.model_validate(
+            {
+                "kind": "JsonSchema",
+                "name": "media_metadata_enrichment",
+                "schema": output_schema,
+                "strict": True,
+            }
+        ),
     )
 
 
@@ -323,21 +315,6 @@ def _record_metadata_failure(media: Media, error_code: str, error_message: str) 
     media.updated_at = datetime.now(UTC)
 
 
-def _capacity_wait_index(payload: dict[str, object]) -> int:
-    """Decode the hard-cut metadata capacity state with no compatibility default."""
-    try:
-        value = payload["capacity_wait_index"]
-    except KeyError as exc:
-        # justify-defect: every enqueue and reschedule writes the wait index, so
-        # a payload without it is hard-cut corruption, not a legacy shape.
-        raise AssertionError("metadata job has no capacity_wait_index") from exc
-    # justify-defect: the only writers store a non-negative int; the generation
-    # execution owner validates it against the operation's fixed schedule.
-    if type(value) is not int or value < 0:
-        raise AssertionError("metadata job has an invalid capacity_wait_index")
-    return value
-
-
 def enrich_metadata(
     media_id: str,
     request_id: str | None,
@@ -355,7 +332,6 @@ def enrich_metadata(
             # justify-defect: the worker holds this claimed row; only unpruned
             # terminal transitions could remove it mid-attempt.
             raise AssertionError(f"metadata job {context.job_id} disappeared")
-        capacity_wait_index = _capacity_wait_index(job.payload)
         generation_id = stable_generation_id(context.job_id, METADATA_STEP_PATH)
         state = read_step_states(job).get(METADATA_STEP_PATH)
         request_fingerprint: str | None = None
@@ -430,54 +406,8 @@ def enrich_metadata(
             media,
             get_content_sample(db, media),
         )
-        command = _metadata_generation_command(
-            generation_id=generation_id,
-            input=user_content,
-        )
-        reconstructed_fingerprint = generation_request_fingerprint(command)
-        if state is None:
-            request_fingerprint = reconstructed_fingerprint
-            prepared = StepReplayState(
-                generation_id=generation_id,
-                dispatch_phase=Prepared,
-                request_fingerprint=present(request_fingerprint),
-                terminal_result=absent(),
-            )
-            if not checkpoint_step_state(
-                db,
-                ctx=context,
-                job=job,
-                step_path=METADATA_STEP_PATH,
-                state=prepared,
-            ):
-                db.rollback()
-                return _job_result(_SkippedPublication(reason="claim_lost_before_prepare"))
-            db.commit()
-        elif request_fingerprint is None:
-            # justify-defect: the Prepared branch above decoded the persisted
-            # request fingerprint before reconstructing the current command.
-            raise AssertionError("Prepared metadata step has no request fingerprint")
-        elif reconstructed_fingerprint != request_fingerprint:
-            # The request fingerprint drifted while the job sat Prepared: it
-            # covers the catalog revision, prompt, schema, policy, and timeout
-            # as well as media facts (e.g. a reindex landed during a capacity
-            # wait). No accepted native turn ran, so this is the same known terminal as
-            # publication-time drift: record the metadata warning and complete
-            # the queue work. A prior pre-accept refusal may have started an
-            # audit row, but no accepted native turn ran.
-            db.commit()
-            return _complete_pre_dispatch_terminal(
-                factory,
-                context=context,
-                media_id=media_uuid,
-                generation_id=generation_id,
-                request_fingerprint=request_fingerprint,
-                observed_reason="source_changed",
-            )
-        if request_fingerprint is None:
-            # justify-defect: every surviving branch above either set the
-            # fingerprint or returned; pyright cannot see that exhaustively.
-            raise AssertionError("metadata dispatch has no request fingerprint")
+        intent = _metadata_generation_intent(input=user_content)
+        db.commit()
 
     owner = LlmCallOwner(kind="media_enrichment", id=media_uuid)
 
@@ -512,39 +442,56 @@ def enrich_metadata(
             locked_media,
             get_content_sample(db, locked_media),
         )
-        locked_command = _metadata_generation_command(
-            generation_id=generation_id,
-            input=locked_content,
-        )
-        if generation_request_fingerprint(locked_command) != request_fingerprint:
+        locked_intent = _metadata_generation_intent(input=locked_content)
+        if locked_intent != intent:
             raise _PreDispatchMetadataTerminal("source_changed")
         return locked_job
+
+    journal = JobGenerationJournal(
+        context=context,
+        step_path=METADATA_STEP_PATH,
+        lock_dispatch=lock_dispatch,
+    )
 
     async def execute(
         _db: Session,
         runtime: ExecutionRuntime,
     ) -> CompletedGeneration | RescheduleRequested:
-        return await execute_generation(
-            GenerationExecutionRequest(
-                owner=owner,
-                command=command,
-                journal=JobGenerationJournal(
-                    context=context,
-                    step_path=METADATA_STEP_PATH,
-                    capacity_wait_index=capacity_wait_index,
-                    lock_dispatch=lock_dispatch,
-                ),
-                capacity_wait_index=capacity_wait_index,
+        from nexus.services import generation_policy
+
+        nonlocal request_fingerprint
+        execution_request = await admit_job_generation(
+            owner=owner,
+            generation_id=generation_id,
+            operation="metadata_enrichment",
+            intent=intent,
+            prompt_template_revision=generation_policy.operation_revision("metadata_enrichment"),
+            prompt_payload_ref=ImmutablePromptPayloadRef(
+                owner_kind="media_enrichment",
+                owner_id=str(media_uuid),
+                revision=generation_policy.operation_revision("metadata_enrichment"),
+                payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
             ),
+            journal=journal,
             session_factory=factory,
             runtime=runtime,
-            encode_terminal=_encode_metadata_terminal,
+        )
+        request_fingerprint = execution_request.spec.fingerprint
+        return await execute_generation(
+            execution_request,
+            session_factory=factory,
+            runtime=runtime,
+            encode_terminal=lambda terminal: _encode_metadata_terminal(
+                codex_terminal_evidence(terminal)
+            ),
             encode_preaccept_failure=_encode_metadata_preaccept_failure,
         )
 
     try:
         execution_result = run_llm_task(_METADATA_TASK_SPEC, execute)
     except _PreDispatchMetadataTerminal as exc:
+        if request_fingerprint is None:
+            return _job_result(_SkippedPublication(reason=exc.reason))
         return _complete_pre_dispatch_terminal(
             factory,
             context=context,
@@ -555,11 +502,24 @@ def enrich_metadata(
         )
     except GenerationDispatchAborted:
         return _job_result(_SkippedPublication(reason="claim_lost_before_dispatch"))
+    except GenerationAdmissionInputsChanged as error:
+        if request_fingerprint is None:
+            raise AssertionError("changed metadata admission has no frozen fingerprint") from error
+        return _complete_pre_dispatch_terminal(
+            factory,
+            context=context,
+            media_id=media_uuid,
+            generation_id=generation_id,
+            request_fingerprint=request_fingerprint,
+            observed_reason="source_changed",
+        )
     except GenerationUncertain as exc:
         raise _UncertainMetadataTurn(exception_error_detail(exc)) from exc
 
     if isinstance(execution_result, RescheduleRequested):
         return execution_result
+    if request_fingerprint is None:
+        raise AssertionError("completed metadata dispatch has no frozen fingerprint")
     completed = decode_step_result(
         execution_result.terminal_result,
         _CompletedMetadataResultEnvelope,
@@ -665,7 +625,6 @@ def _stage_pre_dispatch_terminal(
                 error_detail=_PRE_DISPATCH_SOURCE_CHANGED_DETAIL,
                 publication_result=Present[_MetadataPublicationResult](value=result),
             )
-            terminal_detail = _PRE_DISPATCH_SOURCE_CHANGED_DETAIL
             if media is None:
                 # justify-defect: reason resolution above selects
                 # media_not_found before source_changed.
@@ -677,26 +636,16 @@ def _stage_pre_dispatch_terminal(
             completed = _CompletedSkip(
                 publication_result=Present[_SkippedPublication](value=result),
             )
-            terminal_detail = _PRE_DISPATCH_MEDIA_MISSING_DETAIL
         case "not_ready":
             result = _SkippedPublication(reason="not_ready")
             completed = _CompletedSkip(
                 publication_result=Present[_SkippedPublication](value=result),
             )
-            terminal_detail = _PRE_DISPATCH_NOT_READY_DETAIL
         case _ as unreachable:
             assert_never(unreachable)
 
-    # This path normally precedes the first dispatch and therefore has no
-    # ledger row. A prior exact capacity refusal may have restored Prepared
-    # after staging a start; close that audit instead of leaving a terminal
-    # owner journal beside an open generation row.
-    cancel_preaccept_generation_if_started_in_current_transaction(
-        db,
-        owner=owner,
-        generation_id=generation_id,
-        reason=terminal_detail,
-    )
+    # Prepared is now strictly pre-admission: parent/child rows and Uncertain
+    # land atomically, so this known terminal cannot coexist with a model call.
     if not checkpoint_step_state(
         db,
         ctx=context,
@@ -851,6 +800,9 @@ def _publish_completed_transaction(
     ):
         db.rollback()
         return _job_result(_SkippedPublication(reason="claim_lost_before_publication"))
+    job = get_job(db, context.job_id)
+    if job is None:
+        raise AssertionError("metadata job disappeared after renewing its claim")
 
     if isinstance(completed.publication_result, Present):
         db.commit()
@@ -898,11 +850,9 @@ def _publish_completed_transaction(
         media,
         get_content_sample(db, media),
     )
-    current_command = _metadata_generation_command(
-        generation_id=stable_generation_id(context.job_id, METADATA_STEP_PATH),
-        input=current_content,
-    )
-    if generation_request_fingerprint(current_command) != request_fingerprint:
+    frozen_spec, frozen_intent = _metadata_admission_from_job(job)
+    current_intent = _metadata_generation_intent(input=current_content)
+    if frozen_spec.fingerprint != request_fingerprint or frozen_intent != current_intent:
         code = ApiErrorCode.E_GENERATION_SOURCE_CHANGED.value
         detail = "media facts changed before metadata publication"
         _record_metadata_failure(media, code, detail)
@@ -1019,6 +969,20 @@ def _checkpoint_published(
 
 def _success_result(fields: tuple[str, ...] | list[str]) -> _SuccessfulPublication:
     return _SuccessfulPublication(fields=tuple(fields))
+
+
+def _metadata_admission_from_job(job: JobRow) -> tuple[GenerationSpec, GenerationIntent]:
+    raw_admissions = job.payload.get("generation_admissions")
+    if not isinstance(raw_admissions, dict):
+        raise AssertionError("metadata job has no frozen generation admissions")
+    raw = raw_admissions.get(METADATA_STEP_PATH)
+    if not isinstance(raw, dict) or set(raw) != {"spec", "intent"}:
+        raise AssertionError("metadata job has no exact frozen generation admission")
+    spec = decode_generation_spec_document(raw["spec"])
+    raw_intent = raw["intent"]
+    if not isinstance(raw_intent, dict):
+        raise AssertionError("metadata generation intent is not an object")
+    return spec, GenerationIntent.model_validate(raw_intent)
 
 
 def _persisted_request_fingerprint(

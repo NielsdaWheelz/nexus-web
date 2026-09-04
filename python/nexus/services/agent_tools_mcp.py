@@ -1,8 +1,8 @@
-"""Pinned Codex MCP adapter for a leased ChatTools attempt.
+"""Pinned Codex MCP adapter for a leased model-tool attempt.
 
 The SDK owns JSON-RPC and Streamable HTTP.  This module owns only the bearer
 gate, grant-to-run authorization, declaration projection, and the handoff to
-the existing durable Chat executor.
+the shared generation tool executor.
 """
 
 from __future__ import annotations
@@ -14,23 +14,17 @@ import json
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Final, Literal, cast
 from uuid import UUID
 
 from fastapi import Request
 from llm_tools import (
-    EffectId,
-    ParsedJson,
-    ToolEffect,
-    ToolExecutor,
+    Native,
     ToolId,
-    ToolResult,
-    canonical_json_bytes,
-    raw_input_digest,
 )
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.context import Context
@@ -44,26 +38,31 @@ from sqlalchemy.orm import Session, sessionmaker
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
-from nexus.db.models import ChatRun
-from nexus.jobs.queue import (
-    JobExecutionContext,
-    JobResourceClass,
-    get_job,
-    lock_running_job_claim,
-    update_running_job_payload,
-)
 from nexus.services.agent_tool_grants import AgentToolGrantClaims, verify_agent_tool_grant
-from nexus.services.chat_run_event_store import lock_chat_run_for_update
-from nexus.services.llm_ledger import (
-    GenerationRecord,
-    LlmCallOwner,
-    current_tool_plan_fingerprint,
-    lock_active_generation_for_authority_in_current_transaction,
+from nexus.services.tool_authority import (
+    GenerationToolExecutor,
+    ModelToolExecutionResult,
+    ToolAuthorityRefused,
 )
+from nexus.services.tool_runtime.composition import (
+    compose_product_tool_runtime,
+    freeze_tool_plan_snapshot,
+    operation_presented_declarations,
+    project_provider_model_tools,
+)
+from nexus.services.tool_runtime.snapshots import FrozenToolPlanSnapshot
 
 if TYPE_CHECKING:
     from nexus.config import Settings
-    from nexus.services.chat_run_tools import ToolStepResult
+    from nexus.jobs.queue import JobExecutionContext
+    from nexus.services.codex_generation_contract import (
+        GenerationAdmission,
+        GenerationCommand,
+    )
+    from nexus.services.generation_intent import GenerationIntent
+    from nexus.services.generation_spec import GenerationSpec
+    from nexus.services.llm_ledger import LlmCallOwner
+    from nexus.services.tool_authority import ToolExecutionProjection
     from nexus.services.tool_runtime.composition import FrozenToolOperation
     from nexus.services.tool_runtime.declarations import PresentedToolDeclaration
 
@@ -82,15 +81,6 @@ _MAX_JSON_RPC_INTEGER: Final[int] = 2**63 - 1
 _MAX_JSON_RPC_STRING: Final[int] = 256
 
 type AgentToolRequestAuthorizer = Callable[[AgentToolGrantClaims], Awaitable[bool]]
-
-
-def _job_correlates_to_chat_run(
-    *,
-    kind: object,
-    payload: object,
-    run_id: UUID,
-) -> bool:
-    return kind == "chat_run" and isinstance(payload, dict) and payload.get("run_id") == str(run_id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,21 +125,6 @@ class JsonRpcId:
     def key(self) -> str:
         return f"{self.kind}:{self.value}"
 
-    def position(self, generation_seq: int, tool_index: int) -> str:
-        if generation_seq < 1 or tool_index < 1:
-            raise ValueError("generation and tool positions are positive")
-        return f"generation/{generation_seq}/tool/{tool_index}"
-
-
-class _PolicyViolation(Exception):
-    def __init__(self, generation_id: UUID) -> None:
-        super().__init__("MCP call is outside the active generation policy")
-        self.generation_id = generation_id
-
-
-class _CancellationRequested(Exception):
-    pass
-
 
 @dataclass(slots=True)
 class ActiveAgentToolRegistry:
@@ -163,38 +138,43 @@ class ActiveAgentToolRegistry:
     session_factory: sessionmaker[Session]
     _authorities: dict[str, AgentToolAuthority] = field(default_factory=dict)
     _registry_lock: Any = field(default_factory=threading.RLock, repr=False)
-    _operation: FrozenToolOperation | None = None
+    _operations_by_revision: dict[str, FrozenToolOperation] = field(default_factory=dict)
 
-    def bind_operation(self, operation: FrozenToolOperation) -> None:
-        """Install the listener-loop-owned Chat operation before serving."""
+    def bind_operations(self, operations: tuple[FrozenToolOperation, ...]) -> None:
+        """Install every listener-loop-owned native operation before serving."""
 
         with self._registry_lock:
-            if self._operation is not None or self._authorities:
-                raise RuntimeError("agent-tool listener operation is already bound")
-            self._operation = operation
+            if self._operations_by_revision or self._authorities:
+                raise RuntimeError("agent-tool listener operations are already bound")
+            indexed = {operation.plan.plan_revision: operation for operation in operations}
+            if len(indexed) != len(operations):
+                raise ValueError("agent-tool listener plan revisions must be unique")
+            if not indexed:
+                raise ValueError("agent-tool listener requires at least one native operation")
+            if any(not isinstance(operation.plan.exposure, Native) for operation in operations):
+                raise ValueError("agent-tool listener accepts only native model-tool plans")
+            self._operations_by_revision.update(indexed)
 
-    def unbind_operation(self, operation: FrozenToolOperation) -> None:
-        """Remove the listener operation only after all authorities have closed."""
+    def unbind_operations(self, operations: tuple[FrozenToolOperation, ...]) -> None:
+        """Remove listener operations only after every authority has closed."""
 
         with self._registry_lock:
             if self._authorities:
                 raise RuntimeError("agent-tool listener stopped with active authorities")
-            if self._operation is not operation:
-                raise RuntimeError("agent-tool listener operation identity changed")
-            self._operation = None
+            expected = {operation.plan.plan_revision: operation for operation in operations}
+            if self._operations_by_revision != expected:
+                raise RuntimeError("agent-tool listener operation identities changed")
+            self._operations_by_revision.clear()
 
-    def operation_for(self, admitted: FrozenToolOperation) -> FrozenToolOperation:
+    def operation_for(self, admitted: FrozenToolPlanSnapshot) -> FrozenToolOperation:
         """Return the listener-owned handlers under the admitted frozen plan."""
 
         with self._registry_lock:
-            operation = self._operation
+            operation = self._operations_by_revision.get(admitted.plan_revision)
         if operation is None:
-            raise RuntimeError("agent-tool listener operation is not ready")
-        if (
-            operation.profile != admitted.profile
-            or operation.plan.plan_revision != admitted.plan.plan_revision
-        ):
-            raise RuntimeError("agent-tool listener operation differs from Chat admission")
+            raise RuntimeError("agent-tool listener has no operation for the admitted plan")
+        if freeze_tool_plan_snapshot(operation) != admitted:
+            raise RuntimeError("agent-tool listener operation differs from frozen admission")
         return operation
 
     def register(self, authority: AgentToolAuthority) -> None:
@@ -238,12 +218,18 @@ class _AuthorityRouter:
     def __init__(self, registry: ActiveAgentToolRegistry) -> None:
         self.registry = registry
 
-    def has_tool(self, tool_id: str) -> bool:
-        # Declaration projection is process-constant; this does not authorize
-        # a call, which still resolves a signed grant and rechecks the ledger.
-        from nexus.services.tool_runtime.declarations import CHAT_TOOL_DECLARATIONS
+    def canonical_tool_id(self, wire_name: str, claims: AgentToolGrantClaims) -> str | None:
+        """Reverse an admitted plan's library-owned wire alias."""
 
-        return any(str(entry.spec.id) == tool_id for entry in CHAT_TOOL_DECLARATIONS)
+        authority = self.registry.resolve(claims)
+        if authority is None:
+            return None
+        publication = project_provider_model_tools(authority.operation)
+        if publication is None:
+            return None
+        canonical_ids = tuple(str(grant.id) for grant in authority.operation.profile.ordered_grants)
+        aliases = tuple(tool.name for tool in publication.tools)
+        return dict(zip(aliases, canonical_ids, strict=True)).get(wire_name)
 
     async def authorize_request(
         self,
@@ -311,9 +297,11 @@ class _AgentToolsMCPServer(MCPServer[Any]):
         request = cast(Request, context.request_context.request)
         claims = cast(AgentToolGrantClaims, request.state.agent_tool_grant)
         request_id = JsonRpcId.from_raw(context.request_context.request_id)
-        if self._agent_tool_authority.has_tool(name):
+        canonical_tool_id = self._agent_tool_authority.canonical_tool_id(name, claims)
+        if canonical_tool_id is not None:
             receipt = await self._agent_tool_authority.invoke(
-                tool_id=name,
+                tool_id=canonical_tool_id,
+                provider_wire_name=name,
                 arguments=arguments,
                 request_id=request_id,
                 claims=claims,
@@ -337,20 +325,11 @@ class _AgentToolsMCPServer(MCPServer[Any]):
 
 @dataclass(slots=True)
 class AgentToolAuthority:
-    """Lease-scoped authority that delegates execution to Nexus' real runtime."""
+    """Codex MCP mount over the shared route-neutral generation executor."""
 
-    session_factory: sessionmaker[Session]
-    run_id: UUID
-    job_id: UUID
-    attempt_no: int
-    resource_class: JobResourceClass
     registry: ActiveAgentToolRegistry
-    operation: FrozenToolOperation
-    worker_id: str
-    generation_id: UUID
-    admission_id: UUID
+    executor: GenerationToolExecutor
     grant_jti: str
-    admitted_resource_uris: frozenset[str]
     _notified_policy_violations: set[UUID] = field(default_factory=set)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _activity_lock: Any = field(default_factory=threading.Lock, repr=False)
@@ -362,12 +341,40 @@ class AgentToolAuthority:
         try:
             if str(UUID(self.grant_jti)) != self.grant_jti:
                 raise ValueError
-        except ValueError as exc:
-            raise ValueError("agent-tool authority grant jti must be a canonical UUID") from exc
+        except ValueError as error:
+            raise ValueError("agent-tool authority grant jti must be a canonical UUID") from error
+        listener_operation = self.registry.operation_for(
+            freeze_tool_plan_snapshot(self.executor.authority.operation)
+        )
+        if listener_operation is not self.executor.authority.operation:
+            self.executor = GenerationToolExecutor(
+                authority=replace(self.executor.authority, operation=listener_operation)
+            )
         self._idle.set()
 
+    @classmethod
+    def from_generation_tool_executor(
+        cls,
+        *,
+        executor: GenerationToolExecutor,
+        registry: ActiveAgentToolRegistry,
+        grant_jti: str,
+    ) -> AgentToolAuthority:
+        """Register a minted bearer nonce against one already-frozen executor."""
+
+        authority = cls(registry=registry, executor=executor, grant_jti=grant_jti)
+        registry.register(authority)
+        return authority
+
+    @property
+    def generation_id(self) -> UUID:
+        return self.executor.authority.generation_id
+
+    @property
+    def operation(self) -> FrozenToolOperation:
+        return self.executor.authority.operation
+
     def close(self) -> None:
-        """Remove this authority after the generation reaches a terminal state."""
         self.registry.unregister(self)
 
     async def wait_until_idle(self) -> None:
@@ -379,10 +386,89 @@ class AgentToolAuthority:
         if not idle:
             raise RuntimeError("active MCP tool call did not drain before its bounded deadline")
 
+    async def authorize_request(
+        self,
+        *,
+        claims: AgentToolGrantClaims,
+        on_policy_violation: Callable[[UUID], Awaitable[None]],
+    ) -> bool:
+        """Authenticate the bearer facts and revalidate live durable authority."""
+
+        try:
+            self._authorize_claims(claims)
+        except ToolAuthorityRefused:
+            await self._notify_once(on_policy_violation)
+            return False
+        return True
+
+    async def invoke(
+        self,
+        *,
+        tool_id: str,
+        arguments: dict[str, Any],
+        request_id: JsonRpcId,
+        claims: AgentToolGrantClaims,
+        on_policy_violation: Callable[[UUID], Awaitable[None]],
+        provider_wire_name: str | None = None,
+    ) -> ModelToolExecutionResult:
+        started = False
+        try:
+            self._call_started()
+            started = True
+            async with self._lock:
+                self._authorize_claims(claims)
+                return await self.executor.execute_canonical(
+                    transport_kind="CodexMcp",
+                    model_turn_seq=1,
+                    transport_call_id=f"mcp:{request_id.key()}",
+                    provider_wire_name=provider_wire_name or tool_id,
+                    tool_id=ToolId(tool_id),
+                    arguments=arguments,
+                )
+        except ToolAuthorityRefused as error:
+            await self._notify_once(on_policy_violation)
+            raise MCPError(code=INVALID_REQUEST, message=str(error)) from error
+        finally:
+            if started:
+                self._call_finished()
+
+    async def reject_unknown(
+        self,
+        *,
+        provider_wire_name: str,
+        arguments: dict[str, Any],
+        request_id: JsonRpcId,
+        claims: AgentToolGrantClaims,
+        on_policy_violation: Callable[[UUID], Awaitable[None]],
+    ) -> ModelToolExecutionResult:
+        del provider_wire_name, arguments
+        started = False
+        try:
+            self._call_started()
+            started = True
+            async with self._lock:
+                self._authorize_claims(claims)
+                return self.executor.refuse_unknown_call(
+                    transport_call_id=f"mcp:{request_id.key()}"
+                )
+        except ToolAuthorityRefused as error:
+            await self._notify_once(on_policy_violation)
+            raise MCPError(code=INVALID_REQUEST, message=str(error)) from error
+        finally:
+            if started:
+                self._call_finished()
+
+    def _authorize_claims(self, claims: AgentToolGrantClaims) -> None:
+        if claims.jti != self.grant_jti:
+            raise ToolAuthorityRefused("bearer nonce differs from mounted generation authority")
+        authority = self.executor.authority
+        with authority.session_factory() as db, db.begin():
+            authority.authorize_in_current_transaction(db, claims)
+
     def _call_started(self) -> None:
         with self._activity_lock:
             if not self._accepting_calls:
-                raise _PolicyViolation(self.generation_id)
+                raise ToolAuthorityRefused("generation tool authority is draining")
             self._active_calls += 1
             self._idle.clear()
 
@@ -394,792 +480,189 @@ class AgentToolAuthority:
             if self._active_calls == 0:
                 self._idle.set()
 
-    @classmethod
-    def from_claimed_chat_attempt(
-        cls,
-        *,
-        session_factory: sessionmaker[Session],
-        run_id: UUID,
-        job_id: UUID,
-        attempt_no: int,
-        resource_class: JobResourceClass,
-        operation: FrozenToolOperation,
-        worker_id: str,
-        generation_id: UUID,
-        admission_id: UUID,
-        grant_jti: str,
-        admitted_resource_uris: tuple[str, ...],
-    ) -> AgentToolAuthority:
-        with session_factory() as db:
-            run = db.get(ChatRun, run_id)
-            job = get_job(db, job_id)
-            if run is None or job is None:
-                raise ValueError("claimed Chat attempt does not exist")
-            if (
-                not _job_correlates_to_chat_run(
-                    kind=job.kind,
-                    payload=job.payload,
-                    run_id=run.id,
-                )
-                or job.status != "running"
-                or job.claimed_by != worker_id
-                or job.attempts != attempt_no
-            ):
-                raise ValueError("claimed Chat job identity does not match worker attempt")
-        from nexus.services.generation_policy import TOOL_PLAN_REVISION
-
-        if str(operation.plan.plan_revision) != TOOL_PLAN_REVISION:
-            raise ValueError("Chat tool plan is not the pinned generation policy plan")
-        registry = active_agent_tool_registry()
-        if registry is None:
-            raise RuntimeError("active agent-tool registry is not installed")
-        execution_operation = registry.operation_for(operation)
-        authority = cls(
-            session_factory=session_factory,
-            run_id=run_id,
-            job_id=job_id,
-            attempt_no=attempt_no,
-            resource_class=resource_class,
-            registry=registry,
-            operation=execution_operation,
-            worker_id=worker_id,
-            generation_id=generation_id,
-            admission_id=admission_id,
-            grant_jti=grant_jti,
-            admitted_resource_uris=frozenset(admitted_resource_uris),
-        )
-        registry.register(authority)
-        return authority
-
-    async def invoke(
-        self,
-        *,
-        tool_id: str,
-        arguments: dict[str, Any],
-        request_id: JsonRpcId,
-        claims: AgentToolGrantClaims,
-        on_policy_violation: Callable[[UUID], Awaitable[None]],
-    ) -> Any:
-        started = False
-        try:
-            self._call_started()
-            started = True
-            async with self._lock:
-                binding = self.operation.plan.catalog_view.binding(ToolId(tool_id))
-                digest = raw_input_digest(ParsedJson(arguments))
-                try:
-                    from nexus.services.chat_run_tools import ToolStepResult
-                    from nexus.services.tool_runtime.execution import (
-                        chat_tool_execution_receipt,
-                    )
-
-                    receipt: ToolStepResult
-                    citation_ordinal: int
-                    provider_call_id: str
-                    journal_key: str
-                    result: ToolResult
-                    context: Any
-                    prior_receipt: ToolStepResult | None = None
-                    with self.session_factory() as db:
-                        with db.begin():
-                            (
-                                run,
-                                job,
-                                generation_seq,
-                                journal,
-                                journal_key,
-                                tool_index,
-                                citation_ordinal,
-                                provider_call_id,
-                            ) = self._admit(
-                                db,
-                                claims,
-                                arguments,
-                                digest,
-                                request_id,
-                                tool_id,
-                                tool_id,
-                            )
-                            prior_result = journal[journal_key].get("result")
-                            if prior_result is not None:
-                                prior_receipt = ToolStepResult.model_validate(prior_result)
-                        if prior_receipt is not None:
-                            return prior_receipt
-                        position = request_id.position(generation_seq, tool_index)
-                        effect_id = (
-                            EffectId(str(_stable_generation_id(run.id, position)))
-                            if binding.spec.effect is ToolEffect.Write
-                            else None
-                        )
-                        context = self._make_context(
-                            db,
-                            run=run,
-                            job=job,
-                            position=position,
-                            tool_index=tool_index,
-                            tool_id=binding.spec.id,
-                            effect_id=effect_id,
-                            arguments=arguments,
-                        )
-                        result = await ToolExecutor.execute(
-                            binding,
-                            ParsedJson(arguments),
-                            context,
-                        )
-                        receipt = chat_tool_execution_receipt(
-                            context,
-                            result=result,
-                            provider_call_id=provider_call_id,
-                            starting_citation_ordinal=citation_ordinal,
-                        )
-                    with self.session_factory() as receipt_db:
-                        with receipt_db.begin():
-                            self._receipt(
-                                receipt_db,
-                                claims=claims,
-                                digest=digest,
-                                journal_key=journal_key,
-                                receipt=receipt,
-                            )
-                except _PolicyViolation:
-                    raise
-                return receipt
-        except _CancellationRequested as exc:
-            await self._notify_once(self.generation_id, on_policy_violation)
-            raise MCPError(code=INVALID_REQUEST, message=str(exc)) from exc
-        except _PolicyViolation as exc:
-            await self._notify_once(exc.generation_id, on_policy_violation)
-            raise MCPError(code=INVALID_REQUEST, message=str(exc)) from exc
-        finally:
-            if started:
-                self._call_finished()
-
-    def _load_journal(self, db: Session) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
-        payload = db.execute(
-            text("SELECT payload FROM background_jobs WHERE id = :job_id FOR UPDATE"),
-            {"job_id": self.job_id},
-        ).scalar_one()
-        journal = payload.get("_agent_tool_calls", {}) if isinstance(payload, dict) else {}
-        if not isinstance(journal, dict):
-            raise RuntimeError("agent-tool journal has an invalid shape")
-        return dict(payload), cast(dict[str, dict[str, Any]], journal)
-
-    def _persist_journal(
-        self, db: Session, payload: dict[str, Any], journal: dict[str, dict[str, Any]]
-    ) -> None:
-        payload["_agent_tool_calls"] = journal
-        if not update_running_job_payload(
-            db,
-            job_id=self.job_id,
-            worker_id=self.worker_id,
-            attempt_no=self.attempt_no,
-            payload=payload,
-        ):
-            raise RuntimeError("Chat job lease was lost while writing the MCP journal")
-
-    def database_now(self) -> datetime:
-        with self.session_factory() as db:
-            value = db.scalar(text("SELECT clock_timestamp()"))
-        if not isinstance(value, datetime):
-            raise RuntimeError("database clock did not return a timestamp")
-        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
-
-    async def authorize_request(
-        self,
-        *,
-        claims: AgentToolGrantClaims,
-        on_policy_violation: Callable[[UUID], Awaitable[None]],
-    ) -> bool:
-        """Revalidate live owner authority before any MCP request body is read."""
-
-        try:
-            with self.session_factory() as db:
-                with db.begin():
-                    self._authorize_in_current_transaction(db, claims)
-        except _CancellationRequested:
-            await self._notify_once(self.generation_id, on_policy_violation)
-            return False
-        except _PolicyViolation as exc:
-            await self._notify_once(exc.generation_id, on_policy_violation)
-            return False
-        return True
-
-    def _authorize_in_current_transaction(
-        self,
-        db: Session,
-        claims: AgentToolGrantClaims,
-    ) -> tuple[GenerationRecord, ChatRun, Any]:
-        """Lock and validate generation, run, then job in the canonical order."""
-
-        generation = lock_active_generation_for_authority_in_current_transaction(
-            db,
-            owner=LlmCallOwner(kind="chat_run", id=self.run_id),
-            generation_id=self.generation_id,
-        )
-        if generation is None:
-            raise _PolicyViolation(self.generation_id)
-        run = lock_chat_run_for_update(db, self.run_id)
-        if run is None:
-            raise _PolicyViolation(self.generation_id)
-        context = JobExecutionContext(
-            job_id=self.job_id,
-            worker_id=self.worker_id,
-            attempt_no=self.attempt_no,
-            resource_class=self.resource_class,
-        )
-        if not lock_running_job_claim(db, context=context):
-            raise _PolicyViolation(self.generation_id)
-        job = get_job(db, self.job_id)
-        if job is None or job.status != "running":
-            raise _PolicyViolation(self.generation_id)
-        if run.cancel_requested_at is not None:
-            raise _CancellationRequested("Chat run cancellation was requested")
-        if (
-            run.status != "running"
-            or not _job_correlates_to_chat_run(
-                kind=job.kind,
-                payload=job.payload,
-                run_id=run.id,
-            )
-            or job.claimed_by != self.worker_id
-            or job.attempts != self.attempt_no
-        ):
-            raise _PolicyViolation(self.generation_id)
-        valid = (
-            claims.sub == str(run.owner_user_id)
-            and claims.run_id == str(run.id)
-            and claims.job_id == str(job.id)
-            and claims.worker_id == self.worker_id
-            and claims.attempt_no == self.attempt_no
-            and claims.generation_id == str(self.generation_id)
-            and claims.admission_id == str(self.admission_id)
-            and claims.jti == self.grant_jti
-            and _grant_matches_generation(claims, generation)
-        )
-        if not valid:
-            raise _PolicyViolation(self.generation_id)
-        return generation, run, job
-
-    def _admit(
-        self,
-        db: Session,
-        claims: AgentToolGrantClaims,
-        arguments: Mapping[str, Any],
-        digest: str | None,
-        request_id: JsonRpcId,
-        canonical_tool_id: str | None,
-        provider_wire_name: str | None,
-    ) -> tuple[ChatRun, Any, int, dict[str, dict[str, Any]], str, int, int, str]:
-        generation, run, job = self._authorize_in_current_transaction(db, claims)
-        payload, journal = self._load_journal(db)
-        journal_key = f"{claims.jti}:{request_id.key()}"
-        provider_call_id = f"mcp:{request_id.kind}:{request_id.value}"
-        citation_ordinal, next_tool_index = self._journal_tail(
-            payload=payload,
-            journal=journal,
-            replay_key=journal_key,
-        )
-        previous = journal.get(journal_key)
-        if previous is not None:
-            expected = {
-                "digest": digest,
-                "generation_seq": generation.generation_seq,
-                "request_id": {"kind": request_id.kind, "value": request_id.value},
-                "provider_call_id": provider_call_id,
-                "provider_wire_name": provider_wire_name,
-                "canonical_tool_id": canonical_tool_id,
-            }
-            if any(previous.get(field) != value for field, value in expected.items()):
-                raise RuntimeError("MCP replay identity was reused with a different input digest")
-            return (
-                run,
-                job,
-                generation.generation_seq,
-                journal,
-                journal_key,
-                int(previous["tool_index"]),
-                int(previous["citation_ordinal"]),
-                provider_call_id,
-            )
-        if canonical_tool_id is not None:
-            from nexus.services.tool_runtime.resource_scope import (
-                tool_arguments_within_admitted_scope,
-            )
-
-            if not tool_arguments_within_admitted_scope(
-                db,
-                tool_id=canonical_tool_id,
-                arguments=arguments,
-                admitted_resource_uris=self.admitted_resource_uris,
-            ):
-                raise _PolicyViolation(self.generation_id)
-        if digest is None:
-            return (
-                run,
-                job,
-                generation.generation_seq,
-                journal,
-                journal_key,
-                0,
-                citation_ordinal,
-                provider_call_id,
-            )
-        if provider_wire_name is None:
-            raise RuntimeError("MCP tool admission omitted its provider wire name")
-        tool_index = next_tool_index
-        entry = {
-            "digest": digest,
-            "generation_seq": generation.generation_seq,
-            "tool_index": tool_index,
-            "citation_ordinal": citation_ordinal,
-            "request_id": {"kind": request_id.kind, "value": request_id.value},
-            "provider_call_id": provider_call_id,
-            "provider_wire_name": provider_wire_name,
-            "canonical_tool_id": canonical_tool_id,
-        }
-        journal[journal_key] = entry
-        self._stage_tool_admission_events(
-            db,
-            run=run,
-            canonical_tool_id=canonical_tool_id,
-            provider_wire_name=provider_wire_name,
-            arguments=arguments,
-            digest=digest,
-            provider_call_id=provider_call_id,
-            tool_index=tool_index,
-        )
-        if canonical_tool_id is not None:
-            from nexus.services.tool_runtime.execution import (
-                stage_chat_tool_pre_dispatch_admission,
-            )
-
-            payload = stage_chat_tool_pre_dispatch_admission(
-                db=db,
-                operation=self.operation,
-                run=run,
-                payload=payload,
-                durable_step_path=request_id.position(generation.generation_seq, tool_index),
-                tool_call_index=tool_index,
-                tool_id=ToolId(canonical_tool_id),
-                input_digest=digest,
-                arguments=arguments,
-                provider_wire_name=provider_wire_name,
-            )
-        self._persist_journal(db, payload, journal)
-        return (
-            run,
-            job,
-            generation.generation_seq,
-            journal,
-            journal_key,
-            tool_index,
-            citation_ordinal,
-            provider_call_id,
-        )
-
-    def _journal_tail(
-        self,
-        *,
-        payload: dict[str, Any],
-        journal: dict[str, dict[str, Any]],
-        replay_key: str,
-    ) -> tuple[int, int]:
-        from nexus.services.chat_run_steps import (
-            ToolJournalResultEnvelope,
-            decode_prepared,
-        )
-        from nexus.services.durable_step_journal import decode_step_states
-
-        prepare_state = decode_step_states(payload).get("prepare")
-        if prepare_state is None:
-            raise RuntimeError("MCP admission requires a completed Chat prepare step")
-        prepared = decode_prepared(prepare_state)
-        cursor = prepared.initial_citation_ordinal
-        expected_index = prepared.initial_tool_call_index + 1
-        ordered: list[tuple[str, dict[str, Any]]] = []
-        for key, entry in journal.items():
-            if (
-                not isinstance(entry, dict)
-                or type(entry.get("generation_seq")) is not int
-                or int(entry["generation_seq"]) < 1
-                or type(entry.get("tool_index")) is not int
-            ):
-                raise RuntimeError("agent-tool journal has an invalid entry shape")
-            ordered.append((key, entry))
-        ordered.sort(key=lambda item: int(item[1]["tool_index"]))
-        for key, entry in ordered:
-            if int(entry["tool_index"]) != expected_index:
-                raise RuntimeError("agent-tool journal indices are not contiguous")
-            if entry.get("citation_ordinal") != cursor:
-                raise RuntimeError("agent-tool journal citation cursor is not contiguous")
-            result_json = entry.get("result")
-            if result_json is None:
-                if key != replay_key or key != ordered[-1][0]:
-                    raise RuntimeError("a prior MCP call lacks its durable receipt")
-                return cursor, expected_index + 1
-            receipt = ToolJournalResultEnvelope.model_validate(result_json).root
-            if (
-                receipt.tool_call_index != expected_index
-                or receipt.next_citation_ordinal < cursor
-                or entry.get("next_citation_ordinal") != receipt.next_citation_ordinal
-            ):
-                raise RuntimeError("agent-tool journal receipt disagrees with its position")
-            cursor = receipt.next_citation_ordinal
-            expected_index += 1
-        return cursor, expected_index
-
-    def _stage_tool_admission_events(
-        self,
-        db: Session,
-        *,
-        run: ChatRun,
-        canonical_tool_id: str | None,
-        provider_wire_name: str,
-        arguments: Mapping[str, Any],
-        digest: str,
-        provider_call_id: str,
-        tool_index: int,
-    ) -> None:
-        from nexus.schemas.conversation import StoredToolProjection
-        from nexus.services.chat_run_event_store import append_run_event
-        from nexus.services.chat_run_tools import RecordKind
-        from nexus.services.tool_runtime.declarations import CHAT_TOOL_DECLARATIONS
-
-        if canonical_tool_id is None:
-            projection = StoredToolProjection(
-                record_kind=RecordKind.rejected_provider_call.value,
-                canonical_tool_id=None,
-                provider_wire_name=provider_wire_name,
-                effect=None,
-                result_kind="rejected_provider_call",
-                activity_label="Skipped an unavailable tool",
-                error_type=None,
-                canonical_input_sha256=None,
-                tool_contract_revision=None,
-                binding_policy_revision=None,
-            )
-        else:
-            binding = self.operation.plan.catalog_view.binding(ToolId(canonical_tool_id))
-            presented = next(
-                (
-                    entry
-                    for entry in CHAT_TOOL_DECLARATIONS
-                    if str(entry.spec.id) == canonical_tool_id
-                ),
-                None,
-            )
-            if presented is None:
-                raise RuntimeError("MCP call has no canonical presentation declaration")
-            projection = StoredToolProjection(
-                record_kind=RecordKind.current_execution.value,
-                canonical_tool_id=canonical_tool_id,
-                provider_wire_name=provider_wire_name,
-                effect=binding.spec.effect,
-                result_kind=presented.result_kind,
-                activity_label=presented.activity_label,
-                error_type=None,
-                canonical_input_sha256=digest,
-                tool_contract_revision=binding.spec.tool_contract_revision,
-                binding_policy_revision=binding.policy_revision,
-            )
-        common = {
-            **projection.model_dump(mode="json"),
-            "tool_call_id": None,
-            "assistant_message_id": str(run.assistant_message_id),
-            "tool_call_index": tool_index,
-            "provider_tool_call_id": provider_call_id,
-            # MCP requests arrive whole. The admission ordinal is the durable
-            # provider sequence for this transport; host tool frames are only
-            # activity telemetry and never authority or correlation identity.
-            "provider_event_seq_start": tool_index,
-            "provider_event_seq_end": tool_index,
-        }
-        append_run_event(db, run, "tool_call_start", common)
-        append_run_event(
-            db,
-            run,
-            "tool_call_done",
-            {**common, "input": dict(arguments)},
-        )
-
-    def _make_context(
-        self,
-        db: Session,
-        *,
-        run: ChatRun,
-        job: Any,
-        position: str,
-        tool_index: int,
-        tool_id: ToolId,
-        effect_id: EffectId | None,
-        arguments: Mapping[str, Any],
-    ) -> Any:
-        from nexus.services.tool_runtime.execution import make_chat_execution_context
-
-        return make_chat_execution_context(
-            db=db,
-            operation=self.operation,
-            run=run,
-            claimed_job=job,
-            job_context=JobExecutionContext(
-                job_id=self.job_id,
-                worker_id=self.worker_id,
-                attempt_no=self.attempt_no,
-                resource_class=self.resource_class,
-            ),
-            durable_step_path=position,
-            tool_call_index=tool_index,
-            admitted_resource_uris=tuple(sorted(self.admitted_resource_uris)),
-            tool_id=tool_id,
-            effect_id=effect_id,
-            provider_wire_name=str(tool_id),
-            provider_arguments=dict(arguments),
-        )
-
-    def _receipt(
-        self,
-        db: Session,
-        *,
-        claims: AgentToolGrantClaims,
-        digest: str,
-        journal_key: str,
-        receipt: ToolStepResult,
-    ) -> None:
-        # Receipt landing is still live bearer authority. A completed inner
-        # tool position can be projected later by the explicit Chat repair
-        # path, but this request may not write after generation or job-fence
-        # ownership has ended.
-        generation = lock_active_generation_for_authority_in_current_transaction(
-            db,
-            owner=LlmCallOwner(kind="chat_run", id=self.run_id),
-            generation_id=self.generation_id,
-        )
-        if generation is None:
-            raise _PolicyViolation(self.generation_id)
-        run = lock_chat_run_for_update(db, self.run_id)
-        if (
-            run is None
-            or run.status != "running"
-            or claims.sub != str(run.owner_user_id)
-            or claims.run_id != str(run.id)
-            or claims.job_id != str(self.job_id)
-            or claims.worker_id != self.worker_id
-            or claims.attempt_no != self.attempt_no
-            or claims.generation_id != str(self.generation_id)
-            or claims.admission_id != str(self.admission_id)
-            or claims.jti != self.grant_jti
-            or not _grant_matches_generation(claims, generation)
-        ):
-            raise _PolicyViolation(self.generation_id)
-        job_row = (
-            db.execute(
-                text(
-                    """
-                    SELECT kind, payload, status, claimed_by, attempts
-                    FROM background_jobs
-                    WHERE id = :job_id
-                      AND status = 'running'
-                      AND claimed_by = :worker_id
-                      AND attempts = :attempt_no
-                      AND lease_expires_at > clock_timestamp()
-                    FOR UPDATE
-                    """
-                ),
-                {
-                    "job_id": self.job_id,
-                    "worker_id": self.worker_id,
-                    "attempt_no": self.attempt_no,
-                },
-            )
-            .mappings()
-            .one_or_none()
-        )
-        if (
-            job_row is None
-            or not _job_correlates_to_chat_run(
-                kind=job_row["kind"],
-                payload=job_row["payload"],
-                run_id=self.run_id,
-            )
-            or job_row["attempts"] != self.attempt_no
-            or job_row["status"] != "running"
-            or job_row["claimed_by"] != self.worker_id
-        ):
-            raise _PolicyViolation(self.generation_id)
-        payload = job_row["payload"]
-        if not isinstance(payload, dict):
-            raise _PolicyViolation(self.generation_id)
-        journal = payload.get("_agent_tool_calls", {})
-        if not isinstance(journal, dict):
-            raise RuntimeError("agent-tool journal has an invalid shape")
-        entry = journal.get(journal_key)
-        if (
-            not isinstance(entry, dict)
-            or not journal_key.startswith(f"{claims.jti}:")
-            or entry.get("digest") != digest
-            or entry.get("canonical_tool_id") != receipt.canonical_tool_id
-            or entry.get("provider_call_id") != receipt.model_output.call_id
-            or entry.get("tool_index") != receipt.tool_call_index
-            or entry.get("citation_ordinal", 0) > receipt.next_citation_ordinal
-        ):
-            raise RuntimeError("MCP receipt does not match its admitted journal identity")
-        receipt_json = receipt.model_dump(mode="json")
-        previous = entry.get("result")
-        if previous is not None and previous != receipt_json:
-            raise RuntimeError("MCP replay produced a different durable receipt")
-        entry["result"] = receipt_json
-        entry["next_citation_ordinal"] = receipt.next_citation_ordinal
-        payload["_agent_tool_calls"] = journal
-        if not update_running_job_payload(
-            db,
-            job_id=self.job_id,
-            worker_id=self.worker_id,
-            attempt_no=self.attempt_no,
-            payload=payload,
-        ):
-            raise _PolicyViolation(self.generation_id)
-
-    async def reject_unknown(
-        self,
-        *,
-        provider_wire_name: str,
-        arguments: dict[str, Any],
-        request_id: JsonRpcId,
-        claims: AgentToolGrantClaims,
-        on_policy_violation: Callable[[UUID], Awaitable[None]],
-    ) -> Any:
-        from nexus.schemas.conversation import ChatRunToolResultEventPayload
-        from nexus.services.chat_run_event_store import ChatRunEventEmitter
-        from nexus.services.chat_run_steps import RejectedToolStepResult
-        from nexus.services.chat_run_tools import (
-            RecordKind,
-            ToolModelOutput,
-            bind_provider_tool_call_events,
-            persist_rejected_provider_tool_call,
-        )
-
-        digest = raw_input_digest(ParsedJson(arguments))
-        started = False
-        try:
-            self._call_started()
-            started = True
-            async with self._lock:
-                with self.session_factory() as db:
-                    with db.begin():
-                        (
-                            run,
-                            _,
-                            _,
-                            journal,
-                            journal_key,
-                            tool_index,
-                            citation_ordinal,
-                            provider_call_id,
-                        ) = self._admit(
-                            db,
-                            claims,
-                            arguments,
-                            digest,
-                            request_id,
-                            None,
-                            provider_wire_name,
-                        )
-                        previous = journal[journal_key].get("result")
-                        if previous is not None:
-                            return RejectedToolStepResult.model_validate(previous)
-                        tool_call_id = persist_rejected_provider_tool_call(
-                            db,
-                            run=run,
-                            tool_call_index=tool_index,
-                            provider_wire_name=provider_wire_name,
-                        )
-                        bind_provider_tool_call_events(
-                            db,
-                            run=run,
-                            tool_call_index=tool_index,
-                            tool_call_id=tool_call_id,
-                        )
-                        event = ChatRunToolResultEventPayload(
-                            record_kind=RecordKind.rejected_provider_call.value,
-                            canonical_tool_id=None,
-                            provider_wire_name=provider_wire_name,
-                            effect=None,
-                            result_kind="rejected_provider_call",
-                            activity_label="Skipped an unavailable tool",
-                            error_type=None,
-                            canonical_input_sha256=None,
-                            tool_contract_revision=None,
-                            binding_policy_revision=None,
-                            tool_call_id=tool_call_id,
-                            assistant_message_id=run.assistant_message_id,
-                            tool_call_index=tool_index,
-                            status="error",
-                            scope="provider_tool",
-                            types=[],
-                            filters={},
-                            error_code="unknown_tool",
-                        )
-                        failure: ToolResult = {
-                            "type": "Failure",
-                            "error": {"type": "UnknownTool"},
-                        }
-                        receipt = RejectedToolStepResult(
-                            tool_call_id=tool_call_id,
-                            provider_wire_name=provider_wire_name,
-                            tool_call_index=tool_index,
-                            model_output=ToolModelOutput(
-                                call_id=provider_call_id,
-                                output=canonical_json_bytes(failure).decode("utf-8"),
-                                is_error=True,
-                            ),
-                            next_citation_ordinal=citation_ordinal,
-                            result_event=event,
-                        )
-                        ChatRunEventEmitter(db, run).tool_result(event)
-                        journal[journal_key]["result"] = receipt.model_dump(mode="json")
-                        journal[journal_key]["next_citation_ordinal"] = citation_ordinal
-                        payload, _ = self._load_journal(db)
-                        self._persist_journal(db, payload, journal)
-                        return receipt
-        except _CancellationRequested as exc:
-            await self._notify_once(self.generation_id, on_policy_violation)
-            raise MCPError(code=INVALID_REQUEST, message=str(exc)) from exc
-        except _PolicyViolation as exc:
-            await self._notify_once(exc.generation_id, on_policy_violation)
-            raise MCPError(code=INVALID_REQUEST, message=str(exc)) from exc
-        finally:
-            if started:
-                self._call_finished()
-
     async def _notify_once(
-        self, generation_id: UUID, callback: Callable[[UUID], Awaitable[None]]
+        self,
+        callback: Callable[[UUID], Awaitable[None]],
     ) -> None:
         with self._activity_lock:
-            if generation_id in self._notified_policy_violations:
+            if self.generation_id in self._notified_policy_violations:
                 return
-            self._notified_policy_violations.add(generation_id)
+            self._notified_policy_violations.add(self.generation_id)
         try:
-            await callback(generation_id)
+            await callback(self.generation_id)
         except BaseException:
             with self._activity_lock:
-                self._notified_policy_violations.discard(generation_id)
+                self._notified_policy_violations.discard(self.generation_id)
             raise
 
 
-def _grant_matches_generation(
-    claims: AgentToolGrantClaims,
-    generation: GenerationRecord,
-) -> bool:
-    from nexus.services.generation_policy import POLICY_REVISION, TOOL_PLAN_REVISION
+@dataclass(slots=True)
+class CodexGenerationToolBinding:
+    """Post-admission owner for one Codex bearer and MCP authority mount.
 
-    return (
-        generation.operation == "chat"
-        and generation.plan_revision == POLICY_REVISION
-        and generation.capability_kind == "ChatTools"
-        and generation.tool_plan_fingerprint == current_tool_plan_fingerprint()
-        and claims.tool_plan_revision == TOOL_PLAN_REVISION
-        and claims.request_fingerprint == generation.request_fingerprint
+    Construction is grant-free and safe before host admission. ``bind_admission``
+    is the sole transition that reads the live database lease, mints a bounded
+    bearer, and makes the authority routable by the process-local MCP listener.
+    """
+
+    session_factory: sessionmaker[Session] = field(repr=False)
+    user_id: UUID
+    owner: LlmCallOwner
+    generation_id: UUID
+    job_context: JobExecutionContext
+    operation: FrozenToolOperation = field(repr=False)
+    spec: GenerationSpec = field(repr=False)
+    intent: GenerationIntent = field(repr=False)
+    signing_key: SecretStr = field(repr=False)
+    projection: ToolExecutionProjection | None = field(default=None, repr=False)
+    registry: ActiveAgentToolRegistry | None = field(default=None, repr=False)
+    _bind_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
+    _admission: GenerationAdmission | None = field(default=None, init=False, repr=False)
+    _command: GenerationCommand | None = field(default=None, init=False, repr=False)
+    _authority: AgentToolAuthority | None = field(default=None, init=False, repr=False)
+    _closed: bool = field(default=False, init=False, repr=False)
+
+    async def bind_admission(self, admission: GenerationAdmission) -> GenerationCommand:
+        """Bind the exact accepted host slot once; exact repeats replay in memory."""
+
+        from nexus.jobs.queue import get_job, lock_running_job_claim
+        from nexus.services.agent_tool_grants import issue_generation_tool_grant
+        from nexus.services.codex_generation_contract import (
+            GenerationCommandDraft,
+            generation_command_from_draft,
+        )
+        from nexus.services.generation_intent import BearerToolGrant
+        from nexus.services.tool_authority import compose_generation_tool_executor
+
+        async with self._bind_lock:
+            if self._closed:
+                raise RuntimeError("Codex generation tool binding is closed")
+            if self._admission is not None:
+                if admission != self._admission or self._command is None:
+                    raise RuntimeError("Codex generation tool binding received a second admission")
+                return self._command
+            if admission.request_id != self.generation_id:
+                raise ValueError("Codex admission names a different generation")
+            if admission.runtime_deadline_seconds != self.spec.bounds.turn_timeout_seconds:
+                raise ValueError("Codex admission runtime deadline differs from frozen bounds")
+
+            executor = compose_generation_tool_executor(
+                session_factory=self.session_factory,
+                user_id=self.user_id,
+                owner=self.owner,
+                generation_id=self.generation_id,
+                job_context=self.job_context,
+                operation=self.operation,
+                projection=self.projection,
+            )
+            if executor.authority.spec != self.spec:
+                raise ToolAuthorityRefused(
+                    "Codex tool binding spec differs from the durable generation"
+                )
+            with self.session_factory() as db, db.begin():
+                if not lock_running_job_claim(db, context=self.job_context):
+                    raise ToolAuthorityRefused(
+                        "generation tool grant lost its claimed worker lease"
+                    )
+                job = get_job(db, self.job_context.job_id)
+                database_now = db.execute(text("SELECT clock_timestamp()")).scalar_one()
+                if job is None or job.lease_expires_at is None:
+                    raise ToolAuthorityRefused("generation tool grant has no live lease")
+                if not isinstance(database_now, datetime):
+                    raise AssertionError("database clock did not return a timestamp")
+                lease_expires_at = job.lease_expires_at
+
+            admitted_at = datetime.fromisoformat(admission.admitted_at.removesuffix("Z") + "+00:00")
+            issued = issue_generation_tool_grant(
+                executor.authority.grant_authority(),
+                signing_key=self.signing_key,
+                now=_aware_utc(database_now),
+                lease_expires_at=_aware_utc(lease_expires_at),
+                transport_deadline_at=admitted_at
+                + timedelta(seconds=admission.runtime_deadline_seconds),
+            )
+            registry = self.registry or active_agent_tool_registry()
+            if registry is None:
+                raise RuntimeError("active agent-tool registry is not installed")
+            authority = AgentToolAuthority.from_generation_tool_executor(
+                executor=executor,
+                registry=registry,
+                grant_jti=issued.jti,
+            )
+            try:
+                command = generation_command_from_draft(
+                    GenerationCommandDraft(
+                        request_id=self.generation_id,
+                        spec=self.spec,
+                        intent=self.intent,
+                    ),
+                    tool_grant=BearerToolGrant(token=issued.token),
+                )
+            except BaseException:
+                authority.close()
+                raise
+            self._admission = admission
+            self._command = command
+            self._authority = authority
+            return command
+
+    async def wait_until_idle(self) -> None:
+        """Fence terminal folding behind every MCP request already accepted."""
+
+        authority = self._authority
+        if authority is None:
+            raise RuntimeError("accepted Codex generation has no bound tool authority")
+        await authority.wait_until_idle()
+
+    async def drain_and_close(self) -> None:
+        """Idempotently revoke new calls, drain accepted calls, and unmount."""
+
+        async with self._bind_lock:
+            if self._closed:
+                return
+            self._closed = True
+            authority = self._authority
+        if authority is None:
+            return
+        try:
+            await authority.wait_until_idle()
+        finally:
+            authority.close()
+
+
+def compose_codex_generation_tool_binding(
+    *,
+    session_factory: sessionmaker[Session],
+    user_id: UUID,
+    owner: LlmCallOwner,
+    generation_id: UUID,
+    job_context: JobExecutionContext,
+    operation: FrozenToolOperation,
+    spec: GenerationSpec,
+    intent: GenerationIntent,
+    settings: Settings,
+    projection: ToolExecutionProjection | None = None,
+    registry: ActiveAgentToolRegistry | None = None,
+) -> CodexGenerationToolBinding:
+    """Compose the one grant lifecycle shared by Chat and background Codex."""
+
+    return CodexGenerationToolBinding(
+        session_factory=session_factory,
+        user_id=user_id,
+        owner=owner,
+        generation_id=generation_id,
+        job_context=job_context,
+        operation=operation,
+        spec=spec,
+        intent=intent,
+        signing_key=settings.effective_agent_tool_grant_signing_key,
+        projection=projection,
+        registry=registry,
     )
+
+
+def _aware_utc(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 def create_active_agent_tools_mcp_app(
@@ -1241,12 +724,17 @@ def _active_listener_lifespan(
             trust_env=False,
         ) as client:
             provider = compose_configured_web_search_provider(client, settings=settings)
-            operation = compose_product_tool_runtime(provider).operations["chat"]
-            registry.bind_operation(operation)
+            runtime = compose_product_tool_runtime(provider)
+            operations = tuple(
+                operation
+                for operation in runtime.operations.values()
+                if isinstance(operation.plan.exposure, Native)
+            )
+            registry.bind_operations(operations)
             try:
                 yield None
             finally:
-                registry.unbind_operation(operation)
+                registry.unbind_operations(operations)
 
     return lifespan
 
@@ -1260,9 +748,10 @@ def _create_mcp_app_for_authority(
     lifespan: Callable[[Any], AbstractAsyncContextManager[Any]] | None = None,
     mcp_origin: str,
 ) -> Any:
-    from nexus.services.tool_runtime.declarations import CHAT_TOOL_DECLARATIONS
-
-    tools = [_sdk_tool(authority, entry, on_policy_violation) for entry in CHAT_TOOL_DECLARATIONS]
+    tools = [
+        _sdk_tool(authority, wire_name, entry, on_policy_violation)
+        for wire_name, entry in _model_tool_wire_declarations()
+    ]
     server = _AgentToolsMCPServer(
         authority=authority,
         on_policy_violation=on_policy_violation,
@@ -1401,6 +890,7 @@ def _trusted_mcp_source(request: Request) -> str | None:
 
 def _sdk_tool(
     authority: Any,
+    wire_name: str,
     entry: PresentedToolDeclaration,
     on_policy_violation: Callable[[UUID], Awaitable[None]],
 ) -> Tool:
@@ -1410,6 +900,7 @@ def _sdk_tool(
         request_id = JsonRpcId.from_raw(ctx.request_context.request_id)
         receipt = await authority.invoke(
             tool_id=str(entry.spec.id),
+            provider_wire_name=wire_name,
             arguments=kwargs,
             request_id=request_id,
             claims=claims,
@@ -1437,7 +928,7 @@ def _sdk_tool(
     }
     tool = Tool.from_function(
         dispatch,
-        name=str(entry.spec.id),
+        name=wire_name,
         description=entry.spec.summary,
         structured_output=False,
     )
@@ -1446,6 +937,25 @@ def _sdk_tool(
     # with titles/descriptions; crossing the boundary must choose explicitly.
     tool.parameters = entry.spec.input_schema.presentation
     return tool
+
+
+def _model_tool_wire_declarations() -> tuple[tuple[str, PresentedToolDeclaration], ...]:
+    """Project the union server table only from exact operation-owned plans."""
+
+    runtime = compose_product_tool_runtime(None)
+    declarations_by_alias: dict[str, PresentedToolDeclaration] = {}
+    for operation in runtime.operations.values():
+        if not isinstance(operation.plan.exposure, Native):
+            continue
+        publication = project_provider_model_tools(operation)
+        if publication is None:
+            raise AssertionError("native model-tool plan lowered to no publication")
+        presented = operation_presented_declarations(operation)
+        for tool, entry in zip(publication.tools, presented, strict=True):
+            existing = declarations_by_alias.setdefault(tool.name, entry)
+            if existing.spec is not entry.spec:
+                raise ValueError(f"model-tool wire alias collision: {tool.name}")
+    return tuple(declarations_by_alias.items())
 
 
 class _GrantGate(BaseHTTPMiddleware):
@@ -1568,9 +1078,3 @@ def _wire_tool_result(receipt: Any) -> CallToolResult:
         content=[TextContent(type="text", text=output.output)],
         is_error=output.is_error,
     )
-
-
-def _stable_generation_id(run_id: UUID, position: str) -> UUID:
-    from nexus.services.durable_step_journal import stable_generation_id
-
-    return stable_generation_id(run_id, position)

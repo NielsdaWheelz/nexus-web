@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, cast
 from uuid import UUID
 
@@ -34,14 +34,15 @@ from nexus.schemas.conversation import (
     chat_publication_warning_from_nullable,
     tool_projection_from_persisted_record,
 )
+from nexus.schemas.llm import RunSelectionOut, Selectable
 from nexus.schemas.presence import presence_from_nullable
 from nexus.services.chat_failure import (
-    active_profile_run_ids,
     chat_failure_projection,
-    compute_has_write_tool_attempt,
 )
 from nexus.services.chat_run_execution import project_chat_run_executions
+from nexus.services.chat_run_selection import run_selections_out
 from nexus.services.chat_run_tools import decode_persisted_tool_record
+from nexus.services.generation_catalog import GenerationCatalogSnapshot
 from nexus.services.resource_graph.citations import build_citation_outs_for_sources
 from nexus.services.resource_graph.refs import ResourceRef
 
@@ -51,11 +52,15 @@ def build_assistant_trust_trail(
     *,
     viewer_id: UUID,
     assistant_message_id: UUID,
+    catalog_snapshot: GenerationCatalogSnapshot | None = None,
+    run_selections: Mapping[UUID, RunSelectionOut] | None = None,
 ) -> AssistantTrustTrailOut:
     trail = build_assistant_trust_trails(
         db,
         viewer_id=viewer_id,
         assistant_message_ids=[assistant_message_id],
+        catalog_snapshot=catalog_snapshot,
+        run_selections=run_selections,
     ).get(assistant_message_id)
     if trail is None:
         raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
@@ -67,7 +72,13 @@ def build_assistant_trust_trails(
     *,
     viewer_id: UUID,
     assistant_message_ids: Sequence[UUID],
+    catalog_snapshot: GenerationCatalogSnapshot | None = None,
+    run_selections: Mapping[UUID, RunSelectionOut] | None = None,
 ) -> dict[UUID, AssistantTrustTrailOut]:
+    if (catalog_snapshot is None) == (run_selections is None):
+        raise ValueError(
+            "assistant trust projection requires exactly one catalog observation source"
+        )
     if not assistant_message_ids:
         return {}
 
@@ -113,8 +124,17 @@ def build_assistant_trust_trails(
     for run in run_rows:
         runs_by_message.setdefault(run.assistant_message_id, run)
 
-    run_ids = [run.id for run in runs_by_message.values()]
-    active_run_ids = active_profile_run_ids(db, list(runs_by_message.values()))
+    runs = list(runs_by_message.values())
+    run_ids = [run.id for run in runs]
+    if catalog_snapshot is not None:
+        run_selections = run_selections_out(runs, catalog_snapshot=catalog_snapshot)
+    assert run_selections is not None
+    missing_run_selections = set(run.id for run in runs_by_message.values()) - set(run_selections)
+    if missing_run_selections:
+        raise AssertionError(
+            "assistant trust projection lacks current selection observations for "
+            f"{sorted(str(run_id) for run_id in missing_run_selections)}"
+        )
     execution_by_run = project_chat_run_executions(
         db,
         list(runs_by_message.values()),
@@ -150,6 +170,14 @@ def build_assistant_trust_trails(
         )
     )
     tool_ids = [tool.id for tool in tool_calls]
+    from nexus.services.assistant_write_authorship import (
+        machine_authorships_for_tool_calls,
+    )
+
+    machine_authorships = machine_authorships_for_tool_calls(
+        db,
+        tool_calls=tool_calls,
+    )
 
     retrievals_by_tool: dict[UUID, list[MessageRetrieval]] = {}
     retrieval_by_edge_id: dict[UUID, MessageRetrieval] = {}
@@ -304,6 +332,7 @@ def build_assistant_trust_trails(
                 provider_request_ids=tool.provider_request_ids,
                 result_refs=tool.result_refs,
                 selected_context_refs=tool.selected_context_refs,
+                machine_authorships=machine_authorships.get(tool.id, []),
                 reverted_at=tool.reverted_at,
                 retrievals=retrievals,
                 created_at=tool.created_at,
@@ -416,9 +445,7 @@ def build_assistant_trust_trails(
             run=(
                 TrustRunOut(
                     run_id=run.id,
-                    profile_id=run.profile_id,
-                    model_name=run.model_name,
-                    reasoning_effort=presence_from_nullable(run.reasoning_effort),
+                    run_selection=run_selections[run.id],
                     status=cast(Any, "pending" if run.status == "queued" else run.status),
                     usage=cast(dict[str, Any] | None, done_payload.get("usage")),
                     error_code=run.error_code,
@@ -428,8 +455,10 @@ def build_assistant_trust_trails(
                     ),
                     failure=chat_failure_projection(
                         run,
-                        profile_active=run.id in active_run_ids,
-                        has_write_tool_attempt=compute_has_write_tool_attempt(db, run),
+                        selection_selectable=isinstance(
+                            run_selections[run.id].current_state,
+                            Selectable,
+                        ),
                     ),
                     execution=execution_by_run[run.id],
                     final_chars=cast(int | None, done_payload.get("final_chars")),

@@ -32,29 +32,29 @@ from nexus.jobs.queue import (
     requeue_dead_job,
 )
 from nexus.logging import get_logger
-from nexus.schemas.presence import Present, absent, present
+from nexus.schemas.presence import Present
 from nexus.services import durable_step_journal as step_journal
 from nexus.services import generation_policy
 from nexus.services.artifacts.dossier_types import SubjectResource
 from nexus.services.artifacts.engine import read_head
 from nexus.services.codex_generation_contract import (
-    GenerationCommand,
     GenerationTerminal,
     NormalizedFailureCode,
-    request_fingerprint,
 )
 from nexus.services.generation_intent import GenerationIntent, TextOutput
+from nexus.services.generation_spec import ImmutablePromptPayloadRef, generation_fact_digest
 from nexus.services.llm_execution import (
     AcceptedGenerationFailure,
     CompletedGeneration,
     EncodedGenerationTerminal,
     ExecutionRuntime,
     GenerationDispatchAborted,
-    GenerationExecutionRequest,
     GenerationUncertain,
     GenerationUncertainResolution,
     JobGenerationJournal,
+    admit_job_generation,
     cancel_prepared_generation_without_dispatch_in_current_transaction,
+    codex_terminal_evidence,
     execute_generation,
     prove_uncertain_generation_not_dispatched_in_current_transaction,
 )
@@ -379,22 +379,11 @@ def _dawn_write_step_path(*, user_id: UUID, local_date: date) -> str:
     return f"generation/{user_id}/{local_date.isoformat()}"
 
 
-def _dawn_write_command(*, generation_id: UUID, user_content: str) -> GenerationCommand:
-    return GenerationCommand.model_validate(
-        {
-            "request_id": generation_id,
-            "operation": {
-                "kind": DAWN_WRITE_OPERATION,
-                "revision": generation_policy.operation_revision(DAWN_WRITE_OPERATION),
-            },
-            "policy_revision": generation_policy.POLICY_REVISION,
-            "policy_fingerprint": generation_policy.POLICY_FINGERPRINT,
-            "intent": GenerationIntent(
-                instructions=_SYSTEM_PROMPT,
-                input=user_content,
-                output=TextOutput(),
-            ),
-        }
+def _dawn_write_intent(*, user_content: str) -> GenerationIntent:
+    return GenerationIntent(
+        instructions=_SYSTEM_PROMPT,
+        input=user_content,
+        output=TextOutput(),
     )
 
 
@@ -566,9 +555,6 @@ async def generate_dawn_write(
         raise AssertionError(f"dawn write job {context.job_id} disappeared")
     if job.kind != "dawn_write_job":
         raise AssertionError("dawn write generation has the wrong job kind")
-    capacity_wait_index = job.payload.get("capacity_wait_index")
-    if type(capacity_wait_index) is not int or capacity_wait_index < 0:
-        raise AssertionError("dawn write job has an invalid capacity_wait_index")
     step_path = _dawn_write_step_path(user_id=user_id, local_date=local_date)
     generation_id = step_journal.stable_generation_id(context.job_id, step_path)
     state = step_journal.read_step_states(job).get(step_path)
@@ -622,45 +608,7 @@ async def generate_dawn_write(
         return None
 
     user_content = _render_signals(signals)
-    command = _dawn_write_command(
-        generation_id=generation_id,
-        user_content=user_content,
-    )
-    fingerprint = request_fingerprint(command)
-    if state is None:
-        if not step_journal.checkpoint_step_state(
-            db,
-            ctx=context,
-            job=job,
-            step_path=step_path,
-            state=step_journal.StepReplayState(
-                generation_id=generation_id,
-                dispatch_phase=step_journal.Prepared,
-                request_fingerprint=present(fingerprint),
-                terminal_result=absent(),
-            ),
-        ):
-            db.rollback()
-            return None
-        db.commit()
-        job = get_job(db, context.job_id)
-        if job is None:
-            raise AssertionError(f"dawn write job {context.job_id} disappeared after prepare")
-    elif not isinstance(state.request_fingerprint, Present):
-        raise AssertionError("Prepared dawn write generation has no fingerprint")
-    elif state.request_fingerprint.value != fingerprint:
-        db.rollback()
-        complete_prepared_dawn_write_without_dispatch(
-            db,
-            user_id=user_id,
-            local_date=local_date,
-            context=context,
-            reason="signals_changed",
-        )
-        db.commit()
-        return None
-    # A first dispatch reloads the prepared job; a replay may retain an earlier
-    # read snapshot. Neither may cross the generation host I/O boundary.
+    intent = _dawn_write_intent(user_content=user_content)
     db.commit()
     rate_limiter = get_rate_limiter()
     try:
@@ -695,22 +643,36 @@ async def generate_dawn_write(
             )
             return None if existing is not None else locked_job
 
+        journal = JobGenerationJournal(
+            context=context,
+            step_path=step_path,
+            lock_dispatch=lock_dispatch,
+        )
+
         try:
-            execution_result = await execute_generation(
-                GenerationExecutionRequest(
-                    owner=LlmCallOwner(kind="dawn_write", id=generation_id),
-                    command=command,
-                    journal=JobGenerationJournal(
-                        context=context,
-                        step_path=step_path,
-                        capacity_wait_index=capacity_wait_index,
-                        lock_dispatch=lock_dispatch,
-                    ),
-                    capacity_wait_index=capacity_wait_index,
+            execution_request = await admit_job_generation(
+                owner=LlmCallOwner(kind="dawn_write", id=generation_id),
+                generation_id=generation_id,
+                operation="dawn_write",
+                intent=intent,
+                prompt_template_revision=generation_policy.operation_revision(DAWN_WRITE_OPERATION),
+                prompt_payload_ref=ImmutablePromptPayloadRef(
+                    owner_kind="dawn_write",
+                    owner_id=str(generation_id),
+                    revision=generation_policy.operation_revision(DAWN_WRITE_OPERATION),
+                    payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
                 ),
+                journal=journal,
                 session_factory=get_session_factory(),
                 runtime=runtime,
-                encode_terminal=_encode_dawn_write_terminal,
+            )
+            execution_result = await execute_generation(
+                execution_request,
+                session_factory=get_session_factory(),
+                runtime=runtime,
+                encode_terminal=lambda terminal: _encode_dawn_write_terminal(
+                    codex_terminal_evidence(terminal)
+                ),
                 encode_preaccept_failure=_encode_dawn_write_preaccept_failure,
             )
         except GenerationDispatchAborted:

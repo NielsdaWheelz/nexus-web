@@ -10,6 +10,15 @@ Frontend presentation is owned by
 closed `AssistantDetails`, while consequential writes render through visible
 `AssistantWriteTrail`.
 
+**Generation-backend target amendment (2026-09-01):**
+[`generation-backends-hard-cutover.md`](generation-backends-hard-cutover.md)
+supersedes every generation profile/plan field named below. The current trust
+boundary projects one strict `run_selection` (exact route/model/reasoning,
+dispatch-time disclosure, frozen catalog revisions, tool authority, current
+availability, and rerun eligibility) plus safe terminal/execution facts. The
+trust trail never reconstructs a deleted profile or exposes server-only dispatch
+identity.
+
 **Superseded by default-library-virtualization-and-transient-state-pruning-hard-cutover.md
 (2026-07-17):** `message_retrieval_candidate_ledgers` and
 `message_rerank_ledgers` — named throughout this document (including the
@@ -28,9 +37,9 @@ vs. reload contract — is unchanged.
 ## 0. North star
 
 Every assistant message carries one durable, backend-built trust trail that
-answers: what prompt budget and context assembled this answer, what fixed
-profile/plan executed it, which tools ran, which retrieval rows and ledgers were
-produced,
+answers: what prompt budget and context assembled this answer, what exact
+generation selection and tool authority executed it, which tools ran, which
+retrieval rows and ledgers were produced,
 which retrievals became citation edges, which citation edges graduated into
 conversation context refs, and what terminal status/error/usage closed the run.
 
@@ -308,9 +317,9 @@ apps/web/src/components/chat/AssistantMessage.tsx
 
 The trust trail service reads, but does not mutate, these owners:
 
-- `chat_runs`: profile snapshot, resolved model/effort snapshot, run status,
-  terminal error, and publication fields already exposed through run responses.
-- typed `llm_ledger` reader: matching plan id/revision and normalized usage;
+- `chat_runs`: frozen `generation_spec`, run status, terminal error, and
+  publication fields already exposed through run responses.
+- typed generation-ledger reader: matching exact selection and normalized usage;
   the trust service never queries raw ledger columns.
 - `chat_prompt_assemblies`: prompt budget, manifest, included/dropped IDs,
   context refs.
@@ -441,11 +450,7 @@ class AssistantTrustTrailOut(BaseModel):
 ```python
 class TrustRunOut(BaseModel):
     run_id: UUID
-    profile_id: str | None
-    plan_id: str | None
-    plan_revision: str | None
-    model_name: str | None
-    reasoning_effort: Presence[str]
+    run_selection: RunSelectionOut
     status: Literal["pending", "running", "complete", "error", "cancelled"]
     usage: dict[str, JsonValue] | None
     error_code: str | None
@@ -759,13 +764,13 @@ for message-local inspection and does not add resource graph mutations.
 
 ### 12.5 Generation boundary and ledger
 
-The trust trail composes with the fixed-plan generation contract only at its
-typed read boundary. It may show `profile_id`, plan id/revision, resolved
-model/effort, normalized usage, and safe terminal facts. It never exposes a
-route choice, price, credential, native continuity artifact, raw command,
-host/SDK diagnostic, or raw `llm_calls` row. The authoritative execution and
-ledger contract remains
-[`codex-personal-generation-hard-cutover.md`](codex-personal-generation-hard-cutover.md).
+The trust trail composes with the generation contract only at its typed read
+boundary. It may show the product-facing exact route/model/reasoning selection,
+dispatch-time disclosure, tool authority, current availability, normalized
+usage, and safe terminal facts. It never exposes server-only dispatch identity,
+credentials, native continuity artifacts, raw commands, host/SDK diagnostics,
+or raw `llm_calls` rows. The authoritative execution and ledger contract remains
+[`generation-backends-hard-cutover.md`](generation-backends-hard-cutover.md).
 
 ### 12.6 Search and retrieval
 
@@ -780,7 +785,7 @@ trail.
 
 Allowed in UI:
 
-- product profile, plan id/revision, and resolved model/effort;
+- product-facing exact selection, dispatch disclosure, and tool authority;
 - run status/error code;
 - token/budget summaries;
 - prompt block manifest metadata;
@@ -848,10 +853,10 @@ trust facts.
 AC12. Reload after completion shows the same trust summary counts as the live
 completed message.
 
-AC13. Current runs show the profile, plan id/revision, resolved model/effort,
-and normalized usage from the fixed-plan snapshot and typed ledger reader; no
-removed provider, key-mode, reasoning-option, or cost field survives in either
-wire schema or UI.
+AC13. Current runs show the strict `run_selection` and normalized usage from the
+frozen generation spec and typed ledger reader; no profile, provider-key mode,
+reasoning-option alias, server-only dispatch value, or raw cost field survives
+in either wire schema or UI.
 
 ---
 

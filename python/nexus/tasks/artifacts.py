@@ -92,6 +92,7 @@ def dossier_build(
                 execution_context=context,
                 llm_runtime=runtime,
                 research_tool_operation=tool_runtime.operations["idea_dossier_research"],
+                settings=settings,
             )
             reschedule = await engine.run_build(
                 db,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ from nexus_test_control.policy import (
     repository_violations,
     resource_capability_projection_violations,
 )
+from nexus_test_control.proof_owner import python_exact_proof_owner_sha256
 from nexus_test_control.sensitivity import SensitivityError, declared_fault_for_proof
 
 REPO_ROOT = Path(__file__).parents[4]
@@ -1139,12 +1141,175 @@ def _fault_repository(root: Path) -> dict[str, Any]:
     }
     manifest = {"version": 1, "faults": [fault]}
     _write(root, "python/tests/kernel/test_example.py", "def test_example():\n    assert True\n")
+    _dump(
+        root,
+        "testdata/proofs.json",
+        {"priority_risks": [{"proofs": fault["proofs"]}]},
+    )
     _dump(root, "testdata/faults/manifest.json", manifest)
     return manifest
 
 
-def test_empty_fault_manifest_is_valid() -> None:
+def _mark_coherent_owner(root: Path, manifest: dict[str, Any]) -> None:
+    proof = manifest["faults"][0]["proofs"][0]
+    identity = proof.partition(":")[2]
+    path, _, node = identity.partition("::")
+    digest = python_exact_proof_owner_sha256(
+        (root / path).read_text(encoding="utf-8"),
+        node,
+    )
+    assert digest is not None
+    manifest["faults"][0]["changed_owner_red"] = "coherent-fault"
+    manifest["faults"][0]["changed_owner_sha256"] = digest
+
+
+def test_fault_manifest_is_complete_and_every_patch_applies() -> None:
     assert not fault_manifest_violations(REPO_ROOT)
+
+
+def test_fault_guard_allows_one_exact_pytest_owner_to_use_coherent_candidate_red(
+    tmp_path: Path,
+) -> None:
+    manifest = _fault_repository(tmp_path)
+    _mark_coherent_owner(tmp_path, manifest)
+    _dump(tmp_path, "testdata/faults/manifest.json", manifest)
+
+    assert not fault_manifest_violations(tmp_path)
+
+
+def test_fault_guard_rejects_unregistered_coherent_candidate_owner(tmp_path: Path) -> None:
+    manifest = _fault_repository(tmp_path)
+    _mark_coherent_owner(tmp_path, manifest)
+    _dump(tmp_path, "testdata/faults/manifest.json", manifest)
+    (tmp_path / "testdata/proofs.json").unlink()
+
+    assert "fault-coherent-owner" in _rules(fault_manifest_violations(tmp_path))
+
+
+@pytest.mark.parametrize(
+    ("proofs", "changed_owner_red", "rule"),
+    (
+        (
+            ["pytest:python/tests/kernel/test_example.py::test_example"],
+            "unknown",
+            "fault-schema",
+        ),
+        (
+            ["pytest:python/tests/kernel/test_example.py::test_example"],
+            None,
+            "fault-schema",
+        ),
+        (
+            ["pytest:python/tests/kernel/test_example.py"],
+            "coherent-fault",
+            "fault-coherent-owner",
+        ),
+        (
+            [
+                "pytest:python/tests/kernel/test_example.py::test_example",
+                "pytest:python/tests/kernel/test_example.py::test_other",
+            ],
+            "coherent-fault",
+            "fault-coherent-owner",
+        ),
+        (
+            ["pytest:python/tests/kernel/test_example.py::TestExample::test_example"],
+            "coherent-fault",
+            "fault-coherent-owner",
+        ),
+    ),
+)
+def test_fault_guard_rejects_ambiguous_changed_owner_red(
+    tmp_path: Path,
+    proofs: list[str],
+    changed_owner_red: str | None,
+    rule: str,
+) -> None:
+    manifest = _fault_repository(tmp_path)
+    manifest["faults"][0]["proofs"] = proofs
+    manifest["faults"][0]["changed_owner_red"] = changed_owner_red
+    manifest["faults"][0]["changed_owner_sha256"] = "0" * 64
+    _dump(tmp_path, "testdata/faults/manifest.json", manifest)
+
+    assert rule in _rules(fault_manifest_violations(tmp_path))
+
+
+def test_fault_guard_rejects_coherent_owner_content_drift(tmp_path: Path) -> None:
+    manifest = _fault_repository(tmp_path)
+    _mark_coherent_owner(tmp_path, manifest)
+    _dump(tmp_path, "testdata/faults/manifest.json", manifest)
+    _write(
+        tmp_path,
+        "python/tests/kernel/test_example.py",
+        "VALUE = 2\n\ndef test_example():\n    assert VALUE == 2\n",
+    )
+
+    assert "fault-coherent-owner-drift" in _rules(fault_manifest_violations(tmp_path))
+
+
+def test_fault_guard_rejects_an_owner_digest_without_the_coherent_strategy(
+    tmp_path: Path,
+) -> None:
+    manifest = _fault_repository(tmp_path)
+    manifest["faults"][0]["changed_owner_sha256"] = "0" * 64
+    _dump(tmp_path, "testdata/faults/manifest.json", manifest)
+
+    assert "fault-schema" in _rules(fault_manifest_violations(tmp_path))
+
+
+def test_fault_guard_never_reads_a_traversal_or_symlinked_coherent_owner(
+    tmp_path: Path,
+) -> None:
+    manifest = _fault_repository(tmp_path)
+    outside = tmp_path.parent / f"{tmp_path.name}-outside-owner.py"
+    outside.write_text("def test_example():\n    assert True\n", encoding="utf-8")
+    manifest["faults"][0]["changed_owner_red"] = "coherent-fault"
+    manifest["faults"][0]["changed_owner_sha256"] = "0" * 64
+    proof_root = tmp_path / "python/tests/kernel"
+    external_symlink = proof_root / "test_external_owner.py"
+    external_symlink.symlink_to(outside)
+    internal_symlink = proof_root / "test_internal_owner.py"
+    internal_symlink.symlink_to("test_example.py")
+    loop_symlink = proof_root / "test_loop_owner.py"
+    loop_symlink.symlink_to(loop_symlink.name)
+
+    for escaped_path in (
+        f"../{outside.name}",
+        "python/tests/kernel/test_external_owner.py",
+        "python/tests/kernel/test_internal_owner.py",
+        "python/tests/kernel/test_loop_owner.py",
+    ):
+        proof = f"pytest:{escaped_path}::test_example"
+        manifest["faults"][0]["proofs"] = [proof]
+        _dump(
+            tmp_path,
+            "testdata/proofs.json",
+            {"priority_risks": [{"proofs": [proof]}]},
+        )
+        _dump(tmp_path, "testdata/faults/manifest.json", manifest)
+
+        rules = _rules(fault_manifest_violations(tmp_path))
+        assert {"fault-coherent-owner", "fault-proof"}.issubset(rules)
+        assert "fault-coherent-owner-drift" not in rules
+
+
+def test_fault_guard_rejects_a_stale_patch_in_a_git_worktree(tmp_path: Path) -> None:
+    manifest = _fault_repository(tmp_path)
+    _write(tmp_path, "python/nexus/owner.py", "VALUE = 2\n")
+    patch = (
+        b"diff --git a/python/nexus/owner.py b/python/nexus/owner.py\n"
+        b"--- a/python/nexus/owner.py\n"
+        b"+++ b/python/nexus/owner.py\n"
+        b"@@ -1 +1 @@\n"
+        b"-VALUE = 1\n"
+        b"+VALUE = 0\n"
+    )
+    (tmp_path / "testdata/faults/example.patch").write_bytes(patch)
+    manifest["faults"][0]["sha256"] = hashlib.sha256(patch).hexdigest()
+    _dump(tmp_path, "testdata/faults/manifest.json", manifest)
+    subprocess.run(("git", "init", "-q"), cwd=tmp_path, check=True)
+
+    assert "fault-applicability" in _rules(fault_manifest_violations(tmp_path))
 
 
 @pytest.mark.parametrize(

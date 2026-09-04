@@ -9,7 +9,6 @@ from nexus.db.models import (
     ResourceMutation,
 )
 from nexus.services.agent_tools.read_resource import execute_read_resource
-from nexus.services.conversations import create_conversation
 from tests.testkit.auth import UserRecord
 
 _MUTATION_MODELS = (
@@ -31,7 +30,6 @@ def test_foreign_resource_reads_are_refused_without_side_effects(
     db_session: Session,
     test_user: UserRecord,
 ) -> None:
-    conversation = create_conversation(db_session, test_user.id)
     before = _mutation_counts(db_session)
     uris = (
         "media:00000000-0000-4000-8000-000000000001",
@@ -43,7 +41,7 @@ def test_foreign_resource_reads_are_refused_without_side_effects(
         execute_read_resource(
             db_session,
             viewer_id=test_user.id,
-            conversation_id=conversation.id,
+            admitted_resource_uris=frozenset(),
             uri=uri,
         )
         for uri in uris

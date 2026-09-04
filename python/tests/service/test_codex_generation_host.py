@@ -9,9 +9,11 @@ import os
 import socket
 import threading
 from collections.abc import AsyncIterator, Iterator, Mapping
+from datetime import UTC, datetime
+from importlib.util import find_spec
 from pathlib import Path
 from tempfile import gettempdir
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID, uuid4
 
 import httpx
@@ -20,7 +22,6 @@ import uvicorn
 from apps.codex_agent.capacity import CapacityPaths
 from apps.codex_agent.host import (
     RuntimeVersions,
-    close_runtime_before_release,
     create_codex_agent_app,
 )
 from provider_runtime.agent_runtime import (
@@ -43,22 +44,53 @@ from provider_runtime.agent_runtime import (
     thaw_json_value,
 )
 
-from nexus.services import generation_policy
-from nexus.services.codex_generation_contract import (
-    GenerationAdmission,
-    GenerationCommand,
-    GenerationFrame,
-    GenerationHealth,
-    GenerationTerminal,
-    GenerationToolUse,
-    generation_admission_request,
-)
-from nexus.services.tool_runtime.declarations import CHAT_TOOL_DECLARATIONS
+# BASE sensitivity overlays this proof without candidate production owners.
+_CUTOVER_PRESENT = find_spec("nexus.services.generation_spec") is not None
+
+if TYPE_CHECKING or _CUTOVER_PRESENT:
+    from apps.codex_agent.host import close_runtime_before_release
+    from provider_runtime import Absent as RuntimeAbsent
+    from provider_runtime import Present as RuntimePresent
+    from provider_runtime.agent_runtime import (
+        AgentModelCatalog,
+        AgentModelFacts,
+        AgentReasoningFacts,
+        CodexCatalogSessionRequest,
+    )
+
+    from nexus.services.codex_generation_contract import (
+        GenerationAdmission,
+        GenerationCommand,
+        GenerationFrame,
+        GenerationHealth,
+        GenerationTerminal,
+        GenerationToolUse,
+        generation_admission_request,
+        generation_command_draft,
+    )
+    from nexus.services.codex_generation_operations import (
+        CodexModelToolPlanRegistry,
+    )
+    from nexus.services.tool_runtime.composition import (
+        freeze_tool_plan_snapshot,
+    )
+    from tests.testkit.codex_generation import (
+        codex_generation_command,
+        codex_model_tool_fixture,
+    )
 
 _VERSIONS = RuntimeVersions(sdk="0.144.4", runtime="0.144.4")
 _MCP_ORIGIN = "https://mcp.nexus.example.com/internal/agent-tools/mcp"
 _MCP_SERVER_NAME = "nexus"
-_TOOL_ALLOWLIST = tuple(str(entry.spec.id) for entry in CHAT_TOOL_DECLARATIONS)
+_TOOL_ALLOWLIST = (
+    "web.search",
+    "nexus.search",
+    "nexus.resource.read",
+    "nexus.document.search",
+    "nexus.resource.inspect",
+    "nexus.relations.list",
+)
+_TOOL_WIRE_ALLOWLIST = tuple(tool.replace(".", "__") for tool in _TOOL_ALLOWLIST)
 _LINUX_SUN_PATH_BYTES = 108
 _STRUCTURED_SCHEMA = {
     "type": "object",
@@ -68,6 +100,43 @@ _STRUCTURED_SCHEMA = {
 }
 _ENROLLED_AUTH = b"test-private-chatgpt-auth"
 _REFRESHED_AUTH = b"test-private-chatgpt-auth-refreshed-by-pinned-truncate-write"
+
+
+def _agent_model_catalog() -> AgentModelCatalog:
+    row_fingerprint = "1" * 64
+    return AgentModelCatalog(
+        backend_contract_revision="provider-runtime.agent-model-catalog.v1",
+        definition_revision="2" * 64,
+        native_revision=RuntimeAbsent(),
+        observed_at=datetime(2026, 8, 31, 12, 0, tzinfo=UTC),
+        models=(
+            AgentModelFacts(
+                key="gpt-5.6-terra",
+                dispatch_model="gpt-5.6-terra",
+                label="GPT-5.6 Terra",
+                source_context_window=RuntimeAbsent(),
+                source_max_output_tokens=RuntimeAbsent(),
+                input_modalities=("text", "image"),
+                reasoning=(
+                    AgentReasoningFacts(
+                        key="medium",
+                        label="Balanced reasoning",
+                        native_wire_value="medium",
+                    ),
+                ),
+                source_default_reasoning=RuntimePresent("medium"),
+                upgrade=RuntimeAbsent(),
+                retirement=RuntimeAbsent(),
+                row_fingerprint=row_fingerprint,
+            ),
+        ),
+        diagnostics=(),
+    )
+
+
+def _model_tool_registry() -> CodexModelToolPlanRegistry:
+    registry, _runtime = codex_model_tool_fixture()
+    return registry
 
 
 def _short_socket_path() -> Path:
@@ -117,48 +186,29 @@ def _command(
     chat: bool = False,
     structured: bool = False,
 ) -> GenerationCommand:
-    if chat:
-        operation: dict[str, object] = {
-            "kind": "chat",
-            "profile": "balanced",
-            "revision": generation_policy.operation_revision("chat", profile="balanced"),
-        }
-    else:
-        operation = {
-            "kind": "metadata_enrichment",
-            "revision": generation_policy.operation_revision("metadata_enrichment"),
-        }
-    output: dict[str, object]
-    if structured:
-        output = {
-            "kind": "JsonSchema",
-            "name": "answer",
-            "schema": _STRUCTURED_SCHEMA,
-            "strict": True,
-        }
-    else:
-        output = {"kind": "Text"}
-    payload: dict[str, object] = {
-        "schema_version": "nexus-generation-command.v2",
-        "request_id": str(_request_id(index)),
-        "operation": operation,
-        "policy_revision": generation_policy.POLICY_REVISION,
-        "policy_fingerprint": generation_policy.POLICY_FINGERPRINT,
-        "intent": {
-            "instructions": f"instructions-{index}",
-            "input": input_text,
-            "output": output,
-        },
-    }
-    if chat:
-        payload["tool_grant"] = {"kind": "Bearer", "token": _grant(index)}
-    return GenerationCommand.model_validate(payload)
+    model_tool_plan = (
+        freeze_tool_plan_snapshot(codex_model_tool_fixture()[1].operations["ChatRead"])
+        if chat
+        else None
+    )
+    return codex_generation_command(
+        request_id=_request_id(index),
+        operation="chat" if chat else "metadata_enrichment",
+        instructions=f"instructions-{index}",
+        input_text=input_text,
+        model="gpt-5.6-terra" if chat else "gpt-5.6-luna",
+        reasoning="medium" if chat else "low",
+        turn_timeout_seconds=900 if chat else 120,
+        structured_schema=_STRUCTURED_SCHEMA if structured else None,
+        model_tool_plan=model_tool_plan,
+        tool_grant=_grant(index) if chat else None,
+    )
 
 
 def _wire_command(command: GenerationCommand) -> bytes:
     """Encode the sensitive UDS grant that the model deliberately excludes from dumps."""
 
-    payload = command.model_dump(mode="json", exclude_none=True)
+    payload = command.model_dump(mode="json", exclude={"tool_grant"})
     if command.tool_grant is not None:
         payload["tool_grant"] = {
             "kind": "Bearer",
@@ -220,7 +270,7 @@ def _runtime_terminal(index: int, *, structured: bool = False) -> AgentTerminal:
 
 
 def _script(index: int) -> tuple[AgentEvent, ...]:
-    allowed_name = f"{_MCP_SERVER_NAME}/{_TOOL_ALLOWLIST[0]}"
+    allowed_name = f"{_MCP_SERVER_NAME}/{_TOOL_WIRE_ALLOWLIST[0]}"
     if index == 1:
         return (AgentText("ok"), _runtime_terminal(index, structured=True))
     if index == 2:
@@ -377,6 +427,7 @@ def _captured_request(
     approvals_supplied: bool,
     cancel_supplied: bool,
 ) -> dict[str, object]:
+    assert isinstance(opened, CodexCatalogSessionRequest)
     native = opened.native
     output: dict[str, object] = {"kind": opened.output.kind}
     if isinstance(opened.output, JsonSchemaAgentOutput):
@@ -414,8 +465,10 @@ def _captured_request(
         "transport": opened.transport,
         "auth": (opened.auth.kind, opened.auth.profile_key, opened.auth.name),
         "open": opened.open.kind,
-        "model": opened.model,
-        "reasoning": opened.reasoning.effort if opened.reasoning else None,
+        "model": opened.model_key,
+        "reasoning": opened.reasoning,
+        "agent_definition_revision": opened.agent_definition_revision,
+        "row_fingerprint": opened.row_fingerprint,
         "system": tuple(part.text for part in opened.system),
         "developer": tuple(part.text for part in opened.developer),
         "cwd": opened.cwd,
@@ -636,7 +689,7 @@ def _run_generation_host(
     policy_close_release: Any,
     policy_close_finished: Any,
     stop: Any,
-    chat_network_attested: bool,
+    model_tool_network_attested: bool,
     report: multiprocessing.connection.Connection,
     ready: multiprocessing.connection.Connection,
 ) -> None:
@@ -695,8 +748,9 @@ def _run_generation_host(
         working_directory_root=Path(cwd),
         credential_file=Path(credential_file),
         mcp_origin=_MCP_ORIGIN,
-        chat_network_attested=chat_network_attested,
+        model_tool_network_attested=model_tool_network_attested,
         versions=_VERSIONS,
+        model_tool_registry=_model_tool_registry(),
         capacity_paths=paths,
     )
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -726,7 +780,7 @@ def _start_host(
     capacity_root: Path,
     events: tuple[Any, ...],
     *,
-    chat_network_attested: bool,
+    model_tool_network_attested: bool,
 ) -> tuple[
     multiprocessing.Process,
     multiprocessing.connection.Connection,
@@ -766,7 +820,7 @@ def _start_host(
             policy_close_release,
             policy_close_finished,
             stop,
-            chat_network_attested,
+            model_tool_network_attested,
             report_child,
             ready_child,
         ),
@@ -787,20 +841,21 @@ async def _post(
         "accept": "application/x-ndjson",
         "content-type": "application/json",
     }
-    if command.operation.kind == "chat":
-        admission_response = await client.post(
-            "http://nexus-codex/v2/generation-admissions",
-            headers={"accept": "application/json", "content-type": "application/json"},
-            content=generation_admission_request(command).model_dump_json().encode("utf-8"),
+    admission_response = await client.post(
+        "http://nexus-codex/v2/generation-admissions",
+        headers={"accept": "application/json", "content-type": "application/json"},
+        content=generation_admission_request(generation_command_draft(command))
+        .model_dump_json()
+        .encode("utf-8"),
+    )
+    if admission_response.status_code != 200:
+        return (
+            admission_response.status_code,
+            admission_response.headers.get("content-type", ""),
+            admission_response.content,
         )
-        if admission_response.status_code != 200:
-            return (
-                admission_response.status_code,
-                admission_response.headers.get("content-type", ""),
-                admission_response.content,
-            )
-        admission = GenerationAdmission.model_validate_json(admission_response.content)
-        headers["nexus-generation-admission"] = str(admission.admission_id)
+    admission = GenerationAdmission.model_validate_json(admission_response.content)
+    headers["nexus-generation-admission"] = str(admission.admission_id)
     response = await client.post(
         "http://nexus-codex/v2/generations",
         headers=headers,
@@ -811,6 +866,76 @@ async def _post(
         response.headers.get("content-type", ""),
         response.content,
     )
+
+
+def test_authenticated_catalog_crosses_the_private_host_boundary(tmp_path: Path) -> None:
+    """Risk: the API process must discover account-visible Codex targets without SDK access."""
+
+    async def scenario() -> None:
+        working_root = tmp_path / "runtime"
+        working_root.mkdir(mode=0o700)
+        credential_file = tmp_path / "auth.json"
+        credential_file.write_bytes(_ENROLLED_AUTH)
+        credential_file.chmod(0o600)
+        runtime = ScriptedAgentRuntime(model_catalogs=(_agent_model_catalog(),))
+        app = create_codex_agent_app(
+            runtime_factory=lambda _config: runtime,
+            working_directory_root=working_root,
+            credential_file=credential_file,
+            versions=_VERSIONS,
+            model_tool_registry=CodexModelToolPlanRegistry(()),
+            capacity_paths=_capacity_paths(tmp_path),
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            timeout=5,
+        ) as client:
+            response = await client.get(
+                "http://nexus-codex/v2/model-catalog",
+                headers={"accept": "application/json"},
+            )
+
+        assert response.status_code == 200, (
+            "the private host must expose the authenticated AgentRuntime catalog; "
+            f"actual={response.status_code} body={response.text!r}"
+        )
+        payload = response.json()
+        assert payload["definition_revision"] == "2" * 64
+        assert payload["models"] == [
+            {
+                "key": "gpt-5.6-terra",
+                "dispatch_model": "gpt-5.6-terra",
+                "label": "GPT-5.6 Terra",
+                "source_context_window": {"kind": "Absent"},
+                "source_max_output_tokens": {"kind": "Absent"},
+                "input_modalities": ["text", "image"],
+                "reasoning": [
+                    {
+                        "key": "medium",
+                        "label": "Balanced reasoning",
+                        "native_wire_value": "medium",
+                    }
+                ],
+                "source_default_reasoning": {
+                    "kind": "Present",
+                    "value": "medium",
+                },
+                "upgrade": {"kind": "Absent"},
+                "retirement": {"kind": "Absent"},
+                "row_fingerprint": "1" * 64,
+            }
+        ]
+        call = runtime.calls[0]
+        assert call.operation == "model_catalog"
+        backend, transport, auth = cast(tuple[str, str, Any], call.subject)
+        assert (backend, transport, auth.kind, auth.profile_key) == (
+            "codex",
+            "sdk",
+            "local_account",
+            "codex-personal",
+        )
+
+    asyncio.run(scenario())
 
 
 def test_chat_admission_is_replay_stable_command_bound_and_consumed_once(
@@ -832,8 +957,9 @@ def test_chat_admission_is_replay_stable_command_bound_and_consumed_once(
             working_directory_root=working_root,
             credential_file=credential_file,
             versions=_VERSIONS,
+            model_tool_registry=_model_tool_registry(),
             mcp_origin=_MCP_ORIGIN,
-            chat_network_attested=True,
+            model_tool_network_attested=True,
             capacity_paths=_capacity_paths(tmp_path),
         )
         transport = httpx.ASGITransport(app=app)
@@ -853,7 +979,11 @@ def test_chat_admission_is_replay_stable_command_bound_and_consumed_once(
             )
             assert missing.status_code == 409
 
-            admission_body = generation_admission_request(command).model_dump_json().encode()
+            admission_body = (
+                generation_admission_request(generation_command_draft(command))
+                .model_dump_json()
+                .encode()
+            )
             first = await client.post(
                 "http://nexus-codex/v2/generation-admissions",
                 headers=admission_headers,
@@ -872,7 +1002,9 @@ def test_chat_admission_is_replay_stable_command_bound_and_consumed_once(
             conflicting = await client.post(
                 "http://nexus-codex/v2/generation-admissions",
                 headers=admission_headers,
-                content=generation_admission_request(other).model_dump_json().encode(),
+                content=generation_admission_request(generation_command_draft(other))
+                .model_dump_json()
+                .encode(),
             )
             assert (conflicting.status_code, conflicting.content) == (
                 503,
@@ -946,11 +1078,24 @@ def test_response_start_failure_reclaims_owner_slot_and_ephemeral_root(
             working_directory_root=working_root,
             credential_file=credential_file,
             versions=_VERSIONS,
+            model_tool_registry=_model_tool_registry(),
             capacity_paths=_capacity_paths(tmp_path),
         )
         command = _command(30, "response-start-failure")
         body = _wire_command(command)
-        scope = _generation_scope(body)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            timeout=5,
+        ) as admission_client:
+            admission_response = await admission_client.post(
+                "http://nexus-codex/v2/generation-admissions",
+                headers={"accept": "application/json", "content-type": "application/json"},
+                content=generation_admission_request(generation_command_draft(command))
+                .model_dump_json()
+                .encode(),
+            )
+        admission = GenerationAdmission.model_validate_json(admission_response.content)
+        scope = _generation_scope(body, admission_id=admission.admission_id)
         request_delivered = False
         never_disconnect = asyncio.Event()
 
@@ -1015,10 +1160,23 @@ def test_cancellation_before_owner_first_execution_reclaims_admission(
             working_directory_root=working_root,
             credential_file=credential_file,
             versions=_VERSIONS,
+            model_tool_registry=_model_tool_registry(),
             capacity_paths=_capacity_paths(tmp_path),
         )
         command = _command(30, "cancel-before-owner-first-execution")
         body = _wire_command(command)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            timeout=5,
+        ) as admission_client:
+            admission_response = await admission_client.post(
+                "http://nexus-codex/v2/generation-admissions",
+                headers={"accept": "application/json", "content-type": "application/json"},
+                content=generation_admission_request(generation_command_draft(command))
+                .model_dump_json()
+                .encode(),
+            )
+        admission = GenerationAdmission.model_validate_json(admission_response.content)
         body_consumed = asyncio.Event()
 
         async def receive() -> dict[str, Any]:
@@ -1028,7 +1186,13 @@ def test_cancellation_before_owner_first_execution_reclaims_admission(
         async def unreachable_send(_message: dict[str, Any]) -> None:
             raise AssertionError("pre-start cancellation reached the response boundary")
 
-        request = asyncio.create_task(app(_generation_scope(body), receive, unreachable_send))
+        request = asyncio.create_task(
+            app(
+                _generation_scope(body, admission_id=admission.admission_id),
+                receive,
+                unreachable_send,
+            )
+        )
         await body_consumed.wait()
         request.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -1126,8 +1290,9 @@ def test_failed_runtime_reap_during_cancellation_makes_host_unready(
             working_directory_root=working_root,
             credential_file=credential_file,
             mcp_origin=_MCP_ORIGIN,
-            chat_network_attested=True,
+            model_tool_network_attested=True,
             versions=_VERSIONS,
+            model_tool_registry=_model_tool_registry(),
             capacity_paths=_capacity_paths(tmp_path),
         )
         command = _command(34, "cancel-while-runtime-close-fails", chat=True)
@@ -1140,7 +1305,9 @@ def test_failed_runtime_reap_during_cancellation_makes_host_unready(
                     "accept": "application/json",
                     "content-type": "application/json",
                 },
-                content=generation_admission_request(command).model_dump_json().encode(),
+                content=generation_admission_request(generation_command_draft(command))
+                .model_dump_json()
+                .encode(),
             )
         assert admission_response.status_code == 200
         admission = GenerationAdmission.model_validate_json(admission_response.content)
@@ -1208,6 +1375,7 @@ def test_credential_identity_failure_is_fatal_before_any_success_terminal(
             working_directory_root=working_root,
             credential_file=credential_file,
             versions=_VERSIONS,
+            model_tool_registry=_model_tool_registry(),
             capacity_paths=_capacity_paths(tmp_path),
         )
         transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
@@ -1259,6 +1427,7 @@ def _messages(
 def test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot(
     tmp_path: Path,
 ) -> None:
+    assert _CUTOVER_PRESENT, "the v2 route-neutral generation host cutover is absent"
     context = multiprocessing.get_context("fork")
 
     def unreachable_runtime_factory(
@@ -1287,8 +1456,9 @@ def test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot(
                 working_directory_root=tmp_path,
                 credential_file=credential_file,
                 versions=_VERSIONS,
+                model_tool_registry=_model_tool_registry(),
                 mcp_origin=invalid_origin,
-                chat_network_attested=True,
+                model_tool_network_attested=True,
             )
 
     version_gate_credential = tmp_path / "version-gate-auth.json"
@@ -1300,6 +1470,7 @@ def test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot(
             working_directory_root=tmp_path,
             credential_file=version_gate_credential,
             versions=RuntimeVersions(sdk="0.144.5", runtime="0.144.4"),
+            model_tool_registry=_model_tool_registry(),
         )
 
     unattested_root = tmp_path / "unattested"
@@ -1318,7 +1489,7 @@ def test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot(
         unattested_credential,
         unattested_paths.meminfo.parent,
         unattested_events,
-        chat_network_attested=False,
+        model_tool_network_attested=False,
     )
     try:
 
@@ -1338,7 +1509,9 @@ def test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot(
         unattested_ready.close()
     try:
         assert unattested_process.exitcode == 0
-        assert not tuple(_messages(unattested_report)), "unattested ChatTools constructed a runtime"
+        assert not tuple(_messages(unattested_report)), (
+            "unattested ModelTools constructed a runtime"
+        )
     finally:
         unattested_report.close()
 
@@ -1379,7 +1552,7 @@ def test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot(
         credential_file,
         paths.meminfo.parent,
         events,
-        chat_network_attested=True,
+        model_tool_network_attested=True,
     )
     reports: list[Mapping[str, object]] = []
 
@@ -1416,7 +1589,6 @@ def test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot(
                 health_response = await client.get("http://nexus-codex/health")
                 health = GenerationHealth.model_validate_json(health_response.content)
                 assert health == GenerationHealth(
-                    policy_revision=generation_policy.POLICY_REVISION,
                     sdk_version=_VERSIONS.sdk,
                     runtime_version=_VERSIONS.runtime,
                 )
@@ -1546,7 +1718,7 @@ def test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot(
                 disconnect_admission_response = await client.post(
                     "http://nexus-codex/v2/generation-admissions",
                     headers={"accept": "application/json", "content-type": "application/json"},
-                    content=generation_admission_request(commands[10])
+                    content=generation_admission_request(generation_command_draft(commands[10]))
                     .model_dump_json()
                     .encode("utf-8"),
                 )
@@ -1679,6 +1851,8 @@ def test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot(
         "open": "new",
         "model": "gpt-5.6-luna",
         "reasoning": "low",
+        "agent_definition_revision": "2" * 64,
+        "row_fingerprint": "1" * 64,
         "system": ("instructions-1",),
         "developer": (),
         "cwd": str(lowered_cwds[1]),
@@ -1715,6 +1889,8 @@ def test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot(
         "open": "new",
         "model": "gpt-5.6-terra",
         "reasoning": "medium",
+        "agent_definition_revision": "2" * 64,
+        "row_fingerprint": "1" * 64,
         "system": ("instructions-2",),
         "developer": (),
         "cwd": str(lowered_cwds[2]),
@@ -1756,7 +1932,7 @@ def test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot(
                 ),
             ),
             "required": True,
-            "allowed_tools": _TOOL_ALLOWLIST,
+            "allowed_tools": _TOOL_WIRE_ALLOWLIST,
             "denied_tools": (),
         },
     )
@@ -1783,9 +1959,7 @@ def test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot(
     allowed_events = [
         frame.event for frame in observed[2] if isinstance(frame.event, GenerationToolUse)
     ]
-    assert [event.name for event in allowed_events] == [
-        f"{_MCP_SERVER_NAME}/{_TOOL_ALLOWLIST[0]}"
-    ] * 2
+    assert [event.name for event in allowed_events] == [_TOOL_ALLOWLIST[0]] * 2
     assert _terminal(observed[2]).status == "succeeded"
     assert [frame.event.kind for frame in observed[3]] == ["tool_use", "terminal"]
     assert [frame.event.kind for frame in observed[4]] == [

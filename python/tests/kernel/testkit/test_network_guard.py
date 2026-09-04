@@ -1,13 +1,14 @@
 import json
 import os
 import socket
+import ssl
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
-from tests.testkit.network import install_network_guard
+from tests.testkit.network import install_network_guard, install_test_tls_ca
 
 
 def test_pytest_process_allows_only_local_sockets() -> None:
@@ -170,3 +171,30 @@ def test_static_dns_rejects_ambiguous_tls_port_rewrites(
             client.connect(("127.0.0.1", 443))
     finally:
         restore()
+
+
+def test_tls_guard_loads_each_distinct_controller_owned_ca(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    primary = tmp_path / "primary.pem"
+    additional = tmp_path / "additional.pem"
+    primary.write_text("primary\n", encoding="utf-8")
+    additional.write_text("additional\n", encoding="utf-8")
+    monkeypatch.setenv("NEXUS_TEST_TLS_CA_CERT", str(primary))
+    monkeypatch.setenv("NEXUS_TEST_TLS_CA_CERTS", json.dumps([str(additional)]))
+    loaded: list[Path] = []
+
+    class Context:
+        def load_verify_locations(self, *, cafile: Path) -> None:
+            loaded.append(Path(cafile))
+
+    # The stdlib SSL context is the external boundary owned by this test.
+    monkeypatch.setattr(ssl, "create_default_context", lambda *_args, **_kwargs: Context())
+    restore = install_test_tls_ca()
+    try:
+        ssl.create_default_context()
+    finally:
+        restore()
+
+    assert loaded == [primary, additional]

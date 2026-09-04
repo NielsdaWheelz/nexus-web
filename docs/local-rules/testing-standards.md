@@ -135,9 +135,32 @@ of letting the workflow abort without a verdict.
 For a changed proof file, PR uses BASE when the whole file owns the proof or the
 selected exact module-level Python test plus its imports and non-test module
 support differs from base. Sibling tests are separate owners: changing only a
-sibling retains the selected owner's declared FAULT. Class-qualified nodes,
-non-Python exact nodes, absent owners, duplicate owners, parse failures, and Git
-read failures all fail closed to BASE.
+sibling retains the selected owner's declared FAULT.
+
+One exact module-level Python proof MAY opt into
+`changed_owner_red: coherent-fault` on its single registered product fault when
+an intentional hard-cut interface or a behavior-preserving proof-ownership
+refactor prevents BASE from reaching or falsifying the retained behavioral
+contract. Policy MUST require one canonical exact proof, one product-only
+applicable patch, its SHA-256, and its expected assertion fingerprint. The
+manifest MUST also pin the SHA-256 of version-stable source slices for that exact
+test plus its imports and non-test module support; interpreter-specific AST
+serialization is not a durable encoding. Any owner drift is a policy failure
+requiring explicit review and a new digest. The coherent-candidate fault proves
+only that registered contract; every independent new behavior requires a
+separate exact proof and sensitivity witness. The exception mechanism itself
+MUST have a canonical BASE sensitivity owner. The work report MUST name why
+BASE was inapplicable.
+Whole-file owners, class-qualified nodes, non-Python exact nodes, unmarked
+faults, absent owners, duplicate owners, parse failures, digest drift, and Git
+read failures fail closed.
+
+A Python BASE checkout MUST retain the baseline revision's dependency manifests
+and locks. Candidate Python proof and shared test-support overlays MUST NOT
+install a candidate dependency graph into the unfixed application. A proof for
+behavior that requires a new dependency must reach its behavioral assertion
+before it imports or initializes that dependency, or use a controlled FAULT
+against the coherent candidate revision.
 
 The final work report for a defect or replacement MUST state how sensitivity was
 demonstrated. “Test passes” is insufficient.
@@ -434,7 +457,7 @@ adapter. The Makefile deliberately has no test/check/verify aliases.
 | `./scripts/test pr` | deterministic blocking PR portfolio plus same-run sensitivity |
 | `./scripts/test full` | complete deterministic local portfolio |
 | `./scripts/test nightly` | `full` plus randomized/property audit and Android device proof; hosted verification remains on `codex-nightly` |
-| `./scripts/test codex-nightly` | one bounded four-plan subscription-authenticated Codex generation canary on the dedicated runner |
+| `./scripts/test codex-nightly` | one bounded target-set subscription-authenticated Codex generation canary on the dedicated runner |
 | `./scripts/test release` | `full` plus Android device proof, signed Android release proof, and exact staged artifacts |
 | `./scripts/test doctor` | local tool, dependency, browser, SDK, service, port, and template readiness; protected-workflow inputs only when that lane is explicitly enabled |
 | `./scripts/test android-visual --sha HEAD_SHA --path /OWNED_PATH [--device primary]` | explicit opt-in physical-device authenticated WebView visual check of the current non-`main` worktree; never included in `changed`/`confidence`/`pr`/`full`/`nightly`/`release` |

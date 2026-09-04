@@ -1336,18 +1336,19 @@ def running_job_claim_is_current(
     )
 
 
-def lock_running_job_claim(db: Session, *, context: JobExecutionContext) -> bool:
-    """Fence one effect transaction to the exact live running attempt.
-
-    The row lock composes the ownership check with domain/event writes in the
-    caller's current transaction. Reclaim, dead-letter, and heartbeat updates
-    wait until that transaction commits or rolls back.
-    """
-    return (
+def _lock_running_job_attempt(
+    db: Session,
+    *,
+    job_id: UUID,
+    worker_id: str,
+    attempt_no: int,
+) -> JobRow | None:
+    """Lock and return one exact live attempt as terminal-write authority."""
+    row = (
         db.execute(
             text(
                 """
-                SELECT id
+                SELECT *
                 FROM background_jobs
                 WHERE id = :job_id
                   AND status = 'running'
@@ -1358,11 +1359,31 @@ def lock_running_job_claim(db: Session, *, context: JobExecutionContext) -> bool
                 """
             ),
             {
-                "job_id": context.job_id,
-                "worker_id": context.worker_id,
-                "attempt_no": int(context.attempt_no),
+                "job_id": job_id,
+                "worker_id": worker_id,
+                "attempt_no": int(attempt_no),
             },
-        ).first()
+        )
+        .mappings()
+        .one_or_none()
+    )
+    return None if row is None else _row_to_job(row)
+
+
+def lock_running_job_claim(db: Session, *, context: JobExecutionContext) -> bool:
+    """Fence one effect transaction to the exact live running attempt.
+
+    The row lock composes the ownership check with domain/event writes in the
+    caller's current transaction. Reclaim, dead-letter, and heartbeat updates
+    wait until that transaction commits or rolls back.
+    """
+    return (
+        _lock_running_job_attempt(
+            db,
+            job_id=context.job_id,
+            worker_id=context.worker_id,
+            attempt_no=context.attempt_no,
+        )
         is not None
     )
 
@@ -2038,31 +2059,20 @@ def complete_job(
     *,
     job_id: UUID,
     worker_id: str,
+    attempt_no: int,
     result_payload: Mapping[str, Any] | None = None,
 ) -> bool:
-    """Mark one running row as succeeded when owned by worker_id."""
-    owned = (
-        db.execute(
-            text(
-                """
-                SELECT attempts
-                FROM background_jobs
-                WHERE id = :job_id
-                  AND status = 'running'
-                  AND claimed_by = :worker_id
-                  AND lease_expires_at > now()
-                FOR UPDATE
-                """
-            ),
-            {"job_id": job_id, "worker_id": worker_id},
-        )
-        .mappings()
-        .one_or_none()
+    """Mark one exact, live running attempt as succeeded."""
+    owned = _lock_running_job_attempt(
+        db,
+        job_id=job_id,
+        worker_id=worker_id,
+        attempt_no=attempt_no,
     )
     if owned is None:
         return False
     capacity = _lock_heavy_capacity_for_job(db, job_id)
-    updated = db.execute(
+    db.execute(
         text(
             """
                 UPDATE background_jobs
@@ -2074,10 +2084,7 @@ def complete_job(
                     finished_at = now(),
                     updated_at = now()
                 WHERE id = :job_id
-                  AND status = 'running'
-                  AND claimed_by = :worker_id
-                  AND lease_expires_at > now()
-                RETURNING id, attempts
+                RETURNING id
                 """
         ),
         {
@@ -2087,14 +2094,14 @@ def complete_job(
                 json.dumps(dict(result_payload)) if result_payload is not None else None
             ),
         },
-    ).first()
-    if updated is not None and capacity is not None:
+    ).one()
+    if capacity is not None:
         # justify-defect: the holder is written by the same claim that produced
         # this attempt, so a mismatched worker or attempt is impossible.
-        if capacity.worker_id != worker_id or capacity.attempt_no != int(updated.attempts):
+        if capacity.worker_id != worker_id or capacity.attempt_no != int(attempt_no):
             raise AssertionError("Heavy capacity holder does not match completed attempt")
         _clear_heavy_capacity(db, capacity)
-    return updated is not None
+    return True
 
 
 def fail_job(
@@ -2102,36 +2109,25 @@ def fail_job(
     *,
     job_id: UUID,
     worker_id: str,
+    attempt_no: int,
     error_code: str,
     error_message: str,
     retry_delays_seconds: Sequence[int],
     result_payload: Mapping[str, Any] | None = None,
 ) -> str | None:
-    """Apply retry/dead transition for a failed running job owned by worker_id."""
-    row = (
-        db.execute(
-            text(
-                """
-                SELECT id, kind, status, attempts, max_attempts
-                FROM background_jobs
-                WHERE id = :job_id
-                  AND status = 'running'
-                  AND claimed_by = :worker_id
-                  AND lease_expires_at > now()
-                FOR UPDATE
-                """
-            ),
-            {"job_id": job_id, "worker_id": worker_id},
-        )
-        .mappings()
-        .first()
+    """Apply retry/dead transition for one exact, live running attempt."""
+    row = _lock_running_job_attempt(
+        db,
+        job_id=job_id,
+        worker_id=worker_id,
+        attempt_no=attempt_no,
     )
     if row is None:
         return None
     capacity = _lock_heavy_capacity_for_job(db, job_id)
 
-    attempts = int(row["attempts"])
-    max_attempts = int(row["max_attempts"])
+    attempts = row.attempts
+    max_attempts = row.max_attempts
     should_dead_letter = attempts >= max_attempts
 
     if should_dead_letter:
@@ -2179,7 +2175,7 @@ def fail_job(
     if new_status == FAILED:
         db.execute(
             text("SELECT pg_notify('nexus_background_jobs', :kind)"),
-            {"kind": str(row["kind"])},
+            {"kind": row.kind},
         )
     return new_status
 

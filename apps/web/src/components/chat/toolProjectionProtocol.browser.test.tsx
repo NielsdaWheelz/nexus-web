@@ -3,6 +3,7 @@ import { page, userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@/app/globals.css";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
+import { GENERATION_CATALOG_RESPONSE } from "@/__tests__/helpers/generationCatalog";
 import { apiFetch, type ApiPath } from "@/lib/api/client";
 import { openGenerationRunStream } from "@/lib/api/useGenerationRun";
 import { proxyToFastAPIWithDeps } from "@/lib/api/proxy";
@@ -22,6 +23,7 @@ import { decodeConversationMessage } from "@/lib/conversations/messageWire";
 import type { PaneVisitId } from "@/lib/workspace/schema";
 import AssistantMessage from "./AssistantMessage";
 import ChatComposer from "./ChatComposer";
+import { invalidateGenerationCatalogCache } from "./useGenerationCatalog";
 
 vi.mock("next/server", () => {
   class BrowserNextResponse extends Response {
@@ -47,33 +49,6 @@ const PROJECTION_HEADER = "X-Nexus-Tool-Projection";
 const RELOAD_REQUIRED_CODE = "E_TOOL_PROJECTION_RELOAD_REQUIRED";
 const ID = "11111111-1111-4111-8111-111111111111";
 const SECOND_ID = "22222222-2222-4222-8222-222222222222";
-
-const PROFILES = {
-  default_profile_id: "balanced",
-  profiles: [
-    {
-      id: "fast",
-      label: "Fast",
-      description: "Quick responses for everyday questions.",
-      model_label: "GPT-5.6 Luna",
-      effort_label: "Low",
-    },
-    {
-      id: "balanced",
-      label: "Balanced",
-      description: "The default profile: strong general-purpose reasoning.",
-      model_label: "GPT-5.6 Terra",
-      effort_label: "Medium",
-    },
-    {
-      id: "deep",
-      label: "Deep",
-      description: "Slower, deeper reasoning for hard problems.",
-      model_label: "GPT-5.6 Sol",
-      effort_label: "High",
-    },
-  ],
-};
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -112,6 +87,7 @@ function projectionTool(
     requested_types: [],
     result_refs: [],
     selected_context_refs: [],
+    machine_authorships: [],
     provider_request_ids: [],
     latency_ms: null,
     result_count: 0,
@@ -150,11 +126,13 @@ function assistantMessage(toolCalls: MessageToolCall[]): ConversationMessage {
 
 describe("Chat tool projection protocol", () => {
   beforeEach(async () => {
+    invalidateGenerationCatalogCache();
     sessionStorage.clear();
     await page.viewport(1_024, 768);
   });
 
   afterEach(() => {
+    invalidateGenerationCatalogCache();
     sessionStorage.clear();
     vi.unstubAllGlobals();
   });
@@ -200,7 +178,7 @@ describe("Chat tool projection protocol", () => {
     for (const request of projectionRequests) {
       await apiFetch(request.path, { method: request.method });
     }
-    await apiFetch("/api/llm-profiles");
+    await apiFetch("/api/llm-catalog");
 
     expect(browserRequests).toEqual([
       ...projectionRequests.map((request) => ({
@@ -208,7 +186,7 @@ describe("Chat tool projection protocol", () => {
         path: new URL(request.path, window.location.origin).pathname,
         revision: TOOL_PROJECTION_REVISION,
       })),
-      { method: "GET", path: "/api/llm-profiles", revision: null },
+      { method: "GET", path: "/api/llm-catalog", revision: null },
     ]);
 
     let forwardedRevision: string | null = null;
@@ -398,7 +376,7 @@ describe("Chat tool projection protocol", () => {
       "fetch",
       async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = requestPath(input);
-        if (path === "/api/llm-profiles") return json({ data: PROFILES });
+        if (path === "/api/llm-catalog") return json(GENERATION_CATALOG_RESPONSE);
         if (path === "/api/chat-runs" && init?.method === "POST") {
           expect(new Headers(init.headers).get(PROJECTION_HEADER)).toBe(
             TOOL_PROJECTION_REVISION,
@@ -425,12 +403,12 @@ describe("Chat tool projection protocol", () => {
             kind: "NewConversation",
             visitId: "projection-reload-proof" as PaneVisitId,
           }}
-          inheritedProfileSelection={null}
+          inheritedRunSelection={null}
           sendCapability={{ kind: "Available" }}
         />,
       ),
     );
-    await screen.findByRole("radio", { name: /Balanced/ });
+    await screen.findByRole("button", { name: /Change model/u });
     const composer = screen.getByRole<HTMLTextAreaElement>("textbox", {
       name: "Ask anything",
     });

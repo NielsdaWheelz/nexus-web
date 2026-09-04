@@ -138,7 +138,9 @@ def test_config_publication_is_explicit_fresh_and_python_owned() -> None:
         "ANTHROPIC_API_KEY",
         "GEMINI_API_KEY",
         "MOONSHOT_API_KEY",
+        "OPENROUTER_API_KEY",
         "DEEPSEEK_API_KEY",
+        "XAI_API_KEY",
         "CODEX_API_KEY",
         "NEXUS_PROVIDER_CERTIFICATION",
         "STREAM_MAX_OUTPUT_TOKENS_DEFAULT",
@@ -164,7 +166,7 @@ def test_config_publication_is_explicit_fresh_and_python_owned() -> None:
         "NEXUS_AGENT_TOOLS_MCP_LISTEN",
         "NEXUS_AGENT_TOOLS_MCP_ORIGIN",
         "NEXUS_CODEX_MCP_ORIGIN",
-        "NEXUS_CODEX_CHAT_NETWORK_ATTESTED",
+        "NEXUS_CODEX_MODEL_TOOL_NETWORK_ATTESTED",
         "NEXUS_CODEX_EGRESS_PROXY_IP",
         "NEXUS_CODEX_EGRESS_MCP_HOST",
     )
@@ -172,6 +174,45 @@ def test_config_publication_is_explicit_fresh_and_python_owned() -> None:
     assert all(key in forbidden_block for key in host_only_keys)
     assert "remove_forbidden_vercel_keys" in vercel
     assert "forbidden ${key} is still present after sync" in vercel
+
+
+def test_generation_provider_secrets_have_one_backend_only_publication_boundary() -> None:
+    """Generation credentials follow configured providers and never reach Vercel."""
+
+    generation_keys = (
+        "OPENAI_GENERATION_API_KEY",
+        "ANTHROPIC_GENERATION_API_KEY",
+        "GEMINI_GENERATION_API_KEY",
+        "MOONSHOT_GENERATION_API_KEY",
+        "OPENROUTER_GENERATION_API_KEY",
+        "DEEPSEEK_GENERATION_API_KEY",
+        "XAI_GENERATION_API_KEY",
+    )
+    hetzner = (REPO_ROOT / "deploy/hetzner/sync-env.sh").read_text(encoding="utf-8")
+    vercel = (REPO_ROOT / "deploy/vercel/sync-env.sh").read_text(encoding="utf-8")
+    backend = (REPO_ROOT / "deploy/env/env-prod-backend.example").read_text(encoding="utf-8")
+    frontend = (REPO_ROOT / "deploy/env/env-prod-frontend.example").read_text(encoding="utf-8")
+    worker = (REPO_ROOT / "deploy/env/env-prod-worker.example").read_text(encoding="utf-8")
+
+    assert "require_generation_provider_configuration" in hetzner
+    assert "GENERATION_API_PROVIDERS" in hetzner
+    assert "GENERATION_CONTINUATION_ENCRYPTION_KEY" in hetzner
+    assert "NEXUS_FABLE_RETENTION_ACCEPTED_AT" in hetzner
+    assert all(key in hetzner for key in generation_keys)
+
+    forbidden_start = vercel.index('FORBIDDEN_VERCEL_ENV_KEYS="')
+    forbidden_end = vercel.index('"\n\ndie()', forbidden_start)
+    forbidden = vercel[forbidden_start:forbidden_end]
+    assert "GENERATION_API_PROVIDERS" in forbidden
+    assert "GENERATION_CONTINUATION_ENCRYPTION_KEY" in forbidden
+    assert "NEXUS_FABLE_RETENTION_ACCEPTED_AT" in forbidden
+    assert all(key in forbidden for key in generation_keys)
+
+    assert "GENERATION_API_PROVIDERS=" in backend
+    assert "GENERATION_CONTINUATION_ENCRYPTION_KEY=" in backend
+    assert "NEXUS_FABLE_RETENTION_ACCEPTED_AT=" in backend
+    assert all(f"{key}=" in backend for key in generation_keys)
+    assert all(key not in frontend and key not in worker for key in generation_keys)
 
 
 def test_config_publication_rejects_even_blank_removed_generation_keys(

@@ -24,11 +24,13 @@ from nexus.schemas.chat_reader_selection import ReaderSelectionInput, ReaderSele
 from nexus.schemas.citation import CitationOut, CitationRole, CitationTargetRef
 from nexus.schemas.collection_page import CollectionRevision
 from nexus.schemas.execution import DurableExecutionOut
-from nexus.schemas.llm import ChatProfileId, ExpectedChatFailure
+from nexus.schemas.llm import ExpectedChatFailure, RunSelectionOut
+from nexus.schemas.machine_authorship import MachineAuthorshipOut
 from nexus.schemas.presence import Absent, Presence, Present, absent, present
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.schemas.retrieval import RetrievalContextRef, RetrievalLocator, RetrievalResultRef
 from nexus.schemas.search_types import SEARCH_RESULT_TYPES
+from nexus.services.generation_selection import GenerationSelectionSpec
 
 # Valid sharing modes - must match DB constraint
 SHARING_MODES = Literal["private", "library", "public"]
@@ -263,7 +265,7 @@ class ChatRunMetaEventPayload(BaseModel):
     conversation_id: UUID
     user_message_id: UUID
     assistant_message_id: UUID
-    profile_id: ChatProfileId
+    run_selection: RunSelectionOut
     chat_subject: ChatRunMetaSubjectPayload | None
 
     model_config = ConfigDict(extra="forbid")
@@ -644,11 +646,7 @@ class TrustPromptAssemblyOut(BaseModel):
 
 class TrustRunOut(BaseModel):
     run_id: UUID
-    profile_id: str | None = None
-    plan_id: str | None = None
-    plan_revision: str | None = None
-    model_name: str | None = None
-    reasoning_effort: Presence[str]
+    run_selection: RunSelectionOut
     status: Literal["pending", "running", "complete", "error", "cancelled"]
     usage: dict[str, Any] | None = None
     error_code: str | None = None
@@ -683,6 +681,7 @@ class TrustToolCallOut(ToolProjectionOut):
     provider_request_ids: list[str]
     result_refs: list[dict[str, Any]]
     selected_context_refs: list[dict[str, Any]]
+    machine_authorships: list[MachineAuthorshipOut] = Field(default_factory=list)
     # Undo lifecycle for assistant write tool calls: set once the call is
     # reverted (amanuensis §5.6, D-3); the FE greys the row to "Undone".
     reverted_at: datetime | None = None
@@ -965,10 +964,12 @@ class ChatRunCreateRequest(BaseModel):
 
     destination: ChatDestination
     content: str
-    profile_id: ChatProfileId
+    catalog_definition_revision: str = Field(pattern=r"^[0-9a-f]{64}$")
+    selection: GenerationSelectionSpec
+    tool_authority: Literal["ReadOnly", "AdditiveWrites"]
     reader_selection: Presence[ReaderSelectionInput]
 
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid", strict=True)
 
     @model_validator(mode="after")
     def _content_not_blank(self) -> ChatRunCreateRequest:
@@ -977,13 +978,21 @@ class ChatRunCreateRequest(BaseModel):
         return self
 
 
+class ChatRunRepeatRequest(BaseModel):
+    """Exact selection for rerun/regenerate; write authority never carries over."""
+
+    catalog_definition_revision: str = Field(pattern=r"^[0-9a-f]{64}$")
+    selection: GenerationSelectionSpec
+    tool_authority: Literal["ReadOnly"]
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+
 class ChatRunOut(BaseModel):
     """Response schema for a durable chat run.
 
-    ``profile_id`` is the product-selection snapshot taken at creation;
-    ``model_name``/``reasoning_effort`` are the resolved operator facts filled
-    at execution from the admitted plan (``None`` until then). ``failure`` is the one
-    ``chat_failure_projection`` read —
+    ``run_selection`` is the immutable dispatch projection plus its current
+    server-owned availability. ``failure`` is the one ``chat_failure_projection`` read —
     ``None`` for a run that is not a card-bearing failure (still running, or a
     defect with no stored closed code).
     """
@@ -993,9 +1002,7 @@ class ChatRunOut(BaseModel):
     conversation_id: UUID
     user_message_id: UUID
     assistant_message_id: UUID
-    profile_id: str | None = None
-    model_name: str | None = None
-    reasoning_effort: str | None = None
+    run_selection: RunSelectionOut
     support_id: Presence[str]
     publication_warning: Presence[ChatPublicationWarning]
     failure: ExpectedChatFailure | None = None

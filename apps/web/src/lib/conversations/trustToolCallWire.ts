@@ -8,12 +8,14 @@ import { TOOL_CONTRACT_PROJECTION } from "@/lib/conversations/toolContractProjec
 import { decodeToolProjectionFields } from "@/lib/conversations/toolProjectionWire";
 import {
   MESSAGE_TOOL_STATUSES,
+  type MachineAuthorship,
   type MessageRetrieval,
   type MessageToolCall,
 } from "@/lib/conversations/types";
 import {
   expectArray,
   expectBoolean,
+  expectCanonicalUuid,
   expectExactRecord,
   expectFiniteNumber,
   expectInteger,
@@ -39,11 +41,69 @@ const TRUST_TOOL_CALL_KEYS = [
   "provider_request_ids",
   "result_refs",
   "selected_context_refs",
+  "machine_authorships",
   "reverted_at",
   "retrievals",
   "created_at",
   "updated_at",
 ] as const;
+
+const MACHINE_AUTHORSHIP_KEYS = [
+  "target_kind",
+  "target_id",
+  "generation_id",
+  "generation_seq",
+  "tool_position",
+  "position_path",
+  "effect_id",
+] as const;
+
+const MACHINE_AUTHORSHIP_TARGET_KINDS = [
+  "library_entry",
+  "note_block",
+  "highlight",
+  "resource_edge",
+  "queue_item",
+] as const;
+
+const POSTGRES_INTEGER_MAX = 2_147_483_647;
+
+function decodeMachineAuthorship(raw: unknown, index: number): MachineAuthorship {
+  const name = `trust tool call.machine_authorships[${index}]`;
+  const value = expectExactRecord(raw, MACHINE_AUTHORSHIP_KEYS, name);
+  const generationSeq = expectInteger(value.generation_seq, `${name}.generation_seq`);
+  const toolPosition = expectInteger(value.tool_position, `${name}.tool_position`);
+  const positionPath = expectString(value.position_path, `${name}.position_path`);
+  if (
+    generationSeq < 1 ||
+    generationSeq > POSTGRES_INTEGER_MAX ||
+    toolPosition < 1 ||
+    toolPosition > POSTGRES_INTEGER_MAX
+  ) {
+    throw new TypeError(
+      `${name} generation and tool positions must fit positive database integers`,
+    );
+  }
+  if (positionPath !== `generation/${generationSeq}/tool/${toolPosition}`) {
+    throw new TypeError(`${name}.position_path must match its generation and tool position`);
+  }
+  return {
+    target_kind: expectOneOf(
+      value.target_kind,
+      MACHINE_AUTHORSHIP_TARGET_KINDS,
+      `${name}.target_kind`,
+    ),
+    target_id: expectCanonicalUuid(value.target_id, `${name}.target_id`),
+    generation_id: expectCanonicalUuid(
+      value.generation_id,
+      `${name}.generation_id`,
+    ),
+    generation_seq: generationSeq,
+    tool_position: toolPosition,
+    position_path: positionPath,
+    effect_id: expectCanonicalUuid(value.effect_id, `${name}.effect_id`),
+  };
+}
 
 const TRUST_RETRIEVAL_KEYS = [
   "id",
@@ -220,6 +280,36 @@ export function decodeTrustToolCall(raw: unknown): MessageToolCall {
   ) {
     throw new TypeError("trust tool call counts must match their result arrays");
   }
+  const machineAuthorships = expectArray(
+    value.machine_authorships,
+    decodeMachineAuthorship,
+    "trust tool call.machine_authorships",
+  );
+  if (
+    new Set(
+      machineAuthorships.map(
+        (authorship) => `${authorship.target_kind}:${authorship.target_id}`,
+      ),
+    ).size !== machineAuthorships.length
+  ) {
+    throw new TypeError("trust tool call machine-authorship targets must be unique");
+  }
+  const firstAuthorship = machineAuthorships[0];
+  if (
+    firstAuthorship !== undefined &&
+    machineAuthorships.some(
+      (authorship) =>
+        authorship.generation_id !== firstAuthorship.generation_id ||
+        authorship.generation_seq !== firstAuthorship.generation_seq ||
+        authorship.tool_position !== firstAuthorship.tool_position ||
+        authorship.position_path !== firstAuthorship.position_path ||
+        authorship.effect_id !== firstAuthorship.effect_id,
+    )
+  ) {
+    throw new TypeError(
+      "trust tool call machine-authorship rows must share one effect identity",
+    );
+  }
   return {
     ...projection,
     id: expectString(value.id, "trust tool call.id"),
@@ -241,6 +331,7 @@ export function decodeTrustToolCall(raw: unknown): MessageToolCall {
     ),
     result_refs: resultRefs,
     selected_context_refs: selectedContextRefs,
+    machine_authorships: machineAuthorships,
     provider_request_ids: expectArray(
       value.provider_request_ids,
       (entry, index) =>

@@ -1,4 +1,4 @@
-"""RED contract for the dedicated, sessionless ChatTools bearer grant."""
+"""RED contract for the dedicated, sessionless generation-tool bearer grant."""
 
 from __future__ import annotations
 
@@ -11,20 +11,21 @@ from uuid import uuid4
 import pytest
 from pydantic import SecretStr
 
-_AGENT_TOOL_GRANT_BOUNDARY_PRESENT = find_spec("nexus.services.agent_tool_grants") is not None
-if _AGENT_TOOL_GRANT_BOUNDARY_PRESENT:
+_GENERATION_TOOL_GRANT_BOUNDARY_PRESENT = find_spec("nexus.services.generation_spec") is not None
+if _GENERATION_TOOL_GRANT_BOUNDARY_PRESENT:
     from nexus.services.agent_tool_grants import (
         AGENT_TOOL_GRANT_AUDIENCE,
         AGENT_TOOL_GRANT_ISSUER,
         AGENT_TOOL_GRANT_SCOPE,
         MAX_AGENT_TOOL_GRANT_TTL_SECONDS,
         AgentToolGrantClaims,
+        GenerationToolGrantAuthority,
         issue_agent_tool_grant,
-        issue_chat_generation_grant,
+        issue_generation_tool_grant,
         verify_agent_tool_grant,
     )
 
-_SIGNING_KEY = SecretStr("dedicated-chat-tools-hs256-test-key")
+_SIGNING_KEY = SecretStr("dedicated-generation-tools-hs256-key")
 
 
 def _claims(now: datetime) -> AgentToolGrantClaims:
@@ -35,14 +36,16 @@ def _claims(now: datetime) -> AgentToolGrantClaims:
         scope=AGENT_TOOL_GRANT_SCOPE,
         sub=str(uuid4()),
         jti=str(uuid4()),
-        run_id=str(uuid4()),
         job_id=str(uuid4()),
         worker_id="worker-red-proof",
         attempt_no=3,
         generation_id=str(uuid4()),
-        admission_id=str(uuid4()),
+        generation_spec_fingerprint="a" * 64,
         tool_plan_revision="a" * 64,
-        request_fingerprint="a" * 64,
+        binding_revisions_digest="b" * 64,
+        tool_scope_digest="c" * 64,
+        tool_budget_digest="d" * 64,
+        effect_mode="ReadOnly",
         iat=issued_at,
         nbf=issued_at,
         exp=issued_at + MAX_AGENT_TOOL_GRANT_TTL_SECONDS,
@@ -50,7 +53,9 @@ def _claims(now: datetime) -> AgentToolGrantClaims:
 
 
 def test_grant_is_strict_hs256_bearer_and_does_not_leak_secret() -> None:
-    assert _AGENT_TOOL_GRANT_BOUNDARY_PRESENT, "dedicated agent-tool grant boundary is absent"
+    assert _GENERATION_TOOL_GRANT_BOUNDARY_PRESENT, (
+        "dedicated generation-tool grant boundary is absent"
+    )
     from nexus.services import generation_policy
 
     now = datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
@@ -58,13 +63,12 @@ def test_grant_is_strict_hs256_bearer_and_does_not_leak_secret() -> None:
     bearer = issue_agent_tool_grant(claims, signing_key=_SIGNING_KEY, now=now)
 
     assert verify_agent_tool_grant(bearer, signing_key=_SIGNING_KEY, now=now) == claims
-    assert "dedicated-chat-tools" not in repr(bearer)
-    assert "dedicated-chat-tools" not in str(bearer)
+    assert "dedicated-generation-tools" not in repr(bearer)
+    assert "dedicated-generation-tools" not in str(bearer)
     assert "token" not in claims.model_dump(mode="json")
 
-    assert MAX_AGENT_TOOL_GRANT_TTL_SECONDS == max(
-        generation_policy.chat_policy(profile).turn_timeout_seconds
-        for profile in generation_policy.CHAT_PROFILES
+    assert (
+        MAX_AGENT_TOOL_GRANT_TTL_SECONDS == generation_policy.MODEL_TOOL_ADMISSION_RUNTIME_SECONDS
     )
     assert MAX_AGENT_TOOL_GRANT_TTL_SECONDS == 900
     with pytest.raises(ValueError, match=str(MAX_AGENT_TOOL_GRANT_TTL_SECONDS)):
@@ -79,9 +83,8 @@ def test_grant_is_strict_hs256_bearer_and_does_not_leak_secret() -> None:
         claims.model_copy(update={"aud": "wrong-audience"}),
         claims.model_copy(update={"scope": "wrong-scope"}),
     ):
-        forged = issue_agent_tool_grant(changed, signing_key=_SIGNING_KEY, now=now)
         with pytest.raises(ValueError):
-            verify_agent_tool_grant(forged, signing_key=_SIGNING_KEY, now=now)
+            issue_agent_tool_grant(changed, signing_key=_SIGNING_KEY, now=now)
 
     with pytest.raises(ValueError):
         verify_agent_tool_grant(bearer, signing_key=SecretStr("wrong-key"), now=now)
@@ -102,7 +105,9 @@ def test_grant_is_strict_hs256_bearer_and_does_not_leak_secret() -> None:
 
 
 def test_grant_rejects_clock_skew_and_missing_or_extra_claims() -> None:
-    assert _AGENT_TOOL_GRANT_BOUNDARY_PRESENT, "dedicated agent-tool grant boundary is absent"
+    assert _GENERATION_TOOL_GRANT_BOUNDARY_PRESENT, (
+        "dedicated generation-tool grant boundary is absent"
+    )
     now = datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
     claims = _claims(now)
 
@@ -135,7 +140,7 @@ def test_grant_rejects_clock_skew_and_missing_or_extra_claims() -> None:
             now=now,
         )
 
-    for required_claim in ("generation_id", "admission_id"):
+    for required_claim in ("generation_id", "tool_scope_digest"):
         wire = claims.model_dump(mode="json")
         wire.pop(required_claim)
         with pytest.raises(ValueError):
@@ -146,22 +151,30 @@ def test_grant_rejects_clock_skew_and_missing_or_extra_claims() -> None:
         )
 
 
-def test_chat_grant_uses_host_admission_as_its_non_extensible_900_second_clock() -> None:
-    admitted_at = datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
-    issued_at = admitted_at + timedelta(seconds=17)
-    issued = issue_chat_generation_grant(
+def test_generation_tool_grant_uses_earliest_lease_and_transport_fence() -> None:
+    assert _GENERATION_TOOL_GRANT_BOUNDARY_PRESENT, (
+        "dedicated generation-tool grant boundary is absent"
+    )
+    issued_at = datetime(2026, 8, 24, 12, 0, 17, tzinfo=UTC)
+    authority = GenerationToolGrantAuthority(
         user_id=uuid4(),
-        run_id=uuid4(),
-        job_id=uuid4(),
-        worker_id="worker-admission-clock",
-        attempt_no=1,
         generation_id=uuid4(),
-        admission_id=uuid4(),
-        tool_plan_revision="a" * 64,
-        request_fingerprint="b" * 64,
+        job_id=uuid4(),
+        worker_id="worker-route-neutral-clock",
+        attempt_no=1,
+        generation_spec_fingerprint="a" * 64,
+        tool_plan_revision="b" * 64,
+        binding_revisions_digest="c" * 64,
+        tool_scope_digest="d" * 64,
+        tool_budget_digest="e" * 64,
+        effect_mode="ReadOnly",
+    )
+    issued = issue_generation_tool_grant(
+        authority,
         signing_key=_SIGNING_KEY,
-        admitted_at=admitted_at,
         now=issued_at,
+        lease_expires_at=issued_at + timedelta(seconds=283),
+        transport_deadline_at=issued_at + timedelta(seconds=600),
     )
     claims = verify_agent_tool_grant(
         issued.token,
@@ -169,21 +182,17 @@ def test_chat_grant_uses_host_admission_as_its_non_extensible_900_second_clock()
         now=issued_at,
     )
     assert claims.iat == claims.nbf == int(issued_at.timestamp())
-    assert claims.exp == int(admitted_at.timestamp()) + 900
-    assert claims.exp - claims.iat == 883
+    assert claims.exp == int((issued_at + timedelta(seconds=283)).timestamp())
+    assert claims.exp - claims.iat == 283
+    assert "owner_kind" not in claims.model_dump(mode="json")
+    assert "provider" not in claims.model_dump(mode="json")
+    assert "model" not in claims.model_dump(mode="json")
 
-    with pytest.raises(ValueError, match="expired before"):
-        issue_chat_generation_grant(
-            user_id=uuid4(),
-            run_id=uuid4(),
-            job_id=uuid4(),
-            worker_id="worker-admission-clock",
-            attempt_no=1,
-            generation_id=uuid4(),
-            admission_id=uuid4(),
-            tool_plan_revision="a" * 64,
-            request_fingerprint="b" * 64,
+    with pytest.raises(ValueError, match="no remaining"):
+        issue_generation_tool_grant(
+            authority,
             signing_key=_SIGNING_KEY,
-            admitted_at=admitted_at,
-            now=admitted_at + timedelta(seconds=900),
+            now=issued_at,
+            lease_expires_at=issued_at,
+            transport_deadline_at=issued_at + timedelta(seconds=600),
         )

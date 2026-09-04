@@ -1,10 +1,10 @@
 diff --git a/python/nexus/ops/codex_hosted_evidence.py b/python/nexus/ops/codex_hosted_evidence.py
 --- a/python/nexus/ops/codex_hosted_evidence.py
 +++ b/python/nexus/ops/codex_hosted_evidence.py
-@@ -149,6 +149,5 @@ def _evidence_has_closed_shape(evidence: object, *, run_id: str, source_sha: str) -> bool:
+@@ -258,6 +258,5 @@ def _evidence_has_closed_shape(evidence: object, *, run_id: str, source_sha: str) -> bool:
+             or result.get("tool_events") != 1
+             or not _safe_integer(result.get("elapsed_ms"))
              or not 0 < result["elapsed_ms"] <= _MAX_PLAN_ELAPSED_MS
              or not _safe_integer(result.get("permission_requests"))
 -            or result["permission_requests"] != 0
-             or type(usage) is not dict
-             or set(usage) != {"input_tokens", "output_tokens", "total_tokens"}
-             or any(not _safe_integer(usage.get(key)) for key in usage)
+         ):

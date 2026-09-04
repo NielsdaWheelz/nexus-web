@@ -118,7 +118,7 @@ _CODEX_AGENT_RUNTIME_ENVIRONMENT = {
     "NEXUS_CODEX_CREDENTIAL_FILE": "/run/nexus-codex-credential/auth.json",
     "NEXUS_CODEX_WORKING_DIRECTORY_ROOT": "/run/nexus-codex-turns",
     "NEXUS_CODEX_AGENT_SOCKET": "/run/nexus-codex/agent.sock",
-    "NEXUS_CODEX_CHAT_NETWORK_ATTESTED": "true",
+    "NEXUS_CODEX_MODEL_TOOL_NETWORK_ATTESTED": "true",
 }
 # These are the only environment names inherited from the pinned Python/worker
 # artifact. Their values come from `docker image inspect` and must be preserved
@@ -227,8 +227,17 @@ _CADDY_LOADED_CONFIG_COMMAND = (
 _CADDY_CONFIG_MAX_BYTES = 1024 * 1024
 _CODEX_CAPACITY_CLIENT_ENVIRONMENT = {
     "NEXUS_CODEX_AGENT_SOCKET": "/run/nexus-codex/agent.sock",
+    "NEXUS_CODEX_CAPACITY_GENERATION_SPEC_FILE": "/run/nexus-capacity-input.json",
 }
 _CODEX_CAPACITY_CLIENT_COMMAND = ("-c", "while :; do sleep 3600; done")
+_CODEX_CAPACITY_INPUT_CONTAINER_PATH = "/run/nexus-capacity-input.json"
+_CODEX_CAPACITY_INPUT_SCHEMA_VERSION = "nexus-codex-capacity-canary-input.v1"
+_CODEX_CAPACITY_INPUT_MAX_BYTES = 2 * 1024 * 1024
+_CODEX_CAPACITY_INPUT_INSTRUCTIONS = (
+    "Write one short morning brief sentence for a capacity qualification."
+)
+_CODEX_CAPACITY_INPUT_TEXT = "No personal context is supplied. Return bounded non-empty text."
+_CODEX_CAPACITY_PROMPT_TEMPLATE_REVISION = "codex-capacity-canary.dawn-write.v1"
 _CODEX_PERSONAL_GENERATION_REVISION = 224
 _CAPACITY_SERVICES = (*_SERVICES, "codex-egress-policy", _CODEX_AGENT_HOST)
 _RESOURCE_LIMITS = {
@@ -256,7 +265,7 @@ _MIN_AVAILABLE_MEMORY_BYTES = 256 * 1024 * 1024
 _MIN_SWAP_BYTES = 1024 * 1024 * 1024
 _MIN_PARSER_TEMP_FREE_BYTES = 512 * 1024 * 1024
 _CODEX_CAPACITY_SCHEMA_VERSION = "nexus-codex-capacity.v2"
-_CODEX_CAPACITY_CANARY_SCHEMA_VERSION = "nexus-codex-capacity-canary.v3"
+_CODEX_CAPACITY_CANARY_SCHEMA_VERSION = "nexus-codex-capacity-canary.v4"
 # The canary owns its phase sequence and exit-code table as the public
 # `apps.codex_agent.capacity_canary.TURNS` and `.EXIT_CODES`. This
 # controller ships in the immutable host bundle without the worker package, so
@@ -306,13 +315,14 @@ _CODEX_CAPACITY_EVIDENCE_FIELDS = frozenset(
     }
 )
 _CODEX_CAPACITY_CANARY_FIELDS = frozenset({"schema_version", "status", "turns"})
+_CODEX_CAPACITY_INPUT_FIELDS = frozenset({"schema_version", "spec", "intent"})
 _CODEX_CAPACITY_TURN_FIELDS = frozenset(
     {
         "phase",
         "operation",
-        "plan_id",
-        "plan_revision",
-        "capability",
+        "generation_spec_fingerprint",
+        "model",
+        "reasoning",
         "terminal_status",
         "failure_kind",
         "usage_present",
@@ -2143,6 +2153,137 @@ def _environment_mapping(value: object, label: str) -> dict[str, str]:
             raise ReleaseDefect(f"{label} is malformed")
         environment[name] = raw_value
     return environment
+
+
+def _validated_codex_capacity_input_bytes(payload: bytes) -> bytes:
+    """Validate the candidate-frozen canary input at the controller boundary."""
+
+    if not payload or len(payload) > _CODEX_CAPACITY_INPUT_MAX_BYTES:
+        raise ReleaseDefect("Codex capacity input exceeds its byte contract")
+    value = _read_json_output(payload, "Codex capacity input")
+    envelope = _closed_mapping(
+        value,
+        _CODEX_CAPACITY_INPUT_FIELDS,
+        "Codex capacity input",
+    )
+    if _string(envelope, "schema_version") != _CODEX_CAPACITY_INPUT_SCHEMA_VERSION:
+        raise ReleaseDefect("Codex capacity input schema differs")
+    spec = _mapping(envelope.get("spec"), "Codex capacity input spec")
+    intent = _closed_mapping(
+        envelope.get("intent"),
+        frozenset({"instructions", "input", "output"}),
+        "Codex capacity input intent",
+    )
+    intent_output = _closed_mapping(
+        intent.get("output"),
+        frozenset({"kind"}),
+        "Codex capacity input intent output",
+    )
+    selection = _closed_mapping(
+        spec.get("selection"),
+        frozenset({"route", "model", "reasoning"}),
+        "Codex capacity input selection",
+    )
+    dispatch = _closed_mapping(
+        spec.get("resolved_dispatch_target"),
+        frozenset({"kind", "model_key", "dispatch_model", "agent_definition_revision"}),
+        "Codex capacity input dispatch",
+    )
+    output_contract = _closed_mapping(
+        spec.get("output_contract"),
+        frozenset({"kind"}),
+        "Codex capacity input output contract",
+    )
+    bounds = _mapping(spec.get("bounds"), "Codex capacity input bounds")
+    prompt_ref = _closed_mapping(
+        spec.get("prompt_payload_ref"),
+        frozenset({"kind", "owner_kind", "owner_id", "revision", "payload_digest"}),
+        "Codex capacity input prompt reference",
+    )
+    absent = {"kind": "Absent"}
+    if (
+        spec.get("schema_version") != "nexus-generation-spec.v1"
+        or spec.get("operation") != "dawn_write"
+        or spec.get("selection_source") != "BackgroundPolicy"
+        or selection
+        != {
+            "route": "CodexPersonal",
+            "model": "gpt-5.6-terra",
+            "reasoning": "medium",
+        }
+        or dispatch.get("kind") != "CodexPersonal"
+        or dispatch.get("model_key") != "gpt-5.6-terra"
+        or dispatch.get("dispatch_model") != "gpt-5.6-terra"
+        or output_contract != {"kind": "Text"}
+        or intent_output != {"kind": "Text"}
+        or intent.get("instructions") != _CODEX_CAPACITY_INPUT_INSTRUCTIONS
+        or intent.get("input") != _CODEX_CAPACITY_INPUT_TEXT
+        or spec.get("prompt_template_revision") != _CODEX_CAPACITY_PROMPT_TEMPLATE_REVISION
+        or prompt_ref.get("kind") != "DomainPromptPayload"
+        or prompt_ref.get("owner_kind") != "CodexCapacityCanary"
+        or prompt_ref.get("owner_id") != "production-capacity"
+        or prompt_ref.get("revision") != "dawn-write.v1"
+        or bounds.get("turn_timeout_seconds") != 180
+        or spec.get("effective_context_budget_tokens") != 128_000
+        or spec.get("effective_output_budget_tokens") != 16_000
+        or any(
+            spec.get(field) != absent
+            for field in (
+                "host_tool_plan_snapshot",
+                "host_evidence_revision",
+                "model_tool_plan_snapshot",
+                "tool_effect_mode",
+                "admitted_tool_scope",
+                "admitted_tool_scope_digest",
+                "provider_registry_revision",
+            )
+        )
+    ):
+        raise ReleaseDefect("Codex capacity input differs from the fixed Dawn contract")
+
+    def digest_fact(fact: object) -> str:
+        try:
+            encoded = json.dumps(
+                fact,
+                ensure_ascii=True,
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        except (TypeError, ValueError) as exc:
+            raise ReleaseDefect("Codex capacity input contains non-canonical data") from exc
+        return hashlib.sha256(encoded).hexdigest()
+
+    instructions = _string(intent, "instructions")
+    input_text = _string(intent, "input")
+    if (
+        spec.get("instructions_digest") != hashlib.sha256(instructions.encode("utf-8")).hexdigest()
+        or spec.get("input_digest") != hashlib.sha256(input_text.encode("utf-8")).hexdigest()
+        or prompt_ref.get("payload_digest") != digest_fact(intent)
+        or spec.get("output_contract_fingerprint") != digest_fact(output_contract)
+    ):
+        raise ReleaseDefect("Codex capacity input fact digests differ")
+    fingerprint = spec.get("fingerprint")
+    fingerprint_facts = dict(spec)
+    fingerprint_facts.pop("fingerprint", None)
+    if fingerprint != digest_fact(fingerprint_facts):
+        raise ReleaseDefect("Codex capacity input fingerprint differs")
+    try:
+        canonical = (
+            json.dumps(
+                value,
+                ensure_ascii=True,
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise ReleaseDefect("Codex capacity input contains non-canonical data") from exc
+    if payload != canonical:
+        raise ReleaseDefect("Codex capacity input is not canonical JSON")
+    return canonical
 
 
 def _is_default_local_bridge_ipam(value: object) -> bool:
@@ -4811,8 +4952,7 @@ class HostRelease:
             "backend": "codex",
             "transport": "sdk",
             "auth_profile": "codex-personal",
-            "command_schema_version": "nexus-generation-command.v2",
-            "policy_revision": "codex-generation.2026-08-24.2",
+            "command_schema_version": "nexus-generation-command.v3",
             "sdk_version": "0.144.4",
             "runtime_version": "0.144.4",
         }:
@@ -5208,6 +5348,36 @@ class HostRelease:
         ):
             raise PermanentReleaseFailure("Codex policy public egress network differs")
 
+    def _materialize_codex_capacity_input(
+        self,
+        *,
+        bundle: Path,
+        candidate: CandidateManifest,
+        config_path: Path,
+    ) -> bytes:
+        """Ask the candidate runtime to freeze, then independently admit, Dawn facts."""
+
+        result = self._compose(
+            bundle=bundle,
+            candidate=candidate,
+            config_path=config_path,
+            arguments=(
+                "run",
+                "--rm",
+                "--no-deps",
+                "--entrypoint",
+                "python",
+                "worker-background",
+                "-m",
+                "apps.codex_agent.capacity_canary",
+                "materialize-input",
+            ),
+        )
+        try:
+            return _validated_codex_capacity_input_bytes(result.stdout)
+        except ReleaseDefect as exc:
+            raise CodexCapacityBreach("Codex capacity input contract differs") from exc
+
     def _validate_codex_capacity_client_isolation(
         self,
         inspected: dict[str, Any],
@@ -5217,6 +5387,7 @@ class HostRelease:
         expected_name: str,
         expected_source_sha: str,
         image_environment: dict[str, str],
+        expected_input_source: Path,
     ) -> None:
         config = _mapping(inspected.get("Config"), "Codex capacity canary config")
         host_config = _mapping(
@@ -5254,10 +5425,17 @@ class HostRelease:
         self._validate_resource_limits(_CODEX_AGENT_HOST, inspected)
 
         mounts = inspected.get("Mounts")
-        if not isinstance(mounts, list) or len(mounts) != 1:
+        if not isinstance(mounts, list) or len(mounts) != 2:
+            raise CodexCapacityBreach("Codex capacity canary isolation differs")
+        observed = {
+            mount.get("Destination"): mount
+            for mount in mounts
+            if isinstance(mount, dict) and isinstance(mount.get("Destination"), str)
+        }
+        if set(observed) != {"/run/nexus-codex", _CODEX_CAPACITY_INPUT_CONTAINER_PATH}:
             raise CodexCapacityBreach("Codex capacity canary isolation differs")
         _require_named_volume_mount(
-            mounts[0],
+            observed["/run/nexus-codex"],
             volume_name=_CODEX_AGENT_VOLUME_MOUNTS["/run/nexus-codex"],
             destination="/run/nexus-codex",
             read_write=False,
@@ -5265,6 +5443,14 @@ class HostRelease:
             breach=CodexCapacityBreach,
             failure="Codex capacity canary isolation differs",
         )
+        input_mount = observed[_CODEX_CAPACITY_INPUT_CONTAINER_PATH]
+        if (
+            input_mount.get("Type") != "bind"
+            or input_mount.get("Source") != str(expected_input_source)
+            or input_mount.get("Destination") != _CODEX_CAPACITY_INPUT_CONTAINER_PATH
+            or input_mount.get("RW") is not False
+        ):
+            raise CodexCapacityBreach("Codex capacity canary isolation differs")
         network = _mapping(
             inspected.get("NetworkSettings"),
             "Codex capacity canary network settings",
@@ -5289,6 +5475,7 @@ class HostRelease:
         expected_name: str,
         expected_source_sha: str,
         image_environment: dict[str, str],
+        expected_input_source: Path,
     ) -> None:
         """Assert live qualification isolation as the §11 policy breach it is.
 
@@ -5307,6 +5494,7 @@ class HostRelease:
                 expected_name=expected_name,
                 expected_source_sha=expected_source_sha,
                 image_environment=image_environment,
+                expected_input_source=expected_input_source,
             )
             self._validate_codex_egress_topology(
                 host_container_id=host_container_id,
@@ -6091,17 +6279,20 @@ class HostRelease:
         if not isinstance(turns, list) or len(turns) != len(_CODEX_CAPACITY_PHASES):
             raise CodexCapacityBreach("Codex capacity qualification turns are malformed")
         phases: list[str] = []
+        fingerprints: list[str] = []
         for value in turns:
             turn = _closed_mapping(
                 value, _CODEX_CAPACITY_TURN_FIELDS, "Codex capacity qualification turn"
             )
             phase = _string(turn, "phase")
             phases.append(phase)
+            fingerprint = _string(turn, "generation_spec_fingerprint")
+            fingerprints.append(fingerprint)
             if (
-                _string(turn, "operation") != "dossier_library"
-                or _string(turn, "plan_id") != "thorough"
-                or _string(turn, "plan_revision") != "codex-generation.2026-08-24.2"
-                or _string(turn, "capability") != "Synthesis"
+                _string(turn, "operation") != "dawn_write"
+                or _SHA256.fullmatch(fingerprint) is None
+                or _string(turn, "model") != "gpt-5.6-terra"
+                or _string(turn, "reasoning") != "medium"
                 or _string(turn, "terminal_status") != "succeeded"
                 or turn.get("failure_kind") is not None
                 or _boolean(turn, "usage_present") is not True
@@ -6113,6 +6304,8 @@ class HostRelease:
                 raise CodexCapacityBreach("Codex capacity qualification turn differs")
         if tuple(phases) != _CODEX_CAPACITY_PHASES:
             raise CodexCapacityBreach("Codex capacity qualification turn phases differ")
+        if len(set(fingerprints)) != 1:
+            raise CodexCapacityBreach("Codex capacity qualification spec identity differs")
         services = _string_list(evidence.get("services"), "Codex capacity qualification services")
         if tuple(services) != _CODEX_CAPACITY_SERVICES:
             raise CodexCapacityBreach("Codex capacity qualification service health differs")
@@ -6489,10 +6682,35 @@ class HostRelease:
         name = f"nexus-codex-capacity-{source_sha}"
         canary_id = ""
         canary_may_exist = False
+        input_directory: tempfile.TemporaryDirectory[str] | None = None
+        input_path: Path | None = None
         evidence: dict[str, object] | None = None
         proof_error: BaseException | None = None
         write_failure_evidence = False
         try:
+            input_bytes = self._materialize_codex_capacity_input(
+                bundle=bundle,
+                candidate=candidate,
+                config_path=config.path,
+            )
+            input_directory = tempfile.TemporaryDirectory(prefix="nexus-codex-capacity-input-")
+            input_path = Path(input_directory.name) / "generation.json"
+            _create_bytes(
+                input_path,
+                input_bytes,
+                mode=0o444,
+                owner=(10001, 10001),
+            )
+            input_path = input_path.resolve(strict=True)
+            input_metadata = input_path.lstat()
+            if (
+                not stat.S_ISREG(input_metadata.st_mode)
+                or input_metadata.st_uid != 10001
+                or input_metadata.st_gid != 10001
+                or stat.S_IMODE(input_metadata.st_mode) != 0o444
+                or input_path.read_bytes() != input_bytes
+            ):
+                raise ReleaseDefect("Codex capacity input file is not exact immutable input")
             reservation, memory, pids = _RESOURCE_LIMITS[_CODEX_AGENT_HOST]
             run_volume_name = _CODEX_AGENT_VOLUME_MOUNTS["/run/nexus-codex"]
             self._reclaim_codex_capacity_canary(name, source_sha=source_sha)
@@ -6529,8 +6747,14 @@ class HostRelease:
                     "10001:10001",
                     "--env",
                     "NEXUS_CODEX_AGENT_SOCKET=/run/nexus-codex/agent.sock",
+                    "--env",
+                    "NEXUS_CODEX_CAPACITY_GENERATION_SPEC_FILE="
+                    f"{_CODEX_CAPACITY_INPUT_CONTAINER_PATH}",
                     "--mount",
                     f"type=volume,src={run_volume_name},dst=/run/nexus-codex,readonly",
+                    "--mount",
+                    f"type=bind,src={input_path},dst="
+                    f"{_CODEX_CAPACITY_INPUT_CONTAINER_PATH},readonly",
                     "--entrypoint",
                     "sh",
                     candidate.images.worker,
@@ -6547,6 +6771,7 @@ class HostRelease:
                 expected_name=name,
                 expected_source_sha=source_sha,
                 image_environment=self._codex_agent_image_environment(candidate.images.worker),
+                expected_input_source=input_path,
             )
             host_cgroup = self._codex_capacity_cgroup(host_container_id)
             sampled: list[tuple[tuple[int, float, float], tuple[int, int, int, int]]] = []
@@ -6730,6 +6955,13 @@ class HostRelease:
                 proof_error = ExternalCommandFailed("Codex capacity cleanup failed")
             for cleanup_failure in cleanup_failures:
                 proof_error.add_note(f"Codex capacity cleanup also failed: {cleanup_failure}")
+        if input_directory is not None:
+            try:
+                input_directory.cleanup()
+            except OSError as exc:
+                if proof_error is None:
+                    proof_error = ExternalCommandFailed("Codex capacity input cleanup failed")
+                proof_error.add_note(f"Codex capacity input cleanup also failed: {exc}")
         if proof_error is not None:
             raise proof_error
         if evidence is None:

@@ -6,10 +6,10 @@ import os
 
 
 def reject_subscription_api_key_auth() -> None:
-    """Reject API-key modes in every subscription-backed Codex process."""
+    """Reject every API credential in a subscription-backed Codex process."""
 
-    for name in ("OPENAI_API_KEY", "CODEX_API_KEY"):
-        if name in os.environ:
+    for name in sorted(os.environ):
+        if name.endswith("_API_KEY"):
             raise RuntimeError(f"{name} must not be inherited by a Codex subscription process")
 
 

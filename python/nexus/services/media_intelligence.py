@@ -62,12 +62,15 @@ from nexus.schemas.presence import Presence, Present, absent, nullable_from_pres
 from nexus.services import durable_step_journal as step_journal
 from nexus.services import generation_policy
 from nexus.services.codex_generation_contract import (
-    GenerationCommand,
+    GenerationCommandDraft,
     GenerationTerminal,
     NormalizedFailureCode,
 )
-from nexus.services.codex_generation_contract import (
-    request_fingerprint as generation_request_fingerprint,
+from nexus.services.generation_intent import GenerationIntent
+from nexus.services.generation_spec import (
+    ImmutablePromptPayloadRef,
+    decode_generation_spec_document,
+    generation_fact_digest,
 )
 from nexus.services.llm_execution import (
     AcceptedGenerationFailure,
@@ -75,13 +78,15 @@ from nexus.services.llm_execution import (
     CompletedGeneration,
     EncodedGenerationTerminal,
     ExecutionRuntime,
+    GenerationAdmissionInputsChanged,
     GenerationDispatchAborted,
-    GenerationExecutionRequest,
     GenerationReconciliationRequest,
     GenerationUncertain,
     GenerationUncertainResolution,
     JobGenerationJournal,
+    admit_job_generation,
     cancel_prepared_generation_without_dispatch_in_current_transaction,
+    codex_terminal_evidence,
     execute_generation,
     prove_uncertain_generation_not_dispatched_in_current_transaction,
     reconcile_uncertain_generation_in_current_transaction,
@@ -616,30 +621,11 @@ def _complete_prepared_media_unit_without_dispatch(
     return True
 
 
-def _generation_capacity_wait_index(job: JobRow) -> int:
-    value = job.payload.get("capacity_wait_index")
-    if type(value) is not int or value < 0:
-        raise AssertionError("media unit job has an invalid capacity_wait_index")
-    return value
-
-
-def _media_unit_command(*, generation_id: UUID, user_content: str) -> GenerationCommand:
-    intent = build_synthesis_intent(
+def _media_unit_intent(*, user_content: str) -> GenerationIntent:
+    return build_synthesis_intent(
         system_prompt=_MEDIA_UNIT_SYSTEM_PROMPT,
         user_content=user_content,
         schema=MediaUnitSynthesis,
-    )
-    return GenerationCommand.model_validate(
-        {
-            "request_id": generation_id,
-            "operation": {
-                "kind": MEDIA_UNIT_OPERATION,
-                "revision": generation_policy.operation_revision(MEDIA_UNIT_OPERATION),
-            },
-            "policy_revision": generation_policy.POLICY_REVISION,
-            "policy_fingerprint": generation_policy.POLICY_FINGERPRINT,
-            "intent": intent,
-        }
     )
 
 
@@ -813,23 +799,40 @@ def reconcile_uncertain_media_unit(
             )
         else:
             candidates = _load_candidates(db, media_id=media_id)
-            command = _media_unit_command(
-                generation_id=state.generation_id,
-                user_content=_build_media_unit_user_content(candidates),
+            raw_admissions = payload.get("generation_admissions")
+            if not isinstance(raw_admissions, dict):
+                raise invalid("Media Intelligence has no frozen generation admission")
+            raw_admission = raw_admissions.get(_MEDIA_UNIT_STEP_PATH)
+            if not isinstance(raw_admission, dict) or set(raw_admission) != {
+                "spec",
+                "intent",
+            }:
+                raise invalid("Media Intelligence frozen admission is invalid")
+            spec = decode_generation_spec_document(raw_admission["spec"])
+            raw_intent = raw_admission["intent"]
+            if not isinstance(raw_intent, dict):
+                raise invalid("Media Intelligence frozen intent is invalid")
+            intent = GenerationIntent.model_validate(raw_intent)
+            current_intent = _media_unit_intent(
+                user_content=_build_media_unit_user_content(candidates)
             )
-            if state.request_fingerprint.value != generation_request_fingerprint(command):
+            if state.request_fingerprint.value != spec.fingerprint or intent != current_intent:
                 raise invalid("Media Intelligence inputs changed since generation dispatch")
+            draft = GenerationCommandDraft(
+                request_id=state.generation_id,
+                spec=spec,
+                intent=intent,
+            )
             next_state = reconcile_uncertain_generation_in_current_transaction(
                 db,
                 GenerationReconciliationRequest(
                     owner=owner,
-                    command=command,
+                    draft=draft,
                     state=state,
-                    streaming=False,
                     resolution=resolution,
                 ),
                 encode_terminal=lambda terminal: _encode_media_unit_terminal(
-                    terminal,
+                    codex_terminal_evidence(terminal),
                     candidates=candidates,
                 ),
             )
@@ -1023,26 +1026,10 @@ async def run_media_unit_build(
         return "failed"
 
     user_content = _build_media_unit_user_content(candidates)
-    command = _media_unit_command(
-        generation_id=generation_id,
-        user_content=user_content,
-    )
-    request_fingerprint = generation_request_fingerprint(command)
+    intent = _media_unit_intent(user_content=user_content)
     if state is not None:
         if not isinstance(state.request_fingerprint, Present):
             raise AssertionError("media unit replay state has no request fingerprint")
-        if state.request_fingerprint.value != request_fingerprint:
-            if state.dispatch_phase is step_journal.Prepared:
-                _complete_prepared_media_unit_without_dispatch(
-                    db,
-                    owner=owner,
-                    ctx=ctx,
-                    state=state,
-                    result=_CompletedSkip(reason="request_fingerprint_changed"),
-                    reason="media synthesis inputs changed before redispatch",
-                )
-                return "ok"
-            raise AssertionError("media unit synthesis request changed on replay")
         if state.dispatch_phase is step_journal.Completed:
             if not isinstance(state.terminal_result, Present):
                 raise AssertionError("Completed media unit step has no terminal result")
@@ -1091,35 +1078,6 @@ async def run_media_unit_build(
         )
         return "failed"
     try:
-        if state is None:
-            if not _media_unit_attempt_active(
-                db,
-                media_id=media_id,
-                content_fingerprint=content_fingerprint,
-                ctx=ctx,
-            ):
-                db.rollback()
-                return "ok"
-            prepared = step_journal.StepReplayState(
-                generation_id=generation_id,
-                dispatch_phase=step_journal.Prepared,
-                request_fingerprint=present(request_fingerprint),
-                terminal_result=absent(),
-            )
-            if not step_journal.checkpoint_step_state(
-                db,
-                ctx=ctx,
-                job=job,
-                step_path=_MEDIA_UNIT_STEP_PATH,
-                state=prepared,
-            ):
-                db.rollback()
-                return "ok"
-            db.commit()
-            state = prepared
-            job = get_job(db, ctx.job_id)
-            if job is None:
-                return "ok"
 
         def lock_dispatch(dispatch_db: Session) -> JobRow | None:
             locked_summary = dispatch_db.scalar(
@@ -1150,27 +1108,55 @@ async def run_media_unit_build(
         # A first dispatch reloads the prepared job; a replay may retain an earlier
         # read snapshot. Neither may cross the generation host I/O boundary.
         db.commit()
+        journal = JobGenerationJournal(
+            context=ctx,
+            step_path=_MEDIA_UNIT_STEP_PATH,
+            lock_dispatch=lock_dispatch,
+        )
         try:
-            execution_result = await execute_generation(
-                GenerationExecutionRequest(
-                    owner=LlmCallOwner(kind="media_summary", id=summary_id),
-                    command=command,
-                    journal=JobGenerationJournal(
-                        context=ctx,
-                        step_path=_MEDIA_UNIT_STEP_PATH,
-                        capacity_wait_index=_generation_capacity_wait_index(job),
-                        lock_dispatch=lock_dispatch,
-                    ),
-                    capacity_wait_index=_generation_capacity_wait_index(job),
+            execution_request = await admit_job_generation(
+                owner=LlmCallOwner(kind="media_summary", id=summary_id),
+                generation_id=generation_id,
+                operation="media_summary",
+                intent=intent,
+                prompt_template_revision=generation_policy.operation_revision(MEDIA_UNIT_OPERATION),
+                prompt_payload_ref=ImmutablePromptPayloadRef(
+                    owner_kind="media_summary",
+                    owner_id=str(summary_id),
+                    revision=generation_policy.operation_revision(MEDIA_UNIT_OPERATION),
+                    payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
                 ),
+                journal=journal,
+                session_factory=get_session_factory(),
+                runtime=runtime,
+            )
+            execution_result = await execute_generation(
+                execution_request,
                 session_factory=get_session_factory(),
                 runtime=runtime,
                 encode_terminal=lambda terminal: _encode_media_unit_terminal(
-                    terminal,
+                    codex_terminal_evidence(terminal),
                     candidates=candidates,
                 ),
                 encode_preaccept_failure=_encode_media_unit_preaccept_failure,
             )
+        except GenerationAdmissionInputsChanged:
+            current_job = get_job(db, ctx.job_id)
+            current_state = (
+                None
+                if current_job is None
+                else step_journal.read_step_states(current_job).get(_MEDIA_UNIT_STEP_PATH)
+            )
+            if current_state is not None and current_state.dispatch_phase is step_journal.Prepared:
+                _complete_prepared_media_unit_without_dispatch(
+                    db,
+                    owner=owner,
+                    ctx=ctx,
+                    state=current_state,
+                    result=_CompletedSkip(reason="request_fingerprint_changed"),
+                    reason="media synthesis inputs changed before redispatch",
+                )
+            return "ok"
         except GenerationDispatchAborted:
             if state is not None and state.dispatch_phase is step_journal.Prepared:
                 _complete_prepared_media_unit_without_dispatch(

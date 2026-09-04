@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { RUN_SELECTION } from "@/__tests__/helpers/generationCatalog";
 import type { ConversationMessage } from "@/lib/conversations/types";
 import { decodeChatRunData, decodeConversationMessage } from "./messageWire";
 
@@ -30,9 +31,7 @@ function chatRunData() {
       conversation_id: "conversation-1",
       user_message_id: "user-1",
       assistant_message_id: "assistant-1",
-      profile_id: "balanced",
-      model_name: "gpt-5.6-terra",
-      reasoning_effort: "medium",
+      run_selection: RUN_SELECTION,
       support_id: { kind: "Absent" },
       publication_warning: { kind: "Absent" },
       failure: null,
@@ -130,7 +129,7 @@ describe("conversation message reader-selection wire", () => {
     ).toThrow("conversation message contains retired field provider");
   });
 
-  it("strictly rejects retired trust-run selectors, pricing, and failures", () => {
+  it("decodes immutable trust selection and rejects retired selectors", () => {
     const candidate = {
       ...message(),
       role: "assistant",
@@ -144,11 +143,7 @@ describe("conversation message reader-selection wire", () => {
         status: "error",
         run: {
           run_id: "run-1",
-          profile_id: "balanced",
-          plan_id: "chat_balanced",
-          plan_revision: "codex-personal.v1",
-          model_name: "gpt-5.6-terra",
-          reasoning_effort: { kind: "Present", value: "medium" },
+          run_selection: RUN_SELECTION,
           status: "error",
           usage: null,
           error_code: "E_GENERATION_RUNTIME_UNAVAILABLE",
@@ -171,12 +166,15 @@ describe("conversation message reader-selection wire", () => {
     };
 
     expect(decodeConversationMessage(candidate).trust_trail?.run).toMatchObject({
-      profile_id: "balanced",
+      run_selection: RUN_SELECTION,
       failure: { code: "assistant_unavailable", can_rerun: true },
     });
 
     for (const retired of [
       ["provider", "anthropic"],
+      ["profile_id", "legacy"],
+      ["model_name", "legacy"],
+      ["reasoning_effort", "high"],
       ["reasoning_option_id", "high"],
       ["total_cost_usd_micros", 42],
     ] as const) {
@@ -210,8 +208,10 @@ describe("conversation message reader-selection wire", () => {
     ).toThrow("expected chat failure must contain exactly");
   });
 
-  it("strictly rejects retired active-run fields and profile ids", () => {
-    expect(decodeChatRunData(chatRunData()).run.profile_id).toBe("balanced");
+  it("strictly decodes the active-run selection and rejects retired fields", () => {
+    expect(decodeChatRunData(chatRunData()).run.run_selection).toEqual(
+      RUN_SELECTION,
+    );
 
     for (const retired of [
       ["provider", "anthropic"],
@@ -226,9 +226,13 @@ describe("conversation message reader-selection wire", () => {
     }
 
     const retiredProfile = chatRunData();
-    retiredProfile.run.profile_id = "claude";
-    expect(() => decodeChatRunData(retiredProfile)).toThrow(
-      "chat run.profile_id must be one of",
+    expect(() =>
+      decodeChatRunData({
+        ...retiredProfile,
+        run: { ...retiredProfile.run, profile_id: "legacy" },
+      }),
+    ).toThrow(
+      "chat run must contain exactly",
     );
 
     const current = chatRunData();

@@ -3,7 +3,7 @@
  *
  * A draft is keyed by a structured `ChatDraftKey` (a new-chat pane visit, an
  * existing path, or a branch reply) and persisted in `sessionStorage` so its
- * text, explicit `ChatProfileSelection`, and in-flight send operation survive
+ * text, exact per-run generation selection, write authority, and in-flight send operation survive
  * reload, pane reuse, and mobile unmount.
  *
  * The send operation is an exact command — one idempotency key plus the one
@@ -36,9 +36,9 @@ import {
   type ChatDraftKey,
 } from "@/lib/conversations/chatDraftKey";
 import {
-  isChatProfileSelection,
-  type ChatProfileSelection,
-} from "@/lib/conversations/chatProfileSelection";
+  decodeGenerationSelectionSpec,
+  type GenerationSelectionSpec,
+} from "@/lib/conversations/generationCatalog";
 import { createRandomId } from "@/lib/createRandomId";
 import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
 import { decodePresence } from "@/lib/api/presence";
@@ -65,17 +65,20 @@ export type ChatSendOperation =
 
 export type ChatDraftRecord = Readonly<{
   text: string;
-  profile: ChatProfileSelection | null;
+  selection: GenerationSelectionSpec | null;
+  toolAuthority: "ReadOnly" | "AdditiveWrites";
   operation: ChatSendOperation;
 }>;
 
 export const EMPTY_DRAFT_RECORD: ChatDraftRecord = {
   text: "",
-  profile: null,
+  selection: null,
+  toolAuthority: "ReadOnly",
   operation: { kind: "Absent" },
 };
 
-const STORAGE_PREFIX = "nx_chat_draft.v2:";
+const STORAGE_PREFIX = "nx_chat_draft.v3:";
+const RETIRED_STORAGE_PREFIX = "nx_chat_draft.v2:";
 const CANONICAL_UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const READER_SELECTION_REVISION_RE = /^[0-9a-f]{64}$/;
@@ -106,7 +109,7 @@ export function withReconcileRequired(record: ChatDraftRecord): ChatDraftRecord 
   };
 }
 
-/** A definite rejection consumes the command; editable text/profile survive. */
+/** A definite rejection consumes the command; editable draft choices survive. */
 export function withClearedOperation(record: ChatDraftRecord): ChatDraftRecord {
   return { ...record, operation: { kind: "Absent" } };
 }
@@ -248,7 +251,14 @@ function decodeBranchAnchor(value: unknown): BranchAnchor {
 function decodeChatRunCreateRequest(value: unknown): ChatRunCreateRequest {
   const request = expectExactRecord(
     value,
-    ["destination", "content", "profile_id", "reader_selection"],
+    [
+      "destination",
+      "content",
+      "catalog_definition_revision",
+      "selection",
+      "tool_authority",
+      "reader_selection",
+    ],
     "chat send request",
   );
   const destination = expectExactRecord(
@@ -306,10 +316,23 @@ function decodeChatRunCreateRequest(value: unknown): ChatRunCreateRequest {
   if (content.trim().length === 0) {
     throw new TypeError("chat send request content must not be blank");
   }
-  const profileId = expectOneOf(
-    request.profile_id,
-    ["fast", "balanced", "deep"] as const,
-    "chat send request profile_id",
+  const catalogDefinitionRevision = expectString(
+    request.catalog_definition_revision,
+    "chat send request catalog_definition_revision",
+  );
+  if (!READER_SELECTION_REVISION_RE.test(catalogDefinitionRevision)) {
+    throw new TypeError(
+      "chat send request catalog_definition_revision must be a lowercase SHA-256 digest",
+    );
+  }
+  const selection = decodeGenerationSelectionSpec(
+    request.selection,
+    "chat send request selection",
+  );
+  const toolAuthority = expectOneOf(
+    request.tool_authority,
+    ["ReadOnly", "AdditiveWrites"] as const,
+    "chat send request tool_authority",
   );
   const readerSelection = decodePresence(
     request.reader_selection,
@@ -352,7 +375,9 @@ function decodeChatRunCreateRequest(value: unknown): ChatRunCreateRequest {
   return {
     destination: decodedDestination,
     content,
-    profile_id: profileId,
+    catalog_definition_revision: catalogDefinitionRevision,
+    selection,
+    tool_authority: toolAuthority,
     reader_selection: readerSelection,
   };
 }
@@ -403,18 +428,27 @@ export function decodeChatDraftRecord(raw: string): ChatDraftRecord {
   const parsed: unknown = JSON.parse(raw);
   if (
     !isRecord(parsed) ||
-    Object.keys(parsed).length !== 3 ||
+    Object.keys(parsed).length !== 4 ||
     typeof parsed.text !== "string" ||
-    !("profile" in parsed) ||
+    !("selection" in parsed) ||
+    !("toolAuthority" in parsed) ||
     !("operation" in parsed) ||
-    (parsed.profile !== null && !isChatProfileSelection(parsed.profile))
+    (parsed.toolAuthority !== "ReadOnly" &&
+      parsed.toolAuthority !== "AdditiveWrites")
   ) {
     throw new Error("Malformed chat draft record");
   }
   const operation = decodeOperation(parsed.operation);
   const record: ChatDraftRecord = {
     text: parsed.text,
-    profile: parsed.profile,
+    selection:
+      parsed.selection === null
+        ? null
+        : decodeGenerationSelectionSpec(
+            parsed.selection,
+            "chat draft selection",
+          ),
+    toolAuthority: parsed.toolAuthority,
     operation,
   };
   return operation.kind === "Submitting"
@@ -425,7 +459,8 @@ export function decodeChatDraftRecord(raw: string): ChatDraftRecord {
 function isEmptyRecord(record: ChatDraftRecord): boolean {
   return (
     record.text === "" &&
-    record.profile === null &&
+    record.selection === null &&
+    record.toolAuthority === "ReadOnly" &&
     record.operation.kind === "Absent"
   );
 }
@@ -437,9 +472,27 @@ function requireSessionStorage(): Storage {
   return window.sessionStorage;
 }
 
-function loadRecord(storageKey: string): ChatDraftRecord {
-  const raw = requireSessionStorage().getItem(storageKey);
-  return raw === null ? EMPTY_DRAFT_RECORD : decodeChatDraftRecord(raw);
+function purgeRetiredDrafts(storage: Storage): boolean {
+  const retiredKeys: string[] = [];
+  for (let index = 0; index < storage.length; index += 1) {
+    const key = storage.key(index);
+    if (key?.startsWith(RETIRED_STORAGE_PREFIX)) retiredKeys.push(key);
+  }
+  for (const key of retiredKeys) storage.removeItem(key);
+  return retiredKeys.length > 0;
+}
+
+function loadRecord(storageKey: string): {
+  readonly record: ChatDraftRecord;
+  readonly retiredDraftDiscarded: boolean;
+} {
+  const storage = requireSessionStorage();
+  const retiredDraftDiscarded = purgeRetiredDrafts(storage);
+  const raw = storage.getItem(storageKey);
+  return {
+    record: raw === null ? EMPTY_DRAFT_RECORD : decodeChatDraftRecord(raw),
+    retiredDraftDiscarded,
+  };
 }
 
 /** Persist synchronously. A storage failure is a defect (no fallback). */
@@ -464,8 +517,11 @@ function subscribeToNothing(): () => void {
 interface UseChatDraft {
   content: string;
   setContent: (value: string) => void;
-  profile: ChatProfileSelection | null;
-  setProfile: (value: ChatProfileSelection | null) => void;
+  selection: GenerationSelectionSpec | null;
+  setSelection: (value: GenerationSelectionSpec | null) => void;
+  toolAuthority: "ReadOnly" | "AdditiveWrites";
+  setToolAuthority: (value: "ReadOnly" | "AdditiveWrites") => void;
+  retiredDraftDiscarded: boolean;
   /** The serialized storage key — a stable string for effect dependencies. */
   activeDraftKey: string;
   operation: ChatSendOperation;
@@ -481,7 +537,7 @@ interface UseChatDraft {
   retrySubmit: () => ChatSendCommand;
   /** An unknown outcome (network loss): lock the command for reconciliation. */
   requireReconcile: () => void;
-  /** A definite rejection: consume the command, keep editable text/profile. */
+  /** A definite rejection: consume the command, keep editable draft choices. */
   clearOperation: () => void;
   /** The server confirmed the run — delete the whole record. */
   resolveSuccess: () => void;
@@ -521,18 +577,44 @@ export function useChatDraft({
     storageKey: string;
     record: ChatDraftRecord;
     restored: boolean;
+    retiredDraftDiscarded: boolean;
   }>(() =>
     hydrated
-      ? { storageKey, record: loadRecord(storageKey), restored: true }
-      : { storageKey, record: EMPTY_DRAFT_RECORD, restored: false },
+      ? {
+          storageKey,
+          ...loadRecord(storageKey),
+          restored: true,
+        }
+      : {
+          storageKey,
+          record: EMPTY_DRAFT_RECORD,
+          restored: false,
+          retiredDraftDiscarded: false,
+        },
   );
   let record = state.record;
   if (state.storageKey !== storageKey) {
-    record = hydrated ? loadRecord(storageKey) : EMPTY_DRAFT_RECORD;
-    setState({ storageKey, record, restored: hydrated });
+    const loaded = hydrated
+      ? loadRecord(storageKey)
+      : { record: EMPTY_DRAFT_RECORD, retiredDraftDiscarded: false };
+    record = loaded.record;
+    setState({
+      storageKey,
+      record,
+      restored: hydrated,
+      retiredDraftDiscarded:
+        state.retiredDraftDiscarded || loaded.retiredDraftDiscarded,
+    });
   } else if (hydrated && !state.restored) {
-    record = loadRecord(storageKey);
-    setState({ storageKey, record, restored: true });
+    const loaded = loadRecord(storageKey);
+    record = loaded.record;
+    setState({
+      storageKey,
+      record,
+      restored: true,
+      retiredDraftDiscarded:
+        state.retiredDraftDiscarded || loaded.retiredDraftDiscarded,
+    });
   }
   const recordRef = useRef(record);
   recordRef.current = record;
@@ -540,7 +622,12 @@ export function useChatDraft({
   const write = useCallback(
     (next: ChatDraftRecord) => {
       persistRecord(storageKey, next);
-      setState({ storageKey, record: next, restored: true });
+      setState((current) => ({
+        storageKey,
+        record: next,
+        restored: true,
+        retiredDraftDiscarded: current.retiredDraftDiscarded,
+      }));
     },
     [storageKey],
   );
@@ -559,9 +646,14 @@ export function useChatDraft({
     (value: string) => write({ ...recordRef.current, text: value }),
     [write],
   );
-  const setProfile = useCallback(
-    (value: ChatProfileSelection | null) =>
-      write({ ...recordRef.current, profile: value }),
+  const setSelection = useCallback(
+    (value: GenerationSelectionSpec | null) =>
+      write({ ...recordRef.current, selection: value }),
+    [write],
+  );
+  const setToolAuthority = useCallback(
+    (value: "ReadOnly" | "AdditiveWrites") =>
+      write({ ...recordRef.current, toolAuthority: value }),
     [write],
   );
 
@@ -601,8 +693,11 @@ export function useChatDraft({
   return {
     content: record.text,
     setContent,
-    profile: record.profile,
-    setProfile,
+    selection: record.selection,
+    setSelection,
+    toolAuthority: record.toolAuthority,
+    setToolAuthority,
+    retiredDraftDiscarded: state.retiredDraftDiscarded,
     activeDraftKey: storageKey,
     operation: record.operation,
     reconciling: record.operation.kind === "ReconcileRequired",

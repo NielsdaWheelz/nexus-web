@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 import json
 from uuid import UUID
 
@@ -10,9 +9,9 @@ import pytest
 from pydantic import ValidationError
 
 from nexus.config import Environment, validate_agent_tools_mcp_runtime_origin
-from nexus.services import generation_policy
 from nexus.services.codex_generation_contract import (
     MAX_COMMAND_BODY_BYTES,
+    MAX_MODEL_TOOL_PLAN_BYTES,
     MAX_OUTPUT_SCHEMA_BYTES,
     MAX_TOOL_GRANT_BYTES,
     GenerationCapacityRejection,
@@ -23,11 +22,19 @@ from nexus.services.codex_generation_contract import (
     normalized_failure,
     request_fingerprint,
 )
+from nexus.services.generation_spec import GenerationOperation
+from nexus.services.tool_runtime.composition import (
+    compose_product_tool_runtime,
+    freeze_tool_plan_snapshot,
+)
+from tests.testkit.codex_generation import codex_generation_command
 
-_POLICY_FINGERPRINT = generation_policy.POLICY_FINGERPRINT
 _METADATA_INPUT = "bounded metadata input"
 _INSTRUCTIONS = "Return only the requested result."
 _TOKEN = "grant-secret-must-never-cross-a-diagnostic"
+_CHAT_MODEL_TOOL_PLAN = freeze_tool_plan_snapshot(
+    compose_product_tool_runtime(None).operations["ChatRead"]
+)
 
 
 def test_deployed_mcp_origin_is_required_only_by_the_interactive_owner() -> None:
@@ -56,60 +63,66 @@ def test_deployed_mcp_origin_is_required_only_by_the_interactive_owner() -> None
 
 def _command_payload(
     *,
-    operation: str = "metadata_enrichment",
+    operation: GenerationOperation = "metadata_enrichment",
     instructions: str = _INSTRUCTIONS,
     input: str = _METADATA_INPUT,
     output: dict[str, object] | None = None,
-    grant: str | None = None,
 ) -> dict[str, object]:
-    payload: dict[str, object] = {
-        "schema_version": "nexus-generation-command.v2",
-        "request_id": "755a2de9-2bdc-5c57-a6a0-17a2407f14bb",
-        "operation": {
-            "kind": operation,
-            "revision": (
-                generation_policy.operation_revision(operation)
-                if operation in generation_policy.OPERATIONS
-                else "unknown-operation.revision"
-            ),
-        },
-        "policy_revision": generation_policy.POLICY_REVISION,
-        "policy_fingerprint": _POLICY_FINGERPRINT,
-        "intent": {
-            "instructions": instructions,
-            "input": input,
-            "output": output or {"kind": "Text"},
-        },
-    }
-    if grant is not None:
-        payload["tool_grant"] = {"kind": "Bearer", "token": grant}
-    return payload
-
-
-def _chat_payload(*, grant: str | None = _TOKEN) -> dict[str, object]:
-    payload = _command_payload(
-        operation="metadata_enrichment", input="<user>hello</user>", grant=grant
+    structured_schema = None
+    if output is not None and output.get("kind") == "JsonSchema":
+        schema = output.get("schema")
+        assert isinstance(schema, dict)
+        structured_schema = schema
+    command = codex_generation_command(
+        request_id=UUID("755a2de9-2bdc-5c57-a6a0-17a2407f14bb"),
+        operation=operation,
+        instructions=instructions,
+        input_text=input,
+        model="gpt-5.6-terra",
+        reasoning="medium",
+        turn_timeout_seconds=900 if operation == "chat" else 120,
+        structured_schema=structured_schema,
     )
-    payload["operation"] = {
-        "kind": "chat",
-        "profile": "balanced",
-        "revision": generation_policy.operation_revision("chat", profile="balanced"),
-    }
+    return command.model_dump(mode="json", by_alias=True, exclude_none=True)
+
+
+def _chat_payload(*, grant: str = _TOKEN) -> dict[str, object]:
+    command = codex_generation_command(
+        request_id=UUID("755a2de9-2bdc-5c57-a6a0-17a2407f14bb"),
+        operation="chat",
+        instructions=_INSTRUCTIONS,
+        input_text="<user>hello</user>",
+        model="gpt-5.6-terra",
+        reasoning="medium",
+        turn_timeout_seconds=900,
+        model_tool_plan=_CHAT_MODEL_TOOL_PLAN,
+        tool_grant=grant,
+    )
+    payload = command.model_dump(
+        mode="json",
+        by_alias=True,
+        exclude={"tool_grant"},
+    )
+    payload["tool_grant"] = {"kind": "Bearer", "token": grant}
     return payload
 
 
-def test_generation_command_round_trips_only_the_closed_v2_shape() -> None:
+def test_generation_command_round_trips_only_the_closed_v3_shape() -> None:
     command = GenerationCommand.model_validate(_command_payload())
-    assert command.model_dump(mode="json", exclude_none=True) == _command_payload()
+    assert command.model_dump(mode="json", by_alias=True, exclude_none=True) == (_command_payload())
     assert command.intent.output.kind == "Text"
 
-    structured = copy.deepcopy(_command_payload())
-    structured["intent"]["output"] = {
-        "kind": "JsonSchema",
-        "name": "answer",
-        "schema": {"type": "object", "properties": {"answer": {"type": "string"}}},
-        "strict": True,
-    }
+    structured = _command_payload(
+        output={
+            "kind": "JsonSchema",
+            "name": "answer",
+            "schema": {
+                "type": "object",
+                "properties": {"answer": {"type": "string"}},
+            },
+            "strict": True,
+        }
+    )
     decoded = GenerationCommand.model_validate(structured)
     assert decoded.intent.output.kind == "JsonSchema"
     assert decoded.intent.output.strict is True
@@ -145,14 +158,14 @@ def test_generation_command_round_trips_only_the_closed_v2_shape() -> None:
         GenerationTerminal.model_validate(terminal_with_extra)
 
 
-def test_command_rejects_policy_revision_or_fingerprint_drift_before_admission() -> None:
+def test_command_rejects_frozen_spec_revision_or_fingerprint_drift() -> None:
     for field, value in (
         ("policy_revision", "codex-generation.drifted"),
-        ("policy_fingerprint", "f" * 64),
+        ("catalog_definition_revision", "f" * 64),
     ):
         payload = _command_payload()
-        payload[field] = value
-        with pytest.raises(ValidationError, match="policy"):
+        payload["spec"][field] = value
+        with pytest.raises(ValidationError, match="fingerprint"):
             GenerationCommand.model_validate(payload)
 
 
@@ -163,13 +176,14 @@ def test_command_rejects_provider_controls_unknown_tags_and_unbounded_text() -> 
         with pytest.raises(ValidationError, match="extra_forbidden"):
             GenerationCommand.model_validate(payload)
 
-    unknown_operation = _command_payload(operation="not_a_catalog_operation")
+    unknown_operation = _command_payload()
+    unknown_operation["spec"]["operation"] = "not_a_catalog_operation"
     with pytest.raises(ValidationError):
         GenerationCommand.model_validate(unknown_operation)
 
-    for field in ("instructions", "input"):
+    for field, limit in (("instructions", 32 * 1024), ("input", 1024 * 1024)):
         oversized = _command_payload()
-        oversized["intent"][field] = "x" * (32 * 1024 + 1)
+        oversized["intent"][field] = "x" * (limit + 1)
         with pytest.raises(ValidationError, match="bytes"):
             GenerationCommand.model_validate(oversized)
 
@@ -179,42 +193,27 @@ def test_command_rejects_provider_controls_unknown_tags_and_unbounded_text() -> 
         GenerationCommand.model_validate(oversized_chat)
 
 
-def test_chat_operation_is_typed_by_required_profile_and_requires_a_grant() -> None:
+def test_model_tool_authority_is_typed_and_requires_exactly_one_grant() -> None:
     command = GenerationCommand.model_validate(_chat_payload())
-    assert command.operation.kind == "chat"
-    assert command.operation.profile == "balanced"
+    assert command.spec.operation == "chat"
     assert command.tool_grant is not None
+    assert command.spec.model_tool_plan_snapshot.kind == "Present"
 
-    missing_profile = _chat_payload()
-    del missing_profile["operation"]["profile"]
-    with pytest.raises(ValidationError):
-        GenerationCommand.model_validate(missing_profile)
-
-    for profile in ("fast", "balanced", "deep"):
+    for field in ("profile", "profile_id", "reasoning_option_id"):
         payload = _chat_payload()
-        payload["operation"]["profile"] = profile
-        payload["operation"]["revision"] = generation_policy.operation_revision(
-            "chat", profile=profile
-        )
-        assert GenerationCommand.model_validate(payload).operation.profile == profile
+        payload["spec"][field] = "balanced"
+        with pytest.raises(ValidationError, match="extra_forbidden"):
+            GenerationCommand.model_validate(payload)
 
-    without_grant = _chat_payload(grant=None)
+    without_grant = _chat_payload()
+    del without_grant["tool_grant"]
     with pytest.raises(ValidationError, match="grant"):
         GenerationCommand.model_validate(without_grant)
 
-    synthesis_with_grant = _command_payload(grant=_TOKEN)
+    synthesis_with_grant = _command_payload()
+    synthesis_with_grant["tool_grant"] = {"kind": "Bearer", "token": _TOKEN}
     with pytest.raises(ValidationError, match="grant"):
         GenerationCommand.model_validate(synthesis_with_grant)
-
-    chat_with_schema = _chat_payload()
-    chat_with_schema["intent"]["output"] = {
-        "kind": "JsonSchema",
-        "name": "unsupported",
-        "schema": {"type": "object"},
-        "strict": True,
-    }
-    with pytest.raises(ValidationError, match="Text output"):
-        GenerationCommand.model_validate(chat_with_schema)
 
 
 def test_tool_grant_is_secret_like_and_never_enters_repr_dump_or_fingerprint() -> None:
@@ -227,9 +226,17 @@ def test_tool_grant_is_secret_like_and_never_enters_repr_dump_or_fingerprint() -
     other = GenerationCommand.model_validate(_chat_payload(grant="different-secret"))
     assert request_fingerprint(command) == request_fingerprint(other)
 
-    changed_instructions_payload = _chat_payload()
-    changed_instructions_payload["intent"]["instructions"] = "Different system authority."
-    changed_instructions = GenerationCommand.model_validate(changed_instructions_payload)
+    changed_instructions = codex_generation_command(
+        request_id=UUID("755a2de9-2bdc-5c57-a6a0-17a2407f14bb"),
+        operation="chat",
+        instructions="Different system authority.",
+        input_text="<user>hello</user>",
+        model="gpt-5.6-terra",
+        reasoning="medium",
+        turn_timeout_seconds=900,
+        model_tool_plan=_CHAT_MODEL_TOOL_PLAN,
+        tool_grant=_TOKEN,
+    )
     assert request_fingerprint(command) != request_fingerprint(changed_instructions)
 
 
@@ -366,11 +373,9 @@ def test_health_and_capacity_rejection_are_exact_canonical_contracts() -> None:
     from nexus.services.codex_generation_contract import (
         GenerationHealth,
         capacity_rejection_bytes,
-        command_policy,
     )
 
     health = GenerationHealth(
-        policy_revision=generation_policy.POLICY_REVISION,
         sdk_version="0.144.4",
         runtime_version="0.144.4",
     )
@@ -379,37 +384,49 @@ def test_health_and_capacity_rejection_are_exact_canonical_contracts() -> None:
         "sdk",
         "codex-personal",
     )
+    assert health.command_schema_version == "nexus-generation-command.v3"
     assert capacity_rejection_bytes() == (
         b'{"schema_version":"nexus-generation-rejection.v2","kind":"capacity_unavailable"}'
     )
     assert MAX_COMMAND_BODY_BYTES > 6 * (1024 * 1024 + 32 * 1024)
     assert (
         MAX_COMMAND_BODY_BYTES
-        == 6 * (32 * 1024 + 1024 * 1024 + MAX_OUTPUT_SCHEMA_BYTES + MAX_TOOL_GRANT_BYTES) + 4 * 1024
+        == 6
+        * (
+            32 * 1024
+            + 1024 * 1024
+            + MAX_OUTPUT_SCHEMA_BYTES
+            + MAX_TOOL_GRANT_BYTES
+            + MAX_MODEL_TOOL_PLAN_BYTES
+        )
+        + 4 * 1024
     )
-    assert command_policy(GenerationCommand.model_validate(_command_payload())).capability == (
-        "Synthesis"
-    )
+    command = GenerationCommand.model_validate(_command_payload())
+    assert command.spec.model_tool_plan_snapshot.kind == "Absent"
     assert GenerationCapacityRejection.model_validate_json(capacity_rejection_bytes())
 
 
 def test_command_bounds_schema_and_grant_body_contributors() -> None:
-    oversized_schema = _command_payload()
-    oversized_schema["intent"]["output"] = {
-        "kind": "JsonSchema",
-        "name": "answer",
-        "schema": {"type": "object", "padding": "x" * MAX_OUTPUT_SCHEMA_BYTES},
-        "strict": True,
-    }
     with pytest.raises(ValidationError, match="schema bytes"):
-        GenerationCommand.model_validate(oversized_schema)
+        codex_generation_command(
+            request_id=UUID("755a2de9-2bdc-5c57-a6a0-17a2407f14bb"),
+            operation="metadata_enrichment",
+            instructions=_INSTRUCTIONS,
+            input_text=_METADATA_INPUT,
+            model="gpt-5.6-terra",
+            reasoning="medium",
+            turn_timeout_seconds=120,
+            structured_schema={
+                "type": "object",
+                "padding": "x" * MAX_OUTPUT_SCHEMA_BYTES,
+            },
+        )
 
-    oversized_grant = _chat_payload(grant="x" * (MAX_TOOL_GRANT_BYTES + 1))
     with pytest.raises(ValidationError, match="grant bytes"):
-        GenerationCommand.model_validate(oversized_grant)
+        _chat_payload(grant="x" * (MAX_TOOL_GRANT_BYTES + 1))
 
     with pytest.raises(ValidationError, match="blank"):
-        GenerationCommand.model_validate(_chat_payload(grant="   "))
+        _chat_payload(grant="   ")
 
 
 @pytest.mark.parametrize(

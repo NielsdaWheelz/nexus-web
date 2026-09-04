@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, date, datetime
 from uuid import UUID, uuid4
 
@@ -24,12 +24,12 @@ from nexus.jobs.queue import (
     get_job,
 )
 from nexus.schemas.presence import Present
-from nexus.services import generation_policy
 from nexus.services.codex_generation_client import CodexGenerationCapacityUnavailable
 from nexus.services.codex_generation_contract import (
+    GenerationAdmission,
     GenerationCommand,
+    GenerationCommandDraft,
     GenerationFrame,
-    GenerationHealth,
     GenerationSessionRef,
     GenerationTerminal,
     GenerationUsage,
@@ -37,11 +37,16 @@ from nexus.services.codex_generation_contract import (
 from nexus.services.dawn_write import generate_dawn_write
 from nexus.services.durable_step_journal import Completed, Prepared, read_step_states
 from nexus.services.rate_limit import RateLimiter, get_rate_limiter, set_rate_limiter
+from nexus.services.tool_runtime.composition import compose_product_tool_runtime
+from tests.testkit.codex_generation import (
+    bind_test_codex_admission,
+    compose_codex_execution_runtime,
+)
 
 _LOCAL_DATE = date(2026, 8, 24)
 
 
-class _SuccessfulDawnRuntime:
+class _SuccessfulDawnTransport:
     def __init__(self, caller_db: Session) -> None:
         self.caller_db = caller_db
         self.commands: list[GenerationCommand] = []
@@ -53,19 +58,18 @@ class _SuccessfulDawnRuntime:
         )
         self.transaction_entrypoints.append(entrypoint)
 
-    async def health(self) -> GenerationHealth:
+    def stream(
+        self,
+        draft: GenerationCommandDraft,
+        *,
+        bind_admission: Callable[[GenerationAdmission], Awaitable[GenerationCommand]],
+    ) -> AsyncIterator[GenerationFrame]:
         self._observe_entry("health")
-        return GenerationHealth(
-            policy_revision=generation_policy.POLICY_REVISION,
-            sdk_version="0.144.4",
-            runtime_version="0.144.4",
-        )
-
-    def stream(self, command: GenerationCommand) -> AsyncIterator[GenerationFrame]:
         self._observe_entry("stream")
-        self.commands.append(command)
 
         async def frames() -> AsyncIterator[GenerationFrame]:
+            command = await bind_test_codex_admission(draft, bind_admission)
+            self.commands.append(command)
             yield GenerationFrame(
                 request_id=command.request_id,
                 sequence=0,
@@ -104,19 +108,17 @@ class _SuccessfulDawnRuntime:
         raise AssertionError(f"unexpected Dawn cancellation for {request_id}")
 
 
-class _CapacityDawnRuntime:
+class _CapacityDawnTransport:
     def __init__(self) -> None:
         self.dispatches = 0
 
-    async def health(self) -> GenerationHealth:
-        return GenerationHealth(
-            policy_revision=generation_policy.POLICY_REVISION,
-            sdk_version="0.144.4",
-            runtime_version="0.144.4",
-        )
-
-    def stream(self, command: GenerationCommand) -> AsyncIterator[GenerationFrame]:
-        del command
+    def stream(
+        self,
+        draft: GenerationCommandDraft,
+        *,
+        bind_admission: Callable[[GenerationAdmission], Awaitable[GenerationCommand]],
+    ) -> AsyncIterator[GenerationFrame]:
+        _ = draft, bind_admission
 
         async def frames() -> AsyncIterator[GenerationFrame]:
             self.dispatches += 1
@@ -196,7 +198,11 @@ def test_dawn_write_terminal_journal_publishes_once_and_replays_without_dispatch
                 resource_class="Light",
             )
             db.commit()
-            runtime = _SuccessfulDawnRuntime(db)
+            transport = _SuccessfulDawnTransport(db)
+            runtime = compose_codex_execution_runtime(
+                transport,
+                tools=compose_product_tool_runtime(None),
+            )
 
             first = asyncio.run(
                 generate_dawn_write(
@@ -209,9 +215,9 @@ def test_dawn_write_terminal_journal_publishes_once_and_replays_without_dispatch
                 )
             )
             assert isinstance(first, DawnWrite)
-            assert first.id == runtime.commands[0].request_id
-            assert runtime.commands[0].operation.kind == "dawn_write"
-            assert runtime.transaction_entrypoints == ["health", "stream"]
+            assert first.id == transport.commands[0].request_id
+            assert transport.commands[0].spec.operation == "dawn_write"
+            assert transport.transaction_entrypoints == ["health", "stream"]
 
             persisted_job = get_job(db, job.id)
             assert persisted_job is not None
@@ -240,7 +246,7 @@ def test_dawn_write_terminal_journal_publishes_once_and_replays_without_dispatch
             )
             assert isinstance(replay, DawnWrite)
             assert replay.id == first.id
-            assert len(runtime.commands) == 1
+            assert len(transport.commands) == 1
             assert db.scalar(select(LLMCall).where(LLMCall.id == first.id)) is ledger
             assert (
                 db.scalar(
@@ -252,18 +258,23 @@ def test_dawn_write_terminal_journal_publishes_once_and_replays_without_dispatch
                 == first.id
             )
 
-            assert complete_job(db, job_id=job.id, worker_id=worker_id)
+            assert complete_job(
+                db,
+                job_id=job.id,
+                worker_id=worker_id,
+                attempt_no=context.attempt_no,
+            )
             db.commit()
     finally:
         set_rate_limiter(previous_limiter)
         clear_settings_cache()
 
 
-def test_dawn_write_no_signals_cancels_the_capacity_retained_start(
+def test_dawn_write_no_signals_closes_preaccept_capacity_without_a_ledger(
     engine: Engine,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Risk: a capacity replay becomes a no-op beside a nonterminal ledger row."""
+    """Risk: a preaccept capacity replay fabricates model-call evidence."""
 
     monkeypatch.setenv("DAWN_WRITE_ENABLED", "true")
     clear_settings_cache()
@@ -274,7 +285,11 @@ def test_dawn_write_no_signals_cancels_the_capacity_retained_start(
     media_id = uuid4()
     highlight_id = uuid4()
     worker_id = f"dawn-cancellation-{uuid4()}"
-    runtime = _CapacityDawnRuntime()
+    transport = _CapacityDawnTransport()
+    runtime = compose_codex_execution_runtime(
+        transport,
+        tools=compose_product_tool_runtime(None),
+    )
     try:
         from nexus.services.bootstrap import ensure_user_and_default_library
 
@@ -360,17 +375,16 @@ def test_dawn_write_no_signals_cancels_the_capacity_retained_start(
             )
             persisted_job = get_job(db, job.id)
             assert result is None
-            assert runtime.dispatches == 1
+            assert transport.dispatches == 1
             assert persisted_job is not None
             completed = next(iter(read_step_states(persisted_job).values()))
-            ledger = db.scalars(select(LLMCall).where(LLMCall.id == completed.generation_id)).one()
             assert completed.dispatch_phase is Completed
             assert isinstance(completed.terminal_result, Present)
             assert json.loads(completed.terminal_result.value) == {
                 "outcome": "skipped",
                 "reason": "no_signals",
             }
-            assert ledger.outcome == "Cancelled"
+            assert db.scalar(select(LLMCall).where(LLMCall.id == completed.generation_id)) is None
     finally:
         set_rate_limiter(previous_limiter)
         clear_settings_cache()

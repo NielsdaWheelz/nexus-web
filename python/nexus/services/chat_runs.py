@@ -1,8 +1,8 @@
 """Durable chat-run service.
 
  One chat send is one durable run. HTTP creates/cancels/reads runs; the worker
-executes a typed ChatTools command through the Codex host and tails persisted
-events for the stream route.
+executes the admission-frozen generation through the selected backend and tails
+persisted events for the stream route.
 """
 
 from __future__ import annotations
@@ -12,16 +12,42 @@ import dataclasses
 import time
 from contextlib import suppress
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import Literal, assert_never
 from uuid import UUID, uuid4
 
-from llm_tools import WebSearchProvider
-from pydantic import JsonValue, SecretStr
+from provider_runtime.types import (
+    Absent as RuntimeAbsent,
+)
+from provider_runtime.types import (
+    Cancelled as ProviderCancelled,
+)
+from provider_runtime.types import (
+    Failed as ProviderFailed,
+)
+from provider_runtime.types import (
+    Incomplete as ProviderIncomplete,
+)
+from provider_runtime.types import (
+    InvalidStructuredOutput,
+    InvalidToolArguments,
+    ProviderContextTooLarge,
+    TextContent,
+    TokenUsage,
+    TransientExhausted,
+)
+from provider_runtime.types import (
+    Present as RuntimePresent,
+)
+from provider_runtime.types import (
+    Succeeded as ProviderSucceeded,
+)
+from pydantic import JsonValue
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.config import Settings
 from nexus.db.models import (
+    ChatPromptAssembly,
     ChatRun,
     ChatRunTurnContext,
     Conversation,
@@ -32,7 +58,6 @@ from nexus.errors import (
     ApiError,
     ApiErrorCode,
     NotFoundError,
-    exception_error_detail,
 )
 from nexus.jobs.queue import (
     JobExecutionContext,
@@ -56,8 +81,15 @@ from nexus.schemas.conversation import (
     NoBranchAnchorRequest,
     ReplyInsertion,
 )
+from nexus.schemas.llm import (
+    CatalogDefinitionStale,
+    GenerationSelectionUnavailable,
+    InvalidGenerationSelection,
+    RunSelectionOut,
+    Selectable,
+)
 from nexus.services import generation_policy
-from nexus.services.agent_tool_grants import issue_chat_generation_grant
+from nexus.services.agent_tools_mcp import compose_codex_generation_tool_binding
 from nexus.services.chat_reader_selection import (
     build_reader_selection_snapshot,
     compute_reader_selection_revision,
@@ -92,40 +124,31 @@ from nexus.services.chat_run_idempotency import (
 from nexus.services.chat_run_message_prep import prepare_messages
 from nexus.services.chat_run_prompt_tracking import reconcile_prompt_retrievals
 from nexus.services.chat_run_response import build_chat_run_response
+from nexus.services.chat_run_selection import chat_generation_spec, run_selection_out
 from nexus.services.chat_run_steps import (
     AssistantTurn,
     CancelledGeneration,
     ChatStepRuntime,
     ExpectedFailure,
     GenerationStepResultEnvelope,
-    PreparedChatRun,
     PublicationRequest,
     PublicationStepResult,
     assistant_turn_result,
-    chat_tool_profile_admission,
-    decode_prepared,
     step_fingerprint,
-    validate_chat_tool_profile,
 )
 from nexus.services.chat_run_validation import validate_pre_phase
 from nexus.services.codex_generation_contract import (
-    ChatOperation,
-    GenerationAdmission,
-    GenerationCommand,
-    GenerationFrame,
-    GenerationTerminal,
-    GenerationText,
-    GenerationToolUse,
-    GenerationUsageEvent,
+    GenerationUsage,
     normalized_failure,
-    request_fingerprint,
 )
 from nexus.services.collection_revisions import (
     CollectionFamily,
     bump_collection_revision,
 )
 from nexus.services.context_assembler import (
+    CHAT_PROMPT_TEMPLATE_REVISION,
     assemble_chat_context,
+    chat_prompt_payload_ref,
     persist_prompt_assembly,
 )
 from nexus.services.conversations import DEFAULT_CONVERSATION_TITLE
@@ -134,11 +157,43 @@ from nexus.services.durable_step_journal import (
     Prepared,
     ReplayPolicy,
     StepReplayState,
+    Uncertain,
     decode_step_result,
     encode_step_result,
-    stable_generation_id,
 )
-from nexus.services.generation_intent import BearerToolGrant
+from nexus.services.generation_admission import GenerationOperationUnavailable
+from nexus.services.generation_catalog import (
+    CatalogDefinitionStaleError,
+    GenerationCatalogService,
+    GenerationCatalogSnapshot,
+    GenerationSelectionUnavailableError,
+    InvalidGenerationSelectionError,
+    ResolvedCatalogPair,
+)
+from nexus.services.generation_events import (
+    BackendEvent,
+    BackendTerminal,
+    BackendTextDelta,
+    BackendToolObserved,
+    BackendToolProposed,
+    BackendUsageObserved,
+    CodexTerminalEvidence,
+    ProviderTerminalEvidence,
+)
+from nexus.services.generation_intent import GenerationIntent
+from nexus.services.generation_selection import (
+    CodexPersonalSelection,
+    ProviderApiSelection,
+)
+from nexus.services.generation_service import (
+    ChatToolAuthority,
+    GenerationService,
+)
+from nexus.services.generation_spec import (
+    FrozenToolScope,
+    GenerationSpec,
+    generation_fact_digest,
+)
 from nexus.services.llm_execution import (
     EncodedGenerationTerminal,
     ExecutionRuntime,
@@ -147,7 +202,6 @@ from nexus.services.llm_execution import (
     execute_generation,
 )
 from nexus.services.llm_ledger import LlmCallOwner
-from nexus.services.prompt_budget import ContextBudgetError
 from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.redact import safe_kv
 from nexus.services.resource_graph.context import (
@@ -155,13 +209,13 @@ from nexus.services.resource_graph.context import (
     list_context_refs,
 )
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.tool_runtime.composition import (
-    FrozenToolOperation,
-    compose_product_tool_runtime,
+from nexus.services.tool_authority import (
+    compose_deferred_generation_tool_executor,
 )
-
-if TYPE_CHECKING:
-    from nexus.services.agent_tools_mcp import AgentToolAuthority
+from nexus.services.tool_runtime.composition import (
+    ComposedToolRuntime,
+    FrozenToolOperation,
+)
 
 logger = get_logger(__name__)
 
@@ -357,6 +411,7 @@ def _log_chat_run_finished(
     # justify-service-invariant-check: a receipt is emitted only after the
     # durable run was found and terminalized by this execution boundary.
     assert run is not None, f"terminal chat run {run_id} disappeared"
+    spec = chat_generation_spec(run)
     queue_wait_ms = (
         max(0, int((run.started_at - run.created_at).total_seconds() * 1000))
         if run.started_at is not None
@@ -376,9 +431,9 @@ def _log_chat_run_finished(
             "nexus.chat_run.error_code": run.error_code,
             "nexus.chat_run.warning_code": run.publication_warning_code,
             "nexus.chat_run.support_id": run.support_id,
-            "nexus.llm.backend": "codex",
-            "nexus.llm.model": run.model_name,
-            "nexus.llm.reasoning": run.reasoning_effort,
+            "nexus.llm.backend": spec.selection.route,
+            "nexus.llm.model": spec.display_at_dispatch.model_label,
+            "nexus.llm.reasoning": spec.display_at_dispatch.reasoning_label,
             "nexus.chat_run.queue_wait_ms": queue_wait_ms,
             "nexus.chat_run.execution_ms": execution_ms,
             "nexus.chat_run.citation_finalize_ms": citation_finalize_ms,
@@ -388,21 +443,140 @@ def _log_chat_run_finished(
     )
 
 
-def _chat_tool_operation(
-    web_search_provider: WebSearchProvider | None,
-) -> FrozenToolOperation:
-    return compose_product_tool_runtime(web_search_provider).operations["chat"]
+type ExactChatSelection = CodexPersonalSelection | ProviderApiSelection
 
 
-def create_chat_run(
+async def admit_chat_selection(
+    catalog: GenerationCatalogService,
+    *,
+    catalog_definition_revision: str,
+    selection: ExactChatSelection,
+) -> ResolvedCatalogPair:
+    try:
+        return await catalog.final_chat_selection_check(
+            catalog_definition_revision=catalog_definition_revision,
+            selection=selection,
+        )
+    except CatalogDefinitionStaleError as error:
+        failure = CatalogDefinitionStale(
+            current_definition_revision=error.current_definition_revision
+        )
+        raise ApiError(
+            ApiErrorCode.E_CATALOG_DEFINITION_STALE,
+            "Generation catalog changed; refresh and confirm the selection again",
+            details=failure.model_dump(mode="json"),
+        ) from error
+    except InvalidGenerationSelectionError as error:
+        failure = InvalidGenerationSelection(
+            field=owned_presence.Present(value="selection"),
+            explanation="The exact generation selection is not in the configured catalog.",
+        )
+        raise ApiError(
+            ApiErrorCode.E_INVALID_GENERATION_SELECTION,
+            failure.explanation,
+            details=failure.model_dump(mode="json"),
+        ) from error
+    except GenerationSelectionUnavailableError as error:
+        if isinstance(error.pair.state, Selectable):
+            raise AssertionError("unavailable selection carried Selectable state") from error
+        failure = GenerationSelectionUnavailable(
+            selection=error.pair.selection,
+            state=error.pair.state,
+        )
+        raise ApiError(
+            ApiErrorCode.E_GENERATION_SELECTION_UNAVAILABLE,
+            "The exact generation selection is not currently runnable",
+            details=failure.model_dump(mode="json"),
+        ) from error
+
+
+def _chat_tool_scope(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    conversation_id: UUID,
+) -> FrozenToolScope:
+    refs = {
+        context.target.uri
+        for context in list_context_refs(
+            db,
+            viewer_id=viewer_id,
+            conversation_id=conversation_id,
+        )
+    }
+    return FrozenToolScope(admitted_refs=tuple(sorted(refs)), predicates=())
+
+
+def persist_frozen_chat_admission_in_current_transaction(
+    db: Session,
+    *,
+    run: ChatRun,
+    turn_context: ChatRunTurnContext | None,
+    pair: ResolvedCatalogPair,
+    catalog_definition_revision: str,
+    tool_authority: ChatToolAuthority,
+    generation_service: GenerationService,
+) -> tuple[GenerationSpec, RunSelectionOut]:
+    """Persist one complete Chat prompt/spec before its queue row can exist."""
+
+    assembly = assemble_chat_context(
+        db,
+        run=run,
+        max_context_tokens=pair.effective_context_budget_tokens,
+        max_output_tokens=pair.effective_output_budget_tokens,
+        turn_context=turn_context,
+        tool_authority=tool_authority,
+    )
+    try:
+        spec = generation_service.freeze_chat_from_pair(
+            catalog_definition_revision=catalog_definition_revision,
+            pair=pair,
+            tool_authority=tool_authority,
+            scope=_chat_tool_scope(
+                db,
+                viewer_id=run.owner_user_id,
+                conversation_id=run.conversation_id,
+            ),
+            intent=assembly.generate_intent,
+            prompt_template_revision=CHAT_PROMPT_TEMPLATE_REVISION,
+            prompt_payload_ref=chat_prompt_payload_ref(
+                run_id=run.id,
+                intent=assembly.generate_intent,
+            ),
+        )
+    except GenerationOperationUnavailable as error:
+        raise ApiError(
+            ApiErrorCode.E_GENERATION_RUNTIME_UNAVAILABLE,
+            "The selected generation route cannot run its complete tool plan",
+        ) from error
+    run.generation_spec = spec.model_dump(mode="json", by_alias=True)
+    db.add(run)
+    db.flush()
+    if turn_context is not None:
+        db.add(turn_context)
+    persist_prompt_assembly(db, run=run, assembly=assembly)
+    reconcile_prompt_retrievals(db, run=run, assembly=assembly)
+    persist_attached_citations(db, run, assembly.attached_citations)
+    return spec, run_selection_out(
+        run,
+        pair=pair,
+        observed_at=datetime.now(UTC),
+    )
+
+
+async def create_chat_run(
     db: Session,
     *,
     viewer_id: UUID,
     destination: ChatDestination,
     reader_selection: ReaderSelectionInput | None,
     content: str,
-    profile_id: str,
+    catalog_definition_revision: str,
+    selection: ExactChatSelection,
+    tool_authority: ChatToolAuthority,
     idempotency_key: str | None,
+    catalog: GenerationCatalogService,
+    tool_runtime: ComposedToolRuntime,
 ) -> ChatRunResponse:
     normalized_key = normalize_idempotency_key(idempotency_key)
     selection_key = reader_selection.key if reader_selection is not None else None
@@ -411,25 +585,47 @@ def create_chat_run(
     payload_hash = compute_payload_hash(
         destination=destination,
         content=content,
-        profile_id=profile_id,
+        catalog_definition_revision=catalog_definition_revision,
+        selection=selection,
+        tool_authority=tool_authority,
         reader_selection_key=selection_key,
     )
 
     existing = get_run_by_idempotency_key(db, viewer_id, normalized_key)
     if existing is not None:
         raise_if_payload_mismatch(existing, payload_hash, viewer_id, normalized_key)
-        return build_chat_run_response(db, viewer_id, existing)
+        existing_id = existing.id
+        db.rollback()
+        snapshot = await catalog.read_chat()
+        existing = db.get(ChatRun, existing_id)
+        if existing is None or existing.owner_user_id != viewer_id:
+            raise AssertionError("idempotent Chat run disappeared")
+        return build_chat_run_response(
+            db,
+            viewer_id,
+            existing,
+            run_selection=run_selection_out(existing, catalog_snapshot=snapshot),
+        )
 
-    # Model/rate + destination fast-fail (no selection resolution: a replay
+    # Rate + destination fast-fail (no catalog resolution: a replay
     # whose live source has since changed must still return before we touch it).
     validate_pre_phase(
         db,
         viewer_id,
         destination=destination,
         content=content,
-        profile_id=profile_id,
     )
-    tool_admission = chat_tool_profile_admission(_chat_tool_operation(None))
+    db.rollback()
+    pair = await admit_chat_selection(
+        catalog,
+        catalog_definition_revision=catalog_definition_revision,
+        selection=selection,
+    )
+    generation_service = GenerationService(
+        catalog=catalog,
+        policy=generation_policy.GENERATION_POLICY,
+        tools=tool_runtime,
+    )
 
     try:
         # 2. Idempotency lock; a matching replay returns before source/revision
@@ -440,7 +636,16 @@ def create_chat_run(
         if existing is not None:
             raise_if_payload_mismatch(existing, payload_hash, viewer_id, normalized_key)
             db.commit()
-            return build_chat_run_response(db, viewer_id, existing)
+            return build_chat_run_response(
+                db,
+                viewer_id,
+                existing,
+                run_selection=run_selection_out(
+                    existing,
+                    pair=pair,
+                    observed_at=datetime.now(UTC),
+                ),
+            )
 
         # 3. Resolve the destination conversation + insertion inside the tx.
         conversation_id, parent_message_id, branch_anchor = _resolve_destination(
@@ -500,7 +705,7 @@ def create_chat_run(
                 origin="system",
             )
 
-        # 7. User message (with snapshot), pending assistant, run, turn context.
+        # 7. User message (with snapshot), pending assistant, and transient run.
         prepared = prepare_messages(
             db,
             viewer_id,
@@ -510,7 +715,9 @@ def create_chat_run(
             content,
             snapshot_json,
         )
+        run_id = uuid4()
         run = ChatRun(
+            id=run_id,
             owner_user_id=viewer_id,
             conversation_id=prepared.conversation.id,
             user_message_id=prepared.user_message.id,
@@ -518,31 +725,36 @@ def create_chat_run(
             idempotency_key=normalized_key,
             payload_hash=payload_hash,
             status="queued",
-            profile_id=profile_id,
-            tool_profile_id=tool_admission.profile_id,
-            tool_profile_revision=tool_admission.profile_revision,
-            tool_profile_snapshot=tool_admission.snapshot,
         )
-        db.add(run)
-        db.flush()
+        turn_context = None
         if subject_ref is not None:
-            db.add(
-                ChatRunTurnContext(
-                    chat_run_id=run.id,
-                    requested_subject_scheme=subject_ref.scheme,
-                    requested_subject_id=subject_ref.id,
-                    subject_scheme=subject_ref.scheme,
-                    subject_id=subject_ref.id,
-                    subject_context_edge_id=subject_context_edge_id,
-                )
+            turn_context = ChatRunTurnContext(
+                chat_run_id=run.id,
+                requested_subject_scheme=subject_ref.scheme,
+                requested_subject_id=subject_ref.id,
+                subject_scheme=subject_ref.scheme,
+                subject_id=subject_ref.id,
+                subject_context_edge_id=subject_context_edge_id,
             )
+
+        # 8. Render/freeze the complete prompt, scope, tool plan, and exact
+        #    catalog receipt before the durable run or job can exist.
+        spec, run_selection = persist_frozen_chat_admission_in_current_transaction(
+            db,
+            run=run,
+            turn_context=turn_context,
+            pair=pair,
+            catalog_definition_revision=catalog_definition_revision,
+            tool_authority=tool_authority,
+            generation_service=generation_service,
+        )
         ChatRunEventEmitter(db, run).meta(
             {
                 "run_id": str(run.id),
                 "conversation_id": str(prepared.conversation.id),
                 "user_message_id": str(prepared.user_message.id),
                 "assistant_message_id": str(prepared.assistant_message.id),
-                "profile_id": profile_id,
+                "run_selection": run_selection.model_dump(mode="python"),
                 "chat_subject": (
                     {
                         "requested_resource_ref": subject_ref.uri,
@@ -562,7 +774,10 @@ def create_chat_run(
         enqueue_job(
             db,
             kind="chat_run",
-            payload={"run_id": str(run.id), "capacity_wait_index": 0},
+            payload={
+                "run_id": str(run.id),
+                "generation_spec_fingerprint": spec.fingerprint,
+            },
             priority=50,
             max_attempts=3,
             dedupe_key=f"chat_run:{run.id}",
@@ -572,7 +787,12 @@ def create_chat_run(
         db.rollback()
         raise
 
-    return build_chat_run_response(db, viewer_id, run)
+    return build_chat_run_response(
+        db,
+        viewer_id,
+        run,
+        run_selection=run_selection,
+    )
 
 
 def _resolve_destination(
@@ -637,9 +857,20 @@ def _resolve_destination(
     return conversation.id, None, NoBranchAnchorRequest()
 
 
-def get_chat_run(db: Session, *, viewer_id: UUID, run_id: UUID) -> ChatRunResponse:
+def get_chat_run(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    run_id: UUID,
+    catalog_snapshot: GenerationCatalogSnapshot,
+) -> ChatRunResponse:
     run = get_run_for_owner(db, viewer_id, run_id)
-    return build_chat_run_response(db, viewer_id, run)
+    return build_chat_run_response(
+        db,
+        viewer_id,
+        run,
+        run_selection=run_selection_out(run, catalog_snapshot=catalog_snapshot),
+    )
 
 
 def list_chat_runs_for_conversation(
@@ -648,6 +879,7 @@ def list_chat_runs_for_conversation(
     viewer_id: UUID,
     conversation_id: UUID,
     status: CHAT_RUN_STATUS_FILTER,
+    catalog_snapshot: GenerationCatalogSnapshot,
 ) -> list[ChatRunResponse]:
     conversation = db.get(Conversation, conversation_id)
     if conversation is None or conversation.owner_user_id != viewer_id:
@@ -673,17 +905,36 @@ def list_chat_runs_for_conversation(
         .scalars()
         .all()
     )
-    return [build_chat_run_response(db, viewer_id, run) for run in runs]
+    return [
+        build_chat_run_response(
+            db,
+            viewer_id,
+            run,
+            run_selection=run_selection_out(run, catalog_snapshot=catalog_snapshot),
+        )
+        for run in runs
+    ]
 
 
-def cancel_chat_run(db: Session, *, viewer_id: UUID, run_id: UUID) -> ChatRunResponse:
+def cancel_chat_run(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    run_id: UUID,
+    catalog_snapshot: GenerationCatalogSnapshot,
+) -> ChatRunResponse:
     owned = get_run_for_owner(db, viewer_id, run_id)
     lock_chat_generation_admission_in_current_transaction(db)
     run = lock_chat_run_for_update(db, owned.id)
     if run is None or run.owner_user_id != viewer_id:
         raise AssertionError("owned chat run disappeared before cancellation")
     if run.status in TERMINAL_RUN_STATUSES:
-        return build_chat_run_response(db, viewer_id, run)
+        return build_chat_run_response(
+            db,
+            viewer_id,
+            run,
+            run_selection=run_selection_out(run, catalog_snapshot=catalog_snapshot),
+        )
     if run.cancel_requested_at is None:
         run.cancel_requested_at = datetime.now(UTC)
         run.updated_at = datetime.now(UTC)
@@ -699,7 +950,12 @@ def cancel_chat_run(db: Session, *, viewer_id: UUID, run_id: UUID) -> ChatRunRes
         "chat_run.cancel_requested",
         **safe_kv(chat_run_id=str(run.id), status=run.status),
     )
-    return build_chat_run_response(db, viewer_id, run)
+    return build_chat_run_response(
+        db,
+        viewer_id,
+        run,
+        run_selection=run_selection_out(run, catalog_snapshot=catalog_snapshot),
+    )
 
 
 def assert_chat_run_owner(db: Session, *, viewer_id: UUID, run_id: UUID) -> None:
@@ -733,10 +989,8 @@ async def execute_chat_run(
     session_factory: sessionmaker[Session],
     runtime: ExecutionRuntime,
     settings: Settings,
-    web_search_provider: WebSearchProvider | None = None,
 ) -> ChatExecutionResult:
     """Execute one claimed chat job; defects escape into queue recovery."""
-    operation = _chat_tool_operation(web_search_provider)
     steps = ChatStepRuntime(
         db,
         run_id=run_id,
@@ -751,7 +1005,6 @@ async def execute_chat_run(
             run_id=run_id,
             steps=steps,
             session_factory=session_factory,
-            operation=operation,
             settings=settings,
         )
     except Exception:
@@ -768,7 +1021,6 @@ async def _execute_chat_run(
     run_id: UUID,
     steps: ChatStepRuntime,
     session_factory: sessionmaker[Session],
-    operation: FrozenToolOperation,
     settings: Settings,
 ) -> ChatExecutionResult:
     run = db.get(ChatRun, run_id)
@@ -778,18 +1030,11 @@ async def _execute_chat_run(
     if run.status in TERMINAL_RUN_STATUSES:
         steps.clear()
         return SkippedChatExecution(reason="Terminal")
-    validate_chat_tool_profile(run, operation)
-
-    profile = run.profile_id
-    if profile not in generation_policy.CHAT_PROFILES:
-        raise AssertionError("chat run profile_id is missing or unknown")
-    policy = generation_policy.chat_policy(profile)
-    mark_running(
-        db,
-        run.id,
-        model_name=policy.model,
-        reasoning_effort=policy.effort,
-    )
+    spec, intent = _frozen_chat_admission(db, run=run, job=steps.job)
+    operation = steps.llm_runtime.admission.model_tool_operation(spec)
+    if operation is None:
+        raise AssertionError("Chat GenerationSpec is missing its model-tool plan")
+    mark_running(db, run.id)
     run = db.get(ChatRun, run.id)
     if run is None:
         raise AssertionError("running chat run disappeared")
@@ -802,42 +1047,6 @@ async def _execute_chat_run(
     rate_limiter = get_rate_limiter()
     rate_limiter.acquire_inflight_slot(run.owner_user_id)
     try:
-        try:
-            prepared = _prepare_chat_run(
-                db,
-                run=run,
-                steps=steps,
-                profile=profile,
-            )
-        except ContextBudgetError as exc:
-            logger.warning(
-                "chat_run.context_budget_exceeded",
-                run_id=str(run.id),
-                lane=exc.lane,
-                item_key=exc.item_key,
-                requested_tokens=exc.requested_tokens,
-                remaining_tokens=exc.remaining_tokens,
-            )
-            finalize_run(
-                db,
-                run_id=run.id,
-                assistant_content="",
-                assistant_status="error",
-                run_status="error",
-                done_status="error",
-                error_code="context_too_large",
-                support_id=uuid4().hex[:12],
-                error_detail=exception_error_detail(exc),
-                commit=False,
-            )
-            steps.clear()
-            _log_chat_run_finished(db, run_id=run.id, outcome="Failed")
-            return _failed_chat_execution(
-                db,
-                run_id=run.id,
-                error_code="context_too_large",
-            )
-
         full_content = ""
         final_usage: dict[str, JsonValue] | None = None
         last_provider_event_seq: int | None = None
@@ -847,15 +1056,9 @@ async def _execute_chat_run(
         if generation_state is None:
             generation_state = steps.prepare(
                 generation_path,
-                request_fingerprint(
-                    _chat_command_draft(
-                        prepared.generate_intent,
-                        profile,
-                        generation_state_id=stable_generation_id(run.id, generation_path),
-                    )
-                ),
+                spec.fingerprint,
             )
-        elif generation_state.dispatch_phase not in {Prepared, Completed}:
+        elif generation_state.dispatch_phase not in {Prepared, Uncertain, Completed}:
             raise AssertionError("chat generation step is not dispatchable")
 
         generation_result = await _dispatch_generation_step(
@@ -864,10 +1067,9 @@ async def _execute_chat_run(
             steps=steps,
             path=generation_path,
             generation_id=generation_state.generation_id,
-            intent=prepared.generate_intent,
-            profile=profile,
+            spec=spec,
+            intent=intent,
             operation=operation,
-            admitted_resource_uris=prepared.admitted_resource_uris,
             session_factory=session_factory,
             settings=settings,
             emitter=emitter,
@@ -904,53 +1106,56 @@ async def _execute_chat_run(
         rate_limiter.release_inflight_slot(run.owner_user_id)
 
 
-def _prepare_chat_run(
+def _frozen_chat_admission(
     db: Session,
     *,
     run: ChatRun,
-    steps: ChatStepRuntime,
-    profile: str,
-) -> PreparedChatRun:
-    state = steps.read("prepare", ReplayPolicy.ReDispatchable)
-    if state is not None:
-        if state.dispatch_phase is not Completed:
-            raise AssertionError("prepare database step is not completed")
-        prepared = decode_prepared(state)
-        _assert_step_fingerprint(state, step_fingerprint(prepared))
-        return prepared
+    job: JobRow,
+) -> tuple[GenerationSpec, GenerationIntent]:
+    """Load the exact admission-time spec/prompt pair; never reconstruct it."""
 
-    conversation = db.get(Conversation, run.conversation_id)
-    user_message = db.get(Message, run.user_message_id)
-    if conversation is None or user_message is None:
-        raise AssertionError("chat run conversation or user message is missing")
+    spec = chat_generation_spec(run)
+    if spec.operation != "chat" or spec.selection_source != "ChatRun":
+        raise AssertionError("Chat run carries a non-Chat GenerationSpec")
+    if job.payload.get("generation_spec_fingerprint") != spec.fingerprint:
+        raise AssertionError("Chat job differs from its frozen GenerationSpec")
+    assembly = db.scalar(select(ChatPromptAssembly).where(ChatPromptAssembly.chat_run_id == run.id))
+    if assembly is None or (
+        assembly.conversation_id != run.conversation_id
+        or assembly.assistant_message_id != run.assistant_message_id
+    ):
+        raise AssertionError("Chat run is missing its frozen prompt assembly")
+    try:
+        intent = GenerationIntent.model_validate(assembly.generation_intent)
+    except ValueError as error:
+        raise AssertionError("Chat prompt assembly contains an invalid GenerationIntent") from error
+    intent_digest = generation_fact_digest(intent.model_dump(mode="json"))
+    if (
+        assembly.generation_intent_digest != intent_digest
+        or spec.prompt_payload_ref.payload_digest != intent_digest
+    ):
+        raise AssertionError("Chat prompt assembly differs from its frozen GenerationSpec")
+    return spec, intent
 
-    assembly = assemble_chat_context(
-        db,
-        run=run,
-        profile=profile,
+
+def _initial_chat_citation_ordinal(db: Session, *, run: ChatRun) -> int:
+    """Recover the immutable attached-evidence cursor, excluding later tools."""
+
+    value = db.scalar(
+        text(
+            """
+            SELECT COALESCE(MAX(retrieval.citation_candidate_ordinal), 0) + 1
+            FROM message_retrievals AS retrieval
+            JOIN message_tool_calls AS tool_call ON tool_call.id = retrieval.tool_call_id
+            WHERE tool_call.assistant_message_id = :assistant_message_id
+              AND tool_call.tool_call_index = 0
+            """
+        ),
+        {"assistant_message_id": run.assistant_message_id},
     )
-    persist_prompt_assembly(db, run=run, assembly=assembly)
-    reconcile_prompt_retrievals(db, run=run, assembly=assembly)
-    attached_numbering = persist_attached_citations(db, run, assembly.attached_citations)
-    admitted_resource_uris = tuple(
-        dict.fromkeys(
-            context.target.uri
-            for context in list_context_refs(
-                db,
-                viewer_id=run.owner_user_id,
-                conversation_id=run.conversation_id,
-            )
-        )
-    )
-    prepared = PreparedChatRun(
-        generate_intent=assembly.generate_intent,
-        admitted_resource_uris=admitted_resource_uris,
-        initial_citation_ordinal=attached_numbering.next_ordinal,
-        initial_tool_call_index=0,
-    )
-    fingerprint = step_fingerprint(prepared)
-    steps.complete_database_step("prepare", fingerprint=fingerprint, result=prepared)
-    return prepared
+    if type(value) is not int or value < 1:
+        raise AssertionError("Chat attached citation cursor is invalid")
+    return value
 
 
 async def _dispatch_generation_step(
@@ -960,87 +1165,49 @@ async def _dispatch_generation_step(
     steps: ChatStepRuntime,
     path: str,
     generation_id: UUID,
-    intent: Any,
-    profile: str,
+    spec: GenerationSpec,
+    intent: GenerationIntent,
     operation: FrozenToolOperation,
-    admitted_resource_uris: tuple[str, ...],
     session_factory: sessionmaker[Session],
     settings: Settings,
     emitter: ChatRunEventEmitter,
 ) -> AssistantTurn | ExpectedFailure | CancelledGeneration | RescheduleRequested:
-    """Execute one app-owned ChatTools command; MCP owns tool execution."""
-    draft = _chat_command_draft(intent, profile, generation_state_id=generation_id)
-    request_fp = request_fingerprint(draft)
+    """Execute one exact frozen generation through either supported route."""
+    from nexus.services.tool_runtime.execution import ChatToolExecutionProjection
 
-    capacity_wait_index = _chat_capacity_wait_index(steps.job)
     observed_text_parts: list[str] = []
-    observed_usage: dict[str, JsonValue] | None = None
-    last_sequence: int | None = None
+    observed_text_by_child: dict[int, list[str]] = {}
+    observed_usage_by_child: dict[int, dict[str, JsonValue]] = {}
+    observed_event_count = 0
     text_coalescer = _ChatTextCoalescer(emitter)
 
-    async def observe(frame: GenerationFrame) -> None:
-        nonlocal observed_usage, last_sequence
-        last_sequence = frame.sequence
-        if isinstance(frame.event, GenerationText):
-            observed_text_parts.append(frame.event.text)
+    async def observe(event: BackendEvent) -> None:
+        nonlocal observed_event_count
+        observed_event_count += 1
+        sequence = observed_event_count
+        if isinstance(event, BackendTextDelta):
+            observed_text_parts.append(event.text)
+            observed_text_by_child.setdefault(event.child_seq, []).append(event.text)
             await text_coalescer.add(
-                text=frame.event.text,
-                sequence=frame.sequence,
+                text=event.text,
+                sequence=sequence,
             )
             return
         await text_coalescer.flush()
-        if isinstance(frame.event, GenerationToolUse):
+        if isinstance(event, BackendToolObserved | BackendToolProposed):
             emitter.assistant_activity(
                 phase="tool_calling",
-                provider_event_seq_start=frame.sequence,
-                provider_event_seq_end=frame.sequence,
+                provider_event_seq_start=sequence,
+                provider_event_seq_end=sequence,
             )
-        elif isinstance(frame.event, GenerationUsageEvent):
-            observed_usage = frame.event.usage.model_dump(mode="json")
+        elif isinstance(event, BackendUsageObserved):
+            observed_usage_by_child[event.child_seq] = _usage_document(event.usage)
 
-    authority: AgentToolAuthority | None = None
-
-    async def bind_admission(admission: GenerationAdmission) -> GenerationCommand:
-        nonlocal authority
-        with session_factory() as clock_db:
-            now = clock_db.scalar(text("SELECT clock_timestamp()"))
-        if not isinstance(now, datetime):
-            raise AssertionError("database clock did not return a timestamp")
-        issued_grant = issue_chat_generation_grant(
-            user_id=run.owner_user_id,
-            run_id=run.id,
-            job_id=steps.execution_context.job_id,
-            worker_id=steps.execution_context.worker_id,
-            attempt_no=steps.execution_context.attempt_no,
-            generation_id=generation_id,
-            admission_id=admission.admission_id,
-            tool_plan_revision=generation_policy.TOOL_PLAN_REVISION,
-            request_fingerprint=request_fp,
-            signing_key=settings.effective_agent_tool_grant_signing_key,
-            admitted_at=datetime.fromisoformat(admission.admitted_at[:-1] + "+00:00"),
-            now=now if now.tzinfo is not None else now.replace(tzinfo=UTC),
-        )
-        from nexus.services.agent_tools_mcp import AgentToolAuthority
-
-        authority = AgentToolAuthority.from_claimed_chat_attempt(
-            session_factory=session_factory,
-            run_id=run.id,
-            job_id=steps.execution_context.job_id,
-            attempt_no=steps.execution_context.attempt_no,
-            resource_class=steps.execution_context.resource_class,
-            operation=operation,
-            worker_id=steps.execution_context.worker_id,
-            generation_id=generation_id,
-            admission_id=admission.admission_id,
-            grant_jti=issued_grant.jti,
-            admitted_resource_uris=admitted_resource_uris,
-        )
-        return draft.model_copy(update={"tool_grant": BearerToolGrant(token=issued_grant.token)})
-
-    async def wait_for_tool_authority() -> None:
-        if authority is None:
-            raise AssertionError("accepted Chat generation has no admission-bound tool authority")
-        await authority.wait_until_idle()
+    projection = ChatToolExecutionProjection(
+        run_id=run.id,
+        initial_citation_ordinal=_initial_chat_citation_ordinal(db, run=run),
+    )
+    codex_binding = None
 
     cancel_signal = asyncio.Event()
     cancel_watcher: asyncio.Task[None] | None = None
@@ -1050,25 +1217,45 @@ async def _dispatch_generation_step(
     # Close both shapes before health, UDS, or MCP I/O begins.
     db.commit()
 
-    def resolve_terminal(
-        terminal_db: Session,
-        terminal: GenerationTerminal,
-    ) -> GenerationTerminal:
+    def resolve_terminal(terminal_db: Session, terminal: BackendTerminal) -> BackendTerminal:
         locked_run = lock_chat_run_for_update(terminal_db, run.id)
         if locked_run is None:
             raise AssertionError("chat run disappeared before generation terminal")
-        if locked_run.cancel_requested_at is None or terminal.status == "cancelled":
+        if locked_run.cancel_requested_at is None or _backend_terminal_is_cancelled(terminal):
             return terminal
         cancel_signal.set()
-        return terminal.model_copy(
-            update={
-                "status": "cancelled",
-                "failure": None,
-                "final_text": "",
-                "structured_output": None,
-                "diagnostics": ("worker: durable chat cancellation won terminal linearization",),
-            }
+        return _cancelled_backend_terminal(terminal)
+
+    tool_executor = None
+    admission_binder = None
+    before_terminal = None
+    if isinstance(spec.selection, CodexPersonalSelection):
+        codex_binding = compose_codex_generation_tool_binding(
+            session_factory=session_factory,
+            user_id=run.owner_user_id,
+            owner=LlmCallOwner(kind="chat_run", id=run.id),
+            generation_id=generation_id,
+            job_context=steps.execution_context,
+            operation=operation,
+            spec=spec,
+            intent=intent,
+            settings=settings,
+            projection=projection,
         )
+        admission_binder = codex_binding.bind_admission
+        before_terminal = codex_binding.wait_until_idle
+    elif isinstance(spec.selection, ProviderApiSelection):
+        tool_executor = compose_deferred_generation_tool_executor(
+            session_factory=session_factory,
+            user_id=run.owner_user_id,
+            owner=LlmCallOwner(kind="chat_run", id=run.id),
+            generation_id=generation_id,
+            job_context=steps.execution_context,
+            operation=operation,
+            projection=projection,
+        )
+    else:
+        assert_never(spec.selection)
 
     try:
         cancel_watcher = asyncio.create_task(
@@ -1081,22 +1268,22 @@ async def _dispatch_generation_step(
         result = await execute_generation(
             GenerationExecutionRequest(
                 owner=LlmCallOwner(kind="chat_run", id=run.id),
-                command=draft,
+                generation_id=generation_id,
+                spec=spec,
+                intent=intent,
                 journal=JobGenerationJournal(
                     context=steps.execution_context,
                     step_path=path,
-                    capacity_wait_index=capacity_wait_index,
                     lock_dispatch=steps.lock_dispatch,
                 ),
-                capacity_wait_index=capacity_wait_index,
-                streaming=True,
-                bind_admission=bind_admission,
+                bind_admission=admission_binder,
+                tool_executor=tool_executor,
             ),
             session_factory=session_factory,
             runtime=steps.llm_runtime,
-            observe_frame=observe,
+            observe_event=observe,
             cancel_signal=cancel_signal,
-            before_terminal=wait_for_tool_authority,
+            before_terminal=before_terminal,
             resolve_terminal=resolve_terminal,
             encode_terminal=lambda terminal: EncodedGenerationTerminal(
                 terminal_result=encode_step_result(
@@ -1104,8 +1291,9 @@ async def _dispatch_generation_step(
                         root=_chat_generation_terminal_result(
                             terminal,
                             observed_text="".join(observed_text_parts),
-                            observed_usage=observed_usage,
-                            last_sequence=last_sequence,
+                            observed_text_by_child=observed_text_by_child,
+                            observed_usage_by_child=observed_usage_by_child,
+                            last_sequence=observed_event_count + 1,
                             generation_id=generation_id,
                         )
                     )
@@ -1127,66 +1315,211 @@ async def _dispatch_generation_step(
                     with suppress(asyncio.CancelledError):
                         await cancel_watcher
             finally:
-                try:
-                    if authority is not None:
-                        await authority.wait_until_idle()
-                finally:
-                    if authority is not None:
-                        authority.close()
-
-    # The host terminal cannot discharge a tool effect whose worker-owned
-    # journal remained ambiguous. Preserve that journal and suspend the job
-    # before any run terminal or publication can clear it.
-    steps.assert_no_uncertain_tool_effect()
+                if codex_binding is not None:
+                    await codex_binding.drain_and_close()
 
     if isinstance(result, RescheduleRequested):
         return result
     return decode_step_result(result.terminal_result, GenerationStepResultEnvelope).root
 
 
-def _chat_capacity_wait_index(job: JobRow) -> int:
-    value = job.payload.get("capacity_wait_index")
-    if type(value) is not int or value < 0:
-        raise AssertionError("chat job has an invalid capacity_wait_index")
-    return value
-
-
 def _chat_generation_terminal_result(
-    terminal: GenerationTerminal,
+    terminal: BackendTerminal,
     *,
     observed_text: str,
-    observed_usage: dict[str, JsonValue] | None,
+    observed_text_by_child: dict[int, list[str]],
+    observed_usage_by_child: dict[int, dict[str, JsonValue]],
     last_sequence: int | None,
     generation_id: UUID,
 ) -> AssistantTurn | ExpectedFailure | CancelledGeneration:
-    if terminal.status == "succeeded" and terminal.final_text != observed_text:
-        raise AssertionError("Chat terminal text differs from its streamed text fold")
-    if terminal.status != "succeeded" and terminal.final_text:
-        raise AssertionError("non-success Chat terminal exposed provider text")
-    content = observed_text
-    usage = terminal.usage.model_dump(mode="json") if terminal.usage is not None else observed_usage
-    if terminal.status == "cancelled":
+    terminal_usage = _terminal_usage_document(terminal)
+    usages = dict(observed_usage_by_child)
+    if terminal_usage is not None:
+        observed_terminal_usage = usages.get(terminal.child_seq)
+        if observed_terminal_usage is not None and observed_terminal_usage != terminal_usage:
+            raise AssertionError("Chat terminal usage differs from its streamed usage")
+        usages[terminal.child_seq] = terminal_usage
+    usage = _aggregate_usage(usages)
+    child_text = "".join(observed_text_by_child.get(terminal.child_seq, ()))
+
+    if isinstance(terminal.evidence, CodexTerminalEvidence):
+        native = terminal.evidence.native
+        if native.status == "succeeded" and native.final_text != child_text:
+            raise AssertionError("Codex terminal text differs from its streamed text fold")
+        if native.status != "succeeded" and native.final_text:
+            raise AssertionError("non-success Codex terminal exposed provider text")
+        status = native.status
+        error_code = (
+            normalized_failure(native.failure.kind)
+            if native.status == "failed" and native.failure is not None
+            else None
+        )
+        if native.status == "failed" and error_code is None:
+            raise AssertionError("failed Codex generation omitted failure")
+    elif isinstance(terminal.evidence, ProviderTerminalEvidence):
+        outcome = terminal.evidence.outcome
+        if isinstance(outcome, ProviderSucceeded):
+            content = outcome.response.content
+            if not isinstance(content, TextContent):
+                raise AssertionError("Chat ProviderApi success returned structured output")
+            if content.tool_calls:
+                raise AssertionError("final Chat ProviderApi terminal retained tool proposals")
+            if content.text != child_text:
+                raise AssertionError("Provider terminal text differs from its streamed text fold")
+            status = "succeeded"
+            error_code = None
+        elif isinstance(outcome, ProviderCancelled):
+            status = "cancelled"
+            error_code = None
+        elif isinstance(outcome, ProviderIncomplete | ProviderFailed):
+            status = "failed"
+            error_code = _provider_chat_failure_code(outcome)
+        else:
+            assert_never(outcome)
+    else:
+        assert_never(terminal.evidence)
+
+    if status == "cancelled":
         return CancelledGeneration(
-            assistant_content=content,
+            assistant_content=observed_text,
             usage=_owned_usage(usage),
             last_provider_event_seq=_owned_sequence(last_sequence),
         )
-    if terminal.status == "failed":
-        if terminal.failure is None:
-            raise AssertionError("failed generation omitted failure")
+    if status == "failed":
+        if error_code is None:
+            raise AssertionError("failed Chat generation omitted its domain failure")
         return ExpectedFailure(
-            assistant_content=content,
-            error_code=normalized_failure(terminal.failure.kind),
+            assistant_content=observed_text,
+            error_code=error_code,
             usage=_owned_usage(usage),
             support_id=_owned_text(generation_id.hex[:12]),
             last_provider_event_seq=_owned_sequence(last_sequence),
         )
     return assistant_turn_result(
-        text=content,
+        text=observed_text,
         tool_calls=(),
         usage=usage,
         support_id=generation_id.hex[:12],
         last_provider_event_seq=last_sequence,
+    )
+
+
+def _usage_document(usage: GenerationUsage | TokenUsage) -> dict[str, JsonValue]:
+    if isinstance(usage, GenerationUsage):
+        return usage.model_dump(mode="json")
+    return {
+        "input_tokens": usage.input_tokens,
+        "output_tokens": usage.output_tokens,
+        "total_tokens": usage.total_tokens,
+        "reasoning_tokens": _runtime_optional_int(usage.reasoning_tokens),
+        "cache_read_input_tokens": _runtime_optional_int(usage.cache_read_input_tokens),
+        "cache_write_input_tokens": _runtime_optional_int(usage.cache_write_input_tokens),
+    }
+
+
+def _runtime_optional_int(value: RuntimePresent[int] | RuntimeAbsent) -> int | None:
+    if isinstance(value, RuntimePresent):
+        return value.value
+    if isinstance(value, RuntimeAbsent):
+        return None
+    assert_never(value)
+
+
+def _terminal_usage_document(terminal: BackendTerminal) -> dict[str, JsonValue] | None:
+    evidence = terminal.evidence
+    if isinstance(evidence, CodexTerminalEvidence):
+        usage = evidence.native.usage
+        return None if usage is None else _usage_document(usage)
+    if isinstance(evidence, ProviderTerminalEvidence):
+        usage = evidence.outcome.meta.usage
+        return _usage_document(usage.value) if isinstance(usage, RuntimePresent) else None
+    assert_never(evidence)
+
+
+def _aggregate_usage(
+    usage_by_child: dict[int, dict[str, JsonValue]],
+) -> dict[str, JsonValue] | None:
+    if not usage_by_child:
+        return None
+    required = ("input_tokens", "output_tokens", "total_tokens")
+    optional = (
+        "reasoning_tokens",
+        "cache_read_input_tokens",
+        "cache_write_input_tokens",
+    )
+    result: dict[str, JsonValue] = {
+        key: sum(_usage_int(usage, key) for usage in usage_by_child.values()) for key in required
+    }
+    for key in optional:
+        values = [usage.get(key) for usage in usage_by_child.values()]
+        result[key] = (
+            sum(_usage_optional_int(value, key=key) for value in values if value is not None)
+            if any(value is not None for value in values)
+            else None
+        )
+    return result
+
+
+def _usage_int(usage: dict[str, JsonValue], key: str) -> int:
+    value = usage.get(key)
+    if type(value) is not int or value < 0:
+        raise AssertionError(f"Chat usage {key} is not a non-negative integer")
+    return value
+
+
+def _usage_optional_int(value: JsonValue, *, key: str) -> int:
+    if type(value) is not int or value < 0:
+        raise AssertionError(f"Chat usage {key} is not a non-negative integer")
+    return value
+
+
+def _provider_chat_failure_code(outcome: ProviderIncomplete | ProviderFailed) -> str:
+    if isinstance(outcome, ProviderIncomplete):
+        return "output_limit"
+    failure = outcome.failure
+    if isinstance(failure, ProviderContextTooLarge):
+        return "context_too_large"
+    if isinstance(failure, InvalidStructuredOutput | InvalidToolArguments):
+        return "invalid_output"
+    if isinstance(failure, TransientExhausted):
+        return "runtime_unavailable"
+    assert_never(failure)
+
+
+def _backend_terminal_is_cancelled(terminal: BackendTerminal) -> bool:
+    evidence = terminal.evidence
+    if isinstance(evidence, CodexTerminalEvidence):
+        return evidence.native.status == "cancelled"
+    if isinstance(evidence, ProviderTerminalEvidence):
+        return isinstance(evidence.outcome, ProviderCancelled)
+    assert_never(evidence)
+
+
+def _cancelled_backend_terminal(terminal: BackendTerminal) -> BackendTerminal:
+    evidence = terminal.evidence
+    if isinstance(evidence, CodexTerminalEvidence):
+        cancelled = evidence.native.model_copy(
+            update={
+                "status": "cancelled",
+                "failure": None,
+                "final_text": "",
+                "structured_output": None,
+                "diagnostics": ("worker: durable chat cancellation won terminal linearization",),
+            }
+        )
+        replacement = CodexTerminalEvidence(native=cancelled)
+    elif isinstance(evidence, ProviderTerminalEvidence):
+        replacement = ProviderTerminalEvidence(
+            outcome=ProviderCancelled(meta=evidence.outcome.meta),
+            correlation=evidence.correlation,
+        )
+    else:
+        assert_never(evidence)
+    return BackendTerminal(
+        route=terminal.route,
+        child_seq=terminal.child_seq,
+        backend_seq=terminal.backend_seq,
+        evidence=replacement,
     )
 
 
@@ -1207,28 +1540,6 @@ def _encode_chat_preaccept_failure(
                 last_provider_event_seq=owned_presence.absent(),
             )
         )
-    )
-
-
-def _chat_command_draft(
-    intent: Any,
-    profile: str,
-    *,
-    generation_state_id: UUID | None,
-) -> GenerationCommand:
-    """Build the grant-independent command used for journal identity."""
-    request_id = generation_state_id or uuid4()
-    return GenerationCommand(
-        request_id=request_id,
-        operation=ChatOperation(
-            kind="chat",
-            revision=generation_policy.operation_revision("chat", profile=profile),
-            profile=cast(Any, profile),
-        ),
-        policy_revision=generation_policy.POLICY_REVISION,
-        policy_fingerprint=generation_policy.POLICY_FINGERPRINT,
-        intent=intent,
-        tool_grant=BearerToolGrant(token=SecretStr("pending")),
     )
 
 
@@ -1414,7 +1725,6 @@ def _finalize_cancelled_execution(
     usage: dict[str, JsonValue] | None = None,
     last_provider_event_seq: int | None = None,
 ) -> CancelledChatExecution:
-    steps.stage_prepared_mcp_cancellation_terminals()
     finalize_cancelled(
         db,
         run,

@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import Media, MediaKind, ProcessingStatus
 from nexus.services import generation_policy
-from nexus.services.codex_generation_contract import request_fingerprint
 from nexus.services.contributor_taxonomy import (
     MAX_CONTRIBUTOR_NAME_CODE_POINTS,
     RawCreditEntry,
@@ -19,11 +18,14 @@ from nexus.services.contributors import (
     apply_observed_role_slices_in_current_transaction,
 )
 from nexus.services.metadata_enrichment import build_enrichment_user_content
-from nexus.tasks.enrich_metadata import _metadata_generation_command
+from nexus.tasks.enrich_metadata import _metadata_generation_intent
 
-_METADATA_INPUT_MAX_BYTES = generation_policy.operation_policy(
-    "metadata_enrichment"
-).input_max_bytes
+
+def _metadata_input_max_bytes() -> int:
+    assert hasattr(generation_policy, "workflow_for_operation"), (
+        "the route-neutral background generation policy is absent"
+    )
+    return generation_policy.workflow_for_operation("metadata_enrichment").bounds.input_max_bytes
 
 
 def test_metadata_prompt_preserves_envelope_and_delimiter_at_utf8_input_ceiling(
@@ -40,27 +42,22 @@ def test_metadata_prompt_preserves_envelope_and_delimiter_at_utf8_input_ceiling(
     db_session.add(media)
     db_session.flush()
 
-    source_text = "metadata source \U0001f98a " * _METADATA_INPUT_MAX_BYTES
+    input_max_bytes = _metadata_input_max_bytes()
+    source_text = "metadata source \U0001f98a " * input_max_bytes
     prompt = build_enrichment_user_content(db_session, media, source_text)
 
     prompt_bytes = len(prompt.encode("utf-8"))
-    assert _METADATA_INPUT_MAX_BYTES - 3 <= prompt_bytes
-    assert prompt_bytes <= _METADATA_INPUT_MAX_BYTES, "metadata prompt exceeded wire input bound"
+    assert input_max_bytes - 3 <= prompt_bytes
+    assert prompt_bytes <= input_max_bytes, "metadata prompt exceeded wire input bound"
     assert prompt.endswith("\n---")
     assert "Early extracted text:\n---\n" in prompt
     assert prompt.encode("utf-8").decode("utf-8") == prompt
 
-    first = _metadata_generation_command(
-        generation_id=media.id,
-        input=prompt,
-    )
+    first = _metadata_generation_intent(input=prompt)
     replay = build_enrichment_user_content(db_session, media, source_text)
-    second = _metadata_generation_command(
-        generation_id=media.id,
-        input=replay,
-    )
+    second = _metadata_generation_intent(input=replay)
     assert replay == prompt
-    assert request_fingerprint(second) == request_fingerprint(first)
+    assert second == first
 
 
 def test_metadata_prompt_bounds_oversized_persisted_hints_without_erasing_structure(
@@ -68,12 +65,13 @@ def test_metadata_prompt_bounds_oversized_persisted_hints_without_erasing_struct
 ) -> None:
     """Risk: an old unbounded Text value can make source text erase prompt labels."""
 
+    input_max_bytes = _metadata_input_max_bytes()
     media = Media(
         kind=MediaKind.web_article.value,
-        title="x" * (_METADATA_INPUT_MAX_BYTES * 2),
+        title="x" * (input_max_bytes * 2),
         requested_url="https://example.invalid/article",
-        publisher="publisher" * _METADATA_INPUT_MAX_BYTES,
-        description="description" * _METADATA_INPUT_MAX_BYTES,
+        publisher="publisher" * input_max_bytes,
+        description="description" * input_max_bytes,
         processing_status=ProcessingStatus.ready_for_reading,
     )
     db_session.add(media)
@@ -85,7 +83,7 @@ def test_metadata_prompt_bounds_oversized_persisted_hints_without_erasing_struct
         "source text that must not remove trusted framing",
     )
 
-    assert len(prompt.encode("utf-8")) < _METADATA_INPUT_MAX_BYTES
+    assert len(prompt.encode("utf-8")) < input_max_bytes
     assert 'Known metadata:\n- kind: "web_article"\n- current_title: ' in prompt
     assert "- requested_url: " in prompt
     assert "Media-kind target:" in prompt
@@ -132,7 +130,7 @@ def test_metadata_prompt_bounds_the_author_hint_as_a_valid_json_array(
 
     prompt = build_enrichment_user_content(db_session, media, "bounded source")
 
-    assert len(prompt.encode("utf-8")) < _METADATA_INPUT_MAX_BYTES
+    assert len(prompt.encode("utf-8")) < _metadata_input_max_bytes()
     metadata_block = prompt.removeprefix("Known metadata:\n").split("\n\nMedia-kind target:", 1)[0]
     authors_line = next(
         line for line in metadata_block.splitlines() if line.startswith("- current_authors: ")

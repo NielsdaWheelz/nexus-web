@@ -17,8 +17,8 @@ from typing import cast
 
 from nexus_test_control.model import Resource, ResourceKind
 
-RUNTIME_VERSION = 4
-PREVIOUS_RUNTIME_VERSION = 3
+RUNTIME_VERSION = 5
+PREVIOUS_RUNTIME_VERSION = 4
 LEDGER_VERSION = 1
 LOOPBACK_HOST = "127.0.0.1"
 TEMPLATE_FINGERPRINT_HEX_LENGTH = 40
@@ -38,6 +38,7 @@ _PROCESS_ROLES = frozenset(
         "offline-caddy",
         "offline-caddy-origin",
         "provider-openai",
+        "provider-api-peer",
         "web",
         "worker-interactive",
         "worker-background",
@@ -58,6 +59,7 @@ class EndpointKind(StrEnum):
     AGENT_TOOLS_MCP = "agent-tools-mcp"
     EXTERNAL = "external"
     PROVIDER_OPENAI = "provider-openai"
+    PROVIDER_API = "provider-api"
     WEB = "web"
 
 
@@ -80,6 +82,7 @@ class RuntimePorts:
     web: int
     external: int
     provider_openai: int
+    provider_api: int
 
     def __post_init__(self) -> None:
         ports = tuple(self.as_dict().values())
@@ -105,6 +108,7 @@ class RuntimePorts:
             "web": self.web,
             "external": self.external,
             "provider_openai": self.provider_openai,
+            "provider_api": self.provider_api,
         }
 
 
@@ -199,6 +203,12 @@ def embedding_peer_state_dir(repo_root: Path, run_id: str) -> Path:
     """Return the one run-owned state directory for the embeddings-only peer."""
 
     return canonical_repo_root(repo_root) / embedding_peer_identity(run_id)
+
+
+def provider_api_peer_state_dir(repo_root: Path, run_id: str) -> Path:
+    """Return the one run-owned state directory for the provider API peer."""
+
+    return canonical_repo_root(repo_root) / provider_api_peer_identity(run_id)
 
 
 def codex_generation_peer_state_dir(repo_root: Path, run_id: str) -> Path:
@@ -546,6 +556,11 @@ def embedding_peer_identity(run_id: str) -> str:
     return f".nexus-test/runs/{run_id}/embedding-peer"
 
 
+def provider_api_peer_identity(run_id: str) -> str:
+    require_run_id(run_id)
+    return f".nexus-test/runs/{run_id}/provider-api-peer"
+
+
 def codex_generation_peer_identity(run_id: str) -> str:
     require_run_id(run_id)
     return f".nexus-test/runs/{run_id}/codex-generation-peer"
@@ -741,6 +756,8 @@ def _validate_resource(resource: Resource, run_id: str, scenario_id: str | None)
         expected = supabase_user_email(run_id, scenario_id)
     elif kind is ResourceKind.EMBEDDING_PEER:
         expected = embedding_peer_identity(run_id)
+    elif kind is ResourceKind.PROVIDER_API_PEER:
+        expected = provider_api_peer_identity(run_id)
     elif kind is ResourceKind.CODEX_GENERATION_PEER:
         expected = codex_generation_peer_identity(run_id)
     elif kind is ResourceKind.PROCESS:
@@ -773,6 +790,8 @@ def _resource_endpoint(ports: RuntimePorts, kind: ResourceKind) -> str | None:
         return _endpoint(ports, EndpointKind.MINIO)
     if kind is ResourceKind.SUPABASE_USER:
         return _endpoint(ports, EndpointKind.SUPABASE)
+    if kind is ResourceKind.PROVIDER_API_PEER:
+        return _endpoint(ports, EndpointKind.PROVIDER_API)
     return None
 
 
@@ -786,13 +805,14 @@ def _endpoint(ports: RuntimePorts, kind: EndpointKind) -> str:
         EndpointKind.AGENT_TOOLS_MCP: ports.agent_tools_mcp,
         EndpointKind.EXTERNAL: ports.external,
         EndpointKind.PROVIDER_OPENAI: ports.provider_openai,
+        EndpointKind.PROVIDER_API: ports.provider_api,
         EndpointKind.WEB: ports.web,
     }[kind]
     scheme = (
         "postgresql"
         if kind is EndpointKind.POSTGRES
         else "https"
-        if kind is EndpointKind.PROVIDER_OPENAI
+        if kind in {EndpointKind.PROVIDER_OPENAI, EndpointKind.PROVIDER_API}
         else "http"
     )
     return f"{scheme}://{LOOPBACK_HOST}:{port}"
@@ -843,7 +863,7 @@ def _runtime_from_json(value: object, *, allow_previous: bool = False) -> Runtim
     ports = _object(data["ports"], "runtime ports")
     expected_ports = set(RuntimePorts.__annotations__)
     if allow_previous and version == PREVIOUS_RUNTIME_VERSION:
-        expected_ports.remove("agent_tools_mcp")
+        expected_ports.remove("provider_api")
     _keys(ports, expected_ports, "runtime ports")
     if version == PREVIOUS_RUNTIME_VERSION:
         used_ports = set(ports.values())
@@ -852,8 +872,8 @@ def _runtime_from_json(value: object, *, allow_previous: bool = False) -> Runtim
             None,
         )
         if placeholder is None:
-            raise RuntimeContractError("previous runtime has no free MCP-port placeholder")
-        ports = {**ports, "agent_tools_mcp": placeholder}
+            raise RuntimeContractError("previous runtime has no free provider-API-port placeholder")
+        ports = {**ports, "provider_api": placeholder}
     run_ids = data["owned_run_ids"]
     if not isinstance(run_ids, list) or any(not isinstance(item, str) for item in run_ids):
         raise RuntimeContractError("owned_run_ids must be an array of strings")
@@ -878,14 +898,14 @@ def _runtime_from_json(value: object, *, allow_previous: bool = False) -> Runtim
 def upgrade_previous_runtime(
     repo_root: Path,
     environment: Mapping[str, str],
-    agent_tools_mcp: int,
+    provider_api: int,
 ) -> RuntimeRecord:
-    """Atomically add the v4 MCP port to an exact workspace-owned v3 record."""
+    """Atomically add the v5 provider API port to an exact workspace-owned v4 record."""
     require_test_environment(environment)
-    if isinstance(agent_tools_mcp, bool) or not isinstance(agent_tools_mcp, int):
-        raise RuntimeContractError("agent-tools MCP port must be an integer")
-    if not 1 <= agent_tools_mcp <= 65_535:
-        raise RuntimeContractError("agent-tools MCP port must be between 1 and 65535")
+    if isinstance(provider_api, bool) or not isinstance(provider_api, int):
+        raise RuntimeContractError("provider API port must be an integer")
+    if not 1 <= provider_api <= 65_535:
+        raise RuntimeContractError("provider API port must be between 1 and 65535")
     with _state_lock(repo_root, "runtime"):
         record = _runtime_from_json(
             _read_json(runtime_record_path(repo_root)),
@@ -896,10 +916,10 @@ def upgrade_previous_runtime(
         if record.version != PREVIOUS_RUNTIME_VERSION:
             raise RuntimeContractError("upgrade requires the immediately previous runtime")
         owned_ports = {
-            port for name, port in record.ports.as_dict().items() if name != "agent_tools_mcp"
+            port for name, port in record.ports.as_dict().items() if name != "provider_api"
         }
-        if agent_tools_mcp in owned_ports:
-            raise RuntimeContractError("agent-tools MCP port collides with an owned runtime port")
+        if provider_api in owned_ports:
+            raise RuntimeContractError("provider API port collides with an owned runtime port")
         expected_repo_id = repo_id_for(repo_root)
         if record.repo_id != expected_repo_id:
             raise RuntimeContractError("runtime belongs to a different repository")
@@ -910,14 +930,14 @@ def upgrade_previous_runtime(
         upgraded = replace(
             record,
             version=RUNTIME_VERSION,
-            ports=replace(record.ports, agent_tools_mcp=agent_tools_mcp),
+            ports=replace(record.ports, provider_api=provider_api),
         )
         _write_json(runtime_record_path(repo_root), _runtime_to_json(upgraded))
         return upgraded
 
 
 def read_previous_runtime_for_cleanup(repo_root: Path) -> RuntimeRecord:
-    """Decode v3 only for exact owned cleanup; never start or reuse it."""
+    """Decode v4 only for exact owned cleanup; never start or reuse it."""
     record = _runtime_from_json(
         _read_json(runtime_record_path(repo_root)),
         allow_previous=True,

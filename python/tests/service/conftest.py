@@ -37,9 +37,12 @@ def committed_chat_state_isolation(engine: Engine) -> Generator[None, None, None
             db.scalars(text("SELECT id FROM background_jobs WHERE kind = 'chat_run'")).all()
         )
         current_generation_ids = frozenset(db.scalars(select(LLMCall.id)).all())
+        owned_generation_ids = tuple(
+            sorted(current_generation_ids - existing_generation_ids, key=str)
+        )
         delete_generations_by_ids(
             db,
-            generation_ids=tuple(sorted(current_generation_ids - existing_generation_ids, key=str)),
+            generation_ids=owned_generation_ids,
         )
         delete_jobs_by_ids(
             db,

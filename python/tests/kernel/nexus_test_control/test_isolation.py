@@ -36,7 +36,8 @@ def test_environment_isolation_rejects_production_and_cleans_only_the_exact_run(
         "web",
         "external",
         "provider_openai",
-    ), "the isolated runtime lost its exact MCP port boundary"
+        "provider_api",
+    ), "the isolated runtime lost its exact MCP/provider port boundary"
     production_sentinel = tmp_path / "production-sentinel"
     production_sentinel.write_text("must survive", encoding="utf-8")
 
@@ -84,7 +85,7 @@ def test_environment_isolation_rejects_production_and_cleans_only_the_exact_run(
         )
 
     environment = controlled_environment({})
-    initialize_runtime(tmp_path, environment, RuntimePorts(*range(21001, 21013)))
+    initialize_runtime(tmp_path, environment, RuntimePorts(*range(21001, 21014)))
     cleaned_run = "0123456789abcdef"
     preserved_run = "fedcba9876543210"
     claim_run(tmp_path, environment, cleaned_run)

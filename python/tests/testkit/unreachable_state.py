@@ -827,7 +827,8 @@ def delete_jobs_by_ids(db: Session, *, job_ids: Sequence[UUID]) -> None:
 type GenerationLedgerCorruption = Literal[
     "nonpositive_sequence",
     "owner_operation",
-    "plan_capability",
+    "plan_selection",
+    "model_tool_plan",
     "route",
     "fingerprint",
     "session_ref",
@@ -854,9 +855,15 @@ def corrupt_generation_ledger_row(
                 "UPDATE llm_calls SET owner_kind = 'chat_run' "
                 "WHERE id = :generation_id RETURNING id"
             )
-        case "plan_capability":
+        case "plan_selection":
             statement = (
                 "UPDATE llm_calls SET model_name = 'gpt-5.6-sol' "
+                "WHERE id = :generation_id RETURNING id"
+            )
+        case "model_tool_plan":
+            statement = (
+                "UPDATE llm_calls SET model_tool_plan_snapshot = "
+                '\'{"kind":"Present","value":{}}\'::jsonb '
                 "WHERE id = :generation_id RETURNING id"
             )
         case "route":
@@ -893,9 +900,89 @@ def delete_generations_by_ids(db: Session, *, generation_ids: Sequence[UUID]) ->
     """Remove only committed generation ledger rows owned by one exact proof."""
     if not generation_ids:
         return
+    parameters = {"generation_ids": list(generation_ids)}
+    # Chat projections and machine-authorship rows deliberately use restrictive
+    # links to the canonical tool position.  Remove only the projections owned
+    # by these proof generations before deleting their ledger rows; broad
+    # cascade semantics would weaken the production contract this test helper
+    # is meant to preserve.
+    db.execute(
+        text(
+            """
+            DELETE FROM message_retrievals
+            WHERE tool_call_id IN (
+                SELECT call.id
+                FROM message_tool_calls AS call
+                JOIN llm_tool_positions AS position ON position.id = call.tool_position_id
+                WHERE position.generation_id = ANY(CAST(:generation_ids AS uuid[]))
+            )
+            """
+        ),
+        parameters,
+    )
+    db.execute(
+        text(
+            """
+            DELETE FROM chat_run_events
+            WHERE payload->>'tool_call_id' IN (
+                SELECT CAST(call.id AS text)
+                FROM message_tool_calls AS call
+                JOIN llm_tool_positions AS position ON position.id = call.tool_position_id
+                WHERE position.generation_id = ANY(CAST(:generation_ids AS uuid[]))
+            )
+            """
+        ),
+        parameters,
+    )
+    db.execute(
+        text(
+            """
+            DELETE FROM assistant_write_authorships
+            WHERE tool_position_id IN (
+                SELECT id
+                FROM llm_tool_positions
+                WHERE generation_id = ANY(CAST(:generation_ids AS uuid[]))
+            )
+            """
+        ),
+        parameters,
+    )
+    db.execute(
+        text(
+            """
+            DELETE FROM message_tool_calls
+            WHERE tool_position_id IN (
+                SELECT id
+                FROM llm_tool_positions
+                WHERE generation_id = ANY(CAST(:generation_ids AS uuid[]))
+            )
+            """
+        ),
+        parameters,
+    )
+    db.execute(
+        text(
+            "DELETE FROM llm_model_turn_continuations "
+            "WHERE generation_id = ANY(CAST(:generation_ids AS uuid[]))"
+        ),
+        parameters,
+    )
+    db.execute(
+        text(
+            "DELETE FROM llm_tool_positions "
+            "WHERE generation_id = ANY(CAST(:generation_ids AS uuid[]))"
+        ),
+        parameters,
+    )
+    db.execute(
+        text(
+            "DELETE FROM llm_model_turns WHERE generation_id = ANY(CAST(:generation_ids AS uuid[]))"
+        ),
+        parameters,
+    )
     db.execute(
         text("DELETE FROM llm_calls WHERE id = ANY(CAST(:generation_ids AS uuid[]))"),
-        {"generation_ids": list(generation_ids)},
+        parameters,
     )
 
 

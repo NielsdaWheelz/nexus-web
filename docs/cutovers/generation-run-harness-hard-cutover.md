@@ -4,11 +4,9 @@
 
 The approved target contract is
 [`generation-backends-hard-cutover.md`](generation-backends-hard-cutover.md).
-Until that atomic cutover turns green, source still implements
-[`codex-personal-generation-hard-cutover.md`](codex-personal-generation-hard-cutover.md).
-The older document describes current code only; it is not authority for target
-behavior. Its normative spec is deleted after live contracts migrate; its
-change report remains historical evidence.
+The former Codex-only normative specification is deleted after its live
+contracts move to current owners; its change report remains explicitly
+historical evidence.
 
 The stable module views are [`../modules/llms.md`](../modules/llms.md) and
 [`../modules/chat.md`](../modules/chat.md). They continue to describe shipped

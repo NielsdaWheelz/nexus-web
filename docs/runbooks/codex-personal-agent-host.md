@@ -1,7 +1,8 @@
 # Codex Personal Generation Host Operations
 
 This runbook owns the credential-safe deployment boundary for
-`nexus-codex-agent-host`. The host serves the private v2 generation protocol on
+`nexus-codex-agent-host`. The host serves the private v2 generation protocol,
+including command v3 and the authenticated account model catalog, on
 `/run/nexus-codex/agent.sock`; it has no TCP listener, Nexus application
 configuration, database credential, generation API key, application data mount,
 or host-home mount.
@@ -19,8 +20,9 @@ or host-home mount.
   content-addressed process supervisor beside the profile state, so this exact
   tmpfs is executable; general `/tmp` remains a separate `noexec` tmpfs. Host
   startup rejects any other mount shape and then exercises the real SDK
-  launcher during the subscription-auth probe. The pinned adapter sets
-  `TMPDIR` to that turn's `tmp/` and fixes
+  launcher during the authenticated model-catalog startup probe. Nexus passes
+  the public typed `CodexSandboxControls` contract to every `AgentRuntime` path;
+  it sets `TMPDIR` to that turn's `tmp/` and fixes
   Codex workspace-write policy to exclude bare `/tmp` while retaining only
   `TMPDIR`. Pinned Codex OAuth refresh writes are immediately durable; session,
   cache, launcher, temporary files, and every sibling write remain disposable.
@@ -46,17 +48,17 @@ or host-home mount.
   version before mutation because `gateway_mode_ipv4=isolated` is part of the
   private bridge's security contract.
 - The host receives exactly the public HTTPS MCP origin and
-  `NEXUS_CODEX_CHAT_NETWORK_ATTESTED=true` from Compose. The origin must use a
+  `NEXUS_CODEX_MODEL_TOOL_NETWORK_ATTESTED=true` from Compose. The origin must use a
   lowercase public DNS hostname and the exact path, with no userinfo, query, or
   fragment.
-- Never set `CODEX_HOME`, `OPENAI_API_KEY`, or another generation API key on the
-  running host. The host receives only
+- Never set `CODEX_HOME` or any `*_API_KEY` on the running host. Startup rejects
+  even a blank inherited API-key variable. The host receives only
   `NEXUS_CODEX_CREDENTIAL_FILE=/run/nexus-codex-credential/auth.json`;
   `CODEX_HOME` is legal only for the one enrollment command.
 
 ## MCP wire pin
 
-Production ChatTools interoperation is one fixed contract:
+Production model-tool interoperation is one fixed contract:
 
 - client: `openai-codex==0.144.4` and
   `openai-codex-cli-bin==0.144.4`;
@@ -73,6 +75,15 @@ request, and the mount accepts only an omitted or identical header there.
 Every subsequent POST requires `MCP-Protocol-Version: 2025-06-18`. Any other
 revision, a missing later header, or any client `Mcp-Session-Id` is a protocol
 rejection.
+
+Each tool-bearing command carries the exact frozen model-tool plan admitted by
+the generation owner. The host publishes only that plan through llm-calling's
+MCP lowering: canonical dotted ids use a mechanical dot-to-double-underscore
+wire alias (for example, `web.search` becomes `web__search`), and observed tool
+events must reverse to an admitted canonical id. Unknown aliases fail the turn
+as a policy violation. Codex built-in tools and native web search remain
+disabled; all model tools, for Chat and background operations alike, use this
+same bearer-scoped MCP boundary.
 
 Despite the `Accept` advertisement, Nexus returns JSON for requests and a
 bodyless acknowledgement for notifications. It returns no session id and
@@ -243,7 +254,9 @@ container environment, the private executable runtime tmpfs and general
 `noexec` tmpfs, UDS volume, two-network egress topology, fixed private addresses
 and DNS, sidecar isolation, real SDK launcher/auth startup, the real pinned
 inner-sandbox behavior (`TMPDIR` writable and bare `/tmp` unwritable), and exact
-v2 health identity.
+v2 health identity. It also proves that the authenticated catalog can be read
+through the private UDS; no API process receives the subscription credential or
+imports the Codex SDK.
 
 After reboot, unlock and mount the credential state interactively, then use the
 controller. Do not invoke Compose directly:
@@ -298,14 +311,22 @@ older than 72 hours, run from a clean checkout at the exact candidate SHA:
 ./deploy/hetzner/prove-codex-capacity.sh "$(git rev-parse HEAD)"
 ```
 
-The v3 canary sends one cold and two warm `dossier_library` turns through the
-real UDS host at the `thorough` plan (`Terra/high`, `Synthesis`, no tools). This
-is the bounded release-capacity sample; the four-plan nightly owns Deep/Sol and
-MCP coverage. The enclosing immutable qualification remains
-`nexus-codex-capacity.v2`. It records only phase, operation/plan/policy/
-capability identity, terminal class, usage presence, SDK/runtime versions, and
-tool/permission event counts. It records no prompt, model output, grant,
-session identifier, account identifier, or credential fact.
+The controller must first materialize one canonical
+`nexus-codex-capacity-canary-input.v1` envelope at an explicit resolved absolute
+file and pass it as `NEXUS_CODEX_CAPACITY_GENERATION_SPEC_FILE`. The envelope
+contains a candidate-image-frozen `dawn_write` BackgroundPolicy `GenerationSpec`
+and its digest-matched controller-owned synthetic intent. The canary accepts
+only Codex Personal Terra/medium, Text,
+`NoModelTools`, and `NoHostTools`, then sends one cold and two warm turns while
+varying only `request_id`. It never resolves a model, reasoning value, policy,
+or tool plan locally.
+
+The bounded result is `nexus-codex-capacity-canary.v4`; the enclosing immutable
+qualification remains `nexus-codex-capacity.v2`. It records only phase,
+operation, frozen-spec fingerprint, model/reasoning identity, terminal class,
+usage presence, SDK/runtime versions, and tool/permission event counts. It
+records no prompt, model output, grant, session identifier, account identifier,
+or credential fact.
 
 The release controller measures the 384 MiB host cgroup, host headroom,
 pressure, swap, OOM counters, and unchanged long-lived service health. Passing
@@ -322,18 +343,18 @@ same-named container is never name-only deletion authority. Do not stop other
 services, clear caches, add swap, raise the host limit, or lower reserves to
 manufacture a pass.
 
-## Four-plan nightly
+## Bounded target-set nightly
 
-The protected `codex-nightly` lane performs exactly four subscription turns,
-one per unique plan pair. Together they cover text, strict JSON, and one
-read-only MCP call. The `nexus-hosted-codex-canary.v3` receipt binds the source
-SHA and exact policy/runtime pins, declares the narrow
-`model_effort_runtime_wire` scope and four exact qualified plan ids, then
-records only plan id, model, effort, structured-output validity, usage,
-SDK/runtime versions, tool/permission counts, and bounded elapsed time per
-case. It is not evidence that four representative turns evaluated every
-domain operation. Synthesis has zero tool events; the MCP result has a bounded
-non-zero count; permission requests are always zero.
+The protected `codex-nightly` lane performs one subscription turn for every
+source-qualified Codex Chat target plus one real Library and Idea background
+turn, with a hard ceiling of 16 turns, 600 seconds per turn, 120 minutes, and
+64 KiB of redacted evidence. Every turn publishes its exact frozen MCP plan and
+executes `nexus.resource.read` once. The `nexus-hosted-codex-canary.v4` receipt
+binds the source SHA, policy, dynamic catalog identity, exact source row and
+reasoning sets, backend contract, SDK/CLI pins, and tool authority revisions.
+It retains only capability classes, target/model/reasoning identities,
+structured-output validity, usage presence, declaration/tool/permission
+counts, and bounded elapsed time. It is not a model-by-operation proof.
 
 The nightly runner has a distinct encrypted Codex profile, no database, no
 Docker authority, and no Nexus process. Provision
@@ -345,8 +366,9 @@ admission and the workflow deletes their complete contents in an `always()`
 step. The workflow refuses until an existing runner is provisioned to this
 hard-cut layout; there is no alternate temporary directory. Its MCP peer is the same
 `mcp==2.1.0` stateless JSON server on wire revision `2025-06-18`, served locally
-with TLS and one static read-only tool. A missing credential, runner, state
-root, or policy pin is `not_run`, never skipped green.
+with TLS, the full eleven-tool Chat declaration set, and exactly one implemented
+bounded read operation; each frozen plan controls the visible subset. A missing
+credential, runner, state root, or policy pin is `not_run`, never skipped green.
 
 ## Operation smoke boundary
 
@@ -354,7 +376,7 @@ Do not create production fixtures or a synthetic account to replay every
 operation. Nexus has no account-deletion lifecycle, and Dawn is intentionally a
 population sweep. The closed static catalog owns operation composition and
 policy; representative real-owner service proofs own publication and replay;
-the four-plan nightly owns the unique model/effort, JSON, and MCP boundary; the
+the target-set nightly owns each Codex target plus the strict-output/MCP boundary; the
 capacity proof owns the shipped host envelope.
 
 After deployment, exercise desired operations through their ordinary product
@@ -404,9 +426,9 @@ environment, MCP-origin, or capacity checks.
 ## Incident boundaries
 
 - Quota/auth/runtime/sandbox failure is terminal for that generation; never add
-  API-based generation fallback or automatic re-enrollment. Startup performs
-  only the required authentication-status probe; the pinned client may refresh
-  the exact durable artifact during that probe.
+  API-based fallback inside the Codex route or automatic re-enrollment. Startup
+  performs the required authenticated model-catalog probe; the pinned client may
+  refresh the exact durable artifact during that probe.
 - A pre-accept capacity refusal is known. A post-accept disconnect is uncertain
   and never capacity or redispatch authority.
 - Grant values, `auth.json`, raw SDK frames, model output, prompts, and device

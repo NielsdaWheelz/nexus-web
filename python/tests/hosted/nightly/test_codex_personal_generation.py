@@ -1,4 +1,4 @@
-"""Four-plan Codex subscription canary with bounded, redacted evidence.
+"""Bounded Codex target-set canary with redacted capability evidence.
 
 The controller only enables this module on the enrolled subscription runner.
 No provider API key, model output, prompt, tool grant, or diagnostic is ever
@@ -21,7 +21,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 import pytest
@@ -31,12 +31,15 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
+from llm_tools import WebSearchRequest, WebSearchResponse
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import CallToolResult, ListToolsResult, TextContent, Tool
 from provider_runtime import Present
 from provider_runtime.agent_runtime import (
+    AGENT_BACKEND_CONTRACT_REVISION,
+    AgentModelCatalog,
     AgentPermissionRequest,
     AgentRuntimeConfig,
     AgentTerminal,
@@ -44,31 +47,48 @@ from provider_runtime.agent_runtime import (
     CredentialRef,
     CredentialRejected,
     CredentialUnavailable,
-    SessionQuery,
 )
+from provider_runtime.registry import api_model_catalog
 from pydantic import SecretStr
 
+from nexus.schemas.llm import Ready, Selectable
 from nexus.services import generation_policy
 from nexus.services.codex_generation_contract import (
-    ChatOperation,
-    DawnWriteOperation,
-    DossierLibraryOperation,
     GenerationCommand,
-    MetadataEnrichmentOperation,
+    GenerationCommandDraft,
+    generation_command_from_draft,
 )
-from nexus.services.codex_generation_operations import resolve_codex_generation
+from nexus.services.codex_generation_operations import (
+    compose_codex_model_tool_plan_registry,
+    resolve_codex_generation,
+)
+from nexus.services.generation_admission import FrozenHostEvidence
+from nexus.services.generation_catalog import (
+    GenerationCatalogService,
+    readiness_snapshot,
+    source_controlled_qualification_snapshot,
+)
 from nexus.services.generation_intent import (
     BearerToolGrant,
     GenerationIntent,
     JsonSchemaOutput,
     TextOutput,
 )
+from nexus.services.generation_selection import CodexPersonalSelection
+from nexus.services.generation_service import GenerationService
+from nexus.services.generation_spec import (
+    FrozenHostToolPlanSnapshot,
+    FrozenScopePredicate,
+    FrozenToolScope,
+    ImmutablePromptPayloadRef,
+    generation_fact_digest,
+)
+from nexus.services.tool_runtime.composition import compose_product_tool_runtime
+from nexus.services.tool_runtime.profiles import TOOL_PLAN_DEFINITIONS_BY_ID
 
-_PLANS = (
-    ("routine", "gpt-5.6-luna", "low", "json", MetadataEnrichmentOperation),
-    ("standard", "gpt-5.6-terra", "medium", "text", DawnWriteOperation),
-    ("thorough", "gpt-5.6-terra", "high", "json", DossierLibraryOperation),
-    ("deep", "gpt-5.6-sol", "high", "mcp-read", ChatOperation),
+_BACKGROUND_CASES = (
+    ("dossier_library", "LibraryDossierRead"),
+    ("dossier_idea", "IdeaDossierRead"),
 )
 _MCP_HOST = "mcp.nexus.example.com"
 _MCP_PATH = "/internal/agent-tools/mcp"
@@ -77,6 +97,41 @@ _MCP_TOKEN = "hosted-nightly-read-only-token"
 _MAX_PLAN_ELAPSED_SECONDS = 600
 _MAX_PLAN_ELAPSED_MS = 600_000
 _MAX_MCP_REQUEST_BYTES = 64 * 1024
+_MAX_SUBSCRIPTION_TURNS = 9
+
+
+@dataclass(frozen=True, slots=True)
+class _HostedCase:
+    receipt_kind: Literal["chat_target", "background"]
+    target_key: str
+    source_row_fingerprint: str
+    operation: str
+    reasoning: str
+    capability_classes: tuple[str, ...]
+    tool_plan_id: str
+    command: GenerationCommand = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class _FrozenCanary:
+    catalog_definition_revision: str
+    backend_contract_revision: str
+    target_set: tuple[dict[str, object], ...]
+    cases: tuple[_HostedCase, ...]
+
+
+class _AvailableHostedWebSearch:
+    """Admission-only availability peer; model calls go through the local MCP peer."""
+
+    async def search(self, request: WebSearchRequest) -> WebSearchResponse:
+        del request
+        return WebSearchResponse(
+            results=(),
+            provider="hosted-canary",
+            provider_request_id=None,
+            retrieved_at=datetime.now(UTC).isoformat(),
+            attempts=1,
+        )
 
 
 @dataclass(slots=True)
@@ -218,18 +273,37 @@ def _list_tools(state: _McpState):
         return ListToolsResult(
             tools=[
                 Tool(
-                    name="nexus.resource.read",
-                    description="Read one bounded proof resource.",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {"uri": {"type": "string"}},
-                        "required": ["uri"],
-                    },
+                    name=tool_id,
+                    description=(
+                        "Read one bounded proof resource."
+                        if tool_id == "nexus.resource.read"
+                        else "Hosted canary declaration; do not call this tool."
+                    ),
+                    inputSchema=_mcp_input_schema(tool_id),
                 )
+                for tool_id in _all_canary_tool_ids()
             ]
         )
 
     return list_tools
+
+
+def _all_canary_tool_ids() -> tuple[str, ...]:
+    return tuple(
+        str(grant.id)
+        for grant in TOOL_PLAN_DEFINITIONS_BY_ID["ChatReadAdditiveWrite"].profile.grants
+    )
+
+
+def _mcp_input_schema(tool_id: str) -> dict[str, object]:
+    if tool_id == "nexus.resource.read":
+        return {
+            "type": "object",
+            "properties": {"uri": {"type": "string"}},
+            "required": ["uri"],
+            "additionalProperties": False,
+        }
+    return {"type": "object", "additionalProperties": True}
 
 
 def _call_tool(state: _McpState):
@@ -352,7 +426,7 @@ def _mcp_peer(root: Path) -> Iterator[_McpPeer]:
         state.rmdir()
 
 
-def test_codex_personal_generation_canary_records_exact_four_plan_pairs() -> None:
+def test_codex_personal_generation_canary_records_bounded_target_set() -> None:
     _require(os.environ.get("NEXUS_CODEX_HOSTED_CANARY") == "1", "Codex hosted canary is disabled")
     _require("OPENAI_API_KEY" not in os.environ, "Codex hosted canary received an API key")
     _require("CODEX_API_KEY" not in os.environ, "Codex hosted canary received an API key")
@@ -372,61 +446,50 @@ def test_codex_personal_generation_canary_records_exact_four_plan_pairs() -> Non
     cwd = _owned_directory("NEXUS_CODEX_HOSTED_WORKING_DIRECTORY", empty=True)
     sdk_version = importlib.metadata.version("openai-codex")
     runtime_version = importlib.metadata.version("openai-codex-cli-bin")
-    _require(
-        sdk_version == generation_policy.PLAN_EVAL_PIN["codex_sdk_version"],
-        "Codex SDK drifted from the qualification pin",
-    )
-    _require(
-        runtime_version == generation_policy.PLAN_EVAL_PIN["codex_sdk_version"],
-        "Codex runtime drifted from the qualification pin",
-    )
     try:
-        _probe_subscription_auth(state_root)
+        agent_catalog = asyncio.run(_read_authenticated_catalog(state_root))
     except (CredentialUnavailable, CredentialRejected):
         _write_readiness()
         return
+    frozen = asyncio.run(_freeze_canary(agent_catalog))
+    _require(
+        len(frozen.cases) <= _MAX_SUBSCRIPTION_TURNS,
+        "Codex hosted target set exceeded its subscription-turn ceiling",
+    )
 
     with _mcp_peer(Path(__file__).parents[4]) as peer:
         results: list[dict[str, object]] = []
-        for index, (plan_id, model, effort, shape, operation_type) in enumerate(_PLANS):
-            command = _command(index, operation_type, shape)
-            operation_name = command.operation.kind
+        registry = compose_codex_model_tool_plan_registry()
+        for case in frozen.cases:
             resolved = resolve_codex_generation(
-                command,
+                case.command,
                 working_directory=cwd,
-                mcp_origin=(
-                    "https://mcp.nexus.example.com/internal/agent-tools/mcp"
-                    if shape == "mcp-read"
-                    else None
-                ),
-                tool_credential=(
-                    CredentialRef(
-                        kind="api_key_environment",
-                        profile_key="codex-personal",
-                        name="NEXUS_CODEX_HOSTED_MCP_TOKEN",
-                    )
-                    if shape == "mcp-read"
-                    else None
+                model_tool_registry=registry,
+                mcp_origin="https://mcp.nexus.example.com/internal/agent-tools/mcp",
+                tool_credential=CredentialRef(
+                    kind="api_key_environment",
+                    profile_key="codex-personal",
+                    name="NEXUS_CODEX_HOSTED_MCP_TOKEN",
                 ),
             )
-            if shape == "mcp-read":
-                resolved = _bind_peer(resolved, peer)
+            resolved = _bind_peer(resolved, peer)
             terminal, tool_events, elapsed_ms = _run_once(
                 state_root,
                 resolved,
-                trust_certificate=peer.certificate if shape == "mcp-read" else None,
+                trust_certificate=peer.certificate,
             )
             _require(terminal.status == "succeeded", "Codex turn did not succeed")
             _require(terminal.failure is None, "Codex turn returned a failure")
-            usage = terminal.usage
-            _require(isinstance(usage, Present), "Codex turn omitted usage")
-            usage_value = usage.value
-            resolved_model = resolved.session.model
-            resolved_effort = resolved.session.reasoning.effort
-            _require(resolved_model == model, "resolved model drifted from the plan")
-            _require(resolved_effort == effort, "resolved reasoning drifted from the plan")
+            _require(isinstance(terminal.usage, Present), "Codex turn omitted usage")
+            resolved_model = resolved.session.model_key
+            resolved_effort = resolved.session.reasoning
+            _require(
+                f"CodexPersonal:{resolved_model}" == case.target_key,
+                "resolved model drifted from the frozen target",
+            )
+            _require(resolved_effort == case.reasoning, "resolved reasoning drifted from admission")
             structured_output = terminal.structured_output
-            if shape == "json":
+            if case.receipt_kind == "background":
                 structured_output_valid = (
                     type(structured_output) is dict
                     and set(structured_output) == {"ok"}
@@ -444,80 +507,224 @@ def test_codex_personal_generation_canary_records_exact_four_plan_pairs() -> Non
                 )
             results.append(
                 {
-                    "plan_id": plan_id,
-                    "operation": operation_name,
-                    "profile": "deep" if operation_type is ChatOperation else None,
-                    "operation_revision": command.operation.revision,
-                    "case_shape": {
-                        "text": "text",
-                        "json": "structured",
-                        "mcp-read": "mcp_read",
-                    }[shape],
-                    "model": resolved_model,
+                    "receipt_kind": case.receipt_kind,
+                    "target_key": case.target_key,
+                    "source_row_fingerprint": case.source_row_fingerprint,
+                    "operation": case.operation,
                     "reasoning": resolved_effort,
-                    "backend": "codex",
-                    "transport": "sdk",
-                    "auth_profile": "codex-personal",
+                    "capability_classes": list(case.capability_classes),
+                    "tool_plan_id": case.tool_plan_id,
+                    "tool_authority_revision": TOOL_PLAN_DEFINITIONS_BY_ID[
+                        case.tool_plan_id
+                    ].authority_revision,
                     "terminal_status": "succeeded",
                     "structured_output_valid": structured_output_valid,
-                    "session_ref_schema_version": "agent-session-ref.v1",
-                    "usage": {
-                        "input_tokens": usage_value.input_tokens,
-                        "output_tokens": usage_value.output_tokens,
-                        "total_tokens": usage_value.total_tokens,
-                    },
+                    "usage_present": True,
                     "sdk_version": sdk_version,
                     "runtime_version": runtime_version,
+                    "declared_tool_count": len(
+                        TOOL_PLAN_DEFINITIONS_BY_ID[case.tool_plan_id].profile.grants
+                    ),
                     "tool_events": tool_events,
                     "elapsed_ms": elapsed_ms,
                     "permission_requests": 0,
                 }
             )
-        _require(peer.state.tool_calls >= 1, "MCP peer received no tool call")
-        _require(peer.state.methods == ["tools/list", "tools/call"], "MCP sequence drifted")
+        _require(
+            peer.state.tool_calls == len(frozen.cases),
+            "MCP peer did not receive exactly one tool call per turn",
+        )
+        _require(
+            peer.state.methods
+            == [method for _case in frozen.cases for method in ("tools/list", "tools/call")],
+            "MCP sequence drifted",
+        )
         _require(peer.state.protocol_versions == {_MCP_PROTOCOL_VERSION}, "MCP protocol drifted")
         _require(not peer.state.session_ids, "stateless MCP peer issued a session")
-        _write_evidence(results, sdk_version=sdk_version, runtime_version=runtime_version)
+        _write_evidence(
+            frozen,
+            results,
+            sdk_version=sdk_version,
+            runtime_version=runtime_version,
+        )
 
 
-def _probe_subscription_auth(state_root: Path) -> None:
-    async def probe() -> None:
-        runtime = create_confined_runtime(AgentRuntimeConfig(state_root_base=state_root))
-        try:
-            await runtime.list_sessions(
-                SessionQuery(
-                    backend="codex",
-                    transport="sdk",
-                    auth=CredentialRef(kind="local_account", profile_key="codex-personal"),
-                    limit=1,
-                )
-            )
-        finally:
-            await runtime.close()
-
-    asyncio.run(probe())
+async def _read_authenticated_catalog(state_root: Path) -> AgentModelCatalog:
+    runtime = create_confined_runtime(AgentRuntimeConfig(state_root_base=state_root))
+    try:
+        return await runtime.model_catalog(
+            "codex",
+            CredentialRef(kind="local_account", profile_key="codex-personal"),
+            transport="sdk",
+        )
+    finally:
+        await runtime.close()
 
 
-def _command(index: int, operation_type: type[Any], shape: str) -> GenerationCommand:
-    operation_name = {
-        MetadataEnrichmentOperation: "metadata_enrichment",
-        DawnWriteOperation: "dawn_write",
-        DossierLibraryOperation: "dossier_library",
-        ChatOperation: "chat",
-    }[operation_type]
-    policy = (
-        generation_policy.chat_policy("deep")
-        if operation_type is ChatOperation
-        else generation_policy.operation_policy(operation_name)
+async def _freeze_canary(agent_catalog: AgentModelCatalog) -> _FrozenCanary:
+    now = datetime.now(UTC)
+    ready = Ready(last_checked=now)
+
+    async def load_agent_catalog() -> AgentModelCatalog:
+        return agent_catalog
+
+    async def load_readiness():
+        return readiness_snapshot(observed_at=now, routes={"CodexPersonal": ready})
+
+    catalog_service = GenerationCatalogService(
+        configured_api_providers=(),
+        policy=generation_policy.GENERATION_POLICY,
+        load_agent_catalog=load_agent_catalog,
+        load_api_catalog=api_model_catalog,
+        load_qualifications=source_controlled_qualification_snapshot,
+        load_readiness=load_readiness,
+        clock=lambda: now,
     )
-    if operation_type is ChatOperation:
-        operation: Any = ChatOperation(kind="chat", profile="deep", revision=policy.revision)
-    else:
-        operation = operation_type(kind=operation_name, revision=policy.revision)
-    output = TextOutput()
-    if shape == "json":
+    snapshot = await catalog_service.startup()
+    _require(
+        agent_catalog.backend_contract_revision == AGENT_BACKEND_CONTRACT_REVISION,
+        "live Codex backend contract drifted",
+    )
+    expected_targets = {
+        receipt.target_key: receipt.source_row_fingerprint
+        for receipt in source_controlled_qualification_snapshot().targets
+        if receipt.target_key.startswith("CodexPersonal:")
+    }
+    live_models = {f"CodexPersonal:{model.key}": model for model in agent_catalog.models}
+    _require(set(live_models) == set(expected_targets), "live Codex target set drifted")
+    target_set: list[dict[str, object]] = []
+    for target_key in sorted(expected_targets):
+        model = live_models[target_key]
+        _require(
+            model.row_fingerprint == expected_targets[target_key],
+            "live Codex row fingerprint drifted",
+        )
+        reasoning = [item.key for item in model.reasoning]
+        _require(reasoning and len(reasoning) == len(set(reasoning)), "reasoning set is invalid")
+        target_set.append(
+            {
+                "target_key": target_key,
+                "source_row_fingerprint": model.row_fingerprint,
+                "reasoning": reasoning,
+            }
+        )
+
+    service = GenerationService(
+        catalog=catalog_service,
+        policy=generation_policy.GENERATION_POLICY,
+        tools=compose_product_tool_runtime(_AvailableHostedWebSearch()),
+    )
+    cases: list[_HostedCase] = []
+    for target_key in sorted(expected_targets):
+        model = live_models[target_key]
+        selection = CodexPersonalSelection(
+            route="CodexPersonal",
+            model=model.key,
+            reasoning=model.reasoning[0].key,
+        )
+        pair = snapshot.pair(selection)
+        _require(
+            pair is not None and isinstance(pair.state, Selectable), "target is not selectable"
+        )
+        intent = _canary_intent(strict=False)
+        spec = service.freeze_chat_from_pair(
+            catalog_definition_revision=snapshot.catalog.definition_revision,
+            pair=pair,
+            tool_authority="AdditiveWrites",
+            scope=_canary_scope("chat"),
+            intent=intent,
+            prompt_template_revision=generation_policy.operation_revision("chat"),
+            prompt_payload_ref=_prompt_ref("chat", target_key, intent),
+        )
+        cases.append(
+            _case(
+                index=len(cases),
+                receipt_kind="chat_target",
+                target_key=target_key,
+                source_row_fingerprint=model.row_fingerprint,
+                operation="chat",
+                capability_classes=("text", "tools-continuation"),
+                tool_plan_id="ChatReadAdditiveWrite",
+                spec=spec,
+                intent=intent,
+            )
+        )
+
+    for operation, plan_id in _BACKGROUND_CASES:
+        intent = _canary_intent(strict=True)
+        workflow = generation_policy.background_operation_policy(operation).workflow
+        host: FrozenHostEvidence | None = None
+        if isinstance(workflow.host_tool_plan, generation_policy.ExactHostToolPlan):
+            host = FrozenHostEvidence(
+                plan=FrozenHostToolPlanSnapshot(
+                    plan_id=workflow.host_tool_plan.plan_id,
+                    authority_revision=workflow.host_tool_plan.authority_revision,
+                    facts={"hosted_canary": True},
+                ),
+                evidence_revision=f"{operation}.hosted-canary.v1",
+            )
+        spec = await service.freeze_background(
+            operation=operation,
+            intent=intent,
+            prompt_template_revision=generation_policy.operation_revision(operation),
+            prompt_payload_ref=_prompt_ref(operation, operation, intent),
+            scope=_canary_scope(operation),
+            host=host,
+        )
+        cases.append(
+            _case(
+                index=len(cases),
+                receipt_kind="background",
+                target_key=f"CodexPersonal:{spec.selection.model}",
+                source_row_fingerprint=spec.source_row_fingerprint,
+                operation=operation,
+                capability_classes=("strict-structured", "tools-continuation"),
+                tool_plan_id=plan_id,
+                spec=spec,
+                intent=intent,
+            )
+        )
+    return _FrozenCanary(
+        catalog_definition_revision=snapshot.catalog.definition_revision,
+        backend_contract_revision=agent_catalog.backend_contract_revision,
+        target_set=tuple(target_set),
+        cases=tuple(cases),
+    )
+
+
+def _case(
+    *,
+    index: int,
+    receipt_kind: Literal["chat_target", "background"],
+    target_key: str,
+    source_row_fingerprint: str,
+    operation: str,
+    capability_classes: tuple[str, ...],
+    tool_plan_id: str,
+    spec: Any,
+    intent: GenerationIntent,
+) -> _HostedCase:
+    draft = GenerationCommandDraft(request_id=UUID(int=index + 1), spec=spec, intent=intent)
+    return _HostedCase(
+        receipt_kind=receipt_kind,
+        target_key=target_key,
+        source_row_fingerprint=source_row_fingerprint,
+        operation=operation,
+        reasoning=spec.selection.reasoning,
+        capability_classes=capability_classes,
+        tool_plan_id=tool_plan_id,
+        command=generation_command_from_draft(
+            draft,
+            tool_grant=BearerToolGrant(token=SecretStr("enrolled-hosted-canary-grant")),
+        ),
+    )
+
+
+def _canary_intent(*, strict: bool) -> GenerationIntent:
+    output: TextOutput | JsonSchemaOutput = TextOutput()
+    if strict:
         output = JsonSchemaOutput(
-            name="canary",
+            name="hosted_canary",
             schema={
                 "type": "object",
                 "properties": {"ok": {"type": "boolean"}},
@@ -525,27 +732,31 @@ def _command(index: int, operation_type: type[Any], shape: str) -> GenerationCom
                 "additionalProperties": False,
             },
         )
-    return GenerationCommand(
-        request_id=UUID(int=index + 1),
-        operation=operation,
-        policy_revision=generation_policy.POLICY_REVISION,
-        policy_fingerprint=generation_policy.POLICY_FINGERPRINT,
-        intent=GenerationIntent(
-            instructions=(
-                "Use the admitted Nexus resource.read tool once, then return a bounded result."
-                if operation_type is ChatOperation
-                else "Return a bounded canary result."
-            ),
-            input=(
-                "Read the hosted proof resource before replying."
-                if operation_type is ChatOperation
-                else "Reply with a short result."
-            ),
-            output=output,
+    return GenerationIntent(
+        instructions=(
+            "Call nexus.resource.read exactly once with uri nexus://hosted-canary/proof, "
+            "then return only the admitted bounded output. Do not call any other tool."
         ),
-        tool_grant=BearerToolGrant(token=SecretStr("enrolled-read-only-grant"))
-        if operation_type is ChatOperation
-        else None,
+        input="Read the hosted proof resource, then answer the canary contract.",
+        output=output,
+    )
+
+
+def _prompt_ref(
+    operation: str, identity: str, intent: GenerationIntent
+) -> ImmutablePromptPayloadRef:
+    return ImmutablePromptPayloadRef(
+        owner_kind="hosted_canary",
+        owner_id=f"{operation}:{identity}",
+        revision=generation_policy.operation_revision(operation),
+        payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
+    )
+
+
+def _canary_scope(operation: str) -> FrozenToolScope:
+    return FrozenToolScope(
+        admitted_refs=("nexus://hosted-canary/proof",),
+        predicates=(FrozenScopePredicate(kind="HostedCanary", arguments={"operation": operation}),),
     )
 
 
@@ -621,6 +832,7 @@ def _owned_directory(name: str, *, empty: bool) -> Path:
 
 
 def _write_evidence(
+    frozen: _FrozenCanary,
     results: list[dict[str, object]],
     *,
     sdk_version: str,
@@ -628,19 +840,24 @@ def _write_evidence(
 ) -> None:
     path = Path(os.environ["NEXUS_CODEX_HOSTED_EVIDENCE_PATH"])
     path.parent.mkdir(parents=True, exist_ok=True)
+    tool_revisions = {
+        plan_id: TOOL_PLAN_DEFINITIONS_BY_ID[plan_id].authority_revision
+        for plan_id in ("ChatReadAdditiveWrite", "LibraryDossierRead", "IdeaDossierRead")
+    }
     payload = {
-        "schema_version": "nexus-hosted-codex-canary.v3",
+        "schema_version": "nexus-hosted-codex-canary.v4",
         "run_id": os.environ["NEXUS_TEST_RUN_ID"],
         "source_sha": os.environ["NEXUS_CODEX_HOSTED_SOURCE_SHA"],
         "policy_revision": generation_policy.POLICY_REVISION,
         "policy_fingerprint": generation_policy.POLICY_FINGERPRINT,
-        "policy_facts_fingerprint": generation_policy.POLICY_FACTS_FINGERPRINT,
-        "provider_runtime_revision": generation_policy.PLAN_EVAL_PIN["provider_runtime_revision"],
+        "catalog_definition_revision": frozen.catalog_definition_revision,
+        "backend_contract_revision": frozen.backend_contract_revision,
         "codex_sdk_version": sdk_version,
         "codex_cli_version": runtime_version,
-        "qualification_scope": "model_effort_runtime_wire",
-        "qualified_plan_ids": ["routine", "standard", "thorough", "deep"],
-        "subscription_turns": 4,
+        "qualification_scope": "codex_target_capability_set",
+        "target_set": list(frozen.target_set),
+        "tool_authority_revisions": tool_revisions,
+        "subscription_turns": len(results),
         "results": results,
     }
     temporary = path.with_suffix(".partial")

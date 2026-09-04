@@ -1,12 +1,12 @@
 diff --git a/python/nexus/services/llm_execution.py b/python/nexus/services/llm_execution.py
 --- a/python/nexus/services/llm_execution.py
 +++ b/python/nexus/services/llm_execution.py
-@@ -400,7 +400,7 @@ def _arm_dispatch(
-             expected=state,
-             next_state=StepReplayState(
-                 generation_id=request.command.request_id,
--                dispatch_phase=Uncertain,
-+                dispatch_phase=Prepared,
-                 request_fingerprint=present(request_fingerprint(request.command)),
-                 terminal_result=absent(),
-             ),
+@@ -734,7 +734,7 @@ class _ModelTurnLifecycle:
+                     expected=state,
+                     next_state=StepReplayState(
+                         generation_id=request.generation_id,
+-                        dispatch_phase=Uncertain,
++                        dispatch_phase=Prepared,
+                         request_fingerprint=present(request.spec.fingerprint),
+                         terminal_result=absent(),
+                     ),

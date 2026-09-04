@@ -1,12 +1,19 @@
-# Codex Personal Generation Hard Cutover Change Report
+# Historical Codex Personal Generation Cutover Change Report
 
-**Status:** SOURCE VERIFICATION IN PROGRESS; PRODUCTION ACCEPTANCE PENDING
+**Status:** HISTORICAL EVIDENCE; SUPERSEDED, NOT A CURRENT CONTRACT
+
+**Superseded by:**
+[`generation-backends-hard-cutover.md`](generation-backends-hard-cutover.md).
+This report records the former Codex-only source candidate and its verification
+history. It does not define current generation selection, tools, persistence,
+rollout, or acceptance. Current code and docs must not implement its deleted
+Codex-only, Chat-only-tool, profile, or tool-free-background target.
 
 **Base:** `42f33dc4fc896d0e01287f68ef1d300d47440db1`
 
 ## Result
 
-Nexus generation now has one product policy catalog, one Codex Personal UDS
+The former source candidate had one product policy catalog, one Codex Personal UDS
 execution boundary, one `llm_calls` ledger, and one scoped HTTPS MCP tool path.
 The cut is atomic: no provider, API-key, compatibility, or redispatch fallback
 remains for generation. Embeddings, transcription, Brave retrieval,

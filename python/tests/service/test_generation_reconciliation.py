@@ -4,61 +4,68 @@ from __future__ import annotations
 
 import hashlib
 import json
+from importlib.util import find_spec
+from typing import TYPE_CHECKING, cast
 from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
-from nexus.schemas.presence import Present, absent, present
-from nexus.services import generation_policy
-from nexus.services.codex_generation_client import CodexGenerationProtocolDefect
-from nexus.services.codex_generation_contract import (
-    GenerationCommand,
-    GenerationFailure,
-    GenerationFrame,
-    GenerationSessionRef,
-    GenerationTerminal,
-    request_fingerprint,
-)
-from nexus.services.durable_step_journal import Completed, Prepared, StepReplayState, Uncertain
-from nexus.services.llm_execution import (
-    AttachReconciledGenerationTerminal,
-    EncodedGenerationTerminal,
-    GenerationReconciliationRequest,
-    cancel_prepared_generation_without_dispatch_in_current_transaction,
-    prove_uncertain_generation_not_dispatched_in_current_transaction,
-    reconcile_uncertain_generation_in_current_transaction,
-)
-from nexus.services.llm_ledger import (
-    GenerationStart,
-    LlmCallOwner,
-    read_generation,
-    start_generation_in_current_transaction,
-)
-from nexus.services.structured_synthesis import outcome_failure_facts
+# BASE sensitivity overlays this whole-file owner without the candidate
+# route-neutral generation event model or its supporting ledger/testkit owners.
+_CUTOVER_PRESENT = find_spec("nexus.services.generation_events") is not None
+
+if TYPE_CHECKING or _CUTOVER_PRESENT:
+    from nexus.schemas.presence import Present, absent, present
+    from nexus.services.codex_generation_client import CodexGenerationProtocolDefect
+    from nexus.services.codex_generation_contract import (
+        GenerationCommandDraft,
+        GenerationFailure,
+        GenerationFrame,
+        GenerationSessionRef,
+        GenerationTerminal,
+    )
+    from nexus.services.durable_step_journal import Completed, Prepared, StepReplayState, Uncertain
+    from nexus.services.generation_events import BackendTerminal
+    from nexus.services.llm_execution import (
+        AttachReconciledGenerationTerminal,
+        EncodedGenerationTerminal,
+        GenerationReconciliationRequest,
+        cancel_prepared_generation_without_dispatch_in_current_transaction,
+        codex_terminal_evidence,
+        prove_uncertain_generation_not_dispatched_in_current_transaction,
+        reconcile_uncertain_generation_in_current_transaction,
+    )
+    from nexus.services.llm_ledger import (
+        LlmCallOwner,
+        read_generation,
+        read_model_turns,
+    )
+    from nexus.services.structured_synthesis import outcome_failure_facts
+    from tests.testkit.codex_generation import (
+        codex_generation_draft,
+        stage_uncertain_codex_generation,
+    )
 
 _RAW_RECONCILIATION_DIAGNOSTIC = "operator supplied secret diagnostic"
 _RETAINED_BACKEND_FAILURE_DETAIL = "codex generation failed: backend_failed"
 
 
-def _command(generation_id: UUID) -> GenerationCommand:
-    return GenerationCommand.model_validate(
-        {
-            "schema_version": "nexus-generation-command.v2",
-            "request_id": generation_id,
-            "operation": {
-                "kind": "metadata_enrichment",
-                "revision": generation_policy.operation_revision("metadata_enrichment"),
-            },
-            "policy_revision": generation_policy.POLICY_REVISION,
-            "policy_fingerprint": generation_policy.POLICY_FINGERPRINT,
-            "intent": {
-                "instructions": "Return one bounded result.",
-                "input": "operator reconciliation proof",
-                "output": {"kind": "Text"},
-            },
-        }
+def _candidate_engine(request: pytest.FixtureRequest) -> Engine:
+    assert _CUTOVER_PRESENT, "the route-neutral generation reconciliation owner is absent"
+    return cast(Engine, request.getfixturevalue("engine"))
+
+
+def _draft(generation_id: UUID) -> GenerationCommandDraft:
+    return codex_generation_draft(
+        request_id=generation_id,
+        operation="metadata_enrichment",
+        instructions="Return one bounded result.",
+        input_text="operator reconciliation proof",
+        model="gpt-5.6-terra",
+        reasoning="high",
+        turn_timeout_seconds=180,
     )
 
 
@@ -122,30 +129,27 @@ def _raw_terminal_attachment(
 
 
 def test_operator_terminal_reconciliation_lands_once_without_owning_the_commit(
-    engine: Engine,
+    request: pytest.FixtureRequest,
 ) -> None:
+    engine = _candidate_engine(request)
     generation_id = uuid4()
     owner = LlmCallOwner(kind="media_enrichment", id=uuid4())
-    command = _command(generation_id)
+    draft = _draft(generation_id)
     uncertain = StepReplayState(
         generation_id=generation_id,
         dispatch_phase=Uncertain,
-        request_fingerprint=present(request_fingerprint(command)),
+        request_fingerprint=present(draft.spec.fingerprint),
         terminal_result=absent(),
     )
     request = GenerationReconciliationRequest(
         owner=owner,
-        command=command,
+        draft=draft,
         state=uncertain,
-        streaming=False,
         resolution=_raw_terminal_attachment(_terminal_frame(generation_id)),
     )
 
     with Session(engine) as db:
-        start_generation_in_current_transaction(
-            db,
-            GenerationStart(owner=owner, command=command, streaming=False),
-        )
+        stage_uncertain_codex_generation(db, owner=owner, draft=draft)
         db.commit()
 
     with Session(engine) as db:
@@ -153,18 +157,18 @@ def test_operator_terminal_reconciliation_lands_once_without_owning_the_commit(
             db,
             request,
             encode_terminal=lambda terminal: EncodedGenerationTerminal(
-                terminal_result=terminal.final_text
+                terminal_result=codex_terminal_evidence(terminal).final_text
             ),
         )
         record = read_generation(db, generation_id=generation_id)
         assert isinstance(completed.terminal_result, Present)
         assert completed.terminal_result.value == "recovered terminal"
         assert record is not None
-        assert (record.outcome, record.latency_ms, record.sdk_version) == (
-            "Succeeded",
-            1_234,
-            "0.144.4",
-        ), (
+        turns = read_model_turns(db, generation_id=generation_id)
+        assert record.outcome == "Succeeded" and len(turns) == 1
+        assert turns[0].accepted_at is not None
+        assert turns[0].terminal is not None
+        assert turns[0].terminal["route"] == "CodexPersonal", (
             "operator reconciliation did not stage the normalized terminal facts; "
             f"generation_id={generation_id}, record={record!r}"
         )
@@ -181,7 +185,7 @@ def test_operator_terminal_reconciliation_lands_once_without_owning_the_commit(
             db,
             request,
             encode_terminal=lambda terminal: EncodedGenerationTerminal(
-                terminal_result=terminal.final_text
+                terminal_result=codex_terminal_evidence(terminal).final_text
             ),
         )
         db.commit()
@@ -193,46 +197,43 @@ def test_operator_terminal_reconciliation_lands_once_without_owning_the_commit(
             f"generation_id={generation_id}, record={persisted!r}"
         )
         assert isinstance(completed.terminal_result, Present)
-        with pytest.raises(AssertionError, match="already has terminal"):
+        with pytest.raises(AssertionError, match="not unresolved and armed"):
             reconcile_uncertain_generation_in_current_transaction(
                 db,
                 request,
                 encode_terminal=lambda terminal: EncodedGenerationTerminal(
-                    terminal_result=terminal.final_text
+                    terminal_result=codex_terminal_evidence(terminal).final_text
                 ),
             )
 
 
 def test_reconciled_terminal_cannot_persist_operator_supplied_diagnostics(
-    engine: Engine,
+    request: pytest.FixtureRequest,
 ) -> None:
     """Risk: terminal attachment bypasses the live host's redaction boundary."""
 
+    engine = _candidate_engine(request)
     generation_id = uuid4()
     owner = LlmCallOwner(kind="media_enrichment", id=uuid4())
-    command = _command(generation_id)
+    draft = _draft(generation_id)
     request = GenerationReconciliationRequest(
         owner=owner,
-        command=command,
+        draft=draft,
         state=StepReplayState(
             generation_id=generation_id,
             dispatch_phase=Uncertain,
-            request_fingerprint=present(request_fingerprint(command)),
+            request_fingerprint=present(draft.spec.fingerprint),
             terminal_result=absent(),
         ),
-        streaming=False,
         resolution=_raw_terminal_attachment(_failed_terminal_frame(generation_id)),
     )
 
     with Session(engine) as db:
-        start_generation_in_current_transaction(
-            db,
-            GenerationStart(owner=owner, command=command, streaming=False),
-        )
+        stage_uncertain_codex_generation(db, owner=owner, draft=draft)
         db.commit()
 
-    def encode_terminal(terminal: GenerationTerminal) -> EncodedGenerationTerminal:
-        code, detail = outcome_failure_facts(terminal)
+    def encode_terminal(terminal: BackendTerminal) -> EncodedGenerationTerminal:
+        code, detail = outcome_failure_facts(codex_terminal_evidence(terminal))
         return EncodedGenerationTerminal(
             terminal_result=json.dumps(
                 {"code": code, "detail": detail},
@@ -251,9 +252,16 @@ def test_reconciled_terminal_cannot_persist_operator_supplied_diagnostics(
         assert record is not None
         assert isinstance(completed.terminal_result, Present)
         retained = completed.terminal_result.value
-        assert record.error_detail == _RETAINED_BACKEND_FAILURE_DETAIL
+        assert record.failure_code == "runtime_unavailable"
+        assert record.terminal is not None
+        model_terminal = record.terminal["model_turn_terminal"]
+        assert isinstance(model_terminal, dict)
+        evidence = model_terminal["evidence"]
+        assert isinstance(evidence, dict)
+        diagnostics = evidence["diagnostics"]
+        assert diagnostics == [_RETAINED_BACKEND_FAILURE_DETAIL]
         assert _RETAINED_BACKEND_FAILURE_DETAIL in retained
-        assert _RAW_RECONCILIATION_DIAGNOSTIC not in record.error_detail
+        assert _RAW_RECONCILIATION_DIAGNOSTIC not in json.dumps(record.terminal)
         assert _RAW_RECONCILIATION_DIAGNOSTIC not in retained
         db.commit()
 
@@ -263,13 +271,14 @@ def test_reconciled_terminal_cannot_persist_operator_supplied_diagnostics(
     ["request_id", "sdk_version", "runtime_version", "raw_digest", "sequence", "stream"],
 )
 def test_reconciled_terminal_reuses_live_terminal_validation(
-    engine: Engine,
+    request: pytest.FixtureRequest,
     *,
     drift: str,
 ) -> None:
+    engine = _candidate_engine(request)
     generation_id = uuid4()
     owner = LlmCallOwner(kind="media_enrichment", id=uuid4())
-    command = _command(generation_id)
+    draft = _draft(generation_id)
     frame = _terminal_frame(generation_id)
     if drift == "request_id":
         frame = frame.model_copy(update={"request_id": uuid4()})
@@ -285,7 +294,7 @@ def test_reconciled_terminal_reuses_live_terminal_validation(
     elif drift == "sequence":
         resolution = _raw_terminal_attachment(frame.model_copy(update={"sequence": 1}))
     elif drift == "stream":
-        maximum = generation_policy.operation_policy("metadata_enrichment").stream.max_stream_bytes
+        maximum = draft.spec.bounds.stream.max_stream_bytes
         oversized = b"x" * (maximum + 1)
         resolution = resolution.model_copy(
             update={
@@ -295,29 +304,27 @@ def test_reconciled_terminal_reuses_live_terminal_validation(
         )
     request = GenerationReconciliationRequest(
         owner=owner,
-        command=command,
+        draft=draft,
         state=StepReplayState(
             generation_id=generation_id,
             dispatch_phase=Uncertain,
-            request_fingerprint=present(request_fingerprint(command)),
+            request_fingerprint=present(draft.spec.fingerprint),
             terminal_result=absent(),
         ),
-        streaming=False,
         resolution=resolution,
     )
 
     with Session(engine) as db:
-        start_generation_in_current_transaction(
-            db,
-            GenerationStart(owner=owner, command=command, streaming=False),
-        )
+        stage_uncertain_codex_generation(db, owner=owner, draft=draft)
         db.commit()
 
-    encoded: list[GenerationTerminal] = []
+    encoded: list[BackendTerminal] = []
 
-    def encode_terminal(terminal: GenerationTerminal) -> EncodedGenerationTerminal:
+    def encode_terminal(terminal: BackendTerminal) -> EncodedGenerationTerminal:
         encoded.append(terminal)
-        return EncodedGenerationTerminal(terminal_result=terminal.final_text)
+        return EncodedGenerationTerminal(
+            terminal_result=codex_terminal_evidence(terminal).final_text
+        )
 
     with Session(engine) as db:
         with pytest.raises(CodexGenerationProtocolDefect):
@@ -332,23 +339,21 @@ def test_reconciled_terminal_reuses_live_terminal_validation(
 
 
 def test_non_dispatch_proof_uses_only_persisted_identity_and_retains_the_start(
-    engine: Engine,
+    request: pytest.FixtureRequest,
 ) -> None:
+    engine = _candidate_engine(request)
     generation_id = uuid4()
     owner = LlmCallOwner(kind="media_enrichment", id=uuid4())
-    command = _command(generation_id)
+    draft = _draft(generation_id)
     uncertain = StepReplayState(
         generation_id=generation_id,
         dispatch_phase=Uncertain,
-        request_fingerprint=present(request_fingerprint(command)),
+        request_fingerprint=present(draft.spec.fingerprint),
         terminal_result=absent(),
     )
 
     with Session(engine) as db:
-        start_generation_in_current_transaction(
-            db,
-            GenerationStart(owner=owner, command=command, streaming=False),
-        )
+        stage_uncertain_codex_generation(db, owner=owner, draft=draft)
         db.commit()
 
     with Session(engine) as db:
@@ -360,12 +365,12 @@ def test_non_dispatch_proof_uses_only_persisted_identity_and_retains_the_start(
         record = read_generation(db, generation_id=generation_id)
         assert prepared.dispatch_phase.value == "Prepared"
         assert prepared.request_fingerprint == uncertain.request_fingerprint
-        assert record is not None and record.outcome is None
+        assert record is None
         db.rollback()
 
     drifted = uncertain.model_copy(update={"request_fingerprint": present("0" * 64)})
     with Session(engine) as db:
-        with pytest.raises(AssertionError, match="fingerprint drifted"):
+        with pytest.raises(AssertionError, match="identity drifted"):
             prove_uncertain_generation_not_dispatched_in_current_transaction(
                 db,
                 owner=owner,
@@ -373,31 +378,21 @@ def test_non_dispatch_proof_uses_only_persisted_identity_and_retains_the_start(
             )
 
 
-@pytest.mark.parametrize("retained_start", [False, True])
-def test_preaccept_owner_cancellation_completes_with_or_without_a_retained_start(
-    engine: Engine,
-    *,
-    retained_start: bool,
+def test_preaccept_owner_cancellation_completes_without_creating_ledger_evidence(
+    request: pytest.FixtureRequest,
 ) -> None:
     """Risk: a terminal owner leaves its Prepared journal or ledger nonterminal."""
 
+    engine = _candidate_engine(request)
     generation_id = uuid4()
     owner = LlmCallOwner(kind="media_enrichment", id=uuid4())
-    command = _command(generation_id)
+    draft = _draft(generation_id)
     prepared = StepReplayState(
         generation_id=generation_id,
         dispatch_phase=Prepared,
-        request_fingerprint=present(request_fingerprint(command)),
+        request_fingerprint=present(draft.spec.fingerprint),
         terminal_result=absent(),
     )
-    if retained_start:
-        with Session(engine) as db:
-            start_generation_in_current_transaction(
-                db,
-                GenerationStart(owner=owner, command=command, streaming=False),
-            )
-            db.commit()
-
     with Session(engine) as db:
         completed = cancel_prepared_generation_without_dispatch_in_current_transaction(
             db,
@@ -410,15 +405,9 @@ def test_preaccept_owner_cancellation_completes_with_or_without_a_retained_start
         assert completed.dispatch_phase is Completed
         assert isinstance(completed.terminal_result, Present)
         assert completed.terminal_result.value == '{"outcome":"skipped"}'
-        if retained_start:
-            assert record is not None and record.outcome == "Cancelled"
-        else:
-            assert record is None
+        assert record is None
         db.commit()
 
     with Session(engine) as db:
         persisted = read_generation(db, generation_id=generation_id)
-        if retained_start:
-            assert persisted is not None and persisted.outcome == "Cancelled"
-        else:
-            assert persisted is None
+        assert persisted is None

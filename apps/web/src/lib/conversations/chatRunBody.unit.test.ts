@@ -8,7 +8,13 @@ import type { BranchDraft } from "@/lib/conversations/types";
 
 const scalars = {
   content: "why?",
-  profileId: "fast" as const,
+  catalogDefinitionRevision: "a".repeat(64),
+  selection: {
+    route: "CodexPersonal" as const,
+    model: "gpt-5.6",
+    reasoning: "high",
+  },
+  toolAuthority: "ReadOnly" as const,
 };
 
 describe("buildChatRunBody", () => {
@@ -22,7 +28,13 @@ describe("buildChatRunBody", () => {
     expect(body).toEqual({
       destination: { kind: "New" },
       content: "why?",
-      profile_id: "fast",
+      catalog_definition_revision: "a".repeat(64),
+      selection: {
+        route: "CodexPersonal",
+        model: "gpt-5.6",
+        reasoning: "high",
+      },
+      tool_authority: "ReadOnly",
       reader_selection: { kind: "Absent" },
     });
   });

@@ -1,4 +1,4 @@
-"""Strict v2 Codex generation host over a private Unix-domain socket."""
+"""Strict v3 Codex generation host over a private Unix-domain socket."""
 
 from __future__ import annotations
 
@@ -33,10 +33,13 @@ from apps.codex_agent.credential_state import (
 )
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
-from provider_runtime import Absent, Present, TokenUsage
+from provider_runtime import Absent as RuntimeAbsent
+from provider_runtime import Present as RuntimePresent
+from provider_runtime import TokenUsage
 from provider_runtime.agent_runtime import (
     AgentEvent,
     AgentFailure,
+    AgentModelCatalog,
     AgentNative,
     AgentPermissionRequest,
     AgentQuotaExhausted,
@@ -70,15 +73,19 @@ from provider_runtime.agent_runtime import (
     ref_to_json,
     thaw_json_value,
 )
+from provider_runtime.agent_runtime.tool_projection import (
+    CanonicalMcpToolObservation,
+    RejectedMcpToolObservation,
+)
 from provider_runtime.types import CancelSignal
 from pydantic import ValidationError
 from starlette.types import Receive, Scope, Send
 
-from nexus.services import generation_policy
+from nexus.schemas.presence import Present as NexusPresent
 from nexus.services.codex_generation_contract import (
     MAX_ADMISSION_BODY_BYTES,
     MAX_COMMAND_BODY_BYTES,
-    ChatOperation,
+    CodexModelCatalog,
     FailureKind,
     GenerationAdmission,
     GenerationAdmissionRequest,
@@ -96,13 +103,13 @@ from nexus.services.codex_generation_contract import (
     GenerationUsage,
     GenerationUsageEvent,
     capacity_rejection_bytes,
-    command_policy,
-    request_fingerprint,
+    codex_model_catalog_to_wire,
+    generation_admission_request,
+    generation_command_draft,
 )
 from nexus.services.codex_generation_operations import (
-    CHAT_MCP_SERVER_NAME,
+    CodexModelToolPlanRegistry,
     ResolvedCodexGeneration,
-    chat_mcp_allowed_tools,
     resolve_codex_generation,
 )
 
@@ -110,17 +117,10 @@ _SDK_DISTRIBUTION = "openai-codex"
 _RUNTIME_DISTRIBUTION = "openai-codex-cli-bin"
 _PINNED_CODEX_VERSION = "0.144.4"
 _SYNTHESIS_TEXT_RUN_BYTES = 32 * 1024
-_CHAT_ADMISSION_START_GRACE_SECONDS = 15.0
+_CATALOG_DEADLINE_SECONDS = 90.0
+_GENERATION_ADMISSION_START_GRACE_SECONDS = 15.0
 CODEX_AGENT_HOST_REQUEST_DRAIN_SECONDS = 10.0
-CODEX_AGENT_HOST_TEARDOWN_DEADLINE_SECONDS = float(
-    max(
-        [policy.runtime_close_timeout_seconds for policy in generation_policy.OPERATIONS.values()]
-        + [
-            generation_policy.chat_policy(profile).runtime_close_timeout_seconds
-            for profile in generation_policy.CHAT_PROFILES
-        ]
-    )
-)
+CODEX_AGENT_HOST_TEARDOWN_DEADLINE_SECONDS = 30.0
 _EXIT_MARGIN_SECONDS = 5.0
 CODEX_AGENT_HOST_STOP_GRACE_SECONDS = int(
     CODEX_AGENT_HOST_REQUEST_DRAIN_SECONDS
@@ -147,6 +147,14 @@ def resolve_runtime_versions() -> RuntimeVersions:
 
 
 class AgentRuntimePort(Protocol):
+    async def model_catalog(
+        self,
+        backend: Literal["codex"],
+        auth: CredentialRef,
+        *,
+        transport: Literal["sdk"] = "sdk",
+    ) -> AgentModelCatalog: ...
+
     async def open_session(self, request: AgentSessionRequest) -> AgentSession: ...
 
     def stream_turn(
@@ -188,7 +196,7 @@ class _ReservedAdmission:
 
 
 class _AdmissionLifecycle:
-    """Own one short-lived, replay-stable Chat admission before command delivery."""
+    """Own one short-lived, replay-stable generation admission before delivery."""
 
     def __init__(self, slot: _TurnSlot) -> None:
         self._slot = slot
@@ -205,20 +213,24 @@ class _AdmissionLifecycle:
             return None
         loop = asyncio.get_running_loop()
         admitted_at = _utc_now()
+        runtime_deadline_seconds = request.turn_timeout_seconds
         response = GenerationAdmission(
             request_id=request.request_id,
             admission_id=uuid4(),
             admitted_at=admitted_at,
-            runtime_deadline_seconds=generation_policy.CHAT_ADMISSION_RUNTIME_SECONDS,
+            runtime_deadline_seconds=runtime_deadline_seconds,
         )
         reserved = _ReservedAdmission(
             request=request,
             response=response,
-            runtime_deadline=loop.time() + generation_policy.CHAT_ADMISSION_RUNTIME_SECONDS,
+            runtime_deadline=loop.time() + runtime_deadline_seconds,
         )
         self._pending = reserved
         self._expiry_task = asyncio.create_task(
-            self._expire_after(response.admission_id, _CHAT_ADMISSION_START_GRACE_SECONDS)
+            self._expire_after(
+                response.admission_id,
+                _GENERATION_ADMISSION_START_GRACE_SECONDS,
+            )
         )
         return response
 
@@ -231,16 +243,10 @@ class _AdmissionLifecycle:
     def consume(self, admission_id: UUID, command: GenerationCommand) -> _ReservedAdmission:
         pending = self._pending
         if pending is None or pending.response.admission_id != admission_id:
-            raise ValueError("Chat generation admission is unavailable")
-        if (
-            pending.request.request_id != command.request_id
-            or pending.request.operation != command.operation
-            or pending.request.policy_revision != command.policy_revision
-            or pending.request.policy_fingerprint != command.policy_fingerprint
-            or pending.request.request_fingerprint != request_fingerprint(command)
-        ):
+            raise ValueError("generation admission is unavailable")
+        if pending.request != generation_admission_request(generation_command_draft(command)):
             self._release_pending()
-            raise ValueError("Chat generation command differs from its admission")
+            raise ValueError("generation command differs from its admission")
         self._pending = None
         expiry = self._expiry_task
         self._expiry_task = None
@@ -369,11 +375,13 @@ def create_codex_agent_app(
     working_directory_root: Path,
     credential_file: Path,
     versions: RuntimeVersions,
+    model_tool_registry: CodexModelToolPlanRegistry,
     mcp_origin: str | None = None,
-    chat_network_attested: bool = False,
+    model_tool_network_attested: bool = False,
     capacity_paths: CapacityPaths = PRODUCTION_CAPACITY_PATHS,
 ) -> FastAPI:
-    generation_policy.validate_policy()
+    if not isinstance(model_tool_registry, CodexModelToolPlanRegistry):
+        raise TypeError("model_tool_registry must be CodexModelToolPlanRegistry")
     if versions != RuntimeVersions(
         sdk=_PINNED_CODEX_VERSION,
         runtime=_PINNED_CODEX_VERSION,
@@ -383,7 +391,7 @@ def create_codex_agent_app(
         working_directory_root=working_directory_root,
         credential_file=credential_file,
         mcp_origin=mcp_origin,
-        chat_network_attested=chat_network_attested,
+        model_tool_network_attested=model_tool_network_attested,
     )
     validate_enrolled_auth_file(credential_file)
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
@@ -397,10 +405,45 @@ def create_codex_agent_app(
         if not lifecycle.ready:
             raise HTTPException(status_code=503, detail="Codex generation host is not ready")
         return GenerationHealth(
-            policy_revision=generation_policy.POLICY_REVISION,
             sdk_version=versions.sdk,
             runtime_version=versions.runtime,
         )
+
+    @app.get("/v2/model-catalog", response_model=CodexModelCatalog)
+    async def model_catalog(request: Request) -> Response | CodexModelCatalog:
+        if request.headers.get("accept", "").strip().lower() != "application/json":
+            raise HTTPException(status_code=406, detail="accept must be application/json")
+        if not lifecycle.ready:
+            raise HTTPException(status_code=503, detail="Codex generation host is not ready")
+        if not slot.try_acquire():
+            return _capacity_rejection()
+        if not capacity_is_available(capacity_paths):
+            slot.release()
+            return _capacity_rejection()
+        try:
+            runtime_paths = create_ephemeral_runtime_paths(
+                working_directory_root,
+                f"catalog-{uuid4().hex}",
+            )
+        except BaseException:
+            slot.release()
+            raise
+        try:
+            catalog = await _read_authenticated_catalog(
+                runtime_factory=runtime_factory,
+                runtime_paths=runtime_paths,
+                credential_file=credential_file,
+                lifecycle=lifecycle,
+            )
+            return codex_model_catalog_to_wire(catalog)
+        finally:
+            try:
+                remove_ephemeral_runtime_paths(
+                    runtime_paths,
+                    root=working_directory_root,
+                )
+            finally:
+                slot.release()
 
     @app.post("/v2/generation-admissions", response_model=GenerationAdmission)
     async def admit_generation(request: Request) -> Response | GenerationAdmission:
@@ -409,8 +452,6 @@ def create_codex_agent_app(
         if request.headers.get("accept", "").strip().lower() != "application/json":
             raise HTTPException(status_code=406, detail="accept must be application/json")
         admission_request = await _read_admission_request(request)
-        if not chat_network_attested:
-            raise HTTPException(status_code=422, detail="ChatTools network is not attested")
         if not lifecycle.ready:
             raise HTTPException(status_code=503, detail="Codex generation host is not ready")
         replay = admissions.replay(admission_request)
@@ -430,35 +471,25 @@ def create_codex_agent_app(
         if request.headers.get("accept", "").strip().lower() != "application/x-ndjson":
             raise HTTPException(status_code=406, detail="accept must be application/x-ndjson")
         command = await _read_command(request)
-        if isinstance(command.operation, ChatOperation) and not chat_network_attested:
-            raise HTTPException(status_code=422, detail="ChatTools network is not attested")
+        has_model_tools = isinstance(command.spec.model_tool_plan_snapshot, NexusPresent)
         if not lifecycle.ready:
             raise HTTPException(status_code=503, detail="Codex generation host is not ready")
-        reserved: _ReservedAdmission | None = None
         admission_header = request.headers.get("nexus-generation-admission")
-        if isinstance(command.operation, ChatOperation):
-            if admission_header is None:
-                raise HTTPException(status_code=409, detail="Chat generation admission is required")
-            try:
-                admission_id = UUID(admission_header)
-                if str(admission_id) != admission_header:
-                    raise ValueError
-                reserved = admissions.consume(admission_id, command)
-            except ValueError as error:
-                raise HTTPException(
-                    status_code=409, detail="Chat generation admission does not match"
-                ) from error
-        else:
-            if admission_header is not None:
-                raise HTTPException(
-                    status_code=422,
-                    detail="Synthesis generation forbids an admission header",
-                )
-            if not slot.try_acquire():
-                return _capacity_rejection()
-            if not capacity_is_available(capacity_paths):
-                slot.release()
-                return _capacity_rejection()
+        if admission_header is None:
+            raise HTTPException(status_code=409, detail="generation admission is required")
+        try:
+            admission_id = UUID(admission_header)
+            if str(admission_id) != admission_header:
+                raise ValueError
+            reserved = admissions.consume(admission_id, command)
+        except ValueError as error:
+            raise HTTPException(
+                status_code=409,
+                detail="generation admission does not match",
+            ) from error
+        if has_model_tools and not model_tool_network_attested:
+            slot.release()
+            raise HTTPException(status_code=422, detail="ModelTools network is not attested")
 
         try:
             runtime_paths = create_ephemeral_runtime_paths(
@@ -468,7 +499,7 @@ def create_codex_agent_app(
         except Exception:
             slot.release()
             raise
-        accepted_at = reserved.response.admitted_at if reserved is not None else _utc_now()
+        accepted_at = reserved.response.admitted_at
         control = _TurnControl(command.request_id, asyncio.Event())
         relay: asyncio.Queue[_RelayedFrame] = asyncio.Queue(maxsize=1)
         owner_started = asyncio.Event()
@@ -484,11 +515,12 @@ def create_codex_agent_app(
             owner_started,
             execution_released,
             relay_abandoned,
-            runtime_deadline=reserved.runtime_deadline if reserved is not None else None,
+            runtime_deadline=reserved.runtime_deadline,
             runtime_factory=runtime_factory,
             runtime_paths=runtime_paths,
             working_directory_root=working_directory_root,
             credential_file=credential_file,
+            model_tool_registry=model_tool_registry,
             mcp_origin=mcp_origin,
             versions=versions,
         )
@@ -542,20 +574,88 @@ def create_codex_agent_app(
     return app
 
 
+async def _read_authenticated_catalog(
+    *,
+    runtime_factory: AgentRuntimeFactory,
+    runtime_paths: EphemeralRuntimePaths,
+    credential_file: Path,
+    lifecycle: TurnLifecycle,
+) -> AgentModelCatalog:
+    credential_identity = enrolled_auth_identity(credential_file)
+    runtime_auth_link: Path | None = None
+    runtime: AgentRuntimePort | None = None
+    catalog: AgentModelCatalog | None = None
+    operation_error: BaseException | None = None
+    cleanup_error: BaseException | None = None
+    runtime_close_unproven = asyncio.Event()
+    try:
+        runtime_auth_link = link_runtime_auth(credential_file, runtime_paths)
+        runtime = runtime_factory(AgentRuntimeConfig(state_root_base=runtime_paths.state_root_base))
+        async with asyncio.timeout(_CATALOG_DEADLINE_SECONDS):
+            catalog = await runtime.model_catalog(
+                "codex",
+                CredentialRef(kind="local_account", profile_key="codex-personal"),
+                transport="sdk",
+            )
+    except BaseException as error:
+        operation_error = error
+    finally:
+        if runtime is not None:
+            try:
+                await close_runtime_before_release(
+                    runtime,
+                    CODEX_AGENT_HOST_TEARDOWN_DEADLINE_SECONDS,
+                    runtime_close_unproven=runtime_close_unproven,
+                )
+            except BaseException as error:
+                cleanup_error = error
+        if runtime_auth_link is not None:
+            try:
+                validate_runtime_auth_link(runtime_auth_link, credential_file)
+                sync_enrolled_auth_file(
+                    credential_file,
+                    expected_identity=credential_identity,
+                )
+            except BaseException as error:
+                cleanup_error = cleanup_error or error
+
+    if cleanup_error is not None or runtime_close_unproven.is_set():
+        lifecycle.fail("authenticated catalog runtime cleanup was not proven")
+        raise HTTPException(
+            status_code=503,
+            detail="Codex generation host is not ready",
+        ) from cleanup_error
+    if isinstance(operation_error, asyncio.CancelledError):
+        raise operation_error
+    if operation_error is not None:
+        if not isinstance(operation_error, Exception):
+            raise operation_error
+        if isinstance(operation_error, AgentRuntimeDefect):
+            lifecycle.fail("authenticated catalog runtime defected")
+        raise HTTPException(
+            status_code=503,
+            detail="authenticated Codex model catalog is unavailable",
+        ) from operation_error
+    if catalog is None:
+        lifecycle.fail("authenticated catalog returned no value")
+        raise HTTPException(status_code=503, detail="Codex generation host is not ready")
+    return catalog
+
+
 def _validate_host_configuration(
     *,
     working_directory_root: Path,
     credential_file: Path,
     mcp_origin: str | None,
-    chat_network_attested: bool,
+    model_tool_network_attested: bool,
 ) -> None:
     if not working_directory_root.is_absolute():
         raise ValueError("Codex generation working-directory root must be absolute")
     if not credential_file.is_absolute():
         raise ValueError("Codex generation credential file must be absolute")
-    if type(chat_network_attested) is not bool:
-        raise ValueError("chat_network_attested must be bool")
-    if not chat_network_attested:
+    if type(model_tool_network_attested) is not bool:
+        raise ValueError("model_tool_network_attested must be bool")
+    if not model_tool_network_attested:
         return
     parsed = urlsplit(mcp_origin) if isinstance(mcp_origin, str) else None
     if (
@@ -570,7 +670,7 @@ def _validate_host_configuration(
         or bool(parsed.fragment)
         or not _is_public_dns_hostname(parsed.hostname)
     ):
-        raise ValueError("attested ChatTools requires the canonical public HTTPS MCP endpoint")
+        raise ValueError("attested ModelTools requires the canonical public HTTPS MCP endpoint")
 
 
 def _is_public_dns_hostname(hostname: str) -> bool:
@@ -611,6 +711,7 @@ async def _own_admitted_turn(
     runtime_paths: EphemeralRuntimePaths,
     working_directory_root: Path,
     credential_file: Path,
+    model_tool_registry: CodexModelToolPlanRegistry,
     mcp_origin: str | None,
     versions: RuntimeVersions,
 ) -> None:
@@ -632,6 +733,7 @@ async def _own_admitted_turn(
             credential_file=credential_file,
             credential_identity=credential_identity,
             runtime_close_unproven=runtime_close_unproven,
+            model_tool_registry=model_tool_registry,
             mcp_origin=mcp_origin,
             versions=versions,
         ):
@@ -668,7 +770,7 @@ async def _own_admitted_turn(
                     ).model_dump_json()
                     + "\n"
                 ).encode()
-                bounds = command_policy(command).stream
+                bounds = command.spec.bounds.stream
                 if (
                     emitted_frames >= bounds.max_frames
                     or len(line) > bounds.max_frame_bytes
@@ -820,7 +922,7 @@ def _capacity_rejection() -> Response:
 
 class _StreamBudget:
     def __init__(self, command: GenerationCommand) -> None:
-        self._bounds = command_policy(command).stream
+        self._bounds = command.spec.bounds.stream
         self._frames = 0
         self._bytes = 0
 
@@ -854,10 +956,11 @@ async def _run_turn(
     credential_file: Path,
     credential_identity: CredentialFileIdentity,
     runtime_close_unproven: asyncio.Event,
+    model_tool_registry: CodexModelToolPlanRegistry,
     mcp_origin: str | None,
     versions: RuntimeVersions,
 ) -> AsyncIterator[bytes]:
-    policy = command_policy(command)
+    bounds = command.spec.bounds
     sequence = 0
     budget = _StreamBudget(command)
     runtime: AgentRuntimePort | None = None
@@ -928,18 +1031,19 @@ async def _run_turn(
         operation = resolve_codex_generation(
             command,
             working_directory=runtime_paths.working_directory,
+            model_tool_registry=model_tool_registry,
             mcp_origin=mcp_origin,
             tool_credential=credential,
         )
         runtime = runtime_factory(
             AgentRuntimeConfig(
                 state_root_base=runtime_paths.state_root_base,
-                max_turn_seconds=float(policy.turn_timeout_seconds),
+                max_turn_seconds=float(bounds.turn_timeout_seconds),
                 secret_resolver=resolve_secret if credential is not None else None,
             )
         )
         try:
-            async with asyncio.timeout(float(policy.session_open_timeout_seconds)):
+            async with asyncio.timeout(operation.session_open_timeout_seconds):
                 session = await runtime.open_session(operation.session)
         except TimeoutError:
             terminal = _failed_terminal(
@@ -972,11 +1076,16 @@ async def _run_turn(
                     )
                     continue
                 if isinstance(event, AgentText):
-                    if operation.capability == "ChatTools":
-                        # Chat text is never held: each provider event is relayed now and
+                    if isinstance(operation.model_tool_plan_snapshot, NexusPresent):
+                        # ModelTools text is never held: each provider event is relayed now and
                         # split at the named byte run. Immediate event-granular relay is a
                         # strict implementation of the policy's maximum flush interval.
-                        maximum = policy.stream.text_flush_bytes or _SYNTHESIS_TEXT_RUN_BYTES
+                        flush_bytes = bounds.stream.text_flush_bytes
+                        maximum = (
+                            flush_bytes.value
+                            if isinstance(flush_bytes, NexusPresent)
+                            else _SYNTHESIS_TEXT_RUN_BYTES
+                        )
                         for piece in _split_utf8(event.text, maximum):
                             for line in relay([GenerationText(text=piece)]):
                                 yield line
@@ -1000,11 +1109,7 @@ async def _run_turn(
 
                 for line in relay(flush_synthesis_text()):
                     yield line
-                wire = _event_to_wire(event)
-                forbidden = isinstance(event, AgentPermissionRequest) or (
-                    isinstance(event, AgentToolUse)
-                    and not _tool_is_legal(event, operation.capability)
-                )
+                wire, forbidden = _event_to_wire(event, operation)
                 for line in relay([wire]):
                     yield line
                 if forbidden:
@@ -1014,7 +1119,7 @@ async def _run_turn(
                         session=session,
                         accepted_at=accepted_at,
                         versions=versions,
-                        diagnostics=_diagnostics("turn_stream", "forbidden capability event"),
+                        diagnostics=_diagnostics("turn_stream", "forbidden tool event"),
                     )
                     break
                 if terminal is not None:
@@ -1072,9 +1177,11 @@ async def _run_turn(
         secret_table.clear()
         if runtime is not None:
             try:
+                if operation is None:
+                    raise AssertionError("Codex runtime exists without resolved transport facts")
                 await close_runtime_before_release(
                     runtime,
-                    float(policy.runtime_close_timeout_seconds),
+                    operation.runtime_close_timeout_seconds,
                     runtime_close_unproven=runtime_close_unproven,
                 )
             except Exception as error:
@@ -1170,31 +1277,58 @@ async def close_runtime_before_release(
         raise
 
 
-def _tool_is_legal(event: AgentToolUse, capability: generation_policy.Capability) -> bool:
-    if capability != "ChatTools":
-        return False
-    return event.name in {f"{CHAT_MCP_SERVER_NAME}/{tool}" for tool in chat_mcp_allowed_tools()}
-
-
-def _event_to_wire(event: AgentEvent) -> GenerationEvent:
+def _event_to_wire(
+    event: AgentEvent,
+    operation: ResolvedCodexGeneration,
+) -> tuple[GenerationEvent, bool]:
     if isinstance(event, AgentToolUse):
-        return GenerationToolUse(
-            tool_call_id=event.tool_call_id,
-            name=event.name,
-            phase=event.phase,
-            succeeded=event.succeeded,
-        )
+        published = operation.published_model_tools
+        if published is None:
+            return (
+                GenerationToolUse(
+                    tool_call_id=event.tool_call_id,
+                    name=event.name[:256],
+                    phase=event.phase,
+                    succeeded=event.succeeded,
+                ),
+                True,
+            )
+        observation = published.observe(event)
+        if isinstance(observation, CanonicalMcpToolObservation):
+            return (
+                GenerationToolUse(
+                    tool_call_id=observation.tool_call_id,
+                    name=str(observation.tool_id),
+                    phase=observation.phase,
+                    succeeded=observation.succeeded,
+                ),
+                False,
+            )
+        if isinstance(observation, RejectedMcpToolObservation):
+            return (
+                GenerationToolUse(
+                    tool_call_id=observation.tool_call_id,
+                    name=observation.raw_name,
+                    phase=event.phase,
+                    succeeded=event.succeeded,
+                ),
+                True,
+            )
+        raise AssertionError("MCP observation union was not exhaustive")
     if isinstance(event, AgentUsage):
-        return GenerationUsageEvent(usage=_usage(event.usage))
+        return GenerationUsageEvent(usage=_usage(event.usage)), False
     if isinstance(event, AgentPermissionRequest):
-        return GenerationPermissionRequest(
-            operation=event.request.operation,
-            summary=event.request.summary[:1_000],
-            tool_name=event.request.tool_name,
-            decision=event.decision,
+        return (
+            GenerationPermissionRequest(
+                operation=event.request.operation,
+                summary=event.request.summary[:1_000],
+                tool_name=event.request.tool_name,
+                decision=event.decision,
+            ),
+            True,
         )
     if isinstance(event, AgentNative):
-        return GenerationNative(native_type=event.native_type)
+        return GenerationNative(native_type=event.native_type), False
     raise AssertionError("event conversion received terminal, text, or unknown event")
 
 
@@ -1352,8 +1486,8 @@ def _session_ref(ref: AgentSessionRef) -> GenerationSessionRef:
     return GenerationSessionRef.model_validate(thaw_json_value(ref_to_json(ref)))
 
 
-def _optional_usage(value: Present[TokenUsage] | Absent) -> GenerationUsage | None:
-    return _usage(value.value) if isinstance(value, Present) else None
+def _optional_usage(value: RuntimePresent[TokenUsage] | RuntimeAbsent) -> GenerationUsage | None:
+    return _usage(value.value) if isinstance(value, RuntimePresent) else None
 
 
 def _usage(value: TokenUsage) -> GenerationUsage:
@@ -1367,8 +1501,8 @@ def _usage(value: TokenUsage) -> GenerationUsage:
     )
 
 
-def _presence(value: Present[int] | Absent) -> int | None:
-    return value.value if isinstance(value, Present) else None
+def _presence(value: RuntimePresent[int] | RuntimeAbsent) -> int | None:
+    return value.value if isinstance(value, RuntimePresent) else None
 
 
 def _split_utf8(text: str, maximum_bytes: int) -> list[str]:

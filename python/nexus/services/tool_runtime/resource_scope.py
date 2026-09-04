@@ -1,4 +1,4 @@
-"""Canonical operation-aware resource admission for Chat tools."""
+"""Canonical operation-aware resource admission for all model tools."""
 
 from __future__ import annotations
 

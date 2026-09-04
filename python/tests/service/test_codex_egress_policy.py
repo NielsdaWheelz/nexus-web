@@ -6,10 +6,15 @@ import ipaddress
 import socket
 import ssl
 import struct
-from typing import ClassVar
+from importlib.util import find_spec
+from typing import TYPE_CHECKING, ClassVar
 
 import pytest
-from apps.codex_agent import egress_policy, network_health
+
+_CUTOVER_PRESENT = find_spec("apps.codex_agent.egress_policy") is not None
+
+if TYPE_CHECKING or _CUTOVER_PRESENT:
+    from apps.codex_agent import egress_policy, network_health
 
 
 def _query(host: str, *, query_id: int = 0x1234) -> bytes:
@@ -37,6 +42,7 @@ def _client_hello(host: str) -> bytes:
 def test_codex_egress_allows_only_subscription_auth_and_mcp_sni(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    assert _CUTOVER_PRESENT, "the confined Codex egress policy is absent"
     policy = egress_policy.EgressPolicy(
         ipaddress.IPv4Address("172.30.0.2"), "mcp.nexus.example.com"
     )

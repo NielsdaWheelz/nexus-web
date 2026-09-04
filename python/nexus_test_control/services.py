@@ -23,6 +23,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import MappingProxyType
 from typing import cast
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
@@ -48,6 +49,10 @@ from nexus.release_artifact import (
 from nexus_test_control.build import StandaloneBuild
 from nexus_test_control.model import Resource, ResourceKind
 from nexus_test_control.process import run_command, unblock_and_exec_command
+from nexus_test_control.provider_api_contract import (
+    PROVIDER_API_NAMES,
+    TEST_GENERATION_CONTINUATION_ENCRYPTION_KEY,
+)
 from nexus_test_control.runtime import (
     EndpointKind,
     LedgerEntry,
@@ -67,6 +72,8 @@ from nexus_test_control.runtime import (
     local_docker_host,
     migration_database_name,
     process_resource_identity,
+    provider_api_peer_identity,
+    provider_api_peer_state_dir,
     read_ledger,
     read_previous_runtime_for_cleanup,
     read_runtime,
@@ -128,6 +135,7 @@ _PORT_DEFAULTS = (
     13000,
     19091,
     19092,
+    19093,
 )
 _EPHEMERAL_PORT_RANGE_PATH = Path("/proc/sys/net/ipv4/ip_local_port_range")
 _CONSERVATIVE_EPHEMERAL_PORT_RANGE = (32768, 65535)
@@ -141,15 +149,29 @@ _STATUS_KEYS = frozenset(
 )
 _PROCESS_IDENTITY_GRACE_SECONDS = 2
 _EMBEDDING_PEER_FILES = ("ca.pem", "server-key.pem", "requests.jsonl")
+_PROVIDER_API_PEER_FILES = ("ca.pem", "server-key.pem", "requests.jsonl")
 _CODEX_GENERATION_PEER_AUDIT = "requests.jsonl"
 _CODEX_GENERATION_PEER_SOCKET = "agent.sock"
 TEST_OPENAI_EMBEDDING_API_KEY = "nexus-test-fixture-openai-key"
 TEST_OPENAI_EMBEDDING_HOST = "api.openai.com"
+TEST_PROVIDER_API_CREDENTIALS: Mapping[str, str] = MappingProxyType(
+    {
+        "OPENAI_GENERATION_API_KEY": "nexus-test-fixture-openai-generation-key",
+        "ANTHROPIC_GENERATION_API_KEY": "nexus-test-fixture-anthropic-generation-key",
+        "GEMINI_GENERATION_API_KEY": "nexus-test-fixture-gemini-generation-key",
+        "MOONSHOT_GENERATION_API_KEY": "nexus-test-fixture-moonshot-generation-key",
+        "OPENROUTER_GENERATION_API_KEY": "nexus-test-fixture-openrouter-generation-key",
+        "DEEPSEEK_GENERATION_API_KEY": "nexus-test-fixture-deepseek-generation-key",
+        "XAI_GENERATION_API_KEY": "nexus-test-fixture-xai-generation-key",
+    }
+)
+TEST_FABLE_RETENTION_ACCEPTED_AT = "2026-08-31T00:00:00Z"
 _BASE_TEST_STATIC_DNS: dict[str, object] = {"www.nasa.gov": "93.184.216.34"}
 _CONTROLLER_OWNED_PROCESS_ENV = frozenset(
     {
         "NEXUS_AGENT_TOOLS_MCP_LISTEN",
         "NEXUS_AGENT_TOOLS_MCP_ORIGIN",
+        "NEXUS_TEST_TLS_CA_CERTS",
         "WORKER_LANE",
     }
 )
@@ -171,6 +193,7 @@ _CALLER_RESOURCE_ENV = (
             "NEXUS_TEST_PROCESS_OWNER_FD",
             "NEXUS_TEST_STATIC_DNS",
             "NEXUS_TEST_TLS_CA_CERT",
+            "NEXUS_TEST_TLS_CA_CERTS",
             "NODE_OPTIONS",
             "OUTBOUND_HTTP_PROXY_URL",
             "PODCAST_INDEX_API_KEY",
@@ -204,6 +227,16 @@ _CALLER_RESOURCE_ENV = (
     )
     | _CONTROLLER_OWNED_PROCESS_ENV
 )
+_CALLER_GENERATION_ENV = frozenset(
+    {
+        "GENERATION_API_BASE_URLS",
+        "GENERATION_API_PROVIDERS",
+        "GENERATION_CONTINUATION_ENCRYPTION_KEY",
+        "NEXUS_FABLE_RETENTION_ACCEPTED_AT",
+        *TEST_PROVIDER_API_CREDENTIALS,
+    }
+)
+_PROVIDER_API_RUN_ENV = _CALLER_GENERATION_ENV | {"NEXUS_TEST_TLS_CA_CERTS"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -255,6 +288,36 @@ class EmbeddingPeer:
             and row.get("path") == "/v1/embeddings"
             and isinstance(row.get("payload"), dict)
         )
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderApiPeer:
+    state: Path
+    certificate: Path
+    key: Path
+    audit: Path
+    port: int
+
+    @property
+    def origin(self) -> str:
+        return f"https://127.0.0.1:{self.port}"
+
+    def client_environment(self) -> dict[str, str]:
+        return {
+            "GENERATION_API_BASE_URLS": json.dumps(
+                {provider: self.origin for provider in PROVIDER_API_NAMES},
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+            "GENERATION_API_PROVIDERS": ",".join(PROVIDER_API_NAMES),
+            "GENERATION_CONTINUATION_ENCRYPTION_KEY": (TEST_GENERATION_CONTINUATION_ENCRYPTION_KEY),
+            "NEXUS_FABLE_RETENTION_ACCEPTED_AT": TEST_FABLE_RETENTION_ACCEPTED_AT,
+            "NEXUS_TEST_TLS_CA_CERTS": json.dumps(
+                [str(self.certificate)],
+                separators=(",", ":"),
+            ),
+            **TEST_PROVIDER_API_CREDENTIALS,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -370,6 +433,7 @@ def run_environment(
         "CSP_MEDIA_ORIGINS": expected_external_url,
         "DATABASE_URL": expected_database_url,
         "FASTAPI_BASE_URL": runtime_endpoint(root, environment, EndpointKind.API),
+        "GENERATION_API_PROVIDERS": "",
         "NEXT_PUBLIC_SUPABASE_ANON_KEY": run.supabase.anon_key,
         "NEXT_PUBLIC_SUPABASE_URL": expected_supabase_url,
         "NEXUS_EXTENSION_REDIRECT_ORIGINS": f"https://{TEST_EXTENSION_ID}.chromiumapp.org",
@@ -402,6 +466,26 @@ def run_environment(
     }
     if expected_migration_url is not None:
         values["NEXUS_MIGRATION_DATABASE_URL"] = expected_migration_url
+    provider_resource = Resource(
+        ResourceKind.PROVIDER_API_PEER,
+        provider_api_peer_identity(run.run_id),
+    )
+    provider_entries = [entry for entry in ledger.entries if entry.resource == provider_resource]
+    if provider_entries:
+        if len(provider_entries) != 1 or provider_entries[0].phase is not ResourcePhase.CREATED:
+            raise RuntimeContractError(
+                "provider API configuration requires its exact created peer owner"
+            )
+        paths = _exact_provider_api_peer_paths(root, run.run_id)
+        values.update(
+            ProviderApiPeer(
+                provider_api_peer_state_dir(root, run.run_id),
+                paths["ca.pem"],
+                paths["server-key.pem"],
+                paths["requests.jsonl"],
+                read_runtime(root).ports.provider_api,
+            ).client_environment()
+        )
     return values
 
 
@@ -607,6 +691,7 @@ def test_environment(caller_environment: Mapping[str, str]) -> dict[str, str]:
     if nexus_environment not in {None, "", "test"}:
         raise RuntimeContractError("test control rejects a non-test NEXUS_ENV")
     supplied = sorted(key for key in _CALLER_RESOURCE_ENV if caller_environment.get(key))
+    supplied.extend(sorted(key for key in _CALLER_GENERATION_ENV if key in caller_environment))
     if supplied:
         raise RuntimeContractError(
             "test control does not accept caller resource configuration: " + ", ".join(supplied)
@@ -1068,9 +1153,15 @@ def cgroup_delegate_failure() -> str | None:
     return None
 
 
-def _write_embedding_peer_certificate(certificate: Path, key_path: Path) -> None:
+def _write_loopback_peer_certificate(
+    certificate: Path,
+    key_path: Path,
+    *,
+    common_name: str,
+    dns_names: Sequence[str] = (),
+) -> None:
     key = rsa.generate_private_key(public_exponent=65_537, key_size=2048)
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, TEST_OPENAI_EMBEDDING_HOST)])
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
     value = (
         x509.CertificateBuilder()
         .subject_name(name)
@@ -1083,7 +1174,7 @@ def _write_embedding_peer_certificate(certificate: Path, key_path: Path) -> None
         .add_extension(
             x509.SubjectAlternativeName(
                 [
-                    x509.DNSName(TEST_OPENAI_EMBEDDING_HOST),
+                    *(x509.DNSName(value) for value in dns_names),
                     x509.IPAddress(ipaddress.ip_address("127.0.0.1")),
                 ]
             ),
@@ -1104,6 +1195,15 @@ def _write_embedding_peer_certificate(certificate: Path, key_path: Path) -> None
         )
     )
     key_path.chmod(0o600)
+
+
+def _write_embedding_peer_certificate(certificate: Path, key_path: Path) -> None:
+    _write_loopback_peer_certificate(
+        certificate,
+        key_path,
+        common_name=TEST_OPENAI_EMBEDDING_HOST,
+        dns_names=(TEST_OPENAI_EMBEDDING_HOST,),
+    )
 
 
 def prepare_embedding_peer_state(
@@ -1236,6 +1336,146 @@ def _delete_embedding_peer_state(root: Path, run_id: str) -> None:
     state.rmdir()
 
 
+def prepare_provider_api_peer_state(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    run: TestRun,
+) -> Path:
+    """Plan and create the recoverable state directory for one provider API peer."""
+
+    require_test_environment(environment)
+    root = canonical_repo_root(repo_root)
+    read_ledger(root, run.run_id)
+    resource = Resource(
+        ResourceKind.PROVIDER_API_PEER,
+        provider_api_peer_identity(run.run_id),
+    )
+    record_planned(root, environment, run.run_id, resource)
+    state = provider_api_peer_state_dir(root, run.run_id)
+    try:
+        state.mkdir(parents=False, exist_ok=False)
+    except FileExistsError as exc:
+        raise RuntimeContractError("provider API peer state already exists for this run") from exc
+    return state
+
+
+def materialize_provider_api_peer(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    run: TestRun,
+) -> ProviderApiPeer:
+    """Create the exact run-owned TLS identity and audit state for provider APIs."""
+
+    require_test_environment(environment)
+    root = canonical_repo_root(repo_root)
+    runtime = read_runtime(root)
+    state = prepare_provider_api_peer_state(root, environment, run)
+    certificate = state / "ca.pem"
+    key = state / "server-key.pem"
+    audit = state / "requests.jsonl"
+    audit.touch(mode=0o600, exist_ok=False)
+    _write_loopback_peer_certificate(
+        certificate,
+        key,
+        common_name="nexus-provider-api-peer",
+    )
+    finish_provider_api_peer_state(root, environment, run.run_id)
+    return ProviderApiPeer(state, certificate, key, audit, runtime.ports.provider_api)
+
+
+def finish_provider_api_peer_state(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    run_id: str,
+) -> None:
+    """Attest the exact provider API peer files before publishing CREATED ownership."""
+
+    require_test_environment(environment)
+    root = canonical_repo_root(repo_root)
+    _exact_provider_api_peer_paths(root, run_id)
+    record_created(
+        root,
+        environment,
+        run_id,
+        Resource(ResourceKind.PROVIDER_API_PEER, provider_api_peer_identity(run_id)),
+    )
+
+
+def release_provider_api_peer_state(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    run_id: str,
+) -> None:
+    """Delete an idle exact provider API peer and release persisted ownership."""
+
+    require_test_environment(environment)
+    root = canonical_repo_root(repo_root)
+    with run_lifecycle_lock(root, environment, run_id):
+        ledger = read_ledger(root, run_id)
+        process = Resource(
+            ResourceKind.PROCESS,
+            process_resource_identity(run_id, "provider-api-peer"),
+        )
+        if any(entry.resource == process for entry in ledger.entries):
+            raise RuntimeContractError(
+                "provider API peer state cannot release while its process exists"
+            )
+        resource = Resource(
+            ResourceKind.PROVIDER_API_PEER,
+            provider_api_peer_identity(run_id),
+        )
+        matches = [entry for entry in ledger.entries if entry.resource == resource]
+        if len(matches) != 1:
+            raise RuntimeContractError("provider API peer state is not uniquely owned by this run")
+        _delete_provider_api_peer_state(root, run_id)
+        forget_cleaned(root, environment, run_id, resource)
+
+
+def _exact_provider_api_peer_paths(root: Path, run_id: str) -> dict[str, Path]:
+    state = provider_api_peer_state_dir(root, run_id)
+    if state.is_symlink() or not state.is_dir() or state.resolve(strict=True) != state:
+        raise RuntimeContractError("provider API peer state is not its exact owned directory")
+    entries = {entry.name: entry for entry in state.iterdir()}
+    expected_names = set(_PROVIDER_API_PEER_FILES)
+    if set(entries) != expected_names:
+        raise RuntimeContractError("provider API peer state does not contain its exact files")
+    if any(
+        entry.is_symlink() or not entry.is_file() or entry.resolve(strict=True) != entry
+        for entry in entries.values()
+    ):
+        raise RuntimeContractError("provider API peer state contains a non-owned file")
+    return {file_name: entries[file_name] for file_name in _PROVIDER_API_PEER_FILES}
+
+
+def _owned_provider_api_peer_paths(root: Path, run_id: str) -> dict[str, Path]:
+    resource = Resource(
+        ResourceKind.PROVIDER_API_PEER,
+        provider_api_peer_identity(run_id),
+    )
+    matches = [entry for entry in read_ledger(root, run_id).entries if entry.resource == resource]
+    if len(matches) != 1 or matches[0].phase is not ResourcePhase.CREATED:
+        raise RuntimeContractError("provider API peer requires its exact created state owner")
+    return _exact_provider_api_peer_paths(root, run_id)
+
+
+def _delete_provider_api_peer_state(root: Path, run_id: str) -> None:
+    state = provider_api_peer_state_dir(root, run_id)
+    if not state.exists() and not state.is_symlink():
+        return
+    if state.is_symlink() or not state.is_dir() or state.resolve(strict=True) != state:
+        raise RuntimeContractError("provider API peer state is not its exact owned directory")
+    entries = tuple(state.iterdir())
+    expected_names = set(_PROVIDER_API_PEER_FILES)
+    if {entry.name for entry in entries} - expected_names or any(
+        entry.is_symlink() or not entry.is_file() or entry.resolve(strict=True) != entry
+        for entry in entries
+    ):
+        raise RuntimeContractError("provider API peer state contains unexpected contents")
+    for entry in entries:
+        entry.unlink()
+    state.rmdir()
+
+
 def materialize_codex_generation_peer(
     repo_root: Path,
     environment: Mapping[str, str],
@@ -1356,6 +1596,7 @@ def start_python_process(
     if role not in {
         "external",
         "provider-openai",
+        "provider-api-peer",
         "codex-generation-peer",
         "api",
         "worker-interactive",
@@ -1363,7 +1604,9 @@ def start_python_process(
     }:
         raise RuntimeContractError(f"Python process role is not owned: {role}")
     runtime = read_runtime(root)
-    supplied_topology_keys = _CONTROLLER_OWNED_PROCESS_ENV.intersection(overrides or {})
+    supplied_topology_keys = (_CONTROLLER_OWNED_PROCESS_ENV | _CALLER_GENERATION_ENV).intersection(
+        overrides or {}
+    )
     if supplied_topology_keys:
         raise RuntimeContractError(
             "Python process runtime topology is controller-owned: "
@@ -1371,10 +1614,22 @@ def start_python_process(
         )
     if role == "provider-openai" and overrides:
         raise RuntimeContractError("embedding peer process environment is controller-owned")
+    if role == "provider-api-peer" and overrides:
+        raise RuntimeContractError("provider API peer environment is controller-owned")
     if role == "codex-generation-peer" and overrides:
         raise RuntimeContractError("Codex generation peer environment is controller-owned")
     owned_role_environment: dict[str, str] = {}
-    owned_environment = run_environment(root, environment, run)
+    owned_environment = (
+        {}
+        if role
+        in {
+            "external",
+            "provider-openai",
+            "provider-api-peer",
+            "codex-generation-peer",
+        }
+        else run_environment(root, environment, run)
+    )
     if role == "external":
         _require_loopback_port_available(runtime.ports.external, role)
         command = (
@@ -1393,6 +1648,21 @@ def start_python_process(
             str(root / "python/tests/testkit/openai_embedding_server.py"),
             "--port",
             str(runtime.ports.provider_openai),
+            "--certificate",
+            str(paths["ca.pem"]),
+            "--key",
+            str(paths["server-key.pem"]),
+            "--audit",
+            str(paths["requests.jsonl"]),
+        )
+    elif role == "provider-api-peer":
+        paths = _owned_provider_api_peer_paths(root, run.run_id)
+        _require_loopback_port_available(runtime.ports.provider_api, role)
+        command = (
+            str(root / "python/.venv/bin/python"),
+            str(root / "python/tests/testkit/provider_api_server.py"),
+            "--port",
+            str(runtime.ports.provider_api),
             "--certificate",
             str(paths["ca.pem"]),
             "--key",
@@ -1503,7 +1773,11 @@ def start_web_process(
     if expected_builds not in artifact_root.parents or artifact_root not in server.parents:
         raise RuntimeContractError("web process requires a runtime-owned standalone artifact")
     runtime = read_runtime(root)
-    owned_environment = run_environment(root, environment, run)
+    owned_environment = {
+        key: value
+        for key, value in run_environment(root, environment, run).items()
+        if key not in _PROVIDER_API_RUN_ENV
+    }
     try:
         source_sha = load_runtime_identity(_runtime_identity_path(root)).source_sha
     except BackendArtifactDefect as exc:
@@ -1748,14 +2022,20 @@ def wait_process_ready(
         _require_exact_created_process(root, process, "worker-interactive")
     elif endpoint is EndpointKind.PROVIDER_OPENAI:
         _require_exact_created_process(root, process, "provider-openai")
+    elif endpoint is EndpointKind.PROVIDER_API:
+        _require_exact_created_process(root, process, "provider-api-peer")
     url = runtime_endpoint(root, environment, endpoint) + path
     port = urlsplit(url).port
     if port is None:
         raise RuntimeContractError("process readiness endpoint has no port")
-    if endpoint is EndpointKind.PROVIDER_OPENAI:
-        expected_ca = _owned_embedding_peer_paths(root, process.run_id)["ca.pem"]
+    if endpoint in {EndpointKind.PROVIDER_OPENAI, EndpointKind.PROVIDER_API}:
+        expected_ca = (
+            _owned_embedding_peer_paths(root, process.run_id)["ca.pem"]
+            if endpoint is EndpointKind.PROVIDER_OPENAI
+            else _owned_provider_api_peer_paths(root, process.run_id)["ca.pem"]
+        )
         if tls_ca is None or tls_ca.resolve(strict=True) != expected_ca.resolve(strict=True):
-            raise RuntimeContractError("OpenAI provider readiness requires its exact owned CA")
+            raise RuntimeContractError("provider readiness requires its exact owned CA")
         verify: ssl.SSLContext | bool = ssl.create_default_context(cafile=str(expected_ca))
     elif tls_ca is not None:
         raise RuntimeContractError("TLS CA is only valid for provider readiness")
@@ -2123,6 +2403,8 @@ def clean_run(
                     )
                 elif resource.kind is ResourceKind.EMBEDDING_PEER:
                     _delete_embedding_peer_state(root, run_id)
+                elif resource.kind is ResourceKind.PROVIDER_API_PEER:
+                    _delete_provider_api_peer_state(root, run_id)
                 elif resource.kind is ResourceKind.CODEX_GENERATION_PEER:
                     _delete_codex_generation_peer_state(root, run_id)
                 elif resource.kind is ResourceKind.EXTENSION_PROFILE:
@@ -2252,13 +2534,13 @@ def _upgrade_previous_runtime_if_needed(
                 previous = read_previous_runtime_for_cleanup(root)
             except RuntimeContractError:
                 raise current_error from None
-            used = set(previous.ports.as_dict().values()) - {previous.ports.agent_tools_mcp}
+            used = set(previous.ports.as_dict().values()) - {previous.ports.provider_api}
             ephemeral_port_range = _local_ephemeral_port_range()
-            for port in _candidate_ports(18001, ephemeral_port_range):
+            for port in _candidate_ports(19093, ephemeral_port_range):
                 if port not in used and is_port_available(port):
                     upgrade_previous_runtime(root, environment, port)
                     return
-    raise RuntimeContractError("no local agent-tools MCP test port is available")
+    raise RuntimeContractError("no local provider API test port is available")
 
 
 def _local_ephemeral_port_range() -> tuple[int, int]:

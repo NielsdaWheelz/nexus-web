@@ -1,4 +1,4 @@
-"""Real-UDS RED proof for the strict v2 Codex generation client."""
+"""Real-UDS proof for the strict frozen-spec Codex generation client."""
 
 from __future__ import annotations
 
@@ -17,8 +17,8 @@ import pytest
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import Response, StreamingResponse
+from pydantic import SecretStr
 
-from nexus.services import generation_policy
 from nexus.services.codex_generation_client import (
     CodexGenerationCapacityUnavailable,
     CodexGenerationClient,
@@ -31,11 +31,20 @@ from nexus.services.codex_generation_contract import (
     GenerationAdmission,
     GenerationAdmissionRequest,
     GenerationCommand,
+    GenerationCommandDraft,
     GenerationFrame,
     GenerationHealth,
     GenerationSessionRef,
     GenerationTerminal,
     GenerationText,
+    generation_command_from_draft,
+    generation_draft_fingerprint,
+)
+from nexus.services.generation_intent import BearerToolGrant
+from nexus.services.tool_runtime.composition import freeze_tool_plan_snapshot
+from tests.testkit.codex_generation import (
+    codex_generation_draft,
+    codex_model_tool_fixture,
 )
 
 _REQUEST_ID = UUID("755a2de9-2bdc-5c57-a6a0-17a2407f14bb")
@@ -55,57 +64,37 @@ def _short_socket_path() -> Path:
     return socket_path
 
 
-def _command(mode: str) -> GenerationCommand:
-    return GenerationCommand.model_validate(
-        {
-            "schema_version": "nexus-generation-command.v2",
-            "request_id": str(_REQUEST_ID),
-            "operation": {
-                "kind": "metadata_enrichment",
-                "revision": generation_policy.operation_revision("metadata_enrichment"),
-            },
-            "policy_revision": generation_policy.POLICY_REVISION,
-            "policy_fingerprint": generation_policy.POLICY_FINGERPRINT,
-            "intent": {
-                "instructions": "Return the bounded result.",
-                "input": mode,
-                "output": {"kind": "Text"},
-            },
-        }
+def _command(mode: str) -> GenerationCommandDraft:
+    return codex_generation_draft(
+        request_id=_REQUEST_ID,
+        operation="metadata_enrichment",
+        instructions="Return the bounded result.",
+        input_text=mode,
+        model="gpt-5.6-luna",
+        reasoning="low",
+        turn_timeout_seconds=120,
     )
 
 
-def _chat_command(mode: str) -> GenerationCommand:
-    return GenerationCommand.model_validate(
-        {
-            "schema_version": "nexus-generation-command.v2",
-            "request_id": str(_REQUEST_ID),
-            "operation": {
-                "kind": "chat",
-                "profile": "balanced",
-                "revision": generation_policy.operation_revision("chat", profile="balanced"),
-            },
-            "policy_revision": generation_policy.POLICY_REVISION,
-            "policy_fingerprint": generation_policy.POLICY_FINGERPRINT,
-            "intent": {
-                "instructions": "Return the bounded result.",
-                "input": mode,
-                "output": {"kind": "Text"},
-            },
-            "tool_grant": {
-                "kind": "Bearer",
-                "token": "client-admission-proof-grant-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-            },
-        }
+def _chat_draft(mode: str) -> GenerationCommandDraft:
+    _registry, runtime = codex_model_tool_fixture()
+    return codex_generation_draft(
+        request_id=_REQUEST_ID,
+        operation="chat",
+        instructions="Return the bounded result.",
+        input_text=mode,
+        model="gpt-5.6-terra",
+        reasoning="medium",
+        turn_timeout_seconds=900,
+        model_tool_plan=freeze_tool_plan_snapshot(runtime.operations["ChatRead"]),
     )
 
 
-def _health(*, policy_revision: str = generation_policy.POLICY_REVISION) -> bytes:
+def _health(*, runtime_version: str = _RUNTIME_VERSION) -> bytes:
     return (
         GenerationHealth(
-            policy_revision=policy_revision,
             sdk_version=_SDK_VERSION,
-            runtime_version=_RUNTIME_VERSION,
+            runtime_version=runtime_version,
         )
         .model_dump_json()
         .encode()
@@ -168,16 +157,28 @@ def _run_protocol_peer(
 ) -> None:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     admissions: dict[str, GenerationAdmission] = {}
+    admission_modes = {
+        generation_draft_fingerprint(_command(mode)): mode
+        for mode in (
+            "incremental",
+            "sequence-gap",
+            "after-terminal",
+            "oversized-frame",
+            "accepted-stream-loss",
+            "capacity-exact",
+            "capacity-content-type-near-miss",
+            "capacity-body-near-miss",
+        )
+    }
+    admission_modes[generation_draft_fingerprint(_chat_draft("accepted-capacity"))] = (
+        "accepted-capacity"
+    )
 
     @app.get("/health")
     async def health(request: Request) -> Response:
         report.send(("health", request.url.path))
-        revision = (
-            f"{generation_policy.POLICY_REVISION}.drifted"
-            if health_mismatch
-            else generation_policy.POLICY_REVISION
-        )
-        return Response(_health(policy_revision=revision), media_type="application/json")
+        runtime_version = f"{_RUNTIME_VERSION}.drifted" if health_mismatch else _RUNTIME_VERSION
+        return Response(_health(runtime_version=runtime_version), media_type="application/json")
 
     @app.post("/v2/generations")
     async def generate(request: Request) -> Response:
@@ -190,24 +191,6 @@ def _run_protocol_peer(
                 return Response(status_code=409)
             return Response(
                 _EXACT_CAPACITY_REJECTION,
-                status_code=503,
-                media_type="application/json",
-            )
-        if mode == "capacity-exact":
-            return Response(
-                _EXACT_CAPACITY_REJECTION,
-                status_code=503,
-                media_type="application/json",
-            )
-        if mode == "capacity-content-type-near-miss":
-            return Response(
-                _EXACT_CAPACITY_REJECTION,
-                status_code=503,
-                headers={"content-type": "application/json; charset=utf-8"},
-            )
-        if mode == "capacity-body-near-miss":
-            return Response(
-                _EXACT_CAPACITY_REJECTION + b"\n",
                 status_code=503,
                 media_type="application/json",
             )
@@ -229,9 +212,7 @@ def _run_protocol_peer(
                 yield _frame(1, GenerationText(text="late"))
                 return
             if mode == "oversized-frame":
-                bound = generation_policy.operation_policy(
-                    "metadata_enrichment"
-                ).stream.max_frame_bytes
+                bound = payload["spec"]["bounds"]["stream"]["max_frame_bytes"]
                 yield _frame(0, GenerationText(text="x" * (bound + 1)))
                 return
             if mode == "accepted-stream-loss":
@@ -244,14 +225,33 @@ def _run_protocol_peer(
     @app.post("/v2/generation-admissions")
     async def admit(request: Request) -> Response:
         admission_request = GenerationAdmissionRequest.model_validate_json(await request.body())
+        mode = admission_modes[admission_request.request_fingerprint]
+        report.send(("admission", request.url.path, str(admission_request.request_id), mode))
+        if mode == "capacity-exact":
+            return Response(
+                _EXACT_CAPACITY_REJECTION,
+                status_code=503,
+                media_type="application/json",
+            )
+        if mode == "capacity-content-type-near-miss":
+            return Response(
+                _EXACT_CAPACITY_REJECTION,
+                status_code=503,
+                headers={"content-type": "application/json; charset=utf-8"},
+            )
+        if mode == "capacity-body-near-miss":
+            return Response(
+                _EXACT_CAPACITY_REJECTION + b"\n",
+                status_code=503,
+                media_type="application/json",
+            )
         admission = GenerationAdmission(
             request_id=admission_request.request_id,
             admission_id=uuid4(),
             admitted_at=_ACCEPTED_AT,
-            runtime_deadline_seconds=generation_policy.CHAT_ADMISSION_RUNTIME_SECONDS,
+            runtime_deadline_seconds=admission_request.turn_timeout_seconds,
         )
         admissions[str(admission.admission_id)] = admission
-        report.send(("admission", request.url.path, str(admission_request.request_id)))
         return Response(
             admission.model_dump_json().encode(),
             media_type="application/json",
@@ -345,7 +345,20 @@ def _stop_peer(process: multiprocessing.Process, stop: Any) -> None:
 
 
 async def _drain(client: CodexGenerationClient, mode: str) -> list[GenerationFrame]:
-    return [frame async for frame in client.stream(_command(mode))]
+    return [frame async for frame in _bound_stream(client, _command(mode))]
+
+
+def _bound_stream(
+    client: CodexGenerationClient,
+    draft: GenerationCommandDraft,
+    admissions: list[GenerationAdmission] | None = None,
+) -> AsyncIterator[GenerationFrame]:
+    async def bind_admission(admission: GenerationAdmission) -> GenerationCommand:
+        if admissions is not None:
+            admissions.append(admission)
+        return generation_command_from_draft(draft, tool_grant=None)
+
+    return client.stream(draft, bind_admission=bind_admission)
 
 
 def _messages(connection: multiprocessing.connection.Connection) -> Iterator[tuple[Any, ...]]:
@@ -353,7 +366,7 @@ def _messages(connection: multiprocessing.connection.Connection) -> Iterator[tup
         yield connection.recv()
 
 
-def test_v2_client_preflights_and_classifies_only_strict_incremental_streams() -> None:
+def test_v3_client_preflights_and_classifies_only_strict_incremental_streams() -> None:
     (
         socket_path,
         process,
@@ -368,13 +381,22 @@ def test_v2_client_preflights_and_classifies_only_strict_incremental_streams() -
 
         async def exercise() -> None:
             health = await client.health()
-            assert health.policy_revision == generation_policy.POLICY_REVISION
+            assert health.sdk_version == _SDK_VERSION
+            assert health.runtime_version == _RUNTIME_VERSION
 
-            stream = client.stream(_command("incremental")).__aiter__()
+            tool_free_admissions: list[GenerationAdmission] = []
+            stream = _bound_stream(
+                client,
+                _command("incremental"),
+                tool_free_admissions,
+            ).__aiter__()
             first = await asyncio.wait_for(anext(stream), 2)
             assert first.sequence == 0
             assert isinstance(first.event, GenerationText)
             assert first.event.text == "first"
+            assert len(tool_free_admissions) == 1, (
+                "tool-free generation was dispatched before its durable admission binding"
+            )
             assert first_frame_sent.is_set()
             assert not release_stream.is_set(), "client buffered instead of yielding frame zero"
             release_stream.set()
@@ -388,12 +410,21 @@ def test_v2_client_preflights_and_classifies_only_strict_incremental_streams() -
 
             observed: list[GenerationFrame] = []
             with pytest.raises(CodexGenerationTransportAmbiguous):
-                async for frame in client.stream(_command("accepted-stream-loss")):
+                async for frame in _bound_stream(client, _command("accepted-stream-loss")):
                     observed.append(frame)
             assert [frame.sequence for frame in observed] == [0]
 
+            capacity_admissions: list[GenerationAdmission] = []
             with pytest.raises(CodexGenerationCapacityUnavailable):
-                await _drain(client, "capacity-exact")
+                async for _frame_value in _bound_stream(
+                    client,
+                    _command("capacity-exact"),
+                    capacity_admissions,
+                ):
+                    pass
+            assert capacity_admissions == [], (
+                "pre-admission capacity refusal must not arm durable model work"
+            )
             for mode in (
                 "capacity-content-type-near-miss",
                 "capacity-body-near-miss",
@@ -401,14 +432,21 @@ def test_v2_client_preflights_and_classifies_only_strict_incremental_streams() -
                 with pytest.raises(CodexGenerationRequestRejected):
                     await _drain(client, mode)
 
-            chat_command = _chat_command("accepted-capacity")
+            chat_draft = _chat_draft("accepted-capacity")
 
             async def bind_admission(_admission: GenerationAdmission) -> GenerationCommand:
-                return chat_command
+                return generation_command_from_draft(
+                    chat_draft,
+                    tool_grant=BearerToolGrant(
+                        token=SecretStr(
+                            "client-admission-proof-grant-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                        )
+                    ),
+                )
 
             with pytest.raises(CodexGenerationTransportAmbiguous):
                 async for _frame_value in client.stream(
-                    chat_command,
+                    chat_draft,
                     bind_admission=bind_admission,
                 ):
                     pass
@@ -421,10 +459,49 @@ def test_v2_client_preflights_and_classifies_only_strict_incremental_streams() -
 
         asyncio.run(exercise())
         messages = tuple(_messages(report))
-        generation_paths = [item[1] for item in messages if item[0] == "generation"]
-        assert generation_paths == ["/v2/generations"] * 9
-        admission_paths = [item[1] for item in messages if item[0] == "admission"]
-        assert admission_paths == ["/v2/generation-admissions"]
+        generation_modes = [item[2] for item in messages if item[0] == "generation"]
+        assert generation_modes == [
+            "incremental",
+            "sequence-gap",
+            "after-terminal",
+            "oversized-frame",
+            "accepted-stream-loss",
+            "accepted-capacity",
+        ]
+        admission_modes = [item[3] for item in messages if item[0] == "admission"]
+        assert admission_modes == [
+            "incremental",
+            "sequence-gap",
+            "after-terminal",
+            "oversized-frame",
+            "accepted-stream-loss",
+            "capacity-exact",
+            "capacity-content-type-near-miss",
+            "capacity-body-near-miss",
+            "accepted-capacity",
+        ]
+        dispatch_order = [
+            (item[0], item[3] if item[0] == "admission" else item[2])
+            for item in messages
+            if item[0] in {"admission", "generation"}
+        ]
+        assert dispatch_order == [
+            ("admission", "incremental"),
+            ("generation", "incremental"),
+            ("admission", "sequence-gap"),
+            ("generation", "sequence-gap"),
+            ("admission", "after-terminal"),
+            ("generation", "after-terminal"),
+            ("admission", "oversized-frame"),
+            ("generation", "oversized-frame"),
+            ("admission", "accepted-stream-loss"),
+            ("generation", "accepted-stream-loss"),
+            ("admission", "capacity-exact"),
+            ("admission", "capacity-content-type-near-miss"),
+            ("admission", "capacity-body-near-miss"),
+            ("admission", "accepted-capacity"),
+            ("generation", "accepted-capacity"),
+        ]
         cancel_paths = [item[1] for item in messages if item[0] == "cancel"]
         assert cancel_paths == [f"/v2/generations/{_REQUEST_ID}/cancel"] * 2
         policy_controls = [item for item in messages if item[0] == "policy_violation"]
@@ -461,7 +538,7 @@ def test_v2_client_preflights_and_classifies_only_strict_incremental_streams() -
     ) = _start_peer(health_mismatch=True)
     try:
         mismatch_client = CodexGenerationClient(mismatch_path)
-        with pytest.raises(CodexGenerationProtocolDefect, match="policy"):
+        with pytest.raises(CodexGenerationProtocolDefect, match="runtime identity"):
             asyncio.run(_drain(mismatch_client, "incremental"))
         assert tuple(_messages(mismatch_report)) == (("health", "/health"),)
     finally:

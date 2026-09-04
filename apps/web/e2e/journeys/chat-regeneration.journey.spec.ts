@@ -65,7 +65,6 @@ test("regenerating a completed answer creates a navigable sibling that survives 
   await gotoWithStrictCsp(page, `/conversations/${conversationId}`);
   const input = page.getByRole("textbox", { name: /ask anything/i });
   await expect(input).toBeVisible();
-  await page.getByRole("radio", { name: /^Fast\b/ }).check();
   await input.fill(
     "What did SOFIA establish about water in Clavius Crater? Use the attached source.",
   );
@@ -81,13 +80,13 @@ test("regenerating a completed answer creates a navigable sibling that survives 
   const admitted = (
     JSON.parse(await firstRun.text()) as {
       data: {
-        run: { profile_id: string };
+        run: { run_selection: { selection: unknown } };
         assistant_message: { id: string };
       };
     }
   ).data;
   const originalAssistantId = admitted.assistant_message.id;
-  expect(admitted.run.profile_id).toBe("fast");
+  expect(admitted.run.run_selection.selection).toBeTruthy();
   await expect(
     page.getByText(/SOFIA helped confirm water on the Moon/i).first(),
     `Conversation ${conversationId} did not complete its first grounded answer.`,
@@ -138,17 +137,21 @@ test("regenerating a completed answer creates a navigable sibling that survives 
     regen.ok(),
     `Regenerate failed: ${regen.status()} ${(await regen.text()).slice(0, 300)}`,
   ).toBeTruthy();
-  expect(regeneratePostData, "Regenerate grew a selector body").toBeNull();
+  expect(JSON.parse(regeneratePostData ?? "null")).toMatchObject({
+    tool_authority: "ReadOnly",
+  });
   const regenData = (
     JSON.parse(await regen.text()) as {
       data: {
-        run: { profile_id: string };
+        run: { run_selection: { selection: unknown } };
         assistant_message: { id: string };
       };
     }
   ).data;
   const regeneratedAssistantId = regenData.assistant_message.id;
-  expect(regenData.run.profile_id).toBe("fast");
+  expect(regenData.run.run_selection.selection).toEqual(
+    admitted.run.run_selection.selection,
+  );
   // A new sibling candidate, not an overwrite of the original answer.
   expect(regeneratedAssistantId).not.toBe(originalAssistantId);
 

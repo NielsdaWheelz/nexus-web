@@ -1,7 +1,7 @@
-"""Provider-neutral read-resource tool execution for chat.
+"""Route-neutral read-resource tool execution for model generations.
 
-The chat pipeline uses this tool to let the model fetch the exact text of a
-resource. Data access is shared with prompt assembly through
+The shared tool pipeline uses this to let a model fetch the exact text of a
+resource admitted by its frozen generation scope. Data access is shared with prompt assembly through
 :mod:`nexus.services.resource_graph.resolve` (per-scheme bodies) and
 :mod:`nexus.services.media_read_map` (media documents); this module only
 presents the result, labelling every read with an explicit ``kind``:
@@ -34,7 +34,6 @@ from nexus.services.media_read_map import (
     load_media_document,
     read_page_range,
 )
-from nexus.services.resource_graph.context import admits_resource_for_conversation_read
 from nexus.services.resource_graph.refs import (
     ResourceRef,
     ResourceRefParseFailure,
@@ -44,7 +43,6 @@ from nexus.services.resource_graph.resolve import (
     LoadedQuote,
     LoadedResource,
     load_resource_batch,
-    parent_media_id_for_read_pointer,
 )
 from nexus.services.resource_items.capabilities import (
     resource_citation_result_type,
@@ -85,17 +83,24 @@ def execute_read_resource(
     db: Session,
     *,
     viewer_id: UUID,
-    conversation_id: UUID,
+    admitted_resource_uris: frozenset[str],
     uri: str,
 ) -> ReadResourceResult:
-    """Read the exact text of a referenced resource for a chat turn."""
+    """Read exact text under one operation-frozen resource admission set."""
 
-    if not _readable_in_conversation(db, conversation_id, uri):
+    from nexus.services.tool_runtime.resource_scope import resource_uri_is_admitted
+
+    if not resource_uri_is_admitted(
+        db,
+        uri=uri,
+        admitted_resource_uris=admitted_resource_uris,
+        allow_derived_read=True,
+    ):
         return ReadResourceResult(
             uri=uri,
             status="error",
             body=(
-                f"Resource {uri} is not in this conversation's context refs. "
+                f"Resource {uri} is not in this operation's admitted scope. "
                 "Search for an admitted source first."
             ),
             error_code="not_in_context_refs",
@@ -330,31 +335,6 @@ def _loaded_ref(loaded: LoadedResource) -> ResourceRef:
         # justify-defect: loaded resources come from typed ResourceRef loader inputs.
         raise AssertionError(f"Loaded resource has invalid URI {loaded.uri!r}")
     return parsed
-
-
-def _readable_in_conversation(db: Session, conversation_id: UUID, uri: str) -> bool:
-    """A URI is readable when it is context, or its parent media is (gate O2)."""
-    parsed = parse_resource_ref(uri)
-    if not isinstance(parsed, ResourceRefParseFailure) and admits_resource_for_conversation_read(
-        db, conversation_id=conversation_id, target=parsed
-    ):
-        return True
-    parent = _parent_media_ref(db, uri)
-    return parent is not None and admits_resource_for_conversation_read(
-        db, conversation_id=conversation_id, target=parent
-    )
-
-
-def _parent_media_ref(db: Session, uri: str) -> ResourceRef | None:
-    """The ``media:`` ref a media-derived read pointer belongs to, else None."""
-    if uri.startswith("page_range:"):
-        parsed = _parse_page_range(uri)
-        return ResourceRef(scheme="media", id=parsed[0]) if parsed is not None else None
-    ref = parse_resource_ref(uri)
-    if isinstance(ref, ResourceRefParseFailure):
-        return None
-    media_id = parent_media_id_for_read_pointer(db, scheme=ref.scheme, resource_id=ref.id)
-    return ResourceRef(scheme="media", id=media_id) if media_id is not None else None
 
 
 def _parse_page_range(uri: str) -> tuple[UUID, int, int] | None:

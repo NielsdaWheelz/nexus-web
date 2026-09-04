@@ -26,7 +26,7 @@ from nexus.api.routes.internal_ingest import router as internal_ingest_router
 from nexus.api.routes.lectern import router as lectern_router
 from nexus.api.routes.libraries import router as libraries_router
 from nexus.api.routes.listening_state import router as listening_state_router
-from nexus.api.routes.llm_profiles import router as llm_profiles_router
+from nexus.api.routes.llm import router as llm_router
 from nexus.api.routes.me import router as me_router
 from nexus.api.routes.media import router as media_router
 from nexus.api.routes.media_activity import router as media_activity_router
@@ -99,7 +99,7 @@ def create_api_router() -> APIRouter:
     api_router.include_router(chat_runs_router)
     api_router.include_router(chat_reader_selections_router)
     api_router.include_router(oracle_router)
-    api_router.include_router(llm_profiles_router)
+    api_router.include_router(llm_router)
     api_router.include_router(browse_router)
     api_router.include_router(search_router)
     api_router.include_router(vault_router)

@@ -229,7 +229,7 @@ services:
       NEXUS_CODEX_WORKING_DIRECTORY_ROOT: /run/nexus-codex-turns
       NEXUS_CODEX_AGENT_SOCKET: /run/nexus-codex/agent.sock
       NEXUS_CODEX_MCP_ORIGIN: https://${CADDY_SITE:?set}/internal/agent-tools/mcp
-      NEXUS_CODEX_CHAT_NETWORK_ATTESTED: "true"
+      NEXUS_CODEX_MODEL_TOOL_NETWORK_ATTESTED: "true"
     depends_on:
       codex-egress-policy:
         condition: service_healthy

@@ -64,6 +64,10 @@ class Workflow(StrEnum):
     ANDROID_VISUAL = "android-visual"
 
 
+class ChangedOwnerRedStrategy(StrEnum):
+    COHERENT_FAULT = "coherent-fault"
+
+
 class Capability(StrEnum):
     POLICY = "policy"
     POLICY_SELF_TESTS = "policy-self-tests"
@@ -125,7 +129,7 @@ class PriorityRiskId(StrEnum):
 
 
 PRIORITY_RISK_FLOOR = frozenset(PriorityRiskId)
-PRIORITY_RISK_OWNERSHIP_SHA256 = "7d96515facc7ee1e5e87c0dfd4851accb3859e6997d949f6a5d5d2b8e5dbf74e"
+PRIORITY_RISK_OWNERSHIP_SHA256 = "1b5544faca1626807290cf36a03d564a3e6cced76b8847a53b9cd2ed16a94f0e"
 
 
 class ResourceKind(StrEnum):
@@ -137,6 +141,7 @@ class ResourceKind(StrEnum):
     SUPABASE_USER = "supabase-user"
     EMBEDDING_PEER = "embedding-peer"
     CODEX_GENERATION_PEER = "codex-generation-peer"
+    PROVIDER_API_PEER = "provider-api-peer"
     PROCESS = "process"
     EXTENSION_PROFILE = "extension-profile"
     BUILD_ARTIFACT = "build-artifact"

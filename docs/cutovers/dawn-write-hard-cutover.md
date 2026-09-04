@@ -3,7 +3,7 @@
 **Status:** implemented product contract
 
 **Generation authority:**
-[`codex-personal-generation-hard-cutover.md`](codex-personal-generation-hard-cutover.md)
+[`generation-backends-hard-cutover.md`](generation-backends-hard-cutover.md)
 
 ## Product behavior
 

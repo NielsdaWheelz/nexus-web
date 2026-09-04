@@ -85,7 +85,6 @@ def _frozen_worklist(
     worklist = tuple(items)
     payload = {
         **job.payload,
-        "capacity_wait_index": 0,
         _WORKLIST_KEY: _WORKLIST_ADAPTER.dump_python(worklist, mode="json"),
     }
     if not update_running_job_payload(
@@ -99,29 +98,6 @@ def _frozen_worklist(
         raise AssertionError("dawn write sweep lost its claim while freezing work")
     db.commit()
     return worklist
-
-
-def _reset_capacity_wait(
-    db: Session,
-    *,
-    context: JobExecutionContext,
-) -> None:
-    job = get_job(db, context.job_id)
-    if job is None:
-        raise AssertionError("dawn write sweep job disappeared")
-    if job.payload.get("capacity_wait_index") == 0:
-        db.commit()
-        return
-    if not update_running_job_payload(
-        db,
-        job_id=context.job_id,
-        worker_id=context.worker_id,
-        attempt_no=context.attempt_no,
-        payload={**job.payload, "capacity_wait_index": 0},
-    ):
-        db.rollback()
-        raise AssertionError("dawn write sweep lost its claim while advancing work")
-    db.commit()
 
 
 def dawn_write_sweep(*, context: JobExecutionContext) -> dict | RescheduleRequested:
@@ -178,7 +154,6 @@ def dawn_write_sweep(*, context: JobExecutionContext) -> dict | RescheduleReques
                     reason="already_exists",
                 )
                 already_exists += 1
-                _reset_capacity_wait(db, context=context)
                 continue
 
             result = await generate_dawn_write(
@@ -195,7 +170,6 @@ def dawn_write_sweep(*, context: JobExecutionContext) -> dict | RescheduleReques
                 generated += 1
             else:
                 skipped += 1
-            _reset_capacity_wait(db, context=context)
 
         logger.info(
             "dawn_write_sweep_complete",

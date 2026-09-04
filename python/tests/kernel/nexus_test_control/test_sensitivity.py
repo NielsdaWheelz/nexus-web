@@ -24,7 +24,6 @@ from nexus_test_control.sensitivity import (
     SensitivityExecutionError,
     SensitivityRequest,
     _base_overlays,
-    _python_exact_proof_owner,
     behavioral_red,
     canonical_proof,
     declared_fault_for_proof,
@@ -72,6 +71,8 @@ def test_web_base_overlays_scope_the_workspace_session_fixture_to_its_proofs() -
 
 
 def test_exact_python_owner_ignores_other_tests_but_owns_shared_support() -> None:
+    from nexus_test_control.proof_owner import python_exact_proof_owner
+
     baseline = """
 import pytest
 
@@ -94,14 +95,14 @@ def test_other() -> None:
     shared_support_change = baseline.replace("LIMIT = 16", "LIMIT = 17")
     ambiguous_owner = baseline + "\ndef test_owner() -> None:\n    assert bounded(16)\n"
 
-    owner = _python_exact_proof_owner(baseline, "test_owner")
+    owner = python_exact_proof_owner(baseline, "test_owner")
 
     assert owner is not None
-    assert _python_exact_proof_owner(unrelated_test_change, "test_owner") == owner
-    assert _python_exact_proof_owner(sibling_definition_change, "test_owner") == owner
-    assert _python_exact_proof_owner(selected_test_change, "test_owner") != owner
-    assert _python_exact_proof_owner(shared_support_change, "test_owner") != owner
-    assert _python_exact_proof_owner(ambiguous_owner, "test_owner") is None
+    assert python_exact_proof_owner(unrelated_test_change, "test_owner") == owner
+    assert python_exact_proof_owner(sibling_definition_change, "test_owner") == owner
+    assert python_exact_proof_owner(selected_test_change, "test_owner") != owner
+    assert python_exact_proof_owner(shared_support_change, "test_owner") != owner
+    assert python_exact_proof_owner(ambiguous_owner, "test_owner") is None
 
 
 def test_workflow_sensitivity_retains_fault_only_for_unchanged_exact_owner(
@@ -123,11 +124,15 @@ def test_other() -> None:
     assert True
 """
     owner.write_text(baseline, encoding="utf-8")
+    fault_target_path = "python/nexus_test_control/runner.py"
+    fault_target = tmp_path / fault_target_path
+    fault_target.parent.mkdir(parents=True)
+    fault_target.write_text("old\n", encoding="utf-8")
     for command in (
         ("git", "init", "-q"),
         ("git", "config", "user.email", "nexus-test@example.test"),
         ("git", "config", "user.name", "Nexus Test"),
-        ("git", "add", proof_path),
+        ("git", "add", "--", proof_path, fault_target_path),
         ("git", "commit", "-qm", "base"),
     ):
         subprocess.run(command, cwd=tmp_path, check=True)

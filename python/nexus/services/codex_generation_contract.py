@@ -6,9 +6,11 @@ import hashlib
 import json
 from datetime import datetime
 from types import MappingProxyType
-from typing import Annotated, Literal, Self, get_origin
+from typing import TYPE_CHECKING, Annotated, Literal, Self, assert_never, get_origin
 from uuid import UUID
 
+from provider_runtime import Absent as RuntimeAbsent
+from provider_runtime import Present as RuntimePresent
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -21,7 +23,7 @@ from pydantic import (
 )
 from pydantic_core import PydanticUndefined
 
-from nexus.services import generation_policy
+from nexus.schemas.presence import Absent, Presence, Present
 from nexus.services.generation_intent import (
     BearerToolGrant,
     GenerationIntent,
@@ -30,18 +32,46 @@ from nexus.services.generation_intent import (
     utf8_size,
     validate_intent_bounds,
 )
+from nexus.services.generation_selection import CodexPersonalSelection
+from nexus.services.generation_spec import (
+    CodexDispatchTargetSnapshot,
+    GenerationSpecWire,
+    StrictJsonOutputSnapshot,
+    TextOutputSnapshot,
+)
 
-COMMAND_SCHEMA_VERSION = "nexus-generation-command.v2"
-ADMISSION_SCHEMA_VERSION = "nexus-generation-admission.v1"
+if TYPE_CHECKING:
+    from provider_runtime.agent_runtime import (
+        AgentModelCatalog,
+        AgentModelFacts,
+        AgentUpgradeFacts,
+        UpgradeSourceConflict,
+        UpgradeTargetAmbiguous,
+        UpgradeTargetUnresolved,
+    )
+
+COMMAND_SCHEMA_VERSION = "nexus-generation-command.v3"
+COMMAND_DRAFT_SCHEMA_VERSION = "nexus-generation-command-draft.v1"
+ADMISSION_SCHEMA_VERSION = "nexus-generation-admission.v2"
 EVENT_SCHEMA_VERSION = "nexus-generation-event.v2"
 HEALTH_SCHEMA_VERSION = "nexus-generation-health.v2"
 REJECTION_SCHEMA_VERSION = "nexus-generation-rejection.v2"
+MODEL_CATALOG_SCHEMA_VERSION = "nexus-codex-model-catalog.v1"
 MAX_OUTPUT_SCHEMA_BYTES = 64 * 1024
 MAX_TOOL_GRANT_BYTES = 16 * 1024
+MAX_MODEL_TOOL_PLAN_BYTES = 64 * 1024
+MAX_MODEL_CATALOG_BODY_BYTES = 2 * 1024 * 1024
 MAX_ADMISSION_BODY_BYTES = 4 * 1024
 COMMAND_ENVELOPE_BYTES = 4 * 1024
 MAX_COMMAND_BODY_BYTES = (
-    6 * (32 * 1024 + 1024 * 1024 + MAX_OUTPUT_SCHEMA_BYTES + MAX_TOOL_GRANT_BYTES)
+    6
+    * (
+        32 * 1024
+        + 1024 * 1024
+        + MAX_OUTPUT_SCHEMA_BYTES
+        + MAX_TOOL_GRANT_BYTES
+        + MAX_MODEL_TOOL_PLAN_BYTES
+    )
     + COMMAND_ENVELOPE_BYTES
 )
 
@@ -65,131 +95,170 @@ class _WireModel(BaseModel):
         return data
 
 
-class _Operation(_WireModel):
-    revision: Annotated[str, StringConstraints(min_length=1, max_length=128)]
+CatalogKey = Annotated[str, StringConstraints(min_length=1, max_length=256)]
+CatalogRevision = Annotated[str, StringConstraints(min_length=1, max_length=256)]
+Sha256Hex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 
 
-class MetadataEnrichmentOperation(_Operation):
-    kind: Literal["metadata_enrichment"] = "metadata_enrichment"
+class CodexCatalogReasoning(_WireModel):
+    key: CatalogKey
+    label: Annotated[str, StringConstraints(min_length=1, max_length=1_000)]
+    native_wire_value: CatalogKey
 
 
-class MediaSummaryOperation(_Operation):
-    kind: Literal["media_summary"] = "media_summary"
+class CodexCatalogUpgrade(_WireModel):
+    target_key: CatalogKey
 
 
-class SynapseOperation(_Operation):
-    kind: Literal["synapse"] = "synapse"
+class CodexCatalogModel(_WireModel):
+    key: CatalogKey
+    dispatch_model: CatalogKey
+    label: Annotated[str, StringConstraints(min_length=1, max_length=1_000)]
+    source_context_window: Presence[int]
+    source_max_output_tokens: Presence[int]
+    input_modalities: tuple[Literal["text", "image"], ...] = Field(min_length=1)
+    reasoning: tuple[CodexCatalogReasoning, ...] = Field(min_length=1, max_length=16)
+    source_default_reasoning: Presence[CatalogKey]
+    upgrade: Presence[CodexCatalogUpgrade]
+    retirement: Absent
+    row_fingerprint: Sha256Hex
+
+    @model_validator(mode="after")
+    def _validate_source_facts(self) -> Self:
+        if len(set(self.input_modalities)) != len(self.input_modalities):
+            raise ValueError("Codex catalog input modalities must be unique")
+        reasoning_keys = tuple(item.key for item in self.reasoning)
+        if len(set(reasoning_keys)) != len(reasoning_keys):
+            raise ValueError("Codex catalog reasoning keys must be unique")
+        for capacity in (self.source_context_window, self.source_max_output_tokens):
+            if isinstance(capacity, Present) and capacity.value <= 0:
+                raise ValueError("Codex catalog source capacities must be positive")
+        if (
+            isinstance(self.source_default_reasoning, Present)
+            and self.source_default_reasoning.value not in reasoning_keys
+        ):
+            raise ValueError("Codex catalog default reasoning is not a reasoning row")
+        return self
 
 
-class DawnWriteOperation(_Operation):
-    kind: Literal["dawn_write"] = "dawn_write"
+class CodexUpgradeTargetUnresolved(_WireModel):
+    kind: Literal["upgrade_target_unresolved"] = "upgrade_target_unresolved"
+    model_key: CatalogKey
+    native_target: CatalogKey
 
 
-class OracleOperation(_Operation):
-    kind: Literal["oracle"] = "oracle"
+class CodexUpgradeTargetAmbiguous(_WireModel):
+    kind: Literal["upgrade_target_ambiguous"] = "upgrade_target_ambiguous"
+    model_key: CatalogKey
+    native_target: CatalogKey
 
 
-class DossierPageOperation(_Operation):
-    kind: Literal["dossier_page"] = "dossier_page"
+class CodexUpgradeSourceConflict(_WireModel):
+    kind: Literal["upgrade_source_conflict"] = "upgrade_source_conflict"
+    model_key: CatalogKey
+    native_targets: tuple[CatalogKey, ...] = Field(min_length=2, max_length=16)
 
 
-class DossierNoteOperation(_Operation):
-    kind: Literal["dossier_note"] = "dossier_note"
-
-
-class DossierMediaOperation(_Operation):
-    kind: Literal["dossier_media"] = "dossier_media"
-
-
-class DossierConversationOperation(_Operation):
-    kind: Literal["dossier_conversation"] = "dossier_conversation"
-
-
-class DossierLibraryOperation(_Operation):
-    kind: Literal["dossier_library"] = "dossier_library"
-
-
-class DossierPodcastOperation(_Operation):
-    kind: Literal["dossier_podcast"] = "dossier_podcast"
-
-
-class DossierContributorOperation(_Operation):
-    kind: Literal["dossier_contributor"] = "dossier_contributor"
-
-
-class DossierIdeaOperation(_Operation):
-    kind: Literal["dossier_idea"] = "dossier_idea"
-
-
-class DossierIdeaResolveOperation(_Operation):
-    kind: Literal["dossier_idea_resolve"] = "dossier_idea_resolve"
-
-
-class ChatOperation(_Operation):
-    kind: Literal["chat"] = "chat"
-    profile: Literal["fast", "balanced", "deep"]
-
-
-GenerationOperation = Annotated[
-    MetadataEnrichmentOperation
-    | MediaSummaryOperation
-    | SynapseOperation
-    | DawnWriteOperation
-    | OracleOperation
-    | DossierPageOperation
-    | DossierNoteOperation
-    | DossierMediaOperation
-    | DossierConversationOperation
-    | DossierLibraryOperation
-    | DossierPodcastOperation
-    | DossierContributorOperation
-    | DossierIdeaOperation
-    | DossierIdeaResolveOperation
-    | ChatOperation,
+CodexCatalogDiagnostic = Annotated[
+    CodexUpgradeTargetUnresolved | CodexUpgradeTargetAmbiguous | CodexUpgradeSourceConflict,
     Field(discriminator="kind"),
 ]
 
 
-class GenerationCommand(_WireModel):
-    schema_version: Literal["nexus-generation-command.v2"] = COMMAND_SCHEMA_VERSION
-    request_id: UUID
-    operation: GenerationOperation
-    policy_revision: Annotated[str, StringConstraints(min_length=1, max_length=128)]
-    policy_fingerprint: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
-    intent: GenerationIntent
-    tool_grant: BearerToolGrant | None = None
+class CodexModelCatalog(_WireModel):
+    """Secret-free authenticated AgentRuntime catalog crossing the private UDS."""
+
+    schema_version: Literal["nexus-codex-model-catalog.v1"] = MODEL_CATALOG_SCHEMA_VERSION
+    backend_contract_revision: CatalogRevision
+    definition_revision: Sha256Hex
+    native_revision: Presence[CatalogRevision]
+    observed_at: datetime
+    models: tuple[CodexCatalogModel, ...] = Field(max_length=512)
+    diagnostics: tuple[CodexCatalogDiagnostic, ...] = Field(max_length=512)
+
+    @field_validator("observed_at")
+    @classmethod
+    def _observed_at_is_aware(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("Codex catalog observed_at must be timezone-aware")
+        return value
 
     @model_validator(mode="after")
-    def _matches_policy(self) -> Self:
-        if isinstance(self.operation, ChatOperation):
-            policy = generation_policy.chat_policy(self.operation.profile)
-            expected_revision = generation_policy.operation_revision(
-                "chat", profile=self.operation.profile
-            )
-            if self.tool_grant is None:
-                raise ValueError("ChatTools generation requires a bearer grant")
-            if not isinstance(self.intent.output, TextOutput):
-                raise ValueError("ChatTools requires Text output")
-        else:
-            policy = generation_policy.operation_policy(self.operation.kind)
-            expected_revision = generation_policy.operation_revision(self.operation.kind)
-            if self.tool_grant is not None:
-                raise ValueError("Synthesis generation forbids a bearer grant")
-        if self.operation.revision != expected_revision:
-            raise ValueError("operation revision does not match the policy catalog")
-        if self.policy_revision != generation_policy.POLICY_REVISION:
-            raise ValueError("policy revision does not match the host policy")
-        if self.policy_fingerprint != generation_policy.POLICY_FINGERPRINT:
-            raise ValueError("policy fingerprint does not match the host policy")
+    def _unique_models(self) -> Self:
+        keys = tuple(model.key for model in self.models)
+        if len(set(keys)) != len(keys):
+            raise ValueError("Codex catalog model keys must be unique")
+        return self
+
+
+class _GenerationCommandFacts(_WireModel):
+    """Grant-free semantic facts shared by admission and dispatch."""
+
+    request_id: UUID
+    spec: GenerationSpecWire
+    intent: GenerationIntent
+
+    @model_validator(mode="after")
+    def _matches_frozen_spec(self) -> Self:
+        if not isinstance(self.spec.selection, CodexPersonalSelection) or not isinstance(
+            self.spec.resolved_dispatch_target, CodexDispatchTargetSnapshot
+        ):
+            raise ValueError("Codex host accepts only CodexPersonal GenerationSpec values")
         validate_intent_bounds(
             self.intent,
-            instructions_max_bytes=policy.instructions_max_bytes,
-            input_max_bytes=policy.input_max_bytes,
+            instructions_max_bytes=self.spec.bounds.instructions_max_bytes,
+            input_max_bytes=self.spec.bounds.input_max_bytes,
         )
+        if _text_digest(self.intent.instructions) != self.spec.instructions_digest:
+            raise ValueError("instructions differ from the frozen GenerationSpec")
+        if _text_digest(self.intent.input) != self.spec.input_digest:
+            raise ValueError("input differs from the frozen GenerationSpec")
+        if _digest(self.intent.model_dump(mode="json", by_alias=True)) != (
+            self.spec.prompt_payload_ref.payload_digest
+        ):
+            raise ValueError("intent differs from the frozen prompt payload identity")
+        _validate_output_contract(self)
+
+        plan = self.spec.model_tool_plan_snapshot
+        if isinstance(plan, Present):
+            if plan.value.exposure.type != "Native":
+                raise ValueError("Codex ModelTools requires Native tool exposure")
+        elif not isinstance(plan, Absent):
+            assert_never(plan)
         if isinstance(self.intent.output, JsonSchemaOutput):
             schema_bytes = _canonical_json_bytes(self.intent.output.schema_)
             if len(schema_bytes) > MAX_OUTPUT_SCHEMA_BYTES:
                 raise ValueError(f"schema bytes exceed {MAX_OUTPUT_SCHEMA_BYTES} bytes")
+        if isinstance(plan, Present):
+            plan_bytes = len(_canonical_json_bytes(plan.value.model_dump(mode="json")))
+            if plan_bytes > MAX_MODEL_TOOL_PLAN_BYTES:
+                raise ValueError(f"model tool plan bytes exceed {MAX_MODEL_TOOL_PLAN_BYTES} bytes")
+        return self
+
+
+class GenerationCommandDraft(_GenerationCommandFacts):
+    """Grant-free command admitted before any durable child or SDK work."""
+
+    schema_version: Literal["nexus-generation-command-draft.v1"] = COMMAND_DRAFT_SCHEMA_VERSION
+
+
+class GenerationCommand(_GenerationCommandFacts):
+    """The sole dispatchable command, created only after host admission."""
+
+    schema_version: Literal["nexus-generation-command.v3"] = COMMAND_SCHEMA_VERSION
+    tool_grant: BearerToolGrant | None = None
+
+    @model_validator(mode="after")
+    def _dispatch_authority_is_exact(self) -> Self:
+        plan = self.spec.model_tool_plan_snapshot
+        if isinstance(plan, Present):
+            if self.tool_grant is None:
+                raise ValueError("ModelTools generation requires a bearer grant")
+        elif isinstance(plan, Absent):
+            if self.tool_grant is not None:
+                raise ValueError("NoModelTools generation forbids a bearer grant")
+        else:
+            assert_never(plan)
         if self.tool_grant is not None:
             grant_bytes = utf8_size(self.tool_grant.token.get_secret_value())
             if grant_bytes > MAX_TOOL_GRANT_BYTES:
@@ -200,29 +269,14 @@ class GenerationCommand(_WireModel):
 class GenerationAdmissionRequest(_WireModel):
     """Grant-free immutable identity used to reserve the sole host slot."""
 
-    schema_version: Literal["nexus-generation-admission-request.v1"] = (
-        "nexus-generation-admission-request.v1"
+    schema_version: Literal["nexus-generation-admission-request.v2"] = (
+        "nexus-generation-admission-request.v2"
     )
     request_id: UUID
-    operation: GenerationOperation
-    policy_revision: Annotated[str, StringConstraints(min_length=1, max_length=128)]
-    policy_fingerprint: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
-    request_fingerprint: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
-
-    @model_validator(mode="after")
-    def _matches_policy(self) -> Self:
-        if not isinstance(self.operation, ChatOperation):
-            raise ValueError("two-phase admission is valid only for ChatTools")
-        expected_revision = generation_policy.operation_revision(
-            "chat", profile=self.operation.profile
-        )
-        if self.operation.revision != expected_revision:
-            raise ValueError("admission operation revision does not match the policy catalog")
-        if self.policy_revision != generation_policy.POLICY_REVISION:
-            raise ValueError("admission policy revision does not match the host policy")
-        if self.policy_fingerprint != generation_policy.POLICY_FINGERPRINT:
-            raise ValueError("admission policy fingerprint does not match the host policy")
-        return self
+    generation_spec_fingerprint: Sha256Hex
+    request_fingerprint: Sha256Hex
+    turn_timeout_seconds: int = Field(gt=0)
+    model_tool_plan_fingerprint: Sha256Hex
 
 
 FailureKind = Literal[
@@ -324,7 +378,7 @@ AcceptedAt = Annotated[
 class GenerationAdmission(_WireModel):
     """One replay-stable pre-provider acceptance of the sole host slot."""
 
-    schema_version: Literal["nexus-generation-admission.v1"] = ADMISSION_SCHEMA_VERSION
+    schema_version: Literal["nexus-generation-admission.v2"] = ADMISSION_SCHEMA_VERSION
     request_id: UUID
     admission_id: UUID
     admitted_at: AcceptedAt
@@ -339,13 +393,6 @@ class GenerationAdmission(_WireModel):
             raise ValueError("admitted_at must be a real UTC RFC3339 instant") from error
         if parsed.tzinfo is None or parsed.utcoffset() is None:
             raise ValueError("admitted_at must be UTC")
-        return value
-
-    @field_validator("runtime_deadline_seconds")
-    @classmethod
-    def _runtime_deadline_matches_policy(cls, value: int) -> int:
-        if value != generation_policy.CHAT_ADMISSION_RUNTIME_SECONDS:
-            raise ValueError("admission runtime deadline differs from Chat policy")
         return value
 
 
@@ -419,8 +466,7 @@ class GenerationHealth(_WireModel):
     backend: Literal["codex"] = "codex"
     transport: Literal["sdk"] = "sdk"
     auth_profile: Literal["codex-personal"] = "codex-personal"
-    command_schema_version: Literal["nexus-generation-command.v2"] = COMMAND_SCHEMA_VERSION
-    policy_revision: Annotated[str, StringConstraints(min_length=1, max_length=128)]
+    command_schema_version: Literal["nexus-generation-command.v3"] = COMMAND_SCHEMA_VERSION
     sdk_version: Annotated[str, StringConstraints(min_length=1, max_length=128)]
     runtime_version: Annotated[str, StringConstraints(min_length=1, max_length=128)]
 
@@ -505,14 +551,170 @@ def retained_terminal_error_detail(terminal: GenerationTerminal) -> str | None:
     return f"codex generation failed: {terminal.failure.kind}"
 
 
+def codex_model_catalog_to_wire(catalog: AgentModelCatalog) -> CodexModelCatalog:
+    """Translate the external AgentRuntime value at the private-host boundary."""
+
+    return CodexModelCatalog(
+        backend_contract_revision=catalog.backend_contract_revision,
+        definition_revision=catalog.definition_revision,
+        native_revision=_runtime_presence_to_wire(catalog.native_revision),
+        observed_at=catalog.observed_at,
+        models=tuple(_codex_model_to_wire(model) for model in catalog.models),
+        diagnostics=tuple(_codex_diagnostic_to_wire(item) for item in catalog.diagnostics),
+    )
+
+
+def codex_model_catalog_from_wire(catalog: CodexModelCatalog) -> AgentModelCatalog:
+    """Recover the public AgentRuntime value after strict private-wire decoding."""
+
+    from provider_runtime.agent_runtime import AgentModelCatalog
+
+    return AgentModelCatalog(
+        backend_contract_revision=catalog.backend_contract_revision,
+        definition_revision=catalog.definition_revision,
+        native_revision=_wire_presence_to_runtime(catalog.native_revision),
+        observed_at=catalog.observed_at,
+        models=tuple(_codex_model_from_wire(model) for model in catalog.models),
+        diagnostics=tuple(_codex_diagnostic_from_wire(item) for item in catalog.diagnostics),
+    )
+
+
+def _codex_model_to_wire(model: AgentModelFacts) -> CodexCatalogModel:
+    upgrade: Absent | Present[CodexCatalogUpgrade]
+    if isinstance(model.upgrade, RuntimePresent):
+        upgrade = Present[CodexCatalogUpgrade](
+            value=CodexCatalogUpgrade(target_key=model.upgrade.value.target_key)
+        )
+    else:
+        upgrade = Absent()
+    return CodexCatalogModel(
+        key=model.key,
+        dispatch_model=model.dispatch_model,
+        label=model.label,
+        source_context_window=_runtime_presence_to_wire(model.source_context_window),
+        source_max_output_tokens=_runtime_presence_to_wire(model.source_max_output_tokens),
+        input_modalities=model.input_modalities,
+        reasoning=tuple(
+            CodexCatalogReasoning(
+                key=reasoning.key,
+                label=reasoning.label,
+                native_wire_value=reasoning.native_wire_value,
+            )
+            for reasoning in model.reasoning
+        ),
+        source_default_reasoning=_runtime_presence_to_wire(model.source_default_reasoning),
+        upgrade=upgrade,
+        retirement=Absent(),
+        row_fingerprint=model.row_fingerprint,
+    )
+
+
+def _codex_model_from_wire(model: CodexCatalogModel) -> AgentModelFacts:
+    from provider_runtime.agent_runtime import (
+        AgentModelFacts,
+        AgentReasoningFacts,
+        AgentUpgradeFacts,
+    )
+
+    upgrade: RuntimeAbsent | RuntimePresent[AgentUpgradeFacts]
+    if isinstance(model.upgrade, Present):
+        upgrade = RuntimePresent(AgentUpgradeFacts(target_key=model.upgrade.value.target_key))
+    else:
+        upgrade = RuntimeAbsent()
+    return AgentModelFacts(
+        key=model.key,
+        dispatch_model=model.dispatch_model,
+        label=model.label,
+        source_context_window=_wire_presence_to_runtime(model.source_context_window),
+        source_max_output_tokens=_wire_presence_to_runtime(model.source_max_output_tokens),
+        input_modalities=model.input_modalities,
+        reasoning=tuple(
+            AgentReasoningFacts(
+                key=reasoning.key,
+                label=reasoning.label,
+                native_wire_value=reasoning.native_wire_value,
+            )
+            for reasoning in model.reasoning
+        ),
+        source_default_reasoning=_wire_presence_to_runtime(model.source_default_reasoning),
+        upgrade=upgrade,
+        retirement=RuntimeAbsent(),
+        row_fingerprint=model.row_fingerprint,
+    )
+
+
+def _codex_diagnostic_to_wire(
+    diagnostic: UpgradeTargetUnresolved | UpgradeTargetAmbiguous | UpgradeSourceConflict,
+) -> CodexCatalogDiagnostic:
+    from provider_runtime.agent_runtime import (
+        UpgradeSourceConflict,
+        UpgradeTargetAmbiguous,
+        UpgradeTargetUnresolved,
+    )
+
+    match diagnostic:
+        case UpgradeTargetUnresolved():
+            return CodexUpgradeTargetUnresolved(
+                model_key=diagnostic.model_key,
+                native_target=diagnostic.native_target,
+            )
+        case UpgradeTargetAmbiguous():
+            return CodexUpgradeTargetAmbiguous(
+                model_key=diagnostic.model_key,
+                native_target=diagnostic.native_target,
+            )
+        case UpgradeSourceConflict():
+            return CodexUpgradeSourceConflict(
+                model_key=diagnostic.model_key,
+                native_targets=diagnostic.native_targets,
+            )
+        case _ as unreachable:
+            assert_never(unreachable)
+
+
+def _codex_diagnostic_from_wire(
+    diagnostic: CodexCatalogDiagnostic,
+) -> UpgradeTargetUnresolved | UpgradeTargetAmbiguous | UpgradeSourceConflict:
+    from provider_runtime.agent_runtime import (
+        UpgradeSourceConflict,
+        UpgradeTargetAmbiguous,
+        UpgradeTargetUnresolved,
+    )
+
+    match diagnostic:
+        case CodexUpgradeTargetUnresolved():
+            return UpgradeTargetUnresolved(
+                model_key=diagnostic.model_key,
+                native_target=diagnostic.native_target,
+            )
+        case CodexUpgradeTargetAmbiguous():
+            return UpgradeTargetAmbiguous(
+                model_key=diagnostic.model_key,
+                native_target=diagnostic.native_target,
+            )
+        case CodexUpgradeSourceConflict():
+            return UpgradeSourceConflict(
+                model_key=diagnostic.model_key,
+                native_targets=diagnostic.native_targets,
+            )
+        case _ as unreachable:
+            assert_never(unreachable)
+
+
+def _runtime_presence_to_wire[T](value: RuntimeAbsent | RuntimePresent[T]) -> Absent | Present[T]:
+    if isinstance(value, RuntimeAbsent):
+        return Absent()
+    return Present[T](value=value.value)
+
+
+def _wire_presence_to_runtime[T](value: Absent | Present[T]) -> RuntimeAbsent | RuntimePresent[T]:
+    if isinstance(value, Absent):
+        return RuntimeAbsent()
+    return RuntimePresent(value.value)
+
+
 def capacity_rejection_bytes() -> bytes:
     return b'{"schema_version":"nexus-generation-rejection.v2","kind":"capacity_unavailable"}'
-
-
-def command_policy(command: GenerationCommand) -> generation_policy.OperationPolicy:
-    if isinstance(command.operation, ChatOperation):
-        return generation_policy.chat_policy(command.operation.profile)
-    return generation_policy.operation_policy(command.operation.kind)
 
 
 def _digest(value: object) -> str:
@@ -525,52 +727,104 @@ def _canonical_json_bytes(value: object) -> bytes:
     ).encode()
 
 
-def request_fingerprint(command: GenerationCommand) -> str:
-    """Fingerprint replay-relevant request facts, deliberately excluding the grant."""
+def _text_digest(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
-    if isinstance(command.operation, ChatOperation):
-        tool_plan_revision = generation_policy.TOOL_PLAN_REVISION
-    else:
-        tool_plan_revision = None
+
+def _validate_output_contract(command: _GenerationCommandFacts) -> None:
+    output = command.intent.output
+    frozen = command.spec.output_contract
+    if isinstance(output, TextOutput) and isinstance(frozen, TextOutputSnapshot):
+        return
+    if isinstance(output, JsonSchemaOutput) and isinstance(frozen, StrictJsonOutputSnapshot):
+        if (output.name, output.schema_) == (frozen.name, frozen.json_schema):
+            return
+    raise ValueError("generation output differs from the frozen GenerationSpec")
+
+
+def generation_draft_fingerprint(draft: GenerationCommandDraft) -> str:
+    """Fingerprint the exact grant-free facts journaled before route dispatch."""
+
     return _digest(
         {
-            "operation": command.operation.model_dump(mode="json"),
-            "policy_revision": command.policy_revision,
-            "prompt_revision": command.operation.revision,
-            "tool_plan_revision": tool_plan_revision,
-            "intent_digest": _digest(command.intent.model_dump(mode="json")),
+            "generation_spec_fingerprint": draft.spec.fingerprint,
+            "intent_digest": _digest(draft.intent.model_dump(mode="json", by_alias=True)),
         }
     )
 
 
-def generation_admission_request(command: GenerationCommand) -> GenerationAdmissionRequest:
-    """Project a command onto its grant-free, replay-stable admission identity."""
+def generation_command_draft(command: GenerationCommand) -> GenerationCommandDraft:
+    """Project a dispatchable command back to its exact admitted facts."""
 
-    return GenerationAdmissionRequest(
+    return GenerationCommandDraft(
         request_id=command.request_id,
-        operation=command.operation,
-        policy_revision=command.policy_revision,
-        policy_fingerprint=command.policy_fingerprint,
-        request_fingerprint=request_fingerprint(command),
+        spec=command.spec,
+        intent=command.intent,
+    )
+
+
+def generation_command_from_draft(
+    draft: GenerationCommandDraft,
+    *,
+    tool_grant: BearerToolGrant | None,
+) -> GenerationCommand:
+    """Create the only dispatchable command after successful host admission."""
+
+    return GenerationCommand(
+        request_id=draft.request_id,
+        spec=draft.spec,
+        intent=draft.intent,
+        tool_grant=tool_grant,
+    )
+
+
+def request_fingerprint(command: GenerationCommand) -> str:
+    """Backward-facing dispatch identity; grants never affect replay identity."""
+
+    return generation_draft_fingerprint(generation_command_draft(command))
+
+
+def generation_admission_request(draft: GenerationCommandDraft) -> GenerationAdmissionRequest:
+    """Project a grant-free draft onto its replay-stable admission identity."""
+
+    plan = draft.spec.model_tool_plan_snapshot
+    if isinstance(plan, Present):
+        plan_fingerprint = _digest(plan.value.model_dump(mode="json"))
+    elif isinstance(plan, Absent):
+        plan_fingerprint = _digest(plan.model_dump(mode="json"))
+    else:
+        assert_never(plan)
+    return GenerationAdmissionRequest(
+        request_id=draft.request_id,
+        generation_spec_fingerprint=draft.spec.fingerprint,
+        request_fingerprint=generation_draft_fingerprint(draft),
+        turn_timeout_seconds=draft.spec.bounds.turn_timeout_seconds,
+        model_tool_plan_fingerprint=plan_fingerprint,
     )
 
 
 __all__ = [
     "ADMISSION_SCHEMA_VERSION",
+    "COMMAND_DRAFT_SCHEMA_VERSION",
     "COMMAND_SCHEMA_VERSION",
     "COMMAND_ENVELOPE_BYTES",
     "EVENT_SCHEMA_VERSION",
+    "MODEL_CATALOG_SCHEMA_VERSION",
     "MAX_COMMAND_BODY_BYTES",
     "MAX_ADMISSION_BODY_BYTES",
     "MAX_OUTPUT_SCHEMA_BYTES",
+    "MAX_MODEL_TOOL_PLAN_BYTES",
+    "MAX_MODEL_CATALOG_BODY_BYTES",
     "MAX_TOOL_GRANT_BYTES",
     "FAILURE_KIND_TO_NORMALIZED",
     "NormalizedOutcome",
     "NormalizedFailureCode",
     "GenerationCapacityRejection",
+    "CodexModelCatalog",
     "GenerationAdmission",
     "GenerationAdmissionRequest",
     "GenerationCommand",
+    "GenerationCommandDraft",
     "GenerationContractDefect",
     "GenerationEvent",
     "GenerationFailure",
@@ -585,10 +839,14 @@ __all__ = [
     "GenerationUsage",
     "GenerationUsageEvent",
     "capacity_rejection_bytes",
-    "command_policy",
+    "codex_model_catalog_from_wire",
+    "codex_model_catalog_to_wire",
     "normalized_outcome",
     "normalized_failure",
     "retained_terminal_error_detail",
     "request_fingerprint",
     "generation_admission_request",
+    "generation_command_draft",
+    "generation_command_from_draft",
+    "generation_draft_fingerprint",
 ]

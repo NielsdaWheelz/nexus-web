@@ -4,6 +4,7 @@ import { userEvent } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import "@/app/globals.css";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
+import { RUN_SELECTION } from "@/__tests__/helpers/generationCatalog";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { TOOL_PROJECTION_HEADER } from "@/lib/api/client";
 import {
@@ -79,9 +80,7 @@ function runData(
       conversation_id: CONVERSATION_ID,
       user_message_id: USER_MESSAGE_ID,
       assistant_message_id: ASSISTANT_MESSAGE_ID,
-      profile_id: "balanced",
-      model_name: null,
-      reasoning_effort: null,
+      run_selection: RUN_SELECTION,
       support_id: { kind: "Absent" },
       publication_warning: { kind: "Absent" },
       failure: null,

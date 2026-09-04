@@ -956,7 +956,11 @@ class PassageAnchor(Base):
 
     __tablename__ = "passage_anchors"
 
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
     user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("users.id", name="fk_passage_anchors_user"),
@@ -4621,7 +4625,7 @@ class ConversationShare(Base):
 
 
 class LLMCall(Base):
-    """One replay-stable Codex generation (sole writer: ``llm_ledger``)."""
+    """One route-neutral product generation (sole writer: ``llm_ledger``)."""
 
     __tablename__ = "llm_calls"
 
@@ -4633,40 +4637,20 @@ class LLMCall(Base):
     owner_kind: Mapped[str] = mapped_column(Text, nullable=False)
     owner_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     generation_seq: Mapped[int] = mapped_column(Integer, nullable=False)
-    operation: Mapped[str] = mapped_column(Text, nullable=False)
-    plan_id: Mapped[str] = mapped_column(Text, nullable=False)
-    plan_revision: Mapped[str] = mapped_column(Text, nullable=False)
-    backend: Mapped[str] = mapped_column(Text, nullable=False)
-    transport: Mapped[str] = mapped_column(Text, nullable=False)
-    auth_profile: Mapped[str] = mapped_column(Text, nullable=False)
-    model_name: Mapped[str] = mapped_column(Text, nullable=False)
-    reasoning_effort: Mapped[str] = mapped_column(Text, nullable=False)
-    capability_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    request_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
-    output_schema_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
-    tool_plan_fingerprint: Mapped[str | None] = mapped_column(Text, nullable=True)
-    streaming: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    session_ref: Mapped[dict[str, object] | None] = mapped_column(
+    generation_spec: Mapped[dict[str, object]] = mapped_column(
+        JSONB(none_as_null=True), nullable=False
+    )
+    generation_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
+    outcome: Mapped[str | None] = mapped_column(Text, nullable=True)
+    failure_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    terminal: Mapped[dict[str, object] | None] = mapped_column(
         JSONB(none_as_null=True), nullable=True
     )
-    outcome: Mapped[str | None] = mapped_column(Text, nullable=True)
-    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
-    input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    reasoning_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    cache_read_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    cache_write_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    sdk_version: Mapped[str | None] = mapped_column(Text, nullable=True)
-    runtime_version: Mapped[str | None] = mapped_column(Text, nullable=True)
-    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
         nullable=False,
     )
-    accepted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
     __table_args__ = (
@@ -4675,6 +4659,151 @@ class LLMCall(Base):
             "owner_id",
             "generation_seq",
             name="uq_llm_calls_owner_generation_seq",
+        ),
+    )
+
+
+class LLMModelTurn(Base):
+    """One independently accepted or billable model call within a generation."""
+
+    __tablename__ = "llm_model_turns"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    generation_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("llm_calls.id"),
+        nullable=False,
+    )
+    turn_seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
+    route_request_identity: Mapped[dict[str, object]] = mapped_column(
+        JSONB(none_as_null=True), nullable=False
+    )
+    terminal: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
+    usage: Mapped[dict[str, object] | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
+    billability: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
+    )
+    dispatch_started_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    accepted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "generation_id",
+            "turn_seq",
+            name="uq_llm_model_turns_generation_turn_seq",
+        ),
+    )
+
+
+class LLMModelTurnContinuation(Base):
+    """One sealed provider continuation authorizing an exact successor turn."""
+
+    __tablename__ = "llm_model_turn_continuations"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    generation_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("llm_calls.id"),
+        nullable=False,
+    )
+    source_model_turn_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("llm_model_turns.id"),
+        nullable=False,
+    )
+    successor_turn_seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    target_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
+    codec_id: Mapped[str] = mapped_column(Text, nullable=False)
+    policy_revision: Mapped[str] = mapped_column(Text, nullable=False)
+    envelope_version: Mapped[str] = mapped_column(Text, nullable=False)
+    nonce: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    ciphertext: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "source_model_turn_id",
+            name="uq_llm_model_turn_continuations_source_turn",
+        ),
+        UniqueConstraint(
+            "generation_id",
+            "successor_turn_seq",
+            name="uq_llm_model_turn_continuations_successor_turn",
+        ),
+    )
+
+
+class LLMToolPosition(Base):
+    """One globally ordered canonical tool position within a generation."""
+
+    __tablename__ = "llm_tool_positions"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    generation_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("llm_calls.id"),
+        nullable=False,
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    transport_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    model_turn_seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    transport_call_id: Mapped[str] = mapped_column(Text, nullable=False)
+    canonical_tool_id: Mapped[str] = mapped_column(Text, nullable=False)
+    canonical_input_digest: Mapped[str] = mapped_column(Text, nullable=False)
+    tool_contract_revision: Mapped[str] = mapped_column(Text, nullable=False)
+    plan_revision: Mapped[str] = mapped_column(Text, nullable=False)
+    binding_revision: Mapped[str] = mapped_column(Text, nullable=False)
+    scope_digest: Mapped[str] = mapped_column(Text, nullable=False)
+    budget_digest: Mapped[str] = mapped_column(Text, nullable=False)
+    reservation: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
+    dispatch_claim: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
+    abandoned_attempts: Mapped[int] = mapped_column(Integer, nullable=False)
+    result_evidence: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
+    effect_identity: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
+    settlement: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
+    replay_status: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "generation_id",
+            "position",
+            name="uq_llm_tool_positions_generation_position",
+        ),
+        UniqueConstraint(
+            "generation_id",
+            "transport_kind",
+            "model_turn_seq",
+            "transport_call_id",
+            name="uq_llm_tool_positions_transport_call",
         ),
     )
 
@@ -4923,6 +5052,14 @@ class MessageToolCall(Base):
     canonical_input_sha256: Mapped[str | None] = mapped_column(Text, nullable=True)
     tool_contract_revision: Mapped[str | None] = mapped_column(Text, nullable=True)
     binding_policy_revision: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Current canonical executions point at the route-neutral generation
+    # position that owns ordering, replay, and any stable write-effect identity.
+    # Rejected provider calls have no canonical position and remain NULL.
+    tool_position_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("llm_tool_positions.id"),
+        nullable=True,
+    )
     tool_call_index: Mapped[int] = mapped_column(Integer, nullable=False)
     search_query_fingerprint: Mapped[str | None] = mapped_column(Text, nullable=True)
     scope: Mapped[str] = mapped_column(Text, nullable=False, server_default="all")
@@ -5015,6 +5152,10 @@ class MessageToolCall(Base):
             "tool_call_index",
             name="uix_message_tool_calls_assistant_index",
         ),
+        UniqueConstraint(
+            "tool_position_id",
+            name="uq_message_tool_calls_tool_position",
+        ),
         Index(
             "idx_message_tool_calls_conversation_created",
             "conversation_id",
@@ -5048,6 +5189,46 @@ class MessageToolCall(Base):
         back_populates="tool_call",
         cascade="all, delete-orphan",
         order_by="MessageRetrieval.ordinal",
+    )
+
+
+class AssistantWriteAuthorship(Base):
+    """Durable machine authorship for one concrete additive-write target.
+
+    The generation position is the provenance owner and deliberately outlives
+    the optional Chat projection.  ``target_kind`` + ``target_id`` is a
+    validated polymorphic pointer rather than a foreign key: Undo or a later
+    user deletion may remove the target while its authorship fact remains.
+    """
+
+    __tablename__ = "assistant_write_authorships"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    tool_position_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("llm_tool_positions.id"),
+        nullable=False,
+    )
+    target_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    target_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "target_kind",
+            "target_id",
+            name="uq_assistant_write_authorships_target",
+        ),
+        Index(
+            "ix_assistant_write_authorships_tool_position",
+            "tool_position_id",
+            "created_at",
+            "id",
+        ),
     )
 
 
@@ -5239,14 +5420,11 @@ class ChatRun(Base):
     )
     idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
     payload_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    generation_spec: Mapped[dict[str, object]] = mapped_column(
+        JSONB(none_as_null=True),
+        nullable=False,
+    )
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")
-    # Product selection snapshot and resolved admitted-plan facts.
-    profile_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    tool_profile_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    tool_profile_revision: Mapped[str | None] = mapped_column(Text, nullable=True)
-    tool_profile_snapshot: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
-    model_name: Mapped[str | None] = mapped_column(Text, nullable=True)
-    reasoning_effort: Mapped[str | None] = mapped_column(Text, nullable=True)
     cancel_requested_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True),
         nullable=True,
@@ -5405,6 +5583,11 @@ class ChatPromptAssembly(Base):
         nullable=False,
         server_default=text("'{}'::jsonb"),
     )
+    generation_intent: Mapped[dict[str, object]] = mapped_column(
+        JSONB(none_as_null=True),
+        nullable=False,
+    )
+    generation_intent_digest: Mapped[str] = mapped_column(Text, nullable=False)
     max_context_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
     reserved_output_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
     input_budget_tokens: Mapped[int] = mapped_column(Integer, nullable=False)

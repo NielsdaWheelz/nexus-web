@@ -18,6 +18,7 @@ import type {
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import type { ChatConnectionRecoveries } from "@/lib/conversations/chatConnectionRecovery";
+import type { GenerationSelectionSpec } from "@/lib/conversations/generationCatalog";
 import type {
   DeleteMessageMutation,
   MessageActionMutationOutcome,
@@ -51,8 +52,18 @@ interface ChatSurfaceProps {
     assistantMessageId: string,
   ) => Promise<MessageActionMutationOutcome>;
   rerunningAssistantMessageIds?: ReadonlySet<string>;
+  onRerunAssistantResponseWithSelection?: (
+    assistantMessageId: string,
+    selection: GenerationSelectionSpec,
+    catalogDefinitionRevision: string,
+  ) => Promise<MessageActionMutationOutcome>;
   onRegenerateAssistantResponse?: (
     assistantMessageId: string,
+  ) => Promise<MessageActionMutationOutcome>;
+  onRegenerateAssistantResponseWithSelection?: (
+    assistantMessageId: string,
+    selection: GenerationSelectionSpec,
+    catalogDefinitionRevision: string,
   ) => Promise<MessageActionMutationOutcome>;
   onDeleteMessage?: DeleteMessageMutation;
   connectionRecoveries?: ChatConnectionRecoveries;
@@ -82,7 +93,9 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
       onReplyToAssistant,
       onRerunAssistantResponse,
       rerunningAssistantMessageIds,
+      onRerunAssistantResponseWithSelection,
       onRegenerateAssistantResponse,
+      onRegenerateAssistantResponseWithSelection,
       onDeleteMessage,
       connectionRecoveries,
       onReconnectAssistant,
@@ -210,7 +223,13 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
                 onReplyToAssistant={onReplyToAssistant}
                 onRerunAssistantResponse={onRerunAssistantResponse}
                 rerunning={rerunningAssistantMessageIds?.has(msg.id) === true}
+                onRerunAssistantResponseWithSelection={
+                  onRerunAssistantResponseWithSelection
+                }
                 onRegenerateAssistantResponse={onRegenerateAssistantResponse}
+                onRegenerateAssistantResponseWithSelection={
+                  onRegenerateAssistantResponseWithSelection
+                }
                 onDeleteMessage={onDeleteMessage}
                 connectionRecovery={connectionRecoveries?.[msg.id]}
                 onReconnectAssistant={onReconnectAssistant}

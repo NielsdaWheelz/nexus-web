@@ -1,7 +1,7 @@
-"""Provider-neutral inspect-resource tool: the agent's document map.
+"""Route-neutral inspect-resource tool: the model's document map.
 
 Navigation, not evidence. Given a ``media:`` URI already admitted to the
-conversation, it returns the existing ordered document map. The canonical
+generation, it returns the existing ordered document map. The canonical
 tool-runtime binding owns the bounded model-facing JSON projection.
 """
 
@@ -14,7 +14,6 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from nexus.services.media_read_map import MediaReadMap, get_media_read_map_for_viewer
-from nexus.services.resource_graph.context import admits_resource_for_conversation_read
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 from nexus.services.resource_items.capabilities import resource_inspect_policy
 
@@ -36,10 +35,10 @@ def execute_inspect_resource(
     db: Session,
     *,
     viewer_id: UUID,
-    conversation_id: UUID,
+    admitted_resource_uris: frozenset[str],
     uri: str,
 ) -> InspectResourceResult:
-    """Return the document map for a referenced ``media:`` resource."""
+    """Return a document map under one operation-frozen admission set."""
 
     parsed = parse_resource_ref(uri)
     if isinstance(parsed, ResourceRefParseFailure):
@@ -60,12 +59,10 @@ def execute_inspect_resource(
             "not_inspectable",
         )
 
-    if not admits_resource_for_conversation_read(
-        db, conversation_id=conversation_id, target=parsed
-    ):
+    if uri not in admitted_resource_uris:
         return _error(
             uri,
-            f"Resource {uri} is not in this conversation's context refs. "
+            f"Resource {uri} is not in this operation's admitted scope. "
             "Use nexus__search to find new sources first.",
             "not_in_context_refs",
         )

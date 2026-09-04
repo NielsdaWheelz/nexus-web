@@ -8,17 +8,22 @@ import json
 import re
 import socketserver
 import threading
+from dataclasses import dataclass
 from http import HTTPStatus
 from pathlib import Path
 from typing import BinaryIO
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from pydantic import ValidationError
 
-from nexus.services import generation_policy
+from nexus.schemas.presence import Absent, Present
 from nexus.services.codex_generation_contract import (
+    MAX_ADMISSION_BODY_BYTES,
     MAX_COMMAND_BODY_BYTES,
-    ChatOperation,
+    CodexModelCatalog,
+    GenerationAdmission,
+    GenerationAdmissionRequest,
+    GenerationCapacityRejection,
     GenerationCommand,
     GenerationFrame,
     GenerationHealth,
@@ -26,10 +31,12 @@ from nexus.services.codex_generation_contract import (
     GenerationTerminal,
     GenerationText,
     GenerationUsage,
-    MediaSummaryOperation,
-    MetadataEnrichmentOperation,
+    codex_model_catalog_to_wire,
+    generation_admission_request,
+    generation_command_draft,
     request_fingerprint,
 )
+from tests.testkit.generation_catalog import policy_complete_codex_catalog
 
 _HOST = "nexus-codex"
 _MAX_REQUEST_LINE_BYTES = 4 * 1024
@@ -49,6 +56,12 @@ _CONTROL_PATH = re.compile(
 )
 
 
+@dataclass(frozen=True, slots=True)
+class _ReservedAdmission:
+    request: GenerationAdmissionRequest
+    response: GenerationAdmission
+
+
 class RequestRejected(Exception):
     def __init__(self, status: HTTPStatus, code: str) -> None:
         self.status = status
@@ -59,9 +72,11 @@ class RequestRejected(Exception):
 def deterministic_synthesis_output(command: GenerationCommand) -> dict[str, object]:
     """Return the exact tool-free synthesis needed by real-stack journeys."""
 
-    if command.tool_grant is not None:
+    if command.tool_grant is not None or not isinstance(
+        command.spec.model_tool_plan_snapshot, Absent
+    ):
         raise RequestRejected(HTTPStatus.UNPROCESSABLE_ENTITY, "synthesis_tool_grant_forbidden")
-    if isinstance(command.operation, MetadataEnrichmentOperation):
+    if command.spec.operation == "metadata_enrichment":
         return {
             "title": None,
             "authors": None,
@@ -70,7 +85,7 @@ def deterministic_synthesis_output(command: GenerationCommand) -> dict[str, obje
             "published_date": None,
             "language": "en",
         }
-    if isinstance(command.operation, MediaSummaryOperation):
+    if command.spec.operation == "media_summary":
         candidate = re.search(
             r"(?:\A|\n)\[0\]\s+(.+?)(?=\n\n\[\d+\]\s|\Z)",
             command.intent.input,
@@ -90,20 +105,62 @@ class CodexGenerationPeerServer(socketserver.ThreadingMixIn, socketserver.UnixSt
     def __init__(self, socket_path: Path, audit: Path) -> None:
         self.audit = audit
         self._audit_lock = threading.Lock()
+        self._admission_lock = threading.Lock()
+        self._pending: _ReservedAdmission | None = None
         super().__init__(str(socket_path), CodexGenerationPeerHandler)
 
     def record_command(self, command: GenerationCommand) -> None:
+        plan = command.spec.model_tool_plan_snapshot
         row = {
-            "operation": command.operation.kind,
-            "profile": (
-                command.operation.profile if isinstance(command.operation, ChatOperation) else None
-            ),
+            "catalog_definition_revision": command.spec.catalog_definition_revision,
+            "generation_spec_fingerprint": command.spec.fingerprint,
+            "model": command.spec.selection.model,
+            "model_tool_plan": plan.value.plan_id if isinstance(plan, Present) else None,
+            "operation": command.spec.operation,
+            "reasoning": command.spec.selection.reasoning,
             "request_fingerprint": request_fingerprint(command),
             "request_id": str(command.request_id),
+            "route": command.spec.selection.route,
             "tool_grant_present": command.tool_grant is not None,
         }
         with self._audit_lock, self.audit.open("a", encoding="utf-8") as audit:
             audit.write(json.dumps(row, separators=(",", ":"), sort_keys=True) + "\n")
+
+    def reserve(self, request: GenerationAdmissionRequest) -> GenerationAdmission | None:
+        """Mirror the production host's one replay-stable pending slot."""
+
+        with self._admission_lock:
+            pending = self._pending
+            if pending is not None:
+                return pending.response if pending.request == request else None
+            response = GenerationAdmission(
+                request_id=request.request_id,
+                admission_id=uuid5(
+                    NAMESPACE_URL,
+                    f"nexus-test-codex-admission:{request.request_id}:{request.request_fingerprint}",
+                ),
+                admitted_at=_ACCEPTED_AT,
+                runtime_deadline_seconds=request.turn_timeout_seconds,
+            )
+            self._pending = _ReservedAdmission(request=request, response=response)
+            return response
+
+    def consume(self, admission_id: UUID, command: GenerationCommand) -> bool:
+        with self._admission_lock:
+            pending = self._pending
+            if pending is None or pending.response.admission_id != admission_id:
+                return False
+            matches = pending.request == generation_admission_request(
+                generation_command_draft(command)
+            )
+            self._pending = None
+            return matches
+
+    def cancel(self, request_id: UUID) -> None:
+        with self._admission_lock:
+            pending = self._pending
+            if pending is not None and pending.request.request_id == request_id:
+                self._pending = None
 
 
 class CodexGenerationPeerHandler(socketserver.StreamRequestHandler):
@@ -119,6 +176,12 @@ class CodexGenerationPeerHandler(socketserver.StreamRequestHandler):
             method, path, headers, body = self._read_request()
             if method == "GET" and path == "/health":
                 self._serve_health(headers, body)
+                return
+            if method == "GET" and path == "/v2/model-catalog":
+                self._serve_model_catalog(headers, body)
+                return
+            if method == "POST" and path == "/v2/generation-admissions":
+                self._serve_admission(headers, body)
                 return
             if method == "POST" and path == "/v2/generations":
                 self._serve_generation(headers, body)
@@ -168,7 +231,12 @@ class CodexGenerationPeerHandler(socketserver.StreamRequestHandler):
         if not raw_length.isdecimal():
             raise RequestRejected(HTTPStatus.BAD_REQUEST, "invalid_content_length")
         content_length = int(raw_length)
-        if content_length > MAX_COMMAND_BODY_BYTES:
+        maximum_body_bytes = (
+            MAX_ADMISSION_BODY_BYTES
+            if path == "/v2/generation-admissions"
+            else MAX_COMMAND_BODY_BYTES
+        )
+        if content_length > maximum_body_bytes:
             raise RequestRejected(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "request_too_large")
         body = self.rfile.read(content_length)
         if len(body) != content_length:
@@ -186,13 +254,48 @@ class CodexGenerationPeerHandler(socketserver.StreamRequestHandler):
         if body or headers.get("accept") != "application/json":
             raise RequestRejected(HTTPStatus.BAD_REQUEST, "invalid_health_request")
         health = GenerationHealth(
-            policy_revision=generation_policy.POLICY_REVISION,
             sdk_version=_SDK_VERSION,
             runtime_version=_RUNTIME_VERSION,
         )
         self._send_bytes(
             HTTPStatus.OK,
             health.model_dump_json().encode("utf-8"),
+            "application/json",
+        )
+
+    def _serve_model_catalog(self, headers: dict[str, str], body: bytes) -> None:
+        if body or headers.get("accept") != "application/json":
+            raise RequestRejected(HTTPStatus.BAD_REQUEST, "invalid_model_catalog_request")
+        catalog: CodexModelCatalog = codex_model_catalog_to_wire(policy_complete_codex_catalog())
+        self._send_bytes(
+            HTTPStatus.OK,
+            catalog.model_dump_json().encode("utf-8"),
+            "application/json",
+        )
+
+    def _serve_admission(self, headers: dict[str, str], body: bytes) -> None:
+        if (
+            headers.get("accept") != "application/json"
+            or headers.get("content-type") != "application/json"
+            or not body
+        ):
+            raise RequestRejected(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "invalid_admission_headers")
+        try:
+            request = GenerationAdmissionRequest.model_validate_json(body)
+        except ValidationError as error:
+            raise RequestRejected(HTTPStatus.UNPROCESSABLE_ENTITY, "invalid_admission") from error
+        admission = self.peer.reserve(request)
+        if admission is None:
+            rejection = GenerationCapacityRejection()
+            self._send_bytes(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                rejection.model_dump_json().encode("utf-8"),
+                "application/json",
+            )
+            return
+        self._send_bytes(
+            HTTPStatus.OK,
+            admission.model_dump_json().encode("utf-8"),
             "application/json",
         )
 
@@ -207,7 +310,14 @@ class CodexGenerationPeerHandler(socketserver.StreamRequestHandler):
             command = GenerationCommand.model_validate_json(body)
         except ValidationError as error:
             raise RequestRejected(HTTPStatus.UNPROCESSABLE_ENTITY, "invalid_generation") from error
-        if isinstance(command.operation, ChatOperation):
+        raw_admission_id = headers.get("nexus-generation-admission")
+        try:
+            admission_id = UUID(raw_admission_id or "")
+        except ValueError as error:
+            raise RequestRejected(HTTPStatus.CONFLICT, "invalid_generation_admission") from error
+        if str(admission_id) != raw_admission_id or not self.peer.consume(admission_id, command):
+            raise RequestRejected(HTTPStatus.CONFLICT, "generation_admission_mismatch")
+        if command.spec.operation == "chat":
             prompt = f"{command.intent.instructions}\n{command.intent.input}".casefold()
             if "sofia" not in prompt or "clavius crater" not in prompt:
                 raise RequestRejected(HTTPStatus.UNPROCESSABLE_ENTITY, "unknown_chat_scenario")
@@ -217,9 +327,7 @@ class CodexGenerationPeerHandler(socketserver.StreamRequestHandler):
             structured_output = deterministic_synthesis_output(command)
             text = json.dumps(structured_output, separators=(",", ":"), sort_keys=True)
         self.peer.record_command(command)
-        events = (
-            (GenerationText(text=text),) if isinstance(command.operation, ChatOperation) else ()
-        ) + (
+        events = ((GenerationText(text=text),) if command.spec.operation == "chat" else ()) + (
             GenerationTerminal(
                 status="succeeded",
                 failure=None,
@@ -269,6 +377,7 @@ class CodexGenerationPeerHandler(socketserver.StreamRequestHandler):
             raise RequestRejected(HTTPStatus.BAD_REQUEST, "invalid_request_id") from error
         if body or headers.get("content-length") != "0":
             raise RequestRejected(HTTPStatus.BAD_REQUEST, "invalid_control_request")
+        self.peer.cancel(UUID(request_id))
         self._send_bytes(HTTPStatus.NO_CONTENT, b"", "application/json")
 
     def _send_json(self, status: HTTPStatus, payload: object) -> None:

@@ -249,27 +249,15 @@ class ChatRunEventEmitter:
 def mark_running(
     db: Session,
     run_id: UUID,
-    *,
-    model_name: str,
-    reasoning_effort: str,
 ) -> None:
-    """Enter ``running`` and atomically snapshot the resolved execution facts."""
+    """Enter ``running``; immutable execution facts already live in GenerationSpec."""
     run = lock_chat_run_for_update(db, run_id)
     if run is None:
         raise RuntimeError("chat run disappeared before running transition")
     if run.status == "queued":
         run.status = "running"
-        run.model_name = model_name
-        run.reasoning_effort = reasoning_effort
         run.started_at = run.started_at or func.now()
         run.updated_at = func.now()
-    elif run.status == "running" and (
-        run.model_name != model_name or run.reasoning_effort != reasoning_effort
-    ):
-        # justify-service-invariant-check: queue retries can re-enter a running
-        # run, while the immutable profile resolution is stored in nullable DB
-        # columns and cannot encode cross-column equality in the type system.
-        raise AssertionError("running chat run facts do not match resolved execution facts")
     db.commit()
 
 

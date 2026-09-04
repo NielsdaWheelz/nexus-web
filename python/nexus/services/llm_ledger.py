@@ -1,8 +1,8 @@
-"""Sole staged writer and typed reader for the Codex generation ledger.
+"""Route-neutral parent/child generation ledger and replay fences.
 
-Ledger writes never commit. The durable owner stages a start beside its
-``Uncertain`` checkpoint and stages a terminal beside ``Completed`` in the
-same caller-owned transaction.
+Every helper stages work in its caller-owned transaction and never commits.
+External model/tool I/O must happen only after the corresponding uncertain
+dispatch fact has committed.
 """
 
 from __future__ import annotations
@@ -10,34 +10,29 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Collection
-from dataclasses import dataclass
+from collections.abc import Collection, Mapping
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Literal, Never, cast, get_args
+from typing import Literal, Never, Protocol, cast
 from uuid import UUID
 
-from pydantic import ValidationError
-from sqlalchemy import func, select, text, tuple_
+from sqlalchemy import delete, func, select, text, tuple_
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
-from nexus.db.models import LLMCall
-from nexus.services import generation_policy
-from nexus.services.codex_generation_contract import (
-    ChatOperation,
-    GenerationCommand,
-    GenerationSessionRef,
-    GenerationTerminal,
-    GenerationUsage,
-    NormalizedFailureCode,
-    NormalizedOutcome,
-    command_policy,
-    normalized_failure,
-    normalized_outcome,
-    request_fingerprint,
-    retained_terminal_error_detail,
+from nexus.db.models import (
+    LLMCall,
+    LLMModelTurn,
+    LLMModelTurnContinuation,
 )
-from nexus.services.generation_intent import TextOutput
+from nexus.schemas.presence import Absent, Presence, Present
+from nexus.services.generation_continuations import (
+    GenerationContinuationCipher,
+    GenerationContinuationContext,
+    SealedGenerationContinuation,
+)
 
+type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 type LlmCallOwnerKind = Literal[
     "chat_run",
     "oracle_reading",
@@ -48,6 +43,7 @@ type LlmCallOwnerKind = Literal[
     "dawn_write",
     "media_enrichment",
 ]
+type GenerationOutcome = Literal["Succeeded", "Failed", "Cancelled"]
 
 _OPERATION_OWNER_KINDS: dict[str, LlmCallOwnerKind] = {
     "metadata_enrichment": "media_enrichment",
@@ -66,13 +62,77 @@ _OPERATION_OWNER_KINDS: dict[str, LlmCallOwnerKind] = {
     "dossier_idea_resolve": "artifact_learn_request",
     "chat": "chat_run",
 }
-if set(_OPERATION_OWNER_KINDS) != {*generation_policy.OPERATIONS, "chat"}:
-    raise AssertionError("generation ledger owners do not cover the exact operation catalog")
-
-_MAX_ERROR_DETAIL_LENGTH = 1_000
-_MAX_RUNTIME_VERSION_LENGTH = 128
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
-_NORMALIZED_FAILURE_CODES: frozenset[str] = frozenset(get_args(NormalizedFailureCode))
+_GENERATION_SPEC_SCHEMA_VERSION = "nexus-generation-spec.v1"
+_GENERATION_SPEC_KEYS = frozenset(
+    {
+        "schema_version",
+        "operation",
+        "selection",
+        "selection_source",
+        "resolved_dispatch_target",
+        "source_catalog_definition_revision",
+        "source_row_fingerprint",
+        "agent_definition_revision",
+        "source_context_window",
+        "source_max_output_tokens",
+        "effective_context_budget_tokens",
+        "effective_output_budget_tokens",
+        "bounds",
+        "prompt_template_revision",
+        "prompt_payload_ref",
+        "instructions_digest",
+        "input_digest",
+        "output_contract",
+        "output_contract_fingerprint",
+        "display_at_dispatch",
+        "host_tool_plan_snapshot",
+        "host_evidence_revision",
+        "model_tool_plan_snapshot",
+        "tool_effect_mode",
+        "admitted_tool_scope",
+        "admitted_tool_scope_digest",
+        "catalog_definition_revision",
+        "policy_revision",
+        "backend_contract_revision",
+        "provider_registry_revision",
+        "fingerprint",
+    }
+)
+_PRESENCE_SPEC_KEYS = (
+    "agent_definition_revision",
+    "source_context_window",
+    "source_max_output_tokens",
+    "host_tool_plan_snapshot",
+    "host_evidence_revision",
+    "model_tool_plan_snapshot",
+    "tool_effect_mode",
+    "admitted_tool_scope",
+    "admitted_tool_scope_digest",
+    "provider_registry_revision",
+)
+_MODEL_TOOL_SPEC_KEYS = (
+    "model_tool_plan_snapshot",
+    "tool_effect_mode",
+    "admitted_tool_scope",
+    "admitted_tool_scope_digest",
+)
+
+
+class GenerationSpecLike(Protocol):
+    """Dependency-light boundary implemented by the semantic GenerationSpec."""
+
+    def model_dump(self, *, mode: Literal["json"], by_alias: bool) -> dict[str, object]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class GenerationSpecDocument:
+    """Canonical, validated persistence document for one frozen generation."""
+
+    value: dict[str, JsonValue]
+    fingerprint: str
+    operation: str
+    route: Literal["CodexPersonal", "ProviderApi"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,67 +149,227 @@ class LlmCallOwner:
 
 @dataclass(frozen=True, slots=True)
 class GenerationStart:
-    """Replay-stable generation facts staged immediately before dispatch."""
+    """Replay-stable parent facts staged with owning durable work."""
 
+    generation_id: UUID
     owner: LlmCallOwner
-    command: GenerationCommand
-    streaming: bool
+    spec: GenerationSpecDocument
 
     def __post_init__(self) -> None:
-        operation = self.command.operation.kind
-        expected_owner = _OPERATION_OWNER_KINDS.get(operation)
+        expected_owner = _OPERATION_OWNER_KINDS.get(self.spec.operation)
         if expected_owner is None:
-            raise AssertionError(f"generation operation {operation!r} has no ledger owner")
-        if self.owner.kind != expected_owner:
+            raise ValueError(f"unknown generation operation {self.spec.operation!r}")
+        if expected_owner != self.owner.kind:
             raise ValueError(
-                f"generation operation {operation!r} requires owner kind {expected_owner!r}"
+                f"generation operation {self.spec.operation!r} requires "
+                f"owner kind {expected_owner!r}"
             )
 
 
 @dataclass(frozen=True, slots=True)
 class GenerationRecord:
-    """Detached typed projection of one ledger row."""
+    """Detached typed parent projection."""
 
     id: UUID
-    owner_kind: LlmCallOwnerKind
-    owner_id: UUID
+    owner: LlmCallOwner
     generation_seq: int
-    operation: str
-    plan_id: generation_policy.PlanId
-    plan_revision: str
-    backend: Literal["codex"]
-    transport: Literal["sdk"]
-    auth_profile: Literal["codex-personal"]
-    model_name: str
-    reasoning_effort: str
-    capability_kind: generation_policy.Capability
-    request_fingerprint: str
-    output_schema_fingerprint: str
-    tool_plan_fingerprint: str | None
-    streaming: bool
-    session_ref: dict[str, object] | None
-    outcome: NormalizedOutcome | None
-    error_code: NormalizedFailureCode | None
-    error_detail: str | None
-    input_tokens: int | None
-    output_tokens: int | None
-    total_tokens: int | None
-    reasoning_tokens: int | None
-    cache_read_input_tokens: int | None
-    cache_write_input_tokens: int | None
-    sdk_version: str | None
-    runtime_version: str | None
-    latency_ms: int | None
+    spec: GenerationSpecDocument
+    outcome: GenerationOutcome | None
+    failure_code: str | None
+    terminal: dict[str, JsonValue] | None
     created_at: datetime
+    completed_at: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
+class ModelTurnStart:
+    """Exact identity of one prepared route-native model call."""
+
+    model_turn_id: UUID
+    generation_id: UUID
+    turn_seq: int
+    request_fingerprint: str
+    route_request_identity: Mapping[str, object]
+
+    def __post_init__(self) -> None:
+        if self.turn_seq < 1:
+            raise ValueError("model turn sequence must be positive")
+        _require_sha256(self.request_fingerprint, label="model turn request fingerprint")
+        _freeze_json_object(self.route_request_identity, label="route request identity")
+
+
+@dataclass(frozen=True, slots=True)
+class ModelTurnRecord:
+    """Detached typed child projection."""
+
+    id: UUID
+    generation_id: UUID
+    turn_seq: int
+    request_fingerprint: str
+    route_request_identity: dict[str, JsonValue]
+    terminal: dict[str, JsonValue] | None
+    usage: dict[str, JsonValue] | None
+    billability: dict[str, JsonValue] | None
+    created_at: datetime
+    dispatch_started_at: datetime | None
     accepted_at: datetime | None
     completed_at: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
+class ModelTurnCompletion:
+    """Terminal child facts and its optional atomic successor continuation."""
+
+    terminal: Mapping[str, object]
+    usage: Presence[Mapping[str, object]]
+    billability: Presence[Mapping[str, object]]
+    accepted_at: Presence[datetime]
+    successor: Presence[SealedGenerationContinuation]
+
+    def __post_init__(self) -> None:
+        terminal = _freeze_json_object(self.terminal, label="model turn terminal")
+        if terminal.get("kind") not in {"Succeeded", "Failed", "Cancelled"}:
+            raise ValueError("model turn terminal kind is not closed")
+        _presence_json_object(self.usage, label="model turn usage")
+        _presence_json_object(self.billability, label="model turn billability")
+        if not isinstance(self.accepted_at, (Absent, Present)):
+            raise TypeError("accepted_at must use Presence")
+        if isinstance(self.accepted_at, Present) and not isinstance(
+            self.accepted_at.value, datetime
+        ):
+            raise TypeError("accepted_at Present value must be datetime")
+        if isinstance(self.accepted_at, Present) and self.accepted_at.value.utcoffset() is None:
+            raise ValueError("accepted_at Present value must be timezone-aware")
+        if not isinstance(self.successor, (Absent, Present)):
+            raise TypeError("successor must use Presence")
+        if isinstance(self.successor, Present) and not isinstance(
+            self.successor.value, SealedGenerationContinuation
+        ):
+            raise TypeError("successor Present value must be sealed")
+
+
+@dataclass(frozen=True, slots=True)
+class DispatchableModelTurn:
+    """A prepared child whose provider continuation may be dispatched once."""
+
+    kind: Literal["Dispatchable"] = "Dispatchable"
+    turn: ModelTurnRecord = field(kw_only=True)
+    canonical_continuation: bytes = field(kw_only=True, repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class RedispatchForbiddenModelTurn:
+    """An uncertain/terminal child for which automatic redispatch is forbidden."""
+
+    kind: Literal["RedispatchForbidden"] = "RedispatchForbidden"
+    turn: ModelTurnRecord = field(kw_only=True)
+
+
+type ContinuationResume = DispatchableModelTurn | RedispatchForbiddenModelTurn
+
+
+@dataclass(frozen=True, slots=True)
+class PendingGenerationContinuation:
+    """One terminal child whose sealed successor is safe to resume."""
+
+    source_turn: ModelTurnRecord
+    context: GenerationContinuationContext
+    canonical_continuation: bytes = field(repr=False)
+
+
+def generation_spec_document(
+    spec: GenerationSpecLike | Mapping[str, object],
+) -> GenerationSpecDocument:
+    """Validate and freeze the semantic GenerationSpec at its DB adapter."""
+
+    raw = (
+        spec.model_dump(mode="json", by_alias=True) if not isinstance(spec, Mapping) else dict(spec)
+    )
+    value = _freeze_json_object(raw, label="GenerationSpec")
+    if set(value) != _GENERATION_SPEC_KEYS:
+        missing = sorted(_GENERATION_SPEC_KEYS - set(value))
+        extra = sorted(set(value) - _GENERATION_SPEC_KEYS)
+        raise ValueError(f"GenerationSpec keys differ; missing={missing!r} extra={extra!r}")
+    if value["schema_version"] != _GENERATION_SPEC_SCHEMA_VERSION:
+        raise ValueError("GenerationSpec schema_version is unsupported")
+
+    operation = _bounded_text(value["operation"], label="GenerationSpec operation")
+    selection = _require_object(value["selection"], label="GenerationSpec selection")
+    route = selection.get("route")
+    if route not in {"CodexPersonal", "ProviderApi"}:
+        raise ValueError("GenerationSpec selection route is not closed")
+    selection_source = value["selection_source"]
+    if selection_source not in {"ChatRun", "BackgroundPolicy"}:
+        raise ValueError("GenerationSpec selection_source is not closed")
+    if (operation == "chat") != (selection_source == "ChatRun"):
+        raise ValueError("GenerationSpec operation and selection_source disagree")
+
+    for key in _PRESENCE_SPEC_KEYS:
+        _presence_document(value[key], label=f"GenerationSpec {key}")
+    tool_presence = {
+        cast(str, cast(dict[str, JsonValue], value[key])["kind"]) for key in _MODEL_TOOL_SPEC_KEYS
+    }
+    if len(tool_presence) != 1:
+        raise ValueError("GenerationSpec model-tool fields must be wholly Absent or Present")
+    if route == "CodexPersonal":
+        if cast(dict[str, JsonValue], value["agent_definition_revision"])["kind"] != "Present":
+            raise ValueError("CodexPersonal GenerationSpec lacks Agent definition revision")
+        if cast(dict[str, JsonValue], value["provider_registry_revision"])["kind"] != "Absent":
+            raise ValueError("CodexPersonal GenerationSpec carries provider registry state")
+    else:
+        if cast(dict[str, JsonValue], value["agent_definition_revision"])["kind"] != "Absent":
+            raise ValueError("ProviderApi GenerationSpec carries Agent definition state")
+        if cast(dict[str, JsonValue], value["provider_registry_revision"])["kind"] != "Present":
+            raise ValueError("ProviderApi GenerationSpec lacks provider registry revision")
+
+    for key in ("effective_context_budget_tokens", "effective_output_budget_tokens"):
+        _positive_int(value[key], label=f"GenerationSpec {key}")
+    for key in (
+        "source_row_fingerprint",
+        "instructions_digest",
+        "input_digest",
+        "output_contract_fingerprint",
+        "catalog_definition_revision",
+    ):
+        _require_sha256(value[key], label=f"GenerationSpec {key}")
+    for key in (
+        "resolved_dispatch_target",
+        "bounds",
+        "prompt_payload_ref",
+        "output_contract",
+        "display_at_dispatch",
+    ):
+        _require_object(value[key], label=f"GenerationSpec {key}")
+    for key in (
+        "source_catalog_definition_revision",
+        "prompt_template_revision",
+        "policy_revision",
+        "backend_contract_revision",
+    ):
+        _bounded_text(value[key], label=f"GenerationSpec {key}")
+
+    fingerprint = cast(str, value["fingerprint"])
+    _require_sha256(fingerprint, label="GenerationSpec fingerprint")
+    fingerprinted = dict(value)
+    del fingerprinted["fingerprint"]
+    expected = _digest(fingerprinted)
+    if fingerprint != expected:
+        raise ValueError(
+            f"GenerationSpec fingerprint differs from canonical content: {fingerprint!r}"
+        )
+    return GenerationSpecDocument(
+        value=value,
+        fingerprint=fingerprint,
+        operation=operation,
+        route=cast(Literal["CodexPersonal", "ProviderApi"], route),
+    )
 
 
 def lock_generation_owner_in_current_transaction(
     db: Session,
     owner: LlmCallOwner,
 ) -> None:
-    """Take the ledger owner lock before any domain or queue row lock."""
+    """Take the stable owner lock before every generation/child/tool row lock."""
 
     db.execute(
         text("SELECT pg_advisory_xact_lock(hashtextextended(:owner_key, 0))"),
@@ -157,43 +377,25 @@ def lock_generation_owner_in_current_transaction(
     )
 
 
-def start_generation_in_current_transaction(
-    db: Session,
-    start: GenerationStart,
-) -> UUID:
-    """Stage one exact-replay start without committing its transaction."""
+def start_generation_in_current_transaction(db: Session, start: GenerationStart) -> UUID:
+    """Stage exactly one parent generation without reading mutable policy."""
 
-    owner = start.owner
-    command = start.command
-    lock_generation_owner_in_current_transaction(db, owner)
-    existing = db.get(LLMCall, command.request_id)
+    lock_generation_owner_in_current_transaction(db, start.owner)
+    existing = db.get(LLMCall, start.generation_id)
     if existing is not None:
-        _validate_persisted_call(existing)
-        _assert_start_identity(existing, start)
+        _assert_generation_start_identity(existing, start)
         return existing.id
-
-    policy = command_policy(command)
     call = LLMCall(
-        id=command.request_id,
-        owner_kind=owner.kind,
-        owner_id=owner.id,
-        generation_seq=_next_generation_seq(db, owner),
-        operation=command.operation.kind,
-        plan_id=policy.plan_id,
-        plan_revision=generation_policy.POLICY_REVISION,
-        backend="codex",
-        transport="sdk",
-        auth_profile="codex-personal",
-        model_name=policy.model,
-        reasoning_effort=policy.effort,
-        capability_kind=policy.capability,
-        request_fingerprint=request_fingerprint(command),
-        output_schema_fingerprint=_output_schema_fingerprint(command),
-        tool_plan_fingerprint=_tool_plan_fingerprint(command),
-        streaming=start.streaming,
+        id=start.generation_id,
+        owner_kind=start.owner.kind,
+        owner_id=start.owner.id,
+        generation_seq=_next_generation_seq(db, start.owner),
+        generation_spec=start.spec.value,
+        generation_fingerprint=start.spec.fingerprint,
     )
     db.add(call)
-    _flush_and_validate_staged_call(db, call)
+    db.flush()
+    _validate_call(call)
     return call.id
 
 
@@ -202,191 +404,430 @@ def complete_generation_in_current_transaction(
     *,
     owner: LlmCallOwner,
     generation_id: UUID,
-    terminal: GenerationTerminal,
-    latency_ms: int,
-    accepted_failure_code: Literal["invalid_output"] | None = None,
+    terminal: Mapping[str, object],
 ) -> None:
-    """Stage an accepted host terminal without committing its transaction."""
+    """Stage one parent terminal after its final child has committed."""
 
-    if accepted_failure_code not in {None, "invalid_output"}:
-        raise ValueError(f"unknown accepted failure override {accepted_failure_code!r}")
-    if latency_ms < 0:
-        raise ValueError("generation latency_ms must not be negative")
-    lock_generation_owner_in_current_transaction(db, owner)
-    call = db.scalar(select(LLMCall).where(LLMCall.id == generation_id).with_for_update())
-    if call is None:
-        raise AssertionError(f"llm_calls row missing for generation_id={generation_id}")
-    _validate_persisted_call(call)
-    _assert_owner(call, owner)
-    _assert_no_terminal(call)
+    terminal_document = _freeze_json_object(terminal, label="generation terminal")
+    outcome = terminal_document.get("kind")
+    if outcome not in {"Succeeded", "Failed", "Cancelled"}:
+        raise ValueError("generation terminal kind is not closed")
+    failure_code = terminal_document.get("failure_code")
+    if outcome == "Failed":
+        _bounded_text(failure_code, label="generation failure_code")
+    elif failure_code is not None:
+        raise ValueError("nonfailed generation terminal carries failure_code")
 
-    if accepted_failure_code is not None:
-        if terminal.status != "succeeded":
-            raise ValueError("only a successful host terminal can be semantically overridden")
-        outcome: NormalizedOutcome = "Failed"
-        error_code: NormalizedFailureCode | None = accepted_failure_code
-    else:
-        outcome = normalized_outcome(terminal)
-        error_code = (
-            normalized_failure(terminal.failure.kind) if terminal.failure is not None else None
+    call = _lock_owned_generation(db, owner=owner, generation_id=generation_id)
+    if call.terminal is not None:
+        if call.terminal != terminal_document:
+            _ledger_defect(call, "terminal replay differs from committed terminal")
+        return
+    latest_turn = db.scalar(
+        select(LLMModelTurn)
+        .where(LLMModelTurn.generation_id == generation_id)
+        .order_by(LLMModelTurn.turn_seq.desc())
+        .limit(1)
+    )
+    if latest_turn is None or latest_turn.terminal is None:
+        _ledger_defect(call, "parent terminal precedes a terminal model child")
+    pending_successor = db.scalar(
+        select(LLMModelTurnContinuation.id)
+        .where(LLMModelTurnContinuation.generation_id == generation_id)
+        .limit(1)
+    )
+    if pending_successor is not None:
+        _ledger_defect(call, "parent terminal precedes its sealed successor continuation")
+    call.outcome = cast(GenerationOutcome, outcome)
+    call.failure_code = cast(str | None, failure_code)
+    call.terminal = cast(dict[str, object], terminal_document)
+    call.completed_at = func.now()
+    db.flush()
+    _validate_call(call)
+
+
+def start_model_turn_in_current_transaction(db: Session, start: ModelTurnStart) -> UUID:
+    """Allocate the initial child under the locked parent sequence fence."""
+
+    if start.turn_seq != 1:
+        raise ValueError(
+            "only the initial model child may start directly; "
+            "successors require sealed continuation resume"
         )
-    if outcome == "Failed" and error_code is None:
-        raise AssertionError("failed generation terminal has no normalized failure")
-    if outcome != "Failed" and error_code is not None:
-        raise AssertionError("non-failed generation terminal carries a failure code")
 
-    session_ref = (
-        terminal.session_ref.model_dump(mode="json") if terminal.session_ref is not None else None
+    call = _lock_generation_by_id(db, start.generation_id)
+    _assert_parent_open(call)
+    turn = _start_model_turn_under_parent_lock(db, call=call, start=start)
+    return turn.id
+
+
+def arm_model_turn_dispatch_in_current_transaction(
+    db: Session,
+    *,
+    generation_id: UUID,
+    model_turn_id: UUID,
+) -> None:
+    """Record uncertainty before provider I/O; replay never clears this fact."""
+
+    call = _lock_generation_by_id(db, generation_id)
+    _assert_parent_open(call)
+    turn = _lock_model_turn(db, generation_id=generation_id, model_turn_id=model_turn_id)
+    if turn.terminal is not None:
+        _turn_defect(turn, "terminal turn cannot be armed")
+    if turn.dispatch_started_at is None:
+        turn.dispatch_started_at = func.now()
+        db.flush()
+
+
+def complete_model_turn_in_current_transaction(
+    db: Session,
+    *,
+    generation_id: UUID,
+    model_turn_id: UUID,
+    completion: ModelTurnCompletion,
+) -> None:
+    """Atomically commit child terminal facts and its sealed successor."""
+
+    call = _lock_generation_by_id(db, generation_id)
+    _assert_parent_open(call)
+    turn = _lock_model_turn(db, generation_id=generation_id, model_turn_id=model_turn_id)
+    terminal = _freeze_json_object(completion.terminal, label="model turn terminal")
+    usage = _nullable_json_object(completion.usage, label="model turn usage")
+    billability = _nullable_json_object(completion.billability, label="model turn billability")
+    accepted_at = (
+        completion.accepted_at.value if isinstance(completion.accepted_at, Present) else None
     )
-    if session_ref is not None and (
-        session_ref["backend"],
-        session_ref["transport"],
-        session_ref["profile_key"],
-    ) != (call.backend, call.transport, call.auth_profile):
-        raise AssertionError("generation terminal session route differs from its start")
 
-    usage = terminal.usage
-    call.session_ref = session_ref
-    call.outcome = outcome
-    call.error_code = error_code
-    call.error_detail = (
-        "codex generation invalid output"
-        if accepted_failure_code is not None
-        else retained_terminal_error_detail(terminal)
+    if turn.dispatch_started_at is None:
+        _turn_defect(turn, "terminal turn was never armed before provider I/O")
+    if turn.terminal is not None:
+        expected = (terminal, usage, billability, accepted_at)
+        actual = (turn.terminal, turn.usage, turn.billability, turn.accepted_at)
+        if actual != expected:
+            _turn_defect(turn, "terminal replay differs from committed child terminal")
+        _assert_successor_identity(db, turn=turn, successor=completion.successor)
+        return
+
+    turn.terminal = cast(dict[str, object], terminal)
+    turn.usage = cast(dict[str, object] | None, usage)
+    turn.billability = cast(dict[str, object] | None, billability)
+    turn.accepted_at = accepted_at
+    turn.completed_at = func.now()
+
+    db.execute(
+        delete(LLMModelTurnContinuation).where(
+            LLMModelTurnContinuation.generation_id == generation_id,
+            LLMModelTurnContinuation.successor_turn_seq == turn.turn_seq,
+        )
     )
-    call.input_tokens = usage.input_tokens if usage is not None else None
-    call.output_tokens = usage.output_tokens if usage is not None else None
-    call.total_tokens = usage.total_tokens if usage is not None else None
-    call.reasoning_tokens = usage.reasoning_tokens if usage is not None else None
-    call.cache_read_input_tokens = usage.cache_read_input_tokens if usage is not None else None
-    call.cache_write_input_tokens = usage.cache_write_input_tokens if usage is not None else None
-    call.sdk_version = terminal.sdk_version
-    call.runtime_version = terminal.runtime_version
-    call.latency_ms = latency_ms
-    call.accepted_at = datetime.fromisoformat(terminal.accepted_at[:-1] + "+00:00")
-    call.completed_at = func.now()
-    _flush_and_validate_staged_call(db, call)
+    if isinstance(completion.successor, Present):
+        _stage_successor_continuation(db, turn=turn, sealed=completion.successor.value)
+    db.flush()
+    _validate_turn(turn)
 
 
-def complete_preaccept_failure_if_started_in_current_transaction(
+def resume_generation_continuation_in_current_transaction(
     db: Session,
     *,
-    owner: LlmCallOwner,
-    generation_id: UUID,
-    error_code: NormalizedFailureCode,
-    error_detail: str,
-) -> bool:
-    """Stage a known pre-accept failure only when dispatch had been armed."""
+    source_model_turn_id: UUID,
+    successor: ModelTurnStart,
+    expected_context: GenerationContinuationContext,
+    cipher: GenerationContinuationCipher,
+) -> ContinuationResume:
+    """Idempotently materialize one successor child from sealed state."""
 
-    if error_code not in _NORMALIZED_FAILURE_CODES:
-        raise ValueError(f"unknown normalized pre-accept failure code {error_code!r}")
-    retained_detail = _retained_preaccept_detail(error_detail, label="failure detail")
-    lock_generation_owner_in_current_transaction(db, owner)
-    call = db.scalar(select(LLMCall).where(LLMCall.id == generation_id).with_for_update())
-    if call is None:
-        return False
-    _validate_persisted_call(call)
-    _assert_owner(call, owner)
-    _assert_no_terminal(call)
-    call.outcome = "Failed"
-    call.error_code = error_code
-    call.error_detail = retained_detail
-    call.completed_at = func.now()
-    _flush_and_validate_staged_call(db, call)
-    return True
+    call = _lock_generation_by_id(db, successor.generation_id)
+    _assert_parent_open(call)
+    source = _lock_model_turn(
+        db,
+        generation_id=successor.generation_id,
+        model_turn_id=source_model_turn_id,
+    )
+    if source.terminal is None:
+        _turn_defect(source, "cannot resume from a nonterminal source child")
+    continuation = db.scalar(
+        select(LLMModelTurnContinuation)
+        .where(
+            LLMModelTurnContinuation.generation_id == successor.generation_id,
+            LLMModelTurnContinuation.source_model_turn_id == source_model_turn_id,
+        )
+        .with_for_update()
+    )
+    if continuation is None:
+        consumed_turn = db.scalar(
+            select(LLMModelTurn).where(
+                LLMModelTurn.generation_id == successor.generation_id,
+                LLMModelTurn.turn_seq == successor.turn_seq,
+            )
+        )
+        if consumed_turn is None:
+            _turn_defect(source, "terminal source child has no successor continuation")
+        _assert_model_turn_start_identity(consumed_turn, successor)
+        if consumed_turn.dispatch_started_at is None and consumed_turn.terminal is None:
+            _turn_defect(
+                consumed_turn,
+                "prepared successor lost its continuation before dispatch",
+            )
+        return RedispatchForbiddenModelTurn(turn=_turn_record(consumed_turn))
+    if successor.turn_seq != continuation.successor_turn_seq:
+        _turn_defect(source, "successor child sequence differs from sealed continuation")
+
+    sealed = _sealed_from_row(continuation, source_turn_seq=source.turn_seq)
+    if sealed.context != expected_context:
+        cipher.open(sealed=sealed, expected_context=expected_context)
+
+    existing = db.scalar(
+        select(LLMModelTurn).where(
+            LLMModelTurn.generation_id == successor.generation_id,
+            LLMModelTurn.turn_seq == successor.turn_seq,
+        )
+    )
+    plaintext = cipher.open(sealed=sealed, expected_context=expected_context)
+    turn = (
+        _start_model_turn_under_parent_lock(db, call=call, start=successor)
+        if existing is None
+        else existing
+    )
+    _assert_model_turn_start_identity(turn, successor)
+    record = _turn_record(turn)
+    if turn.dispatch_started_at is not None or turn.terminal is not None:
+        return RedispatchForbiddenModelTurn(turn=record)
+    return DispatchableModelTurn(turn=record, canonical_continuation=plaintext)
 
 
-def cancel_preaccept_generation_if_started_in_current_transaction(
+def open_generation_continuation_in_current_transaction(
     db: Session,
     *,
-    owner: LlmCallOwner,
-    generation_id: UUID,
-    reason: str,
-) -> bool:
-    """Stage an owner-side cancellation proven to precede host acceptance."""
+    source_model_turn_id: UUID,
+    expected_context: GenerationContinuationContext,
+    cipher: GenerationContinuationCipher,
+) -> bytes:
+    """Authenticate one sealed successor without consuming or preparing it.
 
-    retained_reason = _retained_preaccept_detail(reason, label="cancellation reason")
-    lock_generation_owner_in_current_transaction(db, owner)
-    call = db.scalar(select(LLMCall).where(LLMCall.id == generation_id).with_for_update())
-    if call is None:
-        return False
-    _validate_persisted_call(call)
-    _assert_owner(call, owner)
-    _assert_no_terminal(call)
-    call.outcome = "Cancelled"
-    call.error_detail = retained_reason
-    call.completed_at = func.now()
-    _flush_and_validate_staged_call(db, call)
-    return True
+    The provider adapter needs the canonical continuation to derive the exact
+    successor request before that request can be durably armed.  Opening is
+    intentionally read-only: a crash after this transaction may safely reopen
+    the same envelope, while consumption remains atomic with successor arming.
+    """
+
+    call = _lock_generation_by_id(db, expected_context.generation_id)
+    _assert_parent_open(call)
+    source = _lock_model_turn(
+        db,
+        generation_id=expected_context.generation_id,
+        model_turn_id=source_model_turn_id,
+    )
+    if source.turn_seq != expected_context.source_turn_seq or source.terminal is None:
+        _turn_defect(source, "cannot open continuation from the requested source child")
+    continuation = db.scalar(
+        select(LLMModelTurnContinuation)
+        .where(
+            LLMModelTurnContinuation.generation_id == expected_context.generation_id,
+            LLMModelTurnContinuation.source_model_turn_id == source_model_turn_id,
+        )
+        .with_for_update()
+    )
+    if continuation is None:
+        _turn_defect(source, "terminal source child has no sealed successor continuation")
+    sealed = _sealed_from_row(continuation, source_turn_seq=source.turn_seq)
+    return cipher.open(sealed=sealed, expected_context=expected_context)
 
 
-def read_generation(
+def read_pending_generation_continuation_in_current_transaction(
     db: Session,
     *,
     generation_id: UUID,
-) -> GenerationRecord | None:
-    """Read one detached ledger record through the sole typed accessor."""
+    cipher: GenerationContinuationCipher,
+) -> PendingGenerationContinuation | None:
+    """Read the sole reopenable provider successor under the parent fence."""
 
+    call = _lock_generation_by_id(db, generation_id)
+    _assert_parent_open(call)
+    rows = db.scalars(
+        select(LLMModelTurnContinuation)
+        .where(LLMModelTurnContinuation.generation_id == generation_id)
+        .with_for_update()
+    ).all()
+    if not rows:
+        return None
+    if len(rows) != 1:
+        _ledger_defect(call, "generation has more than one pending continuation")
+    row = rows[0]
+    source = _lock_model_turn(
+        db,
+        generation_id=generation_id,
+        model_turn_id=row.source_model_turn_id,
+    )
+    if source.terminal is None or source.completed_at is None:
+        _turn_defect(source, "pending continuation belongs to a nonterminal source child")
+    sealed = _sealed_from_row(row, source_turn_seq=source.turn_seq)
+    plaintext = cipher.open(sealed=sealed, expected_context=sealed.context)
+    return PendingGenerationContinuation(
+        source_turn=_turn_record(source),
+        context=sealed.context,
+        canonical_continuation=plaintext,
+    )
+
+
+def arm_resumed_model_turn_dispatch_in_current_transaction(
+    db: Session,
+    *,
+    source_model_turn_id: UUID,
+    successor: ModelTurnStart,
+    expected_context: GenerationContinuationContext,
+    cipher: GenerationContinuationCipher,
+) -> ModelTurnRecord:
+    """Prepare, arm, and consume one successor under the parent fence.
+
+    This is the sole destructive continuation transition.  The encrypted
+    envelope remains present while callers derive the successor request, then
+    disappears in the same transaction that records dispatch uncertainty.
+    Consequently a crash is always classified as either reopenable or already
+    armed; it can never authorize an automatic duplicate provider call.
+    """
+
+    resumed = resume_generation_continuation_in_current_transaction(
+        db,
+        source_model_turn_id=source_model_turn_id,
+        successor=successor,
+        expected_context=expected_context,
+        cipher=cipher,
+    )
+    if isinstance(resumed, RedispatchForbiddenModelTurn):
+        raise AssertionError(
+            f"llm_model_turns row id={resumed.turn.id} is corrupt: "
+            "successor model turn was already armed"
+        )
+    if resumed.canonical_continuation != open_generation_continuation_in_current_transaction(
+        db,
+        source_model_turn_id=source_model_turn_id,
+        expected_context=expected_context,
+        cipher=cipher,
+    ):
+        raise AssertionError(
+            f"llm_model_turns row id={resumed.turn.id} is corrupt: "
+            "successor continuation changed while arming"
+        )
+    arm_model_turn_dispatch_in_current_transaction(
+        db,
+        generation_id=successor.generation_id,
+        model_turn_id=successor.model_turn_id,
+    )
+    deleted = db.execute(
+        delete(LLMModelTurnContinuation).where(
+            LLMModelTurnContinuation.generation_id == successor.generation_id,
+            LLMModelTurnContinuation.source_model_turn_id == source_model_turn_id,
+            LLMModelTurnContinuation.successor_turn_seq == successor.turn_seq,
+        )
+    )
+    if not isinstance(deleted, CursorResult) or deleted.rowcount != 1:
+        raise AssertionError(
+            f"llm_model_turns row id={resumed.turn.id} is corrupt: "
+            "successor continuation was not consumed exactly once"
+        )
+    db.flush()
+    return resumed.turn
+
+
+def read_generation(db: Session, *, generation_id: UUID) -> GenerationRecord | None:
     call = db.get(LLMCall, generation_id)
-    return None if call is None else _record(call)
+    return None if call is None else _generation_record(call)
+
+
+def read_model_turns(
+    db: Session,
+    *,
+    generation_id: UUID,
+) -> tuple[ModelTurnRecord, ...]:
+    turns = db.scalars(
+        select(LLMModelTurn)
+        .where(LLMModelTurn.generation_id == generation_id)
+        .order_by(LLMModelTurn.turn_seq)
+    ).all()
+    return tuple(_turn_record(turn) for turn in turns)
+
+
+def read_model_turns_for_generations(
+    db: Session,
+    *,
+    generation_ids: Collection[UUID],
+) -> dict[UUID, tuple[ModelTurnRecord, ...]]:
+    """Read every child for a bounded parent set without an N+1 query."""
+
+    distinct_ids = tuple(dict.fromkeys(generation_ids))
+    if not distinct_ids:
+        return {}
+    turns = db.scalars(
+        select(LLMModelTurn)
+        .where(LLMModelTurn.generation_id.in_(distinct_ids))
+        .order_by(LLMModelTurn.generation_id, LLMModelTurn.turn_seq)
+    ).all()
+    grouped: dict[UUID, list[ModelTurnRecord]] = {item: [] for item in distinct_ids}
+    for turn in turns:
+        grouped[turn.generation_id].append(_turn_record(turn))
+    return {generation_id: tuple(records) for generation_id, records in grouped.items()}
 
 
 def read_latest_generations_for_owners(
     db: Session,
     *,
     owners: Collection[LlmCallOwner],
-    outcome: NormalizedOutcome | None = None,
+    outcome: GenerationOutcome | None = None,
 ) -> dict[LlmCallOwner, GenerationRecord]:
-    """Bulk-read each typed owner's newest matching generation in one query."""
-
     distinct_owners = tuple(dict.fromkeys(owners))
     if not distinct_owners:
         return {}
-
-    owner_identity = tuple_(LLMCall.owner_kind, LLMCall.owner_id)
-    latest_generation_query = select(
+    identity = tuple_(LLMCall.owner_kind, LLMCall.owner_id)
+    latest = select(
         LLMCall.owner_kind.label("owner_kind"),
         LLMCall.owner_id.label("owner_id"),
         func.max(LLMCall.generation_seq).label("generation_seq"),
-    ).where(owner_identity.in_([(owner.kind, owner.id) for owner in distinct_owners]))
+    ).where(identity.in_([(owner.kind, owner.id) for owner in distinct_owners]))
     if outcome is not None:
-        latest_generation_query = latest_generation_query.where(LLMCall.outcome == outcome)
-    latest_generations = latest_generation_query.group_by(
-        LLMCall.owner_kind, LLMCall.owner_id
-    ).subquery()
+        latest = latest.where(LLMCall.outcome == outcome)
+    latest_rows = latest.group_by(LLMCall.owner_kind, LLMCall.owner_id).subquery()
     calls = db.scalars(
         select(LLMCall).join(
-            latest_generations,
-            (LLMCall.owner_kind == latest_generations.c.owner_kind)
-            & (LLMCall.owner_id == latest_generations.c.owner_id)
-            & (LLMCall.generation_seq == latest_generations.c.generation_seq),
+            latest_rows,
+            (LLMCall.owner_kind == latest_rows.c.owner_kind)
+            & (LLMCall.owner_id == latest_rows.c.owner_id)
+            & (LLMCall.generation_seq == latest_rows.c.generation_seq),
         )
     ).all()
-    records = [_record(call) for call in calls]
-    return {LlmCallOwner(kind=record.owner_kind, id=record.owner_id): record for record in records}
+    records = [_generation_record(call) for call in calls]
+    return {record.owner: record for record in records}
 
 
-def lock_active_generation_for_authority_in_current_transaction(
+def read_latest_generation_for_owner(
     db: Session,
     *,
     owner: LlmCallOwner,
-    generation_id: UUID,
 ) -> GenerationRecord | None:
-    """Lock one nonterminal owned generation before a tool-authority row lock.
-
-    The owner advisory lock is always first, matching dispatch and terminal
-    ordering. A missing, cross-owner, or already-terminal identity is not
-    authority and is returned as absent rather than exposed to the caller.
-    """
-
-    record = lock_generation_for_authority_in_current_transaction(
-        db,
-        owner=owner,
-        generation_id=generation_id,
+    call = db.scalar(
+        select(LLMCall)
+        .where(LLMCall.owner_kind == owner.kind, LLMCall.owner_id == owner.id)
+        .order_by(LLMCall.generation_seq.desc())
+        .limit(1)
     )
-    if record is None or record.outcome is not None or record.completed_at is not None:
-        return None
-    return record
+    return None if call is None else _generation_record(call)
+
+
+def read_generation_for_owner_sequence(
+    db: Session,
+    *,
+    owner: LlmCallOwner,
+    generation_seq: int,
+) -> GenerationRecord | None:
+    if generation_seq < 1:
+        raise ValueError("generation_seq must be positive")
+    call = db.scalar(
+        select(LLMCall).where(
+            LLMCall.owner_kind == owner.kind,
+            LLMCall.owner_id == owner.id,
+            LLMCall.generation_seq == generation_seq,
+        )
+    )
+    return None if call is None else _generation_record(call)
 
 
 def lock_generation_for_authority_in_current_transaction(
@@ -395,8 +836,6 @@ def lock_generation_for_authority_in_current_transaction(
     owner: LlmCallOwner,
     generation_id: UUID,
 ) -> GenerationRecord | None:
-    """Lock one exact owned generation, including an already-terminal row."""
-
     lock_generation_owner_in_current_transaction(db, owner)
     call = db.scalar(
         select(LLMCall)
@@ -407,364 +846,442 @@ def lock_generation_for_authority_in_current_transaction(
         )
         .with_for_update()
     )
-    return None if call is None else _record(call)
+    return None if call is None else _generation_record(call)
 
 
-def read_latest_generation_for_owner(
+def lock_active_generation_for_authority_in_current_transaction(
     db: Session,
     *,
     owner: LlmCallOwner,
+    generation_id: UUID,
 ) -> GenerationRecord | None:
-    """Read the newest generation for one owner through the typed ledger."""
+    record = lock_generation_for_authority_in_current_transaction(
+        db, owner=owner, generation_id=generation_id
+    )
+    return None if record is None or record.outcome is not None else record
 
-    call = db.scalar(
-        select(LLMCall)
-        .where(LLMCall.owner_kind == owner.kind, LLMCall.owner_id == owner.id)
-        .order_by(LLMCall.generation_seq.desc())
+
+def reset_generation_after_proven_non_dispatch_in_current_transaction(
+    db: Session,
+    *,
+    owner: LlmCallOwner,
+    generation_id: UUID,
+    generation_fingerprint: str,
+) -> None:
+    """Remove only an externally proven, never-dispatched open attempt.
+
+    The journal transition back to Prepared is committed by the caller in the
+    same transaction. This operator-only repair is deliberately unavailable to
+    automatic replay and refuses any terminal child or continuation evidence.
+    """
+
+    _require_sha256(generation_fingerprint, label="generation fingerprint")
+    call = _lock_owned_generation(db, owner=owner, generation_id=generation_id)
+    _assert_parent_open(call)
+    if call.generation_fingerprint != generation_fingerprint:
+        _ledger_defect(call, "proven non-dispatch fingerprint drifted")
+    turns = db.scalars(
+        select(LLMModelTurn)
+        .where(LLMModelTurn.generation_id == generation_id)
+        .order_by(LLMModelTurn.turn_seq)
+        .with_for_update()
+    ).all()
+    if not turns:
+        _ledger_defect(call, "proven non-dispatch has no prepared model child")
+    if any(turn.terminal is not None or turn.completed_at is not None for turn in turns):
+        _ledger_defect(call, "proven non-dispatch has terminal model evidence")
+    continuation = db.scalar(
+        select(LLMModelTurnContinuation.id)
+        .where(LLMModelTurnContinuation.generation_id == generation_id)
         .limit(1)
     )
-    return None if call is None else _record(call)
+    if continuation is not None:
+        _ledger_defect(call, "proven non-dispatch has a successor continuation")
+    db.execute(delete(LLMModelTurn).where(LLMModelTurn.generation_id == generation_id))
+    db.delete(call)
+    db.flush()
 
 
-def read_generation_for_owner_sequence(
+def _start_model_turn_under_parent_lock(
+    db: Session,
+    *,
+    call: LLMCall,
+    start: ModelTurnStart,
+) -> LLMModelTurn:
+    existing_by_id = db.get(LLMModelTurn, start.model_turn_id)
+    if existing_by_id is not None:
+        _assert_model_turn_start_identity(existing_by_id, start)
+        return existing_by_id
+    existing_by_seq = db.scalar(
+        select(LLMModelTurn).where(
+            LLMModelTurn.generation_id == start.generation_id,
+            LLMModelTurn.turn_seq == start.turn_seq,
+        )
+    )
+    if existing_by_seq is not None:
+        _assert_model_turn_start_identity(existing_by_seq, start)
+        return existing_by_seq
+    next_seq_value = db.scalar(
+        select(func.coalesce(func.max(LLMModelTurn.turn_seq), 0) + 1).where(
+            LLMModelTurn.generation_id == call.id
+        )
+    )
+    if next_seq_value is None:
+        _ledger_defect(call, "model turn sequence query returned no scalar")
+    next_seq = int(next_seq_value)
+    if start.turn_seq != next_seq:
+        raise ValueError(
+            f"model turn sequence must be the next parent position {next_seq}, got {start.turn_seq}"
+        )
+    turn = LLMModelTurn(
+        id=start.model_turn_id,
+        generation_id=start.generation_id,
+        turn_seq=start.turn_seq,
+        request_fingerprint=start.request_fingerprint,
+        route_request_identity=_freeze_json_object(
+            start.route_request_identity, label="route request identity"
+        ),
+    )
+    db.add(turn)
+    db.flush()
+    _validate_turn(turn)
+    return turn
+
+
+def _stage_successor_continuation(
+    db: Session,
+    *,
+    turn: LLMModelTurn,
+    sealed: SealedGenerationContinuation,
+) -> None:
+    context = sealed.context
+    _assert_successor_context_identity(turn, context)
+    existing = db.scalar(
+        select(LLMModelTurnContinuation).where(
+            LLMModelTurnContinuation.source_model_turn_id == turn.id
+        )
+    )
+    if existing is not None:
+        _assert_continuation_row(existing, sealed)
+        return
+    continuation = LLMModelTurnContinuation(
+        generation_id=turn.generation_id,
+        source_model_turn_id=turn.id,
+        successor_turn_seq=context.successor_turn_seq,
+        target_fingerprint=context.target_fingerprint,
+        codec_id=context.codec_id,
+        policy_revision=context.policy_revision,
+        envelope_version=sealed.envelope_version,
+        nonce=sealed.nonce,
+        ciphertext=sealed.ciphertext,
+    )
+    db.add(continuation)
+
+
+def _assert_successor_identity(
+    db: Session,
+    *,
+    turn: LLMModelTurn,
+    successor: Presence[SealedGenerationContinuation],
+) -> None:
+    existing = db.scalar(
+        select(LLMModelTurnContinuation).where(
+            LLMModelTurnContinuation.source_model_turn_id == turn.id
+        )
+    )
+    consumed = db.scalar(
+        select(LLMModelTurn.id).where(
+            LLMModelTurn.generation_id == turn.generation_id,
+            LLMModelTurn.turn_seq == turn.turn_seq + 1,
+        )
+    )
+    if isinstance(successor, Absent):
+        if existing is not None:
+            _turn_defect(turn, "terminal replay omitted its committed successor")
+        if consumed is not None:
+            _turn_defect(turn, "terminal replay omitted its consumed successor")
+        return
+    _assert_successor_context_identity(turn, successor.value.context)
+    if existing is None:
+        if consumed is not None:
+            return
+        _turn_defect(turn, "terminal replay added a successor after commit")
+    _assert_continuation_row(existing, successor.value)
+
+
+def _assert_successor_context_identity(
+    turn: LLMModelTurn,
+    context: GenerationContinuationContext,
+) -> None:
+    if (
+        context.generation_id,
+        context.source_turn_seq,
+        context.successor_turn_seq,
+    ) != (turn.generation_id, turn.turn_seq, turn.turn_seq + 1):
+        _turn_defect(turn, "successor continuation identity differs from source child")
+
+
+def _assert_continuation_row(
+    row: LLMModelTurnContinuation,
+    sealed: SealedGenerationContinuation,
+) -> None:
+    context = sealed.context
+    actual = (
+        row.generation_id,
+        row.successor_turn_seq,
+        row.target_fingerprint,
+        row.codec_id,
+        row.policy_revision,
+        row.envelope_version,
+        row.nonce,
+        row.ciphertext,
+    )
+    expected = (
+        context.generation_id,
+        context.successor_turn_seq,
+        context.target_fingerprint,
+        context.codec_id,
+        context.policy_revision,
+        sealed.envelope_version,
+        sealed.nonce,
+        sealed.ciphertext,
+    )
+    if actual != expected:
+        raise AssertionError(
+            f"continuation source_model_turn_id={row.source_model_turn_id} "
+            "was replayed with different sealed facts"
+        )
+
+
+def _sealed_from_row(
+    row: LLMModelTurnContinuation,
+    *,
+    source_turn_seq: int,
+) -> SealedGenerationContinuation:
+    return SealedGenerationContinuation(
+        context=GenerationContinuationContext(
+            generation_id=row.generation_id,
+            source_turn_seq=source_turn_seq,
+            successor_turn_seq=row.successor_turn_seq,
+            target_fingerprint=row.target_fingerprint,
+            codec_id=row.codec_id,
+            policy_revision=row.policy_revision,
+        ),
+        envelope_version=row.envelope_version,
+        nonce=bytes(row.nonce),
+        ciphertext=bytes(row.ciphertext),
+    )
+
+
+def _lock_generation_by_id(db: Session, generation_id: UUID) -> LLMCall:
+    identity = db.execute(
+        select(LLMCall.owner_kind, LLMCall.owner_id).where(LLMCall.id == generation_id)
+    ).one_or_none()
+    if identity is None:
+        raise AssertionError(f"generation_id={generation_id} is missing")
+    owner = LlmCallOwner(kind=cast(LlmCallOwnerKind, identity[0]), id=identity[1])
+    lock_generation_owner_in_current_transaction(db, owner)
+    call = db.scalar(select(LLMCall).where(LLMCall.id == generation_id).with_for_update())
+    if call is None:
+        raise AssertionError(f"generation_id={generation_id} disappeared under owner lock")
+    _validate_call(call)
+    return call
+
+
+def _lock_owned_generation(
     db: Session,
     *,
     owner: LlmCallOwner,
-    generation_seq: int,
-) -> GenerationRecord | None:
-    """Read one owner-local generation ordinal through the typed ledger."""
-
-    if generation_seq < 1:
-        raise ValueError("generation_seq must be positive")
+    generation_id: UUID,
+) -> LLMCall:
+    lock_generation_owner_in_current_transaction(db, owner)
     call = db.scalar(
-        select(LLMCall).where(
+        select(LLMCall)
+        .where(
+            LLMCall.id == generation_id,
             LLMCall.owner_kind == owner.kind,
             LLMCall.owner_id == owner.id,
-            LLMCall.generation_seq == generation_seq,
         )
+        .with_for_update()
     )
-    return None if call is None else _record(call)
+    if call is None:
+        raise AssertionError(f"generation_id={generation_id} is missing or cross-owner")
+    _validate_call(call)
+    return call
 
 
-def current_tool_plan_fingerprint() -> str:
-    """Return the ledger representation of the one pinned Chat tool plan."""
+def _lock_model_turn(
+    db: Session,
+    *,
+    generation_id: UUID,
+    model_turn_id: UUID,
+) -> LLMModelTurn:
+    turn = db.scalar(
+        select(LLMModelTurn)
+        .where(
+            LLMModelTurn.id == model_turn_id,
+            LLMModelTurn.generation_id == generation_id,
+        )
+        .with_for_update()
+    )
+    if turn is None:
+        raise AssertionError(
+            f"model_turn_id={model_turn_id} is missing from generation_id={generation_id}"
+        )
+    _validate_turn(turn)
+    return turn
 
-    return _digest({"tool_plan_revision": generation_policy.TOOL_PLAN_REVISION})
 
-
-def _flush_and_validate_staged_call(db: Session, call: LLMCall) -> None:
-    """Resolve database-owned facts and validate without committing the caller's work."""
-
-    db.flush()
-    _validate_persisted_call(call)
-
-
-def _validate_persisted_call(call: LLMCall) -> None:
-    """Defect unless one trusted row matches the sole writer's exact contract."""
-
+def _validate_call(call: LLMCall) -> None:
     if call.generation_seq < 1:
-        _ledger_defect(call, f"generation_seq={call.generation_seq} is not positive")
-
-    expected_owner = _OPERATION_OWNER_KINDS.get(call.operation)
-    if expected_owner is None or call.owner_kind != expected_owner:
-        _ledger_defect(
-            call,
-            f"owner/operation pair {(call.owner_kind, call.operation)!r} is not catalogued",
-        )
-
-    if call.plan_revision != generation_policy.POLICY_REVISION:
-        _ledger_defect(call, f"plan revision {call.plan_revision!r} is not current")
-    policy_facts = (
-        call.plan_id,
-        call.model_name,
-        call.reasoning_effort,
-        call.capability_kind,
-    )
-    if call.operation == "chat":
-        allowed_chat_facts = {
-            (policy.plan_id, policy.model, policy.effort, policy.capability)
-            for policy in (
-                generation_policy.chat_policy(profile)
-                for profile in generation_policy.CHAT_PROFILES
-            )
-        }
-        if policy_facts not in allowed_chat_facts:
-            _ledger_defect(call, f"chat plan facts {policy_facts!r} are not catalogued")
-    else:
-        try:
-            policy = generation_policy.operation_policy(call.operation)
-        except ValueError:
-            _ledger_defect(call, f"operation {call.operation!r} has no synthesis policy")
-        expected_policy_facts = (
-            policy.plan_id,
-            policy.model,
-            policy.effort,
-            policy.capability,
-        )
-        if policy_facts != expected_policy_facts:
-            _ledger_defect(
-                call,
-                f"plan facts {policy_facts!r} differ from {expected_policy_facts!r}",
-            )
-
-    route = (call.backend, call.transport, call.auth_profile)
-    if route != ("codex", "sdk", "codex-personal"):
-        _ledger_defect(call, f"route {route!r} is not Codex Personal")
-
-    if _SHA256_PATTERN.fullmatch(call.request_fingerprint) is None:
-        _ledger_defect(call, "request_fingerprint is not lowercase SHA-256")
-    if _SHA256_PATTERN.fullmatch(call.output_schema_fingerprint) is None:
-        _ledger_defect(call, "output_schema_fingerprint is not lowercase SHA-256")
-    if call.operation == "chat":
-        if call.output_schema_fingerprint != _chat_output_schema_fingerprint():
-            _ledger_defect(call, "Chat output_schema_fingerprint is not the Text contract")
-        if call.tool_plan_fingerprint != current_tool_plan_fingerprint():
-            _ledger_defect(call, "Chat tool_plan_fingerprint is not the pinned plan")
-    elif call.tool_plan_fingerprint is not None:
-        _ledger_defect(call, "Synthesis generation carries a tool_plan_fingerprint")
-
-    _validate_session_ref(call)
-    _validate_usage(call)
-    _validate_lifecycle(call)
-
-
-def _validate_session_ref(call: LLMCall) -> None:
-    if call.session_ref is None:
+        _ledger_defect(call, "generation_seq is not positive")
+    spec = generation_spec_document(call.generation_spec)
+    if call.generation_fingerprint != spec.fingerprint:
+        _ledger_defect(call, "generation_fingerprint differs from GenerationSpec")
+    expected_owner = _OPERATION_OWNER_KINDS.get(spec.operation)
+    if expected_owner != call.owner_kind:
+        _ledger_defect(call, "owner and GenerationSpec operation disagree")
+    if call.terminal is None:
+        if (
+            call.outcome is not None
+            or call.failure_code is not None
+            or call.completed_at is not None
+        ):
+            _ledger_defect(call, "nonterminal parent carries terminal facts")
         return
-    try:
-        GenerationSessionRef.model_validate(call.session_ref, strict=True)
-    except ValidationError as error:
-        _ledger_defect(
-            call,
-            f"session_ref is invalid: {error.errors(include_url=False, include_input=False)!r}",
-        )
-
-
-def _validate_usage(call: LLMCall) -> None:
-    usage = {
-        "input_tokens": call.input_tokens,
-        "output_tokens": call.output_tokens,
-        "total_tokens": call.total_tokens,
-        "reasoning_tokens": call.reasoning_tokens,
-        "cache_read_input_tokens": call.cache_read_input_tokens,
-        "cache_write_input_tokens": call.cache_write_input_tokens,
-    }
-    if all(value is None for value in usage.values()):
-        return
-    try:
-        GenerationUsage.model_validate(usage, strict=True)
-    except ValidationError as error:
-        _ledger_defect(
-            call,
-            f"usage is invalid: {error.errors(include_url=False, include_input=False)!r}",
-        )
-
-
-def _validate_lifecycle(call: LLMCall) -> None:
-    terminal_facts = (
-        call.session_ref,
-        call.error_code,
-        call.error_detail,
-        call.input_tokens,
-        call.output_tokens,
-        call.total_tokens,
-        call.reasoning_tokens,
-        call.cache_read_input_tokens,
-        call.cache_write_input_tokens,
-        call.sdk_version,
-        call.runtime_version,
-        call.latency_ms,
-        call.accepted_at,
-        call.completed_at,
-    )
-    if call.outcome is None:
-        if any(value is not None for value in terminal_facts):
-            _ledger_defect(call, "nonterminal lifecycle carries terminal facts")
-        return
-
-    if call.outcome not in {"Succeeded", "Failed", "Cancelled"}:
-        _ledger_defect(call, f"outcome {call.outcome!r} is not normalized")
-    if call.completed_at is None:
-        _ledger_defect(call, "terminal lifecycle has no completed_at")
-    _validate_terminal_error_facts(call)
-
-    if call.accepted_at is None:
-        if call.outcome == "Succeeded":
-            _ledger_defect(call, "pre-accept lifecycle cannot succeed")
-        preaccept_forbidden = (
-            call.session_ref,
-            call.input_tokens,
-            call.output_tokens,
-            call.total_tokens,
-            call.reasoning_tokens,
-            call.cache_read_input_tokens,
-            call.cache_write_input_tokens,
-            call.sdk_version,
-            call.runtime_version,
-            call.latency_ms,
-        )
-        if any(value is not None for value in preaccept_forbidden):
-            _ledger_defect(call, "pre-accept lifecycle carries accepted-host facts")
-        return
-
-    if not _bounded_version(call.sdk_version):
-        _ledger_defect(call, f"sdk_version {call.sdk_version!r} is not bounded")
-    if not _bounded_version(call.runtime_version):
-        _ledger_defect(call, f"runtime_version {call.runtime_version!r} is not bounded")
-    if call.latency_ms is None or call.latency_ms < 0:
-        _ledger_defect(call, f"latency_ms {call.latency_ms!r} is invalid")
-    if call.outcome == "Succeeded" and call.session_ref is None:
-        _ledger_defect(call, "accepted success has no session_ref")
-
-
-def _validate_terminal_error_facts(call: LLMCall) -> None:
-    if call.outcome == "Succeeded":
-        if call.error_code is not None or call.error_detail is not None:
-            _ledger_defect(call, "successful lifecycle carries failure facts")
-        return
+    terminal = _freeze_json_object(call.terminal, label="generation terminal")
+    if terminal.get("kind") != call.outcome or call.completed_at is None:
+        _ledger_defect(call, "parent terminal projection is inconsistent")
     if call.outcome == "Failed":
-        if call.error_code not in _NORMALIZED_FAILURE_CODES:
-            _ledger_defect(call, f"failure code {call.error_code!r} is not normalized")
-    elif call.error_code is not None:
-        _ledger_defect(call, "cancelled lifecycle carries a failure code")
-    if not _bounded_error_detail(call.error_detail):
-        _ledger_defect(call, "terminal error_detail is invalid")
+        if terminal.get("failure_code") != call.failure_code:
+            _ledger_defect(call, "parent failure projection is inconsistent")
+    elif call.failure_code is not None:
+        _ledger_defect(call, "nonfailed parent carries failure_code")
 
 
-def _bounded_version(value: str | None) -> bool:
-    return value is not None and 1 <= len(value) <= _MAX_RUNTIME_VERSION_LENGTH
+def _validate_turn(turn: LLMModelTurn) -> None:
+    if turn.turn_seq < 1:
+        _turn_defect(turn, "turn_seq is not positive")
+    _require_sha256(turn.request_fingerprint, label="model turn request fingerprint")
+    _freeze_json_object(turn.route_request_identity, label="route request identity")
+    terminal_facts = (
+        turn.terminal,
+        turn.usage,
+        turn.billability,
+        turn.accepted_at,
+        turn.completed_at,
+    )
+    if turn.terminal is None:
+        if any(value is not None for value in terminal_facts[1:]):
+            _turn_defect(turn, "nonterminal child carries terminal facts")
+        return
+    if turn.dispatch_started_at is None or turn.completed_at is None:
+        _turn_defect(turn, "terminal child was not armed and completed")
+    terminal = _freeze_json_object(turn.terminal, label="model turn terminal")
+    if terminal.get("kind") not in {"Succeeded", "Failed", "Cancelled"}:
+        _turn_defect(turn, "terminal kind is not closed")
+    if turn.usage is not None:
+        _freeze_json_object(turn.usage, label="model turn usage")
+    if turn.billability is not None:
+        _freeze_json_object(turn.billability, label="model turn billability")
 
 
-def _bounded_error_detail(value: str | None) -> bool:
-    return value is not None and len(value) <= _MAX_ERROR_DETAIL_LENGTH and bool(value.strip())
-
-
-def _retained_preaccept_detail(value: str, *, label: str) -> str:
-    if not isinstance(value, str):
-        raise ValueError(f"pre-accept {label} must be text")
-    retained = value[:_MAX_ERROR_DETAIL_LENGTH]
-    if not retained.strip():
-        raise ValueError(f"pre-accept {label} must not be blank")
-    return retained
-
-
-def _chat_output_schema_fingerprint() -> str:
-    return _digest(TextOutput().model_dump(mode="json", by_alias=True))
-
-
-def _ledger_defect(call: LLMCall, detail: str) -> Never:
-    # justify-defect: llm_ledger is the sole writer, so an invalid trusted row is corruption.
-    raise AssertionError(f"llm_calls row id={call.id} is corrupt: {detail}")
-
-
-def _record(call: LLMCall) -> GenerationRecord:
-    _validate_persisted_call(call)
+def _generation_record(call: LLMCall) -> GenerationRecord:
+    _validate_call(call)
     return GenerationRecord(
         id=call.id,
-        owner_kind=cast(LlmCallOwnerKind, call.owner_kind),
-        owner_id=call.owner_id,
+        owner=LlmCallOwner(kind=cast(LlmCallOwnerKind, call.owner_kind), id=call.owner_id),
         generation_seq=call.generation_seq,
-        operation=call.operation,
-        plan_id=cast(generation_policy.PlanId, call.plan_id),
-        plan_revision=call.plan_revision,
-        backend=cast(Literal["codex"], call.backend),
-        transport=cast(Literal["sdk"], call.transport),
-        auth_profile=cast(Literal["codex-personal"], call.auth_profile),
-        model_name=call.model_name,
-        reasoning_effort=call.reasoning_effort,
-        capability_kind=cast(generation_policy.Capability, call.capability_kind),
-        request_fingerprint=call.request_fingerprint,
-        output_schema_fingerprint=call.output_schema_fingerprint,
-        tool_plan_fingerprint=call.tool_plan_fingerprint,
-        streaming=call.streaming,
-        session_ref=dict(call.session_ref) if call.session_ref is not None else None,
-        outcome=cast(NormalizedOutcome | None, call.outcome),
-        error_code=cast(NormalizedFailureCode | None, call.error_code),
-        error_detail=call.error_detail,
-        input_tokens=call.input_tokens,
-        output_tokens=call.output_tokens,
-        total_tokens=call.total_tokens,
-        reasoning_tokens=call.reasoning_tokens,
-        cache_read_input_tokens=call.cache_read_input_tokens,
-        cache_write_input_tokens=call.cache_write_input_tokens,
-        sdk_version=call.sdk_version,
-        runtime_version=call.runtime_version,
-        latency_ms=call.latency_ms,
+        spec=generation_spec_document(call.generation_spec),
+        outcome=cast(GenerationOutcome | None, call.outcome),
+        failure_code=call.failure_code,
+        terminal=(
+            _freeze_json_object(call.terminal, label="generation terminal")
+            if call.terminal is not None
+            else None
+        ),
         created_at=call.created_at,
-        accepted_at=call.accepted_at,
         completed_at=call.completed_at,
     )
 
 
-def _assert_start_identity(call: LLMCall, start: GenerationStart) -> None:
-    policy = command_policy(start.command)
-    expected = (
-        start.owner.kind,
-        start.owner.id,
-        start.command.operation.kind,
-        policy.plan_id,
-        generation_policy.POLICY_REVISION,
-        "codex",
-        "sdk",
-        "codex-personal",
-        policy.model,
-        policy.effort,
-        policy.capability,
-        request_fingerprint(start.command),
-        _output_schema_fingerprint(start.command),
-        _tool_plan_fingerprint(start.command),
-        start.streaming,
+def _turn_record(turn: LLMModelTurn) -> ModelTurnRecord:
+    _validate_turn(turn)
+    return ModelTurnRecord(
+        id=turn.id,
+        generation_id=turn.generation_id,
+        turn_seq=turn.turn_seq,
+        request_fingerprint=turn.request_fingerprint,
+        route_request_identity=_freeze_json_object(
+            turn.route_request_identity, label="route request identity"
+        ),
+        terminal=(
+            _freeze_json_object(turn.terminal, label="model turn terminal")
+            if turn.terminal is not None
+            else None
+        ),
+        usage=(
+            _freeze_json_object(turn.usage, label="model turn usage")
+            if turn.usage is not None
+            else None
+        ),
+        billability=(
+            _freeze_json_object(turn.billability, label="model turn billability")
+            if turn.billability is not None
+            else None
+        ),
+        created_at=turn.created_at,
+        dispatch_started_at=turn.dispatch_started_at,
+        accepted_at=turn.accepted_at,
+        completed_at=turn.completed_at,
     )
+
+
+def _assert_generation_start_identity(call: LLMCall, start: GenerationStart) -> None:
+    _validate_call(call)
     actual = (
         call.owner_kind,
         call.owner_id,
-        call.operation,
-        call.plan_id,
-        call.plan_revision,
-        call.backend,
-        call.transport,
-        call.auth_profile,
-        call.model_name,
-        call.reasoning_effort,
-        call.capability_kind,
-        call.request_fingerprint,
-        call.output_schema_fingerprint,
-        call.tool_plan_fingerprint,
-        call.streaming,
+        call.generation_spec,
+        call.generation_fingerprint,
+    )
+    expected = (
+        start.owner.kind,
+        start.owner.id,
+        start.spec.value,
+        start.spec.fingerprint,
     )
     if actual != expected:
         raise AssertionError(
-            f"generation_id={start.command.request_id} was reused with different start facts"
+            f"generation_id={start.generation_id} was reused with different parent facts"
         )
 
 
-def _assert_owner(call: LLMCall, owner: LlmCallOwner) -> None:
-    if (call.owner_kind, call.owner_id) != (owner.kind, owner.id):
-        raise AssertionError(f"generation_id={call.id} changed durable owner")
-
-
-def _assert_no_terminal(call: LLMCall) -> None:
-    if call.outcome is not None or call.completed_at is not None:
-        raise AssertionError(f"generation_id={call.id} already has terminal outcome={call.outcome}")
-    if any(
-        value is not None
-        for value in (
-            call.session_ref,
-            call.error_code,
-            call.error_detail,
-            call.input_tokens,
-            call.output_tokens,
-            call.total_tokens,
-            call.reasoning_tokens,
-            call.cache_read_input_tokens,
-            call.cache_write_input_tokens,
-            call.sdk_version,
-            call.runtime_version,
-            call.latency_ms,
-            call.accepted_at,
+def _assert_model_turn_start_identity(turn: LLMModelTurn, start: ModelTurnStart) -> None:
+    _validate_turn(turn)
+    actual = (
+        turn.id,
+        turn.generation_id,
+        turn.turn_seq,
+        turn.request_fingerprint,
+        turn.route_request_identity,
+    )
+    expected = (
+        start.model_turn_id,
+        start.generation_id,
+        start.turn_seq,
+        start.request_fingerprint,
+        _freeze_json_object(start.route_request_identity, label="route request identity"),
+    )
+    if actual != expected:
+        raise AssertionError(
+            f"model_turn_id={start.model_turn_id} was reused with different child facts"
         )
-    ):
-        raise AssertionError(f"generation_id={call.id} has partial terminal facts")
+
+
+def _assert_parent_open(call: LLMCall) -> None:
+    if call.terminal is not None or call.completed_at is not None:
+        _ledger_defect(call, "terminal parent cannot accept another child transition")
 
 
 def _next_generation_seq(db: Session, owner: LlmCallOwner) -> int:
@@ -779,14 +1296,81 @@ def _next_generation_seq(db: Session, owner: LlmCallOwner) -> int:
     )
 
 
-def _output_schema_fingerprint(command: GenerationCommand) -> str:
-    return _digest(command.intent.output.model_dump(mode="json", by_alias=True))
+def _presence_json_object(
+    value: Presence[Mapping[str, object]],
+    *,
+    label: str,
+) -> None:
+    if not isinstance(value, (Absent, Present)):
+        raise TypeError(f"{label} must use Presence")
+    if isinstance(value, Present):
+        _freeze_json_object(value.value, label=label)
 
 
-def _tool_plan_fingerprint(command: GenerationCommand) -> str | None:
-    if not isinstance(command.operation, ChatOperation):
-        return None
-    return current_tool_plan_fingerprint()
+def _nullable_json_object(
+    value: Presence[Mapping[str, object]],
+    *,
+    label: str,
+) -> dict[str, JsonValue] | None:
+    _presence_json_object(value, label=label)
+    return _freeze_json_object(value.value, label=label) if isinstance(value, Present) else None
+
+
+def _presence_document(value: JsonValue, *, label: str) -> None:
+    document = _require_object(value, label=label)
+    kind = document.get("kind")
+    if kind == "Absent":
+        if set(document) != {"kind"}:
+            raise ValueError(f"{label} Absent has extra fields")
+        return
+    if kind == "Present":
+        if set(document) != {"kind", "value"}:
+            raise ValueError(f"{label} Present shape is invalid")
+        return
+    raise ValueError(f"{label} is not Presence")
+
+
+def _freeze_json_object(value: Mapping[str, object], *, label: str) -> dict[str, JsonValue]:
+    if not isinstance(value, Mapping):
+        raise TypeError(f"{label} must be an object")
+    try:
+        encoded = json.dumps(
+            dict(value),
+            ensure_ascii=True,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        decoded = json.loads(encoded)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{label} is not canonical JSON") from error
+    if not isinstance(decoded, dict) or any(not isinstance(key, str) for key in decoded):
+        raise ValueError(f"{label} must be a string-keyed JSON object")
+    return cast(dict[str, JsonValue], decoded)
+
+
+def _require_object(value: JsonValue, *, label: str) -> dict[str, JsonValue]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be an object")
+    return value
+
+
+def _bounded_text(value: object, *, label: str) -> str:
+    if not isinstance(value, str) or not value.strip() or len(value) > 512:
+        raise ValueError(f"{label} must be bounded nonblank text")
+    return value
+
+
+def _positive_int(value: object, *, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(f"{label} must be a positive integer")
+    return value
+
+
+def _require_sha256(value: object, *, label: str) -> str:
+    if not isinstance(value, str) or _SHA256_PATTERN.fullmatch(value) is None:
+        raise ValueError(f"{label} must be lowercase SHA-256")
+    return value
 
 
 def _digest(value: object) -> str:
@@ -801,21 +1385,49 @@ def _digest(value: object) -> str:
     ).hexdigest()
 
 
+def _ledger_defect(call: LLMCall, detail: str) -> Never:
+    # justify-defect: this module is the sole writer for trusted generation rows.
+    raise AssertionError(f"llm_calls row id={call.id} is corrupt: {detail}")
+
+
+def _turn_defect(turn: LLMModelTurn, detail: str) -> Never:
+    # justify-defect: this module is the sole writer for trusted child rows.
+    raise AssertionError(f"llm_model_turns row id={turn.id} is corrupt: {detail}")
+
+
 __all__ = [
+    "ContinuationResume",
+    "DispatchableModelTurn",
+    "GenerationOutcome",
     "GenerationRecord",
+    "GenerationSpecDocument",
+    "GenerationSpecLike",
     "GenerationStart",
     "LlmCallOwner",
     "LlmCallOwnerKind",
+    "ModelTurnCompletion",
+    "ModelTurnRecord",
+    "ModelTurnStart",
+    "PendingGenerationContinuation",
+    "RedispatchForbiddenModelTurn",
+    "arm_model_turn_dispatch_in_current_transaction",
     "complete_generation_in_current_transaction",
-    "complete_preaccept_failure_if_started_in_current_transaction",
-    "cancel_preaccept_generation_if_started_in_current_transaction",
-    "current_tool_plan_fingerprint",
+    "complete_model_turn_in_current_transaction",
+    "generation_spec_document",
     "lock_active_generation_for_authority_in_current_transaction",
     "lock_generation_for_authority_in_current_transaction",
     "lock_generation_owner_in_current_transaction",
+    "open_generation_continuation_in_current_transaction",
     "read_generation",
     "read_generation_for_owner_sequence",
-    "read_latest_generations_for_owners",
     "read_latest_generation_for_owner",
+    "read_latest_generations_for_owners",
+    "read_model_turns",
+    "read_model_turns_for_generations",
+    "read_pending_generation_continuation_in_current_transaction",
+    "reset_generation_after_proven_non_dispatch_in_current_transaction",
+    "arm_resumed_model_turn_dispatch_in_current_transaction",
+    "resume_generation_continuation_in_current_transaction",
     "start_generation_in_current_transaction",
+    "start_model_turn_in_current_transaction",
 ]

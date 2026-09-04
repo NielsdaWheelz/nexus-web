@@ -38,14 +38,17 @@ from provider_runtime.agent_runtime import (
     AgentRuntime,
     AgentRuntimeConfig,
     CredentialRef,
-    SessionQuery,
+)
+
+from nexus.services.codex_generation_operations import (
+    compose_codex_model_tool_plan_registry,
 )
 
 _SOCKET_ENV = "NEXUS_CODEX_AGENT_SOCKET"
 _CREDENTIAL_FILE_ENV = "NEXUS_CODEX_CREDENTIAL_FILE"
 _WORKING_DIRECTORY_ROOT_ENV = "NEXUS_CODEX_WORKING_DIRECTORY_ROOT"
 _MCP_ORIGIN_ENV = "NEXUS_CODEX_MCP_ORIGIN"
-_CHAT_NETWORK_ATTESTED_ENV = "NEXUS_CODEX_CHAT_NETWORK_ATTESTED"
+_MODEL_TOOL_NETWORK_ATTESTED_ENV = "NEXUS_CODEX_MODEL_TOOL_NETWORK_ATTESTED"
 
 
 async def run() -> None:
@@ -53,7 +56,7 @@ async def run() -> None:
     credential_file = required_absolute_path(_CREDENTIAL_FILE_ENV)
     working_directory_root = required_absolute_path(_WORKING_DIRECTORY_ROOT_ENV)
     mcp_origin = _required_environment(_MCP_ORIGIN_ENV)
-    chat_network_attested = _required_chat_network_attestation()
+    model_tool_network_attested = _required_model_tool_network_attestation()
     reject_subscription_api_key_auth()
     reject_ambient_codex_home()
     _prepare_working_directory_root(working_directory_root)
@@ -88,8 +91,9 @@ async def run() -> None:
         working_directory_root=working_directory_root,
         credential_file=credential_file,
         versions=versions,
+        model_tool_registry=compose_codex_model_tool_plan_registry(),
         mcp_origin=mcp_origin,
-        chat_network_attested=chat_network_attested,
+        model_tool_network_attested=model_tool_network_attested,
     )
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     owned_identity: tuple[int, int] | None = None
@@ -120,13 +124,10 @@ async def run() -> None:
 async def _probe_chatgpt_auth(state_root: Path) -> None:
     runtime = create_confined_runtime(AgentRuntimeConfig(state_root_base=state_root))
     try:
-        await runtime.list_sessions(
-            SessionQuery(
-                backend="codex",
-                transport="sdk",
-                auth=CredentialRef(kind="local_account", profile_key="codex-personal"),
-                limit=1,
-            )
+        await runtime.model_catalog(
+            "codex",
+            CredentialRef(kind="local_account", profile_key="codex-personal"),
+            transport="sdk",
         )
     finally:
         await runtime.close()
@@ -139,10 +140,10 @@ def _required_environment(name: str) -> str:
     return value
 
 
-def _required_chat_network_attestation() -> bool:
-    value = _required_environment(_CHAT_NETWORK_ATTESTED_ENV)
+def _required_model_tool_network_attestation() -> bool:
+    value = _required_environment(_MODEL_TOOL_NETWORK_ATTESTED_ENV)
     if value != "true":
-        raise RuntimeError(f"{_CHAT_NETWORK_ATTESTED_ENV} must be exactly 'true'")
+        raise RuntimeError(f"{_MODEL_TOOL_NETWORK_ATTESTED_ENV} must be exactly 'true'")
     return True
 
 

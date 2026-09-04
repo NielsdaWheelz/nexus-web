@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import os
 import subprocess
@@ -50,12 +52,13 @@ from nexus_test_control.services import (
 )
 
 if TYPE_CHECKING:
-    from nexus_test_control.services import EmbeddingPeer
+    from nexus_test_control.services import EmbeddingPeer, ProviderApiPeer
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 _CANDIDATE_WORKER_IMAGE_ID = "sha256:" + "c" * 64
 _HOSTED_SOURCE_SHA = "a" * 40
 _CANDIDATE_SHA = "a" * 40
+_GENERATION_CUTOVER_PRESENT = find_spec("nexus.services.generation_catalog") is not None
 
 
 @pytest.mark.parametrize(
@@ -220,7 +223,7 @@ def test_codex_hosted_canary_plan_requires_dedicated_profile_state_without_an_ap
     plan = runner.build_codex_hosted_canary_plan(
         repo_root=tmp_path,
         run_id="0123456789abcdef",
-        target=f"{proof}::test_codex_personal_generation_canary_records_exact_four_plan_pairs",
+        target=f"{proof}::test_codex_personal_generation_canary_records_bounded_target_set",
         environment={
             "NEXUS_CODEX_HOSTED_CANARY": "1",
             "NEXUS_CODEX_HOSTED_PROFILE": "codex-personal",
@@ -239,7 +242,7 @@ def test_codex_hosted_canary_plan_requires_dedicated_profile_state_without_an_ap
     )
     assert (
         plan.command[0][-1]
-        == "./tests/hosted/nightly/test_codex_personal_generation.py::test_codex_personal_generation_canary_records_exact_four_plan_pairs"
+        == "./tests/hosted/nightly/test_codex_personal_generation.py::test_codex_personal_generation_canary_records_bounded_target_set"
     )
     assert plan.environment["NEXUS_CODEX_HOSTED_PROFILE"] == "codex-personal"
     assert plan.environment["NEXUS_CODEX_HOSTED_STATE_ROOT"] == str(state_root)
@@ -253,7 +256,7 @@ def test_codex_hosted_canary_plan_requires_dedicated_profile_state_without_an_ap
         runner.build_codex_hosted_canary_plan(
             repo_root=tmp_path,
             run_id="0123456789abcdef",
-            target=f"{proof}::test_codex_personal_generation_canary_records_exact_four_plan_pairs",
+            target=f"{proof}::test_codex_personal_generation_canary_records_bounded_target_set",
             environment={
                 "NEXUS_CODEX_HOSTED_CANARY": "1",
                 "NEXUS_CODEX_HOSTED_PROFILE": "codex-personal",
@@ -295,7 +298,7 @@ def test_codex_hosted_canary_plan_requires_one_runtime_filesystem(
             run_id="0123456789abcdef",
             target=(
                 "python/tests/hosted/nightly/test_codex_personal_generation.py::"
-                "test_codex_personal_generation_canary_records_exact_four_plan_pairs"
+                "test_codex_personal_generation_canary_records_bounded_target_set"
             ),
             environment={
                 "NEXUS_CODEX_HOSTED_CANARY": "1",
@@ -313,9 +316,7 @@ def test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape(
 ) -> None:
     """Risk: uploaded evidence retains unbounded, ambiguous, or noncanonical data."""
 
-    assert find_spec("nexus.services.generation_policy") is not None, (
-        "fixed Codex generation policy owner is absent"
-    )
+    assert _GENERATION_CUTOVER_PRESENT, "the final generation-catalog owner is absent"
     evidence_path = tmp_path / "hosted-codex-personal-generation.json"
     run_id = "0123456789abcdef"
     valid = _codex_hosted_canary_evidence(run_id)
@@ -325,30 +326,10 @@ def test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape(
         evidence_path, run_id=run_id, source_sha=_HOSTED_SOURCE_SHA
     )
 
-    authoritative_total = _codex_hosted_canary_evidence(run_id)
-    authoritative_result = cast(list[dict[str, object]], authoritative_total["results"])[0]
-    authoritative_usage = cast(dict[str, object], authoritative_result["usage"])
-    authoritative_usage["total_tokens"] = 4
-    _write(evidence_path, json.dumps(authoritative_total, separators=(",", ":")))
-    assert codex_hosted_evidence_is_valid(
-        evidence_path, run_id=run_id, source_sha=_HOSTED_SOURCE_SHA
-    ), "provider-reported total tokens are authoritative, not a derived sum"
-
-    token_boundary = _codex_hosted_canary_evidence(run_id)
-    token_boundary_result = cast(list[dict[str, object]], token_boundary["results"])[0]
-    token_boundary_usage = cast(dict[str, object], token_boundary_result["usage"])
-    token_boundary_usage.update(
-        {"input_tokens": (1 << 53) - 1, "output_tokens": 0, "total_tokens": (1 << 53) - 1}
-    )
-    _write(evidence_path, json.dumps(token_boundary, separators=(",", ":")))
-    assert codex_hosted_evidence_is_valid(
-        evidence_path, run_id=run_id, source_sha=_HOSTED_SOURCE_SHA
-    ), "the exact JSON-safe token ceiling was rejected"
-
     invalid_artifacts = [
         (
-            "evidence exceeds 16 KiB",
-            canonical + " " * (16 * 1024 - len(canonical) + 1),
+            "evidence exceeds 64 KiB",
+            canonical + " " * (64 * 1024 - len(canonical) + 1),
         ),
         (
             "duplicate top-level key",
@@ -356,11 +337,7 @@ def test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape(
         ),
         (
             "duplicate result key",
-            canonical.replace('"backend":', '"backend":"wrong","backend":', 1),
-        ),
-        (
-            "duplicate usage key",
-            canonical.replace('"input_tokens":', '"input_tokens":999,"input_tokens":', 1),
+            canonical.replace('"receipt_kind":', '"receipt_kind":"wrong","receipt_kind":', 1),
         ),
     ]
 
@@ -384,22 +361,12 @@ def test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape(
             )
         )
 
-        usage = cast(dict[str, object], result["usage"])
-        usage[unsafe_key] = 0
-        del result[unsafe_key]
-        invalid_artifacts.append(
-            (
-                f"usage undeclared key {unsafe_key!r}",
-                json.dumps(evidence, separators=(",", ":")),
-            )
-        )
-
     for field, value in (
         ("source_sha", "b" * 40),
         ("policy_revision", "unreviewed-policy"),
         ("policy_fingerprint", "0" * 64),
-        ("policy_facts_fingerprint", "0" * 64),
-        ("provider_runtime_revision", "0" * 40),
+        ("catalog_definition_revision", "not-a-sha256"),
+        ("backend_contract_revision", "other-contract"),
         ("codex_sdk_version", "0.0.0"),
         ("codex_cli_version", "0.0.0"),
     ):
@@ -407,22 +374,11 @@ def test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape(
         evidence[field] = value
         invalid_artifacts.append((f"drifted {field}", json.dumps(evidence, separators=(",", ":"))))
 
-    for token_field in ("input_tokens", "output_tokens", "total_tokens"):
-        for invalid_value in (True, 0.0, -1, 1 << 53):
-            evidence = _codex_hosted_canary_evidence(run_id)
-            result = cast(list[dict[str, object]], evidence["results"])[0]
-            usage = cast(dict[str, object], result["usage"])
-            usage[token_field] = invalid_value
-            invalid_artifacts.append(
-                (
-                    f"invalid {token_field} {invalid_value!r}",
-                    json.dumps(evidence, separators=(",", ":")),
-                )
-            )
-
     for scalar_field, invalid_value in (
         ("subscription_turns", True),
         ("subscription_turns", 1.0),
+        ("declared_tool_count", False),
+        ("declared_tool_count", 0.0),
         ("tool_events", False),
         ("tool_events", 0.0),
         ("permission_requests", False),
@@ -451,75 +407,12 @@ def test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape(
 
 
 def _codex_hosted_canary_evidence(run_id: str) -> dict[str, object]:
-    from nexus.services import generation_policy
+    from tests.testkit.codex_hosted_evidence import codex_hosted_evidence_fixture
 
-    return {
-        "schema_version": "nexus-hosted-codex-canary.v3",
-        "run_id": run_id,
-        "source_sha": _HOSTED_SOURCE_SHA,
-        "policy_revision": generation_policy.POLICY_REVISION,
-        "policy_fingerprint": generation_policy.POLICY_FINGERPRINT,
-        "policy_facts_fingerprint": generation_policy.POLICY_FACTS_FINGERPRINT,
-        "provider_runtime_revision": generation_policy.PLAN_EVAL_PIN["provider_runtime_revision"],
-        "codex_sdk_version": generation_policy.PLAN_EVAL_PIN["codex_sdk_version"],
-        "codex_cli_version": generation_policy.PLAN_EVAL_PIN["codex_sdk_version"],
-        "qualification_scope": "model_effort_runtime_wire",
-        "qualified_plan_ids": ["routine", "standard", "thorough", "deep"],
-        "subscription_turns": 4,
-        "results": [
-            *[
-                {
-                    "backend": "codex",
-                    "transport": "sdk",
-                    "auth_profile": "codex-personal",
-                    "terminal_status": "succeeded",
-                    "plan_id": plan_id,
-                    "operation": operation,
-                    "profile": profile,
-                    "operation_revision": generation_policy.operation_revision(
-                        operation, profile=profile
-                    ),
-                    "case_shape": case_shape,
-                    "model": model,
-                    "reasoning": reasoning,
-                    "structured_output_valid": case_shape == "structured",
-                    "session_ref_schema_version": "agent-session-ref.v1",
-                    "usage": {
-                        "input_tokens": 1,
-                        "output_tokens": 2,
-                        "total_tokens": 3,
-                    },
-                    "sdk_version": generation_policy.PLAN_EVAL_PIN["codex_sdk_version"],
-                    "runtime_version": generation_policy.PLAN_EVAL_PIN["codex_sdk_version"],
-                    "tool_events": tool_events,
-                    "elapsed_ms": 1,
-                    "permission_requests": 0,
-                }
-                for plan_id, operation, profile, case_shape, model, reasoning, tool_events in (
-                    (
-                        "routine",
-                        "metadata_enrichment",
-                        None,
-                        "structured",
-                        "gpt-5.6-luna",
-                        "low",
-                        0,
-                    ),
-                    ("standard", "dawn_write", None, "text", "gpt-5.6-terra", "medium", 0),
-                    (
-                        "thorough",
-                        "dossier_library",
-                        None,
-                        "structured",
-                        "gpt-5.6-terra",
-                        "high",
-                        0,
-                    ),
-                    ("deep", "chat", "deep", "mcp_read", "gpt-5.6-sol", "high", 1),
-                )
-            ]
-        ],
-    }
+    return codex_hosted_evidence_fixture(
+        run_id=run_id,
+        source_sha=_HOSTED_SOURCE_SHA,
+    )
 
 
 def _assert_codex_hosted_evidence_stage_is_atomic_and_run_bound(
@@ -584,7 +477,7 @@ def _assert_codex_hosted_evidence_stage_is_atomic_and_run_bound(
         (
             True,
             "./tests/hosted/nightly/test_codex_personal_generation.py::"
-            "test_codex_personal_generation_canary_records_exact_four_plan_pairs",
+            "test_codex_personal_generation_canary_records_bounded_target_set",
         ),
     ],
     ids=("complete-workflow", "exact-proof"),
@@ -658,7 +551,7 @@ def _run_failing_codex_hosted_workflow(
 
     repo_root = tmp_path / "repo"
     proof_path = "python/tests/hosted/nightly/test_codex_personal_generation.py"
-    proof_node = "test_codex_personal_generation_canary_records_exact_four_plan_pairs"
+    proof_node = "test_codex_personal_generation_canary_records_bounded_target_set"
     _write(repo_root / proof_path, f"def {proof_node}():\n    pass\n")
     (repo_root / "python/.venv").mkdir()
 
@@ -734,7 +627,7 @@ def _run_failing_codex_hosted_workflow(
         ("pytest", "python/tests/audit/property/test_state.py::test_state", Workflow.NIGHTLY),
         (
             "pytest",
-            "python/tests/hosted/nightly/test_codex_personal_generation.py::test_codex_personal_generation_canary_records_exact_four_plan_pairs",
+            "python/tests/hosted/nightly/test_codex_personal_generation.py::test_codex_personal_generation_canary_records_bounded_target_set",
             Workflow.CODEX_NIGHTLY,
         ),
         (
@@ -758,7 +651,23 @@ def test_exact_proof_context_uses_its_authoritative_cadence(
     assert runner._proof_owner(runner_name, node)[1] is expected
 
 
-class _ReadyExternalPorts(runner._RunnerPorts):
+class _ReadyProtocolPorts(runner._RunnerPorts):
+    def materialize_provider_api_peer(
+        self,
+        _repo_root: Path,
+        _environment: Mapping[str, str],
+        run: OwnedTestRun,
+    ) -> ProviderApiPeer:
+        from nexus_test_control.services import ProviderApiPeer
+
+        return ProviderApiPeer(
+            Path(f"/{run.run_id}/provider-api-peer"),
+            Path(f"/{run.run_id}/provider-api-peer/ca.pem"),
+            Path(f"/{run.run_id}/provider-api-peer/server-key.pem"),
+            Path(f"/{run.run_id}/provider-api-peer/requests.jsonl"),
+            19093,
+        )
+
     def start_python_process(
         self,
         _repo_root: Path,
@@ -766,7 +675,7 @@ class _ReadyExternalPorts(runner._RunnerPorts):
         run: OwnedTestRun,
         role: str,
     ) -> StartedProcess:
-        assert role == "external"
+        assert role in {"external", "provider-api-peer"}
         return StartedProcess(
             role=role,
             process_group_id=101,
@@ -783,10 +692,20 @@ class _ReadyExternalPorts(runner._RunnerPorts):
         process: StartedProcess,
         endpoint: runner.EndpointKind,
         path: str,
+        *,
+        tls_ca: Path | None = None,
     ) -> None:
-        assert process.role == "external"
-        assert endpoint is runner.EndpointKind.EXTERNAL
+        expected_endpoint = (
+            runner.EndpointKind.EXTERNAL
+            if process.role == "external"
+            else runner.EndpointKind.PROVIDER_API
+        )
+        assert endpoint is expected_endpoint
         assert path == "/livez"
+        if process.role == "provider-api-peer":
+            assert tls_ca == Path(f"/{process.run_id}/provider-api-peer/ca.pem")
+        else:
+            assert tls_ca is None
 
 
 def test_doctor_is_not_run_when_its_locked_tool_owners_are_absent(tmp_path: Path) -> None:
@@ -2458,7 +2377,7 @@ def test_signed_physical_promotion_owner_uses_only_real_webview_and_bridge_paths
     assert "PROMOTION_COOKIE" not in workflow
 
 
-def _android_release_environment(inputs: "runner._AndroidReleaseInputs") -> dict[str, str]:
+def _android_release_environment(inputs: runner._AndroidReleaseInputs) -> dict[str, str]:
     return {
         "NEXUS_ANDROID_RELEASE_BASE_URL": inputs.base_url,
         "NEXUS_ANDROID_RELEASE_OWNED_HOST": inputs.owned_host,
@@ -3244,7 +3163,7 @@ def test_workflow_interruption_closes_the_owned_run(tmp_path: Path) -> None:
     environment = _stub_tools(tmp_path, "docker", "supabase", "uv")
     cleaned: list[str] = []
 
-    class Ports(_ReadyExternalPorts):
+    class Ports(_ReadyProtocolPorts):
         def prepare_run(
             self,
             _repo_root: Path,
@@ -3329,7 +3248,7 @@ def _assert_container_measurement_stops_before_owned_runtime_cleanup(
         container_reader=read_container,
     )
 
-    class Ports(_ReadyExternalPorts):
+    class Ports(_ReadyProtocolPorts):
         def prepare_run(
             self,
             repo_root: Path,
@@ -3549,7 +3468,7 @@ def test_affected_heavy_proofs_share_one_workflow_run_and_request_migrations_onl
     cleaned: list[str] = []
     commands_before_heavy_lock: list[list[list[str]]] = []
 
-    class Ports(_ReadyExternalPorts):
+    class Ports(_ReadyProtocolPorts):
         @contextmanager
         def heavy_lock(self, _repo_root: Path) -> Iterator[Path]:
             commands_before_heavy_lock.append([command["argv"] for command in _commands(tmp_path)])
@@ -3873,7 +3792,7 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
             _repo_root: Path,
             _environment: Mapping[str, str],
             _run: OwnedTestRun,
-        ) -> "EmbeddingPeer":
+        ) -> EmbeddingPeer:
             from nexus_test_control.services import EmbeddingPeer
 
             state = tmp_path / "embedding-peer"
@@ -3884,6 +3803,23 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
             for path in (certificate, key, audit):
                 _write(path, "owned\n")
             return EmbeddingPeer(state, certificate, key, audit, 4443)
+
+        def materialize_provider_api_peer(
+            self,
+            _repo_root: Path,
+            _environment: Mapping[str, str],
+            _run: OwnedTestRun,
+        ) -> ProviderApiPeer:
+            from nexus_test_control.services import ProviderApiPeer
+
+            state = tmp_path / "provider-api-peer"
+            state.mkdir()
+            certificate = state / "ca.pem"
+            key = state / "server-key.pem"
+            audit = state / "requests.jsonl"
+            for path in (certificate, key, audit):
+                _write(path, "owned\n")
+            return ProviderApiPeer(state, certificate, key, audit, 4444)
 
         def materialize_generation_peer(
             self,
@@ -3952,7 +3888,10 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
             tls_ca: Path | None = None,
         ) -> None:
             readiness_calls.append((_process.role, _endpoint, _path))
-            if _endpoint is runner.EndpointKind.PROVIDER_OPENAI:
+            if _endpoint in {
+                runner.EndpointKind.PROVIDER_OPENAI,
+                runner.EndpointKind.PROVIDER_API,
+            }:
                 assert tls_ca is not None
             return
 
@@ -4023,6 +3962,7 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
     assert build_calls == ["build"]
     assert process_roles == [
         "external",
+        "provider-api-peer",
         "provider-openai",
         "codex-generation-peer",
         "api",
@@ -4032,6 +3972,7 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
     ]
     assert readiness_calls == [
         ("external", runner.EndpointKind.EXTERNAL, "/livez"),
+        ("provider-api-peer", runner.EndpointKind.PROVIDER_API, "/livez"),
         ("provider-openai", runner.EndpointKind.PROVIDER_OPENAI, "/livez"),
         ("api", runner.EndpointKind.API, "/readyz"),
         (
@@ -4055,6 +3996,7 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
     }
     assert process_overrides == {
         "external": None,
+        "provider-api-peer": None,
         "provider-openai": None,
         "codex-generation-peer": None,
         "api": app_environment,
@@ -4126,7 +4068,7 @@ def test_run_proof_executes_only_the_exact_service_node_and_classifies_assertion
     prepared: list[bool] = []
     cleaned: list[str] = []
 
-    class Ports(_ReadyExternalPorts):
+    class Ports(_ReadyProtocolPorts):
         def prepare_run(
             self,
             _root: Path,

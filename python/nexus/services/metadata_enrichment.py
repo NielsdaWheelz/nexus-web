@@ -42,9 +42,9 @@ from nexus.services.reader_publication import replace_reader_document_title
 
 logger = get_logger(__name__)
 
-_METADATA_INPUT_MAX_BYTES = generation_policy.operation_policy(
+_METADATA_INPUT_MAX_BYTES = generation_policy.workflow_for_operation(
     "metadata_enrichment"
-).input_max_bytes
+).bounds.input_max_bytes
 
 _ENRICHMENT_SYSTEM_PROMPT = """\
 Extract bibliographic and descriptive metadata for this media item.

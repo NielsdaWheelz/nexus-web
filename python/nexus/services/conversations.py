@@ -63,12 +63,7 @@ from nexus.schemas.conversation import (
     PageInfo,
 )
 from nexus.schemas.presence import Presence, absent, present
-from nexus.services.chat_failure import (
-    active_profile_run_ids,
-    compute_has_write_tool_attempt,
-    rerun_eligibility,
-    write_tool_attempt_run_ids,
-)
+from nexus.services.chat_failure import rerun_eligibility
 from nexus.services.chat_reader_selection import (
     decode_reader_selection_snapshot,
     reader_selection_out,
@@ -90,6 +85,7 @@ from nexus.services.collection_revisions import (
     read_collection_revision,
     require_collection_revision,
 )
+from nexus.services.generation_catalog import GenerationCatalogSnapshot
 from nexus.services.message_trust_trails import build_assistant_trust_trails
 from nexus.services.resource_graph import cleanup as graph_cleanup
 from nexus.services.resource_graph import context as context_service
@@ -335,19 +331,15 @@ def rerunnable_assistant_message_ids(
     for run in runs:
         latest_by_message_id.setdefault(run.assistant_message_id, run)
 
-    active_run_ids = active_profile_run_ids(db, list(latest_by_message_id.values()))
     rerunnable: set[UUID] = set()
     for message_id, run in latest_by_message_id.items():
         error_code = "cancelled" if run.status == "cancelled" else run.error_code
         if error_code is None:
             continue
-        profile_active = run.id in active_run_ids
-        has_write_tool_attempt = compute_has_write_tool_attempt(db, run)
         if rerun_eligibility(
             error_code=error_code,
             run_status=run.status,
-            profile_active=profile_active,
-            has_write_tool_attempt=has_write_tool_attempt,
+            selection_selectable=True,
         ):
             rerunnable.add(message_id)
     return rerunnable
@@ -360,9 +352,9 @@ def regeneratable_assistant_message_ids(
     assistant_message_ids: Sequence[UUID],
 ) -> set[UUID]:
     """The subset of ``assistant_message_ids`` that are currently regeneratable:
-    a completed assistant answer whose single owning `ChatRun` is complete, whose
-    profile/reasoning selection still resolves to its historical target, and that
-    attempted no assistant-write tool (spec §8). Exactly one complete run is
+    a completed assistant answer whose single owning `ChatRun` is complete.
+    Exact source selection availability is projected separately in
+    ``RunSelectionOut`` because the user may choose a replacement. Exactly one complete run is
     expected per assistant message — this never orders-by-latest. Non-assistant
     ids simply match no owning run and are excluded.
 
@@ -383,13 +375,7 @@ def regeneratable_assistant_message_ids(
         .all()
     )
     run_by_message_id: dict[UUID, ChatRun] = {run.assistant_message_id: run for run in runs}
-    active_run_ids = active_profile_run_ids(db, list(run_by_message_id.values()))
-
-    regeneratable: set[UUID] = set()
-    for message_id, run in run_by_message_id.items():
-        if run.id in active_run_ids and not compute_has_write_tool_attempt(db, run):
-            regeneratable.add(message_id)
-    return regeneratable
+    return set(run_by_message_id)
 
 
 # =============================================================================
@@ -1007,8 +993,6 @@ def message_action_facts(
         if assistant_ids
         else []
     )
-    attempted_run_ids = write_tool_attempt_run_ids(db, runs)
-    active_run_ids = active_profile_run_ids(db, runs)
     latest_run_by_message: dict[UUID, ChatRun] = {}
     for run in runs:
         latest_run_by_message.setdefault(run.assistant_message_id, run)
@@ -1037,8 +1021,7 @@ def message_action_facts(
                 rerun_applicable = rerun_eligibility(
                     error_code=error_code,
                     run_status=terminal_run.status,
-                    profile_active=terminal_run.id in active_run_ids,
-                    has_write_tool_attempt=terminal_run.id in attempted_run_ids,
+                    selection_selectable=True,
                 )
         complete_run = (
             latest_run if latest_run is not None and latest_run.status == "complete" else None
@@ -1050,11 +1033,7 @@ def message_action_facts(
                 is_assistant and is_complete and citation_counts.get(message_id, 0) >= 2
             ),
             rerun_applicable=rerun_applicable,
-            regenerate_applicable=(
-                complete_run is not None
-                and complete_run.id in active_run_ids
-                and complete_run.id not in attempted_run_ids
-            ),
+            regenerate_applicable=complete_run is not None,
         )
     return facts
 
@@ -1107,6 +1086,8 @@ def list_messages(
     db: Session,
     viewer_id: UUID,
     conversation_id: UUID,
+    *,
+    catalog_snapshot: GenerationCatalogSnapshot,
     limit: int = DEFAULT_LIMIT,
     cursor: str | None = None,
     before_cursor: str | None = None,
@@ -1188,6 +1169,7 @@ def list_messages(
         db,
         viewer_id=viewer_id,
         assistant_message_ids=assistant_message_ids,
+        catalog_snapshot=catalog_snapshot,
     )
     rerunnable_message_ids = rerunnable_assistant_message_ids(
         db,

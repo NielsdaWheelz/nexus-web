@@ -9,21 +9,31 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Iterator
+from importlib.util import find_spec
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
-from apps.codex_agent.credential_state import (
-    CredentialStateUnavailable,
-    create_ephemeral_runtime_paths,
-    enrolled_auth_identity,
-    link_runtime_auth,
-    remove_ephemeral_runtime_paths,
-    require_private_executable_runtime_mount,
-    require_writable_credential_mount,
-    sync_enrolled_auth_file,
-)
+
+_CUTOVER_PRESENT = find_spec("apps.codex_agent.credential_state") is not None
+
+if TYPE_CHECKING or _CUTOVER_PRESENT:
+    from apps.codex_agent.credential_state import (
+        CredentialStateUnavailable,
+        create_ephemeral_runtime_paths,
+        enrolled_auth_identity,
+        link_runtime_auth,
+        remove_ephemeral_runtime_paths,
+        require_private_executable_runtime_mount,
+        require_writable_credential_mount,
+        sync_enrolled_auth_file,
+    )
 
 REPO_ROOT = Path(__file__).parents[3]
+
+
+def _require_cutover() -> None:
+    assert _CUTOVER_PRESENT, "the subscription credential-state owner is absent"
 
 
 @pytest.fixture
@@ -111,6 +121,7 @@ def test_enrollment_requires_its_explicit_codex_home_and_reaches_device_auth(
     tmp_path: Path,
     enrollment_tmpfs: Path,
 ) -> None:
+    _require_cutover()
     completed, audit, codex_home, target = _run_enrollment(
         tmp_path,
         enrollment_tmpfs=enrollment_tmpfs,
@@ -134,6 +145,7 @@ def test_enrollment_refuses_api_key_auth_before_exec(
     enrollment_tmpfs: Path,
     forbidden_key: str,
 ) -> None:
+    _require_cutover()
     completed, audit, _, target = _run_enrollment(
         tmp_path,
         enrollment_tmpfs=enrollment_tmpfs,
@@ -150,6 +162,7 @@ def test_enrollment_is_one_shot_and_never_replaces_the_durable_credential(
     tmp_path: Path,
     enrollment_tmpfs: Path,
 ) -> None:
+    _require_cutover()
     completed, audit, codex_home, target = _run_enrollment(
         tmp_path,
         enrollment_tmpfs=enrollment_tmpfs,
@@ -164,6 +177,7 @@ def test_enrollment_is_one_shot_and_never_replaces_the_durable_credential(
 
 
 def test_runtime_credential_requires_an_exact_writable_file_mount(tmp_path: Path) -> None:
+    _require_cutover()
     credential = tmp_path / "auth.json"
     credential.write_bytes(b"test-private-chatgpt-auth")
     credential.chmod(0o600)
@@ -186,6 +200,7 @@ def test_runtime_credential_requires_an_exact_writable_file_mount(tmp_path: Path
 
 
 def test_runtime_launcher_requires_one_private_executable_tmpfs(tmp_path: Path) -> None:
+    _require_cutover()
     runtime_root = tmp_path / "turns"
     runtime_root.mkdir(mode=0o700)
     mountinfo = tmp_path / "mountinfo"
@@ -208,6 +223,7 @@ def test_runtime_launcher_requires_one_private_executable_tmpfs(tmp_path: Path) 
 def test_pinned_refresh_is_power_synced_in_place_and_runtime_state_is_discarded(
     tmp_path: Path,
 ) -> None:
+    _require_cutover()
     credential = tmp_path / "auth.json"
     credential.write_bytes(b"initial-private-chatgpt-auth")
     credential.chmod(0o600)

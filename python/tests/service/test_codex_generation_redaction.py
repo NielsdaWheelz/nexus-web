@@ -1,18 +1,24 @@
 """Failure-retention proof for the Codex generation host boundary."""
 
+from __future__ import annotations
+
+from importlib.util import find_spec
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import UUID
 
-from apps.codex_agent.host import RuntimeVersions, _terminal_to_wire
-from provider_runtime.agent_runtime import AgentFailure, AgentSessionRef, AgentTerminal
+# BASE sensitivity overlays this proof without candidate production owners.
+_CUTOVER_PRESENT = find_spec("nexus.services.generation_spec") is not None
 
-from nexus.services import generation_policy
-from nexus.services.codex_generation_contract import (
-    GenerationCommand,
-    MetadataEnrichmentOperation,
-)
-from nexus.services.codex_generation_operations import resolve_codex_generation
-from nexus.services.generation_intent import GenerationIntent, TextOutput
+if TYPE_CHECKING or _CUTOVER_PRESENT:
+    from apps.codex_agent.host import RuntimeVersions, _terminal_to_wire
+    from provider_runtime.agent_runtime import AgentFailure, AgentSessionRef, AgentTerminal
+
+    from nexus.services.codex_generation_operations import (
+        CodexModelToolPlanRegistry,
+        resolve_codex_generation,
+    )
+    from tests.testkit.codex_generation import codex_generation_command
 
 _RAW_TEXT = "raw runtime failure text must not cross the host boundary"
 _RAW_DIAGNOSTIC = "raw runtime diagnostic must not cross the host boundary"
@@ -21,21 +27,20 @@ _RAW_DIAGNOSTIC = "raw runtime diagnostic must not cross the host boundary"
 def test_failed_runtime_terminal_retains_only_the_bounded_host_diagnostic(
     tmp_path: Path,
 ) -> None:
-    policy = generation_policy.operation_policy("metadata_enrichment")
-    command = GenerationCommand(
+    assert _CUTOVER_PRESENT, "the bounded Codex generation host cutover is absent"
+    command = codex_generation_command(
         request_id=UUID(int=1),
-        operation=MetadataEnrichmentOperation(revision=policy.revision),
-        policy_revision=generation_policy.POLICY_REVISION,
-        policy_fingerprint=generation_policy.POLICY_FINGERPRINT,
-        intent=GenerationIntent(
-            instructions="extract metadata",
-            input="bounded source",
-            output=TextOutput(),
-        ),
+        operation="metadata_enrichment",
+        instructions="extract metadata",
+        input_text="bounded source",
+        model="gpt-5.6-luna",
+        reasoning="low",
+        turn_timeout_seconds=120,
     )
     operation = resolve_codex_generation(
         command,
         working_directory=tmp_path,
+        model_tool_registry=CodexModelToolPlanRegistry(()),
         mcp_origin=None,
         tool_credential=None,
     )

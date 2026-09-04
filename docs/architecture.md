@@ -105,8 +105,9 @@ scaffolding.
                            └──────────────┘
 
    Identity: Supabase Auth (JWT/JWKS) only — no Supabase DB or Storage.
-   External: ChatGPT via the isolated Codex personal host (generation);
-             OpenAI API (embeddings only); Deepgram (transcription),
+   External: ChatGPT via the isolated Codex personal host (all background and
+             a Chat option); configured generation APIs (Chat options);
+             OpenAI API (embeddings); Deepgram (transcription),
              Brave (Browse + agent research), Podcast Index, YouTube Data API
              plus YouTube transcript/caption egress,
              Stripe (billing), Cloudflare R2.
@@ -475,9 +476,9 @@ engine, API, history contract, and `dossier_build` job own the lifecycle.
 **Conversations / chat** — `conversations`, `messages` (the message tree with
 branch pointers), `conversation_branches`, `conversation_active_paths`
 (per-viewer), `conversation_shares`; plus the **chat-run** machinery: `chat_runs`
-(carries the product selection snapshot `profile_id`, resolved
-`model_name`/`reasoning_effort`, and `support_id`; authoritative plan and
-execution provenance lives in the run's `llm_calls` row),
+(carries the exact immutable `generation_spec` and `support_id`;
+authoritative execution provenance lives in its parent `llm_calls` row and
+accepted `llm_model_turns` children),
 `chat_run_events` (append-only SSE log), `chat_prompt_assemblies`; and the
 **retrieval/citation** ledger: `message_tool_calls`, `message_retrievals` — the
 sole durable per-result record (telemetry; carries `cited_edge_id` pointing
@@ -694,14 +695,18 @@ rather than proposed and reconciled after the fact.
 
 **Generation boundary.** Every durable generative job — chat, Oracle,
 synapse, Dawn, dossiers, media summaries, and metadata enrichment — runs through
-`tasks/llm_task.py:run_llm_task` and
-`services/llm_execution.py:execute_generation`. The durable owner checkpoints a
-replay-stable `Prepared | Uncertain | Completed` journal and stages exactly one
-`llm_calls` row before dispatch. The generation service then streams a strict
-command over the private UDS to the isolated Codex host, which authenticates as
-`codex-personal` and resolves the operation's fixed plan from
-`generation_policy.py`. Only a proven pre-accept capacity refusal can restore a
-generation to `Prepared`; accepted ambiguity requires operator reconciliation.
+`GenerationService` and `services/llm_execution.py`. Admission freezes the
+exact selection, budgets, output contract, prompt reference, and operation-owned
+tool plan in one `GenerationSpec`; workers never reread mutable policy. All
+background policy rows select Codex Personal. Chat may instead select any ready,
+qualified route/model/reasoning pair in the complete configured `llm-calling`
+catalog. There are no user defaults, profiles, presets, or fallback routes.
+
+One parent `llm_calls` row owns generation truth. Codex normally creates one
+accepted child model turn through the private UDS host; a ProviderRuntime API
+tool loop creates one child per accepted provider call and advances only from a
+sealed persisted continuation. Completed children replay without dispatch;
+accepted ambiguity requires exact operator reconciliation.
 Within `dossier_build`, `services/artifacts/generation_step.py` is the sole
 Artifact owner of the exact `synthesis` and `document-repair` request
 fingerprints, memoized result envelope, and
@@ -713,14 +718,19 @@ credential mount. The existing PostgreSQL queue, leases, and publication owners
 remain unchanged.
 See [modules/llms.md](modules/llms.md).
 
-ChatTools uses one exact MCP wire: Codex SDK/CLI `0.144.4` speaks Streamable
-HTTP revision `2025-06-18` to the official `mcp==2.1.0` stateless JSON server.
+Eligible Chat and background runs use one canonical tool authority. Codex
+observes its frozen plan over one exact MCP wire: Codex SDK/CLI `0.144.4` speaks
+Streamable HTTP revision `2025-06-18` to the official `mcp==2.1.0` stateless JSON server.
 The initialize body pins that revision; later POSTs require
 `MCP-Protocol-Version: 2025-06-18`. Every POST carries the generation grant in
 `Authorization`, `Content-Type: application/json`, and Codex's
 `Accept: application/json, text/event-stream`; Nexus nevertheless returns JSON
 and emits no `Mcp-Session-Id`. There is no stateful session, event stream,
 resumption, alternate revision, downgrade, OAuth, or transport fallback.
+Provider API tool proposals adapt the same frozen plan to the same executor.
+Both routes use `generation/{generation_seq}/tool/{n}` with one monotonic
+parent-generation ordinal, the same receipts, evidence, citations, trust, and
+Undo.
 
 The worker installs the process-global rate limiter at startup so the first job
 of any kind has a working limiter. SERIALIZABLE retries everywhere (including
@@ -769,16 +779,17 @@ Other identity surfaces:
 - **Generation credential**: only the isolated Codex host can read the exact
   enrolled `codex-personal` ChatGPT `auth.json`, mounted read-write solely for
   pinned `0.144.4` in-place OAuth refresh persistence. All other mutable SDK
-  state is per-turn tmpfs and deleted after close. Application and worker
-  processes receive neither that credential nor a generation API key. `services/llm_credentials.py`
-  retains only the narrow OpenAI embedding credential; embeddings are outside
-  the generation boundary. See [modules/llms.md](modules/llms.md).
+  state is per-turn tmpfs and deleted after close. The Codex host receives no
+  generation API key. API/worker processes receive only the provider keys named
+  by `GENERATION_API_PROVIDERS`; `services/llm_credentials.py` projects that
+  exact configured set into ProviderRuntime and keeps the OpenAI embedding key
+  in its separate narrow credential. See [modules/llms.md](modules/llms.md).
 - **Billing** (`services/billing.py`): Stripe is the system of record;
   `billing_accounts` is a per-user snapshot synced by idempotent webhooks (deduped
   via `stripe_webhook_events`). Tiers: `free | plus | ai_plus | ai_pro`.
 - **Entitlements** (`services/billing_entitlements.py`): derived from the effective
-  billing plan for sharing and transcription. Generation uses the operator-paid
-  subscription and has no product entitlement or token quota. **Internal
+  billing plan for sharing and transcription. Generation uses operator-owned
+  subscription/API credentials and has no product entitlement or token quota. **Internal
   overrides** (`billing_entitlement_overrides`, CLI-managed via
   `ops/entitlement_overrides.py`) can raise a plan upward and grant unlimited
   transcription, with a full audit trail.
@@ -929,7 +940,8 @@ user_link_target: UserLinkTargetMode)` row per `ResourceScheme` replaces the
 
 ### 7.7 Citations & the agent tool contract
 
-Chat publishes one frozen eleven-tool native plan:
+Chat publishes one frozen six-tool read plan, with five additive writes only
+after fresh per-run consent:
 
 - **`web.search`** — bounded Brave public-web search; numbered and citable.
 - **`nexus.search`** — scoped retrieval over the user's Nexus corpus; numbered
@@ -947,12 +959,15 @@ Chat publishes one frozen eleven-tool native plan:
   **`nexus.queue.add`** — the five additive, owner-gated Write operations. They
   persist their exact effects with the tool result and support scoped Undo.
 
-Idea-Dossier research receives only a frozen HostTable grant for `web.search`.
-Oracle and the other background algorithms retain their direct operation-owned
-retrieval; they do not inherit Chat's catalogue. Tool declarations, grants,
-limits, replay policy, and durable execution are owned by
-`services/tool_runtime/`; `services/agent_tools/` remains the domain-adapter
-layer, not a second tool contract.
+Library and Idea Dossier model turns receive only the five Nexus reads over
+their exact admitted evidence scope. Idea host research separately freezes its
+bounded three-search preparation plan. Other background operations retain their
+direct evidence algorithms and publish `NoModelTools`; none inherit Chat
+authority. Codex MCP and Provider API functions adapt eligible plans to the same
+executor. Tool declarations, grants, limits, replay policy, and durable
+execution are owned by `services/tool_runtime/` and `tool_authority.py`;
+`services/agent_tools/` remains the domain-adapter layer, not a second tool
+contract.
 
 Citation `[N]` is a **dense, turn-global ordinal** assigned across the whole turn
 (attached context refs first, then each tool's selected results). A citation **is an
@@ -1260,8 +1275,8 @@ The AI chat: durable, branchable, streamed, RAG-grounded. Backend:
 - **One send = one durable `ChatRun`.** HTTP never opens generation. `POST
 /chat-runs` validates + (idempotently, keyed on `Idempotency-Key` + a payload
   hash) creates the run and enqueues a `chat_run` job, then returns. The **worker**
-  executes: assemble context → stream Codex text + run tools (up to 64 calls
-  under the frozen Chat tool plan) → append events → finalize. The client merely
+  executes: assemble context → run the exact frozen Codex/API selection and
+  tool plan → append route-neutral events → finalize. The client merely
   tails `chat_run_events` over SSE and reconciles via `GET /chat-runs/{id}` on
   each stream boundary.
 - **Context assembly** (`context_assembler.py`, `prompt_budget.py`): a
@@ -1281,11 +1296,11 @@ The AI chat: durable, branchable, streamed, RAG-grounded. Backend:
 - **Connection is not execution**: SSE only tails committed events. Unsequenced
   execution advisories (`Queued | Running | Recovering | Suspended`) report queue
   liveness without advancing the event cursor or starting work.
-- **Profiles are product intent** (`services/generation_policy.py`): chat sends
-  one `profile_id` from the fixed order `fast` / `balanced` / `deep`; `balanced`
-  is the default. Each resolves to one complete versioned plan — Luna/low,
-  Terra/medium, or Sol/high — and callers cannot override model, effort,
-  capability, credential, or fallback. See [modules/llms.md](modules/llms.md).
+- **Selection is exact per run**: Chat sends one tagged route/model/reasoning
+  selection from `GET /llm-catalog`, the catalog-definition revision, and
+  `ReadOnly | AdditiveWrites` authority. The developer Codex seed initializes a
+  new composer but is not a user default. There is no Fast/Balanced/Deep preset,
+  preference, AI Settings control, or fallback. See [modules/llms.md](modules/llms.md).
 
 Frontend: `components/chat/*` (`useChatRunTail` is the SSE engine,
 `useChatMessageUpdates` folds events with RAF-batched deltas, `ForkTreeView`/
@@ -1302,7 +1317,7 @@ retrieval, plate selection, LLM prompt/call, parse, persistence, and SSE event
 emission. A short question → retrieve candidates and pick a plate image → one LLM
 call produces a structured three-phase interpretation → stream + persist as
 `oracle_reading_events` + citation "folios". It has its **own**
-prompt/persistence and does **not** consume Chat's frozen Native tool plan, but
+prompt/persistence and resolves `NoModelTools`, but
 it **reuses the SSE transport**. Retrieval consumes the shared search substrate:
 `services/search/embedding.build_query_embedding` (one active-model embedding for
 both lanes) feeds `search/content_chunk_candidates.retrieve_content_chunk_candidates`,
@@ -2240,7 +2255,7 @@ The things most likely to bite you, distilled:
 | DB layer / sessions / LISTEN-NOTIFY                               | `python/nexus/db/` (`engine.py`, `session.py`, `listen.py`)                                                                                                                                            |
 | The schema                                                        | `python/nexus/db/models.py` (+ `migrations/alembic/versions/`)                                                                                                                                         |
 | Background jobs / worker                                          | `python/nexus/jobs/`, `python/nexus/tasks/`, `apps/worker/`                                                                                                                                            |
-| Codex personal generation boundary                                | `apps/codex_agent/`, `python/nexus/services/{generation_policy,codex_generation_contract,codex_generation_client,llm_execution,llm_ledger}.py`, [`modules/llms.md`](modules/llms.md), [`runbooks/codex-personal-agent-host.md`](runbooks/codex-personal-agent-host.md) |
+| Generation backends                                               | `python/nexus/services/{generation_catalog,generation_policy,generation_service,generation_spec,generation_backend,provider_generation_backend,codex_generation_client,llm_execution,llm_ledger,tool_authority}.py`, `apps/codex_agent/`, [`modules/llms.md`](modules/llms.md) |
 | Media catalog and ingest owners                                   | `python/nexus/services/media.py`, `media_ingest.py`, `media_source_ingest.py`, `source_attempt_failures.py`, `media_failure_projection.py`, `media_fact_revisions.py`, `x_ingest.py`, `youtube_video_ingest.py`, `remote_file_ingest.py`, `remote_file_client.py`, `media_processing_state.py` |
 | Reader/highlights backend                                         | `python/nexus/services/{reader,epub_*,pdf_*,fragment_blocks,highlights,passage_anchors,locator_resolver,text_quote,pdf_quote_match}.py`                                                                |
 | Chat / conversations                                              | `python/nexus/services/chat_runs.py` + `chat_run_*`, `context_assembler.py`, `conversations.py`                                                                                                        |

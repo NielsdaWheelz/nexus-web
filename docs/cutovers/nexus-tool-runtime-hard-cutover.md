@@ -9,13 +9,13 @@ E0 R0/N0d checkpoint `325a8eb1` preceded N1–N3; the §7 connection-seam proof
 and `accepted-url-private-redirect-bypass` sensitivity are green. Candidate-image
 binding remains required by the final protected release gate.
 
-**Generation-backend target amendment (2026-08-31):** when
+**Generation-backend amendment (2026-08-31):**
 [`generation-backends-hard-cutover.md`](generation-backends-hard-cutover.md)
-turns green, its operation-owned `NoModelTools | ModelTools` policy supersedes
-the Chat-only exposure/profile assumptions in this document. The amendments
-below are part of that same atomic cutover; this document remains authoritative
-for declarations, bindings, execution, evidence, replay, effects, trust, and
-Undo.
+owns generation selection, admission, ledger shape, route composition, and the
+complete legacy Chat/historical-generation reset. This document owns the
+surviving route-neutral tool declarations, bindings, authority, execution,
+evidence, replay, effects, trust, and Undo contracts. Its tool profiles are
+capability identities, never user generation profiles or defaults.
 
 ## 1. Decision
 
@@ -82,9 +82,10 @@ Nexus vocabulary/domain owners
   -> local ToolSpec declarations + ToolBinding adapters
   -> immutable Nexus ToolCatalog
   -> operation-owned CapabilityProfile + ToolPlan snapshot
-  -> one ToolExecutor
-       -> Native: provider-runtime values for Chat
-       -> HostTable: deterministic application calls for Idea research
+  -> one GenerationToolExecutor
+       <- Codex MCP observations
+       <- Provider API function-call proposals
+       <- deterministic host preparation
   -> existing Nexus managed operations
   -> strict result + Nexus evidence
   -> existing durable journal / citations / trust / Undo / projections
@@ -97,8 +98,10 @@ Laws:
   constrain what it may see. Every boundary must pass.
 - Tool output, retrieved text, model arguments, and external metadata are
   untrusted and cannot widen grants, scope, limits, or identity.
-- Authority profiles and exposure plans are separate. Chat has a `Native` plan;
-  Idea research has a `HostTable` plan. There is no exposure fallback.
+- Authority and transport projection are separate. An operation freezes one
+  exact plan; Codex MCP and Provider API functions adapt that plan to the same
+  executor. Deterministic host preparation is a separate policy axis. There is
+  no exposure or transport fallback.
 - A direct Program Agent governed by `docs/rules/modules/agent-runtime.md`
   continues to publish only `run`. Its internal host table may consume the same
   declarations later; this cutover does not change that runtime.
@@ -114,9 +117,9 @@ Laws:
   authorization, transactions, retries, or citations.
 
 The shared Agent Runtime rule remains unchanged: its Program Agent publishes
-only `run`. Nexus Chat is an application-owned generation ToolLoop outside that
-module and publishes one closed Native plan. Never combine the two runtimes or
-reuse Agent Runtime protocol state for Chat.
+only `run`. Nexus model-tool execution is application-owned and uses only the
+frozen operation plan. Never reuse Program Agent protocol state as generation
+authority.
 
 ## 4. Structure and reuse
 
@@ -247,10 +250,11 @@ variants have `effect=null` and exact kinds `rejected_provider_call` or
 
 ## 6. Profiles and actual operation behavior
 
-Profiles are closed source declarations validated at startup. A frozen plan
-snapshot contains `profile_id`, `profile_revision`, `plan_revision`, `exposure`,
-grants, effective limits, tool revisions, and binding-policy revisions; it
-contains no prose hash or provider alias.
+Tool profiles are closed source capability declarations validated at startup.
+A frozen plan snapshot contains its tool-profile/plan identities and revisions,
+exposure, grants, effective limits, tool revisions, and binding-policy
+revisions; it contains no user generation preference, prose hash, or provider
+alias.
 
 After the generation-backend cutover, the parent ledger's frozen
 `GenerationSpec.model_tool_plan_snapshot` is the sole model-tool-plan owner.
@@ -258,16 +262,16 @@ After the generation-backend cutover, the parent ledger's frozen
 `tool_profile_snapshot` are deleted with the reset; no parallel Chat snapshot
 or compatibility reader survives. Workers execute only the frozen spec. Do not
 add a generic profile table. `idea_dossier_research` stores one complete frozen
-`HostTable` plan snapshot in the existing durable-step journal before its first
-Web-search position:
-profile/plan ids and revisions, HostTable exposure, run/effective limits, the
-`web.search` grant, tool revision, binding-policy revision, and replay policy.
+host-preparation plan snapshot in the existing durable-step journal before its
+first Web-search position: plan ids and revisions, deterministic host exposure,
+run/effective limits, the `web.search` grant, tool revision, binding-policy
+revision, and replay policy.
 
 | Operation | Exposure | Exact grants | Rule |
 |---|---|---|---|
-| Chat read | Native/MCP or API functions | `web.search` plus the five Nexus reads | Exactly six eager tools; no write grant |
-| Chat additive write | Native/MCP or API functions | Chat read plus five writes | Exactly eleven; fresh per-run consent, eight live writes, trust and Undo |
-| `idea_dossier_research` | HostTable | `web.search` at the existing research step | Keep current sequential durable selection, accepted-source ingest, readiness, and citation behavior; no PTC |
+| Chat read | ModelTools through MCP or API functions | `web.search` plus the five Nexus reads | Exactly six eager tools; no write grant |
+| Chat additive write | ModelTools through MCP or API functions | Chat read plus five writes | Exactly eleven; fresh per-run consent, eight live writes, trust and Undo |
+| `idea_dossier_research` | Deterministic host preparation | `web.search` at the existing research step | Keep current sequential durable selection, accepted-source ingest, readiness, and citation behavior; no PTC |
 | Library/Idea model read | MCP or API functions | the five Nexus reads | Exact admitted refs; unattended, read-only, zero external attempts |
 
 Each exact published Chat definition list—provider-safe names,
@@ -490,141 +494,30 @@ canary.
 
 ## 10. Hard-cut migration and generation-reset amendment
 
-The original rules below describe the implemented tool-runtime transition.
-For PR #203's final migration, generation-backends §7 has precedence: all
-legacy Chat/tool audit rows and historical generation/metering ledgers are
-deleted, while preserved domain objects remain. No old record-kind/profile
-translation is needed for deleted rows.
+The final generation migration is the complete reset in
+generation-backends §7. It deletes every legacy Chat-owned row, tool audit row,
+and historical generation/metering ledger while preserving the named users,
+media, libraries, knowledge, and non-conversation artifact revisions. No
+record-kind, tool-id, generation-profile, or selection translation runs.
 
 The generation cutover stops all Chat and generation admission and refuses the
 data migration while any affected run, job, or Artifact resolver is
 nonterminal. Unrelated non-generation jobs remain untouched.
 
-Rewrite only these executable ids:
+The empty final schema accepts only post-cutover canonical tool identities and
+the route-neutral position grammar in §8. `GenerationSpec` is the sole frozen
+model-tool authority before enqueue. `idea_dossier_research` separately freezes
+its deterministic host-preparation plan before its first Web-search position.
+No deleted Chat row, old executable id, historical decoder, compatibility
+alias, or browser projection bridge survives.
 
-| Old id | Canonical id |
-|---|---|
-| `app_search` | `nexus.search` |
-| `web_search` | `web.search` |
-| `read_resource` | `nexus.resource.read` |
-| `inspect_resource` | `nexus.resource.inspect` |
-| `add_to_library` | `nexus.library.add` |
-| `jot_note` | `nexus.note.create` |
-| `create_highlight` | `nexus.highlight.create` |
-| `mint_edge` | `nexus.edge.create` |
-| `queue_add` | `nexus.queue.add` |
+The browser and API speak only the final Chat tool/result/trust/Undo projection.
+The one-user maintenance procedure closes pre-cutover tabs before frontend
+promotion; current requests never dual-emit or accept an old wire shape.
 
-Migration rules:
-
-1. Delete `chat_runs.profile_id`, `tool_profile_id`,
-   `tool_profile_revision`, and `tool_profile_snapshot` with the complete Chat
-   reset. Final admission persists the sole frozen model-tool snapshot in
-   `GenerationSpec` before enqueue. Journal `idea_dossier_research`'s
-   complete HostTable plan snapshot from §6 before its first Web-search
-   position; a grant alone is insufficient for `ExecutionContext`.
-2. Rename `message_tool_calls.tool_name` to nullable `canonical_tool_id`; add
-   required `record_kind`, nullable `provider_wire_name`, `canonical_input_sha256`,
-   `tool_contract_revision`, and `binding_policy_revision`. Rename `query_hash`
-   to audit-only `search_query_fingerprint`; it never participates in replay.
-   Rename affected constraints/indexes. The migration and application decoder
-   accept exactly four tagged variants. Following `docs/rules/database.md`, the
-   database owns only primitive storage types, column nullability, and true
-   relational identity; it adds no enum, digest-format, conditional-nullability,
-   or union-branch `CHECK`. The narrow application `RecordKind` type,
-   constructors, and decoder own the closed kind set, 64-character lower-case
-   digest validation, and every cross-field invariant:
-
-   - **`current_execution`:** a mapped canonical id; `provider_wire_name` is
-     null; full canonical-input digest and current revisions are required. Only
-     this variant can be created by the post-cutover execution writer or enter
-     replay. A bounded malformed/non-object/schema-invalid argument to a known
-     tool still uses this variant: the library's tagged raw-input envelope is
-     digested before `InvalidInput` terminalizes.
-   - **`historical_execution`:** one of the nine mapped old ids, no provider
-     wire name, reviewed historical revisions, and an optional digest. It is
-     terminal audit state with no replay authority.
-   - **`rejected_provider_call`:** `canonical_tool_id` is null; preserve the
-     original 1–128-character name—the existing storage bound—in
-     `provider_wire_name`; require exact
-     `scope='provider_tool'`, `status='error'`, and
-     `error_code='unknown_tool'`; revisions and replay authority are absent.
-   - **`attached_context`:** both identities are null; preserve the exact
-     synthetic `attached_resources` / `attached_context`, index-zero, complete
-     row meaning; revisions and replay authority are absent.
-
-   For a terminal historical executed row, backfill the digest only from one
-   exact matching valid typed `tool_call_done` input. Leave it null when no such
-   event survives; refuse ambiguous or contradictory matches and every row
-   outside the four variants. Never derive the full digest from
-   `search_query_fingerprint`.
-   `chat_run_tools.py` owns the only post-cutover row constructors; execution
-   can emit only `current_execution`, provider-call rejection only
-   `rejected_provider_call`, and context attachment only `attached_context`.
-   `historical_execution` is migration-only. Raw rows always pass the tagged
-   decoder before any replay, API, trust, citation, or Undo consumer observes
-   them.
-3. Migrate typed `chat_run_events` tool-call/result payloads to the same closed
-   tagged union. Current/historical execution gets `canonical_tool_id`; a
-   rejected call gets only `provider_wire_name`; attached context remains
-   synthetic. Add reviewed
-   server-derived `effect`, `result_kind`, and `activity_label` using §5's exact
-   known/rejected/attached mapping, and assert semantic equality for every
-   pre-existing other key. The presentation may render a bounded rejected name
-   but never classifies or dispatches by it. Provider request/continuation
-   payloads and opaque audit facts are unchanged.
-4. Preflight and migrate every Nexus-decoded durable-step request/result field
-   containing an executable tool id, including `ToolStepRequest.tool_name`,
-   `ToolStepResult.tool_name`, and its owning fingerprint. Provider request/
-   continuation blobs remain opaque. No decodable journal JSON may retain an
-   old executable id or require a legacy decoder.
-5. Change only exact `message_retrievals.scope='read_resource'` to the
-   domain-owned retrieval channel `resource_read`. `scope='assistant_write'`,
-   `attached_context`, resource scopes, and all other domain vocabulary remain.
-6. Rename the complete active typed projection through conversation schemas,
-   event emitter/store, SSE response/reducer, citation/context/trust/failure
-   readers, testkit, and UI. `provider_wire_name` is protocol audit evidence
-   only, never dispatch or replay identity. Delete the unused `context_types`
-   projection if its red test confirms it has no consumer; do not preserve it
-   under new labels.
-7. Preserve completed edge result refs, reverted state, trust history, and Undo;
-   `nexus.edge.create` remains executable with the same domain semantics. No
-   historical old-id decoder exists because no nonterminal old work survives.
-
-The generated browser artifact owns one `tool_projection_revision` over only
-the same-system Chat event/result/trust/Undo wire shape: field names and closed
-`effect`/`result_kind`/error enums. It excludes provider declarations,
-descriptions, search vocabulary, profile revisions, and binding policy. The
-browser bundle—never the BFF—originates this revision as
-`X-Nexus-Tool-Projection` on every request that creates, returns, mutates, or
-streams that shape: initial send; run list/detail/reconcile/cancel; message
-history; rerun/regenerate; Undo; candidate admission; and direct fetch-based
-SSE attachment. The BFF allowlists and forwards it unchanged;
-`StreamCORSMiddleware` allows it in preflight.
-
-FastAPI validates the header before creating or mutating a row, returning a
-projection-bearing response, or attaching a stream. Missing or mismatched
-revisions return the one closed `reload_required` outcome; never dual-emit old
-and new fields or let the BFF make an old browser appear current. Existing
-browser sessions must reload across the cut. The pre-cutover bundle cannot
-interpret this new outcome, so v1 makes no automatic old-tab recovery claim:
-during maintenance the one operator closes every Nexus tab and attests that
-step before the new frontend is promoted. A missed old tab fails closed on its
-missing header; a current bundle with a stale revision renders the reload
-outcome.
-
-Delete, with no aliases or fallbacks:
-
-- `_chat_tool_specs`, `ASSISTANT_WRITE_TOOL_DEFINITIONS`, all tool-name/
-  definition constants, and manual argument/name dispatch in `chat_runs.py` and
-  `writes.py`;
-- name-based replay policy, prompt branches, frontend name sets, XML result
-  renderers, and duplicated `_xml_attr` helpers;
-- `ASSISTANT_WRITE_TOOLS_ENABLED` / `assistant_write_tools_enabled` and its dead
-  branch;
-- `web_search_tool` imports, dependency/lock entry, stale commands, fixtures,
-  and active docs;
-- old ids in live code and supported data. Historical cutover prose remains
-  historical.
+Delete, with no aliases or fallbacks, every superseded tool declaration,
+manual name dispatcher, name-based replay classifier, XML renderer, write-tool
+kill switch, old executable id, and stale provider-specific tool owner.
 
 Do not delete Browse, accepted-source ingest, domain search/read/write services,
 or background-job algorithms.
@@ -676,8 +569,7 @@ The implemented source has one current proof/fault registry. Canonical owners
 are the declaration/projection kernel, real-Postgres read and write services,
 the production MCP service, durable Dossier research, Browse normalization,
 the deterministic safety eval, and backend/browser projection proofs listed in
-§12. Deleted provider-intent, native-tool-profile, and Web-search-identity proof
-owners have no documentary alias.
+§12. Superseded proof owners have no documentary alias.
 
 Current representative sensitivity ids are
 `llm-write-tool-authorization-bypass`, `llm-tool-safety-prompt-bypass`,
@@ -710,8 +602,8 @@ proof has exactly one priority-risk owner. Existing unrelated entries remain.
 | `pytest:python/tests/kernel/test_llm_tool_declarations.py::test_nexus_declarations_and_browser_projection_are_one_closed_semantic_contract` | `llm-tool-safety` | `python/nexus/services/tool_runtime/declarations.py`; `python/nexus/services/tool_runtime/profiles.py`; `python/scripts/generate_tool_contract_projection.py`; `apps/web/src/lib/conversations/toolContractProjection.ts`; `python/tests/kernel/test_llm_tool_declarations.py` | `kernel-python` |
 | `pytest:python/tests/service/test_llm_tools_reads.py::test_nexus_reads_are_scoped_citable_and_closed` | `auth-privacy-secrets` | `python/nexus/services/tool_runtime/bindings.py`; `python/nexus/services/tool_runtime/execution.py`; `python/tests/service/test_llm_tools_reads.py` | `service` |
 | `pytest:python/tests/service/test_llm_tool_safety.py::test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo` | `llm-tool-safety` | `python/nexus/services/tool_runtime/*.py`; `python/nexus/services/agent_tools/writes.py`; `python/nexus/services/chat_run_tools.py`; `python/nexus/services/message_trust_trails.py`; `python/tests/service/test_llm_tool_safety.py` | `service` |
-| `pytest:python/tests/service/test_agent_tools_mcp.py::test_mcp_mount_projects_declarations_and_is_sessionless` | `durable-job-replay` | `python/nexus/services/tool_runtime/*.py`; `python/nexus/services/chat_runs.py`; `python/nexus/services/chat_run_steps.py`; `python/nexus/services/durable_step_journal.py`; `python/nexus/tasks/chat_run.py`; `python/tests/service/test_agent_tools_mcp.py` | `service` |
-| `pytest:python/tests/evals/test_tool_safety_eval.py::test_injected_requests_cannot_authorize_a_foreign_mutating_tool_call` | `llm-tool-safety` | `python/nexus/services/tool_runtime/*.py`; `python/nexus/services/chat_prompt.py`; `python/tests/evals/test_tool_safety_eval.py`; `python/tests/evals/cases/tool_safety.v3.json` | `llm-eval` |
+| `pytest:python/tests/service/test_generation_tool_authority.py::test_frozen_plan_is_transport_neutral_and_fenced` | `durable-job-replay` | `python/nexus/services/tool_authority.py`; `python/nexus/services/agent_tool_grants.py`; `python/nexus/services/agent_tools_mcp.py`; `python/nexus/services/tool_runtime/*.py`; `python/tests/service/test_generation_tool_authority.py` | `service` |
+| `pytest:python/tests/evals/test_tool_safety_eval.py::test_generation_tool_plans_refuse_untrusted_escalation` | `llm-tool-safety` | `python/nexus/services/tool_runtime/*.py`; `python/nexus/services/tool_authority.py`; `python/tests/evals/test_tool_safety_eval.py`; `python/tests/evals/cases/tool_safety.v4.json` | `llm-eval` |
 | `pytest:python/tests/service/test_llm_tools_availability.py::test_keyless_boot_preserves_plan_and_refuses_required_web_before_dispatch` | `production-release-test-control` | `python/nexus/config.py`; `python/nexus/app.py`; `python/nexus/tasks/artifacts.py`; `python/nexus/tasks/chat_run.py`; `python/tests/service/test_llm_tools_availability.py` | `service` |
 | `pytest:python/tests/service/test_llm_tools_dossier.py::test_dossier_freezes_host_plan_and_does_not_automatically_reissue_uncertain_search` | `costly-effects` | `python/nexus/services/artifacts/research.py`; `python/nexus/services/artifacts/coordination.py`; `python/nexus/services/agent_tools/web_page_read.py`; `python/nexus/tasks/artifacts.py`; `python/tests/service/test_llm_tools_dossier.py` | `service` |
 | `pytest:python/tests/service/test_llm_tools_browse.py::test_browse_preserves_normalized_provider_results_after_rename` | `citation-provenance-identity` | `python/nexus/api/routes/browse.py`; `python/nexus/services/browse/brave.py`; `python/nexus/services/browse/service.py`; `python/tests/service/test_llm_tools_browse.py` | `service` |
@@ -735,11 +627,11 @@ duplicate proof owner, unsupported prefix, capability mismatch, or stale digest.
 | bound catalogue/profile and presentation | `python/tests/kernel/test_llm_tool_declarations.py::test_nexus_declarations_and_browser_projection_are_one_closed_semantic_contract`: the real composed Chat surface is closed and bounded; semantic, documentation, and browser-projection revisions change only for their owned inputs, with no fallback or `web.read` grant |
 | Nexus reads/evidence | `python/tests/service/test_llm_tools_reads.py::test_nexus_reads_are_scoped_citable_and_closed`: real PostgreSQL, two users, all five read tools, canonical evidence, closed error translation, identical `ResourceUnavailable` envelopes for nonexistent and foreign ids, and only `current_execution` writer output |
 | Nexus writes | adapt `python/tests/service/test_llm_tool_safety.py::test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo`: real PostgreSQL proves owner checks, eight-write cap, one `current_execution` commit, trust trail, duplicate recovery, and Undo |
-| Chat replay | `python/tests/service/test_agent_tools_mcp.py::test_mcp_mount_projects_declarations_and_is_sessionless`: real PostgreSQL plus the production MCP 2.1 HTTP boundary and Chat recorder; completed bounded reads replay byte-identically, a missing outer MCP receipt is repaired only from the durable inner terminal, changed identity/input is rejected, grants and lease identity stay fenced, and no second execution or citation allocation occurs |
+| route-neutral model-tool replay | `python/tests/service/test_generation_tool_authority.py::test_frozen_plan_is_transport_neutral_and_fenced`: real PostgreSQL plus both production transport adapters; completed bounded reads replay byte-identically, changed identity/input is rejected, grants and lease identity stay fenced, and no second execution or citation allocation occurs |
 | migration | `python/tests/migrations/test_supported_upgrade.py`: the supported 0221 production snapshot and an empty owned database converge to the single current head; immutable pre-floor migration history is retained without a live compatibility proof. |
-| model/tool safety | preserve `python/tests/evals/test_tool_safety_eval.py::test_injected_requests_cannot_authorize_a_foreign_mutating_tool_call` against canonical declarations and `ToolExecutor`; the exact write and MCP service proofs above cover persistence, Undo, grant scope, and transport authority; the registered deterministic safety faults remain sensitive before legacy deletion |
+| model/tool safety | `python/tests/evals/test_tool_safety_eval.py::test_generation_tool_plans_refuse_untrusted_escalation` uses the v4 corpus against canonical declarations and `GenerationToolExecutor`; the exact authority proof above covers persistence, Undo, grant scope, and both transport adapters |
 | availability | adapt `python/tests/service/test_llm_tools_availability.py::test_keyless_boot_preserves_plan_and_refuses_required_web_before_dispatch`: keyless app/worker boot, exact six-/eleven-tool Chat publication with zero-network `ToolUnavailable`, plus required-binding refusal for Library/Idea background reads and `idea_dossier_research` |
-| Dossier research | `python/tests/service/test_llm_tools_dossier.py::test_dossier_freezes_host_plan_and_does_not_automatically_reissue_uncertain_search`: real worker/PostgreSQL proves the full frozen HostTable plan, exact `(build_id, research/web-search/{query_index})` positions, changed input rejection, the renamed `BilledOnce` search binding, production reconciliation with zero automatic Brave redispatch after uncertain dispatch, and unchanged search-ref/accepted-source/readiness replay; no model eval |
+| Dossier research | `python/tests/service/test_llm_tools_dossier.py::test_dossier_freezes_host_plan_and_does_not_automatically_reissue_uncertain_search`: real worker/PostgreSQL proves the full frozen host-preparation plan, exact `(build_id, research/web-search/{query_index})` positions, changed input rejection, the renamed `BilledOnce` search binding, production reconciliation with zero automatic Brave redispatch after uncertain dispatch, and unchanged search-ref/accepted-source/readiness replay; no model eval |
 | accepted-URL egress prerequisite | `node-test:node/ingest/test/accepted_url_egress.test.mjs` covers public-to-private redirect, DNS/private/rebinding, connected destination, MIME, streaming/decompression/timeout ceilings, credential isolation, and zero private-endpoint requests; `python/tests/release_artifact/test_node_ingest_image_binding.py::test_worker_launches_only_the_image_baked_hardened_ingest_entrypoint`, routed by N0a to existing `Capability.RELEASE_ARTIFACT`, proves the candidate image/worker/public adapter reject environment substitution and execute that seam; E0's exact green SHA is release input, not evidence from `web.read` |
 | Browse consumer | `python/tests/service/test_llm_tools_browse.py::test_browse_preserves_normalized_provider_results_after_rename`: public Browse request preserves normalized search results/provenance through the renamed provider |
 | backend projection protocol | `python/tests/service/test_llm_tool_projection_protocol.py::test_revision_gates_every_changed_chat_projection_boundary`: real ASGI/PostgreSQL; current revision admits; stale/missing revision rejects every projection-bearing read/mutation, fresh send, rerun, regenerate, Undo, candidate creation, and stream attachment before effects or disclosure; CORS preflight admits the header |
@@ -777,8 +669,8 @@ testing standard; this spec does not create exceptions.
    branches and verify the backup restore. Record Nexus, provider-runtime,
    final `llm-tools`, and Accepted-URL egress SHAs plus current migration head.
 2. Enter maintenance. Stop every API/worker process importing the old package,
-   stop new Chat and Idea-Dossier admission, and drain or domain-cancel every
-   nonterminal affected operation. Verify refusal queries before migration.
+   stop all generation admission, and drain or domain-cancel every nonterminal
+   affected operation. Verify refusal queries before migration.
 3. Deploy the exact backend migration artifact and run empty/snapshot migration
    proofs against it. Record `DataMutationStarted` immediately before its first
    write.
@@ -786,13 +678,13 @@ testing standard; this spec does not create exceptions.
    artifact. After it, roll back only to an explicitly proven same-schema
    artifact; otherwise forward-fix. Never run old code or a legacy decoder
    against rewritten rows. Prove both recovery branches.
-5. Start the exact backend/workers but keep Chat and Idea research in
-   maintenance. Prove readiness plus semantic Chat, Idea-Dossier, Browse,
+5. Start the exact backend/workers but keep all generation admission in
+   maintenance. Prove readiness plus semantic Chat, background model tools, Browse,
    projection-mismatch, and recovery behavior. While maintenance remains
    active, the sole operator closes all pre-cutover tabs and records the manual
    attestation. Promote and verify the matching frontend artifact from the same
-   release ledger, then load it. Reopen Chat and Idea admission separately only
-   after their respective proof is green. A missed old tab fails closed;
+   release ledger, then load it. Reopen generation admission only after its
+   proof is green. A missed old tab fails closed;
    automatic old-tab reload is not acceptance scope.
 6. Run the one-time old-id/import residue audit and record release evidence.
 

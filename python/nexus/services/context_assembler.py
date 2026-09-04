@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
 
@@ -23,7 +23,6 @@ from nexus.db.models import (
 )
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.schemas.conversation import tool_projection_from_persisted_record
-from nexus.services import generation_policy
 from nexus.services.chat_prompt import (
     PromptPlan,
     build_prompt_plan,
@@ -40,6 +39,7 @@ from nexus.services.chat_reader_selection import (
 )
 from nexus.services.chat_run_tools import decode_persisted_tool_record
 from nexus.services.generation_intent import GenerationIntent, TextOutput
+from nexus.services.generation_spec import ImmutablePromptPayloadRef, generation_fact_digest
 from nexus.services.prompt_budget import (
     BudgetItem,
     BudgetSelection,
@@ -69,6 +69,12 @@ from nexus.services.resource_items.capabilities import (
 )
 from nexus.services.retrieval_citation import RetrievalCitation, citation_from_search_result
 from nexus.services.search.resolver import get_search_result
+
+if TYPE_CHECKING:
+    from nexus.services.generation_service import ChatToolAuthority
+
+
+CHAT_PROMPT_TEMPLATE_REVISION = "chat-context.v4"
 
 
 @dataclass(frozen=True)
@@ -119,7 +125,10 @@ def assemble_chat_context(
     db: Session,
     *,
     run: ChatRun,
-    profile: str,
+    max_context_tokens: int,
+    max_output_tokens: int,
+    turn_context: ChatRunTurnContext | None,
+    tool_authority: ChatToolAuthority,
 ) -> ContextAssembly:
     """Assemble the provider-neutral chat request for a durable chat run."""
 
@@ -132,7 +141,6 @@ def assemble_chat_context(
 
     from nexus.services.conversation_branches import load_message_path
 
-    turn_context = db.get(ChatRunTurnContext, run.id)
     path_messages = load_message_path(
         db,
         conversation_id=conversation.id,
@@ -151,7 +159,7 @@ def assemble_chat_context(
         block_id="system",
         role="system",
         lane="system",
-        text=render_system_prompt_block(),
+        text=render_system_prompt_block(tool_authority=tool_authority),
     )
     mandatory_blocks: list[tuple[str, PromptBlock, Mapping[str, object]]] = []
 
@@ -249,10 +257,8 @@ def assemble_chat_context(
         text=user_message.content,
         source_refs=[{"type": "message", "id": str(user_message.id)}],
     )
-    policy = generation_policy.chat_policy(profile)
-    max_output_tokens = generation_policy.MODEL_BOUNDS[policy.model].model_output_tokens
     budget = build_prompt_budget(
-        max_context_tokens=generation_policy.MODEL_BOUNDS[policy.model].context_tokens,
+        max_context_tokens=max_context_tokens,
         max_output_tokens=max_output_tokens,
     )
     budget_items: list[BudgetItem] = [
@@ -381,13 +387,32 @@ def _generation_intent_from_plan(plan: PromptPlan) -> GenerationIntent:
     )
 
 
+def chat_prompt_payload_ref(
+    *,
+    run_id: UUID,
+    intent: GenerationIntent,
+) -> ImmutablePromptPayloadRef:
+    """Address one immutable raw Chat intent in its protected payload owner."""
+
+    return ImmutablePromptPayloadRef(
+        owner_kind="chat_run",
+        owner_id=str(run_id),
+        revision="chat-prompt-payload.v1",
+        payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
+    )
+
+
 def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssembly) -> None:
     ledger = assembly.ledger
+    intent_document = assembly.generate_intent.model_dump(mode="json")
+    intent_digest = generation_fact_digest(intent_document)
     payload = {
         "chat_run_id": run.id,
         "conversation_id": run.conversation_id,
         "assistant_message_id": run.assistant_message_id,
         "prompt_block_manifest": dict(ledger.prompt_block_manifest),
+        "generation_intent": intent_document,
+        "generation_intent_digest": intent_digest,
         "max_context_tokens": ledger.max_context_tokens,
         "reserved_output_tokens": ledger.reserved_output_tokens,
         "input_budget_tokens": ledger.input_budget_tokens,
@@ -405,7 +430,7 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
     existing = db.execute(
         text(
             """
-            SELECT id
+            SELECT id, generation_intent_digest
             FROM chat_prompt_assemblies
             WHERE chat_run_id = :chat_run_id
             FOR UPDATE
@@ -422,6 +447,8 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
                 conversation_id,
                 assistant_message_id,
                 prompt_block_manifest,
+                generation_intent,
+                generation_intent_digest,
                 max_context_tokens,
                 reserved_output_tokens,
                 input_budget_tokens,
@@ -437,6 +464,8 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
                 :conversation_id,
                 :assistant_message_id,
                 :prompt_block_manifest,
+                :generation_intent,
+                :generation_intent_digest,
                 :max_context_tokens,
                 :reserved_output_tokens,
                 :input_budget_tokens,
@@ -455,12 +484,14 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
             bindparam("dropped_items", type_=JSONB),
             bindparam("budget_breakdown", type_=JSONB),
             bindparam("prompt_block_manifest", type_=JSONB),
+            bindparam("generation_intent", type_=JSONB),
         )
         result = cast(Any, db.execute(insert_statement, payload))
         assert result.rowcount == 1  # justify-service-invariant-check: ledger insert is one row.
         return
 
-    return
+    if existing.generation_intent_digest != intent_digest:
+        raise AssertionError("Chat prompt assembly changed after admission")
 
 
 def _build_subject_block(
