@@ -67,7 +67,7 @@ import {
   type SubscriptionSort,
 } from "@/lib/podcasts/subscriptionView";
 import { runPodcastRefresh } from "@/lib/podcasts/refresh";
-import type { PaneRefreshPublication } from "@/lib/panes/panePublications";
+import type { PaneRefreshExecute } from "@/lib/panes/panePublications";
 import type { PaneHeaderAction } from "@/lib/ui/actionDescriptor";
 import styles from "./page.module.css";
 
@@ -738,7 +738,7 @@ export default function PodcastsPaneBody() {
     subscriptionFilterRows.query.trim().length > 0 &&
     visibleRows.length === 0;
 
-  const executeRefresh = useCallback<PaneRefreshPublication["execute"]>(
+  const executeRefresh = useCallback<PaneRefreshExecute>(
     async ({ signal, reportProgress }) => {
       try {
         const result = await runPodcastRefresh(
@@ -794,6 +794,7 @@ export default function PodcastsPaneBody() {
     ],
     search: subscriptionFilterRows.publication,
     refresh: {
+      kind: "Refreshable",
       sourceKey: `Podcasts.Subscriptions:${subscriptionQueryIdentity}`,
       execute: executeRefresh,
     },

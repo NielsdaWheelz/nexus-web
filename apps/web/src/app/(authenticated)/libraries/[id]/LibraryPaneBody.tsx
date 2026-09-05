@@ -130,7 +130,7 @@ import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
-import type { PaneRefreshPublication } from "@/lib/panes/panePublications";
+import type { PaneRefreshExecute } from "@/lib/panes/panePublications";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { isAbortError } from "@/lib/errors";
 import { runPodcastRefresh } from "@/lib/podcasts/refresh";
@@ -1891,7 +1891,7 @@ export default function LibraryPaneBody() {
       });
   }, [id, presentFailure, revalidateLibraryEntries]);
   retryLibraryRefreshRef.current = retryLibraryRefresh;
-  const executeRefresh = useCallback<PaneRefreshPublication["execute"]>(
+  const executeRefresh = useCallback<PaneRefreshExecute>(
     async ({ signal, reportProgress }) => {
       try {
         const result = await runPodcastRefresh(
@@ -1943,6 +1943,7 @@ export default function LibraryPaneBody() {
     refresh:
       currentLibrary && requestedViewKey && viewIsCommitted
         ? {
+            kind: "Refreshable",
             sourceKey: requestedViewKey,
             execute: executeRefresh,
           }

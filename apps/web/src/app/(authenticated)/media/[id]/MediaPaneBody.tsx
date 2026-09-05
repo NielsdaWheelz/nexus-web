@@ -7159,6 +7159,17 @@ export default function MediaPaneBody() {
         : null,
     [findPublicationBase, inspector.searchResultsExpanded],
   );
+  // Find rides the reader's parsed source, which always lands after the media
+  // record. A readable document promises Find, so between those two moments the
+  // answer is unknown, not negative, and the header holds the entry in place.
+  // Transcript media is not promised: with no transcript there is nothing to
+  // find, and a resolving entry that later vanished would be the same reflow.
+  const findResolving =
+    findPublication === null &&
+    canRead &&
+    (media?.kind === "web_article" ||
+      media?.kind === "epub" ||
+      media?.kind === "pdf");
   const { companionAction } = inspector;
   const activityMenuAction = useMemo<ActionDescriptor>(
     () => ({
@@ -7184,7 +7195,11 @@ export default function MediaPaneBody() {
           }
         : {}),
       ...(mediaInstrument ? { instrument: mediaInstrument } : {}),
-      search: findPublication ?? undefined,
+      search:
+        findPublication ??
+        (findResolving
+          ? { kind: "Resolving" as const, control: "Find" as const }
+          : undefined),
       companionAction: companionAction ?? undefined,
       actionSubject: media
         ? { ref: canonicalResourceRef({ scheme: "media", id }) }
@@ -7197,6 +7212,7 @@ export default function MediaPaneBody() {
       companionAction,
       activityMenuAction,
       findPublication,
+      findResolving,
       id,
       media,
       readerViewActions,

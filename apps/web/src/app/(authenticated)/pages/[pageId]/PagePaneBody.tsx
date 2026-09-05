@@ -47,7 +47,7 @@ import type {
   WorkspaceTarget,
   WorkspaceTargetDisposition,
 } from "@/lib/workspace/targetActivation";
-import type { PaneSearchPublication } from "@/lib/panes/paneSearch";
+import type { PaneReadySearchPublication } from "@/lib/panes/paneSearch";
 import {
   notifyPageActionIntentOwnerReady,
   usePageActionIntentOwner,
@@ -516,7 +516,7 @@ function PageChrome({
   activateTarget,
 }: {
   page: PageView | null;
-  search: PaneSearchPublication;
+  search: PaneReadySearchPublication;
   viewActions: ActionDescriptor[];
   activateTarget: (input: {
     target: WorkspaceTarget;
@@ -535,7 +535,7 @@ function PageChrome({
   );
 }
 
-function LatentPageChrome({ search }: { search: PaneSearchPublication }) {
+function LatentPageChrome({ search }: { search: PaneReadySearchPublication }) {
   usePanePrimaryChrome({ search });
   return null;
 }
@@ -547,7 +547,7 @@ function MaterializedPageChrome({
   activateTarget,
 }: {
   page: PageView;
-  search: PaneSearchPublication;
+  search: PaneReadySearchPublication;
   viewActions: ActionDescriptor[];
   activateTarget: (input: {
     target: WorkspaceTarget;

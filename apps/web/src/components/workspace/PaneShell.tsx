@@ -39,6 +39,7 @@ import {
   type PanePrimaryChromePublication,
   type PanePrimaryChromePublicationUpdate,
   type PaneRefreshProgress,
+  type PaneRefreshPublication,
   type PaneRefreshResult,
   type PaneSecondaryPublication,
 } from "@/lib/panes/panePublications";
@@ -50,7 +51,7 @@ import type { PaneRouteShareIdentity } from "@/lib/panes/paneResourceLocator";
 import { useShareController } from "@/lib/sharing/controller";
 import { present } from "@/lib/api/presence";
 import { usePaneSearchRequested } from "@/lib/panes/paneSearchEvents";
-import type { PaneSearchPublication } from "@/lib/panes/paneSearch";
+import type { PaneReadySearchPublication } from "@/lib/panes/paneSearch";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import {
   useMobileChrome,
@@ -105,6 +106,13 @@ interface PaneRefreshExecution {
   readonly routeKey: string;
   readonly sourceKey: string;
   readonly controller: AbortController;
+}
+
+// A resolving publication has no operation to fence, so it owns no source key.
+function paneRefreshSourceKey(
+  publication: PaneRefreshPublication | undefined,
+): string | null {
+  return publication?.kind === "Refreshable" ? publication.sourceKey : null;
 }
 
 function findTouch(
@@ -330,6 +338,7 @@ export default function PaneShell({
       ? primaryChromeRecord.publication
       : null;
   const acceptedRefresh = acceptedPrimaryChrome?.refresh;
+  const acceptedRefreshSourceKey = paneRefreshSourceKey(acceptedRefresh);
   const acceptedRefreshRef = useRef(acceptedRefresh);
   acceptedRefreshRef.current = acceptedRefresh;
   const [refreshState, setRefreshState] = useState<PaneRefreshState>({
@@ -356,7 +365,9 @@ export default function PaneShell({
   }, []);
   const startPaneRefresh = useCallback(() => {
     const publication = acceptedRefreshRef.current;
-    if (!publication || refreshExecutionRef.current) return;
+    if (publication?.kind !== "Refreshable" || refreshExecutionRef.current) {
+      return;
+    }
 
     clearRefreshSettledTimer();
     setRefreshAnnouncement(null);
@@ -380,7 +391,8 @@ export default function PaneShell({
               refreshExecutionRef.current !== execution ||
               execution.controller.signal.aborted ||
               currentRouteKeyRef.current !== execution.routeKey ||
-              acceptedRefreshRef.current?.sourceKey !== execution.sourceKey
+              paneRefreshSourceKey(acceptedRefreshRef.current) !==
+                execution.sourceKey
             ) {
               return;
             }
@@ -391,7 +403,8 @@ export default function PaneShell({
           refreshExecutionRef.current !== execution ||
           execution.controller.signal.aborted ||
           currentRouteKeyRef.current !== execution.routeKey ||
-          acceptedRefreshRef.current?.sourceKey !== execution.sourceKey
+          paneRefreshSourceKey(acceptedRefreshRef.current) !==
+            execution.sourceKey
         ) {
           return;
         }
@@ -402,7 +415,8 @@ export default function PaneShell({
           refreshSettledTimerRef.current = null;
           if (
             currentRouteKeyRef.current === execution.routeKey &&
-            acceptedRefreshRef.current?.sourceKey === execution.sourceKey
+            paneRefreshSourceKey(acceptedRefreshRef.current) ===
+              execution.sourceKey
           ) {
             commitRefreshState({ kind: "Idle" });
           }
@@ -438,7 +452,7 @@ export default function PaneShell({
       refreshExecutionRef.current = null;
     };
   }, [
-    acceptedRefresh?.sourceKey,
+    acceptedRefreshSourceKey,
     clearRefreshSettledTimer,
     commitRefreshState,
     routeKey,
@@ -447,7 +461,7 @@ export default function PaneShell({
     isActive &&
     isMobile &&
     bodyMode === "standard" &&
-    acceptedRefresh !== undefined;
+    acceptedRefresh?.kind === "Refreshable";
   useEffect(() => {
     const scrollport = bodyRef.current;
     if (!pullRefreshEligible || !scrollport) {
@@ -551,18 +565,23 @@ export default function PaneShell({
     retainedFilterRowsSearch?.kind === "FilterRows"
       ? retainedFilterRowsSearch
       : undefined);
-  const acceptedSearchRef = useRef<PaneSearchPublication | undefined>(
-    acceptedSearch,
+  // A resolving publication carries no row, no query, and no dismissal, so it
+  // reaches the descriptor and nothing else: every expansion, focus, and
+  // gesture path below sees only a search that can actually run.
+  const readySearch =
+    acceptedSearch?.kind === "Resolving" ? undefined : acceptedSearch;
+  const acceptedSearchRef = useRef<PaneReadySearchPublication | undefined>(
+    readySearch,
   );
   const isActiveRef = useRef(isActive);
-  acceptedSearchRef.current = acceptedSearch;
+  acceptedSearchRef.current = readySearch;
   isActiveRef.current = isActive;
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchTriggerRef = useRef<HTMLButtonElement | null>(null);
   const searchRowId = `${paneId}-pane-search`;
   const searchExpanded =
-    acceptedSearch !== undefined &&
-    (acceptedSearch.kind === "FilterRows"
+    readySearch !== undefined &&
+    (readySearch.kind === "FilterRows"
       ? expandedSearchIdentity?.kind === "FilterRows" &&
         expandedSearchIdentity.continuityKey === filterRowsContinuityKey
       : expandedSearchIdentity?.kind === "Route" &&
@@ -663,8 +682,8 @@ export default function PaneShell({
   const accessibleName = paneHeaderAccessibleName(header);
   const effectiveInstrument = acceptedPrimaryChrome?.instrument;
   const effectiveContextualRow =
-    searchExpanded && acceptedSearch
-      ? { kind: "Search" as const, publication: acceptedSearch }
+    searchExpanded && readySearch
+      ? { kind: "Search" as const, publication: readySearch }
       : effectiveInstrument
         ? { kind: "Instrument" as const, publication: effectiveInstrument }
         : null;
@@ -701,12 +720,19 @@ export default function PaneShell({
     : null;
   const actionsWithSearch = useMemo<readonly ActionDescriptor[]>(() => {
     if (!acceptedSearch) return EMPTY_ACTIONS;
+    const resolving = acceptedSearch.kind === "Resolving";
     const activeDomainControlCount =
       acceptedSearch.kind === "FilterRows"
         ? acceptedSearch.activeDomainControlCount
         : 0;
+    // A resolving pane names the control it will become, so the entry never
+    // changes its verb when the source lands.
     const searchLabel =
-      acceptedSearch.kind === "FilterRows" ? "Filter" : "Find";
+      acceptedSearch.kind === "Resolving"
+        ? acceptedSearch.control
+        : acceptedSearch.kind === "FilterRows"
+          ? "Filter"
+          : "Find";
     const collapsedSearchLabel =
       !searchExpanded && activeDomainControlCount > 0
         ? `${searchLabel}, ${activeDomainControlCount} ${activeDomainControlCount === 1 ? "control" : "controls"} active`
@@ -716,6 +742,10 @@ export default function PaneShell({
         kind: "command",
         id: "Pane.Search",
         label: collapsedSearchLabel,
+        disabled: resolving || undefined,
+        disabledReason: resolving
+          ? "Available when this pane finishes loading."
+          : undefined,
         indicator:
           !searchExpanded && activeDomainControlCount > 0
             ? { kind: "Status" }
@@ -752,8 +782,8 @@ export default function PaneShell({
             },
         onSelect: ({ triggerEl }) => {
           searchTriggerRef.current = triggerEl;
-          if (searchExpanded) {
-            acceptedSearch.onDismiss();
+          if (searchExpanded && readySearch) {
+            readySearch.onDismiss();
             closeSearch();
             return;
           }
@@ -778,6 +808,7 @@ export default function PaneShell({
     acceptedSearch,
     closeSearch,
     openSearch,
+    readySearch,
     searchExpanded,
     searchRowId,
   ]);
@@ -823,12 +854,16 @@ export default function PaneShell({
   const paneActions = useMemo<readonly ActionDescriptor[]>(() => {
     const actions = [...reconciledPaneActions];
     if (acceptedRefresh) {
+      const resolving = acceptedRefresh.kind === "Resolving";
       actions.push({
         kind: "command",
         id: "Pane.Refresh",
         label: "Refresh",
         icon: <RefreshCw size={16} aria-hidden="true" />,
-        disabled: refreshState.kind === "Refreshing",
+        disabled: resolving || refreshState.kind === "Refreshing",
+        disabledReason: resolving
+          ? "Available when this pane finishes loading."
+          : undefined,
         onSelect: () => startPaneRefresh(),
       });
     }
