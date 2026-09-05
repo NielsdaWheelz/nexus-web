@@ -6,6 +6,8 @@ import android.app.PendingIntent
 import android.app.job.JobParameters
 import android.app.job.JobService
 import android.content.Intent
+import android.os.Build
+import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
 import app.nexus.android.MainActivity
 import app.nexus.android.R
@@ -24,6 +26,10 @@ internal fun readingJobCallbackOwnsFinish(
     callbackGeneration: Long,
 ): Boolean = !stopped && currentRunGeneration == callbackGeneration
 
+// Only user-initiated data transfer jobs (API 34) reach this service: OfflineReadingScheduler
+// schedules it behind requireOfflineReadingSupported(), so the platform never instantiates it
+// on an older release.
+@RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
 class OfflineReadingTransferJobService : JobService() {
     private val executor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "NexusOfflineReadingTransfer").apply { isDaemon = true }

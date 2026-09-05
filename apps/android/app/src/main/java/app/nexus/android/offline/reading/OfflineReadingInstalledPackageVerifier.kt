@@ -1,6 +1,7 @@
 package app.nexus.android.offline.reading
 
 import java.io.File
+import java.io.InputStream
 import java.security.MessageDigest
 
 internal fun interface OfflineReadingInstalledPackageVerifierPort {
@@ -37,7 +38,7 @@ internal class OfflineReadingInstalledPackageVerifier : OfflineReadingInstalledP
             require(document.mediaType == "application/pdf")
             require(document.path.lowercase().endsWith(".pdf"))
             require(File(directory, document.path).inputStream().use { input ->
-                input.readNBytes(5).contentEquals("%PDF-".toByteArray())
+                input.readUpTo(5).contentEquals("%PDF-".toByteArray())
             })
         } else {
             val assetVerifier = OfflineReadingPackageVerifier()
@@ -53,6 +54,18 @@ internal class OfflineReadingInstalledPackageVerifier : OfflineReadingInstalledP
         }
         true
     }.getOrDefault(false)
+}
+
+/** Reads at most [count] bytes, stopping early at end of stream (InputStream.readNBytes needs API 33). */
+private fun InputStream.readUpTo(count: Int): ByteArray {
+    val buffer = ByteArray(count)
+    var offset = 0
+    while (offset < count) {
+        val read = read(buffer, offset, count - offset)
+        if (read < 0) break
+        offset += read
+    }
+    return buffer.copyOf(offset)
 }
 
 private fun File.sha256Hex(): String {

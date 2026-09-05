@@ -1,5 +1,6 @@
 package app.nexus.android.offline.reading
 
+import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.security.keystore.UserNotAuthenticatedException
@@ -102,7 +103,11 @@ internal class OfflineReadingBindingSeal(
                         keyAlias,
                         KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY,
                     )
-                        .setUnlockedDeviceRequired(true)
+                        .apply {
+                            // Offline reading requires API 34 (requireOfflineReadingSupported);
+                            // the explicit check is what lint can see. The API predates 28.
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) setUnlockedDeviceRequired(true)
+                        }
                         .build()
                 )
             }

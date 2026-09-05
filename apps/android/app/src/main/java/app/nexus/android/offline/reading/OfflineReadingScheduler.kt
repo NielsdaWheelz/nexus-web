@@ -4,6 +4,7 @@ import android.app.job.JobInfo
 import android.app.job.JobScheduler
 import android.content.ComponentName
 import android.content.Context
+import android.os.Build
 import android.os.PersistableBundle
 import app.nexus.android.offline.NetworkPolicy
 import app.nexus.android.offline.OfflineNetworkPolicyStore
@@ -74,7 +75,8 @@ internal class OfflineReadingScheduler(
             ComponentName(appContext, OfflineReadingTransferJobService::class.java),
         )
             .setPersisted(true)
-            .setUserInitiated(true)
+        // requireOfflineReadingSupported() above guarantees API 34; lint cannot see through it.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) builder.setUserInitiated(true)
         val policy = OfflineNetworkPolicyStore(appContext).get()
         builder.setExtras(
             PersistableBundle().apply { putString(OFFLINE_READING_POLICY_EXTRA, policy.name) }
