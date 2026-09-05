@@ -1155,4 +1155,48 @@ describe("Podcast episodes domain view", () => {
     );
     expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
   });
+
+  // Refresh pulls a subscription's new episodes, so its eligibility is a fact
+  // of the detail response. Until that response lands the answer is unknown,
+  // not negative: the header holds Refresh in its final place, blocked with a
+  // reason, instead of growing an entry under an already-open menu.
+  it("holds Refresh in the header prefix, blocked, while the subscription fact is in flight", async () => {
+    const lifecycle = stubTerminalDetailCommittedAfterTheFirstEpisodeRead();
+
+    render(
+      <PodcastDetailPane
+        initialHref={`/podcasts/${PODCAST_ID}`}
+        replaced={[]}
+      />,
+    );
+
+    await lifecycle.detailStarted;
+    await userEvent.click(await screen.findByRole("button", { name: "More" }));
+    const localPrefix = () =>
+      within(screen.getByRole("menu"))
+        .getAllByRole("menuitem")
+        .map((item) => item.getAttribute("data-action-id"))
+        .slice(0, 2);
+    await waitFor(() =>
+      expect(localPrefix()).toEqual(["Pane.Search", "Pane.Refresh"]),
+    );
+    const pending = within(screen.getByRole("menu")).getByRole("menuitem", {
+      name: "Refresh",
+    });
+    expect(pending).toHaveAttribute("data-action-availability", "Blocked");
+    expect(pending).toHaveAccessibleDescription(
+      "Available when this pane finishes loading.",
+    );
+
+    lifecycle.settleTerminalDetail();
+
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("menu")).getByRole("menuitem", {
+          name: "Refresh",
+        }),
+      ).toHaveAttribute("data-action-availability", "Available"),
+    );
+    expect(localPrefix()).toEqual(["Pane.Search", "Pane.Refresh"]);
+  });
 });

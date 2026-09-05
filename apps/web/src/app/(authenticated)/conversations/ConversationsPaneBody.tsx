@@ -564,6 +564,7 @@ export default function ConversationsPaneBody() {
   usePanePrimaryChrome({
     search,
     refresh: {
+      kind: "Refreshable",
       sourceKey: "Conversations:mine",
       execute: executeRefresh,
     },

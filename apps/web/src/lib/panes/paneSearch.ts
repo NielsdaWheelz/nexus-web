@@ -117,9 +117,27 @@ export type PaneFindOccurrencesPublication = PaneSearchBase & {
       };
 };
 
-export type PaneSearchPublication =
+/**
+ * A pane with nothing to search publishes nothing. A pane whose search source
+ * is still loading publishes `Resolving`, naming the control it will become,
+ * so the header's local action set keeps one shape across that window instead
+ * of growing an entry when the source lands. Only publish it where the loaded
+ * answer is certain to be a search: a resolving action that later disappears
+ * is the same reflow in reverse.
+ */
+export interface PaneSearchResolvingPublication {
+  readonly kind: "Resolving";
+  readonly control: "Find" | "Filter";
+}
+
+/** What every search renderer consumes; a resolving pane has none of it yet. */
+export type PaneReadySearchPublication =
   | PaneFilterRowsPublication
   | PaneFindOccurrencesPublication;
+
+export type PaneSearchPublication =
+  | PaneSearchResolvingPublication
+  | PaneReadySearchPublication;
 
 export function truncatePaneSearchQuery(query: string): string {
   return Array.from(query)
@@ -222,6 +240,13 @@ export function arePaneSearchPublicationsEqual(
 ): boolean {
   if (left === right) return true;
   if (!left || !right || left.kind !== right.kind) return false;
+  if (left.kind === "Resolving" || right.kind === "Resolving") {
+    return (
+      left.kind === "Resolving" &&
+      right.kind === "Resolving" &&
+      left.control === right.control
+    );
+  }
   if (!arePaneSearchBasesEqual(left, right)) return false;
   if (left.kind === "FilterRows") {
     return (

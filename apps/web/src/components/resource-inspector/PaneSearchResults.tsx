@@ -3,11 +3,11 @@
 import Button from "@/components/ui/Button";
 import CollectionView from "@/components/collections/CollectionView";
 import { presentPaneFindResult } from "@/lib/collections/presenters/paneFind";
-import type { PaneSearchPublication } from "@/lib/panes/paneSearch";
+import type { PaneReadySearchPublication } from "@/lib/panes/paneSearch";
 import styles from "./PaneSearchResults.module.css";
 
 type FindPublication = Extract<
-  PaneSearchPublication,
+  PaneReadySearchPublication,
   { kind: "FindOccurrences" }
 >;
 
