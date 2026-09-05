@@ -76,6 +76,19 @@ jobs:
       NEXUS_FABLE_RETENTION_ACCEPTED_AT: ${{ secrets.NEXUS_FABLE_RETENTION_ACCEPTED_AT }}
 
     steps:
+      # A bootstrap release on a hosted runner shares the CI full gate's disk
+      # reality: the SDK system image + Gradle build exhaust the ~14GB image
+      # ("No space left on device" preparing the android-36 system image).
+      # Shed the toolchains the lane never uses, exactly as ci.yml's
+      # candidate-full job does; the Android SDK stays.
+      - name: Free hosted-runner disk for the bootstrap release
+        if: inputs.bootstrap_no_device
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/.ghcup /opt/hostedtoolcache/CodeQL \
+            /usr/share/swift /usr/local/share/powershell /usr/local/julia*
+          sudo docker image prune --all --force >/dev/null
+          df -h /
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.tag }}
