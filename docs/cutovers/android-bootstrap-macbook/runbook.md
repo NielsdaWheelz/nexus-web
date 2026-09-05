@@ -34,9 +34,14 @@ container this repository's PR gates already use on this machine — built from
 - The clean work tree at the tag, the main clone's `.git` (the work tree is a
   `git worktree`), the sibling suites, the keystore directory and the secrets
   file are bind-mounted at their workstation paths, so every path the kernel
-  records is the same inside and outside the runner. Linux dependency roots
-  (`python/.venv`, both `node_modules`, `.nexus-test`, Gradle, uv and Playwright
-  caches) live in named volumes and never touch the macOS files.
+  records is the same inside and outside the runner. The Linux dependency roots (`python/.venv`, both `node_modules`, `.nexus-test`)
+  are written into the bind-mounted work tree by the runner's sync (named
+  volumes nested under the virtiofs bind mount vanish from the systemd
+  container's mount table mid-run); only the Gradle, uv and Playwright caches
+  are named volumes. Never run the macOS `uv`/`bun` in that work tree
+  afterwards. The work tree path must stay within 60 bytes: the service suite
+  binds Unix sockets under `test-results/runs/<run id>/` and asserts they fit
+  the 108-byte `sun_path`.
 - The runner talks to the workstation's Docker daemon through the mounted
   socket; the kernel's own Postgres/MinIO/Supabase containers are siblings.
 - The handset stays on the workstation's adb server (the USB transport). The
