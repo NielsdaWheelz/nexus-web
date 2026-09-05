@@ -36,6 +36,14 @@ export type PaneRefreshResult =
   | { readonly kind: "Failed"; readonly announcement: string }
   | { readonly kind: "ObservationLost"; readonly announcement: string };
 
+/**
+ * One reason for every pane-owned command that is holding its place while the
+ * fact deciding it is still in flight. Its owners are the pane chrome planner
+ * and the pane bodies that publish resolving local commands.
+ */
+export const PANE_COMMAND_RESOLVING_REASON =
+  "Available when this pane finishes loading.";
+
 export type PaneRefreshExecute = (input: {
   readonly signal: AbortSignal;
   readonly reportProgress: (progress: PaneRefreshProgress) => void;

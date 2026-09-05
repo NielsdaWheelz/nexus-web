@@ -1949,14 +1949,13 @@ export default function LibraryPaneBody() {
           }
         : undefined,
     companionAction: companionAction ?? undefined,
-    actionSubject: currentLibrary
-      ? {
-          ref: canonicalResourceRef({
-            scheme: "library",
-            id: currentLibrary.id,
-          }),
-        }
-      : undefined,
+    // The pane's canonical identity is its route key, not a fact of any read it
+    // is still waiting on. Publishing it late leaves the menu with no subject,
+    // so it renders no resource suffix and no loading row either: the surface
+    // looks settled while it is not. The snapshot owns missing state.
+    actionSubject: {
+      ref: canonicalResourceRef({ scheme: "library", id }),
+    },
     menuActions: addContentAction,
     header: { kind: "Section", meta: entryMeta },
   });

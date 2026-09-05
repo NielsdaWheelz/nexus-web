@@ -34,6 +34,7 @@ import {
 } from "@/lib/panes/targetLinkActivation";
 import {
   arePanePrimaryChromePublicationsEqual,
+  PANE_COMMAND_RESOLVING_REASON,
   secondaryPublicationIncludesSurface,
   type PaneFixedChromePublication,
   type PanePrimaryChromePublication,
@@ -744,7 +745,7 @@ export default function PaneShell({
         label: collapsedSearchLabel,
         disabled: resolving || undefined,
         disabledReason: resolving
-          ? "Available when this pane finishes loading."
+          ? PANE_COMMAND_RESOLVING_REASON
           : undefined,
         indicator:
           !searchExpanded && activeDomainControlCount > 0
@@ -862,7 +863,7 @@ export default function PaneShell({
         icon: <RefreshCw size={16} aria-hidden="true" />,
         disabled: resolving || refreshState.kind === "Refreshing",
         disabledReason: resolving
-          ? "Available when this pane finishes loading."
+          ? PANE_COMMAND_RESOLVING_REASON
           : undefined,
         onSelect: () => startPaneRefresh(),
       });

@@ -509,9 +509,12 @@ function stubSubscriptionLifecycle({
   };
 }
 
-function stubTerminalDetailCommittedAfterTheFirstEpisodeRead() {
+function stubTerminalDetailCommittedAfterTheFirstEpisodeRead({
+  deferActionSnapshots = false,
+}: { readonly deferActionSnapshots?: boolean } = {}) {
   const detailStarted = deferred<void>();
   const terminalDetail = deferred<Response>();
+  const actionSnapshotsReleased = deferred<void>();
   let terminalEpisodesVisible = false;
   let episodeReads = 0;
 
@@ -530,6 +533,7 @@ function stubTerminalDetailCommittedAfterTheFirstEpisodeRead() {
         return Response.json({ data: { can_transcribe: false } });
       }
       if (url.pathname === "/api/resource-items/action-snapshots/resolve") {
+        if (deferActionSnapshots) await actionSnapshotsReleased.promise;
         const body = typeof init?.body === "string" ? JSON.parse(init.body) : null;
         const refs: string[] = Array.isArray(body?.refs) ? body.refs : [];
         return Response.json({
@@ -566,6 +570,9 @@ function stubTerminalDetailCommittedAfterTheFirstEpisodeRead() {
 
   return {
     detailStarted: detailStarted.promise,
+    releaseActionSnapshots() {
+      actionSnapshotsReleased.resolve();
+    },
     settleTerminalDetail() {
       terminalEpisodesVisible = true;
       terminalDetail.resolve(
@@ -1198,5 +1205,46 @@ describe("Podcast episodes domain view", () => {
       ).toHaveAttribute("data-action-availability", "Available"),
     );
     expect(localPrefix()).toEqual(["Pane.Search", "Pane.Refresh"]);
+  });
+
+  // The pane's canonical identity is its route key. Gating it on the detail read
+  // left the menu with no subject at all: it resolved no snapshot, rendered no
+  // resource suffix, and — because the loading row only exists once a subject
+  // does — announced nothing either. A reader, and any one-shot reader of this
+  // surface, saw a settled menu that was still missing every resource action.
+  it("resolves the Podcast's canonical actions from its route identity, before the detail read lands", async () => {
+    const lifecycle = stubTerminalDetailCommittedAfterTheFirstEpisodeRead({
+      deferActionSnapshots: true,
+    });
+
+    render(
+      <PodcastDetailPane
+        initialHref={`/podcasts/${PODCAST_ID}`}
+        replaced={[]}
+      />,
+    );
+
+    await lifecycle.detailStarted;
+    await userEvent.click(await screen.findByRole("button", { name: "More" }));
+    expect(
+      await within(screen.getByRole("menu")).findByRole("menuitem", {
+        name: "Resource actions are loading…",
+      }),
+      "the menu claimed to be settled while it carried no resource suffix",
+    ).toBeTruthy();
+
+    lifecycle.releaseActionSnapshots();
+
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("menu")).queryByRole("menuitem", {
+          name: "Resource actions are loading…",
+        }),
+      ).toBeNull(),
+    );
+    // The detail read is still in flight: identity never depended on it.
+    expect(
+      screen.queryByRole("link", { name: "The Crew-4 Astronauts" }),
+    ).toBeNull();
   });
 });

@@ -1401,12 +1401,13 @@ export default function PodcastDetailPaneBody() {
         : detail === null && error === null
           ? { kind: "Resolving" }
           : undefined,
-    actionSubject:
-      podcastId && detail
-        ? {
-            ref: canonicalResourceRef({ scheme: "podcast", id: podcastId }),
-          }
-        : undefined,
+    // The pane's canonical identity is its route key, not a fact of any read it
+    // is still waiting on. Publishing it late leaves the menu with no subject,
+    // so it renders no resource suffix and no loading row either: the surface
+    // looks settled while it is not. The snapshot owns missing state.
+    actionSubject: podcastId
+      ? { ref: canonicalResourceRef({ scheme: "podcast", id: podcastId }) }
+      : undefined,
     header: {
       kind: "Section",
       meta:
