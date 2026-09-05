@@ -45,7 +45,9 @@ jobs:
     # USB handset. The explicit bootstrap release is the one exception: no
     # handset exists anywhere, so it runs hosted and boots its own emulator.
     runs-on: ${{ inputs.bootstrap_no_device && 'ubuntu-latest' || fromJSON('["self-hosted", "linux", "x64", "nexus-android-usb"]') }}
-    timeout-minutes: 360
+    # Hosted bootstrap runs are billed; a mute hang must never ride to the
+    # 6-hour default. The lab lane keeps the full window for device stages.
+    timeout-minutes: ${{ inputs.bootstrap_no_device && 150 || 360 }}
     environment: android-release
     env:
       ANDROID_RELEASE_TAG: ${{ inputs.tag }}
@@ -120,12 +122,17 @@ jobs:
 
       - name: Boot the bootstrap emulator
         if: inputs.bootstrap_no_device
+        # Every wait below is bounded and every precondition is checked
+        # loudly: run 33944749484 sat on a bare `adb wait-for-device` for six
+        # billed hours after the emulator died at launch without a word.
+        timeout-minutes: 25
         run: |
           set -euo pipefail
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
             | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+          test -r /dev/kvm && test -w /dev/kvm
           sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           avdmanager="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
           adb="$ANDROID_HOME/platform-tools/adb"
@@ -138,12 +145,19 @@ jobs:
             --name nexus-bootstrap \
             --package "system-images;android-36;google_apis;x86_64" \
             --force >/dev/null
+          df -h /
+          "$ANDROID_HOME/emulator/emulator" -accel-check
           nohup "$ANDROID_HOME/emulator/emulator" -avd nexus-bootstrap \
             -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim \
             -no-snapshot -camera-back none -camera-front none \
             >"$RUNNER_TEMP/emulator.log" 2>&1 &
-          "$adb" wait-for-device
-          for _ in $(seq 1 120); do
+          emulator_pid=$!
+          for _ in $(seq 1 180); do
+            if ! kill -0 "$emulator_pid" 2>/dev/null; then
+              echo "Emulator process exited during boot; log tail follows." >&2
+              tail -n 100 "$RUNNER_TEMP/emulator.log" >&2
+              exit 1
+            fi
             if [ "$("$adb" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; then
               break
             fi
@@ -152,6 +166,13 @@ jobs:
           test "$("$adb" shell getprop sys.boot_completed | tr -d '\r')" = "1"
           "$adb" shell input keyevent 82
           "$adb" devices -l
+
+      - name: Surface emulator diagnostics on failure
+        if: failure() && inputs.bootstrap_no_device
+        run: |
+          tail -n 200 "$RUNNER_TEMP/emulator.log" 2>/dev/null || true
+          "$ANDROID_HOME/platform-tools/adb" devices -l || true
+          df -h /
 
       - name: Decode release keystore
         env:
