@@ -28,7 +28,12 @@ ENV_FILE="${NEXUS_RELEASE_ENV_FILE:-$HOME/.config/nexus-release/release.env}"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(dirname "$script_dir")"
 parent_dir="$(dirname "$repo_root")"
-work_dir="$parent_dir/nexus-web-release-$TAG"
+# Keep the work tree path short: the service suite binds Unix sockets at
+# <repo root>/test-results/runs/<run id>/<6>.sock and asserts the absolute path
+# fits Linux's 108-byte sun_path (python/tests/testkit/codex_metadata.py), which
+# leaves 60 bytes for the repo root.
+work_dir="$parent_dir/nexus-release-${TAG#android-v}"
+max_work_dir_bytes=60
 runner_dir="$script_dir/release-bootstrap-macos"
 runner_image="nexus-release-runner:$TAG"
 runner="nexus-release-$TAG"
@@ -127,6 +132,8 @@ if [ "$mode" = lane ]; then
 fi
 
 # --- checkout at the release tag ------------------------------------------
+[ "$(printf '%s' "$work_dir" | wc -c | tr -d ' ')" -le "$max_work_dir_bytes" ] || \
+  die "work tree path $work_dir exceeds $max_work_dir_bytes bytes; the service suite's Unix socket paths would not fit sun_path (clone this repository under a shorter path)"
 git -C "$repo_root" fetch --quiet origin "refs/tags/$TAG:refs/tags/$TAG" || true
 tag_commit="$(git -C "$repo_root" rev-parse "$TAG^{commit}")" || die "tag $TAG is absent"
 if [ ! -d "$work_dir" ]; then
