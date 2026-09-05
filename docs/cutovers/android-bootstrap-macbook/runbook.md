@@ -118,7 +118,9 @@ Provider certification spends real LLM API credit on each lane attempt.
 
 To start over with a fresh runner: `docker rm -f nexus-release-android-v0.2.14`
 (the named volumes `nexus-release-android-v0.2.14-*` keep the caches; remove
-them too for a fully cold start).
+them too for a fully cold start). Every `docker exec` into the runner goes
+through `lane.sh`, which first leaves the container's root cgroup: an exec that
+stays there blocks systemd from delegating controllers to the user manager.
 
 ## After it publishes
 

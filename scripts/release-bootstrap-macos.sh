@@ -151,10 +151,11 @@ if [ "$mode" != publish ]; then
   if [ "$(docker container inspect --format '{{.State.Running}}' "$runner" 2>/dev/null || true)" != "true" ]; then
     docker rm -f "$runner" >/dev/null 2>&1 || true
     keystore_dir="$(dirname "$NEXUS_ANDROID_RELEASE_STORE_FILE")"
-    # Linux dependency roots live in named volumes mounted over the work tree.
-    # volume-nocopy keeps Docker from seeding an empty volume with whatever the
-    # workstation has at that path (a macOS venv or node_modules would otherwise
-    # be copied in and then "synced" in place).
+    # The Linux dependency roots (python/.venv, node_modules, .nexus-test) live
+    # inside the bind-mounted work tree on purpose: named volumes nested under a
+    # virtiofs bind mount silently vanish from this systemd container's mount
+    # table mid-run, leaving whatever the workstation has at that path. Only the
+    # non-nested caches are volumes.
     docker run --detach --name "$runner" --hostname "$runner" \
       --privileged --cgroupns=private --network host \
       --tmpfs /run --tmpfs /run/lock \
@@ -166,16 +167,12 @@ if [ "$mode" != publish ]; then
       --volume "$parent_dir/llm-tools:$parent_dir/llm-tools:ro" \
       --volume "$keystore_dir:$keystore_dir:ro" \
       --volume "$ENV_FILE:$ENV_FILE:ro" \
-      --mount "type=volume,src=$runner-python-venv,dst=$work_dir/python/.venv,volume-nocopy" \
-      --mount "type=volume,src=$runner-web-node-modules,dst=$work_dir/apps/web/node_modules,volume-nocopy" \
-      --mount "type=volume,src=$runner-ingest-node-modules,dst=$work_dir/node/ingest/node_modules,volume-nocopy" \
-      --mount "type=volume,src=$runner-nexus-test,dst=$work_dir/.nexus-test,volume-nocopy" \
       --volume "$runner-gradle:/root/.gradle" \
       --volume "$runner-cache:/root/.cache" \
       --volume "$runner-playwright:/ms-playwright" \
       "$runner_image" >/dev/null
   fi
-  docker exec "$runner" systemctl is-system-running --wait >/dev/null 2>&1 || true
+  runner_exec boot || die "the runner did not finish booting"
 
   echo "runner preflight (cgroup delegate, docker, toolchain, x86_64 emulation, forwarded device)"
   if [ "$mode" = prepare ]; then

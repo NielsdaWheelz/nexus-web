@@ -5,7 +5,7 @@
 # non-secret environment arrives through `docker exec -e`.
 set -euo pipefail
 
-phase="${1:?phase required: preflight | sync | release}"
+phase="${1:?phase required: boot | preflight | sync | toolchain | release}"
 work_dir="${2:?work tree path required}"
 check_device=true
 [ "${3:-}" = "--no-device" ] && check_device=false
@@ -35,11 +35,36 @@ unset DOCKER_HOST DOCKER_CONTEXT
 export XDG_RUNTIME_DIR=/run/user/0
 export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/0/bus
 
+# A docker exec that arrives before systemd has moved PID 1 into init.scope is
+# placed in the container's root cgroup, and while any process lives there the
+# kernel refuses to enable controllers in the root's cgroup.subtree_control
+# (cgroup v2's no-internal-process rule). systemd then records the failure and
+# every unit below, including the user manager, ends up without controllers.
+# Join PID 1's cgroup before doing anything else so this shell never blocks it.
+if [ "$(cat /proc/self/cgroup)" = "0::/" ]; then
+  for _ in $(seq 1 120); do
+    [ -d /sys/fs/cgroup/init.scope ] && break
+    sleep 0.5
+  done
+  echo $$ > /sys/fs/cgroup/init.scope/cgroup.procs || die "could not leave the container root cgroup"
+fi
+
 cd "$work_dir"
 
 case "$phase" in
+  boot)
+    systemctl is-system-running --wait >/dev/null 2>&1 || true
+    echo "systemd: $(systemctl is-system-running || true)"
+    ;;
+
   preflight)
     systemctl is-system-running --wait >/dev/null 2>&1 || true
+    # Nothing may remain in the root cgroup, and the root must delegate the
+    # controllers to its subtree before any slice can.
+    root_procs="$(cat /sys/fs/cgroup/cgroup.procs)"
+    [ -z "$root_procs" ] || die "processes still live in the container root cgroup: $(printf '%s' "$root_procs" | tr '\n' ' ')"
+    grep -qw memory /sys/fs/cgroup/cgroup.subtree_control || echo "+cpu +memory +pids" > /sys/fs/cgroup/cgroup.subtree_control \
+      || die "could not enable the controllers in the container root cgroup"
     # The root user manager (user@0.service, Delegate=yes) must hold the memory
     # controller. systemd 252 in this container shape loses a race when it
     # creates user.slice/user-0.slice for the manager: its attempt to enable the
