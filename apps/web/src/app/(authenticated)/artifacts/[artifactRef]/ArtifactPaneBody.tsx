@@ -329,7 +329,9 @@ export default function ArtifactPaneBody() {
               },
             }
           : {}),
-      actionSubject: state.head.kind === "Ready" ? actionSubject : undefined,
+      // The dossier's canonical identity is its route ref, not a fact of the
+      // head read. The snapshot owns missing state.
+      actionSubject,
     }),
     [actionSubject, identity, state.head.kind],
   );

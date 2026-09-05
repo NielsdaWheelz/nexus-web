@@ -12,7 +12,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { Activity, Settings } from "lucide-react";
+import { Activity, Moon, Settings, Sun, Users } from "lucide-react";
 import { page, userEvent } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import "@/app/globals.css";
@@ -24,9 +24,10 @@ import {
   type MobileBottomSurfaceId,
 } from "@/lib/mobileViewport/MobileViewportProvider";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
-import type {
-  PaneRefreshExecute,
-  PaneRefreshPublication,
+import {
+  PANE_COMMAND_RESOLVING_REASON,
+  type PaneRefreshExecute,
+  type PaneRefreshPublication,
 } from "@/lib/panes/panePublications";
 import type {
   PaneFindOccurrencesPublication,
@@ -254,22 +255,68 @@ function refreshPublication(execute: PaneRefreshExecute): PaneRefreshPublication
 // The reader pane's own sibling entries, in their published order. They are the
 // ones a late Find used to hide behind: the CI read of a media pane header came
 // back starting at "consumption-activity" because Pane.Search was not there yet.
-const READER_MENU_ACTIONS: readonly ActionDescriptor[] = [
-  {
-    kind: "link",
-    id: "consumption-activity",
-    label: "Activity: Reading",
-    icon: <Activity size={16} aria-hidden="true" />,
-    href: "/stats",
-  },
-  {
-    kind: "command",
-    id: "ViewAction.Reader.Settings",
-    label: "Reader settings",
-    icon: <Settings size={16} aria-hidden="true" />,
-    onSelect: noop,
-  },
-];
+// The media pane's own View commands, in their published order, in the two
+// states it publishes them: still waiting on the media record, and settled on a
+// readable document. Activity and Reader settings never depend on the record;
+// Credits and the theme pair do, and hold their places until it lands.
+function readerMenuActions(resolving: boolean): readonly ActionDescriptor[] {
+  const resolvingState = resolving
+    ? {
+        disabled: true,
+        disabledReason: PANE_COMMAND_RESOLVING_REASON,
+      }
+    : {};
+  return [
+    {
+      kind: "link",
+      id: "consumption-activity",
+      label: "Activity: Reading",
+      icon: <Activity size={16} aria-hidden="true" />,
+      href: "/stats",
+    },
+    {
+      kind: "command",
+      id: "ViewAction.Resource.Credits",
+      label: "Credits…",
+      icon: <Users size={16} aria-hidden="true" />,
+      onSelect: noop,
+      ...resolvingState,
+    },
+    {
+      kind: "command",
+      id: "ViewAction.Reader.Settings",
+      label: "Reader settings",
+      icon: <Settings size={16} aria-hidden="true" />,
+      onSelect: noop,
+    },
+    {
+      kind: "command",
+      id: "ViewAction.Reader.Theme.Light",
+      label: "Light theme",
+      icon: <Sun size={16} aria-hidden="true" />,
+      onSelect: noop,
+      ...resolvingState,
+    },
+    {
+      kind: "command",
+      id: "ViewAction.Reader.Theme.Dark",
+      label: "Dark theme",
+      icon: <Moon size={16} aria-hidden="true" />,
+      onSelect: noop,
+      ...resolvingState,
+    },
+  ];
+}
+
+// The exact local prefix this journey-visible surface owes, in order.
+const MEDIA_PANE_LOCAL_PREFIX = [
+  "Pane.Search",
+  "consumption-activity",
+  "ViewAction.Resource.Credits",
+  "ViewAction.Reader.Settings",
+  "ViewAction.Reader.Theme.Light",
+  "ViewAction.Reader.Theme.Dark",
+] as const;
 
 function findPublication(
   onOpen: () => void,
@@ -632,10 +679,10 @@ describe("PaneShell pane search", () => {
   // ["consumption-activity", "ViewAction.Reader.Settings", …] — Find absent, and
   // every following entry shifted up one place. Find now stands in its own place
   // from the first paint, blocked with a reason until its source lands.
-  it("holds Find at the head of the local order, blocked, while its source resolves", async () => {
+  it("holds every local reader command in its settled place while the media record resolves", async () => {
     await page.viewport(390, 844);
     const onOpen = vi.fn();
-    const tree = (search: PaneSearchPublication) =>
+    const tree = (search: PaneSearchPublication, resolving: boolean) =>
       withRenderEnvironment(
         withPaneProviders(
           <div
@@ -651,53 +698,66 @@ describe("PaneShell pane search", () => {
               isMobile
               isActive
               search={search}
-              menuActions={READER_MENU_ACTIONS}
+              menuActions={readerMenuActions(resolving)}
             />
           </div>,
         ),
         { initialViewport: "mobile" },
       );
-    const { rerender } = render(tree({ kind: "Resolving", control: "Find" }));
+    const { rerender } = render(
+      tree({ kind: "Resolving", control: "Find" }, true),
+    );
 
     await userEvent.click(await screen.findByRole("button", { name: "More" }));
     const actionIds = () =>
       within(screen.getByRole("menu"))
         .getAllByRole("menuitem")
         .map((item) => item.getAttribute("data-action-id"));
+    const availability = () =>
+      within(screen.getByRole("menu"))
+        .getAllByRole("menuitem")
+        .map((item) => item.getAttribute("data-action-availability"));
+    // Every place the settled surface owes is already occupied.
     await waitFor(() =>
-      expect(actionIds()).toEqual([
-        "Pane.Search",
-        "consumption-activity",
-        "ViewAction.Reader.Settings",
-      ]),
+      expect(actionIds()).toEqual([...MEDIA_PANE_LOCAL_PREFIX]),
     );
+    expect(availability()).toEqual([
+      "Blocked",
+      "Available",
+      "Blocked",
+      "Available",
+      "Blocked",
+      "Blocked",
+    ]);
+    for (const name of ["Find", "Credits…", "Light theme", "Dark theme"]) {
+      expect(
+        within(screen.getByRole("menu")).getByRole("menuitem", { name }),
+        `${name} withheld its reason while resolving`,
+      ).toHaveAccessibleDescription(PANE_COMMAND_RESOLVING_REASON);
+    }
     const pending = within(screen.getByRole("menu")).getByRole("menuitem", {
       name: "Find",
     });
-    expect(pending).toHaveAttribute("data-action-availability", "Blocked");
-    expect(pending).toHaveAccessibleDescription(
-      "Available when this pane finishes loading.",
-    );
     // A resolving pane owns no row to disclose and no session to open.
     expect(pending).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(pending);
     expect(onOpen).not.toHaveBeenCalled();
     expect(screen.queryByRole("searchbox")).toBeNull();
 
-    rerender(tree(findPublication(onOpen)));
+    rerender(tree(findPublication(onOpen), false));
 
+    // Same entries, same places, now settled — nothing moved as the record landed.
     await waitFor(() =>
-      expect(
-        within(screen.getByRole("menu")).getByRole("menuitem", {
-          name: "Find",
-        }),
-      ).toHaveAttribute("data-action-availability", "Available"),
+      expect(availability()).toEqual([
+        "Available",
+        "Available",
+        "Available",
+        "Available",
+        "Available",
+        "Available",
+      ]),
     );
-    expect(actionIds()).toEqual([
-      "Pane.Search",
-      "consumption-activity",
-      "ViewAction.Reader.Settings",
-    ]);
+    expect(actionIds()).toEqual([...MEDIA_PANE_LOCAL_PREFIX]);
 
     await userEvent.click(
       within(screen.getByRole("menu")).getByRole("menuitem", { name: "Find" }),

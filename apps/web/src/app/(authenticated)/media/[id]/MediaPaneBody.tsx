@@ -164,7 +164,10 @@ import {
 } from "@/lib/workspace/mobileChrome";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { usePaneFixedChrome } from "@/components/workspace/PaneFixedChrome";
-import type { PanePrimaryChromePublication } from "@/lib/panes/panePublications";
+import {
+  PANE_COMMAND_RESOLVING_REASON,
+  type PanePrimaryChromePublication,
+} from "@/lib/panes/panePublications";
 import type {
   PaneFindOccurrencesPublication,
   PaneFindResultKey,
@@ -5583,13 +5586,20 @@ export default function MediaPaneBody() {
   // Reader view commands share the pane's contextual menu with the canonical
   // resource runtime; Activity remains first within this published View group.
   const readerViewActions = useMemo<ActionDescriptor[]>(() => {
-    if (!media) return [];
+    // The reader's local commands hold their static places from the pane's first
+    // paint. Which of them this media finally supports is a fact of the media
+    // record, so until it lands the record-dependent ones stand blocked with an
+    // honest reason. The loaded answer then decides — Available, or absent
+    // because this media genuinely has no such command. Waiting never decides.
+    const resolving = media === null;
     const view: ActionDescriptor[] = [];
-    if (mediaResourceHeader?.status === "Ready") {
+    if (resolving || mediaResourceHeader?.status === "Ready") {
       view.push({
         kind: "command",
         id: "ViewAction.Resource.Credits",
         label: "Credits…",
+        disabled: resolving || undefined,
+        disabledReason: resolving ? PANE_COMMAND_RESOLVING_REASON : undefined,
         restoreFocusOnClose: false,
         onSelect: openCreditsOverlay,
       });
@@ -5606,7 +5616,7 @@ export default function MediaPaneBody() {
 
     // Terminal Forbidden disables the quick-switch alongside Settings (spec §8).
     const readerPersistenceForbidden = readerPersistence.state === "Forbidden";
-    if (isReflowableReader) {
+    if (resolving || isReflowableReader) {
       view.push({
         kind: "command",
         id: "ViewAction.Reader.Theme.Light",
@@ -5614,7 +5624,11 @@ export default function MediaPaneBody() {
           readerProfile.theme === "light"
             ? "Light theme (current)"
             : "Light theme",
-        disabled: readerProfile.theme === "light" || readerPersistenceForbidden,
+        disabled:
+          resolving ||
+          readerProfile.theme === "light" ||
+          readerPersistenceForbidden,
+        disabledReason: resolving ? PANE_COMMAND_RESOLVING_REASON : undefined,
         onSelect: () => setTheme("light"),
       });
       view.push({
@@ -5624,7 +5638,11 @@ export default function MediaPaneBody() {
           readerProfile.theme === "dark"
             ? "Dark theme (current)"
             : "Dark theme",
-        disabled: readerProfile.theme === "dark" || readerPersistenceForbidden,
+        disabled:
+          resolving ||
+          readerProfile.theme === "dark" ||
+          readerPersistenceForbidden,
+        disabledReason: resolving ? PANE_COMMAND_RESOLVING_REASON : undefined,
         onSelect: () => setTheme("dark"),
       });
     } else if (isPdf && canRead) {
@@ -7166,10 +7184,11 @@ export default function MediaPaneBody() {
   // find, and a resolving entry that later vanished would be the same reflow.
   const findResolving =
     findPublication === null &&
-    canRead &&
-    (media?.kind === "web_article" ||
-      media?.kind === "epub" ||
-      media?.kind === "pdf");
+    (media === null ||
+      (canRead &&
+        (media.kind === "web_article" ||
+          media.kind === "epub" ||
+          media.kind === "pdf")));
   const { companionAction } = inspector;
   const activityMenuAction = useMemo<ActionDescriptor>(
     () => ({
@@ -7201,12 +7220,12 @@ export default function MediaPaneBody() {
           ? { kind: "Resolving" as const, control: "Find" as const }
           : undefined),
       companionAction: companionAction ?? undefined,
-      actionSubject: media
-        ? { ref: canonicalResourceRef({ scheme: "media", id }) }
-        : undefined,
-      ...(media
-        ? { menuActions: [activityMenuAction, ...readerViewActions] }
-        : {}),
+      // The pane's canonical identity is its route key, not a fact of any read it
+      // is still waiting on. Publishing it late leaves the menu with no subject,
+      // so it renders no resource suffix and no loading row either: the surface
+      // looks settled while it is not. The snapshot owns missing state.
+      actionSubject: { ref: canonicalResourceRef({ scheme: "media", id }) },
+      menuActions: [activityMenuAction, ...readerViewActions],
     }),
     [
       companionAction,
@@ -7214,7 +7233,6 @@ export default function MediaPaneBody() {
       findPublication,
       findResolving,
       id,
-      media,
       readerViewActions,
       mediaResourceHeader,
       mediaInstrument,

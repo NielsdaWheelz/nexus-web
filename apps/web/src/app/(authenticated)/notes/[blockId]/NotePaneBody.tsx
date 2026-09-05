@@ -180,11 +180,11 @@ export default function NotePaneBody() {
   usePanePrimaryChrome({
     search,
     companionAction: companionAction ?? undefined,
-    actionSubject: ready
-      ? {
-          ref: canonicalResourceRef({ scheme: "note_block", id: blockId }),
-        }
-      : undefined,
+    // The pane's canonical identity is its route key, never a fact of the
+    // filter-row state it happened to be gated on. The snapshot owns missing.
+    actionSubject: {
+      ref: canonicalResourceRef({ scheme: "note_block", id: blockId }),
+    },
   });
   return (
     <>
