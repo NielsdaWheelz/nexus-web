@@ -64,6 +64,7 @@ if TYPE_CHECKING or _CUTOVER_PRESENT:
         CodexDispatchTargetSnapshot,
         FrozenToolScope,
         GenerationBounds,
+        GenerationOperation,
         GenerationSpec,
         GenerationSpecFacts,
         GenerationStreamBounds,
@@ -304,6 +305,8 @@ async def _prove_frozen_plan_is_transport_neutral_and_fenced(engine: Engine) -> 
                         operation=write_operation,
                         scope=scope,
                         effect_mode="AdditiveWrites",
+                        generation_operation="chat",
+                        selection_source="ChatRun",
                     )
                 ),
             ),
@@ -591,16 +594,18 @@ def _generation_spec(
     operation: Any,
     scope: FrozenToolScope,
     effect_mode: Literal["ReadOnly", "AdditiveWrites"] = "ReadOnly",
+    generation_operation: GenerationOperation = "dossier_library",
+    selection_source: Literal["ChatRun", "BackgroundPolicy"] = "BackgroundPolicy",
 ) -> GenerationSpec:
     output = TextOutputSnapshot()
     facts = GenerationSpecFacts(
-        operation="dossier_library",
+        operation=generation_operation,
         selection=CodexPersonalSelection(
             route="CodexPersonal",
             model="gpt-5.6-terra",
             reasoning="medium",
         ),
-        selection_source="BackgroundPolicy",
+        selection_source=selection_source,
         resolved_dispatch_target=CodexDispatchTargetSnapshot(
             model_key="gpt-5.6-terra",
             dispatch_model="gpt-5.6-terra",
