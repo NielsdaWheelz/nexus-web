@@ -22,7 +22,9 @@ jobs:
       github.event.workflow_run.path == '.github/workflows/ci.yml' &&
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.head_repository.full_name == github.repository
-    runs-on: ubuntu-latest
+    # Self-hosted while GitHub-hosted runners are unavailable (Actions spending
+    # limit); the lab runner is x64, so the images build natively.
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 45
     permissions:
       actions: read
@@ -218,7 +220,7 @@ jobs:
       github.event.workflow_run.path == '.github/workflows/ci.yml' &&
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.head_repository.full_name == github.repository
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 5
     permissions:
       actions: read

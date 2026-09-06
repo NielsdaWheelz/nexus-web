@@ -30,7 +30,10 @@ jobs:
   pr:
     name: Deterministic PR proof
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    # GitHub-hosted runners are unavailable while the account's Actions
+    # spending limit is exhausted; self-hosted minutes are not billed, so the
+    # gate runs on the lab runner. Restore `ubuntu-latest` when billing allows.
+    runs-on: [self-hosted, linux, x64]
     # A broad cutover changes shared priority-risk source (errors, config, models),
     # so the deterministic PR proof runs sensitivity across ~30 priority proofs --
     # including a base-method proof that provisions an isolated base environment --
@@ -157,7 +160,7 @@ jobs:
   candidate-full:
     name: Candidate full proof
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 90
     permissions:
       contents: read
@@ -167,8 +170,10 @@ jobs:
       # free-drive threshold by the journeys phase (XMinioStorageFull refusing
       # captures). Shed preinstalled toolchains the gate never uses — the
       # Android SDK stays, android-host needs it. Preinstalled docker images
-      # are pruned before any project container exists.
+      # are pruned before any project container exists. A self-hosted runner
+      # keeps its own toolchains and images, so the step is hosted-only.
       - name: Free hosted-runner disk for the full stack
+        if: runner.environment == 'github-hosted'
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/.ghcup /opt/hostedtoolcache/CodeQL \
             /usr/share/swift /usr/local/share/powershell /usr/local/julia*
