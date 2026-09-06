@@ -231,6 +231,8 @@ interface UseConversation {
   inheritedRunSelection: RunSelectionOut | null;
   /** The one caller-owned send capability; ChatComposer owns its presentation. */
   sendCapability: ChatSendCapability;
+  /** Bumped by every admitted rerun/regenerate; each bump re-arms the composer's write grant to off. */
+  writeGrantResetVersion: number;
 
   // identity
   conversationId: string | null;
@@ -356,6 +358,7 @@ export function useConversation(
     null,
   );
   const [branchDraft, setBranchDraft] = useState<BranchDraft | null>(null);
+  const [writeGrantResetVersion, setWriteGrantResetVersion] = useState(0);
 
   const rerunningAssistantMessageIds = useStringIdSet();
   const regeneratingAssistantMessageIds = useStringIdSet();
@@ -993,6 +996,7 @@ export function useConversation(
           `${operation} assistant response`,
         );
         keysRef.current.delete(assistantMessageId);
+        setWriteGrantResetVersion((version) => version + 1);
         onChatRunCreated(response.data);
         return "Committed";
       } catch (err) {
@@ -1452,6 +1456,7 @@ export function useConversation(
     replyParentMessageId,
     inheritedRunSelection,
     sendCapability,
+    writeGrantResetVersion,
     conversationId,
     title,
     onChatRunCreated,

@@ -636,6 +636,7 @@ function ConversationHarness() {
         parentMessageId={convo.replyParentMessageId}
         inheritedRunSelection={convo.inheritedRunSelection}
         sendCapability={convo.sendCapability}
+        writeGrantResetVersion={convo.writeGrantResetVersion}
         onChatRunCreated={convo.onChatRunCreated}
         onClearBranchDraft={branch ? () => branch.setBranchDraft(null) : undefined}
       />
@@ -1308,7 +1309,6 @@ describe("Generation selection browser contract", () => {
     });
   });
 
-
   it("inherits the selected-path leaf pair for a continuation and the branch parent pair for a fork reply", async () => {
     const requests: ChatRunCreateRequest[] = [];
     stubConversationFetch(twoTurnTree("complete"), (pathname, init) => {
@@ -1349,7 +1349,6 @@ describe("Generation selection browser contract", () => {
       },
     });
   });
-
 
   it("replays an identical rerun retry but mints a new identity for a confirmed replacement after a network loss", async () => {
     const { CATALOG_REVISION } = requireCutoverSupport().fixtures;
@@ -1400,4 +1399,33 @@ describe("Generation selection browser contract", () => {
     expect(rerunRequests[2].key).not.toBe(rerunRequests[0].key);
   });
 
+  it("re-arms the additive-write grant to off after a successful rerun while a fork reply draft is open", async () => {
+    stubConversationFetch(twoTurnTree("error"), (pathname, init) =>
+      pathname === `/api/messages/${SECOND_ASSISTANT_ID}/rerun` &&
+      init?.method === "POST"
+        ? json(admittedRerun())
+        : undefined,
+    );
+
+    render(withRenderEnvironment(<ConversationHarness />));
+    await screen.findByRole("button", { name: "Rerun" });
+    await userEvent.click(
+      screen.getByRole("button", { name: "Fork from the first answer" }),
+    );
+    expect(
+      await screen.findByRole("region", { name: "Fork reply" }),
+    ).toBeVisible();
+    const writeGrant = screen.getByRole("checkbox", {
+      name: "Allow this reply to add to Nexus",
+    });
+    await userEvent.click(writeGrant);
+    expect(writeGrant).toBeChecked();
+
+    await userEvent.click(screen.getByRole("button", { name: "Rerun" }));
+    await waitFor(() => expect(writeGrant).not.toBeChecked());
+    expect(
+      await screen.findByText("Writes are off for the next reply."),
+    ).toBeVisible();
+    expect(screen.getByRole("region", { name: "Fork reply" })).toBeVisible();
+  });
 });

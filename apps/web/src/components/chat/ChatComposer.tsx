@@ -109,6 +109,8 @@ interface ChatComposerProps {
   onActivateSource?: (selection: ReaderSelectionOut) => void;
   /** Caller-owned availability for the current conversation history. */
   sendCapability: ChatSendCapability;
+  /** Bumped by the owner after an admitted rerun/regenerate; each bump re-arms the write grant to off. */
+  writeGrantResetVersion?: number;
   /** Active run that can be semantically cancelled without closing the SSE tail. */
   activeRunId?: string | null;
   /** Backend cancel action for the active run. */
@@ -196,6 +198,7 @@ export default function ChatComposer({
   onConversationRefresh,
   onActivateSource,
   sendCapability,
+  writeGrantResetVersion = 0,
   activeRunId = null,
   onCancelRun,
   projectionReloadRequestId: inheritedProjectionReloadRequestId = null,
@@ -283,6 +286,14 @@ export default function ChatComposer({
     setError(null);
     setSelectionRequiresConfirmation(false);
   }, [activeDraftKey]);
+
+  const appliedWriteGrantResetRef = useRef(writeGrantResetVersion);
+  useEffect(() => {
+    if (appliedWriteGrantResetRef.current === writeGrantResetVersion) return;
+    appliedWriteGrantResetRef.current = writeGrantResetVersion;
+    setToolAuthority("ReadOnly");
+    setWriteAnnouncement("Writes are off for the next reply.");
+  }, [setToolAuthority, writeGrantResetVersion]);
 
   useEffect(() => {
     if (sending || !restoreFocusAfterSendRef.current) return;
