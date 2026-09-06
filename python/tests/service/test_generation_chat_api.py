@@ -18,13 +18,19 @@ _CUTOVER_PRESENT = find_spec("nexus.services.generation_selection") is not None
 if TYPE_CHECKING or _CUTOVER_PRESENT:
     from nexus.db.models import ChatPromptAssembly, ChatRun, Conversation, Message
     from nexus.errors import ApiError, ApiErrorCode
-    from nexus.schemas.llm import Ineligible, Selectable
+    from nexus.schemas.llm import (
+        AssistantUnavailableChatFailure,
+        ExpectedChatFailure,
+        Ineligible,
+        OperatorDefectChatFailure,
+        Selectable,
+    )
     from nexus.services.chat_run_candidates import (
         regenerate_assistant_response,
         rerun_assistant_response,
     )
     from nexus.services.chat_run_finalize import finalize_run
-    from nexus.services.chat_runs import admit_chat_selection
+    from nexus.services.chat_runs import admit_chat_selection, get_chat_run
     from nexus.services.conversation_branches import get_conversation_tree
     from nexus.services.conversations import list_messages
     from nexus.services.generation_selection import ProviderApiSelection
@@ -415,3 +421,86 @@ def test_missing_required_chat_binding_refuses_before_chat_state_is_durable(
         )
         == before
     )
+
+
+def test_chat_run_failure_projects_one_closed_code_and_rerun_eligibility(
+    db_session: Session,
+) -> None:
+    """Risk: a stored terminal code reaches readers as an invented failure card or rerun state."""
+
+    assert _CUTOVER_PRESENT, "the final exact Chat generation selection is absent"
+    asyncio.run(_prove_chat_run_failure_projection(db_session))
+
+
+async def _prove_chat_run_failure_projection(db_session: Session) -> None:
+    catalog = configured_chat_catalog_service()
+    snapshot = await catalog.read_chat()
+    tool_runtime = compose_available_product_tool_runtime()
+    revision = snapshot.catalog.definition_revision
+    # Each stored code is exactly what its producer writes: the ProviderApi
+    # TransientExhausted and Codex runtime failures land as runtime_unavailable,
+    # a pre-accept Chat capacity refusal as capacity_unavailable, and a Codex
+    # policy violation as policy_violation. The selection stays Selectable, so
+    # rerun eligibility is decided by the code alone.
+    cases: tuple[tuple[str, ExpectedChatFailure, bool], ...] = (
+        ("runtime_unavailable", AssistantUnavailableChatFailure(can_rerun=True), True),
+        ("capacity_unavailable", AssistantUnavailableChatFailure(can_rerun=True), True),
+        ("policy_violation", OperatorDefectChatFailure(), False),
+    )
+    viewer_id = None
+    for error_code, expected_failure, expected_rerun in cases:
+        chat = await create_entitled_chat(
+            db_session,
+            content=f"Fail this run with {error_code}.",
+            catalog_definition_revision=revision,
+            selection=CHAT_TEST_SELECTION,
+            tool_authority="ReadOnly",
+            catalog=catalog,
+            tool_runtime=tool_runtime,
+            user_id=viewer_id,
+        )
+        viewer_id = chat.user_id
+        finalize_run(
+            db_session,
+            run_id=chat.run_id,
+            assistant_content="",
+            assistant_status="error",
+            run_status="error",
+            done_status="error",
+            error_code=error_code,
+        )
+
+        response = get_chat_run(
+            db_session,
+            viewer_id=chat.user_id,
+            run_id=chat.run_id,
+            catalog_snapshot=snapshot,
+        )
+        assert response.run.failure == expected_failure, (
+            f"{error_code}: ChatRunOut projected {response.run.failure!r}"
+        )
+
+        run_row = db_session.get(ChatRun, chat.run_id)
+        assert run_row is not None
+        tree = get_conversation_tree(
+            db_session,
+            viewer_id=chat.user_id,
+            conversation_id=chat.conversation_id,
+            catalog_snapshot=snapshot,
+        )
+        assistant = next(
+            message
+            for path in (tree.selected_path, *tree.path_cache_by_leaf_id.values())
+            for message in path
+            if message.id == run_row.assistant_message_id
+        )
+        assert assistant.trust_trail is not None and assistant.trust_trail.run is not None
+        trust_run = assistant.trust_trail.run
+        assert trust_run.error_code == error_code
+        assert trust_run.failure == expected_failure, (
+            f"{error_code}: conversation tree projected {trust_run.failure!r}"
+        )
+        assert isinstance(trust_run.run_selection.current_state, Selectable)
+        assert trust_run.run_selection.rerun_eligibility is expected_rerun, (
+            f"{error_code}: rerun eligibility {trust_run.run_selection.rerun_eligibility!r}"
+        )
