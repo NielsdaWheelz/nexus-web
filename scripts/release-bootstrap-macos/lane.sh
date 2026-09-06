@@ -173,6 +173,18 @@ case "$phase" in
     done
     find "$HOME/.gradle/jdks" -maxdepth 1 -name '*aarch64*.tar.gz*' -delete 2>/dev/null || true
 
+    # The kernel's runtime state (<repo>/.nexus-test: lifecycle flock files, run
+    # ledgers, pinned suite checkouts) must live on a native Linux filesystem:
+    # on the virtiofs bind mount, flock does not exclude processes that create
+    # the lock file concurrently, which is exactly how the lane serializes its
+    # template-database builds. Point .nexus-test at the runner's state volume.
+    state_dir=/var/lib/nexus-test-state
+    mkdir -p "$state_dir"
+    if [ "$(readlink .nexus-test 2>/dev/null || true)" != "$state_dir" ]; then
+      rm -rf .nexus-test
+      ln -s "$state_dir" .nexus-test
+    fi
+
     (cd python && uv sync --frozen --extra codex-agent --extra dev)
     (cd apps/web && bun install --frozen-lockfile)
     (cd node/ingest && bun install --frozen-lockfile)

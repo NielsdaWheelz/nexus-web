@@ -170,6 +170,7 @@ if [ "$mode" != publish ]; then
       --volume "$runner-gradle:/root/.gradle" \
       --volume "$runner-cache:/root/.cache" \
       --volume "$runner-playwright:/ms-playwright" \
+      --volume "$runner-state:/var/lib/nexus-test-state" \
       "$runner_image" >/dev/null
   fi
   runner_exec boot || die "the runner did not finish booting"
