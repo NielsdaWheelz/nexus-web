@@ -118,9 +118,10 @@ case "$phase" in
     [ -S /var/run/docker.sock ] || die "docker socket is not mounted at /var/run/docker.sock"
     echo "docker: ok"
 
-    for tool in java javac keytool bun uv node supabase actionlint git socat; do
+    for tool in java javac keytool bun uv node supabase actionlint caddy git socat; do
       command -v "$tool" >/dev/null || die "required tool is absent: $tool"
     done
+    [ "$(caddy version | cut -d' ' -f1)" = "v2.11.4" ] || die "Caddy v2.11.4 is required by the service proof"
     java -version >/dev/null 2>&1 || die "the x86_64 JDK at $JAVA_HOME cannot execute; enable Rosetta in Docker Desktop (Settings > General > Use Rosetta for x86_64/amd64 emulation) and restart it"
     [ -f "$ANDROID_HOME/platform-tools/adb" ] || die "adb is absent under $ANDROID_HOME"
     ls "$ANDROID_HOME"/build-tools/*/apksigner >/dev/null 2>&1 || die "apksigner is absent under $ANDROID_HOME"

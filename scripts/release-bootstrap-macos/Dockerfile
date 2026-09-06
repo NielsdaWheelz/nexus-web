@@ -38,6 +38,13 @@ ARG ANDROID_CMDLINE_TOOLS_SHA1=5fdcc763663eefb86a5b8879697aa6088b041e70
 ARG ANDROID_BUILD_TOOLS=36.0.0
 ARG ANDROID_PLATFORM=android-36
 
+# The service capability executes the production Caddyfile and verifies the
+# Caddy Go module embedded in the executable. Keep this identical to
+# .github/actions/setup-test/action.yml and python/nexus_test_control/services.py.
+ARG CADDY_VERSION=2.11.4
+ARG CADDY_URL=https://github.com/caddyserver/caddy/releases/download/v2.11.4/caddy_2.11.4_linux_arm64.tar.gz
+ARG CADDY_SHA256=52d42ae12b3462097e9868da6dfed3c9648ae12edd3b3638102312af84cb6904
+
 ENV ANDROID_HOME=/opt/android-sdk \
     ANDROID_SDK_ROOT=/opt/android-sdk \
     JAVA_HOME=/opt/java/openjdk-x64
@@ -67,6 +74,14 @@ RUN set -eux; \
     echo "$X64_JDK_SHA256  /tmp/jdk-x64.tar.gz" | sha256sum -c -; \
     tar -xzf /tmp/jdk-x64.tar.gz -C "$JAVA_HOME" --strip-components=1; \
     rm /tmp/jdk-x64.tar.gz
+
+RUN set -eux; \
+    curl -fsSL -o /tmp/caddy.tar.gz "$CADDY_URL"; \
+    echo "$CADDY_SHA256  /tmp/caddy.tar.gz" | sha256sum -c -; \
+    tar -xzf /tmp/caddy.tar.gz -C /usr/local/bin caddy; \
+    rm /tmp/caddy.tar.gz; \
+    test "$(caddy version | cut -d' ' -f1)" = "v$CADDY_VERSION"; \
+    grep -aF "$(printf 'github.com/caddyserver/caddy/v2\tv%s' "$CADDY_VERSION")" /usr/local/bin/caddy >/dev/null
 
 RUN set -eux; \
     mkdir -p "$ANDROID_HOME/cmdline-tools" "$ANDROID_HOME/platform-tools"; \

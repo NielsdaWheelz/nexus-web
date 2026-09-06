@@ -47,6 +47,9 @@ container this repository's PR gates already use on this machine — built from
   the 108-byte `sun_path`.
 - The runner talks to the workstation's Docker daemon through the mounted
   socket; the kernel's own Postgres/MinIO/Supabase containers are siblings.
+- The runner image carries the same pinned Caddy v2.11.4 executable as CI. The
+  service capability executes the production Caddyfile and verifies that exact
+  Go module build pin while proving offline-package byte identity.
 - The handset stays on the workstation's adb server (the USB transport). The
   runner's arm64 adb client reaches that server over a loopback bridge
   (`adb-forward.service`, socat to `host.docker.internal:5037`) and never starts
