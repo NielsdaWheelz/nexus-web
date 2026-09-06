@@ -787,11 +787,7 @@ export default function ChatComposer({
             />
             <span>Allow this reply to add to Nexus</span>
           </label>
-          <p
-            id={writeDescriptionId}
-            role="note"
-            aria-label="Allowed Nexus write tools"
-          >
+          <p id={writeDescriptionId} role="note">
             This reply only: <code>nexus.library.add</code>,{" "}
             <code>nexus.note.create</code>, <code>nexus.highlight.create</code>,{" "}
             <code>nexus.edge.create</code>, and <code>nexus.queue.add</code>. Review

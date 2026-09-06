@@ -429,18 +429,20 @@ describe("Generation selection browser contract", () => {
 
     await userEvent.click(writeGrant);
     expect(writeGrant).toBeChecked();
-    const description = screen.getByRole("note", {
-      name: "Allowed Nexus write tools",
-    });
-    for (const toolId of [
-      "nexus.library.add",
-      "nexus.note.create",
-      "nexus.highlight.create",
-      "nexus.edge.create",
-      "nexus.queue.add",
+    for (const clause of [
+      /This reply only/u,
+      /nexus\.library\.add/u,
+      /nexus\.note\.create/u,
+      /nexus\.highlight\.create/u,
+      /nexus\.edge\.create/u,
+      /nexus\.queue\.add/u,
+      /Trust details and Undo/u,
     ]) {
-      expect(description).toHaveTextContent(toolId);
+      expect(writeGrant).toHaveAccessibleDescription(clause);
     }
+    // Browsers resolve a describedby referent through accname step 2C, so an
+    // aria-label on it would replace this description with the label text.
+    expect(screen.getByRole("note")).not.toHaveAttribute("aria-label");
     const input = screen.getByRole("textbox", { name: "Ask anything" });
     await userEvent.type(input, "Use the exact route");
     await userEvent.click(screen.getByRole("button", { name: "Send message" }));
