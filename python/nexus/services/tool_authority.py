@@ -15,6 +15,7 @@ from llm_tools import (
     BudgetState,
     EffectId,
     ExecutionContext,
+    ExecutorConfigurationDefect,
     InvocationPosition,
     ParsedJson,
     PlanCatalogView,
@@ -560,20 +561,11 @@ class ToolPositionRecorder:
 
     def live_write_count(self, db: Session) -> int:
         projected = self.authority.projection.live_write_count(db, authority=self.authority)
-        if projected is not None:
-            return projected
-        return int(
-            db.scalar(
-                select(func.count())
-                .select_from(LLMToolPosition)
-                .where(
-                    LLMToolPosition.generation_id == self.authority.generation_id,
-                    LLMToolPosition.replay_status == "Completed",
-                    LLMToolPosition.effect_identity.is_not(None),
-                )
+        if projected is None:
+            raise ExecutorConfigurationDefect(
+                "write-capable tool plan has no projection owning reverted writes"
             )
-            or 0
-        )
+        return projected
 
     def authorize_effect_in_current_transaction(self, db: Session) -> None:
         self.authority._lock(db)

@@ -7,13 +7,14 @@ import json
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from importlib.util import find_spec
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 from uuid import uuid4
 
 import pytest
 from llm_tools import (
     WEB_SEARCH_SPEC,
     Available,
+    ExecutorConfigurationDefect,
     HandlerSuccess,
     ParsedJson,
     PolicyEpoch,
@@ -96,6 +97,7 @@ if TYPE_CHECKING or _CUTOVER_PRESENT:
         NexusSearchSuccess,
         ResourceReadSuccess,
     )
+    from tests.testkit.llm_tool_scenarios import compose_available_product_tool_runtime
 
 
 def test_frozen_plan_is_transport_neutral_and_fenced(
@@ -285,6 +287,50 @@ async def _prove_frozen_plan_is_transport_neutral_and_fenced(engine: Engine) -> 
             tool_id=ToolId("nexus.search"),
             arguments=_search_arguments("changed replay"),
         )
+
+    # A write-capable plan may run only beside a projection that owns its
+    # reverted writes; a bare ledger count would admit failed and undone writes
+    # against the live-write cap, so the authority refuses before any effect.
+    write_operation = compose_available_product_tool_runtime().operations["ChatReadAdditiveWrite"]
+    write_generation_id = uuid4()
+    with factory() as db:
+        start_generation_in_current_transaction(
+            db,
+            GenerationStart(
+                generation_id=write_generation_id,
+                owner=LlmCallOwner(kind="chat_run", id=uuid4()),
+                spec=generation_spec_document(
+                    _generation_spec(
+                        operation=write_operation,
+                        scope=scope,
+                        effect_mode="AdditiveWrites",
+                    )
+                ),
+            ),
+        )
+        db.commit()
+    unowned_write_executor = compose_generation_tool_executor(
+        session_factory=factory,
+        user_id=user_id,
+        owner=LlmCallOwner(kind="chat_run", id=uuid4()),
+        generation_id=write_generation_id,
+        job_context=job_context,
+        operation=write_operation,
+    )
+    with pytest.raises(ExecutorConfigurationDefect, match="no projection owning reverted writes"):
+        await unowned_write_executor.execute_canonical(
+            transport_kind="ProviderApi",
+            model_turn_seq=1,
+            transport_call_id="provider-call-unowned-write",
+            provider_wire_name="nexus_note_create",
+            tool_id=ToolId("nexus.note.create"),
+            arguments={"markdown": "An assistant write with no revert owner.", "page_uri": None},
+        )
+    with factory() as db:
+        unowned_positions = read_tool_positions(db, generation_id=write_generation_id)
+    assert "Completed" not in {position.replay_status for position in unowned_positions}, (
+        f"an unowned write completed a durable position: {unowned_positions!r}"
+    )
 
     with factory() as db:
         assert (
@@ -540,7 +586,12 @@ def _search_arguments(
     }
 
 
-def _generation_spec(*, operation: Any, scope: FrozenToolScope) -> GenerationSpec:
+def _generation_spec(
+    *,
+    operation: Any,
+    scope: FrozenToolScope,
+    effect_mode: Literal["ReadOnly", "AdditiveWrites"] = "ReadOnly",
+) -> GenerationSpec:
     output = TextOutputSnapshot()
     facts = GenerationSpecFacts(
         operation="dossier_library",
@@ -604,7 +655,7 @@ def _generation_spec(*, operation: Any, scope: FrozenToolScope) -> GenerationSpe
         host_tool_plan_snapshot=Absent(),
         host_evidence_revision=Absent(),
         model_tool_plan_snapshot=Present(value=freeze_tool_plan_snapshot(operation)),
-        tool_effect_mode=Present(value="ReadOnly"),
+        tool_effect_mode=Present(value=effect_mode),
         admitted_tool_scope=Present(value=scope),
         admitted_tool_scope_digest=Present(value=tool_scope_digest(scope)),
         catalog_definition_revision=generation_fact_digest("catalog"),
