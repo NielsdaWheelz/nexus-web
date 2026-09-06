@@ -495,7 +495,6 @@
     {
       "id": "codex-generation-host",
       "source_globs": [
-        ".github/workflows/codex-personal-nightly.yml",
         "apps/codex_agent/**/*.py",
         "deploy/hetzner/release.py",
         "python/pyproject.toml",
@@ -519,20 +518,15 @@
         "python/nexus/tasks/media_unit_build.py",
         "python/nexus/tasks/oracle_reading.py",
         "python/nexus/tasks/synapse_scan.py",
-        "python/nexus/ops/codex_hosted_evidence.py",
         "python/nexus_test_control/runner.py",
         "python/tests/evals/cases/generation_plans.v2.json",
         "python/tests/evals/test_generation_plan_eval.py",
-        "python/tests/hosted/nightly/test_codex_personal_generation.py",
         "python/uv.lock"
       ],
       "proofs": [
         "pytest:python/tests/kernel/nexus_test_control/test_runner.py",
-        "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape",
-        "pytest:python/tests/kernel/nexus_test_control/test_hosted_canary_semantics.py::test_hosted_canary_accepts_bounded_target_set_v4_receipt",
         "pytest:python/tests/kernel/nexus_test_control/test_provider_runtime_pin.py::test_provider_runtime_is_materialized_from_the_pin_without_retargeting_source",
         "pytest:python/tests/kernel/nexus_test_control/test_android_device_method_scope.py::test_exact_android_device_proof_uses_one_instrumentation_method",
-        "pytest:python/tests/kernel/test_codex_nightly_workflow_artifact_contract.py::test_codex_nightly_stages_only_one_run_bound_bounded_json_artifact",
         "pytest:python/tests/kernel/test_generation_contract.py",
         "pytest:python/tests/kernel/test_generation_operation_adapters.py",
         "pytest:python/tests/kernel/test_generation_policy.py::test_exact_generation_policy_is_total_content_derived_and_profile_free",
@@ -546,11 +540,9 @@
         "pytest:python/tests/service/test_codex_egress_policy.py::test_codex_egress_allows_only_subscription_auth_and_mcp_sni",
         "pytest:python/tests/service/test_codex_capacity_canary_contract.py",
         "pytest:python/tests/service/test_codex_capacity_canary_contract.py::test_capacity_canary_rejects_succeeded_terminal_without_bounded_text",
-        "pytest:python/tests/evals/test_generation_plan_eval.py::test_reviewed_generation_plan_corpus_replays_the_shipped_policy_without_a_live_model",
-        "pytest:python/tests/hosted/nightly/test_codex_personal_generation.py"
+        "pytest:python/tests/evals/test_generation_plan_eval.py::test_reviewed_generation_plan_corpus_replays_the_shipped_policy_without_a_live_model"
       ],
       "capabilities": [
-        "codex-hosted",
         "kernel-python",
         "llm-eval",
         "service"
@@ -793,7 +785,6 @@
         "deploy/hetzner/docker-compose.yml",
         "deploy/hetzner/fetch-release-bundle.sh",
         "deploy/hetzner/nexus-codex-agent-host.apparmor",
-        "deploy/hetzner/nexus-codex-nightly-bwrap.apparmor",
         "deploy/hetzner/provision.sh",
         "deploy/hetzner/prove-codex-capacity.sh",
         "deploy/hetzner/release.py",

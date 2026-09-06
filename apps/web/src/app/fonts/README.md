@@ -13,6 +13,8 @@ font families, weights, styles, CSS variables, and preload policy.
 | `im-fell-english-normal-latin.woff2` | Google Fonts, IM Fell English v14 | `248300df1647bec49155a5cada1d65f719ae633ef48564d1f19b135a8a5b7f5f` |
 | `im-fell-english-italic-latin.woff2` | Google Fonts, IM Fell English v14 | `8fc678575e83868f82ce5aa6e023f056ea68d480e16dd108b3e14bc375c8fdea` |
 | `unifraktur-maguntia-latin.woff2` | Google Fonts, UnifrakturMaguntia v22 | `a467466874b50cd9ffbe10e5caccd9b261f2bc2252bcfa7d160c744ed9da6f15` |
+| `cormorant-normal-latin.woff2` | Google Fonts, Cormorant v24 | `e03dc2adb45285809183c820ce54bf020b60a99ebe3218631357230bc97b3954` |
+| `cormorant-italic-latin.woff2` | Google Fonts, Cormorant v24 | `3c1ca32f6da662e7b2e6f6fa8f90993bbf59ca55fa672ac4833b1331d862d0af` |
 
 Each family is distributed under the SIL Open Font License included in
 `licenses/`. Update a font only as a reviewed asset change: replace the bytes,

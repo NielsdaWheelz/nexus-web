@@ -67,7 +67,7 @@ import {
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
 import usePaneScrollRetention from "@/lib/panes/usePaneScrollRetention";
-import type { PaneRefreshPublication } from "@/lib/panes/panePublications";
+import type { PaneRefreshExecute } from "@/lib/panes/panePublications";
 import {
   acceptLibraryInvite,
   declineLibraryInvite,
@@ -636,7 +636,7 @@ export default function LibrariesPaneBody() {
   const filteredLibraryRows = libraryRows.filter((row) =>
     matchesPaneFilterQuery(filterQuery, [row.title.text]),
   );
-  const executeRefresh = useCallback<PaneRefreshPublication["execute"]>(
+  const executeRefresh = useCallback<PaneRefreshExecute>(
     async ({ signal, reportProgress }) => {
       reportProgress({
         kind: "Determinate",
@@ -667,6 +667,7 @@ export default function LibrariesPaneBody() {
   usePanePrimaryChrome({
     search,
     refresh: {
+      kind: "Refreshable",
       sourceKey: "Libraries.Index",
       execute: executeRefresh,
     },

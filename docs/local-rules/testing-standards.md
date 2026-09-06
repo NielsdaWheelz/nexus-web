@@ -456,8 +456,7 @@ adapter. The Makefile deliberately has no test/check/verify aliases.
 | `./scripts/test confidence` | complete policy/static/kernel plus affected service/component proof |
 | `./scripts/test pr` | deterministic blocking PR portfolio plus same-run sensitivity |
 | `./scripts/test full` | complete deterministic local portfolio |
-| `./scripts/test nightly` | `full` plus randomized/property audit and Android device proof; hosted verification remains on `codex-nightly` |
-| `./scripts/test codex-nightly` | one bounded target-set subscription-authenticated Codex generation canary on the dedicated runner |
+| `./scripts/test nightly` | `full` plus randomized/property audit and Android device proof |
 | `./scripts/test release` | `full` plus Android device proof, signed Android release proof, and exact staged artifacts |
 | `./scripts/test doctor` | local tool, dependency, browser, SDK, service, port, and template readiness; protected-workflow inputs only when that lane is explicitly enabled |
 | `./scripts/test android-visual --sha HEAD_SHA --path /OWNED_PATH [--device primary]` | explicit opt-in physical-device authenticated WebView visual check of the current non-`main` worktree; never included in `changed`/`confidence`/`pr`/`full`/`nightly`/`release` |

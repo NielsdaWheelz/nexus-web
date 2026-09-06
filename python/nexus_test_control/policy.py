@@ -221,25 +221,6 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         ),
         ("make test", "nexus-android-usb"),
     ),
-    ".github/workflows/codex-personal-nightly.yml": (
-        (
-            'NEXUS_CODEX_HOSTED_CANARY: "1"',
-            "runs-on: [self-hosted, linux, nexus-codex-nightly]",
-            "cmp deploy/hetzner/nexus-codex-nightly-bwrap.apparmor ",
-            "/etc/apparmor.d/nexus-codex-nightly-bwrap",
-            "NEXUS_CODEX_HOSTED_TEMPORARY_DIRECTORY",
-            'test "$(stat -c \'%d\' "$NEXUS_CODEX_HOSTED_STATE_ROOT")" = '
-            '"$(stat -c \'%d\' "$NEXUS_CODEX_HOSTED_TEMPORARY_DIRECTORY")"',
-            'test "$(stat -c \'%d\' "$NEXUS_CODEX_HOSTED_STATE_ROOT")" = '
-            '"$(stat -c \'%d\' "$NEXUS_CODEX_HOSTED_WORKING_DIRECTORY")"',
-            "Scrub disposable Codex nightly state",
-            'find "$NEXUS_CODEX_HOSTED_TEMPORARY_DIRECTORY" -mindepth 1 -delete',
-            'NEXUS_CODEX_WORKING_DIRECTORY_ROOT="$NEXUS_CODEX_HOSTED_WORKING_DIRECTORY"',
-            "python/.venv/bin/python -m apps.codex_agent.sandbox_health",
-            "run: ./scripts/test codex-nightly",
-        ),
-        ("OPENAI_API_KEY", "make test", "pytest"),
-    ),
     ".github/workflows/release.yml": (
         (
             # The signed release binds the protected USB lab runner; the
@@ -313,7 +294,6 @@ _CONTROLLER_COMMAND_OWNERS: dict[str, str] = {
     "pr": ".github/workflows/ci.yml",
     "full": ".github/workflows/ci.yml",
     "nightly": ".github/workflows/nightly.yml",
-    "codex-nightly": ".github/workflows/codex-personal-nightly.yml",
     "release": ".github/workflows/release.yml",
 }
 _INTERNAL_PACKAGE_RUNNERS: dict[tuple[str, str], str] = {
@@ -346,12 +326,6 @@ _DIRECT_RUNNERS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("make-alias", re.compile(r"\bmake\s+(?:test|verify)(?:[-_][A-Za-z0-9_-]+)?\b")),
 )
 _OWNERSHIP_TOKENS: tuple[tuple[str, re.Pattern[str], frozenset[str], dict[str, int]], ...] = (
-    (
-        "codex-hosted-canary",
-        re.compile(r"\bNEXUS_CODEX_HOSTED_CANARY\b"),
-        frozenset({".github/workflows/codex-personal-nightly.yml"}),
-        {".github/workflows/codex-personal-nightly.yml": 1},
-    ),
     (
         # Nightly keeps the hosted emulator lane it has always had; only the
         # signed release job may claim the one dedicated USB handset, and it
@@ -875,9 +849,6 @@ def _codex_agent_runtime_construction_violations(
 
     root = repo_root / "apps/codex_agent"
     candidates = list(root.rglob("*.py")) if root.is_dir() else []
-    hosted_canary = repo_root / "python/tests/hosted/nightly/test_codex_personal_generation.py"
-    if hosted_canary.is_file():
-        candidates.append(hosted_canary)
     if not candidates:
         return ()
     violations: list[PolicyViolation] = []

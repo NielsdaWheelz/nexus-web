@@ -36,13 +36,32 @@ export type PaneRefreshResult =
   | { readonly kind: "Failed"; readonly announcement: string }
   | { readonly kind: "ObservationLost"; readonly announcement: string };
 
-export interface PaneRefreshPublication {
-  readonly sourceKey: string;
-  readonly execute: (input: {
-    readonly signal: AbortSignal;
-    readonly reportProgress: (progress: PaneRefreshProgress) => void;
-  }) => Promise<PaneRefreshResult>;
-}
+/**
+ * One reason for every pane-owned command that is holding its place while the
+ * fact deciding it is still in flight. Its owners are the pane chrome planner
+ * and the pane bodies that publish resolving local commands.
+ */
+export const PANE_COMMAND_RESOLVING_REASON =
+  "Available when this pane finishes loading.";
+
+export type PaneRefreshExecute = (input: {
+  readonly signal: AbortSignal;
+  readonly reportProgress: (progress: PaneRefreshProgress) => void;
+}) => Promise<PaneRefreshResult>;
+
+/**
+ * A pane that can never refresh publishes nothing. A pane whose refresh
+ * eligibility depends on a datum it is still loading publishes `Resolving`, so
+ * the header's local action set keeps one shape across that window instead of
+ * growing an entry when the datum lands.
+ */
+export type PaneRefreshPublication =
+  | { readonly kind: "Resolving" }
+  | {
+      readonly kind: "Refreshable";
+      readonly sourceKey: string;
+      readonly execute: PaneRefreshExecute;
+    };
 
 export interface PaneInstrumentPublication {
   readonly label: string;
@@ -155,8 +174,13 @@ function arePaneRefreshPublicationsEqual(
   right: PaneRefreshPublication | undefined,
 ): boolean {
   if (left === right) return true;
-  if (!left || !right) return false;
-  return left.sourceKey === right.sourceKey && left.execute === right.execute;
+  if (!left || !right || left.kind !== right.kind) return false;
+  return (
+    left.kind === "Resolving" ||
+    (right.kind === "Refreshable" &&
+      left.sourceKey === right.sourceKey &&
+      left.execute === right.execute)
+  );
 }
 
 function areActionDescriptorListsEqual(

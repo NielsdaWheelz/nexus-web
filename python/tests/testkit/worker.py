@@ -61,7 +61,10 @@ def wait_for_job(
     status: str,
     attempts: int,
     minimum_lease_seconds: float | None = None,
-    timeout_seconds: float = 30,
+    # The ceiling covers a cold worker-process boot on a saturated CI runner:
+    # 30s has been observed expiring with the job claimed, lease valid, and
+    # still running. No caller treats expiry as an expected outcome.
+    timeout_seconds: float = 120,
 ) -> tuple[object, ...]:
     deadline = time.monotonic() + timeout_seconds
     observed: tuple[object, ...] | None = None

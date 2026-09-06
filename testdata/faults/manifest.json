@@ -428,15 +428,6 @@
       "expected_failure": "fresh send with missing revision crossed the public Chat boundary"
     },
     {
-      "id": "codex-hosted-evidence-size-bound-bypass",
-      "patch": "testdata/faults/codex-hosted-evidence-size-bound-bypass.patch",
-      "sha256": "99819b93c24730af11f0c075a756a6db75227040b0a8442acb6fb32ce2057599",
-      "proofs": [
-        "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape"
-      ],
-      "expected_failure": "evidence exceeds 64 KiB"
-    },
-    {
       "id": "codex-egress-allowlist-bypass",
       "patch": "testdata/faults/codex-egress-allowlist-bypass.patch",
       "sha256": "c4ad66dc12ab1eb67bb245082423528c839f2356ee47a44023ce4d5b780ab60b",

@@ -813,12 +813,17 @@ export default function Conversation() {
     [findPublicationBase, inspector.searchResultsExpanded],
   );
   usePanePrimaryChrome({
+    // A conversation being read from the route promises Find once its messages
+    // land, so the header holds the entry, blocked, across that window. A chat
+    // with no conversation yet has nothing to find and stays absent.
     search:
       convo.conversationId &&
       !convo.loading &&
       !(conversationId !== null && convo.messages.length === 0 && convo.error)
         ? findPublication
-        : undefined,
+        : conversationId !== null && convo.loading
+          ? { kind: "Resolving" as const, control: "Find" as const }
+          : undefined,
     companionAction: inspector.companionAction ?? undefined,
     actionSubject:
       convo.conversationId &&

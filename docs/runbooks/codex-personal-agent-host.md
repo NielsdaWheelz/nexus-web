@@ -343,41 +343,13 @@ same-named container is never name-only deletion authority. Do not stop other
 services, clear caches, add swap, raise the host limit, or lower reserves to
 manufacture a pass.
 
-## Bounded target-set nightly
-
-The protected `codex-nightly` lane performs one subscription turn for every
-source-qualified Codex Chat target plus one real Library and Idea background
-turn, with a hard ceiling of 16 turns, 600 seconds per turn, 120 minutes, and
-64 KiB of redacted evidence. Every turn publishes its exact frozen MCP plan and
-executes `nexus.resource.read` once. The `nexus-hosted-codex-canary.v4` receipt
-binds the source SHA, policy, dynamic catalog identity, exact source row and
-reasoning sets, backend contract, SDK/CLI pins, and tool authority revisions.
-It retains only capability classes, target/model/reasoning identities,
-structured-output validity, usage presence, declaration/tool/permission
-counts, and bounded elapsed time. It is not a model-by-operation proof.
-
-The nightly runner has a distinct encrypted Codex profile, no database, no
-Docker authority, and no Nexus process. Provision
-`/var/lib/nexus-codex-nightly/{state,tmp,cwd}` on that same encrypted runner
-filesystem, owned by the runner uid and mode `0700`. `state/` is the sole
-persistent subscription profile. `tmp/` is the confined adapter's sibling
-temporary directory and `cwd/` is the model workspace; both must be empty at
-admission and the workflow deletes their complete contents in an `always()`
-step. The workflow refuses until an existing runner is provisioned to this
-hard-cut layout; there is no alternate temporary directory. Its MCP peer is the same
-`mcp==2.1.0` stateless JSON server on wire revision `2025-06-18`, served locally
-with TLS, the full eleven-tool Chat declaration set, and exactly one implemented
-bounded read operation; each frozen plan controls the visible subset. A missing
-credential, runner, state root, or policy pin is `not_run`, never skipped green.
-
 ## Operation smoke boundary
 
 Do not create production fixtures or a synthetic account to replay every
 operation. Nexus has no account-deletion lifecycle, and Dawn is intentionally a
 population sweep. The closed static catalog owns operation composition and
 policy; representative real-owner service proofs own publication and replay;
-the target-set nightly owns each Codex target plus the strict-output/MCP boundary; the
-capacity proof owns the shipped host envelope.
+the capacity proof owns the shipped host envelope.
 
 After deployment, exercise desired operations through their ordinary product
 entrypoints. Use the generation ledger only as passive evidence that the

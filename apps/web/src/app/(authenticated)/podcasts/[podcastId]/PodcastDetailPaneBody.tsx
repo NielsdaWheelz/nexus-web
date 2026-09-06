@@ -102,7 +102,7 @@ import {
   usePodcastActionIntentOwner,
   type PodcastActionIntent,
 } from "@/lib/podcasts/actionIntent";
-import type { PaneRefreshPublication } from "@/lib/panes/panePublications";
+import type { PaneRefreshExecute } from "@/lib/panes/panePublications";
 
 const EPISODES_PAGE_SIZE = 100;
 
@@ -1251,7 +1251,7 @@ export default function PodcastDetailPaneBody() {
     view,
   ]);
 
-  const executeRefresh = useCallback<PaneRefreshPublication["execute"]>(
+  const executeRefresh = useCallback<PaneRefreshExecute>(
     async ({ signal, reportProgress }) => {
       if (!podcastId) {
         return {
@@ -1386,19 +1386,28 @@ export default function PodcastDetailPaneBody() {
   });
   usePanePrimaryChrome({
     companionAction: companionAction ?? undefined,
-    refresh:
-      podcastId && activeSubscription
+    // Refresh pulls new episodes for a subscription, so an unsubscribed
+    // Podcast has nothing to refresh. Subscription is a fact of the detail
+    // response: until that lands the answer is unknown, not negative, and a
+    // just-acquired Podcast would otherwise grow the header menu mid-read.
+    refresh: !podcastId
+      ? undefined
+      : activeSubscription
         ? {
+            kind: "Refreshable",
             sourceKey: `Podcast.Detail:${episodeQueryIdentity}`,
             execute: executeRefresh,
           }
-        : undefined,
-    actionSubject:
-      podcastId && detail
-        ? {
-            ref: canonicalResourceRef({ scheme: "podcast", id: podcastId }),
-          }
-        : undefined,
+        : detail === null && error === null
+          ? { kind: "Resolving" }
+          : undefined,
+    // The pane's canonical identity is its route key, not a fact of any read it
+    // is still waiting on. Publishing it late leaves the menu with no subject,
+    // so it renders no resource suffix and no loading row either: the surface
+    // looks settled while it is not. The snapshot owns missing state.
+    actionSubject: podcastId
+      ? { ref: canonicalResourceRef({ scheme: "podcast", id: podcastId }) }
+      : undefined,
     header: {
       kind: "Section",
       meta:

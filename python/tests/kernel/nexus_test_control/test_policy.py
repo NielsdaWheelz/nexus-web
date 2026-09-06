@@ -235,24 +235,6 @@ def _minimal_repository(root: Path) -> None:
     )
     _write(
         root,
-        ".github/workflows/codex-personal-nightly.yml",
-        'NEXUS_CODEX_HOSTED_CANARY: "1"\n'
-        "runs-on: [self-hosted, linux, nexus-codex-nightly]\n"
-        "cmp deploy/hetzner/nexus-codex-nightly-bwrap.apparmor "
-        "/etc/apparmor.d/nexus-codex-nightly-bwrap\n"
-        "NEXUS_CODEX_HOSTED_TEMPORARY_DIRECTORY\n"
-        'test "$(stat -c \'%d\' "$NEXUS_CODEX_HOSTED_STATE_ROOT")" = '
-        '"$(stat -c \'%d\' "$NEXUS_CODEX_HOSTED_TEMPORARY_DIRECTORY")"\n'
-        'test "$(stat -c \'%d\' "$NEXUS_CODEX_HOSTED_STATE_ROOT")" = '
-        '"$(stat -c \'%d\' "$NEXUS_CODEX_HOSTED_WORKING_DIRECTORY")"\n'
-        "Scrub disposable Codex nightly state\n"
-        'find "$NEXUS_CODEX_HOSTED_TEMPORARY_DIRECTORY" -mindepth 1 -delete\n'
-        'NEXUS_CODEX_WORKING_DIRECTORY_ROOT="$NEXUS_CODEX_HOSTED_WORKING_DIRECTORY" \\\n'
-        "python/.venv/bin/python -m apps.codex_agent.sandbox_health\n"
-        "run: ./scripts/test codex-nightly\n",
-    )
-    _write(
-        root,
         ".github/workflows/release.yml",
         "runs-on: ${{ inputs.bootstrap_no_device && 'ubuntu-latest' || "
         'fromJSON(\'["self-hosted", "linux", "x64", "nexus-android-usb"]\') }}\n'

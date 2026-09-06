@@ -58,7 +58,6 @@ class Workflow(StrEnum):
     PR = "pr"
     FULL = "full"
     NIGHTLY = "nightly"
-    CODEX_NIGHTLY = "codex-nightly"
     RELEASE = "release"
     DOCTOR = "doctor"
     ANDROID_VISUAL = "android-visual"
@@ -92,7 +91,6 @@ class Capability(StrEnum):
     EXTENSION = "extension"
     ANDROID_HOST = "android-host"
     AUDIT = "audit"
-    CODEX_HOSTED = "codex-hosted"
     ANDROID_DEVICE = "android-device"
     ANDROID_RELEASE = "android-release"
     RELEASE_ARTIFACT = "release-artifact"
@@ -451,10 +449,6 @@ WORKFLOW_REGISTRY: Mapping[Workflow, WorkflowDefinition] = MappingProxyType(
                 ),
             ),
         ),
-        Workflow.CODEX_NIGHTLY: WorkflowDefinition(
-            Workflow.CODEX_NIGHTLY,
-            (CapabilityRequirement(Capability.CODEX_HOSTED, SelectionScope.COMPLETE),),
-        ),
         Workflow.RELEASE: WorkflowDefinition(
             Workflow.RELEASE,
             _requirements(
@@ -494,7 +488,6 @@ DEFERRED_CAPABILITY_OWNER: Mapping[Capability, Workflow] = MappingProxyType(
         Capability.EXTENSION: Workflow.FULL,
         Capability.ANDROID_HOST: Workflow.FULL,
         Capability.AUDIT: Workflow.NIGHTLY,
-        Capability.CODEX_HOSTED: Workflow.CODEX_NIGHTLY,
         Capability.ANDROID_DEVICE: Workflow.NIGHTLY,
         Capability.ANDROID_RELEASE: Workflow.RELEASE,
         Capability.RELEASE_ARTIFACT: Workflow.RELEASE,

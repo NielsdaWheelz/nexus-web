@@ -239,7 +239,9 @@ function LecternApp({
     },
     [onReplacePane],
   );
-  const search = publication?.search;
+  // The Lectern publishes a ready filter row; a resolving one has no bar.
+  const search =
+    publication?.search?.kind === "Resolving" ? undefined : publication?.search;
   return (
     <FeedbackProvider>
       <PaneReturnMementoProvider>

@@ -200,7 +200,6 @@ def test_global_pytest_support_promotes_every_consuming_capability() -> None:
         (Capability.PROVIDER_RUNTIME, SelectionReason.PROMOTED_CAPABILITY, None, False),
         (Capability.LLM_TOOLS, SelectionReason.PROMOTED_CAPABILITY, None, False),
         (Capability.RELEASE_ARTIFACT, SelectionReason.PROMOTED_CAPABILITY, None, False),
-        (Capability.CODEX_HOSTED, SelectionReason.PROMOTED_CAPABILITY, None, False),
     ]
 
 
@@ -275,14 +274,8 @@ def test_direct_test_selects_discovery_policy_without_product_source_routes() ->
     ]
 
 
-@pytest.mark.parametrize(
-    "path",
-    [
-        "python/tests/hosted/nightly/test_codex_personal_generation.py",
-        "apps/android/app/src/androidTest/java/app/nexus/android/NativeAuthHandoffTest.kt",
-    ],
-)
-def test_paid_and_device_proof_never_enters_pr_sensitivity(path: str) -> None:
+def test_device_proof_never_enters_pr_sensitivity() -> None:
+    path = "apps/android/app/src/androidTest/java/app/nexus/android/NativeAuthHandoffTest.kt"
     selection = select_changed(parse_git_name_status(f"M\0{path}\0".encode()))
     assert len(selection) == 1
     assert selection[0].sensitivity_required is False
@@ -418,10 +411,6 @@ def test_release_controller_sources_keep_routing_the_immutable_release_suites(
             "deploy/hetzner/nexus-codex-agent-host.apparmor",
             "pytest:python/tests/kernel/test_production_deploy_behavior.py",
         ),
-        (
-            "deploy/hetzner/nexus-codex-nightly-bwrap.apparmor",
-            "pytest:python/tests/kernel/test_production_deploy_behavior.py",
-        ),
     ],
 )
 def test_codex_environment_and_apparmor_sources_route_their_release_owner(
@@ -515,11 +504,9 @@ def test_generation_plan_policy_and_corpus_route_to_the_fixture_only_eval(path: 
 @pytest.mark.parametrize(
     "path",
     [
-        ".github/workflows/codex-personal-nightly.yml",
         "apps/codex_agent/host.py",
         "apps/codex_agent/nested/future.py",
         "python/pyproject.toml",
-        "python/nexus/ops/codex_hosted_evidence.py",
         "python/uv.lock",
     ],
 )
@@ -541,18 +528,6 @@ def test_codex_generation_sources_route_to_the_exact_contract_and_host_proofs(
             (
                 Capability.KERNEL_PYTHON,
                 "pytest:python/tests/kernel/nexus_test_control/"
-                "test_runner.py::"
-                "test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape",
-            ),
-            (
-                Capability.KERNEL_PYTHON,
-                "pytest:python/tests/kernel/nexus_test_control/"
-                "test_hosted_canary_semantics.py::"
-                "test_hosted_canary_accepts_bounded_target_set_v4_receipt",
-            ),
-            (
-                Capability.KERNEL_PYTHON,
-                "pytest:python/tests/kernel/nexus_test_control/"
                 "test_provider_runtime_pin.py::"
                 "test_provider_runtime_is_materialized_from_the_pin_without_retargeting_source",
             ),
@@ -561,11 +536,6 @@ def test_codex_generation_sources_route_to_the_exact_contract_and_host_proofs(
                 "pytest:python/tests/kernel/nexus_test_control/"
                 "test_android_device_method_scope.py::"
                 "test_exact_android_device_proof_uses_one_instrumentation_method",
-            ),
-            (
-                Capability.KERNEL_PYTHON,
-                "pytest:python/tests/kernel/test_codex_nightly_workflow_artifact_contract.py::"
-                "test_codex_nightly_stages_only_one_run_bound_bounded_json_artifact",
             ),
             (
                 Capability.SERVICE,
@@ -581,10 +551,6 @@ def test_codex_generation_sources_route_to_the_exact_contract_and_host_proofs(
                 Capability.SERVICE,
                 "pytest:python/tests/service/test_codex_capacity_canary_contract.py::"
                 "test_capacity_canary_rejects_succeeded_terminal_without_bounded_text",
-            ),
-            (
-                Capability.CODEX_HOSTED,
-                "pytest:python/tests/hosted/nightly/test_codex_personal_generation.py",
             ),
         }
     )
@@ -740,7 +706,6 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
             # harness proofs.
             "deploy/hetzner/release.py",
             {
-                Capability.CODEX_HOSTED,
                 Capability.ANDROID_HOST,
                 Capability.COMPONENT,
                 Capability.JOURNEYS_ALL,
@@ -757,12 +722,9 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "gradle:apps/android/app/src/test/java/app/nexus/android/offline/readingweb/OfflineReadingRequestRouterTest.kt",
                 "gradle:apps/android/app/src/test/java/app/nexus/android/playback/PlayerProtocolTest.kt",
                 "playwright:apps/web/e2e/journeys/auth-session.journey.spec.ts",
-                "pytest:python/tests/hosted/nightly/test_codex_personal_generation.py",
                 "pytest:python/tests/kernel/nexus_test_control/test_android_device_method_scope.py::test_exact_android_device_proof_uses_one_instrumentation_method",
-                "pytest:python/tests/kernel/nexus_test_control/test_hosted_canary_semantics.py::test_hosted_canary_accepts_bounded_target_set_v4_receipt",
                 "pytest:python/tests/kernel/nexus_test_control/test_provider_runtime_pin.py::test_provider_runtime_is_materialized_from_the_pin_without_retargeting_source",
                 "pytest:python/tests/kernel/nexus_test_control/test_runner.py",
-                "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape",
                 "pytest:python/tests/kernel/test_android_player_protocol_release_gate.py::"
                 "test_release_manifest_decoder_rejects_noncurrent_or_legacy_manifests",
                 "pytest:python/tests/llm_tools_contract/test_pinned_llm_tools.py::"
@@ -777,7 +739,6 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "test_bound_coherent_fault_is_admitted_routed_and_invalidated_on_owner_drift",
                 "pytest:python/tests/kernel/nexus_test_control/test_policy.py",
                 "pytest:python/tests/kernel/test_backend_artifact.py",
-                "pytest:python/tests/kernel/test_codex_nightly_workflow_artifact_contract.py::test_codex_nightly_stages_only_one_run_bound_bounded_json_artifact",
                 "pytest:python/tests/kernel/test_generation_contract.py",
                 "pytest:python/tests/kernel/test_generation_operation_adapters.py",
                 "pytest:python/tests/kernel/test_generation_policy.py::"
@@ -917,7 +878,6 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
         (
             "python/nexus_test_control/runner.py",
             {
-                Capability.CODEX_HOSTED,
                 Capability.COMPONENT,
                 Capability.KERNEL_PYTHON,
                 Capability.LLM_EVAL,
@@ -933,11 +893,8 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/kernel/nexus_test_control/test_coherent_fault_contract.py::test_bound_coherent_fault_is_admitted_routed_and_invalidated_on_owner_drift",
                 "pytest:python/tests/kernel/nexus_test_control/test_policy.py",
                 "pytest:python/tests/kernel/nexus_test_control/test_runner.py",
-                "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape",
-                "pytest:python/tests/kernel/nexus_test_control/test_hosted_canary_semantics.py::test_hosted_canary_accepts_bounded_target_set_v4_receipt",
                 "pytest:python/tests/kernel/nexus_test_control/test_provider_runtime_pin.py::test_provider_runtime_is_materialized_from_the_pin_without_retargeting_source",
                 "pytest:python/tests/kernel/nexus_test_control/test_android_device_method_scope.py::test_exact_android_device_proof_uses_one_instrumentation_method",
-                "pytest:python/tests/kernel/test_codex_nightly_workflow_artifact_contract.py::test_codex_nightly_stages_only_one_run_bound_bounded_json_artifact",
                 "pytest:python/tests/kernel/test_generation_contract.py",
                 "pytest:python/tests/kernel/test_generation_operation_adapters.py",
                 "pytest:python/tests/kernel/test_generation_policy.py::"
@@ -961,7 +918,6 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/service/test_codex_capacity_canary_contract.py",
                 "pytest:python/tests/service/test_codex_capacity_canary_contract.py::test_capacity_canary_rejects_succeeded_terminal_without_bounded_text",
                 "pytest:python/tests/evals/test_generation_plan_eval.py::test_reviewed_generation_plan_corpus_replays_the_shipped_policy_without_a_live_model",
-                "pytest:python/tests/hosted/nightly/test_codex_personal_generation.py",
                 "pytest:python/tests/service/test_llm_tool_projection_protocol.py::"
                 "test_revision_gates_every_changed_chat_projection_boundary",
                 "pytest:python/tests/service/test_llm_tools_availability.py::"

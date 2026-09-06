@@ -72,9 +72,7 @@ _PYTHON_PROOF_OWNERS = (
     ("python/tests/contract/", Capability.PROVIDER_RUNTIME),
     ("python/tests/llm_tools_contract/", Capability.LLM_TOOLS),
     ("python/tests/release_artifact/", Capability.RELEASE_ARTIFACT),
-    ("python/tests/hosted/nightly/", Capability.CODEX_HOSTED),
 )
-_CODEX_HOSTED_PROOF = "python/tests/hosted/nightly/test_codex_personal_generation.py"
 _GLOBAL_PYTEST_SUPPORT_CAPABILITIES = (
     Capability.KERNEL_PYTHON,
     Capability.SERVICE,
@@ -84,7 +82,6 @@ _GLOBAL_PYTEST_SUPPORT_CAPABILITIES = (
     Capability.PROVIDER_RUNTIME,
     Capability.LLM_TOOLS,
     Capability.RELEASE_ARTIFACT,
-    Capability.CODEX_HOSTED,
 )
 
 
@@ -195,7 +192,6 @@ def proof_target(repo_root: Path, proof: str) -> SelectionTarget:
         Capability.COMPONENT: "vitest",
         Capability.EXTENSION: "playwright",
         Capability.INGEST_NODE: "node-test",
-        Capability.CODEX_HOSTED: "pytest",
         Capability.JOURNEYS_ALL: "playwright",
         Capability.KERNEL_PYTHON: "pytest",
         Capability.KERNEL_WEB: "vitest",
@@ -512,11 +508,7 @@ def _promoted_targets(path: str) -> tuple[SelectionTarget, ...]:
 
 def _direct_test_target(path: str) -> SelectionTarget | None:
     python_owner = _python_proof_owner(path)
-    if (
-        python_owner is not None
-        and _is_python_test_file(path)
-        and (python_owner is not Capability.CODEX_HOSTED or path == _CODEX_HOSTED_PROOF)
-    ):
+    if python_owner is not None and _is_python_test_file(path):
         return SelectionTarget(python_owner, f"pytest:{path}")
     if path.endswith((".unit.test.ts", ".unit.test.tsx")):
         return SelectionTarget(Capability.KERNEL_WEB, f"vitest:{path}")
