@@ -118,17 +118,29 @@ function catalogWithNoSelectableChatPair(response: unknown): unknown {
   const catalog = mutableRecord(clone.data, "catalog response.data");
   const chatSeed = mutableRecord(catalog.chat_seed, "catalog chat seed");
   const routes = mutableArray(catalog.routes, "catalog routes");
-  const blocked = {
+  // The two operator-action states production readiness can emit: the Codex
+  // host contract mismatch, and an absent credential on a configured API route.
+  const codexBlocked = {
     kind: "OperatorActionRequired",
-    code: "qualification_missing",
-    explanation: "No Chat generation target is currently qualified.",
-    action: "Qualify at least one Chat generation target and retry.",
+    code: "codex_host_unavailable",
+    explanation:
+      "The Codex generation host contract does not match this Nexus build.",
+    action: "Repair or redeploy the pinned Codex generation host before sending.",
+    last_checked: NOW,
+  } as const;
+  const credentialBlocked = {
+    kind: "OperatorActionRequired",
+    code: "credential_unavailable",
+    explanation: "The configured Anthropic API credential is absent.",
+    action: "Configure the route-specific generation credential before sending.",
     last_checked: NOW,
   } as const;
 
-  chatSeed.state = blocked;
+  chatSeed.state = codexBlocked;
   for (const [routeIndex, routeValue] of routes.entries()) {
     const route = mutableRecord(routeValue, `catalog route ${routeIndex}`);
+    const blocked =
+      route.label === "Codex Personal" ? codexBlocked : credentialBlocked;
     route.readiness = blocked;
     const models = mutableArray(route.models, `catalog route ${routeIndex} models`);
     for (const [modelIndex, modelValue] of models.entries()) {
@@ -514,10 +526,10 @@ describe("Generation selection browser contract", () => {
     await userEvent.type(input, "Keep this draft editable");
 
     const blockedStatus = await screen.findByText(
-      "No model and reasoning pair is currently available for Chat. Qualify at least one Chat generation target and retry.",
+      "No model and reasoning pair is currently available for Chat. Repair or redeploy the pinned Codex generation host before sending.",
     );
     expect(blockedStatus).toHaveTextContent(
-      "No model and reasoning pair is currently available for Chat. Qualify at least one Chat generation target and retry.",
+      "No model and reasoning pair is currently available for Chat. Repair or redeploy the pinned Codex generation host before sending.",
     );
     expect(blockedStatus).toHaveAttribute("aria-live", "polite");
     expect(input).toBeEnabled();

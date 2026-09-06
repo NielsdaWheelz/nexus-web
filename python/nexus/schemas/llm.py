@@ -28,7 +28,6 @@ ReadinessCode = Literal[
     "credential_unavailable",
     "provider_unavailable",
     "quota_unavailable",
-    "qualification_missing",
 ]
 
 

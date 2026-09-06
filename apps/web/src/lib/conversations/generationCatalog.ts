@@ -74,8 +74,7 @@ export type GenerationReadinessCode =
   | "codex_host_unavailable"
   | "credential_unavailable"
   | "provider_unavailable"
-  | "quota_unavailable"
-  | "qualification_missing";
+  | "quota_unavailable";
 
 export type GenerationSelectionState =
   | { readonly kind: "Selectable" }
@@ -85,7 +84,8 @@ export type GenerationSelectionState =
         | "missing_target_qualification"
         | "missing_reasoning_qualification"
         | "missing_chat_tool_qualification"
-        | "unsupported_capability";
+        | "unsupported_capability"
+        | "selection_not_configured";
       readonly explanation: string;
     }
   | Extract<GenerationReadiness, { readonly kind: "OperatorActionRequired" }>
@@ -217,13 +217,13 @@ const READINESS_CODES = [
   "credential_unavailable",
   "provider_unavailable",
   "quota_unavailable",
-  "qualification_missing",
 ] as const;
 const INELIGIBLE_CODES = [
   "missing_target_qualification",
   "missing_reasoning_qualification",
   "missing_chat_tool_qualification",
   "unsupported_capability",
+  "selection_not_configured",
 ] as const;
 const SHA256_RE = /^[0-9a-f]{64}$/;
 const CODEX_MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
