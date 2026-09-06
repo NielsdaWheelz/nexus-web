@@ -374,6 +374,15 @@
       "expected_failure": "lost job lease still authorized an MCP receipt"
     },
     {
+      "id": "agent-tool-mcp-grant-gate-bypass",
+      "patch": "testdata/faults/agent-tool-mcp-grant-gate-bypass.patch",
+      "sha256": "6fb7af992f504487b7ba5b0ea139ee02f06a5f7c10546f61fb3a6a120347477e",
+      "proofs": [
+        "pytest:python/tests/service/test_agent_tools_mcp_gate.py::test_public_mcp_mount_admits_only_a_live_bearer_on_the_exact_protocol"
+      ],
+      "expected_failure": "an unauthorized bearer crossed the public MCP grant gate"
+    },
+    {
       "id": "llm-write-tool-authorization-bypass",
       "patch": "testdata/faults/llm-write-tool-authorization-bypass.patch",
       "sha256": "01076def187ee90f4766051bb316f4d824ac46b45f67fed2dbbb5ffe7683a827",
