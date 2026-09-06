@@ -290,7 +290,7 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
 
 _CONTROLLER_COMMAND_OWNERS: dict[str, str] = {
     "confidence": "scripts/agency_verify.sh",
-    "pr": ".github/workflows/ci.yml",
+    "changed": ".github/workflows/ci.yml",
     "full": ".github/workflows/ci.yml",
     "nightly": ".github/workflows/nightly.yml",
     "release": ".github/workflows/release.yml",
