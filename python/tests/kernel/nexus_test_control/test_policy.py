@@ -225,7 +225,6 @@ def _minimal_repository(root: Path) -> None:
     _write(
         root,
         ".github/workflows/nightly.yml",
-        'NEXUS_HOSTED_CANARY: "1"\n'
         "runs-on: ubuntu-latest\n"
         "uses: reactivecircus/android-emulator-runner@example\n"
         "          api-level: 36\n"

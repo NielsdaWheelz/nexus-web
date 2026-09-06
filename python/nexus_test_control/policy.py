@@ -212,7 +212,6 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     ),
     ".github/workflows/nightly.yml": (
         (
-            'NEXUS_HOSTED_CANARY: "1"',
             "runs-on: ubuntu-latest",
             "\n          api-level: 36\n",
             "\n          system-image-api-level: 36-ext19\n",

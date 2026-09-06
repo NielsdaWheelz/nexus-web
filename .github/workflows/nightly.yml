@@ -1,8 +1,8 @@
 name: Nightly verification
 
-# Intentionally manual until the protected nexus-nightly environment has every
-# hosted credential and an Android-capable runner. A missing requirement is a
-# fail-closed not_run result from the control plane, never a skipped success.
+# Intentionally manual until the protected nexus-nightly environment has an
+# Android-capable runner. A missing requirement is a fail-closed not_run result
+# from the control plane, never a skipped success.
 on:
   workflow_dispatch:
 
@@ -14,13 +14,11 @@ permissions:
   contents: read
 
 jobs:
-  nightly-direct:
+  nightly:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     environment: nexus-nightly
     env:
-      NEXUS_HOSTED_CANARY: "1"
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       NEXUS_GOOGLE_WEB_CLIENT_ID: ${{ vars.NEXUS_GOOGLE_WEB_CLIENT_ID || 'nexus-test.apps.googleusercontent.com' }}
 
     steps:

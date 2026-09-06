@@ -417,7 +417,7 @@ capabilities as blocked and launches no further heavy work.
 | `confidence` | 60–90 seconds | selected service/component setup may exceed the warm target |
 | `pr` | 3–5 minutes locally | CI duration is measured before a p95 ratchet is adopted |
 | `full` | measured; no fixed acceptance number | one current-revision build and one sequential heavy process |
-| `nightly` / `release` | scheduled and cost-capped | hosted/device work remains fail-closed |
+| `nightly` / `release` | scheduled | device work remains fail-closed |
 
 The controller records peak RSS for its process tree and the working set of
 containers owned by the exact test compose project. CPU count never chooses
@@ -492,7 +492,6 @@ physical-device boundaries are excluded. The owning `full`, `nightly`, or
 | Release artifact/image binding | `python/tests/release_artifact/` |
 | Deterministic LLM semantics | `python/tests/evals/` |
 | Property/random-order audit | `python/tests/audit/` |
-| Paid hosted proof | `python/tests/hosted/nightly/` |
 | Web pure kernel | `apps/web/src/**/*.unit.test.{ts,tsx}` |
 | Chromium component | `apps/web/src/**/*.browser.test.{ts,tsx}` |
 | Journeys, deployment smoke, extension | `apps/web/e2e/` under the sole Playwright config |
