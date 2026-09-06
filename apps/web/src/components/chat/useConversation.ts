@@ -53,6 +53,7 @@ import {
 } from "@/lib/conversations/branching";
 import {
   findGenerationCandidate,
+  sameGenerationSelection,
   type GenerationSelectionSpec,
   type RunSelectionOut,
 } from "@/lib/conversations/generationCatalog";
@@ -906,8 +907,9 @@ export function useConversation(
   // Rerun and Regenerate are the same client contract over different endpoints:
   // one durable sibling candidate from an owning source run. While a POST is
   // unresolved the source is busy-locked; a network loss retains its key so an
-  // explicit retry replays the same command; a definite rejection consumes the
-  // key so the next invocation mints a fresh one.
+  // identical explicit retry replays the same command; a confirmed replacement
+  // is a different answer identity (spec 5.2) and mints a fresh one; a definite
+  // rejection consumes the key so the next invocation mints a fresh one.
   const runCandidateAction = useCallback(
     async (
       assistantMessageId: string,
@@ -925,6 +927,16 @@ export function useConversation(
       setError(null);
       try {
         let command = keysRef.current.get(assistantMessageId);
+        if (
+          command !== undefined &&
+          explicitSelection !== undefined &&
+          !sameGenerationSelection(
+            command.request.selection,
+            explicitSelection.selection,
+          )
+        ) {
+          command = undefined;
+        }
         if (command === undefined) {
           let selected = explicitSelection;
           if (selected === undefined) {

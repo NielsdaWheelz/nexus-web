@@ -16,7 +16,10 @@ import "@/app/globals.css";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import { absent } from "@/lib/api/presence";
-import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
+import type {
+  ChatRunCandidateRequest,
+  ChatRunCreateRequest,
+} from "@/lib/api/sse/requests";
 import {
   chatDraftKeyFor,
   type ChatDraftKey,
@@ -1345,6 +1348,56 @@ describe("Generation selection browser contract", () => {
         insertion: { kind: "Reply", parent_message_id: FIRST_ASSISTANT_ID },
       },
     });
+  });
+
+
+  it("replays an identical rerun retry but mints a new identity for a confirmed replacement after a network loss", async () => {
+    const { CATALOG_REVISION } = requireCutoverSupport().fixtures;
+    const rerunRequests: Array<{
+      key: string | null;
+      body: ChatRunCandidateRequest;
+    }> = [];
+    let networkLost = true;
+    stubConversationFetch(twoTurnTree("error"), (pathname, init) => {
+      if (pathname !== `/api/messages/${SECOND_ASSISTANT_ID}/rerun`) return undefined;
+      rerunRequests.push({
+        key: new Headers(init?.headers).get("Idempotency-Key"),
+        body: JSON.parse(String(init?.body)) as ChatRunCandidateRequest,
+      });
+      if (networkLost) throw new TypeError("offline");
+      return json(admittedRerun());
+    });
+
+    render(withRenderEnvironment(<ConversationHarness />));
+    await userEvent.click(await screen.findByRole("button", { name: "Rerun" }));
+    expect(
+      await screen.findByText("This response couldn’t be run again."),
+    ).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Rerun" }));
+    await waitFor(() => expect(rerunRequests).toHaveLength(2));
+    expect(rerunRequests[0].key).not.toBeNull();
+    expect(rerunRequests[1]).toEqual(rerunRequests[0]);
+    expect(rerunRequests[0].body.selection).toEqual(TERRA_HIGH);
+
+    networkLost = false;
+    await userEvent.click(
+      screen.getByRole("button", { name: "Rerun with a different model" }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Rerun with a different model",
+    });
+    await userEvent.type(
+      within(dialog).getByRole("combobox", { name: "Search models" }),
+      "claude",
+    );
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => expect(rerunRequests).toHaveLength(3));
+    expect(rerunRequests[2].body).toEqual({
+      catalog_definition_revision: CATALOG_REVISION,
+      selection: CLAUDE_HIGH,
+      tool_authority: "ReadOnly",
+    });
+    expect(rerunRequests[2].key).not.toBe(rerunRequests[0].key);
   });
 
 });
