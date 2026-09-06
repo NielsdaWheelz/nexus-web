@@ -250,11 +250,11 @@ def test_background_child_reschedule_protocol_preserves_exact_schedule_form() ->
         (
             RescheduleRequested(
                 schedule=ScheduleAfter(30),
-                payload={"capacity_wait_index": 1},
+                payload={"proof": "reschedule-payload"},
             ),
             ChildReschedule(
                 schedule=ScheduleAfter(30),
-                payload={"capacity_wait_index": 1},
+                payload={"proof": "reschedule-payload"},
             ),
         ),
     )

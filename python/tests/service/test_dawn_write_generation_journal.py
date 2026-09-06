@@ -178,7 +178,7 @@ def test_dawn_write_terminal_journal_publishes_once_and_replays_without_dispatch
             job = enqueue_job(
                 db,
                 kind="dawn_write_job",
-                payload={"capacity_wait_index": 0},
+                payload={"proof": "dawn-write-journal"},
                 max_attempts=2,
             )
             db.commit()
@@ -324,7 +324,7 @@ def test_dawn_write_no_signals_closes_preaccept_capacity_without_a_ledger(
             job = enqueue_job(
                 db,
                 kind="dawn_write_job",
-                payload={"capacity_wait_index": 0},
+                payload={"proof": "dawn-write-journal"},
                 max_attempts=2,
             )
             db.commit()

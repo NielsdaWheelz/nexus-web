@@ -619,7 +619,7 @@ def test_metadata_is_heavy_and_excludes_parser_and_reindex_capacity(
             metadata = enqueue_job(
                 db,
                 kind="enrich_metadata",
-                payload={**payload, "capacity_wait_index": 0},
+                payload=payload,
                 priority=1,
                 max_attempts=2,
             )

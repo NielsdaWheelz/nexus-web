@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ast
 import asyncio
 import importlib
 import importlib.util
@@ -146,6 +145,7 @@ _LEGACY_RUNTIME_PATTERNS = (
     re.compile(r"nexus\.(?:api\.routes|services)\.llm_profiles\b"),
     re.compile(r"nexus\.services\.(?:llm_intent_state|llm_outcomes)\b"),
     re.compile(r"\b(?:agent_turn_ledger|native_agent_(?:client|contract|operations))\b"),
+    re.compile(r"\bcapacity_wait_index\b"),
 )
 _LEGACY_DOC_PATTERN = re.compile(
     r"\b(?:ChatProfile|ChatProfileId|ChatProfileSelection|ChatTools)\b|"
@@ -342,21 +342,6 @@ def test_only_final_generation_owners_remain() -> None:
     stale_docs = _stale_generation_docs()
     assert stale_docs == (), (
         "legacy generation statements lack a final-owner amendment:\n" + "\n".join(stale_docs)
-    )
-
-    metadata_dispatch_path = REPO_ROOT / "python/nexus/services/metadata_dispatch.py"
-    metadata_dispatch_tree = ast.parse(
-        metadata_dispatch_path.read_text(encoding="utf-8"),
-        filename=str(metadata_dispatch_path),
-    )
-    legacy_capacity_payload_lines = tuple(
-        node.lineno
-        for node in ast.walk(metadata_dispatch_tree)
-        if isinstance(node, ast.Constant) and node.value == "capacity_wait_index"
-    )
-    assert legacy_capacity_payload_lines == (), (
-        "metadata dispatch retains the legacy capacity_wait_index payload path at lines "
-        f"{legacy_capacity_payload_lines!r}"
     )
 
     # One representative transport decoder proves old profile fields are

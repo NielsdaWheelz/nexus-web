@@ -1593,7 +1593,6 @@ def _ensure_build_locked(
         dedupe_key=_dispatch_key(build_id),
         payload={
             "build_id": str(build_id),
-            "capacity_wait_index": 0,
             "coordination": {},
         },
         max_attempts=3,
