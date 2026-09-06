@@ -15,6 +15,10 @@
 import type { CitationOut } from "@/lib/conversations/citationOut";
 import type { Presence } from "@/lib/api/presence";
 import type { DurableExecution } from "@/lib/api/executionAdvisory";
+import type {
+  GenerationSelectionSpec,
+  SelectionPresentation,
+} from "@/lib/conversations/generationCatalog";
 import type { ResourceActivation } from "@/lib/resources/activation";
 
 /** A9/A15 head-read freshness label (binding `manifests_equal` summary). */
@@ -198,9 +202,41 @@ export interface DossierCancelledFacts {
   at: string;
 }
 
+/** The frozen model-tool authority of one admitted background generation
+ * (spec 5.1): either no model-callable tool or exactly one frozen plan. */
+export type DossierBuildToolPlan =
+  | { kind: "NoModelTools" }
+  | {
+      kind: "ExactModelTools";
+      planId: string;
+      planRevision: string;
+      effectMode: "ReadOnly" | "AdditiveWrites";
+    };
+
+/** Read-only facts of the build's latest admitted ledger generation (spec 3.4,
+ * AC 15): the exact selection, its dispatch-time disclosure, the tool plan,
+ * and the journaled tool-position count. Never a control or a price. */
+export interface DossierAdmittedGeneration {
+  selection: GenerationSelectionSpec;
+  displayAtDispatch: SelectionPresentation;
+  toolPlan: DossierBuildToolPlan;
+  toolPositions: number;
+}
+
+/** The durable pre-admission `CapacityPaused` parked on an active build's job
+ * (spec 3.4): the user waits for Codex capacity and may cancel. */
+export interface DossierCapacityPause {
+  explanation: string;
+  resetAt: Presence<string>;
+  nextCheckAt: string;
+  lastChecked: string;
+}
+
 /** One build attempt's identity (DossierBuildSummary). Serves both
  * `active_build` (only `execution` Present) and `latest_unsuccessful_build`
- * (exactly one of `failure`/`cancellation` Present). */
+ * (exactly one of `failure`/`cancellation` Present). `admittedGeneration` is
+ * the latest ledger generation; `capacityPause` is Present only on an active
+ * build parked by Codex quota. */
 export interface DossierBuildSummary {
   handle: string;
   requesterUserId: Presence<string>;
@@ -209,6 +245,8 @@ export interface DossierBuildSummary {
   execution: Presence<DurableExecution>;
   failure: Presence<DossierFailedFacts>;
   cancellation: Presence<DossierCancelledFacts>;
+  admittedGeneration: Presence<DossierAdmittedGeneration>;
+  capacityPause: Presence<DossierCapacityPause>;
 }
 
 /** A11 Media Abstract (Media Dossier only): compact, read-only, current-only. */

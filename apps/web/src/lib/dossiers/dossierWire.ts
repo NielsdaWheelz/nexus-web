@@ -8,15 +8,22 @@ import { expectExactRecord, expectRecord } from "@/lib/validation";
 import { decodePresence, type Presence } from "@/lib/api/presence";
 import { decodeDurableExecution } from "@/lib/api/executionAdvisory";
 import {
+  decodeGenerationSelectionSpec,
+  type SelectionPresentation,
+} from "@/lib/conversations/generationCatalog";
+import {
   decodeCitationOut,
   type CitationOut,
 } from "@/lib/conversations/citationOut";
 import {
   DOSSIER_BUILD_FAILURE_CODES,
   HISTORICAL_DOSSIER_BUILD_FAILURE_CODES,
+  type DossierAdmittedGeneration,
   type DossierBuildFailureCode,
   type DossierBuildSummary,
+  type DossierBuildToolPlan,
   type DossierCancelledFacts,
+  type DossierCapacityPause,
   type DossierFailedFacts,
   type DossierFreshness,
   type HistoricalDossierBuildFailureCode,
@@ -671,6 +678,138 @@ function decodeCancelledFacts(raw: unknown): DossierCancelledFacts {
   };
 }
 
+function decodeNonemptyString(value: unknown, field: string): string {
+  const text = decodeString(value, field);
+  if (text.length === 0) fail(`${field} must not be empty`);
+  return text;
+}
+
+function decodeSelectionPresentation(raw: unknown): SelectionPresentation {
+  const presentation = expectExactRecord(
+    raw,
+    [
+      "route_label",
+      "model_label",
+      "reasoning_label",
+      "billing",
+      "privacy",
+      "processor_chain",
+    ],
+    "selection presentation",
+  );
+  const billing = expectExactRecord(
+    presentation.billing,
+    ["kind", "label"],
+    "billing disclosure",
+  );
+  let billingDisclosure: SelectionPresentation["billing"];
+  if (billing.kind === "Subscription" && billing.label === "Codex subscription") {
+    billingDisclosure = { kind: "Subscription", label: "Codex subscription" };
+  } else if (billing.kind === "MeteredApi" && billing.label === "Metered API") {
+    billingDisclosure = { kind: "MeteredApi", label: "Metered API" };
+  } else {
+    fail("billing must be a supported disclosure");
+  }
+  const privacy = expectExactRecord(
+    presentation.privacy,
+    ["summary", "retention", "training"],
+    "privacy disclosure",
+  );
+  const chain = expectExactRecord(
+    presentation.processor_chain,
+    ["processors"],
+    "processor chain",
+  );
+  const processors = chain.processors;
+  if (!Array.isArray(processors) || processors.length === 0 || processors.length > 4) {
+    fail("processor_chain.processors must contain one to four rows");
+  }
+  return {
+    route_label: decodeNonemptyString(presentation.route_label, "route_label"),
+    model_label: decodeNonemptyString(presentation.model_label, "model_label"),
+    reasoning_label: decodeNonemptyString(
+      presentation.reasoning_label,
+      "reasoning_label",
+    ),
+    billing: billingDisclosure,
+    privacy: {
+      summary: decodeNonemptyString(privacy.summary, "privacy.summary"),
+      retention: decodeNonemptyString(privacy.retention, "privacy.retention"),
+      training: decodeNonemptyString(privacy.training, "privacy.training"),
+    },
+    processor_chain: {
+      processors: processors.map((processor, index) =>
+        decodeNonemptyString(processor, `processors[${index}]`),
+      ),
+    },
+  };
+}
+
+function decodeToolPlan(raw: unknown): DossierBuildToolPlan {
+  const discriminated = expectRecord(raw, "tool plan");
+  switch (discriminated.kind) {
+    case "NoModelTools": {
+      expectExactRecord(discriminated, ["kind"], "NoModelTools plan");
+      return { kind: "NoModelTools" };
+    }
+    case "ExactModelTools": {
+      const plan = expectExactRecord(
+        discriminated,
+        ["kind", "plan_id", "plan_revision", "effect_mode"],
+        "ExactModelTools plan",
+      );
+      if (!isListedString(plan.effect_mode, ["ReadOnly", "AdditiveWrites"])) {
+        fail("effect_mode must be ReadOnly or AdditiveWrites");
+      }
+      return {
+        kind: "ExactModelTools",
+        planId: decodeNonemptyString(plan.plan_id, "plan_id"),
+        planRevision: decodeNonemptyString(plan.plan_revision, "plan_revision"),
+        effectMode: plan.effect_mode,
+      };
+    }
+    default:
+      return fail(`unknown tool plan kind ${String(discriminated.kind)}`);
+  }
+}
+
+function decodeAdmittedGeneration(raw: unknown): DossierAdmittedGeneration {
+  const generation = expectExactRecord(
+    raw,
+    ["selection", "display_at_dispatch", "tool_plan", "tool_positions"],
+    "admitted generation",
+  );
+  const toolPositions = decodeInteger(generation.tool_positions, "tool_positions");
+  if (toolPositions < 0) fail("tool_positions must not be negative");
+  return {
+    selection: decodeGenerationSelectionSpec(
+      generation.selection,
+      "admitted generation selection",
+    ),
+    displayAtDispatch: decodeSelectionPresentation(generation.display_at_dispatch),
+    toolPlan: decodeToolPlan(generation.tool_plan),
+    toolPositions,
+  };
+}
+
+function decodeCapacityPause(raw: unknown): DossierCapacityPause {
+  const pause = expectExactRecord(
+    raw,
+    ["kind", "code", "explanation", "reset_at", "next_check_at", "last_checked"],
+    "capacity pause",
+  );
+  if (pause.kind !== "CapacityPaused") fail("capacity pause kind must be CapacityPaused");
+  if (pause.code !== "quota_unavailable") {
+    fail("capacity pause code must be quota_unavailable");
+  }
+  return {
+    explanation: decodeNonemptyString(pause.explanation, "explanation"),
+    resetAt: decodePresence(pause.reset_at, (v) => decodeString(v, "reset_at")),
+    nextCheckAt: decodeString(pause.next_check_at, "next_check_at"),
+    lastChecked: decodeString(pause.last_checked, "last_checked"),
+  };
+}
+
 export function decodeDossierBuildSummary(raw: unknown): DossierBuildSummary {
   const build = expectExactRecord(
     raw,
@@ -682,6 +821,8 @@ export function decodeDossierBuildSummary(raw: unknown): DossierBuildSummary {
       "execution",
       "failure",
       "cancellation",
+      "admitted_generation",
+      "capacity_pause",
     ],
     "build summary",
   );
@@ -699,6 +840,11 @@ export function decodeDossierBuildSummary(raw: unknown): DossierBuildSummary {
     ),
     failure: decodePresence(build.failure, decodeFailedFacts),
     cancellation: decodePresence(build.cancellation, decodeCancelledFacts),
+    admittedGeneration: decodePresence(
+      build.admitted_generation,
+      decodeAdmittedGeneration,
+    ),
+    capacityPause: decodePresence(build.capacity_pause, decodeCapacityPause),
   };
 }
 

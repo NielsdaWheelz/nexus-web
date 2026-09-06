@@ -99,6 +99,8 @@ function decodePersistedFailure(failureCode: string) {
       },
     },
     cancellation: ABSENT,
+    admitted_generation: ABSENT,
+    capacity_pause: ABSENT,
   });
   if (build.failure.kind !== "Present") {
     throw new Error(`Persisted failure ${failureCode} decoded as absent`);
