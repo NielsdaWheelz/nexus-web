@@ -154,6 +154,7 @@ _CODEX_GENERATION_PEER_AUDIT = "requests.jsonl"
 _CODEX_GENERATION_PEER_SOCKET = "agent.sock"
 TEST_OPENAI_EMBEDDING_API_KEY = "nexus-test-fixture-openai-key"
 TEST_OPENAI_EMBEDDING_HOST = "api.openai.com"
+TEST_BRAVE_SEARCH_API_KEY = "nexus-test-fixture-brave-key"
 TEST_PROVIDER_API_CREDENTIALS: Mapping[str, str] = MappingProxyType(
     {
         "OPENAI_GENERATION_API_KEY": "nexus-test-fixture-openai-generation-key",
@@ -184,6 +185,8 @@ _CALLER_RESOURCE_ENV = (
             "AWS_PROFILE",
             "AWS_SECRET_ACCESS_KEY",
             "AWS_SESSION_TOKEN",
+            "BRAVE_SEARCH_API_KEY",
+            "BRAVE_SEARCH_BASE_URL",
             "CSP_MEDIA_ORIGINS",
             "DATABASE_URL",
             "DATABASE_URL_TEST",
@@ -268,7 +271,11 @@ class EmbeddingPeer:
             **_BASE_TEST_STATIC_DNS,
             TEST_OPENAI_EMBEDDING_HOST: {"address": "127.0.0.1", "port": self.port},
         }
+        # The pinned Brave provider accepts only an HTTPS origin, so this TLS peer
+        # also serves Brave web search at its loopback origin.
         return {
+            "BRAVE_SEARCH_API_KEY": TEST_BRAVE_SEARCH_API_KEY,
+            "BRAVE_SEARCH_BASE_URL": f"https://127.0.0.1:{self.port}/res/v1",
             "NEXUS_TEST_STATIC_DNS": json.dumps(
                 static_dns,
                 separators=(",", ":"),

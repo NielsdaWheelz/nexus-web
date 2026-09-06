@@ -3563,6 +3563,8 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
     ]
     assert generation_readiness_calls == ["codex-generation-peer"]
     embedding_environment = {
+        "BRAVE_SEARCH_API_KEY": "nexus-test-fixture-brave-key",
+        "BRAVE_SEARCH_BASE_URL": "https://127.0.0.1:4443/res/v1",
         "NEXUS_TEST_STATIC_DNS": (
             '{"api.openai.com":{"address":"127.0.0.1","port":4443},"www.nasa.gov":"93.184.216.34"}'
         ),

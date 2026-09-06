@@ -1,4 +1,4 @@
-"""Canonical-host TLS OpenAI embedding fixture owned by the test controller."""
+"""Controller-owned TLS peer serving canonical-host OpenAI embeddings and Brave search."""
 
 from __future__ import annotations
 
@@ -15,10 +15,12 @@ from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import parse_qs, urlsplit
 
 from nexus_test_control import services as test_services
 from nexus_test_control.runtime import EndpointKind
 from nexus_test_control.services import (
+    TEST_BRAVE_SEARCH_API_KEY,
     TEST_OPENAI_EMBEDDING_API_KEY,
     TEST_OPENAI_EMBEDDING_HOST,
     EmbeddingPeer,
@@ -29,6 +31,26 @@ _API_KEY = TEST_OPENAI_EMBEDDING_API_KEY
 _HOST = TEST_OPENAI_EMBEDDING_HOST
 _MAX_REQUEST_BYTES = 1_048_576
 _TEST_ENV = {"NEXUS_ENV": "test"}
+_BRAVE_API_KEY = TEST_BRAVE_SEARCH_API_KEY
+_BRAVE_WEB_SEARCH_PATH = "/res/v1/web/search"
+# A fixed, secret-free result set; the journey model never reads these pages.
+_BRAVE_WEB_RESULTS = (
+    {
+        "title": "Houston We Have a Podcast",
+        "url": "https://www.nasa.gov/podcasts/houston-we-have-a-podcast/",
+        "description": "NASA Johnson Space Center podcast.",
+    },
+    {
+        "title": "NASA Johnson Space Center",
+        "url": "https://www.nasa.gov/johnson/",
+        "description": "Home of mission control and the astronaut corps.",
+    },
+    {
+        "title": "NASA's SpaceX Crew-4",
+        "url": "https://www.nasa.gov/mission/nasas-spacex-crew-4/",
+        "description": "Crew-4 mission overview.",
+    },
+)
 
 
 class _OpenAIProviderServer(ThreadingHTTPServer):
@@ -62,11 +84,16 @@ class _OpenAIProviderHandler(BaseHTTPRequestHandler):
         return cast(_OpenAIProviderServer, self.server)
 
     def do_GET(self) -> None:  # noqa: N802 - stdlib handler API
-        if self.path == "/livez" and self.headers.get("host", "").partition(":")[0] in {
-            "127.0.0.1",
-            _HOST,
-        }:
+        host = self.headers.get("host", "").partition(":")[0]
+        if self.path == "/livez" and host in {"127.0.0.1", _HOST}:
             self._send_json(200, {"status": "alive"})
+            return
+        target = urlsplit(self.path)
+        if target.path == _BRAVE_WEB_SEARCH_PATH and host == "127.0.0.1":
+            try:
+                self._serve_brave_web_search(target.query)
+            except RequestRejected as error:
+                self._send_json(error.status, {"error": {"code": error.code}})
             return
         self._send_json(404, {"error": {"code": "unknown_path"}})
 
@@ -121,6 +148,26 @@ class _OpenAIProviderHandler(BaseHTTPRequestHandler):
                 "usage": {"prompt_tokens": token_count, "total_tokens": token_count},
             },
             headers={"x-request-id": "req_nexus_embedding_fixture"},
+        )
+
+    def _serve_brave_web_search(self, raw_query: str) -> None:
+        if self.headers.get("x-subscription-token") != _BRAVE_API_KEY:
+            raise RequestRejected(401, "invalid_subscription_token")
+        try:
+            query = parse_qs(raw_query, keep_blank_values=True, strict_parsing=True)
+        except ValueError as error:
+            raise RequestRejected(422, "invalid_search_query") from error
+        terms = query.get("q", [])
+        if len(terms) != 1 or not terms[0].strip():
+            raise RequestRejected(422, "invalid_search_query")
+        self._send_json(
+            200,
+            {
+                "type": "search",
+                "query": {"original": terms[0]},
+                "web": {"type": "search", "results": list(_BRAVE_WEB_RESULTS)},
+            },
+            headers={"x-request-id": "req_nexus_brave_fixture"},
         )
 
     def _read_payload(self) -> dict[str, Any]:

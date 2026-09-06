@@ -998,6 +998,8 @@ def test_caller_resource_configuration_is_rejected_and_secrets_have_safe_reprs()
         {"WORKER_LANE": "interactive"},
         {"OUTBOUND_HTTP_PROXY_URL": "https://production.example"},
         {"PODCAST_INDEX_BASE_URL": "https://production.example"},
+        {"BRAVE_SEARCH_API_KEY": "production-brave-key"},
+        {"BRAVE_SEARCH_BASE_URL": "https://production.example/res/v1"},
         {"GENERATION_API_PROVIDERS": ""},
         {"GENERATION_API_BASE_URLS": "{}"},
         {"OPENAI_GENERATION_API_KEY": "production-generation-key"},
@@ -1387,6 +1389,7 @@ def test_run_environment_contains_only_exact_local_resources_and_no_admin_key(
     assert environment["PODCAST_INDEX_API_KEY"] == "nexus-test-fixture-podcast-key"
     assert environment["PODCAST_INDEX_API_SECRET"] == "nexus-test-fixture-podcast-secret"
     assert environment["PODCAST_INDEX_BASE_URL"] == "http://127.0.0.1:19091"
+    assert not {"BRAVE_SEARCH_API_KEY", "BRAVE_SEARCH_BASE_URL"}.intersection(environment)
     assert "must-not-escape" not in repr(environment)
     assert not {
         "SERVICE_ROLE_KEY",
@@ -1410,6 +1413,8 @@ def test_embedding_peer_materializes_one_exact_client_identity(tmp_path: Path) -
     assert peer.key.stat().st_mode & 0o777 == 0o600
     assert peer.audit.read_bytes() == b""
     assert peer.client_environment() == {
+        "BRAVE_SEARCH_API_KEY": "nexus-test-fixture-brave-key",
+        "BRAVE_SEARCH_BASE_URL": "https://127.0.0.1:19092/res/v1",
         "NEXUS_TEST_STATIC_DNS": (
             '{"api.openai.com":{"address":"127.0.0.1","port":19092},"www.nasa.gov":"93.184.216.34"}'
         ),
