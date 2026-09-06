@@ -9,6 +9,7 @@ import re
 import socketserver
 import threading
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from http import HTTPStatus
 from pathlib import Path
 from typing import BinaryIO
@@ -43,7 +44,6 @@ _MAX_REQUEST_LINE_BYTES = 4 * 1024
 _MAX_HEADER_LINE_BYTES = 8 * 1024
 _MAX_HEADER_BYTES = 32 * 1024
 _MAX_HEADER_COUNT = 64
-_ACCEPTED_AT = "2026-08-27T12:34:56.123456Z"
 _SDK_VERSION = importlib.metadata.version("openai-codex")
 _RUNTIME_VERSION = importlib.metadata.version("openai-codex-cli-bin")
 _GROUNDED_RESPONSE = (
@@ -60,6 +60,11 @@ _CONTROL_PATH = re.compile(
 class _ReservedAdmission:
     request: GenerationAdmissionRequest
     response: GenerationAdmission
+
+
+def _accepted_at() -> str:
+    """The real current UTC instant in the exact wire shape the contract validates."""
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 class RequestRejected(Exception):
@@ -139,7 +144,7 @@ class CodexGenerationPeerServer(socketserver.ThreadingMixIn, socketserver.UnixSt
                     NAMESPACE_URL,
                     f"nexus-test-codex-admission:{request.request_id}:{request.request_fingerprint}",
                 ),
-                admitted_at=_ACCEPTED_AT,
+                admitted_at=_accepted_at(),
                 runtime_deadline_seconds=request.turn_timeout_seconds,
             )
             self._pending = _ReservedAdmission(request=request, response=response)
@@ -349,7 +354,7 @@ class CodexGenerationPeerHandler(socketserver.StreamRequestHandler):
                     reasoning_tokens=0,
                 ),
                 diagnostics=(),
-                accepted_at=_ACCEPTED_AT,
+                accepted_at=_accepted_at(),
                 sdk_version=_SDK_VERSION,
                 runtime_version=_RUNTIME_VERSION,
             ),
