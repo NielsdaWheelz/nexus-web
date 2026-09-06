@@ -156,6 +156,7 @@ from nexus.services.llm_execution import (
     codex_terminal_evidence,
     execute_generation,
     prove_uncertain_generation_not_dispatched_in_current_transaction,
+    read_capacity_pauses,
 )
 from nexus.services.llm_ledger import (
     LlmCallOwner,
@@ -3976,18 +3977,14 @@ def _capacity_pause(job: _JobState | None) -> CapacityPaused | None:
     path and clears it at admission, so a build waits on at most one pause."""
     if job is None or job.status == SUCCEEDED:
         return None
-    raw = job.payload.get("generation_capacity_pauses")
-    if raw is None:
-        return None
-    if not isinstance(raw, dict):
-        raise AssertionError("generation_capacity_pauses payload is not an object")
-    if not set(raw) <= GENERATION_STEP_PATHS:
+    pauses = read_capacity_pauses(job.payload)
+    if not set(pauses) <= GENERATION_STEP_PATHS:
         raise AssertionError("Dossier build carries a capacity pause for an unknown step")
-    if len(raw) > 1:
+    if len(pauses) > 1:
         raise AssertionError("Dossier build carries more than one capacity pause")
-    if not raw:
+    if not pauses:
         return None
-    return CapacityPaused.model_validate(next(iter(raw.values())))
+    return next(iter(pauses.values()))
 
 
 def _admitted_generation(db: Session, build_id: UUID) -> DossierBuildAdmittedGeneration | None:

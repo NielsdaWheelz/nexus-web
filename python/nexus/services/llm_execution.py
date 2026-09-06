@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import json
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
@@ -407,6 +408,34 @@ class JobGenerationJournal:
             payload=payload,
         ):
             raise GenerationDispatchAborted("generation lost its claim while clearing capacity")
+
+
+def read_capacity_pauses(payload: Mapping[str, object]) -> dict[str, CapacityPaused]:
+    """Decode every durable pause parked by ``park_capacity_pause``, keyed by step path.
+
+    The payload stores ``CapacityPaused.model_dump(mode="json")``. Re-entering the
+    strict model through its JSON validator restores the instants exactly as
+    ``decode_generation_spec_document`` does for the frozen spec; the schema is
+    not loosened and no other module parses this shape.
+    """
+
+    raw = payload.get("generation_capacity_pauses")
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise AssertionError("generation_capacity_pauses payload is not an object")
+    pauses: dict[str, CapacityPaused] = {}
+    for step_path, value in raw.items():
+        if not isinstance(step_path, str) or not step_path:
+            raise AssertionError("generation_capacity_pauses is not keyed by step path")
+        try:
+            encoded = json.dumps(value, ensure_ascii=True, allow_nan=False, sort_keys=True)
+        except (TypeError, ValueError) as error:
+            raise AssertionError(
+                f"capacity pause for step {step_path!r} is not JSON data"
+            ) from error
+        pauses[step_path] = CapacityPaused.model_validate_json(encoded)
+    return pauses
 
 
 def _payload_without_capacity_pause(
@@ -1517,5 +1546,6 @@ __all__ = [
     "codex_terminal_evidence",
     "execute_generation",
     "prove_uncertain_generation_not_dispatched_in_current_transaction",
+    "read_capacity_pauses",
     "reconcile_uncertain_generation_in_current_transaction",
 ]
