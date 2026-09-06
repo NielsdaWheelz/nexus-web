@@ -175,6 +175,7 @@
         "python/nexus/services/chat_run_usage.py",
         "python/nexus/services/chat_run_candidates.py",
         "python/nexus/services/chat_run_idempotency.py",
+        "python/nexus/services/chat_failure.py",
         "python/nexus/api/routes/chat_runs.py",
         "python/nexus/api/routes/conversation_branches.py",
         "python/nexus/services/conversation_branches.py",
@@ -222,6 +223,7 @@
         "apps/web/src/lib/api/sse/events.ts",
         "apps/web/src/lib/api/sse/requests.ts",
         "apps/web/src/lib/api/sse/events.selection.unit.test.ts",
+        "python/tests/kernel/test_generation_selection_wire_contract.py",
         "apps/web/src/lib/conversations/generationCatalog.ts",
         "apps/web/src/app/(authenticated)/settings/billing/SettingsBillingPaneBody.tsx",
         "apps/web/src/app/(authenticated)/settings/billing/page.module.css",
@@ -251,12 +253,16 @@
         "vitest:apps/web/src/components/chat/ChatGenerationLifecycle.browser.test.tsx",
         "vitest:apps/web/src/components/chat/ChatFailureCard.browser.test.tsx",
         "pytest:python/tests/kernel/test_generation_backend_runtime.py",
+        "pytest:python/tests/kernel/test_generation_backend_runtime.py::test_closed_backend_event_projection_retains_codex_terminal_truth",
         "pytest:python/tests/service/test_generation_catalog.py",
+        "pytest:python/tests/service/test_generation_catalog.py::test_complete_catalog_and_selection_contract",
         "pytest:python/tests/kernel/test_generation_backend_identity.py",
         "pytest:python/tests/kernel/test_generation_runtime_composition.py",
         "pytest:python/tests/service/test_provider_generation_backend.py::test_route_local_transcripts_preserve_terminal_truth",
         "pytest:python/tests/service/test_generation_chat_api.py",
+        "pytest:python/tests/service/test_generation_chat_api.py::test_exact_selection_and_authority_cross_every_chat_projection",
         "vitest:apps/web/src/lib/api/sse/events.selection.unit.test.ts",
+        "pytest:python/tests/kernel/test_generation_selection_wire_contract.py",
         "vitest:apps/web/src/components/chat/GenerationSelection.browser.test.tsx",
         "vitest:apps/web/src/app/(authenticated)/settings/billing/GenerationBillingDisclosure.browser.test.tsx",
         "playwright:apps/web/e2e/journeys/durable-ingest-reader-open.journey.spec.ts",
@@ -281,18 +287,26 @@
         "python/nexus/services/generation_spec.py",
         "python/nexus/services/llm_execution.py",
         "python/nexus/services/llm_ledger.py",
+        "python/nexus/schemas/artifact.py",
+        "python/nexus/api/routes/dossiers.py",
+        "apps/web/src/lib/dossiers/*.ts",
+        "apps/web/src/components/dossier/*.tsx",
         "python/tests/service/test_generation_capacity_pause.py",
         "python/tests/service/test_generation_policy.py",
-        "python/tests/kernel/test_generation_ledger_operation_ownership.py"
+        "python/tests/kernel/test_generation_ledger_operation_ownership.py",
+        "python/tests/service/test_dossier_build_generation_detail.py"
       ],
       "proofs": [
         "pytest:python/tests/service/test_generation_capacity_pause.py",
         "pytest:python/tests/service/test_generation_policy.py::test_total_policy_and_frozen_admission_contract",
-        "pytest:python/tests/kernel/test_generation_ledger_operation_ownership.py"
+        "pytest:python/tests/kernel/test_generation_ledger_operation_ownership.py",
+        "pytest:python/tests/service/test_dossier_build_generation_detail.py::test_head_projects_capacity_pause_and_admitted_selection_read_only",
+        "vitest:apps/web/src/components/dossier/DossierSurface.browser.test.tsx"
       ],
       "capabilities": [
         "service",
-        "kernel-python"
+        "kernel-python",
+        "component"
       ]
     },
     {
@@ -426,11 +440,13 @@
       "proofs": [
         "pytest:python/tests/service/test_durable_job_replay.py",
         "pytest:python/tests/service/test_durable_job_replay.py::test_reused_worker_identity_cannot_settle_a_reclaimed_attempt",
-        "pytest:python/tests/service/test_generation_execution.py::test_parent_child_tool_replay_is_exactly_once",
+        "pytest:python/tests/service/test_generation_execution.py",
+        "pytest:python/tests/service/test_generation_execution.py::test_provider_crash_after_accepted_child_resumes_one_successor_without_redispatch",
         "pytest:python/tests/service/test_chat_codex_execution.py",
         "pytest:python/tests/service/test_heavy_job_capacity.py",
         "pytest:python/tests/service/test_generation_tool_authority.py::test_frozen_plan_is_transport_neutral_and_fenced",
         "pytest:python/tests/service/test_generation_tool_authority.py",
+        "pytest:python/tests/service/test_agent_tools_mcp_gate.py::test_public_mcp_mount_admits_only_a_live_bearer_on_the_exact_protocol",
         "gradle:apps/android/app/src/test/java/app/nexus/android/offline/OfflineMediaStoreContractTest.kt",
         "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingLifecycleTest.kt",
         "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingSchedulerStoreBoundaryTest.kt"
@@ -927,7 +943,6 @@
         "python/nexus/errors.py",
         "python/nexus/services/chat_run_event_store.py",
         "python/nexus/services/chat_run_response.py",
-        "python/nexus/services/chat_failure.py",
         "python/nexus/services/chat_run_candidates.py",
         "python/nexus/services/chat_run_citations.py",
         "python/nexus/services/context_assembler.py",
