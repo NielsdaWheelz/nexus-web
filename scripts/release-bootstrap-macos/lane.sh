@@ -35,8 +35,10 @@ unset DOCKER_HOST DOCKER_CONTEXT
 export XDG_RUNTIME_DIR=/run/user/0
 export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/0/bus
 # The kernel's runtime state (<repo>/.nexus-test) lives on the runner's state
-# volume; see the sync phase.
-state_dir=/var/lib/nexus-test-state
+# volume, mounted at the volume's own Docker-VM path so that bind mounts the
+# kernel's Supabase CLI takes from under .nexus-test resolve on the daemon side
+# as well; see the sync phase.
+state_dir="${NEXUS_RUNNER_STATE_DIR:?NEXUS_RUNNER_STATE_DIR is required}"
 
 # A docker exec that arrives before systemd has moved PID 1 into init.scope is
 # placed in the container's root cgroup, and while any process lives there the

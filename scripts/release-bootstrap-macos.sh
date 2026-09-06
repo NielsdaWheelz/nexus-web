@@ -103,6 +103,11 @@ lane_env=(
   "NEXUS_PROVIDER_CERTIFICATION=1"
   "NEXUS_ANDROID_RELEASE_CERT_SHA256=$NEXUS_ANDROID_RELEASE_CERT_SHA256"
   "NEXUS_RELEASE_ENV_FILE=$ENV_FILE"
+  # The kernel's runtime state volume, mounted in the runner at the volume's own
+  # Docker-VM path: the Supabase CLI bind-mounts files from its workdir under
+  # <repo>/.nexus-test, and the daemon resolves that path on the VM, so the
+  # symlink the runner plants at .nexus-test must resolve there too.
+  "NEXUS_RUNNER_STATE_DIR=/var/lib/docker/volumes/$runner-state/_data"
 )
 exec_env=()
 for item in "${lane_env[@]}"; do exec_env+=(-e "$item"); done
@@ -170,7 +175,7 @@ if [ "$mode" != publish ]; then
       --volume "$runner-gradle:/root/.gradle" \
       --volume "$runner-cache:/root/.cache" \
       --volume "$runner-playwright:/ms-playwright" \
-      --volume "$runner-state:/var/lib/nexus-test-state" \
+      --volume "$runner-state:/var/lib/docker/volumes/$runner-state/_data" \
       "$runner_image" >/dev/null
   fi
   runner_exec boot || die "the runner did not finish booting"
