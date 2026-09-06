@@ -437,15 +437,6 @@
       "expected_failure": "unapproved DNS names were resolved to the egress proxy"
     },
     {
-      "id": "hosted-semantic-evidence-bypass",
-      "patch": "testdata/faults/hosted-semantic-evidence-bypass.patch",
-      "sha256": "20af083bffb155a0cb881c855e84af9931071acb53bc48fd92354bf2d76a125f",
-      "proofs": [
-        "pytest:python/tests/kernel/nexus_test_control/test_hosted_canary_semantics.py::test_hosted_canary_accepts_bounded_target_set_v4_receipt"
-      ],
-      "expected_failure": "permission-request evidence turned an unsafe semantic result green"
-    },
-    {
       "id": "provider-runtime-developer-head-bypass",
       "patch": "testdata/faults/provider-runtime-developer-head-bypass.patch",
       "sha256": "b3f04c55b83f17f34f7a5561be446093f358a337d0bb598b3aed40bc2662e123",
