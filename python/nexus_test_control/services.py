@@ -2108,14 +2108,14 @@ def wait_codex_generation_peer_ready(
         )
         owned_socket = paths[_CODEX_GENERATION_PEER_SOCKET]
         if owned_socket.is_socket():
-            try:
-                from nexus.services.codex_generation_client import (
-                    CodexGenerationClient,
-                    CodexGenerationClientError,
-                    CodexGenerationProtocolDefect,
-                    CodexGenerationUnavailable,
-                )
+            from nexus.services.codex_generation_client import (
+                CodexGenerationClient,
+                CodexGenerationClientError,
+                CodexGenerationProtocolDefect,
+                CodexGenerationUnavailable,
+            )
 
+            try:
                 asyncio.run(CodexGenerationClient(owned_socket).health())
             except CodexGenerationUnavailable:
                 pass
