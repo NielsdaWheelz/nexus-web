@@ -194,6 +194,48 @@ case "$phase" in
     (cd apps/web && bun install --frozen-lockfile)
     (cd node/ingest && bun install --frozen-lockfile)
     (cd apps/web && bunx playwright install chromium chromium-headless-shell)
+
+    # The FULL/release lane materializes the provider-runtime and llm-tools
+    # repositories from the sibling Git object stores, then intentionally runs
+    # their locked syncs with --offline. Warm every dependency in those suites'
+    # all-extras locks here, while this explicit dependency-sync phase may use
+    # the network. Use throwaway archives rather than changing the developer's
+    # sibling checkouts; the lane remains the sole owner of the immutable
+    # checkouts it promotes under .nexus-test.
+    warm_pinned_python_suite() {
+      local package="$1"
+      local source_directory="$2"
+      local revision scratch archive build
+      revision="$(python3 -c '
+import sys, tomllib
+with open(sys.argv[1], "rb") as project:
+    print(tomllib.load(project)["tool"]["uv"]["sources"][sys.argv[2]]["rev"])
+' "$work_dir/python/pyproject.toml" "$package")"
+      [[ "$revision" =~ ^[0-9a-f]{40}$ ]] || die "$package pin is not a full Git SHA"
+      [ -d "$(dirname "$work_dir")/$source_directory" ] || die "$package sibling source is absent"
+      scratch="$(mktemp -d "/tmp/nexus-${package}-cache.XXXXXX")"
+      archive="$scratch/source.tar"
+      build="$scratch/build"
+      mkdir "$build"
+      if ! git -C "$(dirname "$work_dir")/$source_directory" archive \
+        --format=tar --output="$archive" "$revision"; then
+        rm -rf "$scratch"
+        die "$package pinned commit $revision is absent from the sibling object store"
+      fi
+      if ! tar -xf "$archive" -C "$build"; then
+        rm -rf "$scratch"
+        die "$package pinned archive could not be extracted"
+      fi
+      if ! (cd "$build" && uv sync --all-extras --locked --no-editable \
+        --reinstall-package "$package"); then
+        rm -rf "$scratch"
+        die "$package locked all-extras cache warm failed"
+      fi
+      rm -rf "$scratch"
+      echo "$package locked all-extras cache: warm ($revision)"
+    }
+    warm_pinned_python_suite provider-runtime llm-calling
+    warm_pinned_python_suite llm-tools llm-tools
     ;;
 
   toolchain)

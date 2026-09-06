@@ -45,6 +45,11 @@ container this repository's PR gates already use on this machine — built from
   afterwards. The work tree path must stay within 60 bytes: the service suite
   binds Unix sockets under `test-results/runs/<run id>/` and asserts they fit
   the 108-byte `sun_path`.
+- The dependency-sync phase warms the exact locked all-extras environments for
+  the pinned provider-runtime and llm-tools revisions from throwaway archives
+  of the sibling Git object stores. The lane then materializes its immutable
+  `.nexus-test/<package>/<revision>` checkouts with `uv --offline`; it never
+  retargets or writes into the developer's sibling checkouts.
 - The runner talks to the workstation's Docker daemon through the mounted
   socket; the kernel's own Postgres/MinIO/Supabase containers are siblings.
 - The runner image carries the same pinned Caddy v2.11.4 executable as CI. The
