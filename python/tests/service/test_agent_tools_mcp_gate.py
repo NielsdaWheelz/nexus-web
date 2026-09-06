@@ -225,9 +225,22 @@ async def _prove_public_mcp_mount_gate(engine: Engine) -> None:
         assert initialized.status_code == 200, initialized.text
         assert initialized.json()["result"]["protocolVersion"] == MCP_PROTOCOL_VERSION
         assert initialized.json()["result"]["serverInfo"]["name"] == "nexus"
-        called = await _post(live, _tools_call("gate proof"), bearer=bearer, headers=versioned)
+        listed = await _post(live, _TOOLS_LIST, bearer=bearer, headers=versioned)
+        assert listed.status_code == 200, listed.text
+        published = [tool["name"] for tool in listed.json()["result"]["tools"]]
+        # The model calls the library-owned wire alias it was shown, never the
+        # canonical dotted id.
+        search_wire_name = next(name for name in published if name == "nexus__search")
+        called = await _post(
+            live,
+            _tools_call(search_wire_name, "gate proof"),
+            bearer=bearer,
+            headers=versioned,
+        )
         assert called.status_code == 200, called.text
         assert called.json()["result"]["isError"] is False, called.text
+        receipt = json.loads(called.json()["result"]["content"][0]["text"])
+        assert receipt["type"] == "Success", receipt
         assert invocations == ["gate proof"]
         with factory() as db:
             positions = read_tool_positions(db, generation_id=generation_id)
@@ -283,10 +296,10 @@ async def _prove_public_mcp_mount_gate(engine: Engine) -> None:
         ]
         assert statuses == [401] * MCP_SOURCE_RATE_BURST + [429], statuses[-3:]
 
-        # Two authenticated requests already landed for this grant; spread the
+        # Three authenticated requests already landed for this grant; spread the
         # remainder across sources so only the per-grant window can trip.
         alternating = (await source("203.0.113.30"), await source("203.0.113.31"))
-        for index in range(MCP_GRANT_RATE_BURST - 2):
+        for index in range(MCP_GRANT_RATE_BURST - 3):
             admitted = await _post(
                 alternating[index % 2],
                 _initialize(MCP_PROTOCOL_VERSION),
@@ -338,14 +351,14 @@ def _initialize(protocol_version: str) -> bytes:
 _TOOLS_LIST = json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}).encode()
 
 
-def _tools_call(query: str) -> bytes:
+def _tools_call(wire_name: str, query: str) -> bytes:
     return json.dumps(
         {
             "jsonrpc": "2.0",
             "id": 3,
             "method": "tools/call",
             "params": {
-                "name": "nexus_search",
+                "name": wire_name,
                 "arguments": {
                     "authors": None,
                     "formats": None,
