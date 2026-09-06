@@ -470,10 +470,10 @@ dead letter, model switch, or per-operation manual replay occurs. A quota error
 after provider acceptance remains terminal because repeating could duplicate
 billing/effects.
 
-Lane E owns `generation_plans.v2.json`, its policy-facts fingerprint, and the
-nightly artifact pin. They move atomically to the new
-`GenerationPolicy.revision`, catalog-definition contract, and pinned
-`llm-calling` revision; the old plan/task-family corpus is deleted.
+Lane E owns `generation_plans.v2.json` and its policy-facts fingerprint. They
+move atomically to the new `GenerationPolicy.revision`, catalog-definition
+contract, and pinned `llm-calling` revision; the old plan/task-family corpus
+is deleted.
 
 ## 4. Architecture and ownership
 
@@ -1533,8 +1533,8 @@ discriminant exists between commits.
 | A | API adapter, credentials and provider transcripts; no domain callers | S, L, T, U, V0 | API multi-turn/strict/tool adapter green only through `PROVIDER_API_PEER` |
 | D | all background owners and Chat orchestration call sites | L, C, A | complete portfolio uses GenerationService and its frozen tool mode |
 | W | FastAPI catalog/Chat routes, v3 draft reset, Web picker/consent/disclosure/history UX | S, D | service and Chromium contracts green |
-| E | `generation_plans.v2`, `tool_safety.v4`, unattended prompt-injection evals and Codex hosted receipt schema | S, T, D | `llm-eval` and Codex nightly evidence green |
-| V | final registry/digest/workflow reconciliation, cross-doc banners, residue audit and integration | all | sensitivity, `pr`, `full`, Codex nightly, and `release` evidence |
+| E | `generation_plans.v2`, `tool_safety.v4` and unattended prompt-injection evals | S, T, D | `llm-eval` green |
+| V | final registry/digest/workflow reconciliation, cross-doc banners, residue audit and integration | all | sensitivity, `pr`, `full`, `nightly`, and `release` evidence |
 
 Each lane owns and lands the proof-registry rows and fault patches for files it
 creates/deletes in the same commit; otherwise intermediate `changed` gates are
@@ -1592,7 +1592,7 @@ meaningful RED before GREEN.
 | Oracle/Dossier failure wire | `pytest:python/tests/kernel/test_oracle_wire_contract.py`; `pytest:python/tests/kernel/test_dossier_failure_wire_contract.py`; `vitest:apps/web/src/lib/oracle/oracleReadingWire.unit.test.ts`; `vitest:apps/web/src/lib/dossiers/dossierFailureContract.unit.test.ts` | current and preserved historical failure unions remain exact across backend/Web codecs |
 | LLM evaluation | `pytest:python/tests/evals/test_tool_safety_eval.py::test_generation_tool_plans_refuse_untrusted_escalation` | poisoned Library scope widening; Idea Web-egress attempt; zero mutation |
 | Hard-cut residue | `pytest:python/tests/kernel/test_generation_cutover_residue.py::test_only_final_generation_owners_remain` | deletion manifest; strict decoders/build/import graph; zero stale doc references |
-| External reality | `pytest:python/tests/hosted/nightly/test_codex_personal_generation.py` | subscription-authenticated Codex target set; bounded tool use; exact candidate SHA |
+| External reality | `deploy/hetzner/prove-codex-capacity.sh <candidate-sha>` at release time | subscription-authenticated Codex generation on the existing VPS at the exact candidate SHA; no hosted Codex canary exists |
 
 Each implementation lane registers the files and proof owners it changes under
 the existing priority risks below in the same commit, as section 8 requires.
@@ -1647,13 +1647,12 @@ RED:
   is supplemental and never replaces BASE unless the exact owner uses the
   policy-validated coherent-fault exception above. This keeps proof rewrites
   fail-closed while demonstrating that the retained privacy, revocation,
-  replay, authority, confinement, operation, evaluation, and hosted-evidence
-  assertions still detect their production defect.
+  replay, authority, confinement, operation, and evaluation assertions still
+  detect their production defect.
 - Base RED owns new catalog/selection, policy/capacity, route-neutral backend,
   ProviderApi qualification, ledger, API/UI, secret-isolation, provider-peer,
   and residue owners. Registered fault RED owns adaptations of existing replay,
-  authority, confinement, operation, evaluation, and hosted Codex evidence
-  owners.
+  authority, confinement, operation, and evaluation owners.
 - Register each exact fault patch, SHA-256, layer, expected assertion, and
   canonical node in `testdata/faults/manifest.json`:
 
@@ -1672,8 +1671,6 @@ RED:
   | `codex-temporary-confinement-bypass` | process: the confined temporary/workspace policy weakens |
   | `durable-codex-diagnostic-retention-bypass` | evidence: raw Codex diagnostics survive redaction |
   | `codex-egress-allowlist-bypass` | process: Codex egress escapes the reviewed allowlist |
-  | `codex-hosted-evidence-size-bound-bypass` | evidence: the hosted Codex artifact becomes unbounded |
-  | `hosted-semantic-evidence-bypass` | evidence: unsafe hosted semantics are accepted |
   | `durable-job-fence-bypass` | replay: an expired attempt settles a reclaimed attempt under the same worker identity |
   | `document-import-time-dimension-bypass` | process: a resource-limited child loses its exact time dimension |
   | `document-import-parser-dimension-bypass` | parser: a resource failure loses its typed dimension carrier |
@@ -1707,19 +1704,16 @@ REFACTOR:
 - switch all callers atomically;
 - delete superseded code, tests, schema, config, docs, and dependencies;
 - run `./scripts/test confidence`, then clean-commit `./scripts/test pr`;
-- run only real workflows: `./scripts/test full`, `codex-nightly`, and
-  `release` at the exact candidate SHA. `Capability.MIGRATIONS` is owned by
-  `pr`/`full`; it is not a standalone gate.
-- A sanctioned rerun of Codex hosted evidence is `workflow_dispatch` of
-  `codex-nightly` at the exact candidate ref. `diagnose` and lower-lane
+- run only real workflows: `./scripts/test full`, `./scripts/test nightly`,
+  and `release` at the exact candidate SHA. `Capability.MIGRATIONS` is owned
+  by `pr`/`full`; it is not a standalone gate.
+- Live Codex evidence is the release-time existing-VPS capacity
+  qualification at the exact candidate SHA. `diagnose` and lower-lane
   artifacts never satisfy promotion.
 
 Ordinary `pr` remains network-free with less than ten minutes intended added
 runtime inside its existing 90-minute ceiling; order is static/kernel, service,
-component, journey, sensitivity. Codex nightly keeps its bounded target-set
-artifact: at most 16 turns, 600 seconds per turn, 120 minutes total, 64 KiB,
-exact `source_sha` and revisions, bounded redacted summaries, and no prompt,
-private tool payload, or secret.
+component, journey, sensitivity.
 
 ProviderApi qualification is deliberately deterministic. A source-controlled
 manifest binds every pinned `api_model_catalog()` row fingerprint, exact
@@ -1811,7 +1805,7 @@ protected, spend-capped, exact-SHA provider canary before promotion.
 13. No accepted/uncertain call automatically repeats or changes selection.
 14. Codex subscription state and API credentials remain isolated. Secrets,
     continuations, prompts, and raw private tool payloads never enter catalog
-    APIs, hosted evidence bundles, logs, or the wrong process. Accepted bounded
+    APIs, logs, or the wrong process. Accepted bounded
     tool-result evidence remains only in its authorized product ledger.
 15. Before Chat confirmation, the picker discloses effective
     route/provider/model/reasoning, processor chain, privacy/retention, billing
@@ -1834,7 +1828,7 @@ protected, spend-capped, exact-SHA provider canary before promotion.
     exact-SHA evidence in its named gate; the deletion-manifest proof confirms
     superseded selection owners are absent.
 18. `changed`, `confidence`, `pr` (including migrations), `full` (including
-    `llm-eval`), the existing `codex-nightly`, and `release` are green at one
+    `llm-eval`), `nightly`, and `release` are green at one
     exact SHA. A required `not_run` is never acceptance. ProviderApi
     conformance is owned by the network-free pinned-library and
     controller-loopback proofs; no provider-hosted capability is claimed.
@@ -1962,6 +1956,12 @@ protected, spend-capped, exact-SHA provider canary before promotion.
   pinned-library drift without paid calls. It does not prove live provider
   quota or account entitlement; adding that launch-grade assurance requires a
   separately approved, spend-capped hosted capability.
+- No hosted Codex canary exists. The dedicated subscription runner, its GitHub
+  environment, and the `codex-nightly` lane were retired on 2026-09-05 without
+  ever passing. Live Codex proof is the ordinary `./scripts/test nightly` plus
+  the release-time existing-VPS capacity qualification at the shipped SHA. This
+  gives up scheduled subscription-authenticated coverage of every Chat target
+  rather than maintain a second enrolled account, encrypted host, and runner.
 
 ## 12. Authoritative references
 

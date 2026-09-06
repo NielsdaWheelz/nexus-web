@@ -492,8 +492,8 @@ there is no mixed old/new runtime.
     chat dead-letter finalization path.
 13. Priority-risk proofs use independent oracles and demonstrated-red evidence.
     Run focused static/kernel checks, real PostgreSQL service recovery, and one
-    real-worker Chromium journey. Report Codex-hosted, CI, deploy, recovery-drill,
-    and production evidence separately; unrun gates are not passed.
+    real-worker Chromium journey. Report CI, deploy, recovery-drill, and
+    production evidence separately; unrun gates are not passed.
 
 ## Supersession
 

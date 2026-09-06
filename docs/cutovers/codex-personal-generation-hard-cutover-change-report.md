@@ -11,6 +11,15 @@ Codex-only, Chat-only-tool, profile, or tool-free-background target.
 
 **Base:** `42f33dc4fc896d0e01287f68ef1d300d47440db1`
 
+**Update 2026-09-05:** the hosted Codex subscription canary (the `codex-nightly`
+controller workflow, the `Codex Personal Metadata Nightly` GitHub workflow that
+this candidate had renamed `Codex Personal Generation Nightly`, and the
+dedicated `nexus-codex-nightly` runner) was retired without ever passing; its
+server, runner, and GitHub environment no longer exist. The metadata cutover
+authority that recorded that canary is deleted as superseded, so this report
+carries the note. Live Codex proof is the ordinary `./scripts/test nightly` plus
+the release-time existing-VPS capacity qualification.
+
 ## Result
 
 The former source candidate had one product policy catalog, one Codex Personal UDS
@@ -145,9 +154,9 @@ representative sensitivity faults, followed serially by
 `./scripts/test changed --base 42f33dc4fc896d0e01287f68ef1d300d47440db1`,
 `./scripts/test confidence --base 42f33dc4fc896d0e01287f68ef1d300d47440db1`,
 `NEXUS_TEST_BASE_SHA=42f33dc4fc896d0e01287f68ef1d300d47440db1 ./scripts/test pr`,
-`./scripts/test full`, `./scripts/test release`, the ordinary
-`./scripts/test nightly`, and finally the protected `codex-nightly` lane. Final
-clean-SHA receipts are recorded here after the source candidate is committed.
+`./scripts/test full`, `./scripts/test release`, and the ordinary
+`./scripts/test nightly`. Final clean-SHA receipts are recorded here after the
+source candidate is committed.
 
 | Gate | Candidate result |
 |---|---|
@@ -159,13 +168,13 @@ clean-SHA receipts are recorded here after the source candidate is committed.
 | `./scripts/test full` | pending final clean-SHA run |
 | `./scripts/test release` | pending final clean-SHA run |
 | Ordinary `./scripts/test nightly` | pending final clean-SHA run |
-| Protected four-plan `codex-nightly` | pending enrolled-runner execution |
+| Hosted Codex subscription canary | retired 2026-09-05; live Codex proof is the ordinary `./scripts/test nightly` plus the existing-VPS capacity qualification |
 | Same-SHA capacity and deployed-host evidence | pending deployment |
 
 ## Production boundary
 
 Source completion does not equal production acceptance. All fourteen criteria
-in the owning cutover remain mandatory in one release. The protected runner
-must live-qualify the exact four model/effort pairs, and fresh capacity plus
-target-host evidence must bind to the shipped SHA. No local fake substitutes
-for those authorities.
+in the owning cutover remain mandatory in one release. Fresh capacity plus
+target-host evidence must bind to the shipped SHA; no hosted Codex canary
+exists to live-qualify model/effort pairs, and no local fake substitutes for
+those authorities.
