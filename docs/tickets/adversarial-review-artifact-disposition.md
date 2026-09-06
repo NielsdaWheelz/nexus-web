@@ -1,6 +1,6 @@
 # Decide the disposition of the untracked generation-cutover adversarial review
 
-**Status:** open (decision needed)
+**Status:** open (decision needed: archive or drop the copied review document)
 **Origin:** PR #203 takeover, 2026-09-06
 **Area:** documentation; stale worktree hygiene
 
@@ -47,25 +47,32 @@ Recommendation: option 2 unless the review's refuted-findings section is wanted
 as a record of objections that must not be re-raised, in which case option 1
 with the preamble.
 
-## Also stale in the same location
+## Cleanup done 2026-09-06
 
-Eight pre-existing PR #203 worktrees registered on the primary checkout sit
-at superseded commits (`git worktree list`, 2026-09-06):
+The eight stale PR #203 worktrees (fence-proof.A8JuPE, persisted-sensitivity-final,
+proof.KAnhH6, proof.pmOByV, review.cs8I1R, squash.xSZ5Gq, token-sensitivity,
+`.ol1W8I`) were removed with `git worktree remove --force`, and their local
+branches (`codex/pr203-final`, `codex/pr203-final-next`,
+`codex/pr203-storage-persisted-sensitivity-final`,
+`codex/pr203-storage-token-sensitivity`, `codex/pr203-adversarial-review`, and
+the stale local `codex/codex-personal-generation-hard-cutover`) were deleted.
+None of their compose stacks were running.
 
-| Worktree under `/private/var/tmp/` | Head |
-|---|---|
-| `nexus-pr203-fence-proof.A8JuPE/worktree` | d08fb205 (detached) |
-| `nexus-pr203-persisted-sensitivity-final` | 49fa8cd3 `codex/pr203-storage-persisted-sensitivity-final` |
-| `nexus-pr203-proof.KAnhH6/worktree` | 12014d36 (detached) |
-| `nexus-pr203-proof.pmOByV` | b37eded8 (detached) |
-| `nexus-pr203-review.cs8I1R` | 85c437b5 `codex/pr203-adversarial-review` (dirty, see above) |
-| `nexus-pr203-squash.xSZ5Gq/worktree` | f7e7601b `codex/pr203-final` |
-| `nexus-pr203-token-sensitivity` | 2e76624c `codex/pr203-storage-token-sensitivity` |
-| `nexus-pr203.ol1W8I` | 1588064b `codex/codex-personal-generation-hard-cutover` (stale checkout of the PR branch) |
+Before removal the review document was copied byte-for-byte (356056 bytes) to
+the session scratchpad:
+`/private/tmp/claude-501/-Users-nnandal-Documents-code-nexus-web/a69ceec4-21c1-41bc-95d5-ada831ac3735/scratchpad/generation-backends-hard-cutover-adversarial-review-2026-08-31.md`.
+That directory is temporary, so the archive-or-drop decision above has to be
+taken before it ages out; option 1 now means committing that copy with the
+dating preamble, option 2 means doing nothing.
 
-The two live worktrees (`nexus-pr203-takeover`, `nexus-pr203-strip`, both at
-b8f63d8f) are not stale. The same directory also holds unregistered leftovers
-(`nexus-pr203-*.bundle`, `nexus-pr203-focus-*.exit`/`.log`, `nexus-pr203-ci*`,
-`nexus-pr203-evidence`, a `nexus-pr203-vm-source` clone at 0c651e50, and two
-fault-proof zsh scripts). None were touched by the takeover. Removing them
-frees disk and avoids the macOS temp cleaner corrupting a worktree later.
+## Still left behind (not in the cleanup scope)
+
+- Eight orphaned docker volume sets (three volumes each) named after the removed
+  worktrees' compose projects: `nexus-test-bc251d451c20cf56`, `-b2f52bae1b4f1698`,
+  `-1043c54925a694f8`, `-d21763a88e51febb`, `-9cf883522650fd5f`,
+  `-f0819fe9ebe8235b`, `-0ebae997b6ec8811`, `-8dc93c1a8716431d`
+  (`docker volume ls -q | grep <id> | xargs docker volume rm`).
+- Unregistered files under `/private/var/tmp/`: five `nexus-pr203-*.bundle`
+  (59 MB each), the `nexus-pr203-vm-source` clone (119 MB, at 0c651e50),
+  `nexus-pr203-evidence`, `nexus-pr203-ci*`, `nexus-pr203-focus-*` logs, and
+  two fault-proof zsh scripts.
