@@ -880,4 +880,83 @@ describe("Generation selection browser contract", () => {
       within(dialog).getByText(/exact selection is still pending/u),
     ).toBeVisible();
   });
+
+  it("keeps the picker usable and requires an explicit replacement when only the seed is unavailable", async () => {
+    const { CATALOG_REVISION, GENERATION_CATALOG } =
+      requireCutoverSupport().fixtures;
+    const seedUnavailable = {
+      kind: "Ineligible",
+      code: "missing_chat_tool_qualification",
+      explanation: "GPT-5.6 Terra medium is not qualified for both current Chat tool plans.",
+    } as const;
+    const catalog = mutableRecord(
+      catalogWithTerraReasoningState(GENERATION_CATALOG, "medium", seedUnavailable),
+      "generation catalog",
+    );
+    mutableRecord(catalog.chat_seed, "generation catalog chat seed").state =
+      seedUnavailable;
+    const requests: ChatRunCreateRequest[] = [];
+    vi.stubGlobal(
+      "fetch",
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = requestPath(input);
+        if (path === "/api/llm-catalog") return json({ data: catalog });
+        if (path === "/api/chat-runs" && init?.method === "POST") {
+          requests.push(JSON.parse(String(init.body)) as ChatRunCreateRequest);
+          return json(admittedRun("ReadOnly"));
+        }
+        throw new Error(`Unexpected generation request: ${path}`);
+      },
+    );
+
+    render(withRenderEnvironment(<Composer />));
+    const input = await screen.findByRole("textbox", { name: "Ask anything" });
+    await userEvent.type(input, "Answer with a replacement model");
+    expect(
+      await screen.findByText(
+        "The exact selection is unavailable. Open the model picker to review the reason and choose a replacement; nothing was substituted.",
+      ),
+    ).toBeVisible();
+    const trigger = screen.getByRole("button", {
+      name: "Change model. Codex Personal, GPT-5.6 Terra, Medium, Codex subscription",
+    });
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+
+    await userEvent.click(trigger);
+    const dialog = await screen.findByRole("dialog", {
+      name: "Model and reasoning",
+    });
+    expect(
+      within(dialog).getByRole("radio", { name: /^Medium/u }),
+    ).toHaveAttribute("aria-disabled", "true");
+    expect(
+      within(dialog).getByRole("option", { name: "Claude Sonnet 4.5, Active, Ready" }),
+    ).not.toHaveAttribute("aria-disabled", "true");
+    expect(requests).toHaveLength(0);
+    await userEvent.type(
+      within(dialog).getByRole("combobox", { name: "Search models" }),
+      "claude",
+    );
+    await userEvent.keyboard("{Enter}");
+
+    expect(
+      await screen.findByRole("button", {
+        name: "Change model. Anthropic API, Claude Sonnet 4.5, High, Metered API",
+      }),
+    ).toBeVisible();
+    const send = screen.getByRole("button", { name: "Send message" });
+    await waitFor(() => expect(send).toBeEnabled());
+    await userEvent.click(send);
+    await waitFor(() => expect(requests).toHaveLength(1));
+    expect(requests[0]).toMatchObject({
+      catalog_definition_revision: CATALOG_REVISION,
+      selection: {
+        route: "ProviderApi",
+        model_ref: "anthropic:claude-sonnet-4-5",
+        reasoning: "high",
+      },
+      tool_authority: "ReadOnly",
+    });
+  });
+
 });
