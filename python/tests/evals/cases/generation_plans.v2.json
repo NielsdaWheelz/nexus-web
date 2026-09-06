@@ -7,7 +7,7 @@
   "consumer_pins": {
     "policy_revision": "generation-policy.v2.0d24533c6d6185d1a1a0d28b654ec8cdfee1fc4f48097b31769bc50e11d4f789",
     "policy_facts_fingerprint": "bba771639692232e1639d554b9ccbcbbdaa081f3e93e88db816feebfb79a08f5",
-    "provider_runtime_revision": "b4e05e030b0f2fe8f36f479e8bec320bdc797e20",
+    "provider_runtime_revision": "1353881d80ffeee916b78e163b5620fc967d09bd",
     "llm_tools_revision": "8df458a199703120005296ae12f997b39d208fed",
     "agent_backend_contract_revision": "provider-runtime.agent-model-catalog.v1",
     "codex_sdk_version": "0.144.4",
