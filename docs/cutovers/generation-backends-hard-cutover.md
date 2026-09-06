@@ -1679,10 +1679,10 @@ RED:
   owners `test_generation_selection_wire_contract.py`,
   `test_oracle_wire_contract.py`, `test_dossier_failure_wire_contract.py`,
   `test_generation_operation_adapters.py` (its fault names the whole file), and
-  `test_generation_capacity_pause.py` (its module-level `_SHIPPED_DAWN_SELECTION`
-  and the `_runtime` default evaluate cutover names outside the
-  `_CUTOVER_PRESENT` guard, so BASE fails at collection, not at a behavioral
-  assertion). Their red-before-green evidence is the per-proof RED recorded in
+  `test_generation_capacity_pause.py` (a whole-file owner with no exact
+  canonical node; its nodes reach their base assertion, so registering one
+  canonical node would gate it). Their red-before-green evidence is the
+  per-proof RED recorded in
   the work report, not a controller verdict. `test_generation_catalog.py`,
   `test_generation_backend_runtime.py`, and `test_generation_chat_api.py`
   register one exact canonical node beside the whole-file owner, so `pr` gates
