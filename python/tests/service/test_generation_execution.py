@@ -46,7 +46,7 @@ if TYPE_CHECKING or _CUTOVER_PRESENT:
     from nexus.db.models import LLMModelTurn, LLMModelTurnContinuation
     from nexus.db.session import create_session_factory
     from nexus.jobs.queue import JobExecutionContext, claim_job, enqueue_job, lock_job
-    from nexus.schemas.presence import absent, present
+    from nexus.schemas.presence import Present, absent, present
     from nexus.services import generation_policy
     from nexus.services.codex_generation_contract import NormalizedFailureCode
     from nexus.services.generation_backend import (
@@ -491,7 +491,7 @@ async def _prove_foreign_provider_failure_is_refused(engine: Engine) -> None:
                 codex=_UnusedCodex(),
                 provider=ProviderGenerationBackend(_ForeignFailureProviderRuntime()),
                 codex_projection=_UnusedCodexProjection(),
-                provider_tools=_UnusedProviderTools(),
+                provider_tools=_ToolFreeProviderTools(),
             )
         ),
         continuation_cipher=GenerationContinuationCipher(b"k" * 32),
@@ -689,6 +689,10 @@ class _UnusedCodexProjection:
         )
 
 
-class _UnusedProviderTools:
-    def resolve(self, spec: GenerationSpec) -> ProviderModelTools:
-        raise AssertionError(f"NoModelTools generation {spec.operation!r} resolved provider tools")
+class _ToolFreeProviderTools:
+    """The production port answers every spec; a NoModelTools admission publishes no tools."""
+
+    def resolve(self, spec: GenerationSpec) -> ProviderModelTools | None:
+        if isinstance(spec.model_tool_plan_snapshot, Present):
+            raise AssertionError(f"tool-free {spec.operation!r} admission froze a model tool plan")
+        return None
