@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 from collections.abc import Mapping
 from contextlib import AsyncExitStack
@@ -185,7 +186,19 @@ async def _prove_public_mcp_mount_gate(engine: Engine) -> None:
         transport_deadline_at=stale + timedelta(seconds=120),
     )
     bearer = issued.token.get_secret_value()
-    tampered = bearer[:-1] + ("A" if bearer[-1] != "A" else "B")
+    # Tamper the signed payload, not the signature's last base64url character:
+    # that character carries two significant bits, so a lenient decoder can
+    # yield byte-identical signature bytes and the token still verifies.
+    header, payload, signature = bearer.split(".")
+    original_claims = base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4))
+    tampered_claims = json.dumps(
+        {**json.loads(original_claims), "jti": str(uuid4())},
+        separators=(",", ":"),
+    ).encode()
+    assert tampered_claims != original_claims
+    tampered = ".".join(
+        (header, base64.urlsafe_b64encode(tampered_claims).decode().rstrip("="), signature)
+    )
     authority = AgentToolAuthority.from_generation_tool_executor(
         executor=executor,
         registry=registry,
