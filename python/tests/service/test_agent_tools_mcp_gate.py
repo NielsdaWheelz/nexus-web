@@ -208,10 +208,14 @@ async def _prove_public_mcp_mount_gate(engine: Engine) -> None:
         await stack.enter_async_context(app.router.lifespan_context(app))
 
         async def source(address: str) -> httpx.AsyncClient:
+            # Production reaches this mount through Caddy's single private hop,
+            # so the ASGI peer is that hop and the one X-Forwarded-For names the
+            # source the rate gate keys on.
             return await stack.enter_async_context(
                 httpx.AsyncClient(
-                    transport=httpx.ASGITransport(app=app, client=(address, 40000)),
+                    transport=httpx.ASGITransport(app=app, client=("10.0.0.2", 40000)),
                     base_url=_MCP_HOST,
+                    headers={"X-Forwarded-For": address},
                     timeout=5,
                 )
             )
