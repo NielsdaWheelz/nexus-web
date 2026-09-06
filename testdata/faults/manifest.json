@@ -380,7 +380,7 @@
       "proofs": [
         "pytest:python/tests/service/test_agent_tools_mcp_gate.py::test_public_mcp_mount_admits_only_a_live_bearer_on_the_exact_protocol"
       ],
-      "expected_failure": "an unauthorized bearer crossed the public MCP grant gate"
+      "expected_failure": "an unauthorized grant crossed the public MCP mount"
     },
     {
       "id": "llm-write-tool-authorization-bypass",

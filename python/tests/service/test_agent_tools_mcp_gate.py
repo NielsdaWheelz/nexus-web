@@ -222,102 +222,112 @@ async def _prove_public_mcp_mount_gate(engine: Engine) -> None:
 
         live = await source("203.0.113.10")
         initialized = await _post(live, _initialize(MCP_PROTOCOL_VERSION), bearer=bearer)
-        assert initialized.status_code == 200, initialized.text
-        assert initialized.json()["result"]["protocolVersion"] == MCP_PROTOCOL_VERSION
-        assert initialized.json()["result"]["serverInfo"]["name"] == "nexus"
         listed = await _post(live, _TOOLS_LIST, bearer=bearer, headers=versioned)
-        assert listed.status_code == 200, listed.text
-        published = [tool["name"] for tool in listed.json()["result"]["tools"]]
         # The model calls the library-owned wire alias it was shown, never the
         # canonical dotted id.
-        search_wire_name = next(name for name in published if name == "nexus__search")
         called = await _post(
             live,
-            _tools_call(search_wire_name, "gate proof"),
+            _tools_call("nexus__search", "gate proof"),
             bearer=bearer,
             headers=versioned,
         )
-        assert called.status_code == 200, called.text
-        assert called.json()["result"]["isError"] is False, called.text
-        receipt = json.loads(called.json()["result"]["content"][0]["text"])
-        assert receipt["type"] == "Success", receipt
-        assert invocations == ["gate proof"]
         with factory() as db:
-            positions = read_tool_positions(db, generation_id=generation_id)
-        assert [
-            (position.path, position.transport_kind, position.replay_status)
-            for position in positions
-        ] == [("generation/1/tool/1", "CodexMcp", "Completed")]
+            positions_after_call = read_tool_positions(db, generation_id=generation_id)
 
         foreign_response = await _post(
             live,
             _initialize(MCP_PROTOCOL_VERSION),
             bearer=foreign.token.get_secret_value(),
         )
-        assert foreign_response.status_code == 401, (
-            "an unauthorized bearer crossed the public MCP grant gate: a signed grant "
-            f"with no mounted authority received HTTP {foreign_response.status_code}"
-        )
         tampered_response = await _post(live, _initialize(MCP_PROTOCOL_VERSION), bearer=tampered)
-        assert tampered_response.status_code == 401, tampered_response.status_code
         expired_response = await _post(
             live,
             _initialize(MCP_PROTOCOL_VERSION),
             bearer=expired.token.get_secret_value(),
         )
-        assert expired_response.status_code == 401, expired_response.status_code
         anonymous = await _post(live, _initialize(MCP_PROTOCOL_VERSION), bearer=None)
-        assert anonymous.status_code == 401, anonymous.status_code
-        assert policy_violations == []
 
         wrong_version = await _post(live, _initialize("2025-03-26"), bearer=bearer)
-        assert wrong_version.status_code == 400, wrong_version.status_code
         unversioned = await _post(live, _TOOLS_LIST, bearer=bearer)
-        assert unversioned.status_code == 400, unversioned.status_code
         sessioned = await _post(
             live,
             _TOOLS_LIST,
             bearer=bearer,
             headers={**versioned, "Mcp-Session-Id": "client-chosen-session"},
         )
-        assert sessioned.status_code == 400, sessioned.status_code
         oversized = await _post(
             live,
             b"{" + b" " * MAX_MCP_REQUEST_BODY_BYTES + b"}",
             bearer=bearer,
             headers=versioned,
         )
-        assert oversized.status_code == 413, oversized.status_code
 
         burst = await source("203.0.113.20")
-        statuses = [
+        burst_statuses = [
             (await _post(burst, b"{}", bearer="not-a-grant")).status_code
             for _ in range(MCP_SOURCE_RATE_BURST + 1)
         ]
-        assert statuses == [401] * MCP_SOURCE_RATE_BURST + [429], statuses[-3:]
-
         # Three authenticated requests already landed for this grant; spread the
         # remainder across sources so only the per-grant window can trip.
         alternating = (await source("203.0.113.30"), await source("203.0.113.31"))
-        for index in range(MCP_GRANT_RATE_BURST - 3):
-            admitted = await _post(
-                alternating[index % 2],
-                _initialize(MCP_PROTOCOL_VERSION),
-                bearer=bearer,
-            )
-            assert admitted.status_code == 200, (index, admitted.status_code)
+        admitted_statuses = [
+            (
+                await _post(
+                    alternating[index % 2],
+                    _initialize(MCP_PROTOCOL_VERSION),
+                    bearer=bearer,
+                )
+            ).status_code
+            for index in range(MCP_GRANT_RATE_BURST - 3)
+        ]
         throttled = await _post(
             await source("203.0.113.32"),
             _initialize(MCP_PROTOCOL_VERSION),
             bearer=bearer,
         )
-        assert throttled.status_code == 429, throttled.status_code
-
     with factory() as db:
-        assert len(read_tool_positions(db, generation_id=generation_id)) == 1
-    assert invocations == ["gate proof"]
+        final_positions = read_tool_positions(db, generation_id=generation_id)
     authority.close()
     registry.unbind_operations((operation,))
+
+    # Every assertion runs after the streamable-HTTP task group has closed, so a
+    # failure surfaces as one top-level AssertionError rather than an
+    # ExceptionGroup wrapped by the transport's lifespan.
+    assert initialized.status_code == 200, initialized.text
+    assert initialized.json()["result"]["protocolVersion"] == MCP_PROTOCOL_VERSION
+    assert initialized.json()["result"]["serverInfo"]["name"] == "nexus"
+    assert listed.status_code == 200, listed.text
+    published = [tool["name"] for tool in listed.json()["result"]["tools"]]
+    assert "nexus__search" in published, published
+    assert called.status_code == 200, called.text
+    assert called.json()["result"]["isError"] is False, called.text
+    receipt = json.loads(called.json()["result"]["content"][0]["text"])
+    assert receipt["type"] == "Success", receipt
+    assert [
+        (position.path, position.transport_kind, position.replay_status)
+        for position in positions_after_call
+    ] == [("generation/1/tool/1", "CodexMcp", "Completed")]
+
+    assert foreign_response.status_code == 401, (
+        "an unauthorized grant crossed the public MCP mount: a signed grant with no "
+        f"mounted authority received HTTP {foreign_response.status_code}"
+    )
+    assert tampered_response.status_code == 401, tampered_response.status_code
+    assert expired_response.status_code == 401, expired_response.status_code
+    assert anonymous.status_code == 401, anonymous.status_code
+    assert policy_violations == []
+
+    assert wrong_version.status_code == 400, wrong_version.status_code
+    assert unversioned.status_code == 400, unversioned.status_code
+    assert sessioned.status_code == 400, sessioned.status_code
+    assert oversized.status_code == 413, oversized.status_code
+
+    assert burst_statuses == [401] * MCP_SOURCE_RATE_BURST + [429], burst_statuses[-3:]
+    assert admitted_statuses == [200] * (MCP_GRANT_RATE_BURST - 3), admitted_statuses
+    assert throttled.status_code == 429, throttled.status_code
+
+    assert len(final_positions) == 1
+    assert invocations == ["gate proof"]
 
 
 async def _post(
