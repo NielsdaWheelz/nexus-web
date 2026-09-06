@@ -228,6 +228,7 @@ export default function ChatComposer({
     toolAuthority,
     setToolAuthority,
     retiredDraftDiscarded,
+    restored,
     activeDraftKey,
     operation,
     reconciling,
@@ -597,7 +598,10 @@ export default function ChatComposer({
   const projectionReloadRequestId =
     localProjectionReloadRequestId ?? inheritedProjectionReloadRequestId;
   const projectionReloadRequired = projectionReloadRequestId !== null;
-  const composerDisabled = sending || reconciling || projectionReloadRequired;
+  // Not editable before the draft is restored: input typed into the server
+  // markup before hydration commits is adopted silently and then wiped.
+  const composerDisabled =
+    sending || reconciling || projectionReloadRequired || !restored;
   const sendDisabled =
     sending ||
     sendCapability.kind !== "Available" ||

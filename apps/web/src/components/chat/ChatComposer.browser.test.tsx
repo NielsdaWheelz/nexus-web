@@ -1,7 +1,9 @@
 /// <reference types="vite/client" />
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ComponentProps } from "react";
+import { hydrateRoot } from "react-dom/client";
+import { renderToString } from "react-dom/server";
 import { cdp, page, userEvent } from "vitest/browser";
 import {
   afterEach,
@@ -234,6 +236,33 @@ describe("ChatComposer browser contract", () => {
     await waitFor(() =>
       expect(restored.value).toBe("draft survives hydration"),
     );
+  });
+
+  it("keeps the server-rendered composer inert until its draft is restored, so hydration drops no keystroke", async () => {
+    installBff([]);
+    const composer = () =>
+      withRenderEnvironment(
+        <Composer draftKey={pathKey("00000000-0000-4000-8000-00000000000c")} />,
+      );
+    const container = document.createElement("div");
+    container.innerHTML = renderToString(composer());
+    document.body.append(container);
+    const textbox = within(container).getByRole<HTMLTextAreaElement>("textbox", {
+      name: "Ask anything",
+    });
+    // A keystroke into the server markup never reaches React: hydration adopts
+    // the already-changed value silently and the next update wipes it.
+    expect(textbox).toBeDisabled();
+
+    const root = hydrateRoot(container, composer());
+    try {
+      await waitFor(() => expect(textbox).toBeEnabled());
+      await userEvent.type(textbox, "Typed once editable");
+      expect(textbox).toHaveValue("Typed once editable");
+    } finally {
+      root.unmount();
+      container.remove();
+    }
   });
 
   it("keeps a locked reconciliation intact when a re-key and a new initialContent land in one commit", async () => {

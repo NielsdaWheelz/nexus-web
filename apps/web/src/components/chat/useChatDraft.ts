@@ -522,6 +522,11 @@ interface UseChatDraft {
   toolAuthority: "ReadOnly" | "AdditiveWrites";
   setToolAuthority: (value: "ReadOnly" | "AdditiveWrites") => void;
   retiredDraftDiscarded: boolean;
+  /** False until the persisted record for the active key has been read: on
+   *  the server render and the hydration render. The composer stays
+   *  non-editable until then, because hydration adopts a textarea value typed
+   *  before it commits without firing a change and the next update wipes it. */
+  restored: boolean;
   /** The serialized storage key — a stable string for effect dependencies. */
   activeDraftKey: string;
   operation: ChatSendOperation;
@@ -593,11 +598,13 @@ export function useChatDraft({
         },
   );
   let record = state.record;
+  let restored = state.restored;
   if (state.storageKey !== storageKey) {
     const loaded = hydrated
       ? loadRecord(storageKey)
       : { record: EMPTY_DRAFT_RECORD, retiredDraftDiscarded: false };
     record = loaded.record;
+    restored = hydrated;
     setState({
       storageKey,
       record,
@@ -608,6 +615,7 @@ export function useChatDraft({
   } else if (hydrated && !state.restored) {
     const loaded = loadRecord(storageKey);
     record = loaded.record;
+    restored = true;
     setState({
       storageKey,
       record,
@@ -698,6 +706,7 @@ export function useChatDraft({
     toolAuthority: record.toolAuthority,
     setToolAuthority,
     retiredDraftDiscarded: state.retiredDraftDiscarded,
+    restored,
     activeDraftKey: storageKey,
     operation: record.operation,
     reconciling: record.operation.kind === "ReconcileRequired",
