@@ -141,6 +141,9 @@ from nexus.services.llm_ledger import (
     start_generation_in_current_transaction,
     start_model_turn_in_current_transaction,
 )
+from nexus.services.provider_generation_contract import (
+    provider_turn_continuation_fingerprint,
+)
 
 type LockedDispatch = Callable[[Session], JobRow | None]
 type EncodeTerminal = Callable[[BackendTerminal], "EncodedGenerationTerminal"]
@@ -961,7 +964,9 @@ def _read_replay(
                 target_fingerprint=context.target_fingerprint,
                 codec_id=context.codec_id,
                 policy_revision=context.policy_revision,
-                canonical_fingerprint=hashlib.sha256(pending.canonical_continuation).hexdigest(),
+                canonical_fingerprint=provider_turn_continuation_fingerprint(
+                    pending.canonical_continuation
+                ),
             ),
             canonical_bytes=pending.canonical_continuation,
         )
