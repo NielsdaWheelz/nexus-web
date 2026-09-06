@@ -294,12 +294,13 @@ async def _prove_frozen_plan_is_transport_neutral_and_fenced(engine: Engine) -> 
     # against the live-write cap, so the authority refuses before any effect.
     write_operation = compose_available_product_tool_runtime().operations["ChatReadAdditiveWrite"]
     write_generation_id = uuid4()
+    write_owner = LlmCallOwner(kind="chat_run", id=uuid4())
     with factory() as db:
         start_generation_in_current_transaction(
             db,
             GenerationStart(
                 generation_id=write_generation_id,
-                owner=LlmCallOwner(kind="chat_run", id=uuid4()),
+                owner=write_owner,
                 spec=generation_spec_document(
                     _generation_spec(
                         operation=write_operation,
@@ -315,7 +316,7 @@ async def _prove_frozen_plan_is_transport_neutral_and_fenced(engine: Engine) -> 
     unowned_write_executor = compose_generation_tool_executor(
         session_factory=factory,
         user_id=user_id,
-        owner=LlmCallOwner(kind="chat_run", id=uuid4()),
+        owner=write_owner,
         generation_id=write_generation_id,
         job_context=job_context,
         operation=write_operation,
