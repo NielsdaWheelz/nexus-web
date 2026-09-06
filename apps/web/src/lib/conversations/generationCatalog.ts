@@ -425,7 +425,10 @@ function decodeProcessorChain(raw: unknown, name: string): ProcessorChain {
   return { processors };
 }
 
-function decodePresentation(raw: unknown, name: string): SelectionPresentation {
+export function decodeSelectionPresentation(
+  raw: unknown,
+  name: string,
+): SelectionPresentation {
   const value = expectExactRecord(
     raw,
     [
@@ -681,7 +684,7 @@ function decodeGenerationCatalog(raw: unknown): GenerationCatalog {
         seed.state,
         "generation catalog.chat_seed.state",
       ),
-      presentation: decodePresentation(
+      presentation: decodeSelectionPresentation(
         seed.presentation,
         "generation catalog.chat_seed.presentation",
       ),
@@ -720,7 +723,7 @@ export function decodeRunSelectionOut(raw: unknown, name: string): RunSelectionO
       value.source_catalog_definition_revision,
       `${name}.source_catalog_definition_revision`,
     ),
-    display_at_dispatch: decodePresentation(
+    display_at_dispatch: decodeSelectionPresentation(
       value.display_at_dispatch,
       `${name}.display_at_dispatch`,
     ),

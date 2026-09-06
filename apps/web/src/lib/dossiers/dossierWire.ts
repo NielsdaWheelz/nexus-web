@@ -9,7 +9,7 @@ import { decodePresence, type Presence } from "@/lib/api/presence";
 import { decodeDurableExecution } from "@/lib/api/executionAdvisory";
 import {
   decodeGenerationSelectionSpec,
-  type SelectionPresentation,
+  decodeSelectionPresentation,
 } from "@/lib/conversations/generationCatalog";
 import {
   decodeCitationOut,
@@ -684,67 +684,6 @@ function decodeNonemptyString(value: unknown, field: string): string {
   return text;
 }
 
-function decodeSelectionPresentation(raw: unknown): SelectionPresentation {
-  const presentation = expectExactRecord(
-    raw,
-    [
-      "route_label",
-      "model_label",
-      "reasoning_label",
-      "billing",
-      "privacy",
-      "processor_chain",
-    ],
-    "selection presentation",
-  );
-  const billing = expectExactRecord(
-    presentation.billing,
-    ["kind", "label"],
-    "billing disclosure",
-  );
-  let billingDisclosure: SelectionPresentation["billing"];
-  if (billing.kind === "Subscription" && billing.label === "Codex subscription") {
-    billingDisclosure = { kind: "Subscription", label: "Codex subscription" };
-  } else if (billing.kind === "MeteredApi" && billing.label === "Metered API") {
-    billingDisclosure = { kind: "MeteredApi", label: "Metered API" };
-  } else {
-    fail("billing must be a supported disclosure");
-  }
-  const privacy = expectExactRecord(
-    presentation.privacy,
-    ["summary", "retention", "training"],
-    "privacy disclosure",
-  );
-  const chain = expectExactRecord(
-    presentation.processor_chain,
-    ["processors"],
-    "processor chain",
-  );
-  const processors = chain.processors;
-  if (!Array.isArray(processors) || processors.length === 0 || processors.length > 4) {
-    fail("processor_chain.processors must contain one to four rows");
-  }
-  return {
-    route_label: decodeNonemptyString(presentation.route_label, "route_label"),
-    model_label: decodeNonemptyString(presentation.model_label, "model_label"),
-    reasoning_label: decodeNonemptyString(
-      presentation.reasoning_label,
-      "reasoning_label",
-    ),
-    billing: billingDisclosure,
-    privacy: {
-      summary: decodeNonemptyString(privacy.summary, "privacy.summary"),
-      retention: decodeNonemptyString(privacy.retention, "privacy.retention"),
-      training: decodeNonemptyString(privacy.training, "privacy.training"),
-    },
-    processor_chain: {
-      processors: processors.map((processor, index) =>
-        decodeNonemptyString(processor, `processors[${index}]`),
-      ),
-    },
-  };
-}
-
 function decodeToolPlan(raw: unknown): DossierBuildToolPlan {
   const discriminated = expectRecord(raw, "tool plan");
   switch (discriminated.kind) {
@@ -786,7 +725,10 @@ function decodeAdmittedGeneration(raw: unknown): DossierAdmittedGeneration {
       generation.selection,
       "admitted generation selection",
     ),
-    displayAtDispatch: decodeSelectionPresentation(generation.display_at_dispatch),
+    displayAtDispatch: decodeSelectionPresentation(
+      generation.display_at_dispatch,
+      "admitted generation display_at_dispatch",
+    ),
     toolPlan: decodeToolPlan(generation.tool_plan),
     toolPositions,
   };
