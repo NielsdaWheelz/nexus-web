@@ -397,7 +397,9 @@ def test_v3_client_preflights_and_classifies_only_strict_incremental_streams() -
             assert len(tool_free_admissions) == 1, (
                 "tool-free generation was dispatched before its durable admission binding"
             )
-            assert first_frame_sent.is_set()
+            # The peer flags frame zero after its write lands, so the client can
+            # observe the frame first; wait for the flag instead of sampling it.
+            assert first_frame_sent.wait(2), "peer never reported sending frame zero"
             assert not release_stream.is_set(), "client buffered instead of yielding frame zero"
             release_stream.set()
             remainder = [frame async for frame in stream]
