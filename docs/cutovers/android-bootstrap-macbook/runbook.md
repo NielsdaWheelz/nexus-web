@@ -11,14 +11,17 @@ stronger evidence than the hosted emulator the workflow would have booted.
 The production deploy gate reads only the published release's shape and
 compatibility (manifest fields, APK digests, player-protocol identity against
 the deploy checkout's corpus), so a lane run on operator hardware satisfies it
-exactly as a hosted run would. The player-protocol corpus is unchanged between
-the tag (`137f06bb`: `beb88775` plus two commits on branch
-`release/android-v0.2.14-tag` — two instrumentation tests renamed so the
-release-mode test APK dexes below DEX 040, and the offline-reading subsystem's
-API-34 floor made visible to `lintRelease`; both surfaced only because this is
-the first venue to run the lane's release Gradle tasks) and the deploy
-candidate (`f64652e1`); the manifest built at the tag validates against the
-deploy. Those two commits still need to land on `main` by pull request.
+exactly as a hosted run would. The tag now sits on the deploy candidate itself:
+`f64652e1` (`main`) plus one commit on branch `release/android-v0.2.14-tag`
+that makes the offline-reading subsystem's API-34 floor visible to
+`lintRelease` (nine NewApi errors; it surfaced only because this is the first
+venue to run the lane's release Gradle tasks). The tag was moved off
+`beb88775`, whose PR gate had failed at merge (the repository has no branch
+protection) and whose service suite is broken in ways `main` fixed later; the
+release-mode test APK naming fix it also needed is already on `main`. The
+player-protocol corpus is therefore identical by construction, and the APK and
+the web deploy come from the same commit. The one lint commit still needs to
+land on `main` by pull request.
 
 ## Where the lane actually runs
 
