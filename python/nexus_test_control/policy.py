@@ -198,7 +198,7 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
             'merge_timestamp="$(git show --no-patch --format=%cI "$EXPECTED_HEAD_SHA")"',
             'GIT_COMMITTER_DATE="$merge_timestamp"',
             "git rev-list --parents -n 1 HEAD",
-            "run: ./scripts/test pr",
+            'run: ./scripts/test changed --base "$NEXUS_TEST_BASE_SHA"',
             "if: github.event_name == 'push'",
             "run: ./scripts/test full",
             "if: always()",

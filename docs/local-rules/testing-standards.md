@@ -446,7 +446,9 @@ host.
 
 ## 8. Repository capability contract
 
-`./scripts/test` is the sole public test and verification API. `scripts/test`
+`./scripts/test` is the sole public test and verification API. GitHub's
+`pull_request` job runs `./scripts/test changed --base <base sha>`; the `main`
+push runs `./scripts/test full`, which is the release proof. `scripts/test`
 is a thin locked launcher; `scripts/agency_verify.sh` is a thin `confidence`
 adapter. The Makefile deliberately has no test/check/verify aliases.
 
@@ -454,7 +456,7 @@ adapter. The Makefile deliberately has no test/check/verify aliases.
 |---|---|
 | `./scripts/test changed [--base REF] [PATH_OR_NODE ...]` | changed static paths plus selected affected proof |
 | `./scripts/test confidence` | complete policy/static/kernel plus affected service/component proof |
-| `./scripts/test pr` | deterministic blocking PR portfolio plus same-run sensitivity |
+| `./scripts/test pr` | deterministic blocking PR portfolio plus same-run sensitivity; the local pre-merge command |
 | `./scripts/test full` | complete deterministic local portfolio |
 | `./scripts/test nightly` | `full` plus randomized/property audit and Android device proof |
 | `./scripts/test release` | `full` plus Android device proof, signed Android release proof, and exact staged artifacts |

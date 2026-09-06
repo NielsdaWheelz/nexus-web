@@ -307,14 +307,14 @@ def test_ci_routes_dispatch_only_to_exact_pr_recovery_and_keeps_full_on_main_pus
 
     assert "permissions: {}" in workflow
     assert "pull-requests: read" in workflow
-    assert workflow.count("run: ./scripts/test pr") == 1
+    assert workflow.count('run: ./scripts/test changed --base "$NEXUS_TEST_BASE_SHA"') == 1
     assert workflow.count("run: ./scripts/test full") == 1
     assert "github.event_name != 'workflow_dispatch'" not in workflow
     assert re.search(
         r"(?ms)^  pr:\n.*?^    if: github\.event_name == 'pull_request' "
         r"\|\| github\.event_name == 'workflow_dispatch'$"
-        r".*?^      - name: Run the deterministic PR gate\n"
-        r"        run: \./scripts/test pr$",
+        r".*?^      - name: Run the changed proof\n"
+        r'        run: \./scripts/test changed --base "\$NEXUS_TEST_BASE_SHA"$',
         workflow,
     )
     assert re.search(

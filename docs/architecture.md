@@ -2169,7 +2169,8 @@ test allowlists. Its canonical run environment also owns the external-protocol
 loopback endpoint, proxy, static DNS fixture, and Podcast fixture credentials
 for both in-process service proof and spawned product processes.
 
-**CI**: `.github/workflows/ci.yml` invokes only `./scripts/test pr` and retains
+**CI**: `.github/workflows/ci.yml` invokes `./scripts/test changed --base <base sha>`
+for pull requests and `./scripts/test full` for pushes to `main`, and retains
 the same-run summary even on failure. Protected manual/scheduled workflows own
 `nightly` and `release`; subscription-backed generation and signed release
 proof never run in ordinary PR CI.

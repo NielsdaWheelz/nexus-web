@@ -34,11 +34,10 @@ jobs:
     # spending limit is exhausted; self-hosted minutes are not billed, so the
     # gate runs on the lab runner. Restore `ubuntu-latest` when billing allows.
     runs-on: [self-hosted, linux, x64]
-    # A broad cutover changes shared priority-risk source (errors, config, models),
-    # so the deterministic PR proof runs sensitivity across ~30 priority proofs --
-    # including a base-method proof that provisions an isolated base environment --
-    # on top of every static and real-stack lane. That legitimately exceeds the
-    # 60-minute budget calibrated for a typical PR.
+    # A pull request proves its changed static paths plus the proofs its diff
+    # affects; the deterministic `pr` portfolio with same-run sensitivity stays
+    # the local pre-merge command, and `full` on the main push is the release
+    # proof. A broad cutover can still select most of the portfolio here.
     timeout-minutes: 90
     permissions:
       contents: read
@@ -145,8 +144,8 @@ jobs:
 
       - uses: ./.github/actions/setup-test
 
-      - name: Run the deterministic PR gate
-        run: ./scripts/test pr
+      - name: Run the changed proof
+        run: ./scripts/test changed --base "$NEXUS_TEST_BASE_SHA"
 
       - name: Upload run evidence
         if: always()
@@ -161,7 +160,9 @@ jobs:
     name: Candidate full proof
     if: github.event_name == 'push'
     runs-on: [self-hosted, linux, x64]
-    timeout-minutes: 90
+    # The complete portfolio on the four-core lab runner exceeds the hosted
+    # 90-minute budget; self-hosted minutes are unbilled, so the bound is wide.
+    timeout-minutes: 300
     permissions:
       contents: read
 

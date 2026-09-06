@@ -217,7 +217,7 @@ def _minimal_repository(root: Path) -> None:
         'merge_timestamp="$(git show --no-patch --format=%cI "$EXPECTED_HEAD_SHA")"\n'
         'GIT_COMMITTER_DATE="$merge_timestamp"\n'
         "git rev-list --parents -n 1 HEAD\n"
-        "run: ./scripts/test pr\n"
+        'run: ./scripts/test changed --base "$NEXUS_TEST_BASE_SHA"\n'
         "if: github.event_name == 'push'\n"
         "run: ./scripts/test full\n"
         "if: always()\n",
