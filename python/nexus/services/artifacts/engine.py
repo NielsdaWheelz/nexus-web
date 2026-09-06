@@ -160,6 +160,7 @@ from nexus.services.llm_execution import (
 from nexus.services.llm_ledger import (
     LlmCallOwner,
     lock_generation_owner_in_current_transaction,
+    read_latest_generation_for_owner,
 )
 from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.resource_graph.citations import replace_citations_for_output
@@ -170,6 +171,7 @@ from nexus.services.structured_synthesis import (
     build_synthesis_intent,
     decode_structured_synthesis,
 )
+from nexus.services.tool_authority import read_tool_positions
 from nexus.services.tool_runtime.composition import compose_product_tool_runtime
 from nexus.services.tool_runtime.execution import reconcile_uncertain_tool_completion
 
@@ -406,6 +408,14 @@ def reconcile_uncertain_build(
 
 
 @dataclass(frozen=True, slots=True)
+class DossierBuildAdmittedGeneration:
+    """The build's latest ledger generation: frozen spec plus journaled tool positions."""
+
+    spec: GenerationSpec
+    tool_positions: int
+
+
+@dataclass(frozen=True, slots=True)
 class DossierActiveBuildView:
     build_id: UUID
     handle: str
@@ -413,6 +423,8 @@ class DossierActiveBuildView:
     instruction: str | None
     created_at: datetime
     execution: step_journal.DurableExecutionPhase
+    admitted_generation: DossierBuildAdmittedGeneration | None
+    capacity_pause: CapacityPaused | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -422,6 +434,7 @@ class DossierUnsuccessfulBuildView:
     requester_user_id: UUID | None
     instruction: str | None
     created_at: datetime
+    admitted_generation: DossierBuildAdmittedGeneration | None
     outcome: Literal["failed", "cancelled"]
     failure_code: ReadDossierBuildFailureCode | None
     failure_detail: str | None
@@ -3083,6 +3096,7 @@ def _read_head_snapshot(
         build_id = UUID(str(b["id"]))
         if rev + fail + canc == 0:
             if active is None:
+                job = _job_state(db, build_id)
                 active = DossierActiveBuildView(
                     build_id=build_id,
                     handle=seal_artifact_build(build_id),
@@ -3093,7 +3107,9 @@ def _read_head_snapshot(
                     ),
                     instruction=(str(b["instruction"]) if b["instruction"] is not None else None),
                     created_at=b["created_at"],
-                    execution=_execution_phase(_job_state(db, build_id)),
+                    execution=_execution_phase(job),
+                    admitted_generation=_admitted_generation(db, build_id),
+                    capacity_pause=_capacity_pause(job),
                 )
         elif rev:
             # Builds are newest-first. Once a successful revision is reached,
@@ -3111,6 +3127,7 @@ def _read_head_snapshot(
                 ),
                 instruction=str(b["instruction"]) if b["instruction"] is not None else None,
                 created_at=b["created_at"],
+                admitted_generation=_admitted_generation(db, build_id),
                 outcome="failed" if fail else "cancelled",
                 failure_code=(
                     _FAILURE_CODE_READ_ADAPTER.validate_python(str(b["failure_code"]))
@@ -3687,6 +3704,7 @@ class _JobState:
     status: str
     attempts: int
     error_code: str | None
+    payload: dict[str, object]
 
 
 def _policy_for_locator(locator: DossierSubjectLocator) -> SubjectPolicy:
@@ -3930,20 +3948,58 @@ def _authorize_subject_read(
 def _job_state(db: Session, build_id: UUID) -> _JobState | None:
     row = (
         db.execute(
-            text("SELECT status, attempts, error_code FROM background_jobs WHERE dedupe_key = :k"),
+            text(
+                "SELECT status, attempts, error_code, payload "
+                "FROM background_jobs WHERE dedupe_key = :k"
+            ),
             {"k": _dispatch_key(build_id)},
         )
         .mappings()
         .first()
     )
-    return (
-        _JobState(
-            status=str(row["status"]),
-            attempts=int(row["attempts"]),
-            error_code=(str(row["error_code"]) if row["error_code"] is not None else None),
-        )
-        if row
-        else None
+    if row is None:
+        return None
+    if not isinstance(row["payload"], dict):
+        raise AssertionError(f"Dossier build {build_id} job payload is not an object")
+    return _JobState(
+        status=str(row["status"]),
+        attempts=int(row["attempts"]),
+        error_code=(str(row["error_code"]) if row["error_code"] is not None else None),
+        payload=row["payload"],
+    )
+
+
+def _capacity_pause(job: _JobState | None) -> CapacityPaused | None:
+    """Read the one durable pre-admission pause parked on an active build's job.
+
+    ``llm_execution`` parks exactly one ``CapacityPaused`` per generation step
+    path and clears it at admission, so a build waits on at most one pause."""
+    if job is None or job.status == SUCCEEDED:
+        return None
+    raw = job.payload.get("generation_capacity_pauses")
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise AssertionError("generation_capacity_pauses payload is not an object")
+    if not set(raw) <= GENERATION_STEP_PATHS:
+        raise AssertionError("Dossier build carries a capacity pause for an unknown step")
+    if len(raw) > 1:
+        raise AssertionError("Dossier build carries more than one capacity pause")
+    if not raw:
+        return None
+    return CapacityPaused.model_validate(next(iter(raw.values())))
+
+
+def _admitted_generation(db: Session, build_id: UUID) -> DossierBuildAdmittedGeneration | None:
+    """Project the build's latest admitted ledger generation without mutation."""
+    record = read_latest_generation_for_owner(
+        db, owner=LlmCallOwner(kind="artifact_build", id=build_id)
+    )
+    if record is None:
+        return None
+    return DossierBuildAdmittedGeneration(
+        spec=decode_generation_spec_document(record.spec.value),
+        tool_positions=len(read_tool_positions(db, generation_id=record.id)),
     )
 
 

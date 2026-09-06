@@ -17,9 +17,13 @@ from nexus.db.session import get_db
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import ok
 from nexus.schemas.artifact import (
+    DossierBuildAdmittedGenerationOut,
     DossierBuildCreatedOut,
+    DossierBuildExactModelToolsOut,
     DossierBuildExecution,
+    DossierBuildNoModelToolsOut,
     DossierBuildSummary,
+    DossierBuildToolPlanOut,
     DossierCoverageOut,
     DossierGenerateRequest,
     DossierHeadOut,
@@ -33,6 +37,7 @@ from nexus.schemas.artifact import (
 )
 from nexus.schemas.presence import (
     Presence,
+    Present,
     absent,
     nullable_from_presence,
     presence_from_nullable,
@@ -170,6 +175,35 @@ def _manifest_and_coverage(
     )
 
 
+def _admitted_generation_out(
+    view: engine.DossierBuildAdmittedGeneration | None,
+) -> Presence[DossierBuildAdmittedGenerationOut]:
+    """Project the frozen spec read-only; the model-tool arm is total (spec 5.1)."""
+    if view is None:
+        return absent()
+    spec = view.spec
+    plan, effect_mode = spec.model_tool_plan_snapshot, spec.tool_effect_mode
+    tool_plan: DossierBuildToolPlanOut
+    if isinstance(plan, Present) and isinstance(effect_mode, Present):
+        tool_plan = DossierBuildExactModelToolsOut(
+            plan_id=plan.value.plan_id,
+            plan_revision=plan.value.plan_revision,
+            effect_mode=effect_mode.value,
+        )
+    elif isinstance(plan, Present) or isinstance(effect_mode, Present):
+        raise AssertionError("admitted Dossier generation has a partial model-tool authority")
+    else:
+        tool_plan = DossierBuildNoModelToolsOut()
+    return present(
+        DossierBuildAdmittedGenerationOut(
+            selection=spec.selection,
+            display_at_dispatch=spec.display_at_dispatch,
+            tool_plan=tool_plan,
+            tool_positions=view.tool_positions,
+        )
+    )
+
+
 def _active_build_out(view: engine.DossierActiveBuildView) -> DossierBuildSummary:
     return DossierBuildSummary(
         handle=view.handle,
@@ -179,6 +213,8 @@ def _active_build_out(view: engine.DossierActiveBuildView) -> DossierBuildSummar
         execution=present(DossierBuildExecution(phase=view.execution)),
         failure=absent(),
         cancellation=absent(),
+        admitted_generation=_admitted_generation_out(view.admitted_generation),
+        capacity_pause=presence_from_nullable(view.capacity_pause),
     )
 
 
@@ -220,6 +256,8 @@ def _unsuccessful_build_out(
         execution=absent(),
         failure=failure,
         cancellation=cancellation,
+        admitted_generation=_admitted_generation_out(view.admitted_generation),
+        capacity_pause=absent(),
     )
 
 

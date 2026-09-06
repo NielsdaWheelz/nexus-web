@@ -41,6 +41,8 @@ def _snapshot(failure_code: str) -> DossierBuildSummary:
                 "value": _failure_payload(failure_code),
             },
             "cancellation": _ABSENT,
+            "admitted_generation": _ABSENT,
+            "capacity_pause": _ABSENT,
         }
     )
 
