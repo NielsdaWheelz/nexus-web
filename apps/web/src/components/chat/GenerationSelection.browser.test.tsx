@@ -14,9 +14,17 @@ import {
 } from "vitest";
 import "@/app/globals.css";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { absent } from "@/lib/api/presence";
 import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
-import type { ChatDraftKey } from "@/lib/conversations/chatDraftKey";
+import {
+  chatDraftKeyFor,
+  type ChatDraftKey,
+} from "@/lib/conversations/chatDraftKey";
+import type { GenerationSelectionSpec } from "@/lib/conversations/generationCatalog";
 import ChatComposer from "./ChatComposer";
+import ChatFailureCard from "./ChatFailureCard";
+import { useConversation } from "./useConversation";
 
 interface RunSelectionFixture extends Readonly<Record<string, unknown>> {
   readonly selection: Readonly<Record<string, unknown>>;
@@ -290,6 +298,344 @@ function PickerHarness({
       <section aria-label="Transcript">
         <button type="button">Transcript action</button>
       </section>
+    </>
+  );
+}
+
+const FIRST_USER_ID = "00000000-0000-4000-8000-000000000011";
+const FIRST_ASSISTANT_ID = "00000000-0000-4000-8000-000000000012";
+const SECOND_USER_ID = "00000000-0000-4000-8000-000000000013";
+const SECOND_ASSISTANT_ID = "00000000-0000-4000-8000-000000000014";
+const RERUN_ASSISTANT_ID = "00000000-0000-4000-8000-000000000015";
+const CLAUDE_HIGH = {
+  route: "ProviderApi",
+  model_ref: "anthropic:claude-sonnet-4-5",
+  reasoning: "high",
+} as const;
+const TERRA_HIGH = {
+  route: "CodexPersonal",
+  model: "gpt-5.6-terra",
+  reasoning: "high",
+} as const;
+
+function dispatchedRunSelection(
+  selection: Readonly<Record<string, unknown>>,
+  display: Readonly<{
+    route_label: string;
+    model_label: string;
+    reasoning_label: string;
+    billing: Readonly<Record<string, unknown>>;
+  }>,
+): RunSelectionFixture {
+  return {
+    ...requireCutoverSupport().fixtures.RUN_SELECTION,
+    selection,
+    display_at_dispatch: {
+      ...display,
+      privacy: {
+        summary: "Private account request",
+        retention: "Provider retention applies",
+        training: "Not used for training",
+      },
+      processor_chain: { processors: [display.route_label] },
+    },
+  };
+}
+
+function transcriptMessage(input: {
+  readonly id: string;
+  readonly seq: number;
+  readonly role: "user" | "assistant";
+  readonly parentMessageId: string | null;
+  readonly text: string;
+  readonly status?: "complete" | "error" | "pending";
+  readonly runSelection?: RunSelectionFixture;
+}) {
+  const status = input.status ?? "complete";
+  return {
+    id: input.id,
+    seq: input.seq,
+    role: input.role,
+    message_document: {
+      type: "message_document",
+      blocks:
+        input.text === ""
+          ? []
+          : [{ type: "text", format: "markdown", text: input.text }],
+    },
+    parent_message_id: input.parentMessageId,
+    trust_trail: input.runSelection
+      ? {
+          schema_version: "assistant_trust_trail.v1",
+          assistant_message_id: input.id,
+          conversation_id: CONVERSATION_ID,
+          chat_run_id: `${input.id}-run`,
+          status,
+          run: {
+            run_id: `${input.id}-run`,
+            run_selection: input.runSelection,
+            status,
+            usage: null,
+            error_code: status === "error" ? "assistant_unavailable" : null,
+            support_id: { kind: "Absent" },
+            publication_warning: { kind: "Absent" },
+            failure:
+              status === "error"
+                ? { code: "assistant_unavailable", can_rerun: true }
+                : null,
+            execution: { kind: "Absent" },
+            final_chars: null,
+            started_at: NOW,
+            completed_at: NOW,
+          },
+          prompt: null,
+          tool_calls: [],
+          citations: [],
+          context_refs_added: [],
+          integrity_notices: [],
+          created_at: NOW,
+          updated_at: NOW,
+        }
+      : null,
+    citations: [],
+    reader_selection: { kind: "Absent" },
+    status,
+    can_rerun: status === "error",
+    can_regenerate: false,
+    created_at: NOW,
+    updated_at: NOW,
+  };
+}
+
+/** Two turns: the first answer ran on Claude/high, the second on Terra/high. */
+function twoTurnTree(secondAnswerStatus: "complete" | "error") {
+  const selectedPath = [
+    transcriptMessage({
+      id: FIRST_USER_ID,
+      seq: 1,
+      role: "user",
+      parentMessageId: null,
+      text: "First question",
+    }),
+    transcriptMessage({
+      id: FIRST_ASSISTANT_ID,
+      seq: 2,
+      role: "assistant",
+      parentMessageId: FIRST_USER_ID,
+      text: "First answer",
+      runSelection: dispatchedRunSelection(CLAUDE_HIGH, {
+        route_label: "Anthropic API",
+        model_label: "Claude Sonnet 4.5",
+        reasoning_label: "High",
+        billing: { kind: "MeteredApi", label: "Metered API" },
+      }),
+    }),
+    transcriptMessage({
+      id: SECOND_USER_ID,
+      seq: 3,
+      role: "user",
+      parentMessageId: FIRST_ASSISTANT_ID,
+      text: "Second question",
+    }),
+    transcriptMessage({
+      id: SECOND_ASSISTANT_ID,
+      seq: 4,
+      role: "assistant",
+      parentMessageId: SECOND_USER_ID,
+      text: "Second answer",
+      status: secondAnswerStatus,
+      runSelection: dispatchedRunSelection(TERRA_HIGH, {
+        route_label: "Codex Personal",
+        model_label: "GPT-5.6 Terra",
+        reasoning_label: "High",
+        billing: { kind: "Subscription", label: "Codex subscription" },
+      }),
+    }),
+  ];
+  return {
+    data: {
+      conversation: {
+        id: CONVERSATION_ID,
+        title: "Selection proof",
+        sharing: "private",
+        message_count: selectedPath.length,
+        created_at: NOW,
+        updated_at: NOW,
+      },
+      selected_path: selectedPath,
+      active_leaf_message_id: SECOND_ASSISTANT_ID,
+      fork_options_by_parent_id: {},
+      path_cache_by_leaf_id: { [SECOND_ASSISTANT_ID]: selectedPath },
+      branch_graph: { nodes: [], edges: [], root_message_id: null },
+      page: { before_cursor: null },
+    },
+  };
+}
+
+/** The admitted sibling candidate a rerun of the second answer creates. */
+function admittedRerun() {
+  const admitted = admittedRun("ReadOnly");
+  return {
+    data: {
+      ...admitted.data,
+      run: {
+        ...admitted.data.run,
+        user_message_id: SECOND_USER_ID,
+        assistant_message_id: RERUN_ASSISTANT_ID,
+      },
+      user_message: transcriptMessage({
+        id: SECOND_USER_ID,
+        seq: 3,
+        role: "user",
+        parentMessageId: FIRST_ASSISTANT_ID,
+        text: "Second question",
+      }),
+      assistant_message: transcriptMessage({
+        id: RERUN_ASSISTANT_ID,
+        seq: 4,
+        role: "assistant",
+        parentMessageId: SECOND_USER_ID,
+        text: "",
+        status: "pending",
+      }),
+    },
+  };
+}
+
+/** The BFF surface a loaded conversation touches; `handle` owns the scenario. */
+function stubConversationFetch(
+  tree: unknown,
+  handle: (
+    pathname: string,
+    init: RequestInit | undefined,
+  ) => Response | Promise<Response> | undefined,
+): void {
+  const { GENERATION_CATALOG_RESPONSE } = requireCutoverSupport().fixtures;
+  vi.stubGlobal(
+    "fetch",
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const pathname = requestPath(input);
+      const handled = handle(pathname, init);
+      if (handled !== undefined) return handled;
+      if (pathname === `/api/conversations/${CONVERSATION_ID}/tree`) {
+        return json(tree);
+      }
+      if (pathname === "/api/chat-runs" && init?.method !== "POST") {
+        return json({ data: [] });
+      }
+      if (pathname === "/api/llm-catalog") return json(GENERATION_CATALOG_RESPONSE);
+      if (pathname === "/api/stream-token") {
+        return json({
+          data: {
+            token: "stream-token",
+            stream_base_url: "https://stream.nexus.test",
+            expires_at: "2026-08-31T20:01:00Z",
+          },
+        });
+      }
+      if (pathname === `/stream/chat-runs/${RUN_ID}/events`) {
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              init?.signal?.addEventListener(
+                "abort",
+                () =>
+                  controller.error(new DOMException("Stream aborted", "AbortError")),
+                { once: true },
+              );
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        );
+      }
+      throw new Error(`Unexpected conversation request: ${pathname}`);
+    },
+  );
+}
+
+/**
+ * The real engine, the candidate controls AssistantMessage mounts for a failed
+ * answer (primary Rerun and the replacement picker), and the composer, wired
+ * the way Conversation wires them.
+ */
+function ConversationHarness() {
+  const { CandidateGenerationPicker } = requireCutoverSupport();
+  const convo = useConversation({
+    conversationId: CONVERSATION_ID,
+    branching: true,
+  });
+  const branch = convo.branch;
+  const branchDraft = branch?.branchDraft ?? null;
+  return (
+    <>
+      {convo.error ? (
+        <FeedbackNotice content={convo.error} announcement="Assertive" />
+      ) : null}
+      {convo.messages
+        .filter((message) => message.status === "error")
+        .map((message) => {
+          const run = message.trust_trail?.run;
+          if (!run) throw new Error(`Failed answer ${message.id} has no run projection`);
+          const rerunning = convo.rerunningAssistantMessageIds.has(message.id);
+          return (
+            <div key={message.id}>
+              <ChatFailureCard
+                failure={run.failure}
+                supportId={absent()}
+                canRerun={message.can_rerun}
+                onRerun={() => void convo.rerunAssistantResponse(message.id)}
+                rerunning={rerunning}
+              />
+              <CandidateGenerationPicker
+                operation="Rerun"
+                runSelection={run.run_selection as unknown as RunSelectionFixture}
+                disabled={rerunning}
+                onConfirm={async (selection, catalogDefinitionRevision) =>
+                  (await convo.rerunAssistantResponseWithSelection(
+                    message.id,
+                    selection as GenerationSelectionSpec,
+                    catalogDefinitionRevision,
+                  )) === "Committed"
+                }
+              />
+            </div>
+          );
+        })}
+      {branch ? (
+        <button
+          type="button"
+          onClick={() =>
+            branch.setBranchDraft({
+              parentMessageId: FIRST_ASSISTANT_ID,
+              parentMessageSeq: 2,
+              parentMessagePreview: "First answer",
+              anchor: { kind: "assistant_message", message_id: FIRST_ASSISTANT_ID },
+            })
+          }
+        >
+          Fork from the first answer
+        </button>
+      ) : null}
+      <ChatComposer
+        conversationId={convo.conversationId}
+        draftKey={
+          branchDraft
+            ? chatDraftKeyFor({ kind: "Branch", branchDraft })
+            : chatDraftKeyFor({
+                kind: "Path",
+                targetId:
+                  branch?.activeLeafMessageId ??
+                  convo.replyParentMessageId ??
+                  CONVERSATION_ID,
+              })
+        }
+        branchDraft={branchDraft}
+        parentMessageId={convo.replyParentMessageId}
+        inheritedRunSelection={convo.inheritedRunSelection}
+        sendCapability={convo.sendCapability}
+        onChatRunCreated={convo.onChatRunCreated}
+        onClearBranchDraft={branch ? () => branch.setBranchDraft(null) : undefined}
+      />
     </>
   );
 }
@@ -956,6 +1302,48 @@ describe("Generation selection browser contract", () => {
         reasoning: "high",
       },
       tool_authority: "ReadOnly",
+    });
+  });
+
+
+  it("inherits the selected-path leaf pair for a continuation and the branch parent pair for a fork reply", async () => {
+    const requests: ChatRunCreateRequest[] = [];
+    stubConversationFetch(twoTurnTree("complete"), (pathname, init) => {
+      if (pathname === "/api/chat-runs" && init?.method === "POST") {
+        requests.push(JSON.parse(String(init.body)) as ChatRunCreateRequest);
+        return json(admittedRun("ReadOnly"));
+      }
+      return undefined;
+    });
+
+    render(withRenderEnvironment(<ConversationHarness />));
+    expect(
+      await screen.findByRole("button", {
+        name: "Change model. Codex Personal, GPT-5.6 Terra, High, Codex subscription",
+      }),
+    ).toBeVisible();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Fork from the first answer" }),
+    );
+    expect(
+      await screen.findByRole("button", {
+        name: "Change model. Anthropic API, Claude Sonnet 4.5, High, Metered API",
+      }),
+    ).toBeVisible();
+    expect(screen.getByRole("region", { name: "Fork reply" })).toBeVisible();
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "Ask anything" }),
+      "Continue from the first answer",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(requests).toHaveLength(1));
+    expect(requests[0]).toMatchObject({
+      selection: CLAUDE_HIGH,
+      destination: {
+        kind: "Existing",
+        insertion: { kind: "Reply", parent_message_id: FIRST_ASSISTANT_ID },
+      },
     });
   });
 
