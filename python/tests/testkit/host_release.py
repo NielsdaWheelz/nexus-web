@@ -730,7 +730,7 @@ class HostReleaseHarness:
                             "NEXUS_CODEX_CREDENTIAL_FILE=/run/nexus-codex-credential/auth.json",
                             "NEXUS_CODEX_WORKING_DIRECTORY_ROOT=/run/nexus-codex-turns",
                             "NEXUS_CODEX_AGENT_SOCKET=/run/nexus-codex/agent.sock",
-                            "NEXUS_CODEX_CHAT_NETWORK_ATTESTED=true",
+                            "NEXUS_CODEX_MODEL_TOOL_NETWORK_ATTESTED=true",
                             "NEXUS_CODEX_MCP_ORIGIN=https://api.example.test/internal/agent-tools/mcp",
                             *_CODEX_IMAGE_ENVIRONMENT,
                         ]
@@ -1071,8 +1071,10 @@ class HostReleaseHarness:
             "HTTPS_PROXY": proxy,
             "NO_PROXY": "",
             "PATH": f"{self.fake_bin}{os.pathsep}{os.environ['PATH']}",
-            "PYTHONPATH": f"{self.repo_root / 'python'}{os.pathsep}"
-            f"{os.environ.get('PYTHONPATH', '')}",
+            # The fakes import `apps.*` from the repository root and `nexus`/`tests`
+            # from `python/`, the same roots the pytest process resolves.
+            "PYTHONPATH": f"{self.repo_root}{os.pathsep}{self.repo_root / 'python'}"
+            f"{os.pathsep}{os.environ.get('PYTHONPATH', '')}",
             "PYTHONDONTWRITEBYTECODE": "1",
             "SSL_CERT_FILE": str(self.tls_certificate),
             "https_proxy": proxy,

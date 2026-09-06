@@ -169,7 +169,8 @@ def test_host_release_privileged_python_cannot_write_checkout_bytecode(
         "HTTPS_PROXY": "http://127.0.0.1:43123",
         "NO_PROXY": "",
         "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
-        "PYTHONPATH": f"{REPO_ROOT / 'python'}{os.pathsep}{os.environ.get('PYTHONPATH', '')}",
+        "PYTHONPATH": f"{REPO_ROOT}{os.pathsep}{REPO_ROOT / 'python'}{os.pathsep}"
+        f"{os.environ.get('PYTHONPATH', '')}",
         "PYTHONDONTWRITEBYTECODE": "1",
         "SSL_CERT_FILE": str(tls_certificate),
         "https_proxy": "http://127.0.0.1:43123",
