@@ -33,6 +33,9 @@ def test_provider_runtime_is_materialized_from_the_pin_without_retargeting_sourc
         "[tool.uv.sources]\n"
         f"provider-runtime = {{ git = 'https://example.invalid/runtime', rev = '{revision}' }}\n",
     )
+    state_root = tmp_path / "runtime-state"
+    state_root.mkdir()
+    (repo_root / ".nexus-test").symlink_to(state_root, target_is_directory=True)
     tool_dir = tmp_path / "bin"
     _write(
         tool_dir / "uv",

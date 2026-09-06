@@ -3884,6 +3884,11 @@ def _ensure_pinned_python_suite_checkout(
         # uv writes each console-script launcher in .venv/bin with the absolute
         # build path of the interpreter; promotion renames the directory, so
         # rewrite those launchers to the promoted checkout before it is used.
+        # When .nexus-test is a symlink, uv canonicalizes the temporary cwd and
+        # records its resolved path instead of the logical Path passed here.
+        # Accept both forms and keep the promoted launcher on the stable logical
+        # checkout path.
+        build_prefixes = {str(build), str(build.resolve())}
         bin_dir = build / ".venv/bin"
         for script in bin_dir.iterdir() if bin_dir.is_dir() else ():
             if script.is_symlink() or not script.is_file():
@@ -3892,8 +3897,11 @@ def _ensure_pinned_python_suite_checkout(
                 text = script.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError):
                 continue
-            if str(build) in text:
-                script.write_text(text.replace(str(build), str(checkout)), encoding="utf-8")
+            relocated = text
+            for prefix in build_prefixes:
+                relocated = relocated.replace(prefix, str(checkout))
+            if relocated != text:
+                script.write_text(relocated, encoding="utf-8")
         build.rename(checkout)
     except (OSError, tarfile.TarError) as error:
         raise RuntimeContractError(f"{suite.package} materialization failed") from error
