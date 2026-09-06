@@ -1,5 +1,6 @@
 import fcntl
 import json
+import re
 import socket
 import subprocess
 import sys
@@ -11,6 +12,7 @@ import pytest
 
 from nexus_test_control.model import Resource, ResourceKind
 from nexus_test_control.runtime import (
+    RUNTIME_VERSION,
     EndpointKind,
     ResourcePhase,
     RuntimeContractError,
@@ -532,3 +534,25 @@ def test_template_fingerprint_is_deterministic_and_has_one_exact_lock(tmp_path: 
                 fcntl.flock(competing.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         finally:
             competing.close()
+
+
+_PLAYWRIGHT_RUNTIME_LOADER = Path(__file__).resolve().parents[4] / "apps/web/e2e/runtime.ts"
+
+
+def test_playwright_runtime_loader_pins_the_controller_record_version_and_port_keys() -> None:
+    """Risk: the controller writes a record shape the Playwright loader refuses, so no journey runs."""
+
+    loader = _PLAYWRIGHT_RUNTIME_LOADER.read_text(encoding="utf-8")
+    assert f"record.version !== {RUNTIME_VERSION} ||" in loader, (
+        f"apps/web/e2e/runtime.ts does not refuse every record version except {RUNTIME_VERSION}"
+    )
+    assert f"version: {RUNTIME_VERSION}," in loader, (
+        f"apps/web/e2e/runtime.ts does not return runtime version {RUNTIME_VERSION}"
+    )
+    port_keys_source = re.search(r"const PORT_KEYS = \[(.*?)\] as const;", loader, re.DOTALL)
+    assert port_keys_source is not None, "apps/web/e2e/runtime.ts lost its closed PORT_KEYS tuple"
+    loader_port_keys = re.findall(r'"([a-z_]+)"', port_keys_source.group(1))
+    assert loader_port_keys == list(_ports().as_dict()), (
+        "apps/web/e2e/runtime.ts PORT_KEYS differ from the controller's RuntimePorts.as_dict(): "
+        f"{loader_port_keys!r}"
+    )
