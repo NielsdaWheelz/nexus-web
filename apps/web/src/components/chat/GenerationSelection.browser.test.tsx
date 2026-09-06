@@ -1172,7 +1172,12 @@ describe("Generation selection browser contract", () => {
     dialog = await screen.findByRole("dialog", {
       name: "Model and reasoning",
     });
-    await userEvent.click(screen.getByTestId("generation-selection-backdrop"));
+    // The sheet slides up over the lower scrim, so a tap at the backdrop's
+    // geometric centre races the entrance transition and can land on the panel,
+    // which stops propagation. Tap the top scrim, which the panel never covers.
+    await userEvent.click(screen.getByTestId("generation-selection-backdrop"), {
+      position: { x: 16, y: 16 },
+    });
     await waitFor(() => expect(trigger).toHaveFocus());
     expect(
       screen.queryByRole("dialog", { name: "Model and reasoning" }),
