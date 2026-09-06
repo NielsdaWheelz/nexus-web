@@ -108,17 +108,19 @@ class _AdmissionRuntime:
         raise AssertionError("capacity admission must not dispatch a backend")
 
 
-_SHIPPED_DAWN_SELECTION = CodexPersonalSelection(
-    route="CodexPersonal",
-    model="gpt-5.6-terra",
-    reasoning="medium",
-)
+def _shipped_dawn_selection() -> CodexPersonalSelection:
+    """Build the shipped Dawn Write selection lazily; BASE has no selection owner."""
+    return CodexPersonalSelection(
+        route="CodexPersonal",
+        model="gpt-5.6-terra",
+        reasoning="medium",
+    )
 
 
 def _pair(
     readiness: Ready | CapacityPaused,
     *,
-    selection: CodexPersonalSelection = _SHIPPED_DAWN_SELECTION,
+    selection: CodexPersonalSelection,
 ) -> ResolvedCatalogPair:
     return ResolvedCatalogPair(
         selection=selection,
@@ -160,8 +162,9 @@ def _pair(
 def _runtime(
     readiness: Ready | CapacityPaused,
     *,
-    policy: generation_policy.GenerationPolicy = generation_policy.GENERATION_POLICY,
+    policy: generation_policy.GenerationPolicy | None = None,
 ) -> ExecutionRuntime:
+    policy = generation_policy.GENERATION_POLICY if policy is None else policy
     selection = policy.background_operations["dawn_write"].selection
     assert isinstance(selection, CodexPersonalSelection)
     # justify-type-assertion: this controlled catalog implements the only public
@@ -365,7 +368,7 @@ def test_rebuild_admission_reads_current_policy_and_never_alters_frozen_work(
         model="gpt-5.6-luna",
         reasoning="low",
     )
-    assert revised_selection != _SHIPPED_DAWN_SELECTION
+    assert revised_selection != _shipped_dawn_selection()
     revised = replace(
         shipped,
         revision=generation_fact_digest("rebuild-admission-proof-policy"),
@@ -400,7 +403,7 @@ def test_rebuild_admission_reads_current_policy_and_never_alters_frozen_work(
                 runtime=_runtime(ready),
             )
         )
-        assert first.spec.selection == _SHIPPED_DAWN_SELECTION
+        assert first.spec.selection == _shipped_dawn_selection()
         assert first.spec.policy_revision == shipped.revision
 
         # The deployed policy changes while the first admission is still queued:

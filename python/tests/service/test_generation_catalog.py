@@ -13,13 +13,6 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from provider_runtime import Credentials
-from provider_runtime.agent_runtime import (
-    AGENT_BACKEND_CONTRACT_REVISION,
-    AgentModelCatalog,
-    AgentModelFacts,
-    AgentReasoningFacts,
-)
-from provider_runtime.registry import api_model_catalog
 from provider_runtime.types import Absent as RuntimeAbsent
 from provider_runtime.types import Present as RuntimePresent
 
@@ -27,6 +20,14 @@ from provider_runtime.types import Present as RuntimePresent
 _CUTOVER_PRESENT = find_spec("nexus.services.generation_catalog") is not None
 
 if TYPE_CHECKING or _CUTOVER_PRESENT:
+    from provider_runtime.agent_runtime import (
+        AGENT_BACKEND_CONTRACT_REVISION,
+        AgentModelCatalog,
+        AgentModelFacts,
+        AgentReasoningFacts,
+    )
+    from provider_runtime.registry import api_model_catalog
+
     from nexus.auth.middleware import Viewer, get_viewer
     from nexus.errors import ApiError
     from nexus.responses import api_error_handler

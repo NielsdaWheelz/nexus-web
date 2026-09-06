@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from importlib.util import find_spec
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
+
+# BASE sensitivity overlays this proof without candidate production owners.
+_CUTOVER_PRESENT = find_spec("nexus.services.generation_spec") is not None
 
 if TYPE_CHECKING:
     from fastapi.testclient import TestClient
@@ -103,6 +107,7 @@ def test_head_projects_capacity_pause_and_admitted_selection_read_only(
     """Risk: a quota-parked build hides its durable wait, or the browser must guess a
     background selection, tool plan, or price that the ledger never admitted."""
 
+    assert _CUTOVER_PRESENT, "the admitted-generation run detail owner is absent"
     from nexus.db.models import Media, MediaKind
     from nexus.jobs.queue import update_running_job_payload
     from nexus.schemas.llm import CapacityPaused

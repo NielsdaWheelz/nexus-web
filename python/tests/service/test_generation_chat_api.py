@@ -44,7 +44,11 @@ if TYPE_CHECKING or _CUTOVER_PRESENT:
     )
     from tests.testkit.llm_tool_scenarios import compose_available_product_tool_runtime
 
-pytestmark = pytest.mark.usefixtures("committed_chat_state_isolation")
+# The committed-state isolation fixture is a candidate-only service conftest
+# fixture, and BASE sensitivity overlays this proof without that conftest.
+# Keep it out of the BASE fixture closure so every node still reaches its
+# `_CUTOVER_PRESENT` assertion instead of erroring on a missing fixture.
+pytestmark = [pytest.mark.usefixtures("committed_chat_state_isolation")] if _CUTOVER_PRESENT else []
 
 
 def test_exact_selection_and_authority_cross_every_chat_projection(
