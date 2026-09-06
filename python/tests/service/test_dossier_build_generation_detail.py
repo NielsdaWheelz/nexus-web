@@ -29,17 +29,21 @@ _BUILD_KEYS = {
 
 
 @dataclass(frozen=True, slots=True)
-class _ClaimedBuild:
+class _StartedBuild:
     path: str
     build_id: UUID
     job_id: UUID
+
+
+@dataclass(frozen=True, slots=True)
+class _Claim:
     worker_id: str
     attempt_no: int
     payload: dict[str, object]
 
 
-def _claim_build(db: Session, *, requester_user_id: UUID, subject: ResourceRef) -> _ClaimedBuild:
-    from nexus.jobs.queue import claim_job, find_nonterminal_jobs_for_payload
+def _start_build(db: Session, *, requester_user_id: UUID, subject: ResourceRef) -> _StartedBuild:
+    from nexus.jobs.queue import find_nonterminal_jobs_for_payload
     from nexus.services.artifacts.dossier_types import SubjectResource
     from nexus.services.artifacts.engine import bootstrap_resource_dossier
     from nexus.services.resource_graph.refs import ResourceRef
@@ -57,24 +61,28 @@ def _claim_build(db: Session, *, requester_user_id: UUID, subject: ResourceRef) 
         expected_payload_match={"build_id": str(ticket.build_id)},
     )
     assert len(jobs) == 1
-    worker_id = f"build-detail-{jobs[0].id}"
+    return _StartedBuild(
+        path=f"/artifacts/{ResourceRef(scheme='artifact', id=ticket.artifact_id).uri}",
+        build_id=ticket.build_id,
+        job_id=jobs[0].id,
+    )
+
+
+def _claim(db: Session, build: _StartedBuild) -> _Claim:
+    """Hold the one heavy `dossier_build` lease the way a worker does before parking."""
+    from nexus.jobs.queue import claim_job
+
+    worker_id = f"build-detail-{build.job_id}"
     claimed = claim_job(
         db,
-        job_id=jobs[0].id,
+        job_id=build.job_id,
         worker_id=worker_id,
         lease_seconds=300,
         heavy_kinds=("dossier_build",),
         allowed_kinds=("dossier_build",),
     )
     assert claimed is not None
-    return _ClaimedBuild(
-        path=f"/artifacts/{ResourceRef(scheme='artifact', id=ticket.artifact_id).uri}",
-        build_id=ticket.build_id,
-        job_id=claimed.id,
-        worker_id=worker_id,
-        attempt_no=claimed.attempts,
-        payload=dict(claimed.payload),
-    )
+    return _Claim(worker_id=worker_id, attempt_no=claimed.attempts, payload=dict(claimed.payload))
 
 
 def _active_build(client: TestClient, path: str) -> dict[str, object]:
@@ -123,10 +131,12 @@ def test_head_projects_capacity_pause_and_admitted_selection_read_only(
     db.flush()
     assert library_entries.ensure_media_in_default_library(db, test_user.id, media_id)
 
-    # Media Dossier: quota parks the synthesis admission; policy later admits NoModelTools.
-    media = _claim_build(
+    # Media Dossier: the worker holds the heavy lease, quota parks the synthesis
+    # admission, and policy later admits NoModelTools.
+    media = _start_build(
         db, requester_user_id=test_user.id, subject=ResourceRef(scheme="media", id=media_id)
     )
+    claim = _claim(db, media)
     fresh = _active_build(authenticated_client, media.path)
     assert fresh.get("admitted_generation") == _ABSENT
     assert fresh.get("capacity_pause") == _ABSENT
@@ -141,10 +151,10 @@ def test_head_projects_capacity_pause_and_admitted_selection_read_only(
     assert update_running_job_payload(
         db,
         job_id=media.job_id,
-        worker_id=media.worker_id,
-        attempt_no=media.attempt_no,
+        worker_id=claim.worker_id,
+        attempt_no=claim.attempt_no,
         payload={
-            **media.payload,
+            **claim.payload,
             "generation_capacity_pauses": {"synthesis": pause.model_dump(mode="json")},
         },
     )
@@ -165,9 +175,9 @@ def test_head_projects_capacity_pause_and_admitted_selection_read_only(
     assert update_running_job_payload(
         db,
         job_id=media.job_id,
-        worker_id=media.worker_id,
-        attempt_no=media.attempt_no,
-        payload=media.payload,
+        worker_id=claim.worker_id,
+        attempt_no=claim.attempt_no,
+        payload=claim.payload,
     )
     media_draft = codex_generation_draft(
         request_id=stable_generation_id(media.build_id, "synthesis"),
@@ -199,8 +209,10 @@ def test_head_projects_capacity_pause_and_admitted_selection_read_only(
         },
     }
 
-    # Library Dossier: the admitted generation exposes exactly its frozen read plan.
-    library = _claim_build(
+    # Library Dossier: the admitted generation exposes exactly its frozen read
+    # plan. The queue admits one running heavy job at a time and the head read
+    # never depends on a lease, so this build stays queued and is not claimed.
+    library = _start_build(
         db,
         requester_user_id=test_user.id,
         subject=ResourceRef(scheme="library", id=test_user.default_library_id),
