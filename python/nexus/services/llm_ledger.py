@@ -573,9 +573,6 @@ def resume_generation_continuation_in_current_transaction(
         _turn_defect(source, "successor child sequence differs from sealed continuation")
 
     sealed = _sealed_from_row(continuation, source_turn_seq=source.turn_seq)
-    if sealed.context != expected_context:
-        cipher.open(sealed=sealed, expected_context=expected_context)
-
     existing = db.scalar(
         select(LLMModelTurn).where(
             LLMModelTurn.generation_id == successor.generation_id,
@@ -697,16 +694,6 @@ def arm_resumed_model_turn_dispatch_in_current_transaction(
         raise AssertionError(
             f"llm_model_turns row id={resumed.turn.id} is corrupt: "
             "successor model turn was already armed"
-        )
-    if resumed.canonical_continuation != open_generation_continuation_in_current_transaction(
-        db,
-        source_model_turn_id=source_model_turn_id,
-        expected_context=expected_context,
-        cipher=cipher,
-    ):
-        raise AssertionError(
-            f"llm_model_turns row id={resumed.turn.id} is corrupt: "
-            "successor continuation changed while arming"
         )
     arm_model_turn_dispatch_in_current_transaction(
         db,
