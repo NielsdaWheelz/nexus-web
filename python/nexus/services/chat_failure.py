@@ -71,7 +71,6 @@ _CODE_MAP = {
     "capacity_unavailable": "assistant_unavailable",
     "runtime_unavailable": "assistant_unavailable",
     "policy_violation": "operator_defect",
-    "runtime_defect": "operator_defect",
 }
 
 

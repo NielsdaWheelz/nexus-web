@@ -543,7 +543,5 @@ def _dossier_failure_code(code: NormalizedFailureCode) -> DossierBuildFailureCod
             return DossierBuildFailureCode.CapacityUnavailable
         case "context_too_large":
             return DossierBuildFailureCode.ContextTooLarge
-        case "defect":
-            raise AssertionError("a generation contract defect cannot become a dossier failure")
         case unreachable:
             assert_never(unreachable)

@@ -722,8 +722,6 @@ def _failure_code(kind: NormalizedFailureCode) -> ApiErrorCode:
             return ApiErrorCode.E_GENERATION_RUNTIME_UNAVAILABLE
         case "policy_violation":
             return ApiErrorCode.E_GENERATION_POLICY_VIOLATION
-        case "defect":
-            return ApiErrorCode.E_GENERATION_DEFECT
         case "capacity_unavailable":
             return ApiErrorCode.E_GENERATION_CAPACITY_UNAVAILABLE
         case _ as unreachable:

@@ -487,7 +487,6 @@ NormalizedFailureCode = Literal[
     "runtime_unavailable",
     "capacity_unavailable",
     "context_too_large",
-    "defect",
 ]
 
 
