@@ -193,6 +193,9 @@ if [ "$mode" != publish ]; then
     exit 0
   fi
 
+  echo "tearing down any earlier local test runtime so the lane starts one consistently"
+  runner_exec clean || die "runtime cleanup failed"
+
   echo "running the release lane in the runner (this is the long part)"
   runner_exec release
 fi

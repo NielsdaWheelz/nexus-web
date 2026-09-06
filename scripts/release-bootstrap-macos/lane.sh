@@ -34,6 +34,9 @@ unset DOCKER_HOST DOCKER_CONTEXT
 # The background worker proof addresses the root user manager.
 export XDG_RUNTIME_DIR=/run/user/0
 export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/0/bus
+# The kernel's runtime state (<repo>/.nexus-test) lives on the runner's state
+# volume; see the sync phase.
+state_dir=/var/lib/nexus-test-state
 
 # A docker exec that arrives before systemd has moved PID 1 into init.scope is
 # placed in the container's root cgroup, and while any process lives there the
@@ -178,7 +181,6 @@ case "$phase" in
     # on the virtiofs bind mount, flock does not exclude processes that create
     # the lock file concurrently, which is exactly how the lane serializes its
     # template-database builds. Point .nexus-test at the runner's state volume.
-    state_dir=/var/lib/nexus-test-state
     mkdir -p "$state_dir"
     if [ "$(readlink .nexus-test 2>/dev/null || true)" != "$state_dir" ]; then
       rm -rf .nexus-test
@@ -208,6 +210,24 @@ case "$phase" in
     expected="$(printf '%s' "$NEXUS_ANDROID_RELEASE_CERT_SHA256" | tr -d ':' | tr 'A-F' 'a-f')"
     [ "$signer" = "$expected" ] || die "release APK signer $signer does not match NEXUS_ANDROID_RELEASE_CERT_SHA256 $expected"
     echo "toolchain proof: signed release APK built and verified (signer $signer)"
+    ;;
+
+  clean)
+    # Tear down the kernel's local runtime so the lane initializes Postgres,
+    # MinIO and Supabase together with one consistent runtime record. A stack
+    # left over from an earlier attempt keeps its old published ports while a
+    # fresh record allocates new ones, and the first Supabase call then fails
+    # with "connection refused". Only this checkout's runtime (the compose
+    # project named in its runtime record) is touched; the pinned suite
+    # checkouts in the state volume are kept.
+    ./scripts/test clean || echo "kernel clean reported failures; resetting this checkout's runtime state explicitly"
+    project="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("compose_project", ""))' "$state_dir/runtime.json" 2>/dev/null || true)"
+    if [ -n "$project" ]; then
+      docker ps -aq --filter "name=$project" | xargs -r docker rm -f >/dev/null 2>&1 || true
+      docker volume ls -q --filter "name=$project" | xargs -r docker volume rm -f >/dev/null 2>&1 || true
+    fi
+    rm -rf "$state_dir/runtime.json" "$state_dir/runtime-identity.json" "$state_dir/runs" "$state_dir/locks" "$state_dir/supabase"
+    echo "runtime state reset${project:+ (compose project $project removed)}"
     ;;
 
   release)
