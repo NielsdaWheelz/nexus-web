@@ -182,11 +182,12 @@ _BYTE_PRESERVED_TABLES = (
     "workspace_sessions",
     "artifact_idea_subjects",
     "artifact_idea_resolutions",
-    "artifact_learn_failures",
+    "auth_handoff_codes",
     "oracle_corpus_sources",
     "oracle_passage_anchors",
     "oracle_plates",
     "oracle_corpus_publications",
+    "oracle_reading_folios",
 )
 
 
@@ -246,9 +247,16 @@ def _ids() -> dict[str, UUID]:
             "preserved_build",
             "preserved_failure",
             "preserved_event",
+            "preserved_cancelled_build",
+            "preserved_cancellation",
+            "preserved_succeeded_build",
+            "preserved_revision",
             "preserved_idea_subject",
             "preserved_idea_seed",
             "preserved_learn_request",
+            "preserved_learn_success_request",
+            "preserved_mutation",
+            "auth_handoff_code",
             "preserved_edge",
             "preserved_version",
             "preserved_view",
@@ -323,6 +331,13 @@ def _ids() -> dict[str, UUID]:
             "message_audience_artifact",
             "idea_seed",
             "learn_request",
+            "conversation_failed_build",
+            "conversation_failure",
+            "conversation_cancelled_build",
+            "conversation_cancellation",
+            "message_mutation",
+            "artifact_mutation",
+            "revision_mutation",
             "old_call",
             "old_turn",
             "charge",
@@ -429,7 +444,22 @@ def _seed_preserved_families(connection: Connection, ids: dict[str, UUID]) -> No
             "VALUES (:preserved_failure, :preserved_build, 'ProviderRefused'); "
             "INSERT INTO artifact_build_events (id, build_id, seq, event_type, payload) "
             "VALUES (:preserved_event, :preserved_build, 1, 'Failed', "
-            '\'{"failure_code":"ProviderRefused"}\'::jsonb)'
+            '\'{"failure_code":"ProviderRefused"}\'::jsonb); '
+            "INSERT INTO artifact_builds "
+            "(id, artifact_id, requester_user_id, idempotency_key) VALUES "
+            "(:preserved_cancelled_build, :preserved_artifact, :user, "
+            "'preserved-cancelled-build'), "
+            "(:preserved_succeeded_build, :preserved_artifact, :user, "
+            "'preserved-succeeded-build'); "
+            "INSERT INTO artifact_build_cancellations (id, build_id, actor_user_id) "
+            "VALUES (:preserved_cancellation, :preserved_cancelled_build, :user); "
+            "INSERT INTO artifact_revisions "
+            "(id, build_id, citation_owner_user_id, creator_user_id, input_manifest, "
+            "content_html, content_text) VALUES "
+            "(:preserved_revision, :preserved_succeeded_build, :user, :user, "
+            "'{}'::jsonb, '<p>Preserved</p>', 'Preserved'); "
+            "UPDATE artifacts SET current_revision_id = :preserved_revision "
+            "WHERE id = :preserved_artifact"
         ),
         ids,
     )
@@ -457,9 +487,31 @@ def _seed_preserved_families(connection: Connection, ids: dict[str, UUID]) -> No
             "'Preserved external', 'Preserved', '{}'::jsonb); "
             "INSERT INTO background_jobs (id, kind, payload, status, attempts) "
             "VALUES (:unrelated_job, 'sync_podcast', "
-            "jsonb_build_object('keep', true), 'succeeded', 1)"
+            "jsonb_build_object('keep', true), 'succeeded', 1); "
+            "INSERT INTO resource_mutations "
+            "(id, user_id, mutation_scope, client_mutation_id, request_hash, "
+            "changed_lanes, response_json) VALUES "
+            "(:preserved_mutation, :user, :preserved_mutation_scope, "
+            "'preserved-mutation', :mutation_request_hash, '{}'::jsonb, '{}'::jsonb); "
+            "INSERT INTO auth_handoff_codes "
+            "(id, user_id, code_hash, challenge, access_token, refresh_token, expires_at) "
+            "VALUES (:auth_handoff_code, :user, :code_hash, :challenge, "
+            "'preserved-access', 'preserved-refresh', now() + INTERVAL '1 hour'); "
+            "INSERT INTO oracle_reading_folios "
+            "(reading_id, phase, edge_id, source_kind, locator_label, "
+            "attribution_text, marginalia_text) VALUES "
+            "(:oracle, 'ordeal', :preserved_edge, 'user_media', "
+            "'Preserved folio citation', 'Preserved folio attribution', "
+            "'Preserved folio marginalia')"
         ),
-        {**ids, "content_hash": "a" * 64},
+        {
+            **ids,
+            "content_hash": "a" * 64,
+            "preserved_mutation_scope": f"resource:page:{ids['page']}:title",
+            "mutation_request_hash": "6" * 64,
+            "code_hash": "7" * 64,
+            "challenge": "8" * 64,
+        },
     )
 
 
@@ -608,9 +660,16 @@ def _seed_extended_preserved_families(
             "INSERT INTO artifact_learn_requests "
             "(id, user_id, idempotency_key, request_hash, highlight_id, coordination) VALUES "
             "(:preserved_learn_request, :user, 'preserved-learn', :request_hash, "
-            ":highlight, jsonb_build_object('dispatch_phase', 'Completed')); "
+            ":highlight, jsonb_build_object('dispatch_phase', 'Completed')), "
+            "(:preserved_learn_success_request, :user, 'preserved-learn-success', "
+            ":request_hash, :highlight, "
+            "jsonb_build_object('dispatch_phase', 'Completed')); "
             "INSERT INTO artifact_learn_failures (request_id, error_code) "
-            "VALUES (:preserved_learn_request, 'NoCandidate')"
+            "VALUES (:preserved_learn_request, 'NoCandidate'); "
+            "INSERT INTO artifact_learn_successes "
+            "(request_id, outcome_kind, artifact_id, build_id) VALUES "
+            "(:preserved_learn_success_request, 'created', :preserved_artifact, "
+            ":preserved_succeeded_build)"
         ),
         {**ids, "request_hash": "2" * 64},
     )
@@ -780,7 +839,20 @@ def _seed_reset_aggregate(connection: Connection, ids: dict[str, UUID]) -> None:
             "VALUES (:learn_request, :user, 'reset-learn', :request_hash, :highlight, '{}'::jsonb); "
             "INSERT INTO artifact_learn_successes "
             "(request_id, outcome_kind, artifact_id, build_id) "
-            "VALUES (:learn_request, 'created', :conversation_artifact, :conversation_build)"
+            "VALUES (:learn_request, 'created', :conversation_artifact, :conversation_build); "
+            "INSERT INTO artifact_learn_failures (request_id, error_code) "
+            "VALUES (:learn_request, 'NoCandidate'); "
+            "INSERT INTO artifact_builds "
+            "(id, artifact_id, requester_user_id, idempotency_key) VALUES "
+            "(:conversation_failed_build, :conversation_artifact, :user, "
+            "'reset-failed-build'), "
+            "(:conversation_cancelled_build, :conversation_artifact, :user, "
+            "'reset-cancelled-build'); "
+            "INSERT INTO artifact_build_failures (id, build_id, failure_code) "
+            "VALUES (:conversation_failure, :conversation_failed_build, "
+            "'ProviderRefused'); "
+            "INSERT INTO artifact_build_cancellations (id, build_id, actor_user_id) "
+            "VALUES (:conversation_cancellation, :conversation_cancelled_build, :user)"
         ),
         {**ids, "request_hash": "c" * 64},
     )
@@ -874,6 +946,32 @@ def _seed_reset_typed_closure(connection: Connection, ids: dict[str, UUID]) -> N
             "'Succeeded', '{}'::jsonb)"
         ),
         ids,
+    )
+    _execute_fixture(
+        connection,
+        text(
+            "INSERT INTO resource_mutations "
+            "(id, user_id, mutation_scope, client_mutation_id, request_hash, "
+            "changed_lanes, response_json) VALUES "
+            "(:message_mutation, :user, :message_mutation_scope, "
+            "'reset-message-mutation', :mutation_request_hash, "
+            "'{}'::jsonb, '{}'::jsonb), "
+            "(:artifact_mutation, :user, :artifact_mutation_scope, "
+            "'reset-artifact-mutation', :mutation_request_hash, "
+            "'{}'::jsonb, '{}'::jsonb), "
+            "(:revision_mutation, :user, :revision_mutation_scope, "
+            "'reset-revision-mutation', :mutation_request_hash, "
+            "'{}'::jsonb, '{}'::jsonb)"
+        ),
+        {
+            **ids,
+            "message_mutation_scope": f"resource:message:{ids['assistant_message']}:title",
+            "artifact_mutation_scope": f"resource:artifact:{ids['conversation_artifact']}:title",
+            "revision_mutation_scope": (
+                f"resource:artifact_revision:{ids['conversation_revision']}:title"
+            ),
+            "mutation_request_hash": "9" * 64,
+        },
     )
     _execute_fixture(
         connection,
@@ -1145,6 +1243,43 @@ def _preservation_fingerprint(connection: Connection, ids: dict[str, UUID]) -> t
         connection.execute(
             text(
                 "SELECT id, failure_code FROM artifact_build_failures WHERE id = :preserved_failure"
+            ),
+            ids,
+        ).all(),
+        connection.execute(
+            text(
+                "SELECT id, build_id, actor_user_id FROM artifact_build_cancellations "
+                "WHERE id = :preserved_cancellation"
+            ),
+            ids,
+        ).all(),
+        connection.execute(
+            text("SELECT id, build_id FROM artifact_revisions WHERE id = :preserved_revision"),
+            ids,
+        ).all(),
+        connection.execute(
+            text("SELECT id, current_revision_id FROM artifacts WHERE id = :preserved_artifact"),
+            ids,
+        ).all(),
+        connection.execute(
+            text(
+                "SELECT request_id, error_code FROM artifact_learn_failures "
+                "WHERE request_id = :preserved_learn_request"
+            ),
+            ids,
+        ).all(),
+        connection.execute(
+            text(
+                "SELECT request_id, outcome_kind, artifact_id, build_id "
+                "FROM artifact_learn_successes "
+                "WHERE request_id = :preserved_learn_success_request"
+            ),
+            ids,
+        ).all(),
+        connection.execute(
+            text(
+                "SELECT id, mutation_scope, client_mutation_id, request_hash "
+                "FROM resource_mutations WHERE id = :preserved_mutation"
             ),
             ids,
         ).all(),
@@ -1781,7 +1916,9 @@ def test_0223_aggregate_reset_preserves_domain_data(
                 connection.scalar(
                     text(
                         "SELECT count(*) FROM artifact_builds WHERE id IN "
-                        "(:conversation_build, :transitive_build, :revision_dependent_build)"
+                        "(:conversation_build, :conversation_failed_build, "
+                        ":conversation_cancelled_build, :transitive_build, "
+                        ":revision_dependent_build)"
                     ),
                     ids,
                 )
@@ -1807,6 +1944,53 @@ def test_0223_aggregate_reset_preserves_domain_data(
                     ids,
                 )
                 == 0
+            )
+            assert (
+                connection.scalar(
+                    text(
+                        "SELECT count(*) FROM artifact_build_failures "
+                        "WHERE id = :conversation_failure"
+                    ),
+                    ids,
+                )
+                == 0
+            )
+            assert (
+                connection.scalar(
+                    text(
+                        "SELECT count(*) FROM artifact_build_cancellations "
+                        "WHERE id = :conversation_cancellation"
+                    ),
+                    ids,
+                )
+                == 0
+            )
+            assert (
+                connection.scalar(
+                    text(
+                        "SELECT count(*) FROM artifact_learn_failures "
+                        "WHERE request_id = :learn_request"
+                    ),
+                    ids,
+                )
+                == 0
+            )
+            assert (
+                connection.scalar(
+                    text(
+                        "SELECT count(*) FROM resource_mutations WHERE id IN "
+                        "(:message_mutation, :artifact_mutation, :revision_mutation)"
+                    ),
+                    ids,
+                )
+                == 0
+            )
+            assert (
+                connection.scalar(
+                    text("SELECT count(*) FROM resource_mutations WHERE id = :preserved_mutation"),
+                    ids,
+                )
+                == 1
             )
             assert (
                 connection.scalar(
