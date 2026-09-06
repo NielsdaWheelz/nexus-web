@@ -5,17 +5,28 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
+import ssl
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from importlib.util import find_spec
 from types import MappingProxyType, SimpleNamespace
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
+from llm_tools import (
+    WEB_SEARCH_SPEC,
+    Available,
+    HandlerSuccess,
+    PolicyEpoch,
+    ReplayPolicy,
+    ToolBinding,
+)
 from sqlalchemy import Engine, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 # BASE sensitivity overlays this proof without candidate production owners.
 _CUTOVER_PRESENT = find_spec("nexus.services.generation_continuations") is not None
@@ -37,20 +48,29 @@ if TYPE_CHECKING or _CUTOVER_PRESENT:
         RuntimeStreamEvent,
         StreamStart,
         TerminalEvent,
+        TextContent,
         TokenUsage,
     )
     from provider_runtime.types import (
         Present as RuntimePresent,
     )
+    from provider_runtime.types import (
+        Succeeded as ProviderSucceeded,
+    )
 
+    from nexus.config import Settings
     from nexus.db.models import LLMModelTurn, LLMModelTurnContinuation
     from nexus.db.session import create_session_factory
-    from nexus.jobs.queue import JobExecutionContext, claim_job, enqueue_job, lock_job
+    from nexus.jobs.queue import JobExecutionContext, claim_job, enqueue_job, get_job, lock_job
     from nexus.schemas.presence import Present, absent, present
     from nexus.services import generation_policy
     from nexus.services.codex_generation_contract import NormalizedFailureCode
+    from nexus.services.durable_step_journal import Completed, Uncertain
     from nexus.services.generation_backend import (
         BackendGenerationRequest,
+        BackendToolExecutionRequest,
+        BackendToolExecutionResult,
+        BackendToolExecutor,
         GenerationBackend,
         GenerationBackendComposition,
         PreparedCodexChild,
@@ -60,17 +80,21 @@ if TYPE_CHECKING or _CUTOVER_PRESENT:
         GenerationContinuationCipher,
         GenerationContinuationContext,
     )
-    from nexus.services.generation_events import BackendTerminal
+    from nexus.services.generation_events import BackendTerminal, ProviderTerminalEvidence
     from nexus.services.generation_intent import GenerationIntent, TextOutput
+    from nexus.services.generation_selection import ProviderApiSelection
     from nexus.services.generation_service import GenerationService
     from nexus.services.generation_spec import (
+        FrozenToolScope,
         GenerationSpec,
         ImmutablePromptPayloadRef,
         generation_fact_digest,
     )
     from nexus.services.llm_execution import (
+        CompletedGeneration,
         ComposedExecutionRuntime,
         EncodedGenerationTerminal,
+        GenerationExecutionRequest,
         GenerationUncertain,
         JobGenerationJournal,
         admit_job_generation,
@@ -89,6 +113,7 @@ if TYPE_CHECKING or _CUTOVER_PRESENT:
         complete_generation_in_current_transaction,
         complete_model_turn_in_current_transaction,
         generation_spec_document,
+        lock_generation_owner_in_current_transaction,
         open_generation_continuation_in_current_transaction,
         read_generation,
         read_model_turns,
@@ -97,14 +122,29 @@ if TYPE_CHECKING or _CUTOVER_PRESENT:
         start_generation_in_current_transaction,
         start_model_turn_in_current_transaction,
     )
-    from nexus.services.provider_generation_backend import ProviderGenerationBackend
+    from nexus.services.provider_generation_backend import (
+        ProviderGenerationBackend,
+        ProviderGenerationWiring,
+        build_provider_generation_backend,
+    )
     from nexus.services.provider_generation_contract import ProviderModelTools
-    from nexus.services.tool_runtime.composition import ComposedToolRuntime
+    from nexus.services.tool_authority import (
+        compose_deferred_generation_tool_executor,
+        read_tool_positions,
+    )
+    from nexus.services.tool_runtime.composition import (
+        ComposedToolRuntime,
+        FrozenToolOperation,
+        compose_provider_model_tools,
+        compose_tool_runtime,
+        freeze_tool_plan_snapshot,
+    )
+    from nexus.services.tool_runtime.declarations import NEXUS_TOOL_DECLARATIONS
     from tests.testkit.generation_catalog import (
         CHAT_TEST_SELECTION,
         configured_chat_catalog_service,
     )
-    from tests.testkit.unreachable_state import delete_jobs_by_ids
+    from tests.testkit.unreachable_state import delete_jobs_by_ids, expire_job_claim
 
 
 def _generation_spec() -> dict[str, object]:
@@ -696,3 +736,339 @@ class _ToolFreeProviderTools:
         if isinstance(spec.model_tool_plan_snapshot, Present):
             raise AssertionError(f"tool-free {spec.operation!r} admission froze a model tool plan")
         return None
+
+
+def test_provider_crash_after_accepted_child_resumes_one_successor_without_redispatch(
+    request: pytest.FixtureRequest,
+) -> None:
+    """Risk: a worker crash after an accepted API child reissues billed model work."""
+
+    assert _CUTOVER_PRESENT, "route-neutral durable generation execution is absent"
+    request.getfixturevalue("committed_chat_state_isolation")
+    engine = cast(Engine, request.getfixturevalue("engine"))
+    asyncio.run(_prove_provider_crash_resumes_exactly_once(engine))
+
+
+async def _prove_provider_crash_resumes_exactly_once(engine: Engine) -> None:
+    settings = Settings()
+    endpoint_overrides = json.loads(os.environ["GENERATION_API_BASE_URLS"])
+    ca_certificates = json.loads(os.environ["NEXUS_TEST_TLS_CA_CERTS"])
+    tools = _fail_loud_tool_runtime()
+    operation = tools.operations["ChatRead"]
+    catalog = configured_chat_catalog_service()
+    admission = GenerationService(
+        catalog=catalog,
+        policy=generation_policy.GENERATION_POLICY,
+        tools=tools,
+    )
+    intent = GenerationIntent(
+        instructions="Use the supplied tool before answering.",
+        input="NEXUS_PROVIDER_SCENARIO=tool model=openai:gpt-5.6-luna",
+        output=TextOutput(),
+    )
+    spec = await admission.freeze_chat(
+        catalog_definition_revision=(
+            await catalog.read_for_admission()
+        ).catalog.definition_revision,
+        selection=ProviderApiSelection(
+            route="ProviderApi",
+            model_ref="openai:gpt-5.6-luna",
+            reasoning="low",
+        ),
+        tool_authority="ReadOnly",
+        scope=FrozenToolScope(admitted_refs=("library:proof",), predicates=()),
+        intent=intent,
+        prompt_template_revision="chat.prompt.v1",
+        prompt_payload_ref=ImmutablePromptPayloadRef(
+            owner_kind="chat_run",
+            owner_id="generation-execution-proof",
+            revision="chat.prompt.v1",
+            payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
+        ),
+    )
+    owner = LlmCallOwner(kind="chat_run", id=uuid4())
+    generation_id = uuid4()
+    user_id = uuid4()
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+
+    async with httpx.AsyncClient(
+        verify=ssl.create_default_context(cafile=ca_certificates[0]),
+        timeout=httpx.Timeout(10.0),
+        trust_env=False,
+    ) as client:
+        runtime = ComposedExecutionRuntime(
+            backend=GenerationBackend(
+                GenerationBackendComposition(
+                    codex=_UnusedCodex(),
+                    provider=build_provider_generation_backend(
+                        settings,
+                        client,
+                        wiring=ProviderGenerationWiring(endpoint_overrides=endpoint_overrides),
+                    ),
+                    codex_projection=_UnusedCodexProjection(),
+                    provider_tools=_FrozenProviderTools(operation),
+                )
+            ),
+            continuation_cipher=GenerationContinuationCipher(b"k" * 32),
+            admission=admission,
+        )
+        with Session(engine) as db:
+            job = enqueue_job(db, kind="generation_execution_proof", max_attempts=2)
+            claimed = claim_job(
+                db,
+                job_id=job.id,
+                worker_id="crashed-worker",
+                lease_seconds=300,
+                heavy_kinds=(),
+            )
+            assert claimed is not None
+            db.commit()
+        crashed_context = JobExecutionContext(
+            job_id=job.id,
+            worker_id="crashed-worker",
+            attempt_no=claimed.attempts,
+            resource_class="Light",
+        )
+        crashed_journal = JobGenerationJournal(
+            context=crashed_context,
+            step_path="generation",
+            lock_dispatch=lambda db: get_job(db, job.id),
+        )
+        with Session(engine) as db:
+            lock_generation_owner_in_current_transaction(db, owner)
+            crashed_journal.prepare_admission(
+                db,
+                generation_id=generation_id,
+                spec=spec,
+                intent=intent,
+            )
+            db.commit()
+        crashed_tools = _WorkerToolBoundary(
+            inner=compose_deferred_generation_tool_executor(
+                session_factory=factory,
+                user_id=user_id,
+                owner=owner,
+                generation_id=generation_id,
+                job_context=crashed_context,
+                operation=operation,
+            ),
+            crash_after_receipt=True,
+        )
+        attempt_error: Exception | None = None
+        try:
+            await execute_generation(
+                GenerationExecutionRequest(
+                    owner=owner,
+                    generation_id=generation_id,
+                    spec=spec,
+                    intent=intent,
+                    journal=crashed_journal,
+                    tool_executor=crashed_tools,
+                ),
+                session_factory=factory,
+                runtime=runtime,
+                encode_terminal=_encode_terminal,
+                encode_preaccept_failure=_refuse_preaccept,
+            )
+        except Exception as error:
+            # The queue worker fails its attempt on any exception; durable truth
+            # below is what the reclaimed attempt inherits.
+            attempt_error = error
+
+        with Session(engine) as db:
+            state = crashed_journal.read(db)
+            pending = read_pending_generation_continuation_in_current_transaction(
+                db,
+                generation_id=generation_id,
+                cipher=runtime.continuation_cipher,
+            )
+            turns_after_crash = read_model_turns(db, generation_id=generation_id)
+            positions_after_crash = read_tool_positions(db, generation_id=generation_id)
+        phase = None if state is None else state.dispatch_phase
+        assert phase is Uncertain, (
+            "generation dispatch did not persist the Uncertain checkpoint atomically: "
+            f"generation {generation_id} journal is {phase!r} after its first accepted "
+            f"child; the attempt ended with {attempt_error!r}"
+        )
+        assert isinstance(attempt_error, GenerationUncertain), attempt_error
+        assert isinstance(attempt_error.__cause__, _WorkerCrash), attempt_error.__cause__
+        assert isinstance(pending, PendingGenerationContinuation), (
+            f"accepted child 1 of {generation_id} left no sealed successor continuation"
+        )
+        assert (pending.context.source_turn_seq, pending.context.successor_turn_seq) == (1, 2)
+        assert [
+            (turn.turn_seq, turn.usage is not None, turn.completed_at is not None)
+            for turn in turns_after_crash
+        ] == [(1, True, True)]
+        assert [(position.path, position.replay_status) for position in positions_after_crash] == [
+            ("generation/1/tool/1", "Completed")
+        ]
+        assert len(crashed_tools.receipts) == 1
+        # The peer's fixture proposal omits required arguments, so the durable
+        # receipt is the typed InvalidInput failure, not a handler effect.
+        assert json.loads(crashed_tools.receipts[0].output) == {
+            "type": "Failure",
+            "error": {"type": "InvalidInput"},
+        }
+
+        with Session(engine) as db:
+            expire_job_claim(db, job_id=job.id)
+            db.commit()
+            reclaimed = claim_job(
+                db,
+                job_id=job.id,
+                worker_id="recovery-worker",
+                lease_seconds=300,
+                heavy_kinds=(),
+            )
+            assert reclaimed is not None and reclaimed.attempts == 2, reclaimed
+            db.commit()
+        recovery_context = JobExecutionContext(
+            job_id=job.id,
+            worker_id="recovery-worker",
+            attempt_no=reclaimed.attempts,
+            resource_class="Light",
+        )
+        recovery_journal = JobGenerationJournal(
+            context=recovery_context,
+            step_path="generation",
+            lock_dispatch=lambda db: get_job(db, job.id),
+        )
+        recovery_tools = _WorkerToolBoundary(
+            inner=compose_deferred_generation_tool_executor(
+                session_factory=factory,
+                user_id=user_id,
+                owner=owner,
+                generation_id=generation_id,
+                job_context=recovery_context,
+                operation=operation,
+            ),
+        )
+        completed = await execute_generation(
+            GenerationExecutionRequest(
+                owner=owner,
+                generation_id=generation_id,
+                spec=spec,
+                intent=intent,
+                journal=recovery_journal,
+                tool_executor=recovery_tools,
+            ),
+            session_factory=factory,
+            runtime=runtime,
+            encode_terminal=_encode_terminal,
+            encode_preaccept_failure=_refuse_preaccept,
+        )
+
+    assert isinstance(completed, CompletedGeneration), completed
+    assert (completed.terminal_result, completed.replayed) == ("provider:openai:tool-ok", False)
+    assert [
+        (receipt.provider_call_id, receipt.output, receipt.is_error)
+        for receipt in recovery_tools.receipts
+    ] == [
+        (receipt.provider_call_id, receipt.output, receipt.is_error)
+        for receipt in crashed_tools.receipts
+    ], "the reclaimed attempt did not replay the exact landed tool receipt"
+    with Session(engine) as db:
+        final_state = recovery_journal.read(db)
+        generation = read_generation(db, generation_id=generation_id)
+        turns = read_model_turns(db, generation_id=generation_id)
+        positions = read_tool_positions(db, generation_id=generation_id)
+        model_turn_rows = db.scalar(
+            select(func.count())
+            .select_from(LLMModelTurn)
+            .where(LLMModelTurn.generation_id == generation_id)
+        )
+        continuation_rows = db.scalar(
+            select(func.count())
+            .select_from(LLMModelTurnContinuation)
+            .where(LLMModelTurnContinuation.generation_id == generation_id)
+        )
+    assert final_state is not None and final_state.dispatch_phase is Completed, final_state
+    assert generation is not None and generation.outcome == "Succeeded"
+    assert [turn.turn_seq for turn in turns] == [1, 2]
+    assert model_turn_rows == 2
+    assert (turns[0].id, turns[0].completed_at, turns[0].usage) == (
+        turns_after_crash[0].id,
+        turns_after_crash[0].completed_at,
+        turns_after_crash[0].usage,
+    ), "the reclaimed attempt re-landed the already accepted child 1"
+    assert turns[1].usage is not None and turns[1].completed_at is not None
+    assert continuation_rows == 0
+    assert [
+        (position.id, position.path, position.replay_status, position.completed_at)
+        for position in positions
+    ] == [
+        (
+            positions_after_crash[0].id,
+            "generation/1/tool/1",
+            "Completed",
+            positions_after_crash[0].completed_at,
+        )
+    ]
+
+
+class _WorkerCrash(RuntimeError):
+    """The worker process dies right after its durable tool receipt lands."""
+
+
+@dataclass(slots=True)
+class _WorkerToolBoundary:
+    """The worker's provider tool seam; the crashed attempt dies after its first receipt."""
+
+    inner: BackendToolExecutor
+    crash_after_receipt: bool = False
+    receipts: list[BackendToolExecutionResult] = field(default_factory=list)
+
+    async def execute(self, request: BackendToolExecutionRequest) -> BackendToolExecutionResult:
+        receipt = await self.inner.execute(request)
+        self.receipts.append(receipt)
+        if self.crash_after_receipt:
+            raise _WorkerCrash("worker died after landing the tool receipt")
+        return receipt
+
+
+@dataclass(frozen=True, slots=True)
+class _FrozenProviderTools:
+    operation: FrozenToolOperation
+
+    def resolve(self, spec: GenerationSpec) -> ProviderModelTools | None:
+        plan = spec.model_tool_plan_snapshot
+        assert isinstance(plan, Present), plan
+        assert plan.value == freeze_tool_plan_snapshot(self.operation)
+        return compose_provider_model_tools(self.operation)
+
+
+def _fail_loud_tool_runtime() -> ComposedToolRuntime:
+    async def unexpected(value: Any, context: Any) -> HandlerSuccess[Any]:
+        del value, context
+        raise AssertionError("the peer's fixture proposal must be refused before any handler")
+
+    nexus_bindings = tuple(
+        ToolBinding(
+            spec=entry.spec,
+            execute=Available(unexpected),
+            replay_policy=ReplayPolicy.ReDispatchable,
+            policy_epoch=PolicyEpoch("generation-execution-proof-v1"),
+            policy_inputs={"owner": "generation-execution-proof"},
+        )
+        for entry in NEXUS_TOOL_DECLARATIONS
+    )
+    return compose_tool_runtime(
+        ToolBinding(
+            spec=WEB_SEARCH_SPEC,
+            execute=Available(unexpected),
+            replay_policy=ReplayPolicy.BilledOnce,
+            policy_epoch=PolicyEpoch("generation-execution-proof-v1"),
+            policy_inputs={"owner": "generation-execution-proof"},
+        ),
+        nexus_bindings=nexus_bindings,
+    )
+
+
+def _encode_terminal(terminal: BackendTerminal) -> EncodedGenerationTerminal:
+    evidence = terminal.evidence
+    assert isinstance(evidence, ProviderTerminalEvidence), evidence
+    assert isinstance(evidence.outcome, ProviderSucceeded), evidence.outcome
+    content = evidence.outcome.response.content
+    assert isinstance(content, TextContent), content
+    return EncodedGenerationTerminal(terminal_result=content.text)

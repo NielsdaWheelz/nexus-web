@@ -259,9 +259,9 @@
     {
       "id": "durable-generation-accepted-loss-redispatch",
       "patch": "testdata/faults/durable-generation-accepted-loss-redispatch.patch",
-      "sha256": "87682fc6b16c82a27728e2fb1a54eaa6d8e22f156699d953cb0cc05c28d9cbd3",
+      "sha256": "e44b323a7a4bca588ace4051ff2cc50cf4ec517564f63a7b08d08a0869bac233",
       "proofs": [
-        "pytest:python/tests/service/test_generation_execution.py::test_parent_child_tool_replay_is_exactly_once"
+        "pytest:python/tests/service/test_generation_execution.py::test_provider_crash_after_accepted_child_resumes_one_successor_without_redispatch"
       ],
       "expected_failure": "generation dispatch did not persist the Uncertain checkpoint atomically"
     },
