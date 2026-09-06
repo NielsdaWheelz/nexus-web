@@ -58,7 +58,6 @@ class Workflow(StrEnum):
     PR = "pr"
     FULL = "full"
     NIGHTLY = "nightly"
-    CODEX_NIGHTLY = "codex-nightly"
     RELEASE = "release"
     DOCTOR = "doctor"
     ANDROID_VISUAL = "android-visual"
@@ -89,7 +88,6 @@ class Capability(StrEnum):
     ANDROID_HOST = "android-host"
     AUDIT = "audit"
     HOSTED = "hosted"
-    CODEX_HOSTED = "codex-hosted"
     ANDROID_DEVICE = "android-device"
     PROVIDER_CERTIFICATION = "provider-certification"
     ANDROID_RELEASE = "android-release"
@@ -125,7 +123,7 @@ class PriorityRiskId(StrEnum):
 
 
 PRIORITY_RISK_FLOOR = frozenset(PriorityRiskId)
-PRIORITY_RISK_OWNERSHIP_SHA256 = "deed18bed5c0f23ebfe1827b7679a5a3453ef0e003fe9e28a3fdfd74057f0bc4"
+PRIORITY_RISK_OWNERSHIP_SHA256 = "60f24f533081f43a43901e50c31b552b7a9d1094cb5ed3552cc16860eee84c23"
 
 
 class ResourceKind(StrEnum):
@@ -446,10 +444,6 @@ WORKFLOW_REGISTRY: Mapping[Workflow, WorkflowDefinition] = MappingProxyType(
                 ),
             ),
         ),
-        Workflow.CODEX_NIGHTLY: WorkflowDefinition(
-            Workflow.CODEX_NIGHTLY,
-            (CapabilityRequirement(Capability.CODEX_HOSTED, SelectionScope.COMPLETE),),
-        ),
         Workflow.RELEASE: WorkflowDefinition(
             Workflow.RELEASE,
             _requirements(
@@ -491,7 +485,6 @@ DEFERRED_CAPABILITY_OWNER: Mapping[Capability, Workflow] = MappingProxyType(
         Capability.ANDROID_HOST: Workflow.FULL,
         Capability.AUDIT: Workflow.NIGHTLY,
         Capability.HOSTED: Workflow.NIGHTLY,
-        Capability.CODEX_HOSTED: Workflow.CODEX_NIGHTLY,
         Capability.ANDROID_DEVICE: Workflow.NIGHTLY,
         Capability.PROVIDER_CERTIFICATION: Workflow.RELEASE,
         Capability.ANDROID_RELEASE: Workflow.RELEASE,

@@ -10,7 +10,6 @@ import re
 import shutil
 import signal
 import socket
-import stat
 import subprocess
 import sys
 import tarfile
@@ -32,7 +31,6 @@ import psycopg
 from botocore.exceptions import BotoCoreError
 from sqlalchemy.exc import SQLAlchemyError
 
-from nexus.ops.codex_hosted_evidence import codex_hosted_evidence_is_valid
 from nexus.release_artifact import (
     ANDROID_RELEASE_TAG,
     AndroidPlayerProtocolIdentity,
@@ -375,7 +373,6 @@ _HEAVY_CAPABILITIES = frozenset(
         Capability.ANDROID_HOST,
         Capability.AUDIT,
         Capability.HOSTED,
-        Capability.CODEX_HOSTED,
         Capability.ANDROID_DEVICE,
         Capability.PROVIDER_CERTIFICATION,
         Capability.ANDROID_RELEASE,
@@ -502,13 +499,6 @@ _LLM_TOOLS_SUITE = _PinnedPythonSuite(
         ("uv", "build", "--no-sources", "--offline"),
     ),
 )
-
-
-@dataclass(frozen=True, slots=True)
-class HostedCodexCanaryPlan:
-    command: FixedCommand
-    environment: Mapping[str, str]
-    evidence_relative: Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -1305,7 +1295,7 @@ def run_proof(
                 result = _run_android_host(proof_context, environment)
             case Capability.AUDIT:
                 result = _run_audit(proof_context, environment, execution, exact=True)
-            case Capability.HOSTED | Capability.CODEX_HOSTED:
+            case Capability.HOSTED:
                 result = _run_hosted(
                     proof_context,
                     capability,
@@ -1487,7 +1477,7 @@ def _run_capability_unlocked(
             return _run_android_host(context, caller_environment)
         case Capability.AUDIT:
             return _run_audit(context, caller_environment, execution)
-        case Capability.HOSTED | Capability.CODEX_HOSTED:
+        case Capability.HOSTED:
             return _run_hosted(context, capability, caller_environment, execution)
         case Capability.ANDROID_DEVICE:
             return _run_android_device(context, caller_environment)
@@ -2838,11 +2828,6 @@ def _proof_owner(runner_name: str, node: str) -> tuple[Capability, Workflow]:
                 Capability.PROVIDER_CERTIFICATION,
                 Workflow.RELEASE,
             ),
-            (
-                "python/tests/hosted/nightly/test_codex_personal_metadata.py",
-                Capability.CODEX_HOSTED,
-                Workflow.CODEX_NIGHTLY,
-            ),
             ("python/tests/hosted/nightly/", Capability.HOSTED, Workflow.NIGHTLY),
         ):
             if path.startswith(prefix) and path.endswith(".py"):
@@ -3259,17 +3244,11 @@ def _run_hosted(
     *,
     exact: bool = False,
 ) -> CapabilityResult:
-    if capability not in (Capability.HOSTED, Capability.CODEX_HOSTED):
+    if capability is not Capability.HOSTED:
         raise ValueError("hosted runner requires a typed hosted capability")
     python_root = context.repo_root / "python"
     owner = python_root / "tests/hosted/nightly"
-    all_available = tuple(sorted(owner.rglob("test_*.py"))) if owner.is_dir() else ()
-    codex_owner = owner / "test_codex_personal_metadata.py"
-    available = (
-        tuple(path for path in all_available if path == codex_owner)
-        if capability is Capability.CODEX_HOSTED
-        else tuple(path for path in all_available if path != codex_owner)
-    )
+    available = tuple(sorted(owner.rglob("test_*.py"))) if owner.is_dir() else ()
     if not available or not (python_root / ".venv").is_dir():
         return _not_run(capability, "hosted canary owner is absent")
     if execution is None:
@@ -3286,71 +3265,7 @@ def _run_hosted(
     else:
         return _pass(capability, "no selected hosted canary")
 
-    codex_target = "./tests/hosted/nightly/test_codex_personal_metadata.py"
-    codex_targets = tuple(target for target in selected if target.split("::", 1)[0] == codex_target)
-    openai_targets = tuple(target for target in selected if target not in codex_targets)
-    codex_enabled = environment.get("NEXUS_CODEX_HOSTED_CANARY") == "1"
-    direct_enabled = environment.get("NEXUS_HOSTED_CANARY") == "1"
-    if codex_enabled and direct_enabled:
-        return _not_run(
-            capability,
-            "direct and subscription hosted canaries cannot share a protected runner",
-        )
-    if codex_enabled:
-        if "OPENAI_API_KEY" in environment:
-            return _not_run(
-                capability, "OPENAI_API_KEY is forbidden for the Codex subscription canary"
-            )
-        if not codex_targets:
-            return _not_run(capability, "Codex runner selected no Codex hosted canary")
-        try:
-            plan = build_codex_hosted_canary_plan(
-                repo_root=context.repo_root,
-                run_id=execution.run_id,
-                target=codex_targets[0],
-                environment=environment,
-            )
-        except ValueError as error:
-            return _not_run(capability, str(error))
-        evidence_path = context.repo_root / plan.evidence_relative
-        if evidence_path.exists():
-            evidence_path.unlink()
-        result = _run_owned_commands(
-            capability,
-            (plan.command,),
-            plan.environment,
-            ("uv",),
-            context=context,
-            content_free_failure_detail=(
-                "Codex hosted canary command failed; child output was discarded"
-            ),
-        )
-        if result.evidence.status is not RunStatus.PASS:
-            return result
-        if not codex_hosted_evidence_is_valid(evidence_path, run_id=execution.run_id):
-            return _fail(
-                capability, "Codex hosted canary changed its declared subscription contract"
-            )
-        return CapabilityResult(
-            CapabilityEvidence(
-                capability,
-                RunStatus.PASS,
-                result.evidence.duration_ms,
-                result.evidence.peak_owned_mib,
-                artifacts=(plan.evidence_relative.as_posix(),),
-            ),
-            "one pinned Codex subscription metadata canary passed without API credentials",
-        )
-
-    if direct_enabled:
-        if not openai_targets:
-            return _not_run(capability, "direct runner selected no direct hosted canary")
-    elif codex_targets:
-        return _not_run(
-            capability,
-            "set NEXUS_CODEX_HOSTED_CANARY=1 on the dedicated subscription runner",
-        )
-    else:
+    if environment.get("NEXUS_HOSTED_CANARY") != "1":
         return _not_run(capability, "set NEXUS_HOSTED_CANARY=1 for the paid hosted canary")
     api_key = environment.get("OPENAI_API_KEY")
     if not api_key:
@@ -3385,7 +3300,7 @@ def _run_hosted(
                     "-q",
                     *_DETERMINISTIC_PYTEST,
                     "--force-enable-socket",
-                    *openai_targets,
+                    *selected,
                 ),
                 python_root,
             ),
@@ -3425,92 +3340,6 @@ def _run_hosted(
         ),
         "one pinned OpenAI tool-safety canary passed inside the $0.01 ceiling",
     )
-
-
-def build_codex_hosted_canary_plan(
-    *,
-    repo_root: Path,
-    run_id: str,
-    target: str,
-    environment: Mapping[str, str],
-) -> HostedCodexCanaryPlan:
-    """Construct the credential-free exact command for the protected Codex runner."""
-
-    if environment.get("NEXUS_CODEX_HOSTED_CANARY") != "1":
-        raise ValueError("set NEXUS_CODEX_HOSTED_CANARY=1 on the dedicated subscription runner")
-    if "OPENAI_API_KEY" in environment:
-        raise ValueError("OPENAI_API_KEY is forbidden for the Codex subscription canary")
-    if environment.get("NEXUS_CODEX_HOSTED_PROFILE") != "codex-personal":
-        raise ValueError("Codex hosted canary profile must be codex-personal")
-    if re.fullmatch(r"[0-9a-f]{16}", run_id) is None:
-        raise ValueError("Codex hosted canary run identity is invalid")
-    expected = "./tests/hosted/nightly/test_codex_personal_metadata.py"
-    if target.startswith("./"):
-        normalized_target = target
-    else:
-        normalized_target = _python_heavy_node(target, "tests/hosted/nightly")
-        normalized_target = "./" + normalized_target
-    if normalized_target.split("::", 1)[0] != expected:
-        raise ValueError("Codex hosted canary requires its exact proof node")
-    state_root = _hosted_codex_directory(
-        repo_root, environment, "NEXUS_CODEX_HOSTED_STATE_ROOT", require_empty=False
-    )
-    working_directory = _hosted_codex_directory(
-        repo_root, environment, "NEXUS_CODEX_HOSTED_WORKING_DIRECTORY", require_empty=True
-    )
-    evidence_relative = Path("test-results/runs") / run_id / "hosted-codex-personal-metadata.json"
-    child_environment = _child_environment(environment)
-    child_environment.update(
-        {
-            "NEXUS_CODEX_HOSTED_CANARY": "1",
-            "NEXUS_CODEX_HOSTED_PROFILE": "codex-personal",
-            "NEXUS_CODEX_HOSTED_STATE_ROOT": str(state_root),
-            "NEXUS_CODEX_HOSTED_WORKING_DIRECTORY": str(working_directory),
-            "NEXUS_CODEX_HOSTED_EVIDENCE_PATH": str(repo_root / evidence_relative),
-            "NEXUS_TEST_RUN_ID": run_id,
-        }
-    )
-    return HostedCodexCanaryPlan(
-        command=(
-            (
-                "uv",
-                "run",
-                "--frozen",
-                "--no-sync",
-                "pytest",
-                "-q",
-                *_DETERMINISTIC_PYTEST,
-                "--force-enable-socket",
-                normalized_target,
-            ),
-            repo_root / "python",
-        ),
-        environment=child_environment,
-        evidence_relative=evidence_relative,
-    )
-
-
-def _hosted_codex_directory(
-    repo_root: Path,
-    environment: Mapping[str, str],
-    name: str,
-    *,
-    require_empty: bool,
-) -> Path:
-    raw = environment.get(name)
-    if not raw:
-        raise ValueError(f"Codex hosted canary requires {name}")
-    path = Path(raw)
-    if not path.is_absolute() or path.resolve() != path or not path.is_dir():
-        raise ValueError(f"Codex hosted canary {name} must be an existing resolved directory")
-    if path.is_relative_to(repo_root.resolve()):
-        raise ValueError(f"Codex hosted canary {name} must be outside the workspace")
-    metadata = path.stat()
-    if metadata.st_uid != os.geteuid() or stat.S_IMODE(metadata.st_mode) != 0o700:
-        raise ValueError(f"Codex hosted canary {name} must be current-user-owned mode 0700")
-    if require_empty and any(path.iterdir()):
-        raise ValueError(f"Codex hosted canary {name} must be empty")
-    return path
 
 
 def _parse_hosted_canary_evidence(evidence_path: Path) -> tuple[int, float] | None:

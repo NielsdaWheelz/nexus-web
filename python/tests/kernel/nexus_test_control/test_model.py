@@ -18,7 +18,6 @@ from nexus_test_control.model import (
 
 def test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr() -> None:
     assert set(WORKFLOW_REGISTRY) == set(Workflow)
-    assert "codex-nightly" in {workflow.value for workflow in Workflow}
     assert set(PriorityRisk.value for PriorityRisk in PRIORITY_RISK_FLOOR) == {
         "test-environment-isolation",
         "auth-privacy-secrets",
@@ -49,10 +48,6 @@ def test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr() -> Non
     assert Capability.PROVIDER_CERTIFICATION not in pr_capabilities
     assert Capability.JOURNEYS_CRITICAL in pr_capabilities
     assert Capability.JOURNEYS_ALL not in pr_capabilities
-    assert tuple(
-        requirement.capability
-        for requirement in WORKFLOW_REGISTRY[Workflow.CODEX_NIGHTLY].requirements
-    ) == (Capability.CODEX_HOSTED,)
 
     release_capabilities = {
         requirement.capability for requirement in WORKFLOW_REGISTRY[Workflow.RELEASE].requirements

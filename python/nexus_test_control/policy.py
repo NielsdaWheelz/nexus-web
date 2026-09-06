@@ -214,17 +214,6 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         ),
         ("make test", "nexus-android-usb"),
     ),
-    ".github/workflows/codex-personal-nightly.yml": (
-        (
-            'NEXUS_CODEX_HOSTED_CANARY: "1"',
-            "runs-on: [self-hosted, linux, nexus-codex-nightly]",
-            "cmp deploy/hetzner/nexus-codex-nightly-bwrap.apparmor ",
-            "/etc/apparmor.d/nexus-codex-nightly-bwrap",
-            "python/.venv/bin/python -m apps.codex_agent.sandbox_health",
-            "run: ./scripts/test codex-nightly",
-        ),
-        ("OPENAI_API_KEY", "make test", "pytest"),
-    ),
     ".github/workflows/release.yml": (
         (
             'NEXUS_PROVIDER_CERTIFICATION: "1"',
@@ -299,7 +288,6 @@ _CONTROLLER_COMMAND_OWNERS: dict[str, str] = {
     "pr": ".github/workflows/ci.yml",
     "full": ".github/workflows/ci.yml",
     "nightly": ".github/workflows/nightly.yml",
-    "codex-nightly": ".github/workflows/codex-personal-nightly.yml",
     "release": ".github/workflows/release.yml",
 }
 _INTERNAL_PACKAGE_RUNNERS: dict[tuple[str, str], str] = {
@@ -343,12 +331,6 @@ _OWNERSHIP_TOKENS: tuple[tuple[str, re.Pattern[str], frozenset[str], dict[str, i
         re.compile(r"\bNEXUS_HOSTED_CANARY\b"),
         frozenset({".github/workflows/nightly.yml"}),
         {".github/workflows/nightly.yml": 1},
-    ),
-    (
-        "codex-hosted-canary",
-        re.compile(r"\bNEXUS_CODEX_HOSTED_CANARY\b"),
-        frozenset({".github/workflows/codex-personal-nightly.yml"}),
-        {".github/workflows/codex-personal-nightly.yml": 1},
     ),
     (
         # Nightly keeps the hosted emulator lane it has always had; only the

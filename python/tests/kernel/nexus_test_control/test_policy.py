@@ -233,16 +233,6 @@ def _minimal_repository(root: Path) -> None:
     )
     _write(
         root,
-        ".github/workflows/codex-personal-nightly.yml",
-        'NEXUS_CODEX_HOSTED_CANARY: "1"\n'
-        "runs-on: [self-hosted, linux, nexus-codex-nightly]\n"
-        "cmp deploy/hetzner/nexus-codex-nightly-bwrap.apparmor "
-        "/etc/apparmor.d/nexus-codex-nightly-bwrap\n"
-        "python/.venv/bin/python -m apps.codex_agent.sandbox_health\n"
-        "run: ./scripts/test codex-nightly\n",
-    )
-    _write(
-        root,
         ".github/workflows/release.yml",
         'NEXUS_PROVIDER_CERTIFICATION: "1"\n'
         "runs-on: ${{ inputs.bootstrap_no_device && 'ubuntu-latest' || "

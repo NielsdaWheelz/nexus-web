@@ -434,7 +434,6 @@ adapter. The Makefile deliberately has no test/check/verify aliases.
 | `./scripts/test pr` | deterministic blocking PR portfolio plus same-run sensitivity |
 | `./scripts/test full` | complete deterministic local portfolio |
 | `./scripts/test nightly` | `full` plus randomized/property audit, one hosted canary, and Android device proof |
-| `./scripts/test codex-nightly` | one bounded subscription-authenticated Codex metadata canary on the dedicated runner |
 | `./scripts/test release` | `full` plus bounded provider certification, Android device proof, signed Android release proof, and exact staged artifacts |
 | `./scripts/test doctor` | local tool, dependency, browser, SDK, service, port, and template readiness; protected-workflow inputs only when that lane is explicitly enabled |
 | `./scripts/test android-visual --sha HEAD_SHA --path /OWNED_PATH [--device primary]` | explicit opt-in physical-device authenticated WebView visual check of the current non-`main` worktree; never included in `changed`/`confidence`/`pr`/`full`/`nightly`/`release` |
@@ -448,7 +447,7 @@ The command table above, CI routes, and deferred-owner map are explicit,
 policy-checked projections that MUST change with it; they are not generated
 from the registry.
 
-<!-- nexus-test-routing-sha256: a181c221374d178dc15e014116adb3ee04b8d84c56a4ff2e49f1003f4d6a1caf -->
+<!-- nexus-test-routing-sha256: d41cbc493f7a5143c2a57de72d65e7002434915d19b47a02e02d16659babd544 -->
 
 When changed-file routing names a capability later than the invoked workflow,
 the controller MUST retain it in evidence with its exact `deferred_to` owner and

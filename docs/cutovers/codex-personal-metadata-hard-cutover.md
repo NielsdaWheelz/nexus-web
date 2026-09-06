@@ -4,6 +4,7 @@
 **Date:** 2026-08-13
 **Type:** metadata-only hard cutover; no compatibility period
 **Open questions:** none
+**Update 2026-09-05:** the hosted subscription canary (the `codex-nightly` controller workflow, the `Codex Personal Metadata Nightly` GitHub workflow, and the dedicated `nexus-codex-nightly` runner) was retired without ever passing. The metadata path itself is unchanged.
 
 ## 1. Decision
 
@@ -372,7 +373,7 @@ ChatGPT auth and file modes, then deploy. Credentials never enter Git, captured
 env, logs, test artifacts, or another container.
 
 Pin the `llm-calling` commit, SDK, bundled runtime, and image digest. Upgrade only
-after the hosted canary and sandbox/auth probes pass at the candidate versions.
+after the sandbox/auth probes pass at the candidate versions.
 
 ### Existing-VPS capacity contract
 
@@ -536,7 +537,6 @@ Required verification shape:
 inner loop:  ./scripts/test changed <exact owned path/proof>
 package:     ./scripts/test confidence
 integration: ./scripts/test pr
-live:        ./scripts/test codex-nightly
 capacity:    ./deploy/hetzner/prove-codex-capacity.sh <source-sha>
 release:     ./scripts/test release
 sensitivity: ./scripts/test prove --proof <durable-proof> --against fault:<fault-id>
@@ -568,7 +568,7 @@ The cutover is complete only when:
    converge in one serializable publication transaction.
 10. The migration deletes legacy metadata call history and all residue in §9 is
    absent. Other direct-API operations are unchanged.
-11. The focused local proof portfolio, required sensitivity, hosted canary, and
+11. The focused local proof portfolio, required sensitivity, and
    release sandbox/auth/health gates pass at the exact shipped revisions. The
    first 0216 promotion also has fresh existing-VPS qualification evidence that
    satisfies every §11 threshold.

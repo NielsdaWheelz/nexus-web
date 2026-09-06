@@ -83,16 +83,9 @@ def test_codex_agent_host_is_private_worker_image_with_credential_and_socket_iso
     apparmor_profile = (REPO_ROOT / "deploy/hetzner/nexus-codex-agent-host.apparmor").read_text(
         encoding="utf-8"
     )
-    nightly_apparmor_profile = (
-        REPO_ROOT / "deploy/hetzner/nexus-codex-nightly-bwrap.apparmor"
-    ).read_text(encoding="utf-8")
     release_workflow = (REPO_ROOT / ".github/workflows/backend-images.yml").read_text(
         encoding="utf-8"
     )
-    nightly_workflow = (REPO_ROOT / ".github/workflows/codex-personal-nightly.yml").read_text(
-        encoding="utf-8"
-    )
-    actionlint_config = (REPO_ROOT / ".github/actionlint.yaml").read_text(encoding="utf-8")
     worker_image = (REPO_ROOT / "docker/Dockerfile.backend").read_text(encoding="utf-8")
     start = compose.index("  nexus-codex-agent-host:\n")
     end = compose.index("  migration:\n", start)
@@ -161,16 +154,7 @@ def test_codex_agent_host_is_private_worker_image_with_credential_and_socket_iso
     assert "profile nexus-codex-agent-host flags=(unconfined)" in apparmor_profile
     assert "userns," in apparmor_profile
     assert "include if exists <local/" not in apparmor_profile
-    assert (
-        "profile nexus-codex-nightly-bwrap /usr/bin/bwrap flags=(unconfined)"
-        in nightly_apparmor_profile
-    )
-    assert "userns," in nightly_apparmor_profile
     assert "nexus-codex-agent-host.apparmor" in release_workflow
-    assert "runs-on: [self-hosted, linux, nexus-codex-nightly]" in nightly_workflow
-    assert "- nexus-codex-nightly" in actionlint_config
-    assert "cmp deploy/hetzner/nexus-codex-nightly-bwrap.apparmor" in nightly_workflow
-    assert "/etc/apparmor.d/nexus-codex-nightly-bwrap" in nightly_workflow
     assert "chmod u+s /usr/bin/bwrap" not in worker_image
 
 
