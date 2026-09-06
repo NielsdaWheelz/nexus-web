@@ -65,14 +65,23 @@ That directory is temporary, so the archive-or-drop decision above has to be
 taken before it ages out; option 1 now means committing that copy with the
 dating preamble, option 2 means doing nothing.
 
-## Still left behind (not in the cleanup scope)
+## Second cleanup pass 2026-09-06
 
-- Eight orphaned docker volume sets (three volumes each) named after the removed
-  worktrees' compose projects: `nexus-test-bc251d451c20cf56`, `-b2f52bae1b4f1698`,
-  `-1043c54925a694f8`, `-d21763a88e51febb`, `-9cf883522650fd5f`,
-  `-f0819fe9ebe8235b`, `-0ebae997b6ec8811`, `-8dc93c1a8716431d`
-  (`docker volume ls -q | grep <id> | xargs docker volume rm`).
-- Unregistered files under `/private/var/tmp/`: five `nexus-pr203-*.bundle`
-  (59 MB each), the `nexus-pr203-vm-source` clone (119 MB, at 0c651e50),
-  `nexus-pr203-evidence`, `nexus-pr203-ci*`, `nexus-pr203-focus-*` logs, and
-  two fault-proof zsh scripts.
+Also removed on the owner's confirmation: the orphaned docker volume sets of the
+eight removed worktrees and of five further compose projects with no owning
+runtime record or container; every unregistered `nexus-pr203-*` leftover under
+`/private/var/tmp/` (bundles whose heads are all inside PR #203, the
+`nexus-pr203-vm-source` clone at 0c651e50, evidence, CI, focus and script
+files); the PR #194, #197 and #204 leftovers there (worktrees, bundles, build
+caches; all three PRs merged, none held a dirty or unpushed repository); the
+three agency-managed worktrees for merged branches and the four merged
+`agency/*` local branches. The agency daemon was not running and its own
+metadata under Application Support was left as is.
+
+Deliberately left in place: the running `nexus-test-81b7d2e67326829d` stack,
+which belongs to the `nexus-release-0.2.14` worktree (started 2026-09-06); the
+`nexus-pr203-runner` container and its three cache volumes (still needed for
+governed runs on the takeover worktree); the `nexus_pr194*`/`nexus-pr193-*`
+runner-cache volumes and any stopped runner containers behind them; the
+`/private/var/tmp/nexus-ci-*` hosted-CI artifact downloads and
+`nexus-catalog.*` directories. Those are the next cleanup candidates.
