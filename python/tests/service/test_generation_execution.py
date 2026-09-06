@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+from collections.abc import AsyncIterator
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from importlib.util import find_spec
+from types import MappingProxyType, SimpleNamespace
 from typing import TYPE_CHECKING, cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import Engine, func, select
@@ -17,14 +21,61 @@ from sqlalchemy.orm import Session
 _CUTOVER_PRESENT = find_spec("nexus.services.generation_continuations") is not None
 
 if TYPE_CHECKING or _CUTOVER_PRESENT:
+    from provider_runtime.registry import api_model_catalog
+    from provider_runtime.types import (
+        Absent as RuntimeAbsent,
+    )
+    from provider_runtime.types import (
+        AttemptRecord,
+        CallMeta,
+        CancelSignal,
+        ExpectedModelFailure,
+        Failed,
+        FinalAttempt,
+        GenerateIntent,
+        PossiblyBillable,
+        RuntimeStreamEvent,
+        StreamStart,
+        TerminalEvent,
+        TokenUsage,
+    )
+    from provider_runtime.types import (
+        Present as RuntimePresent,
+    )
+
     from nexus.db.models import LLMModelTurn, LLMModelTurnContinuation
+    from nexus.db.session import create_session_factory
+    from nexus.jobs.queue import JobExecutionContext, claim_job, enqueue_job, lock_job
     from nexus.schemas.presence import absent, present
+    from nexus.services import generation_policy
+    from nexus.services.codex_generation_contract import NormalizedFailureCode
+    from nexus.services.generation_backend import (
+        BackendGenerationRequest,
+        GenerationBackend,
+        GenerationBackendComposition,
+        PreparedCodexChild,
+    )
     from nexus.services.generation_continuations import (
         GenerationContinuationAuthenticationError,
         GenerationContinuationCipher,
         GenerationContinuationContext,
     )
-    from nexus.services.generation_spec import GenerationSpec
+    from nexus.services.generation_events import BackendTerminal
+    from nexus.services.generation_intent import GenerationIntent, TextOutput
+    from nexus.services.generation_service import GenerationService
+    from nexus.services.generation_spec import (
+        GenerationSpec,
+        ImmutablePromptPayloadRef,
+        generation_fact_digest,
+    )
+    from nexus.services.llm_execution import (
+        ComposedExecutionRuntime,
+        EncodedGenerationTerminal,
+        GenerationUncertain,
+        JobGenerationJournal,
+        admit_job_generation,
+        execute_generation,
+    )
     from nexus.services.llm_ledger import (
         DispatchableModelTurn,
         GenerationStart,
@@ -46,6 +97,14 @@ if TYPE_CHECKING or _CUTOVER_PRESENT:
         start_generation_in_current_transaction,
         start_model_turn_in_current_transaction,
     )
+    from nexus.services.provider_generation_backend import ProviderGenerationBackend
+    from nexus.services.provider_generation_contract import ProviderModelTools
+    from nexus.services.tool_runtime.composition import ComposedToolRuntime
+    from tests.testkit.generation_catalog import (
+        CHAT_TEST_SELECTION,
+        configured_chat_catalog_service,
+    )
+    from tests.testkit.unreachable_state import delete_jobs_by_ids
 
 
 def _generation_spec() -> dict[str, object]:
@@ -411,3 +470,225 @@ def test_parent_child_tool_replay_is_exactly_once(request: pytest.FixtureRequest
             )
             == 0
         )
+
+
+def test_foreign_provider_failure_is_refused_not_relabelled(
+    request: pytest.FixtureRequest,
+) -> None:
+    """Risk: an llm-calling failure variant Nexus does not know is renamed into the ledger."""
+
+    assert _CUTOVER_PRESENT, "route-neutral generation execution ownership is absent"
+    request.getfixturevalue("committed_chat_state_isolation")
+    engine = cast(Engine, request.getfixturevalue("engine"))
+    asyncio.run(_prove_foreign_provider_failure_is_refused(engine))
+
+
+async def _prove_foreign_provider_failure_is_refused(engine: Engine) -> None:
+    session_factory = create_session_factory(engine)
+    runtime = ComposedExecutionRuntime(
+        backend=GenerationBackend(
+            GenerationBackendComposition(
+                codex=_UnusedCodex(),
+                provider=ProviderGenerationBackend(_ForeignFailureProviderRuntime()),
+                codex_projection=_UnusedCodexProjection(),
+                provider_tools=_UnusedProviderTools(),
+            )
+        ),
+        continuation_cipher=GenerationContinuationCipher(b"k" * 32),
+        admission=GenerationService(
+            catalog=configured_chat_catalog_service(),
+            policy=_provider_dawn_write_policy(),
+            # justify-type-assertion: Dawn Write owns no model tools, so admission
+            # observes no tool-runtime field beyond the empty operation registry.
+            tools=cast(ComposedToolRuntime, SimpleNamespace(operations={})),
+        ),
+    )
+    job_id, context = _claim_dawn_write_job(engine, worker_id=f"foreign-failure-{uuid4()}")
+    intent = GenerationIntent(
+        instructions="Write the reader's grounded dawn reflection.",
+        input="One bounded proof signal.",
+        output=TextOutput(),
+    )
+    revision = generation_policy.operation_revision("dawn_write")
+    generation_id = uuid4()
+    try:
+        admitted = await admit_job_generation(
+            owner=LlmCallOwner(kind="dawn_write", id=uuid4()),
+            generation_id=generation_id,
+            operation="dawn_write",
+            intent=intent,
+            prompt_template_revision=revision,
+            prompt_payload_ref=ImmutablePromptPayloadRef(
+                owner_kind="dawn_write",
+                owner_id="foreign-failure-proof",
+                revision=revision,
+                payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
+            ),
+            journal=JobGenerationJournal(
+                context=context,
+                step_path="generation/foreign-failure-proof",
+                lock_dispatch=lambda db: lock_job(db, context.job_id),
+            ),
+            session_factory=session_factory,
+            runtime=runtime,
+        )
+        assert admitted.spec.selection == CHAT_TEST_SELECTION
+
+        with pytest.raises(GenerationUncertain) as refused:
+            await execute_generation(
+                admitted,
+                session_factory=session_factory,
+                runtime=runtime,
+                encode_terminal=_encode_any_terminal,
+                encode_preaccept_failure=_refuse_preaccept,
+            )
+        cause = refused.value.__cause__
+        assert isinstance(cause, AssertionError) and "unreachable" in str(cause), (
+            f"foreign provider failure was not refused by the closed ledger match: {cause!r}"
+        )
+        assert "_ForeignFailure" in str(cause)
+
+        with session_factory() as db:
+            generation = read_generation(db, generation_id=generation_id)
+            turns = read_model_turns(db, generation_id=generation_id)
+        assert generation is not None
+        assert generation.outcome is None, (
+            f"foreign provider failure was relabelled into the ledger: {generation.terminal!r}"
+        )
+        assert [turn.terminal for turn in turns] == [None], (
+            f"foreign provider failure was relabelled into a child terminal: {turns!r}"
+        )
+    finally:
+        with session_factory() as db:
+            delete_jobs_by_ids(db, job_ids=(job_id,))
+            db.commit()
+
+
+def _provider_dawn_write_policy() -> generation_policy.GenerationPolicy:
+    """Current developer policy with Dawn routed to the configured API row under proof."""
+
+    current = generation_policy.GENERATION_POLICY
+    dawn_write = replace(current.background_operations["dawn_write"], selection=CHAT_TEST_SELECTION)
+    return replace(
+        current,
+        revision=generation_fact_digest("foreign-failure-proof-policy"),
+        background_operations=MappingProxyType(
+            {**current.background_operations, "dawn_write": dawn_write}
+        ),
+    )
+
+
+def _claim_dawn_write_job(engine: Engine, *, worker_id: str) -> tuple[UUID, JobExecutionContext]:
+    with Session(engine) as db:
+        job = enqueue_job(
+            db,
+            kind="dawn_write_job",
+            payload={"proof": "foreign-provider-failure"},
+            max_attempts=1,
+        )
+        db.commit()
+        claimed = claim_job(
+            db,
+            job_id=job.id,
+            worker_id=worker_id,
+            lease_seconds=900,
+            heavy_kinds=(),
+            allowed_kinds=("dawn_write_job",),
+        )
+        assert claimed is not None
+        db.commit()
+        return job.id, JobExecutionContext(
+            job_id=claimed.id,
+            worker_id=worker_id,
+            attempt_no=claimed.attempts,
+            resource_class="Light",
+        )
+
+
+def _encode_any_terminal(terminal: BackendTerminal) -> EncodedGenerationTerminal:
+    """A domain encoder that accepts every terminal, so only the ledger match can refuse."""
+
+    del terminal
+    return EncodedGenerationTerminal(terminal_result='{"kind":"foreign-failure-proof"}')
+
+
+def _refuse_preaccept(code: NormalizedFailureCode, detail: str) -> str:
+    raise AssertionError(f"a ready ProviderApi row refused before acceptance: {code} {detail}")
+
+
+@dataclass(frozen=True, slots=True)
+class _ForeignFailure:
+    """A failure variant the pinned llm-calling contract does not declare."""
+
+    safe_detail: str
+
+
+class _ForeignFailureProviderRuntime:
+    """Controlled external ProviderRuntime boundary emitting an undeclared failure."""
+
+    async def stream(
+        self,
+        intent: GenerateIntent,
+        *,
+        cancel: CancelSignal | None = None,
+    ) -> AsyncIterator[RuntimeStreamEvent]:
+        del cancel
+        usage = TokenUsage(
+            input_tokens=23,
+            output_tokens=0,
+            total_tokens=23,
+            reasoning_tokens=RuntimeAbsent(),
+            cache_read_input_tokens=RuntimeAbsent(),
+            cache_write_input_tokens=RuntimeAbsent(),
+        )
+        meta = CallMeta(
+            provider=intent.target.provider,
+            model=intent.target.model,
+            provider_request_id=RuntimePresent("foreign-failure-proof"),
+            upstream_provider=RuntimeAbsent(),
+            usage=RuntimePresent(usage),
+            attempt_trace=(
+                AttemptRecord(
+                    attempt=1,
+                    signal=FinalAttempt(),
+                    status_code=RuntimePresent(500),
+                    started_at_ms=1,
+                    ended_at_ms=2,
+                ),
+            ),
+            billability=PossiblyBillable(),
+            native_reasoning=RuntimePresent(intent.reasoning),
+            registry_revision=api_model_catalog().registry_revision,
+        )
+        yield RuntimeStreamEvent(seq=1, event=StreamStart())
+        yield RuntimeStreamEvent(
+            seq=2,
+            event=TerminalEvent(
+                outcome=Failed(
+                    meta=meta,
+                    # justify-type-assertion: the proof deliberately crosses the pinned
+                    # closed union with a variant the contract does not declare.
+                    failure=cast(ExpectedModelFailure, _ForeignFailure(safe_detail="drifted")),
+                )
+            ),
+        )
+
+
+class _UnusedCodex:
+    def stream(self, *_args: object, **_kwargs: object) -> AsyncIterator[object]:
+        raise AssertionError("ProviderApi Dawn admission fell through to Codex")
+
+    async def cancel(self, request_id: UUID) -> None:
+        raise AssertionError(f"unused Codex transport was cancelled for {request_id}")
+
+
+class _UnusedCodexProjection:
+    def prepare(self, request: BackendGenerationRequest) -> PreparedCodexChild:
+        raise AssertionError(
+            f"ProviderApi generation {request.generation_id} used Codex projection"
+        )
+
+
+class _UnusedProviderTools:
+    def resolve(self, spec: GenerationSpec) -> ProviderModelTools:
+        raise AssertionError(f"NoModelTools generation {spec.operation!r} resolved provider tools")

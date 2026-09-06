@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
-import re
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
@@ -25,7 +24,22 @@ from provider_runtime.types import (
     Cancelled as ProviderCancelled,
 )
 from provider_runtime.types import (
+    ExpectedModelFailure,
+    InvalidStructuredOutput,
+    InvalidToolArguments,
+    ProviderContextTooLarge,
+    ProviderHttpUnavailable,
+    ProviderRateLimit,
+    ProviderStreamInterrupted,
+    ProviderTimeout,
+    TransientExhausted,
+    TransportUnavailable,
+)
+from provider_runtime.types import (
     Failed as ProviderFailed,
+)
+from provider_runtime.types import (
+    FailureCode as ProviderFailureCode,
 )
 from provider_runtime.types import (
     Incomplete as ProviderIncomplete,
@@ -1213,24 +1227,25 @@ def _parent_terminal_document(
     }
 
 
-def _provider_failure_code(failure: object) -> str:
-    name = type(failure).__name__
-    fixed = {
-        "ProviderContextTooLarge": "context_too_large",
-        "InvalidToolArguments": "invalid_tool_arguments",
-        "InvalidStructuredOutput": "invalid_structured_output",
-    }
-    if name in fixed:
-        return fixed[name]
-    if name == "TransientExhausted":
-        return {
-            "ProviderRateLimit": "rate_limited",
-            "ProviderTimeout": "timeout",
-            "ProviderHttpUnavailable": "provider_unavailable",
-            "TransportUnavailable": "provider_unavailable",
-            "ProviderStreamInterrupted": "stream_interrupted",
-        }.get(type(getattr(failure, "cause", None)).__name__, "provider_unavailable")
-    return _snake_case(name) or "provider_failed"
+def _provider_failure_code(failure: ExpectedModelFailure) -> ProviderFailureCode:
+    if isinstance(failure, ProviderContextTooLarge):
+        return "context_too_large"
+    if isinstance(failure, InvalidToolArguments):
+        return "invalid_tool_arguments"
+    if isinstance(failure, InvalidStructuredOutput):
+        return "invalid_structured_output"
+    if isinstance(failure, TransientExhausted):
+        cause = failure.cause
+        if isinstance(cause, ProviderRateLimit):
+            return "rate_limited"
+        if isinstance(cause, ProviderTimeout):
+            return "timeout"
+        if isinstance(cause, ProviderHttpUnavailable | TransportUnavailable):
+            return "provider_unavailable"
+        if isinstance(cause, ProviderStreamInterrupted):
+            return "stream_interrupted"
+        assert_never(cause)
+    assert_never(failure)
 
 
 def _json_mapping(value: object) -> Mapping[str, object]:
@@ -1274,10 +1289,6 @@ def _json_value(value: object) -> object:
     if isinstance(value, tuple | list):
         return [_json_value(item) for item in value]
     raise AssertionError(f"unsupported terminal evidence type {type(value).__name__}")
-
-
-def _snake_case(value: str) -> str:
-    return re.sub(r"(?<!^)(?=[A-Z])", "_", value).lower()
 
 
 class _Observer(BackendEventObserver):
