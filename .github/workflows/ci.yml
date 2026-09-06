@@ -161,8 +161,9 @@ jobs:
     if: github.event_name == 'push'
     runs-on: [self-hosted, linux, x64]
     # The complete portfolio on the four-core lab runner exceeds the hosted
-    # 90-minute budget; self-hosted minutes are unbilled, so the bound is wide.
-    timeout-minutes: 300
+    # 90-minute budget (its kernel lane alone measured 60 minutes there);
+    # self-hosted minutes are unbilled, so the bound is wide.
+    timeout-minutes: 480
     permissions:
       contents: read
 
