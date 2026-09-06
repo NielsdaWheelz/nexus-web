@@ -1571,15 +1571,16 @@ meaningful RED before GREEN.
 | `llm-calling` continuation codec | `llm-calling@1353881d80ffeee916b78e163b5620fc967d09bd` `pytest:tests/test_continuation.py::test_continuation_round_trip_is_canonical_bound_and_recursively_immutable` | canonical round trip; recursive immutability |
 | `llm-calling` continuation binding | `llm-calling@1353881d80ffeee916b78e163b5620fc967d09bd` `pytest:tests/test_continuation.py::test_continuation_decode_rejects_target_codec_and_noncanonical_bytes` | target/codec mismatch and noncanonical bytes refuse |
 | `llm-calling` package surface | `llm-calling@1353881d80ffeee916b78e163b5620fc967d09bd` hosted `test` and `test-without-optional-sdk` jobs | clean base wheel imports AgentRuntime without `llm_tools` or either SDK; each optional extra remains independently installable |
-| Nexus catalog/selection | `pytest:python/tests/service/test_generation_catalog.py` | complete configured set; source-controlled qualification binding; private HTTP projection; semantic-vs-readiness revision; stale/invalid exact pair |
+| Nexus catalog/selection | `pytest:python/tests/service/test_generation_catalog.py::test_complete_catalog_and_selection_contract` (canonical node; the whole file stays registered, so its sibling nodes remain priority-routed) | complete configured set; source-controlled qualification binding; private HTTP projection; semantic-vs-readiness revision; stale/invalid exact pair |
 | Developer policy facts | `pytest:python/tests/kernel/test_generation_policy.py::test_exact_generation_policy_is_total_content_derived_and_profile_free` | exact seed and fourteen rows; content-derived revision; no profile vocabulary |
 | Developer policy/admission | `pytest:python/tests/service/test_generation_policy.py::test_total_policy_and_frozen_admission_contract` | exact frozen selections/specs/policy revision/tool modes |
-| Background capacity admission | `pytest:python/tests/service/test_generation_capacity_pause.py` | exact durable `CapacityPaused`; ready admission clears it; reschedule preserves retry budget |
+| Background capacity admission | `pytest:python/tests/service/test_generation_capacity_pause.py` | exact durable `CapacityPaused`; ready admission clears it; reschedule preserves retry budget; rebuild admits current policy; frozen admission unchanged under revision |
 | Transport projection | `pytest:python/tests/kernel/test_generation_transport_projection.py::test_one_plan_lowers_to_both_transport_contracts` | function alias reversal; MCP allowlist; `NoModelTools`; proposal vs observation |
-| Route-neutral backend runtime | `pytest:python/tests/kernel/test_generation_backend_runtime.py` | closed event projection; pre-admission capacity; Codex cancellation; API child/tool/successor ordering and resume; strict-plus-tools route difference |
+| Route-neutral backend runtime | `pytest:python/tests/kernel/test_generation_backend_runtime.py::test_closed_backend_event_projection_retains_codex_terminal_truth` (canonical node; the whole file stays registered, so its sibling nodes remain priority-routed) | closed event projection; pre-admission capacity; Codex cancellation; API child/tool/successor ordering and resume; strict-plus-tools route difference |
 | ProviderApi qualification | `pytest:python/tests/service/test_provider_generation_backend.py::test_route_local_transcripts_preserve_terminal_truth` | all eleven targets and 47 reasoning wires; seven strict engine shapes; fourteen qualified tool continuations; usage and succeeded terminals |
-| Durable execution | `pytest:python/tests/service/test_generation_execution.py::test_parent_child_tool_replay_is_exactly_once` | API crash after child; atomic successor continuation; Codex observation; no duplicate bill/effect |
-| Tool authority | `pytest:python/tests/service/test_generation_tool_authority.py::test_frozen_plan_is_transport_neutral_and_fenced` | transport-neutral read execution; durable position order and exact replay; scope, foreign-generation, bearer, and lease fences |
+| Durable execution | `pytest:python/tests/service/test_generation_execution.py::test_provider_crash_after_accepted_child_resumes_one_successor_without_redispatch` (canonical fault-bound node; the whole file stays registered, so `test_parent_child_tool_replay_is_exactly_once` and `test_foreign_provider_failure_is_refused_not_relabelled` remain priority-routed) | API crash after accepted child; one successor; exact tool-position replay; two model turns; zero continuations; no duplicate usage; foreign provider failure refused before ledger landing |
+| Tool authority | `pytest:python/tests/service/test_generation_tool_authority.py::test_frozen_plan_is_transport_neutral_and_fenced` | transport-neutral read execution; durable position order and exact replay; scope, foreign-generation, bearer, and lease fences; write plan without revert-owning projection refused |
+| Codex MCP transport gate | `pytest:python/tests/service/test_agent_tools_mcp_gate.py::test_public_mcp_mount_admits_only_a_live_bearer_on_the_exact_protocol` | live bearer and initialize journal one position; unmounted, tampered, expired, absent bearer 401; protocol/session 400; body 413; source and grant 429 |
 | Chat write/Undo authority | `pytest:python/tests/service/test_llm_tool_safety.py::test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo` | persisted `ReadOnly`/`AdditiveWrites` prompts match the frozen authority; five additive write tools; owner persistence; idempotent Undo |
 | Machine-authorship lifecycle | `pytest:python/tests/service/test_machine_authorship.py::test_all_additive_writes_publish_durable_authorship_into_later_model_reads` | all five creating writes; highlight plus note; exact persisted targets; later note/highlight/relation reads; Undo; missing/stable-identity corruption refused |
 | Machine-authorship wire | `vitest:apps/web/src/lib/conversations/trustToolCallWire.unit.test.ts` | exact closed decode; missing/extra fields, nonpositive or int32-overflow positions, and incoherent path refused |
@@ -1591,9 +1592,9 @@ meaningful RED before GREEN.
 | Operation portfolio | `pytest:python/tests/kernel/test_generation_operation_adapters.py` | exact fourteen intent/policy rows; exactly Library/Idea `ExactModelTools`; exactly twelve `NoModelTools`; Dawn, Media Unit, Oracle, and Synapse task adapters delegate one frozen route-neutral generation; content owners cannot choose runtime policy |
 | Reset migration admission | `pytest:python/tests/migrations/test_generation_backends_cutover_admission.py::test_0224_refuses_the_only_undrained_generation_job_before_history_reset` | otherwise-empty 0223; one pending generation job is the sole violated preflight invariant; exact refusal before mutation |
 | Reset migration convergence | `pytest:python/tests/migrations/test_generation_backends_cutover.py::test_0223_aggregate_reset_preserves_domain_data` | empty DB; synthetic 0223; domain-reference refusal; preservation digests; empty final authorship table; zero legacy refs |
-| Product Chat API | `pytest:python/tests/service/test_generation_chat_api.py` | create/idempotency/frozen spec/history/trust; rerun/regenerate authority; strict legacy/bodyless ingress; typed selection failures; pre-durable binding refusal |
-| Product catalog API | `pytest:python/tests/service/test_generation_catalog.py` | strict private catalog projection and typed source failure |
-| Product SSE selection wire | `vitest:apps/web/src/lib/api/sse/events.selection.unit.test.ts` | complete immutable selection decode; incomplete/widened projection refusal |
+| Product Chat API | `pytest:python/tests/service/test_generation_chat_api.py::test_exact_selection_and_authority_cross_every_chat_projection` (canonical node; the whole file stays registered, so its sibling nodes remain priority-routed) | create/idempotency/frozen spec/history/trust; rerun/regenerate authority; strict legacy/bodyless ingress; typed selection failures; pre-durable binding refusal; closed failure projection and rerun eligibility |
+| Product catalog API | `pytest:python/tests/service/test_generation_catalog.py` (sibling nodes of the registered whole-file owner; canonical node above) | strict private catalog projection and typed source failure |
+| Product SSE selection wire | `vitest:apps/web/src/lib/api/sse/events.selection.unit.test.ts`; `pytest:python/tests/kernel/test_generation_selection_wire_contract.py` | complete immutable selection decode; incomplete/widened projection refusal; closed selection-state and readiness unions pinned identically on both sides; retired codes refused |
 | Product UI | `vitest:apps/web/src/components/chat/GenerationSelection.browser.test.tsx` | provider/model/reasoning dispatch; billing/privacy/processor disclosure; retired-row refusal; one-run write consent/reset; stale/no-selectable draft retention; desktop Escape/focus return; unavailable rerun replacement |
 | Billing disclosure | `vitest:apps/web/src/app/(authenticated)/settings/billing/GenerationBillingDisclosure.browser.test.tsx` | Codex subscription and metered Provider API facts; no generation controls |
 | Privacy disclosure | `vitest:apps/web/src/app/privacy/PrivacyPage.browser.test.tsx` | all configurable Provider API processors/routes and background Codex statement |
@@ -1663,6 +1664,29 @@ RED:
   ProviderApi qualification, ledger, API/UI, secret-isolation, provider-peer,
   and residue owners. Registered fault RED owns adaptations of existing replay,
   authority, confinement, operation, and evaluation owners.
+- Whole-file owners are not machine-gated. The controller requires same-run
+  sensitivity for a changed proof only when its canonical registered owner is
+  one exact node or carries a registered fault; a changed whole-file owner with
+  neither resolves to itself and its `sensitivity_required` is cleared. The
+  section 9 owners that remain whole-file are therefore not sensitivity-gated
+  by `pr`: the Web owners `trustToolCallWire.unit.test.ts`,
+  `AssistantWriteTrail.browser.test.tsx`, `DossierSurface.browser.test.tsx`,
+  `events.selection.unit.test.ts`, `GenerationSelection.browser.test.tsx`,
+  `GenerationBillingDisclosure.browser.test.tsx`,
+  `PrivacyPage.browser.test.tsx`, `oracleReadingWire.unit.test.ts`, and
+  `dossierFailureContract.unit.test.ts`; the adapted journeys
+  `durable-ingest-reader-open` and `grounded-chat-citation`; and the Python
+  owners `test_generation_selection_wire_contract.py`,
+  `test_oracle_wire_contract.py`, `test_dossier_failure_wire_contract.py`,
+  `test_generation_operation_adapters.py` (its fault names the whole file), and
+  `test_generation_capacity_pause.py` (its module-level `_SHIPPED_DAWN_SELECTION`
+  and the `_runtime` default evaluate cutover names outside the
+  `_CUTOVER_PRESENT` guard, so BASE fails at collection, not at a behavioral
+  assertion). Their red-before-green evidence is the per-proof RED recorded in
+  the work report, not a controller verdict. `test_generation_catalog.py`,
+  `test_generation_backend_runtime.py`, and `test_generation_chat_api.py`
+  register one exact canonical node beside the whole-file owner, so `pr` gates
+  that node with BASE; their sibling scenarios rest on the same recorded RED.
 - Register each exact fault patch, SHA-256, layer, expected assertion, and
   canonical node in `testdata/faults/manifest.json`:
 
@@ -1675,6 +1699,7 @@ RED:
   | `agent-tool-receipt-lease-fence-bypass` | authority: a lost lease can land a tool receipt |
   | `generation-reconciliation-fingerprint-bypass` | reconciliation: a mismatched immutable request is accepted |
   | `agent-tool-grant-scope-bypass` | authority: a bearer can widen its frozen scope |
+  | `agent-tool-mcp-grant-gate-bypass` | authority: a signed bearer without live authority crosses the public MCP mount |
   | `llm-tool-safety-prompt-bypass` | eval: reviewed prompt-injection containment disappears |
   | `codex-generation-policy-plan-bypass` | policy: the exact generation portfolio drifts |
   | `durable-codex-operation-revision-shadow` | adapters: a domain owner shadows runtime policy |
@@ -1961,6 +1986,14 @@ protected, spend-capped, exact-SHA provider canary before promotion.
   billing, tool, and effect truth. Durable `CapacityPaused` accepts delayed
   background work instead of turning predictable quota into dead letters or API
   spend.
+- Whole-file proof owners for the new Web modules, the two adapted journeys,
+  and the wire-contract kernels are not controller sensitivity-gated. The
+  Vitest and Playwright runners accept no exact node, and narrowing a Python
+  owner to one node would drop its sibling scenarios from priority routing, so
+  each Python owner with a BASE-reaching node registers that node beside the
+  whole file instead. The accepted cost is that the remaining whole-file owners'
+  red-before-green rests on recorded per-proof evidence rather than a `pr`
+  verdict.
 - Background run detail ships on the Dossier build head only, because it is the
   one background operation with a user-facing per-run surface. Metadata
   enrichment, Media summary, Synapse, Dawn, Oracle, and Idea resolution keep
