@@ -19,7 +19,6 @@ from pydantic import BaseModel
 
 from nexus.services.generation_selection import (
     CodexPersonalSelection,
-    GenerationSelectionSpec,
     ProviderApiSelection,
 )
 from nexus.services.generation_spec import BackgroundOperationKey
@@ -540,10 +539,6 @@ def policy_facts() -> dict[str, object]:
     )
 
 
-def policy_fingerprint() -> str:
-    return POLICY_FINGERPRINT
-
-
 def background_operation_policy(operation: str) -> BackgroundOperationPolicy:
     try:
         return GENERATION_POLICY.background_operations[cast(BackgroundOperationKey, operation)]
@@ -559,17 +554,6 @@ def workflow_for_operation(operation: str) -> OperationWorkflowSpec:
 
 def operation_revision(operation: str) -> str:
     return workflow_for_operation(operation).revision
-
-
-def assert_background_operation_facts(
-    operation: str,
-    observed: BackgroundOperationPolicy,
-) -> None:
-    expected = background_operation_policy(operation)
-    if observed != expected:
-        raise AssertionError(
-            f"{operation} policy facts drifted: expected {expected}, got {observed}"
-        )
 
 
 def validate_policy() -> None:
@@ -682,7 +666,6 @@ __all__ = [
     "ExactHostToolPlan",
     "ExactModelTools",
     "GenerationPolicy",
-    "GenerationSelectionSpec",
     "HostToolPlan",
     "ModelToolPolicy",
     "NoHostToolPlan",
@@ -695,11 +678,9 @@ __all__ = [
     "StrictJsonOutputContract",
     "TextOutputContract",
     "ToolScopeDerivation",
-    "assert_background_operation_facts",
     "background_operation_policy",
     "operation_revision",
     "policy_facts",
-    "policy_fingerprint",
     "policy_revision_from_facts",
     "validate_policy",
     "workflow_for_operation",

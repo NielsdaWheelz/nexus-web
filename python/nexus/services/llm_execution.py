@@ -97,6 +97,7 @@ from nexus.services.generation_events import (
     ProviderTerminalEvidence,
 )
 from nexus.services.generation_intent import GenerationIntent
+from nexus.services.generation_policy import BACKGROUND_CAPACITY_PROBE_SECONDS
 from nexus.services.generation_selection import ProviderApiSelection
 from nexus.services.generation_spec import (
     BackgroundOperationKey,
@@ -137,7 +138,6 @@ type BindAdmissionFactory = Callable[[GenerationSpec], BindAdmission]
 type ToolExecutorFactory = Callable[[GenerationSpec], BackendToolExecutor]
 
 _MODEL_TURN_COMPONENT = "nexus-generation-model-turn.v1"
-_BACKGROUND_CAPACITY_PROBE_SECONDS = 15 * 60
 
 
 class ExecutionRuntime(Protocol):
@@ -995,7 +995,7 @@ def _fallback_capacity_pause(explanation: str) -> CapacityPaused:
     return CapacityPaused(
         explanation=explanation,
         reset_at=absent(),
-        next_check_at=observed_at + timedelta(seconds=_BACKGROUND_CAPACITY_PROBE_SECONDS),
+        next_check_at=observed_at + timedelta(seconds=BACKGROUND_CAPACITY_PROBE_SECONDS),
         last_checked=observed_at,
     )
 

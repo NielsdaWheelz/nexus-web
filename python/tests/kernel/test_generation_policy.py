@@ -159,8 +159,7 @@ def test_policy_catalog_rejects_drift_and_unknown_operations() -> None:
             route="CodexPersonal", model="gpt-5.6-luna", reasoning="low"
         ),
     )
-    with pytest.raises(AssertionError, match="oracle"):
-        generation_policy.assert_background_operation_facts("oracle", wrong)
+    assert wrong != generation_policy.background_operation_policy("oracle")
     with pytest.raises(ValueError, match="unknown background generation operation"):
         generation_policy.background_operation_policy("unknown")
 
