@@ -287,17 +287,6 @@ export function decodeGenerationSelectionSpec(
   };
 }
 
-export function isGenerationSelectionSpec(
-  raw: unknown,
-): raw is GenerationSelectionSpec {
-  try {
-    decodeGenerationSelectionSpec(raw);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function decodeReadiness(raw: unknown, name: string): GenerationReadiness {
   if (typeof raw !== "object" || raw === null || !("kind" in raw)) {
     throw new TypeError(`${name} must be a readiness object`);
@@ -651,7 +640,7 @@ function decodeRoute(raw: unknown, name: string): GenerationCatalogRoute {
   };
 }
 
-export function decodeGenerationCatalog(raw: unknown): GenerationCatalog {
+function decodeGenerationCatalog(raw: unknown): GenerationCatalog {
   const value = expectExactRecord(
     raw,
     ["definition_revision", "observed_at", "chat_seed", "routes"],
@@ -755,7 +744,7 @@ export function decodeRunSelectionOut(raw: unknown, name: string): RunSelectionO
   };
 }
 
-export function generationSelectionKey(selection: GenerationSelectionSpec): string {
+function generationSelectionKey(selection: GenerationSelectionSpec): string {
   return selection.route === "CodexPersonal"
     ? `CodexPersonal\u0000${selection.model}\u0000${selection.reasoning}`
     : `ProviderApi\u0000${selection.model_ref}\u0000${selection.reasoning}`;
