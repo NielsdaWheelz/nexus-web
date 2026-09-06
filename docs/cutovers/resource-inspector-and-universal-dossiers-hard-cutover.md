@@ -208,6 +208,8 @@ head =
       freshness: Presence<Current | Stale>
       active_build: Presence<DossierBuild {
         execution: Queued | Running | Recovering | Suspended
+        admitted_generation: Presence<selection, disclosure, tool plan, positions>
+        capacity_pause: Presence<CapacityPaused>
       }>
       latest_unsuccessful_build: Presence<Failed | Cancelled>
       history: DossierRevisionSummary[]

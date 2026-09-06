@@ -456,8 +456,14 @@ authority outside the database transaction, then atomically persists the parent
 Workers never reread process policy. Concurrent old/new deployments therefore
 admit a complete old or new revision; neither can alter queued or running work.
 A manual background rerun/rebuild is a fresh admission under the current
-developer policy; users cannot replace its selection. Run/activity detail may
-show the effective background selection and disclosure read-only.
+developer policy; users cannot replace its selection. Build detail shows the
+effective background selection, its dispatch-time disclosure, the frozen model
+tool plan (`NoModelTools` or the exact plan id, revision, and effect mode), and
+the journaled tool-position count read-only: the Dossier head projects the
+build's latest ledger generation as `DossierBuildSummary.admitted_generation`,
+`Absent` until a generation is admitted. No control, credential, price, or
+current catalog state accompanies it; background eligibility stays
+server-internal.
 
 Subscription quota is capacity, not a defect retry. A background admission
 blocked by an observed Codex quota window enters durable `CapacityPaused` with
@@ -465,8 +471,11 @@ the observation, `reset_at: Presence<Instant>`, and `next_check_at`; it is not a
 generation attempt and does not consume the ordinary ~19-minute retry ladder.
 The scheduler rechecks at the provider reset instant when known, otherwise with
 bounded low-frequency readiness probes, and admits once current policy is
-ready. The user sees **Waiting for Codex capacity** and may cancel; no API spend,
-dead letter, model switch, or per-operation manual replay occurs. A quota error
+ready. The Dossier head projects the parked pause as
+`DossierBuildSummary.capacity_pause` on the active build, and the Dossier
+surface shows **Waiting for Codex capacity** with the reset or next-check
+instant while keeping the existing build Cancel; no API spend, dead letter,
+model switch, or per-operation manual replay occurs. A quota error
 after provider acceptance remains terminal because repeating could duplicate
 billing/effects.
 
@@ -1576,6 +1585,7 @@ meaningful RED before GREEN.
 | Machine-authorship wire | `vitest:apps/web/src/lib/conversations/trustToolCallWire.unit.test.ts` | exact closed decode; missing/extra fields, nonpositive or int32-overflow positions, and incoherent path refused |
 | Chat write/Undo presentation | `vitest:apps/web/src/components/chat/AssistantWriteTrail.browser.test.tsx` | visible attribution and owned Undo; no-target and unhydrated states |
 | Artifact generation provenance | `pytest:python/tests/service/test_artifact_revision_generation_provenance.py::test_revision_reads_project_retired_frozen_generation_identity_without_mutation` | immutable retired-generation identity is projected without mutating the revision |
+| Background run detail | `pytest:python/tests/service/test_dossier_build_generation_detail.py::test_head_projects_capacity_pause_and_admitted_selection_read_only`; `vitest:apps/web/src/components/dossier/DossierSurface.browser.test.tsx` | durable `CapacityPaused` with `next_check_at`/`reset_at` and the admitted selection, disclosure, and exact tool plan on the public Dossier head; "Waiting for Codex capacity" with the existing Cancel and a read-only detail line exposing no control, credential, or price |
 | Secrets/confinement | `pytest:python/tests/service/test_generation_secret_isolation.py::test_route_secrets_and_continuations_never_cross_boundaries` | cross-route credential projection; sealed-continuation non-disclosure; terminal redaction; ProviderApi header/body observation; native process, bearer/lease, and egress stay with their existing named owners |
 | Provider loopback control | `pytest:python/tests/kernel/nexus_test_control/test_provider_api_peer.py::test_provider_peer_is_controller_owned_and_recovered` | resource/port/credentials; TLS/base URL; recovery/cleanup; no fixture branch |
 | Operation portfolio | `pytest:python/tests/kernel/test_generation_operation_adapters.py` | exact fourteen intent/policy rows; exactly Library/Idea `ExactModelTools`; exactly twelve `NoModelTools`; Dawn, Media Unit, Oracle, and Synapse task adapters delegate one frozen route-neutral generation; content owners cannot choose runtime policy |
@@ -1951,6 +1961,12 @@ protected, spend-capped, exact-SHA provider canary before promotion.
   billing, tool, and effect truth. Durable `CapacityPaused` accepts delayed
   background work instead of turning predictable quota into dead letters or API
   spend.
+- Background run detail ships on the Dossier build head only, because it is the
+  one background operation with a user-facing per-run surface. Metadata
+  enrichment, Media summary, Synapse, Dawn, Oracle, and Idea resolution keep
+  their existing status projections and expose no admitted selection or
+  capacity wait to the user; their quota pauses remain visible only in the
+  durable job journal until those surfaces gain per-run detail.
 - Deterministic ProviderApi qualification grows with catalog rows and reasoning
   wire shapes, not model × reasoning × operation. It catches application and
   pinned-library drift without paid calls. It does not prove live provider
