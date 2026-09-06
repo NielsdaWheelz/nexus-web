@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from importlib.util import find_spec
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from typing import TYPE_CHECKING, cast
 from uuid import UUID, uuid4
 
@@ -108,15 +108,21 @@ class _AdmissionRuntime:
         raise AssertionError("capacity admission must not dispatch a backend")
 
 
-def _pair(readiness: Ready | CapacityPaused) -> ResolvedCatalogPair:
-    selection = CodexPersonalSelection(
-        route="CodexPersonal",
-        model="gpt-5.6-terra",
-        reasoning="medium",
-    )
+_SHIPPED_DAWN_SELECTION = CodexPersonalSelection(
+    route="CodexPersonal",
+    model="gpt-5.6-terra",
+    reasoning="medium",
+)
+
+
+def _pair(
+    readiness: Ready | CapacityPaused,
+    *,
+    selection: CodexPersonalSelection = _SHIPPED_DAWN_SELECTION,
+) -> ResolvedCatalogPair:
     return ResolvedCatalogPair(
         selection=selection,
-        target_key="CodexPersonal:gpt-5.6-terra",
+        target_key=f"CodexPersonal:{selection.model}",
         source_catalog_definition_revision=_SOURCE_REVISION,
         source_row_fingerprint=_ROW_FINGERPRINT,
         backend_contract_revision=AGENT_BACKEND_CONTRACT_REVISION,
@@ -131,8 +137,8 @@ def _pair(readiness: Ready | CapacityPaused) -> ResolvedCatalogPair:
         effective_output_budget_tokens=16_000,
         presentation=SelectionPresentation(
             route_label="Codex Personal",
-            model_label="GPT-5.6 Terra",
-            reasoning_label="Medium",
+            model_label=selection.model,
+            reasoning_label=selection.reasoning,
             billing=SubscriptionBilling(),
             privacy=PrivacyDisclosure(
                 summary="Authenticated local Codex account.",
@@ -151,20 +157,25 @@ def _pair(readiness: Ready | CapacityPaused) -> ResolvedCatalogPair:
     )
 
 
-def _runtime(readiness: Ready | CapacityPaused) -> ExecutionRuntime:
+def _runtime(
+    readiness: Ready | CapacityPaused,
+    *,
+    policy: generation_policy.GenerationPolicy = generation_policy.GENERATION_POLICY,
+) -> ExecutionRuntime:
+    selection = policy.background_operations["dawn_write"].selection
+    assert isinstance(selection, CodexPersonalSelection)
     # justify-type-assertion: this controlled catalog implements the only public
     # admission method exercised here; constructing the remote-backed catalog
     # would replace the exact readiness state under proof.
-    catalog = cast(GenerationCatalogService, _AdmissionCatalog(pair_value=_pair(readiness)))
+    catalog = cast(
+        GenerationCatalogService,
+        _AdmissionCatalog(pair_value=_pair(readiness, selection=selection)),
+    )
     # justify-type-assertion: Dawn Write owns no model tools, so admission cannot
     # observe any tool-runtime field beyond the empty operation registry.
     tools = cast(ComposedToolRuntime, SimpleNamespace(operations={}))
     return _AdmissionRuntime(
-        admission=GenerationService(
-            catalog=catalog,
-            policy=generation_policy.GENERATION_POLICY,
-            tools=tools,
-        )
+        admission=GenerationService(catalog=catalog, policy=policy, tools=tools)
     )
 
 
@@ -335,4 +346,102 @@ def test_capacity_pause_reschedule_preserves_retry_budget(engine: Engine) -> Non
     finally:
         with session_factory() as db:
             delete_jobs_by_ids(db, job_ids=(job_id,))
+            db.commit()
+
+
+def test_rebuild_admission_reads_current_policy_and_never_alters_frozen_work(
+    engine: Engine,
+) -> None:
+    """Risk: a policy deployment rewrites queued work, or a manual rebuild admits stale policy."""
+
+    assert _CUTOVER_PRESENT, "the durable generation admission owner is absent"
+    session_factory = create_session_factory(engine)
+    ready = Ready(last_checked=datetime.now(UTC))
+    intent = _intent()
+    revision = generation_policy.operation_revision("dawn_write")
+    shipped = generation_policy.GENERATION_POLICY
+    revised_selection = CodexPersonalSelection(
+        route="CodexPersonal",
+        model="gpt-5.6-luna",
+        reasoning="low",
+    )
+    assert revised_selection != _SHIPPED_DAWN_SELECTION
+    revised = replace(
+        shipped,
+        revision=generation_fact_digest("rebuild-admission-proof-policy"),
+        background_operations=MappingProxyType(
+            {
+                **shipped.background_operations,
+                "dawn_write": replace(
+                    shipped.background_operations["dawn_write"],
+                    selection=revised_selection,
+                ),
+            }
+        ),
+    )
+    first_job, first_context = _claim_job(engine, worker_id=f"generation-policy-first-{uuid4()}")
+    rebuild_job, rebuild_context = _claim_job(
+        engine,
+        worker_id=f"generation-policy-rebuild-{uuid4()}",
+    )
+    first_owner = LlmCallOwner(kind="dawn_write", id=uuid4())
+    first_generation_id = uuid4()
+    try:
+        first = asyncio.run(
+            admit_job_generation(
+                owner=first_owner,
+                generation_id=first_generation_id,
+                operation="dawn_write",
+                intent=intent,
+                prompt_template_revision=revision,
+                prompt_payload_ref=_prompt_ref(intent),
+                journal=_journal(first_context),
+                session_factory=session_factory,
+                runtime=_runtime(ready),
+            )
+        )
+        assert first.spec.selection == _SHIPPED_DAWN_SELECTION
+        assert first.spec.policy_revision == shipped.revision
+
+        # The deployed policy changes while the first admission is still queued:
+        # replaying that admission must return the frozen spec, never reread policy.
+        replayed = asyncio.run(
+            admit_job_generation(
+                owner=first_owner,
+                generation_id=first_generation_id,
+                operation="dawn_write",
+                intent=intent,
+                prompt_template_revision=revision,
+                prompt_payload_ref=_prompt_ref(intent),
+                journal=_journal(first_context),
+                session_factory=session_factory,
+                runtime=_runtime(ready, policy=revised),
+            )
+        )
+        assert replayed.spec == first.spec, (
+            f"a queued admission was rewritten by a later policy revision: {replayed.spec!r}"
+        )
+
+        # A manual rebuild is a fresh admission under the current developer policy.
+        rebuild = asyncio.run(
+            admit_job_generation(
+                owner=LlmCallOwner(kind="dawn_write", id=uuid4()),
+                generation_id=uuid4(),
+                operation="dawn_write",
+                intent=intent,
+                prompt_template_revision=revision,
+                prompt_payload_ref=_prompt_ref(intent),
+                journal=_journal(rebuild_context),
+                session_factory=session_factory,
+                runtime=_runtime(ready, policy=revised),
+            )
+        )
+        assert rebuild.spec.selection == revised_selection, (
+            f"rebuild admission ignored the current policy selection: {rebuild.spec.selection!r}"
+        )
+        assert rebuild.spec.policy_revision == revised.revision
+        assert rebuild.spec.fingerprint != first.spec.fingerprint
+    finally:
+        with session_factory() as db:
+            delete_jobs_by_ids(db, job_ids=(first_job, rebuild_job))
             db.commit()
