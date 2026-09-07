@@ -76,10 +76,17 @@ Supabase then failed with `[Errno 111] Connection refused`, surfacing as
 `supabase-user cleanup failed`). The drift appeared between jobs: the stack
 stayed up after one run and a later preparation re-allocated recorded ports
 while the Supabase CLI kept the already-running containers on their old ports.
-Runtime preparation should reconcile the record against the live containers'
-published ports (or tear the stack down and re-provision) instead of trusting a
-record that no longer matches. Until then, run `./scripts/test clean` in the
-runner workspace before a job that follows an aborted or foreign run.
+Mechanism: `actions/checkout` runs `git clean -ffdx` at the start of every
+job, deleting the untracked `.nexus-test/runtime.json` while the compose
+project (named from the workspace path) keeps running; the next preparation
+allocates fresh ports into a new record and `docker compose up` reuses the
+existing containers on their old ports. Both workflows now keep the record on
+self-hosted runners (`clean: ${{ runner.environment == 'github-hosted' }}`).
+The controller should still reconcile the record against live containers (or
+tear down and re-provision) when they disagree, so a lost record cannot yield a
+half-matching runtime. If it happens again: `./scripts/test clean` when the
+record exists; otherwise `supabase stop --project-id <project>` plus
+`docker compose -p <project> down -v` by exact name.
 
 ## Related controller facts found in the same session
 

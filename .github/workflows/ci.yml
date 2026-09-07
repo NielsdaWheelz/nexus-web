@@ -73,6 +73,11 @@ jobs:
           ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/pull/{0}/head', inputs.pull_request_number) || github.sha }}
           fetch-depth: 0
           persist-credentials: false
+          # A persistent self-hosted runner keeps the controller's untracked runtime
+          # record beside its still-running test stack; wiping only the record makes
+          # the next job re-provision onto foreign containers. Hosted runners are
+          # fresh and clean fully.
+          clean: ${{ runner.environment == 'github-hosted' }}
 
       - name: Construct the exact PR merge
         if: github.event_name == 'workflow_dispatch'
@@ -186,6 +191,11 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+          # A persistent self-hosted runner keeps the controller's untracked runtime
+          # record beside its still-running test stack; wiping only the record makes
+          # the next job re-provision onto foreign containers. Hosted runners are
+          # fresh and clean fully.
+          clean: ${{ runner.environment == 'github-hosted' }}
 
       - uses: ./.github/actions/setup-test
         with:

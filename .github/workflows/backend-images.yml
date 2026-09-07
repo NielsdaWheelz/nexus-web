@@ -81,6 +81,11 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 1
           persist-credentials: false
+          # A persistent self-hosted runner keeps the controller's untracked runtime
+          # record beside its still-running test stack; wiping only the record makes
+          # the next job re-provision onto foreign containers. Hosted runners are
+          # fresh and clean fully.
+          clean: ${{ runner.environment == 'github-hosted' }}
 
       - name: Prove the checked-out source identity
         shell: bash
