@@ -135,9 +135,32 @@ of letting the workflow abort without a verdict.
 For a changed proof file, PR uses BASE when the whole file owns the proof or the
 selected exact module-level Python test plus its imports and non-test module
 support differs from base. Sibling tests are separate owners: changing only a
-sibling retains the selected owner's declared FAULT. Class-qualified nodes,
-non-Python exact nodes, absent owners, duplicate owners, parse failures, and Git
-read failures all fail closed to BASE.
+sibling retains the selected owner's declared FAULT.
+
+One exact module-level Python proof MAY opt into
+`changed_owner_red: coherent-fault` on its single registered product fault when
+an intentional hard-cut interface or a behavior-preserving proof-ownership
+refactor prevents BASE from reaching or falsifying the retained behavioral
+contract. Policy MUST require one canonical exact proof, one product-only
+applicable patch, its SHA-256, and its expected assertion fingerprint. The
+manifest MUST also pin the SHA-256 of version-stable source slices for that exact
+test plus its imports and non-test module support; interpreter-specific AST
+serialization is not a durable encoding. Any owner drift is a policy failure
+requiring explicit review and a new digest. The coherent-candidate fault proves
+only that registered contract; every independent new behavior requires a
+separate exact proof and sensitivity witness. The exception mechanism itself
+MUST have a canonical BASE sensitivity owner. The work report MUST name why
+BASE was inapplicable.
+Whole-file owners, class-qualified nodes, non-Python exact nodes, unmarked
+faults, absent owners, duplicate owners, parse failures, digest drift, and Git
+read failures fail closed.
+
+A Python BASE checkout MUST retain the baseline revision's dependency manifests
+and locks. Candidate Python proof and shared test-support overlays MUST NOT
+install a candidate dependency graph into the unfixed application. A proof for
+behavior that requires a new dependency must reach its behavioral assertion
+before it imports or initializes that dependency, or use a controlled FAULT
+against the coherent candidate revision.
 
 The final work report for a defect or replacement MUST state how sensitivity was
 demonstrated. “Test passes” is insufficient.
@@ -394,7 +417,7 @@ capabilities as blocked and launches no further heavy work.
 | `confidence` | 60–90 seconds | selected service/component setup may exceed the warm target |
 | `pr` | 3–5 minutes locally | CI duration is measured before a p95 ratchet is adopted |
 | `full` | measured; no fixed acceptance number | one current-revision build and one sequential heavy process |
-| `nightly` / `release` | scheduled and cost-capped | hosted/device work remains fail-closed |
+| `nightly` / `release` | scheduled | device work remains fail-closed |
 
 The controller records peak RSS for its process tree and the working set of
 containers owned by the exact test compose project. CPU count never chooses
@@ -423,7 +446,9 @@ host.
 
 ## 8. Repository capability contract
 
-`./scripts/test` is the sole public test and verification API. `scripts/test`
+`./scripts/test` is the sole public test and verification API. GitHub's
+`pull_request` job runs `./scripts/test changed --base <base sha>`; the `main`
+push runs `./scripts/test full`, which is the release proof. `scripts/test`
 is a thin locked launcher; `scripts/agency_verify.sh` is a thin `confidence`
 adapter. The Makefile deliberately has no test/check/verify aliases.
 
@@ -431,11 +456,10 @@ adapter. The Makefile deliberately has no test/check/verify aliases.
 |---|---|
 | `./scripts/test changed [--base REF] [PATH_OR_NODE ...]` | changed static paths plus selected affected proof |
 | `./scripts/test confidence` | complete policy/static/kernel plus affected service/component proof |
-| `./scripts/test pr` | deterministic blocking PR portfolio plus same-run sensitivity |
+| `./scripts/test pr` | deterministic blocking PR portfolio plus same-run sensitivity; the local pre-merge command |
 | `./scripts/test full` | complete deterministic local portfolio |
-| `./scripts/test nightly` | `full` plus randomized/property audit, one hosted canary, and Android device proof |
-| `./scripts/test codex-nightly` | one bounded subscription-authenticated Codex metadata canary on the dedicated runner |
-| `./scripts/test release` | `full` plus bounded provider certification, Android device proof, signed Android release proof, and exact staged artifacts |
+| `./scripts/test nightly` | `full` plus randomized/property audit and Android device proof |
+| `./scripts/test release` | `full` plus Android device proof, signed Android release proof, and exact staged artifacts |
 | `./scripts/test doctor` | local tool, dependency, browser, SDK, service, port, and template readiness; protected-workflow inputs only when that lane is explicitly enabled |
 | `./scripts/test android-visual --sha HEAD_SHA --path /OWNED_PATH [--device primary]` | explicit opt-in physical-device authenticated WebView visual check of the current non-`main` worktree; never included in `changed`/`confidence`/`pr`/`full`/`nightly`/`release` |
 | `./scripts/test prove --proof PROOF --against base:REF\|fault:FAULT_ID` | exact demonstrated-red then green sensitivity evidence |
@@ -448,7 +472,7 @@ The command table above, CI routes, and deferred-owner map are explicit,
 policy-checked projections that MUST change with it; they are not generated
 from the registry.
 
-<!-- nexus-test-routing-sha256: a181c221374d178dc15e014116adb3ee04b8d84c56a4ff2e49f1003f4d6a1caf -->
+<!-- nexus-test-routing-sha256: 16be00b8b3dea025d985dacb2bc676ac278d12736120c133ef2593ebd896d864 -->
 
 When changed-file routing names a capability later than the invoked workflow,
 the controller MUST retain it in evidence with its exact `deferred_to` owner and
@@ -470,7 +494,6 @@ physical-device boundaries are excluded. The owning `full`, `nightly`, or
 | Release artifact/image binding | `python/tests/release_artifact/` |
 | Deterministic LLM semantics | `python/tests/evals/` |
 | Property/random-order audit | `python/tests/audit/` |
-| Paid hosted proof | `python/tests/hosted/nightly/` and `python/tests/hosted/release/` |
 | Web pure kernel | `apps/web/src/**/*.unit.test.{ts,tsx}` |
 | Chromium component | `apps/web/src/**/*.browser.test.{ts,tsx}` |
 | Journeys, deployment smoke, extension | `apps/web/e2e/` under the sole Playwright config |

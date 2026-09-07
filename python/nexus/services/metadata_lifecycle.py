@@ -54,7 +54,7 @@ def retry_metadata_for_viewer(
     ):
         raise ConflictError(
             ApiErrorCode.E_RETRY_NOT_ALLOWED,
-            "Metadata enrichment has an unresolved native-agent turn.",
+            "Metadata enrichment has an unresolved generation turn.",
         )
     if any(job.status in {"pending", "running"} for job in jobs):
         raise ConflictError(

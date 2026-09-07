@@ -1,7 +1,8 @@
 """Metadata enrichment domain rules for media items.
 
-The native-agent host proposes bibliographic metadata from existing source
-context. Valid structured output is authoritative for the fields it returns.
+The unified Codex generation boundary proposes bibliographic metadata from
+existing source context. Valid structured output is authoritative for the
+fields it returns.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from sqlalchemy.orm import Session
 from nexus.config import get_settings
 from nexus.db.models import Media
 from nexus.logging import get_logger
+from nexus.services import generation_policy
 from nexus.services.contributor_credits import load_contributor_credits_for_media
 from nexus.services.contributor_taxonomy import (
     MAX_CONTRIBUTOR_NAME_CODE_POINTS,
@@ -36,10 +38,13 @@ from nexus.services.contributor_taxonomy import (
     RawCreditEntry,
     build_observation,
 )
-from nexus.services.native_agent_contract import METADATA_ENRICHMENT_MAX_INPUT_BYTES
 from nexus.services.reader_publication import replace_reader_document_title
 
 logger = get_logger(__name__)
+
+_METADATA_INPUT_MAX_BYTES = generation_policy.workflow_for_operation(
+    "metadata_enrichment"
+).bounds.input_max_bytes
 
 _ENRICHMENT_SYSTEM_PROMPT = """\
 Extract bibliographic and descriptive metadata for this media item.
@@ -78,7 +83,7 @@ class MetadataMergeResult:
 
 
 # Domain value constraints live on the field annotations: they validate every
-# decoded payload and carry into the exported JSON schema the native agent is
+# decoded payload and carry into the exported JSON schema the generation host is
 # held to.
 _METADATA_STRING_MAX_LENGTHS = {
     "title": 255,
@@ -99,7 +104,7 @@ _METADATA_PROMPT_SOURCE_RESERVED_BYTES = 16_384
 # framing's largest possible rendering is a module fact the content contract
 # proves fits its share, so no prompt build can find a negative budget.
 _METADATA_PROMPT_FRAMING_RESERVED_BYTES = (
-    METADATA_ENRICHMENT_MAX_INPUT_BYTES
+    _METADATA_INPUT_MAX_BYTES
     - _METADATA_PROMPT_HINT_TOTAL_MAX_BYTES
     - _METADATA_PROMPT_SOURCE_RESERVED_BYTES
 )
@@ -482,7 +487,7 @@ def build_enrichment_user_content(
     # framing fits its reserved share by construction (see
     # metadata_prompt_budget), so every budget below is non-negative.
     structural_bytes = _framing_bytes(metadata_line_prefixes, kind_rule)
-    untrusted_budget = METADATA_ENRICHMENT_MAX_INPUT_BYTES - structural_bytes
+    untrusted_budget = _METADATA_INPUT_MAX_BYTES - structural_bytes
     metadata_budget = min(
         _METADATA_PROMPT_HINT_TOTAL_MAX_BYTES,
         untrusted_budget - _METADATA_PROMPT_SOURCE_RESERVED_BYTES,
@@ -534,7 +539,7 @@ def metadata_prompt_budget() -> MetadataPromptBudget:
     """Expose the prompt budget so the content contract can prove it closes."""
     longest_rule = max((*_METADATA_KIND_RULES.values(), _METADATA_DEFAULT_KIND_RULE), key=len)
     return MetadataPromptBudget(
-        wire_bound_bytes=METADATA_ENRICHMENT_MAX_INPUT_BYTES,
+        wire_bound_bytes=_METADATA_INPUT_MAX_BYTES,
         hint_total_max_bytes=_METADATA_PROMPT_HINT_TOTAL_MAX_BYTES,
         source_reserved_bytes=_METADATA_PROMPT_SOURCE_RESERVED_BYTES,
         framing_reserved_bytes=_METADATA_PROMPT_FRAMING_RESERVED_BYTES,
@@ -650,7 +655,7 @@ def get_current_author_names(db: Session, media: Media) -> list[str]:
 
 
 def validate_structured_enrichment(payload: object) -> MetadataEnrichmentOutput | None:
-    """Validate native-agent structured metadata once at ingress.
+    """Validate Codex-generated structured metadata once at ingress.
 
     Returns the accepted model, or None when the payload is outside the domain
     output contract. The one caller classifies None as the invalid-output
@@ -690,7 +695,7 @@ def merge_enrichment(
     media: Media,
     enrichment: MetadataEnrichmentOutput,
 ) -> MetadataMergeResult:
-    """Merge accepted native-agent enrichment into media.
+    """Merge accepted Codex-generated enrichment into media.
 
     The output model is the single owner of every value bound: each present
     field is already stripped, non-blank, and within its declared length, so

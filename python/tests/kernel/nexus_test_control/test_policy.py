@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ from nexus_test_control.policy import (
     repository_violations,
     resource_capability_projection_violations,
 )
+from nexus_test_control.proof_owner import python_exact_proof_owner_sha256
 from nexus_test_control.sensitivity import SensitivityError, declared_fault_for_proof
 
 REPO_ROOT = Path(__file__).parents[4]
@@ -215,7 +217,7 @@ def _minimal_repository(root: Path) -> None:
         'merge_timestamp="$(git show --no-patch --format=%cI "$EXPECTED_HEAD_SHA")"\n'
         'GIT_COMMITTER_DATE="$merge_timestamp"\n'
         "git rev-list --parents -n 1 HEAD\n"
-        "run: ./scripts/test pr\n"
+        'run: ./scripts/test changed --base "$NEXUS_TEST_BASE_SHA"\n'
         "if: github.event_name == 'push'\n"
         "run: ./scripts/test full\n"
         "if: always()\n",
@@ -223,7 +225,6 @@ def _minimal_repository(root: Path) -> None:
     _write(
         root,
         ".github/workflows/nightly.yml",
-        'NEXUS_HOSTED_CANARY: "1"\n'
         "runs-on: ubuntu-latest\n"
         "uses: reactivecircus/android-emulator-runner@example\n"
         "          api-level: 36\n"
@@ -233,18 +234,7 @@ def _minimal_repository(root: Path) -> None:
     )
     _write(
         root,
-        ".github/workflows/codex-personal-nightly.yml",
-        'NEXUS_CODEX_HOSTED_CANARY: "1"\n'
-        "runs-on: [self-hosted, linux, nexus-codex-nightly]\n"
-        "cmp deploy/hetzner/nexus-codex-nightly-bwrap.apparmor "
-        "/etc/apparmor.d/nexus-codex-nightly-bwrap\n"
-        "python/.venv/bin/python -m apps.codex_agent.sandbox_health\n"
-        "run: ./scripts/test codex-nightly\n",
-    )
-    _write(
-        root,
         ".github/workflows/release.yml",
-        'NEXUS_PROVIDER_CERTIFICATION: "1"\n'
         "runs-on: ${{ inputs.bootstrap_no_device && 'ubuntu-latest' || "
         'fromJSON(\'["self-hosted", "linux", "x64", "nexus-android-usb"]\') }}\n'
         "run: ./scripts/test release\n",
@@ -400,6 +390,66 @@ def test_repository_guard_rejects_retired_product_test_seams(
         violation.rule == "repository-product-test-seam" and violation.path == relative
         for violation in violations
     )
+
+
+def test_repository_guard_keeps_agent_runtime_construction_behind_confinement_owner(
+    tmp_path: Path,
+) -> None:
+    _minimal_repository(tmp_path)
+    _write(
+        tmp_path,
+        "apps/codex_agent/main.py",
+        "from provider_runtime.agent_runtime import AgentRuntime as RawRuntime\n"
+        "Runtime = RawRuntime\n"
+        "def build(config) -> RawRuntime:\n"
+        "    return Runtime(config)\n",
+    )
+    _write(
+        tmp_path,
+        "apps/codex_agent/confined_runtime.py",
+        "from provider_runtime import agent_runtime as runtime\n"
+        "def build(config) -> runtime.AgentRuntime:\n"
+        "    return runtime.AgentRuntime(config)\n",
+    )
+    _write(
+        tmp_path,
+        "apps/codex_agent/host.py",
+        "from provider_runtime.agent_runtime import AgentRuntime\n"
+        "def consume(runtime: AgentRuntime) -> None:\n"
+        "    return None\n",
+    )
+    _write(
+        tmp_path,
+        "apps/codex_agent/deep.py",
+        "from provider_runtime.agent_runtime.runtime import AgentRuntime as DeepRuntime\n"
+        "from provider_runtime.agent_runtime import runtime as runtime_module\n"
+        "\n"
+        "def build_direct(config):\n"
+        "    return DeepRuntime(config)\n"
+        "\n"
+        "def build_module(config):\n"
+        "    return runtime_module.AgentRuntime(config)\n",
+    )
+
+    violations = repository_violations(tmp_path)
+
+    assert [
+        (violation.rule, violation.path, violation.line)
+        for violation in violations
+        if violation.rule == "codex-agent-runtime-confinement"
+    ] == [
+        ("codex-agent-runtime-confinement", "apps/codex_agent/deep.py", 5),
+        ("codex-agent-runtime-confinement", "apps/codex_agent/deep.py", 8),
+        ("codex-agent-runtime-confinement", "apps/codex_agent/main.py", 4),
+    ]
+    assert {
+        violation.message
+        for violation in violations
+        if violation.rule == "codex-agent-runtime-wiring"
+    } == {
+        "runtime_factory must construct only the confined runtime",
+        "_probe_chatgpt_auth must construct only the confined runtime",
+    }
 
 
 def test_repository_guard_rejects_route_drift(tmp_path: Path) -> None:
@@ -850,10 +900,10 @@ def test_proof_contract_rejects_multiple_exact_sensitivity_owners_per_file(
     tmp_path: Path,
 ) -> None:
     manifest = _complete_proof_repository(tmp_path)
-    native_agent_host = next(
-        risk for risk in manifest["priority_risks"] if risk["id"] == "native-agent-host"
+    codex_generation_host = next(
+        risk for risk in manifest["priority_risks"] if risk["id"] == "codex-generation-host"
     )
-    native_agent_host["proofs"].append(
+    codex_generation_host["proofs"].append(
         "pytest:python/tests/service/test_codex_capacity_canary_contract.py::"
         "test_release_controller_mirrors_the_canary_exit_and_phase_contract"
     )
@@ -1072,12 +1122,175 @@ def _fault_repository(root: Path) -> dict[str, Any]:
     }
     manifest = {"version": 1, "faults": [fault]}
     _write(root, "python/tests/kernel/test_example.py", "def test_example():\n    assert True\n")
+    _dump(
+        root,
+        "testdata/proofs.json",
+        {"priority_risks": [{"proofs": fault["proofs"]}]},
+    )
     _dump(root, "testdata/faults/manifest.json", manifest)
     return manifest
 
 
-def test_empty_fault_manifest_is_valid() -> None:
+def _mark_coherent_owner(root: Path, manifest: dict[str, Any]) -> None:
+    proof = manifest["faults"][0]["proofs"][0]
+    identity = proof.partition(":")[2]
+    path, _, node = identity.partition("::")
+    digest = python_exact_proof_owner_sha256(
+        (root / path).read_text(encoding="utf-8"),
+        node,
+    )
+    assert digest is not None
+    manifest["faults"][0]["changed_owner_red"] = "coherent-fault"
+    manifest["faults"][0]["changed_owner_sha256"] = digest
+
+
+def test_fault_manifest_is_complete_and_every_patch_applies() -> None:
     assert not fault_manifest_violations(REPO_ROOT)
+
+
+def test_fault_guard_allows_one_exact_pytest_owner_to_use_coherent_candidate_red(
+    tmp_path: Path,
+) -> None:
+    manifest = _fault_repository(tmp_path)
+    _mark_coherent_owner(tmp_path, manifest)
+    _dump(tmp_path, "testdata/faults/manifest.json", manifest)
+
+    assert not fault_manifest_violations(tmp_path)
+
+
+def test_fault_guard_rejects_unregistered_coherent_candidate_owner(tmp_path: Path) -> None:
+    manifest = _fault_repository(tmp_path)
+    _mark_coherent_owner(tmp_path, manifest)
+    _dump(tmp_path, "testdata/faults/manifest.json", manifest)
+    (tmp_path / "testdata/proofs.json").unlink()
+
+    assert "fault-coherent-owner" in _rules(fault_manifest_violations(tmp_path))
+
+
+@pytest.mark.parametrize(
+    ("proofs", "changed_owner_red", "rule"),
+    (
+        (
+            ["pytest:python/tests/kernel/test_example.py::test_example"],
+            "unknown",
+            "fault-schema",
+        ),
+        (
+            ["pytest:python/tests/kernel/test_example.py::test_example"],
+            None,
+            "fault-schema",
+        ),
+        (
+            ["pytest:python/tests/kernel/test_example.py"],
+            "coherent-fault",
+            "fault-coherent-owner",
+        ),
+        (
+            [
+                "pytest:python/tests/kernel/test_example.py::test_example",
+                "pytest:python/tests/kernel/test_example.py::test_other",
+            ],
+            "coherent-fault",
+            "fault-coherent-owner",
+        ),
+        (
+            ["pytest:python/tests/kernel/test_example.py::TestExample::test_example"],
+            "coherent-fault",
+            "fault-coherent-owner",
+        ),
+    ),
+)
+def test_fault_guard_rejects_ambiguous_changed_owner_red(
+    tmp_path: Path,
+    proofs: list[str],
+    changed_owner_red: str | None,
+    rule: str,
+) -> None:
+    manifest = _fault_repository(tmp_path)
+    manifest["faults"][0]["proofs"] = proofs
+    manifest["faults"][0]["changed_owner_red"] = changed_owner_red
+    manifest["faults"][0]["changed_owner_sha256"] = "0" * 64
+    _dump(tmp_path, "testdata/faults/manifest.json", manifest)
+
+    assert rule in _rules(fault_manifest_violations(tmp_path))
+
+
+def test_fault_guard_rejects_coherent_owner_content_drift(tmp_path: Path) -> None:
+    manifest = _fault_repository(tmp_path)
+    _mark_coherent_owner(tmp_path, manifest)
+    _dump(tmp_path, "testdata/faults/manifest.json", manifest)
+    _write(
+        tmp_path,
+        "python/tests/kernel/test_example.py",
+        "VALUE = 2\n\ndef test_example():\n    assert VALUE == 2\n",
+    )
+
+    assert "fault-coherent-owner-drift" in _rules(fault_manifest_violations(tmp_path))
+
+
+def test_fault_guard_rejects_an_owner_digest_without_the_coherent_strategy(
+    tmp_path: Path,
+) -> None:
+    manifest = _fault_repository(tmp_path)
+    manifest["faults"][0]["changed_owner_sha256"] = "0" * 64
+    _dump(tmp_path, "testdata/faults/manifest.json", manifest)
+
+    assert "fault-schema" in _rules(fault_manifest_violations(tmp_path))
+
+
+def test_fault_guard_never_reads_a_traversal_or_symlinked_coherent_owner(
+    tmp_path: Path,
+) -> None:
+    manifest = _fault_repository(tmp_path)
+    outside = tmp_path.parent / f"{tmp_path.name}-outside-owner.py"
+    outside.write_text("def test_example():\n    assert True\n", encoding="utf-8")
+    manifest["faults"][0]["changed_owner_red"] = "coherent-fault"
+    manifest["faults"][0]["changed_owner_sha256"] = "0" * 64
+    proof_root = tmp_path / "python/tests/kernel"
+    external_symlink = proof_root / "test_external_owner.py"
+    external_symlink.symlink_to(outside)
+    internal_symlink = proof_root / "test_internal_owner.py"
+    internal_symlink.symlink_to("test_example.py")
+    loop_symlink = proof_root / "test_loop_owner.py"
+    loop_symlink.symlink_to(loop_symlink.name)
+
+    for escaped_path in (
+        f"../{outside.name}",
+        "python/tests/kernel/test_external_owner.py",
+        "python/tests/kernel/test_internal_owner.py",
+        "python/tests/kernel/test_loop_owner.py",
+    ):
+        proof = f"pytest:{escaped_path}::test_example"
+        manifest["faults"][0]["proofs"] = [proof]
+        _dump(
+            tmp_path,
+            "testdata/proofs.json",
+            {"priority_risks": [{"proofs": [proof]}]},
+        )
+        _dump(tmp_path, "testdata/faults/manifest.json", manifest)
+
+        rules = _rules(fault_manifest_violations(tmp_path))
+        assert {"fault-coherent-owner", "fault-proof"}.issubset(rules)
+        assert "fault-coherent-owner-drift" not in rules
+
+
+def test_fault_guard_rejects_a_stale_patch_in_a_git_worktree(tmp_path: Path) -> None:
+    manifest = _fault_repository(tmp_path)
+    _write(tmp_path, "python/nexus/owner.py", "VALUE = 2\n")
+    patch = (
+        b"diff --git a/python/nexus/owner.py b/python/nexus/owner.py\n"
+        b"--- a/python/nexus/owner.py\n"
+        b"+++ b/python/nexus/owner.py\n"
+        b"@@ -1 +1 @@\n"
+        b"-VALUE = 1\n"
+        b"+VALUE = 0\n"
+    )
+    (tmp_path / "testdata/faults/example.patch").write_bytes(patch)
+    manifest["faults"][0]["sha256"] = hashlib.sha256(patch).hexdigest()
+    _dump(tmp_path, "testdata/faults/manifest.json", manifest)
+    subprocess.run(("git", "init", "-q"), cwd=tmp_path, check=True)
+
+    assert "fault-applicability" in _rules(fault_manifest_violations(tmp_path))
 
 
 @pytest.mark.parametrize(

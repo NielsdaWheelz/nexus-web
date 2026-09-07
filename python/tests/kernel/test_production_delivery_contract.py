@@ -9,6 +9,12 @@ from typing import cast
 REPO_ROOT = Path(__file__).parents[3]
 
 
+def _compose_service_start(compose: str, service: str) -> int:
+    match = re.search(rf"(?m)^  {re.escape(service)}:\n", compose)
+    assert match is not None, f"missing top-level Compose service: {service}"
+    return match.start()
+
+
 def test_ci_setup_installs_every_platform_static_tool() -> None:
     setup = (REPO_ROOT / ".github/actions/setup-test/action.yml").read_text(
         encoding="utf-8",
@@ -125,6 +131,118 @@ def test_config_publication_is_explicit_fresh_and_python_owned() -> None:
     assert "sudo install" not in script
     assert "NEXUS_REMOTE_ENV_FILE" not in script
     assert "NEXUS_ENV_FILE" not in script
+
+    forbidden_generation_keys = (
+        "NEXUS_KEY_ENCRYPTION_KEY",
+        "CLOUDFLARE_AI_API_TOKEN",
+        "ANTHROPIC_API_KEY",
+        "GEMINI_API_KEY",
+        "MOONSHOT_API_KEY",
+        "OPENROUTER_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "XAI_API_KEY",
+        "CODEX_API_KEY",
+        "NEXUS_PROVIDER_CERTIFICATION",
+        "STREAM_MAX_OUTPUT_TOKENS_DEFAULT",
+    )
+    validator = script.index("reject_forbidden_removed_generation_env_keys")
+    publication = script.index('scp "${SSH_OPTIONS[@]}"')
+    assert validator < publication
+    assert all(key in script for key in forbidden_generation_keys)
+
+    vercel = (REPO_ROOT / "deploy/vercel/sync-env.sh").read_text(encoding="utf-8")
+    forbidden_start = vercel.index('FORBIDDEN_VERCEL_ENV_KEYS="')
+    forbidden_end = vercel.index('"\n\ndie()', forbidden_start)
+    forbidden_block = vercel[forbidden_start:forbidden_end]
+    assert all(key in forbidden_block for key in forbidden_generation_keys)
+    host_only_keys = (
+        "CODEX_HOME",
+        "NEXUS_CODEX_CREDENTIAL_FILE",
+        "NEXUS_CODEX_ENROLLMENT_AUTH_FILE",
+        "NEXUS_CODEX_STATE_ROOT_BASE",
+        "NEXUS_CODEX_WORKING_DIRECTORY",
+        "NEXUS_CODEX_WORKING_DIRECTORY_ROOT",
+        "NEXUS_CODEX_AGENT_SOCKET",
+        "NEXUS_AGENT_TOOLS_MCP_LISTEN",
+        "NEXUS_AGENT_TOOLS_MCP_ORIGIN",
+        "NEXUS_CODEX_MCP_ORIGIN",
+        "NEXUS_CODEX_MODEL_TOOL_NETWORK_ATTESTED",
+        "NEXUS_CODEX_EGRESS_PROXY_IP",
+        "NEXUS_CODEX_EGRESS_MCP_HOST",
+    )
+    assert all(key in script for key in host_only_keys)
+    assert all(key in forbidden_block for key in host_only_keys)
+    assert "remove_forbidden_vercel_keys" in vercel
+    assert "forbidden ${key} is still present after sync" in vercel
+
+
+def test_generation_provider_secrets_have_one_backend_only_publication_boundary() -> None:
+    """Generation credentials follow configured providers and never reach Vercel."""
+
+    generation_keys = (
+        "OPENAI_GENERATION_API_KEY",
+        "ANTHROPIC_GENERATION_API_KEY",
+        "GEMINI_GENERATION_API_KEY",
+        "MOONSHOT_GENERATION_API_KEY",
+        "OPENROUTER_GENERATION_API_KEY",
+        "DEEPSEEK_GENERATION_API_KEY",
+        "XAI_GENERATION_API_KEY",
+    )
+    hetzner = (REPO_ROOT / "deploy/hetzner/sync-env.sh").read_text(encoding="utf-8")
+    vercel = (REPO_ROOT / "deploy/vercel/sync-env.sh").read_text(encoding="utf-8")
+    backend = (REPO_ROOT / "deploy/env/env-prod-backend.example").read_text(encoding="utf-8")
+    frontend = (REPO_ROOT / "deploy/env/env-prod-frontend.example").read_text(encoding="utf-8")
+    worker = (REPO_ROOT / "deploy/env/env-prod-worker.example").read_text(encoding="utf-8")
+
+    assert "require_generation_provider_configuration" in hetzner
+    assert "GENERATION_API_PROVIDERS" in hetzner
+    assert "GENERATION_CONTINUATION_ENCRYPTION_KEY" in hetzner
+    assert "NEXUS_FABLE_RETENTION_ACCEPTED_AT" in hetzner
+    assert all(key in hetzner for key in generation_keys)
+
+    forbidden_start = vercel.index('FORBIDDEN_VERCEL_ENV_KEYS="')
+    forbidden_end = vercel.index('"\n\ndie()', forbidden_start)
+    forbidden = vercel[forbidden_start:forbidden_end]
+    assert "GENERATION_API_PROVIDERS" in forbidden
+    assert "GENERATION_CONTINUATION_ENCRYPTION_KEY" in forbidden
+    assert "NEXUS_FABLE_RETENTION_ACCEPTED_AT" in forbidden
+    assert all(key in forbidden for key in generation_keys)
+
+    assert "GENERATION_API_PROVIDERS=" in backend
+    assert "GENERATION_CONTINUATION_ENCRYPTION_KEY=" in backend
+    assert "NEXUS_FABLE_RETENTION_ACCEPTED_AT=" in backend
+    assert all(f"{key}=" in backend for key in generation_keys)
+    assert all(key not in frontend and key not in worker for key in generation_keys)
+
+
+def test_config_publication_rejects_even_blank_removed_generation_keys(
+    tmp_path: Path,
+) -> None:
+    """Risk: an empty legacy key survives as ambient generation configuration."""
+
+    source = tmp_path / "source.env"
+    source.write_text("CODEX_API_KEY=\n", encoding="utf-8")
+    script = REPO_ROOT / "deploy/hetzner/sync-env.sh"
+
+    rejected = subprocess.run(
+        (
+            "bash",
+            "-c",
+            'source "$1"; reject_forbidden_removed_generation_env_keys "$2"',
+            "nexus-generation-env-proof",
+            str(script),
+            str(source),
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert rejected.returncode != 0
+    assert rejected.stdout == ""
+    assert rejected.stderr == (
+        "error: CODEX_API_KEY is forbidden after the Codex subscription generation hard cut\n"
+    )
 
 
 def test_worker_ingest_egress_owner_is_baked_and_cannot_be_reconfigured_by_env() -> None:
@@ -351,13 +469,14 @@ def test_production_compose_declares_the_exact_resource_envelope() -> None:
         ("api", "192m", "320m", 256),
         ("worker-interactive", "128m", "256m", 256),
         ("worker-background", "128m", "448m", 256),
+        ("codex-egress-policy", "32m", "64m", 32),
         ("nexus-codex-agent-host", "128m", "384m", 64),
         ("migration", "256m", "512m", 256),
     )
     for index, (service, reservation, hard, pids) in enumerate(expected):
-        start = compose.index(f"  {service}:\n")
+        start = _compose_service_start(compose, service)
         end = (
-            compose.index(f"  {expected[index + 1][0]}:\n")
+            _compose_service_start(compose, expected[index + 1][0])
             if index + 1 < len(expected)
             else compose.index("\nvolumes:\n")
         )
@@ -369,7 +488,11 @@ def test_production_compose_declares_the_exact_resource_envelope() -> None:
         assert f"memswap_limit: {hard}" in block
         assert f"pids_limit: {pids}" in block
 
-    background = compose[compose.index("  worker-background:\n") : compose.index("  migration:\n")]
+    background = compose[
+        _compose_service_start(compose, "worker-background") : _compose_service_start(
+            compose, "migration"
+        )
+    ]
     assert "/var/lib/nexus/parser-tmp:/var/lib/nexus/parser-tmp" in background
     assert (
         'test: ["CMD", "python", "-S", "-m", "apps.worker.health", '
@@ -387,10 +510,11 @@ def test_codex_production_boundary_declares_real_caddy_health_and_encrypted_stat
     compose = (REPO_ROOT / "deploy/hetzner/docker-compose.yml").read_text(encoding="utf-8")
     cloud_init = (REPO_ROOT / "deploy/hetzner/cloud-init.yml").read_text(encoding="utf-8")
     runbook = (REPO_ROOT / "docs/runbooks/codex-personal-agent-host.md").read_text(encoding="utf-8")
-    caddy_start = compose.index("  caddy:\n")
+    normalized_runbook = " ".join(runbook.split())
+    caddy_start = _compose_service_start(compose, "caddy")
     caddy_end = compose.index("\n  api:\n", caddy_start)
     caddy = compose[caddy_start:caddy_end]
-    host_start = compose.index("  nexus-codex-agent-host:\n")
+    host_start = _compose_service_start(compose, "nexus-codex-agent-host")
     host_end = compose.index("\n  migration:\n", host_start)
     host = compose[host_start:host_end]
     enrollment_start = runbook.index('readonly ENROLLMENT_NETWORK="nexus-codex-enrollment-$$"')
@@ -409,8 +533,9 @@ def test_codex_production_boundary_declares_real_caddy_health_and_encrypted_stat
     assert 'restart: "no"' in host
     assert "nexus_codex_state:" not in compose
     assert "- type: bind" in host
-    assert "source: /srv/nexus/codex-state" in host
-    assert "target: /var/lib/nexus-codex" in host
+    assert "source: /srv/nexus/codex-state/codex/codex-personal/auth.json" in host
+    assert "target: /run/nexus-codex-credential/auth.json" in host
+    assert "read_only: false" in host
     assert "create_host_path: false" in host
     assert "propagation: rprivate" in host
     assert "- cryptsetup" in cloud_init
@@ -438,6 +563,14 @@ def test_codex_production_boundary_declares_real_caddy_health_and_encrypted_stat
     assert "--cap-drop ALL --security-opt no-new-privileges:true" in enrollment
     assert "--memory 384m --memory-swap 384m" in enrollment
     assert "--pids-limit 64 --cpus 1.0" in enrollment
+    assert (
+        "--tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m,mode=0700,uid=10001,gid=10001" in enrollment
+    )
+    assert "--env CODEX_HOME=/tmp/nexus-codex-enrollment" in enrollment
+    assert (
+        "--env NEXUS_CODEX_ENROLLMENT_AUTH_FILE=/var/lib/nexus-codex/codex/codex-personal/auth.json"
+        in enrollment
+    )
     assert "OPENAI_API_KEY" not in enrollment
     assert "/srv/nexus/codex-state" in verification
     assert "/srv/nexus/codex-state/codex/codex-personal/auth.json" in verification
@@ -446,7 +579,7 @@ def test_codex_production_boundary_declares_real_caddy_health_and_encrypted_stat
     assert "/var/lib/nexus-codex" not in verification
     assert (
         "The release-owned PostgreSQL backup neither mounts nor reads the Codex state filesystem."
-        in runbook
+        in normalized_runbook
     )
     assert "Automated admission proves only the repository-owned secret locations:" in runbook
     assert "/var/lib/nexus/codex-state.key" in runbook
@@ -458,7 +591,10 @@ def test_codex_production_boundary_declares_real_caddy_health_and_encrypted_stat
     # restarts: an exited container is invisible to a plain `ps`.
     assert "docker compose --project-name nexus ps --all nexus-codex-agent-host" in runbook
     assert "docker compose --project-name nexus logs --tail 50 nexus-codex-agent-host" in runbook
-    assert "`resume-codex-agent-host` is the only supported way to start it again" in runbook
+    assert (
+        "`resume-codex-agent-host` is the only supported way to start it again"
+        in normalized_runbook
+    )
 
 
 def test_the_declared_envelope_fits_the_committed_host_with_its_reserve() -> None:
@@ -497,8 +633,13 @@ def test_the_declared_envelope_fits_the_committed_host_with_its_reserve() -> Non
     for service, (reservation, hard, pids) in limits.items():
         # Anchor to the line start: `      api:` under `depends_on` also contains
         # `  api:`, so an unanchored search reads the wrong block.
-        start = compose.index(f"\n  {service}:\n")
-        block = compose[start : start + 400]
+        marker = f"\n  {service}:\n"
+        start = compose.index(marker)
+        body_start = start + len(marker)
+        next_service = re.search(r"(?m)^  [a-z0-9_-]+:\n", compose[body_start:])
+        assert next_service is not None
+        end = body_start + next_service.start()
+        block = compose[start:end]
         assert f"mem_reservation: {reservation // (1024 * 1024)}m" in block
         assert f"mem_limit: {hard // (1024 * 1024)}m" in block
         assert f"memswap_limit: {hard // (1024 * 1024)}m" in block
@@ -551,6 +692,14 @@ def test_caddy_runtime_logs_redact_sensitive_request_headers() -> None:
     assert "request>headers>Authorization delete" in caddyfile
     assert "request>headers>Cookie delete" in caddyfile
     assert "request>headers>X-Nexus-Internal delete" in caddyfile
+
+
+def test_caddy_mcp_route_overwrites_forwarded_source_at_the_trusted_hop() -> None:
+    caddyfile = (REPO_ROOT / "deploy/hetzner/Caddyfile").read_text(encoding="utf-8")
+
+    assert "@agent_tools_mcp path /internal/agent-tools/mcp" in caddyfile
+    assert "reverse_proxy worker-interactive:8001" in caddyfile
+    assert "header_up X-Forwarded-For {http.request.remote.host}" in caddyfile
 
 
 def test_caddy_offline_package_lane_matches_only_one_canonical_uuid_path() -> None:

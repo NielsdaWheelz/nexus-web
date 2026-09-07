@@ -80,8 +80,8 @@ In scope:
   users, app-process lifecycle, and fingerprint-cached Next production
   artifacts;
 - deleting or replacing legacy tests and every old test-only path they own;
-- adapting the current Android emulator, protected provider-certification,
-  signed-Android, and deployed-auth-smoke owners without duplicating their
+- adapting the current Android emulator, signed-Android, and
+  deployed-auth-smoke owners without duplicating their
   responsibility; the unowned reader-profile fault proxy is deleted.
 
 Non-goals:
@@ -150,7 +150,7 @@ Rules:
 | `pr` | `confidence` plus current-migration, bundle, compact service/component proof, and 2–4 critical journeys; no hosted calls |
 | `full` | `pr` plus all deterministic corpus, provider-runtime, LLM-evaluation, extension, Android-host, and all 10–15 journeys |
 | `nightly` | `full` plus property/random-order audit, budgeted hosted canaries, and the existing Android-emulator proof |
-| `release` | `full` plus fail-closed provider certification, signed Android artifact, and release artifact checks |
+| `release` | `full` plus signed Android artifact and release artifact checks |
 | `doctor` | local tools, locked dependencies, browser install, service health, ports, and template fingerprint; protected-workflow inputs only when that lane is explicitly enabled |
 
 `changed` scans only changed policy/test source unless policy infrastructure
@@ -862,8 +862,8 @@ Workflow ownership is singular:
 - `ci.yml` owns deterministic PR/push proof and no paid certification;
 - `nightly.yml` owns audit, hosted canaries/evaluation, and the adapted existing
   Android emulator runner;
-- protected manual `release.yml` owns provider certification, signed Android
-  artifact verification, and optional tag-matched Android publication;
+- protected manual `release.yml` owns signed Android artifact verification and
+  optional tag-matched Android publication;
 - replace `android-release.yml` by moving its signing/tag/publishing mechanics
   into `release.yml`; install the signed APK on a dedicated emulator placed in
   airplane mode, prove manifest/package-manager App Link routing and native auth
@@ -1025,10 +1025,9 @@ not supported compatibility modes.
   contract/index is byte-identical to the current imported subtree source with
   no local semantic edit; the self-contained local rule remains authoritative
   and unchanged by that import.
-- **AC14 — singular workflow ownership:** paid provider certification exists
-  only in protected manual `release.yml`; Android signing/publication has one
-  owner there; emulator proof has one nightly owner; deployed auth smoke still
-  works through the consolidated web Playwright package.
+- **AC14 — singular workflow ownership:** Android signing/publication has one
+  owner in protected manual `release.yml`; emulator proof has one nightly owner;
+  deployed auth smoke still works through the consolidated web Playwright package.
 - **AC15 — network and costs:** ordinary pytest and spawned-worker proof cannot
   reach external hosts; component-browser guards reject external application
   API calls without claiming full transport parity; Playwright aborts

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Literal, assert_never
 from uuid import UUID
 
@@ -23,7 +23,27 @@ DEAD = "dead"
 
 TERMINAL_STATUSES = frozenset({SUCCEEDED, DEAD})
 
+PERIODIC_PRIORITY_RECONCILIATION_LIMIT = 256
+_PERIODIC_IDENTITY_PAYLOAD_KEYS = frozenset({"request_id", "scheduler_identity"})
+
+_CHAT_GENERATION_ADMISSION_LOCK_KEY = "codex-personal-generation-chat-admission.v1"
+
 type JobResourceClass = Literal["Light", "Heavy"]
+
+
+def lock_chat_generation_admission_in_current_transaction(db: Session) -> None:
+    """Serialize Chat queue admission against new background generations.
+
+    Chat mutation owners take this before domain row locks; ``_insert_job_row``
+    repeats it as a re-entrant doorway assertion. Background generation takes
+    its generation-owner lock, then this lock, then atomically arms dispatch.
+    """
+
+    db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
+        {"lock_key": _CHAT_GENERATION_ADMISSION_LOCK_KEY},
+    )
+
 
 _INSERT_JOB_SQL = text(
     """
@@ -459,6 +479,8 @@ def _insert_job_row(
     available_at: datetime | None,
     dedupe_key: str | None,
 ) -> JobRow:
+    if kind == "chat_run":
+        lock_chat_generation_admission_in_current_transaction(db)
     row = (
         db.execute(
             _INSERT_JOB_SQL,
@@ -553,6 +575,197 @@ def enqueue_unique_job(
         if existing_after_conflict is None:
             raise
         return _row_to_job(existing_after_conflict), False
+
+
+def _validate_periodic_scheduler_row(
+    row: Mapping[Any, Any],
+    *,
+    kind: str,
+    interval_seconds: int,
+    checkpoint_keys: Collection[str],
+    expected_dedupe_key: str | None = None,
+) -> None:
+    interval = int(interval_seconds)
+    if interval <= 0:
+        raise ValueError("Periodic scheduler interval must be positive")
+
+    prefix = f"periodic:{kind}:"
+    dedupe_key = row["dedupe_key"]
+    payload = dict(row["payload"] or {})
+    request_id = payload.get("request_id")
+    scheduler_identity = payload.get("scheduler_identity")
+    checkpoint_key_set = frozenset(checkpoint_keys)
+    if any(
+        not isinstance(key, str)
+        or not key
+        or key != key.strip()
+        or key in _PERIODIC_IDENTITY_PAYLOAD_KEYS
+        for key in checkpoint_key_set
+    ):
+        raise ValueError("Periodic scheduler checkpoint keys must be canonical and disjoint")
+    allowed_payload_keys = _PERIODIC_IDENTITY_PAYLOAD_KEYS | checkpoint_key_set
+    if (
+        str(row["kind"]) != kind
+        or not isinstance(dedupe_key, str)
+        or not dedupe_key.startswith(prefix)
+        or (expected_dedupe_key is not None and dedupe_key != expected_dedupe_key)
+        or not _PERIODIC_IDENTITY_PAYLOAD_KEYS.issubset(payload)
+        or not set(payload).issubset(allowed_payload_keys)
+        or request_id != dedupe_key
+        or not isinstance(scheduler_identity, str)
+        or not scheduler_identity
+        or scheduler_identity != scheduler_identity.strip()
+    ):
+        raise RuntimeError("Periodic scheduler target does not match the exact operation")
+
+    try:
+        slot_start = datetime.fromisoformat(dedupe_key.removeprefix(prefix))
+    except ValueError as exc:
+        raise RuntimeError("Periodic scheduler target does not match the exact operation") from exc
+    if (
+        slot_start.tzinfo is not UTC
+        or slot_start.isoformat() != dedupe_key.removeprefix(prefix)
+        or int(slot_start.timestamp()) % interval != 0
+    ):
+        raise RuntimeError("Periodic scheduler target does not match the exact operation")
+
+
+def reconcile_periodic_job_priority(
+    db: Session,
+    *,
+    job_id: UUID,
+    kind: str,
+    dedupe_key: str,
+    interval_seconds: int,
+    priority: int,
+    checkpoint_keys: Collection[str],
+) -> JobRow:
+    """Apply current scheduler priority to one exact persisted periodic row.
+
+    Periodic dedupe spans worker restarts and deployments, so an existing row
+    can carry the priority policy that admitted it. The scheduler alone owns
+    this narrow reconciliation: it validates the closed periodic identity and
+    registry-declared checkpoint envelope, then changes no execution, retry,
+    lease, availability, payload, or timestamp state. Terminal rows remain
+    immutable history.
+    """
+    row = (
+        db.execute(
+            text("SELECT * FROM background_jobs WHERE id = :job_id FOR UPDATE"),
+            {"job_id": job_id},
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if row is None:
+        raise RuntimeError("Periodic scheduler target is missing")
+
+    _validate_periodic_scheduler_row(
+        row,
+        kind=kind,
+        interval_seconds=interval_seconds,
+        checkpoint_keys=checkpoint_keys,
+        expected_dedupe_key=dedupe_key,
+    )
+
+    status = str(row["status"])
+    if status in TERMINAL_STATUSES or int(row["priority"]) == int(priority):
+        return _row_to_job(row)
+    if status not in {PENDING, FAILED, RUNNING}:
+        raise RuntimeError("Periodic scheduler target has an unknown lifecycle state")
+
+    updated = (
+        db.execute(
+            text(
+                """
+                UPDATE background_jobs
+                SET priority = :priority
+                WHERE id = :job_id
+                RETURNING *
+                """
+            ),
+            {"job_id": job_id, "priority": int(priority)},
+        )
+        .mappings()
+        .one()
+    )
+    return _row_to_job(updated)
+
+
+def reconcile_periodic_job_priorities(
+    db: Session,
+    *,
+    kind: str,
+    interval_seconds: int,
+    priority: int,
+    checkpoint_keys: Collection[str],
+) -> int:
+    """Apply current priority to every active canonical slot for one kind.
+
+    The bounded dedupe-prefix query leaves on-demand rows and downstream work
+    that only carries the periodic request correlation untouched while finding
+    namespace claimants globally so a foreign kind cannot occupy the dedupe
+    namespace. Every selected row must satisfy the full scheduler identity,
+    declared checkpoint envelope, and aligned slot contract before any priority
+    is changed. Overflow fails the whole scheduling transaction instead of
+    partially converging a backlog.
+    """
+    prefix = f"periodic:{kind}:"
+    rows = (
+        db.execute(
+            text(
+                """
+                SELECT *
+                FROM background_jobs
+                WHERE status IN ('pending', 'failed', 'running')
+                  AND left(COALESCE(dedupe_key, ''), char_length(:prefix)) = :prefix
+                ORDER BY created_at ASC, id ASC
+                LIMIT :scan_limit
+                FOR UPDATE
+                """
+            ),
+            {
+                "prefix": prefix,
+                "scan_limit": PERIODIC_PRIORITY_RECONCILIATION_LIMIT + 1,
+            },
+        )
+        .mappings()
+        .all()
+    )
+    if len(rows) > PERIODIC_PRIORITY_RECONCILIATION_LIMIT:
+        raise RuntimeError(
+            f"Periodic scheduler active slot limit exceeds {PERIODIC_PRIORITY_RECONCILIATION_LIMIT}"
+        )
+    for row in rows:
+        _validate_periodic_scheduler_row(
+            row,
+            kind=kind,
+            interval_seconds=interval_seconds,
+            checkpoint_keys=checkpoint_keys,
+        )
+
+    stale_job_ids = [UUID(str(row["id"])) for row in rows if int(row["priority"]) != int(priority)]
+    if not stale_job_ids:
+        return 0
+    updated_ids = set(
+        db.execute(
+            text(
+                """
+                UPDATE background_jobs
+                SET priority = :priority
+                WHERE id = ANY(CAST(:job_ids AS uuid[]))
+                RETURNING id
+                """
+            ),
+            {
+                "job_ids": [str(job_id) for job_id in stale_job_ids],
+                "priority": int(priority),
+            },
+        ).scalars()
+    )
+    if updated_ids != set(stale_job_ids):
+        raise AssertionError("Periodic scheduler priority reconciliation lost a locked row")
+    return len(updated_ids)
 
 
 def claim_next_job(
@@ -1123,18 +1336,19 @@ def running_job_claim_is_current(
     )
 
 
-def lock_running_job_claim(db: Session, *, context: JobExecutionContext) -> bool:
-    """Fence one effect transaction to the exact live running attempt.
-
-    The row lock composes the ownership check with domain/event writes in the
-    caller's current transaction. Reclaim, dead-letter, and heartbeat updates
-    wait until that transaction commits or rolls back.
-    """
-    return (
+def _lock_running_job_attempt(
+    db: Session,
+    *,
+    job_id: UUID,
+    worker_id: str,
+    attempt_no: int,
+) -> JobRow | None:
+    """Lock and return one exact live attempt as terminal-write authority."""
+    row = (
         db.execute(
             text(
                 """
-                SELECT id
+                SELECT *
                 FROM background_jobs
                 WHERE id = :job_id
                   AND status = 'running'
@@ -1145,11 +1359,31 @@ def lock_running_job_claim(db: Session, *, context: JobExecutionContext) -> bool
                 """
             ),
             {
-                "job_id": context.job_id,
-                "worker_id": context.worker_id,
-                "attempt_no": int(context.attempt_no),
+                "job_id": job_id,
+                "worker_id": worker_id,
+                "attempt_no": int(attempt_no),
             },
-        ).first()
+        )
+        .mappings()
+        .one_or_none()
+    )
+    return None if row is None else _row_to_job(row)
+
+
+def lock_running_job_claim(db: Session, *, context: JobExecutionContext) -> bool:
+    """Fence one effect transaction to the exact live running attempt.
+
+    The row lock composes the ownership check with domain/event writes in the
+    caller's current transaction. Reclaim, dead-letter, and heartbeat updates
+    wait until that transaction commits or rolls back.
+    """
+    return (
+        _lock_running_job_attempt(
+            db,
+            job_id=context.job_id,
+            worker_id=context.worker_id,
+            attempt_no=context.attempt_no,
+        )
         is not None
     )
 
@@ -1825,31 +2059,20 @@ def complete_job(
     *,
     job_id: UUID,
     worker_id: str,
+    attempt_no: int,
     result_payload: Mapping[str, Any] | None = None,
 ) -> bool:
-    """Mark one running row as succeeded when owned by worker_id."""
-    owned = (
-        db.execute(
-            text(
-                """
-                SELECT attempts
-                FROM background_jobs
-                WHERE id = :job_id
-                  AND status = 'running'
-                  AND claimed_by = :worker_id
-                  AND lease_expires_at > now()
-                FOR UPDATE
-                """
-            ),
-            {"job_id": job_id, "worker_id": worker_id},
-        )
-        .mappings()
-        .one_or_none()
+    """Mark one exact, live running attempt as succeeded."""
+    owned = _lock_running_job_attempt(
+        db,
+        job_id=job_id,
+        worker_id=worker_id,
+        attempt_no=attempt_no,
     )
     if owned is None:
         return False
     capacity = _lock_heavy_capacity_for_job(db, job_id)
-    updated = db.execute(
+    db.execute(
         text(
             """
                 UPDATE background_jobs
@@ -1861,10 +2084,7 @@ def complete_job(
                     finished_at = now(),
                     updated_at = now()
                 WHERE id = :job_id
-                  AND status = 'running'
-                  AND claimed_by = :worker_id
-                  AND lease_expires_at > now()
-                RETURNING id, attempts
+                RETURNING id
                 """
         ),
         {
@@ -1874,14 +2094,14 @@ def complete_job(
                 json.dumps(dict(result_payload)) if result_payload is not None else None
             ),
         },
-    ).first()
-    if updated is not None and capacity is not None:
+    ).one()
+    if capacity is not None:
         # justify-defect: the holder is written by the same claim that produced
         # this attempt, so a mismatched worker or attempt is impossible.
-        if capacity.worker_id != worker_id or capacity.attempt_no != int(updated.attempts):
+        if capacity.worker_id != worker_id or capacity.attempt_no != int(attempt_no):
             raise AssertionError("Heavy capacity holder does not match completed attempt")
         _clear_heavy_capacity(db, capacity)
-    return updated is not None
+    return True
 
 
 def fail_job(
@@ -1889,36 +2109,25 @@ def fail_job(
     *,
     job_id: UUID,
     worker_id: str,
+    attempt_no: int,
     error_code: str,
     error_message: str,
     retry_delays_seconds: Sequence[int],
     result_payload: Mapping[str, Any] | None = None,
 ) -> str | None:
-    """Apply retry/dead transition for a failed running job owned by worker_id."""
-    row = (
-        db.execute(
-            text(
-                """
-                SELECT id, kind, status, attempts, max_attempts
-                FROM background_jobs
-                WHERE id = :job_id
-                  AND status = 'running'
-                  AND claimed_by = :worker_id
-                  AND lease_expires_at > now()
-                FOR UPDATE
-                """
-            ),
-            {"job_id": job_id, "worker_id": worker_id},
-        )
-        .mappings()
-        .first()
+    """Apply retry/dead transition for one exact, live running attempt."""
+    row = _lock_running_job_attempt(
+        db,
+        job_id=job_id,
+        worker_id=worker_id,
+        attempt_no=attempt_no,
     )
     if row is None:
         return None
     capacity = _lock_heavy_capacity_for_job(db, job_id)
 
-    attempts = int(row["attempts"])
-    max_attempts = int(row["max_attempts"])
+    attempts = row.attempts
+    max_attempts = row.max_attempts
     should_dead_letter = attempts >= max_attempts
 
     if should_dead_letter:
@@ -1966,7 +2175,7 @@ def fail_job(
     if new_status == FAILED:
         db.execute(
             text("SELECT pg_notify('nexus_background_jobs', :kind)"),
-            {"kind": str(row["kind"])},
+            {"kind": row.kind},
         )
     return new_status
 

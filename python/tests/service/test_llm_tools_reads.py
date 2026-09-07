@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import re
 from collections.abc import Mapping
+from importlib.util import find_spec
+from typing import TYPE_CHECKING, cast
 from uuid import uuid4
 
+import pytest
 from llm_tools import ToolId, canonical_json_bytes
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
@@ -22,7 +26,7 @@ from nexus.db.models import (
     MessageToolCall,
     ResourceEdge,
 )
-from nexus.services import bootstrap
+from nexus.services import bootstrap, conversations
 from nexus.services.resource_graph.context import (
     add_context_ref_without_commit,
     admits_resource_for_conversation_read,
@@ -30,13 +34,23 @@ from nexus.services.resource_graph.context import (
 from nexus.services.resource_graph.edges import create_edge
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.schemas import EdgeCreate
-from tests.testkit.chat import create_entitled_chat
-from tests.testkit.llm_tool_scenarios import (
-    claim_chat_tool_job,
-    compose_keyless_tool_runtime,
-    create_readable_media,
-    execute_chat_tool,
-)
+
+# BASE overlays this proof without the exact-generation production owners.
+_CUTOVER_PRESENT = find_spec("nexus.services.generation_selection") is not None
+
+if TYPE_CHECKING or _CUTOVER_PRESENT:
+    from tests.testkit.generation_catalog import (
+        CHAT_TEST_SELECTION,
+        configured_chat_catalog_service,
+    )
+    from tests.testkit.llm_tool_scenarios import (
+        claim_running_chat_tool_job,
+        compose_available_product_tool_runtime,
+        compose_chat_tool_generation,
+        create_readable_media,
+        create_scoped_entitled_chat,
+        execute_chat_tool,
+    )
 
 _EVIDENCE_KEYS = {
     "admission_scope",
@@ -45,6 +59,7 @@ _EVIDENCE_KEYS = {
     "context_ref",
     "excerpt_id",
     "locator",
+    "machine_authorship",
     "observed_at",
     "resource_uri",
     "snapshot_revision",
@@ -81,6 +96,7 @@ def _assert_canonical_evidence(evidence: object, *, expected_resource_uri: str) 
     assert isinstance(evidence, dict), "read success omitted its typed evidence receipt"
     assert set(evidence) == _EVIDENCE_KEYS, "read evidence escaped its closed Nexus schema"
     assert evidence["resource_uri"] == expected_resource_uri
+    assert evidence["machine_authorship"] is None
     assert isinstance(evidence["admission_scope"], str) and evidence["admission_scope"]
     assert isinstance(evidence["citation_target"], str) and evidence["citation_target"]
     revision = evidence["content_sha256"] or evidence["snapshot_revision"]
@@ -89,7 +105,10 @@ def _assert_canonical_evidence(evidence: object, *, expected_resource_uri: str) 
     )
 
 
-def test_nexus_reads_are_scoped_citable_and_closed(engine: Engine) -> None:
+def test_nexus_reads_are_scoped_citable_and_closed(request: pytest.FixtureRequest) -> None:
+    assert _CUTOVER_PRESENT, "the final exact-generation selection owner is absent"
+    request.getfixturevalue("committed_chat_state_isolation")
+    engine = cast(Engine, request.getfixturevalue("engine"))
     owner_id = uuid4()
     foreign_id = uuid4()
     with Session(engine, expire_on_commit=False) as db:
@@ -103,13 +122,7 @@ def test_nexus_reads_are_scoped_citable_and_closed(engine: Engine) -> None:
             foreign_id,
             f"read-tool-foreign-{foreign_id}@example.invalid",
         )
-        chat = create_entitled_chat(
-            db,
-            content="Read the admitted evidence only.",
-            user_id=owner_id,
-        )
-        run = db.get(ChatRun, chat.run_id)
-        assert run is not None
+        conversation = conversations.create_conversation(db, owner_id)
 
         body = "First section. A singular nebula appears only in this admitted document."
         media_id = create_readable_media(
@@ -198,7 +211,7 @@ def test_nexus_reads_are_scoped_citable_and_closed(engine: Engine) -> None:
             add_context_ref_without_commit(
                 db,
                 viewer_id=owner_id,
-                conversation_id=chat.conversation_id,
+                conversation_id=conversation.id,
                 target=target,
                 origin="user",
             )
@@ -222,7 +235,7 @@ def test_nexus_reads_are_scoped_citable_and_closed(engine: Engine) -> None:
                 ResourceEdge(
                     user_id=owner_id,
                     source_scheme="conversation",
-                    source_id=chat.conversation_id,
+                    source_id=conversation.id,
                     target_scheme="media",
                     target_id=target_id,
                     kind="context",
@@ -241,25 +254,41 @@ def test_nexus_reads_are_scoped_citable_and_closed(engine: Engine) -> None:
             target = ResourceRef(scheme="media", id=target_id)
             assert admits_resource_for_conversation_read(
                 db,
-                conversation_id=chat.conversation_id,
+                conversation_id=conversation.id,
                 target=target,
             )
             assert not can_read_media(db, owner_id, target_id)
 
-        runtime = compose_keyless_tool_runtime()
-        operation = runtime.operations["chat"]
-        job_context = claim_chat_tool_job(
+        catalog = configured_chat_catalog_service()
+        catalog_snapshot = asyncio.run(catalog.read_chat())
+        runtime = compose_available_product_tool_runtime()
+        chat = asyncio.run(
+            create_scoped_entitled_chat(
+                db,
+                conversation_id=conversation.id,
+                content="Read the admitted evidence only.",
+                catalog_definition_revision=catalog_snapshot.catalog.definition_revision,
+                selection=CHAT_TEST_SELECTION,
+                tool_authority="ReadOnly",
+                catalog=catalog,
+                tool_runtime=runtime,
+                user_id=owner_id,
+            )
+        )
+        run = db.get(ChatRun, chat.run_id)
+        assert run is not None
+        operation = runtime.operations["ChatRead"]
+        job_context = claim_running_chat_tool_job(
             db,
             job_id=chat.job_id,
+            run=run,
             worker_id=f"read-tools-{uuid4()}",
         )
-        admitted = (
-            media_uri,
-            related_uri,
-            empty_uri,
-            oversized_uri,
-            foreign_uri,
-            missing_uri,
+        generation = compose_chat_tool_generation(
+            db,
+            operation=operation,
+            run=run,
+            job_context=job_context,
         )
         tool_ids = (
             "nexus.search",
@@ -272,14 +301,10 @@ def test_nexus_reads_are_scoped_citable_and_closed(engine: Engine) -> None:
         successes = {
             tool_id: execute_chat_tool(
                 db,
-                operation=operation,
-                run=run,
-                job_context=job_context,
+                generation=generation,
                 tool_id=tool_id,
                 tool_call_index=index,
                 arguments=_read_arguments(tool_id, media_uri),
-                admitted_resource_uris=admitted,
-                effect_id=None,
             )
             for index, tool_id in enumerate(tool_ids, start=1)
         }
@@ -305,14 +330,10 @@ def test_nexus_reads_are_scoped_citable_and_closed(engine: Engine) -> None:
         )
         empty_read = execute_chat_tool(
             db,
-            operation=operation,
-            run=run,
-            job_context=job_context,
+            generation=generation,
             tool_id="nexus.resource.read",
             tool_call_index=6,
             arguments=_read_arguments("nexus.resource.read", empty_uri),
-            admitted_resource_uris=admitted,
-            effect_id=None,
         )
         assert empty_read["type"] == "Success"
         empty_evidence = empty_read["value"]["evidence"]
@@ -356,6 +377,7 @@ def test_nexus_reads_are_scoped_citable_and_closed(engine: Engine) -> None:
                 "direction": "outgoing",
                 "edge_id": str(relation.id),
                 "kind": "supports",
+                "machine_authorship": None,
                 "rationale": None,
                 "source_label": "Admitted evidence atlas",
                 "source_uri": media_uri,
@@ -371,14 +393,10 @@ def test_nexus_reads_are_scoped_citable_and_closed(engine: Engine) -> None:
             for tool_id in tool_ids:
                 denied[(tool_id, inaccessible_uri)] = execute_chat_tool(
                     db,
-                    operation=operation,
-                    run=run,
-                    job_context=job_context,
+                    generation=generation,
                     tool_id=tool_id,
                     tool_call_index=next_index,
                     arguments=_read_arguments(tool_id, inaccessible_uri),
-                    admitted_resource_uris=admitted,
-                    effect_id=None,
                 )
                 next_index += 1
 
@@ -390,18 +408,42 @@ def test_nexus_reads_are_scoped_citable_and_closed(engine: Engine) -> None:
             "a foreign or nonexistent read exposed a distinguishable failure envelope"
         )
 
-        no_admission_search = execute_chat_tool(
+        empty_scope_conversation = conversations.create_conversation(db, owner_id)
+        db.commit()
+        empty_scope_chat = asyncio.run(
+            create_scoped_entitled_chat(
+                db,
+                conversation_id=empty_scope_conversation.id,
+                content="Search without any admitted resources.",
+                catalog_definition_revision=catalog_snapshot.catalog.definition_revision,
+                selection=CHAT_TEST_SELECTION,
+                tool_authority="ReadOnly",
+                catalog=catalog,
+                tool_runtime=runtime,
+                user_id=owner_id,
+            )
+        )
+        empty_scope_run = db.get(ChatRun, empty_scope_chat.run_id)
+        assert empty_scope_run is not None
+        empty_scope_job_context = claim_running_chat_tool_job(
+            db,
+            job_id=empty_scope_chat.job_id,
+            run=empty_scope_run,
+            worker_id=f"read-tools-empty-scope-{uuid4()}",
+        )
+        empty_scope_generation = compose_chat_tool_generation(
             db,
             operation=operation,
-            run=run,
-            job_context=job_context,
-            tool_id="nexus.search",
-            tool_call_index=next_index,
-            arguments={**_search_arguments(media_uri), "scopes": None},
-            admitted_resource_uris=(),
-            effect_id=None,
+            run=empty_scope_run,
+            job_context=empty_scope_job_context,
         )
-        next_index += 1
+        no_admission_search = execute_chat_tool(
+            db,
+            generation=empty_scope_generation,
+            tool_id="nexus.search",
+            tool_call_index=1,
+            arguments={**_search_arguments(media_uri), "scopes": None},
+        )
         assert no_admission_search == {
             "type": "Success",
             "value": {"matches": [], "total_candidates": 0},
@@ -409,14 +451,10 @@ def test_nexus_reads_are_scoped_citable_and_closed(engine: Engine) -> None:
 
         explicit_empty_scope_search = execute_chat_tool(
             db,
-            operation=operation,
-            run=run,
-            job_context=job_context,
+            generation=generation,
             tool_id="nexus.search",
             tool_call_index=next_index,
             arguments={**_search_arguments(media_uri), "scopes": []},
-            admitted_resource_uris=admitted,
-            effect_id=None,
         )
         next_index += 1
         assert explicit_empty_scope_search == {
@@ -426,17 +464,13 @@ def test_nexus_reads_are_scoped_citable_and_closed(engine: Engine) -> None:
 
         oversized_search = execute_chat_tool(
             db,
-            operation=operation,
-            run=run,
-            job_context=job_context,
+            generation=generation,
             tool_id="nexus.search",
             tool_call_index=next_index,
             arguments={
                 **_search_arguments(oversized_uri),
                 "query": "oversized",
             },
-            admitted_resource_uris=admitted,
-            effect_id=None,
         )
         assert oversized_search["type"] == "Success"
         assert oversized_search["value"]["matches"]
@@ -490,17 +524,25 @@ def test_nexus_reads_are_scoped_citable_and_closed(engine: Engine) -> None:
                 .order_by(MessageToolCall.tool_call_index)
             )
         )
-        assert len(rows) == 19
+        assert len(rows) == 18
         assert {row.record_kind for row in rows} == {"current_execution"}
-        assert all(row.provider_wire_name is None for row in rows)
+        assert all(row.provider_wire_name is not None for row in rows)
+        assert all(row.provider_wire_name == row.canonical_tool_id for row in rows)
         assert [row.canonical_tool_id for row in rows[:5]] == list(tool_ids)
         assert rows[5].canonical_tool_id == "nexus.resource.read"
         assert all(row.canonical_input_sha256 for row in rows)
+        from nexus.services.tool_authority import read_tool_positions
+
+        positions = read_tool_positions(db, generation_id=generation.generation_id)
+        assert len(positions) == len(rows)
         for row in rows:
             assert row.canonical_tool_id is not None
             binding = operation.plan.catalog_view.binding(ToolId(row.canonical_tool_id))
             assert row.tool_contract_revision == binding.spec.tool_contract_revision
             assert row.binding_policy_revision == binding.policy_revision
+        for row, position in zip(rows, positions, strict=True):
+            assert row.tool_position_id == position.id
+            assert position.replay_status == "Completed"
 
         result_events = list(
             db.scalars(

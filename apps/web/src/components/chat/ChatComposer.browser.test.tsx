@@ -1,74 +1,58 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+/// <reference types="vite/client" />
+
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ComponentProps } from "react";
+import { hydrateRoot } from "react-dom/client";
+import { renderToString } from "react-dom/server";
 import { cdp, page, userEvent } from "vitest/browser";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import "@/app/globals.css";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
+import { ApiError } from "@/lib/api/client";
 import type { ChatDraftKey } from "@/lib/conversations/chatDraftKey";
 import type { PaneVisitId } from "@/lib/workspace/schema";
 import ChatComposerComponent from "./ChatComposer";
 
-const PROFILES = {
-  default_profile_id: "balanced",
-  profiles: [
-    {
-      id: "balanced",
-      label: "Balanced",
-      description: "Everyday profile",
-      provider_label: "Nexus AI",
-      model_label: "Balanced model",
-      reasoning_options: [
-        { id: "medium", label: "Medium" },
-        { id: "high", label: "High" },
-      ],
-      default_reasoning_option_id: "medium",
-      privacy: { kind: "Standard", notice: "Processed by Nexus AI." },
-    },
-    {
-      id: "fast",
-      label: "Fast",
-      description: "Fast profile",
-      provider_label: "Nexus AI",
-      model_label: "Fast model",
-      reasoning_options: [{ id: "low", label: "Low" }],
-      default_reasoning_option_id: "low",
-      privacy: { kind: "Standard", notice: "Processed by Nexus AI." },
-    },
-    {
-      id: "deepseek-flash",
-      label: "DeepSeek · V4 Flash",
-      description: "Fast, cost-efficient reasoning for everyday questions",
-      provider_label: "DeepSeek",
-      model_label: "DeepSeek V4 Flash",
-      reasoning_options: [
-        { id: "none", label: "None" },
-        { id: "high", label: "High" },
-        { id: "max", label: "Max" },
-      ],
-      default_reasoning_option_id: "high",
-      privacy: { kind: "Standard", notice: "Processed by DeepSeek." },
-    },
-    {
-      id: "deepseek-pro",
-      label: "DeepSeek · V4 Pro",
-      description: "DeepSeek's strongest model for harder reasoning.",
-      provider_label: "DeepSeek",
-      model_label: "DeepSeek V4 Pro",
-      reasoning_options: [
-        { id: "none", label: "None" },
-        { id: "high", label: "High" },
-        { id: "max", label: "Max" },
-      ],
-      default_reasoning_option_id: "high",
-      privacy: { kind: "Standard", notice: "Processed by DeepSeek." },
-    },
-  ],
-};
-
 interface ChatRunCall {
   body: ChatRunCreateRequest;
   key: string;
+}
+
+interface GenerationFixtureModule {
+  readonly GENERATION_CATALOG_RESPONSE: unknown;
+}
+
+interface CutoverSupport {
+  readonly fixtures: GenerationFixtureModule;
+  readonly invalidateGenerationCatalogCache: () => void;
+}
+
+// Vite returns an empty map at BASE instead of failing import analysis on files
+// that exist only in the candidate. The scenarios then own behavioral RED.
+const cutoverModules = import.meta.glob([
+  "../../__tests__/helpers/generationCatalog.ts",
+  "./useGenerationCatalog.ts",
+]);
+let cutoverSupport: CutoverSupport | null = null;
+
+function requireCutoverSupport(): CutoverSupport {
+  if (cutoverSupport === null) {
+    expect(
+      cutoverSupport,
+      "the final exact-generation Chat composer owners are absent",
+    ).not.toBeNull();
+    throw new Error("unreachable after the BASE sensitivity assertion");
+  }
+  return cutoverSupport;
 }
 
 const pathKey = (targetId: string): ChatDraftKey => ({
@@ -92,15 +76,16 @@ function requestPath(input: RequestInfo | URL): string {
   return new URL(value, window.location.origin).pathname;
 }
 
-// The BFF is stubbed at the fetch boundary: profiles resolve, and every chat-run
+// The BFF is stubbed at the fetch boundary: the strict catalog resolves, and every chat-run
 // POST records its exact request + idempotency key, then throws a synthetic
 // network loss to drive the reconciliation ("Retry send") path.
 function installBff(calls: ChatRunCall[]) {
+  const { GENERATION_CATALOG_RESPONSE } = requireCutoverSupport().fixtures;
   vi.stubGlobal(
     "fetch",
     async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = requestPath(input);
-      if (path === "/api/llm-profiles") return json({ data: PROFILES });
+      if (path === "/api/llm-catalog") return json(GENERATION_CATALOG_RESPONSE);
       if (path === "/api/chat-runs" && init?.method === "POST") {
         const headers = new Headers(init.headers);
         calls.push({
@@ -121,7 +106,7 @@ function Composer(
     <ChatComposerComponent
       conversationId="00000000-0000-4000-8000-000000000001"
       draftKey={pathKey("00000000-0000-4000-8000-000000000001")}
-      inheritedProfileSelection={null}
+      inheritedRunSelection={null}
       sendCapability={{ kind: "Available" }}
       {...props}
     />
@@ -129,8 +114,29 @@ function Composer(
 }
 
 describe("ChatComposer browser contract", () => {
+  beforeAll(async () => {
+    const loadFixtures =
+      cutoverModules["../../__tests__/helpers/generationCatalog.ts"];
+    const loadCatalogOwner = cutoverModules["./useGenerationCatalog.ts"];
+    if (loadFixtures === undefined || loadCatalogOwner === undefined) return;
+    const [fixtures, catalogOwner] = await Promise.all([
+      loadFixtures(),
+      loadCatalogOwner(),
+    ]);
+    cutoverSupport = {
+      fixtures: fixtures as GenerationFixtureModule,
+      invalidateGenerationCatalogCache: (
+        catalogOwner as {
+          readonly invalidateGenerationCatalogCache: () => void;
+        }
+      ).invalidateGenerationCatalogCache,
+    };
+  });
+
   beforeEach(async () => {
+    cutoverSupport?.invalidateGenerationCatalogCache();
     sessionStorage.clear();
+    cutoverSupport?.invalidateGenerationCatalogCache();
     await page.viewport(1_024, 768);
   });
 
@@ -146,10 +152,13 @@ describe("ChatComposer browser contract", () => {
     const calls: ChatRunCall[] = [];
     installBff(calls);
     const view = render(withRenderEnvironment(<Composer />));
-    const model = await screen.findByRole("combobox", { name: "Model" });
-    await userEvent.selectOptions(model, "deepseek-flash");
-    expect(screen.getByRole<HTMLSelectElement>("combobox", { name: "Effort" }).value).toBe(
-      "high",
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Change model/u }),
+    );
+    const high = await screen.findByRole("radio", { name: "High" });
+    fireEvent.click(high);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Confirm selection" }),
     );
 
     const input = screen.getByRole<HTMLTextAreaElement>("textbox", {
@@ -164,8 +173,13 @@ describe("ChatComposer browser contract", () => {
     ).toHaveLength(1);
     expect(calls[0].body).toMatchObject({
       content: "First\nSecond",
-      profile_id: "deepseek-flash",
-      reasoning_option_id: "high",
+      catalog_definition_revision: "a".repeat(64),
+      selection: {
+        route: "CodexPersonal",
+        model: "gpt-5.6-terra",
+        reasoning: "high",
+      },
+      tool_authority: "ReadOnly",
     });
     view.unmount();
 
@@ -177,7 +191,7 @@ describe("ChatComposer browser contract", () => {
         { initialViewport: "mobile" },
       ),
     );
-    await screen.findByRole("combobox", { name: "Model" });
+    await screen.findByRole("button", { name: /Change model/u });
     const mobileInput = screen.getByRole<HTMLTextAreaElement>("textbox", {
       name: "Ask anything",
     });
@@ -197,6 +211,7 @@ describe("ChatComposer browser contract", () => {
   });
 
   it("restores a persisted draft after the hydrated browser boundary", async () => {
+    installBff([]);
     const draftKey = newConversationKey("hydration-draft-proof");
     const view = render(
       withRenderEnvironment(
@@ -223,22 +238,72 @@ describe("ChatComposer browser contract", () => {
     );
   });
 
+  it("keeps the server-rendered composer inert until its draft is restored, so hydration drops no keystroke", async () => {
+    installBff([]);
+    const composer = () =>
+      withRenderEnvironment(
+        <Composer draftKey={pathKey("00000000-0000-4000-8000-00000000000c")} />,
+      );
+    const container = document.createElement("div");
+    container.innerHTML = renderToString(composer());
+    document.body.append(container);
+    const textbox = within(container).getByRole<HTMLTextAreaElement>("textbox", {
+      name: "Ask anything",
+    });
+    // A keystroke into the server markup never reaches React: hydration adopts
+    // the already-changed value silently and the next update wipes it.
+    expect(textbox).toBeDisabled();
+
+    const root = hydrateRoot(container, composer());
+    try {
+      await waitFor(() => expect(textbox).toBeEnabled());
+      await userEvent.type(textbox, "Typed once editable");
+      expect(textbox).toHaveValue("Typed once editable");
+    } finally {
+      root.unmount();
+      container.remove();
+    }
+  });
+
   it("keeps a locked reconciliation intact when a re-key and a new initialContent land in one commit", async () => {
     const calls: ChatRunCall[] = [];
     installBff(calls);
     const lockedKey = pathKey("00000000-0000-4000-8000-00000000000b");
-    const lockedStorageKey = "nx_chat_draft:path:00000000-0000-4000-8000-00000000000b";
+    const lockedStorageKey = "nx_chat_draft.v3:path:00000000-0000-4000-8000-00000000000b";
     const persisted = {
       text: "in-flight message",
-      profile: null,
+      selection: {
+        route: "CodexPersonal",
+        model: "gpt-5.6-terra",
+        reasoning: "medium",
+      },
+      toolAuthority: "ReadOnly",
       operation: {
         kind: "ReconcileRequired",
         command: {
           idempotencyKey: "locked-command-key",
           request: {
+            destination: {
+              kind: "Existing",
+              conversation_id: "00000000-0000-4000-8000-00000000000b",
+              insertion: {
+                kind: "Reply",
+                parent_message_id: "00000000-0000-4000-8000-00000000000c",
+                branch_anchor: {
+                  kind: "assistant_message",
+                  message_id: "00000000-0000-4000-8000-00000000000c",
+                },
+              },
+            },
             content: "in-flight message",
-            profile_id: "balanced",
-            reasoning_option_id: "medium",
+            catalog_definition_revision: "a".repeat(64),
+            selection: {
+              route: "CodexPersonal",
+              model: "gpt-5.6-terra",
+              reasoning: "medium",
+            },
+            tool_authority: "ReadOnly",
+            reader_selection: { kind: "Absent" },
           },
         },
       },
@@ -279,6 +344,35 @@ describe("ChatComposer browser contract", () => {
     ).toEqual(persisted.operation);
   });
 
+  it("purges a v2 draft without decoding it and shows the reset", async () => {
+    installBff([]);
+    const draftKey = newConversationKey(
+      "3f2504e0-4f89-41d3-9a0c-0305e82c3302",
+    );
+    sessionStorage.setItem(
+      "nx_chat_draft.v2:new:3f2504e0-4f89-41d3-9a0c-0305e82c3302",
+      JSON.stringify({
+        opaque_legacy_payload: "must not be decoded or replayed",
+      }),
+    );
+
+    render(
+      withRenderEnvironment(
+        <Composer conversationId={null} draftKey={draftKey} />,
+      ),
+    );
+
+    expect(
+      await screen.findByText(/A legacy Chat draft was discarded/u),
+    ).toBeVisible();
+    expect(
+      sessionStorage.getItem(
+        "nx_chat_draft.v2:new:3f2504e0-4f89-41d3-9a0c-0305e82c3302",
+      ),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry send" })).toBeNull();
+  });
+
   it("reloads an in-flight new-chat send as a locked Retry that replays the exact key and request", async () => {
     const calls: ChatRunCall[] = [];
     installBff(calls);
@@ -291,8 +385,15 @@ describe("ChatComposer browser contract", () => {
         <Composer conversationId={null} draftKey={draftKey} />,
       ),
     );
-    const model = await screen.findByRole("combobox", { name: "Model" });
-    await userEvent.selectOptions(model, "deepseek-pro");
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Change model/u }),
+    );
+    const high = await screen.findByRole("radio", { name: "High" });
+    fireEvent.click(high);
+    await waitFor(() => expect(high).toHaveAttribute("aria-checked", "true"));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Confirm selection" }),
+    );
     const input = screen.getByRole<HTMLTextAreaElement>("textbox", {
       name: "Ask anything",
     });
@@ -302,8 +403,11 @@ describe("ChatComposer browser contract", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0].body.destination).toEqual({ kind: "New" });
     expect(calls[0].body).toMatchObject({
-      profile_id: "deepseek-pro",
-      reasoning_option_id: "high",
+      selection: {
+        route: "CodexPersonal",
+        model: "gpt-5.6-terra",
+        reasoning: "high",
+      },
     });
 
     // Simulate a full reload: unmount and remount a FRESH composer on the same
@@ -360,13 +464,13 @@ describe("ChatComposer browser contract", () => {
         { initialViewport: "mobile" },
       ),
     );
-    const model = await screen.findByRole("combobox", { name: "Model" });
-    const effort = screen.getByRole("combobox", { name: "Effort" });
+    const modelTrigger = await screen.findByRole("button", {
+      name: /Change model/u,
+    });
     const stop = screen.getByRole("button", { name: "Stop response" });
     const socketWidth = stop.getBoundingClientRect().width;
 
-    expect(model.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
-    expect(effort.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
+    expect(modelTrigger.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
     expect(stop.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
 
@@ -381,5 +485,32 @@ describe("ChatComposer browser contract", () => {
       expect(screen.getByRole("button", { name: "Stop response" })).toBeVisible(),
     );
     expect(calls).toHaveLength(0);
+  });
+
+  it("surfaces a scoped cancellation transport failure", async () => {
+    const calls: ChatRunCall[] = [];
+    installBff(calls);
+    render(
+      withRenderEnvironment(
+        <Composer
+          activeRunId="00000000-0000-4000-8000-000000000002"
+          onCancelRun={() =>
+            Promise.reject(
+              new ApiError(0, "E_NETWORK", "Synthetic cancellation loss"),
+            )
+          }
+        />,
+      ),
+    );
+
+    await screen.findByRole("button", { name: /Change model/u });
+    await userEvent.click(
+      screen.getByRole("button", { name: "Stop response" }),
+    );
+    expect(
+      await screen.findByText("This response couldn’t be stopped."),
+    ).toBeVisible();
+    expect(screen.getByText("Check your connection and try again.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Stop response" })).toBeEnabled();
   });
 });

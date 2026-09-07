@@ -34,7 +34,6 @@ _FORBIDDEN_MODULE_NAMES = frozenset(
         "httpx",
         "lxml",
         "nexus.services.content_indexing",
-        "nexus.services.llm_profiles",
         "nexus.services.podcasts.backfill",
         "nexus.services.podcasts.sync",
         "nexus.services.rate_limit",
@@ -43,6 +42,7 @@ _FORBIDDEN_MODULE_NAMES = frozenset(
         "openai",
         "provider_runtime",
         "tests.testkit.background_process_probe_handler",
+        "uvicorn",
     }
 )
 

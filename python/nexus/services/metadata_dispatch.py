@@ -17,8 +17,6 @@ logger = get_logger(__name__)
 # owner writes checkpoints under it and the retry lifecycle reads them.
 METADATA_STEP_PATH = "codex/metadata"
 
-_INITIAL_CAPACITY_WAIT_INDEX = 0
-
 
 @cache
 def _metadata_max_attempts() -> int:
@@ -45,7 +43,6 @@ def enqueue_metadata_enrichment(
     payload = {
         "media_id": str(media_id),
         "request_id": request_id,
-        "capacity_wait_index": _INITIAL_CAPACITY_WAIT_INDEX,
     }
     max_attempts = _metadata_max_attempts()
     if dedupe_key is not None:

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Final, Literal
+from typing import TYPE_CHECKING, Any, Final
 
 import httpx
 from llm_tools import (
@@ -22,26 +22,49 @@ from llm_tools import (
     ToolCatalog,
     ToolEffect,
     ToolFamily,
+    ToolId,
+    ToolSpec,
     Unavailable,
     WebSearchProvider,
     bind_brave_web_search,
     web_family,
 )
-from pydantic import BaseModel, ConfigDict, ValidationError
+from provider_runtime.agent_runtime import (
+    CredentialRef,
+)
+from provider_runtime.agent_runtime.tool_projection import (
+    McpToolPublication,
+    PublishedMcpTools,
+    lower_mcp_tools,
+)
+from provider_runtime.tool_adapter import PublishedTools, ToolPublication, lower_tools
+from pydantic import ValidationError
 
 from nexus.config import Settings
-from nexus.services.tool_runtime.bindings import NEXUS_TOOL_BINDINGS
-from nexus.services.tool_runtime.declarations import NEXUS_TOOL_DECLARATIONS
-from nexus.services.tool_runtime.profiles import (
-    CHAT_TOOL_PLAN,
-    CHAT_TOOL_PROFILE,
-    IDEA_DOSSIER_RESEARCH_TOOL_PLAN,
-    IDEA_DOSSIER_RESEARCH_TOOL_PROFILE,
+from nexus.services.tool_runtime.declarations import (
+    CHAT_TOOL_DECLARATIONS,
+    NEXUS_TOOL_DECLARATIONS,
+    PresentedToolDeclaration,
 )
+from nexus.services.tool_runtime.profiles import (
+    TOOL_PLAN_DEFINITIONS,
+    ToolPlanDefinition,
+)
+from nexus.services.tool_runtime.snapshots import (
+    FrozenRunLimitsSnapshot,
+    FrozenToolExposureSnapshot,
+    FrozenToolGrantSnapshot,
+    FrozenToolLimitsSnapshot,
+    FrozenToolPlanSnapshot,
+)
+
+if TYPE_CHECKING:
+    from nexus.services.provider_generation_contract import ProviderModelTools
 
 
 @dataclass(frozen=True, slots=True)
 class FrozenToolOperation:
+    definition: ToolPlanDefinition
     profile: FrozenCapabilityProfile
     plan: FrozenToolPlan
 
@@ -52,48 +75,6 @@ class ComposedToolRuntime:
     operations: Mapping[str, FrozenToolOperation]
 
 
-class _FrozenSnapshot(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-
-class FrozenToolLimitsSnapshot(_FrozenSnapshot):
-    deadline_seconds: float
-    max_attempts: int
-    max_input_bytes: int
-    max_output_bytes: int
-
-
-class FrozenRunLimitsSnapshot(_FrozenSnapshot):
-    max_calls: int
-    max_elapsed_seconds: float
-    max_external_attempts: int
-    max_in_flight: int
-    max_input_bytes: int
-    max_output_bytes: int
-
-
-class FrozenToolGrantSnapshot(_FrozenSnapshot):
-    binding_policy_revision: str
-    id: str
-    limits: FrozenToolLimitsSnapshot
-    replay_policy: Literal["BilledOnce", "ReDispatchable"]
-    tool_contract_revision: str
-
-
-class FrozenToolExposureSnapshot(_FrozenSnapshot):
-    type: Literal["HostTable", "Native"]
-
-
-class FrozenToolPlanSnapshot(_FrozenSnapshot):
-    exposure: FrozenToolExposureSnapshot
-    grants: tuple[FrozenToolGrantSnapshot, ...]
-    plan_id: str
-    plan_revision: str
-    profile_id: str
-    profile_revision: str
-    run_limits: FrozenRunLimitsSnapshot
-
-
 _WEB_SEARCH_POLICY_INPUTS: Final[Mapping[str, object]] = MappingProxyType(
     {
         "context_chars": 12_000,
@@ -102,6 +83,9 @@ _WEB_SEARCH_POLICY_INPUTS: Final[Mapping[str, object]] = MappingProxyType(
         "safe_search": "moderate",
         "selected_results": 5,
     }
+)
+_PRESENTED_DECLARATIONS_BY_ID: Final[Mapping[ToolId, PresentedToolDeclaration]] = MappingProxyType(
+    {entry.spec.id: entry for entry in CHAT_TOOL_DECLARATIONS}
 )
 
 
@@ -128,10 +112,14 @@ def _validate_binding_metadata(
 def compose_tool_runtime(
     web_search_binding: ToolBinding[Any, Any, Any],
     *,
-    nexus_bindings: tuple[ToolBinding[Any, Any, Any], ...] = NEXUS_TOOL_BINDINGS,
+    nexus_bindings: tuple[ToolBinding[Any, Any, Any], ...] | None = None,
 ) -> ComposedToolRuntime:
-    """Freeze the exact Chat Native and Idea-research HostTable operations."""
+    """Freeze every reviewed operation plan against one exact tool catalogue."""
 
+    if nexus_bindings is None:
+        from nexus.services.tool_runtime.bindings import NEXUS_TOOL_BINDINGS
+
+        nexus_bindings = NEXUS_TOOL_BINDINGS
     _validate_binding_metadata(web_search_binding, nexus_bindings)
     catalog = ToolCatalog.compose(
         (
@@ -144,21 +132,121 @@ def compose_tool_runtime(
         )
     )
 
-    chat_profile = CHAT_TOOL_PROFILE.freeze(catalog)
-    idea_profile = IDEA_DOSSIER_RESEARCH_TOOL_PROFILE.freeze(catalog)
-    operations = MappingProxyType(
-        {
-            "chat": FrozenToolOperation(
-                profile=chat_profile,
-                plan=CHAT_TOOL_PLAN.freeze(catalog, chat_profile),
-            ),
-            "idea_dossier_research": FrozenToolOperation(
-                profile=idea_profile,
-                plan=IDEA_DOSSIER_RESEARCH_TOOL_PLAN.freeze(catalog, idea_profile),
-            ),
-        }
-    )
+    operations_by_id: dict[str, FrozenToolOperation] = {}
+    for definition in TOOL_PLAN_DEFINITIONS:
+        profile = definition.profile.freeze(catalog)
+        operation = FrozenToolOperation(
+            definition=definition,
+            profile=profile,
+            plan=definition.plan.freeze(catalog, profile),
+        )
+        _validate_frozen_operation(operation)
+        if definition.plan_id in operations_by_id:
+            raise ValueError(f"duplicate tool plan id: {definition.plan_id}")
+        operations_by_id[definition.plan_id] = operation
+    operations = MappingProxyType(operations_by_id)
     return ComposedToolRuntime(catalog=catalog, operations=operations)
+
+
+def _validate_frozen_operation(operation: FrozenToolOperation) -> None:
+    definition = operation.definition
+    profile = operation.profile
+    plan = operation.plan
+    if plan.profile is not profile:
+        raise ValueError("frozen tool plan and profile do not share one value")
+    expected_ids = tuple(grant.id for grant in definition.profile.grants)
+    if tuple(grant.id for grant in profile.ordered_grants) != expected_ids:
+        raise ValueError("frozen tool grant order differs from its authority definition")
+    write_count = sum(
+        plan.catalog_view.spec(tool_id).effect is ToolEffect.Write for tool_id in expected_ids
+    )
+    if write_count == 0 and definition.max_live_writes is not None:
+        raise ValueError("read-only frozen tool plan carries a write-effect bound")
+    if write_count > 0 and definition.max_live_writes is None:
+        raise ValueError("write-capable frozen tool plan lacks its effect bound")
+
+
+def operation_tool_specs(
+    operation: FrozenToolOperation | None,
+) -> tuple[ToolSpec[Any, Any, Any], ...]:
+    """Project exact ordered declarations from one frozen authority."""
+
+    if operation is None:
+        return ()
+    return tuple(
+        operation.plan.catalog_view.spec(grant.id) for grant in operation.profile.ordered_grants
+    )
+
+
+def operation_presented_declarations(
+    operation: FrozenToolOperation | None,
+) -> tuple[PresentedToolDeclaration, ...]:
+    """Join plan-owned membership to its canonical presentation metadata."""
+
+    declarations: list[PresentedToolDeclaration] = []
+    for spec in operation_tool_specs(operation):
+        try:
+            entry = _PRESENTED_DECLARATIONS_BY_ID[spec.id]
+        except KeyError as exc:
+            raise ValueError(f"frozen tool lacks presentation metadata: {spec.id!s}") from exc
+        if entry.spec is not spec:
+            raise ValueError(f"frozen tool declaration identity drifted: {spec.id!s}")
+        declarations.append(entry)
+    return tuple(declarations)
+
+
+def project_provider_model_tools(
+    operation: FrozenToolOperation | None,
+) -> PublishedTools | None:
+    """Lower one plan to API-provider function declarations; ``None`` means no tools."""
+
+    if operation is None:
+        return None
+    if not isinstance(operation.plan.exposure, Native):
+        raise ValueError("only Native model-tool plans can be provider-published")
+    return lower_tools(ToolPublication(plan=operation.plan, revealed_targets=()))
+
+
+def compose_provider_model_tools(operation: FrozenToolOperation) -> ProviderModelTools:
+    """Bind provider publication and frozen authority into one route value."""
+
+    from nexus.services.provider_generation_contract import ProviderModelTools
+
+    publication = project_provider_model_tools(operation)
+    if publication is None:
+        raise ValueError("provider model tools require one Native operation")
+    return ProviderModelTools(
+        snapshot=freeze_tool_plan_snapshot(operation),
+        publication=publication,
+    )
+
+
+def project_codex_model_tools(
+    operation: FrozenToolOperation | None,
+    *,
+    server_name: str | None = None,
+    url: str | None = None,
+    bearer: CredentialRef | None = None,
+) -> PublishedMcpTools | None:
+    """Lower one plan to authenticated Codex MCP configuration."""
+
+    endpoint_supplied = server_name is not None or url is not None or bearer is not None
+    if operation is None:
+        if endpoint_supplied:
+            raise ValueError("NoModelTools forbids MCP endpoint or bearer configuration")
+        return None
+    if not isinstance(operation.plan.exposure, Native):
+        raise ValueError("only Native model-tool plans can be MCP-published")
+    if server_name is None or url is None or bearer is None:
+        raise ValueError("model-tool MCP publication requires its complete endpoint authority")
+    return lower_mcp_tools(
+        McpToolPublication(
+            plan=operation.plan,
+            server_name=server_name,
+            url=url,
+            bearer=bearer,
+        )
+    )
 
 
 def compose_product_tool_runtime(
@@ -219,7 +307,7 @@ def freeze_tool_plan_snapshot(operation: FrozenToolOperation) -> FrozenToolPlanS
     for grant in profile.ordered_grants:
         binding = operation.plan.catalog_view.binding(grant.id)
         if binding.policy_revision != grant.policy_revision:
-            raise ValueError("HostTable grant changed binding policy after freeze")
+            raise ValueError("frozen tool grant changed binding policy after freeze")
         grants.append(
             FrozenToolGrantSnapshot(
                 binding_policy_revision=grant.policy_revision,
@@ -233,7 +321,8 @@ def freeze_tool_plan_snapshot(operation: FrozenToolOperation) -> FrozenToolPlanS
     return FrozenToolPlanSnapshot(
         exposure=exposure,
         grants=tuple(grants),
-        plan_id=profile_id,
+        max_live_writes=operation.definition.max_live_writes,
+        plan_id=operation.definition.plan_id,
         plan_revision=operation.plan.plan_revision,
         profile_id=profile_id,
         profile_revision=profile.profile_revision,
@@ -267,9 +356,14 @@ __all__ = [
     "FrozenToolPlanSnapshot",
     "FrozenToolOperation",
     "compose_configured_web_search_provider",
+    "compose_provider_model_tools",
     "compose_product_tool_runtime",
     "compose_tool_runtime",
     "encode_tool_plan_snapshot",
     "freeze_tool_plan_snapshot",
+    "operation_presented_declarations",
+    "operation_tool_specs",
+    "project_codex_model_tools",
+    "project_provider_model_tools",
     "validate_tool_plan_snapshot",
 ]

@@ -5,13 +5,18 @@ import hashlib
 import importlib.util
 import json
 import re
+import subprocess
 import tomllib
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from nexus_test_control.model import TEST_ROUTING_SHA256
+from nexus_test_control.model import (
+    TEST_ROUTING_SHA256,
+    ChangedOwnerRedStrategy,
+)
+from nexus_test_control.proof_owner import python_exact_proof_owner_sha256
 
 
 @dataclass(frozen=True)
@@ -134,6 +139,8 @@ _PRODUCT_SOURCE_ROOTS: tuple[tuple[str, frozenset[str]], ...] = (
 )
 _PRODUCT_SOURCE_FILES = frozenset({"deploy/hetzner/release.py"})
 _RETIRED_PRODUCT_TEST_SEAMS = (
+    "GENERATION_API_BASE_URLS",
+    "PROVIDER_API_PEER",
     "REAL_MEDIA_PROVIDER_FIXTURES",
     "REAL_MEDIA_FIXTURE_DIR",
     "RealMediaFixtureExecutionRuntime",
@@ -191,7 +198,7 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
             'merge_timestamp="$(git show --no-patch --format=%cI "$EXPECTED_HEAD_SHA")"',
             'GIT_COMMITTER_DATE="$merge_timestamp"',
             "git rev-list --parents -n 1 HEAD",
-            "run: ./scripts/test pr",
+            'run: ./scripts/test changed --base "$NEXUS_TEST_BASE_SHA"',
             "if: github.event_name == 'push'",
             "run: ./scripts/test full",
             "if: always()",
@@ -205,7 +212,6 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     ),
     ".github/workflows/nightly.yml": (
         (
-            'NEXUS_HOSTED_CANARY: "1"',
             "runs-on: ubuntu-latest",
             "\n          api-level: 36\n",
             "\n          system-image-api-level: 36-ext19\n",
@@ -214,20 +220,8 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         ),
         ("make test", "nexus-android-usb"),
     ),
-    ".github/workflows/codex-personal-nightly.yml": (
-        (
-            'NEXUS_CODEX_HOSTED_CANARY: "1"',
-            "runs-on: [self-hosted, linux, nexus-codex-nightly]",
-            "cmp deploy/hetzner/nexus-codex-nightly-bwrap.apparmor ",
-            "/etc/apparmor.d/nexus-codex-nightly-bwrap",
-            "python/.venv/bin/python -m apps.codex_agent.sandbox_health",
-            "run: ./scripts/test codex-nightly",
-        ),
-        ("OPENAI_API_KEY", "make test", "pytest"),
-    ),
     ".github/workflows/release.yml": (
         (
-            'NEXUS_PROVIDER_CERTIFICATION: "1"',
             # The signed release binds the protected USB lab runner; the
             # explicit bootstrap_no_device dispatch is the one hosted
             # exception because no handset exists anywhere yet.
@@ -296,10 +290,9 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
 
 _CONTROLLER_COMMAND_OWNERS: dict[str, str] = {
     "confidence": "scripts/agency_verify.sh",
-    "pr": ".github/workflows/ci.yml",
+    "changed": ".github/workflows/ci.yml",
     "full": ".github/workflows/ci.yml",
     "nightly": ".github/workflows/nightly.yml",
-    "codex-nightly": ".github/workflows/codex-personal-nightly.yml",
     "release": ".github/workflows/release.yml",
 }
 _INTERNAL_PACKAGE_RUNNERS: dict[tuple[str, str], str] = {
@@ -332,24 +325,6 @@ _DIRECT_RUNNERS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("make-alias", re.compile(r"\bmake\s+(?:test|verify)(?:[-_][A-Za-z0-9_-]+)?\b")),
 )
 _OWNERSHIP_TOKENS: tuple[tuple[str, re.Pattern[str], frozenset[str], dict[str, int]], ...] = (
-    (
-        "provider-certification",
-        re.compile(r"\bNEXUS_PROVIDER_CERTIFICATION\b"),
-        frozenset({".github/workflows/release.yml"}),
-        {".github/workflows/release.yml": 1},
-    ),
-    (
-        "hosted-canary",
-        re.compile(r"\bNEXUS_HOSTED_CANARY\b"),
-        frozenset({".github/workflows/nightly.yml"}),
-        {".github/workflows/nightly.yml": 1},
-    ),
-    (
-        "codex-hosted-canary",
-        re.compile(r"\bNEXUS_CODEX_HOSTED_CANARY\b"),
-        frozenset({".github/workflows/codex-personal-nightly.yml"}),
-        {".github/workflows/codex-personal-nightly.yml": 1},
-    ),
     (
         # Nightly keeps the hosted emulator lane it has always had; only the
         # signed release job may claim the one dedicated USB handset, and it
@@ -386,6 +361,18 @@ def _attribute_parts(node: ast.AST) -> tuple[str, ...]:
     if isinstance(node, ast.Name):
         parts.append(node.id)
     return tuple(reversed(parts))
+
+
+def _resolves_agent_runtime_constructor(
+    expression: ast.AST,
+    *,
+    direct_aliases: set[str],
+    module_aliases: set[tuple[str, ...]],
+) -> bool:
+    parts = _attribute_parts(expression)
+    return (len(parts) == 1 and parts[0] in direct_aliases) or any(
+        parts == (*prefix, "AgentRuntime") for prefix in module_aliases
+    )
 
 
 def _vacuous_assertion(node: ast.AST) -> bool:
@@ -854,6 +841,121 @@ def _package_runner_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
     return _sorted(violations)
 
 
+def _codex_agent_runtime_construction_violations(
+    repo_root: Path,
+) -> tuple[PolicyViolation, ...]:
+    """Keep the pinned AgentRuntime constructor behind the confinement owner."""
+
+    root = repo_root / "apps/codex_agent"
+    candidates = list(root.rglob("*.py")) if root.is_dir() else []
+    if not candidates:
+        return ()
+    violations: list[PolicyViolation] = []
+    for candidate in sorted(candidates):
+        relative = candidate.relative_to(repo_root).as_posix()
+        if relative == "apps/codex_agent/confined_runtime.py":
+            continue
+        try:
+            tree = ast.parse(candidate.read_text(encoding="utf-8"), filename=relative)
+        except (OSError, UnicodeDecodeError, SyntaxError):
+            continue
+
+        direct_aliases: set[str] = set()
+        module_aliases: set[tuple[str, ...]] = {("provider_runtime", "agent_runtime")}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name in {
+                        "provider_runtime.agent_runtime",
+                        "provider_runtime.agent_runtime.runtime",
+                    }:
+                        module_aliases.add(
+                            (alias.asname,)
+                            if alias.asname is not None
+                            else tuple(alias.name.split("."))
+                        )
+                    elif alias.name == "provider_runtime" and alias.asname is not None:
+                        module_aliases.add((alias.asname, "agent_runtime"))
+            elif isinstance(node, ast.ImportFrom):
+                if node.module is not None and (
+                    node.module == "provider_runtime.agent_runtime"
+                    or node.module.startswith("provider_runtime.agent_runtime.")
+                ):
+                    for alias in node.names:
+                        if alias.name in {"AgentRuntime", "*"}:
+                            direct_aliases.add(alias.asname or "AgentRuntime")
+                        elif (
+                            node.module == "provider_runtime.agent_runtime"
+                            and alias.name == "runtime"
+                        ):
+                            module_aliases.add((alias.asname or alias.name,))
+                elif node.module == "provider_runtime":
+                    for alias in node.names:
+                        if alias.name == "agent_runtime":
+                            module_aliases.add((alias.asname or alias.name,))
+
+        changed = True
+        while changed:
+            changed = False
+            for node in ast.walk(tree):
+                value: ast.AST | None = None
+                targets: tuple[ast.expr, ...] = ()
+                if isinstance(node, ast.Assign):
+                    value = node.value
+                    targets = tuple(node.targets)
+                elif isinstance(node, ast.AnnAssign):
+                    value = node.value
+                    targets = (node.target,)
+                if value is None or not _resolves_agent_runtime_constructor(
+                    value,
+                    direct_aliases=direct_aliases,
+                    module_aliases=module_aliases,
+                ):
+                    continue
+                for target in targets:
+                    if isinstance(target, ast.Name) and target.id not in direct_aliases:
+                        direct_aliases.add(target.id)
+                        changed = True
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and _resolves_agent_runtime_constructor(
+                node.func,
+                direct_aliases=direct_aliases,
+                module_aliases=module_aliases,
+            ):
+                violations.append(
+                    PolicyViolation(
+                        "codex-agent-runtime-confinement",
+                        relative,
+                        "AgentRuntime construction belongs only to confined_runtime.py",
+                        node.lineno,
+                    )
+                )
+        if relative == "apps/codex_agent/main.py":
+            functions = {
+                node.name: node
+                for node in ast.walk(tree)
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            }
+            for function_name in ("runtime_factory", "_probe_chatgpt_auth"):
+                function = functions.get(function_name)
+                calls_confined_factory = function is not None and any(
+                    isinstance(node, ast.Call)
+                    and _attribute_parts(node.func) == ("create_confined_runtime",)
+                    for node in ast.walk(function)
+                )
+                if not calls_confined_factory:
+                    violations.append(
+                        PolicyViolation(
+                            "codex-agent-runtime-wiring",
+                            relative,
+                            f"{function_name} must construct only the confined runtime",
+                            function.lineno if function is not None else None,
+                        )
+                    )
+    return _sorted(violations)
+
+
 def repository_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
     """Check the small repository-level contracts that are mechanically decisive."""
     violations: list[PolicyViolation] = []
@@ -1113,6 +1215,7 @@ def repository_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
         )
     violations.extend(_executable_route_violations(repo_root))
     violations.extend(_package_runner_violations(repo_root))
+    violations.extend(_codex_agent_runtime_construction_violations(repo_root))
     return _sorted(violations)
 
 
@@ -1133,6 +1236,23 @@ def _safe_relative(value: str, *, glob: bool = False) -> bool:
     if str(path) != value:
         return False
     return glob or not any(character in value for character in "*?[]")
+
+
+def _resolved_repository_file(repo_root: Path, relative: str) -> Path | None:
+    if not _safe_relative(relative):
+        return None
+    try:
+        root = repo_root.resolve(strict=True)
+        candidate = root
+        for part in PurePosixPath(relative).parts:
+            candidate /= part
+            if candidate.is_symlink():
+                return None
+        candidate = candidate.resolve(strict=True)
+        candidate.relative_to(root)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return candidate if candidate.is_file() else None
 
 
 def _string_list(value: Any, *, allow_empty: bool) -> bool:
@@ -1683,13 +1803,26 @@ def fault_manifest_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
     canonical_nodes = _registered_canonical_nodes(repo_root)
     for index, fault in enumerate(data["faults"]):
         location = f"{relative}#faults[{index}]"
-        if not isinstance(fault, dict) or set(fault) != {
+        required_fault_fields = {
             "id",
             "patch",
             "sha256",
             "proofs",
             "expected_failure",
-        }:
+        }
+        allowed_fault_fields = required_fault_fields | {
+            "changed_owner_red",
+            "changed_owner_sha256",
+        }
+        if (
+            not isinstance(fault, dict)
+            or not required_fault_fields.issubset(fault)
+            or not set(fault).issubset(allowed_fault_fields)
+            or (
+                "changed_owner_red" in fault
+                and fault["changed_owner_red"] != ChangedOwnerRedStrategy.COHERENT_FAULT
+            )
+        ):
             violations.append(PolicyViolation("fault-schema", location, "invalid fault shape"))
             continue
         if (
@@ -1704,6 +1837,75 @@ def fault_manifest_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                 PolicyViolation("fault-schema", location, "invalid or duplicate fault identity")
             )
         proofs = fault.get("proofs")
+        coherent_fault = fault.get("changed_owner_red") == ChangedOwnerRedStrategy.COHERENT_FAULT
+        if coherent_fault:
+            coherent_proof = (
+                proofs[0]
+                if isinstance(proofs, list) and len(proofs) == 1 and isinstance(proofs[0], str)
+                else None
+            )
+            coherent_identity = (
+                coherent_proof.partition(":")[2] if coherent_proof is not None else ""
+            )
+            coherent_path, coherent_separator, coherent_node = coherent_identity.partition("::")
+            coherent_owner_path = _resolved_repository_file(repo_root, coherent_path)
+            coherent_shape = (
+                coherent_proof is not None
+                and coherent_proof.startswith("pytest:")
+                and coherent_identity.count("::") == 1
+                and bool(coherent_separator)
+                and bool(coherent_node)
+                and coherent_path.endswith(".py")
+                and coherent_owner_path is not None
+            )
+            if not coherent_shape:
+                violations.append(
+                    PolicyViolation(
+                        "fault-coherent-owner",
+                        location,
+                        "changed-owner coherent fault requires one exact module-level pytest proof",
+                    )
+                )
+            else:
+                assert coherent_proof is not None
+                assert coherent_owner_path is not None
+                if canonical_nodes.get(coherent_path) != coherent_proof:
+                    violations.append(
+                        PolicyViolation(
+                            "fault-coherent-owner",
+                            location,
+                            "changed-owner coherent fault requires its registered canonical proof",
+                        )
+                    )
+                owner_sha256 = fault.get("changed_owner_sha256")
+                try:
+                    owner_source = coherent_owner_path.read_text(encoding="utf-8")
+                    actual_owner_sha256 = python_exact_proof_owner_sha256(
+                        owner_source,
+                        coherent_node,
+                    )
+                except (OSError, UnicodeError, SyntaxError):
+                    actual_owner_sha256 = None
+                if (
+                    not isinstance(owner_sha256, str)
+                    or _SHA256.fullmatch(owner_sha256) is None
+                    or actual_owner_sha256 != owner_sha256
+                ):
+                    violations.append(
+                        PolicyViolation(
+                            "fault-coherent-owner-drift",
+                            location,
+                            "changed-owner coherent fault must pin its exact proof and module-support SHA-256",
+                        )
+                    )
+        elif "changed_owner_sha256" in fault:
+            violations.append(
+                PolicyViolation(
+                    "fault-schema",
+                    location,
+                    "changed_owner_sha256 requires changed_owner_red=coherent-fault",
+                )
+            )
         if isinstance(proofs, list):
             for proof in proofs:
                 if not isinstance(proof, str):
@@ -1714,8 +1916,7 @@ def fault_manifest_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                     not separator
                     or runner
                     not in {"gradle", "node-test", "playwright", "pytest", "static", "vitest"}
-                    or not _safe_relative(proof_path)
-                    or not (repo_root / proof_path).is_file()
+                    or _resolved_repository_file(repo_root, proof_path) is None
                 ):
                     violations.append(
                         PolicyViolation(
@@ -1791,6 +1992,14 @@ def fault_manifest_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                                 f"fault patch may change product code only: {changed_path}",
                             )
                         )
+                if (repo_root / ".git").exists() and not _fault_patch_applies(repo_root, path):
+                    violations.append(
+                        PolicyViolation(
+                            "fault-applicability",
+                            location,
+                            "fault patch does not apply cleanly to the current product tree",
+                        )
+                    )
     faults_root = repo_root / "testdata/faults"
     if faults_root.is_dir():
         for path in faults_root.glob("*.patch"):
@@ -1804,6 +2013,28 @@ def fault_manifest_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
     return _sorted(violations)
 
 
+def _fault_patch_applies(repo_root: Path, patch: Path) -> bool:
+    """Require every registered mutant to remain executable at the reviewed tree."""
+    try:
+        result = subprocess.run(
+            (
+                "git",
+                "apply",
+                "--check",
+                "--whitespace=error-all",
+                str(patch),
+            ),
+            cwd=repo_root,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
 def _registered_canonical_nodes(repo_root: Path) -> dict[str, str]:
     """The single priority node registered for each proof owner path, if any."""
     manifest = repo_root / "testdata/proofs.json"
@@ -1814,20 +2045,23 @@ def _registered_canonical_nodes(repo_root: Path) -> dict[str, str]:
         risks = data["priority_risks"]
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError):
         return {}
-    nodes: dict[str, str] = {}
-    ambiguous: set[str] = set()
+    proofs_by_path: dict[str, set[str]] = {}
     for risk in risks:
         for proof in risk.get("proofs", []) if isinstance(risk, dict) else []:
             if not isinstance(proof, str):
                 continue
             path = proof.partition(":")[2].split("::", 1)[0]
-            if path in nodes and nodes[path] != proof:
-                ambiguous.add(path)
-            nodes.setdefault(path, proof)
-    # An ambiguous owner is reported by `proof-canonical-node`; do not compound
-    # it with a derived fault violation here.
-    for path in ambiguous:
-        nodes.pop(path, None)
+            proofs_by_path.setdefault(path, set()).add(proof)
+    nodes: dict[str, str] = {}
+    for path, proofs in proofs_by_path.items():
+        exact = {proof for proof in proofs if "::" in proof.partition(":")[2]}
+        candidates = exact or proofs
+        # Competing exact owners are reported by `proof-canonical-node`; do not
+        # compound that ambiguity with a derived fault violation here. A
+        # whole-file route plus one exact node resolves to the exact node, just
+        # as `canonical_proof` does at execution time.
+        if len(candidates) == 1:
+            nodes[path] = next(iter(candidates))
     return nodes
 
 

@@ -105,9 +105,10 @@ scaffolding.
                            └──────────────┘
 
    Identity: Supabase Auth (JWT/JWKS) only — no Supabase DB or Storage.
-   External: OpenAI / Anthropic / Gemini / Moonshot / DeepSeek (direct LLM;
-             OpenAI also embeddings); Deepgram (transcription),
-             Brave (Browse + agent research), Podcast Index, Deepgram, YouTube Data API
+   External: ChatGPT via the isolated Codex personal host (all background and
+             a Chat option); configured generation APIs (Chat options);
+             OpenAI API (embeddings); Deepgram (transcription),
+             Brave (Browse + agent research), Podcast Index, YouTube Data API
              plus YouTube transcript/caption egress,
              Stripe (billing), Cloudflare R2.
 ```
@@ -131,20 +132,24 @@ data and grants no general fetch authority. See [`rules/layers.md`](rules/layers
 
 ## 3. Runtime topology & deployment
 
-There are **five runtime processes** plus managed dependencies.
+Production comprises these runtime processes plus managed external
+dependencies.
 
 | Process                | Code                                                  | Hosted                           | Role                                      |
 | ---------------------- | ----------------------------------------------------- | -------------------------------- | ----------------------------------------- |
 | Next.js frontend + BFF | `apps/web`                                            | **Vercel** (staged, then promoted) | React UI + `/api/*` proxy to FastAPI    |
+| Caddy edge             | `deploy/hetzner/Caddyfile`                            | **Hetzner VPS** (Docker Compose) | TLS termination and exact route proxying  |
 | FastAPI API            | `apps/api/main.py` → `python/nexus`                   | **Hetzner VPS** (Docker Compose) | product API, SSE streaming                |
 | Interactive worker     | `apps/worker/main.py` → `python/nexus/jobs` + `tasks` | **same Hetzner VPS**             | user-waiting queue work                    |
 | Background worker      | `apps/worker/main.py` → `python/nexus/jobs` + `tasks` | **same Hetzner VPS**             | indexing, repair, teardown, periodic work |
+| Codex generation host  | `apps/codex_agent`                                    | **same Hetzner VPS**             | isolated subscription-backed generation  |
+| Codex egress policy    | `apps/codex_agent/egress_policy.py`                   | **same Hetzner VPS**             | DNS/TLS-SNI allowlist for the Codex host  |
 | PostgreSQL (pgvector)  | —                                                     | **same Hetzner VPS**             | the single source of truth                |
 
 Managed/external: **Cloudflare R2** (object storage; MinIO locally), **Supabase**
 (hosted Auth only — JWT issuance/JWKS/OAuth; _no_ Supabase Database or Storage),
-and the LLM/search/podcast/billing providers above. **Caddy** terminates TLS in
-front of the API; the frontend is served by Vercel.
+and the generation/search/podcast/billing services above. The frontend is
+served by Vercel.
 
 Key topology facts (details: [`deployment.md`](../deployment.md),
 `deploy/hetzner/`, `deploy/vercel/`):
@@ -471,10 +476,9 @@ engine, API, history contract, and `dossier_build` job own the lifecycle.
 **Conversations / chat** — `conversations`, `messages` (the message tree with
 branch pointers), `conversation_branches`, `conversation_active_paths`
 (per-viewer), `conversation_shares`; plus the **chat-run** machinery: `chat_runs`
-(carries product selection snapshots `profile_id`/`reasoning_option_id` and
-resolved trust-trail snapshots `provider`/`model_name`/`reasoning_effort`,
-`error_origin`, `support_id` — no `models`/`user_api_keys` FK, both tables are
-gone),
+(carries the exact immutable `generation_spec` and `support_id`;
+authoritative execution provenance lives in its parent `llm_calls` row and
+accepted `llm_model_turns` children),
 `chat_run_events` (append-only SSE log), `chat_prompt_assemblies`; and the
 **retrieval/citation** ledger: `message_tool_calls`, `message_retrievals` — the
 sole durable per-result record (telemetry; carries `cited_edge_id` pointing
@@ -521,8 +525,8 @@ state without deleting history or Lectern membership. See
 [`cutovers/media-progress-reset-hard-cutover.md`](cutovers/media-progress-reset-hard-cutover.md).
 
 **Jobs** — `background_jobs` (raw-SQL-only durable queue), plus rate-limiter
-tables (`rate_limit_request_log`, `rate_limit_inflight`, `token_budget_*`) and
-stream-token replay claims.
+tables (`rate_limit_request_log`, `rate_limit_inflight`) and stream-token replay
+claims.
 
 **Oracle** — the public-domain corpus is a real `libraries` row
 (`system_key = 'oracle_corpus'`) of ordinary `media`; its text and embeddings live
@@ -617,8 +621,20 @@ same entrypoint with fixed `interactive` and `background` lanes:
   Dossier, Media teardown, Podcast live-sync, and Podcast-backfill state without
   overwriting newer lifecycle facts.
 - **Scheduler loop**: the background lane enqueues production periodic jobs
-  into fixed time slots with deterministic dedupe keys. The interactive lane
-  has no periodic kinds.
+  into fixed time slots with deterministic dedupe keys. Routine periodic rows
+  use priority 200 and yield to ordinary priority-100 work; the stale-ingest
+  reconciler alone uses priority -1000. A schedule pass locks and validates all
+  active aligned slots in that kind's global dedupe namespace, then reconciles
+  only priority, so deployment and expired-lease replay cannot retain stale
+  ordering policy. Immutable scheduler identity stays exact while the registry
+  declares the optional checkpoint keys that Dawn and the storage orphan sweep
+  may persist; their owning codecs remain responsible for checkpoint values.
+  The namespace lookup is cross-kind and locks at most 257 rows: more than 256
+  active claimants defects the whole transaction before reconciliation.
+  Propagated `request_id` values are correlation, not namespace ownership.
+  On-demand rows sharing the kind remain untouched, terminal history is
+  immutable, and foreign-kind, undeclared-checkpoint, or noncanonical periodic
+  collisions fail closed. The interactive lane has no periodic kinds.
 
 The **registry** (`jobs/registry.py`) is the source of truth mapping job kind →
 handler + policy. `job_topology.py` owns the disjoint/exhaustive 20-kind
@@ -677,30 +693,44 @@ rather than proposed and reconciled after the fact.
 > row, and recovery relies on the stale reconciler + manual API retry, not
 > queue-level retries.
 
-**Generation boundary in the worker.** Six direct LLM generation kinds (`chat_run`,
-`oracle_reading_generate`, `synapse_scan`, `dawn_write`,
-`dossier_build`, `media_unit_build`) run their bodies inside
-one shared worker envelope,
-`tasks/llm_task.py:run_llm_task` — the sole owner of the event loop, `httpx`
-client, `ProviderRuntime` composition, and worker-exception boundary. Every
-provider call inside a job goes through
-`services/llm_execution.py:execute_generation`/`execute_generation_stream` —
-the durable execution boundary — atomically admitting one replay-stable
-`llm_calls` row plus reservation before dispatch, then atomically terminalizing
-and settling admission exactly once. `ProviderRuntime` owns
-provider retries; `BilledOnce` work selects its single-attempt mode. The existing
-Postgres queue, leases, and durable step journal remain unchanged. Within
-`dossier_build`, `services/artifacts/generation_step.py` is the sole Artifact
-owner of the exact `synthesis` and `document-repair` request fingerprints,
-memoized result envelope, and Prepared/Uncertain/Completed transitions; the
-engine keeps their streaming and unary transports explicit. See
-[modules/llms.md](modules/llms.md).
-`enrich_metadata` is deliberately outside this direct-provider envelope. It
-uses the private UDS Codex host with the ChatGPT-authenticated `codex-personal`
-profile, records the exact native terminal/session/usage/runtime provenance in
-`agent_turns`, and lets its durable checkpoint own prepared/completed/uncertain
-replay. It has no direct provider request, `llm_calls` row, API credential, or
-provider fallback.
+**Generation boundary.** Every durable generative job — chat, Oracle,
+synapse, Dawn, dossiers, media summaries, and metadata enrichment — runs through
+`GenerationService` and `services/llm_execution.py`. Admission freezes the
+exact selection, budgets, output contract, prompt reference, and operation-owned
+tool plan in one `GenerationSpec`; workers never reread mutable policy. All
+background policy rows select Codex Personal. Chat may instead select any ready,
+qualified route/model/reasoning pair in the complete configured `llm-calling`
+catalog. There are no user defaults, profiles, presets, or fallback routes.
+
+One parent `llm_calls` row owns generation truth. Codex normally creates one
+accepted child model turn through the private UDS host; a ProviderRuntime API
+tool loop creates one child per accepted provider call and advances only from a
+sealed persisted continuation. Completed children replay without dispatch;
+accepted ambiguity requires exact operator reconciliation.
+Within `dossier_build`, `services/artifacts/generation_step.py` is the sole
+Artifact owner of the exact `synthesis` and `document-repair` request
+fingerprints, memoized result envelope, and
+`Prepared | Uncertain | Completed` transitions; the engine keeps their
+streaming and unary transports explicit.
+The request-scoped dossier idea resolver uses the same generation service and
+read-only UDS mount from the API process; API and worker clients receive no
+credential mount. The existing PostgreSQL queue, leases, and publication owners
+remain unchanged.
+See [modules/llms.md](modules/llms.md).
+
+Eligible Chat and background runs use one canonical tool authority. Codex
+observes its frozen plan over one exact MCP wire: Codex SDK/CLI `0.144.4` speaks
+Streamable HTTP revision `2025-06-18` to the official `mcp==2.1.0` stateless JSON server.
+The initialize body pins that revision; later POSTs require
+`MCP-Protocol-Version: 2025-06-18`. Every POST carries the generation grant in
+`Authorization`, `Content-Type: application/json`, and Codex's
+`Accept: application/json, text/event-stream`; Nexus nevertheless returns JSON
+and emits no `Mcp-Session-Id`. There is no stateful session, event stream,
+resumption, alternate revision, downgrade, OAuth, or transport fallback.
+Provider API tool proposals adapt the same frozen plan to the same executor.
+Both routes use `generation/{generation_seq}/tool/{n}` with one monotonic
+parent-generation ordinal, the same receipts, evidence, citations, trust, and
+Undo.
 
 The worker installs the process-global rate limiter at startup so the first job
 of any kind has a working limiter. SERIALIZABLE retries everywhere (including
@@ -744,31 +774,28 @@ Other identity surfaces:
   PKCE-bound (`challenge = sha256(verifier)`), 90s TTL, consumed with an atomic
   `DELETE ... RETURNING`.
 
-### 7.5 Platform LLM credentials, billing & entitlements
+### 7.5 Generation credentials, billing & entitlements
 
-- **Platform credentials** (`services/llm_credentials.py`): the sole reader for
-  direct-generation credentials — `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
-  `GEMINI_API_KEY`, `MOONSHOT_API_KEY`, and `DEEPSEEK_API_KEY` — plus the narrow
-  OpenAI embedding credential. There is no BYOK, per-user key, DB lookup, or
-  empty-key fallback. Staging/production startup requires all five direct keys;
-  a missing or rejected key never changes the profile list or route. Direct
-  provider execution is distinct from the shipped native subscription metadata
-  route, which has its own ChatGPT account state and no API key.
-  See [modules/llms.md](modules/llms.md).
+- **Generation credential**: only the isolated Codex host can read the exact
+  enrolled `codex-personal` ChatGPT `auth.json`, mounted read-write solely for
+  pinned `0.144.4` in-place OAuth refresh persistence. All other mutable SDK
+  state is per-turn tmpfs and deleted after close. The Codex host receives no
+  generation API key. API/worker processes receive only the provider keys named
+  by `GENERATION_API_PROVIDERS`; `services/llm_credentials.py` projects that
+  exact configured set into ProviderRuntime and keeps the OpenAI embedding key
+  in its separate narrow credential. See [modules/llms.md](modules/llms.md).
 - **Billing** (`services/billing.py`): Stripe is the system of record;
   `billing_accounts` is a per-user snapshot synced by idempotent webhooks (deduped
   via `stripe_webhook_events`). Tiers: `free | plus | ai_plus | ai_pro`.
 - **Entitlements** (`services/billing_entitlements.py`): derived from the effective
-  plan — `can_share` (≥ plus), `can_use_platform_llm` / `can_transcribe`
-  (≥ ai_plus), plus monthly token/transcription quotas. **Internal overrides**
-  (`billing_entitlement_overrides`, CLI-managed via
+  billing plan for sharing and transcription. Generation uses operator-owned
+  subscription/API credentials and has no product entitlement or token quota. **Internal
+  overrides** (`billing_entitlement_overrides`, CLI-managed via
   `ops/entitlement_overrides.py`) can raise a plan upward and grant unlimited
-  quotas, with a full audit trail.
-- **Rate limiting** (`services/rate_limit.py`): a Postgres-backed limiter using
-  per-scope advisory locks; limits RPM (20), concurrency (3 inflight slots), and a
-  monthly platform-token budget via a reserve→commit pattern with TTL'd
-  reservations and polymorphic reservation-id charges for chat and background
-  generation. It **fails closed** on acquire/check, open on release.
+  transcription, with a full audit trail.
+- **Rate limiting** (`services/rate_limit.py`): a PostgreSQL-backed limiter using
+  per-scope advisory locks; it limits requests per minute and concurrent
+  in-flight generations, failing closed on acquire and open on release.
 
 ### 7.6 Search, retrieval & the embedding pipeline
 
@@ -913,7 +940,8 @@ user_link_target: UserLinkTargetMode)` row per `ResourceScheme` replaces the
 
 ### 7.7 Citations & the agent tool contract
 
-Chat publishes one frozen eleven-tool native plan:
+Chat publishes one frozen six-tool read plan, with five additive writes only
+after fresh per-run consent:
 
 - **`web.search`** — bounded Brave public-web search; numbered and citable.
 - **`nexus.search`** — scoped retrieval over the user's Nexus corpus; numbered
@@ -931,12 +959,15 @@ Chat publishes one frozen eleven-tool native plan:
   **`nexus.queue.add`** — the five additive, owner-gated Write operations. They
   persist their exact effects with the tool result and support scoped Undo.
 
-Idea-Dossier research receives only a frozen HostTable grant for `web.search`.
-Oracle and the other background algorithms retain their direct operation-owned
-retrieval; they do not inherit Chat's catalogue. Tool declarations, grants,
-limits, replay policy, and durable execution are owned by
-`services/tool_runtime/`; `services/agent_tools/` remains the domain-adapter
-layer, not a second tool contract.
+Library and Idea Dossier model turns receive only the five Nexus reads over
+their exact admitted evidence scope. Idea host research separately freezes its
+bounded three-search preparation plan. Other background operations retain their
+direct evidence algorithms and publish `NoModelTools`; none inherit Chat
+authority. Codex MCP and Provider API functions adapt eligible plans to the same
+executor. Tool declarations, grants, limits, replay policy, and durable
+execution are owned by `services/tool_runtime/` and `tool_authority.py`;
+`services/agent_tools/` remains the domain-adapter layer, not a second tool
+contract.
 
 Citation `[N]` is a **dense, turn-global ordinal** assigned across the whole turn
 (attached context refs first, then each tool's selected results). A citation **is an
@@ -966,7 +997,7 @@ The backend separates three owners:
 
 - subject policy derives the subject, audience, authorization, deletion, and
   canonical activation;
-- one of eight bindings collects inputs and owns prompt, operation/profile,
+- one of eight bindings collects inputs and owns prompt, operation,
   manifest, coverage, freshness, citation materialization, and final document
   compilation;
 - the generic engine owns idempotent build creation, durable execution,
@@ -1241,17 +1272,18 @@ The AI chat: durable, branchable, streamed, RAG-grounded. Backend:
   **branch**. `conversation_active_paths` stores a **per-viewer** selected leaf;
   history assembly only includes messages on the current path, so sibling branches
   never leak into context.
-- **One send = one durable `ChatRun`.** HTTP never calls the provider. `POST
+- **One send = one durable `ChatRun`.** HTTP never opens generation. `POST
 /chat-runs` validates + (idempotently, keyed on `Idempotency-Key` + a payload
   hash) creates the run and enqueues a `chat_run` job, then returns. The **worker**
-  executes: assemble context → stream provider tokens + run tools (up to 8 tool
-  iterations) → append events → finalize. The client merely tails `chat_run_events`
-  over SSE and reconciles via `GET /chat-runs/{id}` on each stream boundary.
+  executes: assemble context → run the exact frozen Codex/API selection and
+  tool plan → append route-neutral events → finalize. The client merely
+  tails `chat_run_events` over SSE and reconciles via `GET /chat-runs/{id}` on
+  each stream boundary.
 - **Context assembly** (`context_assembler.py`, `prompt_budget.py`): a
-  token-budgeted, lane-ordered plan (system → scope → attached context → retrieved
+  context-admitted, lane-ordered plan (system → scope → attached context → retrieved
   evidence → web evidence → history → current user). The prompt plan stores
   token counts, lane metadata, and text-free block manifests, but no prompt hashes
-  and no provider cache key. Attached references render as numbered `<resources>`;
+  or remote cache key. Attached references render as numbered `<resources>`;
   the transient `<reader_selection>` (a highlight the user is asking about) is
   bind-only and never numbered.
 - **Durable recovery**: the claimed job stores a strict step journal in its
@@ -1264,13 +1296,11 @@ The AI chat: durable, branchable, streamed, RAG-grounded. Backend:
 - **Connection is not execution**: SSE only tails committed events. Unsequenced
   execution advisories (`Queued | Running | Recovering | Suspended`) report queue
   liveness without advancing the event cursor or starting work.
-- **Profiles, not provider facts** (`services/llm_profiles.py`): chat sends
-  `profile_id` + `reasoning_option_id` from this fixed startup-validated order:
-  `fast`/`balanced`/`deep`/`claude`/`fable`/`gemini`/`kimi`/`deepseek-flash`/
-  `deepseek-pro`. Product profiles own labels and policy;
-  `provider_runtime.registry` owns limits, capabilities, reasoning fragments,
-  continuation codec, and revision. There is no provider/model/key picker,
-  availability intersection, or fallback. See [modules/llms.md](modules/llms.md).
+- **Selection is exact per run**: Chat sends one tagged route/model/reasoning
+  selection from `GET /llm-catalog`, the catalog-definition revision, and
+  `ReadOnly | AdditiveWrites` authority. The developer Codex seed initializes a
+  new composer but is not a user default. There is no Fast/Balanced/Deep preset,
+  preference, AI Settings control, or fallback. See [modules/llms.md](modules/llms.md).
 
 Frontend: `components/chat/*` (`useChatRunTail` is the SSE engine,
 `useChatMessageUpdates` folds events with RAF-batched deltas, `ForkTreeView`/
@@ -1287,7 +1317,7 @@ retrieval, plate selection, LLM prompt/call, parse, persistence, and SSE event
 emission. A short question → retrieve candidates and pick a plate image → one LLM
 call produces a structured three-phase interpretation → stream + persist as
 `oracle_reading_events` + citation "folios". It has its **own**
-prompt/persistence and does **not** consume Chat's frozen Native tool plan, but
+prompt/persistence and resolves `NoModelTools`, but
 it **reuses the SSE transport**. Retrieval consumes the shared search substrate:
 `services/search/embedding.build_query_embedding` (one active-model embedding for
 both lanes) feeds `search/content_chunk_candidates.retrieve_content_chunk_candidates`,
@@ -2126,9 +2156,10 @@ activation.
 **Environment**: `.env.example` is the source of truth for every variable
 ([`rules/codebase.md`](rules/codebase.md)); `make setup` generates local
 `.env` + `apps/web/.env.local`. Major groups: app/env, database + pool, Supabase
-Auth (issuer/JWKS/audiences), internal secret, encryption key, LLM providers +
-flags + rate limits, Brave Browse/chat search, streaming (token signing key + base URL +
-CORS), podcasts, browse providers, worker schedules, Stripe. Worker lanes are
+Auth (issuer/JWKS/audiences), internal secret, encryption key, Codex host/MCP
+grant settings + generation rate limits, the narrow OpenAI embedding key,
+Brave Browse/chat search, streaming (token signing key + base URL + CORS),
+podcasts, browse providers, worker schedules, and Stripe. Worker lanes are
 Compose-owned rather than stored in the merged production env.
 The test controller owns a persistent workspace-local PostgreSQL/MinIO and
 Supabase Auth stack, per-run database/bucket state, and per-scenario users. It
@@ -2138,10 +2169,11 @@ test allowlists. Its canonical run environment also owns the external-protocol
 loopback endpoint, proxy, static DNS fixture, and Podcast fixture credentials
 for both in-process service proof and spawned product processes.
 
-**CI**: `.github/workflows/ci.yml` invokes only `./scripts/test pr` and retains
+**CI**: `.github/workflows/ci.yml` invokes `./scripts/test changed --base <base sha>`
+for pull requests and `./scripts/test full` for pushes to `main`, and retains
 the same-run summary even on failure. Protected manual/scheduled workflows own
-`nightly` and `release`; paid providers and signed release proof never run in
-ordinary PR CI.
+`nightly` and `release`; subscription-backed generation and signed release
+proof never run in ordinary PR CI.
 
 ---
 
@@ -2154,7 +2186,7 @@ runtime, runners, cleanup, memory/cost bounds, and versioned evidence.
 The portfolio is outcome-heavy: comprehensive preventive/static proof; a small
 semantic kernel; a dominant middle of real-PostgreSQL service and real-Chromium
 component proof; ten thin product journeys; and separately scheduled
-provider/device/release proof. Owned Nexus behavior is not mocked. Only an
+hosted-subscription/device/release proof. Owned Nexus behavior is not mocked. Only an
 external boundary may use a small fake or protocol fixture.
 
 The persistent local services are reused, but every workflow receives a
@@ -2188,8 +2220,8 @@ The things most likely to bite you, distilled:
 6. **Reader offsets are Unicode codepoints into current `canonical_text`.** The
    frontend canonicalizer must byte-match the Python one; a mismatch disables
    highlighting for that fragment.
-7. **One send = one durable `ChatRun`**; HTTP never calls the provider; the worker
-   does; the client only tails SSE and reconciles.
+7. **One send = one durable `ChatRun`**; HTTP only admits and enqueues; the worker
+   alone opens generation; the client only tails SSE and reconciles.
 8. **Active conversation path is per-viewer**; only path messages enter context.
 9. **Citation `[N]` is a dense, turn-global ordinal carried on an
    `origin='citation'` `resource_edge`**, not a per-tool index and not a column on
@@ -2224,7 +2256,7 @@ The things most likely to bite you, distilled:
 | DB layer / sessions / LISTEN-NOTIFY                               | `python/nexus/db/` (`engine.py`, `session.py`, `listen.py`)                                                                                                                                            |
 | The schema                                                        | `python/nexus/db/models.py` (+ `migrations/alembic/versions/`)                                                                                                                                         |
 | Background jobs / worker                                          | `python/nexus/jobs/`, `python/nexus/tasks/`, `apps/worker/`                                                                                                                                            |
-| Codex personal metadata host (native subscription turn)           | `apps/codex_agent/`, `python/nexus/services/native_agent_*.py`, `python/nexus/services/agent_turn_ledger.py`, [`modules/llms.md`](modules/llms.md), [`runbooks/codex-personal-agent-host.md`](runbooks/codex-personal-agent-host.md) |
+| Generation backends                                               | `python/nexus/services/{generation_catalog,generation_policy,generation_service,generation_spec,generation_backend,provider_generation_backend,codex_generation_client,llm_execution,llm_ledger,tool_authority}.py`, `apps/codex_agent/`, [`modules/llms.md`](modules/llms.md) |
 | Media catalog and ingest owners                                   | `python/nexus/services/media.py`, `media_ingest.py`, `media_source_ingest.py`, `source_attempt_failures.py`, `media_failure_projection.py`, `media_fact_revisions.py`, `x_ingest.py`, `youtube_video_ingest.py`, `remote_file_ingest.py`, `remote_file_client.py`, `media_processing_state.py` |
 | Reader/highlights backend                                         | `python/nexus/services/{reader,epub_*,pdf_*,fragment_blocks,highlights,passage_anchors,locator_resolver,text_quote,pdf_quote_match}.py`                                                                |
 | Chat / conversations                                              | `python/nexus/services/chat_runs.py` + `chat_run_*`, `context_assembler.py`, `conversations.py`                                                                                                        |

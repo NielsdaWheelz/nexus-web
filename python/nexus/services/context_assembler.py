@@ -4,12 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
 
-from provider_runtime import CanonicalTool, GenerateIntent, ReasoningLevel
-from provider_runtime.registry import resolve_target
 from sqlalchemy import bindparam, select, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
@@ -27,7 +25,6 @@ from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.schemas.conversation import tool_projection_from_persisted_record
 from nexus.services.chat_prompt import (
     PromptPlan,
-    build_generate_intent_from_plan,
     build_prompt_plan,
     render_system_prompt_block,
     validate_prompt_plan_budget,
@@ -41,7 +38,8 @@ from nexus.services.chat_reader_selection import (
     render_subject_metadata_block,
 )
 from nexus.services.chat_run_tools import decode_persisted_tool_record
-from nexus.services.llm_profiles import LlmProfile
+from nexus.services.generation_intent import GenerationIntent, TextOutput
+from nexus.services.generation_spec import ImmutablePromptPayloadRef, generation_fact_digest
 from nexus.services.prompt_budget import (
     BudgetItem,
     BudgetSelection,
@@ -71,6 +69,12 @@ from nexus.services.resource_items.capabilities import (
 )
 from nexus.services.retrieval_citation import RetrievalCitation, citation_from_search_result
 from nexus.services.search.resolver import get_search_result
+
+if TYPE_CHECKING:
+    from nexus.services.generation_service import ChatToolAuthority
+
+
+CHAT_PROMPT_TEMPLATE_REVISION = "chat-context.v4"
 
 
 @dataclass(frozen=True)
@@ -104,7 +108,7 @@ class AssemblyLedger:
 
 @dataclass(frozen=True)
 class ContextAssembly:
-    generate_intent: GenerateIntent
+    generate_intent: GenerationIntent
     prompt_plan: PromptPlan
     history: tuple[HistoryTurn, ...]
     context_blocks: tuple[str, ...]
@@ -121,10 +125,10 @@ def assemble_chat_context(
     db: Session,
     *,
     run: ChatRun,
-    profile: LlmProfile,
-    reasoning: ReasoningLevel,
+    max_context_tokens: int,
     max_output_tokens: int,
-    tools: tuple[CanonicalTool, ...],
+    turn_context: ChatRunTurnContext | None,
+    tool_authority: ChatToolAuthority,
 ) -> ContextAssembly:
     """Assemble the provider-neutral chat request for a durable chat run."""
 
@@ -137,7 +141,6 @@ def assemble_chat_context(
 
     from nexus.services.conversation_branches import load_message_path
 
-    turn_context = db.get(ChatRunTurnContext, run.id)
     path_messages = load_message_path(
         db,
         conversation_id=conversation.id,
@@ -156,7 +159,7 @@ def assemble_chat_context(
         block_id="system",
         role="system",
         lane="system",
-        text=render_system_prompt_block(),
+        text=render_system_prompt_block(tool_authority=tool_authority),
     )
     mandatory_blocks: list[tuple[str, PromptBlock, Mapping[str, object]]] = []
 
@@ -254,9 +257,8 @@ def assemble_chat_context(
         text=user_message.content,
         source_refs=[{"type": "message", "id": str(user_message.id)}],
     )
-    row = resolve_target(profile.target)
     budget = build_prompt_budget(
-        max_context_tokens=row.context_window,
+        max_context_tokens=max_context_tokens,
         max_output_tokens=max_output_tokens,
     )
     budget_items: list[BudgetItem] = [
@@ -342,13 +344,7 @@ def assemble_chat_context(
     estimated_input_tokens = validate_prompt_plan_budget(prompt_plan, budget.input_budget_tokens)
     validate_prompt_size(prompt_plan)
 
-    generate_intent = build_generate_intent_from_plan(
-        plan=prompt_plan,
-        target=profile.target,
-        max_output_tokens=max_output_tokens,
-        reasoning=reasoning,
-        tools=tools,
-    )
+    generate_intent = _generation_intent_from_plan(prompt_plan)
     included_context_refs: list[Mapping[str, object]] = [
         metadata for key, _text, metadata in mandatory_blocks if key in included_keys
     ]
@@ -375,13 +371,48 @@ def assemble_chat_context(
     )
 
 
+def _generation_intent_from_plan(plan: PromptPlan) -> GenerationIntent:
+    """Lower the persisted prompt plan to the app-owned wire intent."""
+    if not plan.turns or plan.turns[0].role != "system":
+        raise AssertionError("chat prompt plan must begin with system instructions")
+    instructions = "\n\n".join(block.text for block in plan.turns[0].blocks)
+    input_text = "\n\n".join(
+        f"<{turn.role}>\n" + "\n".join(block.text for block in turn.blocks)
+        for turn in plan.turns[1:]
+    )
+    return GenerationIntent(
+        instructions=instructions,
+        input=input_text,
+        output=TextOutput(),
+    )
+
+
+def chat_prompt_payload_ref(
+    *,
+    run_id: UUID,
+    intent: GenerationIntent,
+) -> ImmutablePromptPayloadRef:
+    """Address one immutable raw Chat intent in its protected payload owner."""
+
+    return ImmutablePromptPayloadRef(
+        owner_kind="chat_run",
+        owner_id=str(run_id),
+        revision="chat-prompt-payload.v1",
+        payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
+    )
+
+
 def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssembly) -> None:
     ledger = assembly.ledger
+    intent_document = assembly.generate_intent.model_dump(mode="json")
+    intent_digest = generation_fact_digest(intent_document)
     payload = {
         "chat_run_id": run.id,
         "conversation_id": run.conversation_id,
         "assistant_message_id": run.assistant_message_id,
         "prompt_block_manifest": dict(ledger.prompt_block_manifest),
+        "generation_intent": intent_document,
+        "generation_intent_digest": intent_digest,
         "max_context_tokens": ledger.max_context_tokens,
         "reserved_output_tokens": ledger.reserved_output_tokens,
         "input_budget_tokens": ledger.input_budget_tokens,
@@ -399,7 +430,7 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
     existing = db.execute(
         text(
             """
-            SELECT id
+            SELECT id, generation_intent_digest
             FROM chat_prompt_assemblies
             WHERE chat_run_id = :chat_run_id
             FOR UPDATE
@@ -416,6 +447,8 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
                 conversation_id,
                 assistant_message_id,
                 prompt_block_manifest,
+                generation_intent,
+                generation_intent_digest,
                 max_context_tokens,
                 reserved_output_tokens,
                 input_budget_tokens,
@@ -431,6 +464,8 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
                 :conversation_id,
                 :assistant_message_id,
                 :prompt_block_manifest,
+                :generation_intent,
+                :generation_intent_digest,
                 :max_context_tokens,
                 :reserved_output_tokens,
                 :input_budget_tokens,
@@ -449,12 +484,14 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
             bindparam("dropped_items", type_=JSONB),
             bindparam("budget_breakdown", type_=JSONB),
             bindparam("prompt_block_manifest", type_=JSONB),
+            bindparam("generation_intent", type_=JSONB),
         )
         result = cast(Any, db.execute(insert_statement, payload))
         assert result.rowcount == 1  # justify-service-invariant-check: ledger insert is one row.
         return
 
-    return
+    if existing.generation_intent_digest != intent_digest:
+        raise AssertionError("Chat prompt assembly changed after admission")
 
 
 def _build_subject_block(

@@ -208,6 +208,8 @@ head =
       freshness: Presence<Current | Stale>
       active_build: Presence<DossierBuild {
         execution: Queued | Running | Recovering | Suspended
+        admitted_generation: Presence<selection, disclosure, tool plan, positions>
+        capacity_pause: Presence<CapacityPaused>
       }>
       latest_unsuccessful_build: Presence<Failed | Cancelled>
       history: DossierRevisionSummary[]
@@ -759,21 +761,24 @@ Rules:
 ### Durable execution and liveness
 
 `DossierBuildFailureCode` is closed: `NoSourceMaterial`, `InputsChanged`,
-`DependencyProjectionFailed`, `EntitlementDenied`, `BudgetExceeded`,
-`ContextTooLarge`, `ProviderRefused`, `ProviderIncomplete`,
-`DocumentValidationFailed`, and `CitationValidationFailed`. Only these modeled
-outcomes become `artifact_build_failures`. Unexpected exceptions, invariant
-violations, persistent infrastructure/provider retry exhaustion, unknown
-provider failures, and unreconciled uncertain dispatches are defects. No
-generic Internal or migration-only failure code exists.
+`DependencyProjectionFailed`, `ContextTooLarge`, `Auth`, `Quota`, `Timeout`,
+`OutputLimit`, `InvalidOutput`, `PolicyViolation`, `RuntimeUnavailable`,
+`CapacityUnavailable`, `DocumentValidationFailed`, and
+`CitationValidationFailed`. Only these current modeled outcomes become new
+`artifact_build_failures`. Immutable rows using `EntitlementDenied`,
+`BudgetExceeded`, `ProviderRefused`, or `ProviderIncomplete` remain readable
+but are excluded from the write union. Unexpected exceptions, invariant
+violations, and unreconciled uncertain dispatches are defects. No generic
+Internal or migration-only failure code exists.
 
 The generic build job:
 
 - receives and retains `JobExecutionContext`;
 - verifies exact job, attempt, unexpired lease, visible subject/audience, and
-  active build before every provider dispatch, checkpoint, event, and terminal
+  active build before every generation dispatch, checkpoint, event, and terminal
   mutation;
-- uses only central retry policies;
+- uses only the fixed central generation policy and never redispatches an
+  accepted ambiguous turn;
 - treats a successfully recorded Failed/Cancelled build as a successful queue
   execution;
 - lets unexpected exceptions escape to queue retry/dead-letter handling.
@@ -782,23 +787,22 @@ The root durable operation uses the build as its stable replay identity.
 Reduction traverses stable ordered node descriptors with managed iteration, so
 the coordination runtime derives structural replay paths; domain code does not
 author explicit step keys. Coordination replay state—not a duplicate Dossier
-table—owns each provider step’s replay-stable generation identity, request
-fingerprint, provider idempotency/reconciliation key, dispatch phase, and
-normalized terminal result.
+table—owns each generation step's replay-stable identity, request fingerprint,
+reconciliation identity, dispatch phase, and normalized terminal result.
 
 - `Prepared` may dispatch.
 - `Completed` reuses its memoized outcome.
-- `Uncertain` reconciles through a provider guarantee or an explicit operator
+- `Uncertain` reconciles through durable dispatch evidence or an explicit operator
   transition that attaches a reconciled terminal outcome or proves
   `NotDispatched`.
-- Without provider idempotency/reconciliation, `Uncertain` never
-  auto-redispatches; it defects for operator reconciliation.
+- `Uncertain` never auto-redispatches; it defects for operator reconciliation.
 
 The operation commits `Prepared`, commits `Uncertain` immediately before the
 network dispatch, and commits `Completed` with the normalized outcome after the
 response. No network call occurs inside a database transaction.
 
-The LLM ledger is billing/provenance, not replay memoization.
+The generation ledger is execution audit and plan provenance, not replay
+memoization or billing.
 
 Lease expiry below the attempt budget yields `Recovering` and reclaims the same
 job/build. Lease expiry alone is not `Suspended`. Retry exhaustion/dead-letter

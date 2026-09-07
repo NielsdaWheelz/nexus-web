@@ -3,7 +3,7 @@
 The generic dossier engine carries no Resource-kind branches. Every
 scheme-specific decision — how a route locator resolves to a private subject id,
 whether the requester may read/generate (404-masked), which closed
-:class:`AudienceScope` the head is keyed by, who owns the billing identity and
+:class:`AudienceScope` the head is keyed by, who owns per-user concurrency and
 the citation graph edges, and how a canonical resource activates — lives behind
 one :class:`SubjectPolicy` per eligible subject scheme. The internal Idea
 subject is the one explicit typed non-Resource branch because it has no public
@@ -110,8 +110,8 @@ class SubjectPolicy(Protocol):
         library anchors on its owner, not the triggering member)."""
         ...
 
-    def requester_billing(self, resolved: ResolvedSubject, requester_user_id: UUID) -> UUID:
-        """The billing/entitlement identity a provider call is attributed to."""
+    def requester_admission(self, resolved: ResolvedSubject, requester_user_id: UUID) -> UUID:
+        """The user identity charged against the in-flight concurrency limit."""
         ...
 
     def citation_owner(

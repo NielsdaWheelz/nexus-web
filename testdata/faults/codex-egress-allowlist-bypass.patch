@@ -1,0 +1,11 @@
+diff --git a/apps/codex_agent/egress_policy.py b/apps/codex_agent/egress_policy.py
+--- a/apps/codex_agent/egress_policy.py
++++ b/apps/codex_agent/egress_policy.py
+@@ -142,6 +142,6 @@ def dns_response(query: bytes, policy: EgressPolicy) -> bytes:
+         query_type, query_class = struct.unpack_from("!HH", query, offset)
+         question = query[_DNS_HEADER.size : offset + 4]
+     except PolicyError:
+         return _DNS_HEADER.pack(request_id, response_flags | 1, 0, 0, 0, 0)
+-    if query_class != 1 or not policy.admits(host):
++    if query_class != 1 or False:
+         return _DNS_HEADER.pack(request_id, response_flags | 5, 1, 0, 0, 0) + question

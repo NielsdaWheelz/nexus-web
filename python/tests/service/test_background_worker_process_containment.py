@@ -274,22 +274,27 @@ def test_kernel_oom_and_timeout_are_terminally_fenced_before_next_fresh_child(
                 """
             )
         ).one()
+        failure_attempts_by_job_id = {row[0]: row[2] for row in failures}
+        published_attempts_by_job_id = {row[0]: row[2] for row in published_successes}
         stale_timeout_completion = complete_job(
             oracle,
             job_id=timeout_job_id,
             worker_id=WORKER_ID,
+            attempt_no=failure_attempts_by_job_id[timeout_job_id],
             result_payload={"kind": "StalePublish"},
         )
         stale_memory_completion = complete_job(
             oracle,
             job_id=memory_job_id,
             worker_id=WORKER_ID,
+            attempt_no=failure_attempts_by_job_id[memory_job_id],
             result_payload={"kind": "StalePublish"},
         )
         stale_exit_completion = complete_job(
             oracle,
             job_id=published_exit_job_id,
             worker_id=WORKER_ID,
+            attempt_no=published_attempts_by_job_id[published_exit_job_id],
             result_payload={"kind": "StalePublish"},
         )
         recovery_health = get_ingest_recovery_health(oracle)

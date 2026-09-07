@@ -2,7 +2,7 @@
 
 Supersedes the old ``ArtifactReducer`` (a thin 13-field record). A
 :class:`DossierBinding` owns everything scheme-specific about *generating* a
-dossier for one subject: the prompt/operation/profile/reasoning/token budget, the
+dossier for one subject: the prompt and canonical operation, the
 audience-visible input collection (aggregate bindings fan out through
 ``MediaIntelligence.ensure_current_many`` — bounded, inline), the bounded
 reduction, the citation materialization (citations come ONLY from offered
@@ -17,10 +17,9 @@ this module is the shape they conform to.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 from uuid import UUID
 
-from provider_runtime import ReasoningLevel
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -30,8 +29,18 @@ from nexus.services.artifacts.coordination import DossierBuildRuntime
 from nexus.services.artifacts.dossier_types import AudienceScope, DossierBuildFailureCode
 from nexus.services.artifacts.manifests import InputManifestV1
 from nexus.services.artifacts.subject_policy import ResolvedResourceSubject, ResolvedSubject
-from nexus.services.llm_profiles import BackgroundLlmOperation
 from nexus.services.resource_graph.schemas import CitationInput
+
+type DossierOperation = Literal[
+    "dossier_media",
+    "dossier_conversation",
+    "dossier_library",
+    "dossier_podcast",
+    "dossier_contributor",
+    "dossier_page",
+    "dossier_note",
+    "dossier_idea",
+]
 
 # ``collect`` output + the pre-promotion witness are opaque to the engine — it
 # threads them back into the binding's own ``build_user_content`` / ``materialize``
@@ -80,14 +89,7 @@ class DossierBinding(Protocol):
 
     # --- declarative operation policy (A4) ---------------------------------
     subject_scheme: str
-    llm_operation: BackgroundLlmOperation
-    # The declared profile id ("balanced" | "fast"); the engine resolves the
-    # concrete profile via ``operation_profile(llm_operation)``.
-    profile: str
-    # The reasoning override the build job applies (A4): balanced defaults to
-    # medium, but Library/Podcast/Contributor run at ``high``; Page/Note at ``low``.
-    reasoning: ReasoningLevel
-    max_output_tokens: int
+    llm_operation: DossierOperation
     system_prompt: str
     schema: type[BaseModel]
 

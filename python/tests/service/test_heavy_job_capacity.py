@@ -183,7 +183,7 @@ def test_concurrent_claims_admit_only_one_heavy_job(engine: Engine) -> None:
         db.commit()
 
     barrier = threading.Barrier(2)
-    claimed: list[tuple[str, UUID] | None] = []
+    claimed: list[tuple[str, UUID, int] | None] = []
     failures: list[BaseException] = []
 
     def claim(worker_id: str) -> None:
@@ -198,7 +198,7 @@ def test_concurrent_claims_admit_only_one_heavy_job(engine: Engine) -> None:
                     heavy_kinds=(kind,),
                 )
                 db.commit()
-                claimed.append((worker_id, row.id) if row is not None else None)
+                claimed.append((worker_id, row.id, row.attempts) if row is not None else None)
         except BaseException as exc:
             failures.append(exc)
 
@@ -212,7 +212,7 @@ def test_concurrent_claims_admit_only_one_heavy_job(engine: Engine) -> None:
     assert not failures, f"concurrent claims failed: {failures!r}"
     admitted = [item for item in claimed if item is not None]
     assert len(admitted) == 1, f"expected one Heavy admission, got {claimed!r}"
-    worker_id, job_id = admitted[0]
+    worker_id, job_id, attempt_no = admitted[0]
     assert _capacity_holder(engine)[:3] == (job_id, worker_id, 1)
 
     with Session(engine) as db:
@@ -228,7 +228,12 @@ def test_concurrent_claims_admit_only_one_heavy_job(engine: Engine) -> None:
             {"job_ids": [job.id for job in jobs]},
         ).all()
         assert sorted(rows) == [("pending", 0), ("running", 1)]
-        assert complete_job(db, job_id=job_id, worker_id=worker_id)
+        assert complete_job(
+            db,
+            job_id=job_id,
+            worker_id=worker_id,
+            attempt_no=attempt_no,
+        )
         db.commit()
     assert _capacity_holder(engine) == (None, None, None, None)
 
@@ -239,16 +244,14 @@ def test_heavy_claim_and_completion_cannot_form_an_inverse_lock_cycle(engine: En
         holder = enqueue_job(db, kind=kind, priority=0)
         candidate = enqueue_job(db, kind=kind, priority=1)
         db.commit()
-        assert (
-            claim_job(
-                db,
-                job_id=holder.id,
-                worker_id="lock-order-holder",
-                lease_seconds=300,
-                heavy_kinds=(kind,),
-            )
-            is not None
+        holder_claim = claim_job(
+            db,
+            job_id=holder.id,
+            worker_id="lock-order-holder",
+            lease_seconds=300,
+            heavy_kinds=(kind,),
         )
+        assert holder_claim is not None
         db.commit()
 
     holder_locked = threading.Event()
@@ -256,6 +259,7 @@ def test_heavy_claim_and_completion_cannot_form_an_inverse_lock_cycle(engine: En
     completion_done = threading.Event()
     claim_backend_ready = threading.Event()
     claim_backend_pid: list[int] = []
+    candidate_attempts: list[int] = []
     outcomes: list[tuple[str, object]] = []
     failures: list[BaseException] = []
 
@@ -273,6 +277,7 @@ def test_heavy_claim_and_completion_cannot_form_an_inverse_lock_cycle(engine: En
                     db,
                     job_id=holder.id,
                     worker_id="lock-order-holder",
+                    attempt_no=holder_claim.attempts,
                 )
                 db.commit()
                 outcomes.append(("complete", completed))
@@ -295,6 +300,8 @@ def test_heavy_claim_and_completion_cannot_form_an_inverse_lock_cycle(engine: En
                     heavy_kinds=(kind,),
                 )
                 db.commit()
+                if claimed is not None:
+                    candidate_attempts.append(claimed.attempts)
                 outcomes.append(("claim", claimed.id if claimed is not None else None))
         except BaseException as exc:
             failures.append(exc)
@@ -325,6 +332,7 @@ def test_heavy_claim_and_completion_cannot_form_an_inverse_lock_cycle(engine: En
     assert not failures, f"claim/completion concurrency failed: {failures!r}"
     assert ("complete", True) in outcomes
     assert ("claim", candidate.id) in outcomes
+    assert candidate_attempts == [1]
     assert _capacity_holder(engine)[:3] == (
         candidate.id,
         "lock-order-candidate",
@@ -335,6 +343,7 @@ def test_heavy_claim_and_completion_cannot_form_an_inverse_lock_cycle(engine: En
             db,
             job_id=candidate.id,
             worker_id="lock-order-candidate",
+            attempt_no=candidate_attempts[0],
         )
         db.commit()
 
@@ -575,8 +584,18 @@ def test_blocked_heavy_is_unchanged_and_light_work_proceeds(engine: Engine) -> N
         ).one()
         assert blocked_state == ("pending", 0, None, None)
 
-        assert complete_job(db, job_id=light.id, worker_id="light-worker")
-        assert complete_job(db, job_id=admitted.id, worker_id="heavy-holder")
+        assert complete_job(
+            db,
+            job_id=light.id,
+            worker_id="light-worker",
+            attempt_no=next_job.attempts,
+        )
+        assert complete_job(
+            db,
+            job_id=admitted.id,
+            worker_id="heavy-holder",
+            attempt_no=first.attempts,
+        )
         db.commit()
 
 
@@ -600,7 +619,7 @@ def test_metadata_is_heavy_and_excludes_parser_and_reindex_capacity(
             metadata = enqueue_job(
                 db,
                 kind="enrich_metadata",
-                payload={**payload, "capacity_wait_index": 0},
+                payload=payload,
                 priority=1,
                 max_attempts=2,
             )
@@ -640,6 +659,7 @@ def test_metadata_is_heavy_and_excludes_parser_and_reindex_capacity(
                 db,
                 job_id=holder.id,
                 worker_id=f"{holder_kind}-capacity-holder",
+                attempt_no=admitted.attempts,
             )
             db.commit()
             metadata_claim = claim_job(
@@ -656,6 +676,7 @@ def test_metadata_is_heavy_and_excludes_parser_and_reindex_capacity(
                 db,
                 job_id=metadata.id,
                 worker_id="metadata-capacity-worker",
+                attempt_no=metadata_claim.attempts,
             )
             db.commit()
     finally:
@@ -728,8 +749,18 @@ def test_open_light_publication_does_not_block_concurrent_heavy_admission(
         assert _capacity_holder(engine)[:3] == (heavy.id, "heavy-admission-worker", 1)
 
     with Session(engine) as db:
-        assert complete_job(db, job_id=heavy.id, worker_id="heavy-admission-worker")
-        assert complete_job(db, job_id=light.id, worker_id="light-publication-worker")
+        assert complete_job(
+            db,
+            job_id=heavy.id,
+            worker_id="heavy-admission-worker",
+            attempt_no=admitted.attempts,
+        )
+        assert complete_job(
+            db,
+            job_id=light.id,
+            worker_id="light-publication-worker",
+            attempt_no=claimed_light.attempts,
+        )
         db.commit()
     assert _capacity_holder(engine) == (None, None, None, None)
 
@@ -829,6 +860,7 @@ def test_open_heavy_publication_retains_capacity_until_its_commit(engine: Engine
             db,
             job_id=holder.id,
             worker_id="heavy-publication-worker",
+            attempt_no=claimed_holder.attempts,
         )
         db.commit()
     assert _capacity_holder(engine) == (None, None, None, None)
@@ -987,7 +1019,12 @@ def test_heavy_heartbeat_never_pins_capacity_while_waiting_on_the_job_row(
             with Session(engine) as cleanup:
                 current = get_job(cleanup, job.id)
                 if current is not None and current.status == "running":
-                    assert complete_job(cleanup, job_id=job.id, worker_id=worker_id)
+                    assert complete_job(
+                        cleanup,
+                        job_id=job.id,
+                        worker_id=worker_id,
+                        attempt_no=claimed.attempts,
+                    )
                 cleanup.commit()
 
     assert heartbeat_started
@@ -1054,7 +1091,12 @@ def test_heavy_heartbeat_renews_job_and_capacity_in_one_owned_transaction(
     assert capacity_lease == job_lease > lease_before
 
     with Session(engine) as cleanup:
-        assert complete_job(cleanup, job_id=job.id, worker_id=worker_id)
+        assert complete_job(
+            cleanup,
+            job_id=job.id,
+            worker_id=worker_id,
+            attempt_no=claimed.attempts,
+        )
         cleanup.commit()
     assert _capacity_holder(engine) == (None, None, None, None)
 
@@ -1106,6 +1148,7 @@ def test_heavy_heartbeat_owns_transactions_without_committing_caller_state(
             cleanup,
             job_id=heartbeat_target.id,
             worker_id="heartbeat-boundary-worker",
+            attempt_no=claimed.attempts,
         )
         cleanup.commit()
     assert _capacity_holder(engine) == (None, None, None, None)
@@ -1179,7 +1222,12 @@ def test_light_heartbeat_refuses_attempt_that_holds_heavy_capacity(
             lease_seconds=600,
         )
         db.commit()
-        assert complete_job(db, job_id=job.id, worker_id=worker_id)
+        assert complete_job(
+            db,
+            job_id=job.id,
+            worker_id=worker_id,
+            attempt_no=claimed.attempts,
+        )
         db.commit()
     assert _capacity_holder(engine) == (None, None, None, None)
 
@@ -1253,6 +1301,7 @@ def test_heavy_holder_follows_heartbeat_reschedule_failure_repair_and_completion
                 db,
                 job_id=job.id,
                 worker_id="transition-worker",
+                attempt_no=reclaimed.attempts,
                 error_code="E_PROBE",
                 error_message="probe failure",
                 retry_delays_seconds=(),
@@ -1276,6 +1325,7 @@ def test_heavy_holder_follows_heartbeat_reschedule_failure_repair_and_completion
                 db,
                 job_id=job.id,
                 worker_id="transition-worker",
+                attempt_no=final_attempt.attempts,
                 error_code="E_PROBE",
                 error_message="probe failure",
                 retry_delays_seconds=(),
@@ -1295,7 +1345,12 @@ def test_heavy_holder_follows_heartbeat_reschedule_failure_repair_and_completion
         )
         db.commit()
         assert repaired is not None and repaired.attempts == 1
-        assert complete_job(db, job_id=job.id, worker_id="repair-worker")
+        assert complete_job(
+            db,
+            job_id=job.id,
+            worker_id="repair-worker",
+            attempt_no=repaired.attempts,
+        )
         db.commit()
         assert _capacity_holder(engine) == (None, None, None, None)
 
@@ -1307,21 +1362,20 @@ def test_dead_repair_defects_instead_of_reconciling_impossible_capacity(
     with Session(engine) as db:
         job = enqueue_job(db, kind=kind, max_attempts=1)
         db.commit()
-        assert (
-            claim_job(
-                db,
-                job_id=job.id,
-                worker_id="dead-capacity-worker",
-                lease_seconds=60,
-                heavy_kinds=(kind,),
-            )
-            is not None
+        claimed = claim_job(
+            db,
+            job_id=job.id,
+            worker_id="dead-capacity-worker",
+            lease_seconds=60,
+            heavy_kinds=(kind,),
         )
+        assert claimed is not None
         assert (
             fail_job(
                 db,
                 job_id=job.id,
                 worker_id="dead-capacity-worker",
+                attempt_no=claimed.attempts,
                 error_code="E_PROBE",
                 error_message="probe failure",
                 retry_delays_seconds=(),
@@ -1382,9 +1436,22 @@ def test_expired_heavy_reclaim_is_fenced_and_records_worker_interruption(
             )
             is False
         )
-        assert complete_job(db, job_id=job.id, worker_id="expired-worker") is False
+        assert (
+            complete_job(
+                db,
+                job_id=job.id,
+                worker_id="expired-worker",
+                attempt_no=first.attempts,
+            )
+            is False
+        )
         assert _capacity_holder(engine)[:3] == (job.id, "recovery-worker", 2)
-        assert complete_job(db, job_id=job.id, worker_id="recovery-worker")
+        assert complete_job(
+            db,
+            job_id=job.id,
+            worker_id="recovery-worker",
+            attempt_no=recovered.attempts,
+        )
         db.commit()
 
         exhausted = enqueue_job(db, kind=kind, max_attempts=1)
@@ -1494,7 +1561,12 @@ def test_heavy_heartbeat_fences_stale_attempt_after_same_worker_id_reclaim(
         assert renewed_capacity[:3] == (job.id, worker_id, 2)
         assert renewed_capacity[3] > capacity_before[3]
 
-        assert complete_job(db, job_id=job.id, worker_id=worker_id)
+        assert complete_job(
+            db,
+            job_id=job.id,
+            worker_id=worker_id,
+            attempt_no=attempt_2.attempts,
+        )
         db.commit()
     assert _capacity_holder(engine) == (None, None, None, None)
 
@@ -1595,7 +1667,17 @@ def test_heavy_renewal_rejects_missing_or_different_capacity_holder(
             is None
         )
         db.rollback()
-        assert complete_job(db, job_id=other.id, worker_id="other-worker")
-        assert complete_job(db, job_id=orphaned.id, worker_id="orphaned-worker")
+        assert complete_job(
+            db,
+            job_id=other.id,
+            worker_id="other-worker",
+            attempt_no=second.attempts,
+        )
+        assert complete_job(
+            db,
+            job_id=orphaned.id,
+            worker_id="orphaned-worker",
+            attempt_no=first.attempts,
+        )
         db.commit()
         assert _capacity_holder(engine) == (None, None, None, None)

@@ -76,7 +76,8 @@ export default function AssistantWriteTrail({
       Boolean(tool.id) &&
       tool.effect === "Write" &&
       tool.result_kind === "mutation" &&
-      tool.status === "complete",
+      tool.status === "complete" &&
+      tool.machine_authorships !== undefined,
   );
   const [reverted, setReverted] = useState(
     () =>
@@ -108,6 +109,12 @@ export default function AssistantWriteTrail({
       {writes.map((tool) => {
         const id = tool.id as string;
         const { kicker, target, detail } = describeWrite(tool);
+        const authorship = tool.machine_authorships?.[0] ?? null;
+        if (tool.result_refs.length > 0 && authorship === null) {
+          throw new Error(
+            "Successful assistant write lacks proven machine authorship",
+          );
+        }
         const isReverted = reverted.has(id) || Boolean(tool.reverted_at);
         return (
           <div key={id} className={styles.writeRow} role="listitem">
@@ -117,6 +124,11 @@ export default function AssistantWriteTrail({
               {detail ? (
                 <span className={styles.writeDetail}>{detail}</span>
               ) : null}
+              <span className={styles.writeAuthorship}>
+                {authorship
+                  ? `Assistant-created · ${authorship.position_path}`
+                  : "No new target created"}
+              </span>
             </span>
             {isReverted ? (
               <span className={styles.writeUndone}>Undone</span>

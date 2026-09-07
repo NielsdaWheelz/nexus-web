@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from typing import Any
@@ -22,7 +23,12 @@ from nexus.services.collection_revisions import (
 from nexus.services.conversations import delete_message
 from nexus.services.seq import assign_next_message_seq
 from tests.testkit.auth import UserRecord
-from tests.testkit.chat import create_entitled_chat
+from tests.testkit.chat import EntitledChat, create_entitled_chat
+from tests.testkit.generation_catalog import (
+    CHAT_TEST_SELECTION,
+    configured_chat_catalog_service,
+)
+from tests.testkit.llm_tool_scenarios import compose_available_product_tool_runtime
 
 
 def test_deleting_root_subtree_returns_authoritative_conversation_cascade_receipt(
@@ -30,7 +36,7 @@ def test_deleting_root_subtree_returns_authoritative_conversation_cascade_receip
     test_user: UserRecord,
     authenticated_client: TestClient,
 ) -> None:
-    chat = create_entitled_chat(
+    chat = _create_selected_chat(
         db_session,
         user_id=test_user.id,
         content="Delete this entire message tree.",
@@ -75,7 +81,7 @@ def test_deleting_leaf_returns_receipt_without_conversation_cascade(
     test_user: UserRecord,
     authenticated_client: TestClient,
 ) -> None:
-    chat = create_entitled_chat(
+    chat = _create_selected_chat(
         db_session,
         user_id=test_user.id,
         content="Keep the root while deleting this pending reply.",
@@ -110,6 +116,29 @@ def _delete_in_connection(
 ) -> MessageDeleteOut:
     with Session(bind=connection) as db:
         return delete_message(db, viewer_id=viewer_id, message_id=message_id)
+
+
+def _create_selected_chat(
+    db: Session,
+    *,
+    content: str,
+    user_id: UUID,
+) -> EntitledChat:
+    async def admit() -> EntitledChat:
+        catalog = configured_chat_catalog_service()
+        snapshot = await catalog.read_chat()
+        return await create_entitled_chat(
+            db,
+            content=content,
+            catalog_definition_revision=snapshot.catalog.definition_revision,
+            selection=CHAT_TEST_SELECTION,
+            tool_authority="ReadOnly",
+            catalog=catalog,
+            tool_runtime=compose_available_product_tool_runtime(),
+            user_id=user_id,
+        )
+
+    return asyncio.run(admit())
 
 
 def test_message_delete_linearizes_after_concurrent_message_insert(engine: Engine) -> None:

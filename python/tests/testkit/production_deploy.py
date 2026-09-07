@@ -654,7 +654,7 @@ class ProductionDeployHarness:
             fake_bin=fake_bin,
         )
 
-    def run(self, *, include_provider_credentials: bool = True) -> subprocess.CompletedProcess[str]:
+    def run(self, *, include_operator_credentials: bool = True) -> subprocess.CompletedProcess[str]:
         environment = {
             **os.environ,
             "NEXUS_DEPLOY_FAKE_STATE": str(self.state_path),
@@ -663,7 +663,7 @@ class ProductionDeployHarness:
             "NEXUS_SHARED_ENV": str(self.root / "env-prod"),
             "PATH": f"{self.fake_bin}{os.pathsep}{os.environ['PATH']}",
         }
-        if include_provider_credentials:
+        if include_operator_credentials:
             environment.update(
                 {
                     "GH_TOKEN": "test-gh-token",

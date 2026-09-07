@@ -19,12 +19,10 @@ from nexus.schemas.conversation import (
     chat_publication_warning_from_nullable,
     chat_run_event_payload_json,
 )
-from nexus.schemas.llm import ExpectedChatFailure
+from nexus.schemas.llm import ExpectedChatFailure, RunSelectionOut, Selectable
 from nexus.schemas.presence import presence_from_nullable
 from nexus.services.chat_failure import (
     chat_failure_projection,
-    compute_has_write_tool_attempt,
-    compute_terminal_attempts,
 )
 from nexus.services.conversations import (
     conversation_to_out,
@@ -36,7 +34,13 @@ from nexus.services.conversations import (
 from nexus.services.message_trust_trails import build_assistant_trust_trail
 
 
-def build_chat_run_response(db: Session, viewer_id: UUID, run: ChatRun) -> ChatRunResponse:
+def build_chat_run_response(
+    db: Session,
+    viewer_id: UUID,
+    run: ChatRun,
+    *,
+    run_selection: RunSelectionOut,
+) -> ChatRunResponse:
     conversation = db.get(Conversation, run.conversation_id)
     user_message = db.get(Message, run.user_message_id)
     assistant_message = db.get(Message, run.assistant_message_id)
@@ -64,6 +68,7 @@ def build_chat_run_response(db: Session, viewer_id: UUID, run: ChatRun) -> ChatR
         db,
         viewer_id=viewer_id,
         assistant_message_id=assistant_message.id,
+        run_selections={run.id: run_selection},
     )
     assistant_message_out = message_to_out(
         db,
@@ -76,12 +81,16 @@ def build_chat_run_response(db: Session, viewer_id: UUID, run: ChatRun) -> ChatR
     )
     failure = chat_failure_projection(
         run,
-        has_write_tool_attempt=compute_has_write_tool_attempt(db, run),
-        attempts=compute_terminal_attempts(db, run),
+        selection_selectable=isinstance(run_selection.current_state, Selectable),
     )
     if trust_trail.run is None or trust_trail.run.run_id != run.id:
         raise AssertionError("Chat run response trust projection lost its owning run")
-    run_out = _run_out(run, failure, execution=trust_trail.run.execution)
+    run_out = _run_out(
+        run,
+        failure,
+        execution=trust_trail.run.execution,
+        run_selection=run_selection,
+    )
     return ChatRunResponse(
         run=run_out,
         conversation=conversation_to_out(
@@ -101,6 +110,7 @@ def _run_out(
     failure: ExpectedChatFailure | None,
     *,
     execution: Any,
+    run_selection: RunSelectionOut,
 ) -> ChatRunOut:
     """Project nullable row facts once into the owned chat-run wire contract."""
     return ChatRunOut(
@@ -109,12 +119,7 @@ def _run_out(
         conversation_id=run.conversation_id,
         user_message_id=run.user_message_id,
         assistant_message_id=run.assistant_message_id,
-        profile_id=run.profile_id,
-        reasoning_option_id=run.reasoning_option_id,
-        provider=run.provider,
-        model_name=run.model_name,
-        reasoning_effort=run.reasoning_effort,
-        error_origin=run.error_origin,
+        run_selection=run_selection,
         support_id=presence_from_nullable(run.support_id),
         publication_warning=chat_publication_warning_from_nullable(run.publication_warning_code),
         failure=failure,
@@ -192,15 +197,44 @@ def _stream_state(db: Session, run: ChatRun, assistant_content: str) -> ChatRunS
                 item[field] = payload.get(field)
             if isinstance(payload.get("input_preview"), str):
                 item["input_preview"] = payload["input_preview"]
+        elif row.event_type == "tool_result":
+            payload = chat_run_event_payload_json(row.event_type, row.payload)
+            index = payload.get("tool_call_index")
+            if not isinstance(index, int):
+                folded_event_seq = row.seq
+                continue
+            item = tool_calls_by_index.setdefault(
+                index,
+                {
+                    "id": payload.get("tool_call_id"),
+                    "assistant_message_id": payload.get("assistant_message_id"),
+                    "tool_call_index": index,
+                    "input_preview": None,
+                },
+            )
+            item.update(
+                {
+                    "id": payload.get("tool_call_id"),
+                    "assistant_message_id": payload.get("assistant_message_id"),
+                    "record_kind": payload.get("record_kind"),
+                    "canonical_tool_id": payload.get("canonical_tool_id"),
+                    "provider_wire_name": payload.get("provider_wire_name"),
+                    "effect": payload.get("effect"),
+                    "result_kind": payload.get("result_kind"),
+                    "activity_label": payload.get("activity_label"),
+                    "error_type": payload.get("error_type"),
+                    "status": payload.get("status"),
+                    "scope": payload.get("scope"),
+                    "requested_types": payload.get("types", []),
+                    "provider_request_ids": payload.get("provider_request_ids", []),
+                    "result_count": payload.get("result_count") or 0,
+                    "selected_count": payload.get("selected_count") or 0,
+                }
+            )
         folded_event_seq = row.seq
     terminal = run.status in {"complete", "error", "cancelled"}
-    status = (
-        "interrupted"
-        if run.status == "error" and run.error_code == "stream_interrupted"
-        else run.status
-    )
     return ChatRunStreamStateOut(
-        status=cast(Any, status),
+        status=cast(Any, run.status),
         last_event_seq=rows[-1].seq if rows else 0,
         folded_event_seq=folded_event_seq,
         assistant_current_text=assistant_content if terminal else text,

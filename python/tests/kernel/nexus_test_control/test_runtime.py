@@ -1,5 +1,6 @@
 import fcntl
 import json
+import re
 import socket
 import subprocess
 import sys
@@ -11,6 +12,7 @@ import pytest
 
 from nexus_test_control.model import Resource, ResourceKind
 from nexus_test_control.runtime import (
+    RUNTIME_VERSION,
     EndpointKind,
     ResourcePhase,
     RuntimeContractError,
@@ -22,7 +24,6 @@ from nexus_test_control.runtime import (
     initialize_runtime,
     local_docker_host,
     process_resource_identity,
-    provider_fixture_identity,
     read_ledger,
     record_created,
     record_planned,
@@ -120,7 +121,21 @@ def test_docker_host_accepts_only_a_real_local_unix_socket() -> None:
 
 
 def _ports() -> RuntimePorts:
-    return RuntimePorts(15432, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 13000, 19091, 19092)
+    return RuntimePorts(
+        15432,
+        19000,
+        25421,
+        25422,
+        25423,
+        25424,
+        25425,
+        18000,
+        18001,
+        13000,
+        19091,
+        19092,
+        19093,
+    )
 
 
 def _runtime(tmp_path: Path) -> None:
@@ -142,6 +157,12 @@ def test_runtime_exposes_only_recorded_loopback_endpoints_in_test_environment(
     assert runtime_endpoint(tmp_path, TEST_ENV, EndpointKind.PROVIDER_OPENAI) == (
         "https://127.0.0.1:19092"
     )
+    assert runtime_endpoint(tmp_path, TEST_ENV, EndpointKind.PROVIDER_API) == (
+        "https://127.0.0.1:19093"
+    )
+    assert runtime_endpoint(tmp_path, TEST_ENV, EndpointKind.AGENT_TOOLS_MCP) == (
+        "http://127.0.0.1:18001"
+    )
     for environment in ({}, {"NEXUS_ENV": "development"}, {"NEXUS_ENV": "production"}):
         with pytest.raises(RuntimeContractError, match="NEXUS_ENV"):
             runtime_endpoint(tmp_path, environment, EndpointKind.MINIO)
@@ -161,26 +182,38 @@ def test_runtime_and_ledger_are_bound_to_the_exact_repository(tmp_path: Path) ->
 def test_runtime_ports_cannot_be_replaced_after_resource_ownership_exists(tmp_path: Path) -> None:
     _runtime(tmp_path)
     changed = RuntimePorts(
-        15433, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 13000, 19091, 19092
+        15433,
+        19000,
+        25421,
+        25422,
+        25423,
+        25424,
+        25425,
+        18000,
+        18001,
+        13000,
+        19091,
+        19092,
+        19093,
     )
 
     with pytest.raises(RuntimeContractError, match="cannot be replaced"):
         initialize_runtime(tmp_path, TEST_ENV, changed)
 
 
-def test_previous_runtime_adds_one_owned_provider_port_atomically(tmp_path: Path) -> None:
+def test_previous_runtime_adds_one_owned_provider_api_port_atomically(tmp_path: Path) -> None:
     initialize_runtime(tmp_path, TEST_ENV, _ports())
     runtime_path = tmp_path / ".nexus-test/runtime.json"
     previous = json.loads(runtime_path.read_text(encoding="utf-8"))
-    previous["version"] = 2
-    del previous["ports"]["provider_openai"]
+    previous["version"] = 4
+    del previous["ports"]["provider_api"]
     runtime_path.write_text(json.dumps(previous), encoding="utf-8")
 
-    upgraded = upgrade_previous_runtime(tmp_path, TEST_ENV, 19192)
+    upgraded = upgrade_previous_runtime(tmp_path, TEST_ENV, 18101)
 
-    assert upgraded.version == 3
-    assert upgraded.ports.provider_openai == 19192
-    assert json.loads(runtime_path.read_text(encoding="utf-8"))["ports"]["provider_openai"] == 19192
+    assert upgraded.version == 5
+    assert upgraded.ports.provider_api == 18101
+    assert json.loads(runtime_path.read_text(encoding="utf-8"))["ports"]["provider_api"] == 18101
 
 
 def test_claim_restart_repairs_ownership_persisted_before_its_empty_ledger(
@@ -274,8 +307,11 @@ def test_cleanup_uses_only_persisted_exact_resources_and_never_discovers_sentine
         (ResourceKind.RUN_DATABASE, run_database_name(OTHER_RUN_ID)),
         (ResourceKind.BUCKET, "nexus-production"),
         (ResourceKind.SUPABASE_USER, "owner@example.com"),
+        (
+            ResourceKind.EMBEDDING_PEER,
+            f".nexus-test/runs/{OTHER_RUN_ID}/embedding-peer",
+        ),
         (ResourceKind.PROCESS, f"nexus-process-{RUN_ID}-worker"),
-        (ResourceKind.PROVIDER_FIXTURE, provider_fixture_identity(OTHER_RUN_ID)),
         (ResourceKind.TEMPLATE, template_database_name("a" * 40)),
     ],
 )
@@ -422,6 +458,40 @@ def test_interrupted_planned_resources_remain_cleanup_candidates(tmp_path: Path)
     assert cleanup_candidates(tmp_path, TEST_ENV, RUN_ID)[0].resource == building
 
 
+def test_forgetting_cleaned_process_removes_its_exact_owner_marker(tmp_path: Path) -> None:
+    _runtime(tmp_path)
+    process = Resource(
+        ResourceKind.PROCESS,
+        process_resource_identity(RUN_ID, "worker-interactive"),
+    )
+    owner_token = "a" * 32
+    record_planned(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        process,
+        external_id=owner_token,
+        command=("python", "-m", "apps.worker.main"),
+    )
+    record_created(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        process,
+        process_group_id=12345,
+        process_start_token="67890",
+    )
+    marker = tmp_path / ".nexus-test" / "runs" / RUN_ID / "process-owners" / owner_token
+    marker.parent.mkdir()
+    marker.touch()
+
+    forget_cleaned(tmp_path, TEST_ENV, RUN_ID, process)
+
+    assert not marker.parent.exists()
+    assert read_ledger(tmp_path, RUN_ID).entries == ()
+    release_run(tmp_path, TEST_ENV, RUN_ID)
+
+
 def test_extension_profile_is_scenario_scoped_and_run_releases_only_when_empty(
     tmp_path: Path,
 ) -> None:
@@ -464,3 +534,25 @@ def test_template_fingerprint_is_deterministic_and_has_one_exact_lock(tmp_path: 
                 fcntl.flock(competing.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         finally:
             competing.close()
+
+
+_PLAYWRIGHT_RUNTIME_LOADER = Path(__file__).resolve().parents[4] / "apps/web/e2e/runtime.ts"
+
+
+def test_playwright_runtime_loader_pins_the_controller_record_version_and_port_keys() -> None:
+    """Risk: the controller writes a record shape the Playwright loader refuses, so no journey runs."""
+
+    loader = _PLAYWRIGHT_RUNTIME_LOADER.read_text(encoding="utf-8")
+    assert f"record.version !== {RUNTIME_VERSION} ||" in loader, (
+        f"apps/web/e2e/runtime.ts does not refuse every record version except {RUNTIME_VERSION}"
+    )
+    assert f"version: {RUNTIME_VERSION}," in loader, (
+        f"apps/web/e2e/runtime.ts does not return runtime version {RUNTIME_VERSION}"
+    )
+    port_keys_source = re.search(r"const PORT_KEYS = \[(.*?)\] as const;", loader, re.DOTALL)
+    assert port_keys_source is not None, "apps/web/e2e/runtime.ts lost its closed PORT_KEYS tuple"
+    loader_port_keys = re.findall(r'"([a-z_]+)"', port_keys_source.group(1))
+    assert loader_port_keys == list(_ports().as_dict()), (
+        "apps/web/e2e/runtime.ts PORT_KEYS differ from the controller's RuntimePorts.as_dict(): "
+        f"{loader_port_keys!r}"
+    )

@@ -11,6 +11,9 @@ import {
 } from "react";
 import {
   apiFetch,
+  decodeApiPayload,
+  isApiError,
+  isSameSystemApiDefect,
   isToolProjectionReloadRequired,
   type ApiError,
 } from "@/lib/api/client";
@@ -35,24 +38,11 @@ import {
 import { useChatMessageUpdates } from "@/components/chat/useChatMessageUpdates";
 import { PerRunStreamContext } from "@/components/chat/perRunStreamContext";
 import { upsertForkOptionForRun } from "@/lib/conversations/branching";
-import { decodeChatRunData } from "@/lib/conversations/messageWire";
+import type { ChatConnectionRecovery } from "@/lib/conversations/chatConnectionRecovery";
+import { decodeChatRunResponse } from "@/lib/conversations/messageWire";
 
 type ChatRunData = ChatRunResponse["data"];
 type TerminalRunStatus = "complete" | "error" | "cancelled";
-
-/**
- * ConnectionLostStatusUnknown — a CLIENT-ONLY tail state (§10). It is never
- * persisted, never an SSE event, and never a server failure: it is the local
- * fact that the live stream dropped and, after the bounded auto-reconnect
- * budget, could not confirm the run's status. It is keyed by the assistant
- * message id so a message row can render the single `Reconnect` action, which
- * resumes the tail from `last_cursor`. Any rehydrated server state (a terminal
- * run status folded onto the message) replaces it.
- */
-interface ConnectionLostStatusUnknown {
-  run_id: string;
-  last_cursor: string;
-}
 
 const CHAT_STREAM_MAX_RECONNECTS = 8;
 const CHAT_STREAM_BACKOFF: SseBackoffConfig = {
@@ -65,6 +55,49 @@ function isTerminalRunStatus(
   status: ChatRunData["run"]["status"],
 ): status is TerminalRunStatus {
   return status === "complete" || status === "error" || status === "cancelled";
+}
+
+function reconnectFailure(
+  error: ApiError,
+): Pick<
+  Extract<ChatConnectionRecovery, { kind: "Failed" }>,
+  "message" | "requestId" | "retryable"
+> | null {
+  switch (error.code) {
+    case "E_NETWORK":
+      return {
+        message:
+          "Nexus could not be reached. Check your connection, then reconnect again.",
+        requestId: error.requestId,
+        retryable: true,
+      };
+    case "E_NOT_FOUND":
+      return {
+        message:
+          "This response is no longer available. Refresh the conversation to reconcile its status.",
+        requestId: error.requestId,
+        retryable: false,
+      };
+    case "E_FORBIDDEN":
+      return {
+        message:
+          "You no longer have access to this response. Refresh the conversation before trying again.",
+        requestId: error.requestId,
+        retryable: false,
+      };
+    default:
+      return null;
+  }
+}
+
+function isChatStreamContractDefect(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return (
+    error.message.startsWith("Invalid SSE payload") ||
+    error.message.startsWith("Failed to parse SSE ") ||
+    error.message.startsWith("SSE event exceeds maximum size") ||
+    error.message.startsWith("Unknown SSE event type")
+  );
 }
 
 function mergeStreamToolCalls(
@@ -96,6 +129,7 @@ export function useChatRunTail({
   onConversationAvailable,
   onContextRefAdded,
   onProjectionReloadRequired,
+  onDefect,
   shouldStartRun,
   shouldApplyRun,
 }: {
@@ -109,16 +143,19 @@ export function useChatRunTail({
   onConversationAvailable?: (conversationId: string, runId: string) => void;
   onContextRefAdded?: (data: SSEContextRefAddedEvent["data"]) => void;
   onProjectionReloadRequired?: (error: ApiError) => void;
+  onDefect?: (error: unknown) => void;
   shouldStartRun?: (ctx: RunVisibilityContext) => boolean;
   shouldApplyRun?: (ctx: RunVisibilityContext) => boolean;
 }) {
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
-  // Client-only ConnectionLostStatusUnknown state, keyed by assistant message id
-  // (§10). Surfaced to the transcript so exactly one `Reconnect` card shows.
-  const [lostConnections, setLostConnections] = useState<
-    Record<string, ConnectionLostStatusUnknown>
+  // Client-only recovery state, keyed by assistant message id. It remains
+  // addressable through reconnect attempts until a tail has actually claimed
+  // the run or durable terminal state replaces the pending message.
+  const [connectionRecoveries, setConnectionRecoveries] = useState<
+    Record<string, ChatConnectionRecovery>
   >({});
   const mountedRef = useRef(false);
+  const reconnectFlightsRef = useRef<Set<string>>(new Set());
   // One per-run lifecycle owner (abort handle + supersession token + first-delta
   // latch), replacing the three former refs. `useState` with a lazy initializer
   // creates the instance exactly once and React guarantees it persists for the
@@ -220,11 +257,11 @@ export function useChatRunTail({
   const abortAll = useCallback(() => {
     streamCtx.abortAll();
     setActiveRunId(null);
-    setLostConnections({});
+    setConnectionRecoveries({});
   }, [streamCtx]);
 
-  const clearLostConnection = useCallback((assistantMessageId: string) => {
-    setLostConnections((prev) => {
+  const clearConnectionRecovery = useCallback((assistantMessageId: string) => {
+    setConnectionRecoveries((prev) => {
       if (!(assistantMessageId in prev)) return prev;
       const next = { ...prev };
       delete next[assistantMessageId];
@@ -236,16 +273,30 @@ export function useChatRunTail({
     async (runId: string | null = activeRunId) => {
       if (!runId) return;
       try {
-        await apiFetch<ChatRunResponse>(`/api/chat-runs/${runId}/cancel`, {
+        const raw = await apiFetch<unknown>(`/api/chat-runs/${runId}/cancel`, {
           method: "POST",
         });
+        const response = decodeApiPayload(
+          raw,
+          decodeChatRunResponse,
+          "Cancel chat run",
+        );
+        const runData = response.data;
+        if (
+          visibility.isVisible({
+            conversationId: runData.conversation.id,
+            userMessageId: runData.user_message.id,
+            assistantMessageId: runData.assistant_message.id,
+          })
+        ) {
+          mergeRunMessages(runData);
+        }
       } catch (err) {
-        if (reportProjectionReload(err)) return;
-        if (handleUnauthenticatedApiError(err)) return;
-        console.error("Failed to cancel chat run:", err);
+        reportProjectionReload(err);
+        throw err;
       }
     },
-    [activeRunId, reportProjectionReload],
+    [activeRunId, mergeRunMessages, reportProjectionReload, visibility],
   );
 
   useEffect(() => {
@@ -258,7 +309,7 @@ export function useChatRunTail({
 
   const tailChatRun = useCallback(
     async (runData: ChatRunData) => {
-      if (!mountedRef.current) return;
+      if (!mountedRef.current) return false;
       const runId = runData.run.id;
 
       const originalUserId = runData.user_message.id;
@@ -301,17 +352,18 @@ export function useChatRunTail({
         mergeRunMessages(data, idsToReplace);
       };
 
-      if (!canStart()) return;
+      if (!canStart()) return false;
 
       if (streamCtx.isStreaming(runId)) {
         mergeRunMessagesIfVisible(runData);
-        return;
+        clearConnectionRecovery(originalAssistantId);
+        return true;
       }
 
       streamCtx.claim(runId, token);
-      // A fresh tail (including a user-driven Reconnect) supersedes any prior
-      // client-only connection-lost card for this message.
-      clearLostConnection(originalAssistantId);
+      // Clear recovery only after this owner has successfully claimed the run.
+      // A failed GET, invisible run, or rejected reconnect keeps its state.
+      clearConnectionRecovery(originalAssistantId);
       if (runData.stream_state.folded_event_seq > 0) {
         shouldFoldEvent(runId, runData.stream_state.folded_event_seq);
       }
@@ -330,14 +382,17 @@ export function useChatRunTail({
         onRunDone?.(runId, status);
       };
 
-      // Client-only ConnectionLostStatusUnknown fold: the auto-reconnect budget
-      // is spent and the run is not confirmed terminal. Keep partial text +
-      // pending status; surface the single `Reconnect` card via lostConnections.
+      // The auto-reconnect budget is spent and the run is not confirmed
+      // terminal. Keep partial text + pending status and surface recovery.
       const markConnectionLost = (lastCursor: string) => {
         if (!currentVisible()) return;
-        setLostConnections((prev) => ({
+        setConnectionRecoveries((prev) => ({
           ...prev,
-          [currentAssistantId]: { run_id: runId, last_cursor: lastCursor },
+          [currentAssistantId]: {
+            kind: "Lost",
+            runId,
+            lastCursor,
+          },
         }));
       };
 
@@ -356,7 +411,7 @@ export function useChatRunTail({
         }
         notifyDone(runData.run.status);
         finishRun();
-        return;
+        return true;
       }
 
       setActiveRunId(runId);
@@ -364,40 +419,49 @@ export function useChatRunTail({
 
       const reconcile = async () => {
         try {
-          const response = await apiFetch<ChatRunResponse>(
-            `/api/chat-runs/${runId}`,
+          const raw = await apiFetch<unknown>(`/api/chat-runs/${runId}`);
+          const response = decodeApiPayload(
+            raw,
+            decodeChatRunResponse,
+            "Reconcile chat run",
           );
           if (streamCtx.isSuperseded(runId, token)) return null;
+          const persisted = response.data;
           flushDeltas();
-          mergeRunMessagesIfVisible(decodeChatRunData(response.data), [
+          mergeRunMessagesIfVisible(persisted, [
             originalUserId,
             originalAssistantId,
             currentUserId,
             currentAssistantId,
-            response.data.user_message.id,
-            response.data.assistant_message.id,
+            persisted.user_message.id,
+            persisted.assistant_message.id,
           ]);
-          onConversationAvailable?.(response.data.conversation.id, runId);
-          currentUserId = response.data.user_message.id;
-          currentAssistantId = response.data.assistant_message.id;
-          if (response.data.stream_state.folded_event_seq > 0) {
-            shouldFoldEvent(runId, response.data.stream_state.folded_event_seq);
+          onConversationAvailable?.(persisted.conversation.id, runId);
+          currentUserId = persisted.user_message.id;
+          currentAssistantId = persisted.assistant_message.id;
+          if (persisted.stream_state.folded_event_seq > 0) {
+            shouldFoldEvent(runId, persisted.stream_state.folded_event_seq);
           }
 
-          if (isTerminalRunStatus(response.data.run.status)) {
+          if (isTerminalRunStatus(persisted.run.status)) {
             if (currentVisible()) {
-              handleDone(currentAssistantId, response.data.run.status);
+              handleDone(currentAssistantId, persisted.run.status);
             }
-            notifyDone(response.data.run.status);
+            notifyDone(persisted.run.status);
             finishRun();
           }
-          return response.data;
+          return persisted;
         } catch (err) {
           if (reportProjectionReload(err)) {
             finishRun();
             return null;
           }
           if (handleUnauthenticatedApiError(err)) return null;
+          if (!isApiError(err) || isSameSystemApiDefect(err)) {
+            onDefect?.(err);
+            finishRun();
+            return null;
+          }
           console.error("Failed to reconcile chat run:", err);
           return null;
         }
@@ -495,6 +559,11 @@ export function useChatRunTail({
             },
             onError: (err) => {
               if (streamCtx.isSuperseded(runId, token) || finished) return;
+              if (isChatStreamContractDefect(err)) {
+                onDefect?.(err);
+                finishRun();
+                return;
+              }
               if (reportProjectionReload(err)) {
                 finishRun();
                 return;
@@ -503,8 +572,8 @@ export function useChatRunTail({
               // Reconcile one last time — the run may have completed in the DB
               // exactly as the stream died, in which case reconcile() folds the
               // terminal status and finishes. If it did NOT confirm terminal,
-              // fold the client-only ConnectionLostStatusUnknown card instead of
-              // a server failure: partial text stays, the row offers Reconnect.
+              // fold client-only recovery instead of a server failure: partial
+              // text stays and the row offers Reconnect.
               console.error("Chat run stream failed:", err);
               void (async () => {
                 const persisted = await reconcile();
@@ -568,11 +637,12 @@ export function useChatRunTail({
       };
 
       await startStream();
+      return true;
     },
     [
       streamCtx,
       visibility,
-      clearLostConnection,
+      clearConnectionRecovery,
       handleDelta,
       handleDone,
       handleMetaReceived,
@@ -590,29 +660,108 @@ export function useChatRunTail({
       onConversationAvailable,
       onRunDone,
       onRunFinished,
+      onDefect,
       reportProjectionReload,
     ],
   );
 
-  // User-driven resume of a ConnectionLostStatusUnknown card: re-fetch the run
-  // and re-tail it from the persisted cursor. Never calls /rerun.
+  // User-driven resume of a connection-recovery card: re-fetch the same run and
+  // re-tail it from durable state. Never calls /rerun.
   const reconnectRun = useCallback(
     async (assistantMessageId: string) => {
-      const entry = lostConnections[assistantMessageId];
-      if (!entry) return;
-      clearLostConnection(assistantMessageId);
+      const entry = connectionRecoveries[assistantMessageId];
+      if (!entry || reconnectFlightsRef.current.has(assistantMessageId)) return;
+      reconnectFlightsRef.current.add(assistantMessageId);
+      setConnectionRecoveries((prev) => ({
+        ...prev,
+        [assistantMessageId]: {
+          kind: "Reconnecting",
+          runId: entry.runId,
+          lastCursor: entry.lastCursor,
+        },
+      }));
+
+      const restoreOrFail = (
+        failure: Pick<
+          Extract<ChatConnectionRecovery, { kind: "Failed" }>,
+          "message" | "requestId" | "retryable"
+        > | null,
+      ) => {
+        if (!mountedRef.current) return;
+        setConnectionRecoveries((prev) => {
+          const current = prev[assistantMessageId];
+          if (
+            current?.kind !== "Reconnecting" ||
+            current.runId !== entry.runId ||
+            current.lastCursor !== entry.lastCursor
+          ) {
+            return prev;
+          }
+          return {
+            ...prev,
+            [assistantMessageId]: failure
+              ? {
+                  kind: "Failed",
+                  runId: entry.runId,
+                  lastCursor: entry.lastCursor,
+                  ...failure,
+                }
+              : {
+                  kind: "Lost",
+                  runId: entry.runId,
+                  lastCursor: entry.lastCursor,
+                },
+          };
+        });
+      };
+
       try {
-        const response = await apiFetch<ChatRunResponse>(
-          `/api/chat-runs/${entry.run_id}`,
+        const raw = await apiFetch<unknown>(`/api/chat-runs/${entry.runId}`);
+        const response = decodeApiPayload(
+          raw,
+          decodeChatRunResponse,
+          "Reconnect chat run",
         );
-        await tailChatRun(decodeChatRunData(response.data));
+        const claimed = await tailChatRun(response.data);
+        if (!claimed) {
+          restoreOrFail({
+            message:
+              "This response is not available in the current conversation. Return to it, then reconnect again.",
+            retryable: true,
+          });
+        }
       } catch (err) {
-        if (reportProjectionReload(err)) return;
-        if (handleUnauthenticatedApiError(err)) return;
-        console.error("Failed to reconnect chat run:", err);
+        if (isToolProjectionReloadRequired(err)) {
+          reportProjectionReload(err);
+          restoreOrFail({
+            message:
+              "Nexus was updated while this response was open. Reload the page to reconnect safely.",
+            requestId: err.requestId,
+            retryable: false,
+          });
+          return;
+        }
+        if (handleUnauthenticatedApiError(err)) {
+          restoreOrFail(null);
+          return;
+        }
+        if (!isApiError(err) || isSameSystemApiDefect(err)) {
+          restoreOrFail(null);
+          onDefect?.(err);
+          return;
+        }
+        const failure = reconnectFailure(err);
+        if (failure) {
+          restoreOrFail(failure);
+          return;
+        }
+        restoreOrFail(null);
+        onDefect?.(err);
+      } finally {
+        reconnectFlightsRef.current.delete(assistantMessageId);
       }
     },
-    [lostConnections, clearLostConnection, reportProjectionReload, tailChatRun],
+    [connectionRecoveries, onDefect, reportProjectionReload, tailChatRun],
   );
 
   return {
@@ -620,7 +769,7 @@ export function useChatRunTail({
     abortAll,
     cancelRun,
     tailChatRun,
-    lostConnections,
+    connectionRecoveries,
     reconnectRun,
   };
 }

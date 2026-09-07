@@ -1,9 +1,0 @@
-abi <abi/4.0>,
-include <tunables/global>
-
-# This profile is installed only on the dedicated hosted-canary runner. It
-# allows the system bwrap executable to construct Codex's stricter nested
-# namespace while the host-wide unprivileged-userns restriction stays enabled.
-profile nexus-codex-nightly-bwrap /usr/bin/bwrap flags=(unconfined) {
-  userns,
-}

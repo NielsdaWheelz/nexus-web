@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
-from provider_runtime import ReasoningLevel
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -20,6 +19,7 @@ from nexus.services.artifacts.bindings._shared import (
 )
 from nexus.services.artifacts.bindings.base import (
     DossierBindingBase,
+    DossierOperation,
     PublishableDossier,
 )
 from nexus.services.artifacts.coordination import DossierBuildRuntime
@@ -50,7 +50,6 @@ from nexus.services.artifacts.subject_policy import (
     ResolvedIdeaSubject,
     ResolvedSubject,
 )
-from nexus.services.llm_profiles import BackgroundLlmOperation
 from nexus.services.resource_graph.refs import (
     ResourceRef,
     ResourceRefParseFailure,
@@ -68,10 +67,7 @@ class IdeaCoverage:
 
 class IdeaBinding(DossierBindingBase):
     subject_scheme: str = "idea"
-    llm_operation: BackgroundLlmOperation = "dossier_idea"
-    profile: str = "balanced"
-    reasoning: ReasoningLevel = "high"
-    max_output_tokens: int = 12_000
+    llm_operation: DossierOperation = "dossier_idea"
     schema: type[BaseModel] = StandardSynthesis
     system_prompt: str = synthesis_prompt(
         "one user-owned idea, grounded in its Nexus contexts and bounded Web research"
@@ -259,7 +255,7 @@ class IdeaSubjectPolicy:
         _require_idea_audience(idea, audience)
         return idea.user_id
 
-    def requester_billing(
+    def requester_admission(
         self,
         resolved: ResolvedSubject,
         requester_user_id: UUID,

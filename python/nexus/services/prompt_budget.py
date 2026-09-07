@@ -44,9 +44,8 @@ class ContextBudgetError(ValueError):
     """Raised when mandatory assembled context cannot fit the model input budget.
 
     Caught owner-side (chat_runs.py) before any generation attempt begins and
-    folded to the ``context_too_large`` closed §10 code, origin ``intent`` — a
-    ledgerless expected failure (no llm_calls row: the intent never reached
-    ``execute_generation``).
+    folded to the ``context_too_large`` closed §10 code — a ledgerless expected
+    failure (no llm_calls row: the intent never reached ``execute_generation``).
     """
 
     def __init__(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from typing import Literal, assert_never
 from uuid import UUID
 
 from sqlalchemy import Engine, text
@@ -182,6 +183,55 @@ def expire_job_claim(db: Session, *, job_id: UUID) -> None:
         ),
         {"job_id": job_id},
     )
+
+
+def miscorrelate_running_chat_job(
+    db: Session,
+    *,
+    job_id: UUID,
+    foreign_kind: str,
+    foreign_run_id: UUID,
+) -> None:
+    """Point a claimed Chat job at another run without changing its lease identity."""
+
+    updated = db.execute(
+        text(
+            """
+            UPDATE background_jobs
+            SET kind = :foreign_kind,
+                payload = jsonb_set(
+                payload,
+                '{run_id}',
+                to_jsonb(CAST(:foreign_run_id AS text))
+            )
+            WHERE id = :job_id
+              AND kind = 'chat_run'
+              AND status = 'running'
+            RETURNING id
+            """
+        ),
+        {
+            "job_id": job_id,
+            "foreign_kind": foreign_kind,
+            "foreign_run_id": str(foreign_run_id),
+        },
+    ).scalar_one()
+    assert updated == job_id
+
+
+def expire_artifact_learn_resolver_lease(db: Session, *, request_id: UUID) -> None:
+    """Model an abandoned request-scoped Idea resolver without waiting."""
+
+    updated = db.execute(
+        text(
+            "UPDATE artifact_learn_requests "
+            "SET resolver_lease_expires_at = now() - interval '1 second' "
+            "WHERE id = :request_id "
+            "RETURNING id"
+        ),
+        {"request_id": request_id},
+    ).scalar_one()
+    assert updated == request_id
 
 
 def force_upload_cleanup_job_due(db: Session, *, job_id: UUID) -> None:
@@ -426,39 +476,6 @@ def replace_dead_dossier_step_tool_execution(
     ).scalar_one()
     assert updated == job_id
     return previous
-
-
-def replace_completed_chat_tool_arguments(
-    db: Session,
-    *,
-    job_id: UUID,
-    tool_call_index: int,
-    arguments: dict[str, object],
-) -> None:
-    """Model a changed provider invocation inside one completed Chat generation."""
-
-    payload = db.execute(
-        text("SELECT payload FROM background_jobs WHERE id = :job_id FOR UPDATE"),
-        {"job_id": job_id},
-    ).scalar_one()
-    changed = json.loads(json.dumps(payload))
-    generation = changed["coordination"]["turn/0/generation"]
-    terminal = generation["terminal_result"]
-    assert terminal["kind"] == "Present"
-    assistant_turn = json.loads(terminal["value"])
-    calls = assistant_turn["tool_calls"]
-    assert len(calls) >= tool_call_index
-    calls[tool_call_index - 1]["arguments"] = arguments
-    terminal["value"] = json.dumps(
-        assistant_turn,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    )
-    db.execute(
-        text("UPDATE background_jobs SET payload = CAST(:payload AS jsonb) WHERE id = :job_id"),
-        {"job_id": job_id, "payload": json.dumps(changed)},
-    )
 
 
 def replace_completed_chat_tool_terminal(
@@ -804,6 +821,168 @@ def delete_jobs_by_ids(db: Session, *, job_ids: Sequence[UUID]) -> None:
     db.execute(
         text("DELETE FROM background_jobs WHERE id = ANY(CAST(:job_ids AS uuid[]))"),
         {"job_ids": list(job_ids)},
+    )
+
+
+type GenerationLedgerCorruption = Literal[
+    "nonpositive_sequence",
+    "owner_operation",
+    "plan_selection",
+    "model_tool_plan",
+    "route",
+    "fingerprint",
+    "session_ref",
+    "usage",
+    "lifecycle",
+]
+
+
+def corrupt_generation_ledger_row(
+    db: Session,
+    *,
+    generation_id: UUID,
+    corruption: GenerationLedgerCorruption,
+) -> None:
+    """Create one closed invalid ledger-row shape for trusted-read defect proof."""
+
+    match corruption:
+        case "nonpositive_sequence":
+            statement = (
+                "UPDATE llm_calls SET generation_seq = 0 WHERE id = :generation_id RETURNING id"
+            )
+        case "owner_operation":
+            statement = (
+                "UPDATE llm_calls SET owner_kind = 'chat_run' "
+                "WHERE id = :generation_id RETURNING id"
+            )
+        case "plan_selection":
+            statement = (
+                "UPDATE llm_calls SET model_name = 'gpt-5.6-sol' "
+                "WHERE id = :generation_id RETURNING id"
+            )
+        case "model_tool_plan":
+            statement = (
+                "UPDATE llm_calls SET model_tool_plan_snapshot = "
+                '\'{"kind":"Present","value":{}}\'::jsonb '
+                "WHERE id = :generation_id RETURNING id"
+            )
+        case "route":
+            statement = (
+                "UPDATE llm_calls SET auth_profile = 'api-key' "
+                "WHERE id = :generation_id RETURNING id"
+            )
+        case "fingerprint":
+            statement = (
+                "UPDATE llm_calls SET request_fingerprint = repeat('A', 64) "
+                "WHERE id = :generation_id RETURNING id"
+            )
+        case "session_ref":
+            statement = (
+                "UPDATE llm_calls SET session_ref = "
+                '\'{"schema_version":"wrong"}\'::jsonb '
+                "WHERE id = :generation_id RETURNING id"
+            )
+        case "usage":
+            statement = (
+                "UPDATE llm_calls SET input_tokens = 1 WHERE id = :generation_id RETURNING id"
+            )
+        case "lifecycle":
+            statement = (
+                "UPDATE llm_calls SET completed_at = now() WHERE id = :generation_id RETURNING id"
+            )
+        case unreachable:
+            assert_never(unreachable)
+    updated = db.execute(text(statement), {"generation_id": generation_id})
+    assert updated.scalar_one() == generation_id
+
+
+def delete_generations_by_ids(db: Session, *, generation_ids: Sequence[UUID]) -> None:
+    """Remove only committed generation ledger rows owned by one exact proof."""
+    if not generation_ids:
+        return
+    parameters = {"generation_ids": list(generation_ids)}
+    # Chat projections and machine-authorship rows deliberately use restrictive
+    # links to the canonical tool position.  Remove only the projections owned
+    # by these proof generations before deleting their ledger rows; broad
+    # cascade semantics would weaken the production contract this test helper
+    # is meant to preserve.
+    db.execute(
+        text(
+            """
+            DELETE FROM message_retrievals
+            WHERE tool_call_id IN (
+                SELECT call.id
+                FROM message_tool_calls AS call
+                JOIN llm_tool_positions AS position ON position.id = call.tool_position_id
+                WHERE position.generation_id = ANY(CAST(:generation_ids AS uuid[]))
+            )
+            """
+        ),
+        parameters,
+    )
+    db.execute(
+        text(
+            """
+            DELETE FROM chat_run_events
+            WHERE payload->>'tool_call_id' IN (
+                SELECT CAST(call.id AS text)
+                FROM message_tool_calls AS call
+                JOIN llm_tool_positions AS position ON position.id = call.tool_position_id
+                WHERE position.generation_id = ANY(CAST(:generation_ids AS uuid[]))
+            )
+            """
+        ),
+        parameters,
+    )
+    db.execute(
+        text(
+            """
+            DELETE FROM assistant_write_authorships
+            WHERE tool_position_id IN (
+                SELECT id
+                FROM llm_tool_positions
+                WHERE generation_id = ANY(CAST(:generation_ids AS uuid[]))
+            )
+            """
+        ),
+        parameters,
+    )
+    db.execute(
+        text(
+            """
+            DELETE FROM message_tool_calls
+            WHERE tool_position_id IN (
+                SELECT id
+                FROM llm_tool_positions
+                WHERE generation_id = ANY(CAST(:generation_ids AS uuid[]))
+            )
+            """
+        ),
+        parameters,
+    )
+    db.execute(
+        text(
+            "DELETE FROM llm_model_turn_continuations "
+            "WHERE generation_id = ANY(CAST(:generation_ids AS uuid[]))"
+        ),
+        parameters,
+    )
+    db.execute(
+        text(
+            "DELETE FROM llm_tool_positions "
+            "WHERE generation_id = ANY(CAST(:generation_ids AS uuid[]))"
+        ),
+        parameters,
+    )
+    db.execute(
+        text(
+            "DELETE FROM llm_model_turns WHERE generation_id = ANY(CAST(:generation_ids AS uuid[]))"
+        ),
+        parameters,
+    )
+    db.execute(
+        text("DELETE FROM llm_calls WHERE id = ANY(CAST(:generation_ids AS uuid[]))"),
+        parameters,
     )
 
 

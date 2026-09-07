@@ -355,7 +355,10 @@ export default function TranscriptStatePanel({
   if (transcriptionLocked) {
     return (
       <div className={styles.notReady}>
-        <p>Transcription is included with AI Plus and AI Pro.</p>
+        <p>
+          Transcription is included with Transcription Plus and Transcription
+          Pro.
+        </p>
         <p>
           Current plan:{" "}
           {billingAccount ? planLabel(billingAccount.entitlement_plan_tier) : "Free"}.

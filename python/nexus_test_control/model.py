@@ -58,10 +58,13 @@ class Workflow(StrEnum):
     PR = "pr"
     FULL = "full"
     NIGHTLY = "nightly"
-    CODEX_NIGHTLY = "codex-nightly"
     RELEASE = "release"
     DOCTOR = "doctor"
     ANDROID_VISUAL = "android-visual"
+
+
+class ChangedOwnerRedStrategy(StrEnum):
+    COHERENT_FAULT = "coherent-fault"
 
 
 class Capability(StrEnum):
@@ -88,10 +91,7 @@ class Capability(StrEnum):
     EXTENSION = "extension"
     ANDROID_HOST = "android-host"
     AUDIT = "audit"
-    HOSTED = "hosted"
-    CODEX_HOSTED = "codex-hosted"
     ANDROID_DEVICE = "android-device"
-    PROVIDER_CERTIFICATION = "provider-certification"
     ANDROID_RELEASE = "android-release"
     RELEASE_ARTIFACT = "release-artifact"
     DOCTOR = "doctor"
@@ -107,10 +107,12 @@ class PriorityRiskId(StrEnum):
     DESTRUCTIVE_SIDE_EFFECTS = "destructive-side-effects"
     MIGRATION_COMPATIBILITY = "migration-compatibility"
     COSTLY_EFFECTS = "costly-effects"
+    GENERATION_LEDGER_CONTRACT = "generation-ledger-contract"
     READING_PROGRESS = "reading-progress"
     CITATION_PROVENANCE_IDENTITY = "citation-provenance-identity"
     DURABLE_JOB_REPLAY = "durable-job-replay"
-    NATIVE_AGENT_HOST = "native-agent-host"
+    GENERATION_RECONCILIATION = "generation-reconciliation"
+    CODEX_GENERATION_HOST = "codex-generation-host"
     DATABASE_OBJECT_CONVERGENCE = "database-object-convergence"
     DOCUMENT_IMPORT_RELIABILITY = "document-import-reliability"
     LLM_TOOL_SAFETY = "llm-tool-safety"
@@ -125,7 +127,7 @@ class PriorityRiskId(StrEnum):
 
 
 PRIORITY_RISK_FLOOR = frozenset(PriorityRiskId)
-PRIORITY_RISK_OWNERSHIP_SHA256 = "deed18bed5c0f23ebfe1827b7679a5a3453ef0e003fe9e28a3fdfd74057f0bc4"
+PRIORITY_RISK_OWNERSHIP_SHA256 = "9d70da9df530319e4f4a61853ce599e21a639ef2df901ee62c4514237a961ed1"
 
 
 class ResourceKind(StrEnum):
@@ -135,8 +137,10 @@ class ResourceKind(StrEnum):
     MIGRATION_DATABASE = "migration-database"
     BUCKET = "bucket"
     SUPABASE_USER = "supabase-user"
+    EMBEDDING_PEER = "embedding-peer"
+    CODEX_GENERATION_PEER = "codex-generation-peer"
+    PROVIDER_API_PEER = "provider-api-peer"
     PROCESS = "process"
-    PROVIDER_FIXTURE = "provider-fixture"
     EXTENSION_PROFILE = "extension-profile"
     BUILD_ARTIFACT = "build-artifact"
     LOCK = "lock"
@@ -439,16 +443,11 @@ WORKFLOW_REGISTRY: Mapping[Workflow, WorkflowDefinition] = MappingProxyType(
                 (
                     *_FULL_NON_BROWSER,
                     Capability.AUDIT,
-                    Capability.HOSTED,
                     Capability.ANDROID_DEVICE,
                     Capability.JOURNEYS_ALL,
                     Capability.EXTENSION,
                 ),
             ),
-        ),
-        Workflow.CODEX_NIGHTLY: WorkflowDefinition(
-            Workflow.CODEX_NIGHTLY,
-            (CapabilityRequirement(Capability.CODEX_HOSTED, SelectionScope.COMPLETE),),
         ),
         Workflow.RELEASE: WorkflowDefinition(
             Workflow.RELEASE,
@@ -457,7 +456,6 @@ WORKFLOW_REGISTRY: Mapping[Workflow, WorkflowDefinition] = MappingProxyType(
                 (
                     *_FULL_NON_BROWSER,
                     Capability.ANDROID_DEVICE,
-                    Capability.PROVIDER_CERTIFICATION,
                     Capability.ANDROID_RELEASE,
                     Capability.RELEASE_ARTIFACT,
                     Capability.JOURNEYS_ALL,
@@ -490,10 +488,7 @@ DEFERRED_CAPABILITY_OWNER: Mapping[Capability, Workflow] = MappingProxyType(
         Capability.EXTENSION: Workflow.FULL,
         Capability.ANDROID_HOST: Workflow.FULL,
         Capability.AUDIT: Workflow.NIGHTLY,
-        Capability.HOSTED: Workflow.NIGHTLY,
-        Capability.CODEX_HOSTED: Workflow.CODEX_NIGHTLY,
         Capability.ANDROID_DEVICE: Workflow.NIGHTLY,
-        Capability.PROVIDER_CERTIFICATION: Workflow.RELEASE,
         Capability.ANDROID_RELEASE: Workflow.RELEASE,
         Capability.RELEASE_ARTIFACT: Workflow.RELEASE,
     }

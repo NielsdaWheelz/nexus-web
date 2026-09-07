@@ -11,15 +11,19 @@ from llm_tools import Available, ToolId
 from pydantic import TypeAdapter
 from sqlalchemy.orm import Session
 
-from nexus.api.deps import get_single_attempt_execution_runtime
+from nexus.api.deps import get_generation_runtime
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import ok
 from nexus.schemas.artifact import (
+    DossierBuildAdmittedGenerationOut,
     DossierBuildCreatedOut,
+    DossierBuildExactModelToolsOut,
     DossierBuildExecution,
+    DossierBuildNoModelToolsOut,
     DossierBuildSummary,
+    DossierBuildToolPlanOut,
     DossierCoverageOut,
     DossierGenerateRequest,
     DossierHeadOut,
@@ -32,6 +36,8 @@ from nexus.schemas.artifact import (
     ResourceDossierIdentityOut,
 )
 from nexus.schemas.presence import (
+    Presence,
+    Present,
     absent,
     nullable_from_presence,
     presence_from_nullable,
@@ -43,7 +49,10 @@ from nexus.services.artifacts.dossier_types import (
     CancelledEventPayload,
     DossierSubjectLocator,
     FailedEventPayload,
+    HistoricalDossierBuildFailureCode,
+    HistoricalFailedEventPayload,
     InvalidSubjectLocator,
+    ReadFailedEventPayload,
     WebResearchNotConfigured,
 )
 from nexus.services.artifacts.handles import seal_artifact_build, unseal_artifact_build
@@ -166,6 +175,35 @@ def _manifest_and_coverage(
     )
 
 
+def _admitted_generation_out(
+    view: engine.DossierBuildAdmittedGeneration | None,
+) -> Presence[DossierBuildAdmittedGenerationOut]:
+    """Project the frozen spec read-only; the model-tool arm is total (spec 5.1)."""
+    if view is None:
+        return absent()
+    spec = view.spec
+    plan, effect_mode = spec.model_tool_plan_snapshot, spec.tool_effect_mode
+    tool_plan: DossierBuildToolPlanOut
+    if isinstance(plan, Present) and isinstance(effect_mode, Present):
+        tool_plan = DossierBuildExactModelToolsOut(
+            plan_id=plan.value.plan_id,
+            plan_revision=plan.value.plan_revision,
+            effect_mode=effect_mode.value,
+        )
+    elif isinstance(plan, Present) or isinstance(effect_mode, Present):
+        raise AssertionError("admitted Dossier generation has a partial model-tool authority")
+    else:
+        tool_plan = DossierBuildNoModelToolsOut()
+    return present(
+        DossierBuildAdmittedGenerationOut(
+            selection=spec.selection,
+            display_at_dispatch=spec.display_at_dispatch,
+            tool_plan=tool_plan,
+            tool_positions=view.tool_positions,
+        )
+    )
+
+
 def _active_build_out(view: engine.DossierActiveBuildView) -> DossierBuildSummary:
     return DossierBuildSummary(
         handle=view.handle,
@@ -175,24 +213,32 @@ def _active_build_out(view: engine.DossierActiveBuildView) -> DossierBuildSummar
         execution=present(DossierBuildExecution(phase=view.execution)),
         failure=absent(),
         cancellation=absent(),
+        admitted_generation=_admitted_generation_out(view.admitted_generation),
+        capacity_pause=presence_from_nullable(view.capacity_pause),
     )
 
 
 def _unsuccessful_build_out(
     view: engine.DossierUnsuccessfulBuildView,
 ) -> DossierBuildSummary:
-    failure = absent()
+    failure: Presence[ReadFailedEventPayload] = absent()
     cancellation = absent()
     if view.outcome == "failed":
         if view.failure_code is None:
             raise AssertionError("failed Dossier build has no failure code")
-        failure = present(
-            FailedEventPayload(
+        if isinstance(view.failure_code, HistoricalDossierBuildFailureCode):
+            failure_payload: ReadFailedEventPayload = HistoricalFailedEventPayload(
                 failure_code=view.failure_code,
                 detail=presence_from_nullable(view.failure_detail),
                 support=presence_from_nullable(view.failure_support),
             )
-        )
+        else:
+            failure_payload = FailedEventPayload(
+                failure_code=view.failure_code,
+                detail=presence_from_nullable(view.failure_detail),
+                support=presence_from_nullable(view.failure_support),
+            )
+        failure = present(failure_payload)
     else:
         if view.cancelled_at is None:
             raise AssertionError("cancelled Dossier build has no cancellation time")
@@ -210,6 +256,8 @@ def _unsuccessful_build_out(
         execution=absent(),
         failure=failure,
         cancellation=cancellation,
+        admitted_generation=_admitted_generation_out(view.admitted_generation),
+        capacity_pause=absent(),
     )
 
 
@@ -326,7 +374,7 @@ async def learn_dossier(
     request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-    runtime: Annotated[ExecutionRuntime, Depends(get_single_attempt_execution_runtime)],
+    runtime: Annotated[ExecutionRuntime, Depends(get_generation_runtime)],
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)],
     body: Annotated[LearnDossierRequest, Body()],
 ) -> dict:

@@ -63,6 +63,26 @@ class SelectionIndex:
 
 EMPTY_SELECTION_INDEX = SelectionIndex()
 _WEB_TEST_LOOKING = re.compile(r"(?:^|[._-])(?:test|spec)\.[cm]?[jt]sx?\Z", re.I)
+_PYTHON_PROOF_OWNERS = (
+    ("python/tests/kernel/", Capability.KERNEL_PYTHON),
+    ("python/tests/service/", Capability.SERVICE),
+    ("python/tests/migrations/", Capability.MIGRATIONS),
+    ("python/tests/evals/", Capability.LLM_EVAL),
+    ("python/tests/audit/", Capability.AUDIT),
+    ("python/tests/contract/", Capability.PROVIDER_RUNTIME),
+    ("python/tests/llm_tools_contract/", Capability.LLM_TOOLS),
+    ("python/tests/release_artifact/", Capability.RELEASE_ARTIFACT),
+)
+_GLOBAL_PYTEST_SUPPORT_CAPABILITIES = (
+    Capability.KERNEL_PYTHON,
+    Capability.SERVICE,
+    Capability.MIGRATIONS,
+    Capability.LLM_EVAL,
+    Capability.AUDIT,
+    Capability.PROVIDER_RUNTIME,
+    Capability.LLM_TOOLS,
+    Capability.RELEASE_ARTIFACT,
+)
 
 
 SelectionResolver = Callable[[str], Iterable[SelectionTarget]]
@@ -171,16 +191,13 @@ def proof_target(repo_root: Path, proof: str) -> SelectionTarget:
         Capability.AUDIT: "pytest",
         Capability.COMPONENT: "vitest",
         Capability.EXTENSION: "playwright",
-        Capability.HOSTED: "pytest",
         Capability.INGEST_NODE: "node-test",
-        Capability.CODEX_HOSTED: "pytest",
         Capability.JOURNEYS_ALL: "playwright",
         Capability.KERNEL_PYTHON: "pytest",
         Capability.KERNEL_WEB: "vitest",
         Capability.LLM_TOOLS: "pytest",
         Capability.LLM_EVAL: "pytest",
         Capability.MIGRATIONS: "pytest",
-        Capability.PROVIDER_CERTIFICATION: "pytest",
         Capability.RELEASE_ARTIFACT: "pytest",
         Capability.SERVICE: "pytest",
     }.get(direct.capability)
@@ -393,6 +410,13 @@ def _frontend_source(path: str) -> bool:
 
 
 def _promoted_targets(path: str) -> tuple[SelectionTarget, ...]:
+    if path == "python/tests/conftest.py":
+        return tuple(
+            SelectionTarget(capability) for capability in _GLOBAL_PYTEST_SUPPORT_CAPABILITIES
+        )
+    python_owner = _python_proof_owner(path)
+    if python_owner is not None and path.endswith(".py") and not _is_python_test_file(path):
+        return (SelectionTarget(python_owner),)
     if path in {
         "python/nexus/services/resource_items/capabilities.py",
         "apps/web/src/lib/resources/resourceCapabilities.ts",
@@ -483,25 +507,9 @@ def _promoted_targets(path: str) -> tuple[SelectionTarget, ...]:
 
 
 def _direct_test_target(path: str) -> SelectionTarget | None:
-    python_direct = (
-        ("python/tests/kernel/", Capability.KERNEL_PYTHON),
-        ("python/tests/service/", Capability.SERVICE),
-        ("python/tests/migrations/", Capability.MIGRATIONS),
-        ("python/tests/evals/", Capability.LLM_EVAL),
-        ("python/tests/audit/", Capability.AUDIT),
-        ("python/tests/contract/", Capability.PROVIDER_RUNTIME),
-        ("python/tests/llm_tools_contract/", Capability.LLM_TOOLS),
-        ("python/tests/release_artifact/", Capability.RELEASE_ARTIFACT),
-        ("python/tests/hosted/release/", Capability.PROVIDER_CERTIFICATION),
-        (
-            "python/tests/hosted/nightly/test_codex_personal_metadata.py",
-            Capability.CODEX_HOSTED,
-        ),
-        ("python/tests/hosted/nightly/", Capability.HOSTED),
-    )
-    for prefix, capability in python_direct:
-        if path.startswith(prefix) and path.endswith(".py"):
-            return SelectionTarget(capability, f"pytest:{path}")
+    python_owner = _python_proof_owner(path)
+    if python_owner is not None and _is_python_test_file(path):
+        return SelectionTarget(python_owner, f"pytest:{path}")
     if path.endswith((".unit.test.ts", ".unit.test.tsx")):
         return SelectionTarget(Capability.KERNEL_WEB, f"vitest:{path}")
     if path.endswith((".browser.test.ts", ".browser.test.tsx")):
@@ -517,6 +525,17 @@ def _direct_test_target(path: str) -> SelectionTarget | None:
     if path.startswith("node/ingest/test/") and path.endswith(".test.mjs"):
         return SelectionTarget(Capability.INGEST_NODE, f"node-test:{path}")
     return None
+
+
+def _python_proof_owner(path: str) -> Capability | None:
+    for prefix, capability in _PYTHON_PROOF_OWNERS:
+        if path.startswith(prefix):
+            return capability
+    return None
+
+
+def _is_python_test_file(path: str) -> bool:
+    return path.endswith(".py") and PurePosixPath(path).name.startswith("test_")
 
 
 def _conservative_capability(path: str) -> Capability:

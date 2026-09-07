@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import ctypes
 import errno
 import fcntl
 import ipaddress
 import json
+import logging
 import mmap
 import os
 import re
@@ -21,6 +23,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import MappingProxyType
 from typing import cast
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
@@ -46,6 +49,10 @@ from nexus.release_artifact import (
 from nexus_test_control.build import StandaloneBuild
 from nexus_test_control.model import Resource, ResourceKind
 from nexus_test_control.process import run_command, unblock_and_exec_command
+from nexus_test_control.provider_api_contract import (
+    PROVIDER_API_NAMES,
+    TEST_GENERATION_CONTINUATION_ENCRYPTION_KEY,
+)
 from nexus_test_control.runtime import (
     EndpointKind,
     LedgerEntry,
@@ -56,12 +63,17 @@ from nexus_test_control.runtime import (
     canonical_repo_root,
     claim_run,
     cleanup_candidates,
+    codex_generation_peer_identity,
+    codex_generation_peer_state_dir,
+    embedding_peer_identity,
+    embedding_peer_state_dir,
     forget_cleaned,
     initialize_runtime,
     local_docker_host,
     migration_database_name,
     process_resource_identity,
-    provider_fixture_identity,
+    provider_api_peer_identity,
+    provider_api_peer_state_dir,
     read_ledger,
     read_previous_runtime_for_cleanup,
     read_runtime,
@@ -85,6 +97,8 @@ from nexus_test_control.runtime import (
     template_lifecycle_lock,
     upgrade_previous_runtime,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 POSTGRES_IMAGE = (
     "pgvector/pgvector@sha256:bd12d6788a617f4147d5a2ae0b56d07921398adabfe5a033bd3f50c245df55a1"
@@ -117,9 +131,11 @@ _PORT_DEFAULTS = (
     25424,
     25425,
     18000,
+    18001,
     13000,
     19091,
     19092,
+    19093,
 )
 _EPHEMERAL_PORT_RANGE_PATH = Path("/proc/sys/net/ipv4/ip_local_port_range")
 _CONSERVATIVE_EPHEMERAL_PORT_RANGE = (32768, 65535)
@@ -131,54 +147,99 @@ _SAFE_CHILD_ENV = ("HOME", "LANG", "LC_ALL", "PATH", "TMPDIR", "TZ", "UV_CACHE_D
 _STATUS_KEYS = frozenset(
     {"API_URL", "ANON_KEY", "PUBLISHABLE_KEY", "SECRET_KEY", "SERVICE_ROLE_KEY"}
 )
-_CALLER_RESOURCE_ENV = frozenset(
+_PROCESS_IDENTITY_GRACE_SECONDS = 2
+_EMBEDDING_PEER_FILES = ("ca.pem", "server-key.pem", "requests.jsonl")
+_PROVIDER_API_PEER_FILES = ("ca.pem", "server-key.pem", "requests.jsonl")
+_CODEX_GENERATION_PEER_AUDIT = "requests.jsonl"
+_CODEX_GENERATION_PEER_SOCKET = "agent.sock"
+TEST_OPENAI_EMBEDDING_API_KEY = "nexus-test-fixture-openai-key"
+TEST_OPENAI_EMBEDDING_HOST = "api.openai.com"
+TEST_BRAVE_SEARCH_API_KEY = "nexus-test-fixture-brave-key"
+TEST_PROVIDER_API_CREDENTIALS: Mapping[str, str] = MappingProxyType(
     {
-        "AWS_ACCESS_KEY_ID",
-        "AWS_ENDPOINT_URL",
-        "AWS_ENDPOINT_URL_S3",
-        "AWS_PROFILE",
-        "AWS_SECRET_ACCESS_KEY",
-        "AWS_SESSION_TOKEN",
-        "CSP_MEDIA_ORIGINS",
-        "DATABASE_URL",
-        "DATABASE_URL_TEST",
-        "DATABASE_URL_TEST_MIGRATIONS",
-        "NEXT_PUBLIC_SUPABASE_URL",
-        "NEXUS_TEST_PROCESS_OWNER",
-        "NEXUS_TEST_PROCESS_OWNER_FD",
-        "NEXUS_TEST_STATIC_DNS",
-        "NEXUS_TEST_TLS_CA_CERT",
-        "NODE_OPTIONS",
-        "OUTBOUND_HTTP_PROXY_URL",
-        "PODCAST_INDEX_API_KEY",
-        "PODCAST_INDEX_API_SECRET",
-        "PODCAST_INDEX_BASE_URL",
-        "PGDATABASE",
-        "PGHOST",
-        "PGPASSFILE",
-        "PGPASSWORD",
-        "PGSERVICE",
-        "PGSERVICEFILE",
-        "PGUSER",
-        "R2_ENDPOINT_URL",
-        "R2_ACCESS_KEY_ID",
-        "R2_BUCKET",
-        "R2_REGION",
-        "R2_S3_API_ORIGIN",
-        "R2_SECRET_ACCESS_KEY",
-        "SERVICE_ROLE_KEY",
-        "SUPABASE_ANON_KEY",
-        "SUPABASE_ACCESS_TOKEN",
-        "SUPABASE_AUTH_ADMIN_KEY",
-        "SUPABASE_DATABASE_URL",
-        "SUPABASE_DB_URL",
-        "SUPABASE_ISSUER",
-        "SUPABASE_JWKS_URL",
-        "SUPABASE_SERVICE_KEY",
-        "SUPABASE_SERVICE_ROLE_KEY",
-        "SUPABASE_URL",
+        "OPENAI_GENERATION_API_KEY": "nexus-test-fixture-openai-generation-key",
+        "ANTHROPIC_GENERATION_API_KEY": "nexus-test-fixture-anthropic-generation-key",
+        "GEMINI_GENERATION_API_KEY": "nexus-test-fixture-gemini-generation-key",
+        "MOONSHOT_GENERATION_API_KEY": "nexus-test-fixture-moonshot-generation-key",
+        "OPENROUTER_GENERATION_API_KEY": "nexus-test-fixture-openrouter-generation-key",
+        "DEEPSEEK_GENERATION_API_KEY": "nexus-test-fixture-deepseek-generation-key",
+        "XAI_GENERATION_API_KEY": "nexus-test-fixture-xai-generation-key",
     }
 )
+TEST_FABLE_RETENTION_ACCEPTED_AT = "2026-08-31T00:00:00Z"
+_BASE_TEST_STATIC_DNS: dict[str, object] = {"www.nasa.gov": "93.184.216.34"}
+_CONTROLLER_OWNED_PROCESS_ENV = frozenset(
+    {
+        "NEXUS_AGENT_TOOLS_MCP_LISTEN",
+        "NEXUS_AGENT_TOOLS_MCP_ORIGIN",
+        "NEXUS_TEST_TLS_CA_CERTS",
+        "WORKER_LANE",
+    }
+)
+_CALLER_RESOURCE_ENV = (
+    frozenset(
+        {
+            "AWS_ACCESS_KEY_ID",
+            "AWS_ENDPOINT_URL",
+            "AWS_ENDPOINT_URL_S3",
+            "AWS_PROFILE",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+            "BRAVE_SEARCH_API_KEY",
+            "BRAVE_SEARCH_BASE_URL",
+            "CSP_MEDIA_ORIGINS",
+            "DATABASE_URL",
+            "DATABASE_URL_TEST",
+            "DATABASE_URL_TEST_MIGRATIONS",
+            "NEXT_PUBLIC_SUPABASE_URL",
+            "NEXUS_TEST_PROCESS_OWNER",
+            "NEXUS_TEST_PROCESS_OWNER_FD",
+            "NEXUS_TEST_STATIC_DNS",
+            "NEXUS_TEST_TLS_CA_CERT",
+            "NEXUS_TEST_TLS_CA_CERTS",
+            "NODE_OPTIONS",
+            "OUTBOUND_HTTP_PROXY_URL",
+            "PODCAST_INDEX_API_KEY",
+            "PODCAST_INDEX_API_SECRET",
+            "PODCAST_INDEX_BASE_URL",
+            "PGDATABASE",
+            "PGHOST",
+            "PGPASSFILE",
+            "PGPASSWORD",
+            "PGSERVICE",
+            "PGSERVICEFILE",
+            "PGUSER",
+            "R2_ENDPOINT_URL",
+            "R2_ACCESS_KEY_ID",
+            "R2_BUCKET",
+            "R2_REGION",
+            "R2_S3_API_ORIGIN",
+            "R2_SECRET_ACCESS_KEY",
+            "SERVICE_ROLE_KEY",
+            "SUPABASE_ANON_KEY",
+            "SUPABASE_ACCESS_TOKEN",
+            "SUPABASE_AUTH_ADMIN_KEY",
+            "SUPABASE_DATABASE_URL",
+            "SUPABASE_DB_URL",
+            "SUPABASE_ISSUER",
+            "SUPABASE_JWKS_URL",
+            "SUPABASE_SERVICE_KEY",
+            "SUPABASE_SERVICE_ROLE_KEY",
+            "SUPABASE_URL",
+        }
+    )
+    | _CONTROLLER_OWNED_PROCESS_ENV
+)
+_CALLER_GENERATION_ENV = frozenset(
+    {
+        "GENERATION_API_BASE_URLS",
+        "GENERATION_API_PROVIDERS",
+        "GENERATION_CONTINUATION_ENCRYPTION_KEY",
+        "NEXUS_FABLE_RETENTION_ACCEPTED_AT",
+        *TEST_PROVIDER_API_CREDENTIALS,
+    }
+)
+_PROVIDER_API_RUN_ENV = _CALLER_GENERATION_ENV | {"NEXUS_TEST_TLS_CA_CERTS"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -195,6 +256,85 @@ class TestRun:
     migration_database_url: str | None
     bucket: str
     supabase: SupabaseCredentials
+
+
+@dataclass(frozen=True, slots=True)
+class EmbeddingPeer:
+    state: Path
+    certificate: Path
+    key: Path
+    audit: Path
+    port: int
+
+    def client_environment(self) -> dict[str, str]:
+        static_dns = {
+            **_BASE_TEST_STATIC_DNS,
+            TEST_OPENAI_EMBEDDING_HOST: {"address": "127.0.0.1", "port": self.port},
+        }
+        # The pinned Brave provider accepts only an HTTPS origin, so this TLS peer
+        # also serves Brave web search at its loopback origin.
+        return {
+            "BRAVE_SEARCH_API_KEY": TEST_BRAVE_SEARCH_API_KEY,
+            "BRAVE_SEARCH_BASE_URL": f"https://127.0.0.1:{self.port}/res/v1",
+            "NEXUS_TEST_STATIC_DNS": json.dumps(
+                static_dns,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+            "NEXUS_TEST_TLS_CA_CERT": str(self.certificate),
+        }
+
+    def requests(self) -> tuple[dict[str, object], ...]:
+        rows = tuple(
+            json.loads(line) for line in self.audit.read_text(encoding="utf-8").splitlines() if line
+        )
+        return tuple(
+            row["payload"]
+            for row in rows
+            if isinstance(row, dict)
+            and row.get("path") == "/v1/embeddings"
+            and isinstance(row.get("payload"), dict)
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderApiPeer:
+    state: Path
+    certificate: Path
+    key: Path
+    audit: Path
+    port: int
+
+    @property
+    def origin(self) -> str:
+        return f"https://127.0.0.1:{self.port}"
+
+    def client_environment(self) -> dict[str, str]:
+        return {
+            "GENERATION_API_BASE_URLS": json.dumps(
+                {provider: self.origin for provider in PROVIDER_API_NAMES},
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+            "GENERATION_API_PROVIDERS": ",".join(PROVIDER_API_NAMES),
+            "GENERATION_CONTINUATION_ENCRYPTION_KEY": (TEST_GENERATION_CONTINUATION_ENCRYPTION_KEY),
+            "NEXUS_FABLE_RETENTION_ACCEPTED_AT": TEST_FABLE_RETENTION_ACCEPTED_AT,
+            "NEXUS_TEST_TLS_CA_CERTS": json.dumps(
+                [str(self.certificate)],
+                separators=(",", ":"),
+            ),
+            **TEST_PROVIDER_API_CREDENTIALS,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class CodexGenerationPeer:
+    state: Path
+    socket: Path
+    audit: Path
+
+    def client_environment(self) -> dict[str, str]:
+        return {"NEXUS_CODEX_AGENT_SOCKET": str(self.socket)}
 
 
 @dataclass(frozen=True, slots=True)
@@ -258,54 +398,6 @@ def required_platform_process_tools() -> tuple[Path, ...]:
     return (Path(_DARWIN_LSOF),) if sys.platform == "darwin" else ()
 
 
-@dataclass(frozen=True, slots=True)
-class OpenAIProviderFixture:
-    """Exact run-owned state for the canonical OpenAI protocol process."""
-
-    state: Path
-    certificate: Path
-    key: Path = field(repr=False)
-    audit: Path
-    port: int
-
-    def server_environment(self) -> dict[str, str]:
-        return {
-            "NEXUS_TEST_OPENAI_CERTIFICATE": str(self.certificate),
-            "NEXUS_TEST_OPENAI_KEY": str(self.key),
-            "NEXUS_TEST_OPENAI_AUDIT": str(self.audit),
-        }
-
-    def client_environment(self) -> dict[str, str]:
-        return {
-            "NEXUS_TEST_STATIC_DNS": json.dumps(
-                {
-                    "api.openai.com": {"address": "127.0.0.1", "port": self.port},
-                    "www.nasa.gov": "93.184.216.34",
-                },
-                separators=(",", ":"),
-                sort_keys=True,
-            ),
-            "NEXUS_TEST_TLS_CA_CERT": str(self.certificate),
-        }
-
-    def worker_environment(self) -> dict[str, str]:
-        """Compatibility name for production-worker protocol proofs."""
-        return self.client_environment()
-
-    def requests(self) -> tuple[dict[str, object], ...]:
-        rows = tuple(
-            json.loads(line) for line in self.audit.read_text(encoding="utf-8").splitlines() if line
-        )
-        payloads = tuple(
-            row["payload"]
-            for row in rows
-            if isinstance(row, dict)
-            and row.get("path") == "/v1/embeddings"
-            and isinstance(row.get("payload"), dict)
-        )
-        return cast(tuple[dict[str, object], ...], payloads)
-
-
 def run_environment(
     repo_root: Path,
     environment: Mapping[str, str],
@@ -348,13 +440,18 @@ def run_environment(
         "CSP_MEDIA_ORIGINS": expected_external_url,
         "DATABASE_URL": expected_database_url,
         "FASTAPI_BASE_URL": runtime_endpoint(root, environment, EndpointKind.API),
+        "GENERATION_API_PROVIDERS": "",
         "NEXT_PUBLIC_SUPABASE_ANON_KEY": run.supabase.anon_key,
         "NEXT_PUBLIC_SUPABASE_URL": expected_supabase_url,
         "NEXUS_EXTENSION_REDIRECT_ORIGINS": f"https://{TEST_EXTENSION_ID}.chromiumapp.org",
         "NEXUS_ENV": "test",
         "NEXUS_INTERNAL_SECRET": "nexus-test-internal-secret",
         "NEXUS_RUNTIME_IDENTITY_FILE": str(_runtime_identity_path(root)),
-        "NEXUS_TEST_STATIC_DNS": '{"www.nasa.gov":"93.184.216.34"}',
+        "NEXUS_TEST_STATIC_DNS": json.dumps(
+            _BASE_TEST_STATIC_DNS,
+            separators=(",", ":"),
+            sort_keys=True,
+        ),
         "NEXUS_TEST_RUN_ID": run.run_id,
         "OUTBOUND_HTTP_PROXY_URL": expected_external_url,
         "PARSER_TEMP_ROOT": str(root / "test-results" / "runs" / run.run_id / "parser-tmp"),
@@ -362,7 +459,7 @@ def run_environment(
         "PODCAST_INDEX_API_KEY": "nexus-test-fixture-podcast-key",
         "PODCAST_INDEX_API_SECRET": "nexus-test-fixture-podcast-secret",
         "PODCAST_INDEX_BASE_URL": expected_external_url,
-        "OPENAI_API_KEY": "nexus-test-fixture-openai-key",
+        "OPENAI_API_KEY": TEST_OPENAI_EMBEDDING_API_KEY,
         "R2_ACCESS_KEY_ID": MINIO_ACCESS_KEY,
         "R2_BUCKET": expected_bucket,
         "R2_REGION": MINIO_REGION,
@@ -376,6 +473,26 @@ def run_environment(
     }
     if expected_migration_url is not None:
         values["NEXUS_MIGRATION_DATABASE_URL"] = expected_migration_url
+    provider_resource = Resource(
+        ResourceKind.PROVIDER_API_PEER,
+        provider_api_peer_identity(run.run_id),
+    )
+    provider_entries = [entry for entry in ledger.entries if entry.resource == provider_resource]
+    if provider_entries:
+        if len(provider_entries) != 1 or provider_entries[0].phase is not ResourcePhase.CREATED:
+            raise RuntimeContractError(
+                "provider API configuration requires its exact created peer owner"
+            )
+        paths = _exact_provider_api_peer_paths(root, run.run_id)
+        values.update(
+            ProviderApiPeer(
+                provider_api_peer_state_dir(root, run.run_id),
+                paths["ca.pem"],
+                paths["server-key.pem"],
+                paths["requests.jsonl"],
+                read_runtime(root).ports.provider_api,
+            ).client_environment()
+        )
     return values
 
 
@@ -581,6 +698,7 @@ def test_environment(caller_environment: Mapping[str, str]) -> dict[str, str]:
     if nexus_environment not in {None, "", "test"}:
         raise RuntimeContractError("test control rejects a non-test NEXUS_ENV")
     supplied = sorted(key for key in _CALLER_RESOURCE_ENV if caller_environment.get(key))
+    supplied.extend(sorted(key for key in _CALLER_GENERATION_ENV if key in caller_environment))
     if supplied:
         raise RuntimeContractError(
             "test control does not accept caller resource configuration: " + ", ".join(supplied)
@@ -910,13 +1028,13 @@ def invite_supabase_user(
     return InvitedTestUser(email)
 
 
-def grant_scenario_ai_entitlement(
+def grant_scenario_paid_entitlement(
     repo_root: Path,
     environment: Mapping[str, str],
     run: TestRun,
     user: TestUser,
 ) -> None:
-    """Bootstrap one scenario user and grant deterministic chat capacity."""
+    """Bootstrap one scenario user and grant deterministic non-generation paid access."""
     from sqlalchemy import create_engine
     from sqlalchemy.orm import Session
 
@@ -946,8 +1064,6 @@ def grant_scenario_ai_entitlement(
                 db,
                 user_id=user_id,
                 plan_tier="ai_pro",
-                platform_token_quota_mode="unlimited",
-                platform_token_limit_monthly=None,
                 transcription_quota_mode="unlimited",
                 transcription_minutes_limit_monthly=None,
                 expires_at=None,
@@ -1044,161 +1160,30 @@ def cgroup_delegate_failure() -> str | None:
     return None
 
 
-def start_python_process(
-    repo_root: Path,
-    environment: Mapping[str, str],
-    run: TestRun,
-    role: str,
+def _write_loopback_peer_certificate(
+    certificate: Path,
+    key_path: Path,
     *,
-    overrides: Mapping[str, str] | None = None,
-) -> StartedProcess:
-    require_test_environment(environment)
-    root = canonical_repo_root(repo_root)
-    if role not in {
-        "external",
-        "provider-openai",
-        "api",
-        "worker-interactive",
-        "worker-background",
-    }:
-        raise RuntimeContractError(f"Python process role is not owned: {role}")
-    runtime = read_runtime(root)
-    owned_environment = run_environment(root, environment, run)
-    if role == "external":
-        _require_loopback_port_available(runtime.ports.external, role)
-        command = (
-            str(root / "python/.venv/bin/python"),
-            str(root / "python/tests/testkit/external_server.py"),
-            "--port",
-            str(runtime.ports.external),
-            "--fixture-root",
-            str(root / "python/tests/fixtures/real_media"),
-        )
-    elif role == "provider-openai":
-        values = _owned_provider_fixture_paths(root, run.run_id, overrides)
-        _require_loopback_port_available(runtime.ports.provider_openai, role)
-        command = (
-            str(root / "python/.venv/bin/python"),
-            str(root / "python/tests/testkit/openai_embedding_server.py"),
-            "--port",
-            str(runtime.ports.provider_openai),
-            "--certificate",
-            str(values["NEXUS_TEST_OPENAI_CERTIFICATE"]),
-            "--key",
-            str(values["NEXUS_TEST_OPENAI_KEY"]),
-            "--audit",
-            str(values["NEXUS_TEST_OPENAI_AUDIT"]),
-        )
-    elif role == "api":
-        _require_loopback_port_available(runtime.ports.api, role)
-        command = (
-            str(root / "python/.venv/bin/python"),
-            "-m",
-            "uvicorn",
-            "apps.api.main:app",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(runtime.ports.api),
-        )
-    elif role in {"worker-interactive", "worker-background"}:
-        command = (
-            str(root / "python/.venv/bin/python"),
-            "-m",
-            "apps.worker.main",
-        )
-        if role == "worker-background":
-            systemd_run = _require_cgroup_delegate()
-            command = (
-                systemd_run,
-                "--user",
-                "--scope",
-                "--quiet",
-                "--collect",
-                "-p",
-                f"MemoryMax={BACKGROUND_WORKER_MEMORY_LIMIT_BYTES}",
-                "-p",
-                "MemorySwapMax=0",
-                "-p",
-                "OOMPolicy=continue",
-                *command,
-            )
-    else:
-        raise RuntimeContractError(f"Python process role is not owned: {role}")
-    process_environment = {
-        **owned_environment,
-        "NEXUS_TEST_DENY_EXTERNAL_NETWORK": "1",
-        "NODE_OPTIONS": f"--import={root / 'python/tests/testkit/node-network-guard.mjs'}",
-        "PYTHONPATH": f"{root / 'python' / 'tests' / 'testkit'}:{root / 'python'}:{root}",
-        **({"WORKER_LANE": role.removeprefix("worker-")} if role.startswith("worker-") else {}),
-        **(user_systemd_environment() if role == "worker-background" else {}),
-        **(overrides or {}),
-    }
-    return _start_owned_process(
-        root,
-        environment,
-        run.run_id,
-        role,
-        command,
-        cwd=root,
-        process_environment=process_environment,
-    )
-
-
-def prepare_openai_provider_fixture(
-    repo_root: Path,
-    environment: Mapping[str, str],
-    run: TestRun,
-) -> OpenAIProviderFixture:
-    """Create the exact canonical-provider state owned by one persisted run."""
-    require_test_environment(environment)
-    root = canonical_repo_root(repo_root)
-    runtime = read_runtime(root)
-    if run.run_id not in runtime.owned_run_ids:
-        raise RuntimeContractError("OpenAI provider fixture requires an owned run")
-    resource = Resource(ResourceKind.PROVIDER_FIXTURE, provider_fixture_identity(run.run_id))
-    state = root / resource.identity
-    record_planned(root, environment, run.run_id, resource)
-    try:
-        state.mkdir(parents=False, exist_ok=False)
-    except FileExistsError as error:
-        forget_cleaned(root, environment, run.run_id, resource)
-        raise RuntimeContractError("OpenAI provider fixture already exists for this run") from error
-    certificate = state / "ca.pem"
-    key_path = state / "server-key.pem"
-    audit = state / "requests.jsonl"
-    try:
-        audit.touch(mode=0o600, exist_ok=False)
-        _write_openai_test_certificate(certificate, key_path)
-        record_created(root, environment, run.run_id, resource)
-    except Exception:
-        raise
-    return OpenAIProviderFixture(
-        state=state,
-        certificate=certificate,
-        key=key_path,
-        audit=audit,
-        port=runtime.ports.provider_openai,
-    )
-
-
-def _write_openai_test_certificate(certificate: Path, key_path: Path) -> None:
-    host = "api.openai.com"
+    common_name: str,
+    dns_names: Sequence[str] = (),
+) -> None:
     key = rsa.generate_private_key(public_exponent=65_537, key_size=2048)
-    now = datetime.now(UTC)
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, host)])
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
     value = (
         x509.CertificateBuilder()
         .subject_name(name)
         .issuer_name(name)
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
-        .not_valid_before(now - timedelta(minutes=1))
-        .not_valid_after(now + timedelta(days=1))
+        .not_valid_before(datetime.now(UTC) - timedelta(minutes=1))
+        .not_valid_after(datetime.now(UTC) + timedelta(days=1))
         .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
         .add_extension(
             x509.SubjectAlternativeName(
-                [x509.DNSName(host), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]
+                [
+                    *(x509.DNSName(value) for value in dns_names),
+                    x509.IPAddress(ipaddress.ip_address("127.0.0.1")),
+                ]
             ),
             critical=False,
         )
@@ -1219,70 +1204,563 @@ def _write_openai_test_certificate(certificate: Path, key_path: Path) -> None:
     key_path.chmod(0o600)
 
 
-def _clean_openai_provider_fixture(root: Path, identity: str) -> None:
-    state = root / identity
-    if not state.exists():
-        return
-    if state.is_symlink() or not state.is_dir():
-        raise RuntimeContractError("OpenAI provider fixture state is not an owned directory")
-    expected = {"ca.pem", "server-key.pem", "requests.jsonl"}
-    entries = {entry.name for entry in state.iterdir()}
-    if not entries.issubset(expected) or any(not (state / name).is_file() for name in entries):
-        raise RuntimeContractError("OpenAI provider fixture state has unexpected contents")
-    shutil.rmtree(state)
+def _write_embedding_peer_certificate(certificate: Path, key_path: Path) -> None:
+    _write_loopback_peer_certificate(
+        certificate,
+        key_path,
+        common_name=TEST_OPENAI_EMBEDDING_HOST,
+        dns_names=(TEST_OPENAI_EMBEDDING_HOST,),
+    )
 
 
-def release_openai_provider_fixture(
+def prepare_embedding_peer_state(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    run: TestRun,
+) -> Path:
+    """Plan and create the exact recoverable state directory for one embedding peer."""
+
+    require_test_environment(environment)
+    root = canonical_repo_root(repo_root)
+    read_ledger(root, run.run_id)
+    resource = Resource(ResourceKind.EMBEDDING_PEER, embedding_peer_identity(run.run_id))
+    record_planned(root, environment, run.run_id, resource)
+    state = embedding_peer_state_dir(root, run.run_id)
+    try:
+        state.mkdir(parents=False, exist_ok=False)
+    except FileExistsError as exc:
+        raise RuntimeContractError("embedding-peer state already exists for this run") from exc
+    return state
+
+
+def materialize_embedding_peer(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    run: TestRun,
+) -> EmbeddingPeer:
+    """Create the exact run-owned TLS identity and audit state for embeddings."""
+
+    require_test_environment(environment)
+    root = canonical_repo_root(repo_root)
+    runtime = read_runtime(root)
+    state = prepare_embedding_peer_state(root, environment, run)
+    certificate = state / "ca.pem"
+    key = state / "server-key.pem"
+    audit = state / "requests.jsonl"
+    audit.touch(mode=0o600, exist_ok=False)
+    _write_embedding_peer_certificate(certificate, key)
+    finish_embedding_peer_state(root, environment, run.run_id)
+    return EmbeddingPeer(state, certificate, key, audit, runtime.ports.provider_openai)
+
+
+def finish_embedding_peer_state(
     repo_root: Path,
     environment: Mapping[str, str],
     run_id: str,
 ) -> None:
-    """Release an idle exact provider fixture between workflow capabilities."""
+    """Attest the exact peer files before publishing CREATED ownership."""
+
+    require_test_environment(environment)
+    root = canonical_repo_root(repo_root)
+    _exact_embedding_peer_paths(root, run_id)
+    record_created(
+        root,
+        environment,
+        run_id,
+        Resource(ResourceKind.EMBEDDING_PEER, embedding_peer_identity(run_id)),
+    )
+
+
+def release_embedding_peer_state(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    run_id: str,
+) -> None:
+    """Delete an idle exact peer directory and release its persisted ownership."""
+
     require_test_environment(environment)
     root = canonical_repo_root(repo_root)
     with run_lifecycle_lock(root, environment, run_id):
         ledger = read_ledger(root, run_id)
         process = Resource(
-            ResourceKind.PROCESS, process_resource_identity(run_id, "provider-openai")
+            ResourceKind.PROCESS,
+            process_resource_identity(run_id, "provider-openai"),
         )
         if any(entry.resource == process for entry in ledger.entries):
             raise RuntimeContractError(
-                "OpenAI provider fixture cannot release while its process exists"
+                "embedding-peer state cannot release while its process exists"
             )
-        resource = Resource(ResourceKind.PROVIDER_FIXTURE, provider_fixture_identity(run_id))
+        resource = Resource(ResourceKind.EMBEDDING_PEER, embedding_peer_identity(run_id))
         matches = [entry for entry in ledger.entries if entry.resource == resource]
         if len(matches) != 1:
-            raise RuntimeContractError("OpenAI provider fixture is not uniquely owned by this run")
-        _clean_openai_provider_fixture(root, resource.identity)
+            raise RuntimeContractError("embedding-peer state is not uniquely owned by this run")
+        _delete_embedding_peer_state(root, run_id)
         forget_cleaned(root, environment, run_id, resource)
 
 
-def _owned_provider_fixture_paths(
+def _exact_embedding_peer_paths(root: Path, run_id: str) -> dict[str, Path]:
+    state = embedding_peer_state_dir(root, run_id)
+    if state.is_symlink() or not state.is_dir() or state.resolve(strict=True) != state:
+        raise RuntimeContractError("embedding-peer state is not its exact owned directory")
+    entries = {entry.name: entry for entry in state.iterdir()}
+    expected_names = set(_EMBEDDING_PEER_FILES)
+    if set(entries) != expected_names:
+        raise RuntimeContractError("embedding-peer state does not contain its exact files")
+    if any(
+        entry.is_symlink() or not entry.is_file() or entry.resolve(strict=True) != entry
+        for entry in entries.values()
+    ):
+        raise RuntimeContractError("embedding-peer state contains a non-owned file")
+    return {file_name: entries[file_name] for file_name in _EMBEDDING_PEER_FILES}
+
+
+def _owned_embedding_peer_paths(
     root: Path,
     run_id: str,
-    overrides: Mapping[str, str] | None,
 ) -> dict[str, Path]:
-    names = {
-        "NEXUS_TEST_OPENAI_CERTIFICATE",
-        "NEXUS_TEST_OPENAI_KEY",
-        "NEXUS_TEST_OPENAI_AUDIT",
+    resource = Resource(ResourceKind.EMBEDDING_PEER, embedding_peer_identity(run_id))
+    matches = [entry for entry in read_ledger(root, run_id).entries if entry.resource == resource]
+    if len(matches) != 1 or matches[0].phase is not ResourcePhase.CREATED:
+        raise RuntimeContractError("embedding peer requires its exact created state owner")
+    return _exact_embedding_peer_paths(root, run_id)
+
+
+def _delete_embedding_peer_state(root: Path, run_id: str) -> None:
+    state = embedding_peer_state_dir(root, run_id)
+    if not state.exists() and not state.is_symlink():
+        return
+    if state.is_symlink() or not state.is_dir() or state.resolve(strict=True) != state:
+        raise RuntimeContractError("embedding-peer state is not its exact owned directory")
+    entries = tuple(state.iterdir())
+    expected_names = set(_EMBEDDING_PEER_FILES)
+    if {entry.name for entry in entries} - expected_names or any(
+        entry.is_symlink() or not entry.is_file() or entry.resolve(strict=True) != entry
+        for entry in entries
+    ):
+        raise RuntimeContractError("embedding-peer state contains unexpected contents")
+    for entry in entries:
+        entry.unlink()
+    state.rmdir()
+
+
+def prepare_provider_api_peer_state(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    run: TestRun,
+) -> Path:
+    """Plan and create the recoverable state directory for one provider API peer."""
+
+    require_test_environment(environment)
+    root = canonical_repo_root(repo_root)
+    read_ledger(root, run.run_id)
+    resource = Resource(
+        ResourceKind.PROVIDER_API_PEER,
+        provider_api_peer_identity(run.run_id),
+    )
+    record_planned(root, environment, run.run_id, resource)
+    state = provider_api_peer_state_dir(root, run.run_id)
+    try:
+        state.mkdir(parents=False, exist_ok=False)
+    except FileExistsError as exc:
+        raise RuntimeContractError("provider API peer state already exists for this run") from exc
+    return state
+
+
+def materialize_provider_api_peer(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    run: TestRun,
+) -> ProviderApiPeer:
+    """Create the exact run-owned TLS identity and audit state for provider APIs."""
+
+    require_test_environment(environment)
+    root = canonical_repo_root(repo_root)
+    runtime = read_runtime(root)
+    state = prepare_provider_api_peer_state(root, environment, run)
+    certificate = state / "ca.pem"
+    key = state / "server-key.pem"
+    audit = state / "requests.jsonl"
+    audit.touch(mode=0o600, exist_ok=False)
+    _write_loopback_peer_certificate(
+        certificate,
+        key,
+        common_name="nexus-provider-api-peer",
+    )
+    finish_provider_api_peer_state(root, environment, run.run_id)
+    return ProviderApiPeer(state, certificate, key, audit, runtime.ports.provider_api)
+
+
+def finish_provider_api_peer_state(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    run_id: str,
+) -> None:
+    """Attest the exact provider API peer files before publishing CREATED ownership."""
+
+    require_test_environment(environment)
+    root = canonical_repo_root(repo_root)
+    _exact_provider_api_peer_paths(root, run_id)
+    record_created(
+        root,
+        environment,
+        run_id,
+        Resource(ResourceKind.PROVIDER_API_PEER, provider_api_peer_identity(run_id)),
+    )
+
+
+def release_provider_api_peer_state(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    run_id: str,
+) -> None:
+    """Delete an idle exact provider API peer and release persisted ownership."""
+
+    require_test_environment(environment)
+    root = canonical_repo_root(repo_root)
+    with run_lifecycle_lock(root, environment, run_id):
+        ledger = read_ledger(root, run_id)
+        process = Resource(
+            ResourceKind.PROCESS,
+            process_resource_identity(run_id, "provider-api-peer"),
+        )
+        if any(entry.resource == process for entry in ledger.entries):
+            raise RuntimeContractError(
+                "provider API peer state cannot release while its process exists"
+            )
+        resource = Resource(
+            ResourceKind.PROVIDER_API_PEER,
+            provider_api_peer_identity(run_id),
+        )
+        matches = [entry for entry in ledger.entries if entry.resource == resource]
+        if len(matches) != 1:
+            raise RuntimeContractError("provider API peer state is not uniquely owned by this run")
+        _delete_provider_api_peer_state(root, run_id)
+        forget_cleaned(root, environment, run_id, resource)
+
+
+def _exact_provider_api_peer_paths(root: Path, run_id: str) -> dict[str, Path]:
+    state = provider_api_peer_state_dir(root, run_id)
+    if state.is_symlink() or not state.is_dir() or state.resolve(strict=True) != state:
+        raise RuntimeContractError("provider API peer state is not its exact owned directory")
+    entries = {entry.name: entry for entry in state.iterdir()}
+    expected_names = set(_PROVIDER_API_PEER_FILES)
+    if set(entries) != expected_names:
+        raise RuntimeContractError("provider API peer state does not contain its exact files")
+    if any(
+        entry.is_symlink() or not entry.is_file() or entry.resolve(strict=True) != entry
+        for entry in entries.values()
+    ):
+        raise RuntimeContractError("provider API peer state contains a non-owned file")
+    return {file_name: entries[file_name] for file_name in _PROVIDER_API_PEER_FILES}
+
+
+def _owned_provider_api_peer_paths(root: Path, run_id: str) -> dict[str, Path]:
+    resource = Resource(
+        ResourceKind.PROVIDER_API_PEER,
+        provider_api_peer_identity(run_id),
+    )
+    matches = [entry for entry in read_ledger(root, run_id).entries if entry.resource == resource]
+    if len(matches) != 1 or matches[0].phase is not ResourcePhase.CREATED:
+        raise RuntimeContractError("provider API peer requires its exact created state owner")
+    return _exact_provider_api_peer_paths(root, run_id)
+
+
+def _delete_provider_api_peer_state(root: Path, run_id: str) -> None:
+    state = provider_api_peer_state_dir(root, run_id)
+    if not state.exists() and not state.is_symlink():
+        return
+    if state.is_symlink() or not state.is_dir() or state.resolve(strict=True) != state:
+        raise RuntimeContractError("provider API peer state is not its exact owned directory")
+    entries = tuple(state.iterdir())
+    expected_names = set(_PROVIDER_API_PEER_FILES)
+    if {entry.name for entry in entries} - expected_names or any(
+        entry.is_symlink() or not entry.is_file() or entry.resolve(strict=True) != entry
+        for entry in entries
+    ):
+        raise RuntimeContractError("provider API peer state contains unexpected contents")
+    for entry in entries:
+        entry.unlink()
+    state.rmdir()
+
+
+def materialize_codex_generation_peer(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    run: TestRun,
+) -> CodexGenerationPeer:
+    """Create one recoverable, secret-free Codex v2 test-peer state owner."""
+
+    require_test_environment(environment)
+    root = canonical_repo_root(repo_root)
+    read_ledger(root, run.run_id)
+    resource = Resource(
+        ResourceKind.CODEX_GENERATION_PEER,
+        codex_generation_peer_identity(run.run_id),
+    )
+    record_planned(root, environment, run.run_id, resource)
+    state = codex_generation_peer_state_dir(root, run.run_id)
+    try:
+        state.mkdir(parents=False, exist_ok=False)
+    except FileExistsError as exc:
+        raise RuntimeContractError(
+            "Codex generation peer state already exists for this run"
+        ) from exc
+    audit = state / _CODEX_GENERATION_PEER_AUDIT
+    audit.touch(mode=0o600, exist_ok=False)
+    socket_path = state / _CODEX_GENERATION_PEER_SOCKET
+    _exact_codex_generation_peer_paths(root, run.run_id, require_socket=False)
+    record_created(root, environment, run.run_id, resource)
+    return CodexGenerationPeer(state, socket_path, audit)
+
+
+def _exact_codex_generation_peer_paths(
+    root: Path,
+    run_id: str,
+    *,
+    require_socket: bool | None,
+) -> dict[str, Path]:
+    state = codex_generation_peer_state_dir(root, run_id)
+    if state.is_symlink() or not state.is_dir() or state.resolve(strict=True) != state:
+        raise RuntimeContractError("Codex generation peer state is not its exact owned directory")
+    entries = {entry.name: entry for entry in state.iterdir()}
+    allowed_names = {_CODEX_GENERATION_PEER_AUDIT, _CODEX_GENERATION_PEER_SOCKET}
+    if set(entries) - allowed_names:
+        raise RuntimeContractError("Codex generation peer state contains unexpected files")
+    audit = entries.get(_CODEX_GENERATION_PEER_AUDIT)
+    if (
+        audit is None
+        or audit.is_symlink()
+        or not audit.is_file()
+        or audit.resolve(strict=True) != audit
+    ):
+        raise RuntimeContractError("Codex generation peer audit is not its exact owned file")
+    socket_path = entries.get(_CODEX_GENERATION_PEER_SOCKET)
+    if socket_path is None:
+        if require_socket:
+            raise RuntimeContractError("Codex generation peer socket is absent")
+    elif (
+        socket_path.is_symlink()
+        or not socket_path.is_socket()
+        or socket_path.resolve(strict=True) != socket_path
+    ):
+        raise RuntimeContractError("Codex generation peer socket is not its exact owned socket")
+    elif require_socket is False:
+        raise RuntimeContractError("Codex generation peer socket exists before process startup")
+    return {
+        _CODEX_GENERATION_PEER_AUDIT: audit,
+        _CODEX_GENERATION_PEER_SOCKET: state / _CODEX_GENERATION_PEER_SOCKET,
     }
-    if overrides is None or not names.issubset(overrides):
-        raise RuntimeContractError("OpenAI provider process requires its owned fixture paths")
-    owned_root = (runtime_state_dir(root) / "runs" / run_id).resolve(strict=True)
-    fixture_resource = Resource(ResourceKind.PROVIDER_FIXTURE, provider_fixture_identity(run_id))
-    fixture_entries = [
-        entry for entry in read_ledger(root, run_id).entries if entry.resource == fixture_resource
-    ]
-    if len(fixture_entries) != 1 or fixture_entries[0].phase is not ResourcePhase.CREATED:
-        raise RuntimeContractError("OpenAI provider process requires its created fixture owner")
-    values: dict[str, Path] = {}
-    for name in names:
-        path = Path(overrides[name]).resolve(strict=True)
-        if owned_root not in path.parents or not path.is_file():
-            raise RuntimeContractError("OpenAI provider fixture path is outside the exact run")
-        values[name] = path
-    return values
+
+
+def _owned_codex_generation_peer_paths(
+    root: Path,
+    run_id: str,
+    *,
+    require_socket: bool | None,
+) -> dict[str, Path]:
+    resource = Resource(
+        ResourceKind.CODEX_GENERATION_PEER,
+        codex_generation_peer_identity(run_id),
+    )
+    matches = [entry for entry in read_ledger(root, run_id).entries if entry.resource == resource]
+    if len(matches) != 1 or matches[0].phase is not ResourcePhase.CREATED:
+        raise RuntimeContractError("Codex generation peer requires its exact created state owner")
+    return _exact_codex_generation_peer_paths(root, run_id, require_socket=require_socket)
+
+
+def _delete_codex_generation_peer_state(root: Path, run_id: str) -> None:
+    state = codex_generation_peer_state_dir(root, run_id)
+    if not state.exists() and not state.is_symlink():
+        return
+    if state.is_symlink() or not state.is_dir() or state.resolve(strict=True) != state:
+        raise RuntimeContractError("Codex generation peer state is not its exact owned directory")
+    entries = tuple(state.iterdir())
+    allowed_names = {_CODEX_GENERATION_PEER_AUDIT, _CODEX_GENERATION_PEER_SOCKET}
+    if {entry.name for entry in entries} - allowed_names:
+        raise RuntimeContractError("Codex generation peer state contains unexpected files")
+    for entry in entries:
+        if entry.is_symlink() or entry.resolve(strict=True) != entry:
+            raise RuntimeContractError("Codex generation peer state contains a substituted path")
+        if entry.name == _CODEX_GENERATION_PEER_AUDIT and not entry.is_file():
+            raise RuntimeContractError("Codex generation peer audit is not a file")
+        if entry.name == _CODEX_GENERATION_PEER_SOCKET and not entry.is_socket():
+            raise RuntimeContractError("Codex generation peer socket is not a Unix socket")
+    for entry in entries:
+        entry.unlink()
+    state.rmdir()
+
+
+def start_python_process(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    run: TestRun,
+    role: str,
+    *,
+    overrides: Mapping[str, str] | None = None,
+) -> StartedProcess:
+    require_test_environment(environment)
+    root = canonical_repo_root(repo_root)
+    if role not in {
+        "external",
+        "provider-openai",
+        "provider-api-peer",
+        "codex-generation-peer",
+        "api",
+        "worker-interactive",
+        "worker-background",
+    }:
+        raise RuntimeContractError(f"Python process role is not owned: {role}")
+    runtime = read_runtime(root)
+    supplied_topology_keys = (_CONTROLLER_OWNED_PROCESS_ENV | _CALLER_GENERATION_ENV).intersection(
+        overrides or {}
+    )
+    if supplied_topology_keys:
+        raise RuntimeContractError(
+            "Python process runtime topology is controller-owned: "
+            + ", ".join(sorted(supplied_topology_keys))
+        )
+    if role == "provider-openai" and overrides:
+        raise RuntimeContractError("embedding peer process environment is controller-owned")
+    if role == "provider-api-peer" and overrides:
+        raise RuntimeContractError("provider API peer environment is controller-owned")
+    if role == "codex-generation-peer" and overrides:
+        raise RuntimeContractError("Codex generation peer environment is controller-owned")
+    owned_role_environment: dict[str, str] = {}
+    owned_environment = (
+        {}
+        if role
+        in {
+            "external",
+            "provider-openai",
+            "provider-api-peer",
+            "codex-generation-peer",
+        }
+        else run_environment(root, environment, run)
+    )
+    if role == "external":
+        _require_loopback_port_available(runtime.ports.external, role)
+        command = (
+            str(root / "python/.venv/bin/python"),
+            str(root / "python/tests/testkit/external_server.py"),
+            "--port",
+            str(runtime.ports.external),
+            "--fixture-root",
+            str(root / "python/tests/fixtures/real_media"),
+        )
+    elif role == "provider-openai":
+        paths = _owned_embedding_peer_paths(root, run.run_id)
+        _require_loopback_port_available(runtime.ports.provider_openai, role)
+        command = (
+            str(root / "python/.venv/bin/python"),
+            str(root / "python/tests/testkit/openai_embedding_server.py"),
+            "--port",
+            str(runtime.ports.provider_openai),
+            "--certificate",
+            str(paths["ca.pem"]),
+            "--key",
+            str(paths["server-key.pem"]),
+            "--audit",
+            str(paths["requests.jsonl"]),
+        )
+    elif role == "provider-api-peer":
+        paths = _owned_provider_api_peer_paths(root, run.run_id)
+        _require_loopback_port_available(runtime.ports.provider_api, role)
+        command = (
+            str(root / "python/.venv/bin/python"),
+            str(root / "python/tests/testkit/provider_api_server.py"),
+            "--port",
+            str(runtime.ports.provider_api),
+            "--certificate",
+            str(paths["ca.pem"]),
+            "--key",
+            str(paths["server-key.pem"]),
+            "--audit",
+            str(paths["requests.jsonl"]),
+        )
+    elif role == "codex-generation-peer":
+        paths = _owned_codex_generation_peer_paths(root, run.run_id, require_socket=False)
+        command = (
+            str(root / "python/.venv/bin/python"),
+            str(root / "python/tests/testkit/codex_generation_server.py"),
+            "--socket",
+            str(paths[_CODEX_GENERATION_PEER_SOCKET]),
+            "--audit",
+            str(paths[_CODEX_GENERATION_PEER_AUDIT]),
+        )
+    elif role == "api":
+        _require_loopback_port_available(runtime.ports.api, role)
+        command = (
+            str(root / "python/.venv/bin/python"),
+            "-m",
+            "uvicorn",
+            "apps.api.main:app",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(runtime.ports.api),
+        )
+    elif role in {"worker-interactive", "worker-background"}:
+        command = (
+            str(root / "python/.venv/bin/python"),
+            "-m",
+            "apps.worker.main",
+        )
+        if role == "worker-interactive":
+            _require_loopback_port_available(
+                runtime.ports.agent_tools_mcp,
+                "worker-interactive MCP",
+            )
+            mcp_endpoint = runtime_endpoint(root, environment, EndpointKind.AGENT_TOOLS_MCP)
+            owned_role_environment = {
+                "NEXUS_AGENT_TOOLS_MCP_LISTEN": mcp_endpoint.removeprefix("http://"),
+                "NEXUS_AGENT_TOOLS_MCP_ORIGIN": (f"{mcp_endpoint}/internal/agent-tools/mcp"),
+            }
+        else:
+            systemd_run = _require_cgroup_delegate()
+            command = (
+                systemd_run,
+                "--user",
+                "--scope",
+                "--quiet",
+                "--collect",
+                "-p",
+                f"MemoryMax={BACKGROUND_WORKER_MEMORY_LIMIT_BYTES}",
+                "-p",
+                "MemorySwapMax=0",
+                "-p",
+                "OOMPolicy=continue",
+                *command,
+            )
+    else:
+        raise RuntimeContractError(f"Python process role is not owned: {role}")
+    shared_process_environment = {
+        "NEXUS_ENV": "test",
+        "NEXUS_TEST_DENY_EXTERNAL_NETWORK": "1",
+        "NEXUS_TEST_RUN_ID": run.run_id,
+        "PYTHONPATH": f"{root / 'python' / 'tests' / 'testkit'}:{root / 'python'}:{root}",
+    }
+    process_environment = (
+        shared_process_environment
+        if role == "codex-generation-peer"
+        else {
+            **owned_environment,
+            **shared_process_environment,
+            "NODE_OPTIONS": f"--import={root / 'python/tests/testkit/node-network-guard.mjs'}",
+            **(overrides or {}),
+            **({"WORKER_LANE": role.removeprefix("worker-")} if role.startswith("worker-") else {}),
+            **(user_systemd_environment() if role == "worker-background" else {}),
+            **owned_role_environment,
+        }
+    )
+    return _start_owned_process(
+        root,
+        environment,
+        run.run_id,
+        role,
+        command,
+        cwd=root,
+        process_environment=process_environment,
+    )
 
 
 def start_web_process(
@@ -1302,7 +1780,11 @@ def start_web_process(
     if expected_builds not in artifact_root.parents or artifact_root not in server.parents:
         raise RuntimeContractError("web process requires a runtime-owned standalone artifact")
     runtime = read_runtime(root)
-    owned_environment = run_environment(root, environment, run)
+    owned_environment = {
+        key: value
+        for key, value in run_environment(root, environment, run).items()
+        if key not in _PROVIDER_API_RUN_ENV
+    }
     try:
         source_sha = load_runtime_identity(_runtime_identity_path(root)).source_sha
     except BackendArtifactDefect as exc:
@@ -1536,25 +2018,125 @@ def wait_process_ready(
 ) -> None:
     """Wait for an owned process at one exact recorded runtime endpoint."""
     require_test_environment(environment)
+    if type(endpoint) is not EndpointKind:
+        raise RuntimeContractError("process readiness requires a typed endpoint")
     if not path.startswith("/") or "//" in path:
         raise RuntimeContractError("process readiness path must be absolute and normalized")
     root = canonical_repo_root(repo_root)
+    if endpoint is EndpointKind.AGENT_TOOLS_MCP:
+        if path != "/internal/agent-tools/mcp":
+            raise RuntimeContractError("agent-tools MCP readiness requires its literal path")
+        _require_exact_created_process(root, process, "worker-interactive")
+    elif endpoint is EndpointKind.PROVIDER_OPENAI:
+        _require_exact_created_process(root, process, "provider-openai")
+    elif endpoint is EndpointKind.PROVIDER_API:
+        _require_exact_created_process(root, process, "provider-api-peer")
     url = runtime_endpoint(root, environment, endpoint) + path
     port = urlsplit(url).port
     if port is None:
         raise RuntimeContractError("process readiness endpoint has no port")
-    if endpoint is EndpointKind.PROVIDER_OPENAI:
+    if endpoint in {EndpointKind.PROVIDER_OPENAI, EndpointKind.PROVIDER_API}:
         expected_ca = (
-            runtime_state_dir(root) / "runs" / process.run_id / "openai-provider" / "ca.pem"
+            _owned_embedding_peer_paths(root, process.run_id)["ca.pem"]
+            if endpoint is EndpointKind.PROVIDER_OPENAI
+            else _owned_provider_api_peer_paths(root, process.run_id)["ca.pem"]
         )
         if tls_ca is None or tls_ca.resolve(strict=True) != expected_ca.resolve(strict=True):
-            raise RuntimeContractError("OpenAI provider readiness requires its exact owned CA")
+            raise RuntimeContractError("provider readiness requires its exact owned CA")
         verify: ssl.SSLContext | bool = ssl.create_default_context(cafile=str(expected_ca))
     elif tls_ca is not None:
         raise RuntimeContractError("TLS CA is only valid for provider readiness")
     else:
         verify = True
-    _wait_owned_process_url_ready(root, process, url, port, verify, timeout_seconds)
+    expected_status_code = 401 if endpoint is EndpointKind.AGENT_TOOLS_MCP else 200
+    _wait_owned_process_url_ready(
+        root,
+        process,
+        url,
+        port,
+        verify,
+        timeout_seconds,
+        expected_status_code=expected_status_code,
+    )
+
+
+def wait_codex_generation_peer_ready(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    process: StartedProcess,
+    socket_path: Path,
+    *,
+    timeout_seconds: float = 30,
+) -> None:
+    """Require exact UDS health from the run-owned strict-v2 generation peer."""
+
+    require_test_environment(environment)
+    root = canonical_repo_root(repo_root)
+    _require_exact_created_process(root, process, "codex-generation-peer")
+    expected_socket = codex_generation_peer_state_dir(root, process.run_id) / (
+        _CODEX_GENERATION_PEER_SOCKET
+    )
+    if socket_path != expected_socket:
+        raise RuntimeContractError("Codex generation peer readiness requires its exact socket")
+    deadline = time.monotonic() + timeout_seconds
+    identity_deadline = min(deadline, time.monotonic() + _PROCESS_IDENTITY_GRACE_SECONDS)
+    while time.monotonic() < deadline:
+        if not _owned_process_identity_matches(
+            root,
+            process.process_group_id,
+            process.process_start_token,
+            process.run_id,
+            process.owner_token,
+        ):
+            if _process_identity_pending(
+                birth_matches=_process_birth_identity_matches(
+                    process.process_group_id,
+                    process.process_start_token,
+                ),
+                now=time.monotonic(),
+                deadline=identity_deadline,
+            ):
+                time.sleep(0.01)
+                continue
+            raise RuntimeContractError(
+                "owned codex-generation-peer process exited or changed identity before readiness"
+            )
+        paths = _owned_codex_generation_peer_paths(
+            root,
+            process.run_id,
+            require_socket=None,
+        )
+        owned_socket = paths[_CODEX_GENERATION_PEER_SOCKET]
+        if owned_socket.is_socket():
+            from nexus.services.codex_generation_client import (
+                CodexGenerationClient,
+                CodexGenerationClientError,
+                CodexGenerationProtocolDefect,
+                CodexGenerationUnavailable,
+            )
+
+            try:
+                asyncio.run(CodexGenerationClient(owned_socket).health())
+            except CodexGenerationUnavailable:
+                pass
+            except (CodexGenerationClientError, CodexGenerationProtocolDefect) as error:
+                raise RuntimeContractError(
+                    "Codex generation peer returned an invalid health identity"
+                ) from error
+            else:
+                if _process_group_owns_unix_listener(
+                    process.process_group_id,
+                    owned_socket,
+                ) and _owned_process_identity_matches(
+                    root,
+                    process.process_group_id,
+                    process.process_start_token,
+                    process.run_id,
+                    process.owner_token,
+                ):
+                    return
+        time.sleep(0.05)
+    raise RuntimeContractError("owned codex-generation-peer process did not become ready")
 
 
 def wait_offline_reading_caddy_ready(
@@ -1575,7 +2157,13 @@ def wait_offline_reading_caddy_ready(
     if port is None:
         raise RuntimeContractError("only Caddy seam proof processes have run-allocated ports")
     _wait_owned_process_url_ready(
-        root, process, f"http://127.0.0.1:{port}{path}", port, True, timeout_seconds
+        root,
+        process,
+        f"http://127.0.0.1:{port}{path}",
+        port,
+        True,
+        timeout_seconds,
+        expected_status_code=200,
     )
 
 
@@ -1586,9 +2174,17 @@ def _wait_owned_process_url_ready(
     port: int,
     verify: ssl.SSLContext | bool,
     timeout_seconds: float,
+    *,
+    expected_status_code: int,
 ) -> None:
+    host = urlsplit(url).hostname
+    if host != "127.0.0.1":
+        raise RuntimeContractError("process readiness endpoint must use exact IPv4 loopback")
     deadline = time.monotonic() + timeout_seconds
-    identity_deadline = min(deadline, time.monotonic() + 2)
+    identity_deadline = min(
+        deadline,
+        time.monotonic() + _PROCESS_IDENTITY_GRACE_SECONDS,
+    )
     with httpx.Client(
         trust_env=False,
         timeout=1,
@@ -1603,7 +2199,7 @@ def _wait_owned_process_url_ready(
                 process.run_id,
                 process.owner_token,
             ):
-                if _startup_identity_pending(
+                if _process_identity_pending(
                     birth_matches=_process_birth_identity_matches(
                         process.process_group_id,
                         process.process_start_token,
@@ -1619,8 +2215,8 @@ def _wait_owned_process_url_ready(
             try:
                 response = client.get(url)
                 if (
-                    response.status_code == 200
-                    and _process_group_owns_listener(process.process_group_id, port)
+                    response.status_code == expected_status_code
+                    and _process_group_owns_listener(process.process_group_id, host, port)
                     and _owned_process_identity_matches(
                         root,
                         process.process_group_id,
@@ -1634,6 +2230,29 @@ def _wait_owned_process_url_ready(
                 pass
             time.sleep(0.05)
     raise RuntimeContractError(f"owned {process.role} process did not become ready")
+
+
+def _require_exact_created_process(root: Path, process: StartedProcess, role: str) -> None:
+    expected_resource = Resource(
+        ResourceKind.PROCESS,
+        process_resource_identity(process.run_id, role),
+    )
+    matching = [
+        entry
+        for entry in read_ledger(root, process.run_id).entries
+        if entry.resource == expected_resource
+    ]
+    if (
+        process.role != role
+        or len(matching) != 1
+        or matching[0].phase is not ResourcePhase.CREATED
+        or matching[0].external_id != process.owner_token
+        or matching[0].process_group_id != process.process_group_id
+        or matching[0].process_start_token != process.process_start_token
+    ):
+        raise RuntimeContractError(
+            f"process readiness requires the exact created {role} ledger owner"
+        )
 
 
 def _start_owned_process(
@@ -1764,8 +2383,8 @@ def clean_run(
                             process_start_token,
                             run_id,
                             candidate.external_id,
+                            resource.identity,
                         )
-                    _remove_process_owner_marker(root, run_id, candidate.external_id)
                 elif resource.kind is ResourceKind.TEMPLATE_BUILD:
                     if candidate.external_id is None:
                         raise RuntimeContractError("template build lacks its lifecycle fingerprint")
@@ -1789,10 +2408,14 @@ def clean_run(
                         candidate.external_id,
                         supabase,
                     )
+                elif resource.kind is ResourceKind.EMBEDDING_PEER:
+                    _delete_embedding_peer_state(root, run_id)
+                elif resource.kind is ResourceKind.PROVIDER_API_PEER:
+                    _delete_provider_api_peer_state(root, run_id)
+                elif resource.kind is ResourceKind.CODEX_GENERATION_PEER:
+                    _delete_codex_generation_peer_state(root, run_id)
                 elif resource.kind is ResourceKind.EXTENSION_PROFILE:
                     _delete_extension_profile(root, resource.identity)
-                elif resource.kind is ResourceKind.PROVIDER_FIXTURE:
-                    _clean_openai_provider_fixture(root, resource.identity)
                 else:
                     raise RuntimeContractError(f"clean has no owner for {resource.kind.value}")
                 forget_cleaned(root, environment, run_id, resource)
@@ -1918,13 +2541,13 @@ def _upgrade_previous_runtime_if_needed(
                 previous = read_previous_runtime_for_cleanup(root)
             except RuntimeContractError:
                 raise current_error from None
-            used = set(previous.ports.as_dict().values()) - {previous.ports.provider_openai}
+            used = set(previous.ports.as_dict().values()) - {previous.ports.provider_api}
             ephemeral_port_range = _local_ephemeral_port_range()
-            for port in _candidate_ports(19092, ephemeral_port_range):
+            for port in _candidate_ports(19093, ephemeral_port_range):
                 if port not in used and is_port_available(port):
                     upgrade_previous_runtime(root, environment, port)
                     return
-    raise RuntimeContractError("no local provider test port is available")
+    raise RuntimeContractError("no local provider API test port is available")
 
 
 def _local_ephemeral_port_range() -> tuple[int, int]:
@@ -2350,26 +2973,75 @@ def _stop_process_group(
     process_start_token: str | None,
     run_id: str,
     owner_token: str,
+    resource_identity: str,
 ) -> None:
-    owned_groups = _owned_process_group_map(repo_root, run_id, owner_token)
-    try:
-        os.killpg(process_group_id, 0)
-        recorded_group_alive = True
-    except ProcessLookupError:
-        recorded_group_alive = False
-    except PermissionError as exc:
-        raise RuntimeContractError("owned process group could not be verified") from exc
-    if not recorded_group_alive:
-        if process_group_id in owned_groups:
-            raise RuntimeContractError(
-                "owned process identity identifies a group the kernel cannot signal"
+    ledger_phase = _process_ledger_phase(
+        repo_root,
+        process_group_id=process_group_id,
+        process_start_token=process_start_token,
+        run_id=run_id,
+        owner_token=owner_token,
+        resource_identity=resource_identity,
+    )
+    if ledger_phase is None:
+        raise RuntimeContractError("process group no longer belongs to the exact test run")
+    identity_deadline = time.monotonic() + _PROCESS_IDENTITY_GRACE_SECONDS
+    identity_pending_reported = False
+    while True:
+        if ledger_phase is ResourcePhase.CREATED and process_start_token is not None:
+            _reap_exact_created_process_if_exited(
+                process_group_id,
+                process_start_token,
             )
-        # The recorded worker group is already gone; reap any bounded child group
-        # it may have left behind (parent-death teardown races the ledger cleanup).
-        for group_id in sorted(owned_groups):
-            _terminate_process_group(group_id)
-        return
-    if process_group_id not in owned_groups:
+        owned_groups = _owned_process_group_map(repo_root, run_id, owner_token)
+        try:
+            os.killpg(process_group_id, 0)
+            recorded_group_alive = True
+        except ProcessLookupError:
+            recorded_group_alive = False
+        except PermissionError as exc:
+            raise RuntimeContractError("owned process group could not be verified") from exc
+        if not recorded_group_alive:
+            if process_group_id in owned_groups:
+                raise RuntimeContractError(
+                    "owned process identity identifies a group the kernel cannot signal"
+                )
+            # The recorded worker group is already gone; reap any bounded child group
+            # it may have left behind (parent-death teardown races the ledger cleanup).
+            for group_id in sorted(owned_groups):
+                _terminate_process_group(group_id)
+            return
+        if process_group_id in owned_groups:
+            break
+        # The signal-unblocking launcher immediately execs the target. Linux can
+        # expose the immutable birth identity before the new environment becomes
+        # readable, so rescan only while that exact recorded process still exists.
+        identity_pending = (
+            ledger_phase is ResourcePhase.CREATED
+            and process_start_token is not None
+            and _process_identity_pending(
+                birth_matches=_process_birth_identity_matches(
+                    process_group_id,
+                    process_start_token,
+                ),
+                now=time.monotonic(),
+                deadline=identity_deadline,
+            )
+        )
+        if identity_pending:
+            if not identity_pending_reported:
+                _LOGGER.debug(
+                    "exact process birth is awaiting owner visibility",
+                    extra={
+                        "event": "nexus_test.process_owner_visibility_pending",
+                        "process_group_id": process_group_id,
+                        "resource_identity": resource_identity,
+                        "run_id": run_id,
+                    },
+                )
+                identity_pending_reported = True
+            time.sleep(0.01)
+            continue
         raise RuntimeContractError("process group no longer belongs to the exact test run")
     if process_start_token is not None:
         try:
@@ -2388,6 +3060,54 @@ def _stop_process_group(
     # forked into its own session; all carry this run's one secret owner token.
     for group_id in sorted(owned_groups):
         _terminate_process_group(group_id)
+
+
+def _process_ledger_phase(
+    repo_root: Path,
+    *,
+    process_group_id: int,
+    process_start_token: str | None,
+    run_id: str,
+    owner_token: str,
+    resource_identity: str,
+) -> ResourcePhase | None:
+    expected_resource = Resource(ResourceKind.PROCESS, resource_identity)
+    matching = [
+        entry
+        for entry in read_ledger(repo_root, run_id).entries
+        if entry.resource == expected_resource
+    ]
+    if len(matching) != 1 or matching[0].external_id != owner_token:
+        return None
+    entry = matching[0]
+    if entry.phase is ResourcePhase.PLANNED:
+        return (
+            ResourcePhase.PLANNED
+            if entry.process_group_id is None and entry.process_start_token is None
+            else None
+        )
+    if (
+        entry.phase is ResourcePhase.CREATED
+        and process_start_token is not None
+        and entry.process_group_id == process_group_id
+        and entry.process_start_token == process_start_token
+    ):
+        return ResourcePhase.CREATED
+    return None
+
+
+def _reap_exact_created_process_if_exited(
+    process_group_id: int,
+    process_start_token: str,
+) -> None:
+    if not _process_birth_identity_matches(process_group_id, process_start_token):
+        return
+    try:
+        reaped_process_id, _status = os.waitpid(process_group_id, os.WNOHANG)
+    except ChildProcessError:
+        return
+    if reaped_process_id not in {0, process_group_id}:
+        raise AssertionError("waitpid reaped a process outside the exact ledger owner")
 
 
 def _terminate_process_group(process_group_id: int) -> None:
@@ -2480,14 +3200,16 @@ def _process_birth_identity_matches(process_group_id: int, process_start_token: 
     )
 
 
-def _startup_identity_pending(*, birth_matches: bool, now: float, deadline: float) -> bool:
+def _process_identity_pending(*, birth_matches: bool, now: float, deadline: float) -> bool:
     return birth_matches and now < deadline
 
 
-def _process_group_owns_listener(process_group_id: int, port: int) -> bool:
+def _process_group_owns_listener(process_group_id: int, host: str, port: int) -> bool:
+    if host != "127.0.0.1":
+        return False
     if sys.platform == "darwin":
         try:
-            process_ids = _darwin_lsof_process_ids(("-a", f"-iTCP:{port}", "-sTCP:LISTEN"))
+            process_ids = _darwin_lsof_listener_process_ids(host, port)
         except RuntimeContractError:
             return False
         for process_id in process_ids:
@@ -2505,12 +3227,78 @@ def _process_group_owns_listener(process_group_id: int, port: int) -> bool:
         rows = Path("/proc/net/tcp").read_text(encoding="ascii").splitlines()[1:]
     except OSError:
         return False
+    expected_address = f"0100007F:{port:04X}"
     for row in rows:
         columns = row.split()
-        if len(columns) > 9:
-            _, raw_port = columns[1].rsplit(":", 1)
-            if columns[3] == "0A" and int(raw_port, 16) == port:
-                listener_inodes.add(columns[9])
+        if len(columns) > 9 and columns[1].upper() == expected_address and columns[3] == "0A":
+            listener_inodes.add(columns[9])
+    if not listener_inodes:
+        return False
+    for process_root in Path("/proc").iterdir():
+        if not process_root.name.isdecimal():
+            continue
+        process_id = int(process_root.name)
+        try:
+            if (
+                process_root.stat().st_uid != os.getuid()
+                or os.getpgid(process_id) != process_group_id
+            ):
+                continue
+            for descriptor in (process_root / "fd").iterdir():
+                target = descriptor.readlink().as_posix()
+                if target.startswith("socket:[") and target[8:-1] in listener_inodes:
+                    return True
+        except (OSError, ProcessLookupError):
+            continue
+    return False
+
+
+def _process_group_owns_unix_listener(process_group_id: int, socket_path: Path) -> bool:
+    try:
+        if socket_path.is_symlink() or not socket_path.is_socket():
+            return False
+        exact_socket = socket_path.resolve(strict=True)
+    except OSError:
+        return False
+    if exact_socket != socket_path:
+        return False
+    if sys.platform == "darwin":
+        try:
+            result = subprocess.run(
+                (
+                    _DARWIN_LSOF,
+                    "-nP",
+                    "-Fn",
+                    "-a",
+                    "-U",
+                    "-p",
+                    str(process_group_id),
+                ),
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=1,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        return result.returncode == 0 and f"n{exact_socket}" in result.stdout.splitlines()
+    if sys.platform != "linux":
+        return False
+    listener_inodes: set[str] = set()
+    try:
+        rows = Path("/proc/net/unix").read_text(encoding="ascii").splitlines()[1:]
+    except OSError:
+        return False
+    for row in rows:
+        columns = row.split(maxsplit=7)
+        if (
+            len(columns) == 8
+            and columns[3] == "00010000"
+            and columns[4] == "0001"
+            and columns[5] == "01"
+            and columns[7] == str(exact_socket)
+        ):
+            listener_inodes.add(columns[6])
     if not listener_inodes:
         return False
     for process_root in Path("/proc").iterdir():
@@ -2685,22 +3473,6 @@ def _process_owner_marker(repo_root: Path, run_id: str, owner_token: str) -> Pat
     return runtime_state_dir(repo_root) / "runs" / run_id / "process-owners" / owner_token
 
 
-def _remove_process_owner_marker(repo_root: Path, run_id: str, owner_token: str) -> None:
-    if sys.platform != "darwin":
-        return
-    marker = _process_owner_marker(repo_root, run_id, owner_token)
-    marker.unlink(missing_ok=True)
-    try:
-        marker.parent.rmdir()
-    except FileNotFoundError:
-        pass
-    except OSError as exc:
-        if exc.errno != errno.ENOTEMPTY:
-            raise RuntimeContractError(
-                "process owner marker directory could not be removed"
-            ) from exc
-
-
 def _darwin_owner_marker_identities(
     repo_root: Path,
     run_id: str,
@@ -2756,6 +3528,55 @@ def _darwin_lsof_process_ids(selection: tuple[str, ...]) -> tuple[int, ...]:
     if not rows or any(not row.isdecimal() for row in rows):
         raise RuntimeContractError("Darwin process ownership output was malformed")
     return tuple(dict.fromkeys(int(row) for row in rows))
+
+
+def _darwin_lsof_listener_process_ids(host: str, port: int) -> tuple[int, ...]:
+    try:
+        result = subprocess.run(
+            (
+                _DARWIN_LSOF,
+                "-nP",
+                "-Fpfn",
+                "-a",
+                f"-iTCP:{port}",
+                "-sTCP:LISTEN",
+            ),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=1,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeContractError("Darwin listener ownership could not be inspected") from exc
+    if result.returncode == 1 and not result.stdout.strip():
+        return ()
+    if result.returncode != 0:
+        raise RuntimeContractError("Darwin listener ownership inspection failed")
+    return _parse_darwin_lsof_listener_process_ids(result.stdout, host=host, port=port)
+
+
+def _parse_darwin_lsof_listener_process_ids(
+    output: str,
+    *,
+    host: str,
+    port: int,
+) -> tuple[int, ...]:
+    process_id: int | None = None
+    file_process_id: int | None = None
+    matching_process_ids: list[int] = []
+    expected_name = f"{host}:{port}"
+    for row in output.splitlines():
+        if row.startswith("p") and row[1:].isdecimal():
+            process_id = int(row[1:])
+            file_process_id = None
+        elif row.startswith("f") and row[1:] and process_id is not None:
+            file_process_id = process_id
+        elif row.startswith("n") and file_process_id is not None:
+            if row[1:] == expected_name:
+                matching_process_ids.append(file_process_id)
+        else:
+            raise RuntimeContractError("Darwin listener ownership output was malformed")
+    return tuple(dict.fromkeys(matching_process_ids))
 
 
 def _child_environment(environment: Mapping[str, str]) -> dict[str, str]:

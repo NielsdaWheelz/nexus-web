@@ -1,8 +1,10 @@
-diff --git a/python/nexus/services/native_agent_operations.py b/python/nexus/services/native_agent_operations.py
---- a/python/nexus/services/native_agent_operations.py
-+++ b/python/nexus/services/native_agent_operations.py
-@@ -31,3 +31,4 @@
-+METADATA_ENRICHMENT_OPERATION_REVISION = "metadata-enrichment.2026-08-12.4"
- _MODEL = "gpt-5.6-luna"
- _REASONING = "low"
- _AUTH_PROFILE = "codex-personal"
+diff --git a/python/nexus/tasks/enrich_metadata.py b/python/nexus/tasks/enrich_metadata.py
+--- a/python/nexus/tasks/enrich_metadata.py
++++ b/python/nexus/tasks/enrich_metadata.py
+@@ -300,5 +300,6 @@ def _job_result(result: _MetadataPublicationResult) -> dict[str, object]:
+         case _SuccessfulPublication():
+             return {
+                 "status": "success",
+                 "fields": list(result.fields),
++                "operation_revision": generation_policy.operation_revision("metadata_enrichment"),
+             }

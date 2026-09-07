@@ -17,7 +17,6 @@ from typing import cast
 from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
 
-from provider_runtime import ReasoningLevel
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -26,6 +25,7 @@ from nexus.auth.permissions import can_read_media
 from nexus.services.artifacts.bindings.base import (
     DossierBindingBase,
     DossierInputTooLarge,
+    DossierOperation,
     PublishableDossier,
 )
 from nexus.services.artifacts.coordination import DossierBuildRuntime
@@ -40,7 +40,6 @@ from nexus.services.artifacts.manifests import (
     MediaManifestEntry,
 )
 from nexus.services.artifacts.subject_policy import ResolvedSubject
-from nexus.services.llm_profiles import BackgroundLlmOperation
 from nexus.services.media_intelligence import (
     MediaOmission,
     MediaOmissionReason,
@@ -279,10 +278,7 @@ class AggregateMediaBinding(DossierBindingBase):
     """
 
     subject_scheme: str
-    llm_operation: BackgroundLlmOperation
-    profile: str = "balanced"
-    reasoning: ReasoningLevel = "high"
-    max_output_tokens: int = 5000
+    llm_operation: DossierOperation
     schema: type[BaseModel] = StandardSynthesis
     system_prompt: str
     candidates_heading: str

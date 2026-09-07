@@ -68,12 +68,6 @@ jobs:
       NEXUS_ANDROID_RELEASE_BOOTSTRAP_NO_DEVICE: ${{ inputs.bootstrap_no_device }}
       NEXUS_ANDROID_PREVIOUS_VERSION_CODE: ${{ inputs.previous_version_code }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      MOONSHOT_API_KEY: ${{ secrets.MOONSHOT_API_KEY }}
-      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-      NEXUS_PROVIDER_CERTIFICATION: "1"
-      NEXUS_FABLE_RETENTION_ACCEPTED_AT: ${{ secrets.NEXUS_FABLE_RETENTION_ACCEPTED_AT }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -159,9 +153,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          notes="Signed Nexus Android APK. Provider certification, signature verification, staged real-API offline-reading acquisition on the older USB baseline, reboot/airplane-mode cold shelf, in-place V1 reopen/progress/purge, local App Link routing, and native auth handoff passed before this draft was created."
+          notes="Signed Nexus Android APK. Signature verification, staged real-API offline-reading acquisition on the older USB baseline, reboot/airplane-mode cold shelf, in-place V1 reopen/progress/purge, local App Link routing, and native auth handoff passed before this draft was created."
           if [ "$NEXUS_ANDROID_RELEASE_BOOTSTRAP_NO_DEVICE" = "true" ]; then
-            notes="Signed Nexus Android APK. Provider certification, signature verification, the manifest/player-protocol contract, the pinned API origin, and the Android device suite passed before this draft was created. The signed-physical USB baseline stages were explicitly skipped (bootstrap_no_device): no published release carries offline reading, so no in-the-wild offline state exists for them to protect. The operator device smoke follows the production deploy."
+            notes="Signed Nexus Android APK. Signature verification, the manifest/player-protocol contract, the pinned API origin, and the Android device suite passed before this draft was created. The signed-physical USB baseline stages were explicitly skipped (bootstrap_no_device): no published release carries offline reading, so no in-the-wild offline state exists for them to protect. The operator device smoke follows the production deploy."
           fi
           upload_args=()
           if gh release view "$ANDROID_RELEASE_TAG" >/dev/null 2>&1; then

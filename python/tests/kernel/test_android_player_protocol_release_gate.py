@@ -364,7 +364,7 @@ def test_stable_android_manifest_preflight_rejects_an_invalid_latest_pointer(
 
 
 @pytest.mark.parametrize(
-    ("inspect", "include_provider_credentials"),
+    ("inspect", "include_operator_credentials"),
     [
         (
             _inspect(
@@ -396,12 +396,12 @@ def test_stable_android_manifest_preflight_rejects_an_invalid_latest_pointer(
 def test_durable_attempt_paths_never_consult_github(
     tmp_path: Path,
     inspect: dict[str, object],
-    include_provider_credentials: bool,
+    include_operator_credentials: bool,
 ) -> None:
     harness = _harness(tmp_path, inspect)
     harness.update_state(android_manifest_mode="protocol-mismatch")
 
-    completed = harness.run(include_provider_credentials=include_provider_credentials)
+    completed = harness.run(include_operator_credentials=include_operator_credentials)
 
     state = harness.state()
     assert _github_contacts(state) == [], (

@@ -70,6 +70,25 @@ kind is a frozen `JobDefinition`:
   and lease policy.
 - `periodic_interval_seconds` — set only for scheduler-driven background or
   maintenance kinds.
+- `periodic_priority` — routine scheduler rows use priority 200 so newly
+  accepted ordinary work at priority 100 wins before the older periodic slot
+  timestamp can break a tie. The stale-ingest reconciler is the sole urgent
+  periodic exception at priority -1000. On every schedule pass, the scheduler
+  locks every active row that claims the kind's global periodic dedupe
+  namespace, validates its exact aligned slot identity, and applies the current
+  priority without changing payload, availability, attempts, lease, claimant,
+  lifecycle, or timestamps. Propagated `request_id` values remain correlation
+  and do not claim that namespace.
+- `periodic_checkpoint_keys` — the closed set of optional top-level checkpoint
+  keys a periodic handler may persist alongside immutable scheduler identity.
+  Dawn declares its frozen-worklist/generation keys and the storage orphan
+  sweep declares its continuation token; all other periodic jobs declare none.
+  The scheduler rejects undeclared keys while each handler-owned strict codec
+  validates checkpoint values. Namespace selection is global across kinds and
+  bounded to 256 active rows; a foreign-kind claimant, noncanonical identity,
+  undeclared checkpoint, or overflow defects the whole transaction before any
+  durable mutation. On-demand rows sharing a kind are untouched, and terminal
+  rows remain immutable history.
 - `failed_result_statuses` — see the gotcha below.
 - `dead_letter_projection` — a member of the closed `DeadLetterProjection` union
   applied once retries are exhausted; a projection may finalize domain state,
@@ -87,11 +106,12 @@ missing, additional, coerced, padded, or noncanonical values and passes a typed
 
 ### Lease policy by kind
 
-Leases are sized to the worst-case wall-clock of one attempt. Notably
-`oracle_reading_generate` carries a **300s** lease — wide enough for retrieval
-plus the structured synthesis call plus the one bounded repair round
-([llms.md](llms.md)); chat and `dossier_build` sit at 900s; the rest default to
-300s.
+Leases are sized to the worst-case wall-clock of one attempt. The generation
+kinds use these exact registry values: `enrich_metadata` and `synapse_scan`,
+300s; `oracle_reading_generate` and `media_unit_build`, 450s;
+`dawn_write_job` and `dossier_build`, 900s; and `chat_run`, 1,200s. Each lease
+exceeds its bounded generation transport deadline, leaving a positive
+terminal-checkpoint margin ([llms.md](llms.md)).
 
 ### Dead-lettering
 
@@ -235,63 +255,53 @@ commit on each call. There is no explicit row locking on top of SERIALIZABLE
 SERIALIZABLE site, including the worker's scheduler loop, bootstrap, identity
 writes, notes, and Dossier head/build/revision mutations.
 
-## The LLM generation harness inside the worker
+## The Codex generation harness inside the worker
 
-Six direct LLM generation kinds — `chat_run`, `oracle_reading_generate`,
-`dossier_build`, `media_unit_build`, `synapse_scan`, and `dawn_write` — run their bodies inside
-the shared `run_llm_task` envelope ([llms.md](llms.md)), not a hand-rolled
-per-task event loop. `run_llm_task` owns only the worker mechanics: one DB
-session, one fresh event loop, one shared `httpx.AsyncClient`, and one
-production `ExecutionRuntime` construction. Deterministic provider behavior
-belongs to the test harness's loopback HTTP protocol server, not a worker
-branch. The queue contract is
-unchanged: the harness runs inside the existing claim/lease/heartbeat/
-dead-letter machinery.
+Every generation-capable job runs its body inside the shared `run_llm_task`
+envelope ([llms.md](llms.md)), not a hand-rolled event loop. The envelope owns
+only one DB session, one fresh event loop, and construction of the production
+`CodexGenerationClient`. The queue contract stays inside the existing
+claim/lease/heartbeat/dead-letter machinery.
 
-Every provider call inside a job goes through
-`services/llm_execution.py:execute_generation` — the sole caller of both the
-`ExecutionRuntime` seam and the `llm_calls` ledger — and reaches exactly one
-terminal ledger outcome: success, a classified provider/transport failure, a
-planning/budget denial, or a defect. A worker-boundary exception still leaves
-a ledger row (or, for a denial before any row exists, a typed `ApiError`) plus
-`error_code`/`error_origin` on the run parent, so the operator can always
-answer "what failed". See [llms.md](llms.md) for the full execution order and
-the profile each kind resolves against (`fast` for Oracle/Synapse/media
-  summary; binding-owned policy selects `fast` or `balanced`
-  for the eight Dossier operations and Idea resolution; `balanced` for Dawn
-  Write; chat alone is
-user-selected).
+Every generation goes through
+`services/llm_execution.py:execute_generation`. That boundary preflights host
+identity before dispatch is armed; stages the `llm_calls` start beside the
+durable `Uncertain` checkpoint; streams one v2 generation; and stages the
+terminal beside `Completed`. It owns capacity wait/reschedule, accepted-loss
+uncertainty, replay, and the normalized failure boundary. This is the only
+generation execution boundary, and jobs have no local retry policy.
 
-`enrich_metadata` remains a background queue kind, but it is not inside
-`run_llm_task` and does not return a provider `failed_result_status`. Its durable
-metadata owner dispatches exactly one native Codex subscription turn through the
-private host, records the terminal in `agent_turns`, and treats a known terminal
-metadata failure as completed queue work; `Uncertain` remains suspended for
-operator reconciliation without redispatch.
+Each task supplies only its stable operation identity, bounded intent, durable
+owner/step identity, lease-fenced row-validation callback, and semantic result
+decoder. Model, effort, capability, timeouts, and stream bounds come from
+`generation_policy.py`. `enrich_metadata` now uses this same command, client,
+journal, and `llm_calls` path.
 
 `dossier_build` is one generic kind for Media, Conversation, Library, Podcast,
 Contributor, Page, Note, and internal Idea subjects. Its immutable registration
 selects one inseparable subject-policy and binding pair for collection, prompt,
-operation/profile, coverage, freshness, identity, and authorization.
-The Idea binding receives one frozen HostTable operation whose sole grant is
-`web.search`; it never inherits Chat's Native catalogue. Stored binding metadata
-owns its BilledOnce replay policy, so an uncertain public-Web search is never
-automatically redispatched. Billed synthesis and document repair likewise stay
-suspended after uncertainty; the operator can prove either dispatch never
+operation, coverage, freshness, identity, and authorization. The Idea binding
+receives one frozen HostTable operation whose sole grant is `web.search`; it
+never inherits Chat's MCP catalog. Research tools remain domain-owned journal
+steps and never become Codex built-ins; synthesis uses the fixed `Synthesis`
+capability. Stored binding metadata owns its `BilledOnce` replay policy, so an
+uncertain public-Web search is never automatically redispatched. Synthesis and
+document repair likewise stay suspended after uncertainty; the operator can
+prove either dispatch never
 occurred or attach a recovered schema-valid result, and both paths then requeue
-the same build without an automatic provider call. Direct Nexus-search and page
-accept/readiness/read observations are ReDispatchable and pages awaiting ingest
-yield the worker. The artifact head is the database serialization point; the
-build is the replay identity. Build success, modeled failure, and cancellation
-are terminal children, while exhausted or unreconciled execution remains a
-visible, operator-repairable suspended build. Dead `dossier_build` rows are
-never pruned.
+the same build without an automatic generation dispatch. Direct Nexus-search
+and page accept/readiness/read observations are `ReDispatchable`, and pages
+awaiting ingest yield the worker. The artifact head is the database
+serialization point; the build is the replay identity. Build success, modeled
+failure, and cancellation are terminal children, while exhausted or
+unreconciled execution remains a visible, operator-repairable suspended build.
+Dead `dossier_build` rows are never pruned.
 
 `services/durable_step_journal.py` owns the shared strict replay-state codec,
 stable step identity, lease-fenced queue-payload checkpoint, and durable
 execution-phase projection. `services/artifacts/generation_step.py` owns the
-Dossier-specific billed-generation request fingerprint, strict accepted/invalid
-result envelope, and exact Prepared/Uncertain/Completed application for both
+Dossier-specific generation request fingerprint, strict accepted/invalid result
+envelope, and exact `Prepared | Uncertain | Completed` application for both
 `synthesis` and `document-repair`. `services/artifacts/coordination.py` owns the
 Dossier runtime capability and bounded research-yield behavior. The engine owns
 the distinct streaming/cancellation and unary-repair transports; it does not
@@ -303,8 +313,8 @@ acceptance phase and its document-versus-citation failure precedence, so
 constructs one cached immutable registration after module initialization, with
 no mutable policy mirror, package re-export, or lazy fallback lookup.
 
-`chat_run` uses that kernel for preparation, every model/tool turn, and final
-publication. Dead chat jobs are retained because their payload is the in-flight
+`chat_run` uses that kernel for preparation, every generation/MCP tool turn,
+and final publication. Dead chat jobs are retained because their payload is the in-flight
 recovery record. Code defects retry without terminalizing `ChatRun`; exhausted
 attempts project `Suspended`. Operator repair requeues the same row with a fresh
 attempt budget while preserving its prior `error_code`; that queue history makes

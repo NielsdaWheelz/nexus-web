@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Fetch/install one immutable candidate bundle, then stop after its bounded
-# existing-VPS Codex capacity qualification.  This script never calls apply.
+# existing-VPS Codex capacity qualification: one v2 qualification wrapper
+# containing the v4 three-turn dawn_write/Terra-medium canary.
+# This script never calls apply.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -64,8 +66,9 @@ timeout --foreground 3m ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
     --source "$REMOTE_TEMPORARY" >/dev/null
 
 # The installed controller owns candidate identity, AppArmor preparation,
-# cgroup/service observation, sanitized evidence, and the named canary.  Do
-# not append deployment, migration, or frontend commands after this call.
+# cgroup/service observation, sanitized evidence, and the named v4 canary.
+# Full target-set and MCP coverage belong to the protected nightly. Do not append
+# deployment, migration, or frontend commands after this call.
 timeout --foreground 12m ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
   timeout --foreground 11m sudo env PYTHONDONTWRITEBYTECODE=1 \
   "PYTHONPATH=${REMOTE_BUNDLE}/python" \

@@ -14,7 +14,7 @@ from nexus.services.artifacts.bindings._shared import (
     AggregateMediaBinding,
     synthesis_prompt,
 )
-from nexus.services.artifacts.bindings.base import require_resource_subject
+from nexus.services.artifacts.bindings.base import DossierOperation, require_resource_subject
 from nexus.services.artifacts.dossier_types import (
     AudienceScope,
     AudienceUser,
@@ -32,13 +32,12 @@ from nexus.services.artifacts.subject_policy import (
     ResolvedSubject,
     decode_resource_locator,
 )
-from nexus.services.llm_profiles import BackgroundLlmOperation
 from nexus.services.resource_graph.refs import ResourceRef
 
 
 class PodcastBinding(AggregateMediaBinding):
     subject_scheme = "podcast"
-    llm_operation: BackgroundLlmOperation = "dossier_podcast"
+    llm_operation: DossierOperation = "dossier_podcast"
     system_prompt = synthesis_prompt("a podcast across all of its available episodes")
     candidates_heading = "GROUNDED CLAIMS FROM PODCAST EPISODES"
 
@@ -114,7 +113,7 @@ class PodcastSubjectPolicy:
     def collection_viewer(self, resolved: ResolvedSubject, audience: AudienceScope) -> UUID | None:
         return _audience_user(audience)
 
-    def requester_billing(self, resolved: ResolvedSubject, requester_user_id: UUID) -> UUID:
+    def requester_admission(self, resolved: ResolvedSubject, requester_user_id: UUID) -> UUID:
         return requester_user_id
 
     def citation_owner(

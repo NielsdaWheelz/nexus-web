@@ -417,3 +417,46 @@ def test_background_worker_accepts_the_exact_deployed_cgroup_contract(tmp_path: 
 
     assert cgroup.memory_limit_bytes == BACKGROUND_WORKER_MEMORY_LIMIT_BYTES
     assert cgroup.oom_kill_count() == 0
+
+
+def test_interactive_worker_requires_and_supervises_its_mcp_listener(
+    runtime_identity_file: tuple[Path, str],
+) -> None:
+    _, revision = runtime_identity_file
+    settings = get_settings()
+    release_listener = threading.Event()
+    listener = threading.Thread(target=release_listener.wait, name="test-agent-tools-mcp")
+    listener.start()
+    stop_event = threading.Event()
+    shutdown_requested = threading.Event()
+    supervisor = threading.Thread(
+        target=worker_main._supervise_required_listener,
+        kwargs={
+            "listener": listener,
+            "stop_event": stop_event,
+            "shutdown_requested": shutdown_requested,
+        },
+    )
+    supervisor.start()
+    try:
+        assert worker_main._worker_readiness_check(
+            lane="interactive",
+            settings=settings,
+            expected_database_revision=revision,
+            required_listener=listener,
+        )
+        release_listener.set()
+        listener.join(timeout=2)
+        supervisor.join(timeout=2)
+        assert stop_event.is_set(), "listener death did not stop the owning worker"
+        assert not worker_main._worker_readiness_check(
+            lane="interactive",
+            settings=settings,
+            expected_database_revision=revision,
+            required_listener=listener,
+        )
+    finally:
+        shutdown_requested.set()
+        release_listener.set()
+        listener.join(timeout=2)
+        supervisor.join(timeout=2)

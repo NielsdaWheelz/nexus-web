@@ -29,6 +29,8 @@ type ResourceFailureProjection = Literal["Job", "SourceAttemptMedia"]
 type ChildRuntime = Literal["Base", "Llm"]
 type ChildExitCleanup = Literal["None", "SourceAttemptParserTemp"]
 
+CHAT_RUN_LEASE_SECONDS = 1_200
+
 
 @dataclass(frozen=True)
 class JobDefinition:
@@ -41,7 +43,8 @@ class JobDefinition:
     retry_delays_seconds: tuple[int, ...] = (60, 300, 900)
     lease_seconds: int = 300
     periodic_interval_seconds: int | None = None
-    periodic_priority: int = 100
+    periodic_priority: int = 200
+    periodic_checkpoint_keys: frozenset[str] = frozenset()
     failed_result_statuses: tuple[str, ...] = ()
     dead_letter_projection: DeadLetterProjection = "None"
     wall_timeout_seconds: float = 900.0
@@ -90,6 +93,7 @@ def get_task_contract_digest() -> str:
             "resource_failure_projection": definition.resource_failure_projection,
             "child_runtime": definition.child_runtime,
             "periodic_priority": definition.periodic_priority,
+            "periodic_checkpoint_keys": sorted(definition.periodic_checkpoint_keys),
             "child_exit_cleanup": definition.child_exit_cleanup,
         }
         for definition in sorted(definitions.values(), key=lambda item: item.kind)
@@ -157,7 +161,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             resource_class="Light",
             max_attempts=3,
             retry_delays_seconds=(30, 120, 300),
-            lease_seconds=900,
+            lease_seconds=CHAT_RUN_LEASE_SECONDS,
             dead_letter_projection="ChatRun",
             never_prune_dead=True,
         ),
@@ -290,7 +294,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             resource_class="Light",
             max_attempts=1,
             retry_delays_seconds=(0,),
-            lease_seconds=300,  # worst case: retrieval + 45s call + 45s repair round
+            lease_seconds=450,
         ),
         "media_unit_build": JobDefinition(
             kind="media_unit_build",
@@ -298,8 +302,8 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             resource_class="Light",
             max_attempts=3,
             retry_delays_seconds=(60, 300, 900),
-            lease_seconds=300,
-            # Provider replay state lives in the job payload. Dead uncertain
+            lease_seconds=450,
+            # Generation replay state lives in the job payload. Dead uncertain
             # transitions stay operator-discoverable.
             never_prune_dead=True,
             child_runtime="Llm",
@@ -320,12 +324,13 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             resource_class="Light",
             max_attempts=1,
             retry_delays_seconds=(0,),
-            lease_seconds=300,
+            lease_seconds=900,
             periodic_interval_seconds=(
                 int(settings.dawn_write_schedule_seconds)
                 if settings.dawn_write_schedule_seconds > 0
                 else None
             ),
+            periodic_checkpoint_keys=frozenset({"coordination", "dawn_write_worklist"}),
             child_runtime="Llm",
         ),
         "atlas_project_job": JobDefinition(
@@ -376,6 +381,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             retry_delays_seconds=(300, 900, 3600),
             lease_seconds=300,
             periodic_interval_seconds=int(settings.storage_orphan_sweep_interval_seconds),
+            periodic_checkpoint_keys=frozenset({"continuationToken"}),
             never_prune_dead=True,
         ),
     }
@@ -417,7 +423,7 @@ def _run_enrich_metadata(
 
 def _run_chat_run(
     *, payload: Mapping[str, Any], context: JobExecutionContext
-) -> Mapping[str, Any] | None:
+) -> Mapping[str, Any] | RescheduleRequested | None:
     from nexus.tasks.chat_run import chat_run
 
     return chat_run(run_id=str(payload["run_id"]), context=context)
@@ -538,7 +544,7 @@ def _run_purge_expired_auth_handoff_codes(
 
 def _run_oracle_reading_generate(
     *, payload: Mapping[str, Any], context: JobExecutionContext
-) -> Mapping[str, Any] | None:
+) -> Mapping[str, Any] | RescheduleRequested | None:
     from nexus.tasks.oracle_reading import oracle_reading_generate
 
     if set(payload) != {"reading_id"}:
@@ -547,13 +553,14 @@ def _run_oracle_reading_generate(
         # extension surface.
         raise AssertionError("oracle_reading_generate payload keys must be exactly reading_id")
     return oracle_reading_generate(
-        reading_id=_require_job_uuid(payload, "reading_id", "oracle_reading_generate")
+        reading_id=_require_job_uuid(payload, "reading_id", "oracle_reading_generate"),
+        context=context,
     )
 
 
 def _run_media_unit_build(
     *, payload: Mapping[str, Any], context: JobExecutionContext
-) -> Mapping[str, Any] | None:
+) -> Mapping[str, Any] | RescheduleRequested | None:
     from nexus.tasks.media_unit_build import media_unit_build
 
     return media_unit_build(
@@ -565,22 +572,23 @@ def _run_media_unit_build(
 
 def _run_synapse_scan(
     *, payload: Mapping[str, Any], context: JobExecutionContext
-) -> Mapping[str, Any] | None:
+) -> Mapping[str, Any] | RescheduleRequested | None:
     from nexus.tasks.synapse_scan import synapse_scan
 
     return synapse_scan(
         user_id=str(payload["user_id"]),
         ref=str(payload["ref"]),
         reason=_require_job_text(payload, "reason", "synapse_scan"),
+        context=context,
     )
 
 
 def _run_dawn_write_sweep(
     *, payload: Mapping[str, Any], context: JobExecutionContext
-) -> Mapping[str, Any] | None:
+) -> Mapping[str, Any] | RescheduleRequested | None:
     from nexus.tasks.dawn_write import dawn_write_sweep
 
-    return dawn_write_sweep()
+    return dawn_write_sweep(context=context)
 
 
 def _run_atlas_project(

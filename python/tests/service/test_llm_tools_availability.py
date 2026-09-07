@@ -44,18 +44,13 @@ from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.rate_limit import get_rate_limiter, set_rate_limiter
 from tests.testkit.auth import StaticTokenVerifier, UserRecord
 
-_CHAT_TOOL_IDS = (
+_CHAT_READ_TOOL_IDS = (
     "web.search",
     "nexus.search",
     "nexus.resource.read",
     "nexus.document.search",
     "nexus.resource.inspect",
     "nexus.relations.list",
-    "nexus.library.add",
-    "nexus.note.create",
-    "nexus.highlight.create",
-    "nexus.edge.create",
-    "nexus.queue.add",
 )
 
 
@@ -135,10 +130,10 @@ def _idea_work_counts(db: Session, *, artifact_id: UUID) -> tuple[int, int]:
     return builds, jobs
 
 
-def test_configured_brave_provider_factory_is_shared_by_app_chat_and_dossier(
+def test_configured_brave_provider_factory_is_shared_by_app_mcp_and_dossier(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Every product process lowers one exact configured Brave dependency."""
+    """Every tool-owning process lowers one exact configured Brave dependency."""
     monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "configured-provider-proof")
     monkeypatch.setenv(
         "BRAVE_SEARCH_BASE_URL",
@@ -149,27 +144,29 @@ def test_configured_brave_provider_factory_is_shared_by_app_chat_and_dossier(
     try:
         consumers = {
             "app": importlib.import_module("nexus.app"),
-            "chat": importlib.import_module("nexus.tasks.chat_run"),
+            "mcp": importlib.import_module("nexus.services.agent_tools_mcp"),
             "dossier": importlib.import_module("nexus.tasks.artifacts"),
         }
-        factories = {
-            name: getattr(module, "compose_configured_web_search_provider", None)
-            for name, module in consumers.items()
-        }
-        assert all(callable(factory) for factory in factories.values()), (
-            "app, Chat, and Dossier must bind the shared configured Brave factory; "
-            f"observed {factories!r}"
-        )
-        assert len({id(factory) for factory in factories.values()}) == 1, (
-            "app, Chat, and Dossier bound different Brave provider factories"
-        )
-        factory = factories["app"]
+        composition = importlib.import_module("nexus.services.tool_runtime.composition")
+        factory = composition.compose_configured_web_search_provider
         assert getattr(factory, "__module__", None) == (
             "nexus.services.tool_runtime.composition"
         ), "configured Brave provider policy has no single product-composition owner"
         for consumer_name, module in consumers.items():
             module_path = Path(str(module.__file__))
             tree = ast.parse(module_path.read_text())
+            imports = [
+                alias
+                for node in ast.walk(tree)
+                if isinstance(node, ast.ImportFrom)
+                and node.module == "nexus.services.tool_runtime.composition"
+                for alias in node.names
+                if alias.name == "compose_configured_web_search_provider"
+            ]
+            assert len(imports) == 1, (
+                f"{consumer_name} must import the single configured Brave factory; "
+                f"observed {len(imports)} imports in {module_path}"
+            )
             calls = [
                 node
                 for node in ast.walk(tree)
@@ -202,6 +199,35 @@ def test_configured_brave_provider_factory_is_shared_by_app_chat_and_dossier(
                 f"{consumer_name} still owns Brave configuration in {module_path}"
             )
 
+        chat_module = importlib.import_module("nexus.tasks.chat_run")
+        chat_path = Path(str(chat_module.__file__))
+        chat_tree = ast.parse(chat_path.read_text())
+        chat_provider_calls = [
+            node
+            for node in ast.walk(chat_tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "compose_configured_web_search_provider"
+        ]
+        assert chat_provider_calls == [], "Chat worker still owns a direct Brave provider"
+        execute_chat_calls = [
+            node
+            for node in ast.walk(chat_tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "execute_chat_run"
+        ]
+        assert len(execute_chat_calls) == 1
+        delegated_providers = [
+            keyword.value
+            for keyword in execute_chat_calls[0].keywords
+            if keyword.arg == "web_search_provider"
+        ]
+        assert delegated_providers == [], (
+            "Chat must not retain the retired Web-provider injection seam; "
+            "its composed execution runtime and scoped MCP listener own tool execution"
+        )
+
         constructor_arguments: list[tuple[object, str, str, float]] = []
         provider = object()
 
@@ -215,7 +241,6 @@ def test_configured_brave_provider_factory_is_shared_by_app_chat_and_dossier(
             constructor_arguments.append((client, api_key, base_url, timeout_seconds))
             return provider
 
-        composition = importlib.import_module("nexus.services.tool_runtime.composition")
         monkeypatch.setattr(composition, "BraveSearchProvider", record_constructor)
         client = object()
         assert factory(client, settings=get_settings()) is provider
@@ -236,7 +261,7 @@ def test_keyless_boot_preserves_plan_and_refuses_required_web_before_dispatch(
     test_user: UserRecord,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Missing Brave credentials preserve Chat but refuse Web and Idea work."""
+    """Missing Brave credentials preserve exact plans but refuse their unavailable work."""
     monkeypatch.delenv("BRAVE_SEARCH_API_KEY", raising=False)
     monkeypatch.delenv("WORKER_LANE", raising=False)
     monkeypatch.delenv("WORKER_ALLOWED_JOB_KINDS", raising=False)
@@ -254,14 +279,16 @@ def test_keyless_boot_preserves_plan_and_refuses_required_web_before_dispatch(
                 "the keyless app booted without publishing its immutable tool runtime"
             )
             app_runtime = app.state.tool_runtime
-            app_chat = app_runtime.operations["chat"]
-            assert _tool_ids(app_chat) == _CHAT_TOOL_IDS
+            app_chat = app_runtime.operations.get("ChatRead")
+            assert app_chat is not None, "the keyless app omitted its frozen ChatRead operation"
+            assert _tool_ids(app_chat) == _CHAT_READ_TOOL_IDS
 
             from nexus.tasks.artifacts import compose_dossier_tool_runtime
 
             task_runtime = compose_dossier_tool_runtime(None)
-            task_chat = task_runtime.operations["chat"]
-            assert _tool_ids(task_chat) == _CHAT_TOOL_IDS
+            task_chat = task_runtime.operations.get("ChatRead")
+            assert task_chat is not None, "the keyless worker omitted its frozen ChatRead operation"
+            assert _tool_ids(task_chat) == _CHAT_READ_TOOL_IDS
             assert task_chat.profile.profile_revision == app_chat.profile.profile_revision
             assert task_chat.plan.plan_revision == app_chat.plan.plan_revision
 
@@ -271,7 +298,7 @@ def test_keyless_boot_preserves_plan_and_refuses_required_web_before_dispatch(
                 "error": {"type": "ToolUnavailable"},
             }
             assert recorder.record(position).dispatches == 0, (
-                "an unavailable Web binding crossed the provider dispatch boundary"
+                "an unavailable Web binding crossed the tool dispatch boundary"
             )
             assert telemetry.events == [("tool.unavailable", {"tool_id": "web.search"})]
 

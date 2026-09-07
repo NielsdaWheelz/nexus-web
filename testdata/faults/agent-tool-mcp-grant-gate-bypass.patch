@@ -1,0 +1,12 @@
+diff --git a/python/nexus/services/agent_tools_mcp.py b/python/nexus/services/agent_tools_mcp.py
+--- a/python/nexus/services/agent_tools_mcp.py
++++ b/python/nexus/services/agent_tools_mcp.py
+@@ -988,8 +988,6 @@ class _GrantGate(BaseHTTPMiddleware):
+             )
+         except ValueError:
+             return Response(status_code=401)
+-        if not await self._authorize_request(claims):
+-            return Response(status_code=401)
+         request.state.agent_tool_grant = claims
+         if request.method != "POST":
+             return Response(status_code=405, headers={"Allow": "POST"})

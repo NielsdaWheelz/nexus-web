@@ -23,10 +23,11 @@ dependencies = [
     "html5lib==1.1",
     "regex>=2024.11.6",
     "stripe>=12.0.0",
-    "provider-runtime[llm-tools]",
+    "provider-runtime",
     "llm-tools==0.1.0",
     "boto3>=1.43.7",
     "uuid6>=2025.0.1",
+    "mcp==2.1.0",
 ]
 
 [project.optional-dependencies]
@@ -57,7 +58,7 @@ build-backend = "hatchling.build"
 packages = ["nexus"]
 
 [tool.uv.sources]
-provider-runtime = { git = "https://github.com/NielsdaWheelz/llm-calling", rev = "a5d9c8e0c1c851daee0731554e0a4a326d3c2819" }
+provider-runtime = { git = "https://github.com/NielsdaWheelz/llm-calling", rev = "1353881d80ffeee916b78e163b5620fc967d09bd" }
 llm-tools = { git = "https://github.com/NielsdaWheelz/llm-tools.git", rev = "8df458a199703120005296ae12f997b39d208fed" }
 
 [tool.ruff]
@@ -108,7 +109,6 @@ include = [
     "nexus/middleware/request_id.py",
     "nexus/responses.py",
     "nexus/services/agent_tools",
-    "nexus/services/agent_turn_ledger.py",
     "nexus/services/artifacts",
     "nexus/services/atlas_projection.py",
     "nexus/services/capabilities.py",
@@ -144,9 +144,6 @@ include = [
     "nexus/services/metadata_dispatch.py",
     "nexus/services/metadata_enrichment.py",
     "nexus/services/metadata_lifecycle.py",
-    "nexus/services/native_agent_client.py",
-    "nexus/services/native_agent_contract.py",
-    "nexus/services/native_agent_operations.py",
     "nexus/services/node_ingest.py",
     "nexus/services/notes.py",
     "nexus/services/oracle.py",

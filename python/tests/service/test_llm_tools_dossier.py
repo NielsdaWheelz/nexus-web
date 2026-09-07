@@ -5,8 +5,11 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from importlib.util import find_spec
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 import pytest
@@ -18,11 +21,10 @@ from llm_tools import (
     WebSearchResultItem,
     canonical_json_bytes,
 )
-from provider_runtime.testing import ScriptedRuntime
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from nexus.config import clear_settings_cache
+from nexus.config import clear_settings_cache, get_settings
 from nexus.db.models import (
     ArtifactBuildFailure,
     ArtifactIdeaSubject,
@@ -71,15 +73,13 @@ from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.durable_step_journal import (
     AttachReconciledResult,
     Completed,
-    Prepared,
     ProveNotDispatched,
-    StepReplayState,
     ToolExecutionSettlement,
     Uncertain,
-    checkpoint_step_state,
     read_step_states,
     stable_generation_id,
 )
+from nexus.services.llm_execution import ExecutionRuntime
 from nexus.services.rate_limit import RateLimiter, get_rate_limiter, set_rate_limiter
 from nexus.tasks.artifacts import compose_dossier_tool_runtime
 from tests.testkit.unreachable_state import (
@@ -92,6 +92,14 @@ from tests.testkit.unreachable_state import (
 
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _WEB_URL = "https://example.com/durable-dossier-evidence"
+_GENERATION_CUTOVER_PRESENT = find_spec("nexus.services.generation_selection") is not None
+
+if TYPE_CHECKING or _GENERATION_CUTOVER_PRESENT:
+    from nexus.services.codex_generation_contract import (
+        GenerationCommand,
+        GenerationFrame,
+        GenerationHealth,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,8 +217,6 @@ def _create_idea_build(
         db,
         user_id=user_id,
         plan_tier="ai_pro",
-        platform_token_quota_mode="unlimited",
-        platform_token_limit_monthly=None,
         transcription_quota_mode="unlimited",
         transcription_minutes_limit_monthly=None,
         expires_at=None,
@@ -294,11 +300,29 @@ def _runtime(
         artifact_id=build.artifact_id,
         job=job,
         execution_context=context,
-        llm_runtime=ScriptedRuntime(),
+        llm_runtime=_NeverGenerationRuntime(),
         research_tool_operation=compose_dossier_tool_runtime(web_search_provider).operations[
             "idea_dossier_research"
         ],
+        settings=get_settings(),
     )
+
+
+class _NeverGenerationRuntime(ExecutionRuntime):
+    """This research-replay proof must settle before synthesis dispatch."""
+
+    async def health(self) -> GenerationHealth:
+        raise AssertionError("Dossier research replay reached generation health")
+
+    async def stream(self, command: GenerationCommand) -> AsyncIterator[GenerationFrame]:
+        del command
+        raise AssertionError("Dossier research replay dispatched generation")
+        if False:
+            yield
+
+    async def cancel(self, request_id: UUID) -> None:
+        del request_id
+        raise AssertionError("Dossier research replay cancelled generation")
 
 
 def _plan_snapshot(job: JobRow) -> dict[str, object]:
@@ -325,6 +349,7 @@ def _assert_exact_host_plan(snapshot: dict[str, object]) -> None:
     assert set(snapshot) == {
         "exposure",
         "grants",
+        "max_live_writes",
         "plan_id",
         "plan_revision",
         "profile_id",
@@ -334,6 +359,7 @@ def _assert_exact_host_plan(snapshot: dict[str, object]) -> None:
     assert snapshot["plan_id"] == "idea_dossier_research"
     assert snapshot["profile_id"] == "idea_dossier_research"
     assert snapshot["exposure"] == {"type": "HostTable"}
+    assert snapshot["max_live_writes"] is None
     assert snapshot["run_limits"] == {
         "max_calls": 3,
         "max_elapsed_seconds": 60.0,
@@ -434,6 +460,7 @@ def test_dossier_freezes_host_plan_and_does_not_automatically_reissue_uncertain_
 ) -> None:
     """Protect paid research, accepted sources, and readiness across worker replay."""
 
+    assert _GENERATION_CUTOVER_PRESENT, "the exact-generation cutover is absent"
     monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "dossier-tool-replay-test-key")
     clear_settings_cache()
     session_factory = create_session_factory(engine)
@@ -476,6 +503,7 @@ def test_dossier_freezes_host_plan_and_does_not_automatically_reissue_uncertain_
                     db,
                     job_id=crossed.job_id,
                     worker_id=crossed_context.worker_id,
+                    attempt_no=crossed_context.attempt_no,
                     error_code="E_WORKER_INTERRUPTED",
                     error_message="paid search may have crossed the provider boundary",
                     retry_delays_seconds=(0,),
@@ -512,6 +540,7 @@ def test_dossier_freezes_host_plan_and_does_not_automatically_reissue_uncertain_
                     db,
                     job_id=crossed.job_id,
                     worker_id=crossed_retry_context.worker_id,
+                    attempt_no=crossed_retry_context.attempt_no,
                     error_code="E_RECONCILIATION_REQUIRED",
                     error_message="operator evidence is required",
                     retry_delays_seconds=(0,),
@@ -657,6 +686,7 @@ def test_dossier_freezes_host_plan_and_does_not_automatically_reissue_uncertain_
                     db,
                     job_id=replay.job_id,
                     worker_id=replay_context.worker_id,
+                    attempt_no=replay_context.attempt_no,
                     error_code="E_WORKER_INTERRUPTED",
                     error_message="search adapter proved zero transport dispatch",
                     retry_delays_seconds=(0,),
@@ -821,91 +851,10 @@ def test_dossier_freezes_host_plan_and_does_not_automatically_reissue_uncertain_
                 db,
                 job_id=replay.job_id,
                 worker_id=ready_context.worker_id,
+                attempt_no=ready_context.attempt_no,
                 result_payload={"status": "modeled_failure"},
             )
             db.commit()
     finally:
         set_rate_limiter(previous_limiter)
         clear_settings_cache()
-
-
-@pytest.mark.parametrize("step_path", ("synthesis", "document-repair"))
-@pytest.mark.parametrize("attach_result", (False, True))
-def test_dossier_operator_reconciles_every_uncertain_billed_document_step(
-    engine: Engine,
-    *,
-    step_path: str,
-    attach_result: bool,
-) -> None:
-    """An uncertain synthesis or repair is recoverable without redispatch."""
-
-    with Session(engine, expire_on_commit=False) as db:
-        build = _create_idea_build(
-            db,
-            title=f"Reconcile {step_path} {'result' if attach_result else 'dispatch'}",
-            max_attempts=1,
-        )
-        job, context = _claim_build(
-            db,
-            build=build,
-            worker_id=f"reconcile-{step_path}-{'result' if attach_result else 'dispatch'}",
-        )
-        fingerprint = "a" * 64
-        assert checkpoint_step_state(
-            db,
-            ctx=context,
-            job=job,
-            step_path=step_path,
-            state=StepReplayState(
-                generation_id=stable_generation_id(build.build_id, step_path),
-                dispatch_phase=Uncertain,
-                request_fingerprint=present(fingerprint),
-                terminal_result=absent(),
-            ),
-        )
-        db.commit()
-        assert (
-            fail_job(
-                db,
-                job_id=build.job_id,
-                worker_id=context.worker_id,
-                error_code="E_RECONCILIATION_REQUIRED",
-                error_message="provider dispatch outcome is uncertain",
-                retry_delays_seconds=(0,),
-            )
-            == "dead"
-        )
-        db.commit()
-
-        if attach_result:
-            recovered = json.dumps(
-                {
-                    "content_html": "<article></article>",
-                    "citations": [],
-                },
-                separators=(",", ":"),
-            )
-            resolution = AttachReconciledResult(terminal_result=recovered)
-        else:
-            resolution = ProveNotDispatched()
-        reconcile_uncertain_build(
-            db,
-            build_id=build.build_id,
-            resolution=resolution,
-        )
-
-        reconciled_job = get_job(db, build.job_id)
-        assert reconciled_job is not None and reconciled_job.status == PENDING
-        reconciled = read_step_states(reconciled_job)[step_path]
-        assert reconciled.generation_id == stable_generation_id(build.build_id, step_path)
-        assert reconciled.request_fingerprint == present(fingerprint)
-        if attach_result:
-            assert reconciled.dispatch_phase is Completed
-            assert isinstance(reconciled.terminal_result, Present)
-            assert json.loads(reconciled.terminal_result.value) == {
-                "kind": "Accepted",
-                "envelope_json": recovered,
-            }
-        else:
-            assert reconciled.dispatch_phase is Prepared
-            assert reconciled.terminal_result == absent()

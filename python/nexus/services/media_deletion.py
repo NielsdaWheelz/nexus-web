@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media, non_system_media_ref_exists_sql
 from nexus.db.models import Highlight, MediaKind
+from nexus.db.retries import retry_read_committed
 from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, ForbiddenError, NotFoundError
 from nexus.ids import new_uuid7
@@ -36,7 +37,7 @@ from nexus.services import (
     contributors,
     library_entries,
     library_governance,
-    media_intelligence,
+    media_intelligence_lifecycle,
     passage_anchors,
     resource_grants,
 )
@@ -167,6 +168,24 @@ def _viewer_has_non_system_media_reference(db: Session, *, viewer_id: UUID, medi
 
 def remove_media_for_viewer(
     db: Session,
+    viewer_id: UUID,
+    media_id: UUID,
+) -> MediaDeleteResult:
+    """Remove a media from one viewer's workspace as one retryable operation."""
+
+    def attempt() -> MediaDeleteResult:
+        return _remove_media_for_viewer_attempt(
+            db,
+            viewer_id=viewer_id,
+            media_id=media_id,
+        )
+
+    return retry_read_committed(db, "remove_media_for_viewer", attempt)
+
+
+def _remove_media_for_viewer_attempt(
+    db: Session,
+    *,
     viewer_id: UUID,
     media_id: UUID,
 ) -> MediaDeleteResult:
@@ -593,7 +612,7 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
     # Tear down the per-media intelligence unit through its sole owner before the
     # content index removes this media's evidence_spans (media_claims FK them) and
     # before the media row goes (both unit tables FK media, non-cascading).
-    media_intelligence.delete_media_unit(db, media_id=media_id)
+    media_intelligence_lifecycle.delete_media_unit(db, media_id=media_id)
     delete_media_apparatus(db, media_id)
     delete_content_index(db, owner=IndexOwner("media", media_id))
     db.execute(

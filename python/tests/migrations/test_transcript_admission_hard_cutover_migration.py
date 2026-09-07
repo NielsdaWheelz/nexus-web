@@ -20,7 +20,7 @@ def test_0223_removes_enqueue_failure_audits_and_rejects_the_legacy_outcome_at_h
     config = Config(migration_root / "alembic.ini")
     config.set_main_option("script_location", str(migration_root / "alembic"))
     expected_head = ScriptDirectory.from_config(config).get_current_head()
-    assert expected_head == "0223", "transcript admission cutover must be the sole head"
+    assert expected_head == "0224", "integrated generation cutover must be the sole head"
 
     command.upgrade(config, "0222")
     media_id = UUID("00000000-0000-0000-0000-000000002230")

@@ -188,6 +188,34 @@ function PendingToCompleteAnswer({
   );
 }
 
+function RerunnableFailure({
+  onRerun,
+}: {
+  readonly onRerun: (messageId: string) => Promise<"Committed">;
+}) {
+  const [rerunning, setRerunning] = useState(false);
+  const run = async (messageId: string) => {
+    setRerunning(true);
+    try {
+      return await onRerun(messageId);
+    } finally {
+      setRerunning(false);
+    }
+  };
+  return (
+    <MessageRow
+      message={completedAnswer({
+        status: "error",
+        can_rerun: true,
+        can_regenerate: false,
+      })}
+      messageOrdinal={1}
+      onRerunAssistantResponse={run}
+      rerunning={rerunning}
+    />
+  );
+}
+
 describe("Assistant Message canonical actions", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -231,5 +259,30 @@ describe("Assistant Message canonical actions", () => {
     });
     await waitFor(() => expect(trigger).toHaveAttribute("aria-disabled", "true"));
     expect(screen.queryByRole("menuitem", { name: "Regenerate" })).toBeNull();
+  });
+
+  it("reruns an eligible failure from its card with exact identity and busy state", async () => {
+    installSnapshot(false);
+    let settle: ((outcome: "Committed") => void) | undefined;
+    const onRerun = vi.fn(
+      () =>
+        new Promise<"Committed">((resolve) => {
+          settle = resolve;
+        }),
+    );
+    renderInRuntime(<RerunnableFailure onRerun={onRerun} />);
+
+    const runAgain = screen.getByRole("button", { name: "Rerun" });
+    await userEvent.click(runAgain);
+    expect(onRerun).toHaveBeenCalledTimes(1);
+    expect(onRerun).toHaveBeenCalledWith(MESSAGE_ID);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Rerun" })).toBeDisabled(),
+    );
+    settle?.("Committed");
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Rerun" })).toBeEnabled(),
+    );
   });
 });

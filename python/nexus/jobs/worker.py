@@ -45,6 +45,8 @@ from nexus.jobs.queue import (
     fail_job,
     get_job,
     heartbeat_job,
+    reconcile_periodic_job_priorities,
+    reconcile_periodic_job_priority,
     reschedule_running_job,
 )
 from nexus.jobs.registry import (
@@ -191,6 +193,7 @@ class JobWorker:
                     db,
                     job_id=claimed.id,
                     worker_id=self.worker_id,
+                    attempt_no=claimed.attempts,
                     error_code="E_JOB_KIND_UNKNOWN",
                     error_message=f"Unsupported job kind: {claimed.kind}",
                     retry_delays_seconds=(),
@@ -228,13 +231,12 @@ class JobWorker:
         )
 
         try:
-            # A fresh child exists to contain Heavy extraction and to host the Llm
-            # runtime the lean supervisor deliberately does not import; a Light,
-            # Base-runtime maintenance job needs neither, so it runs in-process as
-            # it did before the cutover. The worker runs one job at a time, so an
-            # in-process job never shares the bounded cgroup with a live child.
-            needs_child = definition.resource_class == "Heavy" or definition.child_runtime != "Base"
-            if self.process_executor is None or not needs_child:
+            # The background lane installs a process executor and dispatches every
+            # handler through it. Resource class owns queue capacity only; it must
+            # not let Light imports accumulate in the supervisor memory reserved
+            # for a later Heavy child. Interactive/maintenance workers install no
+            # executor and retain their deliberate in-process boundary.
+            if self.process_executor is None:
                 handler_result = resolve_job_handler(definition.handler_path)(
                     payload=claimed.payload,
                     context=context,
@@ -377,6 +379,7 @@ class JobWorker:
                         db,
                         job_id=claimed.id,
                         worker_id=self.worker_id,
+                        attempt_no=claimed.attempts,
                         error_code=error_code,
                         error_message=reason,
                         retry_delays_seconds=definition.retry_delays_seconds,
@@ -410,6 +413,7 @@ class JobWorker:
                     db,
                     job_id=claimed.id,
                     worker_id=self.worker_id,
+                    attempt_no=claimed.attempts,
                     result_payload=result_payload,
                 )
                 db.commit()
@@ -443,6 +447,7 @@ class JobWorker:
                     db,
                     job_id=claimed.id,
                     worker_id=self.worker_id,
+                    attempt_no=claimed.attempts,
                     error_code=_derive_error_code(exc),
                     error_message=str(exc),
                     retry_delays_seconds=definition.retry_delays_seconds,
@@ -620,7 +625,7 @@ class JobWorker:
                         slot_start=slot_start,
                     )
 
-                    _, was_inserted = enqueue_unique_job(
+                    scheduled, was_inserted = enqueue_unique_job(
                         db,
                         kind=definition.kind,
                         payload={
@@ -634,6 +639,23 @@ class JobWorker:
                     )
                     if was_inserted:
                         inserted += 1
+                    else:
+                        reconcile_periodic_job_priority(
+                            db,
+                            job_id=scheduled.id,
+                            kind=definition.kind,
+                            dedupe_key=dedupe_key,
+                            interval_seconds=int(definition.periodic_interval_seconds or 0),
+                            priority=definition.periodic_priority,
+                            checkpoint_keys=definition.periodic_checkpoint_keys,
+                        )
+                    reconcile_periodic_job_priorities(
+                        db,
+                        kind=definition.kind,
+                        interval_seconds=int(definition.periodic_interval_seconds or 0),
+                        priority=definition.periodic_priority,
+                        checkpoint_keys=definition.periodic_checkpoint_keys,
+                    )
 
                 db.commit()
                 return inserted

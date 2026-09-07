@@ -16,6 +16,8 @@ Local/test environments use Supabase local, staging/prod use cloud.
 Supabase service-role keys are not application runtime settings.
 """
 
+import base64
+import binascii
 import os
 from datetime import datetime
 from enum import Enum
@@ -24,7 +26,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import urlparse
 
-from pydantic import Field, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings
 
 from nexus.job_topology import MAINTENANCE_JOB_KINDS
@@ -38,6 +40,68 @@ DIRECT_UPLOAD_PUT_TIMEOUT_SECONDS = 240
 # `deploy/hetzner/docker-compose.yml`; the cgroup readiness check proves at startup
 # that the deployed limit is exactly this value.
 BACKGROUND_WORKER_MEMORY_LIMIT_BYTES = 448 * 1024 * 1024
+
+
+def parse_agent_tools_mcp_listen(value: str) -> tuple[str, int]:
+    """Parse the dedicated worker MCP listener as one strict host:port pair."""
+    if not isinstance(value, str) or value.count(":") != 1:
+        raise ValueError("NEXUS_AGENT_TOOLS_MCP_LISTEN must be host:port")
+    host, port_text = value.rsplit(":", 1)
+    if not host or "/" in host or any(char.isspace() for char in host):
+        raise ValueError("NEXUS_AGENT_TOOLS_MCP_LISTEN has an invalid host")
+    try:
+        port = int(port_text)
+    except ValueError as exc:
+        raise ValueError("NEXUS_AGENT_TOOLS_MCP_LISTEN has an invalid port") from exc
+    if not 1 <= port <= 65_535:
+        raise ValueError("NEXUS_AGENT_TOOLS_MCP_LISTEN port must be 1..65535")
+    return host, port
+
+
+def parse_agent_tools_mcp_origin(value: str) -> tuple[str, str]:
+    """Return the exact Host and Origin admitted by the MCP transport."""
+
+    parsed = urlparse(value)
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("NEXUS_AGENT_TOOLS_MCP_ORIGIN has an invalid port") from exc
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path != "/internal/agent-tools/mcp"
+        or parsed.params
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("NEXUS_AGENT_TOOLS_MCP_ORIGIN must be one exact MCP endpoint")
+    default_port = 80 if parsed.scheme == "http" else 443
+    authority = parsed.hostname if port in {None, default_port} else f"{parsed.hostname}:{port}"
+    if parsed.netloc != authority:
+        raise ValueError("NEXUS_AGENT_TOOLS_MCP_ORIGIN must use a canonical authority")
+    return authority, f"{parsed.scheme}://{authority}"
+
+
+def validate_agent_tools_mcp_runtime_origin(
+    value: str,
+    *,
+    nexus_env: "Environment",
+    worker_lane: Literal["interactive", "background", "maintenance"] | None,
+) -> tuple[str, str]:
+    """Validate the MCP origin only for the lane that owns that transport."""
+
+    authority, origin = parse_agent_tools_mcp_origin(value)
+    if (
+        worker_lane == "interactive"
+        and nexus_env in {Environment.STAGING, Environment.PROD}
+        and not origin.startswith("https://")
+    ):
+        raise ValueError(
+            "NEXUS_AGENT_TOOLS_MCP_ORIGIN must use HTTPS for a deployed interactive worker"
+        )
+    return authority, origin
 
 
 def _database_url_looks_like_supabase(database_url: str) -> bool:
@@ -66,6 +130,17 @@ class Environment(str, Enum):
     TEST = "test"
     STAGING = "staging"
     PROD = "prod"
+
+
+type GenerationApiProvider = Literal[
+    "openai",
+    "anthropic",
+    "gemini",
+    "moonshot",
+    "openrouter",
+    "deepseek",
+    "xai",
+]
 
 
 class Settings(BaseSettings):
@@ -238,14 +313,6 @@ class Settings(BaseSettings):
     stripe_plus_price_id: str | None = Field(default=None, alias="STRIPE_PLUS_PRICE_ID")
     stripe_ai_plus_price_id: str | None = Field(default=None, alias="STRIPE_AI_PLUS_PRICE_ID")
     stripe_ai_pro_price_id: str | None = Field(default=None, alias="STRIPE_AI_PRO_PRICE_ID")
-    billing_ai_plus_platform_token_limit_monthly: int = Field(
-        default=1_000_000,
-        alias="BILLING_AI_PLUS_PLATFORM_TOKEN_LIMIT_MONTHLY",
-    )
-    billing_ai_pro_platform_token_limit_monthly: int = Field(
-        default=3_000_000,
-        alias="BILLING_AI_PRO_PLATFORM_TOKEN_LIMIT_MONTHLY",
-    )
     billing_ai_plus_transcription_minutes_monthly: int = Field(
         default=300,
         alias="BILLING_AI_PLUS_TRANSCRIPTION_MINUTES_MONTHLY",
@@ -370,19 +437,94 @@ class Settings(BaseSettings):
         alias="MAX_LATEX_SOURCE_ARCHIVE_COMPRESSION_RATIO",
     )
 
-    # Platform API keys for LLM providers.
-    # If set, models from that provider are available to all users
+    # OpenAI's unqualified key remains embedding-only. Generation credentials
+    # are route-specific so no provider secret can cross into the Codex host.
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
-    anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
-    gemini_api_key: str | None = Field(default=None, alias="GEMINI_API_KEY")
-    moonshot_api_key: str | None = Field(default=None, alias="MOONSHOT_API_KEY")
-    deepseek_api_key: str | None = Field(default=None, alias="DEEPSEEK_API_KEY")
-
-    # Explicit RFC 3339 deployment assertion: Fable (the platform LLM runtime)
-    # requires 30-day retention and is not ZDR-eligible, so a human operator
-    # must record when that tradeoff was accepted. Required in staging/prod.
-    nexus_fable_retention_accepted_at: str | None = Field(
-        default=None, alias="NEXUS_FABLE_RETENTION_ACCEPTED_AT"
+    generation_api_providers_raw: str = Field(default="", alias="GENERATION_API_PROVIDERS")
+    openai_generation_api_key: SecretStr | None = Field(
+        default=None,
+        alias="OPENAI_GENERATION_API_KEY",
+        repr=False,
+    )
+    anthropic_generation_api_key: SecretStr | None = Field(
+        default=None,
+        alias="ANTHROPIC_GENERATION_API_KEY",
+        repr=False,
+    )
+    gemini_generation_api_key: SecretStr | None = Field(
+        default=None,
+        alias="GEMINI_GENERATION_API_KEY",
+        repr=False,
+    )
+    moonshot_generation_api_key: SecretStr | None = Field(
+        default=None,
+        alias="MOONSHOT_GENERATION_API_KEY",
+        repr=False,
+    )
+    openrouter_generation_api_key: SecretStr | None = Field(
+        default=None,
+        alias="OPENROUTER_GENERATION_API_KEY",
+        repr=False,
+    )
+    deepseek_generation_api_key: SecretStr | None = Field(
+        default=None,
+        alias="DEEPSEEK_GENERATION_API_KEY",
+        repr=False,
+    )
+    xai_generation_api_key: SecretStr | None = Field(
+        default=None,
+        alias="XAI_GENERATION_API_KEY",
+        repr=False,
+    )
+    generation_continuation_encryption_key: SecretStr | None = Field(
+        default=None,
+        alias="GENERATION_CONTINUATION_ENCRYPTION_KEY",
+        repr=False,
+    )
+    fable_retention_accepted_at: datetime | None = Field(
+        default=None,
+        alias="NEXUS_FABLE_RETENTION_ACCEPTED_AT",
+    )
+    anthropic_api_key_rejected: SecretStr | None = Field(
+        default=None,
+        alias="ANTHROPIC_API_KEY",
+        exclude=True,
+        repr=False,
+    )
+    gemini_api_key_rejected: SecretStr | None = Field(
+        default=None,
+        alias="GEMINI_API_KEY",
+        exclude=True,
+        repr=False,
+    )
+    moonshot_api_key_rejected: SecretStr | None = Field(
+        default=None,
+        alias="MOONSHOT_API_KEY",
+        exclude=True,
+        repr=False,
+    )
+    openrouter_api_key_rejected: SecretStr | None = Field(
+        default=None,
+        alias="OPENROUTER_API_KEY",
+        exclude=True,
+        repr=False,
+    )
+    deepseek_api_key_rejected: SecretStr | None = Field(
+        default=None,
+        alias="DEEPSEEK_API_KEY",
+        exclude=True,
+        repr=False,
+    )
+    xai_api_key_rejected: SecretStr | None = Field(
+        default=None,
+        alias="XAI_API_KEY",
+        exclude=True,
+        repr=False,
+    )
+    agent_tool_grant_signing_key: SecretStr | None = Field(
+        default=None,
+        alias="AGENT_TOOL_GRANT_SIGNING_KEY",
+        repr=False,
     )
 
     # Public web search provider settings.
@@ -408,7 +550,6 @@ class Settings(BaseSettings):
         alias="OUTBOUND_HTTP_PROXY_URL",
     )
 
-    # LLM provider feature flags.
     # Rate limiting settings.
     rate_limit_rpm: int = Field(default=20, alias="RATE_LIMIT_RPM")  # Requests per minute
     rate_limit_concurrent: int = Field(default=3, alias="RATE_LIMIT_CONCURRENT")  # Max concurrent
@@ -427,7 +568,7 @@ class Settings(BaseSettings):
         alias="TRANSCRIPT_EMBEDDING_TIMEOUT_SECONDS",
     )
 
-    # Metadata enrichment settings. The native-agent wire input-byte invariant
+    # Metadata enrichment settings. The generation-host wire input-byte invariant
     # is owned solely by build_enrichment_user_content's byte clamp; this cap
     # only sizes the sampled text.
     metadata_enrichment_max_content_chars: int = Field(
@@ -436,6 +577,14 @@ class Settings(BaseSettings):
     codex_agent_socket: Path = Field(
         default=Path("/run/nexus-codex/agent.sock"),
         alias="NEXUS_CODEX_AGENT_SOCKET",
+    )
+    agent_tools_mcp_listen: str = Field(
+        default="0.0.0.0:8001",
+        alias="NEXUS_AGENT_TOOLS_MCP_LISTEN",
+    )
+    agent_tools_mcp_origin: str = Field(
+        default="http://127.0.0.1:8001/internal/agent-tools/mcp",
+        alias="NEXUS_AGENT_TOOLS_MCP_ORIGIN",
     )
 
     # Synapse resonance engine: SYNAPSE_ENABLED=false turns every scan trigger
@@ -470,11 +619,6 @@ class Settings(BaseSettings):
     stream_base_url: str | None = Field(default=None, alias="STREAM_BASE_URL")
     # Comma-separated list of allowed CORS origins for direct stream endpoints.
     stream_cors_origins: str | None = Field(default=None, alias="STREAM_CORS_ORIGINS")
-    # Default max output tokens for budget reservation
-    stream_max_output_tokens_default: int = Field(
-        default=1024, alias="STREAM_MAX_OUTPUT_TOKENS_DEFAULT"
-    )
-
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",
@@ -513,7 +657,7 @@ class Settings(BaseSettings):
         self._validate_email_credentials()
         self._validate_podcast_credentials()
         self._validate_deployed_browse_provider()
-        self._validate_deployed_llm_runtime()
+        self._validate_deployed_generation_runtime()
         self._validate_ingest_runtime_and_paths()
         self._validate_worker_lane()
         self._validate_worker_intervals()
@@ -560,6 +704,12 @@ class Settings(BaseSettings):
             raise ValueError(
                 "DATABASE_URL must point at standalone Postgres, not Supabase Database."
             )
+        parse_agent_tools_mcp_listen(self.agent_tools_mcp_listen)
+        validate_agent_tools_mcp_runtime_origin(
+            self.agent_tools_mcp_origin,
+            nexus_env=self.nexus_env,
+            worker_lane=self.worker_lane,
+        )
 
     def _validate_retired_storage_settings(self) -> None:
         rejected_storage_origin_settings = [
@@ -684,10 +834,6 @@ class Settings(BaseSettings):
                 raise ValueError(f"{field_name.upper()}={value} must be >= 1.")
 
     def _validate_billing_limits(self) -> None:
-        if self.billing_ai_plus_platform_token_limit_monthly < 0:
-            raise ValueError("BILLING_AI_PLUS_PLATFORM_TOKEN_LIMIT_MONTHLY must be >= 0.")
-        if self.billing_ai_pro_platform_token_limit_monthly < 0:
-            raise ValueError("BILLING_AI_PRO_PLATFORM_TOKEN_LIMIT_MONTHLY must be >= 0.")
         if self.billing_ai_plus_transcription_minutes_monthly < 0:
             raise ValueError("BILLING_AI_PLUS_TRANSCRIPTION_MINUTES_MONTHLY must be >= 0.")
         if self.billing_ai_pro_transcription_minutes_monthly < 0:
@@ -780,39 +926,112 @@ class Settings(BaseSettings):
                 "Browse providers are missing required credentials: YOUTUBE_DATA_API_KEY"
             )
 
-    def _validate_deployed_llm_runtime(self) -> None:
+    def _validate_deployed_generation_runtime(self) -> None:
+        configured = self.generation_api_provider_list
+        rejected = [
+            alias
+            for alias, value in (
+                ("ANTHROPIC_API_KEY", self.anthropic_api_key_rejected),
+                ("GEMINI_API_KEY", self.gemini_api_key_rejected),
+                ("MOONSHOT_API_KEY", self.moonshot_api_key_rejected),
+                ("OPENROUTER_API_KEY", self.openrouter_api_key_rejected),
+                ("DEEPSEEK_API_KEY", self.deepseek_api_key_rejected),
+                ("XAI_API_KEY", self.xai_api_key_rejected),
+            )
+            if value is not None
+        ]
+        if rejected:
+            raise ValueError(
+                "Retired generation credential names are forbidden: " + ", ".join(rejected)
+            )
+
+        credential_by_provider: dict[GenerationApiProvider, tuple[str, SecretStr | None]] = {
+            "openai": ("OPENAI_GENERATION_API_KEY", self.openai_generation_api_key),
+            "anthropic": (
+                "ANTHROPIC_GENERATION_API_KEY",
+                self.anthropic_generation_api_key,
+            ),
+            "gemini": ("GEMINI_GENERATION_API_KEY", self.gemini_generation_api_key),
+            "moonshot": (
+                "MOONSHOT_GENERATION_API_KEY",
+                self.moonshot_generation_api_key,
+            ),
+            "openrouter": (
+                "OPENROUTER_GENERATION_API_KEY",
+                self.openrouter_generation_api_key,
+            ),
+            "deepseek": (
+                "DEEPSEEK_GENERATION_API_KEY",
+                self.deepseek_generation_api_key,
+            ),
+            "xai": ("XAI_GENERATION_API_KEY", self.xai_generation_api_key),
+        }
+        missing: list[str] = []
+        for provider in configured:
+            name, credential = credential_by_provider[provider]
+            if credential is None or not credential.get_secret_value().strip():
+                missing.append(name)
+        if missing:
+            raise ValueError(
+                "Configured generation providers are missing credentials: " + ", ".join(missing)
+            )
+        stale = [
+            name
+            for provider, (name, credential) in credential_by_provider.items()
+            if provider not in configured
+            and credential is not None
+            and credential.get_secret_value() != ""
+        ]
+        if stale:
+            raise ValueError(
+                "Generation credentials are forbidden for unconfigured provider "
+                + ", ".join(name.removesuffix("_GENERATION_API_KEY").lower() for name in stale)
+            )
+        if configured:
+            if self.generation_continuation_encryption_key is None:
+                raise ValueError(
+                    "GENERATION_CONTINUATION_ENCRYPTION_KEY is required when an API provider "
+                    "is configured"
+                )
+            encoded_key = self.generation_continuation_encryption_key.get_secret_value()
+            try:
+                decoded_key = base64.b64decode(encoded_key, validate=True)
+            except (binascii.Error, ValueError) as exc:
+                raise ValueError(
+                    "GENERATION_CONTINUATION_ENCRYPTION_KEY must be canonical base64 for a "
+                    "32-byte key"
+                ) from exc
+            if len(decoded_key) != 32 or base64.b64encode(decoded_key).decode() != encoded_key:
+                raise ValueError(
+                    "GENERATION_CONTINUATION_ENCRYPTION_KEY must be canonical base64 for a "
+                    "32-byte key"
+                )
+        if "anthropic" in configured:
+            if self.fable_retention_accepted_at is None:
+                raise ValueError(
+                    "NEXUS_FABLE_RETENTION_ACCEPTED_AT is required when Anthropic is configured"
+                )
+            if self.fable_retention_accepted_at.utcoffset() is None:
+                raise ValueError("NEXUS_FABLE_RETENTION_ACCEPTED_AT must include a timezone")
+        elif self.fable_retention_accepted_at is not None:
+            raise ValueError(
+                "NEXUS_FABLE_RETENTION_ACCEPTED_AT is forbidden while Anthropic is unconfigured"
+            )
+
         if self.nexus_env not in (Environment.STAGING, Environment.PROD):
             return
-        missing_llm_keys: list[str] = []
+        if not configured:
+            raise ValueError("GENERATION_API_PROVIDERS must be nonempty in staging/prod")
         if not self.openai_api_key:
-            missing_llm_keys.append("OPENAI_API_KEY")
-        if not self.anthropic_api_key:
-            missing_llm_keys.append("ANTHROPIC_API_KEY")
-        if not self.gemini_api_key:
-            missing_llm_keys.append("GEMINI_API_KEY")
-        if not self.moonshot_api_key:
-            missing_llm_keys.append("MOONSHOT_API_KEY")
-        if not self.deepseek_api_key:
-            missing_llm_keys.append("DEEPSEEK_API_KEY")
-        if missing_llm_keys:
-            raise ValueError(
-                "Platform LLM provider keys are required in staging/prod: "
-                f"{', '.join(missing_llm_keys)}"
-            )
-        if not self.nexus_fable_retention_accepted_at:
-            raise ValueError(
-                "NEXUS_FABLE_RETENTION_ACCEPTED_AT is required for "
-                f"NEXUS_ENV={self.nexus_env.value}: Fable requires 30-day retention "
-                "and is not ZDR-eligible, so a deploy must explicitly record (RFC "
-                "3339) when that tradeoff was accepted."
-            )
+            raise ValueError("OPENAI_API_KEY is required for transcript embeddings")
+        if not self.agent_tool_grant_signing_key:
+            raise ValueError("AGENT_TOOL_GRANT_SIGNING_KEY is required in staging/prod")
+        from nexus.services.agent_tool_grants import validate_agent_tool_grant_signing_key
+
         try:
-            datetime.fromisoformat(self.nexus_fable_retention_accepted_at)
+            validate_agent_tool_grant_signing_key(self.agent_tool_grant_signing_key)
         except ValueError as exc:
-            raise ValueError(
-                "NEXUS_FABLE_RETENTION_ACCEPTED_AT must be an RFC 3339 timestamp, "
-                f"got {self.nexus_fable_retention_accepted_at!r}"
-            ) from exc
+            raise ValueError("AGENT_TOOL_GRANT_SIGNING_KEY is invalid") from exc
 
     def _validate_ingest_runtime_and_paths(self) -> None:
         if self.ingest_stale_extracting_seconds < 1:
@@ -958,6 +1177,57 @@ class Settings(BaseSettings):
         if self.nexus_env in (Environment.LOCAL, Environment.TEST):
             return "dGVzdC1zdHJlYW0tdG9rZW4tc2lnbmluZy1rZXktMzJieXRlcw=="  # test key
         raise ValueError("STREAM_TOKEN_SIGNING_KEY is required in staging/prod")
+
+    @property
+    def effective_agent_tool_grant_signing_key(self) -> SecretStr:
+        """Return the dedicated grant key, with a non-production test key only."""
+        if self.agent_tool_grant_signing_key is not None:
+            return self.agent_tool_grant_signing_key
+        if self.nexus_env in (Environment.LOCAL, Environment.TEST):
+            return SecretStr("test-agent-tools-grant-signing-key-32-bytes!")
+        raise ValueError("AGENT_TOOL_GRANT_SIGNING_KEY is required in staging/prod")
+
+    @property
+    def effective_generation_continuation_encryption_key(self) -> SecretStr:
+        """Return the deployment key, or an unused deterministic local/test key."""
+
+        if self.generation_continuation_encryption_key is not None:
+            return self.generation_continuation_encryption_key
+        if self.nexus_env in (Environment.LOCAL, Environment.TEST) and not (
+            self.generation_api_provider_list
+        ):
+            return SecretStr(base64.b64encode(b"nexus-local-continuation-key-v1!").decode("ascii"))
+        raise ValueError("GENERATION_CONTINUATION_ENCRYPTION_KEY is required")
+
+    @property
+    def generation_api_provider_list(self) -> tuple[GenerationApiProvider, ...]:
+        """Parse the required deployment-owned provider list once at ingress."""
+
+        if self.generation_api_providers_raw == "":
+            return ()
+        providers: list[GenerationApiProvider] = []
+        for raw_provider in self.generation_api_providers_raw.split(","):
+            provider = raw_provider.strip()
+            match provider:
+                case (
+                    "openai"
+                    | "anthropic"
+                    | "gemini"
+                    | "moonshot"
+                    | "openrouter"
+                    | "deepseek"
+                    | "xai"
+                ):
+                    providers.append(provider)
+                case "":
+                    raise ValueError("GENERATION_API_PROVIDERS contains an empty provider")
+                case _:
+                    raise ValueError(
+                        f"GENERATION_API_PROVIDERS contains unknown provider {provider!r}"
+                    )
+        if len(set(providers)) != len(providers):
+            raise ValueError("GENERATION_API_PROVIDERS contains a duplicate provider")
+        return tuple(providers)
 
 
 @lru_cache

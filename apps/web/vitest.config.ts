@@ -55,6 +55,7 @@ export default defineConfig({
       "pdfjs-dist",
       "pdfjs-dist/web/pdf_viewer.mjs",
       "react-dom/client",
+      "react-dom/server",
     ],
   },
   test: {

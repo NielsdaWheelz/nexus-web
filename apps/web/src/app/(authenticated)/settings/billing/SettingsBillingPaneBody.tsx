@@ -18,6 +18,7 @@ import Pill from "@/components/ui/Pill";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { planLabel } from "@/lib/billing/planLabel";
 import { useBillingAccount, type BillingPlanTier } from "@/lib/billing/useBillingAccount";
+import type { BillingDisclosure } from "@/lib/conversations/generationCatalog";
 import { formatDisplayDate, formatDisplayNumber } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
@@ -35,6 +36,34 @@ const BILLING_DISABLED_MESSAGE =
   "Billing is currently disabled. Plan changes and billing management are unavailable right now.";
 
 type BillingAction = "Checkout" | "Portal";
+
+type GenerationBillingDisclosureCopy = {
+  readonly [Kind in BillingDisclosure["kind"]]: Extract<
+    BillingDisclosure,
+    { readonly kind: Kind }
+  > & {
+    readonly route: string;
+    readonly detail: string;
+  };
+};
+
+const GENERATION_BILLING_DISCLOSURES = {
+  Subscription: {
+    kind: "Subscription",
+    route: "Codex Personal",
+    label: "Codex subscription",
+    detail:
+      "Background generation and Codex Personal Chat use the operator-managed ChatGPT/Codex subscription.",
+  },
+  MeteredApi: {
+    kind: "MeteredApi",
+    route: "Provider API",
+    label: "Metered API",
+    detail:
+      "Provider API Chat runs are billed to the operator-managed account for the selected provider.",
+  },
+} satisfies GenerationBillingDisclosureCopy;
+const GENERATION_BILLING_ROWS = Object.values(GENERATION_BILLING_DISCLOSURES);
 
 function billingActionErrorMessage(
   error: unknown,
@@ -85,8 +114,8 @@ function billingActionErrorMessage(
 
 function planDescription(planTier: BillingPlanTier): string {
   if (planTier === "plus") return "Sharing and collaboration.";
-  if (planTier === "ai_plus") return "Sharing, platform AI, and transcription.";
-  if (planTier === "ai_pro") return "Higher AI and transcription limits.";
+  if (planTier === "ai_plus") return "Sharing and transcription.";
+  if (planTier === "ai_pro") return "Higher transcription limits.";
   return "Private solo reading and notes.";
 }
 
@@ -184,6 +213,32 @@ function sourceLabel(source: string): string {
   if (source === "internal_grant") return "Internal grant";
   if (source === "subscription") return "Subscription";
   return "Free";
+}
+
+export function GenerationBillingDisclosure() {
+  return (
+    <section className={styles.usageCard} aria-label="AI generation billing">
+      <h2 className={styles.usageTitle}>AI generation billing</h2>
+      <p className={styles.usageMeta}>
+        Nexus plans do not include or meter AI generation. Chat discloses the
+        route billing class before each run.
+      </p>
+      <dl className={styles.generationBillingList}>
+        {GENERATION_BILLING_ROWS.map((disclosure) => (
+          <div key={disclosure.kind}>
+            <dt>{disclosure.route}</dt>
+            <dd>
+              <strong>{disclosure.label}</strong>
+              <span>{disclosure.detail}</span>
+            </dd>
+          </div>
+        ))}
+      </dl>
+      <p className={styles.usageMeta}>
+        You select the model and reasoning level in Chat for each run.
+      </p>
+    </section>
+  );
 }
 
 export default function SettingsBillingPaneBody() {
@@ -350,19 +405,6 @@ export default function SettingsBillingPaneBody() {
 
             <div className={styles.usageGrid}>
               <section className={styles.usageCard}>
-                <h2 className={styles.usageTitle}>AI tokens</h2>
-                <p className={styles.usageValue}>
-                  {formatUsage(account.ai_token_usage.used, "tokens", display)}
-                </p>
-                <p className={styles.usageMeta}>
-                  Limit: {formatUsage(account.ai_token_usage.limit, "tokens", display)}
-                </p>
-                <p className={styles.usageMeta}>
-                  Remaining: {formatUsage(account.ai_token_usage.remaining, "tokens", display)}
-                </p>
-              </section>
-
-              <section className={styles.usageCard}>
                 <h2 className={styles.usageTitle}>Transcription</h2>
                 <p className={styles.usageValue}>
                   {formatUsage(account.transcription_usage.used, "minutes", display)}
@@ -374,11 +416,11 @@ export default function SettingsBillingPaneBody() {
                   Remaining: {formatUsage(account.transcription_usage.remaining, "minutes", display)}
                 </p>
               </section>
+              <GenerationBillingDisclosure />
             </div>
 
             <div className={styles.entitlementRow}>
               <span>Sharing: {yesNo(account.can_share)}</span>
-              <span>Platform AI: {yesNo(account.can_use_platform_llm)}</span>
               <span>Transcription: {yesNo(account.can_transcribe)}</span>
             </div>
 

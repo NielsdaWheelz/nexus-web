@@ -2162,6 +2162,7 @@ def test_source_progress_is_monotonic_and_rejects_a_lost_heavy_fence(engine: Eng
         )
         db.commit()
         assert claimed is not None and claimed.attempts == 1
+        claimed_attempt_no = claimed.attempts
 
     context = JobExecutionContext(
         job_id=job.id,
@@ -2209,7 +2210,12 @@ def test_source_progress_is_monotonic_and_rejects_a_lost_heavy_fence(engine: Eng
         assert persisted.progress_completed == 0
         assert persisted.progress_total is None
         assert persisted.progress_unit is None
-        assert complete_job(db, job_id=job.id, worker_id=worker_id)
+        assert complete_job(
+            db,
+            job_id=job.id,
+            worker_id=worker_id,
+            attempt_no=claimed_attempt_no,
+        )
         db.commit()
 
     with pytest.raises(SourcePublicationSuperseded):

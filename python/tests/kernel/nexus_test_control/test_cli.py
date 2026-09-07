@@ -601,18 +601,6 @@ def test_pr_records_later_cadence_selection_without_dispatching_it() -> None:
                 sensitivity_required=True,
             ),
             Selection(
-                "python/tests/hosted/nightly/test_openai_canary.py",
-                Capability.HOSTED,
-                SelectionReason.CHANGED_TEST,
-                "pytest:python/tests/hosted/nightly/test_openai_canary.py",
-            ),
-            Selection(
-                "python/tests/hosted/nightly/test_codex_personal_metadata.py",
-                Capability.CODEX_HOSTED,
-                SelectionReason.CHANGED_TEST,
-                "pytest:python/tests/hosted/nightly/test_codex_personal_metadata.py",
-            ),
-            Selection(
                 "python/nexus/auth/verifier.py",
                 Capability.SERVICE,
                 SelectionReason.PRIORITY_RISK,
@@ -628,8 +616,6 @@ def test_pr_records_later_cadence_selection_without_dispatching_it() -> None:
 
     assert [(selection.capability, selection.deferred_to) for selection in routed] == [
         (Capability.JOURNEYS_ALL, Workflow.FULL),
-        (Capability.HOSTED, Workflow.NIGHTLY),
-        (Capability.CODEX_HOSTED, Workflow.CODEX_NIGHTLY),
         (Capability.SERVICE, None),
         (Capability.SENSITIVITY, None),
     ]
@@ -657,10 +643,7 @@ def test_changed_records_protected_capabilities_at_their_owning_cadence() -> Non
         (Capability.ANDROID_HOST, Workflow.FULL),
         (Capability.EXTENSION, Workflow.FULL),
         (Capability.AUDIT, Workflow.NIGHTLY),
-        (Capability.HOSTED, Workflow.NIGHTLY),
-        (Capability.CODEX_HOSTED, Workflow.CODEX_NIGHTLY),
         (Capability.ANDROID_DEVICE, Workflow.NIGHTLY),
-        (Capability.PROVIDER_CERTIFICATION, Workflow.RELEASE),
     )
     selection = tuple(
         Selection(

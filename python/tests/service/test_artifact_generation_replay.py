@@ -1,31 +1,18 @@
-"""Public recovery proof for billed Artifact synthesis and document repair."""
+"""Public recovery proof for durable Codex Artifact generation replay."""
 
 from __future__ import annotations
 
 import asyncio
-import json
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
-from provider_runtime import (
-    Absent,
-    CallMeta,
-    Cancelled,
-    Present,
-    StructuredContent,
-    Succeeded,
-    TerminalEvent,
-)
-from provider_runtime.testing import ScriptedRuntime
-from provider_runtime.types import (
-    AttemptRecord,
-    FinalAttempt,
-    PossiblyBillable,
-    ResponsePayload,
-)
+import pytest
+from pydantic import JsonValue
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
+from nexus.config import get_settings
 from nexus.db.models import (
     ArtifactBuildCancellation,
     ArtifactBuildFailure,
@@ -50,20 +37,31 @@ from nexus.services.artifacts.engine import (
     regenerate_artifact,
     run_build,
 )
-from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.bootstrap import ensure_user_and_default_library
+from nexus.services.codex_generation_client import CodexGenerationClientError
+from nexus.services.codex_generation_contract import (
+    GenerationAdmission,
+    GenerationCommand,
+    GenerationCommandDraft,
+    GenerationFrame,
+    GenerationSessionRef,
+    GenerationTerminal,
+    GenerationUsage,
+)
 from nexus.services.durable_step_journal import (
-    AttachReconciledResult,
     Completed,
+    Prepared,
+    ProveNotDispatched,
     Uncertain,
     read_step_states,
 )
-from nexus.services.llm_profiles import operation_profile
 from nexus.services.rate_limit import RateLimiter, get_rate_limiter, set_rate_limiter
 from nexus.tasks.artifacts import compose_dossier_tool_runtime
+from tests.testkit.codex_generation import (
+    bind_test_codex_admission,
+    compose_codex_execution_runtime,
+)
 from tests.testkit.unreachable_state import set_pending_job_max_attempts
-
-_PROFILE = operation_profile("dossier_note")
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,29 +72,7 @@ class _NoteBuild:
     job_id: UUID
 
 
-def _meta(label: str) -> CallMeta:
-    return CallMeta(
-        provider=_PROFILE.target.provider,
-        model=_PROFILE.target.model,
-        provider_request_id=Present(f"artifact-generation-{label}"),
-        upstream_provider=Absent(),
-        usage=Absent(),
-        attempt_trace=(
-            AttemptRecord(
-                attempt=1,
-                signal=FinalAttempt(),
-                status_code=Present(200),
-                started_at_ms=0,
-                ended_at_ms=1,
-            ),
-        ),
-        billability=PossiblyBillable(),
-        native_reasoning=Present("low"),
-        registry_revision="artifact-generation-replay-v1",
-    )
-
-
-def _synthesis_payload(*, invalid_document: bool) -> dict[str, object]:
+def _synthesis_payload(*, invalid_document: bool) -> dict[str, JsonValue]:
     script = "<script>forbidden()</script>" if invalid_document else ""
     return {
         "content_html": (
@@ -107,15 +83,58 @@ def _synthesis_payload(*, invalid_document: bool) -> dict[str, object]:
     }
 
 
-def _succeeded(payload: dict[str, object], *, label: str) -> Succeeded:
-    encoded = json.dumps(payload, separators=(",", ":"))
-    return Succeeded(
-        meta=_meta(label),
-        response=ResponsePayload(
-            content=StructuredContent(payload=payload, text=encoded),
-            continuation=Absent(),
+def _succeeded(command: GenerationCommand, payload: dict[str, JsonValue]) -> GenerationFrame:
+    return GenerationFrame(
+        request_id=command.request_id,
+        sequence=0,
+        event=GenerationTerminal(
+            status="succeeded",
+            failure=None,
+            final_text="",
+            structured_output=payload,
+            session_ref=GenerationSessionRef(
+                schema_version="agent-session-ref.v1",
+                backend="codex",
+                transport="sdk",
+                native_session_id=f"artifact-generation-{command.request_id}",
+                profile_key="codex-personal",
+                state_root_fingerprint="1" * 64,
+                cwd_fingerprint="2" * 64,
+            ),
+            usage=GenerationUsage(input_tokens=80, output_tokens=20, total_tokens=100),
+            diagnostics=(),
+            accepted_at="2026-08-24T12:34:56.123456Z",
+            sdk_version="0.144.4",
+            runtime_version="0.144.4",
         ),
     )
+
+
+class _ScriptedCodexTransport:
+    def __init__(self, outcomes: tuple[dict[str, JsonValue] | Exception, ...] = ()) -> None:
+        self._outcomes = list(outcomes)
+        self.commands: list[GenerationCommand] = []
+
+    def stream(
+        self,
+        draft: GenerationCommandDraft,
+        *,
+        bind_admission: Callable[[GenerationAdmission], Awaitable[GenerationCommand]],
+    ) -> AsyncIterator[GenerationFrame]:
+        async def frames() -> AsyncIterator[GenerationFrame]:
+            command = await bind_test_codex_admission(draft, bind_admission)
+            self.commands.append(command)
+            if not self._outcomes:
+                raise AssertionError("unexpected Artifact generation dispatch")
+            outcome = self._outcomes.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            yield _succeeded(command, outcome)
+
+        return frames()
+
+    async def cancel(self, request_id: UUID) -> None:
+        raise AssertionError(f"unexpected Artifact generation cancellation for {request_id}")
 
 
 def _create_note_build(db: Session) -> _NoteBuild:
@@ -125,18 +144,6 @@ def _create_note_build(db: Session) -> _NoteBuild:
         db,
         user_id,
         f"artifact-generation-{user_id}@example.invalid",
-    )
-    grant_entitlement_override(
-        db,
-        user_id=user_id,
-        plan_tier="ai_pro",
-        platform_token_quota_mode="unlimited",
-        platform_token_limit_monthly=None,
-        transcription_quota_mode="unlimited",
-        transcription_minutes_limit_monthly=None,
-        expires_at=None,
-        reason="Artifact generation replay proof",
-        actor_label="nexus-test",
     )
     note_bodies.upsert_note_body(
         db,
@@ -200,21 +207,21 @@ def _runtime(
     build: _NoteBuild,
     job: JobRow,
     context: JobExecutionContext,
-    llm_runtime: ScriptedRuntime,
+    codex: _ScriptedCodexTransport,
 ) -> DossierBuildRuntime:
+    tools = compose_dossier_tool_runtime(None)
     return DossierBuildRuntime(
         build_id=build.build_id,
         artifact_id=build.artifact_id,
         job=job,
         execution_context=context,
-        llm_runtime=llm_runtime,
-        research_tool_operation=compose_dossier_tool_runtime(None).operations[
-            "idea_dossier_research"
-        ],
+        llm_runtime=compose_codex_execution_runtime(codex, tools=tools),
+        research_tool_operation=tools.operations["idea_dossier_research"],
+        settings=get_settings(),
     )
 
 
-def test_uncertain_document_repair_reconciles_and_replays_without_dispatch(engine: Engine) -> None:
+def test_proven_nondispatch_replays_the_exact_document_repair_command(engine: Engine) -> None:
     session_factory = create_session_factory(engine)
     previous_limiter = get_rate_limiter()
     set_rate_limiter(RateLimiter(session_factory=session_factory))
@@ -222,21 +229,14 @@ def test_uncertain_document_repair_reconciles_and_replays_without_dispatch(engin
         with Session(engine, expire_on_commit=False) as db:
             build = _create_note_build(db)
             job, context = _claim(db, build, worker_id="artifact-repair-first")
-            scripted = ScriptedRuntime(
-                stream_scripts=(
-                    (
-                        TerminalEvent(
-                            outcome=_succeeded(
-                                _synthesis_payload(invalid_document=True),
-                                label="invalid-primary",
-                            )
-                        ),
-                    ),
+            scripted = _ScriptedCodexTransport(
+                (
+                    _synthesis_payload(invalid_document=True),
+                    CodexGenerationClientError("document repair transport is ambiguous"),
                 ),
-                generate_outcomes=(Cancelled(meta=_meta("uncertain-repair")),),
             )
 
-            assert (
+            with pytest.raises(RuntimeError, match="failed after durable dispatch"):
                 asyncio.run(
                     run_build(
                         db,
@@ -245,9 +245,9 @@ def test_uncertain_document_repair_reconciles_and_replays_without_dispatch(engin
                         runtime=_runtime(build, job, context, scripted),
                     )
                 )
-                is None
-            )
-            assert [call.operation for call in scripted.calls] == ["stream", "generate"]
+            assert len(scripted.commands) == 2
+            assert all(command.spec.operation == "dossier_note" for command in scripted.commands)
+            original_repair_command = scripted.commands[1]
             interrupted = get_job(db, build.job_id)
             assert interrupted is not None
             interrupted_states = read_step_states(interrupted)
@@ -281,6 +281,7 @@ def test_uncertain_document_repair_reconciles_and_replays_without_dispatch(engin
                     db,
                     job_id=build.job_id,
                     worker_id=context.worker_id,
+                    attempt_no=context.attempt_no,
                     error_code="E_RECONCILIATION_REQUIRED",
                     error_message="document repair dispatch outcome is uncertain",
                     retry_delays_seconds=(0,),
@@ -288,25 +289,21 @@ def test_uncertain_document_repair_reconciles_and_replays_without_dispatch(engin
                 == "dead"
             )
             db.commit()
-            recovered = json.dumps(
-                _synthesis_payload(invalid_document=False),
-                separators=(",", ":"),
-            )
             reconcile_uncertain_build(
                 db,
                 build_id=build.build_id,
-                resolution=AttachReconciledResult(terminal_result=recovered),
+                resolution=ProveNotDispatched(),
             )
             reconciled = get_job(db, build.job_id)
             assert reconciled is not None and reconciled.status == PENDING
-            assert read_step_states(reconciled)["document-repair"].dispatch_phase is Completed
+            assert read_step_states(reconciled)["document-repair"].dispatch_phase is Prepared
 
             replay_job, replay_context = _claim(
                 db,
                 build,
                 worker_id="artifact-repair-replay",
             )
-            replay_provider = ScriptedRuntime()
+            replay_runtime = _ScriptedCodexTransport((_synthesis_payload(invalid_document=False),))
             assert (
                 asyncio.run(
                     run_build(
@@ -317,13 +314,13 @@ def test_uncertain_document_repair_reconciles_and_replays_without_dispatch(engin
                             build,
                             replay_job,
                             replay_context,
-                            replay_provider,
+                            replay_runtime,
                         ),
                     )
                 )
                 is None
             )
-            assert replay_provider.calls == []
+            assert replay_runtime.commands == [original_repair_command]
             revision = db.scalar(
                 select(ArtifactRevision).where(ArtifactRevision.build_id == build.build_id)
             )
@@ -334,6 +331,7 @@ def test_uncertain_document_repair_reconciles_and_replays_without_dispatch(engin
                 db,
                 job_id=build.job_id,
                 worker_id=replay_context.worker_id,
+                attempt_no=replay_context.attempt_no,
                 result_payload={"status": "ok"},
             )
             db.commit()

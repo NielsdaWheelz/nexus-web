@@ -11,7 +11,21 @@ from pathlib import Path
 
 import uvicorn
 from apps.codex_agent import sandbox_health
-from apps.codex_agent.auth_environment import reject_api_key_auth
+from apps.codex_agent.auth_environment import (
+    reject_ambient_codex_home,
+    reject_subscription_api_key_auth,
+)
+from apps.codex_agent.confined_runtime import create_confined_runtime
+from apps.codex_agent.credential_state import (
+    create_ephemeral_runtime_paths,
+    enrolled_auth_identity,
+    link_runtime_auth,
+    remove_ephemeral_runtime_paths,
+    require_private_executable_runtime_mount,
+    require_writable_credential_mount,
+    sync_enrolled_auth_file,
+    validate_runtime_auth_link,
+)
 from apps.codex_agent.host import (
     CODEX_AGENT_HOST_REQUEST_DRAIN_SECONDS,
     CODEX_AGENT_HOST_TEARDOWN_DEADLINE_SECONDS,
@@ -24,32 +38,62 @@ from provider_runtime.agent_runtime import (
     AgentRuntime,
     AgentRuntimeConfig,
     CredentialRef,
-    SessionQuery,
+)
+
+from nexus.services.codex_generation_operations import (
+    compose_codex_model_tool_plan_registry,
 )
 
 _SOCKET_ENV = "NEXUS_CODEX_AGENT_SOCKET"
-_STATE_ROOT_ENV = "NEXUS_CODEX_STATE_ROOT_BASE"
-_WORKING_DIRECTORY_ENV = "NEXUS_CODEX_WORKING_DIRECTORY"
+_CREDENTIAL_FILE_ENV = "NEXUS_CODEX_CREDENTIAL_FILE"
+_WORKING_DIRECTORY_ROOT_ENV = "NEXUS_CODEX_WORKING_DIRECTORY_ROOT"
+_MCP_ORIGIN_ENV = "NEXUS_CODEX_MCP_ORIGIN"
+_MODEL_TOOL_NETWORK_ATTESTED_ENV = "NEXUS_CODEX_MODEL_TOOL_NETWORK_ATTESTED"
 
 
 async def run() -> None:
     socket_path = required_absolute_path(_SOCKET_ENV)
-    state_root = required_absolute_path(_STATE_ROOT_ENV)
-    working_directory = required_absolute_path(_WORKING_DIRECTORY_ENV)
-    reject_api_key_auth()
-    _validate_directories(socket_path, state_root, working_directory)
+    credential_file = required_absolute_path(_CREDENTIAL_FILE_ENV)
+    working_directory_root = required_absolute_path(_WORKING_DIRECTORY_ROOT_ENV)
+    mcp_origin = _required_environment(_MCP_ORIGIN_ENV)
+    model_tool_network_attested = _required_model_tool_network_attestation()
+    reject_subscription_api_key_auth()
+    reject_ambient_codex_home()
+    _prepare_working_directory_root(working_directory_root)
+    _validate_directories(socket_path, working_directory_root)
+    require_private_executable_runtime_mount(working_directory_root)
+    require_writable_credential_mount(credential_file)
     _remove_proven_stale_socket(socket_path)
-    sandbox_health.check()
+    sandbox_health.check(working_directory_root)
     versions = resolve_runtime_versions()
-    await _probe_chatgpt_auth(state_root)
+    probe_paths = create_ephemeral_runtime_paths(working_directory_root, "startup-auth")
+    credential_identity = enrolled_auth_identity(credential_file)
+    probe_auth_link: Path | None = None
+    try:
+        probe_auth_link = link_runtime_auth(credential_file, probe_paths)
+        await _probe_chatgpt_auth(probe_paths.state_root_base)
+    finally:
+        try:
+            if probe_auth_link is not None:
+                validate_runtime_auth_link(probe_auth_link, credential_file)
+                sync_enrolled_auth_file(
+                    credential_file,
+                    expected_identity=credential_identity,
+                )
+        finally:
+            remove_ephemeral_runtime_paths(probe_paths, root=working_directory_root)
 
-    def runtime_factory() -> AgentRuntime:
-        return AgentRuntime(AgentRuntimeConfig(state_root_base=state_root))
+    def runtime_factory(config: AgentRuntimeConfig) -> AgentRuntime:
+        return create_confined_runtime(config)
 
     app = create_codex_agent_app(
         runtime_factory=runtime_factory,
-        working_directory=working_directory,
+        working_directory_root=working_directory_root,
+        credential_file=credential_file,
         versions=versions,
+        model_tool_registry=compose_codex_model_tool_plan_registry(),
+        mcp_origin=mcp_origin,
+        model_tool_network_attested=model_tool_network_attested,
     )
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     owned_identity: tuple[int, int] | None = None
@@ -78,28 +122,52 @@ async def run() -> None:
 
 
 async def _probe_chatgpt_auth(state_root: Path) -> None:
-    runtime = AgentRuntime(AgentRuntimeConfig(state_root_base=state_root))
+    runtime = create_confined_runtime(AgentRuntimeConfig(state_root_base=state_root))
     try:
-        await runtime.list_sessions(
-            SessionQuery(
-                backend="codex",
-                transport="sdk",
-                auth=CredentialRef(kind="local_account", profile_key="codex-personal"),
-                limit=1,
-            )
+        await runtime.model_catalog(
+            "codex",
+            CredentialRef(kind="local_account", profile_key="codex-personal"),
+            transport="sdk",
         )
     finally:
         await runtime.close()
 
 
-def _validate_directories(socket_path: Path, state_root: Path, working_directory: Path) -> None:
+def _required_environment(name: str) -> str:
+    value = os.environ.get(name)
+    if value is None or not value:
+        raise RuntimeError(f"{name} is required")
+    return value
+
+
+def _required_model_tool_network_attestation() -> bool:
+    value = _required_environment(_MODEL_TOOL_NETWORK_ATTESTED_ENV)
+    if value != "true":
+        raise RuntimeError(f"{_MODEL_TOOL_NETWORK_ATTESTED_ENV} must be exactly 'true'")
+    return True
+
+
+def _validate_directories(
+    socket_path: Path,
+    working_directory_root: Path,
+) -> None:
     _validate_owned_directory(socket_path.parent, expected_mode=0o770, label="socket directory")
-    _validate_owned_directory(state_root, expected_mode=0o700, label="state root")
-    _validate_owned_directory(working_directory, expected_mode=0o700, label="working directory")
+    _validate_owned_directory(
+        working_directory_root,
+        expected_mode=0o700,
+        label="working-directory root",
+    )
     if any(entry != socket_path for entry in socket_path.parent.iterdir()):
         raise RuntimeError("Codex agent socket directory may contain only its socket")
-    if any(working_directory.iterdir()):
-        raise RuntimeError("Codex agent working directory must be an existing empty directory")
+    if any(working_directory_root.iterdir()):
+        raise RuntimeError("Codex agent working-directory root must be empty at startup")
+
+
+def _prepare_working_directory_root(path: Path) -> None:
+    try:
+        path.mkdir(mode=0o700)
+    except FileExistsError:
+        pass
 
 
 def _validate_owned_directory(path: Path, *, expected_mode: int, label: str) -> None:

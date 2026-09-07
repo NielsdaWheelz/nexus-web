@@ -105,16 +105,7 @@ function installBff({ holdSettlement = false } = {}): {
             entitlement_source: "free",
             entitlement_expires_at: null,
             can_share: false,
-            can_use_platform_llm: false,
             can_transcribe: false,
-            ai_token_usage: {
-              used: 0,
-              reserved: 0,
-              limit: null,
-              remaining: null,
-              period_start: "2026-01-01T00:00:00Z",
-              period_end: "2026-02-01T00:00:00Z",
-            },
             transcription_usage: {
               used: 0,
               reserved: 0,

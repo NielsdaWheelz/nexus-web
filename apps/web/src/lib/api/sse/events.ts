@@ -21,6 +21,10 @@ import {
   type CitationOut,
 } from "@/lib/conversations/citationOut";
 import {
+  decodeRunSelectionOut,
+  type RunSelectionOut,
+} from "@/lib/conversations/generationCatalog";
+import {
   MESSAGE_TOOL_STATUSES,
   type ChatPublicationWarning,
   type MessageToolStatus,
@@ -37,9 +41,7 @@ import {
 import { hasOnlyKeys, isOptionalString } from "./guards";
 import { isCitationEventData, type CitationEventData } from "./citations";
 
-/** Meta event: initial IDs and product-selection snapshot (profile_id/
- * reasoning_option_id). Resolved provider/model are operator facts filled in
- * later on the run record, not carried on this event (§10). */
+/** Meta event: initial IDs and immutable dispatch selection snapshot. */
 interface SSEMetaEvent {
   type: "meta";
   data: {
@@ -47,8 +49,7 @@ interface SSEMetaEvent {
     conversation_id: string;
     user_message_id: string;
     assistant_message_id: string;
-    profile_id: string;
-    reasoning_option_id: string;
+    run_selection: RunSelectionOut;
     chat_subject: {
       requested_resource_ref: string;
       resource_ref: string;
@@ -196,23 +197,34 @@ function parseMetaData(data: unknown): SSEMetaEvent["data"] {
       "conversation_id",
       "user_message_id",
       "assistant_message_id",
-      "profile_id",
-      "reasoning_option_id",
+      "run_selection",
       "chat_subject",
     ]) ||
     typeof data.run_id !== "string" ||
     typeof data.conversation_id !== "string" ||
     typeof data.user_message_id !== "string" ||
     typeof data.assistant_message_id !== "string" ||
-    typeof data.profile_id !== "string" ||
-    typeof data.reasoning_option_id !== "string" ||
     (data.chat_subject !== null && !isMetaSubject(data.chat_subject))
   ) {
     throw new Error("Invalid SSE payload for meta");
   }
-  // justify-type-assertion: the guard above exhaustively validated every
-  // field of the meta payload.
-  return data as SSEMetaEvent["data"];
+  let runSelection: RunSelectionOut;
+  try {
+    runSelection = decodeRunSelectionOut(
+      data.run_selection,
+      "SSE meta.run_selection",
+    );
+  } catch {
+    throw new Error("Invalid SSE payload for meta.run_selection");
+  }
+  return {
+    run_id: data.run_id,
+    conversation_id: data.conversation_id,
+    user_message_id: data.user_message_id,
+    assistant_message_id: data.assistant_message_id,
+    run_selection: runSelection,
+    chat_subject: data.chat_subject,
+  };
 }
 
 function isMetaSubject(

@@ -9,6 +9,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from nexus.config import Settings
 from nexus.jobs.queue import RUNNING, JobExecutionContext, JobRow, get_job
 from nexus.services import durable_step_journal
 from nexus.services.llm_execution import ExecutionRuntime
@@ -40,6 +41,7 @@ class DossierBuildRuntime:
     execution_context: JobExecutionContext
     llm_runtime: ExecutionRuntime
     research_tool_operation: FrozenToolOperation
+    settings: Settings
 
     def read_step(self, path: str) -> durable_step_journal.StepReplayState | None:
         return durable_step_journal.read_step_states(self.job).get(path)

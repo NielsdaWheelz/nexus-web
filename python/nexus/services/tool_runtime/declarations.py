@@ -25,6 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from nexus.schemas.highlights import HIGHLIGHT_COLORS
 from nexus.schemas.library import CreateLibraryRequest
+from nexus.schemas.machine_authorship import MachineAuthorshipOut
 from nexus.schemas.resource_graph import ConnectionQueryRequest
 from nexus.services.agent_tools.app_search import APP_SEARCH_LIMIT
 from nexus.services.contributor_taxonomy import (
@@ -66,6 +67,7 @@ class NexusEvidence(_StrictModel):
     context_ref: Annotated[str, Field(max_length=128)] | None
     excerpt_id: UUID | None
     locator: Annotated[str, Field(max_length=512)] | None
+    machine_authorship: MachineAuthorshipOut | None = None
     observed_at: datetime | None
     resource_uri: Annotated[str, Field(max_length=_RESOURCE_URI_MAX)]
     snapshot_revision: Annotated[str, Field(max_length=128)] | None
@@ -265,6 +267,7 @@ class RelationMatch(_StrictModel):
     direction: Literal["incoming", "outgoing", "undirected"]
     edge_id: UUID
     kind: EdgeKind
+    machine_authorship: MachineAuthorshipOut | None = None
     rationale: Annotated[str, Field(max_length=150)] | None
     source_label: Annotated[str, Field(max_length=150)] | None
     source_uri: Annotated[str, Field(max_length=_RESOURCE_URI_MAX)]
@@ -441,7 +444,7 @@ NEXUS_TOOL_DECLARATIONS: tuple[PresentedToolDeclaration, ...] = (
         success_type=NexusSearchSuccess,
         error_type=ResourceUnavailable,
         effect=ToolEffect.Read,
-        limits=ToolLimits(20_480, 102_400, 0, 30.0),
+        limits=ToolLimits(20_480, 106_496, 0, 30.0),
         result_kind="retrieval",
         activity_label="Searching Nexus",
     ),
@@ -471,7 +474,7 @@ NEXUS_TOOL_DECLARATIONS: tuple[PresentedToolDeclaration, ...] = (
         success_type=DocumentSearchSuccess,
         error_type=DocumentSearchError,
         effect=ToolEffect.Read,
-        limits=ToolLimits(4_096, 212_992, 0, 30.0),
+        limits=ToolLimits(4_096, 217_088, 0, 30.0),
         result_kind="retrieval",
         activity_label="Searching this document",
     ),
@@ -486,7 +489,7 @@ NEXUS_TOOL_DECLARATIONS: tuple[PresentedToolDeclaration, ...] = (
         success_type=ResourceInspectSuccess,
         error_type=ResourceInspectError,
         effect=ToolEffect.Read,
-        limits=ToolLimits(4_096, 1_716_224, 0, 30.0),
+        limits=ToolLimits(4_096, 1_720_320, 0, 30.0),
         result_kind="navigation",
         activity_label="Mapping this document",
     ),
@@ -501,7 +504,7 @@ NEXUS_TOOL_DECLARATIONS: tuple[PresentedToolDeclaration, ...] = (
         success_type=RelationsListSuccess,
         error_type=ResourceUnavailable,
         effect=ToolEffect.Read,
-        limits=ToolLimits(4_096, 507_904, 0, 30.0),
+        limits=ToolLimits(4_096, 544_768, 0, 30.0),
         result_kind="retrieval",
         activity_label="Reading connections",
     ),
@@ -651,8 +654,10 @@ BROWSER_TOOL_PROJECTION_CONTRACT = {
                 "record_kind",
                 "result_kind",
             ),
-            "null_fields": ("provider_wire_name",),
-            "nullable_fields": ("error_type",),
+            "null_fields": (),
+            # Pre-cutover audit rows may be null; every newly admitted MCP
+            # execution persists its declared canonical wire name.
+            "nullable_fields": ("error_type", "provider_wire_name"),
         },
         "historical_execution": {
             "non_null_fields": (

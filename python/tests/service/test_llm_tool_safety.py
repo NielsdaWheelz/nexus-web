@@ -2,19 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from importlib.util import find_spec
 from threading import Event
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID, uuid4
 
 import pytest
-from llm_tools import DeclaredToolFailure, EffectId, ToolEffect, ToolId
+from llm_tools import DeclaredToolFailure, ToolEffect, ToolId
 from sqlalchemy import Engine, event, func, select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
+    ChatPromptAssembly,
     ChatRun,
     ChatRunEvent,
     ConsumptionQueueItem,
@@ -34,19 +37,34 @@ from nexus.db.models import (
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.library import CreateLibraryRequest
 from nexus.schemas.notes import CreatePageRequest
-from nexus.services import bootstrap, library_entries, library_governance, notes
+from nexus.services import bootstrap, conversations, library_entries, library_governance, notes
 from nexus.services.agent_tools.writes import add_to_queue, undo_tool_call
 from nexus.services.billing_entitlements import revoke_entitlement_override
 from nexus.services.consumption import service as consumption_service
-from nexus.services.durable_step_journal import Completed, read_step_states, stable_generation_id
 from nexus.services.message_trust_trails import build_assistant_trust_trail
-from tests.testkit.chat import create_entitled_chat
-from tests.testkit.llm_tool_scenarios import (
-    claim_chat_tool_job,
-    compose_keyless_tool_runtime,
-    create_readable_media,
-    execute_chat_tool,
-)
+from nexus.services.resource_graph.context import add_context_ref_without_commit
+from nexus.services.resource_graph.refs import ResourceRef
+
+# BASE overlays this proof without the exact-generation production owners.
+_CUTOVER_PRESENT = find_spec("nexus.services.generation_service") is not None
+
+if TYPE_CHECKING or _CUTOVER_PRESENT:
+    from nexus.services.generation_intent import GenerationIntent
+    from nexus.services.generation_service import ChatToolAuthority
+    from nexus.services.generation_spec import decode_generation_spec_document
+    from tests.testkit.generation_catalog import (
+        CHAT_TEST_SELECTION,
+        configured_chat_catalog_service,
+    )
+    from tests.testkit.llm_tool_scenarios import (
+        ChatToolGeneration,
+        claim_running_chat_tool_job,
+        compose_available_product_tool_runtime,
+        compose_chat_tool_generation,
+        create_readable_media,
+        create_scoped_entitled_chat,
+        execute_chat_tool,
+    )
 
 _WRITE_TOOL_IDS = (
     "nexus.library.add",
@@ -56,33 +74,29 @@ _WRITE_TOOL_IDS = (
     "nexus.queue.add",
 )
 
-
-def _effect_id(run_id: UUID, tool_call_index: int) -> EffectId:
-    path = f"turn/0/tool/{tool_call_index}"
-    return EffectId(str(stable_generation_id(run_id, path)))
+_WRITE_PROMPT_TOOL_NAMES = (
+    "nexus__library__add",
+    "nexus__note__create",
+    "nexus__highlight__create",
+    "nexus__edge__create",
+    "nexus__queue__add",
+)
 
 
 def _execute_write(
     db: Session,
     *,
-    operation: Any,
-    run: ChatRun,
-    job_context: Any,
+    generation: ChatToolGeneration,
     tool_id: str,
     tool_call_index: int,
     arguments: dict[str, object],
-    admitted_resource_uris: tuple[str, ...],
 ) -> Any:
     return execute_chat_tool(
         db,
-        operation=operation,
-        run=run,
-        job_context=job_context,
+        generation=generation,
         tool_id=tool_id,
         tool_call_index=tool_call_index,
         arguments=arguments,
-        admitted_resource_uris=admitted_resource_uris,
-        effect_id=_effect_id(run.id, tool_call_index),
     )
 
 
@@ -160,7 +174,10 @@ def _tool_rows(db: Session, assistant_message_id: UUID) -> list[MessageToolCall]
     return list(
         db.scalars(
             select(MessageToolCall)
-            .where(MessageToolCall.assistant_message_id == assistant_message_id)
+            .where(
+                MessageToolCall.assistant_message_id == assistant_message_id,
+                MessageToolCall.record_kind == "current_execution",
+            )
             .order_by(MessageToolCall.tool_call_index)
         )
     )
@@ -176,9 +193,36 @@ def _active_write_count(rows: Sequence[MessageToolCall]) -> int:
     )
 
 
-def test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo(
-    engine: Engine,
+def _assert_persisted_prompt_matches_frozen_authority(
+    db: Session,
+    *,
+    run: ChatRun,
+    expected_authority: ChatToolAuthority,
 ) -> None:
+    spec = decode_generation_spec_document(run.generation_spec)
+    assert spec.tool_effect_mode.kind == "Present", (
+        f"Chat run {run.id} omitted its frozen tool authority"
+    )
+    assert spec.tool_effect_mode.value == expected_authority, (
+        f"Chat run {run.id} froze {spec.tool_effect_mode.value!r}, expected {expected_authority!r}"
+    )
+    prompt = db.scalar(select(ChatPromptAssembly).where(ChatPromptAssembly.chat_run_id == run.id))
+    assert prompt is not None, f"Chat run {run.id} omitted its admission-time prompt"
+    instructions = GenerationIntent.model_validate(prompt.generation_intent).instructions
+    observed = tuple(name for name in _WRITE_PROMPT_TOOL_NAMES if name in instructions)
+    expected = _WRITE_PROMPT_TOOL_NAMES if expected_authority == "AdditiveWrites" else ()
+    assert observed == expected, (
+        f"Chat run {run.id} prompt write tools {observed!r} do not match its "
+        f"frozen {expected_authority!r} authority"
+    )
+
+
+def test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo(
+    request: pytest.FixtureRequest,
+) -> None:
+    assert _CUTOVER_PRESENT, "the final generation tool authority is absent"
+    request.getfixturevalue("committed_chat_state_isolation")
+    engine = cast(Engine, request.getfixturevalue("engine"))
     _assert_rare_owner_refusals_are_closed()
     owner_id = uuid4()
     foreign_id = uuid4()
@@ -193,13 +237,7 @@ def test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo(
             foreign_id,
             f"write-tool-foreign-{foreign_id}@example.invalid",
         )
-        chat = create_entitled_chat(
-            db,
-            content="Apply only the five requested additive changes.",
-            user_id=owner_id,
-        )
-        run = db.get(ChatRun, chat.run_id)
-        assert run is not None
+        conversation = conversations.create_conversation(db, owner_id)
 
         target_library_id = uuid4()
         library_governance.create_library(
@@ -271,23 +309,98 @@ def test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo(
         foreign_media_uri = f"media:{foreign_media_id}"
         owner_page_uri = f"page:{owner_page_id}"
         foreign_page_uri = f"page:{foreign_page_id}"
-        admitted = (
-            quote_uri,
-            edge_uri,
-            queue_uri,
-            foreign_media_uri,
-            owner_page_uri,
-            foreign_page_uri,
-            f"library:{target_library_id}",
-            f"library:{foreign_library_id}",
+        for target in (
+            ResourceRef(scheme="media", id=quote_media_id),
+            ResourceRef(scheme="media", id=edge_media_id),
+            ResourceRef(scheme="media", id=queue_media_id),
+            ResourceRef(scheme="page", id=owner_page_id),
+        ):
+            add_context_ref_without_commit(
+                db,
+                viewer_id=owner_id,
+                conversation_id=conversation.id,
+                target=target,
+                origin="user",
+            )
+        db.add_all(
+            [
+                ResourceEdge(
+                    user_id=owner_id,
+                    source_scheme="conversation",
+                    source_id=conversation.id,
+                    target_scheme=scheme,
+                    target_id=target_id,
+                    kind="context",
+                    origin="system",
+                    source_order_key=f"tool-safety-private-{ordinal}",
+                )
+                for ordinal, (scheme, target_id) in enumerate(
+                    (("media", foreign_media_id), ("page", foreign_page_id)),
+                    start=1,
+                )
+            ]
+        )
+        db.commit()
+
+        catalog = configured_chat_catalog_service()
+        catalog_snapshot = asyncio.run(catalog.read_chat())
+        runtime = compose_available_product_tool_runtime()
+        chat = asyncio.run(
+            create_scoped_entitled_chat(
+                db,
+                conversation_id=conversation.id,
+                content="Apply only the five requested additive changes.",
+                catalog_definition_revision=catalog_snapshot.catalog.definition_revision,
+                selection=CHAT_TEST_SELECTION,
+                tool_authority="AdditiveWrites",
+                catalog=catalog,
+                tool_runtime=runtime,
+                user_id=owner_id,
+            )
+        )
+        run = db.get(ChatRun, chat.run_id)
+        assert run is not None
+        _assert_persisted_prompt_matches_frozen_authority(
+            db,
+            run=run,
+            expected_authority="AdditiveWrites",
         )
 
-        runtime = compose_keyless_tool_runtime()
-        operation = runtime.operations["chat"]
-        job_context = claim_chat_tool_job(
+        read_only_conversation = conversations.create_conversation(db, owner_id)
+        db.commit()
+        read_only_chat = asyncio.run(
+            create_scoped_entitled_chat(
+                db,
+                conversation_id=read_only_conversation.id,
+                content="Summarize without changing my library.",
+                catalog_definition_revision=catalog_snapshot.catalog.definition_revision,
+                selection=CHAT_TEST_SELECTION,
+                tool_authority="ReadOnly",
+                catalog=catalog,
+                tool_runtime=runtime,
+                user_id=owner_id,
+            )
+        )
+        read_only_run = db.get(ChatRun, read_only_chat.run_id)
+        assert read_only_run is not None
+        _assert_persisted_prompt_matches_frozen_authority(
+            db,
+            run=read_only_run,
+            expected_authority="ReadOnly",
+        )
+
+        operation = runtime.operations["ChatReadAdditiveWrite"]
+        job_context = claim_running_chat_tool_job(
             db,
             job_id=chat.job_id,
+            run=run,
             worker_id=f"write-tools-{uuid4()}",
+        )
+        generation = compose_chat_tool_generation(
+            db,
+            operation=operation,
+            run=run,
+            job_context=job_context,
         )
         successful_cases = (
             (
@@ -327,13 +440,10 @@ def test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo(
         successes = tuple(
             _execute_write(
                 db,
-                operation=operation,
-                run=run,
-                job_context=job_context,
+                generation=generation,
                 tool_id=tool_id,
                 tool_call_index=index,
                 arguments=arguments,
-                admitted_resource_uris=admitted,
             )
             for index, (tool_id, arguments) in enumerate(successful_cases, start=1)
         )
@@ -386,28 +496,27 @@ def test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo(
         assert all(event.payload["record_kind"] == "current_execution" for event in first_events)
         assert all(event.payload["effect"] == ToolEffect.Write for event in first_events)
 
-        from nexus.jobs.queue import get_job
+        from nexus.services.tool_authority import read_tool_positions
 
-        claimed_job = get_job(db, job_context.job_id)
-        assert claimed_job is not None
-        states = read_step_states(claimed_job)
-        for index in range(1, 6):
-            path = f"turn/0/tool/{index}"
-            assert states[path].dispatch_phase is Completed
-            assert states[path].generation_id == stable_generation_id(run.id, path)
-            assert str(states[path].generation_id) == str(_effect_id(run.id, index))
+        first_positions = read_tool_positions(db, generation_id=generation.generation_id)
+        assert tuple(position.position for position in first_positions) == (1, 2, 3, 4, 5)
+        for row, position in zip(first_rows, first_positions, strict=True):
+            assert row.tool_position_id == position.id
+            assert position.replay_status == "Completed"
+            assert position.effect_identity == {
+                "effect_id": str(position.id),
+                "generation_id": str(generation.generation_id),
+                "position_path": position.path,
+            }
 
         # Re-entering one completed position returns the exact terminal result;
-        # no domain owner, trust row, event, or journal position runs twice.
+        # no domain owner, trust row, event, or canonical position runs twice.
         replayed_note = _execute_write(
             db,
-            operation=operation,
-            run=run,
-            job_context=job_context,
+            generation=generation,
             tool_id="nexus.note.create",
             tool_call_index=2,
             arguments=successful_cases[1][1],
-            admitted_resource_uris=admitted,
         )
         assert replayed_note == successes[1]
         assert len(_tool_rows(db, run.assistant_message_id)) == 5
@@ -464,13 +573,10 @@ def test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo(
         denied = tuple(
             _execute_write(
                 db,
-                operation=operation,
-                run=run,
-                job_context=job_context,
+                generation=generation,
                 tool_id=tool_id,
                 tool_call_index=index,
                 arguments=arguments,
-                admitted_resource_uris=admitted,
             )
             for index, (tool_id, arguments) in enumerate(foreign_cases, start=6)
         )
@@ -558,13 +664,10 @@ def test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo(
         refusals = tuple(
             _execute_write(
                 db,
-                operation=operation,
-                run=run,
-                job_context=job_context,
+                generation=generation,
                 tool_id=tool_id,
                 tool_call_index=index,
                 arguments=arguments,
-                admitted_resource_uris=admitted,
             )
             for index, (tool_id, arguments, _error_type) in enumerate(
                 refusal_cases,
@@ -587,13 +690,10 @@ def test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo(
         fill_results = tuple(
             _execute_write(
                 db,
-                operation=operation,
-                run=run,
-                job_context=job_context,
+                generation=generation,
                 tool_id="nexus.library.add",
                 tool_call_index=index,
                 arguments=fill_arguments,
-                admitted_resource_uris=admitted,
             )
             for index in range(19, 22)
         )
@@ -603,13 +703,10 @@ def test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo(
 
         capped = _execute_write(
             db,
-            operation=operation,
-            run=run,
-            job_context=job_context,
+            generation=generation,
             tool_id="nexus.library.add",
             tool_call_index=22,
             arguments=fill_arguments,
-            admitted_resource_uris=admitted,
         )
         assert capped == _failure("WriteCapReached")
         assert _active_write_count(_tool_rows(db, run.assistant_message_id)) == 8
@@ -618,12 +715,16 @@ def test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo(
             db,
             viewer_id=owner_id,
             assistant_message_id=run.assistant_message_id,
+            catalog_snapshot=catalog_snapshot,
         )
-        assert tuple(tool.canonical_tool_id for tool in trust.tool_calls[:5]) == _WRITE_TOOL_IDS
-        assert all(tool.record_kind == "current_execution" for tool in trust.tool_calls)
-        assert all(tool.provider_wire_name is None for tool in trust.tool_calls)
-        assert all(tool.result_kind == "mutation" for tool in trust.tool_calls)
-        assert all(tool.effect == ToolEffect.Write for tool in trust.tool_calls)
+        execution_tools = tuple(
+            tool for tool in trust.tool_calls if tool.record_kind == "current_execution"
+        )
+        assert tuple(tool.canonical_tool_id for tool in execution_tools[:5]) == _WRITE_TOOL_IDS
+        assert all(tool.provider_wire_name is not None for tool in execution_tools)
+        assert all(tool.provider_wire_name == tool.canonical_tool_id for tool in execution_tools)
+        assert all(tool.result_kind == "mutation" for tool in execution_tools)
+        assert all(tool.effect == ToolEffect.Write for tool in execution_tools)
 
         first_success_rows = _tool_rows(db, run.assistant_message_id)[:5]
         for row in first_success_rows:
@@ -653,13 +754,10 @@ def test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo(
 
         reclaimed = _execute_write(
             db,
-            operation=operation,
-            run=run,
-            job_context=job_context,
+            generation=generation,
             tool_id="nexus.library.add",
             tool_call_index=23,
             arguments=fill_arguments,
-            admitted_resource_uris=admitted,
         )
         assert reclaimed["type"] == "Success"
         assert reclaimed["value"]["already_present"] is False
@@ -693,6 +791,7 @@ def test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo(
             db,
             viewer_id=owner_id,
             assistant_message_id=run.assistant_message_id,
+            catalog_snapshot=catalog_snapshot,
         )
         reverted = {
             tool.tool_call_index for tool in final_trust.tool_calls if tool.reverted_at is not None
@@ -711,6 +810,12 @@ def test_all_mutating_tools_enforce_owner_persistence_and_idempotent_undo(
         assert len(final_rows) == len(final_events) == 23
         assert {row.record_kind for row in final_rows} == {"current_execution"}
         assert all("tool_name" not in event.payload for event in final_events)
+        final_positions = read_tool_positions(db, generation_id=generation.generation_id)
+        assert len(final_positions) == len(final_rows)
+        assert all(
+            row.tool_position_id == position.id
+            for row, position in zip(final_rows, final_positions, strict=True)
+        )
 
     _assert_library_add_closes_podcast_owner_refusals(engine)
     _assert_concurrent_queue_insertion_is_not_claimed_for_undo(engine)
@@ -720,18 +825,17 @@ def _assert_library_add_closes_podcast_owner_refusals(engine: Engine) -> None:
     owner_id = uuid4()
     foreign_id = uuid4()
     with Session(engine, expire_on_commit=False) as db:
-        chat = create_entitled_chat(
+        bootstrap.ensure_user_and_default_library(
             db,
-            content="File only podcasts whose placement owner authorizes the change.",
-            user_id=owner_id,
+            owner_id,
+            f"podcast-write-owner-{owner_id}@example.invalid",
         )
         bootstrap.ensure_user_and_default_library(
             db,
             foreign_id,
             f"write-tool-foreign-member-{foreign_id}@example.invalid",
         )
-        run = db.get(ChatRun, chat.run_id)
-        assert run is not None
+        conversation = conversations.create_conversation(db, owner_id)
 
         source_library_id = uuid4()
         unsubscribed_target_id = uuid4()
@@ -801,6 +905,44 @@ def _assert_library_add_closes_podcast_owner_refusals(engine: Engine) -> None:
             library_entries.media_target(episode_id),
         )
         db.flush()
+        db.add_all(
+            [
+                ResourceEdge(
+                    user_id=owner_id,
+                    source_scheme="conversation",
+                    source_id=conversation.id,
+                    target_scheme="podcast",
+                    target_id=podcast_id,
+                    kind="context",
+                    origin="system",
+                    source_order_key=f"podcast-tool-safety-{ordinal}",
+                )
+                for ordinal, podcast_id in enumerate(
+                    (unsubscribed_id, replacement_id, billing_id),
+                    start=1,
+                )
+            ]
+        )
+        db.commit()
+
+        catalog = configured_chat_catalog_service()
+        catalog_snapshot = asyncio.run(catalog.read_chat())
+        runtime = compose_available_product_tool_runtime()
+        chat = asyncio.run(
+            create_scoped_entitled_chat(
+                db,
+                conversation_id=conversation.id,
+                content="File only podcasts whose placement owner authorizes the change.",
+                catalog_definition_revision=catalog_snapshot.catalog.definition_revision,
+                selection=CHAT_TEST_SELECTION,
+                tool_authority="AdditiveWrites",
+                catalog=catalog,
+                tool_runtime=runtime,
+                user_id=owner_id,
+            )
+        )
+        run = db.get(ChatRun, chat.run_id)
+        assert run is not None
         revoke_entitlement_override(
             db,
             user_id=owner_id,
@@ -809,12 +951,18 @@ def _assert_library_add_closes_podcast_owner_refusals(engine: Engine) -> None:
         )
         db.commit()
 
-        runtime = compose_keyless_tool_runtime()
-        operation = runtime.operations["chat"]
-        job_context = claim_chat_tool_job(
+        operation = runtime.operations["ChatReadAdditiveWrite"]
+        job_context = claim_running_chat_tool_job(
             db,
             job_id=chat.job_id,
+            run=run,
             worker_id=f"podcast-write-refusal-{uuid4()}",
+        )
+        generation = compose_chat_tool_generation(
+            db,
+            operation=operation,
+            run=run,
+            job_context=job_context,
         )
         cases = (
             (unsubscribed_id, unsubscribed_target_id, "ResourceUnavailable"),
@@ -824,9 +972,7 @@ def _assert_library_add_closes_podcast_owner_refusals(engine: Engine) -> None:
         results = tuple(
             _execute_write(
                 db,
-                operation=operation,
-                run=run,
-                job_context=job_context,
+                generation=generation,
                 tool_id="nexus.library.add",
                 tool_call_index=index,
                 arguments={
@@ -834,7 +980,6 @@ def _assert_library_add_closes_podcast_owner_refusals(engine: Engine) -> None:
                     "library_id": str(library_id),
                     "library_name": None,
                 },
-                admitted_resource_uris=(f"podcast:{podcast_id}",),
             )
             for index, (podcast_id, library_id, _error_type) in enumerate(cases, start=1)
         )

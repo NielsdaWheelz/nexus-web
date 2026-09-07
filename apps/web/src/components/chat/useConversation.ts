@@ -32,6 +32,7 @@ import {
 import type { MutableRefObject, RefObject } from "react";
 import {
   apiFetch,
+  decodeApiPayload,
   isApiError,
   isSameSystemApiDefect,
   isToolProjectionReloadRequired,
@@ -43,17 +44,26 @@ import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoun
 import { createRandomId } from "@/lib/createRandomId";
 import { isAbortError } from "@/lib/errors";
 import { useChatRunTail } from "@/components/chat/useChatRunTail";
+import { loadGenerationCatalog } from "@/components/chat/useGenerationCatalog";
 import { useStringIdSet, type StringIdSet } from "@/lib/useStringIdSet";
 import {
   activeBranchGraphForPath,
   activeForkOptionsForPath,
   selectedPathMessageIds,
 } from "@/lib/conversations/branching";
-import type { InheritedChatProfileSelection } from "@/lib/conversations/chatProfileSelection";
+import {
+  findGenerationCandidate,
+  sameGenerationSelection,
+  type GenerationSelectionSpec,
+  type RunSelectionOut,
+} from "@/lib/conversations/generationCatalog";
+import type { ChatRunCandidateRequest } from "@/lib/api/sse/requests";
+import type { ChatConnectionRecoveries } from "@/lib/conversations/chatConnectionRecovery";
 import type { SSEContextRefAddedEvent } from "@/lib/api/sse/events";
 import { messageUpdateReducer } from "@/lib/conversations/messageUpdateReducer";
 import {
-  decodeChatRunData,
+  decodeChatRunListResponse,
+  decodeChatRunResponse,
   decodeConversationMessages,
   decodeConversationTree,
 } from "@/lib/conversations/messageWire";
@@ -83,6 +93,10 @@ import {
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 
 type ChatRunData = ChatRunResponse["data"];
+type CandidateCommand = Readonly<{
+  idempotencyKey: string;
+  request: ChatRunCandidateRequest;
+}>;
 type ConversationHistorySnapshot =
   | {
       kind: "branching";
@@ -144,6 +158,25 @@ function conversationOperationErrorMessage(
                     ? "Forks couldn’t be refreshed."
                     : "This chat couldn’t be loaded.",
       };
+    case "E_CATALOG_DEFINITION_STALE":
+      return {
+        tone: "Warning",
+        requestId: error.requestId,
+        title: "Model availability changed. Review the exact selection again.",
+      };
+    case "E_GENERATION_SELECTION_UNAVAILABLE":
+      return {
+        tone: "Warning",
+        requestId: error.requestId,
+        title: "That exact model and reasoning are unavailable.",
+        message: "Choose a different model; nothing was substituted.",
+      };
+    case "E_INVALID_GENERATION_SELECTION":
+      return {
+        tone: "Danger",
+        requestId: error.requestId,
+        title: "That model selection is invalid.",
+      };
     default:
       throw error;
   }
@@ -194,10 +227,12 @@ interface UseConversation {
   projectionReloadRequestId: string | null;
   /** Complete assistant leaf — the default reply/continuation parent. */
   replyParentMessageId: string | null;
-  /** Product selection inherited from the causal assistant parent, if any. */
-  inheritedProfileSelection: InheritedChatProfileSelection | null;
+  /** Immutable run selection inherited from the causal assistant parent. */
+  inheritedRunSelection: RunSelectionOut | null;
   /** The one caller-owned send capability; ChatComposer owns its presentation. */
   sendCapability: ChatSendCapability;
+  /** Bumped by every admitted rerun/regenerate; each bump re-arms the composer's write grant to off. */
+  writeGrantResetVersion: number;
 
   // identity
   conversationId: string | null;
@@ -214,15 +249,26 @@ interface UseConversation {
   rerunAssistantResponse: (
     assistantMessageId: string,
   ) => Promise<MessageActionMutationOutcome>;
+  rerunAssistantResponseWithSelection: (
+    assistantMessageId: string,
+    selection: GenerationSelectionSpec,
+    catalogDefinitionRevision: string,
+  ) => Promise<MessageActionMutationOutcome>;
+  rerunningAssistantMessageIds: ReadonlySet<string>;
 
   // regenerate (a new sibling candidate from an eligible completed answer)
   regenerateAssistantResponse: (
     assistantMessageId: string,
   ) => Promise<MessageActionMutationOutcome>;
+  regenerateAssistantResponseWithSelection: (
+    assistantMessageId: string,
+    selection: GenerationSelectionSpec,
+    catalogDefinitionRevision: string,
+  ) => Promise<MessageActionMutationOutcome>;
   deleteMessage: DeleteMessageMutation;
 
-  // client-only connection-lost recovery (ConnectionLostStatusUnknown, §10)
-  connectionLostAssistantIds: Set<string>;
+  // client-only connection recovery; server failure/status remains canonical.
+  connectionRecoveries: ChatConnectionRecoveries;
   reconnectAssistantResponse: (assistantMessageId: string) => void;
 
   // branching (present only when options.branching === true)
@@ -312,6 +358,7 @@ export function useConversation(
     null,
   );
   const [branchDraft, setBranchDraft] = useState<BranchDraft | null>(null);
+  const [writeGrantResetVersion, setWriteGrantResetVersion] = useState(0);
 
   const rerunningAssistantMessageIds = useStringIdSet();
   const regeneratingAssistantMessageIds = useStringIdSet();
@@ -319,8 +366,8 @@ export function useConversation(
   // retry after an ambiguous network loss replays the SAME command instead of
   // minting a second candidate (spec §5.4). Cleared on success, a definite
   // rejection, or a conversation change.
-  const rerunKeysRef = useRef<Map<string, string>>(new Map());
-  const regenerateKeysRef = useRef<Map<string, string>>(new Map());
+  const rerunKeysRef = useRef<Map<string, CandidateCommand>>(new Map());
+  const regenerateKeysRef = useRef<Map<string, CandidateCommand>>(new Map());
 
   // Conversations created on first send are seeded optimistically; their
   // initial route adoption must not refetch history. Existing conversations
@@ -380,7 +427,7 @@ export function useConversation(
     tailChatRun,
     abortAll,
     cancelRun,
-    lostConnections,
+    connectionRecoveries,
     reconnectRun,
   } = useChatRunTail(
     branching
@@ -390,6 +437,7 @@ export function useConversation(
           onContextRefAdded,
           onConversationAvailable: onConversationCreated,
           onProjectionReloadRequired: reportProjectionReload,
+          onDefect: reportAsyncDefect,
           shouldStartRun: shouldStartRunForCurrentConversation,
           shouldApplyRun: shouldApplyRunToSelectedPath,
         }
@@ -398,6 +446,7 @@ export function useConversation(
           onContextRefAdded,
           onConversationAvailable: onConversationCreated,
           onProjectionReloadRequired: reportProjectionReload,
+          onDefect: reportAsyncDefect,
           shouldStartRun: shouldStartRunForCurrentConversation,
         },
   );
@@ -426,22 +475,35 @@ export function useConversation(
         conversation_id: id,
         status: "active",
       })}` as ApiPath;
-      const activeRuns = signal
-        ? await apiFetch<ChatRunListResponse>(path, { signal })
-        : await (activeRunsRequestRef.current ??
-            (activeRunsRequestRef.current = apiFetch<ChatRunListResponse>(
-              path,
-            ).finally(() => {
+      let activeRuns: ChatRunListResponse;
+      if (signal) {
+        const raw = await apiFetch<unknown>(path, { signal });
+        activeRuns = decodeApiPayload(
+          raw,
+          decodeChatRunListResponse,
+          "Active chat runs",
+        );
+      } else {
+        activeRuns = await (activeRunsRequestRef.current ??
+          (activeRunsRequestRef.current = apiFetch<unknown>(path)
+            .then((response) =>
+              decodeApiPayload(
+                response,
+                decodeChatRunListResponse,
+                "Active chat runs",
+              ),
+            )
+            .finally(() => {
               activeRunsRequestRef.current = null;
             })));
+      }
       return activeRuns.data
         .filter(
           (runData) =>
             runData.conversation.id === id &&
             (visibleMessageIds.has(runData.user_message.id) ||
               visibleMessageIds.has(runData.assistant_message.id)),
-        )
-        .map(decodeChatRunData);
+        );
     },
     [],
   );
@@ -459,10 +521,19 @@ export function useConversation(
       } catch (err) {
         if (reportProjectionReload(err)) return;
         if (handleUnauthenticatedApiError(err)) return;
+        if (!isApiError(err) || isSameSystemApiDefect(err)) {
+          reportAsyncDefect(err);
+          return;
+        }
         console.error("Failed to load active chat runs:", err);
       }
     },
-    [conversationId, loadVisibleActiveRuns, reportProjectionReload],
+    [
+      conversationId,
+      loadVisibleActiveRuns,
+      reportAsyncDefect,
+      reportProjectionReload,
+    ],
   );
 
   const applyConversationTree = useCallback(
@@ -561,6 +632,7 @@ export function useConversation(
           if (isAbortError(err) || signal.aborted) throw err;
           if (isToolProjectionReloadRequired(err)) throw err;
           if (handleUnauthenticatedApiError(err)) throw err;
+          if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
           console.error("Failed to load active chat runs:", err);
         }
         return {
@@ -581,7 +653,11 @@ export function useConversation(
       return {
         kind: "linear",
         conversationId: id,
-        messages: decodeConversationMessages(history.data),
+        messages: decodeApiPayload(
+          history.data,
+          decodeConversationMessages,
+          "Conversation messages",
+        ),
         olderCursor: history.page.before_cursor ?? null,
       };
     },
@@ -758,15 +834,29 @@ export function useConversation(
       scrollRef.current?.captureAnchor(null);
       dispatchMessages({
         type: "prepend_older",
-        messages: decodeConversationMessages(response.data),
+        messages: decodeApiPayload(
+          response.data,
+          decodeConversationMessages,
+          "Older conversation messages",
+        ),
       });
       setOlderCursor(response.page.before_cursor ?? null);
     } catch (err) {
       if (reportProjectionReload(err)) return;
       if (handleUnauthenticatedApiError(err)) return;
+      if (!isApiError(err) || isSameSystemApiDefect(err)) {
+        reportAsyncDefect(err);
+        return;
+      }
       console.error("Failed to load older messages:", err);
     }
-  }, [branching, conversationId, olderCursor, reportProjectionReload]);
+  }, [
+    branching,
+    conversationId,
+    olderCursor,
+    reportAsyncDefect,
+    reportProjectionReload,
+  ]);
 
   // --------------------------------------------------------------------------
   // Run created (optimistic seed + tail)
@@ -820,29 +910,94 @@ export function useConversation(
   // Rerun and Regenerate are the same client contract over different endpoints:
   // one durable sibling candidate from an owning source run. While a POST is
   // unresolved the source is busy-locked; a network loss retains its key so an
-  // explicit retry replays the same command; a definite rejection consumes the
-  // key so the next invocation mints a fresh one.
+  // identical explicit retry replays the same command; a confirmed replacement
+  // is a different answer identity (spec 5.2) and mints a fresh one; a definite
+  // rejection consumes the key so the next invocation mints a fresh one.
   const runCandidateAction = useCallback(
     async (
       assistantMessageId: string,
       endpoint: ApiPath,
       busy: StringIdSet,
-      keysRef: MutableRefObject<Map<string, string>>,
+      keysRef: MutableRefObject<Map<string, CandidateCommand>>,
       operation: "Rerun" | "Regenerate",
+      explicitSelection?: Readonly<{
+        selection: GenerationSelectionSpec;
+        catalogDefinitionRevision: string;
+      }>,
     ): Promise<MessageActionMutationOutcome> => {
       if (busy.has(assistantMessageId)) return "Failed";
-      const idempotencyKey =
-        keysRef.current.get(assistantMessageId) ?? createRandomId();
-      keysRef.current.set(assistantMessageId, idempotencyKey);
       busy.add(assistantMessageId);
       setError(null);
       try {
-        const response = await apiFetch<ChatRunResponse>(endpoint, {
+        let command = keysRef.current.get(assistantMessageId);
+        if (
+          command !== undefined &&
+          explicitSelection !== undefined &&
+          !sameGenerationSelection(
+            command.request.selection,
+            explicitSelection.selection,
+          )
+        ) {
+          command = undefined;
+        }
+        if (command === undefined) {
+          let selected = explicitSelection;
+          if (selected === undefined) {
+            const source = messages.find(
+              (message) => message.id === assistantMessageId,
+            );
+            const sourceSelection = source?.trust_trail?.run?.run_selection;
+            if (source?.role !== "assistant" || sourceSelection === undefined) {
+              throw new Error(
+                "Candidate generation requires an immutable source run selection",
+              );
+            }
+            const catalog = await loadGenerationCatalog({ refresh: true });
+            const candidate = findGenerationCandidate(
+              catalog,
+              sourceSelection.selection,
+            );
+            if (
+              !sourceSelection.rerun_eligibility ||
+              candidate?.reasoning.chat_state.kind !== "Selectable"
+            ) {
+              setError({
+                tone: "Warning",
+                title: "The original model selection is unavailable.",
+                message:
+                  "Choose a different model for this new run; nothing was substituted. Writes are off for reruns.",
+              });
+              return "Failed";
+            }
+            selected = {
+              selection: sourceSelection.selection,
+              catalogDefinitionRevision: catalog.definition_revision,
+            };
+          }
+          command = {
+            idempotencyKey: createRandomId(),
+            request: {
+              catalog_definition_revision:
+                selected.catalogDefinitionRevision,
+              selection: selected.selection,
+              tool_authority: "ReadOnly",
+            },
+          };
+          keysRef.current.set(assistantMessageId, command);
+        }
+        const rawResponse = await apiFetch<unknown>(endpoint, {
           method: "POST",
-          headers: { "Idempotency-Key": idempotencyKey },
+          headers: { "Idempotency-Key": command.idempotencyKey },
+          body: JSON.stringify(command.request),
         });
+        const response = decodeApiPayload(
+          rawResponse,
+          decodeChatRunResponse,
+          `${operation} assistant response`,
+        );
         keysRef.current.delete(assistantMessageId);
-        onChatRunCreated(decodeChatRunData(response.data));
+        setWriteGrantResetVersion((version) => version + 1);
+        onChatRunCreated(response.data);
         return "Committed";
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return "Failed";
@@ -861,7 +1016,7 @@ export function useConversation(
         busy.remove(assistantMessageId);
       }
     },
-    [onChatRunCreated, reportAsyncDefect, reportOperationError],
+    [messages, onChatRunCreated, reportAsyncDefect, reportOperationError],
   );
 
   const rerunAssistantResponse = useCallback(
@@ -876,6 +1031,23 @@ export function useConversation(
     [rerunningAssistantMessageIds, runCandidateAction],
   );
 
+  const rerunAssistantResponseWithSelection = useCallback(
+    (
+      assistantMessageId: string,
+      selection: GenerationSelectionSpec,
+      catalogDefinitionRevision: string,
+    ) =>
+      runCandidateAction(
+        assistantMessageId,
+        `/api/messages/${assistantMessageId}/rerun` as ApiPath,
+        rerunningAssistantMessageIds,
+        rerunKeysRef,
+        "Rerun",
+        { selection, catalogDefinitionRevision },
+      ),
+    [rerunningAssistantMessageIds, runCandidateAction],
+  );
+
   const regenerateAssistantResponse = useCallback(
     (assistantMessageId: string) =>
       runCandidateAction(
@@ -884,6 +1056,23 @@ export function useConversation(
         regeneratingAssistantMessageIds,
         regenerateKeysRef,
         "Regenerate",
+      ),
+    [regeneratingAssistantMessageIds, runCandidateAction],
+  );
+
+  const regenerateAssistantResponseWithSelection = useCallback(
+    (
+      assistantMessageId: string,
+      selection: GenerationSelectionSpec,
+      catalogDefinitionRevision: string,
+    ) =>
+      runCandidateAction(
+        assistantMessageId,
+        `/api/messages/${assistantMessageId}/regenerate` as ApiPath,
+        regeneratingAssistantMessageIds,
+        regenerateKeysRef,
+        "Regenerate",
+        { selection, catalogDefinitionRevision },
       ),
     [regeneratingAssistantMessageIds, runCandidateAction],
   );
@@ -995,11 +1184,6 @@ export function useConversation(
       reportOperationError,
       rerunningAssistantMessageIds,
     ],
-  );
-
-  const connectionLostAssistantIds = useMemo(
-    () => new Set(Object.keys(lostConnections)),
-    [lostConnections],
   );
 
   const reconnectAssistantResponse = useCallback(
@@ -1214,7 +1398,7 @@ export function useConversation(
     return null;
   }, [messages]);
 
-  const inheritedProfileSelection = useMemo(() => {
+  const inheritedRunSelection = useMemo(() => {
     const assistant = branchDraft
       ? messages.find((message) => message.id === branchDraft.parentMessageId)
       : messages[messages.length - 1];
@@ -1229,21 +1413,7 @@ export function useConversation(
 
     const run = assistant.trust_trail?.run;
     if (!run) return null;
-    if (run.profile_id === null && run.reasoning_option_id === null)
-      return null;
-    if (run.profile_id === null || run.reasoning_option_id === null) {
-      // justify-defect: a ChatRun writes its product profile and reasoning
-      // selection together, so a same-system trust trail cannot contain half.
-      throw new Error("Assistant run selection must be complete");
-    }
-    return {
-      selection: {
-        profileId: run.profile_id,
-        reasoningOptionId: run.reasoning_option_id,
-      },
-      assistantMessageId: assistant.id,
-      runId: run.run_id,
-    };
+    return run.run_selection;
   }, [branchDraft, messages]);
 
   const sendCapability = useMemo<ChatSendCapability>(() => {
@@ -1284,17 +1454,21 @@ export function useConversation(
     error,
     projectionReloadRequestId,
     replyParentMessageId,
-    inheritedProfileSelection,
+    inheritedRunSelection,
     sendCapability,
+    writeGrantResetVersion,
     conversationId,
     title,
     onChatRunCreated,
     activeRunId,
     cancelActiveRun,
     rerunAssistantResponse,
+    rerunAssistantResponseWithSelection,
+    rerunningAssistantMessageIds: rerunningAssistantMessageIds.ids,
     regenerateAssistantResponse,
+    regenerateAssistantResponseWithSelection,
     deleteMessage,
-    connectionLostAssistantIds,
+    connectionRecoveries,
     reconnectAssistantResponse,
     branch,
     scrollRef,

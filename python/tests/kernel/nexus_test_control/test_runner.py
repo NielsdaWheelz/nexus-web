@@ -1,19 +1,21 @@
+from __future__ import annotations
+
 import json
 import os
 import subprocess
 import sys
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from importlib.util import find_spec
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import TYPE_CHECKING
 
 import pytest
 
 import nexus_test_control.memory as memory
 import nexus_test_control.runner as runner
-from nexus.ops.codex_hosted_evidence import codex_hosted_evidence_is_valid
 from nexus_test_control.build import StandaloneBuild
 from nexus_test_control.evidence import CapabilityEvidence
 from nexus_test_control.model import (
@@ -36,7 +38,6 @@ from nexus_test_control.runner import (
 )
 from nexus_test_control.runtime import RuntimeContractError
 from nexus_test_control.services import (
-    OpenAIProviderFixture,
     StartedProcess,
     SupabaseCredentials,
     authorized_instrumentation_device,
@@ -49,9 +50,13 @@ from nexus_test_control.services import (
     TestUser as OwnedTestUser,
 )
 
+if TYPE_CHECKING:
+    from nexus_test_control.services import EmbeddingPeer, ProviderApiPeer
+
 REPO_ROOT = Path(__file__).resolve().parents[4]
 _CANDIDATE_WORKER_IMAGE_ID = "sha256:" + "c" * 64
 _CANDIDATE_SHA = "a" * 40
+_GENERATION_CUTOVER_PRESENT = find_spec("nexus.services.generation_catalog") is not None
 
 
 @pytest.mark.parametrize(
@@ -199,409 +204,11 @@ def test_browser_admission_uses_the_playwright_host_default_cache(tmp_path: Path
     assert runner._browser_installed(tmp_path, {"HOME": str(home)})
 
 
-def test_codex_hosted_canary_plan_requires_dedicated_profile_state_without_an_api_key(
-    tmp_path: Path,
-) -> None:
-    """Risk: the subscription canary falls through to the direct API credential lane."""
-
-    proof = "python/tests/hosted/nightly/test_codex_personal_metadata.py"
-    state_root = tmp_path.parent / "codex-nightly-state"
-    working_directory = tmp_path.parent / "codex-nightly-cwd"
-    state_root.mkdir(mode=0o700)
-    working_directory.mkdir(mode=0o700)
-    plan = runner.build_codex_hosted_canary_plan(
-        repo_root=tmp_path,
-        run_id="0123456789abcdef",
-        target=f"{proof}::test_codex",
-        environment={
-            "NEXUS_CODEX_HOSTED_CANARY": "1",
-            "NEXUS_CODEX_HOSTED_PROFILE": "codex-personal",
-            "NEXUS_CODEX_HOSTED_STATE_ROOT": str(state_root),
-            "NEXUS_CODEX_HOSTED_WORKING_DIRECTORY": str(working_directory),
-        },
-    )
-
-    assert plan.evidence_relative.as_posix() == (
-        "test-results/runs/0123456789abcdef/hosted-codex-personal-metadata.json"
-    )
-    assert (
-        plan.command[0][-1] == "./tests/hosted/nightly/test_codex_personal_metadata.py::test_codex"
-    )
-    assert plan.environment["NEXUS_CODEX_HOSTED_PROFILE"] == "codex-personal"
-    assert plan.environment["NEXUS_CODEX_HOSTED_STATE_ROOT"] == str(state_root)
-    assert plan.environment["NEXUS_CODEX_HOSTED_WORKING_DIRECTORY"] == str(working_directory)
-    assert plan.environment["NEXUS_TEST_RUN_ID"] == "0123456789abcdef"
-    assert "OPENAI_API_KEY" not in plan.environment
-
-    with pytest.raises(ValueError, match="OPENAI_API_KEY"):
-        runner.build_codex_hosted_canary_plan(
-            repo_root=tmp_path,
-            run_id="0123456789abcdef",
-            target=f"{proof}::test_codex",
-            environment={
-                "NEXUS_CODEX_HOSTED_CANARY": "1",
-                "NEXUS_CODEX_HOSTED_PROFILE": "codex-personal",
-                "NEXUS_CODEX_HOSTED_STATE_ROOT": str(state_root),
-                "NEXUS_CODEX_HOSTED_WORKING_DIRECTORY": str(working_directory),
-                "OPENAI_API_KEY": "",
-            },
-        )
-
-
-def test_codex_hosted_canary_evidence_accepts_only_its_bounded_canonical_shape(
-    tmp_path: Path,
-) -> None:
-    """Risk: uploaded evidence retains unbounded, ambiguous, or noncanonical data."""
-
-    evidence_path = tmp_path / "hosted-codex-personal-metadata.json"
-    run_id = "0123456789abcdef"
-    valid = _codex_hosted_canary_evidence(run_id)
-    canonical = json.dumps(valid, separators=(",", ":"))
-    _write(evidence_path, canonical)
-    assert codex_hosted_evidence_is_valid(evidence_path, run_id=run_id)
-
-    authoritative_total = _codex_hosted_canary_evidence(run_id)
-    authoritative_result = cast(list[dict[str, object]], authoritative_total["results"])[0]
-    authoritative_usage = cast(dict[str, object], authoritative_result["usage"])
-    authoritative_usage["total_tokens"] = 4
-    _write(evidence_path, json.dumps(authoritative_total, separators=(",", ":")))
-    assert codex_hosted_evidence_is_valid(evidence_path, run_id=run_id), (
-        "provider-reported total tokens are authoritative, not a derived sum"
-    )
-
-    for version_field in ("sdk_version", "runtime_version"):
-        for valid_version in ("0", "1" * 64):
-            boundary = _codex_hosted_canary_evidence(run_id)
-            boundary_result = cast(list[dict[str, object]], boundary["results"])[0]
-            boundary_result[version_field] = valid_version
-            _write(evidence_path, json.dumps(boundary, separators=(",", ":")))
-            assert codex_hosted_evidence_is_valid(evidence_path, run_id=run_id), (
-                f"valid {version_field} boundary {valid_version!r} was rejected"
-            )
-
-    token_boundary = _codex_hosted_canary_evidence(run_id)
-    token_boundary_result = cast(list[dict[str, object]], token_boundary["results"])[0]
-    token_boundary_usage = cast(dict[str, object], token_boundary_result["usage"])
-    token_boundary_usage.update(
-        {"input_tokens": (1 << 53) - 1, "output_tokens": 0, "total_tokens": (1 << 53) - 1}
-    )
-    _write(evidence_path, json.dumps(token_boundary, separators=(",", ":")))
-    assert codex_hosted_evidence_is_valid(evidence_path, run_id=run_id), (
-        "the exact JSON-safe token ceiling was rejected"
-    )
-
-    invalid_artifacts = [
-        (
-            "evidence exceeds 16 KiB",
-            canonical + " " * (16 * 1024 - len(canonical) + 1),
-        ),
-        (
-            "duplicate top-level key",
-            canonical.replace('"run_id":', '"run_id":"wrong","run_id":', 1),
-        ),
-        (
-            "duplicate result key",
-            canonical.replace('"backend":', '"backend":"wrong","backend":', 1),
-        ),
-        (
-            "duplicate usage key",
-            canonical.replace('"input_tokens":', '"input_tokens":999,"input_tokens":', 1),
-        ),
-    ]
-
-    for unsafe_key in ("prompt", "output", "auth", "raw_frames"):
-        evidence = _codex_hosted_canary_evidence(run_id)
-        evidence[unsafe_key] = "must not be retained"
-        invalid_artifacts.append(
-            (
-                f"top-level undeclared key {unsafe_key!r}",
-                json.dumps(evidence, separators=(",", ":")),
-            )
-        )
-
-        result = cast(list[dict[str, object]], evidence["results"])[0]
-        result[unsafe_key] = "must not be retained"
-        del evidence[unsafe_key]
-        invalid_artifacts.append(
-            (
-                f"result undeclared key {unsafe_key!r}",
-                json.dumps(evidence, separators=(",", ":")),
-            )
-        )
-
-        usage = cast(dict[str, object], result["usage"])
-        usage[unsafe_key] = 0
-        del result[unsafe_key]
-        invalid_artifacts.append(
-            (
-                f"usage undeclared key {unsafe_key!r}",
-                json.dumps(evidence, separators=(",", ":")),
-            )
-        )
-
-    for version_field in ("sdk_version", "runtime_version"):
-        for invalid_version in ("", "v1", "1/2", "1" * 65):
-            evidence = _codex_hosted_canary_evidence(run_id)
-            result = cast(list[dict[str, object]], evidence["results"])[0]
-            result[version_field] = invalid_version
-            invalid_artifacts.append(
-                (
-                    f"invalid {version_field} {invalid_version!r}",
-                    json.dumps(evidence, separators=(",", ":")),
-                )
-            )
-
-    for token_field in ("input_tokens", "output_tokens", "total_tokens"):
-        for invalid_value in (True, 0.0, -1, 1 << 53):
-            evidence = _codex_hosted_canary_evidence(run_id)
-            result = cast(list[dict[str, object]], evidence["results"])[0]
-            usage = cast(dict[str, object], result["usage"])
-            usage[token_field] = invalid_value
-            invalid_artifacts.append(
-                (
-                    f"invalid {token_field} {invalid_value!r}",
-                    json.dumps(evidence, separators=(",", ":")),
-                )
-            )
-
-    for scalar_field, invalid_value in (
-        ("subscription_turns", True),
-        ("subscription_turns", 1.0),
-        ("tool_events", False),
-        ("tool_events", 0.0),
-        ("permission_requests", False),
-        ("permission_requests", 0.0),
-    ):
-        evidence = _codex_hosted_canary_evidence(run_id)
-        result = cast(list[dict[str, object]], evidence["results"])[0]
-        if scalar_field == "subscription_turns":
-            evidence[scalar_field] = invalid_value
-        else:
-            result[scalar_field] = invalid_value
-        invalid_artifacts.append(
-            (
-                f"non-strict {scalar_field} {invalid_value!r}",
-                json.dumps(evidence, separators=(",", ":")),
-            )
-        )
-
-    for case, artifact in invalid_artifacts:
-        _write(evidence_path, artifact)
-        assert not codex_hosted_evidence_is_valid(evidence_path, run_id=run_id), case
-
-    _assert_codex_hosted_evidence_stage_is_atomic_and_run_bound(tmp_path)
-
-
-def _codex_hosted_canary_evidence(run_id: str) -> dict[str, object]:
-    return {
-        "schema_version": "nexus-hosted-codex-canary.v1",
-        "run_id": run_id,
-        "subscription_turns": 1,
-        "results": [
-            {
-                "backend": "codex",
-                "transport": "sdk",
-                "auth_profile": "codex-personal",
-                "model": "gpt-5.6-luna",
-                "reasoning": "low",
-                "structured_output_valid": True,
-                "session_ref_schema_version": "agent-session-ref.v1",
-                "usage": {
-                    "input_tokens": 1,
-                    "output_tokens": 2,
-                    "total_tokens": 3,
-                },
-                "sdk_version": "1.2.3",
-                "runtime_version": "4.5.6",
-                "tool_events": 0,
-                "permission_requests": 0,
-            }
-        ],
-    }
-
-
-def _assert_codex_hosted_evidence_stage_is_atomic_and_run_bound(
-    tmp_path: Path,
-) -> None:
-    run_id = "0123456789abcdef"
-    source = tmp_path / "test-results/runs" / run_id / "hosted-codex-personal-metadata.json"
-    encoded = (
-        json.dumps(_codex_hosted_canary_evidence(run_id), separators=(",", ":")) + "\n"
-    ).encode()
-    source.parent.mkdir(parents=True)
-    source.write_bytes(encoded)
-    destination = tmp_path / "artifact.json"
-    fallback = b'{"status":"failed"}\n'
-    destination.write_bytes(fallback)
-    command = (
-        sys.executable,
-        "-m",
-        "nexus.ops.codex_hosted_evidence",
-        "stage",
-        str(source),
-        str(destination),
-    )
-
-    with destination.open("rb") as previous:
-        staged = subprocess.run(
-            command,
-            cwd=REPO_ROOT / "python",
-            check=False,
-            capture_output=True,
-        )
-        assert staged.returncode == 0
-        assert staged.stdout == b""
-        assert staged.stderr == b""
-        assert previous.read() == fallback
-        assert os.fstat(previous.fileno()).st_ino != destination.stat().st_ino
-    assert destination.read_bytes() == encoded
-    assert not tuple(tmp_path.glob(".artifact.json.*.partial"))
-
-    misbound = tmp_path / "test-results/runs/not-a-run" / source.name
-    misbound.parent.mkdir(parents=True)
-    misbound.write_bytes(encoded)
-    destination.write_bytes(fallback)
-    rejected = subprocess.run(
-        (*command[:4], str(misbound), str(destination)),
-        cwd=REPO_ROOT / "python",
-        check=False,
-        capture_output=True,
-    )
-    assert rejected.returncode != 0
-    assert rejected.stdout == b""
-    assert rejected.stderr == b""
-    assert destination.read_bytes() == fallback
-    assert not tuple(tmp_path.glob(".artifact.json.*.partial"))
-
-
-@pytest.mark.parametrize(
-    ("exact", "expected_target"),
-    [
-        (False, "./tests/hosted/nightly/test_codex_personal_metadata.py"),
-        (
-            True,
-            "./tests/hosted/nightly/test_codex_personal_metadata.py::"
-            "test_codex_personal_metadata_canary_uses_one_structured_subscription_turn",
-        ),
-    ],
-    ids=("complete-workflow", "exact-proof"),
-)
-def test_codex_nightly_workflow_normalizes_the_selected_hosted_target_once(
-    tmp_path: Path,
-    exact: bool,
-    expected_target: str,
-) -> None:
-    """Risk: the complete protected workflow rejects its own canonical proof path."""
-
-    result, repo_root, _results, _sentinel = _run_failing_codex_hosted_workflow(
-        tmp_path,
-        exact=exact,
-    )
-
-    assert result.id is Capability.CODEX_HOSTED
-    assert result.status is RunStatus.FAIL
-    commands = _commands(repo_root)
-    assert len(commands) == 1
-    assert commands[0]["tool"] == "uv"
-    assert commands[0]["argv"] == [
-        "run",
-        "--frozen",
-        "--no-sync",
-        "pytest",
-        "--maxfail=1",
-        "-q",
-        "-p",
-        "no:randomly",
-        "--force-enable-socket",
-        expected_target,
-    ]
-
-
-def test_codex_hosted_command_failure_discards_child_output_and_failure_artifact(
-    tmp_path: Path,
-) -> None:
-    """Risk: provider-authenticated output escapes through controller failure evidence."""
-
-    result, _repo_root, results, sentinel = _run_failing_codex_hosted_workflow(tmp_path)
-
-    assert result.id is Capability.CODEX_HOSTED
-    assert result.status is RunStatus.FAIL
-    assert result.detail == "Codex hosted canary command failed; child output was discarded"
-    assert sentinel not in result.detail
-    assert result.artifacts == ()
-    assert not (results / "codex-hosted-1.log").exists()
-    assert not tuple(results.iterdir()), "Codex failure evidence directory retained child output"
-
-
-def _run_failing_codex_hosted_workflow(
-    tmp_path: Path,
-    *,
-    exact: bool = False,
-) -> tuple[CapabilityEvidence, Path, Path, str]:
-    """Run the protected workflow against one real failing fake child executable."""
-
-    repo_root = tmp_path / "repo"
-    proof_path = "python/tests/hosted/nightly/test_codex_personal_metadata.py"
-    proof_node = "test_codex_personal_metadata_canary_uses_one_structured_subscription_turn"
-    _write(repo_root / proof_path, f"def {proof_node}():\n    pass\n")
-    (repo_root / "python/.venv").mkdir()
-
-    state_root = tmp_path / "state"
-    working_directory = tmp_path / "cwd"
-    state_root.mkdir(mode=0o700)
-    working_directory.mkdir(mode=0o700)
-    sentinel = "PRIVATE-CODEX-CHILD-CONTENT"
-    _write_executable(
-        repo_root / "bin/uv",
-        stdout=f"stdout:{sentinel}",
-        diagnostic=f"stderr:{sentinel}",
-        exit_status=7,
-    )
-    evidence_run_id = "0123456789abcdef"
-    results = repo_root / "test-results/runs" / evidence_run_id
-    results.mkdir(parents=True)
-    environment = {
-        **_tool_environment(repo_root),
-        "NEXUS_CODEX_HOSTED_CANARY": "1",
-        "NEXUS_CODEX_HOSTED_PROFILE": "codex-personal",
-        "NEXUS_CODEX_HOSTED_STATE_ROOT": str(state_root),
-        "NEXUS_CODEX_HOSTED_WORKING_DIRECTORY": str(working_directory),
-        "NEXUS_TEST_EVIDENCE_RUN_ID": evidence_run_id,
-        "NEXUS_TEST_RESULTS_DIR": str(results),
-    }
-
-    context = CapabilityContext(repo_root, Workflow.CODEX_NIGHTLY, ())
-    if exact:
-        proof = f"pytest:{proof_path}::{proof_node}"
-        result = run_proof(
-            context,
-            proof,
-            environment,
-            _available_memory=lambda: 8192,
-        ).evidence
-    else:
-        workflow = run_workflow(
-            context,
-            StringIO(),
-            environment,
-            run_id=evidence_run_id,
-            _available_memory=lambda: 8192,
-        )
-        assert len(workflow.capabilities) == 1
-        result = workflow.capabilities[0]
-    return result, repo_root, results, sentinel
-
-
 @pytest.mark.parametrize(
     ("runner_name", "node", "expected"),
     [
         ("pytest", "python/tests/migrations/test_head.py::test_head", Workflow.PR),
         ("pytest", "python/tests/audit/property/test_state.py::test_state", Workflow.NIGHTLY),
-        (
-            "pytest",
-            "python/tests/hosted/nightly/test_openai_canary.py::test_canary",
-            Workflow.NIGHTLY,
-        ),
         (
             "playwright",
             "apps/web/e2e/journeys/auth-session.journey.spec.ts",
@@ -623,7 +230,23 @@ def test_exact_proof_context_uses_its_authoritative_cadence(
     assert runner._proof_owner(runner_name, node)[1] is expected
 
 
-class _ReadyExternalPorts(runner._RunnerPorts):
+class _ReadyProtocolPorts(runner._RunnerPorts):
+    def materialize_provider_api_peer(
+        self,
+        _repo_root: Path,
+        _environment: Mapping[str, str],
+        run: OwnedTestRun,
+    ) -> ProviderApiPeer:
+        from nexus_test_control.services import ProviderApiPeer
+
+        return ProviderApiPeer(
+            Path(f"/{run.run_id}/provider-api-peer"),
+            Path(f"/{run.run_id}/provider-api-peer/ca.pem"),
+            Path(f"/{run.run_id}/provider-api-peer/server-key.pem"),
+            Path(f"/{run.run_id}/provider-api-peer/requests.jsonl"),
+            19093,
+        )
+
     def start_python_process(
         self,
         _repo_root: Path,
@@ -631,7 +254,7 @@ class _ReadyExternalPorts(runner._RunnerPorts):
         run: OwnedTestRun,
         role: str,
     ) -> StartedProcess:
-        assert role == "external"
+        assert role in {"external", "provider-api-peer"}
         return StartedProcess(
             role=role,
             process_group_id=101,
@@ -648,10 +271,20 @@ class _ReadyExternalPorts(runner._RunnerPorts):
         process: StartedProcess,
         endpoint: runner.EndpointKind,
         path: str,
+        *,
+        tls_ca: Path | None = None,
     ) -> None:
-        assert process.role == "external"
-        assert endpoint is runner.EndpointKind.EXTERNAL
+        expected_endpoint = (
+            runner.EndpointKind.EXTERNAL
+            if process.role == "external"
+            else runner.EndpointKind.PROVIDER_API
+        )
+        assert endpoint is expected_endpoint
         assert path == "/livez"
+        if process.role == "provider-api-peer":
+            assert tls_ca == Path(f"/{process.run_id}/provider-api-peer/ca.pem")
+        else:
+            assert tls_ca is None
 
 
 def test_doctor_is_not_run_when_its_locked_tool_owners_are_absent(tmp_path: Path) -> None:
@@ -898,6 +531,8 @@ def test_changed_python_static_and_kernel_use_only_the_selected_file_and_node(
         ("apps/api/main.py", "app = object()\n"),
         ("apps/worker/health.py", "def health():\n    return None\n"),
         ("apps/worker/main.py", "def main():\n    return None\n"),
+        ("apps/codex_agent/egress_policy.py", "def policy():\n    return None\n"),
+        ("apps/codex_agent/network_health.py", "def health():\n    return None\n"),
         ("deploy/hetzner/release.py", "def release():\n    return None\n"),
     ),
 )
@@ -1376,34 +1011,42 @@ def test_complete_fast_commands_are_fixed_to_their_final_owners(tmp_path: Path) 
     ]
     assert commands[0]["argv"][-1] == "tests/kernel/nexus_test_control/test_policy.py"
     assert commands[1]["argv"] == ["run", "test:eslint-policy"]
-    assert commands[2]["argv"][-15:] == [
+    assert commands[2]["argv"][-19:] == [
         ".",
         "../apps/api/main.py",
         "../apps/codex_agent/__init__.py",
         "../apps/codex_agent/auth_environment.py",
         "../apps/codex_agent/capacity.py",
         "../apps/codex_agent/capacity_canary.py",
+        "../apps/codex_agent/confined_runtime.py",
+        "../apps/codex_agent/credential_state.py",
+        "../apps/codex_agent/egress_policy.py",
         "../apps/codex_agent/enroll.py",
         "../apps/codex_agent/health.py",
         "../apps/codex_agent/host.py",
         "../apps/codex_agent/main.py",
+        "../apps/codex_agent/network_health.py",
         "../apps/codex_agent/path_environment.py",
         "../apps/codex_agent/sandbox_health.py",
         "../apps/worker/health.py",
         "../apps/worker/main.py",
         "../deploy/hetzner/release.py",
     ]
-    assert commands[3]["argv"][-15:] == [
+    assert commands[3]["argv"][-19:] == [
         ".",
         "../apps/api/main.py",
         "../apps/codex_agent/__init__.py",
         "../apps/codex_agent/auth_environment.py",
         "../apps/codex_agent/capacity.py",
         "../apps/codex_agent/capacity_canary.py",
+        "../apps/codex_agent/confined_runtime.py",
+        "../apps/codex_agent/credential_state.py",
+        "../apps/codex_agent/egress_policy.py",
         "../apps/codex_agent/enroll.py",
         "../apps/codex_agent/health.py",
         "../apps/codex_agent/host.py",
         "../apps/codex_agent/main.py",
+        "../apps/codex_agent/network_health.py",
         "../apps/codex_agent/path_environment.py",
         "../apps/codex_agent/sandbox_health.py",
         "../apps/worker/health.py",
@@ -1421,10 +1064,14 @@ def test_complete_fast_commands_are_fixed_to_their_final_owners(tmp_path: Path) 
         "../apps/codex_agent/auth_environment.py",
         "../apps/codex_agent/capacity.py",
         "../apps/codex_agent/capacity_canary.py",
+        "../apps/codex_agent/confined_runtime.py",
+        "../apps/codex_agent/credential_state.py",
+        "../apps/codex_agent/egress_policy.py",
         "../apps/codex_agent/enroll.py",
         "../apps/codex_agent/health.py",
         "../apps/codex_agent/host.py",
         "../apps/codex_agent/main.py",
+        "../apps/codex_agent/network_health.py",
         "../apps/codex_agent/path_environment.py",
         "../apps/codex_agent/sandbox_health.py",
         "../apps/worker/health.py",
@@ -2309,7 +1956,7 @@ def test_signed_physical_promotion_owner_uses_only_real_webview_and_bridge_paths
     assert "PROMOTION_COOKIE" not in workflow
 
 
-def _android_release_environment(inputs: "runner._AndroidReleaseInputs") -> dict[str, str]:
+def _android_release_environment(inputs: runner._AndroidReleaseInputs) -> dict[str, str]:
     return {
         "NEXUS_ANDROID_RELEASE_BASE_URL": inputs.base_url,
         "NEXUS_ANDROID_RELEASE_OWNED_HOST": inputs.owned_host,
@@ -3095,7 +2742,7 @@ def test_workflow_interruption_closes_the_owned_run(tmp_path: Path) -> None:
     environment = _stub_tools(tmp_path, "docker", "supabase", "uv")
     cleaned: list[str] = []
 
-    class Ports(_ReadyExternalPorts):
+    class Ports(_ReadyProtocolPorts):
         def prepare_run(
             self,
             _repo_root: Path,
@@ -3180,7 +2827,7 @@ def _assert_container_measurement_stops_before_owned_runtime_cleanup(
         container_reader=read_container,
     )
 
-    class Ports(_ReadyExternalPorts):
+    class Ports(_ReadyProtocolPorts):
         def prepare_run(
             self,
             repo_root: Path,
@@ -3400,7 +3047,7 @@ def test_affected_heavy_proofs_share_one_workflow_run_and_request_migrations_onl
     cleaned: list[str] = []
     commands_before_heavy_lock: list[list[list[str]]] = []
 
-    class Ports(_ReadyExternalPorts):
+    class Ports(_ReadyProtocolPorts):
         @contextmanager
         def heavy_lock(self, _repo_root: Path) -> Iterator[Path]:
             commands_before_heavy_lock.append([command["argv"] for command in _commands(tmp_path)])
@@ -3689,6 +3336,9 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
     bun.chmod(0o755)
     build_calls: list[str] = []
     process_roles: list[str] = []
+    process_overrides: dict[str, Mapping[str, str] | None] = {}
+    readiness_calls: list[tuple[str, runner.EndpointKind, str]] = []
+    generation_readiness_calls: list[str] = []
     password_users: list[str] = []
     invited_users: list[str] = []
     entitlements: list[str] = []
@@ -3716,6 +3366,59 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
             build_calls.append("build")
             return StandaloneBuild("a" * 64, artifact, artifact / "server.js")
 
+        def materialize_embedding_peer(
+            self,
+            _repo_root: Path,
+            _environment: Mapping[str, str],
+            _run: OwnedTestRun,
+        ) -> EmbeddingPeer:
+            from nexus_test_control.services import EmbeddingPeer
+
+            state = tmp_path / "embedding-peer"
+            state.mkdir()
+            certificate = state / "ca.pem"
+            key = state / "server-key.pem"
+            audit = state / "requests.jsonl"
+            for path in (certificate, key, audit):
+                _write(path, "owned\n")
+            return EmbeddingPeer(state, certificate, key, audit, 4443)
+
+        def materialize_provider_api_peer(
+            self,
+            _repo_root: Path,
+            _environment: Mapping[str, str],
+            _run: OwnedTestRun,
+        ) -> ProviderApiPeer:
+            from nexus_test_control.services import ProviderApiPeer
+
+            state = tmp_path / "provider-api-peer"
+            state.mkdir()
+            certificate = state / "ca.pem"
+            key = state / "server-key.pem"
+            audit = state / "requests.jsonl"
+            for path in (certificate, key, audit):
+                _write(path, "owned\n")
+            return ProviderApiPeer(state, certificate, key, audit, 4444)
+
+        def materialize_generation_peer(
+            self,
+            _repo_root: Path,
+            _environment: Mapping[str, str],
+            _run: OwnedTestRun,
+        ) -> SimpleNamespace:
+            state = tmp_path / "generation-peer"
+            state.mkdir()
+            socket_path = state / "agent.sock"
+            audit = state / "requests.jsonl"
+            _write(audit, "")
+            return SimpleNamespace(
+                socket=socket_path,
+                audit=audit,
+                client_environment=lambda: {
+                    "NEXUS_CODEX_AGENT_SOCKET": str(socket_path),
+                },
+            )
+
         def start_python_process(
             self,
             _repo_root: Path,
@@ -3725,11 +3428,8 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
             *,
             overrides: Mapping[str, str] | None = None,
         ) -> StartedProcess:
-            if role in {"api", "worker-interactive", "worker-background"}:
-                assert overrides is not None
-                assert "NEXUS_TEST_STATIC_DNS" in overrides
-                assert "NEXUS_TEST_TLS_CA_CERT" in overrides
             process_roles.append(role)
+            process_overrides[role] = overrides
             return StartedProcess(
                 role=role,
                 process_group_id=len(process_roles) + 100,
@@ -3738,21 +3438,6 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
                 owner_token="a" * 32,
                 log_path=f"{role}.log",
             )
-
-        def prepare_openai_provider_fixture(
-            self,
-            _repo_root: Path,
-            _environment: Mapping[str, str],
-            _run: OwnedTestRun,
-        ) -> OpenAIProviderFixture:
-            state = tmp_path / ".nexus-test/runs/0123456789abcdef/openai-provider"
-            state.mkdir(parents=True)
-            certificate = state / "ca.pem"
-            key = state / "server-key.pem"
-            audit = state / "requests.jsonl"
-            for path in (certificate, key, audit):
-                path.touch()
-            return OpenAIProviderFixture(state, certificate, key, audit, 19092)
 
         def start_web_process(
             self,
@@ -3781,9 +3466,23 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
             *,
             tls_ca: Path | None = None,
         ) -> None:
-            if _endpoint is runner.EndpointKind.PROVIDER_OPENAI:
+            readiness_calls.append((_process.role, _endpoint, _path))
+            if _endpoint in {
+                runner.EndpointKind.PROVIDER_OPENAI,
+                runner.EndpointKind.PROVIDER_API,
+            }:
                 assert tls_ca is not None
             return
+
+        def wait_generation_peer_ready(
+            self,
+            _repo_root: Path,
+            _environment: Mapping[str, str],
+            _process: StartedProcess,
+            _socket_path: Path,
+        ) -> None:
+            assert _socket_path == tmp_path / "generation-peer/agent.sock"
+            generation_readiness_calls.append(_process.role)
 
         def create_supabase_user(
             self,
@@ -3811,7 +3510,7 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
             invited_users.append(scenario_id)
             return SimpleNamespace(email=f"nexus+0123456789abcdef+{scenario_id}@example.invalid")
 
-        def grant_scenario_ai_entitlement(
+        def grant_scenario_paid_entitlement(
             self,
             _root: Path,
             _environment: Mapping[str, str],
@@ -3842,12 +3541,49 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
     assert build_calls == ["build"]
     assert process_roles == [
         "external",
+        "provider-api-peer",
         "provider-openai",
+        "codex-generation-peer",
         "api",
         "worker-interactive",
         "worker-background",
         "web",
     ]
+    assert readiness_calls == [
+        ("external", runner.EndpointKind.EXTERNAL, "/livez"),
+        ("provider-api-peer", runner.EndpointKind.PROVIDER_API, "/livez"),
+        ("provider-openai", runner.EndpointKind.PROVIDER_OPENAI, "/livez"),
+        ("api", runner.EndpointKind.API, "/readyz"),
+        (
+            "worker-interactive",
+            runner.EndpointKind.AGENT_TOOLS_MCP,
+            "/internal/agent-tools/mcp",
+        ),
+        ("web", runner.EndpointKind.WEB, "/login"),
+    ]
+    assert generation_readiness_calls == ["codex-generation-peer"]
+    embedding_environment = {
+        "BRAVE_SEARCH_API_KEY": "nexus-test-fixture-brave-key",
+        "BRAVE_SEARCH_BASE_URL": "https://127.0.0.1:4443/res/v1",
+        "NEXUS_TEST_STATIC_DNS": (
+            '{"api.openai.com":{"address":"127.0.0.1","port":4443},"www.nasa.gov":"93.184.216.34"}'
+        ),
+        "NEXUS_TEST_TLS_CA_CERT": str(tmp_path / "embedding-peer/ca.pem"),
+    }
+    app_environment = {
+        **embedding_environment,
+        "NEXUS_CODEX_AGENT_SOCKET": str(tmp_path / "generation-peer/agent.sock"),
+        "SYNAPSE_ENABLED": "false",
+    }
+    assert process_overrides == {
+        "external": None,
+        "provider-api-peer": None,
+        "provider-openai": None,
+        "codex-generation-peer": None,
+        "api": app_environment,
+        "worker-interactive": app_environment,
+        "worker-background": app_environment,
+    }
     assert invited_users == ["auth-session"]
     assert password_users == [
         "durable-ingest-reader-open",
@@ -3913,7 +3649,7 @@ def test_run_proof_executes_only_the_exact_service_node_and_classifies_assertion
     prepared: list[bool] = []
     cleaned: list[str] = []
 
-    class Ports(_ReadyExternalPorts):
+    class Ports(_ReadyProtocolPorts):
         def prepare_run(
             self,
             _root: Path,
@@ -4498,108 +4234,6 @@ def test_workflow_stops_launching_capabilities_after_the_first_decisive_result(
 
     assert result.capabilities[0].status is RunStatus.FAIL
     assert all(item.status is RunStatus.NOT_RUN for item in result.capabilities[1:])
-
-
-def test_paid_evidence_parser_accepts_only_typed_bounded_accounting(tmp_path: Path) -> None:
-    path = tmp_path / "paid.json"
-    _write(
-        path,
-        json.dumps(
-            {
-                "provider_calls": 18,
-                "estimated_cost_usd": 0.031,
-                "runtime_revision": "a" * 40,
-                "registry_revision": "2026-08-11.1",
-                "run_id": "0123456789abcdef",
-                "limits": {"provider_calls": 18, "estimated_cost_usd": 0.18},
-                "results": [{"attempts": 1}],
-            }
-        ),
-    )
-
-    assert runner._read_paid_evidence(path) == (
-        18,
-        0.031,
-        (18, 0.18),
-        [{"attempts": 1}],
-        "a" * 40,
-        "2026-08-11.1",
-        "0123456789abcdef",
-    )
-
-    _write(
-        path,
-        json.dumps(
-            {
-                "provider_calls": True,
-                "estimated_cost_usd": 0,
-                "runtime_revision": "a" * 40,
-                "registry_revision": "2026-08-11.1",
-                "run_id": "0123456789abcdef",
-                "limits": {"provider_calls": 18, "estimated_cost_usd": 0.18},
-                "results": [],
-            }
-        ),
-    )
-    assert runner._read_paid_evidence(path) is None
-
-
-def test_provider_certification_requires_both_deepseek_ac4_probe_sets() -> None:
-    profile_ids = (
-        "fast",
-        "balanced",
-        "deep",
-        "claude",
-        "fable",
-        "gemini",
-        "kimi",
-        "deepseek-flash",
-        "deepseek-pro",
-    )
-    deepseek_ids = ("deepseek-flash", "deepseek-pro")
-    generation_index = 0
-
-    def nexus_result(**facts: object) -> dict[str, object]:
-        nonlocal generation_index
-        generation_index += 1
-        return {
-            **facts,
-            "status": "succeeded",
-            "nexus_generation_id": f"generation-{generation_index}",
-            "nexus_ledger_outcome": "succeeded",
-            "nexus_charged_tokens": 3,
-        }
-
-    results: list[dict[str, object]] = [
-        nexus_result(profile_id=profile_id, operation="generate") for profile_id in profile_ids
-    ]
-    for operation in (
-        "stream",
-        "strict_json",
-        "thinking_tool_initial",
-        "thinking_tool_continuation",
-    ):
-        results.extend(
-            nexus_result(
-                profile_id=profile_id,
-                operation=operation,
-                reasoning="high",
-            )
-            for profile_id in deepseek_ids
-        )
-    results.append({"operation": "embed"})
-
-    assert len(results) == 18
-    assert runner._provider_certification_results_are_complete(results)
-
-    results[-2]["reasoning"] = "none"
-    assert not runner._provider_certification_results_are_complete(results)
-    results[-2]["reasoning"] = "high"
-    results[0]["status"] = "incomplete"
-    assert not runner._provider_certification_results_are_complete(results)
-    results[0]["status"] = "succeeded"
-    results[0].pop("nexus_generation_id")
-    assert not runner._provider_certification_results_are_complete(results)
 
 
 def test_android_release_parsers_fail_closed_on_signer_and_manifest_contract() -> None:

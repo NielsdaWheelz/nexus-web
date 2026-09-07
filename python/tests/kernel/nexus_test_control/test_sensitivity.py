@@ -24,7 +24,6 @@ from nexus_test_control.sensitivity import (
     SensitivityExecutionError,
     SensitivityRequest,
     _base_overlays,
-    _python_exact_proof_owner,
     behavioral_red,
     canonical_proof,
     declared_fault_for_proof,
@@ -72,6 +71,8 @@ def test_web_base_overlays_scope_the_workspace_session_fixture_to_its_proofs() -
 
 
 def test_exact_python_owner_ignores_other_tests_but_owns_shared_support() -> None:
+    from nexus_test_control.proof_owner import python_exact_proof_owner
+
     baseline = """
 import pytest
 
@@ -94,14 +95,14 @@ def test_other() -> None:
     shared_support_change = baseline.replace("LIMIT = 16", "LIMIT = 17")
     ambiguous_owner = baseline + "\ndef test_owner() -> None:\n    assert bounded(16)\n"
 
-    owner = _python_exact_proof_owner(baseline, "test_owner")
+    owner = python_exact_proof_owner(baseline, "test_owner")
 
     assert owner is not None
-    assert _python_exact_proof_owner(unrelated_test_change, "test_owner") == owner
-    assert _python_exact_proof_owner(sibling_definition_change, "test_owner") == owner
-    assert _python_exact_proof_owner(selected_test_change, "test_owner") != owner
-    assert _python_exact_proof_owner(shared_support_change, "test_owner") != owner
-    assert _python_exact_proof_owner(ambiguous_owner, "test_owner") is None
+    assert python_exact_proof_owner(unrelated_test_change, "test_owner") == owner
+    assert python_exact_proof_owner(sibling_definition_change, "test_owner") == owner
+    assert python_exact_proof_owner(selected_test_change, "test_owner") != owner
+    assert python_exact_proof_owner(shared_support_change, "test_owner") != owner
+    assert python_exact_proof_owner(ambiguous_owner, "test_owner") is None
 
 
 def test_workflow_sensitivity_retains_fault_only_for_unchanged_exact_owner(
@@ -123,11 +124,15 @@ def test_other() -> None:
     assert True
 """
     owner.write_text(baseline, encoding="utf-8")
+    fault_target_path = "python/nexus_test_control/runner.py"
+    fault_target = tmp_path / fault_target_path
+    fault_target.parent.mkdir(parents=True)
+    fault_target.write_text("old\n", encoding="utf-8")
     for command in (
         ("git", "init", "-q"),
         ("git", "config", "user.email", "nexus-test@example.test"),
         ("git", "config", "user.name", "Nexus Test"),
-        ("git", "add", proof_path),
+        ("git", "add", "--", proof_path, fault_target_path),
         ("git", "commit", "-qm", "base"),
     ):
         subprocess.run(command, cwd=tmp_path, check=True)
@@ -682,6 +687,35 @@ def test_isolated_worktree_cleans_runtime_before_removal_on_proof_exit(
     assert checkout is not None
     assert not checkout.exists()
     assert str(checkout) not in _git_output(tmp_path, "worktree", "list", "--porcelain")
+
+
+def test_isolated_worktree_bounds_run_owned_unix_socket_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "proof.txt").write_text("proof\n")
+    _commit(tmp_path, "base")
+    revision = _git_output(tmp_path, "rev-parse", "HEAD")
+    ambient_temp = tmp_path / f"ambient-{'x' * 128}"
+    ambient_temp.mkdir()
+    monkeypatch.setenv("TMPDIR", str(ambient_temp))
+
+    def clean_runtime(
+        _worktree: Path,
+        _environment: Mapping[str, str],
+    ) -> tuple[str, ...]:
+        return ()
+
+    with isolated_worktree(
+        tmp_path,
+        revision,
+        overlays=(),
+        runtime_cleaner=clean_runtime,
+    ) as red_root:
+        representative_socket = red_root / "test-results/runs" / "0123456789abcdef" / "g12345.sock"
+        assert red_root.parent.parent == Path("/tmp").resolve(strict=True)
+        assert red_root.parent.name.startswith("nexus-sensitivity-")
+        assert len(os.fsencode(representative_socket)) < 104
 
 
 def test_isolated_worktree_disables_container_sampling_before_exact_teardown(

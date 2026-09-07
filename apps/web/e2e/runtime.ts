@@ -11,9 +11,11 @@ const PORT_KEYS = [
   "supabase_inbucket",
   "supabase_shadow",
   "api",
+  "agent_tools_mcp",
   "web",
   "external",
   "provider_openai",
+  "provider_api",
 ] as const;
 
 type PortKey = (typeof PORT_KEYS)[number];
@@ -51,7 +53,7 @@ function parseRuntimeRecord(value: unknown, repoRoot: string): RuntimeRecord {
   const ownedRunIds = record.owned_run_ids;
   const activeRunId = process.env.NEXUS_TEST_RUN_ID;
   if (
-    record.version !== 3 ||
+    record.version !== 5 ||
     record.repo_id !== repoId ||
     record.compose_project !== `nexus-test-${repoId}` ||
     record.supabase_workdir !==
@@ -91,7 +93,7 @@ function parseRuntimeRecord(value: unknown, repoRoot: string): RuntimeRecord {
   }
 
   return {
-    version: 3,
+    version: 5,
     repo_id: repoId,
     compose_project: `nexus-test-${repoId}`,
     supabase_workdir: path.join(repoRoot, ".nexus-test", "supabase"),

@@ -6,8 +6,10 @@ import os
 import signal
 import socket
 import threading
+import time
 from collections.abc import Callable
-from typing import cast
+from typing import TYPE_CHECKING, cast
+from uuid import UUID
 
 from apps.worker.health import (
     WORKER_HEALTH_PROGRESS_INTERVAL_SECONDS,
@@ -21,6 +23,7 @@ from nexus.config import (
     Environment,
     Settings,
     get_settings,
+    parse_agent_tools_mcp_listen,
 )
 from nexus.db.engine import get_engine
 from nexus.job_topology import (
@@ -42,6 +45,13 @@ from nexus.runtime_health import get_runtime_identity, is_database_ready
 
 logger = get_logger(__name__)
 
+if TYPE_CHECKING:
+    import uvicorn
+
+    from nexus.services.agent_tools_mcp import ActiveAgentToolRegistry
+
+_MCP_LISTENER_START_TIMEOUT_SECONDS = 10.0
+
 
 def _get_worker_session_factory() -> sessionmaker[Session]:
     """Build the worker factory without importing the FastAPI request seam."""
@@ -58,8 +68,11 @@ def _worker_readiness_check(
     lane: WorkerLane,
     settings: Settings,
     expected_database_revision: str,
+    required_listener: threading.Thread | None = None,
 ) -> bool:
     """Verify the lane-owned runtime contract before publishing progress."""
+    if lane == "interactive" and (required_listener is None or not required_listener.is_alive()):
+        return False
     if lane == "background":
         try:
             ValidatedCgroup.for_current_process(
@@ -80,8 +93,75 @@ def _worker_readiness_check(
     )
 
 
+def _supervise_required_listener(
+    listener: threading.Thread,
+    *,
+    stop_event: threading.Event,
+    shutdown_requested: threading.Event,
+) -> None:
+    """Stop the worker if its required sibling listener exits unexpectedly."""
+
+    listener.join()
+    if not shutdown_requested.is_set():
+        stop_event.set()
+
+
 def _worker_id() -> str:
     return f"{socket.gethostname()}:{os.getpid()}"
+
+
+def _start_agent_tools_listener(
+    *,
+    settings: Settings,
+    session_factory: sessionmaker[Session],
+) -> tuple[uvicorn.Server, threading.Thread, ActiveAgentToolRegistry]:
+    """Start the interactive worker's sessionless MCP listener.
+
+    Authorities are registered by the active generation owner; the listener
+    itself owns no ORM state and remains usable across worker jobs.
+    """
+    import uvicorn
+
+    from nexus.services.agent_tools_mcp import (
+        ActiveAgentToolRegistry,
+        create_active_agent_tools_mcp_app,
+    )
+    from nexus.services.codex_generation_client import CodexGenerationClient
+
+    host, port = parse_agent_tools_mcp_listen(settings.agent_tools_mcp_listen)
+    registry = ActiveAgentToolRegistry(session_factory=session_factory)
+    control = CodexGenerationClient(settings.codex_agent_socket)
+
+    async def policy_violation(generation_id: UUID) -> None:
+        await control.policy_violation(generation_id)
+
+    app = create_active_agent_tools_mcp_app(
+        registry=registry,
+        signing_key=settings.effective_agent_tool_grant_signing_key,
+        on_policy_violation=policy_violation,
+        settings=settings,
+    )
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            host=host,
+            port=port,
+            log_config=None,
+            access_log=False,
+        )
+    )
+    thread = threading.Thread(target=server.run, name="agent-tools-mcp", daemon=True)
+    thread.start()
+    deadline = time.monotonic() + _MCP_LISTENER_START_TIMEOUT_SECONDS
+    while not server.started:
+        if not thread.is_alive():
+            raise RuntimeError("agent-tools MCP listener exited during startup")
+        if time.monotonic() >= deadline:
+            server.should_exit = True
+            thread.join(timeout=1)
+            raise RuntimeError("agent-tools MCP listener did not become ready")
+        time.sleep(0.01)
+    return server, thread, registry
 
 
 def register_shutdown_signal_handlers(stop_event: threading.Event) -> None:
@@ -111,6 +191,10 @@ def create_worker(
     if stop_event is None:
         stop_event = threading.Event()
     settings = get_settings()
+    if settings.worker_lane == "interactive":
+        # Validate the listener before constructing a worker or accepting jobs;
+        # F owns the actual process/server wiring.
+        parse_agent_tools_mcp_listen(settings.agent_tools_mcp_listen)
     registry = get_default_registry()
     if settings.worker_lane == "interactive":
         allowed_kinds = INTERACTIVE_WORKER_JOB_KINDS
@@ -156,10 +240,10 @@ def create_worker(
         )
     else:
         # Interactive and explicitly gated maintenance handlers remain in-process.
-        from nexus.services.llm_profiles import validate_profiles
+        from nexus.services.generation_policy import validate_policy
         from nexus.services.rate_limit import RateLimiter, set_rate_limiter
 
-        validate_profiles()
+        validate_policy()
         set_rate_limiter(
             RateLimiter(
                 session_factory=session_factory,
@@ -197,6 +281,9 @@ def main() -> None:
 
     settings = get_settings()
     identity = get_runtime_identity()
+    mcp_listener: tuple[uvicorn.Server, threading.Thread, ActiveAgentToolRegistry] | None = None
+    mcp_supervisor: threading.Thread | None = None
+    mcp_shutdown_requested = threading.Event()
     publisher: WorkerHeartbeatPublisher | None = None
     if settings.worker_lane in ("interactive", "background"):
         lane = cast(WorkerLane, settings.worker_lane)
@@ -214,6 +301,7 @@ def main() -> None:
                 lane=lane,
                 settings=settings,
                 expected_database_revision=identity.expected_database_revision,
+                required_listener=mcp_listener[1] if mcp_listener is not None else None,
             ),
         )
         if publisher is not None:
@@ -223,6 +311,25 @@ def main() -> None:
         stop_event=stop_event,
         successful_cycle_callback=publisher.publish if publisher is not None else None,
     )
+    if settings.worker_lane == "interactive":
+        mcp_listener = _start_agent_tools_listener(
+            settings=settings,
+            session_factory=_get_worker_session_factory(),
+        )
+        from nexus.services.agent_tools_mcp import set_active_agent_tool_registry
+
+        set_active_agent_tool_registry(mcp_listener[2])
+        mcp_supervisor = threading.Thread(
+            target=_supervise_required_listener,
+            kwargs={
+                "listener": mcp_listener[1],
+                "stop_event": stop_event,
+                "shutdown_requested": mcp_shutdown_requested,
+            },
+            name="agent-tools-mcp-supervisor",
+            daemon=True,
+        )
+        mcp_supervisor.start()
     if settings.worker_lane == "background":
         process_executor = worker.process_executor
         if process_executor is None:
@@ -253,6 +360,20 @@ def main() -> None:
     try:
         worker.run_forever()
     finally:
+        if mcp_listener is not None:
+            mcp_shutdown_requested.set()
+            mcp_listener[0].should_exit = True
+            mcp_listener[1].join(timeout=10)
+            if mcp_listener[1].is_alive():
+                raise RuntimeError("agent-tool listener did not stop within its shutdown bound")
+            if mcp_supervisor is None:
+                raise AssertionError("agent-tool listener has no supervisor")
+            mcp_supervisor.join(timeout=1)
+            if mcp_supervisor.is_alive():
+                raise RuntimeError("agent-tool listener supervisor did not stop")
+            from nexus.services.agent_tools_mcp import set_active_agent_tool_registry
+
+            set_active_agent_tool_registry(None)
         if publisher is not None:
             publisher.clear()
         logger.info("postgres_worker_stopped", worker_id=worker.worker_id)

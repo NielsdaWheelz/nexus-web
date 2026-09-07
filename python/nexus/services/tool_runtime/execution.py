@@ -63,14 +63,18 @@ from nexus.jobs.queue import (
     get_job,
     lock_running_job_claim,
 )
-from nexus.schemas.conversation import ChatRunToolResultEventPayload
-from nexus.schemas.presence import Present, absent, present
+from nexus.schemas.conversation import ChatRunToolResultEventPayload, StoredToolProjection
+from nexus.schemas.presence import Present, absent
 from nexus.schemas.retrieval import RetrievalResultRef
 from nexus.services.chat_run_citations import (
     CitationCandidateNumbering,
     number_tool_citation_candidates,
 )
-from nexus.services.chat_run_event_store import ChatRunEventEmitter
+from nexus.services.chat_run_event_store import (
+    ChatRunEventEmitter,
+    append_run_event,
+    lock_chat_run_for_update,
+)
 from nexus.services.chat_run_tools import (
     RecordKind,
     ToolModelOutput,
@@ -98,11 +102,30 @@ from nexus.services.durable_step_journal import (
     ReplayPolicy as JournalReplayPolicy,
 )
 from nexus.services.retrieval_citation import RetrievalCitation, insert_retrieval_row
+from nexus.services.tool_authority import (
+    ToolAuthority,
+    ToolAuthorityRefused,
+    ToolPositionRecord,
+    ToolPositionRecorder,
+)
 from nexus.services.tool_runtime import declarations as tool_declarations
 from nexus.services.tool_runtime.declarations import CHAT_TOOL_DECLARATIONS
 
 if TYPE_CHECKING:
+    from nexus.services.llm_ledger import LlmCallOwner
     from nexus.services.tool_runtime.composition import FrozenToolOperation
+
+
+# Pydantic's generic-model specialization cache is context-local.  Calling
+# ``Present[type(value)]`` inside an MCP request thread can therefore create a
+# same-named class that is not the class captured by these models' serializers
+# at import time.  Freeze every constructor used by an unvalidated model_copy
+# here, in the same import context as the durable model schema.
+_PRESENT_STR = Present[str]
+_PRESENT_TOOL_DISPATCH_CLAIM = Present[ToolDispatchClaim]
+_PRESENT_TOOL_EXECUTION = Present[ToolExecutionState]
+_PRESENT_TOOL_RESERVATION = Present[ToolExecutionReservation]
+_PRESENT_TOOL_SETTLEMENT = Present[ToolExecutionSettlement]
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +136,8 @@ class _ChatExecutionOwner:
     assistant_message_id: UUID
     tool_call_index: int
     admitted_resource_uris: frozenset[str]
+    provider_wire_name: str
+    provider_arguments: dict[str, Any] | None
 
 
 @dataclass(slots=True)
@@ -126,6 +151,372 @@ class _AuditProjection:
     provider_request_ids: list[str] = field(default_factory=list)
     search_query_fingerprint: str | None = None
     latency_ms: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ChatToolExecutionProjection:
+    """Optional Chat view below the canonical generation tool-position ledger."""
+
+    run_id: UUID
+    initial_citation_ordinal: int
+
+    def __post_init__(self) -> None:
+        if self.initial_citation_ordinal < 1:
+            raise ValueError("Chat citation ordinal must be positive")
+
+    @property
+    def scope_label(self) -> str:
+        return "conversation_context"
+
+    def lock_owner(
+        self,
+        db: Session,
+        *,
+        user_id: UUID,
+        owner: LlmCallOwner,
+    ) -> None:
+        if owner.kind != "chat_run" or owner.id != self.run_id:
+            raise ToolAuthorityRefused("Chat projection differs from generation owner")
+        run = lock_chat_run_for_update(db, self.run_id)
+        if (
+            run is None
+            or run.owner_user_id != user_id
+            or run.status != "running"
+            or run.cancel_requested_at is not None
+        ):
+            raise ToolAuthorityRefused("Chat projection owner is not live")
+
+    def stage_started(
+        self,
+        db: Session,
+        *,
+        authority: ToolAuthority,
+        position: ToolPositionRecord,
+        provider_wire_name: str,
+        arguments: Mapping[str, object],
+    ) -> None:
+        run = self._run(db, authority=authority)
+        binding = authority.operation.plan.catalog_view.binding(ToolId(position.canonical_tool_id))
+        presented = next(
+            (
+                entry
+                for entry in _presented_declarations(authority)
+                if str(entry.spec.id) == position.canonical_tool_id
+            ),
+            None,
+        )
+        if presented is None:
+            raise AssertionError("Chat tool position has no presentation declaration")
+        projection = StoredToolProjection(
+            record_kind=RecordKind.current_execution.value,
+            canonical_tool_id=position.canonical_tool_id,
+            provider_wire_name=provider_wire_name,
+            effect=binding.spec.effect,
+            result_kind=presented.result_kind,
+            activity_label=presented.activity_label,
+            error_type=None,
+            canonical_input_sha256=position.canonical_input_digest,
+            tool_contract_revision=position.tool_contract_revision,
+            binding_policy_revision=position.binding_revision,
+        )
+        common = {
+            **projection.model_dump(mode="json"),
+            "tool_call_id": None,
+            "assistant_message_id": str(run.assistant_message_id),
+            "tool_call_index": position.position,
+            "provider_tool_call_id": position.transport_call_id,
+            # The canonical position is the route-neutral observation order;
+            # provider/host sequence remains child transport evidence.
+            "provider_event_seq_start": position.position,
+            "provider_event_seq_end": position.position,
+        }
+        append_run_event(db, run, "tool_call_start", common)
+        append_run_event(
+            db,
+            run,
+            "tool_call_done",
+            {**common, "input": dict(arguments)},
+        )
+        tool_call_id = persist_tool_call_start(
+            db,
+            run=run,
+            tool_call_index=position.position,
+            tool_position_id=position.id,
+            identity=current_tool_record_identity(
+                canonical_tool_id=position.canonical_tool_id,
+                canonical_input_sha256=position.canonical_input_digest,
+                binding_policy_revision=position.binding_revision,
+            ),
+            provider_wire_name=provider_wire_name,
+            scope=(
+                "assistant_write"
+                if binding.spec.effect is ToolEffect.Write
+                else "conversation_context"
+            ),
+            requested_types=[],
+        )
+        bind_provider_tool_call_events(
+            db,
+            run=run,
+            tool_call_index=position.position,
+            tool_call_id=tool_call_id,
+        )
+
+    def stage_terminal(
+        self,
+        db: Session,
+        *,
+        authority: ToolAuthority,
+        position: ToolPositionRecord,
+        result: ToolResult,
+        audit: Mapping[str, object],
+    ) -> None:
+        run = self._run(db, authority=authority)
+        chat = self._chat_owner(db, authority=authority, position=position)
+        projection = _audit_projection(audit)
+        if position.canonical_tool_id == "web.search":
+            projection = _build_web_search_audit(
+                db,
+                run=run,
+                chat=chat,
+                result=result,
+                catalog_view=authority.operation.plan.catalog_view,
+            )
+        tool_call_id = _stage_chat_terminal_projection(
+            db,
+            run=run,
+            chat=chat,
+            tool_position=position,
+            identity=_tool_execution_identity(authority, position),
+            result=result,
+            audit=projection,
+        )
+        binding = authority.operation.plan.catalog_view.binding(ToolId(position.canonical_tool_id))
+        if result["type"] == "Success" and binding.spec.effect is ToolEffect.Write:
+            from nexus.services.assistant_write_authorship import (
+                persist_assistant_write_authorships,
+            )
+
+            persist_assistant_write_authorships(
+                db,
+                viewer_id=authority.user_id,
+                tool_call_id=tool_call_id,
+                position=position,
+                created_refs=projection.created_refs,
+            )
+
+    def render_output(
+        self,
+        db: Session,
+        *,
+        authority: ToolAuthority,
+        position: ToolPositionRecord,
+        result: ToolResult,
+    ) -> str:
+        run = self._run(db, authority=authority)
+        chat = self._chat_owner(db, authority=authority, position=position)
+        receipt = stage_chat_tool_execution_receipt(
+            db=db,
+            catalog_view=authority.operation.plan.catalog_view,
+            run=run,
+            tool_call_index=position.position,
+            identity=_tool_execution_identity(authority, position),
+            provider_wire_name=chat.provider_wire_name,
+            result=result,
+            provider_call_id=position.transport_call_id,
+            starting_citation_ordinal=self._starting_citation_ordinal(
+                db,
+                run=run,
+                position=position.position,
+            ),
+        )
+        return receipt.model_output.output
+
+    def live_write_count(
+        self,
+        db: Session,
+        *,
+        authority: ToolAuthority,
+    ) -> int | None:
+        from nexus.services.chat_run_tools import assistant_write_tool_call_count
+
+        run = self._run(db, authority=authority)
+        return assistant_write_tool_call_count(
+            db,
+            assistant_message_id=run.assistant_message_id,
+            canonical_tool_ids=_write_tool_ids(),
+        )
+
+    def _run(self, db: Session, *, authority: ToolAuthority) -> ChatRun:
+        run = lock_chat_run_for_update(db, self.run_id)
+        if (
+            run is None
+            or authority.owner.kind != "chat_run"
+            or authority.owner.id != run.id
+            or authority.user_id != run.owner_user_id
+            or run.status != "running"
+            or run.cancel_requested_at is not None
+        ):
+            raise ToolAuthorityRefused("Chat projection owner is not live")
+        return run
+
+    def _chat_owner(
+        self,
+        db: Session,
+        *,
+        authority: ToolAuthority,
+        position: ToolPositionRecord,
+    ) -> _ChatExecutionOwner:
+        run = self._run(db, authority=authority)
+        event_input = db.execute(
+            text(
+                """
+                SELECT payload->'input'
+                FROM chat_run_events
+                WHERE run_id = :run_id
+                  AND event_type = 'tool_call_done'
+                  AND payload->>'tool_call_index' = :tool_call_index
+                ORDER BY seq DESC
+                LIMIT 1
+                """
+            ),
+            {"run_id": run.id, "tool_call_index": str(position.position)},
+        ).scalar_one_or_none()
+        row = (
+            db.execute(
+                text(
+                    """
+                    SELECT provider_wire_name
+                    FROM message_tool_calls
+                    WHERE assistant_message_id = :assistant_message_id
+                      AND tool_call_index = :tool_call_index
+                    """
+                ),
+                {
+                    "assistant_message_id": run.assistant_message_id,
+                    "tool_call_index": position.position,
+                },
+            )
+            .mappings()
+            .one()
+        )
+        provider_wire_name = row["provider_wire_name"]
+        if not isinstance(provider_wire_name, str) or not provider_wire_name:
+            raise AssertionError("Chat tool projection lost its provider wire name")
+        return _ChatExecutionOwner(
+            run_id=run.id,
+            conversation_id=run.conversation_id,
+            user_message_id=run.user_message_id,
+            assistant_message_id=run.assistant_message_id,
+            tool_call_index=position.position,
+            admitted_resource_uris=authority.admitted_resource_uris,
+            provider_wire_name=provider_wire_name,
+            provider_arguments=dict(event_input) if isinstance(event_input, dict) else None,
+        )
+
+    def _starting_citation_ordinal(
+        self,
+        db: Session,
+        *,
+        run: ChatRun,
+        position: int,
+    ) -> int:
+        previous = db.scalar(
+            text(
+                """
+                SELECT max(retrieval.citation_candidate_ordinal)
+                FROM message_retrievals AS retrieval
+                JOIN message_tool_calls AS tool_call ON tool_call.id = retrieval.tool_call_id
+                WHERE tool_call.assistant_message_id = :assistant_message_id
+                  AND tool_call.tool_call_index < :tool_call_index
+                """
+            ),
+            {
+                "assistant_message_id": run.assistant_message_id,
+                "tool_call_index": position,
+            },
+        )
+        if previous is None:
+            return self.initial_citation_ordinal
+        if type(previous) is not int or previous < self.initial_citation_ordinal:
+            raise AssertionError("Chat citation candidate cursor is malformed")
+        return previous + 1
+
+
+def _presented_declarations(authority: ToolAuthority) -> tuple[Any, ...]:
+    from nexus.services.tool_runtime.composition import operation_presented_declarations
+
+    return operation_presented_declarations(authority.operation)
+
+
+def _tool_execution_identity(
+    authority: ToolAuthority,
+    position: ToolPositionRecord,
+) -> ToolExecutionIdentity:
+    binding = authority.operation.plan.catalog_view.binding(ToolId(position.canonical_tool_id))
+    return ToolExecutionIdentity(
+        tool_id=position.canonical_tool_id,
+        tool_contract_revision=position.tool_contract_revision,
+        policy_revision=position.binding_revision,
+        plan_revision=position.plan_revision,
+        input_digest=position.canonical_input_digest,
+        replay_policy=_journal_policy(binding.replay_policy),
+    )
+
+
+def _audit_projection(values: Mapping[str, object]) -> _AuditProjection:
+    scope = values.get("scope", "conversation_context")
+    if not isinstance(scope, str) or not scope:
+        raise ValueError("Chat tool audit scope must be nonblank text")
+    requested_types = _audit_sequence(values, "requested_types", str)
+    citations = _audit_sequence(values, "citations", RetrievalCitation)
+    selected_citations = _audit_sequence(values, "selected_citations", RetrievalCitation)
+    provider_request_ids = _audit_sequence(values, "provider_request_ids", str)
+    filters = values.get("filters", {})
+    if not isinstance(filters, Mapping) or any(not isinstance(key, str) for key in filters):
+        raise ValueError("Chat tool audit filters must be a string-keyed mapping")
+    raw_created_refs = values.get("created_refs", ())
+    if not isinstance(raw_created_refs, Sequence) or isinstance(
+        raw_created_refs, (str, bytes, bytearray)
+    ):
+        raise ValueError("Chat tool audit created refs must be a sequence")
+    created_refs: list[dict[str, Any]] = []
+    for raw_ref in raw_created_refs:
+        if not isinstance(raw_ref, Mapping) or any(not isinstance(key, str) for key in raw_ref):
+            raise ValueError("Chat tool audit created refs must be string-keyed mappings")
+        created_refs.append(dict(raw_ref))
+    search_query_fingerprint = values.get("search_query_fingerprint")
+    if search_query_fingerprint is not None and not isinstance(search_query_fingerprint, str):
+        raise ValueError("Chat tool audit query fingerprint must be text")
+    latency_ms = values.get("latency_ms")
+    if latency_ms is not None and (
+        not isinstance(latency_ms, int) or isinstance(latency_ms, bool) or latency_ms < 0
+    ):
+        raise ValueError("Chat tool audit latency must be a non-negative integer")
+    return _AuditProjection(
+        scope=scope,
+        requested_types=cast("list[str]", requested_types),
+        filters=dict(filters),
+        citations=cast("list[RetrievalCitation]", citations),
+        selected_citations=cast("list[RetrievalCitation]", selected_citations),
+        created_refs=created_refs,
+        provider_request_ids=cast("list[str]", provider_request_ids),
+        search_query_fingerprint=search_query_fingerprint,
+        latency_ms=latency_ms,
+    )
+
+
+def _audit_sequence(
+    values: Mapping[str, object],
+    name: str,
+    item_type: type[object],
+) -> list[object]:
+    value = values.get(name, ())
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        raise ValueError(f"Chat tool audit {name} must be a sequence")
+    if any(not isinstance(item, item_type) for item in value):
+        raise ValueError(f"Chat tool audit {name} has the wrong item type")
+    return list(value)
 
 
 _BOUNDARY_ERROR_TYPES = {
@@ -316,17 +707,46 @@ def reconcile_uncertain_tool_completion(
     completed_execution = execution.model_copy(
         update={
             "dispatch_claim": absent(),
-            "settlement": present(settlement),
+            "settlement": _PRESENT_TOOL_SETTLEMENT(value=settlement),
         }
     )
     completed = state.model_copy(
         update={
             "dispatch_phase": Completed,
-            "terminal_result": present(raw_result),
-            "tool_execution": present(completed_execution),
+            "terminal_result": _PRESENT_STR(value=raw_result),
+            "tool_execution": _PRESENT_TOOL_EXECUTION(value=completed_execution),
         }
     )
     return StepReplayState.model_validate(completed.model_dump(mode="python"))
+
+
+def _reservation_is_within_run_limits(
+    states: Sequence[StepReplayState],
+    *,
+    limits: RunLimits,
+    reservation: ToolExecutionReservation,
+) -> bool:
+    accepted: list[ToolExecutionReservation] = []
+    in_flight = 0
+    for state in states:
+        if not isinstance(state.tool_execution, Present):
+            continue
+        tool = state.tool_execution.value
+        if not isinstance(tool.reservation, Present) or not tool.reservation.value.accepted:
+            continue
+        accepted.append(tool.reservation.value)
+        if state.dispatch_phase is Uncertain:
+            in_flight += 1
+    return (
+        sum(item.calls for item in accepted) + reservation.calls <= limits.max_calls
+        and sum(item.input_bytes for item in accepted) + reservation.input_bytes
+        <= limits.max_input_bytes
+        and sum(item.max_attempts for item in accepted) + reservation.max_attempts
+        <= limits.max_external_attempts
+        and sum(item.max_output_bytes for item in accepted) + reservation.max_output_bytes
+        <= limits.max_output_bytes
+        and in_flight < limits.max_in_flight
+    )
 
 
 class _DurableBudgetState:
@@ -371,7 +791,6 @@ class NexusPositionRecorder:
         position: InvocationPosition,
         limits: RunLimits,
         catalog_view: PlanCatalogView,
-        chat: _ChatExecutionOwner | None,
     ) -> None:
         if claimed_job.id != job_context.job_id:
             raise ValueError("claimed job differs from its execution context")
@@ -387,8 +806,7 @@ class NexusPositionRecorder:
         self.job_context = job_context
         self.position = position
         self.catalog_view = catalog_view
-        self.chat = chat
-        self.audit = _AuditProjection(scope="conversation_context" if chat else "durable_operation")
+        self.audit = _AuditProjection(scope="durable_operation")
         self.budgets = _DurableBudgetState(self, limits)
 
     @property
@@ -453,12 +871,6 @@ class NexusPositionRecorder:
             input_digest=input_digest,
             replay_policy=_journal_policy(replay_policy),
         )
-        if self.chat is not None:
-            self.audit.scope = (
-                "assistant_write"
-                if _declaration(str(tool_id)).spec.effect is ToolEffect.Write
-                else "conversation_context"
-            )
         job = self._lock_job()
         state = self._state(job)
         if state is not None:
@@ -469,8 +881,6 @@ class NexusPositionRecorder:
             ):
                 self.db.rollback()
                 raise ValueError("occupied position has a different tool identity")
-            if self.chat is not None:
-                self._assert_chat_row(identity)
             if (
                 state.dispatch_phase is Uncertain
                 and identity.replay_policy is JournalReplayPolicy.ReDispatchable
@@ -485,7 +895,7 @@ class NexusPositionRecorder:
                 recovered = state.model_copy(
                     update={
                         "dispatch_phase": Prepared,
-                        "tool_execution": present(recovered_execution),
+                        "tool_execution": _PRESENT_TOOL_EXECUTION(value=recovered_execution),
                     }
                 )
                 self._checkpoint(job, recovered)
@@ -496,31 +906,10 @@ class NexusPositionRecorder:
         state = StepReplayState(
             generation_id=stable_generation_id(self.operation_id, str(position)),
             dispatch_phase=Prepared,
-            request_fingerprint=present(input_digest),
+            request_fingerprint=_PRESENT_STR(value=input_digest),
             terminal_result=absent(),
-            tool_execution=present(ToolExecutionState(identity=identity)),
+            tool_execution=_PRESENT_TOOL_EXECUTION(value=ToolExecutionState(identity=identity)),
         )
-        if self.chat is not None:
-            run = self._chat_run()
-            record_identity = current_tool_record_identity(
-                canonical_tool_id=str(tool_id),
-                canonical_input_sha256=input_digest,
-                binding_policy_revision=policy_revision,
-            )
-            tool_call_id = persist_tool_call_start(
-                self.db,
-                run=run,
-                tool_call_index=self.chat.tool_call_index,
-                identity=record_identity,
-                scope=self.audit.scope,
-                requested_types=[],
-            )
-            bind_provider_tool_call_events(
-                self.db,
-                run=run,
-                tool_call_index=self.chat.tool_call_index,
-                tool_call_id=tool_call_id,
-            )
         self._checkpoint(job, state)
         return _position_state(state, catalog_view=self.catalog_view)
 
@@ -561,8 +950,10 @@ class NexusPositionRecorder:
             raise ValueError("only a prepared tool position may reserve budget")
         updated = state.model_copy(
             update={
-                "tool_execution": present(
-                    execution.model_copy(update={"reservation": present(proposed)})
+                "tool_execution": _PRESENT_TOOL_EXECUTION(
+                    value=execution.model_copy(
+                        update={"reservation": _PRESENT_TOOL_RESERVATION(value=proposed)}
+                    )
                 )
             }
         )
@@ -600,8 +991,8 @@ class NexusPositionRecorder:
             raise ValueError("dispatch requires an accepted reservation")
         updated_execution = execution.model_copy(
             update={
-                "dispatch_claim": present(
-                    ToolDispatchClaim(
+                "dispatch_claim": _PRESENT_TOOL_DISPATCH_CLAIM(
+                    value=ToolDispatchClaim(
                         worker_id=self.job_context.worker_id,
                         attempt_no=self.job_context.attempt_no,
                     )
@@ -609,7 +1000,10 @@ class NexusPositionRecorder:
             }
         )
         updated = state.model_copy(
-            update={"dispatch_phase": Uncertain, "tool_execution": present(updated_execution)}
+            update={
+                "dispatch_phase": Uncertain,
+                "tool_execution": _PRESENT_TOOL_EXECUTION(value=updated_execution),
+            }
         )
         self._checkpoint(job, updated)
         return PositionState(
@@ -649,7 +1043,10 @@ class NexusPositionRecorder:
             }
         )
         updated = state.model_copy(
-            update={"dispatch_phase": Prepared, "tool_execution": present(updated_execution)}
+            update={
+                "dispatch_phase": Prepared,
+                "tool_execution": _PRESENT_TOOL_EXECUTION(value=updated_execution),
+            }
         )
         self._checkpoint(job, updated)
 
@@ -707,8 +1104,8 @@ class NexusPositionRecorder:
         updated_execution = execution.model_copy(
             update={
                 "dispatch_claim": absent(),
-                "settlement": present(
-                    ToolExecutionSettlement(
+                "settlement": _PRESENT_TOOL_SETTLEMENT(
+                    value=ToolExecutionSettlement(
                         actual_attempts=stored_settlement.actual_attempts,
                         actual_output_bytes=stored_settlement.actual_output_bytes,
                     )
@@ -718,14 +1115,12 @@ class NexusPositionRecorder:
         updated = state.model_copy(
             update={
                 "dispatch_phase": Completed,
-                "terminal_result": present(canonical_json_bytes(result).decode("utf-8")),
-                "tool_execution": present(updated_execution),
+                "terminal_result": _PRESENT_STR(value=canonical_json_bytes(result).decode("utf-8")),
+                "tool_execution": _PRESENT_TOOL_EXECUTION(value=updated_execution),
             }
         )
         updated = StepReplayState.model_validate(updated.model_dump(mode="python"))
         try:
-            if self.chat is not None:
-                self._persist_chat_terminal(updated_execution.identity, result)
             if not checkpoint_step_state(
                 self.db,
                 ctx=self.job_context,
@@ -783,27 +1178,17 @@ class NexusPositionRecorder:
         job = get_job(self.db, self.job_context.job_id)
         if job is None:
             return False
-        accepted: list[ToolExecutionReservation] = []
-        in_flight = 0
-        for state in read_step_states(job).values():
-            if not isinstance(state.tool_execution, Present):
-                continue
-            tool = state.tool_execution.value
-            if not isinstance(tool.reservation, Present) or not tool.reservation.value.accepted:
-                continue
-            accepted.append(tool.reservation.value)
-            if state.dispatch_phase is Uncertain:
-                in_flight += 1
-        limits = self.budgets.limits
-        return (
-            sum(item.calls for item in accepted) + reservation.calls <= limits.max_calls
-            and sum(item.input_bytes for item in accepted) + reservation.input_bytes
-            <= limits.max_input_bytes
-            and sum(item.max_attempts for item in accepted) + reservation.max_attempts
-            <= limits.max_external_attempts
-            and sum(item.max_output_bytes for item in accepted) + reservation.max_output_bytes
-            <= limits.max_output_bytes
-            and in_flight < limits.max_in_flight
+        proposed = ToolExecutionReservation(
+            calls=reservation.calls,
+            input_bytes=reservation.input_bytes,
+            max_attempts=reservation.max_attempts,
+            max_output_bytes=reservation.max_output_bytes,
+            accepted=False,
+        )
+        return _reservation_is_within_run_limits(
+            tuple(read_step_states(job).values()),
+            limits=self.budgets.limits,
+            reservation=proposed,
         )
 
     def _validate_settlement(
@@ -815,88 +1200,17 @@ class NexusPositionRecorder:
         if settlement.actual_attempts < 0 or settlement.actual_output_bytes < 0:
             raise ValueError("tool settlement cannot be negative")
 
-    def _chat_run(self) -> ChatRun:
-        assert self.chat is not None
-        run = self.db.get(ChatRun, self.chat.run_id)
-        if run is None or (
-            run.conversation_id != self.chat.conversation_id
-            or run.user_message_id != self.chat.user_message_id
-            or run.assistant_message_id != self.chat.assistant_message_id
-        ):
-            raise AssertionError("Chat execution owner changed durable identity")
-        return run
-
-    def _assert_chat_row(self, identity: ToolExecutionIdentity) -> None:
-        assert self.chat is not None
-        row = (
-            self.db.execute(
-                text(
-                    """
-                SELECT canonical_tool_id, record_kind, provider_wire_name,
-                       canonical_input_sha256, tool_contract_revision,
-                       binding_policy_revision
-                FROM message_tool_calls
-                WHERE assistant_message_id = :assistant_message_id
-                  AND tool_call_index = :tool_call_index
-                """
-                ),
-                {
-                    "assistant_message_id": self.chat.assistant_message_id,
-                    "tool_call_index": self.chat.tool_call_index,
-                },
-            )
-            .mappings()
-            .one_or_none()
-        )
-        if row is None or dict(row) != {
-            "canonical_tool_id": identity.tool_id,
-            "record_kind": RecordKind.current_execution.value,
-            "provider_wire_name": None,
-            "canonical_input_sha256": identity.input_digest,
-            "tool_contract_revision": identity.tool_contract_revision,
-            "binding_policy_revision": identity.policy_revision,
-        }:
-            self.db.rollback()
-            raise ValueError("Chat tool row differs from occupied durable identity")
-
-    def _persist_chat_terminal(
-        self,
-        identity: ToolExecutionIdentity,
-        result: ToolResult,
-    ) -> None:
-        assert self.chat is not None
-        run = self._chat_run()
-        if identity.tool_id == "web.search":
-            self._stage_web_search_audit(result)
-        _stage_chat_terminal_projection(
-            self.db,
-            run=run,
-            chat=self.chat,
-            identity=identity,
-            result=result,
-            audit=self.audit,
-        )
-
-    def _stage_web_search_audit(self, result: ToolResult) -> None:
-        assert self.chat is not None
-        self.audit = _build_web_search_audit(
-            self.db,
-            run=self._chat_run(),
-            chat=self.chat,
-            result=result,
-            catalog_view=self.catalog_view,
-        )
-
 
 def _stage_chat_terminal_projection(
     db: Session,
     *,
     run: ChatRun,
     chat: _ChatExecutionOwner,
+    tool_position: ToolPositionRecord | None,
     identity: ToolExecutionIdentity,
     result: ToolResult,
     audit: _AuditProjection,
-) -> None:
+) -> UUID:
     """Stage the sole Chat row/event/retrieval projection without committing."""
 
     declaration = _declaration(identity.tool_id)
@@ -923,7 +1237,9 @@ def _stage_chat_terminal_projection(
         user_message_id=run.user_message_id,
         assistant_message_id=run.assistant_message_id,
         tool_call_index=chat.tool_call_index,
+        tool_position_id=tool_position.id if tool_position is not None else None,
         identity=record_identity,
+        provider_wire_name=chat.provider_wire_name,
         search_query_fingerprint=audit.search_query_fingerprint,
         scope=audit.scope,
         requested_types=audit.requested_types,
@@ -948,7 +1264,7 @@ def _stage_chat_terminal_projection(
     event = ChatRunToolResultEventPayload(
         record_kind=RecordKind.current_execution.value,
         canonical_tool_id=identity.tool_id,
-        provider_wire_name=None,
+        provider_wire_name=chat.provider_wire_name,
         effect=declaration.spec.effect,
         result_kind=declaration.result_kind,
         activity_label=declaration.activity_label,
@@ -971,6 +1287,7 @@ def _stage_chat_terminal_projection(
         results=event_results,
     )
     ChatRunEventEmitter(db, run).tool_result(event)
+    return tool_call_id
 
 
 def _build_web_search_audit(
@@ -988,20 +1305,24 @@ def _build_web_search_audit(
     from nexus.schemas.retrieval import ExternalSnapshotId, ProviderResultRef
     from nexus.services.agent_tools.web_search import PersistedWebSearchCitation
 
-    raw_input = db.execute(
-        text(
-            """
-            SELECT payload->'input'
-            FROM chat_run_events
-            WHERE run_id = :run_id
-              AND event_type = 'tool_call_done'
-              AND payload->>'tool_call_index' = :tool_call_index
-            ORDER BY seq DESC
-            LIMIT 1
-            """
-        ),
-        {"run_id": chat.run_id, "tool_call_index": str(chat.tool_call_index)},
-    ).scalar_one_or_none()
+    raw_input: object = chat.provider_arguments
+    if raw_input is None:
+        # Reconciliation reconstructs the admitted request from the MCP-owned
+        # durable event because there is no live handler context by definition.
+        raw_input = db.execute(
+            text(
+                """
+                SELECT payload->'input'
+                FROM chat_run_events
+                WHERE run_id = :run_id
+                  AND event_type = 'tool_call_done'
+                  AND payload->>'tool_call_index' = :tool_call_index
+                ORDER BY seq DESC
+                LIMIT 1
+                """
+            ),
+            {"run_id": chat.run_id, "tool_call_index": str(chat.tool_call_index)},
+        ).scalar_one_or_none()
     projected_input: dict[str, object] | None = None
     if isinstance(raw_input, dict):
         input_type = catalog_view.spec(ToolId("web.search")).input_type
@@ -1139,147 +1460,11 @@ def _selected_web_result_indexes(
     return frozenset(selected)
 
 
-def stage_reconciled_chat_tool_terminal(
-    *,
-    db: Session,
-    operation: FrozenToolOperation,
-    run: ChatRun,
-    tool_call_index: int,
-    identity: ToolExecutionIdentity,
-    result: ToolResult,
-) -> None:
-    """Stage one operator-attached Chat terminal through the live projection owner.
-
-    The caller owns the dead-job lock, journal checkpoint, requeue, and atomic
-    commit. This function requires the already-occupied current row and refuses
-    a second terminal projection instead of silently replaying side effects.
-    """
-
-    binding = _assert_operation_identity(operation, identity)
-    if binding.replay_policy is not PortableReplayPolicy.BilledOnce:
-        raise ValueError("only BilledOnce Chat tools accept reconciled terminals")
-    if tool_call_index < 1:
-        raise ValueError("Chat tool-call index must be positive")
-    stored_run = db.get(ChatRun, run.id)
-    if stored_run is None or (
-        stored_run.conversation_id != run.conversation_id
-        or stored_run.user_message_id != run.user_message_id
-        or stored_run.assistant_message_id != run.assistant_message_id
-        or stored_run.owner_user_id != run.owner_user_id
-    ):
-        raise ValueError("Chat run differs from the reconciled execution owner")
-    raw_result = canonical_json_bytes(result).decode("utf-8")
-    if (
-        _validated_portable_result(
-            raw_result,
-            tool_id=identity.tool_id,
-            catalog_view=operation.plan.catalog_view,
-        )
-        != result
-    ):
-        raise ValueError("reconciled Chat result differs from its strict projection")
-
-    row = (
-        db.execute(
-            text(
-                """
-                SELECT id, canonical_tool_id, record_kind, provider_wire_name,
-                       canonical_input_sha256, tool_contract_revision,
-                       binding_policy_revision, status, error_code
-                FROM message_tool_calls
-                WHERE assistant_message_id = :assistant_message_id
-                  AND tool_call_index = :tool_call_index
-                FOR UPDATE
-                """
-            ),
-            {
-                "assistant_message_id": stored_run.assistant_message_id,
-                "tool_call_index": tool_call_index,
-            },
-        )
-        .mappings()
-        .one_or_none()
-    )
-    if row is None or dict(row) != {
-        "id": row["id"] if row is not None else None,
-        "canonical_tool_id": identity.tool_id,
-        "record_kind": RecordKind.current_execution.value,
-        "provider_wire_name": None,
-        "canonical_input_sha256": identity.input_digest,
-        "tool_contract_revision": identity.tool_contract_revision,
-        "binding_policy_revision": identity.policy_revision,
-        "status": "running",
-        "error_code": None,
-    }:
-        raise ValueError("Chat tool row is not the occupied reconciliable position")
-    prior_terminal = db.execute(
-        text(
-            """
-            SELECT 1
-            FROM chat_run_events
-            WHERE run_id = :run_id
-              AND event_type = 'tool_result'
-              AND payload->>'tool_call_id' = :tool_call_id
-            LIMIT 1
-            """
-        ),
-        {"run_id": stored_run.id, "tool_call_id": str(row["id"])},
-    ).scalar_one_or_none()
-    if prior_terminal is not None:
-        raise ValueError("Chat tool position already has a terminal projection")
-
-    chat = _ChatExecutionOwner(
-        run_id=stored_run.id,
-        conversation_id=stored_run.conversation_id,
-        user_message_id=stored_run.user_message_id,
-        assistant_message_id=stored_run.assistant_message_id,
-        tool_call_index=tool_call_index,
-        admitted_resource_uris=frozenset(),
-    )
-    audit = _AuditProjection(scope="conversation_context")
-    if identity.tool_id == "web.search":
-        audit = _build_web_search_audit(
-            db,
-            run=stored_run,
-            chat=chat,
-            result=result,
-            catalog_view=operation.plan.catalog_view,
-        )
-    _stage_chat_terminal_projection(
-        db,
-        run=stored_run,
-        chat=chat,
-        identity=identity,
-        result=result,
-        audit=audit,
-    )
-
-
 def _declaration(tool_id: str) -> Any:
     matches = [entry for entry in CHAT_TOOL_DECLARATIONS if str(entry.spec.id) == tool_id]
     if len(matches) != 1:
         raise AssertionError(f"unknown canonical tool declaration: {tool_id!r}")
     return matches[0]
-
-
-class _ChatCancellation:
-    def __init__(self, db: Session, run_id: UUID) -> None:
-        self._db = db
-        self._run_id = run_id
-
-    @property
-    def cancelled(self) -> bool:
-        return bool(
-            self._db.execute(
-                text("SELECT cancel_requested_at IS NOT NULL FROM chat_runs WHERE id = :id"),
-                {"id": self._run_id},
-            ).scalar_one()
-        )
-
-
-class _NexusTelemetry:
-    def event(self, name: str, attributes: dict[str, Any]) -> None:
-        del name, attributes
 
 
 def make_durable_execution_context(
@@ -1309,7 +1494,6 @@ def make_durable_execution_context(
         position=position,
         limits=operation.profile.run_limits,
         catalog_view=operation.plan.catalog_view,
-        chat=None,
     )
     return ExecutionContext(
         plan=operation.plan,
@@ -1326,102 +1510,68 @@ def make_durable_execution_context(
     )
 
 
-def make_chat_execution_context(
+def stage_chat_tool_execution_receipt(
     *,
     db: Session,
-    operation: FrozenToolOperation,
+    catalog_view: PlanCatalogView,
     run: ChatRun,
-    claimed_job: JobRow,
-    job_context: JobExecutionContext,
-    durable_step_path: str,
     tool_call_index: int,
-    admitted_resource_uris: tuple[str, ...],
-    tool_id: ToolId,
-    effect_id: EffectId | None,
-) -> ExecutionContext:
-    """Build the explicit Chat context frozen by admission and queue claim."""
-
-    if tool_call_index < 1:
-        raise ValueError("Chat tool-call index must be positive")
-    if durable_step_path.rsplit("/", 1)[-1] != str(tool_call_index):
-        raise ValueError("Chat durable position differs from its tool-call index")
-    binding = operation.plan.catalog_view.binding(tool_id)
-    expected_effect_id = EffectId(str(stable_generation_id(run.id, durable_step_path)))
-    if binding.spec.effect is ToolEffect.Write:
-        if effect_id != expected_effect_id:
-            raise ValueError("Chat write effect id differs from its durable position")
-    elif effect_id is not None:
-        raise ValueError("Chat read tool must not carry an effect id")
-    admitted = tuple(dict.fromkeys(admitted_resource_uris))
-    if any(not uri for uri in admitted):
-        raise ValueError("Chat admitted resource URIs must be non-empty")
-    position = InvocationPosition(durable_step_path)
-    chat = _ChatExecutionOwner(
-        run_id=run.id,
-        conversation_id=run.conversation_id,
-        user_message_id=run.user_message_id,
-        assistant_message_id=run.assistant_message_id,
-        tool_call_index=tool_call_index,
-        admitted_resource_uris=frozenset(admitted),
-    )
-    recorder = NexusPositionRecorder(
-        db=db,
-        operation_id=run.id,
-        claimed_job=claimed_job,
-        job_context=job_context,
-        position=position,
-        limits=operation.profile.run_limits,
-        catalog_view=operation.plan.catalog_view,
-        chat=chat,
-    )
-    return ExecutionContext(
-        plan=operation.plan,
-        grant=operation.plan.grant(tool_id),
-        catalog_view=operation.plan.catalog_view,
-        position=position,
-        recorder=recorder,
-        effect_id=effect_id,
-        budgets=recorder.budgets,
-        principal=Principal(str(run.owner_user_id)),
-        scope=Scope("conversation_context"),
-        cancellation=_ChatCancellation(db, run.id),
-        telemetry=_NexusTelemetry(),
-    )
-
-
-def chat_tool_execution_receipt(
-    context: ExecutionContext,
-    *,
+    identity: ToolExecutionIdentity,
+    provider_wire_name: str,
     result: ToolResult,
     provider_call_id: str,
     starting_citation_ordinal: int,
 ) -> ToolStepResult:
-    """Project a completed portable result into Chat's durable model bridge."""
+    """Stage the single strict Chat receipt projection without committing."""
 
-    recorder = context.recorder
-    if not isinstance(recorder, NexusPositionRecorder) or recorder.chat is None:
-        raise ValueError("Chat receipt requires a Nexus Chat execution context")
-    chat = recorder.chat
+    validated_result = _validated_portable_result(
+        canonical_json_bytes(result).decode("utf-8"),
+        tool_id=identity.tool_id,
+        catalog_view=catalog_view,
+    )
+    if validated_result != result:
+        raise ValueError("Chat receipt result differs from its strict tool projection")
+    if tool_call_index < 1 or starting_citation_ordinal < 1:
+        raise ValueError("Chat receipt position and citation cursor must be positive")
+    expected_error = (
+        str(cast("dict[str, object]", result["error"])["type"])
+        if result["type"] == "Failure"
+        else None
+    )
     row = (
-        recorder.db.execute(
+        db.execute(
             text(
                 """
-            SELECT id, canonical_tool_id, record_kind, canonical_input_sha256,
-                   tool_contract_revision, binding_policy_revision, status, error_code
-            FROM message_tool_calls
-            WHERE assistant_message_id = :assistant_message_id
-              AND tool_call_index = :tool_call_index
-            """
+                SELECT id, canonical_tool_id, record_kind, provider_wire_name,
+                       canonical_input_sha256, tool_contract_revision,
+                       binding_policy_revision, status, error_code
+                FROM message_tool_calls
+                WHERE assistant_message_id = :assistant_message_id
+                  AND tool_call_index = :tool_call_index
+                FOR UPDATE
+                """
             ),
             {
-                "assistant_message_id": chat.assistant_message_id,
-                "tool_call_index": chat.tool_call_index,
+                "assistant_message_id": run.assistant_message_id,
+                "tool_call_index": tool_call_index,
             },
         )
         .mappings()
         .one()
     )
-    event_payload = recorder.db.execute(
+    expected_row = {
+        "canonical_tool_id": identity.tool_id,
+        "record_kind": RecordKind.current_execution.value,
+        "provider_wire_name": provider_wire_name,
+        "canonical_input_sha256": identity.input_digest,
+        "tool_contract_revision": identity.tool_contract_revision,
+        "binding_policy_revision": identity.policy_revision,
+        "status": "error" if result["type"] == "Failure" else "complete",
+        "error_code": expected_error,
+    }
+    if any(row[field] != value for field, value in expected_row.items()):
+        raise ValueError("Chat receipt row differs from its completed durable identity")
+    event_payload = db.execute(
         text(
             """
             SELECT payload
@@ -1433,15 +1583,27 @@ def chat_tool_execution_receipt(
             LIMIT 1
             """
         ),
-        {"run_id": chat.run_id, "tool_call_id": str(row["id"])},
+        {"run_id": run.id, "tool_call_id": str(row["id"])},
     ).scalar_one()
     event = ChatRunToolResultEventPayload.model_validate(event_payload)
+    if (
+        event.tool_call_id != row["id"]
+        or event.assistant_message_id != run.assistant_message_id
+        or event.tool_call_index != tool_call_index
+        or event.canonical_tool_id != identity.tool_id
+        or event.provider_wire_name != provider_wire_name
+        or event.canonical_input_sha256 != identity.input_digest
+        or event.tool_contract_revision != identity.tool_contract_revision
+        or event.binding_policy_revision != identity.policy_revision
+        or event.status != expected_row["status"]
+        or event.error_code != expected_error
+    ):
+        raise ValueError("Chat receipt event differs from its completed durable identity")
     numbering = number_tool_citation_candidates(
-        recorder.db,
+        db,
         tool_call_id=row["id"],
         start_ordinal=starting_citation_ordinal,
     )
-    recorder.db.commit()
     return ToolStepResult(
         tool_call_id=row["id"],
         canonical_tool_id=row["canonical_tool_id"],
@@ -1449,7 +1611,7 @@ def chat_tool_execution_receipt(
         canonical_input_sha256=row["canonical_input_sha256"],
         tool_contract_revision=row["tool_contract_revision"],
         binding_policy_revision=row["binding_policy_revision"],
-        tool_call_index=chat.tool_call_index,
+        tool_call_index=tool_call_index,
         model_output=ToolModelOutput(
             call_id=provider_call_id,
             output=_render_chat_tool_result(result, numbering),
@@ -1500,17 +1662,18 @@ def _render_chat_tool_result(
     )
 
 
-def _chat_recorder(context: ExecutionContext) -> NexusPositionRecorder:
+def _nexus_recorder(context: ExecutionContext) -> ToolPositionRecorder:
     recorder = context.recorder
-    if not isinstance(recorder, NexusPositionRecorder) or recorder.chat is None:
-        raise ExecutorConfigurationDefect("Nexus tools require an explicit Chat execution owner")
+    if not isinstance(recorder, ToolPositionRecorder):
+        raise ExecutorConfigurationDefect(
+            "Nexus domain tools require the canonical generation position recorder"
+        )
     try:
         principal = UUID(str(context.principal))
     except ValueError as exc:
         raise ExecutorConfigurationDefect("Nexus principal is not a UUID") from exc
-    run = recorder._chat_run()
-    if principal != run.owner_user_id:
-        raise ExecutorConfigurationDefect("Nexus principal differs from the Chat owner")
+    if principal != recorder.principal_id:
+        raise ExecutorConfigurationDefect("Nexus principal differs from tool authority")
     return recorder
 
 
@@ -1543,65 +1706,32 @@ def _parse_ref_or_unavailable(uri: str) -> Any:
     return parsed
 
 
-def _page_range_parent(uri: str) -> str | None:
-    scheme, separator, rest = uri.partition(":")
-    if scheme != "page_range" or not separator:
-        return None
-    media_text, separator, range_text = rest.partition(":")
-    start_text, dash, end_text = range_text.partition("-")
-    if not separator or not dash:
-        return None
-    try:
-        media_id = UUID(media_text)
-        start = int(start_text)
-        end = int(end_text)
-    except ValueError:
-        return None
-    if str(media_id) != media_text or start < 1 or end < start:
-        return None
-    return f"media:{media_id}"
-
-
 def _admitted_target(
-    recorder: NexusPositionRecorder,
+    recorder: ToolPositionRecorder,
     uri: str,
     *,
     allow_derived_read: bool = False,
 ) -> Any:
     """Return the parsed target after the operation-owned frozen admission set."""
 
-    from nexus.services.resource_graph.resolve import parent_media_id_for_read_pointer
+    from nexus.services.tool_runtime.resource_scope import resource_uri_is_admitted
 
-    assert recorder.chat is not None
-    parsed = None
-    admitted_uri = uri
-    if uri not in recorder.chat.admitted_resource_uris:
-        if not allow_derived_read:
-            _resource_unavailable()
-        parent_uri = _page_range_parent(uri)
-        if parent_uri is None:
-            parsed = _parse_ref_or_unavailable(uri)
-            parent_id = parent_media_id_for_read_pointer(
-                recorder.db,
-                scheme=parsed.scheme,
-                resource_id=parsed.id,
-            )
-            parent_uri = f"media:{parent_id}" if parent_id is not None else None
-        if parent_uri is None or parent_uri not in recorder.chat.admitted_resource_uris:
-            _resource_unavailable()
-        admitted_uri = parent_uri
-    _parse_ref_or_unavailable(admitted_uri)
-    return parsed or _parse_ref_or_unavailable(uri)
+    if not resource_uri_is_admitted(
+        recorder.db,
+        uri=uri,
+        admitted_resource_uris=recorder.admitted_resource_uris,
+        allow_derived_read=allow_derived_read,
+    ):
+        _resource_unavailable()
+    return _parse_ref_or_unavailable(uri)
 
 
-def _assert_visible(recorder: NexusPositionRecorder, uri: str) -> Any:
+def _assert_visible(recorder: ToolPositionRecorder, uri: str) -> Any:
     from nexus.services.resource_graph.resolve import assert_ref_visible
 
     ref = _admitted_target(recorder, uri)
     try:
-        assert_ref_visible(
-            recorder.db, viewer_id=UUID(str(recorder._chat_run().owner_user_id)), ref=ref
-        )
+        assert_ref_visible(recorder.db, viewer_id=recorder.principal_id, ref=ref)
     except ApiError as exc:
         _collapse_expected_unavailable(
             exc,
@@ -1629,6 +1759,11 @@ def _evidence(
     citation: RetrievalCitation | None = None,
     content: str | None = None,
 ) -> tool_declarations.NexusEvidence:
+    from nexus.services.assistant_write_authorship import (
+        machine_authorship_for_resource_uri,
+    )
+
+    recorder = _nexus_recorder(context)
     excerpt_id = None
     if citation is not None and citation.evidence_span_id is not None:
         try:
@@ -1644,6 +1779,11 @@ def _evidence(
         context_ref=resource_uri,
         excerpt_id=excerpt_id,
         locator=_citation_locator(citation),
+        machine_authorship=machine_authorship_for_resource_uri(
+            recorder.db,
+            viewer_id=recorder.principal_id,
+            resource_uri=resource_uri,
+        ),
         observed_at=None,
         resource_uri=resource_uri,
         snapshot_revision=None if content is not None else _snapshot_revision(material),
@@ -1651,7 +1791,7 @@ def _evidence(
 
 
 def _citation_for_ref(
-    recorder: NexusPositionRecorder,
+    recorder: ToolPositionRecorder,
     *,
     result_type: str | None,
     source_id: str,
@@ -1665,7 +1805,7 @@ def _citation_for_ref(
     try:
         result = get_search_result(
             recorder.db,
-            UUID(str(recorder._chat_run().owner_user_id)),
+            recorder.principal_id,
             result_type,
             source_id,
         )
@@ -1735,7 +1875,6 @@ def _run_search(
     from nexus.services.agent_tools.app_search import (
         APP_SEARCH_LIMIT,
     )
-    from nexus.services.resource_graph.context import search_scope_refs_for_conversation
     from nexus.services.resource_items.capabilities import resource_can_be_app_search_scope
     from nexus.services.retrieval_citation import citation_from_search_result
     from nexus.services.search.batch import search_scopes
@@ -1743,19 +1882,14 @@ def _run_search(
     from nexus.services.search.scope import scope_from_uri
     from nexus.services.search.telemetry import hash_query
 
-    recorder = _chat_recorder(context)
-    assert recorder.chat is not None
+    recorder = _nexus_recorder(context)
     viewer_id = UUID(str(context.principal))
     requested_scopes = list(value.scopes or ())
     if value.scopes is None:
         requested_scopes = [
-            ref.uri
-            for ref in search_scope_refs_for_conversation(
-                recorder.db,
-                viewer_id=viewer_id,
-                conversation_id=recorder.chat.conversation_id,
-            )
-            if ref.uri in recorder.chat.admitted_resource_uris
+            uri
+            for uri in sorted(recorder.admitted_resource_uris)
+            if resource_can_be_app_search_scope(_parse_ref_or_unavailable(uri))
         ]
     scopes = []
     for uri in requested_scopes:
@@ -1853,13 +1987,12 @@ def _run_resource_read(
 ) -> HandlerSuccess[tool_declarations.ResourceReadSuccess]:
     from nexus.services.agent_tools.read_resource import execute_read_resource
 
-    recorder = _chat_recorder(context)
+    recorder = _nexus_recorder(context)
     _admitted_target(recorder, value.uri, allow_derived_read=True)
-    assert recorder.chat is not None
     result = execute_read_resource(
         recorder.db,
         viewer_id=UUID(str(context.principal)),
-        conversation_id=recorder.chat.conversation_id,
+        admitted_resource_uris=recorder.admitted_resource_uris,
         uri=value.uri,
     )
     if result.is_error:
@@ -1936,7 +2069,7 @@ def _run_document_search(
     from nexus.services.search.scope import scope_from_uri
     from nexus.services.search.service import search
 
-    recorder = _chat_recorder(context)
+    recorder = _nexus_recorder(context)
     _assert_visible(recorder, value.uri)
     query = build_search_query(
         text=value.query,
@@ -1993,13 +2126,12 @@ def _run_resource_inspect(
 ) -> HandlerSuccess[tool_declarations.ResourceInspectSuccess]:
     from nexus.services.agent_tools.inspect_resource import execute_inspect_resource
 
-    recorder = _chat_recorder(context)
+    recorder = _nexus_recorder(context)
     ref = _admitted_target(recorder, value.uri)
-    assert recorder.chat is not None
     result = execute_inspect_resource(
         recorder.db,
         viewer_id=UUID(str(context.principal)),
-        conversation_id=recorder.chat.conversation_id,
+        admitted_resource_uris=recorder.admitted_resource_uris,
         uri=value.uri,
     )
     if result.is_error:
@@ -2079,7 +2211,7 @@ def _run_relations_list(
     from nexus.services.resource_graph.schemas import ConnectionFilters, ConnectionQuery
     from nexus.services.resource_items.capabilities import resource_citation_result_type
 
-    recorder = _chat_recorder(context)
+    recorder = _nexus_recorder(context)
     ref = _assert_visible(recorder, value.uri)
     page = query_connections(
         recorder.db,
@@ -2095,11 +2227,18 @@ def _run_relations_list(
             cursor=None,
         ),
     )
+    from nexus.services.assistant_write_authorship import machine_authorship_for_edge
+
     relations = [
         tool_declarations.RelationMatch(
             direction=item.direction,
             edge_id=item.edge_id,
             kind=item.kind,
+            machine_authorship=machine_authorship_for_edge(
+                recorder.db,
+                viewer_id=recorder.principal_id,
+                edge_id=item.edge_id,
+            ),
             rationale=item.snapshot.excerpt[:150]
             if item.snapshot and item.snapshot.excerpt
             else None,
@@ -2135,9 +2274,6 @@ def _run_relations_list(
         ),
         actual_attempts=0,
     )
-
-
-_WRITE_CAP = 8
 
 
 def _write_tool_ids() -> tuple[str, ...]:
@@ -2204,27 +2340,26 @@ def _run_write(
     mutate: Callable[[Session, UUID, UUID, dict[str, Any]], Any],
 ) -> HandlerSuccess[Any]:
     from nexus.services.agent_tools import writes
-    from nexus.services.chat_run_tools import assistant_write_tool_call_count
 
-    recorder = _chat_recorder(context)
-    assert recorder.chat is not None
+    recorder = _nexus_recorder(context)
+    write_cap = recorder.max_live_writes
+    if write_cap is None:
+        raise ExecutorConfigurationDefect("read-only tool plan reached a write handler")
     if context.effect_id is None:
         raise ExecutorConfigurationDefect("Nexus write lacks its stable effect id")
     viewer_id = UUID(str(context.principal))
-    if (
-        assistant_write_tool_call_count(
-            recorder.db,
-            assistant_message_id=recorder.chat.assistant_message_id,
-            canonical_tool_ids=_write_tool_ids(),
-        )
-        >= _WRITE_CAP
-    ):
-        _declared_failure(tool_declarations.WriteCapReached(type="WriteCapReached"))
     arguments = value.model_dump(mode="json")
     for key in ("resource_uri", "page_uri", "media_uri", "source_uri", "target_uri"):
         uri = arguments.get(key)
         if isinstance(uri, str):
             _admitted_target(recorder, uri)
+    # Linearize the generation, optional projection owner, and queue lease
+    # immediately before the effect. The locks remain held until the domain
+    # mutation and canonical terminal receipt commit together.
+    recorder.authorize_effect_in_current_transaction(recorder.db)
+    live_write_count = recorder.live_write_count(recorder.db)
+    if live_write_count >= write_cap:
+        _declared_failure(tool_declarations.WriteCapReached(type="WriteCapReached"))
     try:
         with recorder.db.begin_nested():
             effect = mutate(
@@ -2350,11 +2485,9 @@ class NexusToolExecution:
 
 
 __all__ = [
+    "ChatToolExecutionProjection",
     "NexusPositionRecorder",
     "NexusToolExecution",
-    "chat_tool_execution_receipt",
-    "make_chat_execution_context",
     "make_durable_execution_context",
     "reconcile_uncertain_tool_completion",
-    "stage_reconciled_chat_tool_terminal",
 ]

@@ -11,11 +11,10 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any, Literal, cast
 from uuid import UUID
 
-from provider_runtime import Present, Succeeded
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -29,29 +28,78 @@ from nexus.db.models import (
     OracleReadingEvent,
     OracleReadingFolio,
 )
+from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
 from nexus.errors import (
     ApiError,
     ApiErrorCode,
+    InvalidRequestError,
     NotFoundError,
 )
-from nexus.jobs.queue import enqueue_job
+from nexus.jobs.queue import (
+    JobExecutionContext,
+    JobRow,
+    RescheduleRequested,
+    enqueue_job,
+    get_job,
+    lock_job,
+    lock_running_job_claim,
+    replace_dead_job_payload,
+    requeue_dead_job,
+)
 from nexus.logging import get_logger
 from nexus.schemas.citation import CitationOut
 from nexus.schemas.oracle import (
     ConcordanceEntryOut,
     OracleReadingDetailOut,
     OracleReadingEventOut,
+    OracleReadingFailureCode,
     OracleReadingImageOut,
     OracleReadingPassageOut,
     OracleReadingSummaryOut,
     oracle_done_payload,
+    oracle_event_payload,
+    oracle_folio_theme,
     oracle_passage_payload,
+    oracle_read_failure_code,
+    oracle_reading_event_type,
+    oracle_reading_failure_code,
+    oracle_reading_phase,
+    oracle_reading_source_kind,
+    oracle_reading_status,
 )
-from nexus.services import oracle_corpus, run_kit
-from nexus.services.llm_execution import ExecutionRuntime, GenerationRequest, execute_generation
-from nexus.services.llm_ledger import LlmCallOwner
-from nexus.services.llm_profiles import operation_profile
+from nexus.schemas.presence import Present
+from nexus.services import (
+    durable_step_journal as step_journal,
+)
+from nexus.services import (
+    generation_policy,
+    oracle_corpus,
+    run_kit,
+)
+from nexus.services.codex_generation_contract import (
+    GenerationTerminal,
+    NormalizedFailureCode,
+)
+from nexus.services.generation_intent import GenerationIntent
+from nexus.services.generation_spec import ImmutablePromptPayloadRef, generation_fact_digest
+from nexus.services.llm_execution import (
+    AcceptedGenerationFailure,
+    CompletedGeneration,
+    EncodedGenerationTerminal,
+    ExecutionRuntime,
+    GenerationAdmissionInputsChanged,
+    GenerationDispatchAborted,
+    GenerationUncertain,
+    GenerationUncertainResolution,
+    JobGenerationJournal,
+    admit_job_generation,
+    cancel_prepared_generation_without_dispatch_in_current_transaction,
+    codex_terminal_evidence,
+    execute_generation,
+    prove_uncertain_generation_not_dispatched_in_current_transaction,
+)
+from nexus.services.llm_ledger import LlmCallOwner, lock_generation_owner_in_current_transaction
 from nexus.services.oracle_plates import oracle_plate_url
 from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.resource_graph.citations import (
@@ -60,7 +108,7 @@ from nexus.services.resource_graph.citations import (
     record_citation,
 )
 from nexus.services.resource_graph.connections import query_connections
-from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.resource_graph.schemas import (
     CitationSnapshot,
     ConnectionFilters,
@@ -87,7 +135,6 @@ from nexus.services.structured_synthesis import (
 logger = get_logger(__name__)
 
 ORACLE_OPERATION = "oracle"
-ORACLE_MAX_OUTPUT_TOKENS = 2000
 ORACLE_PUBLIC_DOMAIN_CANDIDATES = 6
 ORACLE_USER_LIBRARY_CANDIDATES = 4
 ORACLE_FOLIO_ALLOCATE_ATTEMPTS = 8
@@ -119,7 +166,14 @@ ORACLE_THEMES: tuple[str, ...] = (
     "Of Mercy",
 )  # 24 entries; mirrors the DB CHECK
 ORACLE_TOKEN_RE = re.compile(r"[a-z]{3,}")
-ORACLE_PHASES: tuple[str, str, str] = ("descent", "ordeal", "ascent")
+type OraclePhase = Literal["descent", "ordeal", "ascent"]
+type OracleSourceKind = Literal["public_domain", "user_media"]
+ORACLE_PHASES: tuple[OraclePhase, OraclePhase, OraclePhase] = (
+    "descent",
+    "ordeal",
+    "ascent",
+)
+_SYNTHESIS_STEP_PATH = "synthesis"
 # Typed cause when the worker finds the corpus library/media/index/anchors not ready (§10.5).
 E_ORACLE_CORPUS_NOT_READY = "E_ORACLE_CORPUS_NOT_READY"
 ORACLE_URL_RE = re.compile(r"\b(?:https?://|www\.)", re.IGNORECASE)
@@ -225,7 +279,10 @@ def _insert_reading_with_next_folio(
     enqueue_job(
         db,
         kind="oracle_reading_generate",
-        payload={"reading_id": str(reading.id)},
+        payload={
+            "reading_id": str(reading.id),
+            "coordination": {},
+        },
     )
     return reading
 
@@ -324,11 +381,15 @@ def get_reading_detail(
             f"oracle folio (reading {row.reading_id}, phase {row.phase}) "
             f"lost its citation edge {row.edge_id}"
         )
+        # justify-defect: Oracle writes each folio from a non-empty selected
+        # candidate snippet in the same transaction as its citation snapshot.
+        if not edge.snapshot.excerpt:
+            raise AssertionError("oracle folio citation snapshot lost its exact snippet")
         passages.append(
             OracleReadingPassageOut(
-                phase=row.phase,
-                source_kind=row.source_kind,
-                exact_snippet=edge.snapshot.excerpt or "",
+                phase=oracle_reading_phase(row.phase),
+                source_kind=oracle_reading_source_kind(row.source_kind),
+                exact_snippet=edge.snapshot.excerpt,
                 locator_label=row.locator_label,
                 attribution_text=row.attribution_text,
                 marginalia_text=row.marginalia_text,
@@ -341,15 +402,19 @@ def get_reading_detail(
         folio_number=reading.folio_number,
         folio_motto=reading.folio_motto,
         folio_motto_gloss=reading.folio_motto_gloss,
-        folio_theme=reading.folio_theme,
+        folio_theme=(
+            None if reading.folio_theme is None else oracle_folio_theme(reading.folio_theme)
+        ),
         argument_text=reading.argument_text,
         question_text=reading.question_text,
-        status=reading.status,
+        status=oracle_reading_status(reading.status),
         image=image_out,
         passages=passages,
         events=[
             OracleReadingEventOut(
-                seq=row.seq, event_type=row.event_type, payload=dict(row.payload or {})
+                seq=row.seq,
+                event_type=oracle_reading_event_type(row.event_type),
+                payload=dict(row.payload or {}),
             )
             for row in event_rows
         ],
@@ -357,7 +422,9 @@ def get_reading_detail(
         started_at=reading.started_at,
         completed_at=reading.completed_at,
         failed_at=reading.failed_at,
-        error_code=reading.error_code,
+        error_code=(
+            None if reading.error_code is None else oracle_read_failure_code(reading.error_code)
+        ),
     )
 
 
@@ -409,11 +476,15 @@ def list_all_readings(db: Session, *, viewer_id: UUID) -> list[OracleReadingSumm
                 folio_number=row["folio_number"],
                 folio_motto=row["folio_motto"],
                 folio_motto_gloss=row["folio_motto_gloss"],
-                folio_theme=row["folio_theme"],
+                folio_theme=(
+                    None
+                    if row["folio_theme"] is None
+                    else oracle_folio_theme(str(row["folio_theme"]))
+                ),
                 plate_thumbnail_url=plate_thumbnail_url,
                 plate_alt_text=plate_alt_text,
                 question_text=row["question_text"],
-                status=row["status"],
+                status=oracle_reading_status(str(row["status"])),
                 created_at=row["created_at"],
                 completed_at=row["completed_at"],
                 failed_at=row["failed_at"],
@@ -493,7 +564,6 @@ def _validate_oracle_pre_enqueue_controls(*, viewer_id: UUID) -> None:
     rate_limiter = get_rate_limiter()
     rate_limiter.check_rpm_limit(viewer_id)
     rate_limiter.check_concurrent_limit(viewer_id)
-    rate_limiter.check_token_budget(viewer_id)
 
 
 # ---------- SSE handler dependencies ----------------------------------------
@@ -504,6 +574,94 @@ def assert_reading_owner(db: Session, *, viewer_id: UUID, reading_id: UUID) -> N
     _get_reading_owned_by(db, viewer_id=viewer_id, reading_id=reading_id)
 
 
+def reconcile_uncertain_oracle_reading(
+    db: Session,
+    *,
+    reading_id: UUID,
+    resolution: GenerationUncertainResolution,
+) -> None:
+    """Prove non-dispatch for one suspended Oracle generation and requeue it.
+
+    Oracle intentionally retains no raw prompt, embedding, ranked retrieval, or
+    plate-selection snapshot. Those inputs cannot be reproduced without new
+    external or mutable reads, so terminal attachment is not a safe operation.
+    This entrypoint owns only the evidence-backed non-dispatch transition. It
+    locks the generation owner before the reading and exact dead job, validates
+    the persisted journal fingerprint against the nonterminal ledger start, and
+    returns that same job to Pending without dispatching.
+    """
+
+    def invalid(message: str) -> InvalidRequestError:
+        return InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, message)
+
+    if not isinstance(resolution, step_journal.ProveNotDispatched):
+        raise invalid("Oracle reconciliation can only prove generation was not dispatched")
+
+    owner = LlmCallOwner(kind="oracle_reading", id=reading_id)
+
+    def op() -> None:
+        # The shared generation-owner key is the first lock in live and repair
+        # paths; domain and queue rows follow it in their established order.
+        lock_generation_owner_in_current_transaction(db, owner)
+        reading = db.scalar(
+            select(OracleReading).where(OracleReading.id == reading_id).with_for_update()
+        )
+        if reading is None or reading.status != "pending":
+            raise invalid("Oracle reading is not suspended and pending")
+
+        rows = (
+            db.execute(
+                text(
+                    "SELECT id, payload FROM background_jobs "
+                    "WHERE kind = 'oracle_reading_generate' "
+                    "AND payload ->> 'reading_id' = :reading_id "
+                    "AND status = 'dead' FOR UPDATE"
+                ),
+                {"reading_id": str(reading_id)},
+            )
+            .mappings()
+            .all()
+        )
+        if not rows:
+            raise invalid("Oracle has no dead generation job to reconcile")
+        if len(rows) != 1:
+            raise AssertionError("Oracle reading has multiple dead generation jobs")
+        row = rows[0]
+        payload = dict(row["payload"])
+        if payload.get("reading_id") != str(reading_id):
+            raise AssertionError("dead Oracle job payload identity changed")
+        state = step_journal.decode_step_states(payload).get(_SYNTHESIS_STEP_PATH)
+        if state is None:
+            raise invalid("Oracle has no uncertain generation step to reconcile")
+        if state.dispatch_phase is not step_journal.Uncertain:
+            raise invalid("Oracle generation step is not uncertain")
+        expected_generation_id = step_journal.stable_generation_id(
+            reading_id,
+            _SYNTHESIS_STEP_PATH,
+        )
+        if state.generation_id != expected_generation_id:
+            raise AssertionError("dead Oracle generation identity changed")
+
+        next_state = prove_uncertain_generation_not_dispatched_in_current_transaction(
+            db,
+            owner=owner,
+            state=state,
+        )
+        next_payload = step_journal.payload_with_step_state(
+            payload,
+            step_path=_SYNTHESIS_STEP_PATH,
+            state=next_state,
+        )
+        job_id = UUID(str(row["id"]))
+        if not replace_dead_job_payload(db, job_id=job_id, payload=next_payload):
+            raise AssertionError("locked dead Oracle job changed during reconciliation")
+        if not requeue_dead_job(db, job_id=job_id):
+            raise AssertionError("locked dead Oracle job could not be requeued")
+        db.commit()
+
+    retry_serializable(db, "reconcile_uncertain_oracle_reading", op)
+
+
 # ---------- worker entrypoint -----------------------------------------------
 
 
@@ -511,7 +669,7 @@ def assert_reading_owner(db: Session, *, viewer_id: UUID, reading_id: UUID) -> N
 class _Candidate:
     """One retrieved passage offered to the LLM by index."""
 
-    source_kind: str  # "public_domain" | "user_media"
+    source_kind: OracleSourceKind
     exact_snippet: str
     locator_label: str
     attribution_text: str
@@ -520,6 +678,184 @@ class _Candidate:
     target: ResourceRef  # stable citation target (§5.3)
     tags: list[str]
     score: float
+
+
+class _CompletedOraclePlate(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: UUID
+    attribution_text: str
+    artist: str
+    work_title: str
+    year: str | None
+    width: int
+    height: int
+
+
+class _CompletedOraclePassage(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    phase: OraclePhase
+    source_kind: OracleSourceKind
+    exact_snippet: str
+    locator_label: str
+    attribution_text: str
+    deep_link: str | None
+    title: str
+    target_uri: str
+    marginalia_text: str
+
+
+class _CompletedOracleSuccess(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    outcome: Literal["success"] = "success"
+    argument: str
+    folio_motto: str
+    folio_motto_gloss: str | None
+    folio_theme: str
+    interpretation: str
+    omens: tuple[str, str, str]
+    plate: _CompletedOraclePlate
+    passages: tuple[
+        _CompletedOraclePassage,
+        _CompletedOraclePassage,
+        _CompletedOraclePassage,
+    ]
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+
+
+class _CompletedOracleFailure(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    outcome: Literal["failure"] = "failure"
+    error_code: OracleReadingFailureCode
+    error_detail: str | None = None
+
+
+class _CompletedOracleNoop(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    outcome: Literal["noop"] = "noop"
+    status: Literal["streaming", "complete", "failed"]
+
+
+type _CompletedOracle = Annotated[
+    _CompletedOracleSuccess | _CompletedOracleFailure | _CompletedOracleNoop,
+    Field(discriminator="outcome"),
+]
+_COMPLETED_ORACLE_ADAPTER: TypeAdapter[_CompletedOracle] = TypeAdapter(_CompletedOracle)
+
+
+def _oracle_intent(*, user_content: str) -> GenerationIntent:
+    return build_synthesis_intent(
+        system_prompt=_ORACLE_SYSTEM_PROMPT,
+        user_content=user_content,
+        schema=_OracleSynthesisOutput,
+    )
+
+
+def _invalid_oracle_terminal(detail: str) -> EncodedGenerationTerminal:
+    return EncodedGenerationTerminal(
+        terminal_result=_COMPLETED_ORACLE_ADAPTER.dump_json(
+            _CompletedOracleFailure(
+                error_code="invalid_output",
+                error_detail=detail,
+            )
+        ).decode("utf-8"),
+        accepted_failure=AcceptedGenerationFailure(
+            code="invalid_output",
+            detail=detail,
+        ),
+    )
+
+
+def _encode_oracle_terminal(
+    terminal: GenerationTerminal,
+    *,
+    candidates: list[_Candidate],
+    plate: OraclePlate,
+    requires_user_content: bool,
+) -> EncodedGenerationTerminal:
+    if terminal.status != "succeeded":
+        code, detail = outcome_failure_facts(terminal)
+        completed: _CompletedOracle = _CompletedOracleFailure(
+            error_code=oracle_reading_failure_code(code),
+            error_detail=detail,
+        )
+        return EncodedGenerationTerminal(
+            terminal_result=_COMPLETED_ORACLE_ADAPTER.dump_json(completed).decode("utf-8")
+        )
+    try:
+        parsed = decode_structured_synthesis(
+            terminal,
+            schema=_OracleSynthesisOutput,
+        )
+    except StructuredSynthesisError as exc:
+        return _invalid_oracle_terminal(str(exc))
+    parts = _validate_oracle_output(parsed, candidates=candidates)
+    if parts is None:
+        return _invalid_oracle_terminal("the JSON violates the reading rules in the system prompt")
+    argument, motto, gloss, theme, by_phase, interpretation, omens = parts
+    if requires_user_content and not _selected_user_media(candidates, by_phase):
+        return _invalid_oracle_terminal(
+            "select at least one source_kind=user_media candidate among the three phases"
+        )
+    passages = tuple(
+        _CompletedOraclePassage(
+            phase=phase,
+            source_kind=candidate.source_kind,
+            exact_snippet=candidate.exact_snippet,
+            locator_label=candidate.locator_label,
+            attribution_text=candidate.attribution_text,
+            deep_link=candidate.deep_link,
+            title=candidate.title,
+            target_uri=candidate.target.uri,
+            marginalia_text=marginalia,
+        )
+        for phase in ORACLE_PHASES
+        for index, marginalia in (by_phase[phase],)
+        for candidate in (candidates[index],)
+    )
+    if len(passages) != 3:
+        raise AssertionError("validated oracle output did not select three passages")
+    usage = terminal.usage
+    completed = _CompletedOracleSuccess(
+        argument=argument,
+        folio_motto=motto,
+        folio_motto_gloss=gloss,
+        folio_theme=theme,
+        interpretation=interpretation.strip(),
+        omens=(omens[0], omens[1], omens[2]),
+        plate=_CompletedOraclePlate(
+            id=plate.id,
+            attribution_text=plate.attribution_text,
+            artist=plate.artist,
+            work_title=plate.work_title,
+            year=plate.year,
+            width=plate.width,
+            height=plate.height,
+        ),
+        passages=(passages[0], passages[1], passages[2]),
+        input_tokens=usage.input_tokens if usage is not None else None,
+        output_tokens=usage.output_tokens if usage is not None else None,
+    )
+    return EncodedGenerationTerminal(
+        terminal_result=_COMPLETED_ORACLE_ADAPTER.dump_json(completed).decode("utf-8")
+    )
+
+
+def _encode_oracle_preaccept_failure(
+    code: NormalizedFailureCode,
+    detail: str,
+) -> str:
+    return _COMPLETED_ORACLE_ADAPTER.dump_json(
+        _CompletedOracleFailure(
+            error_code=oracle_reading_failure_code(code),
+            error_detail=detail,
+        )
+    ).decode("utf-8")
 
 
 def _surfaced_passage_citation(citation: CitationOut | None) -> CitationOut | None:
@@ -535,51 +871,396 @@ def _surfaced_passage_citation(citation: CitationOut | None) -> CitationOut | No
     return None
 
 
+def _completed_oracle_plate_payload(
+    plate: _CompletedOraclePlate,
+) -> dict[str, Any]:
+    return {
+        "url": oracle_plate_url(plate.id),
+        "attribution_text": plate.attribution_text,
+        "artist": plate.artist,
+        "work_title": plate.work_title,
+        "year": plate.year,
+        "width": plate.width,
+        "height": plate.height,
+    }
+
+
+def _apply_completed_oracle(
+    db: Session,
+    *,
+    reading_id: UUID,
+    context: JobExecutionContext,
+    completed: _CompletedOracle,
+) -> dict[str, Any]:
+    if isinstance(completed, _CompletedOracleNoop):
+        db.commit()
+        return {"status": completed.status, "noop": True}
+
+    def publish() -> dict[str, Any]:
+        reading = db.scalar(
+            select(OracleReading).where(OracleReading.id == reading_id).with_for_update()
+        )
+        if reading is None:
+            raise ApiError(ApiErrorCode.E_NOT_FOUND, "Oracle reading not found")
+        if not lock_running_job_claim(db, context=context):
+            db.rollback()
+            return {"status": reading.status, "noop": True}
+        if reading.status in {"complete", "failed"}:
+            status = reading.status
+            db.commit()
+            return {"status": status, "noop": True}
+        if reading.status != "pending":
+            raise AssertionError(
+                f"oracle reading has non-terminal status {reading.status!r} at publication"
+            )
+        stream = run_kit.oracle_reading_stream(reading)
+        if isinstance(completed, _CompletedOracleFailure):
+            run_kit.mark_terminal(
+                db,
+                stream=stream,
+                status="failed",
+                done_payload=oracle_done_payload(
+                    status="failed",
+                    error_code=completed.error_code,
+                ),
+                error_code=completed.error_code,
+                error_detail=(
+                    completed.error_detail[:1000] if completed.error_detail is not None else None
+                ),
+            )
+            db.commit()
+            return {
+                "status": "failed",
+                "error_code": completed.error_code,
+            }
+
+        if db.get(OraclePlate, completed.plate.id) is None:
+            raise AssertionError("completed oracle plate disappeared before publication")
+        reading.status = "streaming"
+        reading.started_at = func.now()
+        reading.folio_motto = completed.folio_motto
+        reading.folio_motto_gloss = completed.folio_motto_gloss
+        reading.folio_theme = completed.folio_theme
+        reading.argument_text = completed.argument
+        reading.image_id = completed.plate.id
+        reading.interpretation_text = completed.interpretation
+        db.flush()
+
+        run_kit.append_event(
+            db,
+            stream=stream,
+            event_type="meta",
+            payload=oracle_event_payload(
+                "meta",
+                {
+                    "question": reading.question_text,
+                    "folio_number": reading.folio_number,
+                },
+            ),
+        )
+        run_kit.append_event(
+            db,
+            stream=stream,
+            event_type="bind",
+            payload=oracle_event_payload(
+                "bind",
+                {
+                    "folio_motto": completed.folio_motto,
+                    "folio_motto_gloss": completed.folio_motto_gloss,
+                    "folio_theme": completed.folio_theme,
+                },
+            ),
+        )
+        run_kit.append_event(
+            db,
+            stream=stream,
+            event_type="argument",
+            payload=oracle_event_payload("argument", {"text": completed.argument}),
+        )
+        run_kit.append_event(
+            db,
+            stream=stream,
+            event_type="plate",
+            payload=oracle_event_payload("plate", _completed_oracle_plate_payload(completed.plate)),
+        )
+
+        reading_ref = ResourceRef(scheme="oracle_reading", id=reading_id)
+        for ordinal, passage in enumerate(completed.passages, start=1):
+            target = assert_resource_ref(passage.target_uri)
+            edge = record_citation(
+                db,
+                viewer_id=reading.user_id,
+                source=reading_ref,
+                target=target,
+                ordinal=ordinal,
+                kind="context",
+                snapshot=CitationSnapshot(
+                    title=passage.title,
+                    excerpt=passage.exact_snippet,
+                    section_label=passage.locator_label,
+                    result_type=target.scheme,
+                    deep_link=passage.deep_link,
+                ),
+            )
+            db.add(
+                OracleReadingFolio(
+                    reading_id=reading_id,
+                    phase=passage.phase,
+                    edge_id=edge.id,
+                    source_kind=passage.source_kind,
+                    locator_label=passage.locator_label,
+                    attribution_text=passage.attribution_text,
+                    marginalia_text=passage.marginalia_text,
+                )
+            )
+            db.flush()
+            citation = _surfaced_passage_citation(
+                next(
+                    (
+                        value
+                        for value in build_citation_outs(
+                            db,
+                            viewer_id=reading.user_id,
+                            source=reading_ref,
+                        )
+                        if value.ordinal == ordinal
+                    ),
+                    None,
+                )
+            )
+            run_kit.append_event(
+                db,
+                stream=stream,
+                event_type="passage",
+                payload=oracle_passage_payload(
+                    phase=passage.phase,
+                    source_kind=passage.source_kind,
+                    exact_snippet=passage.exact_snippet,
+                    locator_label=passage.locator_label,
+                    attribution_text=passage.attribution_text,
+                    marginalia_text=passage.marginalia_text,
+                    deep_link=passage.deep_link,
+                    citation=citation,
+                ),
+            )
+
+        run_kit.append_event(
+            db,
+            stream=stream,
+            event_type="delta",
+            payload=oracle_event_payload("delta", {"text": completed.interpretation}),
+        )
+        run_kit.append_event(
+            db,
+            stream=stream,
+            event_type="omens",
+            payload=oracle_event_payload("omens", {"lines": list(completed.omens)}),
+        )
+        run_kit.mark_terminal(
+            db,
+            stream=stream,
+            status="complete",
+            done_payload=oracle_done_payload(status="complete", error_code=None),
+        )
+        db.commit()
+        return {
+            "status": "complete",
+            "folio_number": reading.folio_number,
+            "input_tokens": completed.input_tokens,
+            "output_tokens": completed.output_tokens,
+        }
+
+    return retry_serializable(db, "oracle.publish", publish)
+
+
+def _stage_oracle_terminal_without_dispatch(
+    db: Session,
+    *,
+    reading_id: UUID,
+    context: JobExecutionContext,
+    reason: str,
+    error_code: OracleReadingFailureCode | None = None,
+    error_detail: str | None = None,
+) -> dict[str, Any] | None:
+    """Stage Oracle's journal, ledger, and domain terminal; caller commits."""
+
+    owner = LlmCallOwner(kind="oracle_reading", id=reading_id)
+    lock_generation_owner_in_current_transaction(db, owner)
+    reading = db.scalar(
+        select(OracleReading).where(OracleReading.id == reading_id).with_for_update()
+    )
+    if reading is None:
+        raise ApiError(ApiErrorCode.E_NOT_FOUND, "Oracle reading not found")
+    if not lock_running_job_claim(db, context=context):
+        return None
+    job = get_job(db, context.job_id)
+    if (
+        job is None
+        or job.kind != "oracle_reading_generate"
+        or job.payload.get("reading_id") != str(reading_id)
+    ):
+        raise AssertionError("oracle job disappeared at cancellation")
+
+    if reading.status == "pending":
+        if error_code is None:
+            return {"status": "pending", "noop": True}
+        completed: _CompletedOracle = _CompletedOracleFailure(
+            error_code=error_code,
+            error_detail=error_detail,
+        )
+        result: dict[str, Any] = {"status": "failed", "error_code": error_code}
+    else:
+        if reading.status not in {"streaming", "complete", "failed"}:
+            raise AssertionError(f"oracle reading has unknown status {reading.status!r}")
+        completed = _CompletedOracleNoop(
+            status=cast(Literal["streaming", "complete", "failed"], reading.status)
+        )
+        result = {"status": reading.status, "noop": True}
+
+    state = step_journal.read_step_states(job).get(_SYNTHESIS_STEP_PATH)
+    if state is not None:
+        if state.dispatch_phase is not step_journal.Prepared:
+            raise GenerationUncertain(
+                f"oracle generation {state.generation_id} is not cancellable before dispatch"
+            )
+        next_state = cancel_prepared_generation_without_dispatch_in_current_transaction(
+            db,
+            owner=owner,
+            state=state,
+            terminal_result=_COMPLETED_ORACLE_ADAPTER.dump_json(completed).decode("utf-8"),
+            reason=reason,
+        )
+        if not step_journal.checkpoint_step_state(
+            db,
+            ctx=context,
+            job=job,
+            step_path=_SYNTHESIS_STEP_PATH,
+            state=next_state,
+        ):
+            raise GenerationUncertain(
+                f"oracle generation {state.generation_id} lost its claim at cancellation"
+            )
+
+    if isinstance(completed, _CompletedOracleFailure):
+        run_kit.mark_terminal(
+            db,
+            stream=run_kit.oracle_reading_stream(reading),
+            status="failed",
+            done_payload=oracle_done_payload(status="failed", error_code=completed.error_code),
+            error_code=completed.error_code,
+            error_detail=(
+                completed.error_detail[:1000] if completed.error_detail is not None else None
+            ),
+        )
+    return result
+
+
 async def execute_reading(
     db: Session,
     *,
     reading_id: UUID,
+    context: JobExecutionContext,
     runtime: ExecutionRuntime,
-) -> dict[str, Any]:
+) -> dict[str, Any] | RescheduleRequested:
     """Worker job body: pick plate, retrieve passages, call LLM, persist, stream."""
+    job = get_job(db, context.job_id)
+    if job is None:
+        raise AssertionError(f"oracle job {context.job_id} disappeared")
+    if job.kind != "oracle_reading_generate" or job.payload.get("reading_id") != str(reading_id):
+        raise AssertionError("oracle job payload identity changed")
+    generation_id = step_journal.stable_generation_id(
+        reading_id,
+        _SYNTHESIS_STEP_PATH,
+    )
+    state = step_journal.read_step_states(job).get(_SYNTHESIS_STEP_PATH)
+    if state is not None and state.generation_id != generation_id:
+        raise AssertionError("oracle generation identity changed")
+    if state is not None and state.dispatch_phase is step_journal.Completed:
+        if not isinstance(state.terminal_result, Present):
+            raise AssertionError("Completed oracle generation has no result")
+        completed = _COMPLETED_ORACLE_ADAPTER.validate_json(state.terminal_result.value)
+        return _apply_completed_oracle(
+            db,
+            reading_id=reading_id,
+            context=context,
+            completed=completed,
+        )
+    if state is not None and state.dispatch_phase is step_journal.Uncertain:
+        db.commit()
+        raise GenerationUncertain(f"oracle generation {generation_id} has an unresolved dispatch")
+
     reading = _get_reading_or_fail(db, reading_id)
     if reading.status != "pending":
-        # Replay of an already-claimed job; refuse rather than emit twice.
-        status = reading.status
+        observed_status = reading.status
+        db.rollback()
+        result = _stage_oracle_terminal_without_dispatch(
+            db,
+            reading_id=reading_id,
+            context=context,
+            reason="oracle reading became terminal before dispatch",
+        )
+        if result is None:
+            db.rollback()
+            return {"status": observed_status, "noop": True}
         db.commit()
-        return {"status": status, "noop": True}
+        return result
 
     question = reading.question_text
     viewer_id = reading.user_id
-    folio_number = reading.folio_number
     rate_limiter = get_rate_limiter()
     inflight_acquired = False
 
+    # Release the transaction opened by owner/job reads before crossing the
+    # external concurrency boundary.
+    db.commit()
     try:
         try:
             rate_limiter.acquire_inflight_slot(viewer_id)
             inflight_acquired = True
         except ApiError as exc:
-            _fail(db, reading, code=exc.code.value, detail=exc.message)
-            return {"status": "failed", "error_code": exc.code.value}
+            if exc.code is not ApiErrorCode.E_RATE_LIMITED:
+                raise
+            db.rollback()
+            result = _stage_oracle_terminal_without_dispatch(
+                db,
+                reading_id=reading_id,
+                context=context,
+                reason="oracle concurrency admission failed before dispatch",
+                error_code=oracle_reading_failure_code(exc.code.value),
+                error_detail=exc.message,
+            )
+            if result is None:
+                db.rollback()
+                return {"status": "pending", "noop": True}
+            db.commit()
+            return result
 
         readiness = oracle_corpus.get_oracle_corpus_readiness(db)
         if readiness.status != "ready" or readiness.library_id is None:
-            _fail(
-                db,
-                reading,
-                code=E_ORACLE_CORPUS_NOT_READY,
-                detail=(
-                    f"corpus not ready: {readiness.ready_media_count}/{readiness.work_count} media, "
-                    f"{readiness.resolved_anchor_count}/{readiness.anchor_count} anchors, "
-                    f"{readiness.ready_plate_count}/{readiness.plate_count} plates"
-                ),
+            detail = (
+                f"corpus not ready: {readiness.ready_media_count}/{readiness.work_count} media, "
+                f"{readiness.resolved_anchor_count}/{readiness.anchor_count} anchors, "
+                f"{readiness.ready_plate_count}/{readiness.plate_count} plates"
             )
-            return {"status": "failed", "error_code": E_ORACLE_CORPUS_NOT_READY}
+            db.rollback()
+            result = _stage_oracle_terminal_without_dispatch(
+                db,
+                reading_id=reading_id,
+                context=context,
+                reason="oracle corpus was not ready before dispatch",
+                error_code=oracle_reading_failure_code(E_ORACLE_CORPUS_NOT_READY),
+                error_detail=detail,
+            )
+            if result is None:
+                db.rollback()
+                return {"status": "pending", "noop": True}
+            db.commit()
+            return result
 
+        # Embedding construction performs external I/O; the readiness snapshot
+        # is complete and no database transaction may cross that boundary.
+        db.commit()
         try:
-            # One active-model query embedding feeds both corpus and personal retrieval;
-            # there is no separate Oracle corpus embedding model (G4/§10.1).
             query_embedding = build_query_embedding(
                 db, question, ["content_chunk"], transaction_active_at_entry=False
             )
@@ -609,244 +1290,141 @@ async def execute_reading(
                 ]
             plate = _pick_plate(db, question=question, candidates=candidates)
         except ApiError as exc:
-            _fail(db, reading, code=exc.code.value, detail=exc.message)
-            return {"status": "failed", "error_code": exc.code.value}
+            if exc.code is not ApiErrorCode.E_APP_SEARCH_FAILED:
+                raise
+            db.rollback()
+            result = _stage_oracle_terminal_without_dispatch(
+                db,
+                reading_id=reading_id,
+                context=context,
+                reason="oracle retrieval failed before dispatch",
+                error_code=oracle_reading_failure_code(exc.code.value),
+                error_detail=exc.message,
+            )
+            if result is None:
+                db.rollback()
+                return {"status": "pending", "noop": True}
+            db.commit()
+            return result
 
         if len(candidates) < 3:
-            _fail(
-                db, reading, code="E_INTERNAL", detail="fewer than 3 candidate passages retrieved"
-            )
-            return {"status": "failed", "error_code": "E_INTERNAL"}
+            db.rollback()
+            # justify-defect: a ready Oracle corpus is required to yield three
+            # candidates; persisting E_INTERNAL as a user-facing reading would
+            # conceal a broken retrieval/corpus invariant.
+            raise AssertionError("ready Oracle corpus yielded fewer than three candidates")
         if requires_user_content and not _candidate_set_includes_user_media(candidates):
-            _fail(
+            detail = "user content is searchable but yielded no user_media candidate"
+            db.rollback()
+            result = _stage_oracle_terminal_without_dispatch(
                 db,
-                reading,
-                code=ApiErrorCode.E_APP_SEARCH_FAILED.value,
-                detail="user content is searchable but yielded no user_media candidate",
+                reading_id=reading_id,
+                context=context,
+                reason="oracle user content was unavailable before dispatch",
+                error_code=oracle_reading_failure_code(ApiErrorCode.E_APP_SEARCH_FAILED.value),
+                error_detail=detail,
             )
-            return {"status": "failed", "error_code": ApiErrorCode.E_APP_SEARCH_FAILED.value}
+            if result is None:
+                db.rollback()
+                return {"status": "pending", "noop": True}
+            db.commit()
+            return result
 
         user_content = _build_oracle_user_content(question=question, candidates=candidates)
+        intent = _oracle_intent(user_content=user_content)
 
-        reading = _get_reading_or_fail(db, reading_id)
-        if reading.status != "pending":
-            status = reading.status
-            db.commit()
-            return {"status": status, "noop": True}
-        reading.status = "streaming"
-        reading.started_at = db.scalar(select(func.now()))
-        db.flush()
-        run_kit.append_event(
-            db,
-            stream=run_kit.oracle_reading_stream(reading),
-            event_type="meta",
-            payload={"question": question, "folio_number": folio_number},
-        )
+        def lock_dispatch(dispatch_db: Session) -> JobRow | None:
+            locked_reading = dispatch_db.scalar(
+                select(OracleReading).where(OracleReading.id == reading_id).with_for_update()
+            )
+            locked_job = lock_job(dispatch_db, context.job_id)
+            if (
+                locked_reading is None
+                or locked_reading.status != "pending"
+                or locked_job is None
+                or locked_job.kind != "oracle_reading_generate"
+                or locked_job.payload.get("reading_id") != str(reading_id)
+            ):
+                return None
+            return locked_job
+
+        # A first dispatch reloads the prepared job; a replay may retain an earlier
+        # read snapshot. Neither may cross the generation host I/O boundary.
         db.commit()
-
-        # The semantic validator's rejection is now terminal (no repair round —
-        # the runtime enforces strict JSON); the hook stashes the accepted
-        # decomposition for the one accepted call.
-        accepted: list[_OracleReadingParts] = []
-
-        def _validate(parsed: _OracleSynthesisOutput) -> str | None:
-            outcome = _validate_oracle_output(parsed, candidates=candidates)
-            if outcome is None:
-                return "the JSON violates the reading rules in the system prompt"
-            if requires_user_content and not _selected_user_media(candidates, outcome[4]):
-                return "select at least one source_kind=user_media candidate among the three phases"
-            accepted.clear()
-            accepted.append(outcome)
-            return None
-
-        profile = operation_profile(ORACLE_OPERATION)
-        intent = build_synthesis_intent(
-            profile=profile,
-            system_prompt=_ORACLE_SYSTEM_PROMPT,
-            user_content=user_content,
-            max_output_tokens=ORACLE_MAX_OUTPUT_TOKENS,
-            schema=_OracleSynthesisOutput,
+        journal = JobGenerationJournal(
+            context=context,
+            step_path=_SYNTHESIS_STEP_PATH,
+            lock_dispatch=lock_dispatch,
         )
         try:
-            call = await execute_generation(
-                GenerationRequest(
-                    generation_id=reading_id,
-                    owner=LlmCallOwner(kind="oracle_reading", id=reading_id, user_id=viewer_id),
-                    operation=ORACLE_OPERATION,
-                    profile=profile,
-                    reasoning=profile.default_reasoning_option_id,
-                    intent=intent,
+            execution_request = await admit_job_generation(
+                owner=LlmCallOwner(kind="oracle_reading", id=reading_id),
+                generation_id=generation_id,
+                operation="oracle",
+                intent=intent,
+                prompt_template_revision=generation_policy.operation_revision(ORACLE_OPERATION),
+                prompt_payload_ref=ImmutablePromptPayloadRef(
+                    owner_kind="oracle_reading",
+                    owner_id=str(reading_id),
+                    revision=generation_policy.operation_revision(ORACLE_OPERATION),
+                    payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
                 ),
+                journal=journal,
                 session_factory=get_session_factory(),
                 runtime=runtime,
             )
-        except ApiError as exc:
-            reading = _get_reading(db, reading_id)
-            if reading is None:
-                raise ApiError(ApiErrorCode.E_NOT_FOUND, "Oracle reading not found") from exc
-            _fail(db, reading, code=exc.code.value, detail=exc.message)
-            return {"status": "failed", "error_code": exc.code.value}
-
-        if not isinstance(call.outcome, Succeeded):
-            code, detail = outcome_failure_facts(call.outcome)
-            logger.warning("oracle.llm_error", reading_id=str(reading_id), error_code=code)
-            reading = _get_reading(db, reading_id)
-            if reading is None:
-                raise ApiError(ApiErrorCode.E_NOT_FOUND, "Oracle reading not found")
-            _fail(db, reading, code=code, detail=detail)
-            return {"status": "failed", "error_code": code}
-
-        try:
-            decode_structured_synthesis(
-                call.outcome, schema=_OracleSynthesisOutput, validate=_validate
-            )
-        except StructuredSynthesisError as exc:
-            logger.warning(
-                "oracle.llm_unparseable",
-                reading_id=str(reading_id),
-                reason=str(exc),
-            )
-            reading = _get_reading_or_fail(db, reading_id)
-            _fail(db, reading, code="invalid_structured_output", detail=str(exc))
-            return {"status": "failed", "error_code": "invalid_structured_output"}
-
-        usage = call.outcome.meta.usage
-        if not accepted:
-            # justify-defect: decode_structured_synthesis returns only after
-            # _validate accepted the output and stashed the decomposition.
-            raise AssertionError("oracle synthesis returned without a validated output")
-        argument, motto, gloss, theme, by_phase, interpretation, omens = accepted[-1]
-
-        reading = _get_reading_or_fail(db, reading_id)
-        if reading.status != "streaming":
-            status = reading.status
-            db.commit()
-            return {"status": status, "noop": True}
-        interpretation_text = interpretation.strip()
-        reading.folio_motto = motto
-        reading.folio_motto_gloss = gloss
-        reading.folio_theme = theme
-        reading.argument_text = argument
-        reading.image_id = plate.id
-        reading.interpretation_text = interpretation_text  # canonical store; delta is replay
-        db.flush()
-
-        reading_stream = run_kit.oracle_reading_stream(reading)
-        run_kit.append_event(
-            db,
-            stream=reading_stream,
-            event_type="bind",
-            payload={
-                "folio_motto": motto,
-                "folio_motto_gloss": gloss,
-                "folio_theme": theme,
-            },
-        )
-        run_kit.append_event(
-            db, stream=reading_stream, event_type="argument", payload={"text": argument}
-        )
-        run_kit.append_event(
-            db, stream=reading_stream, event_type="plate", payload=_oracle_image_payload(plate)
-        )
-        db.commit()
-
-        reading_ref = ResourceRef(scheme="oracle_reading", id=reading_id)
-        for ordinal, phase in enumerate(ORACLE_PHASES, start=1):
-            idx, marginalia = by_phase[phase]
-            candidate = candidates[idx]
-            # One citation edge plus one oracle-owned folio row per phase, in
-            # the same per-phase transaction (§5.3): the edge carries identity
-            # (target) and display snapshot; the folio carries generated content.
-            edge = record_citation(
-                db,
-                viewer_id=viewer_id,
-                source=reading_ref,
-                target=candidate.target,
-                ordinal=ordinal,
-                kind="context",
-                snapshot=CitationSnapshot(
-                    title=candidate.title,
-                    excerpt=candidate.exact_snippet,
-                    section_label=candidate.locator_label,
-                    result_type=candidate.target.scheme,
-                    deep_link=candidate.deep_link,
+            execution_result = await execute_generation(
+                execution_request,
+                session_factory=get_session_factory(),
+                runtime=runtime,
+                encode_terminal=lambda terminal: _encode_oracle_terminal(
+                    codex_terminal_evidence(terminal),
+                    candidates=candidates,
+                    plate=plate,
+                    requires_user_content=requires_user_content,
                 ),
+                encode_preaccept_failure=_encode_oracle_preaccept_failure,
             )
-            db.add(
-                OracleReadingFolio(
-                    reading_id=reading_id,
-                    phase=phase,
-                    edge_id=edge.id,
-                    source_kind=candidate.source_kind,
-                    locator_label=candidate.locator_label,
-                    attribution_text=candidate.attribution_text,
-                    marginalia_text=marginalia,
-                )
-            )
-            db.flush()
-            # The streamed passage chip and the REST detail chip are one shape:
-            # the edge-built CitationOut read model (G6). build_citation_outs is
-            # the sole producer; the just-flushed edge is visible to it, and its
-            # ordinal selects this phase's chip (descent 1, ordeal 2, ascent 3).
-            # Any target with a live shared locator surfaces a chip, including
-            # resolved public-domain anchors; stale/span-less targets stay typographic.
-            citation = _surfaced_passage_citation(
-                next(
-                    (
-                        out
-                        for out in build_citation_outs(db, viewer_id=viewer_id, source=reading_ref)
-                        if out.ordinal == ordinal
-                    ),
-                    None,
-                )
-            )
-            run_kit.append_event(
+        except GenerationAdmissionInputsChanged:
+            db.rollback()
+            result = _stage_oracle_terminal_without_dispatch(
                 db,
-                stream=reading_stream,
-                event_type="passage",
-                payload=oracle_passage_payload(
-                    phase=phase,
-                    source_kind=candidate.source_kind,
-                    exact_snippet=candidate.exact_snippet,
-                    locator_label=candidate.locator_label,
-                    attribution_text=candidate.attribution_text,
-                    marginalia_text=marginalia,
-                    deep_link=candidate.deep_link,
-                    citation=citation,
+                reading_id=reading_id,
+                context=context,
+                reason="oracle input changed before dispatch",
+                error_code=oracle_reading_failure_code(
+                    ApiErrorCode.E_GENERATION_SOURCE_CHANGED.value
                 ),
+                error_detail="Oracle input changed after the generation was prepared",
             )
+            if result is None:
+                db.rollback()
+                return {"status": "pending", "noop": True}
             db.commit()
-
-        run_kit.append_event(
-            db,
-            stream=reading_stream,
-            event_type="delta",
-            payload={"text": interpretation_text},
-        )
-        db.commit()
-        omens_payload: run_kit.RunEventPayload = {"lines": list(omens)}
-        run_kit.append_event(db, stream=reading_stream, event_type="omens", payload=omens_payload)
-        db.commit()
-
-        reading = _get_reading_or_fail(db, reading_id)
-        if reading.status != "streaming":
-            status = reading.status
+            return result
+        except GenerationDispatchAborted:
+            result = _stage_oracle_terminal_without_dispatch(
+                db,
+                reading_id=reading_id,
+                context=context,
+                reason="oracle dispatch invalidated before acceptance",
+            )
+            if result is None:
+                db.rollback()
+                return {"status": "pending", "noop": True}
             db.commit()
-            return {"status": status, "noop": True}
-        run_kit.mark_terminal(
+            return result
+        if isinstance(execution_result, RescheduleRequested):
+            return execution_result
+        if not isinstance(execution_result, CompletedGeneration):
+            raise AssertionError("oracle generation result is not exhaustive")
+        completed = _COMPLETED_ORACLE_ADAPTER.validate_json(execution_result.terminal_result)
+        return _apply_completed_oracle(
             db,
-            stream=run_kit.oracle_reading_stream(reading),
-            status="complete",
-            done_payload=oracle_done_payload(status="complete", error_code=None),
+            reading_id=reading_id,
+            context=context,
+            completed=completed,
         )
-        db.commit()
-
-        return {
-            "status": "complete",
-            "folio_number": folio_number,
-            "input_tokens": usage.value.input_tokens if isinstance(usage, Present) else None,
-            "output_tokens": usage.value.output_tokens if isinstance(usage, Present) else None,
-        }
     finally:
         if inflight_acquired:
             rate_limiter.release_inflight_slot(viewer_id)
@@ -909,24 +1487,6 @@ def _oracle_image_payload(image: OraclePlate) -> dict[str, Any]:
         "width": image.width,
         "height": image.height,
     }
-
-
-def _fail(db: Session, reading: OracleReading, *, code: str, detail: str | None = None) -> None:
-    """Terminal failure: the one normalized ``done {status, error_code}`` event.
-
-    ``run_kit.mark_terminal`` stamps ``failed_at``/``error_code``/``error_detail``
-    on the reading (``detail`` is operator-facing and never reaches the wire;
-    the FE owns failure copy keyed on ``error_code``).
-    """
-    run_kit.mark_terminal(
-        db,
-        stream=run_kit.oracle_reading_stream(reading),
-        status="failed",
-        done_payload=oracle_done_payload(status="failed", error_code=code),
-        error_code=code,
-        error_detail=detail[:1000] if detail is not None else None,
-    )
-    db.commit()
 
 
 # ---------- internal: retrieval ---------------------------------------------
@@ -1106,7 +1666,7 @@ def _pick_plate(db: Session, *, question: str, candidates: Sequence[_Candidate])
 
 
 # The byte-exact decomposition of the legacy `_ORACLE_SYSTEM_PROMPT` literal
-# through `build_synthesis_prompt`; test_structured_synthesis.py pins the
+# through `build_synthesis_prompt`; test_structured_synthesis_contract.py pins the
 # reassembled bytes against an independent golden copy (N9: verbatim, no
 # rewrites).
 
@@ -1242,7 +1802,7 @@ def _validate_oracle_output(
     Returns (argument, motto, gloss, theme, by_phase, interpretation, omens) where
     by_phase maps each phase to (candidate_index, marginalia). Returns None on any
     semantic failure — surfaced as the validate-hook rejection reason
-    (invalid_structured_output; no repair round, the runtime enforces strict JSON).
+    (invalid_output; no repair round, the runtime enforces strict JSON).
     """
     argument = parsed.argument
     motto = parsed.folio_motto.strip()

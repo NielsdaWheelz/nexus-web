@@ -159,8 +159,20 @@ def add_to_library(db: Session, viewer_id: UUID, args: dict[str, Any]) -> WriteE
             },
         )
 
+    entry_id = library_entries.entry_id_for_target_in_current_transaction(
+        db,
+        library_id=library_id,
+        target=(
+            library_entries.media_target(ref.id)
+            if ref.scheme == "media"
+            else library_entries.podcast_target(ref.id)
+        ),
+    )
+    if entry_id is None:
+        raise AssertionError("added library filing has no durable entry identity")
     created = {
         "kind": "entry",
+        "id": str(entry_id),
         "library_id": str(library_id),
         "target_scheme": ref.scheme,
         "target_id": str(ref.id),

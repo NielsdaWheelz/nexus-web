@@ -308,6 +308,13 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
   const conversation = (await readBody(conversationResponse)) as {
     data: { id: string };
   };
+  const catalogResponse = await api.get("/api/llm-catalog");
+  const catalog = (await readBody(catalogResponse)) as {
+    data: {
+      definition_revision: string;
+      chat_seed: { selection: unknown };
+    };
+  };
   const chatResponse = await api.post("/api/chat-runs", {
     headers: {
       origin: webOrigin,
@@ -322,8 +329,9 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
       },
       content:
         "What did SOFIA establish about water in Clavius Crater? Use the attached source.",
-      profile_id: "fast",
-      reasoning_option_id: "high",
+      catalog_definition_revision: catalog.data.definition_revision,
+      selection: catalog.data.chat_seed.selection,
+      tool_authority: "ReadOnly",
       reader_selection: { kind: "Absent" },
     },
   });

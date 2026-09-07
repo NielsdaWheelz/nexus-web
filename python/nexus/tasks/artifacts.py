@@ -31,7 +31,7 @@ from nexus.jobs.queue import JobExecutionContext, JobRow, RescheduleRequested, g
 from nexus.logging import get_logger
 from nexus.services.artifacts import engine
 from nexus.services.artifacts.coordination import DossierBuildRuntime
-from nexus.services.llm_execution import ExecutionRuntime, ProviderRetryMode
+from nexus.services.llm_execution import ExecutionRuntime
 from nexus.services.tool_runtime.composition import (
     ComposedToolRuntime,
     compose_configured_web_search_provider,
@@ -57,20 +57,15 @@ def dossier_build(
 
     ``engine.run_build`` is replay-safe (a no-op once the build already has a
     terminal child) and owns the whole reduce loop + every terminal write.
-    Deliberately no ``on_worker_exception`` boundary: a bare exception here is
-    left to propagate so the queue's normal retry/dead-letter machinery
-    applies (see module docstring).
+    A bare exception propagates to the queue's normal retry/dead-letter
+    machinery (see module docstring).
     """
     build_id = UUID(str(payload["build_id"]))
-    spec = LlmTaskSpec(
-        label="dossier_build",
-        http_timeout_s=120.0,
-        retry_mode=ProviderRetryMode.SingleAttempt,
-    )
+    spec = LlmTaskSpec(label="dossier_build")
     settings = get_settings()
 
     async def _handler(
-        db: Session, runtime: ExecutionRuntime, client: httpx.AsyncClient
+        db: Session, runtime: ExecutionRuntime
     ) -> Mapping[str, Any] | RescheduleRequested:
         build = db.get(ArtifactBuild, build_id)
         if build is None:
@@ -80,25 +75,31 @@ def dossier_build(
             # justify-defect: a claimed worker execution always owns its durable
             # job row; coordination cannot checkpoint without that lease record.
             raise AssertionError("dossier worker job disappeared")
-        web_provider: WebSearchProvider | None = compose_configured_web_search_provider(
-            client,
-            settings=settings,
-        )
-        tool_runtime = compose_dossier_tool_runtime(web_provider)
-        dossier_runtime = DossierBuildRuntime(
-            build_id=build_id,
-            artifact_id=build.artifact_id,
-            job=job,
-            execution_context=context,
-            llm_runtime=runtime,
-            research_tool_operation=tool_runtime.operations["idea_dossier_research"],
-        )
-        reschedule = await engine.run_build(
-            db,
-            build_id=build_id,
-            ctx=context,
-            runtime=dossier_runtime,
-        )
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(120.0, connect=10.0),
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+            trust_env=False,
+        ) as client:
+            web_provider: WebSearchProvider | None = compose_configured_web_search_provider(
+                client,
+                settings=settings,
+            )
+            tool_runtime = compose_dossier_tool_runtime(web_provider)
+            dossier_runtime = DossierBuildRuntime(
+                build_id=build_id,
+                artifact_id=build.artifact_id,
+                job=job,
+                execution_context=context,
+                llm_runtime=runtime,
+                research_tool_operation=tool_runtime.operations["idea_dossier_research"],
+                settings=settings,
+            )
+            reschedule = await engine.run_build(
+                db,
+                build_id=build_id,
+                ctx=context,
+                runtime=dossier_runtime,
+            )
         if reschedule is not None:
             return reschedule
         return {"status": "ok", "build_id": str(build_id)}

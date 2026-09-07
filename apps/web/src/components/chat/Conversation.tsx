@@ -929,9 +929,16 @@ export default function Conversation() {
             onSelectFork={branch ? handleSelectFork : undefined}
             onReplyToAssistant={branch ? handleReplyToAssistant : undefined}
             onRerunAssistantResponse={convo.rerunAssistantResponse}
+            onRerunAssistantResponseWithSelection={
+              convo.rerunAssistantResponseWithSelection
+            }
+            rerunningAssistantMessageIds={convo.rerunningAssistantMessageIds}
             onRegenerateAssistantResponse={convo.regenerateAssistantResponse}
+            onRegenerateAssistantResponseWithSelection={
+              convo.regenerateAssistantResponseWithSelection
+            }
             onDeleteMessage={convo.deleteMessage}
-            connectionLostAssistantIds={convo.connectionLostAssistantIds}
+            connectionRecoveries={convo.connectionRecoveries}
             onReconnectAssistant={convo.reconnectAssistantResponse}
             composer={
               <ChatComposer
@@ -939,8 +946,9 @@ export default function Conversation() {
                 draftKey={composerDraftKey}
                 branchDraft={branchDraft}
                 parentMessageId={activeReplyParentMessageId}
-                inheritedProfileSelection={convo.inheritedProfileSelection}
+                inheritedRunSelection={convo.inheritedRunSelection}
                 sendCapability={convo.sendCapability}
+                writeGrantResetVersion={convo.writeGrantResetVersion}
                 projectionReloadRequestId={convo.projectionReloadRequestId}
                 activeRunId={convo.activeRunId}
                 onCancelRun={convo.cancelActiveRun}

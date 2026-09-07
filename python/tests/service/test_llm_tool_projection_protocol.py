@@ -8,7 +8,9 @@ preflight must admit the browser-authored header.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Generator, Mapping
+from importlib.util import find_spec
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -30,6 +32,7 @@ from tests.testkit.auth import UserRecord
 _PROJECTION_HEADER = "X-Nexus-Tool-Projection"
 _RELOAD_REQUIRED_CODE = "E_TOOL_PROJECTION_RELOAD_REQUIRED"
 _STALE_REVISION = "0" * 64
+_GENERATION_CUTOVER_PRESENT = find_spec("nexus.services.generation_selection") is not None
 
 
 def _current_projection_revision() -> str:
@@ -74,12 +77,17 @@ def _chat_row_counts(db: Session, viewer_id: UUID) -> tuple[int, int, int, int]:
     return int(conversations), int(messages), int(runs), int(jobs)
 
 
-def _send_body() -> dict[str, object]:
+def _send_body(
+    *,
+    catalog_definition_revision: str,
+    selection: Mapping[str, object],
+) -> dict[str, object]:
     return {
         "destination": {"kind": "New"},
         "content": "Prove the projection gate before creating this run.",
-        "profile_id": "balanced",
-        "reasoning_option_id": "medium",
+        "catalog_definition_revision": catalog_definition_revision,
+        "selection": dict(selection),
+        "tool_authority": "ReadOnly",
         "reader_selection": {"kind": "Absent"},
     }
 
@@ -104,6 +112,8 @@ def _projection_request(
     headers = {} if revision is None else {_PROJECTION_HEADER: revision}
     if path == "/chat-runs" or path.endswith(("/rerun", "/regenerate")):
         headers["Idempotency-Key"] = f"tool-projection-proof-{uuid4()}"
+    if body is None:
+        return client.request(method, path, headers=headers)
     return client.request(method, path, headers=headers, json=body)
 
 
@@ -122,13 +132,32 @@ def test_revision_gates_every_changed_chat_projection_boundary(
     db_session: Session,
     test_user: UserRecord,
     projection_rate_limiter: None,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    assert _GENERATION_CUTOVER_PRESENT, "the exact-selection generation cutover is absent"
+    from tests.testkit.generation_catalog import (
+        CHAT_TEST_SELECTION,
+        configured_chat_catalog_service,
+    )
+    from tests.testkit.llm_tool_scenarios import compose_available_product_tool_runtime
+
+    catalog = configured_chat_catalog_service()
+    catalog_snapshot = asyncio.run(catalog.read_chat())
+    monkeypatch.setattr(authenticated_client.app.state, "generation_catalog_service", catalog)
+    monkeypatch.setattr(
+        authenticated_client.app.state,
+        "tool_runtime",
+        compose_available_product_tool_runtime(),
+    )
+    send_body = _send_body(
+        catalog_definition_revision=catalog_snapshot.catalog.definition_revision,
+        selection=CHAT_TEST_SELECTION.model_dump(mode="json"),
+    )
+
     grant_entitlement_override(
         db_session,
         user_id=test_user.id,
         plan_tier="ai_pro",
-        platform_token_quota_mode="unlimited",
-        platform_token_limit_monthly=None,
         transcription_quota_mode="unlimited",
         transcription_minutes_limit_monthly=None,
         expires_at=None,
@@ -144,7 +173,7 @@ def test_revision_gates_every_changed_chat_projection_boundary(
             method="POST",
             path="/chat-runs",
             revision=revision,
-            body=_send_body(),
+            body=send_body,
         )
         _assert_reload_required(response, boundary=f"fresh send with {label}")
     assert _chat_row_counts(db_session, test_user.id) == before_rejected_sends, (
@@ -213,7 +242,7 @@ def test_revision_gates_every_changed_chat_projection_boundary(
         method="POST",
         path="/chat-runs",
         revision=current_revision,
-        body=_send_body(),
+        body=send_body,
     )
     assert current_send.status_code == 200, (
         f"current projection could not create one Chat run: {current_send.text}"

@@ -1,9 +1,8 @@
 /**
- * ChatComposer - message input with LLM-profile picker and chat-run send.
+ * ChatComposer - message input with exact generation picker and chat-run send.
  *
- * The composer owns profile-catalog loading and next-turn selection resolution.
- * ChatProfilePicker renders the ready resolved selection and reports explicit
- * draft changes only.
+ * The composer owns generation-catalog loading, causal selection inheritance,
+ * and the off-by-default per-run additive-write grant.
  *
  * It DOES own the durable send-attempt machine (via `useChatDraft`): one
  * idempotency key per answer-determining payload identity, replayed on an
@@ -14,10 +13,11 @@
 
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { ArrowUp, RotateCcw, Square } from "lucide-react";
 import {
   apiFetch,
+  decodeApiPayload,
   isApiError,
   isSameSystemApiDefect,
   isToolProjectionReloadRequired,
@@ -30,11 +30,12 @@ import type { ReaderSelectionInput } from "@/lib/api/sse/requests";
 import { buildChatRunBody } from "@/lib/conversations/chatRunBody";
 import type { ChatDraftKey } from "@/lib/conversations/chatDraftKey";
 import {
-  resolveChatProfileSelection,
-  type InheritedChatProfileSelection,
-  type ResolvedChatProfileSelection,
-} from "@/lib/conversations/chatProfileSelection";
-import { decodeChatRunData } from "@/lib/conversations/messageWire";
+  findGenerationCandidate,
+  hasSelectableCandidate,
+  readinessAction,
+  type RunSelectionOut,
+} from "@/lib/conversations/generationCatalog";
+import { decodeChatRunResponse } from "@/lib/conversations/messageWire";
 import type { PendingTurnContext } from "@/lib/conversations/pendingTurnContext";
 import {
   decodeReaderSelectionPreview,
@@ -44,8 +45,8 @@ import {
 import { readerSelectionKeyToWire } from "@/lib/conversations/readerSelectionKey";
 import { isRecord } from "@/lib/validation";
 import BranchComposerHeader from "@/components/chat/BranchComposerHeader";
-import ChatProfilePicker from "@/components/chat/ChatProfilePicker";
-import { useChatProfiles } from "@/components/chat/useChatProfiles";
+import GenerationSelectionPicker from "@/components/chat/GenerationSelectionPicker";
+import { useGenerationCatalog } from "@/components/chat/useGenerationCatalog";
 import QuotedPassageCard from "@/components/chat/QuotedPassageCard";
 import ToolProjectionReloadNotice from "@/components/chat/ToolProjectionReloadNotice";
 import { useChatDraft, type ChatSendCommand } from "@/components/chat/useChatDraft";
@@ -85,8 +86,8 @@ interface ChatComposerProps {
   branchDraft?: BranchDraft | null;
   /** Active-path assistant message used for ordinary continuation replies. */
   parentMessageId?: string | null;
-  /** Product selection inherited from the causal assistant parent. */
-  inheritedProfileSelection: InheritedChatProfileSelection | null;
+  /** Immutable product selection inherited from the causal assistant parent. */
+  inheritedRunSelection: RunSelectionOut | null;
   /** Clears branch-reply mode. */
   onClearBranchDraft?: () => void;
   /** Jumps the transcript to the visible parent message for branch mode. */
@@ -108,6 +109,8 @@ interface ChatComposerProps {
   onActivateSource?: (selection: ReaderSelectionOut) => void;
   /** Caller-owned availability for the current conversation history. */
   sendCapability: ChatSendCapability;
+  /** Bumped by the owner after an admitted rerun/regenerate; each bump re-arms the write grant to off. */
+  writeGrantResetVersion?: number;
   /** Active run that can be semantically cancelled without closing the SSE tail. */
   activeRunId?: string | null;
   /** Backend cancel action for the active run. */
@@ -136,6 +139,16 @@ function chatRunErrorMessage(
   operation: "Start" | "Stop",
 ): FeedbackContent {
   switch (error.code) {
+    case "E_NETWORK":
+      return {
+        tone: "Danger",
+        requestId: error.requestId,
+        title:
+          operation === "Start"
+            ? "This message couldn’t be sent."
+            : "This response couldn’t be stopped.",
+        message: "Check your connection and try again.",
+      };
     case "E_BAD_REQUEST":
       return {
         tone: "Danger",
@@ -174,7 +187,7 @@ export default function ChatComposer({
   draftKey,
   branchDraft = null,
   parentMessageId = null,
-  inheritedProfileSelection,
+  inheritedRunSelection,
   onClearBranchDraft,
   onJumpToBranchParent,
   pendingContext = absent(),
@@ -185,6 +198,7 @@ export default function ChatComposer({
   onConversationRefresh,
   onActivateSource,
   sendCapability,
+  writeGrantResetVersion = 0,
   activeRunId = null,
   onCancelRun,
   projectionReloadRequestId: inheritedProjectionReloadRequestId = null,
@@ -198,13 +212,23 @@ export default function ChatComposer({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
   const restoreFocusAfterSendRef = useRef(false);
+  const seededDraftKeyRef = useRef<string | null>(null);
   const isMobileViewport = useIsMobileViewport();
+  const writeDescriptionId = useId();
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [writeAnnouncement, setWriteAnnouncement] = useState("");
+  const [selectionRequiresConfirmation, setSelectionRequiresConfirmation] =
+    useState(false);
 
   const {
     content,
     setContent,
-    profile,
-    setProfile,
+    selection,
+    setSelection,
+    toolAuthority,
+    setToolAuthority,
+    retiredDraftDiscarded,
+    restored,
     activeDraftKey,
     operation,
     reconciling,
@@ -215,41 +239,44 @@ export default function ChatComposer({
     resolveSuccess,
   } = useChatDraft({ draftKey, initialContent });
   const {
-    profiles,
-    defaultProfileId,
-    isLoading,
-    error: profilesError,
-  } = useChatProfiles();
+    catalog,
+    loading: catalogLoading,
+    refreshing: catalogRefreshing,
+    error: catalogError,
+    retry: retryCatalog,
+  } = useGenerationCatalog({ pickerOpen });
+  const effectiveSelection =
+    selection ?? inheritedRunSelection?.selection ?? catalog?.chat_seed.selection ?? null;
+  const effectiveCandidate =
+    catalog === null || effectiveSelection === null
+      ? null
+      : findGenerationCandidate(catalog, effectiveSelection);
+  const selectionIsSelectable =
+    effectiveCandidate?.reasoning.chat_state.kind === "Selectable";
+  const noSelectablePair =
+    catalog !== null && !hasSelectableCandidate(catalog);
+  const operatorRecovery =
+    catalog?.routes
+      .map((route) => readinessAction(route.readiness))
+      .find((action) => action !== null) ??
+    "Retry after generation availability has been restored.";
 
-  let resolvedProfileSelection: ResolvedChatProfileSelection | null = null;
-  if (!isLoading && profilesError === null) {
-    if (defaultProfileId === null) {
-      // justify-defect: a ready same-system catalog must name its product default.
-      throw new Error(
-        "Ready LLM profile catalog is missing its default profile",
-      );
+  useEffect(() => {
+    if (seededDraftKeyRef.current === activeDraftKey) return;
+    if (selection !== null) {
+      seededDraftKeyRef.current = activeDraftKey;
+      return;
     }
-    resolvedProfileSelection = resolveChatProfileSelection({
-      draftSelection: profile,
-      inheritedSelection: inheritedProfileSelection,
-      profiles,
-      defaultProfileId,
-    });
-  }
-  const effectiveProfileSelection = resolvedProfileSelection?.selection ?? null;
-  let unavailableProfileLabel: string | null = null;
-  if (resolvedProfileSelection?.kind === "UnavailableReplacement") {
-    const replacementProfile = profiles.find(
-      (item) => item.id === resolvedProfileSelection.selection.profileId,
-    );
-    if (replacementProfile === undefined) {
-      // justify-defect: the resolver derives its replacement from this catalog.
-      throw new Error(
-        "Replacement chat profile is absent from the ready catalog",
-      );
-    }
-    unavailableProfileLabel = replacementProfile.label;
-  }
+    if (catalog === null) return;
+    seededDraftKeyRef.current = activeDraftKey;
+    setSelection(inheritedRunSelection?.selection ?? catalog.chat_seed.selection);
+  }, [
+    activeDraftKey,
+    catalog,
+    inheritedRunSelection,
+    selection,
+    setSelection,
+  ]);
 
   useEffect(() => {
     if (!autoFocus) return;
@@ -258,7 +285,16 @@ export default function ChatComposer({
 
   useEffect(() => {
     setError(null);
+    setSelectionRequiresConfirmation(false);
   }, [activeDraftKey]);
+
+  const appliedWriteGrantResetRef = useRef(writeGrantResetVersion);
+  useEffect(() => {
+    if (appliedWriteGrantResetRef.current === writeGrantResetVersion) return;
+    appliedWriteGrantResetRef.current = writeGrantResetVersion;
+    setToolAuthority("ReadOnly");
+    setWriteAnnouncement("Writes are off for the next reply.");
+  }, [setToolAuthority, writeGrantResetVersion]);
 
   useEffect(() => {
     if (sending || !restoreFocusAfterSendRef.current) return;
@@ -288,15 +324,22 @@ export default function ChatComposer({
       setError(null);
       onSendStarted?.();
       try {
-        const runResponse = await apiFetch<ChatRunResponse>("/api/chat-runs", {
+        const rawResponse = await apiFetch<unknown>("/api/chat-runs", {
           method: "POST",
           body: JSON.stringify(command.request),
           headers: { "Idempotency-Key": command.idempotencyKey },
         });
+        const runResponse = decodeApiPayload(
+          rawResponse,
+          decodeChatRunResponse,
+          "Create chat run",
+        );
         // Delete the complete draft record before canonical route replacement.
         resolveSuccess();
+        setPickerOpen(false);
+        setWriteAnnouncement("Writes are off for the next reply.");
         restoreFocusAfterSendRef.current = true;
-        onChatRunCreated?.(decodeChatRunData(runResponse.data));
+        onChatRunCreated?.(runResponse.data);
         onIntentConsumed?.();
         onMessageSent?.();
         onClearBranchDraft?.();
@@ -322,6 +365,29 @@ export default function ChatComposer({
           setLocalProjectionReloadRequestId(err.requestId ?? "");
           return;
         }
+        if (
+          err.code === "E_CATALOG_DEFINITION_STALE" ||
+          err.code === "E_GENERATION_SELECTION_UNAVAILABLE"
+        ) {
+          clearOperation();
+          setSelectionRequiresConfirmation(true);
+          // Recovery opens the exact-selection owner, whose lifecycle moves
+          // focus to search. Returning focus to the composer would immediately
+          // dismiss the non-modal desktop dialog before reconfirmation.
+          restoreFocusAfterSendRef.current = false;
+          retryCatalog();
+          setPickerOpen(true);
+          setError({
+            tone: "Warning",
+            title:
+              err.code === "E_CATALOG_DEFINITION_STALE"
+                ? "Model availability changed — review and confirm again."
+                : "That exact model and reasoning are unavailable.",
+            message: "Your message and selection were kept. Nothing was substituted.",
+            requestId: err.requestId,
+          });
+          return;
+        }
         // Every remaining outcome is a definite rejection: it consumes the
         // command, so the next explicit send mints a new key. An unknown code —
         // including E_IDEMPOTENCY_KEY_REPLAY_MISMATCH, an invariant defect — is
@@ -329,6 +395,7 @@ export default function ChatComposer({
         const known =
           err.code === "E_READER_SELECTION_STALE" ||
           err.code === "E_CONVERSATION_NO_LONGER_EMPTY" ||
+          err.code === "E_INVALID_GENERATION_SELECTION" ||
           err.code === "E_BAD_REQUEST" ||
           err.code === "E_FORBIDDEN" ||
           err.code === "E_NOT_FOUND";
@@ -338,7 +405,16 @@ export default function ChatComposer({
         }
         clearOperation();
         restoreFocusAfterSendRef.current = true;
-        if (err.code === "E_READER_SELECTION_STALE") {
+        if (err.code === "E_INVALID_GENERATION_SELECTION") {
+          setSelectionRequiresConfirmation(true);
+          setError({
+            tone: "Danger",
+            title: "That model selection is invalid.",
+            message: "Review the exact model and reasoning before sending again.",
+            requestId: err.requestId,
+          });
+          setPickerOpen(true);
+        } else if (err.code === "E_READER_SELECTION_STALE") {
           const fresh = decodeReaderSelectionPreview(
             isRecord(err.details) ? err.details.preview : undefined,
           );
@@ -379,6 +455,7 @@ export default function ChatComposer({
       onSendStarted,
       requireReconcile,
       resolveSuccess,
+      retryCatalog,
     ],
   );
 
@@ -388,7 +465,9 @@ export default function ChatComposer({
       !trimmed ||
       sending ||
       sendCapability.kind !== "Available" ||
-      !effectiveProfileSelection ||
+      catalog === null ||
+      effectiveSelection === null ||
+      !selectionIsSelectable ||
       pendingBlocksSend
     ) {
       return;
@@ -406,8 +485,9 @@ export default function ChatComposer({
     const request = buildChatRunBody({
       conversationId,
       content: trimmed,
-      profileId: effectiveProfileSelection.profileId,
-      reasoningOptionId: effectiveProfileSelection.reasoningOptionId,
+      catalogDefinitionRevision: catalog.definition_revision,
+      selection: effectiveSelection,
+      toolAuthority,
       branchDraft,
       parentMessageId,
       readerSelection,
@@ -426,13 +506,16 @@ export default function ChatComposer({
     branchDraft,
     content,
     conversationId,
-    effectiveProfileSelection,
+    catalog,
+    effectiveSelection,
     parentMessageId,
     pendingBlocksSend,
     postCommand,
     readerHighlight,
     sendCapability,
     sending,
+    selectionIsSelectable,
+    toolAuthority,
   ]);
 
   const handleRetry = useCallback(() => {
@@ -466,7 +549,8 @@ export default function ChatComposer({
       if (
         err.code !== "E_BAD_REQUEST" &&
         err.code !== "E_FORBIDDEN" &&
-        err.code !== "E_NOT_FOUND"
+        err.code !== "E_NOT_FOUND" &&
+        err.code !== "E_NETWORK"
       ) {
         setAsyncDefect({ error: err });
         return;
@@ -509,16 +593,22 @@ export default function ChatComposer({
   // Render
   // --------------------------------------------------------------------------
 
-  // While reconciling, the composer is a LOCKED replay panel: text/profile/quote
+  // While reconciling, the composer is a LOCKED replay panel: text/selection/quote
   // stay visible but immutable, and the only action is "Retry send".
   const projectionReloadRequestId =
     localProjectionReloadRequestId ?? inheritedProjectionReloadRequestId;
   const projectionReloadRequired = projectionReloadRequestId !== null;
-  const composerDisabled = sending || reconciling || projectionReloadRequired;
+  // Not editable before the draft is restored: input typed into the server
+  // markup before hydration commits is adopted silently and then wiped.
+  const composerDisabled =
+    sending || reconciling || projectionReloadRequired || !restored;
   const sendDisabled =
     sending ||
     sendCapability.kind !== "Available" ||
-    !effectiveProfileSelection ||
+    catalog === null ||
+    effectiveSelection === null ||
+    !selectionIsSelectable ||
+    selectionRequiresConfirmation ||
     !content.trim() ||
     pendingBlocksSend ||
     projectionReloadRequired;
@@ -543,9 +633,16 @@ export default function ChatComposer({
             />
           </div>
         ) : null}
+        {retiredDraftDiscarded ? (
+          <div className={styles.composerWarning} role="status">
+            A legacy Chat draft was discarded because its model choice could not
+            be reconstructed safely. Only v3 drafts are restored.
+          </div>
+        ) : null}
         {reconciling && (
           <div className={styles.composerError} role="alert">
-            Send status unknown. Retry send.
+            Send status unknown. The original exact selection and write
+            authority are locked for retry.
           </div>
         )}
 
@@ -593,33 +690,40 @@ export default function ChatComposer({
         />
 
         <div className={styles.composerActionRow}>
-          {profilesError ? (
-            <span className={styles.profileStatus} role="status">
-              Models unavailable
+          {catalog === null && catalogError !== null ? (
+            <span className={styles.selectionStatus} role="status">
+              Model availability could not be loaded. Your draft is still
+              editable.{" "}
+              <button type="button" onClick={retryCatalog}>
+                Retry
+              </button>
             </span>
-          ) : isLoading ? (
-            <span className={styles.profileStatus} role="status">
-              Loading profiles…
+          ) : catalog === null && catalogLoading ? (
+            <span className={styles.selectionStatus} role="status">
+              Loading model availability…
             </span>
           ) : reconciling ? (
-            <span className={styles.profileStatus}>
-              Original chat profile locked for retry.
+            <span className={styles.selectionStatus}>
+              Original model, reasoning, catalog revision, and write authority
+              locked for retry.
             </span>
-          ) : effectiveProfileSelection ? (
-            <>
-              <ChatProfilePicker
-                profiles={profiles}
-                value={effectiveProfileSelection}
-                onChange={setProfile}
-                disabled={composerDisabled}
-              />
-              {unavailableProfileLabel !== null ? (
-                <span className={styles.profileStatus} role="status">
-                  The previous chat profile is no longer available. Using{" "}
-                  {unavailableProfileLabel}.
-                </span>
-              ) : null}
-            </>
+          ) : catalog !== null ? (
+            <GenerationSelectionPicker
+              catalog={catalog}
+              value={effectiveSelection}
+              contextualSelection={inheritedRunSelection}
+              open={pickerOpen}
+              onOpenChange={setPickerOpen}
+              onConfirm={(nextSelection) => {
+                setSelection(nextSelection);
+                setSelectionRequiresConfirmation(false);
+              }}
+              disabled={composerDisabled}
+              refreshing={catalogRefreshing}
+              refreshError={catalogError}
+              onRetryRefresh={retryCatalog}
+              writeAuthority={toolAuthority}
+            />
           ) : null}
 
           {reconciling ? (
@@ -661,6 +765,57 @@ export default function ChatComposer({
             </Button>
           )}
         </div>
+        {noSelectablePair ? (
+          <div className={styles.composerWarning} role="status" aria-live="polite">
+            No model and reasoning pair is currently available for Chat. {operatorRecovery}
+          </div>
+        ) : effectiveSelection !== null && !selectionIsSelectable && catalog !== null ? (
+          <div className={styles.composerWarning} role="status">
+            The exact selection is unavailable. Open the model picker to review
+            the reason and choose a replacement; nothing was substituted.
+          </div>
+        ) : selectionRequiresConfirmation ? (
+          <div className={styles.composerWarning} role="status">
+            Review and confirm the exact model and reasoning again before sending.
+          </div>
+        ) : null}
+
+        <div
+          className={styles.writeAuthority}
+          data-armed={toolAuthority === "AdditiveWrites" ? "true" : undefined}
+        >
+          <label>
+            <input
+              type="checkbox"
+              checked={toolAuthority === "AdditiveWrites"}
+              disabled={composerDisabled}
+              aria-describedby={writeDescriptionId}
+              onChange={(event) => {
+                const armed = event.currentTarget.checked;
+                setToolAuthority(armed ? "AdditiveWrites" : "ReadOnly");
+                setWriteAnnouncement(
+                  armed
+                    ? "Additive Nexus writes allowed for this reply only."
+                    : "Nexus writes are off for this reply.",
+                );
+              }}
+            />
+            <span>Allow this reply to add to Nexus</span>
+          </label>
+          <p id={writeDescriptionId} role="note">
+            This reply only: <code>nexus.library.add</code>,{" "}
+            <code>nexus.note.create</code>, <code>nexus.highlight.create</code>,{" "}
+            <code>nexus.edge.create</code>, and <code>nexus.queue.add</code>. Review
+            each write in <a href="#chat-write-authority-help">Trust details and Undo</a>.
+          </p>
+          <p id="chat-write-authority-help" className="sr-only">
+            Assistant Trust details show every write call and provide Undo when
+            the write can be reverted.
+          </p>
+        </div>
+        <span className="sr-only" role="status" aria-live="polite">
+          {writeAnnouncement}
+        </span>
       </div>
     </div>
   );
