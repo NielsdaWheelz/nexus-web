@@ -24,6 +24,7 @@ VERSION_CODE=17
 PREVIOUS_VERSION_CODE=16
 REPOSITORY="NielsdaWheelz/nexus-web"
 ENV_FILE="${NEXUS_RELEASE_ENV_FILE:-$HOME/.config/nexus-release/release.env}"
+DEBUG_KEYSTORE="$HOME/.android/debug.keystore"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(dirname "$script_dir")"
@@ -74,6 +75,7 @@ for name in NEXUS_ANDROID_RELEASE_STORE_FILE NEXUS_ANDROID_RELEASE_STORE_PASSWOR
   [ -n "${!name:-}" ] || die "$name is required in $ENV_FILE"
 done
 [ -f "$NEXUS_ANDROID_RELEASE_STORE_FILE" ] || die "keystore not found at $NEXUS_ANDROID_RELEASE_STORE_FILE"
+[ -f "$DEBUG_KEYSTORE" ] || die "debug keystore not found at $DEBUG_KEYSTORE"
 case "$NEXUS_ANDROID_RELEASE_STORE_FILE" in
   /*) ;;
   *) die "NEXUS_ANDROID_RELEASE_STORE_FILE must be an absolute path (it is bind-mounted into the runner)" ;;
@@ -198,6 +200,7 @@ if [ "$mode" != publish ]; then
       --volume "$work_dir:$work_dir" \
       --volume "$parent_dir/llm-calling:$parent_dir/llm-calling:ro" \
       --volume "$parent_dir/llm-tools:$parent_dir/llm-tools:ro" \
+      --volume "$DEBUG_KEYSTORE:/root/.android/debug.keystore:ro" \
       --volume "$keystore_dir:$keystore_dir:ro" \
       --volume "$ENV_FILE:$ENV_FILE:ro" \
       --volume "$runner-gradle:/root/.gradle" \

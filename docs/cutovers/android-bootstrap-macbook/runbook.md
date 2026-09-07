@@ -62,7 +62,11 @@ container this repository's PR gates already use on this machine — built from
   `usb:` topology the lane requires. During a full lane, the workstation sends
   a no-op shell request to that one serial every 20 seconds so the USB transport
   cannot idle before the device capability; the loop is stopped on every script
-  exit and does not run in prepare or publish-only mode.
+  exit and does not run in prepare or publish-only mode. The Mac's established
+  `~/.android/debug.keystore` is mounted read-only into the runner so the debug
+  app and test APKs retain the signer identity already known to the dedicated
+  handset (including protected profiles); the production APK continues to use
+  the separate release keystore below.
 - Google ships AGP's `aapt2` only for x86_64 Linux, and Robolectric's native
   runtime (the Android host unit tests) has no Linux arm64 build, so every
   Gradle/JVM step runs on x86_64 under Docker Desktop's Rosetta emulation: the
