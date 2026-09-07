@@ -64,6 +64,23 @@ Start the candidate stack through the controller (any small governed
 `changed <service proof>`) and start `pr` while it is running. Never
 `docker compose up` the stack by hand.
 
+## Second symptom on a persistent self-hosted runner (2026-09-06)
+
+On `nexus-dev-server` (runner workspace reused across jobs) the runtime record
+`.nexus-test/runtime.json` said `supabase_api: 25426, supabase_db: 25428,
+supabase_inbucket: 25430` while the live Supabase containers of the same compose
+project published kong 25423, db 25425, inbucket 25427. Every controller call to
+Supabase then failed with `[Errno 111] Connection refused`, surfacing as
+`test_control_runtime_lifecycle.py::test_interrupted_database_and_journey_runs_clean_only_their_real_resources[journey]`
+(`create_supabase_user` in the interrupted child; then the cleanup's
+`supabase-user cleanup failed`). The drift appeared between jobs: the stack
+stayed up after one run and a later preparation re-allocated recorded ports
+while the Supabase CLI kept the already-running containers on their old ports.
+Runtime preparation should reconcile the record against the live containers'
+published ports (or tear the stack down and re-provision) instead of trusting a
+record that no longer matches. Until then, run `./scripts/test clean` in the
+runner workspace before a job that follows an aborted or foreign run.
+
 ## Related controller facts found in the same session
 
 - `./scripts/test clean` reports "owned run cleanup failed" for a run whose
