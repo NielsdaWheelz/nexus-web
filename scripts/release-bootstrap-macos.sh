@@ -37,8 +37,21 @@ max_work_dir_bytes=60
 runner_dir="$script_dir/release-bootstrap-macos"
 runner_image="nexus-release-runner:$TAG"
 runner="nexus-release-$TAG"
+cert_dir=""
+adb_keepalive_pid=""
 
 die() { echo "release-bootstrap: $*" >&2; exit 1; }
+
+cleanup() {
+  if [ -n "$adb_keepalive_pid" ]; then
+    kill "$adb_keepalive_pid" >/dev/null 2>&1 || true
+    wait "$adb_keepalive_pid" 2>/dev/null || true
+  fi
+  if [ -n "$cert_dir" ]; then
+    rm -rf "$cert_dir"
+  fi
+}
+trap cleanup EXIT
 
 mode=lane
 case "${1:-}" in
@@ -69,7 +82,6 @@ esac
 command -v keytool >/dev/null || die "keytool (JDK 21) is required on PATH"
 if [ -z "${NEXUS_ANDROID_RELEASE_CERT_SHA256:-}" ]; then
   cert_dir="$(mktemp -d)"
-  trap 'rm -rf "$cert_dir"' EXIT
   # Apple's /usr/bin/keytool stub exits non-zero with no output when no JDK is
   # installed; hashing that would still yield 64 hex characters, so require a
   # successful, non-empty export before deriving anything from it.
@@ -134,6 +146,22 @@ if [ "$mode" = lane ]; then
   printf '%s' "$device_rows" | grep -q "usb:" || \
     die "the attached device has no usb: topology (wireless adb cannot satisfy the lane): $device_rows"
   echo "device: $device_rows"
+  device_serial="$(printf '%s\n' "$device_rows" | awk '{print $1}')"
+
+  # This Samsung/USB link has repeatedly gone idle at about fifteen minutes,
+  # before the release kernel reaches instrumentation. Exercise the selected
+  # transport while the lane runs; adb multiplexes this no-op shell request
+  # with later instrumentation traffic. A transient miss is deliberately not
+  # fatal because reconnecting the same serial before android-device can still
+  # preserve the lane. The EXIT trap always stops the workstation-side loop.
+  (
+    while true; do
+      "$adb" -s "$device_serial" shell true >/dev/null 2>&1 || true
+      sleep 20
+    done
+  ) &
+  adb_keepalive_pid=$!
+  echo "device keepalive: active ($device_serial)"
 fi
 
 # --- checkout at the release tag ------------------------------------------
