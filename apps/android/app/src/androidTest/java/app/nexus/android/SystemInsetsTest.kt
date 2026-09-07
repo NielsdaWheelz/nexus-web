@@ -272,10 +272,33 @@ class SystemInsetsTest {
     private fun assertCssInsetsMatchNative(snapshot: InsetProbeSnapshot, state: String) {
         val native = snapshot.native
         val css = snapshot.css
-        assertEquals("$state left inset diverged", native.left.toDouble(), css.leftPhysical, 1.0)
-        assertEquals("$state top inset diverged", native.top.toDouble(), css.topPhysical, 1.0)
-        assertEquals("$state right inset diverged", native.right.toDouble(), css.rightPhysical, 1.0)
-        assertEquals("$state bottom inset diverged", native.bottom.toDouble(), css.bottomPhysical, 1.0)
+        // WebView exposes safe-area values in CSS-pixel increments. Converting them back to
+        // physical pixels can therefore differ by one renderer pixel at a forced density.
+        val physicalTolerance = maxOf(1.0, css.devicePixelRatio)
+        assertEquals(
+            "$state left inset diverged",
+            native.left.toDouble(),
+            css.leftPhysical,
+            physicalTolerance,
+        )
+        assertEquals(
+            "$state top inset diverged",
+            native.top.toDouble(),
+            css.topPhysical,
+            physicalTolerance,
+        )
+        assertEquals(
+            "$state right inset diverged",
+            native.right.toDouble(),
+            css.rightPhysical,
+            physicalTolerance,
+        )
+        assertEquals(
+            "$state bottom inset diverged",
+            native.bottom.toDouble(),
+            css.bottomPhysical,
+            physicalTolerance,
+        )
     }
 
     private fun assertSafeControlInsideCssSafeRectangle(css: CssInsetProbe) {

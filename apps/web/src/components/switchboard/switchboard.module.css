@@ -427,10 +427,17 @@
 
 .nexusWrapper {
   --nexus-bottom-gap: 12px;
+  --nexus-system-gesture-clearance: 52px;
   position: fixed;
   z-index: var(--z-overlay);
-  right: max(16px, var(--viewport-safe-right));
-  bottom: calc(var(--mobile-nexus-bottom-offset) + var(--nexus-bottom-gap));
+  right: max(
+    var(--nexus-system-gesture-clearance),
+    var(--viewport-safe-right)
+  );
+  bottom: max(
+    calc(var(--mobile-nexus-bottom-offset) + var(--nexus-bottom-gap)),
+    var(--nexus-system-gesture-clearance)
+  );
   width: 48px;
   height: 48px;
   pointer-events: none;

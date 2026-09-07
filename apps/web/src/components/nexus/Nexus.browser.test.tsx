@@ -1392,7 +1392,7 @@ describe("Nexus product composition", () => {
         bottom: document.documentElement.clientHeight - wrapperRect.bottom,
       },
       "The Player-absent Nexus control moved inside the Android fixture's right/bottom envelope",
-    ).toEqual({ right: 16, bottom: 12 });
+    ).toEqual({ right: 52, bottom: 52 });
     expect(screen.queryByRole("dialog", { name: "Nexus" })).toBeNull();
     expect(
       [
@@ -1556,6 +1556,7 @@ describe("Nexus product composition", () => {
     ).toBeVisible();
     await dismissNexus();
 
+    const exactSlopTrace = beginTrustedPointerTrace(button);
     await dispatchTrustedTouch({
       start: center,
       moves: [{ x: center.x + 8, y: center.y }],
@@ -1565,8 +1566,9 @@ describe("Nexus product composition", () => {
     fireEvent.click(button, { detail: 1 });
     expect(
       screen.queryByRole("dialog", { name: "Nexus" }),
-      "Movement at the exact 8px slop boundary did not arm click suppression",
+      `Movement at the exact 8px slop boundary did not arm click suppression; pointer trace: ${trustedPointerTraceDiagnostic(exactSlopTrace.entries)}`,
     ).toBeNull();
+    exactSlopTrace.stop();
 
     await dispatchTrustedTouch({
       start: center,

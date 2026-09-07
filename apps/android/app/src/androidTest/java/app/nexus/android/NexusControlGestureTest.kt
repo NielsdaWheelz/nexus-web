@@ -304,13 +304,16 @@ class NexusControlGestureTest {
         )
         assertEquals(
             "$diagnostics; right geometry diverged from the production envelope",
-            maxOf(16.0, fixture.safeRight),
+            maxOf(SYSTEM_GESTURE_CLEARANCE_CSS_PX, fixture.safeRight),
             fixture.viewportWidth - fixture.wrapper.right,
             CSS_PX_TOLERANCE,
         )
         assertEquals(
             "$diagnostics; Player-absent bottom geometry diverged from production",
-            fixture.safeBottom + 12.0,
+            maxOf(
+                fixture.safeBottom + NEXUS_BOTTOM_GAP_CSS_PX,
+                SYSTEM_GESTURE_CLEARANCE_CSS_PX,
+            ),
             fixture.viewportHeight - fixture.wrapper.bottom,
             CSS_PX_TOLERANCE,
         )
@@ -657,6 +660,8 @@ class NexusControlGestureTest {
         const val TOUCH_TRAVEL_CSS_PX = 24.0
         const val COMMIT_DISPLACEMENT_CSS_PX = 20.0
         const val CSS_PX_TOLERANCE = 0.5
+        const val NEXUS_BOTTOM_GAP_CSS_PX = 12.0
+        const val SYSTEM_GESTURE_CLEARANCE_CSS_PX = 52.0
         const val SUCCESS_DIAGNOSTIC_MARKER = "NEXUS_CONTROL_GESTURE_DIAGNOSTICS:"
         val GESTURE_PROBE_HTML =
             """
@@ -681,8 +686,8 @@ class NexusControlGestureTest {
                   #nexus-wrapper {
                     position: fixed;
                     z-index: 10000;
-                    right: max(16px, env(safe-area-inset-right));
-                    bottom: calc(env(safe-area-inset-bottom) + 12px);
+                    right: max(52px, env(safe-area-inset-right));
+                    bottom: max(calc(env(safe-area-inset-bottom) + 12px), 52px);
                     width: 48px;
                     height: 48px;
                     pointer-events: none;

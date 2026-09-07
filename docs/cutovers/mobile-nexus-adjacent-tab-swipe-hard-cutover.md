@@ -56,11 +56,12 @@ Open questions: none.
   Back on this shell is `webView.goBack()` (`MainActivity`'s back dispatcher;
   the manifest declares no `enableOnBackInvokedCallback`), a swipe lost to the
   system is a visible history navigation, not a silent no-op, and counts as a
-  gate failure. If the current `right: max(16px, var(--viewport-safe-right))`
-  geometry overlaps the measured back band on the attested handset at default
-  sensitivity, this cutover stops and the single permitted revision is the
-  wrapper inset in `switchboard.module.css`, re-proved through the same gate
-  and re-checked against the existing mobile-geometry journey. Adding
+  gate failure. The original `right: max(16px, var(--viewport-safe-right))`
+  geometry overlapped the measured back band on the attested handset. The
+  single permitted revision is a conservative 52px minimum right and bottom
+  wrapper inset in `switchboard.module.css`, which clears the handset's maximum
+  back-sensitivity band and mandatory Home band and is re-proved through the
+  same gate and existing mobile-geometry journey. Adding
   `setSystemGestureExclusionRects`, any production Android change, an invisible
   lane, or a relaxed acceptance row remains forbidden.
 
@@ -424,15 +425,16 @@ origin. A recognizer window wider than the platform's would promise taps the
 platform has already cancelled and will never deliver a click for.
 
 **Reachable travel.** The control is pinned at
-`right: max(16px, var(--viewport-safe-right))` with a 48px target
+`right: max(52px, var(--viewport-safe-right))` with a 48px target
 (`switchboard.module.css:365-374, 376-395`) and `--viewport-safe-right` is `0`
 in portrait, so a rightward `Previous` stream beginning `p` CSS px from the
-target's right edge can report at most `p + 16` CSS px of displacement before
+target's right edge can report at most `p + 52` CSS px of displacement before
 the contact reaches the display edge. Commit displacement is calibrated
-against that budget and may not be raised. Moving the wrapper, widening the
-target, adding an invisible lane, or making the threshold direction-dependent
-are all out of scope; if the calibrated value still cannot be reached in
-practice, the locked Android-edge decision applies — stop and revise this
+against that budget and may not be raised. Moving the wrapper again, widening
+the target, adding an invisible lane, or making the threshold
+direction-dependent are all out of scope; if the calibrated value still cannot
+be reached in practice, the locked Android-edge decision applies — stop and
+revise this
 specification.
 
 Rules:
@@ -880,10 +882,11 @@ target before injecting anything and names any divergence in the failure
 message: drift between the fixture rule set and `.nexusWrapper`/`.nexusButton`
 invalidates the proof rather than silently weakening it.
 
-It places one 48px target at `right: max(16px, env(safe-area-inset-right))`
-and `bottom: calc(env(safe-area-inset-bottom) + 12px)`. Production resolves
-that bottom as `--mobile-nexus-bottom-offset + --nexus-bottom-gap`, where the
-offset is `max(ceil(safe-bottom), player band)` (`switchboard.module.css:366-370`,
+It places one 48px target at `right: max(52px, env(safe-area-inset-right))`
+and `bottom: max(calc(env(safe-area-inset-bottom) + 12px), 52px)`. Production
+resolves that bottom as the maximum of the system-gesture clearance and
+`--mobile-nexus-bottom-offset + --nexus-bottom-gap`, where the offset is
+`max(ceil(safe-bottom), player band)` (`switchboard.module.css:366-370`,
 default `globals.css:127`, resolver
 `lib/mobileViewport/model.ts::resolveNexusBottomOffsetPx`); the fixture pins
 the Player-absent evaluation deliberately, because that is the lowest the

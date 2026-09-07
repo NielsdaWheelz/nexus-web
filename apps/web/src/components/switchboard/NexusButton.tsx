@@ -21,6 +21,9 @@ import type { WorkspaceAdjacentPaneDirection } from "@/lib/workspace/store";
 import styles from "./switchboard.module.css";
 
 const TOUCH_MOVEMENT_SLOP_PX = 8;
+// Native input projection can undershoot a nominal CSS-pixel boundary by a
+// few floating-point ulps (for example, 7.999969px for an 8px movement).
+const TOUCH_MOVEMENT_SLOP_EPSILON_PX = 0.001;
 const TOUCH_HORIZONTAL_LOCK_RATIO = 1.5;
 const TOUCH_COMMIT_DISPLACEMENT_PX = 20;
 
@@ -135,7 +138,9 @@ export default function NexusButton({
     };
     if (
       axisState !== "Tracking" ||
-      Math.hypot(displacement.dx, displacement.dy) < TOUCH_MOVEMENT_SLOP_PX
+      Math.hypot(displacement.dx, displacement.dy) +
+        TOUCH_MOVEMENT_SLOP_EPSILON_PX <
+        TOUCH_MOVEMENT_SLOP_PX
     ) {
       return;
     }
