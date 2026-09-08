@@ -115,7 +115,7 @@
     {
       "id": "migration-head-schema-omission",
       "patch": "testdata/faults/migration-head-schema-omission.patch",
-      "sha256": "7c2a8b14d2fb8ba149b511825150519fe4e28dd27a1663ed28b37a3d004acbb5",
+      "sha256": "c50c8cff2b4653ceacb7d7396bfe65016e437091dee453d6cd45e1d75d120f42",
       "proofs": [
         "pytest:python/tests/migrations/test_supported_upgrade.py::test_empty_owned_database_upgrades_to_the_single_head"
       ],
