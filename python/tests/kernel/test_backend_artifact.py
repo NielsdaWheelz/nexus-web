@@ -348,8 +348,12 @@ def test_backend_publisher_is_exact_main_source_ci_and_builds_each_target_once(
     assert "github.run_id" in workflow
     assert "Preserve immutable backend candidate on rerun" in workflow
     assert ".workflow_run.id == $run_id" in workflow
-    assert "Prepare a hermetic publisher workspace" in workflow
-    assert "Remove the release workspace" in workflow
+    assert "Prepare a hermetic publisher workspace" in workflow, (
+        "publisher must sanitize its persistent checkout before any image build"
+    )
+    assert "Remove the release workspace" in workflow, (
+        "publisher must clean its exact run-owned artifact workspace"
+    )
     source_claim = workflow.index("Claim the first exact source CI run")
     source_identity = workflow.index("Prove the checked-out source identity")
     workspace_preparation = workflow.index("Prepare a hermetic publisher workspace")
