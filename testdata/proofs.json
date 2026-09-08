@@ -796,6 +796,7 @@
         "deploy/env/env-prod-worker.example",
         "deploy/env/env-prod.example",
         "deploy/hetzner/Caddyfile",
+        "deploy/hetzner/backend-publisher-workspace.sh",
         "deploy/hetzner/cloud-init.yml",
         "deploy/hetzner/deploy.sh",
         "deploy/hetzner/docker-compose.yml",
