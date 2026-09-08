@@ -21,7 +21,7 @@ from nexus_test_control.runtime import (
 
 _MEMORY = re.compile(r"([0-9]+(?:\.[0-9]+)?)(B|kB|KiB|MB|MiB|GB|GiB)\Z")
 _MIB = 1024 * 1024
-_CONTAINER_READ_ATTEMPTS = 2
+_CONTAINER_FAILURE_LIMIT = 2
 _DARWIN_PRESSURE_NORMAL = 1
 _DARWIN_VM_STAT = Path("/usr/bin/vm_stat")
 _DARWIN_SYSCTL = Path("/usr/sbin/sysctl")
@@ -119,6 +119,7 @@ class OwnedMemorySampler:
         self._container_roots = {repo_root} if include_containers else set()
         self._required_container_roots = set(self._container_roots)
         self._sampled_container_roots: set[Path] = set()
+        self._container_failure_streaks: dict[Path, int] = {}
         self._stop = threading.Event()
         self._lock = threading.Lock()
         self._peak_process_bytes = 0
@@ -150,6 +151,7 @@ class OwnedMemorySampler:
         """Stop sampling an owner before its exact container teardown begins."""
         with self._lock:
             self._container_roots.discard(repo_root)
+            self._container_failure_streaks.pop(repo_root, None)
             if not self._container_roots:
                 self._current_container_bytes = 0
 
@@ -220,19 +222,17 @@ class OwnedMemorySampler:
             process_failure_detail = str(error) or type(error).__name__
         container_bytes: int | None = None
         sampled_roots: set[Path] = set()
-        failed_roots: set[Path] = set()
-        container_failure_detail: str | None = None
+        failed_roots: dict[Path, str] = {}
         if include_containers:
             with self._lock:
                 container_roots = tuple(self._container_roots)
             container_bytes = 0
             for root in container_roots:
                 try:
-                    container_bytes += self._read_container(root)
+                    container_bytes += self._container_reader(root)
                     sampled_roots.add(root)
                 except (OSError, RuntimeContractError, subprocess.SubprocessError) as error:
-                    failed_roots.add(root)
-                    container_failure_detail = str(error) or type(error).__name__
+                    failed_roots[root] = str(error) or type(error).__name__
         with self._lock:
             if process_bytes is None:
                 self._measurement_failed = True
@@ -246,36 +246,34 @@ class OwnedMemorySampler:
                 self._interval_process_bytes = max(self._interval_process_bytes, process_bytes)
             # Teardown first disables the exact owner. An in-flight Docker stats
             # call may then observe that owner's expected disappearance. Only a
-            # failure for a still-active owner invalidates the measurement.
-            active_failed_roots = failed_roots.intersection(self._container_roots)
-            if active_failed_roots:
+            # persistent failures for a still-active owner invalidate the
+            # measurement; one lifecycle sample may be transient.
+            active_failed_roots = set(failed_roots).intersection(self._container_roots)
+            for root in sampled_roots:
+                self._container_failure_streaks.pop(root, None)
+            for root in set(failed_roots).difference(active_failed_roots):
+                self._container_failure_streaks.pop(root, None)
+            exhausted_roots: list[Path] = []
+            for root in active_failed_roots:
+                streak = self._container_failure_streaks.get(root, 0) + 1
+                self._container_failure_streaks[root] = streak
+                if streak >= _CONTAINER_FAILURE_LIMIT:
+                    exhausted_roots.append(root)
+            if exhausted_roots:
                 self._measurement_failed = True
                 if self._measurement_failure_detail is None:
+                    first = min(exhausted_roots, key=lambda path: path.as_posix())
                     self._measurement_failure_detail = (
-                        container_failure_detail or "owned container probe failed"
+                        "owned container probe failed "
+                        f"{_CONTAINER_FAILURE_LIMIT} consecutive samples: {failed_roots[first]}"
                     )
-            elif container_bytes is not None:
-                self._sampled_container_roots.update(sampled_roots)
+            self._sampled_container_roots.update(sampled_roots)
+            if not active_failed_roots and container_bytes is not None:
                 self._current_container_bytes = container_bytes
                 self._peak_container_bytes = max(self._peak_container_bytes, container_bytes)
                 self._interval_container_bytes = max(
                     self._interval_container_bytes, container_bytes
                 )
-
-    def _read_container(self, repo_root: Path) -> int:
-        """Recover one transient Docker probe without rerunning any proof."""
-        last_error: OSError | RuntimeContractError | subprocess.SubprocessError | None = None
-        for _attempt in range(_CONTAINER_READ_ATTEMPTS):
-            try:
-                return self._container_reader(repo_root)
-            except (OSError, RuntimeContractError, subprocess.SubprocessError) as error:
-                last_error = error
-        if last_error is None:
-            raise AssertionError("container measurement made no read attempt")
-        detail = str(last_error) or type(last_error).__name__
-        raise RuntimeContractError(
-            f"owned container probe failed {_CONTAINER_READ_ATTEMPTS} consecutive reads: {detail}"
-        ) from last_error
 
 
 @contextmanager
