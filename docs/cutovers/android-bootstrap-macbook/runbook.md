@@ -136,6 +136,8 @@ extension, provider certification, signed APK build and verification,
 instrumentation on the USB handset), and on green publishes the
 draft-then-stable release with its five assets from the workstation. If the
 lane passed but publishing was interrupted, rerun with `--publish-only`.
+The publisher selects the one passing run at the current tag, so a late failed
+run can retain its staged release artifacts without making a retry ambiguous.
 
 Provider certification spends real LLM API credit on each lane attempt.
 

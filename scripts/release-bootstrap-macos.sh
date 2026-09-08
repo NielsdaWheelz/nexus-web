@@ -129,6 +129,7 @@ for item in "${lane_env[@]}"; do exec_env+=(-e "$item"); done
 # --- preflight -------------------------------------------------------------
 command -v gh >/dev/null || die "gh CLI is required"
 gh auth status >/dev/null 2>&1 || die "gh is not authenticated"
+command -v jq >/dev/null || die "jq is required"
 command -v docker >/dev/null || die "docker is required (Docker Desktop)"
 docker info >/dev/null 2>&1 || die "docker daemon is not running"
 command -v keytool >/dev/null || die "keytool (JDK) is required"
@@ -237,9 +238,19 @@ if [ "$mode" != publish ]; then
 fi
 
 # --- publish the verified release ------------------------------------------
-release_dirs=("$work_dir"/test-results/runs/*/release)
+# A late capability can fail after release-artifact has staged its files. Keep
+# that failed-run evidence, but never let its release directory compete with a
+# green run: publication is owned by the one passing summary at this tag.
+release_dirs=()
+for summary in "$work_dir"/test-results/runs/*/summary.json; do
+  [ -f "$summary" ] || continue
+  [ "$(jq -r '.status // empty' "$summary")" = pass ] || continue
+  [ "$(jq -r '.git_sha // empty' "$summary")" = "$tag_commit" ] || continue
+  candidate="${summary%/summary.json}/release"
+  [ -d "$candidate" ] && release_dirs+=("$candidate")
+done
 [ "${#release_dirs[@]}" = 1 ] && [ -d "${release_dirs[0]}" ] || \
-  die "expected exactly one control-plane-owned release directory under $work_dir/test-results/runs"
+  die "expected exactly one passing control-plane-owned release directory for $tag_commit under $work_dir/test-results/runs"
 release_dir="${release_dirs[0]}"
 version_name="${TAG#android-v}"
 for asset in "nexus-android.apk" "nexus-android.apk.sha256" \
