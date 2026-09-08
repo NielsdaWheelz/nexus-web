@@ -1,0 +1,196 @@
+"""Transaction-scoped recording and reading of import history.
+
+The only writer and the only reader of `media_upload_events` and
+`media_processing_events`. Every function here runs inside a caller-owned
+transaction and commits nothing: an owner appends the event in the same
+transaction that commits the fact it documents, so a committed failure without
+its history is impossible.
+
+No policy, no scheduling, no domain decisions — these are the final insert
+adapters for the two tables, which is why they convert owned `Presence` to
+column `NULL` (`docs/rules/boundaries.md`).
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from uuid import UUID
+
+from sqlalchemy import bindparam, text
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Session
+
+from nexus.ids import new_uuid7
+from nexus.schemas.import_history import (
+    PROCESSING_EVENTS_TABLE,
+    UPLOAD_EVENTS_TABLE,
+    FullHistoryCoverage,
+    HistoryCoverage,
+    HistoryEntry,
+    HistoryOwner,
+    HistoryTable,
+    IndexFacts,
+    PartialHistoryCoverage,
+    SafeFailureCode,
+    SourceFacts,
+    Stage,
+    UploadFacts,
+    UploadHistoryOwner,
+    history_event_type,
+    history_facts,
+    history_payload,
+)
+from nexus.schemas.presence import Presence, Present, nullable_from_presence, presence_from_nullable
+
+_APPEND_UPLOAD_EVENT = text(
+    """
+    INSERT INTO media_upload_events (id, session_id, event_type, stage, failure_code, payload)
+    VALUES (:id, :session_id, :event_type, :stage, :failure_code, :payload)
+    """
+).bindparams(bindparam("payload", type_=JSONB))
+
+_APPEND_PROCESSING_EVENT = text(
+    """
+    INSERT INTO media_processing_events (id, media_id, event_type, stage, failure_code, payload)
+    VALUES (:id, :media_id, :event_type, :stage, :failure_code, :payload)
+    """
+).bindparams(bindparam("payload", type_=JSONB))
+
+
+def append_upload_event(
+    db: Session,
+    *,
+    session_id: UUID,
+    facts: UploadFacts,
+    stage: Presence[Stage],
+    failure_code: Presence[SafeFailureCode],
+) -> UUID:
+    """Record one upload-session event. `occurred_at` is the database clock."""
+    event_id = new_uuid7()
+    db.execute(
+        _APPEND_UPLOAD_EVENT,
+        {
+            "id": event_id,
+            "session_id": session_id,
+            "event_type": history_event_type(facts),
+            "stage": nullable_from_presence(stage),
+            "failure_code": nullable_from_presence(failure_code),
+            "payload": history_payload(facts),
+        },
+    )
+    return event_id
+
+
+def append_processing_event(
+    db: Session,
+    *,
+    media_id: UUID,
+    facts: SourceFacts | IndexFacts,
+    stage: Presence[Stage],
+    failure_code: Presence[SafeFailureCode],
+) -> UUID:
+    """Record one source-ingest or content-index event for a media."""
+    event_id = new_uuid7()
+    db.execute(
+        _APPEND_PROCESSING_EVENT,
+        {
+            "id": event_id,
+            "media_id": media_id,
+            "event_type": history_event_type(facts),
+            "stage": nullable_from_presence(stage),
+            "failure_code": nullable_from_presence(failure_code),
+            "payload": history_payload(facts),
+        },
+    )
+    return event_id
+
+
+def delete_upload_history_in_current_transaction(db: Session, *, session_id: UUID) -> None:
+    """Explicit teardown: history dies with the session row it documents."""
+    db.execute(
+        text("DELETE FROM media_upload_events WHERE session_id = :session_id"),
+        {"session_id": session_id},
+    )
+
+
+def delete_processing_history_in_current_transaction(db: Session, *, media_id: UUID) -> None:
+    """Explicit teardown: history dies with the media row it documents."""
+    db.execute(
+        text("DELETE FROM media_processing_events WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+
+
+def _owner_sources(owner: HistoryOwner) -> tuple[list[tuple[HistoryTable, str]], dict[str, object]]:
+    """Every table holding this owner's history, with its owner predicate.
+
+    An upload-origin import keeps its session history after publication and
+    gains the published media's processing history, so both tables answer for it.
+    """
+    if isinstance(owner, UploadHistoryOwner):
+        sources: list[tuple[HistoryTable, str]] = [
+            (UPLOAD_EVENTS_TABLE, "session_id = :session_id")
+        ]
+        params: dict[str, object] = {"session_id": owner.session_id}
+        if isinstance(owner.media_id, Present):
+            sources.append((PROCESSING_EVENTS_TABLE, "media_id = :media_id"))
+            params["media_id"] = owner.media_id.value
+        return sources, params
+    return [(PROCESSING_EVENTS_TABLE, "media_id = :media_id")], {"media_id": owner.media_id}
+
+
+def read_history_page(
+    db: Session,
+    *,
+    owner: HistoryOwner,
+    before: Presence[tuple[datetime, UUID]],
+    limit: int,
+) -> list[HistoryEntry]:
+    """One page of this import's history, newest first, keyset-paged on
+    `(occurred_at, id)`."""
+    sources, params = _owner_sources(owner)
+    params["limit"] = limit
+    keyset = ""
+    if isinstance(before, Present):
+        occurred_at, event_id = before.value
+        params["before_occurred_at"] = occurred_at
+        params["before_id"] = event_id
+        keyset = " AND (occurred_at, id) < (:before_occurred_at, :before_id)"
+    # Table and predicate come from `_owner_sources`, never from a caller value.
+    branches = " UNION ALL ".join(
+        f"SELECT '{table}' AS source_table, id, occurred_at, event_type, stage, failure_code,"
+        f" payload FROM {table} WHERE {predicate}{keyset}"
+        for table, predicate in sources
+    )
+    rows = db.execute(
+        text(f"{branches} ORDER BY occurred_at DESC, id DESC LIMIT :limit"), params
+    ).all()
+    return [
+        HistoryEntry.model_validate(
+            {
+                "id": row.id,
+                "occurred_at": row.occurred_at,
+                "stage": presence_from_nullable(row.stage),
+                "failure_code": presence_from_nullable(row.failure_code),
+                "facts": history_facts(
+                    table=row.source_table, event_type=row.event_type, payload=row.payload
+                ),
+            }
+        )
+        for row in rows
+    ]
+
+
+def history_coverage(db: Session, *, owner: HistoryOwner) -> HistoryCoverage:
+    """`Partial` from the earliest baseline this import carries, else `Full`."""
+    sources, params = _owner_sources(owner)
+    branches = " UNION ALL ".join(
+        f"SELECT occurred_at FROM {table} WHERE {predicate} AND event_type = 'HistoryBaseline'"
+        for table, predicate in sources
+    )
+    recorded_since = db.execute(
+        text(f"SELECT min(occurred_at) FROM ({branches}) baselines"), params
+    ).scalar_one()
+    if recorded_since is None:
+        return FullHistoryCoverage()
+    return PartialHistoryCoverage(recorded_since=recorded_since)

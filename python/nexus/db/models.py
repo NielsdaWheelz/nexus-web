@@ -1615,6 +1615,80 @@ class MediaTeardownIntent(Base):
     __table_args__ = (UniqueConstraint("media_id", name="uq_media_teardown_intents_media"),)
 
 
+class MediaUploadEvent(Base):
+    """Append-only upload history for one media upload session
+    (`imports-workspace-hard-cutover.md`).
+
+    ``event_type`` plus the owning table select the closed ``payload`` variant;
+    the application owns that validation, so the schema carries only storage
+    shape. ``id`` is application-generated (``nexus.ids.new_uuid7()``) because
+    the recording helper appends inside the transaction that commits the fact it
+    documents. ``stage`` and ``failure_code`` are the indexed query columns and
+    are absent for events that name neither.
+    """
+
+    __tablename__ = "media_upload_events"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    session_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media_upload_sessions.id", name="fk_media_upload_events_session"),
+        nullable=False,
+    )
+    occurred_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    event_type: Mapped[str] = mapped_column(Text, nullable=False)
+    stage: Mapped[str | None] = mapped_column(Text, nullable=True)
+    failure_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+
+    __table_args__ = (
+        Index(
+            "ix_media_upload_events_session_occurred_id",
+            "session_id",
+            "occurred_at",
+            "id",
+        ),
+    )
+
+
+class MediaProcessingEvent(Base):
+    """Append-only source-ingest and content-index history for one media
+    (`imports-workspace-hard-cutover.md`). Same envelope as
+    :class:`MediaUploadEvent`; the payload names a source attempt or an index
+    revision."""
+
+    __tablename__ = "media_processing_events"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id", name="fk_media_processing_events_media"),
+        nullable=False,
+    )
+    occurred_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    event_type: Mapped[str] = mapped_column(Text, nullable=False)
+    stage: Mapped[str | None] = mapped_column(Text, nullable=True)
+    failure_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+
+    __table_args__ = (
+        Index(
+            "ix_media_processing_events_media_occurred_id",
+            "media_id",
+            "occurred_at",
+            "id",
+        ),
+    )
+
+
 class ProjectGutenbergCatalogEntry(Base):
     """Local mirror of the Project Gutenberg catalog metadata feed."""
 

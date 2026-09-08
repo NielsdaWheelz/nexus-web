@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, JsonValue
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, FiniteFloat, JsonValue
 from pydantic.alias_generators import to_camel
 
 from nexus.schemas.collection_page import CollectionRevision
@@ -419,10 +419,27 @@ class CreateUploadSessionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+def _canonical_uuid_text(value: str) -> str:
+    """Replay keys are text columns, so two spellings of one UUID would be two
+    different memo rows for one intent. Only the canonical spelling is a key."""
+    try:
+        parsed = UUID(value)
+    except ValueError as exc:
+        raise ValueError("client_mutation_id must be canonical lowercase UUID text") from exc
+    if str(parsed) != value:
+        raise ValueError("client_mutation_id must be canonical lowercase UUID text")
+    return value
+
+
+ClientMutationUuidText = Annotated[str, AfterValidator(_canonical_uuid_text)]
+
+
 class RetryUploadSessionRequest(BaseModel):
     filename: str = Field(min_length=1, max_length=255)
     content_type: str
     size_bytes: int = Field(gt=0)
+    client_mutation_id: ClientMutationUuidText
+    expected_generation: int = Field(ge=1)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -621,10 +638,85 @@ class ArticleCaptureResponse(BaseModel):
     ingest_enqueued: bool
 
 
-class RetryRequest(BaseModel):
-    """Body for POST /media/{id}/retry."""
+class RetrySourceRequest(BaseModel):
+    """Body for POST /media/{id}/retry that admits a new source attempt."""
 
-    from_stage: Literal["source", "metadata"]
+    from_stage: Literal["source"]
+    client_mutation_id: ClientMutationUuidText
+    expected_attempt_id: UUID
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class RetryMetadataRequest(BaseModel):
+    """Body for POST /media/{id}/retry that re-enriches metadata; its owner and
+    its (absent) idempotency contract are unchanged by the imports cutover."""
+
+    from_stage: Literal["metadata"]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+RetryRequest = Annotated[
+    RetrySourceRequest | RetryMetadataRequest,
+    Field(discriminator="from_stage"),
+]
+
+
+class SourceRepairRequest(BaseModel):
+    """Requeue the exact dead job of one nonterminal source attempt."""
+
+    kind: Literal["Source"]
+    client_mutation_id: ClientMutationUuidText
+    expected_attempt_id: UUID
+    expected_job_id: UUID
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SearchRepairRequest(BaseModel):
+    """Requeue the exact dead reindex job of one content-index revision."""
+
+    kind: Literal["Search"]
+    client_mutation_id: ClientMutationUuidText
+    expected_revision: int = Field(ge=1)
+    expected_job_id: UUID
+
+    model_config = ConfigDict(extra="forbid")
+
+
+MediaRepairRequest = Annotated[
+    SourceRepairRequest | SearchRepairRequest,
+    Field(discriminator="kind"),
+]
+
+
+class SourceRetryAdmission(BaseModel):
+    """The immutable receipt of an admitted source retry: the new attempt and
+    the one job that will run it."""
+
+    kind: Literal["SourceRetry"] = "SourceRetry"
+    media_id: UUID
+    source_attempt_id: UUID
+    job_id: UUID
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SourceRepairAdmission(BaseModel):
+    kind: Literal["SourceRepair"] = "SourceRepair"
+    media_id: UUID
+    source_attempt_id: UUID
+    job_id: UUID
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SearchRepairAdmission(BaseModel):
+    kind: Literal["SearchRepair"] = "SearchRepair"
+    media_id: UUID
+    revision: int = Field(ge=1)
+    job_id: UUID
 
     model_config = ConfigDict(extra="forbid")
 

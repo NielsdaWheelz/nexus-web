@@ -4,13 +4,31 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
-from typing import Literal, assert_never
+from datetime import datetime
+from typing import Any, Literal, assert_never
 from uuid import UUID
 
-from sqlalchemy import Engine, text
+from sqlalchemy import Engine, Row, text
 from sqlalchemy.orm import Session
 
-from nexus.schemas.presence import Presence, Present, present
+from nexus.ids import new_uuid7
+from nexus.schemas.import_history import (
+    HistoryOwner,
+    IndexFacts,
+    SafeFailureCode,
+    SourceFacts,
+    Stage,
+    UploadFacts,
+    UploadHistoryOwner,
+    history_event_type,
+    history_payload,
+)
+from nexus.schemas.presence import (
+    Presence,
+    Present,
+    nullable_from_presence,
+    present,
+)
 from nexus.services.durable_step_journal import (
     Completed,
     ToolExecutionState,
@@ -96,6 +114,18 @@ def cleanup_committed_upload_user(engine: Engine, *, user_id: UUID) -> None:
             {"user_id": user_id},
         )
         connection.execute(
+            text(
+                """
+                DELETE FROM media_upload_events
+                WHERE session_id IN (
+                    SELECT id FROM media_upload_sessions
+                    WHERE created_by_user_id = :user_id
+                )
+                """
+            ),
+            {"user_id": user_id},
+        )
+        connection.execute(
             text("DELETE FROM media_upload_sessions WHERE created_by_user_id = :user_id"),
             {"user_id": user_id},
         )
@@ -135,6 +165,15 @@ def cleanup_committed_upload_user(engine: Engine, *, user_id: UUID) -> None:
             text(
                 """
                 DELETE FROM pdf_page_text_spans
+                WHERE media_id IN (SELECT id FROM media WHERE created_by_user_id = :user_id)
+                """
+            ),
+            {"user_id": user_id},
+        )
+        connection.execute(
+            text(
+                """
+                DELETE FROM media_processing_events
                 WHERE media_id IN (SELECT id FROM media WHERE created_by_user_id = :user_id)
                 """
             ),
@@ -805,6 +844,10 @@ def delete_source_probe_owners_by_job_kind(db: Session, *, kind: str) -> None:
         )
     if media_ids:
         db.execute(
+            text("DELETE FROM media_processing_events WHERE media_id = ANY(CAST(:ids AS uuid[]))"),
+            {"ids": media_ids},
+        )
+        db.execute(
             text("DELETE FROM pdf_page_text_spans WHERE media_id = ANY(CAST(:ids AS uuid[]))"),
             {"ids": media_ids},
         )
@@ -1012,6 +1055,10 @@ def delete_source_attempts_and_media(
         {"attempt_ids": list(attempt_ids)},
     )
     db.execute(
+        text("DELETE FROM media_processing_events WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    db.execute(
         text("DELETE FROM pdf_page_text_spans WHERE media_id = :media_id"),
         {"media_id": media_id},
     )
@@ -1066,4 +1113,120 @@ def publish_source_probe_success(
             """
         ),
         {"media_id": media_id},
+    )
+
+
+def insert_upload_event(
+    db: Session,
+    *,
+    session_id: UUID,
+    facts: UploadFacts,
+    stage: Presence[Stage],
+    failure_code: Presence[SafeFailureCode],
+    occurred_at: datetime,
+) -> UUID:
+    """Record one upload event at a chosen past instant.
+
+    The owner helper always stamps the database clock, so historical fixtures —
+    an old failure a later date filter must not match — are unreachable through
+    it. The stored shape is the owner's own codec, so the row stays decodable.
+    """
+    event_id = new_uuid7()
+    db.execute(
+        text(
+            """
+            INSERT INTO media_upload_events (
+                id, session_id, occurred_at, event_type, stage, failure_code, payload
+            ) VALUES (
+                :id, :session_id, :occurred_at, :event_type, :stage, :failure_code,
+                CAST(:payload AS jsonb)
+            )
+            """
+        ),
+        {
+            "id": event_id,
+            "session_id": session_id,
+            "occurred_at": occurred_at,
+            "event_type": history_event_type(facts),
+            "stage": nullable_from_presence(stage),
+            "failure_code": nullable_from_presence(failure_code),
+            "payload": json.dumps(history_payload(facts)),
+        },
+    )
+    return event_id
+
+
+def insert_processing_event(
+    db: Session,
+    *,
+    media_id: UUID,
+    facts: SourceFacts | IndexFacts,
+    stage: Presence[Stage],
+    failure_code: Presence[SafeFailureCode],
+    occurred_at: datetime,
+) -> UUID:
+    """Record one source or index event at a chosen past instant."""
+    event_id = new_uuid7()
+    db.execute(
+        text(
+            """
+            INSERT INTO media_processing_events (
+                id, media_id, occurred_at, event_type, stage, failure_code, payload
+            ) VALUES (
+                :id, :media_id, :occurred_at, :event_type, :stage, :failure_code,
+                CAST(:payload AS jsonb)
+            )
+            """
+        ),
+        {
+            "id": event_id,
+            "media_id": media_id,
+            "occurred_at": occurred_at,
+            "event_type": history_event_type(facts),
+            "stage": nullable_from_presence(stage),
+            "failure_code": nullable_from_presence(failure_code),
+            "payload": json.dumps(history_payload(facts)),
+        },
+    )
+    return event_id
+
+
+def read_events(db: Session, *, owner: HistoryOwner) -> list[dict[str, object]]:
+    """Every stored history row for one import, oldest first, exactly as
+    written. An independent oracle for the owner's decode path."""
+    rows: list[Row[Any]] = []
+    if isinstance(owner, UploadHistoryOwner):
+        rows.extend(
+            db.execute(
+                text(
+                    """
+                    SELECT 'media_upload_events' AS source_table, id, occurred_at, event_type,
+                           stage, failure_code, payload
+                    FROM media_upload_events
+                    WHERE session_id = :session_id
+                    """
+                ),
+                {"session_id": owner.session_id},
+            ).all()
+        )
+        media_id = owner.media_id.value if isinstance(owner.media_id, Present) else None
+    else:
+        media_id = owner.media_id
+    if media_id is not None:
+        rows.extend(
+            db.execute(
+                text(
+                    """
+                    SELECT 'media_processing_events' AS source_table, id, occurred_at, event_type,
+                           stage, failure_code, payload
+                    FROM media_processing_events
+                    WHERE media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            ).all()
+        )
+    return sorted(
+        (dict(row._mapping) for row in rows),
+        key=lambda event: (event["occurred_at"], event["id"]),
     )
