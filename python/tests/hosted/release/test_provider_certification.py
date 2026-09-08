@@ -62,6 +62,10 @@ from tests.hosted._provider_live import (
 CALL_LIMIT = 18
 COST_LIMIT_USD = 0.18
 MAX_OUTPUT_TOKENS = 256
+# DeepSeek's high-reasoning tokens share the output budget with its answer. The
+# pinned provider-runtime live matrix uses this bounded cap so a short strict
+# JSON answer cannot legitimately terminate before it is emitted.
+DEEPSEEK_MAX_OUTPUT_TOKENS = 4_096
 
 _STRICT_REPLY_SCHEMA: dict[str, object] = {
     "type": "object",
@@ -561,7 +565,7 @@ def _deepseek_intent(
             SystemMessage(blocks=(PromptBlock(text="Nexus DeepSeek release certification."),)),
             UserMessage(blocks=(PromptBlock(text=user),)),
         ),
-        max_output_tokens=MAX_OUTPUT_TOKENS,
+        max_output_tokens=DEEPSEEK_MAX_OUTPUT_TOKENS,
         reasoning="high",
         tools=tools,
         tool_choice="auto" if tools else "none",
