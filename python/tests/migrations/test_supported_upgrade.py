@@ -25,6 +25,15 @@ _REQUIRED_TABLES = {
 }
 
 
+def test_migration_config_uses_the_current_unambiguous_path_separator() -> None:
+    migration_root = Path(__file__).parents[3] / "migrations"
+    config = Config(migration_root / "alembic.ini")
+
+    assert config.get_main_option("path_separator") == "os"
+    assert config.get_main_option("version_path_separator") is None
+    assert config.get_prepend_sys_paths_list() == ["../python"]
+
+
 def test_empty_owned_database_upgrades_to_the_single_head(
     empty_migration_database_url: str,
 ) -> None:

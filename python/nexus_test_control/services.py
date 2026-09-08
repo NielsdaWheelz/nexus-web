@@ -71,12 +71,13 @@ from nexus_test_control.runtime import (
     initialize_runtime,
     local_docker_host,
     migration_database_name,
+    missing_runtime_port_names,
     process_resource_identity,
     provider_api_peer_identity,
     provider_api_peer_state_dir,
     read_ledger,
-    read_previous_runtime_for_cleanup,
     read_runtime,
+    read_upgradeable_runtime,
     record_created,
     record_planned,
     release_run,
@@ -95,7 +96,7 @@ from nexus_test_control.runtime import (
     template_database_name,
     template_fingerprint,
     template_lifecycle_lock,
-    upgrade_previous_runtime,
+    upgrade_runtime_to_current,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -137,6 +138,10 @@ _PORT_DEFAULTS = (
     19092,
     19093,
 )
+_UPGRADE_PORT_DEFAULTS = {
+    "agent_tools_mcp": 18001,
+    "provider_api": 19093,
+}
 _EPHEMERAL_PORT_RANGE_PATH = Path("/proc/sys/net/ipv4/ip_local_port_range")
 _CONSERVATIVE_EPHEMERAL_PORT_RANGE = (32768, 65535)
 _SUPABASE_DIAGNOSTIC_TAIL_CHARS = 8192
@@ -722,7 +727,7 @@ def ensure_services(repo_root: Path, environment: Mapping[str, str]) -> Supabase
                 initialize_runtime(root, environment, _allocate_ports())
                 _start_services(root)
         else:
-            _upgrade_previous_runtime_if_needed(root, environment)
+            _upgrade_runtime_if_needed(root, environment)
             _start_services(root)
         _publish_runtime_identity(root)
     return read_supabase_credentials(root, environment)
@@ -2463,7 +2468,7 @@ def clean_owned_runtime(
     if not runtime_record_path(root).exists():
         return ()
     run_command = command_runner or _run
-    _upgrade_previous_runtime_if_needed(root, environment, port_available=port_available)
+    _upgrade_runtime_if_needed(root, environment, port_available=port_available)
     runtime = read_runtime(root)
     run_ids = runtime.owned_run_ids
     failures: list[str] = []
@@ -2525,7 +2530,7 @@ def _allocate_ports() -> RuntimePorts:
     return RuntimePorts(*ports)
 
 
-def _upgrade_previous_runtime_if_needed(
+def _upgrade_runtime_if_needed(
     root: Path,
     environment: Mapping[str, str],
     *,
@@ -2535,19 +2540,37 @@ def _upgrade_previous_runtime_if_needed(
     try:
         read_runtime(root)
         return
-    except RuntimeContractError as current_error:
+    except RuntimeContractError:
         with _port_allocation_lock():
             try:
-                previous = read_previous_runtime_for_cleanup(root)
-            except RuntimeContractError:
-                raise current_error from None
-            used = set(previous.ports.as_dict().values()) - {previous.ports.provider_api}
+                read_runtime(root)
+                return
+            except RuntimeContractError as current_error:
+                try:
+                    previous = read_upgradeable_runtime(root)
+                except RuntimeContractError:
+                    raise current_error from None
+            missing_ports = missing_runtime_port_names(previous)
+            used = {
+                port for name, port in previous.ports.as_dict().items() if name not in missing_ports
+            }
+            added_ports: dict[str, int] = {}
             ephemeral_port_range = _local_ephemeral_port_range()
-            for port in _candidate_ports(19093, ephemeral_port_range):
-                if port not in used and is_port_available(port):
-                    upgrade_previous_runtime(root, environment, port)
-                    return
-    raise RuntimeContractError("no local provider API test port is available")
+            for name in missing_ports:
+                for port in _candidate_ports(_UPGRADE_PORT_DEFAULTS[name], ephemeral_port_range):
+                    if (
+                        port not in used
+                        and port not in added_ports.values()
+                        and is_port_available(port)
+                    ):
+                        added_ports[name] = port
+                        break
+                else:
+                    raise RuntimeContractError(
+                        f"no local {name.replace('_', ' ')} test port is available"
+                    )
+            upgrade_runtime_to_current(root, environment, added_ports)
+            return
 
 
 def _local_ephemeral_port_range() -> tuple[int, int]:

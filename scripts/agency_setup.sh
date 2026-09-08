@@ -17,7 +17,9 @@ require_tool bun
 require_tool docker
 require_tool supabase
 
-uv sync --all-extras --locked --directory "$repo_root/python"
+# Sensitivity builds fresh offline environments. Reinstalling hydrates every
+# locked artifact even when this workspace's existing venv is already current.
+uv sync --all-extras --locked --reinstall --directory "$repo_root/python"
 bun install --frozen-lockfile --cwd "$repo_root/apps/web"
 bun install --frozen-lockfile --cwd "$repo_root/node/ingest"
 

@@ -21,6 +21,17 @@
       "expected_failure": "ephemeral client range leaked into allocated test ports"
     },
     {
+      "id": "provider-api-peer-loopback-san-bypass",
+      "patch": "testdata/faults/provider-api-peer-loopback-san-bypass.patch",
+      "sha256": "02f614850023b20e0bb8d5266f202ef919cbd1bddac3b7e9d53066ffffa0f389",
+      "proofs": [
+        "pytest:python/tests/kernel/nexus_test_control/test_provider_api_peer.py::test_provider_peer_is_controller_owned_and_recovered"
+      ],
+      "expected_failure": "IPv4Address('127.0.0.1')",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "6ba9f07298da823b9cb09e43f971b3611262c3bee61da9b2cc4cab3452d5fe4a"
+    },
+    {
       "id": "test-control-output-bounds-bypass",
       "patch": "testdata/faults/test-control-output-bounds-bypass.patch",
       "sha256": "ef0990a8f12b7b5aa852009755caf0b6392864d55f46842c8082356e31cf3039",
@@ -104,7 +115,7 @@
     {
       "id": "migration-head-schema-omission",
       "patch": "testdata/faults/migration-head-schema-omission.patch",
-      "sha256": "7c2a8b14d2fb8ba149b511825150519fe4e28dd27a1663ed28b37a3d004acbb5",
+      "sha256": "c50c8cff2b4653ceacb7d7396bfe65016e437091dee453d6cd45e1d75d120f42",
       "proofs": [
         "pytest:python/tests/migrations/test_supported_upgrade.py::test_empty_owned_database_upgrades_to_the_single_head"
       ],

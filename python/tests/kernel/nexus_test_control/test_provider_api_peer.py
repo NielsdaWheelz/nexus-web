@@ -4,6 +4,7 @@ import base64
 import ipaddress
 import json
 import socket
+import ssl
 from pathlib import Path
 
 import httpx
@@ -168,7 +169,8 @@ def test_provider_peer_is_controller_owned_and_recovered(
             "/livez",
             tls_ca=peer.certificate,
         )
-        with httpx.Client(verify=str(peer.certificate), trust_env=False) as client:
+        tls_context = ssl.create_default_context(cafile=str(peer.certificate))
+        with httpx.Client(verify=tls_context, trust_env=False) as client:
             response = client.get(f"{expected_origin}/livez")
         assert response.status_code == 200
         assert response.json() == {
