@@ -203,8 +203,10 @@ def test_existing_vps_capacity_qualification_is_immutable_and_exact_candidate_bo
     assert "install-bundle" in capacity_probe
     assert "prove-codex-capacity.sh" in release_workflow
     assert "prove-codex-capacity.sh" in bundle_fetch
-    assert './deploy/hetzner/prove-codex-capacity.sh "$SOURCE_SHA"' in runbook
-    assert "within the preceding 72 hours" in normalized_runbook
+    if './deploy/hetzner/prove-codex-capacity.sh "$SOURCE_SHA"' not in runbook:
+        pytest.fail("production runbook omits the sole capacity qualification command")
+    if "within the preceding 72 hours" not in normalized_runbook:
+        pytest.fail("production runbook omits the 72-hour qualification freshness bound")
 
 
 def test_deploy_uses_existing_current_record_and_artifact_owner_publisher(
