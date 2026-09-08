@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -292,8 +294,33 @@ def test_candidate_manifest_loader_rejects_unknown_duplicate_and_noncanonical_js
         load_candidate_manifest(path)
 
 
-def test_backend_publisher_is_exact_main_source_ci_and_builds_each_target_once() -> None:
+def _initialize_publisher_checkout(path: Path) -> None:
+    path.mkdir()
+    (path / ".gitignore").write_text("/.nexus-test/\n", encoding="utf-8")
+    (path / "tracked.txt").write_text("owned source\n", encoding="utf-8")
+    subprocess.run(("git", "init", "--quiet"), cwd=path, check=True)
+    subprocess.run(("git", "add", ".gitignore", "tracked.txt"), cwd=path, check=True)
+    subprocess.run(
+        (
+            "git",
+            "-c",
+            "user.name=Nexus test",
+            "-c",
+            "user.email=nexus-test@example.invalid",
+            "commit",
+            "--quiet",
+            "--message=fixture",
+        ),
+        cwd=path,
+        check=True,
+    )
+
+
+def test_backend_publisher_is_exact_main_source_ci_and_builds_each_target_once(
+    tmp_path: Path,
+) -> None:
     workflow = (REPO_ROOT / ".github/workflows/backend-images.yml").read_text()
+    workspace_owner = REPO_ROOT / "deploy/hetzner/backend-publisher-workspace.sh"
 
     assert "workflow_run:" in workflow
     assert 'workflows: ["CI"]' in workflow
@@ -322,6 +349,8 @@ def test_backend_publisher_is_exact_main_source_ci_and_builds_each_target_once()
     assert "Preserve immutable backend candidate on rerun" in workflow
     assert ".workflow_run.id == $run_id" in workflow
     source_claim = workflow.index("Claim the first exact source CI run")
+    source_identity = workflow.index("Prove the checked-out source identity")
+    workspace_preparation = workflow.index("Prepare a hermetic publisher workspace")
     assert "actions/workflows/${SOURCE_CI_WORKFLOW_ID}/runs" in workflow
     assert '.path == ".github/workflows/ci.yml"' in workflow
     assert "min_by(.run_number).id" in workflow
@@ -336,12 +365,30 @@ def test_backend_publisher_is_exact_main_source_ci_and_builds_each_target_once()
     worker_label_proof = workflow.index('require_revision_label "$WORKER_IMAGE" "worker"')
     manifest_write = workflow.index("write-candidate-manifest")
     artifact_upload = workflow.index("Upload the immutable release bundle")
+    workspace_cleanup = workflow.index("Remove the release workspace")
+    assert source_identity < workspace_preparation < api_pull
     assert source_claim < api_pull < api_label_proof < manifest_write < artifact_upload
     assert source_claim < worker_pull < worker_label_proof < manifest_write < artifact_upload
+    assert artifact_upload < workspace_cleanup
     assert "org.opencontainers.image.revision" in workflow
     assert 'if [ "$revision" != "$SOURCE_SHA" ]; then' in workflow
     assert "Prove digest references are public" in workflow
     assert "nexus-backend-release-${{ github.event.workflow_run.head_sha }}" in workflow
+    assert "deploy/hetzner/backend-publisher-workspace.sh prepare" in workflow
+    assert (
+        workflow.count('deploy/hetzner/backend-publisher-workspace.sh require "$RELEASE_WORKSPACE"')
+        == 2
+    )
+    assert "path: ${{ steps.release_workspace.outputs.path }}/bundle/" in workflow
+    assert "if: ${{ always() && steps.release_workspace.outputs.path != '' }}" in workflow
+    assert 'deploy/hetzner/backend-publisher-workspace.sh cleanup "$RELEASE_WORKSPACE"' in workflow
+    for forbidden in (
+        "mkdir release-bundle",
+        "> api-runtime-identity.json",
+        "> worker-runtime-identity.json",
+        "path: release-bundle/",
+    ):
+        assert forbidden not in workflow
     for bundled in (
         "candidate-manifest.json",
         "deploy/hetzner/release.py",
@@ -354,6 +401,113 @@ def test_backend_publisher_is_exact_main_source_ci_and_builds_each_target_once()
         "testdata/android/player-protocol.json",
     ):
         assert bundled in workflow
+
+    assert workspace_owner.is_file()
+    owner = workspace_owner.read_text(encoding="utf-8")
+    assert 'git -C "$checkout" clean -qffdx -e /.nexus-test/' in owner
+    assert 'git -C "$checkout" clean -nffdx -e /.nexus-test/' in owner
+    assert "nexus-backend-release.XXXXXXXX" in owner
+    assert 'rm --recursive --force --one-file-system -- "$release_workspace"' in owner
+
+    checkout = tmp_path / "checkout"
+    runner_temp = tmp_path / "runner-temp"
+    github_output = runner_temp / "github-output"
+    _initialize_publisher_checkout(checkout)
+    runner_temp.mkdir()
+    github_output.touch()
+    runtime_state = checkout / ".nexus-test"
+    runtime_state.mkdir()
+    (runtime_state / "runtime.json").write_text("owned runtime\n", encoding="utf-8")
+    stale_bundle = checkout / "release-bundle"
+    stale_bundle.mkdir()
+    (stale_bundle / "stale").write_text("unowned\n", encoding="utf-8")
+    nested_repository = checkout / "stale/nested-repository"
+    nested_repository.mkdir(parents=True)
+    subprocess.run(("git", "init", "--quiet"), cwd=nested_repository, check=True)
+
+    environment = {
+        **os.environ,
+        "GITHUB_OUTPUT": str(github_output),
+        "GITHUB_WORKSPACE": str(checkout),
+        "RUNNER_TEMP": str(runner_temp),
+    }
+    prepared = subprocess.run(
+        (str(workspace_owner), "prepare"),
+        cwd=checkout,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert prepared.returncode == 0, prepared.stderr
+    assert prepared.stdout == ""
+    assert prepared.stderr == ""
+    output = github_output.read_text(encoding="utf-8")
+    assert output.startswith("path=") and output.endswith("\n") and output.count("\n") == 1
+    release_workspace = Path(output.removeprefix("path=").strip())
+    assert release_workspace.parent == runner_temp
+    assert release_workspace.name.startswith("nexus-backend-release.")
+    assert release_workspace.stat().st_mode & 0o777 == 0o700
+    assert (runtime_state / "runtime.json").read_text(encoding="utf-8") == "owned runtime\n"
+    assert not stale_bundle.exists()
+    assert not nested_repository.exists()
+    assert (checkout / "tracked.txt").read_text(encoding="utf-8") == "owned source\n"
+
+    required = subprocess.run(
+        (str(workspace_owner), "require", str(release_workspace)),
+        cwd=checkout,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert required.returncode == 0, required.stderr
+    (release_workspace / "bundle").mkdir()
+    (release_workspace / "bundle/candidate-manifest.json").write_text(
+        "owned artifact\n",
+        encoding="utf-8",
+    )
+    rejected_cleanup = subprocess.run(
+        (str(workspace_owner), "cleanup", str(checkout)),
+        cwd=checkout,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected_cleanup.returncode != 0
+    assert rejected_cleanup.stdout == ""
+    assert rejected_cleanup.stderr == (
+        "error: release workspace is outside the exact runner-owned namespace\n"
+    )
+    assert (checkout / "tracked.txt").read_text(encoding="utf-8") == "owned source\n"
+    cleaned = subprocess.run(
+        (str(workspace_owner), "cleanup", str(release_workspace)),
+        cwd=checkout,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert cleaned.returncode == 0, cleaned.stderr
+    assert not release_workspace.exists()
+
+    hostile_checkout = tmp_path / "hostile-checkout"
+    _initialize_publisher_checkout(hostile_checkout)
+    hostile_target = tmp_path / "foreign-runtime"
+    hostile_target.mkdir()
+    (hostile_checkout / ".nexus-test").symlink_to(hostile_target, target_is_directory=True)
+    rejected = subprocess.run(
+        (str(workspace_owner), "prepare"),
+        cwd=hostile_checkout,
+        env={**environment, "GITHUB_WORKSPACE": str(hostile_checkout)},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+    assert rejected.stdout == ""
+    assert rejected.stderr == ("error: the preserved .nexus-test path must be a real directory\n")
 
 
 def test_backend_dockerfile_has_only_immutable_upstreams_and_baked_identity() -> None:
