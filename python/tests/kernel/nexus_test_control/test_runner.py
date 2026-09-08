@@ -343,8 +343,10 @@ def test_doctor_materializes_a_disposable_fresh_offline_python_environment(
         return subprocess.CompletedProcess(command, returncode, "", "")
 
     environment = {"PATH": "/bin", "UV_PROJECT_ENVIRONMENT": "/foreign"}
+    cache_check = getattr(runner, "_isolated_python_cache_failure", None)
+    assert callable(cache_check), "doctor does not prove fresh offline Python setup"
     assert (
-        runner._isolated_python_cache_failure(
+        cache_check(
             tmp_path,
             environment,
             command_runner=command_runner,
