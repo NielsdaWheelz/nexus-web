@@ -233,6 +233,20 @@ def test_codex_host_is_required_only_after_its_immutable_schema_cutover() -> Non
     assert release._requires_codex_agent_host(cutover) is True
 
 
+def test_codex_generation_resources_fit_the_exact_release_host_envelope() -> None:
+    """Risk: application bounds outgrow the isolated host's enforced resources."""
+
+    from nexus.services import generation_policy
+
+    release = _release_module()
+
+    assert release._CODEX_AGENT_EPHEMERAL_FILE_LIMIT_BYTES == (
+        generation_policy.CODEX_EPHEMERAL_FILE_LIMIT_BYTES
+    )
+    assert release._CODEX_AGENT_EPHEMERAL_ROOT_BYTES == generation_policy.CODEX_EPHEMERAL_ROOT_BYTES
+    assert release._CODEX_AGENT_EPHEMERAL_ROOT_BYTES * 2 <= release._CODEX_AGENT_MEMORY_LIMIT_BYTES
+
+
 def test_first_0224_apply_accepts_the_exact_0216_predecessor_shape(tmp_path: Path) -> None:
     """Risk: release admission requires the new sidecar contract from its predecessor."""
 

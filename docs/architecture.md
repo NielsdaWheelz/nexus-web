@@ -2134,6 +2134,9 @@ one separate typed entrypoint, `./scripts/test`.
 `main` CI triggers one backend publisher. It builds API/worker targets once,
 publishes their GHCR digests and strict manifest, and supplies the immutable host
 bundle. Vercel builds the exact SHA as an unaliased production-target candidate.
+Candidates carrying the Codex agent host first run the separate immutable-bundle
+capacity qualification on the existing VPS; its candidate-bound measured
+evidence must be fresh before application mutation.
 `deploy/hetzner/deploy.sh <source-sha>` validates both lineages, captures current
 content-addressed VPS config by exact path and digest, stops app writers,
 verifies a migration backup when needed, upgrades the linear Alembic head,

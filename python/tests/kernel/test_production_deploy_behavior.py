@@ -177,7 +177,7 @@ def test_codex_agent_host_is_private_worker_image_with_credential_and_socket_iso
 
 
 def test_existing_vps_capacity_qualification_is_immutable_and_exact_candidate_bound() -> None:
-    """Risk: first 0216 promotion runs without exact, immutable measured-host evidence.
+    """Risk: first Codex-host promotion lacks exact immutable measured-host evidence.
 
     The measured behavior (immutable 0444 evidence, exact candidate binding,
     canary phases and exit codes) is proved by the fake-Docker release harness
@@ -195,12 +195,16 @@ def test_existing_vps_capacity_qualification_is_immutable_and_exact_candidate_bo
     release_workflow = (REPO_ROOT / ".github/workflows/backend-images.yml").read_text(
         encoding="utf-8"
     )
+    runbook = (REPO_ROOT / "deployment.md").read_text(encoding="utf-8")
+    normalized_runbook = " ".join(runbook.split())
 
     assert "qualify-codex-capacity" in capacity_probe
     assert " apply " not in capacity_probe
     assert "install-bundle" in capacity_probe
     assert "prove-codex-capacity.sh" in release_workflow
     assert "prove-codex-capacity.sh" in bundle_fetch
+    assert './deploy/hetzner/prove-codex-capacity.sh "$SOURCE_SHA"' in runbook
+    assert "within the preceding 72 hours" in normalized_runbook
 
 
 def test_deploy_uses_existing_current_record_and_artifact_owner_publisher(

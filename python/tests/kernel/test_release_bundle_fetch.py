@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
 
@@ -48,6 +49,17 @@ def test_release_bundle_fetch_binds_unique_artifact_owner_and_source_ci(
         "release.py",
         "testdata/android/player-protocol.json",
     ]
+    controller = ast.parse((output / "release.py").read_text(encoding="utf-8"))
+    nexus_imports: set[str] = set()
+    for node in ast.walk(controller):
+        if isinstance(node, ast.Import):
+            nexus_imports.update(name.name for name in node.names if name.name.startswith("nexus."))
+        elif isinstance(node, ast.ImportFrom) and node.module is not None:
+            if node.module == "nexus":
+                nexus_imports.update(f"nexus.{name.name}" for name in node.names)
+            elif node.module.startswith("nexus."):
+                nexus_imports.add(node.module)
+    assert nexus_imports == {"nexus.release_artifact"}
     events = harness.state()["events"]
     assert any("actions/artifacts?name=" in " ".join(event["arguments"]) for event in events)
     assert any("actions/runs/7001/attempts/1" in " ".join(event["arguments"]) for event in events)

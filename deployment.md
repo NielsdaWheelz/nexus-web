@@ -35,6 +35,9 @@ expected Oracle manifest digest, task contract, and captured VPS config.
 
 - `deploy/hetzner/deploy.sh <source-sha>` is the only application release
   entrypoint. Rerun it unchanged to resume.
+- `deploy/hetzner/prove-codex-capacity.sh <source-sha>` is the only Codex-host
+  release qualification entrypoint. It installs the exact immutable bundle and
+  records measured evidence, but never applies an application release.
 - Release only a clean checkout where `HEAD == origin/main == source-sha` and
   exact `main` CI succeeded.
 - CI builds each backend target once. Production pulls manifest-selected GHCR
@@ -184,7 +187,25 @@ published source SHA.
 ## Release
 
 After exact `main` CI, backend publication, and the staged Vercel build are
-green, announce the no-use window and close clients. Then run:
+green, qualify a candidate that carries the Codex agent host. The passing
+candidate-bound evidence must have been measured on the production host within
+the preceding 72 hours:
+
+```bash
+SOURCE_SHA="$(git rev-parse HEAD)"
+./deploy/hetzner/prove-codex-capacity.sh "$SOURCE_SHA"
+```
+
+This bounded preflight runs the subscription-authenticated cold/warm canary in
+the candidate worker image and measures its real production cgroup, host
+headroom, pressure, swap, OOM counters, and the unchanged long-lived services.
+It does not call `apply`, stop writers, migrate data, or promote Vercel. An
+absent, stale, retriable, or subscription-blocked result is not release
+evidence; diagnose it and rerun the unchanged qualification command. A measured
+contract breach permanently disqualifies the candidate SHA.
+
+After qualification passes, announce the no-use window and close clients. Then
+run:
 
 ```bash
 SOURCE_SHA="$(git rev-parse HEAD)"
@@ -200,7 +221,8 @@ installed bundle; this is recovery authority, not permission to unfreeze main.
 
 The command performs the complete protocol:
 
-1. validates Git, CI, bundle, manifest, and staged Vercel identity;
+1. validates Git, CI, bundle, manifest, staged Vercel identity, and the exact
+   fresh capacity qualification when the candidate carries the Codex host;
 2. installs the immutable bundle and inspects durable host state;
 3. before the first hard-cut attempt, proves exact predecessor identity, host
    capacity, foreign-container absence, and current memory/PID use; when an

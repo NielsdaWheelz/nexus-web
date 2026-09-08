@@ -3632,7 +3632,6 @@ class HostRelease:
 
     def _preflight_codex_agent_host_security(self, bundle: Path) -> None:
         self._require_codex_agent_host_kernel_boundary()
-        self._require_codex_generation_resource_contract()
         _run(
             (
                 "apparmor_parser",
@@ -3641,23 +3640,6 @@ class HostRelease:
             ),
             timeout_seconds=10,
         )
-
-    @staticmethod
-    def _require_codex_generation_resource_contract() -> None:
-        # Lazy by design: base-sensitivity overlays can import the release owner
-        # before the new generation module exists, while a Codex release must
-        # prove the exact candidate policy/deploy relationship before mutation.
-        from nexus.services import generation_policy
-
-        if (
-            _CODEX_AGENT_EPHEMERAL_FILE_LIMIT_BYTES
-            != generation_policy.CODEX_EPHEMERAL_FILE_LIMIT_BYTES
-            or _CODEX_AGENT_EPHEMERAL_ROOT_BYTES != generation_policy.CODEX_EPHEMERAL_ROOT_BYTES
-            or _CODEX_AGENT_EPHEMERAL_ROOT_BYTES * 2 > _CODEX_AGENT_MEMORY_LIMIT_BYTES
-        ):
-            raise PermanentReleaseFailure(
-                "Codex ephemeral storage limits differ from the generation policy or cgroup"
-            )
 
     def _revalidate_attempt_host_capacity(
         self,
