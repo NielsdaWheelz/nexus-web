@@ -121,11 +121,12 @@ def test_full_android_device_sweep_retains_attested_success_evidence(tmp_path: P
         stdout=f"List of devices attached\n{adb_row}\n",
     )
     diagnostic = "NEXUS_CONTROL_GESTURE_DIAGNOSTICS: navigationMode=2"
-    oversized_stdout = "~" * 300_000 + diagnostic
+    oversized_stdout = "~" * 300_000 + "BUILD SUCCESSFUL"
     _write_executable(
         android_root / "gradlew",
         stdout=oversized_stdout,
         passing_test=NEXUS_TEST,
+        instrumentation_diagnostic=diagnostic,
     )
     environment = {
         "PATH": str(tmp_path / "bin"),
@@ -282,6 +283,7 @@ def _write_executable(
     *,
     stdout: str = "",
     passing_test: tuple[str, str] | None = None,
+    instrumentation_diagnostic: str | None = None,
 ) -> None:
     test_report = ""
     if passing_test is not None:
@@ -292,6 +294,15 @@ def _write_executable(
             "(reports / 'TEST-device.xml').write_text(\n"
             f"    {f'<testsuite><testcase classname={class_name!r} name={method!r} /></testsuite>'!r},\n"
             "    encoding='utf-8',\n"
+            ")\n"
+        )
+    diagnostic_report = ""
+    if instrumentation_diagnostic is not None:
+        diagnostic_report = (
+            "testlog = reports / 'device/testlog'\n"
+            "testlog.mkdir(parents=True, exist_ok=True)\n"
+            "(testlog / 'test-results.log').write_text(\n"
+            f"    {f'{instrumentation_diagnostic}\n'!r}, encoding='utf-8'\n"
             ")\n"
         )
     _write(
@@ -309,6 +320,7 @@ def _write_executable(
         "with (Path(os.environ['HOME']) / 'commands.jsonl').open('a') as handle:\n"
         "    handle.write(json.dumps(record, sort_keys=True) + '\\n')\n"
         f"{test_report}"
+        f"{diagnostic_report}"
         f"print({stdout!r})\n",
     )
     path.chmod(0o755)

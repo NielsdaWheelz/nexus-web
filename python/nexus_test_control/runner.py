@@ -4274,7 +4274,8 @@ def _run_android_instrumentation(
     if successful is None:
         raise AssertionError("passing Android instrumentation command identity is absent")
     if _android_nexus_diagnostics_required(context):
-        if _ANDROID_NEXUS_DIAGNOSTIC_MARKER not in (successful.completed.stdout or ""):
+        successful = _retain_android_nexus_diagnostics(android_root, successful)
+        if successful is None:
             return _result(
                 Capability.ANDROID_DEVICE,
                 RunStatus.NOT_RUN,
@@ -4305,6 +4306,45 @@ def _run_android_instrumentation(
         replace(result.evidence, artifacts=(artifact,)),
         result.detail,
     )
+
+
+def _retain_android_nexus_diagnostics(
+    android_root: Path,
+    successful: _SuccessfulFixedCommand,
+) -> _SuccessfulFixedCommand | None:
+    stdout = successful.completed.stdout or ""
+    if _ANDROID_NEXUS_DIAGNOSTIC_MARKER in stdout:
+        return successful
+
+    reports = android_root / "app/build/outputs/androidTest-results"
+    diagnostic_lines: list[str] = []
+    for report in sorted(reports.glob("connected/**/testlog/test-results.log")):
+        try:
+            if report.stat().st_size > _ANDROID_DEVICE_ARTIFACT_MAX_BYTES:
+                return None
+            report_text = report.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            continue
+        diagnostic_lines.extend(
+            line
+            for line in report_text.splitlines()
+            if line.startswith(_ANDROID_NEXUS_DIAGNOSTIC_MARKER)
+            and len(line.encode("utf-8")) <= _ANDROID_DEVICE_OUTPUT_LIMIT
+        )
+    if len(diagnostic_lines) != 1:
+        return None
+
+    retained_stdout = stdout
+    if retained_stdout and not retained_stdout.endswith("\n"):
+        retained_stdout += "\n"
+    retained_stdout += diagnostic_lines[0] + "\n"
+    completed = subprocess.CompletedProcess(
+        args=successful.completed.args,
+        returncode=successful.completed.returncode,
+        stdout=retained_stdout,
+        stderr=successful.completed.stderr,
+    )
+    return replace(successful, completed=completed)
 
 
 def _android_nexus_diagnostics_required(context: CapabilityContext) -> bool:

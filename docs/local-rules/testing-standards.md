@@ -759,9 +759,11 @@ selected inventory row, bound serial, exact proof/scope and command identity,
 exit code, and successful instrumentation stdout/stderr; inability to retain it is
 `not_run`, never pass. When the Nexus-control gesture owner is selected, its
 successful test emits `NEXUS_CONTROL_GESTURE_DIAGNOSTICS:` through
-`Instrumentation.REPORT_KEY_STREAMRESULT`; absence of that exact marker from
-captured stdout or absence of exactly one fresh passing result for the named
-Nexus method is also `not_run`. `nightly` uses the hosted emulator;
+`Instrumentation.REPORT_KEY_STREAMRESULT`. When Gradle suppresses that stream
+from its success console, the controller recovers exactly one bounded marker
+from the freshly cleared UTP `testlog/test-results.log` and appends it to the
+retained stdout. Absence of that marker or absence of exactly one fresh passing
+result for the named Nexus method is still `not_run`. `nightly` uses the hosted emulator;
 `release` runs on the protected USB runner and requires the wired handset
 there. The debug sweep
 excludes the signed-promotion annotation, whose scenarios only the signed lane

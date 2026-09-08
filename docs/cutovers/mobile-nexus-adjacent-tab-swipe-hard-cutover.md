@@ -1009,9 +1009,12 @@ and the keyboard proof's in-worktree red in the work report.
    diagnostics. The USB row must be the inventory's only authorized `device`
    row; a coexisting emulator or wireless transport invalidates the run.
    The Nexus proof emits `NEXUS_CONTROL_GESTURE_DIAGNOSTICS:` through
-   `Instrumentation.REPORT_KEY_STREAMRESULT`; a selected Nexus owner whose
-   captured stdout lacks that marker, or whose fresh Gradle result set does not
-   contain exactly one passing result for the named Nexus method, is `not_run`.
+   `Instrumentation.REPORT_KEY_STREAMRESULT`; when Gradle suppresses that
+   stream from its success console, the controller recovers exactly one bounded
+   marker from the freshly cleared UTP `testlog/test-results.log` and appends it
+   to retained stdout. A selected Nexus owner whose retained stdout lacks that
+   marker, or whose fresh Gradle result set does not contain exactly one passing
+   result for the named Nexus method, is `not_run`.
    Failure to retain the artifact is likewise `not_run`. `./scripts/test android-visual` runs no
    instrumentation and is not this evidence (it may
    capture accompanying screenshots). Any
