@@ -147,6 +147,25 @@ cannot read a newly created package, never release that SHA; make both
 successful SHA. Once installed, the root-owned immutable bundle is the resume
 and verification authority after the 90-day Actions retention window.
 
+### Shared self-hosted release runner
+
+When the `main` gate temporarily runs on the shared 8 GiB devbox, reserve the
+host for that gate before creating the release SHA. Prove that no other Actions
+job or local `./scripts/test` process is active. For every idle checkout that
+has its own `.nexus-test/runtime.json`, run that checkout's
+`./scripts/test clean`; this is the only supported way to remove its recorded
+test stack, volumes, and runtime state. Never stop or delete test containers by
+name discovery from another checkout, because only the owning runtime record
+and recovery ledger are cleanup authority. Preserve shared dependency, image,
+and build caches.
+
+The controller's per-heavy-operation 2,048 MiB `MemAvailable` admission remains
+the authoritative safety gate. Do not lower it or treat `not_run` as success.
+If source CI attempt 1 is denied for host capacity, clean the verified idle test
+runtimes, confirm the devbox is otherwise idle, and use a fresh commit SHA; a
+successful CI rerun is diagnostic evidence but is intentionally not publishable
+under the first-attempt artifact lineage above.
+
 ## Explicit config publication
 
 Tracked contracts live in `deploy/env/*.example`; real files beside them remain
