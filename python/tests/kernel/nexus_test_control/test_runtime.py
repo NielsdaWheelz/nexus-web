@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+import nexus_test_control.runtime as runtime_control
 from nexus_test_control.model import Resource, ResourceKind
 from nexus_test_control.runtime import (
     RUNTIME_VERSION,
@@ -37,7 +38,6 @@ from nexus_test_control.runtime import (
     template_database_name,
     template_fingerprint,
     template_lifecycle_lock,
-    upgrade_runtime_to_current,
     workspace_heavy_lock,
 )
 
@@ -226,7 +226,9 @@ def test_upgradeable_runtime_adds_every_missing_owned_port_atomically(
         del previous["ports"][name]
     runtime_path.write_text(json.dumps(previous), encoding="utf-8")
 
-    upgraded = upgrade_runtime_to_current(tmp_path, TEST_ENV, added_ports)
+    upgrade = getattr(runtime_control, "upgrade_runtime_to_current", None)
+    assert callable(upgrade), "runtime has no bounded v3/v4 migration"
+    upgraded = upgrade(tmp_path, TEST_ENV, added_ports)
 
     assert upgraded.version == 5
     persisted_ports = json.loads(runtime_path.read_text(encoding="utf-8"))["ports"]
@@ -245,7 +247,13 @@ def test_upgradeable_runtime_rejects_an_incomplete_port_migration(tmp_path: Path
     runtime_path.write_text(json.dumps(previous), encoding="utf-8")
 
     with pytest.raises(RuntimeContractError, match="migration port keys"):
-        upgrade_runtime_to_current(tmp_path, TEST_ENV, {"provider_api": 18101})
+        upgrade = getattr(runtime_control, "upgrade_runtime_to_current", None)
+        assert callable(upgrade), "runtime has no bounded v3/v4 migration"
+        upgrade(
+            tmp_path,
+            TEST_ENV,
+            {"provider_api": 18101},
+        )
 
     assert json.loads(runtime_path.read_text(encoding="utf-8")) == previous
 
