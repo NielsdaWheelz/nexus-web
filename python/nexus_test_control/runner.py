@@ -5202,6 +5202,44 @@ def _gradle_assertion_passed(android_root: Path, target: str) -> bool:
     return matches == 1
 
 
+def _isolated_python_cache_failure(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    *,
+    command_runner: Callable[..., subprocess.CompletedProcess[str]] = run_command,
+) -> str | None:
+    with tempfile.TemporaryDirectory(prefix="nexus-doctor-python-") as temporary:
+        isolated_environment = {
+            **environment,
+            "UV_PROJECT_ENVIRONMENT": str(Path(temporary) / ".venv"),
+        }
+        command = (
+            "uv",
+            "sync",
+            "--project",
+            str(repo_root / "python"),
+            "--all-extras",
+            "--locked",
+            "--offline",
+            "--no-progress",
+        )
+        try:
+            checked = command_runner(
+                command,
+                cwd=repo_root,
+                env=isolated_environment,
+                capture_output=True,
+                check=False,
+            )
+        except OSError as error:
+            return (
+                f"fresh offline Python environment check could not start: {error.strerror or error}"
+            )
+    if checked.returncode != 0:
+        return "locked Python artifacts cannot materialize a fresh offline environment"
+    return None
+
+
 def _run_doctor(context: CapabilityContext, environment: Mapping[str, str]) -> CapabilityResult:
     started = time.monotonic_ns()
     child_environment = _child_environment(environment)
@@ -5244,6 +5282,13 @@ def _run_doctor(context: CapabilityContext, environment: Mapping[str, str]) -> C
         return _not_run(
             Capability.DOCTOR, f"locked tool owners are absent: {', '.join(missing_paths)}"
         )
+
+    cache_failure = _isolated_python_cache_failure(
+        context.repo_root,
+        child_environment,
+    )
+    if cache_failure is not None:
+        return _fail(Capability.DOCTOR, cache_failure)
 
     dependency_commands: tuple[FixedCommand, ...] = (
         (

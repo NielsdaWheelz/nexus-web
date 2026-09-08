@@ -300,6 +300,64 @@ def test_doctor_is_not_run_when_its_locked_tool_owners_are_absent(tmp_path: Path
     assert evidence.capabilities[0].peak_owned_mib > 0
 
 
+@pytest.mark.parametrize(
+    ("returncode", "expected_failure"),
+    (
+        (0, None),
+        (1, "locked Python artifacts cannot materialize a fresh offline environment"),
+    ),
+)
+def test_doctor_materializes_a_disposable_fresh_offline_python_environment(
+    tmp_path: Path,
+    returncode: int,
+    expected_failure: str | None,
+) -> None:
+    observed_environment: dict[str, str] = {}
+    isolated_root: Path | None = None
+
+    def command_runner(
+        command: tuple[str, ...],
+        *,
+        cwd: Path,
+        env: Mapping[str, str],
+        capture_output: bool,
+        check: bool,
+    ) -> subprocess.CompletedProcess[str]:
+        nonlocal isolated_root
+        assert command == (
+            "uv",
+            "sync",
+            "--project",
+            str(tmp_path / "python"),
+            "--all-extras",
+            "--locked",
+            "--offline",
+            "--no-progress",
+        )
+        assert cwd == tmp_path
+        assert capture_output is True
+        assert check is False
+        observed_environment.update(env)
+        isolated_root = Path(env["UV_PROJECT_ENVIRONMENT"]).parent
+        assert isolated_root.is_dir()
+        return subprocess.CompletedProcess(command, returncode, "", "")
+
+    environment = {"PATH": "/bin", "UV_PROJECT_ENVIRONMENT": "/foreign"}
+    assert (
+        runner._isolated_python_cache_failure(
+            tmp_path,
+            environment,
+            command_runner=command_runner,
+        )
+        == expected_failure
+    )
+
+    assert environment == {"PATH": "/bin", "UV_PROJECT_ENVIRONMENT": "/foreign"}
+    assert observed_environment["PATH"] == "/bin"
+    assert observed_environment["UV_PROJECT_ENVIRONMENT"] != "/foreign"
+    assert isolated_root is not None and not isolated_root.exists()
+
+
 def test_changed_policy_scans_only_the_selected_python_proof(tmp_path: Path) -> None:
     proof = tmp_path / "python/tests/kernel/test_rule.py"
     _write(proof, "import time\n\ndef test_rule():\n    time.sleep(1)\n")

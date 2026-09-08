@@ -111,7 +111,9 @@ runs:
 
     - name: Install locked Python dependencies
       shell: bash
-      run: uv sync --all-extras --locked --directory python
+      # Sensitivity builds fresh offline environments. Reinstalling hydrates
+      # every locked artifact even when a persistent runner's venv is current.
+      run: uv sync --all-extras --locked --reinstall --directory python
 
     # The background worker's cgroup proofs need a rootless systemd user manager.
     # The hosted runner must be provisioned; the protected self-hosted host may
