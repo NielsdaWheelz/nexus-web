@@ -1790,14 +1790,25 @@ def test_clean_removes_only_the_exact_recorded_workspace_runtime(tmp_path: Path)
     assert foreign.read_text(encoding="utf-8") == "preserve"
 
 
-def test_clean_upgrades_then_removes_the_exact_previous_runtime(
+@pytest.mark.parametrize(
+    ("version", "removed_ports", "available_ports"),
+    (
+        (3, ("agent_tools_mcp", "provider_api"), {18001, 19093}),
+        (4, ("provider_api",), {19093}),
+    ),
+)
+def test_clean_upgrades_then_removes_an_exact_upgradeable_runtime(
     tmp_path: Path,
+    version: int,
+    removed_ports: tuple[str, ...],
+    available_ports: set[int],
 ) -> None:
     runtime = initialize_runtime(tmp_path, TEST_ENV, _ports())
     runtime_path = tmp_path / ".nexus-test/runtime.json"
     previous = json.loads(runtime_path.read_text(encoding="utf-8"))
-    previous["version"] = 4
-    del previous["ports"]["provider_api"]
+    previous["version"] = version
+    for name in removed_ports:
+        del previous["ports"][name]
     runtime_path.write_text(json.dumps(previous), encoding="utf-8")
     commands: list[tuple[str, ...]] = []
 
@@ -1811,7 +1822,7 @@ def test_clean_upgrades_then_removes_the_exact_previous_runtime(
             tmp_path,
             TEST_ENV,
             command_runner=run_command,
-            port_available=lambda port: port == 19093,
+            port_available=available_ports.__contains__,
         )
         == ()
     )

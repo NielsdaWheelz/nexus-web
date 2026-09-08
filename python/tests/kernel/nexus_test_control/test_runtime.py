@@ -37,7 +37,7 @@ from nexus_test_control.runtime import (
     template_database_name,
     template_fingerprint,
     template_lifecycle_lock,
-    upgrade_previous_runtime,
+    upgrade_runtime_to_current,
     workspace_heavy_lock,
 )
 
@@ -201,19 +201,53 @@ def test_runtime_ports_cannot_be_replaced_after_resource_ownership_exists(tmp_pa
         initialize_runtime(tmp_path, TEST_ENV, changed)
 
 
-def test_previous_runtime_adds_one_owned_provider_api_port_atomically(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("version", "removed_ports", "added_ports"),
+    (
+        (
+            3,
+            ("agent_tools_mcp", "provider_api"),
+            {"agent_tools_mcp": 18101, "provider_api": 18102},
+        ),
+        (4, ("provider_api",), {"provider_api": 18101}),
+    ),
+)
+def test_upgradeable_runtime_adds_every_missing_owned_port_atomically(
+    tmp_path: Path,
+    version: int,
+    removed_ports: tuple[str, ...],
+    added_ports: dict[str, int],
+) -> None:
     initialize_runtime(tmp_path, TEST_ENV, _ports())
     runtime_path = tmp_path / ".nexus-test/runtime.json"
     previous = json.loads(runtime_path.read_text(encoding="utf-8"))
-    previous["version"] = 4
+    previous["version"] = version
+    for name in removed_ports:
+        del previous["ports"][name]
+    runtime_path.write_text(json.dumps(previous), encoding="utf-8")
+
+    upgraded = upgrade_runtime_to_current(tmp_path, TEST_ENV, added_ports)
+
+    assert upgraded.version == 5
+    persisted_ports = json.loads(runtime_path.read_text(encoding="utf-8"))["ports"]
+    for name, port in added_ports.items():
+        assert getattr(upgraded.ports, name) == port
+        assert persisted_ports[name] == port
+
+
+def test_upgradeable_runtime_rejects_an_incomplete_port_migration(tmp_path: Path) -> None:
+    initialize_runtime(tmp_path, TEST_ENV, _ports())
+    runtime_path = tmp_path / ".nexus-test/runtime.json"
+    previous = json.loads(runtime_path.read_text(encoding="utf-8"))
+    previous["version"] = 3
+    del previous["ports"]["agent_tools_mcp"]
     del previous["ports"]["provider_api"]
     runtime_path.write_text(json.dumps(previous), encoding="utf-8")
 
-    upgraded = upgrade_previous_runtime(tmp_path, TEST_ENV, 18101)
+    with pytest.raises(RuntimeContractError, match="migration port keys"):
+        upgrade_runtime_to_current(tmp_path, TEST_ENV, {"provider_api": 18101})
 
-    assert upgraded.version == 5
-    assert upgraded.ports.provider_api == 18101
-    assert json.loads(runtime_path.read_text(encoding="utf-8"))["ports"]["provider_api"] == 18101
+    assert json.loads(runtime_path.read_text(encoding="utf-8")) == previous
 
 
 def test_claim_restart_repairs_ownership_persisted_before_its_empty_ledger(

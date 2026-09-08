@@ -18,7 +18,12 @@ from typing import cast
 from nexus_test_control.model import Resource, ResourceKind
 
 RUNTIME_VERSION = 5
-PREVIOUS_RUNTIME_VERSION = 4
+# v3 was the last main predecessor; v4 was emitted by intermediate commits
+# before the v5 squash and can still own a persistent developer runtime.
+_UPGRADEABLE_RUNTIME_MISSING_PORTS = {
+    3: ("agent_tools_mcp", "provider_api"),
+    4: ("provider_api",),
+}
 LEDGER_VERSION = 1
 LOOPBACK_HOST = "127.0.0.1"
 TEMPLATE_FINGERPRINT_HEX_LENGTH = 40
@@ -120,6 +125,15 @@ class RuntimeRecord:
     supabase_workdir: str
     ports: RuntimePorts
     owned_run_ids: tuple[str, ...] = ()
+
+
+def missing_runtime_port_names(record: RuntimeRecord) -> tuple[str, ...]:
+    if record.version == RUNTIME_VERSION:
+        return ()
+    try:
+        return _UPGRADEABLE_RUNTIME_MISSING_PORTS[record.version]
+    except KeyError as error:
+        raise RuntimeContractError("runtime version is not upgradeable") from error
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,6 +265,10 @@ def initialize_runtime(
 
 def read_runtime(repo_root: Path) -> RuntimeRecord:
     record = _runtime_from_json(_read_json(runtime_record_path(repo_root)))
+    return _require_owned_runtime(repo_root, record)
+
+
+def _require_owned_runtime(repo_root: Path, record: RuntimeRecord) -> RuntimeRecord:
     expected_repo_id = repo_id_for(repo_root)
     if record.repo_id != expected_repo_id:
         raise RuntimeContractError("runtime belongs to a different repository")
@@ -852,28 +870,43 @@ def _runtime_to_json(record: RuntimeRecord) -> dict[str, object]:
     }
 
 
-def _runtime_from_json(value: object, *, allow_previous: bool = False) -> RuntimeRecord:
+def _runtime_from_json(value: object, *, allow_upgradeable: bool = False) -> RuntimeRecord:
     data = _object(value, "runtime")
     _keys(
         data,
         {"version", "repo_id", "compose_project", "supabase_workdir", "ports", "owned_run_ids"},
         "runtime",
     )
-    version = cast(int, data["version"])
+    raw_version = data["version"]
+    if isinstance(raw_version, bool) or not isinstance(raw_version, int):
+        raise RuntimeContractError("runtime version must be an integer")
+    version = raw_version
     ports = _object(data["ports"], "runtime ports")
+    if version == RUNTIME_VERSION:
+        missing_ports: tuple[str, ...] = ()
+    elif allow_upgradeable:
+        try:
+            missing_ports = _UPGRADEABLE_RUNTIME_MISSING_PORTS[version]
+        except KeyError as error:
+            raise RuntimeContractError("runtime version is not upgradeable") from error
+    else:
+        raise RuntimeContractError("runtime version is invalid")
     expected_ports = set(RuntimePorts.__annotations__)
-    if allow_previous and version == PREVIOUS_RUNTIME_VERSION:
-        expected_ports.remove("provider_api")
+    expected_ports.difference_update(missing_ports)
     _keys(ports, expected_ports, "runtime ports")
-    if version == PREVIOUS_RUNTIME_VERSION:
+    if missing_ports:
         used_ports = set(ports.values())
-        placeholder = next(
-            (candidate for candidate in range(65_535, 0, -1) if candidate not in used_ports),
-            None,
-        )
-        if placeholder is None:
-            raise RuntimeContractError("previous runtime has no free provider-API-port placeholder")
-        ports = {**ports, "provider_api": placeholder}
+        placeholders: dict[str, int] = {}
+        for name in missing_ports:
+            placeholder = next(
+                (candidate for candidate in range(65_535, 0, -1) if candidate not in used_ports),
+                None,
+            )
+            if placeholder is None:
+                raise RuntimeContractError("upgradeable runtime has no free port placeholder")
+            placeholders[name] = placeholder
+            used_ports.add(placeholder)
+        ports = {**ports, **placeholders}
     run_ids = data["owned_run_ids"]
     if not isinstance(run_ids, list) or any(not isinstance(item, str) for item in run_ids):
         raise RuntimeContractError("owned_run_ids must be an array of strings")
@@ -885,72 +918,70 @@ def _runtime_from_json(value: object, *, allow_previous: bool = False) -> Runtim
         ports=RuntimePorts(**cast(dict[str, int], ports)),
         owned_run_ids=tuple(run_ids),
     )
-    allowed_versions = (
-        {RUNTIME_VERSION, PREVIOUS_RUNTIME_VERSION} if allow_previous else {RUNTIME_VERSION}
-    )
-    if record.version not in allowed_versions or record.owned_run_ids != tuple(
-        sorted(set(run_ids))
-    ):
-        raise RuntimeContractError("runtime version or owned runs are invalid")
+    if record.owned_run_ids != tuple(sorted(set(run_ids))):
+        raise RuntimeContractError("runtime owned runs are invalid")
     return record
 
 
-def upgrade_previous_runtime(
+def upgrade_runtime_to_current(
     repo_root: Path,
     environment: Mapping[str, str],
-    provider_api: int,
+    added_ports: Mapping[str, int],
 ) -> RuntimeRecord:
-    """Atomically add the v5 provider API port to an exact workspace-owned v4 record."""
+    """Atomically add every missing port to an exact workspace-owned v3 or v4 record."""
     require_test_environment(environment)
-    if isinstance(provider_api, bool) or not isinstance(provider_api, int):
-        raise RuntimeContractError("provider API port must be an integer")
-    if not 1 <= provider_api <= 65_535:
-        raise RuntimeContractError("provider API port must be between 1 and 65535")
     with _state_lock(repo_root, "runtime"):
-        record = _runtime_from_json(
-            _read_json(runtime_record_path(repo_root)),
-            allow_previous=True,
+        record = _require_owned_runtime(
+            repo_root,
+            _runtime_from_json(
+                _read_json(runtime_record_path(repo_root)),
+                allow_upgradeable=True,
+            ),
         )
         if record.version == RUNTIME_VERSION:
-            return read_runtime(repo_root)
-        if record.version != PREVIOUS_RUNTIME_VERSION:
-            raise RuntimeContractError("upgrade requires the immediately previous runtime")
-        owned_ports = {
-            port for name, port in record.ports.as_dict().items() if name != "provider_api"
+            if added_ports:
+                raise RuntimeContractError("current runtime does not accept migration ports")
+            return record
+        missing_ports = missing_runtime_port_names(record)
+        if set(added_ports) != set(missing_ports):
+            raise RuntimeContractError(
+                f"runtime migration port keys must be exactly {sorted(missing_ports)}"
+            )
+        if any(
+            isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65_535
+            for port in added_ports.values()
+        ):
+            raise RuntimeContractError(
+                "runtime migration ports must be integers from 1 through 65535"
+            )
+        persisted_ports = {
+            name: port for name, port in record.ports.as_dict().items() if name not in missing_ports
         }
-        if provider_api in owned_ports:
-            raise RuntimeContractError("provider API port collides with an owned runtime port")
-        expected_repo_id = repo_id_for(repo_root)
-        if record.repo_id != expected_repo_id:
-            raise RuntimeContractError("runtime belongs to a different repository")
-        if record.compose_project != compose_project_name(expected_repo_id):
-            raise RuntimeContractError("runtime compose project is not repository-owned")
-        if record.supabase_workdir != str(runtime_state_dir(repo_root) / "supabase"):
-            raise RuntimeContractError("runtime Supabase workdir is outside repository state")
+        if len(set(added_ports.values())) != len(added_ports) or set(
+            added_ports.values()
+        ).intersection(persisted_ports.values()):
+            raise RuntimeContractError("runtime migration ports collide with owned runtime ports")
+        current_ports = RuntimePorts(**{**persisted_ports, **added_ports})
         upgraded = replace(
             record,
             version=RUNTIME_VERSION,
-            ports=replace(record.ports, provider_api=provider_api),
+            ports=current_ports,
         )
         _write_json(runtime_record_path(repo_root), _runtime_to_json(upgraded))
         return upgraded
 
 
-def read_previous_runtime_for_cleanup(repo_root: Path) -> RuntimeRecord:
-    """Decode v4 only for exact owned cleanup; never start or reuse it."""
-    record = _runtime_from_json(
-        _read_json(runtime_record_path(repo_root)),
-        allow_previous=True,
+def read_upgradeable_runtime(repo_root: Path) -> RuntimeRecord:
+    """Decode v3 or v4 for exact migration or cleanup; never start or reuse it."""
+    record = _require_owned_runtime(
+        repo_root,
+        _runtime_from_json(
+            _read_json(runtime_record_path(repo_root)),
+            allow_upgradeable=True,
+        ),
     )
-    if record.version != PREVIOUS_RUNTIME_VERSION:
-        raise RuntimeContractError("cleanup fallback requires the immediately previous runtime")
-    expected_repo_id = repo_id_for(repo_root)
-    if record.repo_id != expected_repo_id:
-        raise RuntimeContractError("runtime belongs to a different repository")
-    if record.compose_project != compose_project_name(expected_repo_id):
-        raise RuntimeContractError("runtime compose project is not repository-owned")
-    if record.supabase_workdir != str(runtime_state_dir(repo_root) / "supabase"):
-        raise RuntimeContractError("runtime Supabase workdir is outside repository state")
+    if record.version == RUNTIME_VERSION:
+        raise RuntimeContractError("runtime is already current")
     return record
 
 
