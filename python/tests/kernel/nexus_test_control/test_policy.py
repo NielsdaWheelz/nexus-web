@@ -201,6 +201,18 @@ def _minimal_repository(root: Path) -> None:
     )
     _write(
         root,
+        "scripts/ci-proof-artifact.sh",
+        "test-results/.nexus-ignore-contract\n"
+        "CI evidence staging admits only changed or full\n"
+        "test invocation did not claim exactly one new run evidence directory\n"
+        "run evidence contains a symlink, special file, or foreign owner\n"
+        "terminal run evidence does not match the CI invocation\n"
+        "nexus-ci-evidence.XXXXXXXX\n"
+        'cp --archive --reflink=auto -- "$run_directory" "$evidence_workspace/runs/"\n'
+        'rm --recursive --force --one-file-system -- "$evidence_workspace"\n',
+    )
+    _write(
+        root,
         ".github/workflows/ci.yml",
         "workflow_dispatch:\n"
         "pull_request_number:\n"
@@ -217,10 +229,14 @@ def _minimal_repository(root: Path) -> None:
         'merge_timestamp="$(git show --no-patch --format=%cI "$EXPECTED_HEAD_SHA")"\n'
         'GIT_COMMITTER_DATE="$merge_timestamp"\n'
         "git rev-list --parents -n 1 HEAD\n"
-        'run: ./scripts/test changed --base "$NEXUS_TEST_BASE_SHA"\n'
+        'run: scripts/ci-proof-artifact.sh run changed --base "$NEXUS_TEST_BASE_SHA"\n'
         "if: github.event_name == 'push'\n"
-        "run: ./scripts/test full\n"
-        "if: always()\n",
+        "run: scripts/ci-proof-artifact.sh run full\n"
+        "if: ${{ always() && steps.proof.outputs.path != '' }}\n"
+        "path: ${{ steps.proof.outputs.path }}/\n"
+        "if-no-files-found: error\n"
+        "include-hidden-files: true\n"
+        'scripts/ci-proof-artifact.sh cleanup "$NEXUS_CI_EVIDENCE_PATH"\n',
     )
     _write(
         root,
@@ -534,6 +550,33 @@ def test_repository_guard_rejects_rogue_workflow_test_route(tmp_path: Path) -> N
     )
 
     assert "repository-test-route-owner" in _rules(repository_violations(tmp_path))
+
+
+@pytest.mark.parametrize(
+    "route",
+    (
+        "scripts/ci-proof-artifact.sh run full",
+        "./scripts/ci-proof-artifact.sh run full",
+    ),
+)
+def test_repository_guard_rejects_rogue_ci_artifact_adapter_route(
+    tmp_path: Path,
+    route: str,
+) -> None:
+    _minimal_repository(tmp_path)
+    _write(
+        tmp_path,
+        ".github/workflows/rogue.yml",
+        f"steps:\n  - run: {route}\n",
+    )
+
+    violations = repository_violations(tmp_path)
+
+    assert any(
+        violation.rule == "repository-test-route-owner"
+        and violation.path == ".github/workflows/rogue.yml"
+        for violation in violations
+    )
 
 
 def test_repository_guard_rejects_rogue_composite_action_test_route(tmp_path: Path) -> None:

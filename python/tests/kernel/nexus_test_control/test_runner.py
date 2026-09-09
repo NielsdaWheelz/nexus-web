@@ -818,8 +818,10 @@ def test_complete_static_platform_runs_every_owned_check(tmp_path: Path) -> None
     shell_paths = (
         "deploy/cloudflare/apply-r2-cors.sh",
         "deploy/cloudflare/apply-r2-lifecycle.sh",
+        "deploy/hetzner/backend-publisher-workspace.sh",
         "deploy/hetzner/deploy.sh",
         "deploy/hetzner/fetch-release-bundle.sh",
+        "deploy/hetzner/prove-codex-capacity.sh",
         "deploy/hetzner/provision.sh",
         "deploy/hetzner/reconcile-oracle.sh",
         "deploy/hetzner/sync-env.sh",
@@ -827,6 +829,7 @@ def test_complete_static_platform_runs_every_owned_check(tmp_path: Path) -> None
         "deploy/supabase/verify-auth-config.sh",
         "deploy/vercel/sync-env.sh",
         "deploy/vercel/sync-resource-sharing-firewall.sh",
+        "scripts/ci-proof-artifact.sh",
     )
     for path in shell_paths:
         _write(tmp_path / path, "#!/usr/bin/env bash\nset -eu\n")
@@ -994,8 +997,10 @@ def test_complete_fast_commands_are_fixed_to_their_final_owners(tmp_path: Path) 
     for path in (
         "deploy/cloudflare/apply-r2-cors.sh",
         "deploy/cloudflare/apply-r2-lifecycle.sh",
+        "deploy/hetzner/backend-publisher-workspace.sh",
         "deploy/hetzner/deploy.sh",
         "deploy/hetzner/fetch-release-bundle.sh",
+        "deploy/hetzner/prove-codex-capacity.sh",
         "deploy/hetzner/provision.sh",
         "deploy/hetzner/reconcile-oracle.sh",
         "deploy/hetzner/sync-env.sh",
@@ -1003,6 +1008,7 @@ def test_complete_fast_commands_are_fixed_to_their_final_owners(tmp_path: Path) 
         "deploy/supabase/verify-auth-config.sh",
         "deploy/vercel/sync-env.sh",
         "deploy/vercel/sync-resource-sharing-firewall.sh",
+        "scripts/ci-proof-artifact.sh",
     ):
         _write(tmp_path / path, "#!/usr/bin/env bash\nset -eu\n")
     _write(tmp_path / "deploy/hetzner/docker-compose.yml", "services: {}\n")

@@ -77,7 +77,8 @@ prepare() {
       die "the preserved .nexus-test directory must be owned by the publisher user"
     fi
   fi
-  if ! git -C "$checkout" check-ignore --quiet -- .nexus-test; then
+  if ! git -C "$checkout" check-ignore --quiet -- \
+    .nexus-test/.nexus-ignore-contract; then
     die ".nexus-test must remain an explicit ignored runtime boundary"
   fi
   if ! git -C "$checkout" diff --quiet --ignore-submodules=none -- \
