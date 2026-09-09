@@ -101,13 +101,19 @@ local implementation verification.
 The sensitivity registry uses `coherent-fault` for the new shared-kernel
 boundaries: the baseline lacks the shared package, new lifecycle result and
 asynchronous recorder contract. It also uses that exception for the retained
-accepted-child replay, MCP authority, dossier uncertainty and prompt-safety
+accepted-child replay, MCP authority, dossier uncertainty and tool-safety
 owners. Their test support now constructs the required implementation revision,
 awaits recorder operations, and uses the renamed generation failure encoder;
 overlaying that support onto the old dependency graph cannot reach the retained
 behavioral assertion. Each exception pins one reviewed exact owner and one
 product-only fault with an explicit assertion fingerprint. Existing unrelated
 BASE proofs retain their original sensitivity mode.
+
+The tool-safety eval owns its exact generation and job IDs through setup,
+execution and teardown; it does not depend on a sibling service fixture.
+Its fault removes only the frozen-resource-scope refusal before tool-position
+allocation. The eval must reject that change at its existing server-refusal
+oracle, while retaining the zero-position and zero-domain-mutation checks.
 
 Five retained exact owners also use coherent faults. The transport-plan and
 generation-policy fixtures require `ToolBinding.implementation_revision`, which

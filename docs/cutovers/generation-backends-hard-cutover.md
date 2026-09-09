@@ -1700,7 +1700,7 @@ RED:
   | `generation-reconciliation-fingerprint-bypass` | reconciliation: a mismatched immutable request is accepted |
   | `agent-tool-grant-scope-bypass` | authority: a bearer can widen its frozen scope |
   | `agent-tool-mcp-grant-gate-bypass` | authority: a signed bearer without live authority crosses the public MCP mount |
-  | `llm-tool-safety-prompt-bypass` | eval: reviewed prompt-injection containment disappears |
+  | `llm-generation-tool-scope-bypass` | eval: an unadmitted resource reaches durable tool-position allocation |
   | `codex-generation-policy-plan-bypass` | policy: the exact generation portfolio drifts |
   | `durable-codex-operation-revision-shadow` | adapters: a domain owner shadows runtime policy |
   | `codex-temporary-confinement-bypass` | process: the confined temporary/workspace policy weakens |

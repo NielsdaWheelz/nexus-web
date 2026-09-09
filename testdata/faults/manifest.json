@@ -276,7 +276,7 @@
       ],
       "expected_failure": "generation dispatch did not persist the Uncertain checkpoint atomically",
       "changed_owner_red": "coherent-fault",
-      "changed_owner_sha256": "998550d8b36d365a0aa402ed271e6dcbb9d5dbb1abcb0b47ce2c57e76d0a8672"
+      "changed_owner_sha256": "277855f846f310ef9ed5176b837704cf3a68c64abdba61ac7f2e823e8c699adb"
     },
     {
       "id": "generation-reconciliation-fingerprint-bypass",
@@ -384,9 +384,9 @@
       "proofs": [
         "pytest:python/tests/service/test_generation_tool_authority.py::test_frozen_plan_is_transport_neutral_and_fenced"
       ],
-      "expected_failure": "lost job lease still authorized an MCP receipt",
+      "expected_failure": "DID NOT RAISE",
       "changed_owner_red": "coherent-fault",
-      "changed_owner_sha256": "3fa8c1bee3c70bb60faf42f98233778089feafc09ecb4bfdc4aac7bc0b460e65"
+      "changed_owner_sha256": "9a4dd54bf3169d76e73c6b29ab67f90f05840e95cc18fd57b849f19bb7550093"
     },
     {
       "id": "agent-tool-mcp-grant-gate-bypass",
@@ -397,7 +397,7 @@
       ],
       "expected_failure": "an unauthorized grant crossed the public MCP mount",
       "changed_owner_red": "coherent-fault",
-      "changed_owner_sha256": "0d53f2ea58b4d3edd9ad0f20953b5d15366ca4e462d62dfc29ef1a42e608f0e4"
+      "changed_owner_sha256": "8bb61bbd7ce54d30b119ef8bb709092a8282f193b32db554140af7c25b1e4696"
     },
     {
       "id": "llm-write-tool-authorization-bypass",
@@ -409,15 +409,15 @@
       "expected_failure": "foreign mutating tool crossed owner authorization"
     },
     {
-      "id": "llm-tool-safety-prompt-bypass",
-      "patch": "testdata/faults/llm-tool-safety-prompt-bypass.patch",
-      "sha256": "ec4e995b8aeb1b8aa5c17bece91e61f549f2c2b2e1f573baa311afd667be4b1d",
+      "id": "llm-generation-tool-scope-bypass",
+      "patch": "testdata/faults/llm-generation-tool-scope-bypass.patch",
+      "sha256": "d2631e66fb46f57313c1e9626e172ef0af4dbdcd6eec83e6143b2b3e253891e2",
       "proofs": [
         "pytest:python/tests/evals/test_tool_safety_eval.py::test_generation_tool_plans_refuse_untrusted_escalation"
       ],
-      "expected_failure": "production prompt lost a reviewed tool-safety instruction",
+      "expected_failure": "DID NOT RAISE",
       "changed_owner_red": "coherent-fault",
-      "changed_owner_sha256": "3a592ebbe17a173afc529c3a35202c7bf59adbaa4a9ce59a186090f28e9439b0"
+      "changed_owner_sha256": "45022354fcf2d2f21f2f0a30af7b909265f0e68a0e09ba56b8c29c8c4eec5099"
     },
     {
       "id": "nexus-tool-declaration-effect-bypass",

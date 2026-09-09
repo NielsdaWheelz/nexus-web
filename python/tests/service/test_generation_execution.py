@@ -9,9 +9,8 @@ import ssl
 from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
-from importlib.util import find_spec
 from types import MappingProxyType, SimpleNamespace
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import httpx
@@ -24,135 +23,132 @@ from llm_tools import (
     ReplayPolicy,
     ToolBinding,
 )
+from provider_runtime.registry import api_model_catalog
+from provider_runtime.types import (
+    Absent as RuntimeAbsent,
+)
+from provider_runtime.types import (
+    AttemptRecord,
+    CallMeta,
+    CancelSignal,
+    ExpectedModelFailure,
+    Failed,
+    FinalAttempt,
+    GenerateIntent,
+    PossiblyBillable,
+    RuntimeStreamEvent,
+    StreamStart,
+    TerminalEvent,
+    TextContent,
+    TokenUsage,
+)
+from provider_runtime.types import (
+    Present as RuntimePresent,
+)
+from provider_runtime.types import (
+    Succeeded as ProviderSucceeded,
+)
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from nexus.config import Settings
+from nexus.db.models import LLMModelTurn, LLMModelTurnContinuation
+from nexus.db.session import create_session_factory
+from nexus.jobs.queue import JobExecutionContext, claim_job, enqueue_job, get_job, lock_job
+from nexus.schemas.presence import Present, absent, present
+from nexus.services import generation_policy
+from nexus.services.codex_generation_contract import GenerationFrame
+from nexus.services.durable_step_journal import Completed, Uncertain
+from nexus.services.generation_backend import (
+    BackendGenerationRequest,
+    BackendToolExecutionRequest,
+    BackendToolExecutionResult,
+    BackendToolExecutor,
+    GenerationBackend,
+    GenerationBackendComposition,
+    PreparedCodexChild,
+)
+from nexus.services.generation_continuations import (
+    GenerationContinuationAuthenticationError,
+    GenerationContinuationCipher,
+    GenerationContinuationContext,
+)
+from nexus.services.generation_events import BackendTerminal, ProviderTerminalEvidence
+from nexus.services.generation_intent import GenerationIntent, TextOutput
+from nexus.services.generation_selection import ProviderApiSelection
+from nexus.services.generation_service import GenerationService
+from nexus.services.generation_spec import (
+    FrozenToolScope,
+    GenerationSpec,
+    ImmutablePromptPayloadRef,
+    generation_fact_digest,
+)
+from nexus.services.llm_execution import (
+    CompletedGeneration,
+    ComposedExecutionRuntime,
+    EncodedGenerationTerminal,
+    GenerationExecutionRequest,
+    GenerationFailureCode,
+    GenerationUncertain,
+    JobGenerationJournal,
+    admit_job_generation,
+    execute_generation,
+)
+from nexus.services.llm_ledger import (
+    DispatchableModelTurn,
+    GenerationStart,
+    LlmCallOwner,
+    ModelTurnCompletion,
+    ModelTurnStart,
+    PendingGenerationContinuation,
+    RedispatchForbiddenModelTurn,
+    arm_model_turn_dispatch_in_current_transaction,
+    arm_resumed_model_turn_dispatch_in_current_transaction,
+    complete_generation_in_current_transaction,
+    complete_model_turn_in_current_transaction,
+    generation_spec_document,
+    lock_generation_owner_in_current_transaction,
+    open_generation_continuation_in_current_transaction,
+    read_generation,
+    read_model_turns,
+    read_pending_generation_continuation_in_current_transaction,
+    resume_generation_continuation_in_current_transaction,
+    start_generation_in_current_transaction,
+    start_model_turn_in_current_transaction,
+)
+from nexus.services.provider_generation_backend import (
+    ProviderGenerationBackend,
+    ProviderGenerationWiring,
+    build_provider_generation_backend,
+)
+from nexus.services.provider_generation_contract import ProviderModelTools
+from nexus.services.tool_authority import (
+    compose_deferred_generation_tool_executor,
+    read_tool_positions,
+)
+from nexus.services.tool_runtime.composition import (
+    ComposedToolRuntime,
+    FrozenToolOperation,
+    compose_provider_model_tools,
+    compose_tool_runtime,
+    freeze_tool_plan_snapshot,
+)
+from nexus.services.tool_runtime.declarations import NEXUS_TOOL_DECLARATIONS
+from tests.testkit.generation_catalog import (
+    CHAT_TEST_SELECTION,
+    configured_chat_catalog_service,
+)
 from tests.testkit.generation_ledger import generation_spec_fixture
-
-# BASE sensitivity overlays this proof without candidate production owners.
-_CUTOVER_PRESENT = find_spec("nexus.services.generation_continuations") is not None
-
-if TYPE_CHECKING or _CUTOVER_PRESENT:
-    from provider_runtime.registry import api_model_catalog
-    from provider_runtime.types import (
-        Absent as RuntimeAbsent,
-    )
-    from provider_runtime.types import (
-        AttemptRecord,
-        CallMeta,
-        CancelSignal,
-        ExpectedModelFailure,
-        Failed,
-        FinalAttempt,
-        GenerateIntent,
-        PossiblyBillable,
-        RuntimeStreamEvent,
-        StreamStart,
-        TerminalEvent,
-        TextContent,
-        TokenUsage,
-    )
-    from provider_runtime.types import (
-        Present as RuntimePresent,
-    )
-    from provider_runtime.types import (
-        Succeeded as ProviderSucceeded,
-    )
-
-    from nexus.config import Settings
-    from nexus.db.models import LLMModelTurn, LLMModelTurnContinuation
-    from nexus.db.session import create_session_factory
-    from nexus.jobs.queue import JobExecutionContext, claim_job, enqueue_job, get_job, lock_job
-    from nexus.schemas.presence import Present, absent, present
-    from nexus.services import generation_policy
-    from nexus.services.codex_generation_contract import GenerationFrame
-    from nexus.services.durable_step_journal import Completed, Uncertain
-    from nexus.services.generation_backend import (
-        BackendGenerationRequest,
-        BackendToolExecutionRequest,
-        BackendToolExecutionResult,
-        BackendToolExecutor,
-        GenerationBackend,
-        GenerationBackendComposition,
-        PreparedCodexChild,
-    )
-    from nexus.services.generation_continuations import (
-        GenerationContinuationAuthenticationError,
-        GenerationContinuationCipher,
-        GenerationContinuationContext,
-    )
-    from nexus.services.generation_events import BackendTerminal, ProviderTerminalEvidence
-    from nexus.services.generation_intent import GenerationIntent, TextOutput
-    from nexus.services.generation_selection import ProviderApiSelection
-    from nexus.services.generation_service import GenerationService
-    from nexus.services.generation_spec import (
-        FrozenToolScope,
-        GenerationSpec,
-        ImmutablePromptPayloadRef,
-        generation_fact_digest,
-    )
-    from nexus.services.llm_execution import (
-        CompletedGeneration,
-        ComposedExecutionRuntime,
-        EncodedGenerationTerminal,
-        GenerationExecutionRequest,
-        GenerationFailureCode,
-        GenerationUncertain,
-        JobGenerationJournal,
-        admit_job_generation,
-        execute_generation,
-    )
-    from nexus.services.llm_ledger import (
-        DispatchableModelTurn,
-        GenerationStart,
-        LlmCallOwner,
-        ModelTurnCompletion,
-        ModelTurnStart,
-        PendingGenerationContinuation,
-        RedispatchForbiddenModelTurn,
-        arm_model_turn_dispatch_in_current_transaction,
-        arm_resumed_model_turn_dispatch_in_current_transaction,
-        complete_generation_in_current_transaction,
-        complete_model_turn_in_current_transaction,
-        generation_spec_document,
-        lock_generation_owner_in_current_transaction,
-        open_generation_continuation_in_current_transaction,
-        read_generation,
-        read_model_turns,
-        read_pending_generation_continuation_in_current_transaction,
-        resume_generation_continuation_in_current_transaction,
-        start_generation_in_current_transaction,
-        start_model_turn_in_current_transaction,
-    )
-    from nexus.services.provider_generation_backend import (
-        ProviderGenerationBackend,
-        ProviderGenerationWiring,
-        build_provider_generation_backend,
-    )
-    from nexus.services.provider_generation_contract import ProviderModelTools
-    from nexus.services.tool_authority import (
-        compose_deferred_generation_tool_executor,
-        read_tool_positions,
-    )
-    from nexus.services.tool_runtime.composition import (
-        ComposedToolRuntime,
-        FrozenToolOperation,
-        compose_provider_model_tools,
-        compose_tool_runtime,
-        freeze_tool_plan_snapshot,
-    )
-    from nexus.services.tool_runtime.declarations import NEXUS_TOOL_DECLARATIONS
-    from tests.testkit.generation_catalog import (
-        CHAT_TEST_SELECTION,
-        configured_chat_catalog_service,
-    )
-    from tests.testkit.unreachable_state import delete_jobs_by_ids, expire_job_claim
+from tests.testkit.unreachable_state import (
+    delete_generations_by_ids,
+    delete_jobs_by_ids,
+    expire_job_claim,
+)
 
 
 def test_parent_child_tool_replay_is_exactly_once(request: pytest.FixtureRequest) -> None:
     """Risk: crash replay duplicates a billable child or successor dispatch."""
 
-    assert _CUTOVER_PRESENT, "sealed generation continuation ownership is absent"
     request.getfixturevalue("committed_chat_state_isolation")
     engine = cast(Engine, request.getfixturevalue("engine"))
     generation_id = uuid4()
@@ -418,7 +414,6 @@ def test_foreign_provider_failure_is_refused_not_relabelled(
 ) -> None:
     """Risk: an llm-calling failure variant Nexus does not know is renamed into the ledger."""
 
-    assert _CUTOVER_PRESENT, "route-neutral generation execution ownership is absent"
     request.getfixturevalue("committed_chat_state_isolation")
     engine = cast(Engine, request.getfixturevalue("engine"))
     asyncio.run(_prove_foreign_provider_failure_is_refused(engine))
@@ -640,17 +635,28 @@ class _ToolFreeProviderTools:
 
 
 def test_provider_crash_after_accepted_child_resumes_one_successor_without_redispatch(
-    request: pytest.FixtureRequest,
+    engine: Engine,
 ) -> None:
     """Risk: a worker crash after an accepted API child reissues billed model work."""
 
-    assert _CUTOVER_PRESENT, "route-neutral durable generation execution is absent"
-    request.getfixturevalue("committed_chat_state_isolation")
-    engine = cast(Engine, request.getfixturevalue("engine"))
-    asyncio.run(_prove_provider_crash_resumes_exactly_once(engine))
+    generation_id = uuid4()
+    owned_job_ids: list[UUID] = []
+    try:
+        asyncio.run(
+            _prove_provider_crash_resumes_exactly_once(
+                engine, generation_id=generation_id, owned_job_ids=owned_job_ids
+            )
+        )
+    finally:
+        with Session(engine) as db:
+            delete_generations_by_ids(db, generation_ids=(generation_id,))
+            delete_jobs_by_ids(db, job_ids=owned_job_ids)
+            db.commit()
 
 
-async def _prove_provider_crash_resumes_exactly_once(engine: Engine) -> None:
+async def _prove_provider_crash_resumes_exactly_once(
+    engine: Engine, *, generation_id: UUID, owned_job_ids: list[UUID]
+) -> None:
     settings = Settings()
     endpoint_overrides = json.loads(os.environ["GENERATION_API_BASE_URLS"])
     ca_certificates = json.loads(os.environ["NEXUS_TEST_TLS_CA_CERTS"])
@@ -688,7 +694,6 @@ async def _prove_provider_crash_resumes_exactly_once(engine: Engine) -> None:
         ),
     )
     owner = LlmCallOwner(kind="chat_run", id=uuid4())
-    generation_id = uuid4()
     user_id = uuid4()
     factory = sessionmaker(bind=engine, expire_on_commit=False)
 
@@ -715,6 +720,7 @@ async def _prove_provider_crash_resumes_exactly_once(engine: Engine) -> None:
         )
         with Session(engine) as db:
             job = enqueue_job(db, kind="generation_execution_proof", max_attempts=2)
+            owned_job_ids.append(job.id)
             claimed = claim_job(
                 db,
                 job_id=job.id,
