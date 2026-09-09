@@ -148,7 +148,7 @@ async def _prove_public_mcp_mount_gate(engine: Engine) -> None:
         )
         db.commit()
 
-    executor = compose_generation_tool_executor(
+    executor = await compose_generation_tool_executor(
         session_factory=factory,
         user_id=user_id,
         owner=owner,
@@ -159,7 +159,7 @@ async def _prove_public_mcp_mount_gate(engine: Engine) -> None:
     signing_key = SecretStr("agent-tools-mcp-gate-proof-signing-key-0123456789")
     registry = ActiveAgentToolRegistry(session_factory=factory)
     registry.bind_operations((operation,))
-    now = registry.database_now()
+    now = await registry.database_now()
     grant_authority = executor.authority.grant_authority()
     issued = issue_generation_tool_grant(
         grant_authority,
@@ -406,6 +406,7 @@ def _controlled_runtime(handlers: Mapping[str, Any]) -> ComposedToolRuntime:
             spec=entry.spec,
             execute=Available(handlers.get(str(entry.spec.id), unexpected)),
             replay_policy=ReplayPolicy.ReDispatchable,
+            implementation_revision="test_agent_tools_mcp_gate.v1",
             policy_epoch=PolicyEpoch("agent-tools-mcp-gate-proof-v1"),
             policy_inputs={"owner": "agent-tools-mcp-gate-proof"},
         )
@@ -416,6 +417,7 @@ def _controlled_runtime(handlers: Mapping[str, Any]) -> ComposedToolRuntime:
             spec=WEB_SEARCH_SPEC,
             execute=Available(unexpected),
             replay_policy=ReplayPolicy.BilledOnce,
+            implementation_revision="test_agent_tools_mcp_gate.v1",
             policy_epoch=PolicyEpoch("agent-tools-mcp-gate-proof-v1"),
             policy_inputs={"owner": "agent-tools-mcp-gate-proof"},
         ),

@@ -7,7 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
-    "sqlalchemy[postgresql-psycopg]>=2.0.36",
+    "sqlalchemy[asyncio,postgresql-psycopg]>=2.0.36",
     "alembic>=1.14.0",
     "pydantic-settings>=2.6.0",
     "PyJWT[crypto]>=2.13.0",
@@ -24,6 +24,7 @@ dependencies = [
     "regex>=2024.11.6",
     "stripe>=12.0.0",
     "provider-runtime",
+    "llm-agent-kernel==0.1.0",
     "llm-tools==0.1.0",
     "boto3>=1.43.7",
     "uuid6>=2025.0.1",
@@ -58,8 +59,9 @@ build-backend = "hatchling.build"
 packages = ["nexus"]
 
 [tool.uv.sources]
-provider-runtime = { git = "https://github.com/NielsdaWheelz/llm-calling", rev = "16499e1c4783a890063f51bb16b64d48b0cdbe3b" }
-llm-tools = { git = "https://github.com/NielsdaWheelz/llm-tools.git", rev = "8df458a199703120005296ae12f997b39d208fed" }
+provider-runtime = { git = "https://github.com/NielsdaWheelz/llm-calling", rev = "8fde23ac56571a63c65cfcff55c73a0976f83eb4" }
+llm-agent-kernel = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git", rev = "35f42b91bc214f556c1b5b6a36d9629ed00e574d" }
+llm-tools = { git = "https://github.com/NielsdaWheelz/llm-tools.git", rev = "9e6d155f3b64f03495911435b7cae8b8d131f9a2" }
 
 [tool.ruff]
 target-version = "py312"

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from fastapi.testclient import TestClient
 from llm_tools import (
     WebSearchRequest,
@@ -18,7 +20,11 @@ class _RecordingBrowseProvider:
     def __init__(self) -> None:
         self.requests: list[WebSearchRequest] = []
 
-    async def search(self, request: WebSearchRequest) -> WebSearchResponse:
+    async def search(
+        self, request: WebSearchRequest, *, attempt_started: Callable[[], None] | None = None
+    ) -> WebSearchResponse:
+        if attempt_started is not None:
+            attempt_started()
         self.requests.append(request)
         return WebSearchResponse(
             results=(

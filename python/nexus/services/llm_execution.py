@@ -18,6 +18,7 @@ from enum import Enum
 from typing import Literal, Protocol, assert_never
 from uuid import UUID, uuid5
 
+from llm_agent_kernel.generation import GenerationStopped
 from provider_runtime.types import (
     Absent as RuntimeAbsent,
 )
@@ -91,6 +92,7 @@ from nexus.services.generation_backend import (
     BackendChildCompletion,
     BackendChildDispatch,
     BackendEventObserver,
+    BackendGenerationOutcome,
     BackendGenerationRequest,
     BackendToolExecutionRequest,
     BackendToolExecutionResult,
@@ -140,6 +142,7 @@ from nexus.services.llm_ledger import (
     reset_generation_after_proven_non_dispatch_in_current_transaction,
     start_generation_in_current_transaction,
     start_model_turn_in_current_transaction,
+    stop_generation_in_current_transaction,
 )
 from nexus.services.provider_generation_contract import (
     provider_turn_continuation_fingerprint,
@@ -147,7 +150,8 @@ from nexus.services.provider_generation_contract import (
 
 type LockedDispatch = Callable[[Session], JobRow | None]
 type EncodeTerminal = Callable[[BackendTerminal], "EncodedGenerationTerminal"]
-type EncodePreacceptFailure = Callable[[NormalizedFailureCode, str], str]
+type GenerationFailureCode = NormalizedFailureCode | Literal["cancelled", "turn_limit"]
+type EncodeFailure = Callable[[GenerationFailureCode, str], str]
 type ObserveEvent = Callable[[BackendEvent], Awaitable[None]]
 type BeforeTerminal = Callable[[], Awaitable[None]]
 type ResolveTerminal = Callable[[Session, BackendTerminal], BackendTerminal]
@@ -167,7 +171,7 @@ class ExecutionRuntime(Protocol):
     @property
     def admission(self) -> GenerationAdmissionPort: ...
 
-    async def execute(self, execution: GenerationBackendExecution) -> BackendTerminal: ...
+    async def execute(self, execution: GenerationBackendExecution) -> BackendGenerationOutcome: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,7 +180,7 @@ class ComposedExecutionRuntime:
     continuation_cipher: GenerationContinuationCipher = field(repr=False)
     admission: GenerationAdmissionPort
 
-    async def execute(self, execution: GenerationBackendExecution) -> BackendTerminal:
+    async def execute(self, execution: GenerationBackendExecution) -> BackendGenerationOutcome:
         return await self.backend.execute(execution)
 
 
@@ -653,7 +657,7 @@ async def execute_generation(
     session_factory: sessionmaker[Session],
     runtime: ExecutionRuntime,
     encode_terminal: EncodeTerminal,
-    encode_preaccept_failure: EncodePreacceptFailure,
+    encode_failure: EncodeFailure,
     observe_event: ObserveEvent | None = None,
     cancel_signal: CancellationSignal | None = None,
     before_terminal: BeforeTerminal | None = None,
@@ -673,7 +677,7 @@ async def execute_generation(
             session_factory,
             request,
             pause=error.reason,
-            encode_preaccept_failure=encode_preaccept_failure,
+            encode_failure=encode_failure,
             continuation_is_safe=resume is not None,
         )
     with session_factory() as db:
@@ -710,13 +714,54 @@ async def execute_generation(
             return _capacity_refusal(
                 session_factory,
                 request,
-                encode_preaccept_failure=encode_preaccept_failure,
+                encode_failure=encode_failure,
             )
         if _journal_is_uncertain(session_factory, request):
             raise GenerationUncertain(
                 f"generation {request.generation_id} failed after durable dispatch"
             ) from error
         raise
+    if isinstance(terminal, GenerationStopped):
+        if before_terminal is not None:
+            await before_terminal()
+        detail = (
+            "Generation cancelled before the next dispatch."
+            if terminal.reason == "cancelled"
+            else "Generation reached its frozen model-turn limit."
+        )
+        terminal_result = encode_failure(terminal.reason, detail)
+        with session_factory() as db:
+            lock_generation_owner_in_current_transaction(db, request.owner)
+            state = _require_journal_state(db, request)
+            if terminal.last_ordinal == 0:
+                if state.dispatch_phase is not Prepared:
+                    raise AssertionError("undispatched cancellation has an armed owner")
+            else:
+                if state.dispatch_phase is not Uncertain:
+                    raise AssertionError("generation stop requires its armed owner")
+                stop_generation_in_current_transaction(
+                    db,
+                    owner=request.owner,
+                    generation_id=request.generation_id,
+                    source_turn_seq=terminal.last_ordinal,
+                    reason=terminal.reason,
+                )
+            landed = request.journal.complete(
+                db,
+                expected=state,
+                next_state=StepReplayState(
+                    generation_id=request.generation_id,
+                    dispatch_phase=Completed,
+                    request_fingerprint=present(request.spec.fingerprint),
+                    terminal_result=present(terminal_result),
+                ),
+            )
+            if not landed:
+                raise GenerationUncertain(
+                    f"generation {request.generation_id} lost its claim while stopping"
+                )
+            db.commit()
+        return CompletedGeneration(terminal_result=terminal_result, terminal=None, replayed=False)
     if lifecycle.completed is None or lifecycle.completed.terminal is not terminal:
         raise AssertionError("backend returned a terminal not committed by its lifecycle")
     if lifecycle.encoded is None:
@@ -978,7 +1023,7 @@ def _capacity_refusal(
     session_factory: sessionmaker[Session],
     request: GenerationExecutionRequest,
     *,
-    encode_preaccept_failure: EncodePreacceptFailure,
+    encode_failure: EncodeFailure,
 ) -> GenerationExecutionResult:
     """Park background quota or close Chat before model-call admission."""
 
@@ -991,7 +1036,7 @@ def _capacity_refusal(
         session_factory,
         request,
         pause=_fallback_capacity_pause(detail),
-        encode_preaccept_failure=encode_preaccept_failure,
+        encode_failure=encode_failure,
         continuation_is_safe=False,
     )
 
@@ -1001,7 +1046,7 @@ def _handle_capacity_pause(
     request: GenerationExecutionRequest,
     *,
     pause: CapacityPaused,
-    encode_preaccept_failure: EncodePreacceptFailure,
+    encode_failure: EncodeFailure,
     continuation_is_safe: bool,
 ) -> GenerationExecutionResult:
     if request.owner.kind != "chat_run" or continuation_is_safe:
@@ -1011,7 +1056,7 @@ def _handle_capacity_pause(
         if request.owner.kind == "artifact_learn_request":
             raise GenerationCapacityPaused(pause)
         return RescheduleRequested(schedule=GenerationCapacityPaused(pause).schedule)
-    terminal_result = encode_preaccept_failure(
+    terminal_result = encode_failure(
         "capacity_unavailable",
         pause.explanation,
     )

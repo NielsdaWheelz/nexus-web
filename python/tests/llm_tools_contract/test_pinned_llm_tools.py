@@ -11,7 +11,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-LLM_TOOLS_SHA = "8df458a199703120005296ae12f997b39d208fed"
+LLM_TOOLS_SHA = "9e6d155f3b64f03495911435b7cae8b8d131f9a2"
 
 
 def _provider_runtime_sha() -> str:

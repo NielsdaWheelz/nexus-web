@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable, Mapping, Sequence
+import time
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from types import MappingProxyType
@@ -53,8 +55,10 @@ from llm_tools import (
 )
 from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import text
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session, sessionmaker
 
+from nexus.db.async_session import open_async_session
 from nexus.db.models import ChatRun
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.jobs.queue import (
@@ -755,6 +759,7 @@ class _DurableBudgetState:
     def __init__(self, recorder: NexusPositionRecorder, limits: RunLimits) -> None:
         self._recorder = recorder
         self._limits = limits
+        self.deadline = 0.0
 
     @property
     def limits(self) -> RunLimits:
@@ -762,19 +767,34 @@ class _DurableBudgetState:
 
     @property
     def remaining_elapsed_seconds(self) -> float:
-        job = get_job(self._recorder.db, self._recorder.job_context.job_id)
-        if job is None:
-            return 0.0
-        started_at = job.started_at or job.created_at
-        if started_at.tzinfo is None:
-            started_at = started_at.replace(tzinfo=UTC)
-        elapsed = (datetime.now(UTC) - started_at.astimezone(UTC)).total_seconds()
-        return max(0.0, float(self._limits.max_elapsed_seconds) - elapsed)
+        return max(0.0, self.deadline - time.monotonic())
 
-    def reserve(self, position: InvocationPosition, reservation: Reservation) -> bool:
-        return self._recorder._budget_accepts(position, reservation)
+    async def refresh(self) -> None:
+        def remaining(db: Session) -> float:
+            with db.begin():
+                job = self._recorder._lock_job()
+                now = db.scalar(text("SELECT clock_timestamp()"))
+                if not isinstance(now, datetime):
+                    raise AssertionError("database clock did not return a timestamp")
+                started_at = job.started_at or job.created_at
+                if started_at.tzinfo is None:
+                    started_at = started_at.replace(tzinfo=UTC)
+                elapsed = (now - started_at).total_seconds()
+                return max(0.0, float(self._limits.max_elapsed_seconds) - elapsed)
 
-    def settle(self, position: InvocationPosition, settlement: Settlement) -> None:
+        observed_at = time.monotonic()
+        remaining_seconds = await self._recorder.database.run_sync(remaining)
+        self.deadline = observed_at + remaining_seconds
+
+    async def reserve(self, position: InvocationPosition, reservation: Reservation) -> bool:
+        def reserve_in_database(db: Session) -> bool:
+            with db.begin():
+                self._recorder._lock_job()
+                return self._recorder._budget_accepts(position, reservation)
+
+        return await self._recorder.database.run_sync(reserve_in_database)
+
+    async def settle(self, position: InvocationPosition, settlement: Settlement) -> None:
         self._recorder._validate_settlement(position, settlement)
 
 
@@ -784,7 +804,7 @@ class NexusPositionRecorder:
     def __init__(
         self,
         *,
-        db: Session,
+        db: AsyncSession,
         operation_id: UUID,
         claimed_job: JobRow,
         job_context: JobExecutionContext,
@@ -801,7 +821,8 @@ class NexusPositionRecorder:
             or claimed_job.attempts != job_context.attempt_no
         ):
             raise ValueError("claimed job differs from its lease identity")
-        self.db = db
+        self.database = db
+        self.db = db.sync_session
         self.operation_id = operation_id
         self.job_context = job_context
         self.position = position
@@ -851,7 +872,7 @@ class NexusPositionRecorder:
             raise ValueError("durable position belongs to a non-tool step")
         return state.tool_execution.value
 
-    def occupy(
+    async def occupy(
         self,
         *,
         position: InvocationPosition,
@@ -862,157 +883,167 @@ class NexusPositionRecorder:
         input_digest: str,
         replay_policy: PortableReplayPolicy,
     ) -> PositionState:
-        self._check_position(position)
-        identity = ToolExecutionIdentity(
-            tool_id=str(tool_id),
-            tool_contract_revision=tool_contract_revision,
-            policy_revision=policy_revision,
-            plan_revision=plan_revision,
-            input_digest=input_digest,
-            replay_policy=_journal_policy(replay_policy),
-        )
-        job = self._lock_job()
-        state = self._state(job)
-        if state is not None:
-            existing_execution = self._tool_state(state)
-            if (
-                state.generation_id != stable_generation_id(self.operation_id, str(position))
-                or existing_execution.identity != identity
-            ):
-                self.db.rollback()
-                raise ValueError("occupied position has a different tool identity")
-            if (
-                state.dispatch_phase is Uncertain
-                and identity.replay_policy is JournalReplayPolicy.ReDispatchable
-                and isinstance(existing_execution.reservation, Present)
-                and existing_execution.reservation.value.max_attempts == 0
-                and isinstance(existing_execution.dispatch_claim, Present)
-                and self.job_context.attempt_no > existing_execution.dispatch_claim.value.attempt_no
-            ):
-                recovered_execution = existing_execution.model_copy(
-                    update={"dispatch_claim": absent()}
-                )
-                recovered = state.model_copy(
-                    update={
-                        "dispatch_phase": Prepared,
-                        "tool_execution": _PRESENT_TOOL_EXECUTION(value=recovered_execution),
-                    }
-                )
-                self._checkpoint(job, recovered)
-                return _position_state(recovered, catalog_view=self.catalog_view)
-            self.db.commit()
+        def operation(_db: Session) -> PositionState:
+            self._check_position(position)
+            identity = ToolExecutionIdentity(
+                tool_id=str(tool_id),
+                tool_contract_revision=tool_contract_revision,
+                policy_revision=policy_revision,
+                plan_revision=plan_revision,
+                input_digest=input_digest,
+                replay_policy=_journal_policy(replay_policy),
+            )
+            job = self._lock_job()
+            state = self._state(job)
+            if state is not None:
+                existing_execution = self._tool_state(state)
+                if (
+                    state.generation_id != stable_generation_id(self.operation_id, str(position))
+                    or existing_execution.identity != identity
+                ):
+                    self.db.rollback()
+                    raise ValueError("occupied position has a different tool identity")
+                if (
+                    state.dispatch_phase is Uncertain
+                    and identity.replay_policy is JournalReplayPolicy.ReDispatchable
+                    and isinstance(existing_execution.reservation, Present)
+                    and existing_execution.reservation.value.max_attempts == 0
+                    and isinstance(existing_execution.dispatch_claim, Present)
+                    and self.job_context.attempt_no
+                    > existing_execution.dispatch_claim.value.attempt_no
+                ):
+                    recovered_execution = existing_execution.model_copy(
+                        update={"dispatch_claim": absent()}
+                    )
+                    recovered = state.model_copy(
+                        update={
+                            "dispatch_phase": Prepared,
+                            "tool_execution": _PRESENT_TOOL_EXECUTION(value=recovered_execution),
+                        }
+                    )
+                    self._checkpoint(job, recovered)
+                    return _position_state(recovered, catalog_view=self.catalog_view)
+                self.db.commit()
+                return _position_state(state, catalog_view=self.catalog_view)
+
+            state = StepReplayState(
+                generation_id=stable_generation_id(self.operation_id, str(position)),
+                dispatch_phase=Prepared,
+                request_fingerprint=_PRESENT_STR(value=input_digest),
+                terminal_result=absent(),
+                tool_execution=_PRESENT_TOOL_EXECUTION(value=ToolExecutionState(identity=identity)),
+            )
+            self._checkpoint(job, state)
             return _position_state(state, catalog_view=self.catalog_view)
 
-        state = StepReplayState(
-            generation_id=stable_generation_id(self.operation_id, str(position)),
-            dispatch_phase=Prepared,
-            request_fingerprint=_PRESENT_STR(value=input_digest),
-            terminal_result=absent(),
-            tool_execution=_PRESENT_TOOL_EXECUTION(value=ToolExecutionState(identity=identity)),
-        )
-        self._checkpoint(job, state)
-        return _position_state(state, catalog_view=self.catalog_view)
+        return await self.database.run_sync(operation)
 
-    def reserve(
+    async def reserve(
         self,
         *,
         position: InvocationPosition,
         budgets: BudgetState,
         reservation: Reservation,
     ) -> bool:
-        self._check_position(position)
-        if budgets is not self.budgets:
-            raise ValueError("position used a different durable budget owner")
-        job = self._lock_job()
-        state = self._required_state(job)
-        execution = self._tool_state(state)
-        if isinstance(execution.reservation, Present):
-            stored = execution.reservation.value
-            if (
-                stored.calls != reservation.calls
-                or stored.input_bytes != reservation.input_bytes
-                or stored.max_attempts != reservation.max_attempts
-                or stored.max_output_bytes != reservation.max_output_bytes
-            ):
+        def operation(_db: Session) -> bool:
+            self._check_position(position)
+            if budgets is not self.budgets:
+                raise ValueError("position used a different durable budget owner")
+            job = self._lock_job()
+            state = self._required_state(job)
+            execution = self._tool_state(state)
+            if isinstance(execution.reservation, Present):
+                stored = execution.reservation.value
+                if (
+                    stored.calls != reservation.calls
+                    or stored.input_bytes != reservation.input_bytes
+                    or stored.max_attempts != reservation.max_attempts
+                    or stored.max_output_bytes != reservation.max_output_bytes
+                ):
+                    self.db.rollback()
+                    raise ValueError("durable tool budget reservation changed")
+                self.db.commit()
+                return stored.accepted
+            proposed = ToolExecutionReservation(
+                calls=reservation.calls,
+                input_bytes=reservation.input_bytes,
+                max_attempts=reservation.max_attempts,
+                max_output_bytes=reservation.max_output_bytes,
+                accepted=self._budget_accepts(position, reservation),
+            )
+            if state.dispatch_phase is not Prepared:
                 self.db.rollback()
-                raise ValueError("durable tool budget reservation changed")
-            self.db.commit()
-            return stored.accepted
-        proposed = ToolExecutionReservation(
-            calls=reservation.calls,
-            input_bytes=reservation.input_bytes,
-            max_attempts=reservation.max_attempts,
-            max_output_bytes=reservation.max_output_bytes,
-            accepted=budgets.reserve(position, reservation),
-        )
-        if state.dispatch_phase is not Prepared:
-            self.db.rollback()
-            raise ValueError("only a prepared tool position may reserve budget")
-        updated = state.model_copy(
-            update={
-                "tool_execution": _PRESENT_TOOL_EXECUTION(
-                    value=execution.model_copy(
-                        update={"reservation": _PRESENT_TOOL_RESERVATION(value=proposed)}
+                raise ValueError("only a prepared tool position may reserve budget")
+            updated = state.model_copy(
+                update={
+                    "tool_execution": _PRESENT_TOOL_EXECUTION(
+                        value=execution.model_copy(
+                            update={"reservation": _PRESENT_TOOL_RESERVATION(value=proposed)}
+                        )
                     )
-                )
-            }
-        )
-        self._checkpoint(job, updated)
-        return proposed.accepted
+                }
+            )
+            self._checkpoint(job, updated)
+            return proposed.accepted
 
-    def dispatch_started(
+        return await self.database.run_sync(operation)
+
+    async def dispatch_started(
         self,
         *,
         position: InvocationPosition,
         replay_policy: PortableReplayPolicy,
     ) -> PositionState:
-        self._check_position(position)
-        job = self._lock_job()
-        state = self._required_state(job)
-        execution = self._tool_state(state)
-        if execution.identity.replay_policy is not _journal_policy(replay_policy):
-            self.db.rollback()
-            raise ValueError("durable tool replay policy changed")
-        if state.dispatch_phase is Completed:
-            self.db.commit()
-            return _position_state(state, catalog_view=self.catalog_view)
-        if state.dispatch_phase is Uncertain:
-            self.db.commit()
+        def operation(_db: Session) -> PositionState:
+            self._check_position(position)
+            job = self._lock_job()
+            state = self._required_state(job)
+            execution = self._tool_state(state)
+            if execution.identity.replay_policy is not _journal_policy(replay_policy):
+                self.db.rollback()
+                raise ValueError("durable tool replay policy changed")
+            if state.dispatch_phase is Completed:
+                self.db.commit()
+                return _position_state(state, catalog_view=self.catalog_view)
+            if state.dispatch_phase is Uncertain:
+                self.db.commit()
+                return PositionState(
+                    terminal_result=None,
+                    uncertain=True,
+                    actual_attempts=execution.abandoned_attempts,
+                )
+            if (
+                not isinstance(execution.reservation, Present)
+                or not execution.reservation.value.accepted
+            ):
+                self.db.rollback()
+                raise ValueError("dispatch requires an accepted reservation")
+            updated_execution = execution.model_copy(
+                update={
+                    "dispatch_claim": _PRESENT_TOOL_DISPATCH_CLAIM(
+                        value=ToolDispatchClaim(
+                            worker_id=self.job_context.worker_id,
+                            attempt_no=self.job_context.attempt_no,
+                        )
+                    )
+                }
+            )
+            updated = state.model_copy(
+                update={
+                    "dispatch_phase": Uncertain,
+                    "tool_execution": _PRESENT_TOOL_EXECUTION(value=updated_execution),
+                }
+            )
+            self._checkpoint(job, updated)
             return PositionState(
                 terminal_result=None,
-                uncertain=True,
+                uncertain=False,
                 actual_attempts=execution.abandoned_attempts,
             )
-        if (
-            not isinstance(execution.reservation, Present)
-            or not execution.reservation.value.accepted
-        ):
-            self.db.rollback()
-            raise ValueError("dispatch requires an accepted reservation")
-        updated_execution = execution.model_copy(
-            update={
-                "dispatch_claim": _PRESENT_TOOL_DISPATCH_CLAIM(
-                    value=ToolDispatchClaim(
-                        worker_id=self.job_context.worker_id,
-                        attempt_no=self.job_context.attempt_no,
-                    )
-                )
-            }
-        )
-        updated = state.model_copy(
-            update={
-                "dispatch_phase": Uncertain,
-                "tool_execution": _PRESENT_TOOL_EXECUTION(value=updated_execution),
-            }
-        )
-        self._checkpoint(job, updated)
-        return PositionState(
-            terminal_result=None,
-            uncertain=False,
-            actual_attempts=execution.abandoned_attempts,
-        )
 
-    def dispatch_abandoned(
+        return await self.database.run_sync(operation)
+
+    async def dispatch_abandoned(
         self,
         *,
         position: InvocationPosition,
@@ -1020,46 +1051,52 @@ class NexusPositionRecorder:
         actual_attempts: int,
         lease_recovered: bool,
     ) -> None:
-        self._check_position(position)
-        if replay_policy is not PortableReplayPolicy.ReDispatchable or not lease_recovered:
-            raise ValueError("only verified ReDispatchable work may be re-admitted")
-        job = self._lock_job()
-        state = self._required_state(job)
-        execution = self._tool_state(state)
-        if (
-            state.dispatch_phase is not Uncertain
-            or execution.identity.replay_policy is not JournalReplayPolicy.ReDispatchable
-            or not isinstance(execution.reservation, Present)
-            or not isinstance(execution.dispatch_claim, Present)
-            or self.job_context.attempt_no <= execution.dispatch_claim.value.attempt_no
-            or actual_attempts < execution.abandoned_attempts
-        ):
-            self.db.rollback()
-            raise ValueError("durable abandoned-dispatch accounting conflicts")
-        updated_execution = execution.model_copy(
-            update={
-                "abandoned_attempts": actual_attempts,
-                "dispatch_claim": absent(),
-            }
-        )
-        updated = state.model_copy(
-            update={
-                "dispatch_phase": Prepared,
-                "tool_execution": _PRESENT_TOOL_EXECUTION(value=updated_execution),
-            }
-        )
-        self._checkpoint(job, updated)
+        def operation(_db: Session) -> None:
+            self._check_position(position)
+            if replay_policy is not PortableReplayPolicy.ReDispatchable or not lease_recovered:
+                raise ValueError("only verified ReDispatchable work may be re-admitted")
+            job = self._lock_job()
+            state = self._required_state(job)
+            execution = self._tool_state(state)
+            if (
+                state.dispatch_phase is not Uncertain
+                or execution.identity.replay_policy is not JournalReplayPolicy.ReDispatchable
+                or not isinstance(execution.reservation, Present)
+                or not isinstance(execution.dispatch_claim, Present)
+                or self.job_context.attempt_no <= execution.dispatch_claim.value.attempt_no
+                or actual_attempts < execution.abandoned_attempts
+            ):
+                self.db.rollback()
+                raise ValueError("durable abandoned-dispatch accounting conflicts")
+            updated_execution = execution.model_copy(
+                update={
+                    "abandoned_attempts": actual_attempts,
+                    "dispatch_claim": absent(),
+                }
+            )
+            updated = state.model_copy(
+                update={
+                    "dispatch_phase": Prepared,
+                    "tool_execution": _PRESENT_TOOL_EXECUTION(value=updated_execution),
+                }
+            )
+            self._checkpoint(job, updated)
 
-    def uncertain(self, *, position: InvocationPosition) -> None:
-        self._check_position(position)
-        job = self._lock_job()
-        state = self._required_state(job)
-        if state.dispatch_phase is not Uncertain:
-            self.db.rollback()
-            raise ValueError("only a dispatched tool position may remain uncertain")
-        self.db.commit()
+        return await self.database.run_sync(operation)
 
-    def terminalize_and_settle(
+    async def uncertain(self, *, position: InvocationPosition) -> None:
+        def operation(_db: Session) -> None:
+            self._check_position(position)
+            job = self._lock_job()
+            state = self._required_state(job)
+            if state.dispatch_phase is not Uncertain:
+                self.db.rollback()
+                raise ValueError("only a dispatched tool position may remain uncertain")
+            self.db.commit()
+
+        return await self.database.run_sync(operation)
+
+    async def terminalize_and_settle(
         self,
         *,
         position: InvocationPosition,
@@ -1067,73 +1104,78 @@ class NexusPositionRecorder:
         result: ToolResult,
         settlement: Settlement,
     ) -> ToolResult:
-        self._check_position(position)
-        if budgets is not self.budgets:
-            raise ValueError("position used a different durable budget owner")
-        job = self._lock_job()
-        state = self._required_state(job)
-        if state.dispatch_phase is Completed:
-            self.db.commit()
-            persisted = _position_state(state, catalog_view=self.catalog_view).terminal_result
-            if persisted != result:
-                raise ValueError("terminal result differs from completed durable position")
-            return result
-        execution = self._tool_state(state)
-        if not isinstance(execution.reservation, Present):
-            self.db.rollback()
-            raise ValueError("terminal tool result has no reservation")
-        stored_settlement = settlement
-        if not execution.reservation.value.accepted:
-            stored_settlement = Settlement(actual_attempts=0, actual_output_bytes=0)
-        reservation = execution.reservation.value
-        if (
-            stored_settlement.actual_attempts < execution.abandoned_attempts
-            or stored_settlement.actual_attempts > reservation.max_attempts
-            or stored_settlement.actual_output_bytes > reservation.max_output_bytes
-            or (
-                not reservation.accepted
-                and (
-                    stored_settlement.actual_attempts != 0
-                    or stored_settlement.actual_output_bytes != 0
-                )
-            )
-        ):
-            self.db.rollback()
-            raise ValueError("durable tool settlement exceeds its reservation")
-        budgets.settle(position, stored_settlement)
-        updated_execution = execution.model_copy(
-            update={
-                "dispatch_claim": absent(),
-                "settlement": _PRESENT_TOOL_SETTLEMENT(
-                    value=ToolExecutionSettlement(
-                        actual_attempts=stored_settlement.actual_attempts,
-                        actual_output_bytes=stored_settlement.actual_output_bytes,
+        def operation(_db: Session) -> ToolResult:
+            self._check_position(position)
+            if budgets is not self.budgets:
+                raise ValueError("position used a different durable budget owner")
+            job = self._lock_job()
+            state = self._required_state(job)
+            if state.dispatch_phase is Completed:
+                self.db.commit()
+                persisted = _position_state(state, catalog_view=self.catalog_view).terminal_result
+                if persisted != result:
+                    raise ValueError("terminal result differs from completed durable position")
+                return result
+            execution = self._tool_state(state)
+            if not isinstance(execution.reservation, Present):
+                self.db.rollback()
+                raise ValueError("terminal tool result has no reservation")
+            stored_settlement = settlement
+            if not execution.reservation.value.accepted:
+                stored_settlement = Settlement(actual_attempts=0, actual_output_bytes=0)
+            reservation = execution.reservation.value
+            if (
+                stored_settlement.actual_attempts < execution.abandoned_attempts
+                or stored_settlement.actual_attempts > reservation.max_attempts
+                or stored_settlement.actual_output_bytes > reservation.max_output_bytes
+                or (
+                    not reservation.accepted
+                    and (
+                        stored_settlement.actual_attempts != 0
+                        or stored_settlement.actual_output_bytes != 0
                     )
-                ),
-            }
-        )
-        updated = state.model_copy(
-            update={
-                "dispatch_phase": Completed,
-                "terminal_result": _PRESENT_STR(value=canonical_json_bytes(result).decode("utf-8")),
-                "tool_execution": _PRESENT_TOOL_EXECUTION(value=updated_execution),
-            }
-        )
-        updated = StepReplayState.model_validate(updated.model_dump(mode="python"))
-        try:
-            if not checkpoint_step_state(
-                self.db,
-                ctx=self.job_context,
-                job=job,
-                step_path=str(position),
-                state=updated,
+                )
             ):
-                raise RuntimeError("durable terminal checkpoint lost its queue lease")
-            self.db.commit()
-        except BaseException:
-            self.db.rollback()
-            raise
-        return result
+                self.db.rollback()
+                raise ValueError("durable tool settlement exceeds its reservation")
+            self._validate_settlement(position, stored_settlement)
+            updated_execution = execution.model_copy(
+                update={
+                    "dispatch_claim": absent(),
+                    "settlement": _PRESENT_TOOL_SETTLEMENT(
+                        value=ToolExecutionSettlement(
+                            actual_attempts=stored_settlement.actual_attempts,
+                            actual_output_bytes=stored_settlement.actual_output_bytes,
+                        )
+                    ),
+                }
+            )
+            updated = state.model_copy(
+                update={
+                    "dispatch_phase": Completed,
+                    "terminal_result": _PRESENT_STR(
+                        value=canonical_json_bytes(result).decode("utf-8")
+                    ),
+                    "tool_execution": _PRESENT_TOOL_EXECUTION(value=updated_execution),
+                }
+            )
+            updated = StepReplayState.model_validate(updated.model_dump(mode="python"))
+            try:
+                if not checkpoint_step_state(
+                    self.db,
+                    ctx=self.job_context,
+                    job=job,
+                    step_path=str(position),
+                    state=updated,
+                ):
+                    raise RuntimeError("durable terminal checkpoint lost its queue lease")
+                self.db.commit()
+            except BaseException:
+                self.db.rollback()
+                raise
+            return result
+
+        return await self.database.run_sync(operation)
 
     def stage_audit(
         self,
@@ -1467,9 +1509,10 @@ def _declaration(tool_id: str) -> Any:
     return matches[0]
 
 
-def make_durable_execution_context(
+@asynccontextmanager
+async def open_durable_execution_context(
     *,
-    db: Session,
+    session_factory: sessionmaker[Session],
     operation: FrozenToolOperation,
     operation_id: UUID,
     claimed_job: JobRow,
@@ -1481,33 +1524,35 @@ def make_durable_execution_context(
     effect_id: EffectId | None,
     cancellation: Any,
     telemetry: Any,
-) -> ExecutionContext:
+) -> AsyncIterator[ExecutionContext]:
     """Build one explicit generic context over a claimed durable Nexus job."""
 
     position = InvocationPosition(durable_step_path)
     grant = operation.plan.grant(tool_id)
-    recorder = NexusPositionRecorder(
-        db=db,
-        operation_id=operation_id,
-        claimed_job=claimed_job,
-        job_context=job_context,
-        position=position,
-        limits=operation.profile.run_limits,
-        catalog_view=operation.plan.catalog_view,
-    )
-    return ExecutionContext(
-        plan=operation.plan,
-        grant=grant,
-        catalog_view=operation.plan.catalog_view,
-        position=position,
-        recorder=recorder,
-        effect_id=effect_id,
-        budgets=recorder.budgets,
-        principal=principal,
-        scope=scope,
-        cancellation=cancellation,
-        telemetry=telemetry,
-    )
+    async with open_async_session(session_factory) as db:
+        recorder = NexusPositionRecorder(
+            db=db,
+            operation_id=operation_id,
+            claimed_job=claimed_job,
+            job_context=job_context,
+            position=position,
+            limits=operation.profile.run_limits,
+            catalog_view=operation.plan.catalog_view,
+        )
+        await recorder.budgets.refresh()
+        yield ExecutionContext(
+            plan=operation.plan,
+            grant=grant,
+            catalog_view=operation.plan.catalog_view,
+            position=position,
+            recorder=recorder,
+            effect_id=effect_id,
+            budgets=recorder.budgets,
+            principal=principal,
+            scope=scope,
+            cancellation=cancellation,
+            telemetry=telemetry,
+        )
 
 
 def stage_chat_tool_execution_receipt(
@@ -1868,7 +1913,7 @@ def _selected_nexus_search_citations(
     return selected
 
 
-def _run_search(
+async def _run_search(
     value: tool_declarations.NexusSearchInput,
     context: ExecutionContext,
 ) -> HandlerSuccess[tool_declarations.NexusSearchSuccess]:
@@ -1877,47 +1922,55 @@ def _run_search(
     )
     from nexus.services.resource_items.capabilities import resource_can_be_app_search_scope
     from nexus.services.retrieval_citation import citation_from_search_result
-    from nexus.services.search.batch import search_scopes
-    from nexus.services.search.query import build_search_query
+    from nexus.services.search.batch import search_scopes_async
+    from nexus.services.search.query import SearchQuery, SearchScope, build_search_query
     from nexus.services.search.scope import scope_from_uri
     from nexus.services.search.telemetry import hash_query
 
     recorder = _nexus_recorder(context)
     viewer_id = UUID(str(context.principal))
-    requested_scopes = list(value.scopes or ())
-    if value.scopes is None:
-        requested_scopes = [
-            uri
-            for uri in sorted(recorder.admitted_resource_uris)
-            if resource_can_be_app_search_scope(_parse_ref_or_unavailable(uri))
-        ]
-    scopes = []
-    for uri in requested_scopes:
-        ref = _admitted_target(recorder, uri)
-        if not resource_can_be_app_search_scope(ref):
-            _resource_unavailable()
-        scopes.append(scope_from_uri(uri))
-    limit = value.limit or APP_SEARCH_LIMIT
-    query = build_search_query(
-        text=value.query,
-        raw_kinds=list(value.kinds) if value.kinds is not None else None,
-        raw_formats=list(value.formats) if value.formats is not None else None,
-        raw_authors=list(value.authors) if value.authors is not None else None,
-        raw_roles=list(value.roles) if value.roles is not None else None,
-        scope=scope_from_uri("all"),
-        cursor=None,
-        limit=limit,
-    )
-    filters = {
-        key: list(items)
-        for key, items in (
-            ("kinds", value.kinds),
-            ("formats", value.formats),
-            ("authors", value.authors),
-            ("roles", value.roles),
-        )
-        if items is not None
-    }
+
+    def prepare(
+        _db: Session,
+    ) -> tuple[SearchQuery, list[SearchScope], list[str], dict[str, object]]:
+        with recorder.db.begin():
+            requested_scopes = list(value.scopes or ())
+            if value.scopes is None:
+                requested_scopes = [
+                    uri
+                    for uri in sorted(recorder.admitted_resource_uris)
+                    if resource_can_be_app_search_scope(_parse_ref_or_unavailable(uri))
+                ]
+            scopes = []
+            for uri in requested_scopes:
+                ref = _admitted_target(recorder, uri)
+                if not resource_can_be_app_search_scope(ref):
+                    _resource_unavailable()
+                scopes.append(scope_from_uri(uri))
+            limit = value.limit or APP_SEARCH_LIMIT
+            query = build_search_query(
+                text=value.query,
+                raw_kinds=list(value.kinds) if value.kinds is not None else None,
+                raw_formats=list(value.formats) if value.formats is not None else None,
+                raw_authors=list(value.authors) if value.authors is not None else None,
+                raw_roles=list(value.roles) if value.roles is not None else None,
+                scope=scope_from_uri("all"),
+                cursor=None,
+                limit=limit,
+            )
+            filters = {
+                key: list(items)
+                for key, items in (
+                    ("kinds", value.kinds),
+                    ("formats", value.formats),
+                    ("authors", value.authors),
+                    ("roles", value.roles),
+                )
+                if items is not None
+            }
+            return query, scopes, requested_scopes, filters
+
+    query, scopes, requested_scopes, filters = await recorder.database.run_sync(prepare)
     if not scopes:
         recorder.stage_audit(
             scope="conversation_context",
@@ -1932,7 +1985,7 @@ def _run_search(
             actual_attempts=0,
         )
     try:
-        response = search_scopes(recorder.db, viewer_id, query, scopes)
+        response = await search_scopes_async(recorder.database, viewer_id, query, scopes)
     except ApiError as exc:
         _collapse_expected_unavailable(
             exc,
@@ -1943,42 +1996,48 @@ def _run_search(
                 }
             ),
         )
-    citations = [citation_from_search_result(item, filters=filters) for item in response.results]
-    matches = [
-        tool_declarations.NexusSearchMatch(
-            evidence=_evidence(
-                context,
-                resource_uri=item.resource_ref,
-                material=item.model_dump(mode="json"),
-                citation=citation,
-            ),
-            excerpt=item.snippet[:300],
-            kind=cast("Any", _kind_for_result_type(item.type)),
-            score=min(1.0, max(0.0, float(item.score))),
-            title=item.title[:150],
-            uri=item.resource_ref,
+
+    def finish(_db: Session) -> HandlerSuccess[tool_declarations.NexusSearchSuccess]:
+        citations = [
+            citation_from_search_result(item, filters=filters) for item in response.results
+        ]
+        matches = [
+            tool_declarations.NexusSearchMatch(
+                evidence=_evidence(
+                    context,
+                    resource_uri=item.resource_ref,
+                    material=item.model_dump(mode="json"),
+                    citation=citation,
+                ),
+                excerpt=item.snippet[:300],
+                kind=cast("Any", _kind_for_result_type(item.type)),
+                score=min(1.0, max(0.0, float(item.score))),
+                title=item.title[:150],
+                uri=item.resource_ref,
+            )
+            for item, citation in zip(response.results, citations, strict=True)
+        ]
+        selected = _selected_nexus_search_citations(
+            citations,
+            catalog_view=recorder.catalog_view,
         )
-        for item, citation in zip(response.results, citations, strict=True)
-    ]
-    selected = _selected_nexus_search_citations(
-        citations,
-        catalog_view=recorder.catalog_view,
-    )
-    recorder.stage_audit(
-        scope=",".join(requested_scopes) if requested_scopes else "conversation_context",
-        requested_types=list(query.effective_result_types),
-        filters=filters,
-        citations=citations,
-        selected_citations=selected,
-        search_query_fingerprint=hash_query(value.query),
-    )
-    return HandlerSuccess(
-        tool_declarations.NexusSearchSuccess(
-            matches=matches,
-            total_candidates=len(matches) + int(bool(response.page.has_more)),
-        ),
-        actual_attempts=0,
-    )
+        recorder.stage_audit(
+            scope=",".join(requested_scopes) if requested_scopes else "conversation_context",
+            requested_types=list(query.effective_result_types),
+            filters=filters,
+            citations=citations,
+            selected_citations=selected,
+            search_query_fingerprint=hash_query(value.query),
+        )
+        return HandlerSuccess(
+            tool_declarations.NexusSearchSuccess(
+                matches=matches,
+                total_candidates=len(matches) + int(bool(response.page.has_more)),
+            ),
+            actual_attempts=0,
+        )
+
+    return await recorder.database.run_sync(finish)
 
 
 def _run_resource_read(
@@ -2060,64 +2119,78 @@ def _run_resource_read(
     )
 
 
-def _run_document_search(
+async def _run_document_search(
     value: tool_declarations.DocumentSearchInput,
     context: ExecutionContext,
 ) -> HandlerSuccess[tool_declarations.DocumentSearchSuccess]:
     from nexus.services.retrieval_citation import citation_from_search_result
-    from nexus.services.search.query import build_search_query
+    from nexus.services.search.batch import search_scopes_async
+    from nexus.services.search.query import SearchQuery, build_search_query
     from nexus.services.search.scope import scope_from_uri
-    from nexus.services.search.service import search
 
     recorder = _nexus_recorder(context)
-    _assert_visible(recorder, value.uri)
-    query = build_search_query(
-        text=value.query,
-        raw_kinds=["documents"],
-        raw_formats=None,
-        raw_authors=None,
-        raw_roles=None,
-        scope=scope_from_uri(value.uri),
-        cursor=None,
-        limit=value.limit or 8,
-    )
+
+    def prepare(_db: Session) -> SearchQuery:
+        with recorder.db.begin():
+            _assert_visible(recorder, value.uri)
+            query = build_search_query(
+                text=value.query,
+                raw_kinds=["documents"],
+                raw_formats=None,
+                raw_authors=None,
+                raw_roles=None,
+                scope=scope_from_uri(value.uri),
+                cursor=None,
+                limit=value.limit or 8,
+            )
+            return query
+
+    query = await recorder.database.run_sync(prepare)
     try:
-        response = search(recorder.db, UUID(str(context.principal)), query)
+        response = await search_scopes_async(
+            recorder.database, UUID(str(context.principal)), query, (query.scope,)
+        )
     except ApiError as exc:
         _collapse_expected_unavailable(
             exc,
             allowed_codes=frozenset({ApiErrorCode.E_NOT_FOUND}),
         )
-    citations = [
-        citation_from_search_result(item, filters={"uri": value.uri, "query": value.query})
-        for item in response.results
-    ]
-    matches = [
-        tool_declarations.DocumentSearchMatch(
-            evidence=_evidence(
-                context,
-                resource_uri=item.resource_ref,
-                material=item.model_dump(mode="json"),
-                citation=citation,
-            ),
-            ordinal=ordinal,
-            score=min(1.0, max(0.0, float(item.score))),
-            text=_plain_search_snippet(item.snippet)[:2000],
-            title=item.title[:500],
-            uri=item.resource_ref,
+
+    def finish(_db: Session) -> HandlerSuccess[tool_declarations.DocumentSearchSuccess]:
+        citations = [
+            citation_from_search_result(item, filters={"uri": value.uri, "query": value.query})
+            for item in response.results
+        ]
+        matches = [
+            tool_declarations.DocumentSearchMatch(
+                evidence=_evidence(
+                    context,
+                    resource_uri=item.resource_ref,
+                    material=item.model_dump(mode="json"),
+                    citation=citation,
+                ),
+                ordinal=ordinal,
+                score=min(1.0, max(0.0, float(item.score))),
+                text=_plain_search_snippet(item.snippet)[:2000],
+                title=item.title[:500],
+                uri=item.resource_ref,
+            )
+            for ordinal, (item, citation) in enumerate(
+                zip(response.results, citations, strict=True)
+            )
+        ]
+        recorder.stage_audit(
+            scope=value.uri,
+            requested_types=list(query.effective_result_types),
+            filters={"uri": value.uri},
+            citations=citations,
         )
-        for ordinal, (item, citation) in enumerate(zip(response.results, citations, strict=True))
-    ]
-    recorder.stage_audit(
-        scope=value.uri,
-        requested_types=list(query.effective_result_types),
-        filters={"uri": value.uri},
-        citations=citations,
-    )
-    return HandlerSuccess(
-        tool_declarations.DocumentSearchSuccess(matches=matches, uri=value.uri),
-        actual_attempts=0,
-    )
+        return HandlerSuccess(
+            tool_declarations.DocumentSearchSuccess(matches=matches, uri=value.uri),
+            actual_attempts=0,
+        )
+
+    return await recorder.database.run_sync(finish)
 
 
 def _run_resource_inspect(
@@ -2451,9 +2524,7 @@ type _NexusHandler = Callable[[Any, ExecutionContext], HandlerSuccess[Any]]
 
 _NEXUS_HANDLERS: Mapping[str, _NexusHandler] = MappingProxyType(
     {
-        "nexus.search": _run_search,
         "nexus.resource.read": _run_resource_read,
-        "nexus.document.search": _run_document_search,
         "nexus.resource.inspect": _run_resource_inspect,
         "nexus.relations.list": _run_relations_list,
         "nexus.library.add": _run_library_add,
@@ -2475,19 +2546,26 @@ class NexusToolExecution:
         value: object,
         context: ExecutionContext,
     ) -> HandlerSuccess[Any]:
+        if str(tool_id) == "nexus.search":
+            return await _run_search(cast(tool_declarations.NexusSearchInput, value), context)
+        if str(tool_id) == "nexus.document.search":
+            return await _run_document_search(
+                cast(tool_declarations.DocumentSearchInput, value), context
+            )
         try:
             handler = _NEXUS_HANDLERS[str(tool_id)]
         except KeyError as exc:
             raise ExecutorConfigurationDefect(
                 f"Nexus execution has no handler for {tool_id!s}"
             ) from exc
-        return handler(value, context)
+        recorder = _nexus_recorder(context)
+        return await recorder.database.run_sync(lambda _db: handler(value, context))
 
 
 __all__ = [
     "ChatToolExecutionProjection",
     "NexusPositionRecorder",
     "NexusToolExecution",
-    "make_durable_execution_context",
+    "open_durable_execution_context",
     "reconcile_uncertain_tool_completion",
 ]

@@ -18,6 +18,7 @@ from nexus.services.generation_catalog import (
     GenerationCatalogSnapshot,
     ResolvedCatalogPair,
 )
+from nexus.services.generation_history import read_generation_history
 from nexus.services.generation_spec import GenerationSpec, decode_generation_spec_document
 
 
@@ -42,7 +43,7 @@ def run_selection_out(
 ) -> RunSelectionOut:
     """Project immutable dispatch facts plus exactly one current observation."""
 
-    spec = chat_generation_spec(run)
+    spec = read_generation_history(run.generation_spec)
     if (catalog_snapshot is None) == (pair is None):
         raise ValueError("run selection projection requires exactly one catalog observation")
     if catalog_snapshot is not None:

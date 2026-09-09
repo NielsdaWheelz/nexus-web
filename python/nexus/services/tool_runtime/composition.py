@@ -16,7 +16,6 @@ from llm_tools import (
     FrozenToolPlan,
     HostTable,
     Native,
-    PolicyEpoch,
     ReplayPolicy,
     ToolBinding,
     ToolCatalog,
@@ -255,12 +254,14 @@ def compose_product_tool_runtime(
     """Compose one process-owned runtime with stable configured/keyless authority."""
 
     if web_search_provider is None:
+        portable = ToolCatalog.compose((web_family(),)).binding(WEB_SEARCH_SPEC.id)
         web_search_binding: ToolBinding[Any, Any, Any] = ToolBinding(
             spec=WEB_SEARCH_SPEC,
             execute=Unavailable("Brave credential is absent"),
             replay_policy=ReplayPolicy.BilledOnce,
-            policy_epoch=PolicyEpoch("web-search-v1"),
-            policy_inputs=_WEB_SEARCH_POLICY_INPUTS,
+            implementation_revision=portable.implementation_revision,
+            policy_epoch=portable.policy_epoch,
+            policy_inputs={**portable.policy_inputs, **_WEB_SEARCH_POLICY_INPUTS},
         )
     else:
         portable = bind_brave_web_search(web_search_provider, max_results=6)
@@ -268,8 +269,9 @@ def compose_product_tool_runtime(
             spec=portable.spec,
             execute=portable.execute,
             replay_policy=portable.replay_policy,
+            implementation_revision=portable.implementation_revision,
             policy_epoch=portable.policy_epoch,
-            policy_inputs=_WEB_SEARCH_POLICY_INPUTS,
+            policy_inputs={**portable.policy_inputs, **_WEB_SEARCH_POLICY_INPUTS},
         )
     return compose_tool_runtime(web_search_binding)
 
@@ -312,6 +314,7 @@ def freeze_tool_plan_snapshot(operation: FrozenToolOperation) -> FrozenToolPlanS
             FrozenToolGrantSnapshot(
                 binding_policy_revision=grant.policy_revision,
                 id=str(grant.id),
+                implementation_revision=grant.implementation_revision,
                 limits=FrozenToolLimitsSnapshot.model_validate(grant.limits.json()),
                 replay_policy=binding.replay_policy.value,
                 tool_contract_revision=grant.tool_contract_revision,

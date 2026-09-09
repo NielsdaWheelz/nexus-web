@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass, field
 from uuid import UUID
 
@@ -43,6 +43,7 @@ from nexus.jobs.queue import get_job
 from nexus.schemas.presence import Present
 from nexus.services import generation_policy
 from nexus.services.chat_runs import PublishedChatExecution, execute_chat_run, get_chat_run
+from nexus.services.codex_generation_contract import GenerationFrame
 from nexus.services.generation_backend import (
     BackendGenerationRequest,
     GenerationBackend,
@@ -284,7 +285,7 @@ class _ProviderTools:
 
 
 class _UnusedCodex:
-    def stream(self, *_args: object, **_kwargs: object) -> AsyncIterator[object]:
+    def stream(self, *_args: object, **_kwargs: object) -> AsyncGenerator[GenerationFrame]:
         raise AssertionError("exact ProviderApi Chat selection fell through to Codex")
 
     async def cancel(self, request_id: UUID) -> None:

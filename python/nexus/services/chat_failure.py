@@ -66,6 +66,7 @@ _CONDITIONALLY_RERUNNABLE_CODES = frozenset(
 _CODE_MAP = {
     "timeout": "incomplete",
     "output_limit": "incomplete",
+    "turn_limit": "incomplete",
     "auth": "assistant_unavailable",
     "quota": "assistant_unavailable",
     "capacity_unavailable": "assistant_unavailable",

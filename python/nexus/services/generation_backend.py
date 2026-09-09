@@ -9,12 +9,31 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
+from contextlib import aclosing
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, Protocol, assert_never
 from uuid import UUID
 
+from llm_agent_kernel.generation import (
+    GenerationCompleted,
+    GenerationContinuation,
+    GenerationDefect,
+    GenerationObservation,
+    GenerationProposal,
+    GenerationStopped,
+    GenerationToolCall,
+    GenerationToolResult,
+    GenerationTurn,
+    run_generation,
+)
+from llm_agent_kernel.generation import (
+    GenerationFrame as KernelFrame,
+)
+from llm_agent_kernel.generation import (
+    GenerationTerminal as KernelTerminal,
+)
 from provider_runtime.types import CancelSignal, ProviderTarget
 
 from nexus.schemas.presence import Absent, Presence, Present
@@ -214,7 +233,7 @@ class CodexGenerationTransport(Protocol):
         draft: GenerationCommandDraft,
         *,
         bind_admission: CodexAdmissionBinder,
-    ) -> AsyncIterator[GenerationFrame]: ...
+    ) -> AsyncGenerator[GenerationFrame]: ...
 
     async def cancel(self, request_id: UUID) -> None: ...
 
@@ -246,7 +265,7 @@ class ProviderGenerationTransport(Protocol):
         turn: ProviderTurnRequest,
         *,
         cancel: CancelSignal | None = None,
-    ) -> AsyncIterator[ProviderGenerationEvent]: ...
+    ) -> AsyncGenerator[ProviderGenerationEvent]: ...
 
 
 class CodexChildProjection(Protocol):
@@ -300,319 +319,328 @@ class GenerationBackendExecution:
     provider_resume: ProviderResumeState | None = field(default=None, repr=False)
 
 
-class GenerationBackend:
-    """Dispatch one frozen generation with no policy, catalog, env, or fallback read."""
+type NativeTurn = GenerationCommandDraft | ProviderTurnRequest
+type KernelContinuation = GenerationContinuation[ProviderContinuationMaterial, ToolCallResolution]
+type KernelCompletion = KernelTerminal[
+    BackendTerminal, ProviderContinuationMaterial, ToolCallResolution
+]
+type BackendGenerationOutcome = BackendTerminal | GenerationStopped[BackendTerminal]
 
-    __slots__ = ("_composition",)
+
+class GenerationBackend:
+    """Adapt frozen Nexus facts to the single shared execution owner."""
 
     def __init__(self, composition: GenerationBackendComposition) -> None:
         self._composition = composition
 
-    async def execute(self, execution: GenerationBackendExecution) -> BackendTerminal:
+    async def execute(self, execution: GenerationBackendExecution) -> BackendGenerationOutcome:
         request = execution.request
-        selection = request.spec.selection
-        match selection:
+        model_tools: ProviderModelTools | None = None
+        start: GenerationTurn[NativeTurn] | KernelContinuation
+        match request.spec.selection:
             case CodexPersonalSelection():
                 if execution.provider_resume is not None:
                     raise GenerationBackendDefect(
                         "CodexPersonal execution received a ProviderApi resume state"
                     )
-                return await self._execute_codex(execution)
+                draft = self._composition.codex_projection.prepare(request).draft
+                if (
+                    draft.request_id != request.generation_id
+                    or draft.spec != request.spec
+                    or draft.intent != request.intent
+                ):
+                    raise GenerationBackendDefect(
+                        "Codex projection changed frozen generation identity"
+                    )
+                has_tools = isinstance(request.spec.model_tool_plan_snapshot, Present)
+                if has_tools != (execution.codex_bind_admission is not None):
+                    raise GenerationBackendDefect(
+                        "Codex ModelTools must use exactly one post-admission MCP grant binder"
+                    )
+                start = GenerationTurn(1, draft)
+                max_turns = 1
             case ProviderApiSelection():
+                if execution.codex_bind_admission is not None:
+                    raise GenerationBackendDefect(
+                        "ProviderApi execution received a Codex MCP grant binder"
+                    )
+                frozen = request.spec.model_tool_plan_snapshot
                 if isinstance(
                     request.spec.output_contract, StrictJsonOutputSnapshot
-                ) and isinstance(request.spec.model_tool_plan_snapshot, Present):
+                ) and isinstance(frozen, Present):
                     raise GenerationBackendCompositionRefused(
                         "ProviderApi strict structured output and model tools cannot share "
                         "one generation"
                     )
-                return await self._execute_provider(execution)
+                model_tools = self._composition.provider_tools.resolve(request.spec)
+                if isinstance(frozen, Present):
+                    if model_tools is None or model_tools.snapshot != frozen.value:
+                        raise GenerationBackendDefect(
+                            "provider tool projection differs from the frozen GenerationSpec"
+                        )
+                elif model_tools is not None:
+                    raise GenerationBackendDefect(
+                        "NoModelTools resolved a provider tool publication"
+                    )
+                max_turns = model_tools.snapshot.run_limits.max_calls + 1 if model_tools else 1
+                if execution.provider_resume is None:
+                    turn = self._composition.provider.prepare_initial_turn(
+                        generation_id=request.generation_id,
+                        spec=request.spec,
+                        intent=request.intent,
+                        model_tools=model_tools,
+                    )
+                    start = GenerationTurn(turn.turn_seq, turn)
+                else:
+                    start = _resume_continuation(execution, model_tools)
             case other:
                 assert_never(other)
-
-    async def _execute_codex(self, execution: GenerationBackendExecution) -> BackendTerminal:
-        request = execution.request
-        prepared = self._composition.codex_projection.prepare(request)
-        draft = prepared.draft
-        if (
-            draft.request_id != request.generation_id
-            or draft.spec != request.spec
-            or draft.intent != request.intent
-        ):
-            raise GenerationBackendDefect("Codex projection changed frozen generation identity")
-        has_model_tools = isinstance(request.spec.model_tool_plan_snapshot, Present)
-        if has_model_tools != (execution.codex_bind_admission is not None):
-            raise GenerationBackendDefect(
-                "Codex ModelTools must use exactly one post-admission MCP grant binder"
-            )
-        child = _codex_child_dispatch(request, draft)
-        armed = False
-
-        async def bind_after_admission(admission: GenerationAdmission) -> GenerationCommand:
-            nonlocal armed
-            if armed:
-                raise GenerationBackendDefect("Codex host invoked admission binding twice")
-            await execution.lifecycle.arm_child(child)
-            armed = True
-            if execution.codex_bind_admission is None:
-                return generation_command_from_draft(draft, tool_grant=None)
-            dispatched = await execution.codex_bind_admission(admission)
-            if generation_command_draft(dispatched) != draft:
-                raise GenerationBackendDefect(
-                    "Codex admission binder changed frozen generation identity"
-                )
-            return dispatched
-
-        async def consume() -> BackendTerminal:
-            terminal: BackendTerminal | None = None
-            async for frame in self._composition.codex.stream(
-                draft,
-                bind_admission=bind_after_admission,
-            ):
-                if not armed:
-                    raise GenerationBackendDefect(
-                        "Codex emitted model evidence before durable child arming"
-                    )
-                event = project_codex_generation_frame(frame)
-                if isinstance(event, BackendTerminal):
-                    if terminal is not None:
-                        raise GenerationBackendDefect("Codex emitted more than one terminal")
-                    proposed = BackendChildCompletion(
-                        child=child,
-                        terminal=event,
-                        successor=Absent(),
-                    )
-                    completed = _validate_effective_completion(
-                        proposed,
-                        await execution.lifecycle.complete_child(proposed),
-                    )
-                    event = completed.terminal
-                    terminal = event
-                await execution.observer.observe(event)
-            if terminal is None:
-                raise GenerationBackendDefect("Codex stream ended without terminal truth")
-            return terminal
-
-        stream_task = asyncio.create_task(consume())
-        cancel_task = asyncio.create_task(execution.cancellation.wait())
+        adapter = _KernelAdapter(self._composition, execution, model_tools)
         try:
-            done, _pending = await asyncio.wait(
-                (stream_task, cancel_task),
-                return_when=asyncio.FIRST_COMPLETED,
+            result = await run_generation(
+                start=start,
+                driver=adapter,
+                lifecycle=adapter,
+                tools=adapter,
+                observer=adapter,
+                cancellation=execution.cancellation,
+                max_turns=max_turns,
             )
-            if stream_task in done:
-                return await stream_task
-            await self._composition.codex.cancel(request.generation_id)
-            return await stream_task
-        finally:
-            for task in (stream_task, cancel_task):
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(stream_task, cancel_task, return_exceptions=True)
+        except GenerationDefect as error:
+            raise GenerationBackendDefect(str(error)) from error
+        if isinstance(result, GenerationCompleted):
+            return result.terminal
+        return result
 
-    async def _execute_provider(self, execution: GenerationBackendExecution) -> BackendTerminal:
-        request = execution.request
-        if execution.codex_bind_admission is not None:
-            raise GenerationBackendDefect("ProviderApi execution received a Codex MCP grant binder")
-        model_tools = self._composition.provider_tools.resolve(request.spec)
-        frozen_tools = request.spec.model_tool_plan_snapshot
-        if isinstance(frozen_tools, Present):
-            if model_tools is None or model_tools.snapshot != frozen_tools.value:
-                raise GenerationBackendDefect(
-                    "provider tool projection differs from the frozen GenerationSpec"
-                )
-        elif not isinstance(frozen_tools, Absent) or model_tools is not None:
-            raise GenerationBackendDefect("NoModelTools resolved a provider tool publication")
 
-        resume = execution.provider_resume
-        if resume is None:
-            turn = self._composition.provider.prepare_initial_turn(
-                generation_id=request.generation_id,
-                spec=request.spec,
-                intent=request.intent,
-                model_tools=model_tools,
-            )
-        else:
-            turn = await self._prepare_provider_resume(
-                execution=execution,
-                resume=resume,
-                model_tools=model_tools,
-            )
-        while True:
-            terminal, proposals, continuation = await self._consume_provider_child(
-                execution=execution,
-                turn=turn,
-            )
-            if isinstance(continuation, Absent):
-                if proposals:
-                    raise GenerationBackendDefect(
-                        "provider terminal omitted continuation for its tool proposals"
-                    )
-                return terminal
-            if model_tools is None:
-                raise GenerationBackendDefect(
-                    "provider continuation exists without frozen model tools"
-                )
-            material = continuation.value
-            if tuple(_proposal_call_id(item.proposal) for item in proposals) != (
-                material.provider_call_ids
-            ):
-                raise GenerationBackendDefect(
-                    "provider terminal continuation differs from observed proposals"
-                )
-            if (
-                material.identity.successor_child_seq
-                > model_tools.snapshot.run_limits.max_calls + 1
-            ):
-                raise GenerationBackendDefect(
-                    "provider model/tool loop exceeded its frozen maximum call count"
-                )
-            results = await self._execute_provider_tools(
-                execution=execution,
-                source_child_seq=turn.turn_seq,
-                proposals=tuple(proposal.proposal for proposal in proposals),
-            )
-            canonical_continuation = await execution.lifecycle.open_successor(material.identity)
-            if not isinstance(canonical_continuation, bytes) or (
-                provider_turn_continuation_fingerprint(canonical_continuation)
-                != material.identity.canonical_fingerprint
-            ):
-                raise GenerationBackendDefect(
-                    "opened provider continuation differs from committed canonical identity"
-                )
-            turn = self._composition.provider.prepare_successor_turn(
-                generation_id=request.generation_id,
-                spec=request.spec,
-                intent=request.intent,
-                source_turn_seq=material.identity.source_child_seq,
-                canonical_continuation=canonical_continuation,
-                tool_results=results,
-                model_tools=model_tools,
-            )
+@dataclass(frozen=True, slots=True)
+class _KernelAdapter:
+    """Nexus lowering and durable hooks; execution ordering belongs to the kernel."""
 
-    async def _prepare_provider_resume(
+    composition: GenerationBackendComposition
+    execution: GenerationBackendExecution
+    model_tools: ProviderModelTools | None
+
+    async def stream(
         self,
+        turn: GenerationTurn[NativeTurn],
         *,
-        execution: GenerationBackendExecution,
-        resume: ProviderResumeState,
-        model_tools: ProviderModelTools | None,
-    ) -> ProviderTurnRequest:
-        request = execution.request
-        identity = resume.identity
-        dispatch = request.spec.resolved_dispatch_target
-        if not isinstance(dispatch, ProviderDispatchTargetSnapshot):
-            raise GenerationBackendDefect("ProviderApi resume lacks its frozen dispatch target")
-        if (
-            identity.generation_id != request.generation_id
-            or identity.target_fingerprint != request.spec.source_row_fingerprint
-            or identity.codec_id != dispatch.continuation_codec
-            or identity.policy_revision != request.spec.policy_revision
-        ):
-            raise GenerationBackendDefect(
-                "ProviderApi resume identity differs from its frozen generation"
-            )
-        if model_tools is None:
-            raise GenerationBackendDefect("ProviderApi resume requires frozen model tools")
-        if identity.successor_child_seq > model_tools.snapshot.run_limits.max_calls + 1:
-            raise GenerationBackendDefect(
-                "ProviderApi resume exceeds its frozen maximum call count"
-            )
-        decoded = decode_provider_turn_continuation(
-            resume.canonical_bytes,
-            spec=request.spec,
-            expected_source_turn_seq=identity.source_child_seq,
-            target=ProviderTarget(provider=dispatch.provider, model=dispatch.model_id),
-            codec_id=dispatch.continuation_codec,
-        )
-        proposals = tuple(
-            model_tools.publication.decode_tool_call(call) for call in decoded.tool_calls
-        )
-        results = await self._execute_provider_tools(
-            execution=execution,
-            source_child_seq=identity.source_child_seq,
-            proposals=proposals,
-        )
-        return self._composition.provider.prepare_successor_turn(
+        arm: Callable[[], Awaitable[None]],
+        cancellation: CancelSignal,
+    ) -> AsyncGenerator[
+        KernelFrame[BackendEvent, BackendTerminal, ProviderContinuationMaterial, ToolCallResolution]
+    ]:
+        native = turn.request
+        if isinstance(native, GenerationCommandDraft):
+
+            async def bind(admission: GenerationAdmission) -> GenerationCommand:
+                await arm()
+                binder = self.execution.codex_bind_admission
+                command = (
+                    generation_command_from_draft(native, tool_grant=None)
+                    if binder is None
+                    else await binder(admission)
+                )
+                if generation_command_draft(command) != native:
+                    raise GenerationBackendDefect(
+                        "Codex admission binder changed frozen generation identity"
+                    )
+                return command
+
+            # Race only the next transport read against cancellation. The native
+            # transport owns interrupt and terminal truth; no effect is raced.
+            stream = self.composition.codex.stream(native, bind_admission=bind)
+            cancel_task = asyncio.create_task(cancellation.wait())
+            read_task: asyncio.Task[GenerationFrame] | None = None
+            cancelled = False
+            try:
+                while True:
+                    read_task = asyncio.create_task(anext(stream))
+                    if not cancelled:
+                        done, _ = await asyncio.wait(
+                            (read_task, cancel_task), return_when=asyncio.FIRST_COMPLETED
+                        )
+                        if read_task not in done:
+                            await cancel_task
+                            await self.composition.codex.cancel(native.request_id)
+                            cancelled = True
+                    try:
+                        frame = await read_task
+                    except StopAsyncIteration:
+                        break
+                    if frame.request_id != native.request_id:
+                        raise GenerationBackendDefect("Codex changed frozen generation identity")
+                    event = project_codex_generation_frame(frame)
+                    if isinstance(event, BackendTerminal):
+                        yield KernelTerminal(event.backend_seq, event)
+                    else:
+                        yield GenerationObservation(event.backend_seq, event)
+            finally:
+                pending: list[asyncio.Task[object]] = [cancel_task]
+                if read_task is not None:
+                    pending.append(read_task)
+                for task in pending:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
+                await stream.aclose()
+            return
+        await arm()
+        calls: list[GenerationToolCall[ToolCallResolution]] = []
+        stream = self.composition.provider.stream_turn(native, cancel=cancellation)
+        sequence = 0
+        async with aclosing(stream):
+            async for frame in stream:
+                sequence += 1
+                if frame.turn_seq != turn.ordinal:
+                    raise GenerationBackendDefect("provider changed frozen child identity")
+                event = project_provider_generation_event(frame)
+                if isinstance(event, BackendToolProposed):
+                    call = GenerationToolCall(event.proposal.provider_call_id, event.proposal)
+                    calls.append(call)
+                    yield GenerationProposal(sequence, call, event)
+                elif isinstance(frame, ProviderTerminal):
+                    if not isinstance(event, BackendTerminal):
+                        raise GenerationBackendDefect(
+                            "provider terminal projection is not terminal"
+                        )
+                    material = _provider_continuation_material(native, frame)
+                    continuation = None
+                    if isinstance(material, Present):
+                        if material.value.provider_call_ids != tuple(
+                            call.call_id for call in calls
+                        ):
+                            raise GenerationBackendDefect(
+                                "provider terminal continuation differs from observed proposals"
+                            )
+                        continuation = GenerationContinuation(
+                            turn.ordinal, material.value, tuple(calls)
+                        )
+                    yield KernelTerminal(sequence, event, continuation)
+                else:
+                    yield GenerationObservation(sequence, event)
+
+    def successor(
+        self,
+        continuation: KernelContinuation,
+        results: tuple[GenerationToolResult[BackendToolExecutionResult], ...],
+    ) -> GenerationTurn[NativeTurn]:
+        request = self.execution.request
+        if self.model_tools is None:
+            raise GenerationBackendDefect("provider successor lacks its frozen tool publication")
+        turn = self.composition.provider.prepare_successor_turn(
             generation_id=request.generation_id,
             spec=request.spec,
             intent=request.intent,
-            source_turn_seq=identity.source_child_seq,
-            canonical_continuation=resume.canonical_bytes,
-            tool_results=results,
-            model_tools=model_tools,
+            source_turn_seq=continuation.source_ordinal,
+            canonical_continuation=continuation.payload.canonical_bytes,
+            tool_results=tuple(
+                ProviderToolResult(
+                    provider_call_id=result.payload.provider_call_id,
+                    output=result.payload.output,
+                    is_error=result.payload.is_error,
+                )
+                for result in results
+            ),
+            model_tools=self.model_tools,
+        )
+        return GenerationTurn(turn.turn_seq, turn)
+
+    async def arm(self, turn: GenerationTurn[NativeTurn]) -> None:
+        await self.execution.lifecycle.arm_child(self._child(turn))
+
+    async def complete(
+        self, turn: GenerationTurn[NativeTurn], terminal: KernelCompletion
+    ) -> KernelCompletion:
+        proposed = BackendChildCompletion(
+            child=self._child(turn),
+            terminal=terminal.value,
+            successor=(
+                Absent()
+                if terminal.continuation is None
+                else Present(value=terminal.continuation.payload)
+            ),
+        )
+        completed = _validate_effective_completion(
+            proposed, await self.execution.lifecycle.complete_child(proposed)
+        )
+        return KernelTerminal(
+            terminal.sequence,
+            completed.terminal,
+            terminal.continuation if isinstance(completed.successor, Present) else None,
         )
 
-    async def _execute_provider_tools(
-        self,
-        *,
-        execution: GenerationBackendExecution,
-        source_child_seq: int,
-        proposals: tuple[ToolCallResolution, ...],
-    ) -> tuple[ProviderToolResult, ...]:
-        results: list[ProviderToolResult] = []
-        for proposal in proposals:
-            observed = await execution.tool_executor.execute(
-                BackendToolExecutionRequest(
-                    generation_id=execution.request.generation_id,
-                    child_seq=source_child_seq,
-                    proposal=proposal,
-                )
+    async def open(self, continuation: KernelContinuation) -> None:
+        material = continuation.payload
+        opened = await self.execution.lifecycle.open_successor(material.identity)
+        if opened != material.canonical_bytes:
+            raise GenerationBackendDefect(
+                "opened provider continuation differs from committed canonical identity"
             )
-            expected_call_id = _proposal_call_id(proposal)
-            if observed.provider_call_id != expected_call_id:
-                raise GenerationBackendDefect(
-                    "ToolAuthority result differs from its provider proposal identity"
-                )
-            results.append(
-                ProviderToolResult(
-                    provider_call_id=observed.provider_call_id,
-                    output=observed.output,
-                    is_error=observed.is_error,
-                )
-            )
-        return tuple(results)
 
-    async def _consume_provider_child(
-        self,
-        *,
-        execution: GenerationBackendExecution,
-        turn: ProviderTurnRequest,
-    ) -> tuple[
-        BackendTerminal,
-        tuple[BackendToolProposed, ...],
-        Presence[ProviderContinuationMaterial],
-    ]:
-        child = _provider_child_dispatch(turn)
-        await execution.lifecycle.arm_child(child)
-        proposals: list[BackendToolProposed] = []
-        async for native in self._composition.provider.stream_turn(
-            turn,
-            cancel=execution.cancellation,
-        ):
-            event = project_provider_generation_event(native)
-            if isinstance(event, BackendToolProposed):
-                proposals.append(event)
-                continue
-            if isinstance(native, ProviderTerminal):
-                if not isinstance(event, BackendTerminal):
-                    raise GenerationBackendDefect("provider terminal projection is not terminal")
-                continuation = _provider_continuation_material(turn, native)
-                proposed = BackendChildCompletion(
-                    child=child,
-                    terminal=event,
-                    successor=continuation,
-                )
-                completed = _validate_effective_completion(
-                    proposed,
-                    await execution.lifecycle.complete_child(proposed),
-                )
-                event = completed.terminal
-                for proposal in proposals:
-                    await execution.observer.observe(proposal)
-                await execution.observer.observe(event)
-                return event, tuple(proposals), completed.successor
-            await execution.observer.observe(event)
-        raise GenerationBackendDefect("provider stream ended without terminal truth")
+    async def execute(
+        self, source_ordinal: int, call: GenerationToolCall[ToolCallResolution]
+    ) -> GenerationToolResult[BackendToolExecutionResult]:
+        result = await self.execution.tool_executor.execute(
+            BackendToolExecutionRequest(
+                generation_id=self.execution.request.generation_id,
+                child_seq=source_ordinal,
+                proposal=call.payload,
+            )
+        )
+        return GenerationToolResult(result.provider_call_id, result)
+
+    async def observe(self, event: BackendEvent) -> None:
+        await self.execution.observer.observe(event)
+
+    def _child(self, turn: GenerationTurn[NativeTurn]) -> BackendChildDispatch:
+        if isinstance(turn.request, GenerationCommandDraft):
+            return _codex_child_dispatch(self.execution.request, turn.request)
+        return _provider_child_dispatch(turn.request)
+
+
+def _resume_continuation(
+    execution: GenerationBackendExecution, model_tools: ProviderModelTools | None
+) -> KernelContinuation:
+    request = execution.request
+    resume = execution.provider_resume
+    if resume is None:
+        raise GenerationBackendDefect("provider resume state is absent")
+    identity = resume.identity
+    dispatch = request.spec.resolved_dispatch_target
+    if not isinstance(dispatch, ProviderDispatchTargetSnapshot):
+        raise GenerationBackendDefect("ProviderApi resume lacks its frozen dispatch target")
+    if (
+        identity.generation_id != request.generation_id
+        or identity.target_fingerprint != request.spec.source_row_fingerprint
+        or identity.codec_id != dispatch.continuation_codec
+        or identity.policy_revision != request.spec.policy_revision
+    ):
+        raise GenerationBackendDefect(
+            "ProviderApi resume identity differs from its frozen generation"
+        )
+    if model_tools is None:
+        raise GenerationBackendDefect("ProviderApi resume requires frozen model tools")
+    decoded = decode_provider_turn_continuation(
+        resume.canonical_bytes,
+        spec=request.spec,
+        expected_source_turn_seq=identity.source_child_seq,
+        target=ProviderTarget(provider=dispatch.provider, model=dispatch.model_id),
+        codec_id=dispatch.continuation_codec,
+    )
+    calls = tuple(
+        GenerationToolCall(call.id, model_tools.publication.decode_tool_call(call))
+        for call in decoded.tool_calls
+    )
+    return GenerationContinuation(
+        identity.source_child_seq,
+        ProviderContinuationMaterial(
+            identity=identity,
+            provider_call_ids=tuple(call.call_id for call in calls),
+            canonical_bytes=resume.canonical_bytes,
+        ),
+        calls,
+    )
 
 
 def _codex_child_dispatch(
@@ -699,10 +727,6 @@ def _provider_continuation_material(
     )
 
 
-def _proposal_call_id(proposal: ToolCallResolution) -> str:
-    return proposal.provider_call_id
-
-
 def _canonical_route_request_identity(value: Mapping[str, object]) -> dict[str, object]:
     """Detach an adapter-owned frozen tree into ledger-safe canonical JSON."""
 
@@ -742,6 +766,7 @@ __all__ = [
     "BackendChildLifecycle",
     "BackendEventObserver",
     "BackendGenerationRequest",
+    "BackendGenerationOutcome",
     "BackendToolExecutionRequest",
     "BackendToolExecutionResult",
     "BackendToolExecutor",

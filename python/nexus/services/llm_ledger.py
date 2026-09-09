@@ -446,6 +446,49 @@ def complete_generation_in_current_transaction(
     _validate_call(call)
 
 
+def stop_generation_in_current_transaction(
+    db: Session,
+    *,
+    owner: LlmCallOwner,
+    generation_id: UUID,
+    source_turn_seq: int,
+    reason: Literal["cancelled", "turn_limit"],
+) -> None:
+    """Retire a committed successor and close its parent without inventing a model turn."""
+
+    call = _lock_owned_generation(db, owner=owner, generation_id=generation_id)
+    _assert_parent_open(call)
+    source = db.scalar(
+        select(LLMModelTurn)
+        .where(LLMModelTurn.generation_id == generation_id)
+        .order_by(LLMModelTurn.turn_seq.desc())
+        .limit(1)
+        .with_for_update()
+    )
+    if source is None or source.turn_seq != source_turn_seq or source.terminal is None:
+        _ledger_defect(call, "generation stop lacks its exact terminal source child")
+    continuation = db.scalar(
+        select(LLMModelTurnContinuation)
+        .where(LLMModelTurnContinuation.generation_id == generation_id)
+        .with_for_update()
+    )
+    if continuation is None or continuation.source_model_turn_id != source.id:
+        _ledger_defect(call, "generation stop lacks its exact pending continuation")
+    db.delete(continuation)
+    db.flush()
+    terminal: dict[str, object] = {
+        "kind": "Cancelled" if reason == "cancelled" else "Failed",
+        "orchestration_stop": reason,
+        "final_model_turn_seq": source_turn_seq,
+        "model_turn_terminal": dict(source.terminal),
+    }
+    if reason == "turn_limit":
+        terminal["failure_code"] = reason
+    complete_generation_in_current_transaction(
+        db, owner=owner, generation_id=generation_id, terminal=terminal
+    )
+
+
 def start_model_turn_in_current_transaction(db: Session, start: ModelTurnStart) -> UUID:
     """Allocate the initial child under the locked parent sequence fence."""
 
@@ -1415,6 +1458,7 @@ __all__ = [
     "reset_generation_after_proven_non_dispatch_in_current_transaction",
     "arm_resumed_model_turn_dispatch_in_current_transaction",
     "resume_generation_continuation_in_current_transaction",
+    "stop_generation_in_current_transaction",
     "start_generation_in_current_transaction",
     "start_model_turn_in_current_transaction",
 ]

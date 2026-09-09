@@ -435,7 +435,24 @@
         "apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingScheduler.kt",
         "apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingStateCodec.kt",
         "apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingStore.kt",
-        "apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingTransferJobService.kt"
+        "apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingTransferJobService.kt",
+        "python/nexus/services/generation_backend.py",
+        "python/tests/kernel/test_generation_terminal_acceptance.py",
+        "python/tests/kernel/test_tool_implementation_authority.py",
+        "python/tests/service/test_tool_database_scheduling.py",
+        "python/nexus/services/tool_runtime/execution.py",
+        "python/tests/service/test_tool_async_transactions.py",
+        "python/nexus/services/generation_history.py",
+        "python/tests/kernel/test_generation_history.py",
+        "migrations/alembic/versions/0225_shared_agent_kernel.py",
+        "python/tests/migrations/test_shared_agent_kernel_cutover.py",
+        "python/nexus/db/async_session.py",
+        "python/nexus/services/provider_generation_backend.py",
+        "python/tests/service/test_shared_generation_stop.py",
+        "docs/cutovers/shared-agent-kernel-hard-cutover.md",
+        "python/tests/kernel/test_provider_terminal_acceptance.py",
+        "python/tests/service/test_chat_generation_recovery_usage.py",
+        "python/tests/testkit/provider_generation.py"
       ],
       "proofs": [
         "pytest:python/tests/service/test_durable_job_replay.py",
@@ -449,11 +466,22 @@
         "pytest:python/tests/service/test_agent_tools_mcp_gate.py::test_public_mcp_mount_admits_only_a_live_bearer_on_the_exact_protocol",
         "gradle:apps/android/app/src/test/java/app/nexus/android/offline/OfflineMediaStoreContractTest.kt",
         "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingLifecycleTest.kt",
-        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingSchedulerStoreBoundaryTest.kt"
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingSchedulerStoreBoundaryTest.kt",
+        "pytest:python/tests/kernel/test_generation_terminal_acceptance.py::test_late_native_evidence_cannot_commit_or_publish_a_generation_terminal",
+        "pytest:python/tests/kernel/test_tool_implementation_authority.py::test_frozen_tool_snapshot_and_bearer_digest_bind_handler_implementation",
+        "pytest:python/tests/service/test_tool_database_scheduling.py::test_tool_database_wait_keeps_the_provider_event_loop_live",
+        "pytest:python/tests/service/test_tool_async_transactions.py::test_network_releases_database_and_cancelled_write_preserves_atomic_receipt",
+        "pytest:python/tests/kernel/test_generation_history.py::test_historical_selection_survives_without_accepting_old_tool_authority",
+        "pytest:python/tests/migrations/test_shared_agent_kernel_cutover.py::test_shared_kernel_cutover_requires_drain_and_preserves_history",
+        "pytest:python/tests/service/test_shared_generation_stop.py::test_stopped_parent_retains_paid_child_and_cannot_resume_its_successor",
+        "pytest:python/tests/kernel/test_provider_terminal_acceptance.py::test_late_provider_evidence_cannot_commit_publish_or_execute_a_tool_decision",
+        "pytest:python/tests/service/test_chat_generation_recovery_usage.py::test_resumed_chat_stop_publishes_original_paid_usage_and_retires_continuation"
       ],
       "capabilities": [
         "service",
-        "android-host"
+        "android-host",
+        "kernel-python",
+        "migrations"
       ]
     },
     {

@@ -12,7 +12,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from llm_tools import ToolId
-from sqlalchemy import func, select
+from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 # BASE sensitivity overlays this proof without candidate production owners.
@@ -52,12 +52,13 @@ def test_generation_tool_plans_refuse_untrusted_escalation(
 
     assert _CUTOVER_PRESENT, "the final unattended generation tool authority is absent"
     # Candidate-only fixture resolution must not become the BASE red oracle.
-    db_session = cast(Session, request.getfixturevalue("db_session"))
-    asyncio.run(_prove_generation_tool_plans_refuse_untrusted_escalation(db_session))
+    request.getfixturevalue("committed_chat_state_isolation")
+    engine = cast(Engine, request.getfixturevalue("engine"))
+    asyncio.run(_prove_generation_tool_plans_refuse_untrusted_escalation(engine))
 
 
 async def _prove_generation_tool_plans_refuse_untrusted_escalation(
-    db_session: Session,
+    engine: Engine,
 ) -> None:
     safety = json.loads(_SAFETY_CASES_PATH.read_text(encoding="utf-8"))
     generation = json.loads(_GENERATION_CASES_PATH.read_text(encoding="utf-8"))
@@ -98,13 +99,12 @@ async def _prove_generation_tool_plans_refuse_untrusted_escalation(
     assert rubric["expected_exception"] == "ToolAuthorityRefused"
     observed: dict[str, str] = {}
     factory = sessionmaker(
-        bind=db_session.get_bind(),
+        bind=engine,
         expire_on_commit=False,
-        join_transaction_mode="create_savepoint",
     )
     for case in safety["cases"]:
         assert isinstance(case["untrusted_content"], str) and case["untrusted_content"]
-        executor = _start_executor(
+        executor = await _start_executor(
             factory,
             runtime=runtime,
             operation=cast(str, case["operation"]),
@@ -135,7 +135,7 @@ async def _prove_generation_tool_plans_refuse_untrusted_escalation(
     assert observed == safety["baseline"]
 
 
-def _start_executor(
+async def _start_executor(
     factory: sessionmaker[Session],
     *,
     runtime: ComposedToolRuntime,
@@ -181,7 +181,7 @@ def _start_executor(
             ),
         )
         db.commit()
-    return compose_generation_tool_executor(
+    return await compose_generation_tool_executor(
         session_factory=factory,
         user_id=uuid4(),
         owner=owner,

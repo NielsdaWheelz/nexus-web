@@ -1,8 +1,9 @@
 diff --git a/python/nexus/services/tool_runtime/execution.py b/python/nexus/services/tool_runtime/execution.py
 --- a/python/nexus/services/tool_runtime/execution.py
 +++ b/python/nexus/services/tool_runtime/execution.py
-@@ -1787,16 +1787,5 @@ def _run_search(
-     }
+@@ -1972,18 +1972,7 @@
+ 
+     query, scopes, requested_scopes, filters = await recorder.database.run_sync(prepare)
      if not scopes:
 -        recorder.stage_audit(
 -            scope="conversation_context",
@@ -18,5 +19,5 @@ diff --git a/python/nexus/services/tool_runtime/execution.py b/python/nexus/serv
 -        )
 +        scopes = [scope_from_uri("all")]
      try:
-         response = search_scopes(recorder.db, viewer_id, query, scopes)
+         response = await search_scopes_async(recorder.database, viewer_id, query, scopes)
      except ApiError as exc:

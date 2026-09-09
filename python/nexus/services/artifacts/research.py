@@ -18,8 +18,9 @@ from llm_tools import (
     ToolId,
 )
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
+from nexus.db.async_session import open_async_session
 from nexus.jobs.queue import JobRow
 from nexus.logging import get_logger
 from nexus.schemas.presence import Present, absent, present
@@ -57,14 +58,14 @@ from nexus.services.resource_graph.refs import (
 from nexus.services.resource_graph.resolve import load_resource_batch
 from nexus.services.resource_graph.schemas import CitationSnapshot
 from nexus.services.resource_items.capabilities import resource_read_policy
+from nexus.services.search.batch import search_scopes_async
 from nexus.services.search.kinds import SearchKind
 from nexus.services.search.query import SearchQuery
-from nexus.services.search.service import search
 from nexus.services.tool_runtime.composition import (
     encode_tool_plan_snapshot,
     validate_tool_plan_snapshot,
 )
-from nexus.services.tool_runtime.execution import make_durable_execution_context
+from nexus.services.tool_runtime.execution import open_durable_execution_context
 
 if TYPE_CHECKING:
     from nexus.services.artifacts.bindings._shared import Candidate
@@ -451,15 +452,17 @@ async def _nexus_search(
     query: str,
     query_fingerprint: str,
 ) -> NexusSearchResult:
-    response = search(
-        db,
-        viewer_id,
-        SearchQuery(
-            text=query,
-            requested_kinds=_NEXUS_RESEARCH_KINDS,
-            limit=_MAX_NEXUS_RESULTS_PER_QUERY,
-        ),
+    if db.in_transaction():
+        raise RuntimeError("research search requires its committed dispatch checkpoint")
+    prepared_query = SearchQuery(
+        text=query,
+        requested_kinds=_NEXUS_RESEARCH_KINDS,
+        limit=_MAX_NEXUS_RESULTS_PER_QUERY,
     )
+    async with open_async_session(sessionmaker(bind=db.get_bind())) as database:
+        response = await search_scopes_async(
+            database, viewer_id, prepared_query, (prepared_query.scope,)
+        )
     items: list[NexusSearchItem] = []
     for rank, result in enumerate(response.results, start=1):
         if result.citation_target is None:
@@ -522,8 +525,9 @@ async def _web_search_tool_step(
     request_fingerprint: str,
 ) -> WebSearchResult:
     operation = runtime.research_tool_operation
-    context = make_durable_execution_context(
-        db=db,
+    db.commit()
+    async with open_durable_execution_context(
+        session_factory=sessionmaker(bind=db.get_bind(), expire_on_commit=False),
         operation=operation,
         operation_id=runtime.build_id,
         claimed_job=runtime.job,
@@ -535,17 +539,17 @@ async def _web_search_tool_step(
         effect_id=None,
         cancellation=_DossierToolCancellation(),
         telemetry=_DossierToolTelemetry(),
-    )
-    try:
-        result = await ToolExecutor.execute(
-            operation.plan.catalog_view.binding(_WEB_SEARCH_TOOL_ID),
-            ParsedJson({"query": query, "freshness_days": None}),
-            context,
-        )
-    except PositionConflictDefect as exc:
-        # With the exact frozen plan already validated, a conflict at this fixed
-        # position means the Idea-derived query changed after durable occupation.
-        raise ResearchInputsChanged from exc
+    ) as context:
+        try:
+            result = await ToolExecutor.execute(
+                operation.plan.catalog_view.binding(_WEB_SEARCH_TOOL_ID),
+                ParsedJson({"query": query, "freshness_days": None}),
+                context,
+            )
+        except PositionConflictDefect as exc:
+            # With the exact frozen plan already validated, a conflict at this fixed
+            # position means the Idea-derived query changed after durable occupation.
+            raise ResearchInputsChanged from exc
 
     runtime.refresh_job(db)
     if result.get("type") != "Success":

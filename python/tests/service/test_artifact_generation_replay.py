@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
@@ -120,8 +120,8 @@ class _ScriptedCodexTransport:
         draft: GenerationCommandDraft,
         *,
         bind_admission: Callable[[GenerationAdmission], Awaitable[GenerationCommand]],
-    ) -> AsyncIterator[GenerationFrame]:
-        async def frames() -> AsyncIterator[GenerationFrame]:
+    ) -> AsyncGenerator[GenerationFrame]:
+        async def frames() -> AsyncGenerator[GenerationFrame]:
             command = await bind_test_codex_admission(draft, bind_admission)
             self.commands.append(command)
             if not self._outcomes:

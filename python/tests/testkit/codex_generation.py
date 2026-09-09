@@ -155,7 +155,7 @@ async def _unused_handler(
     _value: object,
     _context: object,
 ) -> HandlerSuccess[dict[str, object]]:
-    return HandlerSuccess(value={})
+    return HandlerSuccess(value={}, actual_attempts=0)
 
 
 def _binding(
@@ -167,6 +167,7 @@ def _binding(
         spec=spec,
         execute=Available(_unused_handler),
         replay_policy=replay_policy,
+        implementation_revision="codex_generation.v1",
         policy_epoch=PolicyEpoch("codex-transport-proof-v1"),
         policy_inputs={"owner": "codex-transport-proof"},
     )

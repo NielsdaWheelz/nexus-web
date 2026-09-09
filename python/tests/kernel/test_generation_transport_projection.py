@@ -44,7 +44,7 @@ _WRITE_IDS = (
 
 async def _unused_handler(value: object, context: object) -> HandlerSuccess[dict[str, object]]:
     del value, context
-    return HandlerSuccess(value={})
+    return HandlerSuccess(value={}, actual_attempts=0)
 
 
 def _binding(
@@ -56,6 +56,7 @@ def _binding(
         spec=spec,
         execute=Available(_unused_handler),
         replay_policy=replay_policy,
+        implementation_revision="test_generation_transport_projection.v1",
         policy_epoch=PolicyEpoch("generation-transport-proof-v1"),
         policy_inputs={"owner": "generation-transport-proof"},
     )

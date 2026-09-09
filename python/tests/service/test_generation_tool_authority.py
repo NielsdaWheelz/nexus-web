@@ -4,22 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from importlib.util import find_spec
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 import pytest
 from llm_tools import (
-    WEB_SEARCH_SPEC,
-    Available,
     ExecutorConfigurationDefect,
     HandlerSuccess,
     ParsedJson,
-    PolicyEpoch,
-    ReplayPolicy,
-    ToolBinding,
     ToolId,
     raw_input_digest,
 )
@@ -27,6 +21,12 @@ from provider_runtime.tool_adapter import CanonicalToolCall
 from pydantic import SecretStr
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
+
+from tests.testkit.generation_tool_authority import (
+    controlled_tool_runtime,
+    generation_tool_spec,
+    search_arguments,
+)
 
 # BASE sensitivity overlays this proof without candidate production owners.
 _CUTOVER_PRESENT = find_spec("nexus.services.tool_authority") is not None
@@ -36,13 +36,6 @@ if TYPE_CHECKING or _CUTOVER_PRESENT:
 
     from nexus.db.models import ArtifactBuild, SynthesisArtifact
     from nexus.jobs.queue import JobExecutionContext, claim_job, enqueue_job, fail_job
-    from nexus.schemas.llm import (
-        PrivacyDisclosure,
-        ProcessorChain,
-        SelectionPresentation,
-        SubscriptionBilling,
-    )
-    from nexus.schemas.presence import Absent, Present
     from nexus.services import bootstrap
     from nexus.services.agent_tool_grants import (
         issue_generation_tool_grant,
@@ -59,19 +52,9 @@ if TYPE_CHECKING or _CUTOVER_PRESENT:
         dossier_candidates_from_ledger,
     )
     from nexus.services.generation_backend import BackendToolExecutionRequest
-    from nexus.services.generation_selection import CodexPersonalSelection
     from nexus.services.generation_spec import (
-        CodexDispatchTargetSnapshot,
         FrozenToolScope,
-        GenerationBounds,
-        GenerationOperation,
-        GenerationSpec,
-        GenerationSpecFacts,
-        GenerationStreamBounds,
-        ImmutablePromptPayloadRef,
-        TextOutputSnapshot,
         generation_fact_digest,
-        tool_scope_digest,
     )
     from nexus.services.llm_ledger import (
         GenerationStart,
@@ -87,13 +70,7 @@ if TYPE_CHECKING or _CUTOVER_PRESENT:
         compose_generation_tool_executor,
         read_tool_positions,
     )
-    from nexus.services.tool_runtime.composition import (
-        ComposedToolRuntime,
-        compose_tool_runtime,
-        freeze_tool_plan_snapshot,
-    )
     from nexus.services.tool_runtime.declarations import (
-        NEXUS_TOOL_DECLARATIONS,
         NexusEvidence,
         NexusSearchSuccess,
         ResourceReadSuccess,
@@ -123,10 +100,10 @@ async def _prove_frozen_plan_is_transport_neutral_and_fenced(engine: Engine) -> 
             actual_attempts=0,
         )
 
-    runtime = _controlled_runtime({"nexus.search": execute_search})
+    runtime = controlled_tool_runtime({"nexus.search": execute_search})
     operation = runtime.operations["LibraryDossierRead"]
     scope = FrozenToolScope(admitted_refs=("library:proof",), predicates=())
-    spec = _generation_spec(operation=operation, scope=scope)
+    spec = generation_tool_spec(operation=operation, scope=scope)
     owner = LlmCallOwner(kind="artifact_build", id=uuid4())
     generation_id = uuid4()
     worker_id = "generation-tool-authority-proof"
@@ -167,7 +144,7 @@ async def _prove_frozen_plan_is_transport_neutral_and_fenced(engine: Engine) -> 
         )
         db.commit()
 
-    executor = compose_generation_tool_executor(
+    executor = await compose_generation_tool_executor(
         session_factory=factory,
         user_id=user_id,
         owner=owner,
@@ -201,7 +178,7 @@ async def _prove_frozen_plan_is_transport_neutral_and_fenced(engine: Engine) -> 
     async def on_policy_violation(value: Any) -> None:
         policy_violations.append(str(value))
 
-    arguments_a = _search_arguments("Codex transport")
+    arguments_a = search_arguments("Codex transport")
     codex = await mcp_authority.invoke(
         claims=claims,
         on_policy_violation=on_policy_violation,
@@ -210,7 +187,7 @@ async def _prove_frozen_plan_is_transport_neutral_and_fenced(engine: Engine) -> 
         tool_id="nexus.search",
         arguments=arguments_a,
     )
-    arguments_b = _search_arguments("Provider transport")
+    arguments_b = search_arguments("Provider transport")
     provider_request = BackendToolExecutionRequest(
         generation_id=generation_id,
         child_seq=2,
@@ -245,7 +222,7 @@ async def _prove_frozen_plan_is_transport_neutral_and_fenced(engine: Engine) -> 
             request_id=JsonRpcId.integer(2),
             provider_wire_name="nexus_search",
             tool_id="nexus.search",
-            arguments=_search_arguments("foreign bearer"),
+            arguments=search_arguments("foreign bearer"),
         )
     assert policy_violations == [str(generation_id)]
 
@@ -257,7 +234,7 @@ async def _prove_frozen_plan_is_transport_neutral_and_fenced(engine: Engine) -> 
                 proposal=CanonicalToolCall(
                     provider_call_id="foreign-generation-call",
                     tool_id=ToolId("nexus.search"),
-                    arguments=_search_arguments("foreign"),
+                    arguments=search_arguments("foreign"),
                 ),
             )
         )
@@ -277,7 +254,7 @@ async def _prove_frozen_plan_is_transport_neutral_and_fenced(engine: Engine) -> 
             transport_call_id="provider-call-scope-widening",
             provider_wire_name="nexus_search",
             tool_id=ToolId("nexus.search"),
-            arguments=_search_arguments("scope widening", scopes=["library:foreign"]),
+            arguments=search_arguments("scope widening", scopes=["library:foreign"]),
         )
     with pytest.raises(ValueError, match="reused with different authority"):
         await executor.execute_canonical(
@@ -286,7 +263,7 @@ async def _prove_frozen_plan_is_transport_neutral_and_fenced(engine: Engine) -> 
             transport_call_id="provider-call-1",
             provider_wire_name="nexus_search",
             tool_id=ToolId("nexus.search"),
-            arguments=_search_arguments("changed replay"),
+            arguments=search_arguments("changed replay"),
         )
 
     # A write-capable plan may run only beside a projection that owns its
@@ -302,7 +279,7 @@ async def _prove_frozen_plan_is_transport_neutral_and_fenced(engine: Engine) -> 
                 generation_id=write_generation_id,
                 owner=write_owner,
                 spec=generation_spec_document(
-                    _generation_spec(
+                    generation_tool_spec(
                         operation=write_operation,
                         scope=scope,
                         effect_mode="AdditiveWrites",
@@ -313,7 +290,7 @@ async def _prove_frozen_plan_is_transport_neutral_and_fenced(engine: Engine) -> 
             ),
         )
         db.commit()
-    unowned_write_executor = compose_generation_tool_executor(
+    unowned_write_executor = await compose_generation_tool_executor(
         session_factory=factory,
         user_id=user_id,
         owner=write_owner,
@@ -357,7 +334,7 @@ async def _prove_frozen_plan_is_transport_neutral_and_fenced(engine: Engine) -> 
             transport_call_id="mcp:integer:3",
             provider_wire_name="nexus_search",
             tool_id=ToolId("nexus.search"),
-            arguments=_search_arguments("lost lease"),
+            arguments=search_arguments("lost lease"),
         )
     with factory() as db:
         assert len(read_tool_positions(db, generation_id=generation_id)) == 2
@@ -416,10 +393,10 @@ async def _prove_dossier_projection_uses_only_completed_read_evidence(
             actual_attempts=0,
         )
 
-    runtime = _controlled_runtime({"nexus.resource.read": execute_read})
+    runtime = controlled_tool_runtime({"nexus.resource.read": execute_read})
     operation = runtime.operations["LibraryDossierRead"]
     scope = FrozenToolScope(admitted_refs=(read_target.uri,), predicates=())
-    spec = _generation_spec(operation=operation, scope=scope)
+    spec = generation_tool_spec(operation=operation, scope=scope)
     generation_id = uuid4()
     worker_id = "dossier-tool-projection-proof"
     factory = sessionmaker(bind=engine, expire_on_commit=False)
@@ -476,7 +453,7 @@ async def _prove_dossier_projection_uses_only_completed_read_evidence(
         )
         db.commit()
 
-    executor = compose_generation_tool_executor(
+    executor = await compose_generation_tool_executor(
         session_factory=factory,
         user_id=user_id,
         owner=owner,
@@ -485,8 +462,8 @@ async def _prove_dossier_projection_uses_only_completed_read_evidence(
         operation=operation,
         projection=projection,
     )
-    prepared_arguments = _search_arguments("not completed")
-    prepared = executor.authority.prepare_position(
+    prepared_arguments = search_arguments("not completed")
+    prepared = await executor.authority.prepare_position(
         transport_kind="CodexMcp",
         model_turn_seq=1,
         transport_call_id="mcp:string:prepared",
@@ -536,7 +513,7 @@ async def _prove_dossier_projection_uses_only_completed_read_evidence(
     ]
 
     with pytest.raises(ToolAuthorityRefused, match="requester is not live"):
-        compose_generation_tool_executor(
+        await compose_generation_tool_executor(
             session_factory=factory,
             user_id=uuid4(),
             owner=owner,
@@ -545,128 +522,3 @@ async def _prove_dossier_projection_uses_only_completed_read_evidence(
             operation=operation,
             projection=projection,
         )
-
-
-def _controlled_runtime(handlers: Mapping[str, Any]) -> ComposedToolRuntime:
-    async def unexpected(value: Any, context: Any) -> HandlerSuccess[Any]:
-        del value, context
-        raise AssertionError("proof dispatched a tool outside its controlled handler set")
-
-    nexus_bindings = tuple(
-        ToolBinding(
-            spec=entry.spec,
-            execute=Available(handlers.get(str(entry.spec.id), unexpected)),
-            replay_policy=ReplayPolicy.ReDispatchable,
-            policy_epoch=PolicyEpoch("generation-tool-authority-proof-v1"),
-            policy_inputs={"owner": "generation-tool-authority-proof"},
-        )
-        for entry in NEXUS_TOOL_DECLARATIONS
-    )
-    return compose_tool_runtime(
-        ToolBinding(
-            spec=WEB_SEARCH_SPEC,
-            execute=Available(unexpected),
-            replay_policy=ReplayPolicy.BilledOnce,
-            policy_epoch=PolicyEpoch("generation-tool-authority-proof-v1"),
-            policy_inputs={"owner": "generation-tool-authority-proof"},
-        ),
-        nexus_bindings=nexus_bindings,
-    )
-
-
-def _search_arguments(
-    query: str,
-    *,
-    scopes: list[str] | None = None,
-) -> dict[str, object]:
-    return {
-        "authors": None,
-        "formats": None,
-        "kinds": None,
-        "limit": None,
-        "query": query,
-        "roles": None,
-        "scopes": scopes,
-    }
-
-
-def _generation_spec(
-    *,
-    operation: Any,
-    scope: FrozenToolScope,
-    effect_mode: Literal["ReadOnly", "AdditiveWrites"] = "ReadOnly",
-    generation_operation: GenerationOperation = "dossier_library",
-    selection_source: Literal["ChatRun", "BackgroundPolicy"] = "BackgroundPolicy",
-) -> GenerationSpec:
-    output = TextOutputSnapshot()
-    facts = GenerationSpecFacts(
-        operation=generation_operation,
-        selection=CodexPersonalSelection(
-            route="CodexPersonal",
-            model="gpt-5.6-terra",
-            reasoning="medium",
-        ),
-        selection_source=selection_source,
-        resolved_dispatch_target=CodexDispatchTargetSnapshot(
-            model_key="gpt-5.6-terra",
-            dispatch_model="gpt-5.6-terra",
-            agent_definition_revision="generation-tool-authority-agent.v1",
-        ),
-        source_catalog_definition_revision="generation-tool-authority-catalog.v1",
-        source_row_fingerprint=generation_fact_digest("source-row"),
-        agent_definition_revision=Present(value="generation-tool-authority-agent.v1"),
-        source_context_window=Absent(),
-        source_max_output_tokens=Absent(),
-        effective_context_budget_tokens=32_000,
-        effective_output_budget_tokens=4_096,
-        bounds=GenerationBounds(
-            instructions_max_bytes=32_768,
-            input_max_bytes=65_536,
-            turn_timeout_seconds=120,
-            session_open_timeout_seconds=10,
-            runtime_close_timeout_seconds=10,
-            transport_margin_seconds=5,
-            transport_deadline_seconds=125,
-            stream=GenerationStreamBounds(
-                max_frames=1_024,
-                max_frame_bytes=1_048_576,
-                max_stream_bytes=8_388_608,
-                text_flush_interval_ms=Absent(),
-                text_flush_bytes=Absent(),
-            ),
-        ),
-        prompt_template_revision="generation-tool-authority.prompt.v1",
-        prompt_payload_ref=ImmutablePromptPayloadRef(
-            owner_kind="artifact_build",
-            owner_id="proof",
-            revision="generation-tool-authority.prompt.v1",
-            payload_digest=generation_fact_digest("prompt"),
-        ),
-        instructions_digest=generation_fact_digest("instructions"),
-        input_digest=generation_fact_digest("input"),
-        output_contract=output,
-        output_contract_fingerprint=generation_fact_digest(output.model_dump(mode="json")),
-        display_at_dispatch=SelectionPresentation(
-            route_label="Codex Personal",
-            model_label="GPT-5.6 Terra",
-            reasoning_label="Medium",
-            billing=SubscriptionBilling(),
-            privacy=PrivacyDisclosure(
-                summary="Local authenticated Codex account.",
-                retention="Codex account retention applies.",
-                training="Nexus does not opt content into training.",
-            ),
-            processor_chain=ProcessorChain(processors=("Nexus", "OpenAI Codex")),
-        ),
-        host_tool_plan_snapshot=Absent(),
-        host_evidence_revision=Absent(),
-        model_tool_plan_snapshot=Present(value=freeze_tool_plan_snapshot(operation)),
-        tool_effect_mode=Present(value=effect_mode),
-        admitted_tool_scope=Present(value=scope),
-        admitted_tool_scope_digest=Present(value=tool_scope_digest(scope)),
-        catalog_definition_revision=generation_fact_digest("catalog"),
-        policy_revision="generation-tool-authority-policy.v1",
-        backend_contract_revision="generation-tool-authority-backend.v1",
-        provider_registry_revision=Absent(),
-    )
-    return GenerationSpec.freeze(facts)

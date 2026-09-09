@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import os
 import ssl
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from importlib.util import find_spec
@@ -27,6 +26,8 @@ from llm_tools import (
 )
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
+
+from tests.testkit.generation_ledger import generation_spec_fixture
 
 # BASE sensitivity overlays this proof without candidate production owners.
 _CUTOVER_PRESENT = find_spec("nexus.services.generation_continuations") is not None
@@ -64,7 +65,7 @@ if TYPE_CHECKING or _CUTOVER_PRESENT:
     from nexus.jobs.queue import JobExecutionContext, claim_job, enqueue_job, get_job, lock_job
     from nexus.schemas.presence import Present, absent, present
     from nexus.services import generation_policy
-    from nexus.services.codex_generation_contract import NormalizedFailureCode
+    from nexus.services.codex_generation_contract import GenerationFrame
     from nexus.services.durable_step_journal import Completed, Uncertain
     from nexus.services.generation_backend import (
         BackendGenerationRequest,
@@ -95,6 +96,7 @@ if TYPE_CHECKING or _CUTOVER_PRESENT:
         ComposedExecutionRuntime,
         EncodedGenerationTerminal,
         GenerationExecutionRequest,
+        GenerationFailureCode,
         GenerationUncertain,
         JobGenerationJournal,
         admit_job_generation,
@@ -147,107 +149,6 @@ if TYPE_CHECKING or _CUTOVER_PRESENT:
     from tests.testkit.unreachable_state import delete_jobs_by_ids, expire_job_claim
 
 
-def _generation_spec() -> dict[str, object]:
-    output_contract = {"kind": "Text"}
-    document: dict[str, object] = {
-        "schema_version": "nexus-generation-spec.v1",
-        "operation": "metadata_enrichment",
-        "selection": {
-            "route": "ProviderApi",
-            "model_ref": "openai:gpt-5.6-luna",
-            "reasoning": "low",
-        },
-        "selection_source": "BackgroundPolicy",
-        "resolved_dispatch_target": {
-            "kind": "ProviderApi",
-            "model_ref": "openai:gpt-5.6-luna",
-            "provider": "openai",
-            "model_id": "gpt-5.6-luna",
-            "engine": "responses",
-            "base_url": {"kind": "Absent"},
-            "correlation": "header",
-            "routing": {"kind": "Absent"},
-            "continuation_codec": "openai.responses.v1",
-            "registry_revision": "registry.1",
-        },
-        "source_catalog_definition_revision": "provider-catalog.1",
-        "source_row_fingerprint": "1" * 64,
-        "agent_definition_revision": {"kind": "Absent"},
-        "source_context_window": {"kind": "Present", "value": 128_000},
-        "source_max_output_tokens": {"kind": "Present", "value": 16_384},
-        "effective_context_budget_tokens": 32_000,
-        "effective_output_budget_tokens": 4_096,
-        "bounds": {
-            "instructions_max_bytes": 65_536,
-            "input_max_bytes": 1_048_576,
-            "turn_timeout_seconds": 180,
-            "session_open_timeout_seconds": 30,
-            "runtime_close_timeout_seconds": 10,
-            "transport_margin_seconds": 5,
-            "transport_deadline_seconds": 185,
-            "stream": {
-                "max_frames": 10_000,
-                "max_frame_bytes": 1_048_576,
-                "max_stream_bytes": 16_777_216,
-                "text_flush_interval_ms": {"kind": "Absent"},
-                "text_flush_bytes": {"kind": "Absent"},
-            },
-        },
-        "prompt_template_revision": "metadata.prompt.1",
-        "prompt_payload_ref": {
-            "kind": "DomainPromptPayload",
-            "owner_kind": "media_enrichment",
-            "owner_id": "proof-owner",
-            "revision": "metadata.prompt.1",
-            "payload_digest": "2" * 64,
-        },
-        "instructions_digest": "3" * 64,
-        "input_digest": "4" * 64,
-        "output_contract": output_contract,
-        "output_contract_fingerprint": hashlib.sha256(
-            json.dumps(
-                output_contract,
-                ensure_ascii=True,
-                allow_nan=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode()
-        ).hexdigest(),
-        "display_at_dispatch": {
-            "route_label": "OpenAI API",
-            "model_label": "GPT-5.6 Luna",
-            "reasoning_label": "Low",
-            "billing": {"kind": "MeteredApi", "label": "Metered API"},
-            "privacy": {
-                "summary": "OpenAI API processes this generation.",
-                "retention": "Configured API retention applies.",
-                "training": "Configured API training policy applies.",
-            },
-            "processor_chain": {"processors": ("Nexus", "OpenAI API")},
-        },
-        "host_tool_plan_snapshot": {"kind": "Absent"},
-        "host_evidence_revision": {"kind": "Absent"},
-        "model_tool_plan_snapshot": {"kind": "Absent"},
-        "tool_effect_mode": {"kind": "Absent"},
-        "admitted_tool_scope": {"kind": "Absent"},
-        "admitted_tool_scope_digest": {"kind": "Absent"},
-        "catalog_definition_revision": "8" * 64,
-        "policy_revision": "generation-policy.1",
-        "backend_contract_revision": "provider-runtime.1",
-        "provider_registry_revision": {"kind": "Present", "value": "registry.1"},
-    }
-    document["fingerprint"] = hashlib.sha256(
-        json.dumps(
-            document,
-            ensure_ascii=True,
-            allow_nan=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode()
-    ).hexdigest()
-    return GenerationSpec.model_validate(document).model_dump(mode="json", by_alias=True)
-
-
 def test_parent_child_tool_replay_is_exactly_once(request: pytest.FixtureRequest) -> None:
     """Risk: crash replay duplicates a billable child or successor dispatch."""
 
@@ -258,7 +159,7 @@ def test_parent_child_tool_replay_is_exactly_once(request: pytest.FixtureRequest
     first_turn_id = uuid4()
     second_turn_id = uuid4()
     owner = LlmCallOwner(kind="media_enrichment", id=uuid4())
-    spec = generation_spec_document(_generation_spec())
+    spec = generation_spec_document(generation_spec_fixture())
     cipher = GenerationContinuationCipher(b"k" * 32)
     context = GenerationContinuationContext(
         generation_id=generation_id,
@@ -580,7 +481,7 @@ async def _prove_foreign_provider_failure_is_refused(engine: Engine) -> None:
                 session_factory=session_factory,
                 runtime=runtime,
                 encode_terminal=_encode_any_terminal,
-                encode_preaccept_failure=_refuse_preaccept,
+                encode_failure=_refuse_preaccept,
             )
         cause = refused.value.__cause__
         assert isinstance(cause, AssertionError) and "unreachable" in str(cause), (
@@ -652,7 +553,7 @@ def _encode_any_terminal(terminal: BackendTerminal) -> EncodedGenerationTerminal
     return EncodedGenerationTerminal(terminal_result='{"kind":"foreign-failure-proof"}')
 
 
-def _refuse_preaccept(code: NormalizedFailureCode, detail: str) -> str:
+def _refuse_preaccept(code: GenerationFailureCode, detail: str) -> str:
     raise AssertionError(f"a ready ProviderApi row refused before acceptance: {code} {detail}")
 
 
@@ -715,7 +616,7 @@ class _ForeignFailureProviderRuntime:
 
 
 class _UnusedCodex:
-    def stream(self, *_args: object, **_kwargs: object) -> AsyncIterator[object]:
+    def stream(self, *_args: object, **_kwargs: object) -> AsyncGenerator[GenerationFrame]:
         raise AssertionError("ProviderApi Dawn admission fell through to Codex")
 
     async def cancel(self, request_id: UUID) -> None:
@@ -868,7 +769,7 @@ async def _prove_provider_crash_resumes_exactly_once(engine: Engine) -> None:
                 session_factory=factory,
                 runtime=runtime,
                 encode_terminal=_encode_terminal,
-                encode_preaccept_failure=_refuse_preaccept,
+                encode_failure=_refuse_preaccept,
             )
         except Exception as error:
             # The queue worker fails its attempt on any exception; durable truth
@@ -956,7 +857,7 @@ async def _prove_provider_crash_resumes_exactly_once(engine: Engine) -> None:
             session_factory=factory,
             runtime=runtime,
             encode_terminal=_encode_terminal,
-            encode_preaccept_failure=_refuse_preaccept,
+            encode_failure=_refuse_preaccept,
         )
 
     assert isinstance(completed, CompletedGeneration), completed
@@ -1048,6 +949,7 @@ def _fail_loud_tool_runtime() -> ComposedToolRuntime:
             spec=entry.spec,
             execute=Available(unexpected),
             replay_policy=ReplayPolicy.ReDispatchable,
+            implementation_revision="test_generation_execution.v1",
             policy_epoch=PolicyEpoch("generation-execution-proof-v1"),
             policy_inputs={"owner": "generation-execution-proof"},
         )
@@ -1058,6 +960,7 @@ def _fail_loud_tool_runtime() -> ComposedToolRuntime:
             spec=WEB_SEARCH_SPEC,
             execute=Available(unexpected),
             replay_policy=ReplayPolicy.BilledOnce,
+            implementation_revision="test_generation_execution.v1",
             policy_epoch=PolicyEpoch("generation-execution-proof-v1"),
             policy_inputs={"owner": "generation-execution-proof"},
         ),
