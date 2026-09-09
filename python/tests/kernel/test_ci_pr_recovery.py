@@ -138,18 +138,32 @@ def _ci_artifact_repository(tmp_path: Path) -> Path:
         "set -euo pipefail\n"
         'run_directory="test-results/runs/${FAKE_RUN_ID}"\n'
         'mkdir -p -- "$run_directory"\n'
+        'if [ -z "${FAKE_SKIP_RUN_CLAIM:-}" ]; then\n'
+        '  if [ -n "${FAKE_MALFORMED_RUN_CLAIM:-}" ]; then\n'
+        "    printf '{}\\n' >&\"$NEXUS_TEST_RUN_CLAIM_FD\"\n"
+        "  else\n"
+        '    claim_run_id="${FAKE_CLAIM_RUN_ID:-$FAKE_RUN_ID}"\n'
+        "    printf "
+        "'"
+        '{"directory":"test-results/runs/%s","run_id":"%s","version":1}'
+        "\\n' "
+        '"$claim_run_id" "$claim_run_id" >&"$NEXUS_TEST_RUN_CLAIM_FD"\n'
+        "  fi\n"
+        "fi\n"
         'printf \'%s\\n\' "$*" >"$run_directory/invocation.txt"\n'
         "printf 'hidden\\n' >\"$run_directory/.hidden-evidence\"\n"
         'git_sha="$(git rev-parse HEAD)"\n'
         'status="pass"\n'
         'if [ "${FAKE_TEST_STATUS:-0}" -ne 0 ]; then status="fail"; fi\n'
-        "printf '{}\\n' >\"$run_directory/run-context.json\"\n"
-        "printf "
+        'if [ -z "${FAKE_SKIP_SUMMARY:-}" ]; then\n'
+        "  printf '{}\\n' >\"$run_directory/run-context.json\"\n"
+        "  printf "
         '\'{"git_sha":"%s","run_context_artifact":'
         '"test-results/runs/%s/run-context.json","run_id":"%s",'
         '"status":"%s","version":3,"workflow":"%s"}\\n\' '
         '"$git_sha" "$FAKE_RUN_ID" "$FAKE_RUN_ID" "$status" "$1" '
         '>"$run_directory/summary.json"\n'
+        "fi\n"
         'if [ -n "${FAKE_TRAILING_SUMMARY:-}" ]; then\n'
         "  printf '{}\\n' >>\"$run_directory/summary.json\"\n"
         "fi\n"
@@ -158,6 +172,7 @@ def _ci_artifact_repository(tmp_path: Path) -> Path:
         "fi\n"
         'if [ -n "${FAKE_SECOND_RUN_ID:-}" ]; then\n'
         '  mkdir -p -- "test-results/runs/${FAKE_SECOND_RUN_ID}"\n'
+        "  printf 'nested\\n' >\"test-results/runs/${FAKE_SECOND_RUN_ID}/api.log\"\n"
         "fi\n"
         'exit "${FAKE_TEST_STATUS:-0}"\n',
         encoding="utf-8",
@@ -452,6 +467,7 @@ def test_ci_artifact_owner_stages_only_the_run_claimed_by_this_invocation(
     assert output_lines[0].startswith("path=")
     assert output_lines[1] == f"result={'pass' if test_status == 0 else 'fail'}"
     evidence_workspace = Path(output_lines[0].removeprefix("path="))
+    assert list(runner_temp.glob("nexus-test-run-claim.*")) == []
     assert evidence_workspace.parent == runner_temp
     assert evidence_workspace.name.startswith("nexus-ci-evidence.")
     assert evidence_workspace.stat().st_mode & 0o777 == 0o700
@@ -511,6 +527,42 @@ def test_ci_artifact_owner_stages_only_the_run_claimed_by_this_invocation(
     )
 
 
+def test_ci_artifact_owner_stages_claimed_interrupted_run_before_failing_job(
+    tmp_path: Path,
+) -> None:
+    repository = _ci_artifact_repository(tmp_path)
+    runner_temp = tmp_path / "runner-temp"
+    runner_temp.mkdir()
+    github_output = runner_temp / "github-output"
+    github_output.touch()
+    environment = {
+        **os.environ,
+        "FAKE_RUN_ID": "9999999999999999",
+        "FAKE_SKIP_SUMMARY": "1",
+        "FAKE_TEST_STATUS": "143",
+        "GITHUB_OUTPUT": str(github_output),
+        "GITHUB_WORKSPACE": str(repository),
+        "RUNNER_TEMP": str(runner_temp),
+    }
+
+    completed = subprocess.run(
+        (str(CI_ARTIFACT_OWNER), "run", "full"),
+        cwd=repository,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    output = dict(line.split("=", 1) for line in github_output.read_text().splitlines())
+    assert output["result"] == "incomplete"
+    staged_run = Path(output["path"]) / "runs/9999999999999999"
+    assert (staged_run / "invocation.txt").is_file()
+    assert not (staged_run / "summary.json").exists()
+    assert list(runner_temp.glob("nexus-test-run-claim.*")) == []
+
+
 @pytest.mark.parametrize(
     ("result", "expected_status", "expected_error"),
     (
@@ -540,7 +592,9 @@ def test_ci_artifact_owner_enforces_every_proof_result(
     assert completed.stderr == expected_error
 
 
-def test_ci_artifact_owner_rejects_ambiguous_new_run_evidence(tmp_path: Path) -> None:
+def test_ci_artifact_owner_uses_exact_claim_amid_subordinate_run_evidence(
+    tmp_path: Path,
+) -> None:
     repository = _ci_artifact_repository(tmp_path)
     runner_temp = tmp_path / "runner-temp"
     runner_temp.mkdir()
@@ -564,12 +618,89 @@ def test_ci_artifact_owner_rejects_ambiguous_new_run_evidence(tmp_path: Path) ->
         text=True,
     )
 
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == ""
+    assert completed.stderr == ""
+    output = dict(line.split("=", 1) for line in github_output.read_text().splitlines())
+    evidence_workspace = Path(output["path"])
+    assert output["result"] == "pass"
+    assert (evidence_workspace / "runs/3333333333333333/summary.json").is_file()
+    assert not (evidence_workspace / "runs/4444444444444444").exists()
+    assert (repository / "test-results/runs/4444444444444444/api.log").read_text(
+        encoding="utf-8"
+    ) == "nested\n"
+
+
+@pytest.mark.parametrize("environment_flag", ("FAKE_SKIP_RUN_CLAIM", "FAKE_MALFORMED_RUN_CLAIM"))
+def test_ci_artifact_owner_requires_one_exact_controller_claim(
+    tmp_path: Path,
+    environment_flag: str,
+) -> None:
+    repository = _ci_artifact_repository(tmp_path)
+    runner_temp = tmp_path / "runner-temp"
+    runner_temp.mkdir()
+    github_output = runner_temp / "github-output"
+    github_output.touch()
+    environment = {
+        **os.environ,
+        "FAKE_RUN_ID": "5555555555555555",
+        environment_flag: "1",
+        "GITHUB_OUTPUT": str(github_output),
+        "GITHUB_WORKSPACE": str(repository),
+        "RUNNER_TEMP": str(runner_temp),
+    }
+
+    completed = subprocess.run(
+        (str(CI_ARTIFACT_OWNER), "run", "full"),
+        cwd=repository,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode != 0
+    assert completed.stdout == ""
+    assert completed.stderr == "error: test controller did not publish one exact run claim\n"
+    assert github_output.read_text(encoding="utf-8") == ""
+    assert list(runner_temp.glob("nexus-test-run-claim.*")) == []
+
+
+def test_ci_artifact_owner_rejects_claim_to_historical_run(tmp_path: Path) -> None:
+    repository = _ci_artifact_repository(tmp_path)
+    historical = repository / "test-results/runs/7777777777777777"
+    historical.mkdir(parents=True)
+    (historical / "historical.txt").write_text("preserve\n", encoding="utf-8")
+    runner_temp = tmp_path / "runner-temp"
+    runner_temp.mkdir()
+    github_output = runner_temp / "github-output"
+    github_output.touch()
+    environment = {
+        **os.environ,
+        "FAKE_CLAIM_RUN_ID": "7777777777777777",
+        "FAKE_RUN_ID": "8888888888888888",
+        "GITHUB_OUTPUT": str(github_output),
+        "GITHUB_WORKSPACE": str(repository),
+        "RUNNER_TEMP": str(runner_temp),
+    }
+
+    completed = subprocess.run(
+        (str(CI_ARTIFACT_OWNER), "run", "full"),
+        cwd=repository,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
     assert completed.returncode != 0
     assert completed.stdout == ""
     assert completed.stderr == (
-        "error: test invocation did not claim exactly one new run evidence directory\n"
+        "error: test controller claimed a pre-existing run evidence directory\n"
     )
+    assert (historical / "historical.txt").read_text(encoding="utf-8") == "preserve\n"
     assert github_output.read_text(encoding="utf-8") == ""
+    assert list(runner_temp.glob("nexus-test-run-claim.*")) == []
 
 
 @pytest.mark.parametrize(

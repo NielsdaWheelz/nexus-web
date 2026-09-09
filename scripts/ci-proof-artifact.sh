@@ -6,6 +6,17 @@ die() {
   exit 1
 }
 
+run_claim_to_cleanup=""
+
+cleanup_run_claim() {
+  local claim="$run_claim_to_cleanup"
+  if [ -n "$claim" ] && [ -f "$claim" ] && [ ! -L "$claim" ]; then
+    rm -- "$claim"
+  fi
+}
+
+trap cleanup_run_claim EXIT
+
 canonical_runner_temp() {
   local configured="${RUNNER_TEMP:-}"
   if [ -z "$configured" ] || [ "$configured" = "/" ]; then
@@ -65,6 +76,32 @@ github_output_path() {
     die "GITHUB_OUTPUT must be owned by the CI user"
   fi
   printf '%s\n' "$output"
+}
+
+validated_run_claim_file() {
+  local claim="$1"
+  local runner_temp
+  runner_temp="$(canonical_runner_temp)"
+
+  local parent="${claim%/*}"
+  local name="${claim##*/}"
+  if [ "$parent" != "$runner_temp" ] \
+    || [[ ! "$name" =~ ^nexus-test-run-claim\.[A-Za-z0-9]{8}$ ]]; then
+    die "run claim file is outside the exact runner-owned namespace"
+  fi
+  if [ ! -f "$claim" ] || [ -L "$claim" ]; then
+    die "run claim must be a real file"
+  fi
+  if [ "$(realpath -e -- "$claim")" != "$claim" ]; then
+    die "run claim file must be canonical"
+  fi
+  if [ "$(stat -c '%u' -- "$claim")" != "$(id -u)" ]; then
+    die "run claim file must be owned by the CI user"
+  fi
+  if [ "$(stat -c '%a' -- "$claim")" != "600" ]; then
+    die "run claim file must be private"
+  fi
+  printf '%s\n' "$claim"
 }
 
 validated_evidence_workspace() {
@@ -149,44 +186,60 @@ run_proof() {
     done
   fi
 
+  local run_claim
+  run_claim="$(mktemp -- "$runner_temp/nexus-test-run-claim.XXXXXXXX")"
+  run_claim_to_cleanup="$run_claim"
+  chmod 600 -- "$run_claim"
+  run_claim="$(validated_run_claim_file "$run_claim")"
+  local run_claim_descriptor
+  exec {run_claim_descriptor}>"$run_claim"
+
   local test_status
-  if (cd "$checkout" && "$checkout/scripts/test" "$@"); then
+  if (
+    cd "$checkout"
+    NEXUS_TEST_RUN_CLAIM_FD="$run_claim_descriptor" "$checkout/scripts/test" "$@"
+  ); then
     test_status=0
   else
     test_status=$?
   fi
+  exec {run_claim_descriptor}>&-
   if ! git -C "$checkout" diff --quiet --ignore-submodules=none -- \
     || ! git -C "$checkout" diff --cached --quiet --ignore-submodules=none --; then
     die "CI test invocation left tracked changes"
   fi
 
+  run_claim="$(validated_run_claim_file "$run_claim")"
+  if ! jq -se '
+    length == 1
+    and (.[0] |
+      type == "object"
+      and keys == ["directory", "run_id", "version"]
+      and .version == 1
+      and (.run_id | type == "string" and test("^[0-9a-f]{16}$"))
+      and .directory == ("test-results/runs/" + .run_id)
+    )
+  ' "$run_claim" >/dev/null; then
+    die "test controller did not publish one exact run claim"
+  fi
+  local run_id claim_directory
+  IFS=$'\t' read -r run_id claim_directory < <(
+    jq -r '[.run_id, .directory] | @tsv' "$run_claim"
+  )
+  rm -- "$run_claim"
+  run_claim_to_cleanup=""
+
+  if [ -n "${existing_runs[$run_id]+present}" ]; then
+    die "test controller claimed a pre-existing run evidence directory"
+  fi
   if [ ! -d "$runs" ] || [ -L "$runs" ]; then
-    if [ "$test_status" -ne 0 ]; then
-      return "$test_status"
-    fi
-    die "passing test invocation produced no run evidence directory"
+    die "claimed run evidence path is not a real directory"
   fi
 
-  local -a new_runs=()
-  for path in "$runs"/*; do
-    [ -e "$path" ] || [ -L "$path" ] || continue
-    name="${path##*/}"
-    if [[ "$name" =~ ^[0-9a-f]{16}$ ]] \
-      && [ -d "$path" ] \
-      && [ ! -L "$path" ] \
-      && [ -z "${existing_runs[$name]+present}" ]; then
-      new_runs+=("$path")
-    fi
-  done
-  if [ "${#new_runs[@]}" -eq 0 ] && [ "$test_status" -ne 0 ]; then
-    return "$test_status"
+  local run_directory="$checkout/$claim_directory"
+  if [ ! -d "$run_directory" ] || [ -L "$run_directory" ]; then
+    die "claimed run evidence directory is absent or invalid"
   fi
-  if [ "${#new_runs[@]}" -ne 1 ]; then
-    die "test invocation did not claim exactly one new run evidence directory"
-  fi
-
-  local run_directory="${new_runs[0]}"
-  local run_id="${run_directory##*/}"
   if [ "$(realpath -e -- "$run_directory")" != "$run_directory" ]; then
     die "run evidence directory must be canonical"
   fi

@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 from io import StringIO
 from pathlib import Path
@@ -159,6 +160,56 @@ def test_workflow_writes_truthful_not_run_summary(tmp_path: Path) -> None:
     }
     assert capability["peak_owned_mib"] > 0
     assert summary["peak_owned_mib"]["total"] >= capability["peak_owned_mib"]
+
+
+def test_workflow_publishes_exact_run_claim_before_execution(tmp_path: Path) -> None:
+    _git_repository(tmp_path)
+    claim = tmp_path / "run-claim.json"
+    descriptor = os.open(claim, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    output = StringIO()
+
+    exit_code = main(
+        ["doctor"],
+        repo_root=tmp_path,
+        environment={"NEXUS_TEST_RUN_CLAIM_FD": str(descriptor)},
+        stdout=output,
+    )
+
+    assert exit_code == 1
+    with pytest.raises(OSError):
+        os.fstat(descriptor)
+    receipt = json.loads(claim.read_text(encoding="utf-8"))
+    summary_path = tmp_path / output.getvalue().strip().split("summary=", 1)[1]
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert receipt == {
+        "directory": f"test-results/runs/{summary['run_id']}",
+        "run_id": summary["run_id"],
+        "version": 1,
+    }
+    assert summary["invocation"]["input_fingerprint"] == execution_input_fingerprint({})
+
+
+def test_workflow_rejects_non_file_run_claim_channel(tmp_path: Path) -> None:
+    _git_repository(tmp_path)
+    read_descriptor, write_descriptor = os.pipe()
+    errors = StringIO()
+    try:
+        assert (
+            main(
+                ["doctor"],
+                repo_root=tmp_path,
+                environment={"NEXUS_TEST_RUN_CLAIM_FD": str(write_descriptor)},
+                stderr=errors,
+            )
+            == 1
+        )
+        with pytest.raises(OSError):
+            os.fstat(write_descriptor)
+    finally:
+        os.close(read_descriptor)
+
+    assert "run claim descriptor must name a regular file" in errors.getvalue()
+    assert not tuple((tmp_path / "test-results/runs").glob("*/summary.json"))
 
 
 def test_summary_coexists_with_same_run_failure_artifacts(tmp_path: Path) -> None:
