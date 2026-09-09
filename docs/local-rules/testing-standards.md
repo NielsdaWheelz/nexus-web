@@ -484,6 +484,12 @@ outputs from a failed step, the adapter returns success only after staging
 validated evidence and publishes the canonical proof result as data. A final
 always-run step enforces that result after upload and cleanup; an adapter,
 upload, cleanup, `fail`, or `not_run` outcome still fails the job.
+The adapter launches the controller in its own process group and forwards
+HUP/INT/TERM as an owned TERM before staging interrupted evidence. Every command
+spawned by the controller preserves the Actions runner's inherited process
+tracking identity, without admitting a caller replacement, so the runner can
+reap the complete proof tree even if cancellation escalates past cooperative
+controller cleanup.
 
 | Command | Required meaning |
 |---|---|

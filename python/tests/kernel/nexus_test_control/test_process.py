@@ -67,6 +67,38 @@ def test_captured_child_output_retains_requested_marker_line_with_a_bounded_tail
     assert completed.stdout.endswith("stdout-tail")
 
 
+def test_owned_child_inherits_only_the_controller_runner_tracking_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    command = (
+        sys.executable,
+        "-c",
+        "import os; print(os.environ.get('RUNNER_TRACKING_ID', 'absent'))",
+    )
+    monkeypatch.setenv("RUNNER_TRACKING_ID", "controller-owned-identity")
+
+    inherited = run_command(
+        command,
+        cwd=tmp_path,
+        env={"RUNNER_TRACKING_ID": "untrusted-replacement"},
+        capture_output=True,
+        check=True,
+    )
+
+    assert inherited.stdout == "controller-owned-identity\n"
+
+    monkeypatch.delenv("RUNNER_TRACKING_ID")
+    absent = run_command(
+        command,
+        cwd=tmp_path,
+        env={"RUNNER_TRACKING_ID": "untrusted-replacement"},
+        capture_output=True,
+        check=True,
+    )
+
+    assert absent.stdout == "absent\n"
+
+
 def test_sigterm_to_controller_terminates_its_current_child_process_group(
     tmp_path: Path,
 ) -> None:
