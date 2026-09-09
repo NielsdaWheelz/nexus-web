@@ -43,7 +43,15 @@ def run_selection_out(
 ) -> RunSelectionOut:
     """Project immutable dispatch facts plus exactly one current observation."""
 
-    spec = read_generation_history(run.generation_spec)
+    # justify-defect: malformed durable Chat facts are storage corruption.
+    try:
+        spec = read_generation_history(run.generation_spec)
+    except (TypeError, ValueError) as error:
+        raise AssertionError(f"Chat run {run.id} carries an invalid generation spec") from error
+    # justify-service-invariant-check: generic history also represents background work.
+    # justify-defect: a Chat row must retain its original Chat admission identity.
+    if spec.operation != "chat" or spec.selection_source != "ChatRun":
+        raise AssertionError(f"Chat run {run.id} carries a non-Chat generation spec")
     if (catalog_snapshot is None) == (pair is None):
         raise ValueError("run selection projection requires exactly one catalog observation")
     if catalog_snapshot is not None:
