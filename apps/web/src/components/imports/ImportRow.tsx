@@ -265,11 +265,12 @@ export default function ImportRow({
 }) {
   const display = useRenderEnvironment();
   const reason = importReasonLine(item);
+  const now = new Date();
   const matched =
     item.matchedEvent.kind === "Present"
-      ? historyMatchLine(item.matchedEvent.value, display)
+      ? historyMatchLine(item.matchedEvent.value, display, now)
       : null;
-  const age = importAgeLine(item, display, new Date());
+  const age = importAgeLine(item, display, now);
   return (
     <ResourceRow
       as="li"

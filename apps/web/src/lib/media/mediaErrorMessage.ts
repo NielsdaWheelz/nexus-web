@@ -6,6 +6,7 @@
  * (contract §6).
  */
 
+import { RESOURCE_ACTION_CATALOG } from "@/lib/actions/resourceActions";
 import { assertNever } from "@/lib/assertNever";
 import { SAFE_FAILURE_CODES } from "@/lib/imports/importRef";
 import {
@@ -88,6 +89,16 @@ function sourceAction(
   }
 }
 
+/**
+ * A stopped import and a stopped search index are both states the reader is
+ * offered a command for in Imports, so this names the command the action
+ * catalog owns rather than repeating its wording here.
+ */
+const REPAIR_SOURCE_LABEL =
+  RESOURCE_ACTION_CATALOG["ResourceOperation.Media.RepairSource"].label;
+const REPAIR_SEARCH_LABEL =
+  RESOURCE_ACTION_CATALOG["ResourceOperation.Media.RepairSearch"].label;
+
 function sourceErrorMessage(
   input: Extract<MediaErrorInput, { kind: "Source" }>,
 ): MediaErrorPresentation | null {
@@ -95,9 +106,8 @@ function sourceErrorMessage(
     return {
       kind: "Source",
       severity: "error",
-      title: "Import stopped; repair required.",
-      explanation:
-        "Automatic retries are exhausted. The stopped import remains visible for operator repair.",
+      title: "Processing stopped before this import finished.",
+      explanation: `Automatic retries are used up. Imports offers ${REPAIR_SOURCE_LABEL}, which runs the stopped attempt again without creating a new one.`,
       action: { kind: "None" },
     };
   }
@@ -141,8 +151,8 @@ function retrievalErrorMessage(
       return {
         kind: "Retrieval",
         severity: "error",
-        title: "Search and AI stopped and need repair.",
-        explanation: "Reading remains available; repair is an internal operation.",
+        title: "Search indexing stopped. You can still read this document.",
+        explanation: `${REPAIR_SEARCH_LABEL} in Imports rebuilds it from the text already imported; the source is not fetched or extracted again.`,
         action: { kind: "None" },
       };
     case "no_text":

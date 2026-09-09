@@ -88,6 +88,18 @@ export const NAV_ACCOUNT: AccountNavigation = {
   settings: resolveNavDestination(APP_NAVIGATION.account.settings),
 };
 
+/**
+ * The utility destination the workspace is on, if it is on one: every chrome
+ * marks its utility entrance current from this one derivation.
+ */
+export function utilityActiveId(
+  activeDestinationId: DestinationId | null,
+): NavItem["id"] | null {
+  return activeDestinationId === NAV_UTILITIES.imports.id
+    ? activeDestinationId
+    : null;
+}
+
 export function isAccountDestinationId(
   destinationId: DestinationId | null,
 ): destinationId is AccountNavigation[keyof AccountNavigation]["id"] {

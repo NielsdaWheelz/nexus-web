@@ -7,10 +7,12 @@ import Pill from "@/components/ui/Pill";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { isApiError } from "@/lib/api/client";
 import type { ImportRef } from "@/lib/imports/importRef";
+import type { HistoryEntry } from "@/lib/imports/importsClient";
 import { useImportDetail } from "@/lib/imports/useImportDetail";
 import { useImportHistory } from "@/lib/imports/useImportHistory";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import {
+  IMPORT_MATCHED_ATTEMPT_LABEL,
   IMPORT_UNAVAILABLE_LINE,
   historyCoverageLine,
   historyEventLine,
@@ -18,6 +20,7 @@ import {
   importConsequenceLine,
   importKindLabel,
   importMomentText,
+  importRecoveryAbsenceLine,
   importRecoveryRestrictionLine,
   importRecoveryScopeLine,
   importStageLabel,
@@ -32,12 +35,20 @@ import styles from "./ImportsWorkspace.module.css";
  * The inspected import, in the order a reader needs it: what this means for
  * them, what a recovery would reuse and repeat, the attempts that were actually
  * recorded, and the safe identifiers underneath (contract §6). It reads the
- * detail and the history itself, so the pane only has to name the selection.
+ * detail and the history itself, so the pane only has to name the selection and
+ * the event the open view matched it on.
  */
 export default function ImportInspector({
   importRef,
+  matchedEvent,
 }: {
   readonly importRef: ImportRef;
+  /**
+   * The event the open view matched this import on, or null when it matched
+   * none. The detail read has no filter to correlate, so this fact reaches the
+   * inspector from the listed row rather than from the read below.
+   */
+  readonly matchedEvent: HistoryEntry | null;
 }) {
   const display = useRenderEnvironment();
   const detail = useImportDetail(importRef);
@@ -68,9 +79,15 @@ export default function ImportInspector({
       ? item.capabilities.unavailableReason.value
       : null;
   const matched =
-    item.matchedEvent.kind === "Present"
-      ? historyMatchLine(item.matchedEvent.value, display)
-      : null;
+    matchedEvent === null
+      ? null
+      : historyMatchLine(matchedEvent, display, new Date());
+  const recoveryLine =
+    recovery !== null
+      ? importRecoveryScopeLine(recovery)
+      : restriction !== null
+        ? importRecoveryRestrictionLine(restriction)
+        : importRecoveryAbsenceLine(item.state);
 
   return (
     <div className={styles.inspector}>
@@ -87,22 +104,16 @@ export default function ImportInspector({
         {matched === null ? null : <p className={styles.rowMatched}>{matched}</p>}
       </PaneSection>
 
-      <PaneSection title="Recovery">
-        {recovery === null ? (
-          <p>
-            {restriction === null
-              ? "No recovery is offered for this import."
-              : importRecoveryRestrictionLine(restriction)}
-          </p>
-        ) : (
-          <>
-            <p>{importRecoveryScopeLine(recovery)}</p>
+      {recoveryLine === null ? null : (
+        <PaneSection title="Recovery">
+          <p>{recoveryLine}</p>
+          {recovery === null ? null : (
             <div className={styles.inspectorActions}>
               <ImportActions item={item} />
             </div>
-          </>
-        )}
-      </PaneSection>
+          )}
+        </PaneSection>
+      )}
 
       <PaneSection
         title="Attempts"
@@ -126,14 +137,26 @@ export default function ImportInspector({
               <section key={group.id} className={styles.attempt}>
                 <h3 className={styles.attemptTitle}>{group.label}</h3>
                 <ol className={styles.attemptEvents}>
-                  {group.entries.map((entry) => (
-                    <li key={entry.id}>
-                      <span>{historyEventLine(entry)}</span>
-                      <time dateTime={entry.occurredAt}>
-                        {importMomentText(entry.occurredAt, display)}
-                      </time>
-                    </li>
-                  ))}
+                  {group.entries.map((entry) => {
+                    const isMatch =
+                      matchedEvent !== null && entry.id === matchedEvent.id;
+                    return (
+                      <li
+                        key={entry.id}
+                        aria-current={isMatch ? "true" : undefined}
+                      >
+                        <span>{historyEventLine(entry)}</span>
+                        {isMatch ? (
+                          <Pill tone="info" size="sm">
+                            {IMPORT_MATCHED_ATTEMPT_LABEL}
+                          </Pill>
+                        ) : null}
+                        <time dateTime={entry.occurredAt}>
+                          {importMomentText(entry.occurredAt, display)}
+                        </time>
+                      </li>
+                    );
+                  })}
                 </ol>
               </section>
             ))}

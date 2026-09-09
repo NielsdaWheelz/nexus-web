@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { RESOURCE_ACTION_CATALOG } from "@/lib/actions/resourceActions";
 import { IMPORT_FAILURE_COPY } from "@/lib/status/imports";
 import { mediaErrorMessage } from "@/lib/media/mediaErrorMessage";
 
@@ -28,13 +29,13 @@ function sourceInput(
 describe("media error presentation", () => {
   it("shows the failure record's own words rather than a second dictionary", () => {
     const presentation = mediaErrorMessage(
-      sourceInput("E_SOURCE_TOO_LARGE", { can_retry: true }),
+      sourceInput("E_SOURCE_FETCH_FAILED", { can_retry: true }),
     );
     expect(presentation).toEqual({
       kind: "Source",
       severity: "error",
-      title: IMPORT_FAILURE_COPY.E_SOURCE_TOO_LARGE.title,
-      explanation: IMPORT_FAILURE_COPY.E_SOURCE_TOO_LARGE.explanation,
+      title: IMPORT_FAILURE_COPY.E_SOURCE_FETCH_FAILED.title,
+      explanation: IMPORT_FAILURE_COPY.E_SOURCE_FETCH_FAILED.explanation,
       action: { kind: "Retry" },
     });
   });
@@ -54,7 +55,7 @@ describe("media error presentation", () => {
   it("offers a retry only where the same source can help and this viewer may retry", () => {
     expect(
       mediaErrorMessage(
-        sourceInput("E_SOURCE_TOO_LARGE", { can_retry: false }),
+        sourceInput("E_SOURCE_FETCH_FAILED", { can_retry: false }),
       )?.action,
     ).toEqual({ kind: "None" });
     expect(
@@ -62,6 +63,12 @@ describe("media error presentation", () => {
         sourceInput("E_BILLING_REQUIRED", { can_retry: true }),
       )?.action,
       "a retry was offered for a cause the same source cannot clear",
+    ).toEqual({ kind: "None" });
+    expect(
+      mediaErrorMessage(
+        sourceInput("E_SOURCE_TOO_LARGE", { can_retry: true }),
+      )?.action,
+      "a same-source-terminal reason still offered the same source",
     ).toEqual({ kind: "None" });
   });
 
@@ -96,6 +103,38 @@ describe("media error presentation", () => {
     expect(
       mediaErrorMessage({ kind: "Retrieval", retrievalStatus: "ready" }),
     ).toBeNull();
+  });
+
+  it("tells the reader which command recovers a stopped import", () => {
+    expect(
+      mediaErrorMessage({
+        kind: "Source",
+        processingStatus: "suspended",
+        lastErrorCode: null,
+        capabilities: { can_retry: false },
+        sourceUrl: null,
+      }),
+      "a state Imports offers this reader a command for was called operator work",
+    ).toEqual({
+      kind: "Source",
+      severity: "error",
+      title: "Processing stopped before this import finished.",
+      explanation: `Automatic retries are used up. Imports offers ${RESOURCE_ACTION_CATALOG["ResourceOperation.Media.RepairSource"].label}, which runs the stopped attempt again without creating a new one.`,
+      action: { kind: "None" },
+    });
+  });
+
+  it("tells the reader which command rebuilds a stopped search index", () => {
+    expect(
+      mediaErrorMessage({ kind: "Retrieval", retrievalStatus: "suspended" }),
+      "a state Imports offers this reader a command for was called internal",
+    ).toEqual({
+      kind: "Retrieval",
+      severity: "error",
+      title: "Search indexing stopped. You can still read this document.",
+      explanation: `${RESOURCE_ACTION_CATALOG["ResourceOperation.Media.RepairSearch"].label} in Imports rebuilds it from the text already imported; the source is not fetched or extracted again.`,
+      action: { kind: "None" },
+    });
   });
 
   it("defects on a source code that is not in the catalog", () => {

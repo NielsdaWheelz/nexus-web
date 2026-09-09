@@ -10,9 +10,9 @@
 out separately in four places, and the media response that should own it is
 untyped:
 
-- `python/nexus/schemas/library.py:291` (`LibraryMediaItemOut.kind`)
-- `python/nexus/schemas/imports.py` (`MediaKind`, `ImportItem.media_kind`)
-- `python/nexus/schemas/imports.py` (`MediaKind`, added by this cutover)
+- `python/nexus/schemas/library.py:291` (`LibraryEntryMediaOut.kind`)
+- `python/nexus/schemas/imports.py:44` (`MediaKind`, added by this cutover and
+  read by `ImportItem.media_kind:227` and `ImportSummaryQuery.media_kind:308`)
 - `python/nexus/schemas/consumption.py:34` reorders the same members as
   `ConsumptionMediaKind`
 - `python/nexus/schemas/media.py:285` is `kind: str  # "web_article", ...`, so
@@ -29,9 +29,10 @@ is owned by another track and reaches unrelated consumers.
 
 ## Prerequisites
 
-The imports cutover must land first: `schemas/media_activity.py` is deleted by
-its Track C2 and `schemas/imports.py` is its replacement, so consolidating now
-would conflict with in-flight work.
+None. The prerequisite this ticket was filed with is met: the imports cutover
+has landed on this branch — `python/nexus/schemas/media_activity.py` is deleted
+and `python/nexus/schemas/imports.py` is its replacement — so the consolidation
+no longer conflicts with in-flight work.
 
 ## Proposed fix
 

@@ -38,7 +38,10 @@ import { pluralize } from "@/lib/text/pluralize";
 /**
  * What one recorded failure code means to a reader, and whether the same source
  * can help. `recovery` is a fact about the code, never about this viewer's
- * permissions: the offer a viewer actually gets comes from the server.
+ * permissions: the offer a viewer actually gets comes from the server. It never
+ * says `SameSource` for a code the owner lists as same-source terminal
+ * (`services/capabilities._SAME_SOURCE_TERMINAL_ERROR_CODES`), so this record
+ * and that policy can never offer a reader two different answers.
  */
 export interface ImportFailureCopy {
   /** One short line for a row or an attempt. No terminal period. */
@@ -62,7 +65,7 @@ export const IMPORT_FAILURE_COPY: Readonly<
     reason: "Unsafe EPUB archive",
     title: "This EPUB cannot be opened safely.",
     explanation: "Use a valid EPUB from a trusted source.",
-    recovery: "SameSource",
+    recovery: "None",
   },
   E_BILLING_REQUIRED: {
     reason: "Billing required",
@@ -122,7 +125,7 @@ export const IMPORT_FAILURE_COPY: Readonly<
     reason: "Not a PDF or EPUB",
     title: "This file is not a valid PDF or EPUB.",
     explanation: "Use a valid PDF or EPUB, or a direct download link to one.",
-    recovery: "SameSource",
+    recovery: "None",
   },
   E_INVALID_KIND: {
     reason: "Unsupported kind",
@@ -158,7 +161,7 @@ export const IMPORT_FAILURE_COPY: Readonly<
     reason: "PDF is password-protected",
     title: "This PDF is password-protected.",
     explanation: "Upload an unlocked PDF to read it in Nexus.",
-    recovery: "SameSource",
+    recovery: "None",
   },
   E_PDF_TEXT_UNAVAILABLE: {
     reason: "Imported without selectable text",
@@ -257,7 +260,7 @@ export const IMPORT_FAILURE_COPY: Readonly<
     reason: "Source too large",
     title: "This document is too large to import.",
     explanation: "Use a smaller PDF or EPUB, or upload a smaller file.",
-    recovery: "SameSource",
+    recovery: "None",
   },
   E_SSRF_BLOCKED: {
     reason: "Address not allowed",
@@ -366,35 +369,48 @@ export const IMPORT_FAILURE_COPY: Readonly<
  */
 interface ImportStageCopy {
   readonly label: string;
+  /** Work in flight now. */
   readonly working: string;
+  /** A recorded moment at which this stage began. */
+  readonly reached: string;
   readonly failed: string;
 }
 
 const IMPORT_STAGE_COPY: Readonly<Record<ImportStage, ImportStageCopy>> = {
-  Upload: { label: "Upload", working: "Uploading", failed: "Upload failed" },
+  Upload: {
+    label: "Upload",
+    working: "Uploading",
+    reached: "Upload started",
+    failed: "Upload failed",
+  },
   Validate: {
     label: "Validation",
     working: "Validating",
+    reached: "Validation started",
     failed: "Validation failed",
   },
   Extract: {
     label: "Extraction",
     working: "Extracting",
+    reached: "Extraction started",
     failed: "Extraction failed",
   },
   Finalize: {
     label: "Reader preparation",
     working: "Finalizing reader",
+    reached: "Reader preparation started",
     failed: "Reader preparation failed",
   },
   Index: {
     label: "Search indexing",
     working: "Indexing for search",
+    reached: "Search indexing started",
     failed: "Search indexing failed",
   },
   SourceProcessing: {
     label: "Source processing",
     working: "Source processing",
+    reached: "Source processing started",
     failed: "Source processing failed",
   },
 };
@@ -402,6 +418,14 @@ const IMPORT_STAGE_COPY: Readonly<Record<ImportStage, ImportStageCopy>> = {
 export function importStageLabel(stage: ImportStage): string {
   return IMPORT_STAGE_COPY[stage].label;
 }
+
+/**
+ * The bytes arrived and the server's verification refused them (stage Validate).
+ * `IMPORT_STAGE_COPY.Upload.failed` names a transfer that itself failed (stage
+ * Upload); this owns the other fact, so the row and the attempt narration can
+ * never drift apart.
+ */
+export const UPLOAD_REJECTED_LABEL = "Upload rejected";
 
 export function importKindLabel(kind: MediaKind): string {
   switch (kind) {
@@ -452,11 +476,11 @@ export function isUploadObligation(item: ImportItem): boolean {
 
 function attentionLine(item: ImportItem, state: Extract<ImportState, { kind: "NeedsAttention" }>): string {
   if (isUploadObligation(item)) {
-    if (state.stage !== "Upload") return "Upload rejected";
+    if (state.stage !== "Upload") return UPLOAD_REJECTED_LABEL;
     return state.failureCode.kind === "Present" &&
       state.failureCode.value === "E_UPLOAD_CAPABILITY_EXPIRED"
-      ? "Upload link expired"
-      : "Upload failed";
+      ? IMPORT_FAILURE_COPY.E_UPLOAD_CAPABILITY_EXPIRED.reason
+      : IMPORT_STAGE_COPY.Upload.failed;
   }
   return IMPORT_STAGE_COPY[state.stage].failed;
 }
@@ -513,6 +537,51 @@ export function importReasonLine(item: ImportItem): string | null {
   return state.failureCode.kind === "Present"
     ? IMPORT_FAILURE_COPY[state.failureCode.value].reason
     : null;
+}
+
+/** Which recorded time a History date range bounds. */
+export type ImportsDateBounds = "Failure" | "AnyEvent";
+
+/**
+ * What a History date range bounds. With `Had failures` or a reason filter the
+ * server correlates the range to the failure event; with neither it correlates
+ * to any recorded event, and a reader is never left guessing which time they
+ * bounded (spec "Target behavior and content").
+ */
+function importsDateVerb(bounds: ImportsDateBounds): string {
+  switch (bounds) {
+    case "Failure":
+      return "Failed";
+    case "AnyEvent":
+      return "Recorded";
+    default:
+      return assertNever(bounds, "Unreachable date filter bounds");
+  }
+}
+
+/** The name of the date pair a reader edits. */
+export function importsDateFilterLabel(bounds: ImportsDateBounds): string {
+  return `${importsDateVerb(bounds)} during`;
+}
+
+/**
+ * One end of that range as its own sentence, for the applied filter a reader
+ * reads away from the inputs. The range is half-open, so `from` includes its
+ * day and `before` excludes it, and the chip says which.
+ */
+export function importsDateChipLabel(
+  bounds: ImportsDateBounds,
+  edge: "From" | "Before",
+  date: string,
+): string {
+  switch (edge) {
+    case "From":
+      return `${importsDateVerb(bounds)} on or after ${date}`;
+    case "Before":
+      return `${importsDateVerb(bounds)} before ${date}`;
+    default:
+      return assertNever(edge, "Unreachable date filter edge");
+  }
 }
 
 /** The wording of a state a reader can filter History by. */
@@ -602,6 +671,25 @@ export function importRecoveryRestrictionLine(
 }
 
 /**
+ * What the Recovery section says when the server offered nothing and named no
+ * restriction. Work still running has nothing to recover and nothing to
+ * apologise for, so it gets no section at all; finished work says it finished
+ * rather than reading as a problem (spec content rubric, inspector row).
+ */
+export function importRecoveryAbsenceLine(state: ImportState): string | null {
+  switch (state.kind) {
+    case "Active":
+      return null;
+    case "NeedsAttention":
+      return "No recovery is offered for this import.";
+    case "Complete":
+      return "This import finished. There is nothing to recover.";
+    default:
+      return assertNever(state, "Unreachable import state");
+  }
+}
+
+/**
  * The visible label of the one recovery command this owner names. Every media
  * offer is a resource action whose label the action catalog owns, so repeating
  * those three strings here would let the two drift apart.
@@ -664,17 +752,21 @@ function historyEventLabel(entry: HistoryEntry): string {
     case "UploadAccepted":
       return "Upload accepted";
     case "UploadExecutionStarted":
-      return "Upload started";
+      // The owner records this when the verification lease is claimed, at the
+      // stage it claimed (`Validate`), so the label follows the recorded stage
+      // rather than naming the transfer that already finished.
+      return entry.stage.kind === "Present"
+        ? IMPORT_STAGE_COPY[entry.stage.value].reached
+        : "Processing started";
     case "UploadRecoveryAccepted":
       return "Upload retry accepted";
     case "UploadHistoryBaseline":
     case "SourceHistoryBaseline":
       return "Detailed execution history was not recorded";
     case "UploadFailed":
-      // The row calls a rejected upload exactly this (`attentionLine`).
       return facts.transport.kind === "Present"
-        ? "Upload failed"
-        : "Upload rejected";
+        ? IMPORT_STAGE_COPY.Upload.failed
+        : UPLOAD_REJECTED_LABEL;
     case "UploadPublished":
       return "Upload published";
     case "SourceAccepted":
@@ -683,7 +775,7 @@ function historyEventLabel(entry: HistoryEntry): string {
       return "Processing started";
     case "SourceStageChanged":
       return entry.stage.kind === "Present"
-        ? IMPORT_STAGE_COPY[entry.stage.value].working
+        ? IMPORT_STAGE_COPY[entry.stage.value].reached
         : "Processing continued";
     case "SourceRetryScheduled":
     case "IndexRetryScheduled":
@@ -706,7 +798,7 @@ function historyEventLabel(entry: HistoryEntry): string {
     case "IndexRecoveryAccepted":
       return "Search index rebuild accepted";
     case "IndexExecutionStarted":
-      return "Search indexing started";
+      return IMPORT_STAGE_COPY.Index.reached;
     case "IndexSucceeded":
       return "Search index ready";
     case "IndexSuperseded":
@@ -717,9 +809,28 @@ function historyEventLabel(entry: HistoryEntry): string {
 }
 
 /**
+ * How far one run had got when it stopped, from the counted snapshot the owner
+ * recorded at the failure. The recorded unit is named as it was recorded and no
+ * total is claimed that was not (spec "Store safe codes and counted progress at
+ * failure"; never an invented percentage or ETA).
+ */
+function failureProgressLine(
+  progress: Extract<HistoryEntry["facts"], { kind: "SourceFailed" }>["progress"],
+): string {
+  if (progress.kind === "Absent") return "";
+  const { completed, total, unit } = progress.value;
+  const counted =
+    total.kind === "Present" ? `${completed} of ${total.value}` : `${completed}`;
+  return unit.kind === "Present"
+    ? ` Stopped at ${unit.value.toLowerCase()} ${counted}.`
+    : ` Stopped at ${counted}.`;
+}
+
+/**
  * One recorded event as the inspector's attempt list narrates it: the short
- * label, and for a failure the cause, the reason and whether the pipeline will
- * try again on its own.
+ * label, the outcome a baseline attempt carries instead of detail, and for a
+ * failure the cause, the reason, whether the pipeline will try again on its own
+ * and how far the run had got.
  */
 export function historyEventLine(entry: HistoryEntry): string {
   const label = historyEventLabel(entry);
@@ -735,15 +846,36 @@ export function historyEventLine(entry: HistoryEntry): string {
       ? `${label}. ${transportFailureLine(facts.transport.value)}.`
       : `${label}.${reason}`;
   }
+  if (facts.kind === "SourceHistoryBaseline") {
+    // The migration kept the outcome this attempt already had (contract D2), so
+    // a pre-cut failure is never narrated as if it had succeeded. Its columns
+    // carry no stage or code, so the outcome is the only evidence there is.
+    switch (facts.outcome.kind) {
+      case "Succeeded":
+        return `${label}. This attempt succeeded.`;
+      case "Failed":
+        return `${label}. This attempt failed: ${
+          IMPORT_FAILURE_COPY[facts.outcome.failureCode].reason
+        }.`;
+      case "InFlight":
+        return `${label}. This attempt was still running.`;
+      default:
+        return assertNever(facts.outcome, "Unreachable baseline outcome");
+    }
+  }
   if (facts.kind !== "SourceFailed" && facts.kind !== "IndexFailed") {
     return label;
   }
   const cause =
-    facts.origin === "Execution" ? "The run failed" : "The source was refused";
+    facts.origin === "Execution"
+      ? "The run failed"
+      : "The import could not use this source";
   const outcome = facts.terminal
     ? "No more automatic retries."
     : "An automatic retry follows.";
-  return `${label}. ${cause}.${reason} ${outcome}`;
+  const progress =
+    facts.kind === "SourceFailed" ? failureProgressLine(facts.progress) : "";
+  return `${label}. ${cause}.${reason} ${outcome}${progress}`;
 }
 
 type DisplayContext = Pick<
@@ -764,12 +896,23 @@ function formattedInstant(value: string, formatted: string | null): string {
   return formatted;
 }
 
-/** A recorded instant as the short day a `Matched:` clause names. */
-function importDayText(value: string, context: DisplayContext): string {
-  return formattedInstant(
-    value,
-    formatDisplayDate(value, context, { month: "short", day: "numeric" }),
-  );
+/**
+ * A recorded instant as the short day a `Matched:` clause names. History spans
+ * whatever range the reader asks for, so an event from another year says which
+ * one and the reader's own year stays the bare day (spec content rubric,
+ * `Matched: Extraction failed · Sep 6`).
+ */
+function importDayText(
+  value: string,
+  context: DisplayContext,
+  now: Date,
+): string {
+  const options: Intl.DateTimeFormatOptions =
+    formatDisplayDate(value, context, { year: "numeric" }) ===
+    formatDisplayDate(now, context, { year: "numeric" })
+      ? { month: "short", day: "numeric" }
+      : { month: "short", day: "numeric", year: "numeric" };
+  return formattedInstant(value, formatDisplayDate(value, context, options));
 }
 
 /** A recorded instant as the date and time an attempt list shows. */
@@ -783,15 +926,19 @@ export function importMomentText(value: string, context: DisplayContext): string
   );
 }
 
+/** The mark on the one recorded attempt a History filter matched. */
+export const IMPORT_MATCHED_ATTEMPT_LABEL = "Matched";
+
 /** The `Matched:` line that explains why a row matched a history filter. */
 export function historyMatchLine(
   entry: HistoryEntry,
   context: DisplayContext,
+  now: Date,
 ): string {
-  return `Matched: ${historyEventLabel(entry)} · ${importDayText(entry.occurredAt, context)}`;
+  return `Matched: ${historyEventLabel(entry)} · ${importDayText(entry.occurredAt, context, now)}`;
 }
 
-export interface ImportAge {
+interface ImportAge {
   readonly dateTime: string;
   readonly text: string;
 }
@@ -917,7 +1064,7 @@ export function uploadSessionActionErrorMessage(error: unknown): string {
       case "VerificationRejected":
         return uploadVerificationFailureCopy(outcome.code);
       case "Superseded":
-        return "This import already finished. Imports has been refreshed.";
+        return "This import moved on. Imports has been refreshed.";
       case "Conflicted":
         return IMPORTS_CONFLICT_MESSAGE;
       case "Unresolved":
@@ -1008,8 +1155,10 @@ export function importsEmptyCopy(
         body: "An import being uploaded, extracted or indexed appears here.",
       };
     case "History":
+      // Any applied bound routes to the filtered copy above, so this branch is
+      // reached only where no date range exists to name.
       return {
-        title: "No imports were recorded in this range",
+        title: "No imports have recorded history",
         body: "History shows every import with recorded evidence, including the ones that finished.",
       };
     default:

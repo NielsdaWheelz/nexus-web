@@ -1,11 +1,13 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
-import { useState } from "react";
-import { userEvent } from "vitest/browser";
+import { useState, type ReactNode } from "react";
+import { cdp, userEvent } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import "@/app/globals.css";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount";
 import { ResourceActionRuntimeProvider } from "@/lib/actions/resourceActionRuntime";
+import type { HistoryEntry } from "@/lib/imports/importsClient";
 import { ImportsProvider } from "@/lib/imports/ImportsProvider";
 import {
   decodeImportsUrlState,
@@ -49,10 +51,17 @@ const ATTEMPT_ID = "55555555-5555-4555-8555-555555555555";
 const JOB_ID = "66666666-6666-4666-8666-666666666666";
 const EVENT_ID = "77777777-7777-4777-8777-777777777777";
 const OTHER_EVENT_ID = "88888888-8888-4888-8888-888888888888";
+const RETRY_EVENT_ID = "12121212-1212-4212-8212-121212121212";
 const FACTS_REVISION = "3".repeat(64);
 const RESOLVE_PATH = "/api/resource-items/action-snapshots/resolve";
 const UPLOAD_ONE = "nup1.session-one.signature-one";
 const UPLOAD_TWO = "nup1.session-two.signature-two";
+/**
+ * History spans whatever range the reader asks for, so a matched event from
+ * another year is dated with one. These fixtures stay in the reader's current
+ * year, so the day a case asserts does not change when the year does.
+ */
+const MATCHED_AT = `${new Date().getUTCFullYear()}-09-06T08:00:00Z`;
 const LONG_TITLE =
   "A 712-page systems book whose title keeps going well past the width of any pane a reader can open";
 
@@ -92,7 +101,7 @@ function attentionMediaItem(overrides: Record<string, unknown> = {}) {
     state: {
       kind: "NeedsAttention",
       stage: "Extract",
-      failure_code: present("E_SOURCE_TOO_LARGE"),
+      failure_code: present("E_SOURCE_FETCH_FAILED"),
     },
     accepted_at: "2026-09-06T08:00:00Z",
     updated_at: "2026-09-06T09:00:00Z",
@@ -191,6 +200,7 @@ function queuedMediaItem() {
   };
 }
 
+/** A domain failure: the ingest owner writes these terminal, always. */
 function failedSourceEvent(id: string, occurredAt: string) {
   return {
     id,
@@ -202,6 +212,24 @@ function failedSourceEvent(id: string, occurredAt: string) {
       source_attempt_id: ATTEMPT_ID,
       execution_id: ABSENT,
       origin: "Domain",
+      terminal: true,
+      progress: ABSENT,
+    },
+  };
+}
+
+/** The queue's own failure: the one class an automatic retry follows. */
+function interruptedRunEvent(id: string, occurredAt: string) {
+  return {
+    id,
+    occurred_at: occurredAt,
+    stage: present("Extract"),
+    failure_code: present("E_WORKER_INTERRUPTED"),
+    facts: {
+      kind: "SourceFailed",
+      source_attempt_id: ATTEMPT_ID,
+      execution_id: ABSENT,
+      origin: "Execution",
       terminal: false,
       progress: ABSENT,
     },
@@ -222,7 +250,11 @@ function acceptedSourceEvent(id: string, occurredAt: string, attemptNo: number) 
   };
 }
 
-function baselineSourceEvent(id: string, occurredAt: string) {
+function baselineSourceEvent(
+  id: string,
+  occurredAt: string,
+  outcome: Record<string, unknown>,
+) {
   return {
     id,
     occurred_at: occurredAt,
@@ -232,7 +264,7 @@ function baselineSourceEvent(id: string, occurredAt: string) {
       kind: "SourceHistoryBaseline",
       source_attempt_id: "99999999-9999-4999-8999-999999999999",
       attempt_no: 1,
-      outcome: { kind: "Succeeded" },
+      outcome,
     },
   };
 }
@@ -247,7 +279,7 @@ function historyMediaItem() {
     state: { kind: "Complete" },
     accepted_at: "2026-09-06T07:00:00Z",
     updated_at: "2026-09-07T07:00:00Z",
-    matched_event: present(failedSourceEvent(EVENT_ID, "2026-09-06T08:00:00Z")),
+    matched_event: present(failedSourceEvent(EVENT_ID, MATCHED_AT)),
     capabilities: {
       can_open: true,
       can_remove: true,
@@ -465,6 +497,7 @@ function ImportsHarness({ initial }: { initial: string }) {
   // The pane spends its ShellScroll return memento on this report, so the
   // harness stands in for the pane and shows what it was told.
   const [listSettled, setListSettled] = useState(false);
+  const [matchedEvent, setMatchedEvent] = useState<HistoryEntry | null>(null);
   const selected =
     state.selected.kind === "Present" ? state.selected.value : null;
   return (
@@ -482,12 +515,13 @@ function ImportsHarness({ initial }: { initial: string }) {
         state={state}
         onStateChange={setState}
         selectedRef={selected}
-        onSelect={(ref) =>
+        onSelect={(ref) => {
           setState((current) => ({
             ...current,
             selected: ref === null ? ABSENT : { kind: "Present", value: ref },
-          }))
-        }
+          }));
+        }}
+        onMatchedEvent={setMatchedEvent}
         onListSettled={setListSettled}
       />
       {selected === null ? null : (
@@ -500,16 +534,16 @@ function ImportsHarness({ initial }: { initial: string }) {
           >
             Back to imports
           </button>
-          <ImportInspector importRef={selected} />
+          <ImportInspector importRef={selected} matchedEvent={matchedEvent} />
         </div>
       )}
     </>
   );
 }
 
-function renderImports(initial = "") {
-  return render(
-    withRenderEnvironment(
+/** Every provider the real chrome and pane mount above this composition. */
+function ImportsShell({ children }: { children: ReactNode }) {
+  return (
       <AuthenticatedAccountProvider
         account={{ accountId: ACCOUNT_ID, calendarTimeZone: "UTC" }}
       >
@@ -534,9 +568,7 @@ function renderImports(initial = "") {
                           <ResourceOverlaysProvider>
                             <GlobalPlayerProvider>
                               <ResourceActionRuntimeProvider>
-                                <ImportsProvider>
-                                  <ImportsHarness initial={initial} />
-                                </ImportsProvider>
+                                <ImportsProvider>{children}</ImportsProvider>
                                 <ResourceActionOverlays />
                               </ResourceActionRuntimeProvider>
                             </GlobalPlayerProvider>
@@ -550,7 +582,34 @@ function renderImports(initial = "") {
             </FeedbackProvider>
           </KeybindingsProvider>
         </MobileChromeProvider>
-      </AuthenticatedAccountProvider>,
+      </AuthenticatedAccountProvider>
+  );
+}
+
+function renderImports(initial = "") {
+  return render(
+    withRenderEnvironment(
+      <ImportsShell>
+        <ImportsHarness initial={initial} />
+      </ImportsShell>,
+    ),
+  );
+}
+
+/**
+ * The badge alone in its label-hidden branch — the caller shape `NavRail` uses
+ * when it is collapsed (`labelVisible={!collapsed}`). The rail's own chip
+ * wrapper and icon are not here, so this proves the badge branch, not where the
+ * collapsed rail paints it.
+ */
+function renderLabelHiddenBadge() {
+  return render(
+    withRenderEnvironment(
+      <ImportsShell>
+        <a href="/imports">
+          <ImportsBadge label="Imports" labelVisible={false} />
+        </a>
+      </ImportsShell>,
     ),
   );
 }
@@ -572,27 +631,6 @@ function listSettledReport(): string {
     screen.getByRole("status", { name: "Imports list settled" }).textContent ??
     ""
   );
-}
-
-/**
- * The touch-target rule that applies to one element, read out of the live
- * stylesheet. A coarse pointer cannot be emulated inside this runner, so the
- * proof a mobile reader gets a full target is that the rule selects the row's
- * actual command and asks for the 44px token — the defect this catches is a
- * rule whose selector matches nothing.
- */
-function coarsePointerMinHeight(element: Element): string | null {
-  for (const sheet of Array.from(document.styleSheets)) {
-    for (const rule of Array.from(sheet.cssRules)) {
-      if (!(rule instanceof CSSMediaRule)) continue;
-      if (!rule.conditionText.includes("pointer: coarse")) continue;
-      for (const inner of Array.from(rule.cssRules)) {
-        if (!(inner instanceof CSSStyleRule)) continue;
-        if (element.matches(inner.selectorText)) return inner.style.minHeight;
-      }
-    }
-  }
-  return null;
 }
 
 function setViewportWidth(width: number): void {
@@ -622,10 +660,40 @@ describe("Imports workspace", () => {
 
     renderImports("?view=NeedsAttention");
 
+    const link = await screen.findByRole("link", {
+      name: "Imports, 150 need attention",
+    });
+    expect(within(link).getByText("99+")).toBeVisible();
+    const tab = screen.getByRole("tab", { name: "Needs attention, 150" });
     expect(
-      await screen.findByRole("link", { name: "Imports, 150 need attention" }),
+      within(tab).getByText("99+"),
+      "the same count read as 99+ in the rail and in full on its tab",
     ).toBeVisible();
-    expect(screen.getByText("99+")).toBeVisible();
+  });
+
+  it("keeps the capped count painted when the chrome hides its label", async () => {
+    installBff({
+      summary: () => summaryBody(150, 2, 1),
+      page: () => pageBody([]),
+    });
+
+    renderLabelHiddenBadge();
+
+    const link = await screen.findByRole("link", {
+      name: "Imports, 150 need attention",
+    });
+    const count = within(link).getByText("99+");
+    await waitFor(() => {
+      const box = count.getBoundingClientRect();
+      expect(
+        Math.min(box.width, box.height),
+        "the label-hidden badge left its count in the screen-reader-only box instead of painting it",
+      ).toBeGreaterThan(1);
+    });
+    expect(
+      within(link).queryByText("Imports"),
+      "the label-hidden badge painted the label it was told to hide",
+    ).toBeNull();
   });
 
   it("shows no badge while the summary is unknown and none when nothing needs attention", async () => {
@@ -755,6 +823,28 @@ describe("Imports workspace", () => {
     expect(importsUrl(), "History opened without its visible 30-day window").toMatch(
       /from=\d{4}-\d{2}-\d{2}/,
     );
+    expect(
+      screen.getByRole("group", { name: "Recorded during" }),
+      "an unqualified History range claimed to bound failures",
+    ).toBeVisible();
+  });
+
+  it("says History holds no recorded evidence rather than naming a range it never applied", async () => {
+    installBff({
+      summary: () => summaryBody(0, 0, 1),
+      page: () => pageBody([]),
+    });
+
+    renderImports("?view=History");
+
+    expect(
+      await screen.findByText("No imports have recorded history"),
+      "an unfiltered History named a date range the reader does not have",
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Clear filters" }),
+      "a view with no applied filter offered to clear them",
+    ).toBeNull();
   });
 
   it("narrows the list by a filter and clears every filter at once", async () => {
@@ -795,19 +885,22 @@ describe("Imports workspace", () => {
     expect(queries.at(-1), "clearing the filters kept the query").not.toContain("q=");
   });
 
-  it("explains why a completed row matched a history filter beside its current outcome", async () => {
+  it("explains why a completed row matched a history filter and marks that attempt", async () => {
     installBff({
       summary: () => summaryBody(0, 0, 1),
       page: () => pageBody([historyMediaItem()]),
-      detail: () => detailBody(historyMediaItem()),
+      // The detail owner correlates no filter, so its item carries no matched
+      // event: only the row the reader selected knows why it matched.
+      detail: () => detailBody({ ...historyMediaItem(), matched_event: ABSENT }),
       history: () =>
         historyBody([
+          interruptedRunEvent(RETRY_EVENT_ID, "2026-09-06T08:30:00Z"),
           failedSourceEvent(EVENT_ID, "2026-09-06T08:00:00Z"),
           acceptedSourceEvent(OTHER_EVENT_ID, "2026-09-06T07:00:00Z", 2),
         ]),
     });
 
-    renderImports("?view=History&had_failures=true");
+    renderImports("?view=History&had_failures=true&from=2026-08-09");
 
     const row = await screen.findByRole("listitem", { name: /A recovered essay/ });
     expect(within(row).getByText("Complete")).toBeVisible();
@@ -815,6 +908,14 @@ describe("Imports workspace", () => {
       within(row).getByText(/^Matched: /),
       "a currently successful row did not explain why it matched",
     ).toHaveTextContent("Matched: Extraction failed · Sep 6");
+    expect(
+      screen.getByRole("group", { name: "Failed during" }),
+      "the date range never said which recorded time it bounds",
+    ).toBeVisible();
+    expect(
+      screen.getByText("Failed on or after 2026-08-09"),
+      "an applied date filter read as a URL parameter instead of a sentence",
+    ).toBeVisible();
 
     await userEvent.click(
       within(row).getByRole("button", { name: "A recovered essay" }),
@@ -823,10 +924,142 @@ describe("Imports workspace", () => {
     const inspector = await screen.findByRole("complementary", {
       name: "Import detail",
     });
+    expect(
+      within(inspector).getByText(
+        "This import finished. There is nothing to recover.",
+      ),
+      "a finished import was told a recovery is missing",
+    ).toBeVisible();
     expect(within(inspector).getByText("Source attempt 2")).toBeVisible();
     expect(
-      within(inspector).getByText("Source accepted"),
-      "the matched attempt was not offered in the inspector",
+      await within(inspector).findByText("Matched: Extraction failed · Sep 6"),
+      "the inspector never named the attempt this row matched on",
+    ).toBeVisible();
+    const marked = within(inspector)
+      .getAllByRole("listitem")
+      .filter((entry) => entry.getAttribute("aria-current") === "true");
+    expect(marked, "no single recorded attempt was marked as the match").toHaveLength(1);
+    expect(marked[0]).toHaveTextContent(
+      "Extraction failed. The import could not use this source. Source could not be fetched. No more automatic retries.",
+    );
+    expect(within(marked[0] as HTMLElement).getByText("Matched")).toBeVisible();
+    expect(
+      within(inspector).getByText(
+        "Extraction failed. The run failed. Processing was interrupted. An automatic retry follows.",
+      ),
+      "a failure the queue will retry promised no retry",
+    ).toBeVisible();
+  });
+
+  it("explains a history match the reader restored from the URL alone", async () => {
+    installBff({
+      summary: () => summaryBody(0, 0, 1),
+      page: () => pageBody([historyMediaItem()]),
+      detail: () => detailBody({ ...historyMediaItem(), matched_event: ABSENT }),
+      history: () =>
+        historyBody([
+          failedSourceEvent(EVENT_ID, "2026-09-06T08:00:00Z"),
+          acceptedSourceEvent(OTHER_EVENT_ID, "2026-09-06T07:00:00Z", 2),
+        ]),
+    });
+
+    renderImports(
+      `?view=History&had_failures=true&selected=media%3A${HISTORY_MEDIA_ID}`,
+    );
+
+    const inspector = await screen.findByRole("complementary", {
+      name: "Import detail",
+    });
+    expect(
+      await within(inspector).findByText("Matched: Extraction failed · Sep 6"),
+      "a selection restored from the URL was never told why it matched",
+    ).toBeVisible();
+    const marked = within(inspector)
+      .getAllByRole("listitem")
+      .filter((entry) => entry.getAttribute("aria-current") === "true");
+    expect(marked, "no single recorded attempt was marked as the match").toHaveLength(1);
+    expect(within(marked[0] as HTMLElement).getByText("Matched")).toBeVisible();
+  });
+
+  it("drops the match when the reader leaves the view that correlated it", async () => {
+    installBff({
+      summary: () => summaryBody(0, 0, 1),
+      page: (query) =>
+        pageBody(
+          query.get("view") === "History"
+            ? [historyMediaItem()]
+            : [activeMediaItem()],
+        ),
+      detail: () => detailBody({ ...historyMediaItem(), matched_event: ABSENT }),
+      history: () =>
+        historyBody([failedSourceEvent(EVENT_ID, "2026-09-06T08:00:00Z")]),
+    });
+
+    renderImports(
+      `?view=History&had_failures=true&selected=media%3A${HISTORY_MEDIA_ID}`,
+    );
+
+    const inspector = await screen.findByRole("complementary", {
+      name: "Import detail",
+    });
+    await within(inspector).findByText("Matched: Extraction failed · Sep 6");
+
+    await userEvent.click(screen.getByRole("tab", { name: "In progress" }));
+
+    await waitFor(() =>
+      expect(
+        within(inspector).queryByText(/^Matched: /),
+        "the inspector explained a match against a query this view never ran",
+      ).toBeNull(),
+    );
+    expect(
+      within(inspector)
+        .getAllByRole("listitem")
+        .filter((entry) => entry.getAttribute("aria-current") === "true"),
+      "a recorded attempt stayed marked as the match of a query that was not run",
+    ).toEqual([]);
+  });
+
+  it("offers no command and says why when the same source cannot succeed", async () => {
+    const terminal = attentionMediaItem({
+      state: {
+        kind: "NeedsAttention",
+        stage: "Extract",
+        failure_code: present("E_SOURCE_TOO_LARGE"),
+      },
+      capabilities: {
+        can_open: false,
+        can_remove: true,
+        recovery: ABSENT,
+        unavailable_reason: present("SameSourceTerminal"),
+      },
+    });
+    installBff({
+      summary: () => summaryBody(1, 0, 1),
+      page: () =>
+        pageBody([terminal], { groups: [{ stage: "Extract", count: 1 }] }),
+      detail: () => detailBody(terminal, { canRead: false }),
+    });
+
+    renderImports("?view=NeedsAttention");
+
+    const row = await screen.findByRole("listitem", {
+      name: new RegExp(LONG_TITLE.slice(0, 20)),
+    });
+    expect(
+      within(row).queryByRole("button", { name: "Retry source processing" }),
+      "a reason the same source can never clear still offered that source",
+    ).toBeNull();
+
+    await userEvent.click(within(row).getByRole("button", { name: LONG_TITLE }));
+
+    const inspector = await screen.findByRole("complementary", {
+      name: "Import detail",
+    });
+    expect(
+      await within(inspector).findByText(
+        "The same source cannot succeed. Start a new import from a different source.",
+      ),
     ).toBeVisible();
   });
 
@@ -858,6 +1091,10 @@ describe("Imports workspace", () => {
     const first = await screen.findByRole("listitem", { name: /Field notes\.pdf/ });
     const second = screen.getByRole("listitem", { name: /Second notes\.pdf/ });
 
+    expect(
+      within(first).queryAllByRole("button", { name: "Retry upload" }),
+      "the stranded upload stopped offering the retry it accepts",
+    ).toHaveLength(1);
     await userEvent.upload(
       within(first).getByLabelText("Choose Field notes.pdf to retry the upload"),
       new File([new Uint8Array([37, 80, 68, 70])], "Field notes.pdf", {
@@ -896,12 +1133,14 @@ describe("Imports workspace", () => {
         },
       }),
     );
-    expect(
-      await screen.findByText(
-        "The upload didn’t finish. Choose the original file to retry.",
-      ),
-      "a refused recovery told the reader nothing",
-    ).toBeVisible();
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          "The upload didn’t finish. Choose the original file to retry.",
+        ),
+        "a refused recovery told the reader nothing",
+      ).toBeVisible(),
+    );
 
     remove.resolve(new Response(null, { status: 204 }));
     await waitFor(() =>
@@ -932,7 +1171,9 @@ describe("Imports workspace", () => {
       }),
     );
 
-    expect(await screen.findByText("Choose the original file")).toBeVisible();
+    await waitFor(() =>
+      expect(screen.getByText("Choose the original file")).toBeVisible(),
+    );
     expect(
       requests.filter((request) => request.path.endsWith("/retry")),
       "a retry sent bytes the import never accepted",
@@ -993,8 +1234,10 @@ describe("Imports workspace", () => {
       await within(row).findByRole("button", { name: "Retry source processing" }),
     );
 
-    expect(await screen.findByText("This import changed")).toBeVisible();
-    expect(screen.getByText("Review its current status")).toBeVisible();
+    await waitFor(() => {
+      expect(screen.getByText("This import changed")).toBeVisible();
+      expect(screen.getByText("Review its current status")).toBeVisible();
+    });
     expect(
       within(row).getByText("Extraction failed"),
       "a refused command changed the row it did not act on",
@@ -1058,8 +1301,10 @@ describe("Imports workspace", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
 
-    expect(await screen.findByText("Couldn’t refresh imports")).toBeVisible();
-    expect(screen.getByText("Showing the last update")).toBeVisible();
+    await waitFor(() => {
+      expect(screen.getByText("Couldn’t refresh imports")).toBeVisible();
+      expect(screen.getByText("Showing the last update")).toBeVisible();
+    });
     expect(
       screen.getByText(LONG_TITLE),
       "a failed refresh discarded the last good rows",
@@ -1076,7 +1321,13 @@ describe("Imports workspace", () => {
         ],
       }),
       detail: () => detailBody(indexMediaItem(), { canRead: true }),
-      history: () => historyBody([baselineSourceEvent(EVENT_ID, "2026-09-07T08:00:00Z")]),
+      history: () =>
+        historyBody([
+          baselineSourceEvent(EVENT_ID, "2026-09-07T08:00:00Z", {
+            kind: "Failed",
+            failure_code: "E_SOURCE_TOO_LARGE",
+          }),
+        ]),
     });
 
     renderImports("?view=NeedsAttention");
@@ -1100,7 +1351,10 @@ describe("Imports workspace", () => {
       ),
     ).toBeVisible();
     expect(
-      within(inspector).getByText("Detailed execution history was not recorded"),
+      within(inspector).getByText(
+        "Detailed execution history was not recorded. This attempt failed: Source too large.",
+      ),
+      "a pre-cut attempt the migration recorded as failed read like one that succeeded",
     ).toBeVisible();
 
     await userEvent.click(
@@ -1121,36 +1375,6 @@ describe("Imports workspace", () => {
       screen.getByRole("listitem", { name: /A readable report/ }),
       "a dismissed inspector left its row marked current",
     ).not.toHaveAttribute("aria-current");
-  });
-
-  it("keeps a long title, a full touch target and every refinement reachable at 200% zoom", async () => {
-    installBff({
-      summary: () => summaryBody(2, 1, 1),
-      page: () =>
-        pageBody([attentionMediaItem(), uploadItem(UPLOAD_ONE, "Field notes.pdf")], {
-          groups: [{ stage: "Upload", count: 1 }, { stage: "Extract", count: 1 }],
-        }),
-    });
-
-    renderImports("?view=NeedsAttention");
-    await screen.findByText(LONG_TITLE);
-
-    setViewportWidth(320);
-
-    expect(
-      screen.getByRole("button", { name: LONG_TITLE }),
-      "a truncated title stopped naming itself",
-    ).toBeVisible();
-    expect(
-      coarsePointerMinHeight(
-        screen.getByRole("button", { name: "Retry upload" }),
-      ),
-      "a row command has no 44px touch-target rule of its own",
-    ).toBe("var(--size-xl)");
-    expect(screen.getByRole("searchbox", { name: "Search imports" })).toBeVisible();
-    expect(screen.getByRole("combobox", { name: "Type" })).toBeVisible();
-    expect(screen.getByRole("combobox", { name: "Stage" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Refresh" })).toBeVisible();
   });
 
   it("dates every row by the age of what it states", async () => {
@@ -1236,5 +1460,48 @@ describe("Imports workspace", () => {
 
     expect(await screen.findByText("Extracting page 80 of 712")).toBeVisible();
     expect(screen.getByText("Waiting for capacity")).toBeVisible();
+  });
+
+  // Declared last, and the only scenario that touches CDP: enabling touch input
+  // is what moves Chromium's `pointer` feature, and disabling it again leaves
+  // the page `pointer: none` rather than back at `fine`
+  // (`SelectionActionDock.browser.test.tsx` records those measurements), so the
+  // toggle must outlive no other scenario. Each test file gets its own page.
+  it("keeps a long title, a full touch target and every refinement reachable at 200% zoom", async () => {
+    installBff({
+      summary: () => summaryBody(2, 1, 1),
+      page: () =>
+        pageBody([attentionMediaItem(), uploadItem(UPLOAD_ONE, "Field notes.pdf")], {
+          groups: [{ stage: "Upload", count: 1 }, { stage: "Extract", count: 1 }],
+        }),
+    });
+
+    renderImports("?view=NeedsAttention");
+    await screen.findByText(LONG_TITLE);
+
+    setViewportWidth(320);
+
+    expect(
+      screen.getByRole("button", { name: LONG_TITLE }),
+      "a truncated title stopped naming itself",
+    ).toBeVisible();
+    expect(screen.getByRole("searchbox", { name: "Search imports" })).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Type" })).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Stage" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeVisible();
+
+    await cdp().send("Emulation.setTouchEmulationEnabled", {
+      enabled: true,
+      maxTouchPoints: 1,
+    });
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("button", { name: "Retry upload" })
+          .getBoundingClientRect().height,
+        "a row command is below the 44px target a touch reader needs",
+      ).toBe(44),
+    );
+    await cdp().send("Emulation.setTouchEmulationEnabled", { enabled: false });
   });
 });

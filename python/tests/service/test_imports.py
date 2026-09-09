@@ -55,6 +55,7 @@ from tests.testkit.unreachable_state import (
     expire_heavy_job_claim,
     insert_processing_event,
     insert_upload_event,
+    read_content_index_state,
     read_events,
 )
 
@@ -1363,8 +1364,10 @@ def test_operator_repair_requeues_the_dead_job_of_the_current_index_revision(
         kind=MediaKind.epub,
     )
     attempt.status = "succeeded"
+    # `indexing` is what `prepare_media_content_reindex` leaves behind while an
+    # execution holds the revision; nothing marks a media content index `failed`.
     db_session.add(
-        ContentIndexState(owner_kind="media", owner_id=media_id, revision=1, status="failed")
+        ContentIndexState(owner_kind="media", owner_id=media_id, revision=1, status="indexing")
     )
     job = enqueue_job(
         db_session,
@@ -1399,6 +1402,10 @@ def test_operator_repair_requeues_the_dead_job_of_the_current_index_revision(
     assert repaired.json()["data"] == {"media_id": str(media_id), "job_id": str(job.id)}
     requeued = get_job(db_session, job.id)
     assert requeued is not None and requeued.status == "pending", "the exact dead job runs again"
+    assert read_content_index_state(db_session, owner_id=media_id) == (
+        "indexing",
+        1,
+    ), "search repair rewrote the index materialization instead of rerunning the job"
     assert [
         event["event_type"]
         for event in read_events(db_session, owner=MediaHistoryOwner(media_id=media_id))

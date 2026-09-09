@@ -719,7 +719,7 @@
       "proofs": [
         "vitest:apps/web/src/components/imports/ImportsWorkspace.browser.test.tsx"
       ],
-      "expected_failure": "Unable to find an accessible element with the role \"button\" and name \"Retry upload\""
+      "expected_failure": "the stranded upload stopped offering the retry it accepts"
     },
     {
       "id": "imports-history-baseline-omission",
@@ -746,7 +746,7 @@
       "proofs": [
         "pytest:python/tests/service/test_import_index_recovery.py::test_stale_revision_cannot_requeue_a_dead_reindex_job"
       ],
-      "expected_failure": "DID NOT RAISE"
+      "expected_failure": "DID NOT RAISE <class 'nexus.errors.ApiError'>"
     },
     {
       "id": "imports-history-correlation-bypass",
@@ -756,6 +756,15 @@
         "pytest:python/tests/service/test_imports.py::test_history_stage_and_date_filters_must_be_satisfied_by_one_event"
       ],
       "expected_failure": "an old Extract failure and a recent Index event are two events, not one match"
+    },
+    {
+      "id": "imports-pane-return-token-published-early",
+      "patch": "testdata/faults/imports-pane-return-token-published-early.patch",
+      "sha256": "e182d3aed0ade49fac17bcb4ca1dd559af079fabde231e891c88e16f8cea60a8",
+      "proofs": [
+        "vitest:apps/web/src/app/(authenticated)/imports/ImportsPaneBody.browser.test.tsx"
+      ],
+      "expected_failure": "spent its return memento on a list that had not been read yet"
     },
     {
       "id": "document-import-confirm-replay-conflict",

@@ -27,6 +27,8 @@ import {
   importKindLabel,
   importStageLabel,
   importsAttentionPhrase,
+  importsDateChipLabel,
+  type ImportsDateBounds,
 } from "@/lib/status/imports";
 
 export const IMPORTS_VIEW_LABEL: Readonly<Record<ImportsView, string>> = {
@@ -36,7 +38,16 @@ export const IMPORTS_VIEW_LABEL: Readonly<Record<ImportsView, string>> = {
 };
 
 const HISTORY_DEFAULT_WINDOW_DAYS = 30;
-const BADGE_VISIBLE_CAP = 99;
+const VISIBLE_COUNT_CAP = 99;
+
+/**
+ * A count as every surface prints it. One cap for the navigation badge and the
+ * view tabs, so the same number can never read as `99+` in one place and `150`
+ * in another; the exact number stays in the accessible name.
+ */
+export function importsCountText(count: number): string {
+  return count > VISIBLE_COUNT_CAP ? `${VISIBLE_COUNT_CAP}+` : String(count);
+}
 
 /**
  * The view an entry without an explicit `view` lands on: attention when it is
@@ -95,7 +106,7 @@ export function importsBadge(summary: ImportSummary | null): ImportsBadge {
   const count = summary.needsAttentionCount;
   return {
     kind: "Count",
-    visible: count > BADGE_VISIBLE_CAP ? `${BADGE_VISIBLE_CAP}+` : String(count),
+    visible: importsCountText(count),
     accessible: importsAttentionPhrase(count),
   };
 }
@@ -227,6 +238,18 @@ export function importHistoryGroups(
   });
 }
 
+/**
+ * Which recorded time this History query's dates bound. The server correlates
+ * the range to the failure event when the query asks about failures, and to any
+ * recorded event otherwise (spec, Filters and history).
+ */
+export function importsDateBounds(state: ImportsUrlState): ImportsDateBounds {
+  const failures =
+    (state.hadFailures.kind === "Present" && state.hadFailures.value) ||
+    state.failureCode.kind === "Present";
+  return failures ? "Failure" : "AnyEvent";
+}
+
 /** One removable filter, named by the URL field it came from. */
 export type ImportsFilterField =
   | "q"
@@ -289,11 +312,18 @@ export function appliedImportsFilters(
         : "No recorded failures",
     });
   }
+  const dated = importsDateBounds(state);
   if (state.from.kind === "Present") {
-    chips.push({ id: "from", label: `From ${state.from.value}` });
+    chips.push({
+      id: "from",
+      label: importsDateChipLabel(dated, "From", state.from.value),
+    });
   }
   if (state.before.kind === "Present") {
-    chips.push({ id: "before", label: `Before ${state.before.value}` });
+    chips.push({
+      id: "before",
+      label: importsDateChipLabel(dated, "Before", state.before.value),
+    });
   }
   return chips;
 }

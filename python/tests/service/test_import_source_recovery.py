@@ -46,6 +46,7 @@ from nexus.services.media_source_ingest import (
     accept_embedded_source,
     complete_x_post_snapshot_attempt,
     enqueue_accepted_source_attempt_in_transaction,
+    refresh_source_for_viewer,
     repair_dead_source_execution,
     retry_source_for_viewer,
 )
@@ -341,6 +342,24 @@ def test_dead_execution_repairs_the_same_job_and_the_worker_reruns_it(
     assert projected.capabilities.can_repair_source is True
     assert projected.capabilities.can_retry is False
 
+    with pytest.raises(ApiError) as refused_retry:
+        retry_source_for_viewer(
+            db,
+            viewer_id=user.id,
+            media_id=first.media_id,
+            client_mutation_id=str(uuid4()),
+            expected_attempt_id=first.attempt_id,
+            request_id="dead-repair-retry",
+        )
+    assert refused_retry.value.code is ApiErrorCode.E_RETRY_NOT_ALLOWED
+    assert refused_retry.value.message == (
+        "Processing stopped before this import finished. Imports offers Retry stopped "
+        "processing, which runs the stopped attempt again without creating a new one."
+    ), (
+        "a viewer holding the repair offer must be told the command they hold, not that "
+        f"an operator owns it: {refused_retry.value.message}"
+    )
+
     actor = ViewerRecovery(viewer_id=user.id, is_admin=False, client_mutation_id=str(uuid4()))
     with pytest.raises(ApiError) as foreign_job:
         repair_dead_source_execution(
@@ -451,6 +470,23 @@ def test_succeeded_attempt_with_a_later_dead_job_is_complete_and_unrepairable(
         )
     assert refused.value.code is ApiErrorCode.E_REPAIR_NOT_ALLOWED
     assert _job(db, first.job_id).status == "dead", "a refused repair requeued the dead job"
+
+    with pytest.raises(ApiError) as refused_refresh:
+        refresh_source_for_viewer(
+            db=db,
+            viewer_id=user.id,
+            media_id=first.media_id,
+            request_id="published-then-dead-refresh",
+        )
+    assert refused_refresh.value.code is ApiErrorCode.E_RETRY_NOT_ALLOWED
+    assert refused_refresh.value.message == (
+        "Automatic retries are used up for the latest source attempt, so the source is "
+        "not fetched again for it. Imports shows any recovery this import is offered."
+    ), (
+        "the refusal must state the dead job it reads, not a suspension and an operator "
+        f"repair that this complete import is offered nowhere: {refused_refresh.value.message}"
+    )
+    assert ingest_job_count(db, media_id=first.media_id) == 1, "a refused refresh cloned an attempt"
 
 
 def _next_attempt_at(payload: dict[str, Any]) -> datetime:

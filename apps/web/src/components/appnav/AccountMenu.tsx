@@ -11,12 +11,17 @@ import { useOfflineReadingCapability } from "@/lib/offlineReading/OfflineReading
 import { useAndroidShell } from "@/lib/renderEnvironment/provider";
 import type { AppNavActivationResult } from "@/lib/panes/targetLinkActivation";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
-import { NAV_UTILITIES, type AccountNavigation, type NavItem } from "./navModel";
+import type {
+  AccountNavigation,
+  NavItem,
+  UtilityNavigation,
+} from "./navModel";
 import styles from "./AppNav.module.css";
 import { accountSignOutOwner } from "./accountSignOut";
 
 export default function AccountMenu({
   account,
+  utilities,
   activeId,
   utilityActiveId,
   placement,
@@ -25,6 +30,7 @@ export default function AccountMenu({
   onNavigate,
 }: {
   account: AccountNavigation;
+  utilities: UtilityNavigation;
   activeId: NavItem["id"] | null;
   /** The utility destination the workspace is on, which is not an Account one. */
   utilityActiveId: NavItem["id"] | null;
@@ -45,7 +51,7 @@ export default function AccountMenu({
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState<string | null>(null);
   const signOutOwner = accountSignOutOwner(androidShell, offlineReading.kind);
-  const imports = NAV_UTILITIES.imports;
+  const imports = utilities.imports;
   const ImportsIcon = imports.icon;
   const options: ActionDescriptor[] = [
     {

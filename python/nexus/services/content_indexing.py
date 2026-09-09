@@ -1452,7 +1452,9 @@ def repair_dead_media_reindex(
     expected_job_id: UUID,
 ) -> SearchRepairAdmission:
     """Requeue the exact dead reindex job of the current index revision. Never
-    touches source rows: search repair repeats indexing, not extraction."""
+    touches source rows or the published materialization: search repair repeats
+    indexing, so a ``ready`` document keeps serving search until the rerun itself
+    marks it indexing."""
     scope = f"media_search_repair:{media_id}"
     request_bytes = canonical_json_bytes(
         {"expected_revision": expected_revision, "expected_job_id": str(expected_job_id)}
@@ -1522,9 +1524,6 @@ def repair_dead_media_reindex(
         if not requeue_dead_job(db, job_id=offer.expected_job_id):
             # justify-defect: current_dead_job_for_payload locked this exact dead row.
             raise AssertionError("locked dead reindex job could not be requeued")
-        mark_content_index_pending(
-            db, owner=IndexOwner(kind="media", id=media_id), reason="operator_repair"
-        )
         _record_index_event(
             db,
             media_id=media_id,
@@ -1554,22 +1553,25 @@ def current_search_repair_offer(db: Session, *, media_id: UUID) -> RepairSearchO
     refusal that says why there is none. The read ends here: an internal route
     resolves the identity it will name, then the admission opens its own
     serializable transaction."""
-    media_exists = db.execute(
-        text("SELECT 1 FROM media WHERE id = :media_id"), {"media_id": media_id}
-    ).scalar_one_or_none()
-    revision = db.execute(
-        text(
-            """
-            SELECT revision
-            FROM content_index_states
-            WHERE owner_kind = 'media' AND owner_id = :media_id
-            """
-        ),
-        {"media_id": media_id},
-    ).scalar_one_or_none()
+    indexed = (
+        db.execute(
+            text(
+                """
+                SELECT cis.revision
+                FROM media m
+                LEFT JOIN content_index_states cis
+                  ON cis.owner_kind = 'media' AND cis.owner_id = m.id
+                WHERE m.id = :media_id
+                """
+            ),
+            {"media_id": media_id},
+        )
+        .mappings()
+        .one_or_none()
+    )
     offer = None
-    if revision is not None:
-        revision = _validated_media_revision(revision)
+    if indexed is not None and indexed["revision"] is not None:
+        revision = _validated_media_revision(indexed["revision"])
         dead = current_dead_job_for_payload(
             db,
             kind=MEDIA_CONTENT_REINDEX_JOB_KIND,
@@ -1584,7 +1586,7 @@ def current_search_repair_offer(db: Session, *, media_id: UUID) -> RepairSearchO
             )
         )
     db.rollback()
-    if media_exists is None:
+    if indexed is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     if not isinstance(offer, RepairSearchOffer):
         raise ConflictError(

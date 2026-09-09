@@ -39,6 +39,7 @@ from nexus.schemas.media import (
     OfflineDownloadSpecOut,
     PodcastEpisodeChapterOut,
     SourceCountedProgress,
+    SourceProgress,
     SourceStageProgress,
 )
 from nexus.schemas.presence import (
@@ -79,6 +80,9 @@ from nexus.services.playback_source import derive_playback_source
 from nexus.services.resource_grants import media_grant_path_exists_sql
 from nexus.services.source_publication import (
     SourceCountedProgress as PublishedSourceCountedProgress,
+)
+from nexus.services.source_publication import (
+    SourceProgress as PublishedSourceProgress,
 )
 from nexus.services.source_publication import load_source_progress
 
@@ -745,6 +749,7 @@ def list_media_for_viewer_by_ids(
     contributors_by_media = load_contributor_credits_for_media(db, list(row_by_media_id.keys()))
     chapters_by_media = _load_podcast_episode_chapters_by_ids(db, list(row_by_media_id.keys()))
     embed_summaries_by_media = document_embed_summaries_for_media(db, list(row_by_media_id.keys()))
+    progress_by_media_id = load_source_progress(db, tuple(row_by_media_id.keys()))
 
     media_list: list[MediaOut] = []
     for media_id in ordered_media_ids:
@@ -754,13 +759,13 @@ def list_media_for_viewer_by_ids(
         media = _media_out_from_row(
             row=row,
             contributors=contributors_by_media.get(media_id, []),
+            source_progress=_source_progress_presence(progress_by_media_id.get(media_id)),
             chapters=chapters_by_media.get(media_id, []),
             pdf_quote_ready=pdf_readiness.get(media_id, False),
             is_admin=is_admin,
         )
         media.document_embed_summary = embed_summaries_by_media.get(media_id)
         media_list.append(media)
-    _apply_source_progress(db, media_list)
     _apply_consumption_state(db, viewer_id, media_list)
     return media_list
 
@@ -875,6 +880,7 @@ def _media_out_from_row(
     *,
     row: RowMapping,
     contributors: list[ContributorCreditOut],
+    source_progress: Presence[SourceProgress],
     chapters: list[PodcastEpisodeChapterOut] | None = None,
     pdf_quote_ready: bool = False,
     is_admin: bool = False,
@@ -917,7 +923,7 @@ def _media_out_from_row(
         title=row["title"],
         canonical_source_url=row["canonical_source_url"],
         processing_status=processing_status,
-        source_progress=absent(),
+        source_progress=source_progress,
         transcript_state=row["transcript_state"],
         transcript_coverage=row["transcript_coverage"],
         transcript_origin=presence_from_nullable(row["transcript_origin"]),
@@ -950,30 +956,35 @@ def _media_out_from_row(
     )
 
 
-def _apply_source_progress(db: Session, media_outs: list[MediaOut]) -> None:
-    progress_by_media_id = load_source_progress(db, tuple(media.id for media in media_outs))
-    for media in media_outs:
-        progress = progress_by_media_id.get(media.id)
-        if progress is None:
-            media.source_progress = absent()
-        elif isinstance(progress, PublishedSourceCountedProgress):
-            media.source_progress = present(
-                SourceCountedProgress(
-                    completed=progress.completed,
-                    total=progress.total,
-                    unit=progress.unit,
-                    run_count=progress.run_count,
-                    updated_at=progress.updated_at,
-                )
+def _source_progress_presence(
+    progress: PublishedSourceProgress | None,
+) -> Presence[SourceProgress]:
+    """The in-flight source progress of one media, in the field's own parametrization.
+
+    `present()` stamps the concrete variant (`Present[SourceStageProgress]`), and a
+    value in that shape serializes with a Pydantic field mismatch unless the model
+    declaring the field revalidates it. Building the declared `Present[SourceProgress]`
+    removes that dependence.
+    """
+    if progress is None:
+        return absent()
+    if isinstance(progress, PublishedSourceCountedProgress):
+        return Present[SourceProgress](
+            value=SourceCountedProgress(
+                completed=progress.completed,
+                total=progress.total,
+                unit=progress.unit,
+                run_count=progress.run_count,
+                updated_at=progress.updated_at,
             )
-        else:
-            media.source_progress = present(
-                SourceStageProgress(
-                    stage=progress.stage,
-                    run_count=progress.run_count,
-                    updated_at=progress.updated_at,
-                )
-            )
+        )
+    return Present[SourceProgress](
+        value=SourceStageProgress(
+            stage=progress.stage,
+            run_count=progress.run_count,
+            updated_at=progress.updated_at,
+        )
+    )
 
 
 def _apply_consumption_state(
@@ -1219,6 +1230,7 @@ def list_visible_media(
     contributors_by_media = load_contributor_credits_for_media(db, page_media_ids)
     chapters_by_media = _load_podcast_episode_chapters_by_ids(db, page_media_ids)
     embed_summaries_by_media = document_embed_summaries_for_media(db, page_media_ids)
+    progress_by_media_id = load_source_progress(db, tuple(page_media_ids))
 
     media_list: list[MediaOut] = []
     for row in page_rows:
@@ -1226,6 +1238,7 @@ def list_visible_media(
         media = _media_out_from_row(
             row=row,
             contributors=contributors_by_media.get(media_id, []),
+            source_progress=_source_progress_presence(progress_by_media_id.get(media_id)),
             chapters=chapters_by_media.get(media_id, []),
             pdf_quote_ready=pdf_readiness.get(media_id, False),
             is_admin=is_admin,
@@ -1233,7 +1246,6 @@ def list_visible_media(
         media.document_embed_summary = embed_summaries_by_media.get(media_id)
         media_list.append(media)
 
-    _apply_source_progress(db, media_list)
     _apply_consumption_state(db, viewer_id, media_list)
 
     next_cursor = None

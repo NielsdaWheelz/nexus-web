@@ -22,6 +22,7 @@ import {
   NAV_MODEL,
   NAV_UTILITIES,
   isAccountDestinationId,
+  utilityActiveId,
   type NavItem,
 } from "./navModel";
 import NavRail from "./NavRail";
@@ -64,8 +65,6 @@ export default function AppNav() {
   const accountActiveId = isAccountDestinationId(activeDestinationId)
     ? activeDestinationId
     : null;
-  const utilityActiveId =
-    activeDestinationId === NAV_UTILITIES.imports.id ? activeDestinationId : null;
 
   const onNavigate = useCallback(
     (event: MouseEvent<HTMLElement>, destination: NavItem) => {
@@ -121,7 +120,7 @@ export default function AppNav() {
       home={NAV_HOME}
       utilities={NAV_UTILITIES}
       account={NAV_ACCOUNT}
-      utilityActiveId={utilityActiveId}
+      utilityActiveId={utilityActiveId(activeDestinationId)}
       accountActiveId={accountActiveId}
       activeId={activeId}
       collapsed={collapsed}

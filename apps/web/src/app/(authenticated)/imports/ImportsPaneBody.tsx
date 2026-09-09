@@ -9,6 +9,7 @@ import { usePaneSecondary } from "@/components/workspace/PaneSecondary";
 import { absent, present } from "@/lib/api/presence";
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
 import type { ImportRef } from "@/lib/imports/importRef";
+import type { HistoryEntry } from "@/lib/imports/importsClient";
 import { useImports } from "@/lib/imports/ImportsProvider";
 import {
   decodeImportsUrlState,
@@ -54,6 +55,10 @@ export default function ImportsPaneBody() {
   }, [setPaneOpen]);
 
   const selectedRef = state.selected.kind === "Present" ? state.selected.value : null;
+  // Why a filtered History row matched is a fact of the list, not of the detail
+  // read, so the workspace reports the listed row's matched event — including
+  // when a view or filter change leaves the selection without one.
+  const [matchedEvent, setMatchedEvent] = useState<HistoryEntry | null>(null);
   const publication = useMemo<PaneSecondaryPublication | null>(
     () =>
       selectedRef === null
@@ -63,12 +68,17 @@ export default function ImportsPaneBody() {
             surfaces: [
               {
                 id: "import-detail",
-                body: <ImportInspector importRef={selectedRef} />,
+                body: (
+                  <ImportInspector
+                    importRef={selectedRef}
+                    matchedEvent={matchedEvent}
+                  />
+                ),
               },
             ],
             defaultSurfaceId: "import-detail",
           }),
-    [selectedRef],
+    [matchedEvent, selectedRef],
   );
   const requestSecondarySurface = usePaneSecondary(publication);
 
@@ -132,6 +142,7 @@ export default function ImportsPaneBody() {
       onStateChange={setState}
       selectedRef={selectedRef}
       onSelect={onSelect}
+      onMatchedEvent={setMatchedEvent}
       onListSettled={setListSettled}
     />
   );

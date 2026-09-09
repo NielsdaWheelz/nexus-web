@@ -12,6 +12,7 @@ import {
   isAccountDestinationId,
   NAV_ACCOUNT,
   NAV_UTILITIES,
+  utilityActiveId,
   type NavItem,
 } from "@/components/appnav/navModel";
 import {
@@ -184,8 +185,6 @@ export default function SwitchboardTask({
   const accountActiveId = isAccountDestinationId(activeDestinationId)
     ? activeDestinationId
     : null;
-  const utilityActiveId =
-    activeDestinationId === NAV_UTILITIES.imports.id ? activeDestinationId : null;
   const activate = (
     action: NexusAction,
     activation: NexusTargetActivation,
@@ -241,7 +240,8 @@ export default function SwitchboardTask({
     <AccountMenu
       account={NAV_ACCOUNT}
       activeId={accountActiveId}
-      utilityActiveId={utilityActiveId}
+      utilities={NAV_UTILITIES}
+      utilityActiveId={utilityActiveId(activeDestinationId)}
       placement="below"
       align="end"
       renderTrigger={(trigger) => (

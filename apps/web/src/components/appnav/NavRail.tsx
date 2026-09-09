@@ -222,6 +222,7 @@ export default function NavRail({
         </button>
         <NavAccount
           account={account}
+          utilities={utilities}
           activeId={accountActiveId}
           utilityActiveId={utilityActiveId}
           collapsed={collapsed}

@@ -12,18 +12,23 @@ import type {
   ImportState,
 } from "@/lib/imports/importsClient";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
+import { UploadSessionError } from "@/lib/media/ingestionClient";
 import {
   IMPORTS_SETTLED_LINE,
   IMPORT_FAILURE_COPY,
   importAgeLine,
   importConsequenceLine,
   importReasonLine,
+  importRecoveryAbsenceLine,
   importStatusLine,
   historyEventLine,
   historyMatchLine,
   importsAttentionPhrase,
+  importsDateChipLabel,
+  importsDateFilterLabel,
   importsFreshnessLine,
   importsSummaryLine,
+  uploadSessionActionErrorMessage,
 } from "@/lib/status/imports";
 
 /**
@@ -74,8 +79,14 @@ function uploadImport(state: ImportState): ImportItem {
 const ATTEMPT_ID = "22222222-2222-4222-8222-222222222222";
 const JOB_ID = "44444444-4444-4444-8444-444444444444";
 const DISPLAY = { displayLocale: "en-US", displayTimeZone: "UTC" } as const;
+const NOW = new Date("2026-09-08T12:00:00Z");
 
-function failedExtraction(): HistoryEntry {
+function failedExtraction(
+  progress: Extract<
+    HistoryEntry["facts"],
+    { kind: "SourceFailed" }
+  >["progress"] = absent(),
+): HistoryEntry {
   return {
     id: "33333333-3333-4333-8333-333333333333",
     occurredAt: "2026-09-06T08:00:00Z",
@@ -86,6 +97,27 @@ function failedExtraction(): HistoryEntry {
       sourceAttemptId: ATTEMPT_ID,
       executionId: absent(),
       origin: "Domain",
+      terminal: true,
+      progress,
+    },
+  };
+}
+
+/**
+ * The one failure class that is not terminal: the queue's own execution
+ * failure, recorded with the queue's `terminal` flag (`jobs/history_projections`).
+ */
+function interruptedRun(): HistoryEntry {
+  return {
+    id: "77777777-7777-4777-8777-777777777777",
+    occurredAt: "2026-09-06T08:30:00Z",
+    stage: present("Extract"),
+    failureCode: present("E_WORKER_INTERRUPTED"),
+    facts: {
+      kind: "SourceFailed",
+      sourceAttemptId: ATTEMPT_ID,
+      executionId: absent(),
+      origin: "Execution",
       terminal: false,
       progress: absent(),
     },
@@ -273,11 +305,163 @@ describe("Imports copy owner", () => {
   });
 
   it("explains a filter match in one clause and the attempt itself in full", () => {
-    expect(historyMatchLine(failedExtraction(), DISPLAY)).toBe(
+    expect(historyMatchLine(failedExtraction(), DISPLAY, NOW)).toBe(
       "Matched: Extraction failed · Sep 6",
     );
-    expect(historyEventLine(failedExtraction())).toBe(
-      "Extraction failed. The source was refused. Source could not be fetched. An automatic retry follows.",
+    expect(
+      historyMatchLine(
+        { ...failedExtraction(), occurredAt: "2025-09-06T08:00:00Z" },
+        DISPLAY,
+        NOW,
+      ),
+      "an event from an earlier year was dated as if it were this one",
+    ).toBe("Matched: Extraction failed · Sep 6, 2025");
+    expect(
+      historyEventLine(failedExtraction()),
+      "a domain failure was narrated as the source refusing Nexus",
+    ).toBe(
+      "Extraction failed. The import could not use this source. Source could not be fetched. No more automatic retries.",
+    );
+    expect(
+      historyEventLine(interruptedRun()),
+      "an execution failure that will be retried promised no retry",
+    ).toBe(
+      `Extraction failed. The run failed. ${IMPORT_FAILURE_COPY.E_WORKER_INTERRUPTED.reason}. An automatic retry follows.`,
+    );
+  });
+
+  it("narrates a recorded stage change as a moment, not as work in flight", () => {
+    expect(
+      historyEventLine({
+        id: "88888888-8888-4888-8888-888888888888",
+        occurredAt: "2026-09-06T08:10:00Z",
+        stage: present("Extract"),
+        failureCode: absent(),
+        facts: {
+          kind: "SourceStageChanged",
+          sourceAttemptId: ATTEMPT_ID,
+          executionId: JOB_ID,
+        },
+      }),
+      "a past event read as work still running",
+    ).toBe("Extraction started");
+  });
+
+  it("says how far a run had got when its progress was recorded at the failure", () => {
+    expect(
+      historyEventLine(
+        failedExtraction(
+          present({ completed: 480, total: present(712), unit: present("Page") }),
+        ),
+      ),
+      "the counted progress recorded at the failure was never shown",
+    ).toBe(
+      "Extraction failed. The import could not use this source. Source could not be fetched. No more automatic retries. Stopped at page 480 of 712.",
+    );
+    expect(
+      historyEventLine(
+        failedExtraction(
+          present({ completed: 480, total: absent(), unit: present("Page") }),
+        ),
+      ),
+      "a count without a recorded total claimed one",
+    ).toBe(
+      "Extraction failed. The import could not use this source. Source could not be fetched. No more automatic retries. Stopped at page 480.",
+    );
+  });
+
+  it("names the outcome a baseline attempt recorded, not only the detail it lacks", () => {
+    const baseline = (
+      outcome: Extract<
+        HistoryEntry["facts"],
+        { kind: "SourceHistoryBaseline" }
+      >["outcome"],
+    ): HistoryEntry => ({
+      id: "99999999-9999-4999-8999-999999999999",
+      occurredAt: "2026-09-06T07:00:00Z",
+      stage: absent(),
+      failureCode: absent(),
+      facts: {
+        kind: "SourceHistoryBaseline",
+        sourceAttemptId: ATTEMPT_ID,
+        attemptNo: 1,
+        outcome,
+      },
+    });
+    expect(
+      historyEventLine(
+        baseline({ kind: "Failed", failureCode: "E_SOURCE_TOO_LARGE" }),
+      ),
+      "a pre-cut attempt the migration recorded as failed read exactly like one recorded as succeeded",
+    ).toBe(
+      `Detailed execution history was not recorded. This attempt failed: ${IMPORT_FAILURE_COPY.E_SOURCE_TOO_LARGE.reason}.`,
+    );
+    expect(historyEventLine(baseline({ kind: "Succeeded" }))).toBe(
+      "Detailed execution history was not recorded. This attempt succeeded.",
+    );
+    expect(historyEventLine(baseline({ kind: "InFlight" }))).toBe(
+      "Detailed execution history was not recorded. This attempt was still running.",
+    );
+    expect(
+      historyEventLine({
+        id: "10101010-1010-4010-8010-101010101010",
+        occurredAt: "2026-09-06T07:00:00Z",
+        stage: absent(),
+        failureCode: absent(),
+        facts: { kind: "UploadHistoryBaseline", generation: 1 },
+      }),
+      "an upload baseline records no outcome and must not be given one",
+    ).toBe("Detailed execution history was not recorded");
+  });
+
+  it("says a superseded command moved on rather than claiming it finished", () => {
+    expect(
+      uploadSessionActionErrorMessage(
+        new UploadSessionError({ kind: "Superseded" }),
+      ),
+      "a stale generation and a lost session were both told the import finished",
+    ).toBe("This import moved on. Imports has been refreshed.");
+  });
+
+  it("keeps a standing negative off work that has nothing to recover", () => {
+    expect(
+      importRecoveryAbsenceLine({
+        kind: "Active",
+        status: "Processing",
+        stage: "Extract",
+        waitingReason: absent(),
+        progress: absent(),
+        nextRetryAt: absent(),
+      }),
+      "running work was told a recovery is missing",
+    ).toBeNull();
+    expect(importRecoveryAbsenceLine({ kind: "Complete" })).toBe(
+      "This import finished. There is nothing to recover.",
+    );
+    expect(
+      importRecoveryAbsenceLine({
+        kind: "NeedsAttention",
+        stage: "Extract",
+        failureCode: absent(),
+      }),
+    ).toBe("No recovery is offered for this import.");
+  });
+
+  it("names which recorded time a History date range bounds", () => {
+    expect(importsDateFilterLabel("Failure")).toBe("Failed during");
+    expect(importsDateFilterLabel("AnyEvent")).toBe("Recorded during");
+    expect(
+      importsDateChipLabel("Failure", "From", "2026-08-09"),
+      "an applied date filter named the URL parameter instead of the bound",
+    ).toBe("Failed on or after 2026-08-09");
+    expect(importsDateChipLabel("Failure", "Before", "2026-08-09")).toBe(
+      "Failed before 2026-08-09",
+    );
+    expect(importsDateChipLabel("AnyEvent", "From", "2026-08-09")).toBe(
+      "Recorded on or after 2026-08-09",
+    );
+    expect(importsDateChipLabel("AnyEvent", "Before", "2026-08-09")).toBe(
+      "Recorded before 2026-08-09",
     );
   });
 
@@ -291,6 +475,14 @@ describe("Imports copy owner", () => {
         }),
       ),
     ).toBe("Upload failed. The storage service rejected this upload (503).");
+    expect(
+      historyEventLine({
+        ...failedUpload({ kind: "UploadExecutionStarted", generation: 2 }),
+        stage: present("Validate"),
+        failureCode: absent(),
+      }),
+      "server-side verification starting was narrated as the upload starting",
+    ).toBe("Validation started");
     const rejected: HistoryEntry = {
       ...failedUpload({
         kind: "UploadFailed",
@@ -305,7 +497,7 @@ describe("Imports copy owner", () => {
       "a rejected upload was narrated without the code the server recorded",
     ).toBe(`Upload rejected. ${IMPORT_FAILURE_COPY.E_SOURCE_INTEGRITY.reason}.`);
     expect(
-      historyMatchLine(rejected, DISPLAY),
+      historyMatchLine(rejected, DISPLAY, NOW),
       "the attempt list and the row named one fact two ways",
     ).toBe("Matched: Upload rejected · Sep 6");
     expect(

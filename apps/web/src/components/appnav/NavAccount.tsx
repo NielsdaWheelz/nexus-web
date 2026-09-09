@@ -8,18 +8,21 @@ import {
   isAccountDestinationId,
   type AccountNavigation,
   type NavItem,
+  type UtilityNavigation,
 } from "./navModel";
 import styles from "./AppNav.module.css";
 
 /** Rail account cluster: the shared contextual Account menu. */
 export default function NavAccount({
   account,
+  utilities,
   activeId,
   utilityActiveId,
   collapsed,
   onNavigate,
 }: {
   account: AccountNavigation;
+  utilities: UtilityNavigation;
   activeId: NavItem["id"] | null;
   utilityActiveId: NavItem["id"] | null;
   collapsed: boolean;
@@ -32,6 +35,7 @@ export default function NavAccount({
   return (
     <AccountMenu
       account={account}
+      utilities={utilities}
       activeId={activeId}
       utilityActiveId={utilityActiveId}
       placement="above"

@@ -64,6 +64,7 @@ from nexus.schemas.import_history import (
 )
 from nexus.schemas.media import UploadTransportHttpRejectedFailure, UploadVerificationFailureCode
 from nexus.schemas.presence import absent, present
+from nexus.services.capabilities import _SAME_SOURCE_TERMINAL_ERROR_CODES
 from nexus.services.media_source_ingest import _TERMINAL_SOURCE_FAILURE_CODES
 
 _ATTEMPT_ID = UUID("018f0000-0000-7000-8000-000000000001")
@@ -267,6 +268,42 @@ def test_browser_failure_code_catalog_mirrors_the_python_catalog() -> None:
         "browser and Python failure-code catalogs differ: browser-only="
         f"{sorted(set(browser_codes) - SAFE_FAILURE_CODES)} python-only="
         f"{sorted(SAFE_FAILURE_CODES - set(browser_codes))}"
+    )
+
+
+def test_browser_copy_never_offers_the_same_source_for_an_owner_terminal_code() -> None:
+    """`lib/status/imports.ts` guarantees in its own doc comment that `recovery`
+    never says `SameSource` for a code the policy owner lists as same-source
+    terminal, so the record and the policy can never offer a reader two different
+    answers. Read from the repository root, like the D18 mirror above, so a code
+    added to the owner frozenset cannot leave the guarantee unproved."""
+    repository_root = Path(__file__).parents[3]
+    copy_source = (repository_root / "apps/web/src/lib/status/imports.ts").read_text()
+    catalog = re.search(
+        r"export const IMPORT_FAILURE_COPY\b.*?= \{(?P<records>.*?)\n\};", copy_source, re.DOTALL
+    )
+    assert catalog is not None, (
+        "imports.ts no longer declares IMPORT_FAILURE_COPY as one object literal"
+    )
+    recovery_by_code = dict(
+        re.findall(r'(E_[A-Z0-9_]+): \{[^{}]*?recovery: "([A-Za-z]+)"', catalog.group("records"))
+    )
+
+    assert set(recovery_by_code) == SAFE_FAILURE_CODES, (
+        "the parsed copy records are not the failure-code catalog: copy-only="
+        f"{sorted(set(recovery_by_code) - SAFE_FAILURE_CODES)} catalog-only="
+        f"{sorted(SAFE_FAILURE_CODES - set(recovery_by_code))}"
+    )
+    assert _SAME_SOURCE_TERMINAL_ERROR_CODES <= set(recovery_by_code), (
+        "the copy owner has no record for a same-source-terminal code: "
+        f"{sorted(_SAME_SOURCE_TERMINAL_ERROR_CODES - set(recovery_by_code))}"
+    )
+    offenders = sorted(
+        code for code in _SAME_SOURCE_TERMINAL_ERROR_CODES if recovery_by_code[code] == "SameSource"
+    )
+
+    assert not offenders, (
+        f"the copy owner offers the same source for codes the policy always refuses: {offenders}"
     )
 
 

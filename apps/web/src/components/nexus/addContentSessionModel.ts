@@ -12,6 +12,7 @@ import {
 } from "@/lib/media/ingestionClient";
 import {
   IMPORTS_CONFLICT_MESSAGE,
+  UPLOAD_REJECTED_LABEL,
   uploadVerificationFailureCopy,
 } from "@/lib/status/imports";
 import { assertNever } from "@/lib/assertNever";
@@ -227,7 +228,7 @@ function uploadAcceptanceFailure(
         kind: "Rejected",
         feedback: {
           tone: "Danger",
-          title: "Upload rejected",
+          title: UPLOAD_REJECTED_LABEL,
           message: uploadVerificationFailureCopy(outcome.code),
         },
       };

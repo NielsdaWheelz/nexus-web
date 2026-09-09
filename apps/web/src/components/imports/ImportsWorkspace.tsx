@@ -31,7 +31,7 @@ import {
   type ImportsUrlState,
   type ImportsView,
 } from "@/lib/imports/importsUrlState";
-import type { ImportItem } from "@/lib/imports/importsClient";
+import type { HistoryEntry, ImportItem } from "@/lib/imports/importsClient";
 import { useImportsPage } from "@/lib/imports/useImportsPage";
 import { formatLocalDateInTimeZone } from "@/lib/localDate";
 import { MEDIA_KINDS, type MediaKind } from "@/lib/media/kind";
@@ -43,6 +43,7 @@ import {
   importKindLabel,
   importStageLabel,
   importsEmptyCopy,
+  importsDateFilterLabel,
   importsFreshnessLine,
   importsLoadErrorMessage,
   importsMatchedLine,
@@ -53,6 +54,8 @@ import {
   IMPORTS_VIEW_LABEL,
   appliedImportsFilters,
   importStageSections,
+  importsCountText,
+  importsDateBounds,
   importsViewSelection,
   unqualifiedImportsView,
   withoutImportsFilter,
@@ -66,6 +69,14 @@ export interface ImportsWorkspaceProps {
   readonly onStateChange: (next: ImportsUrlState) => void;
   readonly selectedRef: ImportRef | null;
   readonly onSelect: (ref: ImportRef | null) => void;
+  /**
+   * The recorded event this view matched the selected import on, or null when
+   * this view correlated none. Only the list holds that event — the detail read
+   * has no filter to correlate — and it is a fact of the listed row rather than
+   * of the click, so it is reported whenever the page or the selection changes
+   * and the inspector can never explain a match the current query never made.
+   */
+  readonly onMatchedEvent: (matchedEvent: HistoryEntry | null) => void;
   /**
    * Reports whether the listed page has settled (ready or failed). The pane
    * owns the return memento and cannot see this read, so the list reports it.
@@ -102,6 +113,7 @@ export default function ImportsWorkspace({
   onStateChange,
   selectedRef,
   onSelect,
+  onMatchedEvent,
   onListSettled,
 }: ImportsWorkspaceProps) {
   const { summary, loadState, refresh } = useImports();
@@ -156,6 +168,7 @@ export default function ImportsWorkspace({
       onStateChange={onStateChange}
       selectedRef={selectedRef}
       onSelect={onSelect}
+      onMatchedEvent={onMatchedEvent}
       onListSettled={onListSettled}
     />
   );
@@ -167,6 +180,7 @@ function ImportsWorkspaceView({
   onStateChange,
   selectedRef,
   onSelect,
+  onMatchedEvent,
   onListSettled,
 }: ImportsWorkspaceProps & { readonly view: ImportsView }) {
   const { summary, loadState, observation, refresh } = useImports();
@@ -179,6 +193,23 @@ function ImportsWorkspaceView({
   useEffect(() => {
     onListSettled(listSettled);
   }, [listSettled, onListSettled]);
+
+  // Why the selected import is on this page is a fact of the page: a view or a
+  // filter the reader changed re-reads it, and the row that matched under the
+  // old query may not be here at all. Reporting it from the listed row (and
+  // reporting null when there is none) keeps the inspector's `Matched:` line
+  // true of the query the reader is actually looking at.
+  const selected =
+    selectedRef === null
+      ? undefined
+      : page.items.find((item) => item.ref === selectedRef);
+  const matchedEvent =
+    selected === undefined || selected.matchedEvent.kind !== "Present"
+      ? null
+      : selected.matchedEvent.value;
+  useEffect(() => {
+    onMatchedEvent(matchedEvent);
+  }, [matchedEvent, onMatchedEvent]);
 
   const [draft, setDraft] = useState(() => text(state.q));
   const committedRef = useRef(text(state.q));
@@ -228,6 +259,7 @@ function ImportsWorkspaceView({
       ? null
       : importsFreshnessLine(observedAt, display, new Date());
   const empty = importsEmptyCopy(view, chips.length > 0);
+  const datesBound = importsDateFilterLabel(importsDateBounds(state));
   const sections = importStageSections(page.groups, page.items);
   const grouped = view === "NeedsAttention" && sections.length > 0;
 
@@ -262,14 +294,22 @@ function ImportsWorkspaceView({
         {IMPORTS_VIEWS.map((candidate) => {
           const count = viewCount(candidate);
           return (
-            <TabsTrigger key={candidate} value={candidate}>
+            <TabsTrigger
+              key={candidate}
+              value={candidate}
+              aria-label={
+                count === null || count === 0
+                  ? undefined
+                  : `${IMPORTS_VIEW_LABEL[candidate]}, ${count}`
+              }
+            >
               {IMPORTS_VIEW_LABEL[candidate]}
               {count === null || count === 0 ? null : (
                 <Pill
                   tone={candidate === "NeedsAttention" ? "warning" : "neutral"}
                   size="sm"
                 >
-                  {count}
+                  {importsCountText(count)}
                 </Pill>
               )}
             </TabsTrigger>
@@ -426,36 +466,45 @@ function ImportsWorkspaceView({
                             })
                           }
                         />
-                        <label className={styles.dateField}>
-                          <span>From</span>
-                          <input
-                            type="date"
-                            value={text(state.from)}
-                            onChange={(event) =>
-                              update({
-                                from:
-                                  event.target.value === ""
-                                    ? absent()
-                                    : present(event.target.value),
-                              })
-                            }
-                          />
-                        </label>
-                        <label className={styles.dateField}>
-                          <span>Before</span>
-                          <input
-                            type="date"
-                            value={text(state.before)}
-                            onChange={(event) =>
-                              update({
-                                before:
-                                  event.target.value === ""
-                                    ? absent()
-                                    : present(event.target.value),
-                              })
-                            }
-                          />
-                        </label>
+                        <div
+                          role="group"
+                          aria-label={datesBound}
+                          className={styles.dateGroup}
+                        >
+                          <span aria-hidden="true" className={styles.dateGroupLabel}>
+                            {datesBound}
+                          </span>
+                          <label className={styles.dateField}>
+                            <span>From</span>
+                            <input
+                              type="date"
+                              value={text(state.from)}
+                              onChange={(event) =>
+                                update({
+                                  from:
+                                    event.target.value === ""
+                                      ? absent()
+                                      : present(event.target.value),
+                                })
+                              }
+                            />
+                          </label>
+                          <label className={styles.dateField}>
+                            <span>Before</span>
+                            <input
+                              type="date"
+                              value={text(state.before)}
+                              onChange={(event) =>
+                                update({
+                                  before:
+                                    event.target.value === ""
+                                      ? absent()
+                                      : present(event.target.value),
+                                })
+                              }
+                            />
+                          </label>
+                        </div>
                       </>
                     )}
                   </>

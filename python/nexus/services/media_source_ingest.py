@@ -1833,7 +1833,9 @@ def retry_source_for_viewer(
             case RepairSourceOffer():
                 raise ConflictError(
                     ApiErrorCode.E_RETRY_NOT_ALLOWED,
-                    "Source processing is suspended and requires repair, not a new attempt.",
+                    "Processing stopped before this import finished. Imports offers Retry "
+                    "stopped processing, which runs the stopped attempt again without "
+                    "creating a new one.",
                 )
             case "NotOwner" | "SameSourceTerminal" | "SourceNotReacquirable":
                 raise ConflictError(ApiErrorCode.E_RETRY_NOT_ALLOWED, _RESTRICTION_MESSAGES[offer])
@@ -2581,7 +2583,9 @@ def _raise_if_source_action_not_reacquirable(
         if dead is not None and dead.id == attempt.job_id:
             raise ConflictError(
                 ApiErrorCode.E_RETRY_NOT_ALLOWED,
-                "Source processing is suspended and requires operator repair.",
+                "Automatic retries are used up for the latest source attempt, so the "
+                "source is not fetched again for it. Imports shows any recovery this "
+                "import is offered.",
             )
     restriction = _source_reacquisition_restriction(
         source_type=attempt.source_type,

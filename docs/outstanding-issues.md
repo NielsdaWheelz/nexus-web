@@ -112,13 +112,12 @@ backend · opened 2026-09-08 by Claude (imports cutover, Track C1) · P3
 and the pane-level proof of the calendar-day contract is still owed. See
 [docs/tickets/imports-history-date-bounds-require-an-explicit-offset.md](tickets/imports-history-date-bounds-require-an-explicit-offset.md).
 
-### [OPEN] OI-016 — The Imports pane body has no browser proof
+### [OPEN] OI-016 — The mobile Account-menu entrance to Imports has no proof
 frontend · opened 2026-09-08 by Claude (imports cutover, Track E) · P2
-`ImportsPaneBody` composes the secondary group, the return-memento token and the
-Account-menu mobile entrance, and no browser proof renders it: the mobile
-list → detail → Back flow, the readiness gate and the mobile entrance are all
-unproven. See
-[docs/tickets/imports-inspector-mobile-sheet-dismissal-has-no-proof.md](tickets/imports-inspector-mobile-sheet-dismissal-has-no-proof.md).
+The pane body's readiness token and `imports-inspector` sheet are now proved by
+`ImportsPaneBody.browser.test.tsx`; the mobile entrance is not, because neither
+`AccountMenu` nor `SwitchboardTask` has ever been rendered by a test. See
+[docs/tickets/imports-mobile-account-entrance-has-no-proof.md](tickets/imports-mobile-account-entrance-has-no-proof.md).
 
 ### [OPEN] OI-017 — The Imports page read runs two statements under one snapshot
 backend · opened 2026-09-08 by Claude (imports cutover, Track C2) · P3
@@ -162,3 +161,57 @@ A pre-existing defect surfaced while fixing the completion's lock cycle: quote
 completion raises when its ingest job is not running. See
 [docs/tickets/x-quote-completion-defects-when-its-ingest-job-is-not-running.md](tickets/x-quote-completion-defects-when-its-ingest-job-is-not-running.md).
 
+### [OPEN] OI-024 — A media content index is never marked `failed` when its reindex job dies
+backend · opened 2026-09-08 by Claude (imports cutover, Track C2) · P2
+`media_content_reindex_job` declares no dead-letter projection, so the Imports
+classifier's `index_status = 'failed'` defect branch guards a state only the
+note reindex can reach. See
+[docs/tickets/media-content-index-failed-status-has-no-writer.md](tickets/media-content-index-failed-status-has-no-writer.md).
+
+### [OPEN] OI-025 — The `operator_repair` media-reindex reason has no producer
+backend · opened 2026-09-08 by Claude (imports cutover, Track C2) · P3
+`MEDIA_CONTENT_REINDEX_REASONS` admits a payload reason nothing writes; repair
+requeues the existing job and keeps its original reason. See
+[docs/tickets/media-reindex-operator-repair-reason-has-no-producer.md](tickets/media-reindex-operator-repair-reason-has-no-producer.md).
+
+### [OPEN] OI-029 — `Refresh source` is offered where the dead-job guard always refuses it
+backend · opened 2026-09-09 by Claude (imports cutover, Track C2) · P3
+`can_refresh_source` does not read the dead `ingest_media_source` job that
+`_raise_if_source_action_not_reacquirable` refuses on, so a published import
+whose queue row later died offers a refresh that always returns 409. See
+[docs/tickets/refresh-source-is-offered-where-a-dead-job-always-refuses-it.md](tickets/refresh-source-is-offered-where-a-dead-job-always-refuses-it.md).
+
+### [OPEN] OI-030 — The source-refusal sentence is duplicated in Python with no mirror
+backend · opened 2026-09-09 by Claude (imports cutover, Track C2) · P3
+The repairable-state refusal in `media_source_ingest.py` now repeats, word for
+word, the copy `mediaErrorMessage.ts` composes from the action catalog, and
+nothing compares the two. See
+[docs/tickets/server-refusal-copy-duplicates-the-browser-owner-with-no-mirror.md](tickets/server-refusal-copy-duplicates-the-browser-owner-with-no-mirror.md).
+
+### [OPEN] OI-031 — The counted unit recorded at a source failure is free text on the wire
+frontend · opened 2026-09-09 by Claude (imports cutover, Track E) · P3
+`SourceFailureProgress.unit` is `Presence[str]` while the live progress schema
+carries the same column as `Literal["Page", "Chapter"]`, so the copy owner
+lowercases the recorded unit instead of matching it exhaustively. See
+[docs/tickets/history-failure-progress-unit-is-free-text-on-the-wire.md](tickets/history-failure-progress-unit-is-free-text-on-the-wire.md).
+
+### [OPEN] OI-032 — The collapsed rail paints its attention count on top of the Imports icon
+frontend · opened 2026-09-09 by Claude (imports cutover, Track F) · P3
+Collapsed, `.utilityChip` puts the `Pill` over the `ListTodo` glyph, so the digit
+is unreadable while the accessible name stays exact. See
+[docs/tickets/collapsed-rail-count-is-illegible-over-its-icon.md](tickets/collapsed-rail-count-is-illegible-over-its-icon.md).
+
+### [OPEN] OI-033 — A browser proof's testing-library failure loses its diagnostic in the controller
+test-control · opened 2026-09-09 by Claude (imports cutover, Track F) · P2
+`_decisive_output` keeps only lines carrying an assertion marker past its 1900
+character bound, and `TestingLibraryElementError:` carries none, so a missing
+element red collapses to `Tests N failed`, so a browser fault can only be
+fingerprinted by putting a marked assertion ahead of the query. See
+[docs/tickets/controller-drops-testing-library-query-errors-from-proof-diagnostics.md](tickets/controller-drops-testing-library-query-errors-from-proof-diagnostics.md).
+
+### [OPEN] OI-034 — The Imports freshness line opens with a bare separator
+frontend · opened 2026-09-09 by Claude (imports cutover, Track F re-review) · P3
+`ImportsWorkspace.tsx` renders the ` · ` separator whenever a freshness stamp
+exists, but its first segment is empty until the page read is `ready`, so a
+loading pane reads `· Last checked now`. See
+[docs/tickets/imports-freshness-line-opens-with-a-bare-separator.md](tickets/imports-freshness-line-opens-with-a-bare-separator.md).

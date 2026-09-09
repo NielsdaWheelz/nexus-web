@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { APIResponse, Page, TestInfo } from "playwright/test";
+import type { APIResponse, Locator, Page, TestInfo } from "playwright/test";
 import { TOOL_PROJECTION_HEADER } from "@/lib/api/client";
 import { TOOL_PROJECTION_REVISION } from "@/lib/conversations/toolContractProjection";
 import { captureReadableArticle } from "../articleFixture";
@@ -377,7 +377,24 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
   ).toBeVisible({ timeout: 60_000 });
   await captureImportsReview(page, testInfo, "rail-badge");
   // The collapsed rail is icon-only, and the attention count still has to paint.
+  // The rail animates its width, so a capture taken on the click reviews the
+  // transition rather than the icon-only rail: wait for the collapsed width
+  // token (`--navbar-collapsed-width`, globals.css) to land.
   await page.getByRole("button", { name: "Collapse navigation" }).click();
+  await expect
+    .poll(
+      async () =>
+        (
+          await page
+            .getByRole("navigation", { name: "Primary" })
+            .boundingBox()
+        )?.width,
+      {
+        message: "The rail never settled at its collapsed width.",
+        timeout: 15_000,
+      },
+    )
+    .toBe(48);
   await captureImportsReview(page, testInfo, "rail-badge-collapsed");
   await page.getByRole("button", { name: "Expand navigation" }).click();
   await page.getByRole("tab", { name: /^Needs attention/ }).click();
@@ -443,14 +460,47 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
     `The recovered import ${recoveredRef} still needs attention after a successful recovery.`,
   ).not.toContain(recoveredRef);
 
+  // The layout review is of the pane, so the inspector the selection above
+  // published has to be dismissed: it is a companion here and a sheet under the
+  // mobile breakpoint, and either one is a modal over the surface this review
+  // exists to read.
+  const dismissInspector = async (region: Locator) => {
+    await region.getByRole("button", { name: "Close Import details" }).click();
+    await expect(
+      region,
+      "The Imports inspector stayed over the pane the layout review is of.",
+    ).toBeHidden();
+  };
+  await dismissInspector(
+    page.getByRole("complementary", { name: "Import details" }),
+  );
+
   // The layout review, captured last because nothing after this step drives the
   // page. Browser zoom divides the layout viewport rather than magnifying the
   // painted output, and the layout viewport is what the media and container
-  // queries answer to, so 200% of this window is a 640 px layout.
-  await page.setViewportSize({ width: 1280, height: 720 });
-  await captureImportsReview(page, testInfo, "viewport-1280x720");
+  // queries answer to, so 200% of this window is a 640 px layout. Every width
+  // change re-reads the list, so each capture waits for the rows rather than
+  // photographing the skeletons that replace them.
+  const captureLayoutReview = async (width: number, state: string) => {
+    await page.setViewportSize({ width, height: 720 });
+    await expect(
+      recoveredRow,
+      `The ${width} px layout review never got the History list back for ${recoveredRef}.`,
+    ).toBeVisible({ timeout: 60_000 });
+    await captureImportsReview(page, testInfo, state);
+  };
+  await captureLayoutReview(1280, "viewport-1280x720");
+  // Dismissing keeps the selection in the URL by design, so crossing into the
+  // mobile chrome remounts the pane and it opens the sheet for that import
+  // again: dismiss it once here. 430 px is the same chrome, so it inherits a
+  // dismissed sheet without another remount.
   await page.setViewportSize({ width: 640, height: 720 });
-  await captureImportsReview(page, testInfo, "zoom-200");
+  await dismissInspector(page.getByTestId("mobile-secondary-host"));
+  await captureLayoutReview(640, "zoom-200-mobile");
+  // 640 px is still above `PaneToolbar`'s ≤479 px container query, so the
+  // wrapped toolbar the rubric names is only reviewable at a narrower layout:
+  // 200% of an 860 px window.
+  await captureLayoutReview(430, "zoom-200-toolbar-wrap");
 
   const rejected = await acceptPdfUpload(
     api,
