@@ -104,6 +104,67 @@ def test_heavy_lock_serializes_linked_worktrees_through_their_common_git_owner(
     assert "BlockingIOError" in completed.stderr
 
 
+def test_heavy_lock_serializes_independent_clones_through_complete_git_lineage(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    first_clone = tmp_path / "first-clone"
+    second_clone = tmp_path / "second-clone"
+    shallow_clone = tmp_path / "shallow-clone"
+    source.mkdir()
+    subprocess.run(("git", "init", "-q"), cwd=source, check=True)
+    (source / "proof.txt").write_text("proof\n", encoding="utf-8")
+    subprocess.run(("git", "add", "."), cwd=source, check=True)
+    subprocess.run(
+        (
+            "git",
+            "-c",
+            "user.name=Nexus Test",
+            "-c",
+            "user.email=nexus@example.invalid",
+            "commit",
+            "-qm",
+            "base",
+        ),
+        cwd=source,
+        check=True,
+    )
+    for clone in (first_clone, second_clone):
+        subprocess.run(
+            ("git", "clone", "-q", str(source), str(clone)),
+            cwd=tmp_path,
+            check=True,
+        )
+
+    assert (first_clone / ".git").resolve() != (second_clone / ".git").resolve()
+    with workspace_heavy_lock(first_clone) as first_path:
+        with pytest.raises(BlockingIOError):
+            with workspace_heavy_lock(second_clone, blocking=False):
+                pass
+    with workspace_heavy_lock(second_clone) as second_path:
+        assert second_path == first_path
+        assert second_path.parent == Path("/tmp")
+
+    subprocess.run(
+        ("git", "clone", "-q", "--depth", "1", f"file://{source}", str(shallow_clone)),
+        cwd=tmp_path,
+        check=True,
+    )
+    assert (
+        subprocess.run(
+            ("git", "rev-parse", "--is-shallow-repository"),
+            cwd=shallow_clone,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        == "true"
+    )
+    with pytest.raises(RuntimeContractError, match="requires complete Git history"):
+        with workspace_heavy_lock(shallow_clone):
+            pass
+
+
 def test_docker_host_accepts_only_a_real_local_unix_socket() -> None:
     with tempfile.TemporaryDirectory(prefix="nexus-sock-", dir="/tmp") as temp_dir:
         socket_root = Path(temp_dir)

@@ -561,6 +561,13 @@ still apply. A direct invocation is not a workflow verdict.
 
 The controller owns one persistent, health-checked, workspace-local
 PostgreSQL/MinIO/Supabase-test stack recorded in `.nexus-test/runtime.json`.
+Memory-heavy proof is serialized by one host lock for every independent clone
+and linked worktree with the same complete Git lineage roots. Shallow history
+fails closed because it cannot establish that stable identity; a synthetic
+checkout without committed lineage falls back to its common Git directory.
+This conservative lease prevents a local run and the self-hosted Actions runner
+from producing nominally green but resource-contended evidence on the same
+devbox.
 Before `full` or a higher local workflow, `scripts/agency_setup.sh` hydrates the
 exact pinned `provider-runtime` and `llm-tools` commits and all of their locked
 artifacts. It requires adjacent `llm-calling` and `llm-tools` Git checkouts,
