@@ -25,7 +25,6 @@ if TYPE_CHECKING or _CUTOVER_PRESENT:
         PENDING,
         JobExecutionContext,
         RescheduleRequested,
-        claim_job,
         enqueue_job,
         get_job,
         lock_job,
@@ -66,6 +65,7 @@ if TYPE_CHECKING or _CUTOVER_PRESENT:
     from nexus.services.llm_ledger import LlmCallOwner
     from nexus.services.tool_runtime.composition import ComposedToolRuntime
     from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
+    from tests.testkit.queue_claims import claim_job_row
     from tests.testkit.unreachable_state import delete_jobs_by_ids
 
 _STEP_PATH = "generation/capacity-proof"
@@ -209,7 +209,7 @@ def _claim_job(engine: Engine, *, worker_id: str) -> tuple[UUID, JobExecutionCon
             max_attempts=1,
         )
         db.commit()
-        claimed = claim_job(
+        claimed = claim_job_row(
             db,
             job_id=job.id,
             worker_id=worker_id,
@@ -223,6 +223,7 @@ def _claim_job(engine: Engine, *, worker_id: str) -> tuple[UUID, JobExecutionCon
             worker_id=worker_id,
             attempt_no=claimed.attempts,
             resource_class="Light",
+            execution_id=claimed.execution_id,
         )
         db.commit()
         return job.id, context

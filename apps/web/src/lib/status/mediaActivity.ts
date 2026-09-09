@@ -179,6 +179,8 @@ export function uploadSessionActionErrorMessage(error: unknown): string {
         return uploadVerificationFailureCopy(outcome.code);
       case "Superseded":
         return "This import already finished. Activity has been refreshed.";
+      case "Conflicted":
+        return "This import changed. Review its current status.";
       case "Unresolved":
         return "Nexus is still verifying this upload. Refresh in a moment.";
       case "UnsupportedFileType":

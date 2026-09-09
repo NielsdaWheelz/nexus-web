@@ -26,7 +26,6 @@ from nexus.errors import InvalidRequestError
 from nexus.jobs.queue import (
     JobExecutionContext,
     JobRow,
-    claim_job,
     fail_job,
     get_job,
     update_running_job_payload,
@@ -81,6 +80,7 @@ from tests.testkit.codex_generation import (
     codex_generation_draft,
     stage_uncertain_codex_generation,
 )
+from tests.testkit.queue_claims import claim_job_row
 from tests.testkit.unreachable_state import set_pending_job_max_attempts
 
 
@@ -168,7 +168,7 @@ def _claim_exact_job(
     worker_id: str,
 ) -> tuple[JobRow, JobExecutionContext]:
     set_pending_job_max_attempts(db, job_id=job_id, max_attempts=1)
-    claimed = claim_job(
+    claimed = claim_job_row(
         db,
         job_id=job_id,
         worker_id=worker_id,
@@ -181,6 +181,7 @@ def _claim_exact_job(
         worker_id=worker_id,
         attempt_no=claimed.attempts,
         resource_class="Light",
+        execution_id=claimed.execution_id,
     )
 
 

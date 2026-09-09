@@ -1,6 +1,6 @@
 # The upload transport vocabulary is decoded in two browser modules
 
-**Status:** open (Track D2 to collapse)
+**Status:** resolved (Track D2, 2026-09-08)
 **Origin:** Imports workspace cutover, Track D1, 2026-09-08
 **Area:** `apps/web/src/lib/imports/importsClient.ts`; `apps/web/src/lib/media/ingestionClient.ts`
 
@@ -28,3 +28,11 @@ failure) and have both call sites use it.
 
 One module exports the upload transport union and its decoder; neither
 `importsClient.ts` nor `ingestionClient.ts` declares a second copy.
+
+## Resolution (Track D2, 2026-09-08)
+
+`apps/web/src/lib/media/uploadVerification.ts` — the existing upload-vocabulary
+owner — now exports `UploadTransportFailure` and `decodeUploadTransportFailure`.
+`importsClient.ts` decodes `UploadFailed.transport` with it and `ingestionClient.ts`
+uses the same type for the failure it reports and decodes; both private copies are
+deleted.

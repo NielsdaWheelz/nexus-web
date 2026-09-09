@@ -1,6 +1,6 @@
 # The Imports URL codec cannot be read by a server component
 
-**Status:** open (blocks Track F's `app/(authenticated)/imports/page.tsx`)
+**Status:** resolved (Track D2, 2026-09-08)
 **Origin:** Imports workspace cutover, Track D1, 2026-09-08
 **Area:** `apps/web/src/lib/imports/importsUrlState.ts`;
 `apps/web/src/lib/imports/importsClient.ts`
@@ -38,3 +38,15 @@ contract §5 names for it.)
 `decodeImportsUrlState` / `encodeImportsUrlState` are reachable from a module
 with no `"use client"` in its import graph, and Track F's route can read the
 Imports URL on the server if it chooses to.
+
+## Resolution (Track D2, 2026-09-08)
+
+`apps/web/src/lib/imports/importRef.ts` is directive-free and owns the import-ref
+grammar plus the closed vocabularies the codec narrows to (`IMPORT_STAGES`,
+`IMPORT_STATE_KINDS`, `SAFE_FAILURE_CODES`). `importsUrlState.ts` imports only from
+it, `@/lib/media/kind` and `@/lib/api/presence`, so nothing in its import graph
+carries `"use client"` and a server component can read the Imports URL.
+
+Contract §5 names the file for the ref grammar alone and puts `SAFE_FAILURE_CODES`
+in `importsClient.ts`; the vocabularies moved with the grammar because leaving them
+behind would have left the codec client-only and this ticket open.

@@ -33,7 +33,7 @@ from nexus.logging import get_logger
 
 logger = get_logger(__name__)
 
-_PROTOCOL_VERSION = 2
+_PROTOCOL_VERSION = 3
 _INPUT_KEYS = frozenset(
     {
         "version",
@@ -51,7 +51,7 @@ _RESULT_KEYS = {
     "ModeledFailure": frozenset({"version", "kind", "error_code", "message", "resource_dimension"}),
     "Defect": frozenset({"version", "kind", "error_type", "message"}),
 }
-_CONTEXT_KEYS = frozenset({"job_id", "worker_id", "attempt_no", "resource_class"})
+_CONTEXT_KEYS = frozenset({"job_id", "worker_id", "attempt_no", "resource_class", "execution_id"})
 _PRESENCE_ABSENT_KEYS = frozenset({"kind"})
 _PRESENCE_PRESENT_KEYS = frozenset({"kind", "value"})
 _SCHEDULE_AT_KEYS = frozenset({"kind", "instant"})
@@ -400,6 +400,7 @@ class BackgroundProcessExecutor:
                     worker_id=worker_id,
                     attempt_no=0,
                     resource_class="Light",
+                    execution_id=UUID(int=0),
                 ),
                 wall_timeout_seconds=_PARSER_TEMP_PRUNE_WALL_TIMEOUT_SECONDS,
                 runtime="Base",
@@ -486,6 +487,7 @@ def _encode_request(
             "worker_id": context.worker_id,
             "attempt_no": context.attempt_no,
             "resource_class": context.resource_class,
+            "execution_id": str(context.execution_id),
         },
         "oom_score_adj": oom_score_adj,
         "result_max_bytes": result_max_bytes,
@@ -641,6 +643,7 @@ def _child_result(request: dict[str, object]) -> dict[str, object]:
         worker_id=_require_str(context_value["worker_id"], label="worker_id"),
         attempt_no=_require_int(context_value["attempt_no"], label="attempt_no"),
         resource_class=cast(Literal["Light", "Heavy"], resource_class),
+        execution_id=UUID(_require_str(context_value["execution_id"], label="execution_id")),
     )
     handler = resolve_job_handler(handler_path)
     try:

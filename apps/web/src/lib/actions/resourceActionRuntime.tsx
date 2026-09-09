@@ -99,8 +99,16 @@ import {
 } from "@/lib/libraries/placementController";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
-import { runSourceProcessingAction } from "@/lib/media/sourceActions";
-import { retryMediaMetadata } from "@/lib/media/ingestionClient";
+import {
+  publishImportsInvalidation,
+  repairSearchImport,
+  repairSourceImport,
+  retrySourceImport,
+} from "@/lib/imports/importsClient";
+import {
+  refreshMediaSource,
+  retryMediaMetadata,
+} from "@/lib/media/ingestionClient";
 import { confirmAndDeleteMedia } from "@/lib/media/mediaLibraries";
 import { deleteMemberLibrary } from "@/lib/libraries/client";
 import { deleteConversation } from "@/lib/conversations/indexMutation";
@@ -677,19 +685,34 @@ async function runResourceActionEffect(
       window.location.assign(response.data.url);
       return;
     }
-    case "RetryProcessing":
-      await runSourceProcessingAction({
+    case "RetrySource":
+      await retrySourceImport({
         mediaId: requireRefId(target),
-        action: "retry",
-        successTitle: "Retrying source processing",
+        expectedAttemptId: intent.expectedAttemptId,
+        clientMutationId: crypto.randomUUID(),
       });
+      publishImportsInvalidation();
+      return;
+    case "RepairSource":
+      await repairSourceImport({
+        mediaId: requireRefId(target),
+        expectedAttemptId: intent.expectedAttemptId,
+        expectedJobId: intent.expectedJobId,
+        clientMutationId: crypto.randomUUID(),
+      });
+      publishImportsInvalidation();
+      return;
+    case "RepairSearch":
+      await repairSearchImport({
+        mediaId: requireRefId(target),
+        expectedRevision: intent.expectedRevision,
+        expectedJobId: intent.expectedJobId,
+        clientMutationId: crypto.randomUUID(),
+      });
+      publishImportsInvalidation();
       return;
     case "RefreshSource":
-      await runSourceProcessingAction({
-        mediaId: requireRefId(target),
-        action: "refresh",
-        successTitle: "Refreshing source",
-      });
+      await refreshMediaSource(requireRefId(target));
       return;
     case "RetryMetadata":
       await retryMediaMetadata(requireRefId(target));
@@ -1162,7 +1185,9 @@ function reconciliationScopeFor(
     case "RetryTranscript":
     case "AddToLectern":
     case "RemoveFromLectern":
-    case "RetryProcessing":
+    case "RetrySource":
+    case "RepairSource":
+    case "RepairSearch":
     case "RefreshSource":
     case "RetryMetadata":
     case "RefreshPodcast":

@@ -204,8 +204,10 @@ def test_a_stored_payload_with_an_unknown_field_is_rejected() -> None:
     )
 
 
-def test_an_event_type_the_branch_does_not_own_is_rejected() -> None:
-    with pytest.raises(ValueError):
+def test_an_event_type_the_branch_does_not_own_is_a_defect_naming_it() -> None:
+    """A stored type the owning branch never writes is corruption, not an unknown
+    variant to decode; the defect names the value so the row can be found."""
+    with pytest.raises(AssertionError, match="'Superseded'"):
         history_facts(
             table=UPLOAD_EVENTS_TABLE,
             event_type="Superseded",

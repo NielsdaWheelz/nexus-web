@@ -31,7 +31,6 @@ from nexus.db.session import create_session_factory
 from nexus.errors import ApiError, ApiErrorCode, ResourceLimitError
 from nexus.jobs.queue import (
     JobExecutionContext,
-    claim_job,
     complete_job,
     enqueue_job,
     parser_operation_has_live_job,
@@ -82,6 +81,7 @@ from tests.testkit.epub_fixtures import (
     epub2_payload,
     zip_payload,
 )
+from tests.testkit.queue_claims import claim_job_row
 from tests.testkit.unreachable_state import (
     delete_jobs_by_ids,
     delete_source_attempts_and_media,
@@ -2153,7 +2153,7 @@ def test_source_progress_is_monotonic_and_rejects_a_lost_heavy_fence(engine: Eng
         )
         attempt.job_id = job.id
         db.commit()
-        claimed = claim_job(
+        claimed = claim_job_row(
             db,
             job_id=job.id,
             worker_id=worker_id,
@@ -2169,6 +2169,7 @@ def test_source_progress_is_monotonic_and_rejects_a_lost_heavy_fence(engine: Eng
         worker_id=worker_id,
         attempt_no=1,
         resource_class="Heavy",
+        execution_id=claimed.execution_id,
     )
     fence = SourcePublicationFence.from_context(attempt_id=attempt_id, context=context)
     session_factory = create_session_factory(engine)

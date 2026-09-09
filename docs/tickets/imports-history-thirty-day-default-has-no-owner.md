@@ -1,6 +1,6 @@
 # The History view's 30-day default has no owner
 
-**Status:** open (Track E's toolbar to own; Track D2 to verify the URL stays honest)
+**Status:** open (Track E's toolbar to own; Track D2 verified the URL contract, 2026-09-08)
 **Origin:** Imports workspace cutover, Track D1, 2026-09-08
 **Area:** `apps/web/src/lib/imports/importsUrlState.ts`;
 `apps/web/src/components/imports/**` (not yet written)
@@ -41,3 +41,13 @@ the applied-filter chips, and in the API query by the one existing path.
 Opening History with no `from` shows a 30-day window whose bound is visible in
 the URL and in the toolbar, Clear all / widening the date removes it, and a URL
 that already names `from` is left exactly as written.
+
+## Track D2 note (2026-09-08)
+
+The codec now carries the bounds as UTC calendar days (`from=YYYY-MM-DD`), and
+`importsQueryParams` is the one place that turns them into the explicit
+`YYYY-MM-DDT00:00:00Z` instants the API accepts (contract D17). Decoding no longer
+narrows filters by view at all, so a default the toolbar writes survives a tab
+switch and comes back when the reader returns to History. The 30-day default is
+still unowned: Track E's toolbar must write it through the same `usePaneUrlState`
+setter the date fields use, so it shows in the URL and in `AppliedFilters`.

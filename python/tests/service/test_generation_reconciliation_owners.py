@@ -32,7 +32,6 @@ from nexus.errors import InvalidRequestError
 from nexus.jobs.queue import (
     JobExecutionContext,
     JobRow,
-    claim_job,
     complete_job,
     dead_letter_expired_job,
     enqueue_job,
@@ -88,6 +87,7 @@ from tests.testkit.codex_generation import (
     codex_generation_draft,
     stage_uncertain_codex_generation,
 )
+from tests.testkit.queue_claims import claim_job_row
 from tests.testkit.unreachable_state import (
     expire_artifact_learn_resolver_lease,
     expire_job_claim,
@@ -221,7 +221,7 @@ def _seed_dossier_generation_owner(
         assert len(jobs) == 1
         job_id = jobs[0].id
         worker_id = f"dossier-cancellation-{job_id}"
-        claimed = claim_job(
+        claimed = claim_job_row(
             db,
             job_id=job_id,
             worker_id=worker_id,
@@ -235,6 +235,7 @@ def _seed_dossier_generation_owner(
             worker_id=worker_id,
             attempt_no=claimed.attempts,
             resource_class="Heavy",
+            execution_id=claimed.execution_id,
         )
         generation_id = stable_generation_id(ticket.build_id, "synthesis")
         draft = _draft(
@@ -311,7 +312,7 @@ def _close_dossier_claim(db: Session, seeded: _DossierGenerationOwner) -> None:
         db.commit()
         if transition == "dead":
             return
-        claimed = claim_job(
+        claimed = claim_job_row(
             db,
             job_id=job.id,
             worker_id=seeded.context.worker_id,
@@ -336,7 +337,7 @@ def _suspend_uncertain_generation(
 ) -> tuple[JobRow, GenerationCommandDraft]:
     job = enqueue_job(db, kind=kind, payload=payload, max_attempts=1)
     worker_id = f"generation-reconciliation-{job.id}"
-    claimed = claim_job(
+    claimed = claim_job_row(
         db,
         job_id=job.id,
         worker_id=worker_id,
@@ -518,7 +519,7 @@ def test_synapse_terminal_noop_completes_repaired_prepared_without_ledger(
                 resolution=ProveNotDispatched(),
             )
             worker_id = f"synapse-cancellation-{job.id}"
-            claimed = claim_job(
+            claimed = claim_job_row(
                 db,
                 job_id=job.id,
                 worker_id=worker_id,
@@ -532,6 +533,7 @@ def test_synapse_terminal_noop_completes_repaired_prepared_without_ledger(
                 worker_id=worker_id,
                 attempt_no=claimed.attempts,
                 resource_class="Light",
+                execution_id=claimed.execution_id,
             )
             db.commit()
 
@@ -608,7 +610,7 @@ def test_dossier_generation_non_dispatch_proof_requeues_the_same_build(
             max_attempts=1,
         )
         worker_id = f"dossier-reconciliation-{job.id}"
-        claimed = claim_job(
+        claimed = claim_job_row(
             db,
             job_id=job.id,
             worker_id=worker_id,

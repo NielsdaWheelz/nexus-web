@@ -15,6 +15,7 @@ def _light_context() -> JobExecutionContext:
         worker_id="strict-job-text-proof",
         attempt_no=1,
         resource_class="Light",
+        execution_id=uuid4(),
     )
 
 

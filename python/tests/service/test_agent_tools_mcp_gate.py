@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session, sessionmaker
 _CUTOVER_PRESENT = find_spec("nexus.services.agent_tools_mcp") is not None
 
 if TYPE_CHECKING or _CUTOVER_PRESENT:
-    from nexus.jobs.queue import JobExecutionContext, claim_job, enqueue_job
+    from nexus.jobs.queue import JobExecutionContext, enqueue_job
     from nexus.schemas.llm import (
         PrivacyDisclosure,
         ProcessorChain,
@@ -81,6 +81,7 @@ if TYPE_CHECKING or _CUTOVER_PRESENT:
         NEXUS_TOOL_DECLARATIONS,
         NexusSearchSuccess,
     )
+    from tests.testkit.queue_claims import claim_job_row
 
 _MCP_ORIGIN = "https://mcp.nexus.example.com/internal/agent-tools/mcp"
 _MCP_HOST = "https://mcp.nexus.example.com"
@@ -124,7 +125,7 @@ async def _prove_public_mcp_mount_gate(engine: Engine) -> None:
 
     with Session(engine) as db:
         job = enqueue_job(db, kind="agent_tools_mcp_gate_proof", max_attempts=2)
-        claimed = claim_job(
+        claimed = claim_job_row(
             db,
             job_id=job.id,
             worker_id=worker_id,
@@ -137,6 +138,7 @@ async def _prove_public_mcp_mount_gate(engine: Engine) -> None:
             worker_id=worker_id,
             attempt_no=claimed.attempts,
             resource_class="Light",
+            execution_id=claimed.execution_id,
         )
         start_generation_in_current_transaction(
             db,

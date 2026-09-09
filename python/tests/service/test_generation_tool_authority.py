@@ -35,7 +35,7 @@ if TYPE_CHECKING or _CUTOVER_PRESENT:
     from mcp.shared.exceptions import MCPError
 
     from nexus.db.models import ArtifactBuild, SynthesisArtifact
-    from nexus.jobs.queue import JobExecutionContext, claim_job, enqueue_job, fail_job
+    from nexus.jobs.queue import JobExecutionContext, enqueue_job, fail_job
     from nexus.schemas.llm import (
         PrivacyDisclosure,
         ProcessorChain,
@@ -99,6 +99,7 @@ if TYPE_CHECKING or _CUTOVER_PRESENT:
         ResourceReadSuccess,
     )
     from tests.testkit.llm_tool_scenarios import compose_available_product_tool_runtime
+    from tests.testkit.queue_claims import claim_job_row
 
 
 def test_frozen_plan_is_transport_neutral_and_fenced(
@@ -135,7 +136,7 @@ async def _prove_frozen_plan_is_transport_neutral_and_fenced(engine: Engine) -> 
 
     with Session(engine) as db:
         job = enqueue_job(db, kind="generation_tool_authority_proof", max_attempts=2)
-        claimed = claim_job(
+        claimed = claim_job_row(
             db,
             job_id=job.id,
             worker_id=worker_id,
@@ -148,6 +149,7 @@ async def _prove_frozen_plan_is_transport_neutral_and_fenced(engine: Engine) -> 
             worker_id=worker_id,
             attempt_no=claimed.attempts,
             resource_class="Light",
+            execution_id=claimed.execution_id,
         )
         deferred_provider_executor = compose_deferred_generation_tool_executor(
             session_factory=factory,
@@ -452,7 +454,7 @@ async def _prove_dossier_projection_uses_only_completed_read_evidence(
             baseline_candidates=(baseline,),
         )
         job = enqueue_job(db, kind="dossier_tool_projection_proof", max_attempts=2)
-        claimed = claim_job(
+        claimed = claim_job_row(
             db,
             job_id=job.id,
             worker_id=worker_id,
@@ -465,6 +467,7 @@ async def _prove_dossier_projection_uses_only_completed_read_evidence(
             worker_id=worker_id,
             attempt_no=claimed.attempts,
             resource_class="Light",
+            execution_id=claimed.execution_id,
         )
         start_generation_in_current_transaction(
             db,

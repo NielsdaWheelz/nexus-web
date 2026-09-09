@@ -65,10 +65,13 @@ _OWNER_FAILURE_CODES = Literal[
     "E_INVALID_REQUEST",
     "E_MEDIA_NOT_FOUND",
     "E_MEDIA_NOT_READY",
+    "E_OWNER_REQUIRED",
     "E_PDF_PASSWORD_REQUIRED",
     "E_PDF_TEXT_UNAVAILABLE",
     "E_PODCAST_PROVIDER_UNAVAILABLE",
     "E_PODCAST_QUOTA_EXCEEDED",
+    "E_REPAIR_NOT_ALLOWED",
+    "E_RESOURCE_CONFLICT",
     "E_RESOURCE_LIMIT",
     "E_RETRY_INVALID_STATE",
     "E_RETRY_NOT_ALLOWED",
@@ -102,9 +105,13 @@ SafeFailureCode = UploadVerificationFailureCode | _OWNER_FAILURE_CODES
 
 Composed from the upload-verification alias plus the codes the source-ingest
 adapters, the object store, and the queue actually record, so widening either
-owner is a type error here. It names every value the trusted columns hold,
-including `E_PDF_TEXT_UNAVAILABLE`, which a ready PDF carries on
-`media.last_error_code` without having failed. Raw provider text, signed URLs
+owner is a type error here. It names every value of
+`media_source_attempts.error_code` and
+`media_upload_sessions.verification_error_code`, and every value of
+`media.last_error_code` at the moments history reads it: when a source failure
+copies it onto the attempt, and when a reused URL's attempt is born failed.
+`media.last_error_code` on readable media is wider (metadata enrichment writes
+its own codes there) and is never narrowed here. Raw provider text, signed URLs
 and source content never reach history.
 """
 
@@ -114,12 +121,15 @@ SAFE_FAILURE_CODES: frozenset[str] = frozenset(
 
 
 def assume_safe_failure_code(raw: str) -> SafeFailureCode:
-    """Narrow a trusted failure column (`media_source_attempts.error_code`,
-    `media_upload_sessions.verification_error_code`, `media.last_error_code`)."""
+    """Narrow a trusted failure column: `media_source_attempts.error_code`,
+    `media_upload_sessions.verification_error_code`, or `media.last_error_code`
+    read for a failed source (copied onto its attempt, or the outcome a reused
+    URL's attempt is born with)."""
     if raw not in SAFE_FAILURE_CODES:
-        # justify-defect: a kernel proof scans every module that writes those columns
-        # for the codes it writes, and migration 0225 rejects a database holding one
-        # this catalog does not name.
+        # justify-defect: a kernel proof scans every module that writes those
+        # columns at those moments for the codes it writes, and migration 0225
+        # rejects a database whose attempt or verification columns hold one this
+        # catalog does not name.
         raise AssertionError(f"uncatalogued import failure code {raw!r}")
     return cast(SafeFailureCode, raw)
 
@@ -507,10 +517,24 @@ def history_facts(
     write cannot decode.
     """
     if table == UPLOAD_EVENTS_TABLE:
-        kind = _UPLOAD_KIND_BY_EVENT_TYPE.get(event_type, event_type)
-        return _UPLOAD_FACTS.validate_python({"kind": kind, **payload})
+        return _UPLOAD_FACTS.validate_python(
+            {"kind": _stored_kind(_UPLOAD_KIND_BY_EVENT_TYPE, event_type), **payload}
+        )
     if "revision" in payload:
-        kind = _INDEX_KIND_BY_EVENT_TYPE.get(event_type, event_type)
-        return _INDEX_FACTS.validate_python({"kind": kind, **payload})
-    kind = _SOURCE_KIND_BY_EVENT_TYPE.get(event_type, event_type)
-    return _SOURCE_FACTS.validate_python({"kind": kind, **payload})
+        return _INDEX_FACTS.validate_python(
+            {"kind": _stored_kind(_INDEX_KIND_BY_EVENT_TYPE, event_type), **payload}
+        )
+    return _SOURCE_FACTS.validate_python(
+        {"kind": _stored_kind(_SOURCE_KIND_BY_EVENT_TYPE, event_type), **payload}
+    )
+
+
+def _stored_kind(kinds_by_event_type: Mapping[str, str], event_type: str) -> str:
+    kind = kinds_by_event_type.get(event_type)
+    if kind is None:
+        # justify-defect: `services/import_history.py` is the only writer and only
+        # writes `history_event_type(...)`; any other stored value is corruption.
+        raise AssertionError(
+            f"history row carries an event type its branch does not own: {event_type!r}"
+        )
+    return kind

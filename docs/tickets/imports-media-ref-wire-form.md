@@ -1,6 +1,6 @@
 # `ImportItem.media_ref` carries a bare UUID, not the spec's `MediaRef`
 
-**Status:** open (spec/implementation disagreement; decide before Track F)
+**Status:** decided in favour of the spec (Track D2, 2026-09-08); Python side still to follow
 **Origin:** Imports workspace cutover, Track D1, 2026-09-08
 **Area:** `python/nexus/schemas/imports.py`; `apps/web/src/lib/imports/importsClient.ts`
 
@@ -37,3 +37,16 @@ accept both.
 
 Spec, `schemas/imports.py` and `importsClient.ts` name the same form, and the
 Imports pane plans a media resource action without a second grammar.
+
+## Decision (Track D2, 2026-09-08)
+
+The ref form wins, per the spec's `Presence<MediaRef>` and contract D16 ("`media_ref`
+is the canonical resource ref text `media:<uuid>`"). `importsClient.ts` now decodes
+`media_ref` with `parseResourceRef`, requires the `media` scheme, and yields a
+`CanonicalResourceRef` the resource-action runtime can consume without a second
+grammar; `importsClient.unit.test.ts` has a named case refusing a bare UUID.
+
+Remaining work, outside Track D's ownership: `python/nexus/schemas/imports.py:216`
+must become the ref text (`media_ref: Presence[ResourceRefText]`, formatted
+`f"media:{media_id}"`) and `services/imports.py` must format it. Until then the
+browser decoder rejects the producer's payload.

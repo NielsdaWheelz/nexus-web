@@ -241,6 +241,7 @@ function uploadAcceptanceFailure(
       };
     case "Superseded":
       return { kind: "Superseded" };
+    case "Conflicted":
     case "Unresolved":
       return unresolvedAcceptance();
     case "UnsupportedFileType":

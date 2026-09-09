@@ -5,7 +5,7 @@
  */
 
 const POLL_INTERVAL_MS = 5_000;
-const CLOSED_PANE_WINDOW_MS = 15 * 60_000;
+export const IMPORTS_CLOSED_PANE_WINDOW_MS = 15 * 60_000;
 
 export type ImportsObservation =
   | { readonly kind: "Poll"; readonly delayMs: number }
@@ -25,7 +25,7 @@ export function nextObservation({
   readonly paneOpen: boolean;
 }): ImportsObservation {
   if (activeCount === 0 || !documentVisible) return { kind: "Stopped" };
-  if (!paneOpen && nowMs - lastWakeAtMs >= CLOSED_PANE_WINDOW_MS) {
+  if (!paneOpen && nowMs - lastWakeAtMs >= IMPORTS_CLOSED_PANE_WINDOW_MS) {
     return { kind: "Stopped" };
   }
   return { kind: "Poll", delayMs: POLL_INTERVAL_MS };

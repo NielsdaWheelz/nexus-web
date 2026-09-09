@@ -20,7 +20,7 @@ _CUTOVER_PRESENT = find_spec("nexus.services.tool_authority") is not None
 
 if TYPE_CHECKING or _CUTOVER_PRESENT:
     from nexus.db.models import ConsumptionQueueItem, LLMToolPosition
-    from nexus.jobs.queue import JobExecutionContext, claim_job, enqueue_job
+    from nexus.jobs.queue import JobExecutionContext, enqueue_job
     from nexus.services import generation_policy
     from nexus.services.llm_ledger import (
         GenerationStart,
@@ -39,6 +39,7 @@ if TYPE_CHECKING or _CUTOVER_PRESENT:
         freeze_tool_plan_snapshot,
     )
     from tests.testkit.codex_generation import codex_generation_draft
+    from tests.testkit.queue_claims import claim_job_row
 
 _GENERATION_CASES_PATH = Path(__file__).parent / "cases" / "generation_plans.v2.json"
 _SAFETY_CASES_PATH = Path(__file__).parent / "cases" / "tool_safety.v4.json"
@@ -158,7 +159,7 @@ def _start_executor(
     )
     with factory() as db:
         job = enqueue_job(db, kind=f"tool_safety_{operation}", max_attempts=1)
-        claimed = claim_job(
+        claimed = claim_job_row(
             db,
             job_id=job.id,
             worker_id=worker_id,
@@ -171,6 +172,7 @@ def _start_executor(
             worker_id=worker_id,
             attempt_no=claimed.attempts,
             resource_class="Light",
+            execution_id=claimed.execution_id,
         )
         start_generation_in_current_transaction(
             db,

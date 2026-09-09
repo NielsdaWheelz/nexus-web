@@ -204,15 +204,15 @@ def test_worker_topology_and_task_digest_cover_resource_class(
     "encoded",
     (
         b'{"version":1,"kind":"Succeeded","payload":{}}',
-        b'{"version":2,"version":2,"kind":"Succeeded","payload":{}}',
-        b'{"version":2,"kind":"Succeeded","payload":{},"extra":null}',
-        b'{"version":2,"kind":"ModeledFailure","error_code":"E_RESOURCE_LIMIT",'
+        b'{"version":3,"version":3,"kind":"Succeeded","payload":{}}',
+        b'{"version":3,"kind":"Succeeded","payload":{},"extra":null}',
+        b'{"version":3,"kind":"ModeledFailure","error_code":"E_RESOURCE_LIMIT",'
         b'"message":"bounded","resource_dimension":null}',
-        b'{"version":2,"kind":"Reschedule","schedule":null,"payload":{"kind":"Absent"}}',
-        b'{"version":2,"kind":"Reschedule","schedule":{"kind":"At"},"payload":{"kind":"Absent"}}',
-        b'{"version":2,"kind":"Reschedule","schedule":{"kind":"At",'
+        b'{"version":3,"kind":"Reschedule","schedule":null,"payload":{"kind":"Absent"}}',
+        b'{"version":3,"kind":"Reschedule","schedule":{"kind":"At"},"payload":{"kind":"Absent"}}',
+        b'{"version":3,"kind":"Reschedule","schedule":{"kind":"At",'
         b'"instant":"2026-08-17T12:00:00"},"payload":{"kind":"Absent"}}',
-        b'{"version":2,"kind":"Reschedule","schedule":{"kind":"After","seconds":true},'
+        b'{"version":3,"kind":"Reschedule","schedule":{"kind":"After","seconds":true},'
         b'"payload":{"kind":"Absent"}}',
     ),
 )
@@ -222,12 +222,12 @@ def test_background_child_result_protocol_rejects_noncanonical_values(encoded: b
 
 
 def test_background_child_result_protocol_is_exact_and_size_bounded() -> None:
-    success = _decode_result(b'{"version":2,"kind":"Succeeded","payload":{"value":3}}')
+    success = _decode_result(b'{"version":3,"kind":"Succeeded","payload":{"value":3}}')
     assert success == ChildSucceeded(payload={"value": 3})
 
     encoded = _bounded_result_bytes(
         {
-            "version": 2,
+            "version": 3,
             "kind": "Succeeded",
             "payload": {"value": "x" * 2048},
         },
@@ -279,6 +279,7 @@ def test_background_child_protocol_rejects_non_json_numeric_constants(constant: 
                 worker_id="strict-json-proof",
                 attempt_no=1,
                 resource_class="Light",
+                execution_id=uuid4(),
             ),
             oom_score_adj=750,
             result_max_bytes=1024,
@@ -286,7 +287,7 @@ def test_background_child_protocol_rejects_non_json_numeric_constants(constant: 
         )
 
     encoded = _bounded_result_bytes(
-        {"version": 2, "kind": "Succeeded", "payload": {"value": constant}},
+        {"version": 3, "kind": "Succeeded", "payload": {"value": constant}},
         result_max_bytes=1024,
     )
     assert _decode_result(encoded) == ChildDefect(
@@ -296,4 +297,4 @@ def test_background_child_protocol_rejects_non_json_numeric_constants(constant: 
 
     for token in (b"NaN", b"Infinity", b"-Infinity"):
         with pytest.raises(BackgroundProcessProtocolDefect, match="non-JSON constant"):
-            _decode_result(b'{"version":2,"kind":"Succeeded","payload":{"value":' + token + b"}}")
+            _decode_result(b'{"version":3,"kind":"Succeeded","payload":{"value":' + token + b"}}")

@@ -1,6 +1,6 @@
 # Upload retry and remove have no `lib/imports` client function
 
-**Status:** open (Track D2 to resolve)
+**Status:** resolved (Track D2, 2026-09-08)
 **Origin:** Imports workspace cutover, Track D1, 2026-09-08 (revised after review)
 **Area:** `apps/web/src/lib/imports/importsClient.ts`; `apps/web/src/lib/media/ingestionClient.ts`
 
@@ -55,3 +55,28 @@ one deletes `/media/uploads/{handle}`; retry sends `client_mutation_id` and
 `expected_generation` and returns the two modeled outcomes; a unit case proves
 that removal treats `E_UPLOAD_SESSION_NOT_FOUND` and
 `E_UPLOAD_ALREADY_PUBLISHED` as the obligation discharged rather than an error.
+
+## Resolution (Track D2, 2026-09-08)
+
+`ingestionClient.ts` keeps both commands and the outcome contract; no module was
+moved and no cycle exists, because `importsClient.ts` never imports
+`ingestionClient.ts` — the dependency runs one way,
+`ingestionClient -> importsClient.publishImportsInvalidation`.
+`retryUploadSession` now takes `{sessionHandle, file, expectedGeneration,
+clientMutationId, signal}`, sends `client_mutation_id` and `expected_generation`,
+handles the endpoint's `UploadRequired | NeedsAttention` answer through the modeled
+`UploadSessionOutcome` channel (`retriedCapability`, which threw on
+`NeedsAttention`, is deleted), and adds `409 E_RESOURCE_CONFLICT -> Conflicted`.
+`removeUploadSession` is unchanged and still treats
+`E_UPLOAD_SESSION_NOT_FOUND` / `E_UPLOAD_ALREADY_PUBLISHED` as the obligation
+discharged, proved by `ingestionClient.unit.test.ts`.
+
+Amended after review (2026-09-08): the retry answer is decoded by a `retryResponse`
+narrowing that refuses `Published` at the boundary, so the two declared variants are
+the whole type and no downstream guard remains; the declared-code table gained
+`E_UPLOAD_GENERATION_STALE -> Superseded` and
+`E_IDEMPOTENCY_KEY_REPLAY_MISMATCH -> IntentChanged`, the two 409s the replay
+contract introduces; and the pre-cutover "re-request when the signed window has
+already closed" branch is deleted — the server memoizes the admitted expiry and
+will not extend it, so an expired admitted capability is the modeled
+`NeedsAttention` answer and another renewal needs a fresh explicit command.

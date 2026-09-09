@@ -10,7 +10,10 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.errors import ApiErrorCode, ResourceFailureDimension
+from nexus.schemas.import_history import SourceFailed, assume_safe_failure_code
+from nexus.schemas.presence import Presence, present
 from nexus.services import media_source_types as source_types
+from nexus.services.import_history import append_processing_event
 from nexus.services.media_fact_revisions import bump_all_media_fact_collections
 from nexus.services.media_failure_projection import (
     MediaFailureStage,
@@ -20,6 +23,7 @@ from nexus.services.podcasts.transcription_failure import (
     PodcastTranscriptionFailure,
     publish_podcast_transcription_failure,
 )
+from nexus.services.source_publication import source_failure_progress, source_history_stage
 from nexus.services.transcripts.state import set_media_transcript_state
 
 _ACTIVE_ATTEMPT_STATUSES = frozenset({"accepted", "queued", "running"})
@@ -34,6 +38,9 @@ class SourceAttemptFailure:
     error_message: str
     retry_after_seconds: int | None
     now: datetime
+    execution_id: Presence[UUID]
+    """The worker execution that observed the failure; Absent when the failure
+    was published outside any execution (acceptance or enqueue time)."""
 
 
 @dataclass(frozen=True)
@@ -41,11 +48,16 @@ class ResourceLimitedSourceAttempt:
     media_id: UUID
     attempt_id: UUID
     dimension: ResourceFailureDimension
+    execution_id: Presence[UUID]
 
 
 @dataclass(frozen=True)
 class _LockedSourceAttempt:
     source_type: str
+    processing_stage: str | None
+    progress_completed: int
+    progress_total: int | None
+    progress_unit: str | None
 
 
 def source_attempt_failure_stage(source_type: str) -> MediaFailureStage:
@@ -85,6 +97,7 @@ def publish_resource_limited_source_attempt(
             error_message=message,
             retry_after_seconds=None,
             now=now,
+            execution_id=command.execution_id,
         ),
     )
     return message
@@ -110,14 +123,15 @@ def _lock_source_attempt(
     attempt_id: UUID,
 ) -> _LockedSourceAttempt:
     media_exists = db.scalar(
-        text("SELECT id FROM media WHERE id = :media_id FOR UPDATE"),
+        text("SELECT id FROM media WHERE id = :media_id FOR NO KEY UPDATE"),
         {"media_id": media_id},
     )
     attempt = (
         db.execute(
             text(
                 """
-                SELECT media_id, source_type, status
+                SELECT media_id, source_type, status, processing_stage,
+                       progress_completed, progress_total, progress_unit
                 FROM media_source_attempts
                 WHERE id = :attempt_id
                 FOR UPDATE
@@ -132,7 +146,13 @@ def _lock_source_attempt(
         raise AssertionError("source failure identity is inconsistent")
     if str(attempt["status"]) not in _ACTIVE_ATTEMPT_STATUSES:
         raise AssertionError("source failure attempt is not active")
-    return _LockedSourceAttempt(source_type=str(attempt["source_type"]))
+    return _LockedSourceAttempt(
+        source_type=str(attempt["source_type"]),
+        processing_stage=attempt["processing_stage"],
+        progress_completed=int(attempt["progress_completed"]),
+        progress_total=attempt["progress_total"],
+        progress_unit=attempt["progress_unit"],
+    )
 
 
 def _publish_locked_source_attempt_failure(
@@ -166,6 +186,28 @@ def _publish_locked_source_attempt_failure(
     ).one_or_none()
     if updated_attempt is None:
         raise AssertionError("source failure attempt changed while locked")
+    append_processing_event(
+        db,
+        media_id=failure.media_id,
+        facts=SourceFailed(
+            source_attempt_id=failure.attempt_id,
+            execution_id=failure.execution_id,
+            origin="Domain",
+            terminal=True,
+            progress=source_failure_progress(
+                processing_stage=attempt.processing_stage,
+                progress_completed=attempt.progress_completed,
+                progress_total=attempt.progress_total,
+                progress_unit=attempt.progress_unit,
+            ),
+        ),
+        stage=present(
+            source_history_stage(
+                source_type=attempt.source_type, processing_stage=attempt.processing_stage
+            )
+        ),
+        failure_code=present(assume_safe_failure_code(failure.error_code)),
+    )
 
     if attempt.source_type == source_types.PODCAST_EPISODE_TRANSCRIPT:
         if failure.failure_stage != "transcribe":

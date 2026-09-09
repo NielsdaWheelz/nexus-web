@@ -15,9 +15,61 @@ from nexus.db.models import MediaSourceAttempt, MediaSourceAttemptStatus
 from nexus.db.retries import retry_serializable
 from nexus.jobs.queue import JobExecutionContext, lock_and_renew_running_job_claim
 from nexus.logging import get_logger
+from nexus.schemas.import_history import SourceFailureProgress, SourceStageChanged, Stage
+from nexus.schemas.presence import Presence, absent, present
+from nexus.services import media_source_types as source_types
+from nexus.services.import_history import append_processing_event
 
 SOURCE_PUBLICATION_LEASE_SECONDS = 300
 logger = get_logger(__name__)
+
+COUNTED_PROGRESS_SOURCE_TYPES: frozenset[str] = (
+    source_types.LOCAL_FILE_SOURCE_TYPES | source_types.REMOTE_FILE_SOURCE_TYPES
+)
+"""The source types whose adapter records Validate/Extract/Finalize progress.
+
+Only the PDF/EPUB file adapters call ``record_source_extraction_progress`` and
+``record_source_finalizing``; every other source is one opaque processing step.
+"""
+
+
+def source_history_stage(*, source_type: str, processing_stage: str | None) -> Stage:
+    """The history stage of one source attempt (contract D12)."""
+    if source_type not in COUNTED_PROGRESS_SOURCE_TYPES:
+        return "SourceProcessing"
+    match processing_stage:
+        case None | "Validate":
+            return "Validate"
+        case "Extract":
+            return "Extract"
+        case "Finalize":
+            return "Finalize"
+        case _:
+            # justify-defect: reset_source_progress and the two record_* writers
+            # are the only producers of this column and write these three values.
+            raise AssertionError(
+                f"source attempt has an unknown processing stage {processing_stage!r}"
+            )
+
+
+def source_failure_progress(
+    *,
+    processing_stage: str | None,
+    progress_completed: int,
+    progress_total: int | None,
+    progress_unit: str | None,
+) -> Presence[SourceFailureProgress]:
+    """The counted progress a failure happened at, Present only when the run had
+    recorded a counted Extract snapshot."""
+    if processing_stage != "Extract" or progress_total is None:
+        return absent()
+    return present(
+        SourceFailureProgress(
+            completed=progress_completed,
+            total=present(progress_total),
+            unit=absent() if progress_unit is None else present(progress_unit),
+        )
+    )
 
 
 @dataclass(frozen=True)
@@ -27,6 +79,7 @@ class SourcePublicationFence:
     worker_id: str
     attempt_no: int
     resource_class: Literal["Light", "Heavy"]
+    execution_id: UUID
 
     @classmethod
     def from_context(
@@ -41,6 +94,7 @@ class SourcePublicationFence:
             worker_id=context.worker_id,
             attempt_no=context.attempt_no,
             resource_class=context.resource_class,
+            execution_id=context.execution_id,
         )
 
     def execution_context(self) -> JobExecutionContext:
@@ -49,6 +103,7 @@ class SourcePublicationFence:
             worker_id=self.worker_id,
             attempt_no=self.attempt_no,
             resource_class=self.resource_class,
+            execution_id=self.execution_id,
         )
 
 
@@ -100,7 +155,7 @@ def record_source_extraction_progress(
     if total < 1 or completed < 0 or completed > total:
         raise ValueError("source extraction progress is outside its counted range")
 
-    def mutate(_db: Session, attempt: MediaSourceAttempt) -> None:
+    def mutate(db: Session, attempt: MediaSourceAttempt) -> None:
         if attempt.processing_stage not in {"Validate", "Extract"}:
             raise AssertionError("source extraction progress regressed from a later stage")
         if attempt.progress_total is not None and int(attempt.progress_total) != total:
@@ -109,6 +164,8 @@ def record_source_extraction_progress(
             raise AssertionError("source extraction progress unit changed within one run")
         if completed < int(attempt.progress_completed or 0):
             raise AssertionError("source extraction progress regressed within one run")
+        if attempt.processing_stage != "Extract":
+            _record_stage_changed(db, fence=fence, media_id=media_id, stage="Extract")
         attempt.processing_stage = "Extract"
         attempt.progress_completed = completed
         attempt.progress_total = total
@@ -132,9 +189,10 @@ def record_source_finalizing(
 ) -> None:
     """Advance an exact source run to its final publication stage."""
 
-    def mutate(_db: Session, attempt: MediaSourceAttempt) -> None:
+    def mutate(db: Session, attempt: MediaSourceAttempt) -> None:
         if attempt.processing_stage not in {"Validate", "Extract"}:
             raise AssertionError("source finalization started from an invalid stage")
+        _record_stage_changed(db, fence=fence, media_id=media_id, stage="Finalize")
         attempt.processing_stage = "Finalize"
         attempt.progress_completed = 0
         attempt.progress_total = None
@@ -147,6 +205,20 @@ def record_source_finalizing(
         fence=fence,
         media_ids=(media_id,),
         mutate=mutate,
+    )
+
+
+def _record_stage_changed(
+    db: Session, *, fence: SourcePublicationFence, media_id: UUID, stage: Stage
+) -> None:
+    append_processing_event(
+        db,
+        media_id=media_id,
+        facts=SourceStageChanged(
+            source_attempt_id=fence.attempt_id, execution_id=fence.execution_id
+        ),
+        stage=present(stage),
+        failure_code=absent(),
     )
 
 
@@ -258,7 +330,7 @@ def _require_source_publication(
                 FROM media
                 WHERE id = ANY(:media_ids)
                 ORDER BY id ASC
-                FOR UPDATE
+                FOR NO KEY UPDATE
                 """
             ),
             {"media_ids": ordered_media_ids},

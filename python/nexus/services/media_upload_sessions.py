@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Literal, assert_never, cast, get_args
 from uuid import UUID
@@ -19,10 +19,20 @@ from nexus.db.models import (
     MediaUploadSessionDestination,
     ProcessingStatus,
 )
+from nexus.db.retries import admit_serializable
 from nexus.db.session import transaction
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.ids import new_uuid7
 from nexus.logging import get_logger
+from nexus.schemas.import_history import (
+    SafeFailureCode,
+    UploadAccepted,
+    UploadExecutionStarted,
+    UploadFacts,
+    UploadFailed,
+    UploadPublished,
+    UploadRecoveryAccepted,
+)
 from nexus.schemas.media import (
     CapabilityExpired,
     CreateUploadSessionRequest,
@@ -44,12 +54,22 @@ from nexus.schemas.media import (
     UploadVerificationFailureCode,
     VerificationFailed,
 )
+from nexus.schemas.presence import Presence, absent, present
 from nexus.services import library_entries, library_governance, media_source_ingest
 from nexus.services.file_ingest_validation import (
     has_valid_file_signature,
     validate_file_ingest_request,
 )
+from nexus.services.import_history import (
+    append_upload_event,
+    delete_upload_history_in_current_transaction,
+)
 from nexus.services.media_processing_state import mark_source_queued
+from nexus.services.resource_mutation_replay import (
+    canonical_json_bytes,
+    lookup_replay,
+    record_replay,
+)
 from nexus.services.sealed_handles import (
     UploadSessionHandle,
     seal_upload_session,
@@ -162,6 +182,19 @@ class _MeasuredSource:
 
 def _db_now(db: Session) -> datetime:
     return db.execute(select(func.now())).scalar_one()
+
+
+def _record_upload_event(
+    db: Session,
+    session_id: UUID,
+    facts: UploadFacts,
+    *,
+    stage: Literal["Upload", "Validate"],
+    failure_code: Presence[SafeFailureCode],
+) -> None:
+    append_upload_event(
+        db, session_id=session_id, facts=facts, stage=present(stage), failure_code=failure_code
+    )
 
 
 def _normalize_filename(filename: str) -> str:
@@ -360,12 +393,16 @@ def _needs_attention(session: MediaUploadSession, now: datetime) -> NeedsAttenti
             capabilities=capabilities,
         )
     if session.upload_url_expires_at <= now:
-        return NeedsAttention(
-            session_handle=seal_upload_session(session.id),
-            failure=CapabilityExpired(expired_at=session.upload_url_expires_at),
-            capabilities=capabilities,
-        )
+        return _capability_expired(session.id, session.upload_url_expires_at)
     return None
+
+
+def _capability_expired(session_id: UUID, expired_at: datetime) -> NeedsAttention:
+    return NeedsAttention(
+        session_handle=seal_upload_session(session_id),
+        failure=CapabilityExpired(expired_at=expired_at),
+        capabilities=UploadSessionCapabilities(can_retry_upload=True, can_remove=True),
+    )
 
 
 def _advance_generation(session: MediaUploadSession, now: datetime) -> None:
@@ -380,46 +417,74 @@ def _advance_generation(session: MediaUploadSession, now: datetime) -> None:
     session.updated_at = now
 
 
-def _upload_required(
-    db: Session,
-    session: MediaUploadSession,
+@dataclass(frozen=True, slots=True)
+class _UploadCapability:
+    """One generation's immutable upload facts, carried out of the transaction
+    that admitted it so the capability is minted with no transaction open."""
+
+    session_id: UUID
+    generation: int
+    kind: str
+    content_type: str
+    expected_size_bytes: int
+    expires_at: datetime
+
+    @classmethod
+    def of(cls, session: MediaUploadSession) -> _UploadCapability:
+        return cls(
+            session_id=session.id,
+            generation=session.upload_generation,
+            kind=session.kind,
+            content_type=session.content_type,
+            expected_size_bytes=session.expected_size_bytes,
+            expires_at=session.upload_url_expires_at,
+        )
+
+    def staging_path(self) -> str:
+        return build_upload_session_staging_storage_path(
+            self.session_id, self.generation, get_file_extension(self.kind)
+        )
+
+
+def _reserve_staged_bytes_in_current_transaction(
+    db: Session, capability: _UploadCapability
+) -> None:
+    reserve_upload_session_storage_object_write_in_current_transaction(
+        db,
+        upload_session_id=capability.session_id,
+        storage_path=capability.staging_path(),
+        retain_until=(
+            capability.expires_at
+            + _STAGED_RETENTION
+            - timedelta(seconds=get_settings().signed_url_expiry_s)
+        ),
+    )
+
+
+def _signed_upload_required(
+    capability: _UploadCapability,
     *,
     outcome: Literal["Created", "Reused"],
+    expires_in: int,
     storage_client: StorageClientBase,
 ) -> UploadRequired:
-    path = build_upload_session_staging_storage_path(
-        session.id,
-        session.upload_generation,
-        get_file_extension(session.kind),
-    )
-    retain_until = (
-        session.upload_url_expires_at
-        + _STAGED_RETENTION
-        - timedelta(seconds=get_settings().signed_url_expiry_s)
-    )
-    reserve_upload_session_storage_object_write(
-        db,
-        upload_session_id=session.id,
-        storage_path=path,
-        retain_until=retain_until,
-    )
     try:
         signed = storage_client.sign_upload(
-            path,
-            content_type=session.content_type,
-            size_bytes=session.expected_size_bytes,
-            expires_in=get_settings().signed_url_expiry_s,
+            capability.staging_path(),
+            content_type=capability.content_type,
+            size_bytes=capability.expected_size_bytes,
+            expires_in=expires_in,
         )
     except StorageError as exc:
         raise ApiError(ApiErrorCode.E_SIGN_UPLOAD_FAILED, "Failed to initialize upload.") from exc
     return UploadRequired(
-        session_handle=seal_upload_session(session.id),
-        generation=session.upload_generation,
+        session_handle=seal_upload_session(capability.session_id),
+        generation=capability.generation,
         upload_url=signed.upload_url,
         required_headers=UploadRequiredHeaders.model_validate(
-            {"Content-Type": session.content_type}
+            {"Content-Type": capability.content_type}
         ),
-        expires_at=session.upload_url_expires_at,
+        expires_at=capability.expires_at,
         idempotency_outcome=outcome,
     )
 
@@ -479,6 +544,13 @@ def create_upload_session(
                 for library_id in intent.library_ids
             )
             created = True
+            _record_upload_event(
+                db,
+                session.id,
+                UploadAccepted(generation=1),
+                stage="Upload",
+                failure_code=absent(),
+            )
         else:
             _assert_valid_persisted_state(session)
             matches = (
@@ -521,21 +593,30 @@ def create_upload_session(
                 # capability fences itself with a new generation and a new path.
                 # ``_advance_generation`` clears the stolen lease.
                 _advance_generation(session, now)
+                _record_upload_event(
+                    db,
+                    session.id,
+                    UploadRecoveryAccepted(generation=session.upload_generation),
+                    stage="Upload",
+                    failure_code=absent(),
+                )
             else:
                 session.upload_url_expires_at = now + timedelta(
                     seconds=get_settings().signed_url_expiry_s
                 )
                 session.updated_at = now
+        capability = _UploadCapability.of(session)
+        _reserve_staged_bytes_in_current_transaction(db, capability)
     logger.info(
         "IntentAccepted",
-        upload_session_id=str(session.id),
-        generation=session.upload_generation,
+        upload_session_id=str(capability.session_id),
+        generation=capability.generation,
         request_id=clean_request_id,
     )
-    return _upload_required(
-        db,
-        session,
+    return _signed_upload_required(
+        capability,
         outcome="Created" if created else "Reused",
+        expires_in=get_settings().signed_url_expiry_s,
         storage_client=storage_client or get_storage_client(),
     )
 
@@ -563,6 +644,16 @@ def record_transport_failure(
             )
             session.transport_failed_at = now
             session.updated_at = now
+            _record_upload_event(
+                db,
+                session.id,
+                UploadFailed(
+                    generation=session.upload_generation,
+                    transport=present(_transport_failure(session).reason),
+                ),
+                stage="Upload",
+                failure_code=present("E_UPLOAD_TRANSPORT_FAILED"),
+            )
     logger.info(
         "PutFailed",
         upload_session_id=str(session.id),
@@ -580,6 +671,15 @@ def record_transport_failure(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _AdmittedRetry:
+    """The memoized receipt of one admitted retry: the generation and its expiry,
+    never a signed URL."""
+
+    generation: int
+    expires_at: datetime
+
+
 def retry_upload_session(
     db: Session,
     *,
@@ -587,11 +687,25 @@ def retry_upload_session(
     session_handle: str,
     request: RetryUploadSessionRequest,
     storage_client: StorageClientBase | None = None,
-) -> UploadRequired:
+) -> UploadRequired | NeedsAttention:
+    """Admit one new upload generation for the inspected one, exactly once per
+    ``client_mutation_id``; a replay re-mints the admitted generation for its
+    remaining life and never extends it."""
     filename = _normalize_filename(request.filename)
     content_type = _normalize_content_type(request.content_type)
-    with transaction(db):
+    session_id = unseal_upload_session(session_handle)
+    scope = f"media_upload_retry:{session_id}"
+    request_bytes = canonical_json_bytes(request.model_dump(mode="json"))
+
+    def admit() -> tuple[_UploadCapability, _AdmittedRetry]:
         session = _owned_session_for_update(db, viewer_id, session_handle)
+        memo = lookup_replay(
+            db,
+            viewer_id=viewer_id,
+            scope=scope,
+            client_mutation_id=request.client_mutation_id,
+            request_bytes=request_bytes,
+        )
         if session.published_at is not None:
             raise ConflictError(
                 ApiErrorCode.E_UPLOAD_ALREADY_PUBLISHED, "Upload is already published."
@@ -601,6 +715,21 @@ def retry_upload_session(
                 ApiErrorCode.E_UPLOAD_INTENT_MISMATCH,
                 "A rejected upload session cannot be retried.",
             )
+        if memo is not None:
+            admitted = _AdmittedRetry(
+                generation=int(str(memo["generation"])),
+                expires_at=datetime.fromisoformat(str(memo["expires_at"])),
+            )
+            if session.upload_generation != admitted.generation:
+                raise ConflictError(
+                    ApiErrorCode.E_UPLOAD_GENERATION_STALE,
+                    "Upload generation is no longer current.",
+                )
+            # The replay re-mints the admitted capability: its expiry is the memo's,
+            # even when a later create-with-reused-key extended the same generation.
+            capability = replace(_UploadCapability.of(session), expires_at=admitted.expires_at)
+            db.commit()
+            return capability, admitted
         now = _db_now(db)
         if (
             session.verification_token is not None
@@ -626,11 +755,49 @@ def retry_upload_session(
                 ApiErrorCode.E_UPLOAD_INTENT_MISMATCH,
                 "Retry request does not match the upload intent.",
             )
+        if request.expected_generation != session.upload_generation:
+            raise ConflictError(
+                ApiErrorCode.E_RESOURCE_CONFLICT,
+                "The inspected upload generation is no longer current.",
+                details={"current": {"generation": session.upload_generation}},
+            )
         _advance_generation(session, now)
-    return _upload_required(
-        db,
-        session,
+        _record_upload_event(
+            db,
+            session.id,
+            UploadRecoveryAccepted(generation=session.upload_generation),
+            stage="Upload",
+            failure_code=absent(),
+        )
+        capability = _UploadCapability.of(session)
+        _reserve_staged_bytes_in_current_transaction(db, capability)
+        admitted = _AdmittedRetry(
+            generation=capability.generation, expires_at=capability.expires_at
+        )
+        record_replay(
+            db,
+            viewer_id=viewer_id,
+            scope=scope,
+            client_mutation_id=request.client_mutation_id,
+            request_bytes=request_bytes,
+            response_json={
+                "generation": admitted.generation,
+                "expires_at": admitted.expires_at.isoformat(),
+            },
+            changed_lanes={},
+        )
+        db.commit()
+        return capability, admitted
+
+    capability, admitted = admit_serializable(db, "retry_upload_session", admit)
+    now = _db_now(db)
+    db.rollback()
+    if admitted.expires_at <= now:
+        return _capability_expired(session_id, admitted.expires_at)
+    return _signed_upload_required(
+        capability,
         outcome="Reused",
+        expires_in=int((admitted.expires_at - now).total_seconds()),
         storage_client=storage_client or get_storage_client(),
     )
 
@@ -732,6 +899,13 @@ def _record_terminal_verification_failure(
         ).scalar_one_or_none()
         if session is not None and session.verification_token == token:
             now = _db_now(db)
+            _record_upload_event(
+                db,
+                session.id,
+                UploadFailed(generation=session.upload_generation, transport=absent()),
+                stage="Validate",
+                failure_code=present(error_code.value),
+            )
             session.verification_error_code = error_code.value
             session.verification_failed_at = now
             session.verification_token = None
@@ -907,6 +1081,13 @@ def _claim_verification(
         session.verification_generation = generation
         session.verification_expires_at = claimed.lease_expires_at
         session.updated_at = now
+        _record_upload_event(
+            db,
+            session.id,
+            UploadExecutionStarted(generation=generation),
+            stage="Validate",
+            failure_code=absent(),
+        )
     return claimed
 
 
@@ -1113,6 +1294,17 @@ def confirm_upload_session(
                 session.published_media_id = candidate_media_id
                 session.published_source_attempt_id = attempt.id
                 session.published_at = now
+                _record_upload_event(
+                    db,
+                    session.id,
+                    UploadPublished(
+                        generation=generation,
+                        media_id=candidate_media_id,
+                        source_attempt_id=attempt.id,
+                    ),
+                    stage="Upload",
+                    failure_code=absent(),
+                )
                 session.verification_token = None
                 session.verification_generation = None
                 session.verification_expires_at = None
@@ -1230,6 +1422,7 @@ def delete_upload_session(
                 MediaUploadSessionDestination.upload_session_id == session.id
             )
         )
+        delete_upload_history_in_current_transaction(db, session_id=session.id)
         db.delete(session)
 
 
@@ -1273,6 +1466,7 @@ def delete_published_media_support_in_current_transaction(
             MediaUploadSessionDestination.upload_session_id == session.id
         )
     )
+    delete_upload_history_in_current_transaction(db, session_id=session.id)
     deleted_ids = list(
         db.execute(
             delete(MediaUploadSession)

@@ -43,7 +43,6 @@ from nexus.jobs.queue import (
     JobExecutionContext,
     JobRow,
     RescheduleRequested,
-    claim_job,
     complete_job,
     fail_job,
     find_nonterminal_jobs_for_payload,
@@ -82,6 +81,7 @@ from nexus.services.durable_step_journal import (
 from nexus.services.llm_execution import ExecutionRuntime
 from nexus.services.rate_limit import RateLimiter, get_rate_limiter, set_rate_limiter
 from nexus.tasks.artifacts import compose_dossier_tool_runtime
+from tests.testkit.queue_claims import claim_job_row
 from tests.testkit.unreachable_state import (
     make_failed_job_retryable,
     make_pending_job_due,
@@ -269,7 +269,7 @@ def _claim_build(
     build: _IdeaBuild,
     worker_id: str,
 ) -> tuple[JobRow, JobExecutionContext]:
-    claimed = claim_job(
+    claimed = claim_job_row(
         db,
         job_id=build.job_id,
         worker_id=worker_id,
@@ -283,6 +283,7 @@ def _claim_build(
         worker_id=worker_id,
         attempt_no=claimed.attempts,
         resource_class="Heavy",
+        execution_id=claimed.execution_id,
     )
     db.commit()
     return claimed, context

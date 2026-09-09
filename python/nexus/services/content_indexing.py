@@ -20,12 +20,37 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.errors import ApiErrorCode
-from nexus.jobs.queue import JobExecutionContext
+from nexus.auth.permissions import can_read_media
+from nexus.db.retries import admit_serializable
+from nexus.errors import ApiErrorCode, ConflictError, ForbiddenError, NotFoundError
+from nexus.jobs.queue import JobExecutionContext, current_dead_job_for_payload, requeue_dead_job
+from nexus.schemas.import_history import (
+    IndexAccepted,
+    IndexExecutionStarted,
+    IndexFacts,
+    IndexRecoveryAccepted,
+    IndexSucceeded,
+    IndexSuperseded,
+)
+from nexus.schemas.imports import RepairSearchOffer
+from nexus.schemas.media import SearchRepairAdmission
+from nexus.schemas.presence import absent, present
 from nexus.services import media_intelligence_lifecycle
+from nexus.services.capabilities import (
+    OperatorRecovery,
+    RecoveryActor,
+    SearchRecoveryAnswer,
+    ViewerRecovery,
+)
+from nexus.services.import_history import append_processing_event
 from nexus.services.parser_temp import utf8_byte_length
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_mutation_replay import (
+    canonical_json_bytes,
+    lookup_replay,
+    record_replay,
+)
 from nexus.services.semantic_chunks import (
     build_text_embeddings,
     current_transcript_embedding_model,
@@ -637,7 +662,7 @@ def rebuild_content_index(
     """Synchronous note doorway; durable media jobs plan and publish separately."""
     if owner.kind == "media":
         db.execute(
-            text("SELECT id FROM media WHERE id = :owner_id FOR UPDATE"),
+            text("SELECT id FROM media WHERE id = :owner_id FOR NO KEY UPDATE"),
             {"owner_id": owner.id},
         ).scalar_one()
     return publish_content_index(
@@ -927,7 +952,7 @@ def prepare_media_content_reindex(
                 SELECT id, kind, processing_status, title, language, plain_text
                 FROM media
                 WHERE id = :media_id
-                FOR UPDATE
+                FOR NO KEY UPDATE
                 """
             ),
             {"media_id": media_id},
@@ -943,7 +968,7 @@ def prepare_media_content_reindex(
         raise AssertionError("media content-reindex owner kind is ineligible")
 
     state = _lock_media_index_state(db, media_id)
-    if state is None or _validated_media_revision(state["revision"]) != revision:
+    if state is None:
         return None
 
     from nexus.jobs.queue import lock_and_renew_running_job_claim
@@ -962,9 +987,25 @@ def prepare_media_content_reindex(
     ):
         # justify-defect: the worker context must name this exact closed payload.
         raise AssertionError("media content-reindex job identity is malformed")
+    if _validated_media_revision(state["revision"]) != revision:
+        _record_index_event(
+            db,
+            media_id=media_id,
+            facts=IndexSuperseded(
+                revision=revision, job_id=job.id, execution_id=context.execution_id
+            ),
+        )
+        return None
     if media["processing_status"] != "ready_for_reading":
         # justify-defect: only source success may request a document index revision.
         raise AssertionError("media content-reindex owner is not readable")
+    _record_index_event(
+        db,
+        media_id=media_id,
+        facts=IndexExecutionStarted(
+            revision=revision, job_id=job.id, execution_id=context.execution_id
+        ),
+    )
 
     blocks = _snapshot_media_indexable_blocks(
         db,
@@ -1010,7 +1051,7 @@ def publish_media_content_reindex(
     """Fence and atomically publish one complete current document revision."""
     media = (
         db.execute(
-            text("SELECT id, kind FROM media WHERE id = :media_id FOR UPDATE"),
+            text("SELECT id, kind FROM media WHERE id = :media_id FOR NO KEY UPDATE"),
             {"media_id": work.media_id},
         )
         .mappings()
@@ -1022,7 +1063,7 @@ def publish_media_content_reindex(
         # justify-defect: a media row cannot change document kind.
         raise AssertionError("media kind changed during content reindex")
     state = _lock_media_index_state(db, work.media_id)
-    if state is None or _validated_media_revision(state["revision"]) != work.revision:
+    if state is None:
         return None
 
     from nexus.jobs.queue import lock_and_renew_running_job_claim
@@ -1041,11 +1082,27 @@ def publish_media_content_reindex(
     ):
         # justify-defect: publication is authorized only by this exact payload.
         raise AssertionError("media content-reindex publication identity is malformed")
+    if _validated_media_revision(state["revision"]) != work.revision:
+        _record_index_event(
+            db,
+            media_id=work.media_id,
+            facts=IndexSuperseded(
+                revision=work.revision, job_id=job.id, execution_id=context.execution_id
+            ),
+        )
+        return None
     if plan.owner != IndexOwner("media", work.media_id) or plan.source_kind != work.source_kind:
         # justify-defect: the immutable plan must belong to the prepared snapshot.
         raise AssertionError("media content-index plan identity is malformed")
 
     result = publish_content_index(db, plan=plan, reason=work.reason)
+    _record_index_event(
+        db,
+        media_id=work.media_id,
+        facts=IndexSucceeded(
+            revision=work.revision, job_id=job.id, execution_id=context.execution_id
+        ),
+    )
     plan_chunk_count = len(plan.chunks) if isinstance(plan, ContentIndexPlan) else plan.chunk_count
     if work.source_kind == "pdf" and plan_chunk_count == 0:
         db.execute(
@@ -1284,6 +1341,9 @@ def request_media_content_reindex(
         media_id=media_id,
         revision=revision,
     )
+    _record_index_event(
+        db, media_id=media_id, facts=IndexAccepted(revision=revision, job_id=selected.id)
+    )
     return MediaContentReindexIntent(
         revision=revision,
         background_job_id=selected.id,
@@ -1352,13 +1412,150 @@ def ensure_media_content_reindex_job(
         media_id=media_id,
         revision=revision,
     )
+    _record_index_event(
+        db, media_id=media_id, facts=IndexAccepted(revision=revision, job_id=inserted.id)
+    )
     return MediaContentReindexIntent(revision, inserted.id, False, True)
 
 
+def _record_index_event(db: Session, *, media_id: UUID, facts: IndexFacts) -> None:
+    append_processing_event(
+        db, media_id=media_id, facts=facts, stage=present("Index"), failure_code=absent()
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class SearchRecoveryFacts:
+    """The current index revision and, when its exact reindex job is dead, that job."""
+
+    revision: int
+    dead_job_id: UUID | None
+    is_creator: bool
+    is_admin: bool
+
+
+def search_recovery(facts: SearchRecoveryFacts) -> SearchRecoveryAnswer:
+    """The one recovery answer for a media's search-index obligation (contract D6)."""
+    if facts.dead_job_id is None:
+        return None
+    if not (facts.is_creator or facts.is_admin):
+        return "NotOwner"
+    return RepairSearchOffer(expected_revision=facts.revision, expected_job_id=facts.dead_job_id)
+
+
+def repair_dead_media_reindex(
+    db: Session,
+    *,
+    actor: RecoveryActor,
+    media_id: UUID,
+    expected_revision: int,
+    expected_job_id: UUID,
+) -> SearchRepairAdmission:
+    """Requeue the exact dead reindex job of the current index revision. Never
+    touches source rows: search repair repeats indexing, not extraction."""
+    scope = f"media_search_repair:{media_id}"
+    request_bytes = canonical_json_bytes(
+        {"expected_revision": expected_revision, "expected_job_id": str(expected_job_id)}
+    )
+
+    def admit() -> SearchRepairAdmission:
+        match actor:
+            case ViewerRecovery(viewer_id=viewer_id, is_admin=is_admin):
+                if not can_read_media(db, viewer_id, media_id):
+                    raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+                creator_id = db.execute(
+                    text("SELECT created_by_user_id FROM media WHERE id = :media_id"),
+                    {"media_id": media_id},
+                ).scalar_one_or_none()
+                if creator_id is None:
+                    raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+                is_creator = creator_id == viewer_id
+                if not (is_creator or is_admin):
+                    raise ForbiddenError(ApiErrorCode.E_OWNER_REQUIRED, "Media owner required")
+                replay = lookup_replay(
+                    db,
+                    viewer_id=viewer_id,
+                    scope=scope,
+                    client_mutation_id=actor.client_mutation_id,
+                    request_bytes=request_bytes,
+                )
+                if replay is not None:
+                    db.rollback()
+                    return SearchRepairAdmission.model_validate(replay)
+            case OperatorRecovery():
+                is_creator, is_admin = False, True
+        _lock_media_for_reindex(db, media_id)
+        state = _lock_media_index_state(db, media_id)
+        if state is None:
+            raise ConflictError(
+                ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Media has no search index to repair."
+            )
+        revision = _validated_media_revision(state["revision"])
+        dead = current_dead_job_for_payload(
+            db,
+            kind=MEDIA_CONTENT_REINDEX_JOB_KIND,
+            expected_payload_match={"media_id": str(media_id), "revision": revision},
+        )
+        offer = search_recovery(
+            SearchRecoveryFacts(
+                revision=revision,
+                dead_job_id=None if dead is None else dead.id,
+                is_creator=is_creator,
+                is_admin=is_admin,
+            )
+        )
+        if offer == "NotOwner":
+            # justify-defect: creator-or-admin authority was established before the lock.
+            raise AssertionError("search repair policy refused an authorized actor")
+        current: dict[str, object] = {"revision": revision}
+        if dead is not None:
+            current["job_id"] = str(dead.id)
+        if offer is None or (offer.expected_revision, offer.expected_job_id) != (
+            expected_revision,
+            expected_job_id,
+        ):
+            raise ConflictError(
+                ApiErrorCode.E_RESOURCE_CONFLICT,
+                "The inspected search index execution is no longer current.",
+                details={"current": current},
+            )
+        if not requeue_dead_job(db, job_id=offer.expected_job_id):
+            # justify-defect: current_dead_job_for_payload locked this exact dead row.
+            raise AssertionError("locked dead reindex job could not be requeued")
+        _record_index_event(
+            db,
+            media_id=media_id,
+            facts=IndexRecoveryAccepted(revision=revision, job_id=offer.expected_job_id),
+        )
+        admission = SearchRepairAdmission(
+            media_id=media_id, revision=revision, job_id=offer.expected_job_id
+        )
+        if isinstance(actor, ViewerRecovery):
+            record_replay(
+                db,
+                viewer_id=actor.viewer_id,
+                scope=scope,
+                client_mutation_id=actor.client_mutation_id,
+                request_bytes=request_bytes,
+                response_json=admission.model_dump(mode="json"),
+                changed_lanes={},
+            )
+        db.commit()
+        return admission
+
+    return admit_serializable(db, "repair_dead_media_reindex", admit)
+
+
 def _lock_media_for_reindex(db: Session, media_id: UUID) -> None:
+    """Hold the media row for a transaction that goes on to lock its queue rows.
+
+    ``FOR NO KEY UPDATE`` admits the ``KEY SHARE`` the worker's history insert
+    takes on this row inside its own queue transition, so a transition and a
+    media-locked caller never wait on each other's locks.
+    """
     if (
         db.execute(
-            text("SELECT id FROM media WHERE id = :media_id FOR UPDATE"),
+            text("SELECT id FROM media WHERE id = :media_id FOR NO KEY UPDATE"),
             {"media_id": media_id},
         ).scalar_one_or_none()
         is None

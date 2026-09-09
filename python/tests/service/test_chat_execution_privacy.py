@@ -12,11 +12,12 @@ from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
 from nexus.errors import NotFoundError
-from nexus.jobs.queue import claim_job, fail_job, update_running_job_payload
+from nexus.jobs.queue import fail_job, update_running_job_payload
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.chat_run_execution import chat_run_execution_phase
 from nexus.services.chat_runs import get_chat_run
 from nexus.services.durable_step_journal import DurableExecutionPhase
+from tests.testkit.queue_claims import claim_job_row
 
 _CUTOVER_PRESENT = find_spec("nexus.services.generation_selection") is not None
 
@@ -41,7 +42,7 @@ def test_suspended_chat_exposes_only_phase_and_masks_its_private_journal(
     with Session(engine) as db:
         chat, catalog_snapshot = asyncio.run(_create_privacy_chat(db))
         for attempt in range(1, 4):
-            claimed = claim_job(
+            claimed = claim_job_row(
                 db,
                 job_id=chat.job_id,
                 worker_id=worker_id,

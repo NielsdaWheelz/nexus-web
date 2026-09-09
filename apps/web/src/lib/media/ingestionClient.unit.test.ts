@@ -10,11 +10,13 @@ import { acceptanceErrorMessage } from "@/components/nexus/addContentSessionMode
 import { uploadSessionActionErrorMessage } from "@/lib/status/mediaActivity";
 
 /**
- * Oracle: the upload-session API contract (spec §5 of
- * docs/cutovers/document-import-reliability-hard-cutover.md and the
- * per-endpoint error table it declares). Every declared code must reach the
- * user as its own next step; none of them may be laundered into the
- * same-system defect boundary that replaces the Add sheet.
+ * Oracle: the upload-session API contract — the per-endpoint error table this
+ * client declares, under "API and recovery admission" in
+ * docs/cutovers/imports-workspace-hard-cutover.md, which adds the replay
+ * contract of `POST /media/uploads/{handle}/retry` (a stale memoized generation
+ * and a reused key over different bytes are both refused with 409). Every
+ * declared code must reach the user as its own next step; none of them may be
+ * laundered into the same-system defect boundary that replaces the Add sheet.
  */
 const DECLARED_CODES: readonly [
   UploadSessionEndpoint,
@@ -100,8 +102,22 @@ const DECLARED_CODES: readonly [
   [
     "Retry",
     409,
+    "E_UPLOAD_GENERATION_STALE",
+    { kind: "Superseded" },
+    "Superseded",
+  ],
+  [
+    "Retry",
+    409,
     "E_UPLOAD_INTENT_MISMATCH",
     { kind: "FileMismatch" },
+    "Rejected",
+  ],
+  [
+    "Retry",
+    409,
+    "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH",
+    { kind: "IntentChanged" },
     "Rejected",
   ],
   [
@@ -112,6 +128,13 @@ const DECLARED_CODES: readonly [
     "Unresolved",
   ],
   ["Retry", 500, "E_SIGN_UPLOAD_FAILED", { kind: "Unresolved" }, "Unresolved"],
+  [
+    "Retry",
+    409,
+    "E_RESOURCE_CONFLICT",
+    { kind: "Conflicted" },
+    "Unresolved",
+  ],
   ["Confirm", 400, "E_INVALID_REQUEST", { kind: "IntentMalformed" }, "Defect"],
   [
     "Confirm",
@@ -236,6 +259,7 @@ describe("upload-session error contract", () => {
     ["Create" as const, "E_UPSTREAM", 503],
     ["Confirm" as const, "E_INTERNAL", 500],
     ["Remove" as const, "E_UPLOAD_GENERATION_STALE", 409],
+    ["Confirm" as const, "E_RESOURCE_CONFLICT", 409],
   ])(
     "leaves %s %s to the generic API error channel",
     (endpoint, code, status) => {

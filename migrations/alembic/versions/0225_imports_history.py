@@ -208,11 +208,18 @@ def _record_source_attempt_baselines(bind: Connection) -> None:
 
 def _baseline_outcome(status: str, error_code: str | None) -> SourceBaselineOutcome:
     """The preflight already rejected any status or code this cannot state."""
-    if status == "succeeded":
-        return SucceededSourceBaselineOutcome()
-    if status == "failed":
-        return FailedSourceBaselineOutcome(failure_code=assume_safe_failure_code(str(error_code)))
-    return InFlightSourceBaselineOutcome()
+    match status:
+        case "succeeded":
+            return SucceededSourceBaselineOutcome()
+        case "failed":
+            return FailedSourceBaselineOutcome(
+                failure_code=assume_safe_failure_code(str(error_code))
+            )
+        case "accepted" | "queued" | "running":
+            return InFlightSourceBaselineOutcome()
+        case _:
+            # justify-defect: the preflight admits exactly these five statuses.
+            raise AssertionError(f"source attempt baseline cannot state status {status!r}")
 
 
 def upgrade() -> None:

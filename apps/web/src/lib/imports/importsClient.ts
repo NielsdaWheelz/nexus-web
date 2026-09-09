@@ -15,7 +15,22 @@ import {
   decodeMediaSourceProgress,
   type MediaSourceProgress,
 } from "@/lib/media/sourceProgress";
+import {
+  decodeUploadTransportFailure,
+  type UploadTransportFailure,
+} from "@/lib/media/uploadVerification";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
+import type { CanonicalResourceRef } from "@/lib/sharing/types";
+import {
+  IMPORT_STAGES,
+  IMPORT_STATE_KINDS,
+  SAFE_FAILURE_CODES,
+  parseImportRef,
+  type ImportRef,
+  type ImportStage,
+  type SafeFailureCode,
+} from "@/lib/imports/importRef";
 import {
   expectArray,
   expectBoolean,
@@ -27,23 +42,6 @@ import {
   expectOneOf,
   expectRecord,
 } from "@/lib/validation";
-
-export const IMPORT_STAGES = [
-  "Upload",
-  "Validate",
-  "Extract",
-  "Finalize",
-  "Index",
-  "SourceProcessing",
-] as const;
-export type ImportStage = (typeof IMPORT_STAGES)[number];
-
-export const IMPORT_STATE_KINDS = [
-  "Active",
-  "NeedsAttention",
-  "Complete",
-] as const;
-export type ImportStateKind = (typeof IMPORT_STATE_KINDS)[number];
 
 const IMPORT_WAITING_REASONS = ["Queue", "Capacity", "RetryBackoff"] as const;
 export type ImportWaitingReason = (typeof IMPORT_WAITING_REASONS)[number];
@@ -59,31 +57,6 @@ export type ModeledRecoveryRestriction = (typeof RECOVERY_RESTRICTIONS)[number];
 const SOURCE_RECOVERY_INPUTS = ["StoredSource", "RefetchSource"] as const;
 const FAILURE_ORIGINS = ["Execution", "Domain"] as const;
 
-export type ImportRef = string & { readonly __importRef: unique symbol };
-
-const UPLOAD_REF_PREFIX = "upload:";
-const UPLOAD_HANDLE_RE = /^[A-Za-z0-9_.-]+$/;
-
-/**
- * Parse an import ref, returning null on any grammar violation. The media form
- * is the resource ref the rest of the app speaks, so `resourceRef` parses it —
- * this module never splits a ref on `:`. The upload form is not a resource: it
- * carries the server's opaque session handle, so only its URL-safe alphabet is
- * checked — pinning that handle's version or length here would turn a
- * server-side handle change into a browser defect.
- */
-export function parseImportRef(raw: string): ImportRef | null {
-  const resource = parseResourceRef(raw);
-  const valid =
-    resource === null
-      ? raw.startsWith(UPLOAD_REF_PREFIX) &&
-        UPLOAD_HANDLE_RE.test(raw.slice(UPLOAD_REF_PREFIX.length))
-      : resource.scheme === "media";
-  // justify-type-assertion: the two grammars above are the complete import ref
-  // contract and this is their sole constructor.
-  return valid ? (raw as ImportRef) : null;
-}
-
 export type ImportState =
   | {
       readonly kind: "Active";
@@ -96,7 +69,7 @@ export type ImportState =
   | {
       readonly kind: "NeedsAttention";
       readonly stage: ImportStage;
-      readonly failureCode: Presence<string>;
+      readonly failureCode: Presence<SafeFailureCode>;
     }
   | { readonly kind: "Complete" };
 
@@ -124,6 +97,13 @@ export type RecoveryOffer =
       readonly input: "PublishedContent";
     };
 
+/**
+ * The offers that name a media resource, so the resource-action runtime plans
+ * from exactly these three; the upload offer is dispatched by the Imports
+ * provider instead (contract D7).
+ */
+export type MediaRecoveryOffer = Exclude<RecoveryOffer, { kind: "RetryUpload" }>;
+
 export interface ImportCapabilities {
   readonly canOpen: boolean;
   readonly canRemove: boolean;
@@ -132,11 +112,6 @@ export interface ImportCapabilities {
 }
 
 export type FailureOrigin = (typeof FAILURE_ORIGINS)[number];
-
-/** The upload transport vocabulary of `schemas/media.py`, as history records it. */
-export type UploadTransportFailure =
-  | { readonly kind: "Network" | "Timeout" | "Aborted" }
-  | { readonly kind: "HttpRejected"; readonly status: number };
 
 export type UploadHistoryFacts =
   | {
@@ -211,7 +186,7 @@ export type SourceHistoryFacts =
       readonly attemptNo: number;
       readonly outcome:
         | { readonly kind: "Succeeded" }
-        | { readonly kind: "Failed"; readonly failureCode: string }
+        | { readonly kind: "Failed"; readonly failureCode: SafeFailureCode }
         | { readonly kind: "InFlight" };
     };
 
@@ -255,7 +230,7 @@ export interface HistoryEntry {
   readonly id: string;
   readonly occurredAt: string;
   readonly stage: Presence<ImportStage>;
-  readonly failureCode: Presence<string>;
+  readonly failureCode: Presence<SafeFailureCode>;
   readonly facts: HistoryFacts;
 }
 
@@ -264,7 +239,7 @@ export interface ImportItem {
   readonly title: string;
   readonly mediaKind: MediaKind;
   readonly sourceLabel: Presence<string>;
-  readonly mediaRef: Presence<string>;
+  readonly mediaRef: Presence<CanonicalResourceRef>;
   readonly state: ImportState;
   readonly acceptedAt: string;
   readonly updatedAt: string;
@@ -328,6 +303,14 @@ function positiveInteger(raw: unknown, name: string): number {
   return value;
 }
 
+function mediaResourceRef(raw: unknown, name: string): CanonicalResourceRef {
+  const parsed = parseResourceRef(expectNonemptyString(raw, name));
+  if (parsed === null || parsed.scheme !== "media") {
+    throw new TypeError(`${name} must be a media resource ref`);
+  }
+  return canonicalResourceRef(parsed);
+}
+
 function importRef(raw: unknown, name: string): ImportRef {
   const parsed = parseImportRef(expectNonemptyString(raw, name));
   if (parsed === null) {
@@ -375,7 +358,7 @@ function importState(raw: unknown, name: string): ImportState {
       kind,
       stage: expectOneOf(state.stage, IMPORT_STAGES, `${name}.stage`),
       failureCode: decodePresence(state.failure_code, (value) =>
-        expectNonemptyString(value, `${name}.failure_code.value`),
+        expectOneOf(value, SAFE_FAILURE_CODES, `${name}.failure_code.value`),
       ),
     };
   }
@@ -383,7 +366,40 @@ function importState(raw: unknown, name: string): ImportState {
   return { kind };
 }
 
-function recoveryOffer(raw: unknown, name: string): RecoveryOffer {
+/**
+ * The wire key for each offer field, so the same offer type decodes at both
+ * boundaries it crosses: the Imports API, which is snake_case like every other
+ * `/api/imports` payload, and the media action snapshot, which is camelCase for
+ * its whole payload (`resourceActionSnapshot.ts`). Neither payload mixes the
+ * two conventions, so `lib/resources/activation.ts` is the precedent followed
+ * here rather than a second offer type.
+ */
+interface RecoveryOfferKeys {
+  readonly expectedGeneration: string;
+  readonly expectedAttemptId: string;
+  readonly expectedJobId: string;
+  readonly expectedRevision: string;
+}
+
+const SNAKE_CASE_OFFER_KEYS: RecoveryOfferKeys = {
+  expectedGeneration: "expected_generation",
+  expectedAttemptId: "expected_attempt_id",
+  expectedJobId: "expected_job_id",
+  expectedRevision: "expected_revision",
+};
+
+const CAMEL_CASE_OFFER_KEYS: RecoveryOfferKeys = {
+  expectedGeneration: "expectedGeneration",
+  expectedAttemptId: "expectedAttemptId",
+  expectedJobId: "expectedJobId",
+  expectedRevision: "expectedRevision",
+};
+
+function recoveryOffer(
+  raw: unknown,
+  name: string,
+  keys: RecoveryOfferKeys,
+): RecoveryOffer {
   const kind = expectOneOf(
     expectRecord(raw, name).kind,
     ["RetryUpload", "RetrySource", "RepairSource", "RepairSearch"] as const,
@@ -393,14 +409,14 @@ function recoveryOffer(raw: unknown, name: string): RecoveryOffer {
     case "RetryUpload": {
       const offer = expectExactRecord(
         raw,
-        ["kind", "expected_generation", "input"],
+        ["kind", keys.expectedGeneration, "input"],
         name,
       );
       return {
         kind,
         expectedGeneration: positiveInteger(
-          offer.expected_generation,
-          `${name}.expected_generation`,
+          offer[keys.expectedGeneration],
+          `${name}.${keys.expectedGeneration}`,
         ),
         input: expectOneOf(
           offer.input,
@@ -412,60 +428,52 @@ function recoveryOffer(raw: unknown, name: string): RecoveryOffer {
     case "RetrySource": {
       const offer = expectExactRecord(
         raw,
-        ["kind", "expected_attempt_id", "input"],
+        ["kind", keys.expectedAttemptId, "input"],
         name,
       );
       return {
         kind,
         expectedAttemptId: expectCanonicalRfcUuid(
-          offer.expected_attempt_id,
-          `${name}.expected_attempt_id`,
+          offer[keys.expectedAttemptId],
+          `${name}.${keys.expectedAttemptId}`,
         ),
-        input: expectOneOf(
-          offer.input,
-          SOURCE_RECOVERY_INPUTS,
-          `${name}.input`,
-        ),
+        input: expectOneOf(offer.input, SOURCE_RECOVERY_INPUTS, `${name}.input`),
       };
     }
     case "RepairSource": {
       const offer = expectExactRecord(
         raw,
-        ["kind", "expected_attempt_id", "expected_job_id", "input"],
+        ["kind", keys.expectedAttemptId, keys.expectedJobId, "input"],
         name,
       );
       return {
         kind,
         expectedAttemptId: expectCanonicalRfcUuid(
-          offer.expected_attempt_id,
-          `${name}.expected_attempt_id`,
+          offer[keys.expectedAttemptId],
+          `${name}.${keys.expectedAttemptId}`,
         ),
         expectedJobId: expectCanonicalRfcUuid(
-          offer.expected_job_id,
-          `${name}.expected_job_id`,
+          offer[keys.expectedJobId],
+          `${name}.${keys.expectedJobId}`,
         ),
-        input: expectOneOf(
-          offer.input,
-          SOURCE_RECOVERY_INPUTS,
-          `${name}.input`,
-        ),
+        input: expectOneOf(offer.input, SOURCE_RECOVERY_INPUTS, `${name}.input`),
       };
     }
     case "RepairSearch": {
       const offer = expectExactRecord(
         raw,
-        ["kind", "expected_revision", "expected_job_id", "input"],
+        ["kind", keys.expectedRevision, keys.expectedJobId, "input"],
         name,
       );
       return {
         kind,
         expectedRevision: positiveInteger(
-          offer.expected_revision,
-          `${name}.expected_revision`,
+          offer[keys.expectedRevision],
+          `${name}.${keys.expectedRevision}`,
         ),
         expectedJobId: expectCanonicalRfcUuid(
-          offer.expected_job_id,
-          `${name}.expected_job_id`,
+          offer[keys.expectedJobId],
+          `${name}.${keys.expectedJobId}`,
         ),
         input: expectOneOf(
           offer.input,
@@ -477,6 +485,27 @@ function recoveryOffer(raw: unknown, name: string): RecoveryOffer {
   }
 }
 
+/** Strict decoder for the snake_case `/api/imports` wire. */
+export function decodeRecoveryOffer(raw: unknown, name: string): RecoveryOffer {
+  return recoveryOffer(raw, name, SNAKE_CASE_OFFER_KEYS);
+}
+
+/**
+ * Strict decoder for the camelCase media action snapshot. An upload session is
+ * not a resource, so its offer is refused here rather than guarded downstream:
+ * the snapshot's capability can only carry a media recovery.
+ */
+export function decodeCamelCaseMediaRecoveryOffer(
+  raw: unknown,
+  name: string,
+): MediaRecoveryOffer {
+  const offer = recoveryOffer(raw, name, CAMEL_CASE_OFFER_KEYS);
+  if (offer.kind === "RetryUpload") {
+    throw new TypeError(`${name} must name a media recovery`);
+  }
+  return offer;
+}
+
 function importCapabilities(raw: unknown, name: string): ImportCapabilities {
   const value = expectExactRecord(
     raw,
@@ -484,7 +513,7 @@ function importCapabilities(raw: unknown, name: string): ImportCapabilities {
     name,
   );
   const recovery = decodePresence(value.recovery, (offer) =>
-    recoveryOffer(offer, `${name}.recovery.value`),
+    decodeRecoveryOffer(offer, `${name}.recovery.value`),
   );
   const unavailableReason = decodePresence(value.unavailable_reason, (reason) =>
     expectOneOf(
@@ -499,27 +528,6 @@ function importCapabilities(raw: unknown, name: string): ImportCapabilities {
     recovery,
     unavailableReason,
   };
-}
-
-function uploadTransportFailure(
-  raw: unknown,
-  name: string,
-): UploadTransportFailure {
-  const kind = expectOneOf(
-    expectRecord(raw, name).kind,
-    ["Network", "Timeout", "Aborted", "HttpRejected"] as const,
-    `${name}.kind`,
-  );
-  if (kind === "HttpRejected") {
-    const failure = expectExactRecord(raw, ["kind", "status"], name);
-    const status = expectNonnegativeInteger(failure.status, `${name}.status`);
-    if (status < 100 || status > 599) {
-      throw new TypeError(`${name}.status must be an HTTP status`);
-    }
-    return { kind, status };
-  }
-  expectExactRecord(raw, ["kind"], name);
-  return { kind };
 }
 
 function acceptedSourceRecovery(
@@ -565,8 +573,9 @@ function baselineOutcome(
     const outcome = expectExactRecord(raw, ["kind", "failure_code"], name);
     return {
       kind,
-      failureCode: expectNonemptyString(
+      failureCode: expectOneOf(
         outcome.failure_code,
+        SAFE_FAILURE_CODES,
         `${name}.failure_code`,
       ),
     };
@@ -651,7 +660,7 @@ function historyFacts(raw: unknown, name: string): HistoryFacts {
           `${name}.generation`,
         ),
         transport: decodePresence(facts.transport, (value) =>
-          uploadTransportFailure(value, `${name}.transport.value`),
+          decodeUploadTransportFailure(value, `${name}.transport.value`),
         ),
       };
     }
@@ -935,7 +944,7 @@ function historyEntry(raw: unknown, name: string): HistoryEntry {
       expectOneOf(value, IMPORT_STAGES, `${name}.stage.value`),
     ),
     failureCode: decodePresence(entry.failure_code, (value) =>
-      expectNonemptyString(value, `${name}.failure_code.value`),
+      expectOneOf(value, SAFE_FAILURE_CODES, `${name}.failure_code.value`),
     ),
     facts: historyFacts(entry.facts, `${name}.facts`),
   };
@@ -966,7 +975,7 @@ function importItem(raw: unknown, name: string): ImportItem {
       expectNonemptyString(value, `${name}.source_label.value`),
     ),
     mediaRef: decodePresence(item.media_ref, (value) =>
-      expectCanonicalRfcUuid(value, `${name}.media_ref.value`),
+      mediaResourceRef(value, `${name}.media_ref.value`),
     ),
     state: importState(item.state, `${name}.state`),
     acceptedAt: expectIsoInstant(item.accepted_at, `${name}.accepted_at`),

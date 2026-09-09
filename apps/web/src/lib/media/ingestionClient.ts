@@ -10,17 +10,15 @@ import {
 import { createRandomId } from "@/lib/createRandomId";
 import { isAbortError } from "@/lib/errors";
 import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision";
-import { publishMediaActivityInvalidation } from "@/lib/media/activityClient";
-import {
-  decodeMediaActionCapabilities,
-  type MediaActionCapabilities,
-} from "@/lib/media/mediaActionCapabilities";
+import { publishImportsInvalidation } from "@/lib/imports/importsClient";
 import {
   requireDocumentProcessingStatus,
   type DocumentProcessingStatus,
 } from "@/lib/media/documentReadiness";
 import {
   UPLOAD_VERIFICATION_CODES,
+  decodeUploadTransportFailure,
+  type UploadTransportFailure,
   type UploadVerificationCode,
 } from "@/lib/media/uploadVerification";
 import {
@@ -103,7 +101,7 @@ export function isFailedSourceIngest(result: SourceIngestResult): boolean {
  * inferring intent from an HTTP status class.
  */
 export type UploadSessionOutcome =
-  /** Import Activity owns an unresolved obligation for this session. */
+  /** Imports owns an unresolved obligation for this session. */
   | { readonly kind: "NeedsAttention" }
   /** Verification rejected the stored bytes. Terminal for this session. */
   | {
@@ -112,8 +110,10 @@ export type UploadSessionOutcome =
     }
   /** No staged bytes for this generation; the same file must be sent again. */
   | { readonly kind: "BytesMissing" }
-  /** This attempt no longer owns the session; Import Activity is authoritative. */
+  /** This attempt no longer owns the session; Imports is authoritative. */
   | { readonly kind: "Superseded" }
+  /** The identity this command named is stale; Imports holds a newer one. */
+  | { readonly kind: "Conflicted" }
   /** Acceptance is genuinely unknown; replaying the same intent converges. */
   | { readonly kind: "Unresolved" }
   /** Terminal for this intent; only a new import can succeed. */
@@ -182,9 +182,14 @@ function retryOutcome(code: string): UploadSessionOutcome | null {
       return { kind: "IntentMalformed" };
     case "E_UPLOAD_SESSION_NOT_FOUND":
     case "E_UPLOAD_ALREADY_PUBLISHED":
+    case "E_UPLOAD_GENERATION_STALE":
       return { kind: "Superseded" };
     case "E_UPLOAD_INTENT_MISMATCH":
       return { kind: "FileMismatch" };
+    case "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH":
+      return { kind: "IntentChanged" };
+    case "E_RESOURCE_CONFLICT":
+      return { kind: "Conflicted" };
     case "E_UPLOAD_VERIFICATION_IN_PROGRESS":
     case "E_SIGN_UPLOAD_FAILED":
       return { kind: "Unresolved" };
@@ -253,12 +258,13 @@ export function uploadSessionOutcome(
   }
 }
 
-/** Outcomes that changed what Import Activity owes this viewer. */
-function activityObligationChanged(outcome: UploadSessionOutcome): boolean {
+/** Outcomes that changed what Imports owes this viewer. */
+function importsObligationChanged(outcome: UploadSessionOutcome): boolean {
   switch (outcome.kind) {
     case "NeedsAttention":
     case "VerificationRejected":
     case "Superseded":
+    case "Conflicted":
       return true;
     case "BytesMissing":
     case "Unresolved":
@@ -278,7 +284,7 @@ function uploadSessionFailure(
 ): unknown {
   const outcome = uploadSessionOutcome(endpoint, error);
   if (outcome === null) return error;
-  if (activityObligationChanged(outcome)) publishMediaActivityInvalidation();
+  if (importsObligationChanged(outcome)) publishImportsInvalidation();
   return new UploadSessionError(outcome, { cause: error });
 }
 
@@ -310,6 +316,8 @@ type UploadResponse =
     };
 
 type UploadCapability = Extract<UploadResponse, { kind: "UploadRequired" }>;
+/** The two variants the retry endpoint declares (contract §4). */
+type RetryResponse = Exclude<UploadResponse, { kind: "Published" }>;
 type PublishedUpload = Extract<UploadResponse, { kind: "Published" }>;
 
 type UploadFailure =
@@ -320,35 +328,10 @@ type UploadFailure =
     }
   | {
       readonly kind: "TransportFailed";
-      readonly reason: UploadTransportReason;
+      readonly reason: UploadTransportFailure;
       readonly failedAt: string;
     }
   | { readonly kind: "CapabilityExpired"; readonly expiredAt: string };
-
-/** The closed transport vocabulary the browser is allowed to report. */
-type UploadTransportReason =
-  | { readonly kind: "Network" }
-  | { readonly kind: "Timeout" }
-  | { readonly kind: "Aborted" }
-  | { readonly kind: "HttpRejected"; readonly status: number };
-
-function transportReason(raw: unknown, name: string): UploadTransportReason {
-  const kind = expectOneOf(
-    expectRecord(raw, name).kind,
-    ["Network", "Timeout", "Aborted", "HttpRejected"] as const,
-    `${name}.kind`,
-  );
-  if (kind === "HttpRejected") {
-    const reason = expectExactRecord(raw, ["kind", "status"], name);
-    const status = expectNonnegativeInteger(reason.status, `${name}.status`);
-    if (status < 100 || status > 599) {
-      throw new TypeError(`${name}.status must be an HTTP status`);
-    }
-    return { kind, status };
-  }
-  expectExactRecord(raw, ["kind"], name);
-  return { kind };
-}
 
 function uploadFailure(raw: unknown, name: string): UploadFailure {
   const kind = expectString(expectRecord(raw, name).kind, `${name}.kind`);
@@ -368,7 +351,7 @@ function uploadFailure(raw: unknown, name: string): UploadFailure {
     );
     return {
       kind,
-      reason: transportReason(failure.reason, `${name}.reason`),
+      reason: decodeUploadTransportFailure(failure.reason, `${name}.reason`),
       failedAt: expectIsoInstant(failure.failed_at, `${name}.failed_at`),
     };
   }
@@ -382,6 +365,16 @@ function uploadFailure(raw: unknown, name: string): UploadFailure {
   throw new TypeError(
     `${name}.kind must be VerificationFailed, TransportFailed, or CapabilityExpired`,
   );
+}
+
+function retryResponse(raw: unknown): RetryResponse {
+  const response = uploadResponse(raw);
+  if (response.kind === "Published") {
+    throw new TypeError(
+      "upload retry must answer UploadRequired or NeedsAttention",
+    );
+  }
+  return response;
 }
 
 function browserSettableHeaders(
@@ -521,14 +514,6 @@ function confirmedUpload(raw: unknown): PublishedUpload {
   return response;
 }
 
-function retriedCapability(raw: unknown): UploadCapability {
-  const response = uploadResponse(raw);
-  if (response.kind !== "UploadRequired") {
-    throw new TypeError("upload retry must return a fresh upload capability");
-  }
-  return response;
-}
-
 function contentTypeFor(kind: UploadFileKind): string {
   return kind === "Pdf" ? "application/pdf" : "application/epub+zip";
 }
@@ -585,7 +570,7 @@ function putWindowMs(capability: UploadCapability): number {
 async function reportTransportFailure(
   capability: UploadCapability,
   durationMs: number,
-  reason: UploadTransportReason,
+  reason: UploadTransportFailure,
 ): Promise<void> {
   try {
     await apiCommand204(
@@ -603,7 +588,7 @@ async function reportTransportFailure(
   } catch (error) {
     throw uploadSessionFailure("TransportFailure", error);
   }
-  publishMediaActivityInvalidation();
+  publishImportsInvalidation();
 }
 
 async function putAndConfirm(
@@ -747,31 +732,46 @@ export async function uploadIngestFile({
   }
   if (started.kind === "Published") {
     publishLibraryPlacementChange([...libraryIds]);
-    publishMediaActivityInvalidation();
+    publishImportsInvalidation();
     return publishedResult(started);
   }
   if (started.kind === "NeedsAttention") {
-    publishMediaActivityInvalidation();
+    publishImportsInvalidation();
     throw new UploadSessionError(attentionOutcome(started.failure));
   }
   const result = await putAndConfirm(started, file, signal, onPhaseChange);
   publishLibraryPlacementChange([...libraryIds]);
-  publishMediaActivityInvalidation();
+  publishImportsInvalidation();
   return result;
 }
 
-export async function retryUploadSession(
-  sessionHandle: string,
-  file: File,
-  signal?: AbortSignal,
-): Promise<void> {
+/**
+ * Re-admit a failed upload session at the generation the reader's offer named,
+ * then send the bytes again. The server answers `UploadRequired` with a fresh
+ * capability for exactly that generation, or `NeedsAttention` when the session
+ * still owes the reader something a retry cannot settle; both are modeled
+ * outcomes, and only a raised `UploadSessionError` reports one.
+ */
+export async function retryUploadSession({
+  sessionHandle,
+  file,
+  expectedGeneration,
+  clientMutationId,
+  signal,
+}: {
+  readonly sessionHandle: string;
+  readonly file: File;
+  readonly expectedGeneration: number;
+  readonly clientMutationId: string;
+  readonly signal?: AbortSignal;
+}): Promise<void> {
   const kind = getFileUploadKind(file);
   // A file this client cannot upload at all can never match the session intent
   // the server holds, so it is the same modeled mismatch the server reports.
   if (!kind || getFileUploadError(file)) {
     throw new UploadSessionError({ kind: "FileMismatch" });
   }
-  const request = async (): Promise<UploadCapability> => {
+  const request = async (): Promise<RetryResponse> => {
     try {
       return decodeApiPayload(
         await apiFetch<unknown>(
@@ -782,11 +782,13 @@ export async function retryUploadSession(
               filename: file.name,
               content_type: contentTypeFor(kind),
               size_bytes: file.size,
+              client_mutation_id: clientMutationId,
+              expected_generation: expectedGeneration,
             }),
             signal,
           },
         ),
-        retriedCapability,
+        retryResponse,
         "POST /api/media/uploads/:session/retry",
       );
     } catch (error) {
@@ -795,12 +797,24 @@ export async function retryUploadSession(
   };
 
   try {
-    let capability = await request();
-    if (putWindowMs(capability) <= 0) capability = await request();
-    await putAndConfirm(capability, file, signal);
+    const admitted = await request();
+    if (admitted.kind === "NeedsAttention") {
+      publishImportsInvalidation();
+      throw new UploadSessionError(attentionOutcome(admitted.failure));
+    }
+    if (putWindowMs(admitted) <= 0) {
+      // The server memoized this generation's expiry and mints its capability
+      // without extending it, so a second retry cannot widen the window: the
+      // window has closed and another renewal needs a fresh explicit command
+      // (spec, API and recovery admission). That is the same answer the server
+      // gives once the memoized expiry has passed.
+      publishImportsInvalidation();
+      throw new UploadSessionError({ kind: "NeedsAttention" });
+    }
+    await putAndConfirm(admitted, file, signal);
   } catch (error) {
     // A session that is already published, or already gone, is the obligation
-    // discharged rather than a failed action: Activity drops the row.
+    // discharged rather than a failed action: Imports drops the row.
     if (
       error instanceof UploadSessionError &&
       error.outcome.kind === "Superseded"
@@ -810,7 +824,7 @@ export async function retryUploadSession(
     throw error;
   }
   publishLibraryPlacementChange("Unknown");
-  publishMediaActivityInvalidation();
+  publishImportsInvalidation();
 }
 
 export async function removeUploadSession(
@@ -835,11 +849,7 @@ export async function removeUploadSession(
     }
     return;
   }
-  publishMediaActivityInvalidation();
-}
-
-export interface SourceActionResult extends SourceIngestResult {
-  capabilities: MediaActionCapabilities;
+  publishImportsInvalidation();
 }
 
 function sourceIngestResult(
@@ -901,59 +911,21 @@ export async function addMediaFromUrl({
     "POST /api/media/from-url",
   );
   publishLibraryPlacementChange([...libraryIds]);
-  publishMediaActivityInvalidation();
+  publishImportsInvalidation();
   return result;
 }
 
-async function sourceAction(
-  mediaId: string,
-  path: "retry" | "refresh",
-  body?: unknown,
-): Promise<SourceActionResult> {
-  const name = `media ${path} response`;
-  const raw = await apiFetch<unknown>(`/api/media/${mediaId}/${path}`, {
-    method: "POST",
-    headers:
-      path === "retry"
-        ? { "Idempotency-Key": createRandomId("media-source-retry") }
-        : undefined,
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  return decodeApiPayload(
-    raw,
-    (payload) => {
-      const envelope = expectExactRecord(payload, ["data"], name);
-      const data = expectRecord(envelope.data, `${name}.data`);
-      return {
-        ...sourceIngestResult(data, name),
-        capabilities: decodeMediaActionCapabilities(
-          data.capabilities,
-          `${name}.capabilities`,
-        ),
-      };
-    },
-    `POST /api/media/:id/${path}`,
+/** Re-fetch a media's source. The refreshed facts arrive through Imports. */
+export async function refreshMediaSource(mediaId: string): Promise<void> {
+  await apiFetch<unknown>(
+    `/api/media/${encodeURIComponent(mediaId)}/refresh`,
+    { method: "POST" },
   );
+  publishImportsInvalidation();
 }
 
-export async function retryMediaSource(
-  mediaId: string,
-): Promise<SourceActionResult> {
-  const result = await sourceAction(mediaId, "retry", { from_stage: "source" });
-  publishMediaActivityInvalidation();
-  return result;
-}
-
-export async function refreshMediaSource(
-  mediaId: string,
-): Promise<SourceActionResult> {
-  const result = await sourceAction(mediaId, "refresh");
-  publishMediaActivityInvalidation();
-  return result;
-}
-
-export function retryMediaMetadata<T = unknown>(mediaId: string): Promise<T> {
-  return apiFetch<T>(`/api/media/${mediaId}/retry`, {
+export async function retryMediaMetadata(mediaId: string): Promise<void> {
+  await apiFetch<unknown>(`/api/media/${encodeURIComponent(mediaId)}/retry`, {
     method: "POST",
     body: JSON.stringify({ from_stage: "metadata" }),
   });

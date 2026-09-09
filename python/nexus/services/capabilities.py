@@ -1,13 +1,43 @@
 """Capabilities derivation for media items.
 
-Also the single owner of the two author-editing permission predicates (spec 6).
-The same functions shape the returned capabilities on the media DTO and
-re-authorize each author mutation inside its transaction — the facade calls them
-directly so the wire capability and the enforced rule can never diverge.
+Also the single owner of the two author-editing permission predicates (spec 6)
+and of the identity a recovery command is admitted for. The same functions shape
+the returned capabilities on the media DTO and re-authorize each author mutation
+inside its transaction — the facade calls them directly so the wire capability
+and the enforced rule can never diverge. Recovery capabilities are not derived
+here: the source and search owners decide the offer, and this module only reads
+which offer they made.
 """
 
+from dataclasses import dataclass
+from typing import Literal
+from uuid import UUID
+
 from nexus.db.models import MediaKind, ProcessingStatus, TranscriptCoverage, TranscriptState
+from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
 from nexus.schemas.media import CapabilitiesOut
+
+SourceRecoveryRestriction = Literal["NotOwner", "SameSourceTerminal", "SourceNotReacquirable"]
+type SourceRecoveryAnswer = RetrySourceOffer | RepairSourceOffer | SourceRecoveryRestriction | None
+type SearchRecoveryAnswer = RepairSearchOffer | Literal["NotOwner"] | None
+
+
+@dataclass(frozen=True, slots=True)
+class ViewerRecovery:
+    """A viewer's recovery command: authorized as that viewer and replayed by
+    their ``client_mutation_id``."""
+
+    viewer_id: UUID
+    is_admin: bool
+    client_mutation_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class OperatorRecovery:
+    """An internal operator route: operator authority, no viewer, no replay ledger."""
+
+
+type RecoveryActor = ViewerRecovery | OperatorRecovery
 
 # Roles that may rename a canonical contributor (spec 6:
 # canRename = isAdministrator OR canCurateContributors).
@@ -51,13 +81,6 @@ _SOURCE_REFRESH_MEDIA_KINDS = {
     MediaKind.podcast_episode.value,
     MediaKind.pdf.value,
     MediaKind.epub.value,
-}
-_RETRYABLE_SOURCE_MEDIA_KINDS = {
-    MediaKind.epub.value,
-    MediaKind.pdf.value,
-    MediaKind.web_article.value,
-    MediaKind.video.value,
-    MediaKind.podcast_episode.value,
 }
 _VALID_TRANSCRIPT_STATES = {state.value for state in TranscriptState}
 _VALID_TRANSCRIPT_COVERAGES = {coverage.value for coverage in TranscriptCoverage}
@@ -155,14 +178,11 @@ def derive_capabilities(
     can_delete: bool = False,
     is_creator: bool = False,
     is_admin: bool = False,
-    requested_url_exists: bool = False,
-    source_retry_available: bool = False,
     source_refresh_available: bool = False,
-    source_suspended: bool = False,
-    source_repair_available: bool = False,
-    search_repair_available: bool = False,
+    source_recovery: SourceRecoveryAnswer,
+    search_recovery: SearchRecoveryAnswer,
 ) -> CapabilitiesOut:
-    """Derive capabilities from media state."""
+    """Derive capabilities from media state and the owners' recovery answers."""
     processing_status = _validate_processing_status(processing_status)
     _validate_transcript_state(transcript_state)
     _validate_transcript_coverage(transcript_coverage)
@@ -217,21 +237,13 @@ def derive_capabilities(
     )
     can_search = can_quote and retrieval_ready
 
-    same_source_terminal = is_same_source_terminal_error(last_error_code)
-    can_retry = (
-        is_creator
-        and kind in _RETRYABLE_SOURCE_MEDIA_KINDS
-        and processing_status == ProcessingStatus.failed.value
-        and source_retry_available
-        and not same_source_terminal
-        and not source_suspended
-    )
+    source_suspended = isinstance(source_recovery, RepairSourceOffer)
     can_refresh_source = (
         is_creator
         and kind in _SOURCE_REFRESH_MEDIA_KINDS
         and source_refresh_available
         and processing_status in _REFRESHABLE_PROCESSING_STATUSES
-        and not same_source_terminal
+        and not is_same_source_terminal_error(last_error_code)
         and not source_suspended
     )
     can_retry_metadata = is_creator and processing_status in READABLE_PROCESSING_STATUSES
@@ -253,11 +265,11 @@ def derive_capabilities(
         can_play=can_play,
         can_download_file=can_download_file,
         can_delete=can_delete,
-        can_retry=can_retry,
+        can_retry=isinstance(source_recovery, RetrySourceOffer),
         can_refresh_source=can_refresh_source,
         can_retry_metadata=can_retry_metadata,
-        can_repair_source=(is_creator or is_admin) and source_repair_available,
-        can_repair_search=(is_creator or is_admin) and search_repair_available,
+        can_repair_source=source_suspended,
+        can_repair_search=isinstance(search_recovery, RepairSearchOffer),
         can_edit_authors=can_edit_authors,
         can_read_embeds=is_document and kind == MediaKind.web_article.value,
     )

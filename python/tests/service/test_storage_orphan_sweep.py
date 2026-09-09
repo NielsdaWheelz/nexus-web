@@ -9,7 +9,8 @@ from sqlalchemy import Engine
 
 import nexus.tasks.storage_orphan_sweep as storage_orphan_sweep_module
 from nexus.db.session import create_session_factory
-from nexus.jobs.queue import JobExecutionContext, claim_job, enqueue_job, get_job
+from nexus.jobs.queue import JobExecutionContext, enqueue_job, get_job
+from tests.testkit.queue_claims import claim_job_row
 from tests.testkit.unreachable_state import delete_jobs_by_ids
 
 
@@ -45,7 +46,7 @@ def test_storage_orphan_sweep_defects_on_a_malformed_persisted_page_token(
             )
             job_ids.append(job.id)
             db.commit()
-            claimed = claim_job(
+            claimed = claim_job_row(
                 db,
                 job_id=job.id,
                 worker_id=worker_id,
@@ -59,6 +60,7 @@ def test_storage_orphan_sweep_defects_on_a_malformed_persisted_page_token(
                 worker_id=worker_id,
                 attempt_no=claimed.attempts,
                 resource_class="Light",
+                execution_id=claimed.execution_id,
             )
             db.commit()
             before = get_job(db, claimed.id)

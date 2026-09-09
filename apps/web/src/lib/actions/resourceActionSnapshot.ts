@@ -1,4 +1,8 @@
 import {
+  decodeCamelCaseMediaRecoveryOffer,
+  type MediaRecoveryOffer,
+} from "@/lib/imports/importsClient";
+import {
   decodeCamelCaseResourceActivation,
   type ResourceActivation,
 } from "@/lib/resources/activation";
@@ -43,7 +47,6 @@ export type ResourceActionCapability =
         | "Chat"
         | "PlayNext"
         | "DownloadOriginal"
-        | "RetryProcessing"
         | "RefreshSource"
         | "RetryMetadata"
         | "EditAuthors"
@@ -79,6 +82,17 @@ export type ResourceActionCapability =
       readonly kind: "OpenSource";
       readonly availability: ServerActionAvailability;
       readonly href: string;
+    }
+  | {
+      /**
+       * The one recovery this media is currently offered, computed by the same
+       * owner policy the Imports pane reads (contract D7). It carries the exact
+       * identity the viewer's menu rendered, so the command it plans conflicts
+       * rather than acting on work the reader never saw.
+       */
+      readonly kind: "Recovery";
+      readonly availability: ServerActionAvailability;
+      readonly offer: MediaRecoveryOffer;
     }
   | {
       readonly kind: "OfflineReading";
@@ -222,6 +236,17 @@ function decodeResourceActionCapability(
         ),
       };
     }
+    case "Recovery": {
+      expectExactRecord(record, ["kind", "availability", "offer"], name);
+      return {
+        kind,
+        availability: decodeServerActionAvailability(
+          record.availability,
+          `${name}.availability`,
+        ),
+        offer: decodeCamelCaseMediaRecoveryOffer(record.offer, `${name}.offer`),
+      };
+    }
     case "OpenSource": {
       expectExactRecord(record, ["kind", "availability", "href"], name);
       return {
@@ -254,7 +279,6 @@ function decodeResourceActionCapability(
     case "Chat":
     case "PlayNext":
     case "DownloadOriginal":
-    case "RetryProcessing":
     case "RefreshSource":
     case "RetryMetadata":
     case "EditAuthors":

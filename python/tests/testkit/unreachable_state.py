@@ -101,6 +101,14 @@ def cleanup_committed_upload_user(engine: Engine, *, user_id: UUID) -> None:
             .scalars()
             .all()
         )
+        media_ids = (
+            connection.execute(
+                text("SELECT id::text FROM media WHERE created_by_user_id = :user_id"),
+                {"user_id": user_id},
+            )
+            .scalars()
+            .all()
+        )
         connection.execute(
             text(
                 """
@@ -148,9 +156,18 @@ def cleanup_committed_upload_user(engine: Engine, *, user_id: UUID) -> None:
                 DELETE FROM background_jobs
                 WHERE payload->>'actor_user_id' = :user_id
                    OR payload->>'uploadSessionId' = ANY(:session_ids)
+                   OR payload->>'media_id' = ANY(:media_ids)
                 """
             ),
-            {"user_id": str(user_id), "session_ids": upload_session_ids},
+            {
+                "user_id": str(user_id),
+                "session_ids": upload_session_ids,
+                "media_ids": media_ids,
+            },
+        )
+        connection.execute(
+            text("DELETE FROM resource_mutations WHERE user_id = :user_id"),
+            {"user_id": user_id},
         )
         connection.execute(
             text(
@@ -320,6 +337,40 @@ def expire_upload_verification_lease(db: Session, *, session_id: UUID) -> UUID:
     return UUID(str(token))
 
 
+def expire_upload_retry_capability(db: Session, *, session_id: UUID) -> datetime:
+    """Lapse the admitted upload capability in place, in both owners at once.
+
+    A retry admission memoizes the generation's expiry and stamps the same instant
+    on the session, so time passing expires both together. The proof reaches that
+    instant directly rather than waiting for the signed-URL lifetime.
+    """
+    expired_at = db.execute(
+        text(
+            """
+            UPDATE media_upload_sessions
+            SET upload_url_expires_at = now() - interval '1 second'
+            WHERE id = :session_id
+            RETURNING upload_url_expires_at
+            """
+        ),
+        {"session_id": session_id},
+    ).scalar_one()
+    db.execute(
+        text(
+            """
+            UPDATE resource_mutations
+            SET response_json = jsonb_set(
+                response_json, '{expires_at}', to_jsonb(CAST(:expired_at AS text))
+            )
+            WHERE mutation_scope = :scope
+            """
+        ),
+        {"scope": f"media_upload_retry:{session_id}", "expired_at": expired_at.isoformat()},
+    )
+    db.commit()
+    return expired_at
+
+
 def make_upload_cleanup_job_available_before_its_fence(db: Session, *, job_id: UUID) -> None:
     """Expose one cleanup job while preserving its future durable writer fences."""
     db.execute(
@@ -429,6 +480,39 @@ def assign_dead_job_to_heavy_capacity(db: Session, *, job_id: UUID) -> None:
     ).first()
     if updated is None:
         raise AssertionError("expected unheld Heavy capacity")
+
+
+def forget_job_execution_id(db: Session, *, job_id: UUID) -> None:
+    """Model a running row claimed before migration 0225: its execution has no identity."""
+    updated = db.execute(
+        text(
+            """
+            UPDATE background_jobs
+            SET execution_id = NULL
+            WHERE id = :job_id
+              AND status = 'running'
+            RETURNING id
+            """
+        ),
+        {"job_id": job_id},
+    ).scalar_one()
+    assert updated == job_id
+
+
+def read_content_index_state(db: Session, *, owner_id: UUID) -> tuple[str, int]:
+    """The stored ``(status, revision)`` of one media index owner, read outside every owner lock."""
+    row = db.execute(
+        text(
+            """
+            SELECT status, revision
+            FROM content_index_states
+            WHERE owner_kind = 'media'
+              AND owner_id = :owner_id
+            """
+        ),
+        {"owner_id": owner_id},
+    ).one()
+    return str(row[0]), int(row[1])
 
 
 def make_failed_job_retryable(db: Session, *, job_id: UUID) -> None:

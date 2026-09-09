@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { absent, present } from "@/lib/api/presence";
-import { parseImportRef } from "./importsClient";
+import { parseImportRef } from "./importRef";
 import {
   decodeImportsUrlState,
   encodeImportsUrlState,
@@ -10,11 +10,12 @@ import {
 
 /**
  * Oracle: the Imports URL contract — the pane's navigable state (spec
- * "Navigable frontend context belongs in the URL"; contract §5 parameter list)
- * and the filter combinations `GET /imports` rejects per view (contract §4
+ * "Navigable frontend context belongs in the URL"; contract §5 parameter list),
+ * the calendar-date history bounds of D17, the closed failure-code catalog of
+ * D18, and the filter combinations `GET /imports` rejects per view (contract §4
  * "Filters and views"). A URL the user can edit is untrusted input: decoding is
- * tolerant, and the state it yields can never name a combination the API
- * answers with 400.
+ * tolerant and keeps what the reader wrote; the API query is what can never
+ * name a combination the server answers with 400.
  */
 const SELECTED_REF = "media:11111111-1111-4111-8111-111111111111";
 
@@ -35,8 +36,8 @@ const HISTORY_URL: Record<string, string> = {
   stage: "Extract",
   state: "Complete",
   had_failures: "true",
-  from: "2026-09-01T00:00:00+02:00",
-  before: "2026-09-08T00:00:00Z",
+  from: "2026-09-01",
+  before: "2026-09-08",
   selected: SELECTED_REF,
 };
 
@@ -50,8 +51,8 @@ describe("Imports URL state", () => {
       failureCode: absent(),
       currentState: present("Complete"),
       hadFailures: present(true),
-      from: present("2026-08-31T22:00:00.000Z"),
-      before: present("2026-09-08T00:00:00.000Z"),
+      from: present("2026-09-01"),
+      before: present("2026-09-08"),
       selected: selected(),
     });
   });
@@ -64,11 +65,11 @@ describe("Imports URL state", () => {
           q: "   ",
           media_kind: "scroll",
           stage: "Transcribe",
-          failure_code: "",
+          failure_code: "E_NOT_A_CATALOGUED_CODE",
           state: "Waiting",
           had_failures: "yes",
-          from: "2026-09-01",
-          before: "not an instant",
+          from: "2026-09-31",
+          before: "2026-09-08T00:00:00Z",
           selected: "media:not-a-uuid",
         }),
       ),
@@ -86,34 +87,51 @@ describe("Imports URL state", () => {
     });
   });
 
-  it("drops the filters the chosen view rejects", () => {
-    const attention = decodeImportsUrlState(
-      params({ ...HISTORY_URL, view: "NeedsAttention", failure_code: "E_INGEST_FAILED" }),
+  it("keeps a reader's History filters when the pane names another view", () => {
+    const decoded = decodeImportsUrlState(
+      params({ ...HISTORY_URL, view: "NeedsAttention" }),
     );
-    expect(attention.failureCode).toEqual(present("E_INGEST_FAILED"));
-    expect(attention.stage).toEqual(present("Extract"));
-    expect(attention.currentState).toEqual(absent());
-    expect(attention.hadFailures).toEqual(absent());
-    expect(attention.from).toEqual(absent());
-    expect(attention.before).toEqual(absent());
-    expect(attention.selected).toEqual(selected());
 
-    const inProgress = decodeImportsUrlState(
-      params({ ...HISTORY_URL, view: "InProgress", failure_code: "E_INGEST_FAILED" }),
+    expect(decoded.view).toEqual(present("NeedsAttention"));
+    expect(decoded.currentState).toEqual(present("Complete"));
+    expect(decoded.hadFailures).toEqual(present(true));
+    expect(decoded.from).toEqual(present("2026-09-01"));
+    expect(decoded.before).toEqual(present("2026-09-08"));
+    expect(encodeImportsUrlState(decoded, new URLSearchParams()).get("from")).toBe(
+      "2026-09-01",
     );
-    expect(inProgress.stage).toEqual(present("Extract"));
-    expect(inProgress.failureCode).toEqual(absent());
-    expect(inProgress.currentState).toEqual(absent());
-    expect(inProgress.from).toEqual(absent());
   });
 
-  it("keeps every filter until an unqualified entry names its view", () => {
-    const unqualified = decodeImportsUrlState(
-      params({ ...HISTORY_URL, view: "", failure_code: "E_INGEST_FAILED" }),
+  it("drops the filters the queried view rejects", () => {
+    const decoded = decodeImportsUrlState(
+      params({ ...HISTORY_URL, failure_code: "E_INGEST_FAILED" }),
     );
-    expect(unqualified.view).toEqual(absent());
-    expect(unqualified.currentState).toEqual(present("Complete"));
-    expect(unqualified.from).toEqual(present("2026-08-31T22:00:00.000Z"));
+
+    expect(importsQueryParams("NeedsAttention", decoded).toString()).toBe(
+      new URLSearchParams({
+        view: "NeedsAttention",
+        q: "field notes",
+        media_kind: "pdf",
+        stage: "Extract",
+        failure_code: "E_INGEST_FAILED",
+      }).toString(),
+    );
+    expect(importsQueryParams("InProgress", decoded).toString()).toBe(
+      new URLSearchParams({
+        view: "InProgress",
+        q: "field notes",
+        media_kind: "pdf",
+        stage: "Extract",
+      }).toString(),
+    );
+  });
+
+  it("sends History bounds as the explicit UTC instants the API accepts", () => {
+    const decoded = decodeImportsUrlState(params(HISTORY_URL));
+    const query = importsQueryParams("History", decoded);
+
+    expect(query.get("from")).toBe("2026-09-01T00:00:00Z");
+    expect(query.get("before")).toBe("2026-09-08T00:00:00Z");
   });
 
   it("drops only the failure flag a reason filter contradicts", () => {
@@ -124,8 +142,9 @@ describe("Imports URL state", () => {
         had_failures: "false",
       }),
     );
-    expect(contradicted.failureCode).toEqual(present("E_INGEST_FAILED"));
-    expect(contradicted.hadFailures).toEqual(absent());
+    const contradictedQuery = importsQueryParams("History", contradicted);
+    expect(contradictedQuery.get("failure_code")).toBe("E_INGEST_FAILED");
+    expect(contradictedQuery.get("had_failures")).toBeNull();
 
     const agreeing = decodeImportsUrlState(
       params({
@@ -134,11 +153,12 @@ describe("Imports URL state", () => {
         had_failures: "true",
       }),
     );
-    expect(agreeing.failureCode).toEqual(present("E_INGEST_FAILED"));
-    expect(agreeing.hadFailures).toEqual(present(true));
+    const agreeingQuery = importsQueryParams("History", agreeing);
+    expect(agreeingQuery.get("failure_code")).toBe("E_INGEST_FAILED");
+    expect(agreeingQuery.get("had_failures")).toBe("true");
   });
 
-  it("encodes a canonical, stable-ordered query that decodes back unchanged", () => {
+  it("encodes a canonical, stable-ordered URL that decodes back unchanged", () => {
     const decoded = decodeImportsUrlState(params(HISTORY_URL));
     const encoded = encodeImportsUrlState(decoded, params({ stale: "1" }));
 
@@ -154,7 +174,6 @@ describe("Imports URL state", () => {
       "selected",
     ]);
     expect(encoded.get("q")).toBe("field notes");
-    expect(encoded.get("from")).toBe("2026-08-31T22:00:00.000Z");
     expect(decodeImportsUrlState(encoded)).toEqual(decoded);
   });
 
@@ -162,35 +181,6 @@ describe("Imports URL state", () => {
     const empty: ImportsUrlState = decodeImportsUrlState(new URLSearchParams());
     expect(encodeImportsUrlState(empty, new URLSearchParams()).toString()).toBe(
       "",
-    );
-  });
-
-  it("builds the API query for the view the pane resolved", () => {
-    const decoded = decodeImportsUrlState(
-      params({ ...HISTORY_URL, view: "", failure_code: "E_INGEST_FAILED" }),
-    );
-
-    expect(importsQueryParams("NeedsAttention", decoded).toString()).toBe(
-      new URLSearchParams({
-        view: "NeedsAttention",
-        q: "field notes",
-        media_kind: "pdf",
-        stage: "Extract",
-        failure_code: "E_INGEST_FAILED",
-      }).toString(),
-    );
-    expect(importsQueryParams("History", decoded).toString()).toBe(
-      new URLSearchParams({
-        view: "History",
-        q: "field notes",
-        media_kind: "pdf",
-        stage: "Extract",
-        failure_code: "E_INGEST_FAILED",
-        state: "Complete",
-        had_failures: "true",
-        from: "2026-08-31T22:00:00.000Z",
-        before: "2026-09-08T00:00:00.000Z",
-      }).toString(),
     );
   });
 });

@@ -38,6 +38,7 @@ function uploadSessionCaptureMessage(
       return "Nexus never received this file. Attach it again.";
     case "Superseded":
       return "This upload finished elsewhere. Open Import Activity to find it.";
+    case "Conflicted":
     case "Unresolved":
       return "Nexus couldn’t confirm this upload. Open Import Activity before attaching it again.";
     case "UnsupportedFileType":

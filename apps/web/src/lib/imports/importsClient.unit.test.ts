@@ -8,9 +8,9 @@ import {
   decodeImportSummary,
   decodeSearchAdmission,
   decodeSourceAdmission,
-  parseImportRef,
   type HistoryFacts,
 } from "./importsClient";
+import { parseImportRef } from "./importRef";
 
 /**
  * Oracle: the Imports wire contract — the DTOs of the cutover contract §4 and
@@ -256,7 +256,7 @@ function activeItem(): Record<string, unknown> {
     title: "The long document",
     media_kind: "epub",
     source_label: { kind: "Present", value: "example.com" },
-    media_ref: { kind: "Present", value: MEDIA_ID },
+    media_ref: { kind: "Present", value: MEDIA_REF },
     state: {
       kind: "Active",
       status: "Processing",
@@ -296,7 +296,7 @@ function recoveredItem(): Record<string, unknown> {
     source_label: { kind: "Present", value: "example.org" },
     media_ref: {
       kind: "Present",
-      value: "99999999-9999-4999-8999-999999999999",
+      value: "media:99999999-9999-4999-8999-999999999999",
     },
     state: { kind: "Complete" },
     accepted_at: "2026-09-01T09:00:00Z",
@@ -406,6 +406,7 @@ describe("Imports transport decoders", () => {
       present("SameSourceTerminal"),
     );
 
+    expect(active.mediaRef).toEqual(present(MEDIA_REF));
     expect(recovered.state).toEqual({ kind: "Complete" });
     expect(recovered.matchedEvent).toEqual(
       present({
@@ -449,11 +450,16 @@ describe("Imports transport decoders", () => {
     expect(page.nextCursor).toEqual(absent());
   });
 
-  const brokenPages: readonly [string, Record<string, unknown>][] = [
-    ["more items than the query matched", { matched_count: 2 }],
+  const brokenPages: readonly [string, Record<string, unknown>, string][] = [
+    [
+      "more items than the query matched",
+      { matched_count: 2 },
+      "GET /api/imports returned more items than it matched",
+    ],
     [
       "the same import twice",
       { items: [uploadItem(), activeItem(), activeItem()] },
+      "GET /api/imports returned the same import twice",
     ],
     [
       "stage groups larger than the match",
@@ -463,20 +469,59 @@ describe("Imports transport decoders", () => {
           { stage: "Extract", count: 3 },
         ],
       },
+      "GET /api/imports grouped more imports than it matched",
     ],
     [
       "a continuation cursor with nothing to continue from",
       { matched_count: 0, groups: [], items: [] },
+      "GET /api/imports continues a page that returned no items",
     ],
-    ["a null where an owned absence belongs", { next_cursor: null }],
-    ["an unknown envelope key", { unread_count: 1 }],
+    [
+      "a null where an owned absence belongs",
+      { next_cursor: null },
+      "Invalid Presence: expected an object, got null",
+    ],
+    [
+      "an unknown envelope key",
+      { unread_count: 1 },
+      "GET /api/imports.data must contain exactly [observed_at, matched_count, groups, items, next_cursor]",
+    ],
   ];
 
-  for (const [description, overrides] of brokenPages) {
+  for (const [description, overrides, rejection] of brokenPages) {
     it(`refuses a page carrying ${description}`, () => {
-      expect(() => decodeImportPage(pageData(overrides))).toThrow();
+      expect(() => decodeImportPage(pageData(overrides))).toThrow(rejection);
     });
   }
+
+  it("refuses an item naming a failure code the catalog does not carry", () => {
+    expect(() =>
+      decodeImportPage(
+        pageData({
+          items: [
+            {
+              ...uploadItem(),
+              state: {
+                kind: "NeedsAttention",
+                stage: "Upload",
+                failure_code: { kind: "Present", value: "E_UPLOAD_HICCUP" },
+              },
+            },
+          ],
+        }),
+      ),
+    ).toThrow("GET /api/imports.items[0].state.failure_code.value must be one of");
+  });
+
+  it("refuses a media ref that is not the canonical resource ref grammar", () => {
+    expect(() =>
+      decodeImportPage(
+        pageData({
+          items: [{ ...activeItem(), media_ref: { kind: "Present", value: MEDIA_ID } }],
+        }),
+      ),
+    ).toThrow("GET /api/imports.items[0].media_ref.value must be a media resource ref");
+  });
 
   it("decodes every history facts variant into its own typed subject", () => {
     const page = decodeImportHistoryPage({
@@ -584,7 +629,7 @@ describe("Imports transport decoders", () => {
           next_cursor: { kind: "Absent" },
         },
       }),
-    ).toThrow();
+    ).toThrow("GET /api/imports/:ref/history.entries[0].facts.kind must be one of");
   });
 
   it("decodes the summary the badge counts", () => {

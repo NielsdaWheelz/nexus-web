@@ -20,8 +20,9 @@ from nexus.db.models import (
     MediaUploadSession,
     ProcessingStatus,
 )
-from nexus.jobs.queue import JobRow, claim_job, enqueue_job
+from nexus.jobs.queue import JobRow, enqueue_job
 from nexus.services.library_entries import ensure_media_in_default_library
+from tests.testkit.queue_claims import claim_job_row
 
 
 def create_source_media(
@@ -95,7 +96,7 @@ def claim_heavy_job(
     allowed_kinds: tuple[str, ...] = ("ingest_media_source",),
 ) -> JobRow:
     """Claim one exact Heavy operation through the canonical queue transition."""
-    claimed = claim_job(
+    claimed = claim_job_row(
         db,
         job_id=job_id,
         worker_id=worker_id,

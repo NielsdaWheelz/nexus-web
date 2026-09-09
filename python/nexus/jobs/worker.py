@@ -19,6 +19,14 @@ from sqlalchemy.orm import Session
 from nexus.db.retries import retry_serializable
 from nexus.errors import ResourceFailureDimension
 from nexus.jobs.dead_letter_projections import apply_dead_letter_projection
+from nexus.jobs.history_projections import (
+    Dead,
+    HistoryOutcome,
+    Interrupted,
+    Rescheduled,
+    RetryScheduled,
+    apply_history_projection,
+)
 from nexus.jobs.process_executor import (
     BackgroundProcessExecutor,
     ChildClaimLost,
@@ -32,6 +40,7 @@ from nexus.jobs.process_executor import (
 )
 from nexus.jobs.queue import (
     HEAVY_CAPACITY_OCCUPIED_SQL,
+    ClaimedJob,
     JobExecutionContext,
     JobRow,
     RescheduleRequested,
@@ -58,6 +67,7 @@ from nexus.jobs.registry import (
     resolve_job_handler,
 )
 from nexus.logging import get_logger
+from nexus.schemas.presence import presence_from_nullable
 from nexus.services.source_attempt_failures import (
     ResourceLimitedSourceAttempt,
     publish_resource_limited_source_attempt,
@@ -146,6 +156,12 @@ class JobWorker:
                     )
                 else:
                     self._handle_dead_letter(db, definition, dead_job)
+                    self._record_history(
+                        db,
+                        definition,
+                        dead_job,
+                        Interrupted(execution_id=dead_job.execution_id, terminal=True),
+                    )
                 db.commit()
                 return True
 
@@ -156,12 +172,13 @@ class JobWorker:
                 heavy_kinds=self.heavy_kinds,
                 allowed_kinds=self.allowed_kinds,
             )
+            self._record_reclaim(db, claimed)
             db.commit()
 
         if claimed is None:
             return False
 
-        return self._execute_claimed(claimed)
+        return self._execute_claimed(claimed.job)
 
     def run_exact(self, job_id: UUID) -> bool | None:
         """Claim and execute only one exact due job, with no scan or scheduling."""
@@ -174,10 +191,61 @@ class JobWorker:
                 heavy_kinds=self.heavy_kinds,
                 allowed_kinds=self.allowed_kinds,
             )
+            self._record_reclaim(db, claimed)
             db.commit()
         if claimed is None:
             return None
-        return self._execute_claimed(claimed)
+        return self._execute_claimed(claimed.job)
+
+    def _record_reclaim(self, db: Session, claimed: ClaimedJob | None) -> None:
+        """A claim that took over an expired running row records the interruption
+        of the execution it displaced, inside the claim's own transaction."""
+        if claimed is None or claimed.interrupted is None:
+            return
+        definition = self.registry.get(claimed.job.kind)
+        if definition is None:
+            return
+        self._record_history(
+            db,
+            definition,
+            claimed.job,
+            Interrupted(execution_id=claimed.interrupted.execution_id, terminal=False),
+        )
+
+    def _record_history(
+        self, db: Session, definition: JobDefinition, job: JobRow, outcome: HistoryOutcome
+    ) -> None:
+        apply_history_projection(
+            db, projection=definition.history_projection, job=job, outcome=outcome
+        )
+
+    def _settle_failed_attempt(
+        self,
+        db: Session,
+        definition: JobDefinition,
+        claimed: JobRow,
+        transition: JobFailureTransition,
+        error_code: str,
+    ) -> None:
+        """Apply the dead-letter repair and the history of one failed attempt inside
+        the transaction ``fail_job`` already opened."""
+        job = get_job(db, claimed.id)
+        if job is None:
+            # justify-defect: fail_job just locked and updated this exact row.
+            raise AssertionError("failed job row disappeared inside its own transition")
+        match transition:
+            case "dead":
+                self._handle_dead_letter(db, definition, job)
+                self._record_history(db, definition, job, Dead(error_code=error_code))
+            case "failed":
+                self._record_history(
+                    db,
+                    definition,
+                    job,
+                    RetryScheduled(next_attempt_at=job.available_at, error_code=error_code),
+                )
+            case _ as unreachable:
+                assert_never(unreachable)
 
     def _execute_claimed(self, claimed: JobRow) -> bool:
         definition = self.registry.get(claimed.kind)
@@ -201,11 +269,15 @@ class JobWorker:
                 db.commit()
             return True
 
+        if claimed.execution_id is None:
+            # justify-defect: every claim UPDATE allocates the execution identity.
+            raise AssertionError("claimed job has no execution identity")
         context = JobExecutionContext(
             job_id=claimed.id,
             worker_id=self.worker_id,
             attempt_no=claimed.attempts,
             resource_class=definition.resource_class,
+            execution_id=claimed.execution_id,
         )
         still_owned = heartbeat_job(
             session_factory=self.session_factory,
@@ -344,6 +416,8 @@ class JobWorker:
                         schedule=handler_result.schedule,
                         payload=handler_result.payload,
                     )
+                    if rescheduled:
+                        self._record_rescheduled(db, definition, claimed.id)
                     db.commit()
                 if rescheduled:
                     match handler_result.schedule:
@@ -385,10 +459,8 @@ class JobWorker:
                         retry_delays_seconds=definition.retry_delays_seconds,
                         result_payload=result_payload,
                     )
-                    if transition == "dead":
-                        dead_job = get_job(db, claimed.id)
-                        if dead_job is not None:
-                            self._handle_dead_letter(db, definition, dead_job)
+                    if transition is not None:
+                        self._settle_failed_attempt(db, definition, claimed, transition, error_code)
                     db.commit()
                 if transition is None:
                     logger.warning(
@@ -442,20 +514,19 @@ class JobWorker:
                 kind=claimed.kind,
                 error=str(exc),
             )
+            error_code = _derive_error_code(exc)
             with self.session_factory() as db:
                 transition = fail_job(
                     db,
                     job_id=claimed.id,
                     worker_id=self.worker_id,
                     attempt_no=claimed.attempts,
-                    error_code=_derive_error_code(exc),
+                    error_code=error_code,
                     error_message=str(exc),
                     retry_delays_seconds=definition.retry_delays_seconds,
                 )
-                if transition == "dead":
-                    dead_job = get_job(db, claimed.id)
-                    if dead_job is not None:
-                        self._handle_dead_letter(db, definition, dead_job)
+                if transition is not None:
+                    self._settle_failed_attempt(db, definition, claimed, transition, error_code)
                 db.commit()
                 if transition is None:
                     logger.warning(
@@ -488,6 +559,13 @@ class JobWorker:
             error_code=job.error_code,
         )
 
+    def _record_rescheduled(self, db: Session, definition: JobDefinition, job_id: UUID) -> None:
+        job = get_job(db, job_id)
+        if job is None:
+            # justify-defect: reschedule_running_job just locked and updated this row.
+            raise AssertionError("rescheduled job row disappeared inside its own transition")
+        self._record_history(db, definition, job, Rescheduled(next_attempt_at=job.available_at))
+
     def _release_shutdown_interrupted_job(self, *, claimed: JobRow) -> None:
         """Return a shutdown-interrupted job to pending without burning an attempt.
 
@@ -496,6 +574,7 @@ class JobWorker:
         attempt the claim already charged and releases the Heavy capacity lease in
         the same fenced transaction.
         """
+        definition = self.registry[claimed.kind]
         with self.session_factory() as db:
             released = reschedule_running_job(
                 db,
@@ -504,6 +583,8 @@ class JobWorker:
                 attempt_no=claimed.attempts,
                 schedule=ScheduleAfter(0),
             )
+            if released:
+                self._record_rescheduled(db, definition, claimed.id)
             db.commit()
         if released:
             logger.info(
@@ -540,6 +621,13 @@ class JobWorker:
                 dead_job = get_job(db, claimed.id)
                 if dead_job is not None:
                     self._handle_dead_letter(db, definition, dead_job)
+                    # The source owner records its terminal domain failure inside
+                    # publish_resource_limited_source_attempt; only job-owned
+                    # projections need the queue seam here.
+                    if definition.resource_failure_projection == "Job":
+                        self._record_history(
+                            db, definition, dead_job, Dead(error_code="E_RESOURCE_LIMIT")
+                        )
             db.commit()
         if settlement == "ResourceFailed":
             logger.warning(
@@ -1202,6 +1290,7 @@ def _settle_abnormal_child_outcome(
                 media_id=media_id,
                 attempt_id=attempt_id,
                 dimension=dimension,
+                execution_id=presence_from_nullable(claimed.execution_id),
             ),
         )
 

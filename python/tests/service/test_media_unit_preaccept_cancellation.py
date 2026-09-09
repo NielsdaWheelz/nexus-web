@@ -31,7 +31,6 @@ if TYPE_CHECKING or _CUTOVER_PRESENT:
         JobExecutionContext,
         JobRow,
         RescheduleRequested,
-        claim_job,
         find_nonterminal_jobs_for_payload,
         get_job,
     )
@@ -58,6 +57,7 @@ if TYPE_CHECKING or _CUTOVER_PRESENT:
         bind_test_codex_admission,
         compose_codex_execution_runtime,
     )
+    from tests.testkit.queue_claims import claim_job_row
 
 
 def _require_cutover() -> None:
@@ -228,7 +228,7 @@ def _seed_build(engine: Engine) -> _SeededBuild:
             },
         )
         assert len(jobs) == 1
-        claimed = claim_job(
+        claimed = claim_job_row(
             db,
             job_id=jobs[0].id,
             worker_id=f"media-preaccept-{media_id}",
@@ -251,6 +251,7 @@ def _seed_build(engine: Engine) -> _SeededBuild:
                 worker_id=f"media-preaccept-{media_id}",
                 attempt_no=claimed.attempts,
                 resource_class="Light",
+                execution_id=claimed.execution_id,
             ),
             content_fingerprint=unit.content_fingerprint,
         )

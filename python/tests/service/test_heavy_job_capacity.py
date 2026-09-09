@@ -15,8 +15,6 @@ from nexus.db.session import create_session_factory
 from nexus.jobs.queue import (
     JobExecutionContext,
     ScheduleAt,
-    claim_job,
-    claim_next_job,
     complete_job,
     dead_letter_expired_job,
     enqueue_job,
@@ -31,6 +29,7 @@ from nexus.jobs.queue import (
 )
 from nexus.jobs.registry import JobDefinition, get_default_registry
 from nexus.jobs.worker import JobWorker, _terminal_resource_failure
+from tests.testkit.queue_claims import claim_job_row, claim_next_job_row
 from tests.testkit.unreachable_state import (
     assign_dead_job_to_heavy_capacity,
     clear_heavy_capacity_holder,
@@ -190,7 +189,7 @@ def test_concurrent_claims_admit_only_one_heavy_job(engine: Engine) -> None:
         try:
             with Session(engine) as db:
                 barrier.wait()
-                row = claim_next_job(
+                row = claim_next_job_row(
                     db,
                     worker_id=worker_id,
                     lease_seconds=300,
@@ -244,7 +243,7 @@ def test_heavy_claim_and_completion_cannot_form_an_inverse_lock_cycle(engine: En
         holder = enqueue_job(db, kind=kind, priority=0)
         candidate = enqueue_job(db, kind=kind, priority=1)
         db.commit()
-        holder_claim = claim_job(
+        holder_claim = claim_job_row(
             db,
             job_id=holder.id,
             worker_id="lock-order-holder",
@@ -292,7 +291,7 @@ def test_heavy_claim_and_completion_cannot_form_an_inverse_lock_cycle(engine: En
                 db.execute(text("SET LOCAL statement_timeout = '5s'"))
                 claim_backend_pid.append(int(db.scalar(text("SELECT pg_backend_pid()"))))
                 claim_backend_ready.set()
-                claimed = claim_job(
+                claimed = claim_job_row(
                     db,
                     job_id=candidate.id,
                     worker_id="lock-order-candidate",
@@ -368,7 +367,7 @@ def test_revoke_serializes_before_claim_and_clears_any_new_heavy_holder(engine: 
                 db.execute(text("SET LOCAL statement_timeout = '5s'"))
                 claim_backend_pid.append(int(db.scalar(text("SELECT pg_backend_pid()"))))
                 claim_backend_ready.set()
-                claimed = claim_job(
+                claimed = claim_job_row(
                     db,
                     job_id=target.id,
                     worker_id="revoke-race-claimant",
@@ -436,7 +435,7 @@ def test_concurrent_heavy_heartbeat_and_resource_settlement_share_one_lock_order
         with Session(engine) as db:
             job = enqueue_job(db, kind=kind, priority=0, max_attempts=3)
             db.commit()
-            claimed = claim_job(
+            claimed = claim_job_row(
                 db,
                 job_id=job.id,
                 worker_id=worker_id,
@@ -468,6 +467,7 @@ def test_concurrent_heavy_heartbeat_and_resource_settlement_share_one_lock_order
                         worker_id=worker_id,
                         attempt_no=claimed.attempts,
                         resource_class="Heavy",
+                        execution_id=claimed.execution_id,
                     ),
                     lease_seconds=30,
                 )
@@ -541,7 +541,7 @@ def test_blocked_heavy_is_unchanged_and_light_work_proceeds(engine: Engine) -> N
         light = enqueue_job(db, kind=light_kind, priority=2)
         db.commit()
 
-        first = claim_job(
+        first = claim_job_row(
             db,
             job_id=admitted.id,
             worker_id="heavy-holder",
@@ -552,7 +552,7 @@ def test_blocked_heavy_is_unchanged_and_light_work_proceeds(engine: Engine) -> N
         db.commit()
         assert first is not None
 
-        next_job = claim_next_job(
+        next_job = claim_next_job_row(
             db,
             worker_id="light-worker",
             lease_seconds=300,
@@ -562,7 +562,7 @@ def test_blocked_heavy_is_unchanged_and_light_work_proceeds(engine: Engine) -> N
         db.commit()
         assert next_job is not None and next_job.id == light.id
 
-        denied = claim_job(
+        denied = claim_job_row(
             db,
             job_id=blocked.id,
             worker_id="denied-worker",
@@ -625,7 +625,7 @@ def test_metadata_is_heavy_and_excludes_parser_and_reindex_capacity(
             )
             db.commit()
 
-            admitted = claim_job(
+            admitted = claim_job_row(
                 db,
                 job_id=holder.id,
                 worker_id=f"{holder_kind}-capacity-holder",
@@ -637,7 +637,7 @@ def test_metadata_is_heavy_and_excludes_parser_and_reindex_capacity(
             assert admitted is not None and admitted.id == holder.id
 
             assert (
-                claim_job(
+                claim_job_row(
                     db,
                     job_id=metadata.id,
                     worker_id="metadata-capacity-contender",
@@ -662,7 +662,7 @@ def test_metadata_is_heavy_and_excludes_parser_and_reindex_capacity(
                 attempt_no=admitted.attempts,
             )
             db.commit()
-            metadata_claim = claim_job(
+            metadata_claim = claim_job_row(
                 db,
                 job_id=metadata.id,
                 worker_id="metadata-capacity-worker",
@@ -704,7 +704,7 @@ def test_open_light_publication_does_not_block_concurrent_heavy_admission(
         heavy = enqueue_job(db, kind=heavy_kind, priority=0)
         light = enqueue_job(db, kind=light_kind, priority=0)
         db.commit()
-        claimed_light = claim_job(
+        claimed_light = claim_job_row(
             db,
             job_id=light.id,
             worker_id="light-publication-worker",
@@ -724,6 +724,7 @@ def test_open_light_publication_does_not_block_concurrent_heavy_admission(
                     worker_id="light-publication-worker",
                     attempt_no=1,
                     resource_class="Light",
+                    execution_id=claimed_light.execution_id,
                 ),
                 lease_seconds=300,
             )
@@ -734,7 +735,7 @@ def test_open_light_publication_does_not_block_concurrent_heavy_admission(
             # A regression fails on this bounded wait instead of hanging the suite.
             admission.execute(text("SET LOCAL statement_timeout = '5s'"))
             try:
-                admitted = claim_next_job(
+                admitted = claim_next_job_row(
                     admission,
                     worker_id="heavy-admission-worker",
                     lease_seconds=300,
@@ -771,7 +772,7 @@ def test_open_heavy_publication_retains_capacity_until_its_commit(engine: Engine
         holder = enqueue_job(db, kind=kind, priority=0)
         candidate = enqueue_job(db, kind=kind, priority=1)
         db.commit()
-        claimed_holder = claim_job(
+        claimed_holder = claim_job_row(
             db,
             job_id=holder.id,
             worker_id="heavy-publication-worker",
@@ -793,7 +794,7 @@ def test_open_heavy_publication_retains_capacity_until_its_commit(engine: Engine
                 db.execute(text("SET LOCAL statement_timeout = '5s'"))
                 backend_pid.append(int(db.scalar(text("SELECT pg_backend_pid()"))))
                 backend_ready.set()
-                claimed = claim_job(
+                claimed = claim_job_row(
                     db,
                     job_id=candidate.id,
                     worker_id="blocked-heavy-candidate",
@@ -814,6 +815,7 @@ def test_open_heavy_publication_retains_capacity_until_its_commit(engine: Engine
                 worker_id="heavy-publication-worker",
                 attempt_no=1,
                 resource_class="Heavy",
+                execution_id=claimed_holder.execution_id,
             ),
             lease_seconds=300,
         )
@@ -881,7 +883,7 @@ def test_heavy_heartbeat_never_pins_capacity_while_waiting_on_the_job_row(
     with Session(engine) as db:
         job = enqueue_job(db, kind=kind, priority=0)
         db.commit()
-        claimed = claim_job(
+        claimed = claim_job_row(
             db,
             job_id=job.id,
             worker_id=worker_id,
@@ -919,6 +921,7 @@ def test_heavy_heartbeat_never_pins_capacity_while_waiting_on_the_job_row(
                         worker_id=worker_id,
                         attempt_no=claimed.attempts,
                         resource_class="Heavy",
+                        execution_id=claimed.execution_id,
                     ),
                     lease_seconds=300,
                 )
@@ -1045,7 +1048,7 @@ def test_heavy_heartbeat_renews_job_and_capacity_in_one_owned_transaction(
     with Session(engine) as db:
         job = enqueue_job(db, kind=kind, priority=0)
         db.commit()
-        claimed = claim_job(
+        claimed = claim_job_row(
             db,
             job_id=job.id,
             worker_id=worker_id,
@@ -1072,6 +1075,7 @@ def test_heavy_heartbeat_renews_job_and_capacity_in_one_owned_transaction(
             worker_id=worker_id,
             attempt_no=claimed.attempts,
             resource_class="Heavy",
+            execution_id=claimed.execution_id,
         ),
         lease_seconds=900,
     )
@@ -1114,7 +1118,7 @@ def test_heavy_heartbeat_owns_transactions_without_committing_caller_state(
     with Session(engine) as setup:
         heartbeat_target = enqueue_job(setup, kind=heartbeat_kind)
         setup.commit()
-        claimed = claim_job(
+        claimed = claim_job_row(
             setup,
             job_id=heartbeat_target.id,
             worker_id="heartbeat-boundary-worker",
@@ -1135,6 +1139,7 @@ def test_heavy_heartbeat_owns_transactions_without_committing_caller_state(
                 worker_id="heartbeat-boundary-worker",
                 attempt_no=claimed.attempts,
                 resource_class="Heavy",
+                execution_id=claimed.execution_id,
             ),
             lease_seconds=600,
         )
@@ -1171,7 +1176,7 @@ def test_light_heartbeat_refuses_attempt_that_holds_heavy_capacity(
     with Session(engine) as db:
         job = enqueue_job(db, kind=kind)
         db.commit()
-        claimed = claim_job(
+        claimed = claim_job_row(
             db,
             job_id=job.id,
             worker_id=worker_id,
@@ -1195,6 +1200,7 @@ def test_light_heartbeat_refuses_attempt_that_holds_heavy_capacity(
                     worker_id=worker_id,
                     attempt_no=claimed.attempts,
                     resource_class="Light",
+                    execution_id=claimed.execution_id,
                 ),
                 lease_seconds=600,
             )
@@ -1218,6 +1224,7 @@ def test_light_heartbeat_refuses_attempt_that_holds_heavy_capacity(
                 worker_id=worker_id,
                 attempt_no=claimed.attempts,
                 resource_class="Heavy",
+                execution_id=claimed.execution_id,
             ),
             lease_seconds=600,
         )
@@ -1240,7 +1247,7 @@ def test_heavy_holder_follows_heartbeat_reschedule_failure_repair_and_completion
     with Session(engine) as db:
         job = enqueue_job(db, kind=kind, max_attempts=2)
         db.commit()
-        claimed = claim_job(
+        claimed = claim_job_row(
             db,
             job_id=job.id,
             worker_id="transition-worker",
@@ -1258,6 +1265,7 @@ def test_heavy_holder_follows_heartbeat_reschedule_failure_repair_and_completion
                 worker_id="transition-worker",
                 attempt_no=claimed.attempts,
                 resource_class="Heavy",
+                execution_id=claimed.execution_id,
             ),
             lease_seconds=120,
         )
@@ -1287,7 +1295,7 @@ def test_heavy_holder_follows_heartbeat_reschedule_failure_repair_and_completion
         db.commit()
         assert _capacity_holder(engine) == (None, None, None, None)
 
-        reclaimed = claim_job(
+        reclaimed = claim_job_row(
             db,
             job_id=job.id,
             worker_id="transition-worker",
@@ -1311,7 +1319,7 @@ def test_heavy_holder_follows_heartbeat_reschedule_failure_repair_and_completion
         db.commit()
         assert _capacity_holder(engine) == (None, None, None, None)
 
-        final_attempt = claim_job(
+        final_attempt = claim_job_row(
             db,
             job_id=job.id,
             worker_id="transition-worker",
@@ -1336,7 +1344,7 @@ def test_heavy_holder_follows_heartbeat_reschedule_failure_repair_and_completion
         assert _capacity_holder(engine) == (None, None, None, None)
 
         assert requeue_dead_job(db, job_id=job.id)
-        repaired = claim_job(
+        repaired = claim_job_row(
             db,
             job_id=job.id,
             worker_id="repair-worker",
@@ -1362,7 +1370,7 @@ def test_dead_repair_defects_instead_of_reconciling_impossible_capacity(
     with Session(engine) as db:
         job = enqueue_job(db, kind=kind, max_attempts=1)
         db.commit()
-        claimed = claim_job(
+        claimed = claim_job_row(
             db,
             job_id=job.id,
             worker_id="dead-capacity-worker",
@@ -1401,7 +1409,7 @@ def test_expired_heavy_reclaim_is_fenced_and_records_worker_interruption(
     with Session(engine) as db:
         job = enqueue_job(db, kind=kind, max_attempts=2)
         db.commit()
-        first = claim_job(
+        first = claim_job_row(
             db,
             job_id=job.id,
             worker_id="expired-worker",
@@ -1412,7 +1420,7 @@ def test_expired_heavy_reclaim_is_fenced_and_records_worker_interruption(
         expire_heavy_job_claim(db, job_id=job.id)
         db.commit()
 
-        recovered = claim_job(
+        recovered = claim_job_row(
             db,
             job_id=job.id,
             worker_id="recovery-worker",
@@ -1431,6 +1439,7 @@ def test_expired_heavy_reclaim_is_fenced_and_records_worker_interruption(
                     worker_id="expired-worker",
                     attempt_no=first.attempts,
                     resource_class="Heavy",
+                    execution_id=first.execution_id,
                 ),
                 lease_seconds=300,
             )
@@ -1457,7 +1466,7 @@ def test_expired_heavy_reclaim_is_fenced_and_records_worker_interruption(
         exhausted = enqueue_job(db, kind=kind, max_attempts=1)
         db.commit()
         assert (
-            claim_job(
+            claim_job_row(
                 db,
                 job_id=exhausted.id,
                 worker_id="dead-worker",
@@ -1491,7 +1500,7 @@ def test_heavy_heartbeat_fences_stale_attempt_after_same_worker_id_reclaim(
     with Session(engine) as db:
         job = enqueue_job(db, kind=kind, max_attempts=2)
         db.commit()
-        attempt_1 = claim_job(
+        attempt_1 = claim_job_row(
             db,
             job_id=job.id,
             worker_id=worker_id,
@@ -1503,7 +1512,7 @@ def test_heavy_heartbeat_fences_stale_attempt_after_same_worker_id_reclaim(
 
         expire_heavy_job_claim(db, job_id=job.id)
         db.commit()
-        attempt_2 = claim_job(
+        attempt_2 = claim_job_row(
             db,
             job_id=job.id,
             worker_id=worker_id,
@@ -1528,6 +1537,7 @@ def test_heavy_heartbeat_fences_stale_attempt_after_same_worker_id_reclaim(
                     worker_id=worker_id,
                     attempt_no=1,
                     resource_class="Heavy",
+                    execution_id=attempt_2.execution_id,
                 ),
                 lease_seconds=600,
             )
@@ -1549,6 +1559,7 @@ def test_heavy_heartbeat_fences_stale_attempt_after_same_worker_id_reclaim(
                 worker_id=worker_id,
                 attempt_no=2,
                 resource_class="Heavy",
+                execution_id=attempt_2.execution_id,
             ),
             lease_seconds=600,
         )
@@ -1580,7 +1591,7 @@ def test_heavy_renewal_rejects_missing_or_different_capacity_holder(
         orphaned = enqueue_job(db, kind=kind, priority=0)
         other = enqueue_job(db, kind=kind, priority=1)
         db.commit()
-        first = claim_job(
+        first = claim_job_row(
             db,
             job_id=orphaned.id,
             worker_id="orphaned-worker",
@@ -1603,6 +1614,7 @@ def test_heavy_renewal_rejects_missing_or_different_capacity_holder(
                     worker_id="orphaned-worker",
                     attempt_no=first.attempts,
                     resource_class="Heavy",
+                    execution_id=first.execution_id,
                 ),
                 lease_seconds=600,
             )
@@ -1616,6 +1628,7 @@ def test_heavy_renewal_rejects_missing_or_different_capacity_holder(
                     worker_id="orphaned-worker",
                     attempt_no=1,
                     resource_class="Heavy",
+                    execution_id=first.execution_id,
                 ),
                 lease_seconds=600,
             )
@@ -1630,7 +1643,7 @@ def test_heavy_renewal_rejects_missing_or_different_capacity_holder(
             == lease_before
         )
 
-        second = claim_job(
+        second = claim_job_row(
             db,
             job_id=other.id,
             worker_id="other-worker",
@@ -1648,6 +1661,7 @@ def test_heavy_renewal_rejects_missing_or_different_capacity_holder(
                     worker_id="orphaned-worker",
                     attempt_no=first.attempts,
                     resource_class="Heavy",
+                    execution_id=first.execution_id,
                 ),
                 lease_seconds=600,
             )
@@ -1661,6 +1675,7 @@ def test_heavy_renewal_rejects_missing_or_different_capacity_holder(
                     worker_id="orphaned-worker",
                     attempt_no=1,
                     resource_class="Heavy",
+                    execution_id=second.execution_id,
                 ),
                 lease_seconds=600,
             )
