@@ -170,6 +170,12 @@ jobs:
           NEXUS_CI_EVIDENCE_PATH: ${{ steps.proof.outputs.path }}
         run: scripts/ci-proof-artifact.sh cleanup "$NEXUS_CI_EVIDENCE_PATH"
 
+      - name: Enforce proof result
+        if: ${{ always() }}
+        env:
+          NEXUS_CI_PROOF_RESULT: ${{ steps.proof.outputs.result }}
+        run: scripts/ci-proof-artifact.sh enforce "$NEXUS_CI_PROOF_RESULT"
+
   candidate-full:
     name: Candidate full proof
     if: github.event_name == 'push'
@@ -232,3 +238,9 @@ jobs:
         env:
           NEXUS_CI_EVIDENCE_PATH: ${{ steps.proof.outputs.path }}
         run: scripts/ci-proof-artifact.sh cleanup "$NEXUS_CI_EVIDENCE_PATH"
+
+      - name: Enforce proof result
+        if: ${{ always() }}
+        env:
+          NEXUS_CI_PROOF_RESULT: ${{ steps.proof.outputs.result }}
+        run: scripts/ci-proof-artifact.sh enforce "$NEXUS_CI_PROOF_RESULT"

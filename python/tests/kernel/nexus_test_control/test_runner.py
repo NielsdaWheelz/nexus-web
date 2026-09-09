@@ -3408,10 +3408,20 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
     password_users: list[str] = []
     invited_users: list[str] = []
     entitlements: list[str] = []
+    data_plane_resets: list[str] = []
     artifact = tmp_path / ".nexus-test/builds/fingerprint"
     _write(artifact / "server.js", "export {};\n")
 
     class Ports(runner._RunnerPorts):
+        def reset_run_data_plane(
+            self,
+            _repo_root: Path,
+            _environment: Mapping[str, str],
+            run: OwnedTestRun,
+        ) -> None:
+            assert process_roles == []
+            data_plane_resets.append(run.run_id)
+
         def browser_installed(self, _repo_root: Path, _environment: Mapping[str, str]) -> bool:
             return True
 
@@ -3605,6 +3615,7 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
     assert bundle.evidence.status is RunStatus.PASS
     assert journeys.evidence.status is RunStatus.PASS
     assert build_calls == ["build"]
+    assert data_plane_resets == ["0123456789abcdef"]
     assert process_roles == [
         "external",
         "provider-api-peer",

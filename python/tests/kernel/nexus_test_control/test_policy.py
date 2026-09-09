@@ -236,7 +236,8 @@ def _minimal_repository(root: Path) -> None:
         "path: ${{ steps.proof.outputs.path }}/\n"
         "if-no-files-found: error\n"
         "include-hidden-files: true\n"
-        'scripts/ci-proof-artifact.sh cleanup "$NEXUS_CI_EVIDENCE_PATH"\n',
+        'scripts/ci-proof-artifact.sh cleanup "$NEXUS_CI_EVIDENCE_PATH"\n'
+        'scripts/ci-proof-artifact.sh enforce "$NEXUS_CI_PROOF_RESULT"\n',
     )
     _write(
         root,

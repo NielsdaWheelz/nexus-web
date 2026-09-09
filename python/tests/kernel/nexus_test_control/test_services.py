@@ -49,6 +49,7 @@ from nexus_test_control.services import (
     clean_owned_runtime,
     clean_run,
     new_run_id,
+    reset_run_data_plane,
     run_environment,
     start_python_process,
     start_web_process,
@@ -1397,6 +1398,22 @@ def test_run_environment_contains_only_exact_local_resources_and_no_admin_key(
         "SUPABASE_SERVICE_KEY",
         "SUPABASE_SERVICE_ROLE_KEY",
     }.intersection(environment)
+
+
+def test_browser_data_plane_reset_rejects_foreign_resource_identity_before_io(
+    tmp_path: Path,
+) -> None:
+    run = _owned_run(tmp_path)
+    foreign = replace(run, bucket="nexus-run-fedcba9876543210")
+    before = read_ledger(tmp_path, RUN_ID).entries
+
+    with pytest.raises(
+        RuntimeContractError,
+        match="browser data plane does not belong to the exact test run",
+    ):
+        reset_run_data_plane(tmp_path, TEST_ENV, foreign)
+
+    assert read_ledger(tmp_path, RUN_ID).entries == before
 
 
 def test_embedding_peer_materializes_one_exact_client_identity(tmp_path: Path) -> None:
