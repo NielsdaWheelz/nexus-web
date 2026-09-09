@@ -961,7 +961,7 @@
     {
       "id": "chat-native-terminal-cancellation",
       "patch": "testdata/faults/chat-native-terminal-cancellation.patch",
-      "sha256": "77fa308163c3a22687d3a720c34dd7b3d62988e0f69daa27b57436821b24882d",
+      "sha256": "748f9fe47d9a849a5cd6f4d2d974406dc1c00618d90f85bce9aeeb61e3081c2e",
       "proofs": [
         "pytest:python/tests/service/test_chat_terminal_cancellation.py::test_late_chat_cancellation_preserves_native_child_and_paid_usage"
       ],
