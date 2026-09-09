@@ -107,6 +107,7 @@ from nexus_test_control.services import (
     TestRun,
     TestUser,
     _repository_template_fingerprint,
+    android_sdk_available,
     authorized_instrumentation_device,
     authorized_usb_physical_device,
     cgroup_delegate_failure,
@@ -122,6 +123,8 @@ from nexus_test_control.services import (
     required_platform_process_tools,
     reset_run_data_plane,
     resolve_adb,
+    resolve_android_sdk,
+    resolved_android_environment,
     run_environment,
     start_python_process,
     start_web_process,
@@ -3641,7 +3644,7 @@ def _run_android_host(
     )
     if not wrapper.is_file() or not owners:
         return _not_run(Capability.ANDROID_HOST, "Android host proof owner is absent")
-    if not _android_sdk_available(android_root, environment):
+    if not android_sdk_available(android_root, environment):
         return _not_run(Capability.ANDROID_HOST, "Android SDK is absent")
     nodes, promoted = _selected_proof_nodes(context, Capability.ANDROID_HOST, "gradle")
     argv: tuple[str, ...] = ("./gradlew", "--no-daemon", ":app:testDebugUnitTest")
@@ -3650,7 +3653,7 @@ def _run_android_host(
             return _pass(Capability.ANDROID_HOST, "no selected Android host proof")
         for node in nodes:
             argv = (*argv, "--tests", _android_test_class(context.repo_root, node))
-    child_environment = dict(environment)
+    child_environment = resolved_android_environment(environment)
     child_environment["NEXUS_GOOGLE_WEB_CLIENT_ID"] = _TEST_GOOGLE_CLIENT_ID
     with _gradle_lock(context.repo_root):
         return _run_fixed_commands(
@@ -3689,7 +3692,7 @@ def _run_android_device(
     )
     if not wrapper.is_file() or not owners:
         return _not_run(Capability.ANDROID_DEVICE, "Android device proof owner is absent")
-    if not _android_sdk_available(android_root, environment):
+    if not android_sdk_available(android_root, environment):
         return _not_run(Capability.ANDROID_DEVICE, "Android SDK is absent")
     device, device_detail = _android_device_target(
         android_root,
@@ -3698,7 +3701,7 @@ def _run_android_device(
     )
     if device is None:
         return _not_run(Capability.ANDROID_DEVICE, device_detail)
-    child_environment = dict(environment)
+    child_environment = resolved_android_environment(environment)
     child_environment["NEXUS_GOOGLE_WEB_CLIENT_ID"] = _TEST_GOOGLE_CLIENT_ID
     child_environment["ANDROID_SERIAL"] = device.serial
     argv = (
@@ -3745,7 +3748,7 @@ def _run_android_device_exact(
     wrapper = android_root / "gradlew"
     if not wrapper.is_file():
         return _not_run(Capability.ANDROID_DEVICE, "Android device proof owner is absent")
-    if not _android_sdk_available(android_root, environment):
+    if not android_sdk_available(android_root, environment):
         return _not_run(Capability.ANDROID_DEVICE, "Android SDK is absent")
     device, device_detail = _android_device_target(
         android_root,
@@ -3755,7 +3758,7 @@ def _run_android_device_exact(
     if device is None:
         return _not_run(Capability.ANDROID_DEVICE, device_detail)
     target = _android_device_test_target(context.repo_root, node)
-    child_environment = dict(environment)
+    child_environment = resolved_android_environment(environment)
     child_environment["NEXUS_GOOGLE_WEB_CLIENT_ID"] = _TEST_GOOGLE_CLIENT_ID
     child_environment["ANDROID_SERIAL"] = device.serial
     argv = (
@@ -4895,10 +4898,9 @@ def _android_release_inputs(
 def _android_release_tools(
     environment: Mapping[str, str],
 ) -> tuple[Path, Path, Path] | None:
-    sdk_value = environment.get("ANDROID_HOME") or environment.get("ANDROID_SDK_ROOT")
-    if not sdk_value:
+    sdk = resolve_android_sdk(environment)
+    if sdk is None:
         return None
-    sdk = Path(sdk_value)
     adb = sdk / "platform-tools/adb"
     apksigners = tuple(sdk.glob("build-tools/*/apksigner"))
     analyzers = tuple(sdk.glob("cmdline-tools/*/bin/apkanalyzer"))
@@ -5387,7 +5389,7 @@ def _run_doctor(context: CapabilityContext, environment: Mapping[str, str]) -> C
                 f"pinned {suite.package} checkout is not ready",
             )
 
-    if not _android_sdk_available(context.repo_root / "apps/android", environment):
+    if not android_sdk_available(context.repo_root / "apps/android", environment):
         return _not_run(Capability.DOCTOR, "the Android SDK is absent")
     if not _browser_installed(context.repo_root, environment):
         return _not_run(Capability.DOCTOR, "the locked Chromium browser is absent")
@@ -5664,15 +5666,6 @@ def _android_device_test_target(repo_root: Path, node: str) -> str:
         raise ValueError(f"Android device proof has no exact method: {node}")
     target = f"{package.group(1)}.{class_name}"
     return f"{target}#{method}" if separator else target
-
-
-def _android_sdk_available(android_root: Path, environment: Mapping[str, str]) -> bool:
-    if (android_root / "local.properties").is_file():
-        return True
-    return any(
-        environment.get(key) and Path(environment[key]).is_dir()
-        for key in ("ANDROID_HOME", "ANDROID_SDK_ROOT")
-    )
 
 
 def _android_device_target(

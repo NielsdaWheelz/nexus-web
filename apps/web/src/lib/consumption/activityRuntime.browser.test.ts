@@ -37,6 +37,17 @@ const ACCOUNT_NATIVE = "10000000-0000-4000-8000-000000000013";
 const ACCOUNT_NATIVE_OTHER = "10000000-0000-4000-8000-000000000014";
 const ACCOUNT_FAILED_STORAGE = "10000000-0000-4000-8000-000000000015";
 const ACCOUNT_CAPACITY = "10000000-0000-4000-8000-000000000016";
+const TEST_NOW_MS = Date.parse("2026-08-10T18:05:00.000Z");
+
+type TestRuntimeOptions = NonNullable<
+  Parameters<typeof createActivityRuntime>[0]
+>;
+
+function createTestActivityRuntime(
+  options: TestRuntimeOptions = {},
+): ActivityRuntime {
+  return createActivityRuntime({ now: () => TEST_NOW_MS, ...options });
+}
 
 function closedSpan(
   captureKey: string,
@@ -120,7 +131,7 @@ describe("durable Consumption activity outbox", () => {
     await outbox.enqueue(
       ACCOUNT_FAILED_STORAGE,
       closedSpan("20000000-0000-4000-8000-000000000015"),
-      Date.now(),
+      TEST_NOW_MS,
     );
 
     await outbox.markFailed(
@@ -142,7 +153,7 @@ describe("durable Consumption activity outbox", () => {
 
   it("blocks at capacity without evicting durable rows", async () => {
     const outbox = new ActivityOutbox(2);
-    const runtime = createActivityRuntime({
+    const runtime = createTestActivityRuntime({
       outbox,
       capacityLimit: 2,
       upload: async () => ({ kind: "AuthenticationLost" }),
@@ -198,7 +209,7 @@ describe("durable Consumption activity outbox", () => {
         return new Response(null, { status: 204 });
       }),
     );
-    const runtime = createActivityRuntime({
+    const runtime = createTestActivityRuntime({
       activityDiagnostic: (detail) => diagnostics.push(detail),
     });
     await runtime.open(ACCOUNT_DURABLE);
@@ -239,14 +250,14 @@ describe("durable Consumption activity outbox", () => {
           : new Response(null, { status: 204 });
       }),
     );
-    const beforeStop = createActivityRuntime();
+    const beforeStop = createTestActivityRuntime();
     await beforeStop.open(ACCOUNT_RECOVERY);
     await beforeStop.enqueue(
       closedSpan("20000000-0000-4000-8000-000000000002"),
     );
     await vi.waitFor(() => expect(requests).toHaveLength(1));
 
-    const afterReload = createActivityRuntime();
+    const afterReload = createTestActivityRuntime();
     await afterReload.open(ACCOUNT_RECOVERY);
     await waitForSync(afterReload, "Synced");
 
@@ -285,7 +296,7 @@ describe("durable Consumption activity outbox", () => {
           : new Response(null, { status: 204 });
       }),
     );
-    const firstRuntime = createActivityRuntime();
+    const firstRuntime = createTestActivityRuntime();
     await firstRuntime.open(ACCOUNT_REGROUP);
     await firstRuntime.enqueue(
       closedSpan("20000000-0000-4000-8000-000000000003"),
@@ -295,7 +306,7 @@ describe("durable Consumption activity outbox", () => {
       closedSpan("20000000-0000-4000-8000-000000000004"),
     );
 
-    const recoveredRuntime = createActivityRuntime();
+    const recoveredRuntime = createTestActivityRuntime();
     await recoveredRuntime.open(ACCOUNT_REGROUP);
     await waitForSync(recoveredRuntime, "Synced");
 
@@ -333,7 +344,7 @@ describe("durable Consumption activity outbox", () => {
         },
       ),
     );
-    const runtime = createActivityRuntime();
+    const runtime = createTestActivityRuntime();
     await runtime.open(ACCOUNT_SWITCH_FROM);
     await runtime.enqueue(
       closedSpan("20000000-0000-4000-8000-000000000012"),
@@ -362,7 +373,7 @@ describe("durable Consumption activity outbox", () => {
       "fetch",
       vi.fn(async () => errorResponse(401, "E_UNAUTHENTICATED")),
     );
-    const runtime = createActivityRuntime();
+    const runtime = createTestActivityRuntime();
     await runtime.open(ACCOUNT_LIFECYCLE);
     let monotonicNow = 10_000;
     const recorder = new ActivityRecorder({
@@ -398,7 +409,7 @@ describe("durable Consumption activity outbox", () => {
         throw new DOMException("storage disabled", "InvalidStateError");
       },
     });
-    const runtime = createActivityRuntime();
+    const runtime = createTestActivityRuntime();
 
     await runtime.open("10000000-0000-4000-8000-000000000010");
 
@@ -414,7 +425,7 @@ describe("durable Consumption activity outbox", () => {
       "fetch",
       vi.fn(async () => errorResponse(401, "E_UNAUTHENTICATED")),
     );
-    const runtime = createActivityRuntime();
+    const runtime = createTestActivityRuntime();
     await runtime.open(ACCOUNT_AUTH);
 
     await runtime.enqueue(
@@ -444,7 +455,7 @@ describe("durable Consumption activity outbox", () => {
           : new Response(null, { status: 204 });
       }),
     );
-    const runtime = createActivityRuntime();
+    const runtime = createTestActivityRuntime();
     await runtime.open(ACCOUNT_MEDIA);
 
     await runtime.enqueue(
@@ -491,10 +502,10 @@ describe("durable Consumption activity outbox", () => {
   it("marks locally expired capture failed without sending it", async () => {
     const fetch = vi.fn(async () => new Response(null, { status: 204 }));
     vi.stubGlobal("fetch", fetch);
-    const runtime = createActivityRuntime();
+    const runtime = createTestActivityRuntime();
     await runtime.open(ACCOUNT_EXPIRY);
     const expired = new Date(
-      Date.now() - 31 * 24 * 60 * 60 * 1_000,
+      TEST_NOW_MS - 31 * 24 * 60 * 60 * 1_000,
     ).toISOString();
 
     await runtime.enqueue(
@@ -530,7 +541,7 @@ describe("durable Consumption activity outbox", () => {
           : new Response(null, { status: 204 });
       }),
     );
-    const runtime = createActivityRuntime();
+    const runtime = createTestActivityRuntime();
     await runtime.open(ACCOUNT_DEFECT);
 
     await runtime.enqueue(

@@ -561,6 +561,18 @@ still apply. A direct invocation is not a workflow verdict.
 
 The controller owns one persistent, health-checked, workspace-local
 PostgreSQL/MinIO/Supabase-test stack recorded in `.nexus-test/runtime.json`.
+Before `full` or a higher local workflow, `scripts/agency_setup.sh` hydrates the
+exact pinned `provider-runtime` and `llm-tools` commits and all of their locked
+artifacts. It requires adjacent `llm-calling` and `llm-tools` Git checkouts,
+fetches only a missing pinned commit object, and MUST NOT move either checkout's
+HEAD or refs or alter its index, tracked files, or untracked files. The test
+controller then archives that immutable object into its owned checkout and
+materializes the suite with network disabled. Android proof honors an explicit,
+consistent `ANDROID_HOME` or `ANDROID_SDK_ROOT`; when both are absent, the
+controller discovers only the conventional `$HOME/Android/Sdk` Linux install or
+`$HOME/Library/Android/sdk` macOS install and publishes it to owned Android
+children. An invalid, relative, or conflicting explicit SDK setting remains a
+fail-closed prerequisite error and is never masked by discovery.
 Initial allocation MUST exclude the host kernel's ephemeral client-port range;
 when the kernel range interface is absent, the controller excludes ports
 `32768–65535`; an unreadable or malformed present interface fails closed.

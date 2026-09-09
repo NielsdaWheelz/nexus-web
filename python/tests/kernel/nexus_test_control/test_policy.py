@@ -487,6 +487,51 @@ def test_repository_guard_rejects_route_drift(tmp_path: Path) -> None:
     assert "repository-route-contract" in _rules(repository_violations(tmp_path))
 
 
+def test_repository_guard_does_not_match_retired_route_inside_active_identifier(
+    tmp_path: Path,
+) -> None:
+    _minimal_repository(tmp_path)
+    setup = tmp_path / "scripts/agency_setup.sh"
+    setup.write_text(
+        setup.read_text(encoding="utf-8") + "python -m nexus_test_control.setup_dependencies\n",
+        encoding="utf-8",
+    )
+
+    assert not any(
+        violation.rule == "repository-route-contract"
+        and violation.path == "scripts/agency_setup.sh"
+        for violation in repository_violations(tmp_path)
+    )
+
+
+@pytest.mark.parametrize(
+    "legacy_name",
+    (
+        "DATABASE_URL_TEST",
+        "DATABASE_URL_TEST_MIGRATIONS",
+        "nexus_test",
+        "nexus_test_migrations",
+    ),
+)
+def test_repository_guard_rejects_each_retired_setup_identifier(
+    tmp_path: Path,
+    legacy_name: str,
+) -> None:
+    _minimal_repository(tmp_path)
+    setup = tmp_path / "scripts/agency_setup.sh"
+    setup.write_text(
+        setup.read_text(encoding="utf-8") + f"retired={legacy_name}\n",
+        encoding="utf-8",
+    )
+
+    assert any(
+        violation.rule == "repository-route-contract"
+        and violation.path == "scripts/agency_setup.sh"
+        and legacy_name in violation.message
+        for violation in repository_violations(tmp_path)
+    )
+
+
 def test_repository_guard_scans_every_deploy_smoke_script(tmp_path: Path) -> None:
     _minimal_repository(tmp_path)
     _write(tmp_path, "deploy/smoke/auth-smoke.sh", "pytest tests/deploy\n")
