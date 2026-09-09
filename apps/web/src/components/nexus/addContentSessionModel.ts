@@ -10,7 +10,10 @@ import {
   type UploadPhase,
   type UploadSessionOutcome,
 } from "@/lib/media/ingestionClient";
-import { uploadVerificationFailureCopy } from "@/lib/status/mediaActivity";
+import {
+  IMPORTS_CONFLICT_MESSAGE,
+  uploadVerificationFailureCopy,
+} from "@/lib/status/imports";
 import { assertNever } from "@/lib/assertNever";
 import {
   projectLibraryPlacement,
@@ -179,7 +182,7 @@ export type AcceptanceFailure =
       reason: UnresolvedAcceptanceReason;
       feedback: FeedbackContent;
     }
-  /** The foreground attempt lost the session; Import Activity owns it now. */
+  /** The foreground attempt lost the session; Imports owns it now. */
   | { kind: "Superseded" }
   | { kind: "Defect"; error: unknown };
 
@@ -216,7 +219,7 @@ function uploadAcceptanceFailure(
           tone: "Warning",
           title: "Upload needs attention",
           message:
-            "Use Import Activity for the available next step, or restage this file as a new import.",
+            "Use Imports for the available next step, or restage this file as a new import.",
         },
       };
     case "VerificationRejected":
@@ -242,6 +245,7 @@ function uploadAcceptanceFailure(
     case "Superseded":
       return { kind: "Superseded" };
     case "Conflicted":
+      return terminalAcceptance(IMPORTS_CONFLICT_MESSAGE);
     case "Unresolved":
       return unresolvedAcceptance();
     case "UnsupportedFileType":

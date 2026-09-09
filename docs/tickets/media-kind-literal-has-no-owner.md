@@ -11,12 +11,12 @@ out separately in four places, and the media response that should own it is
 untyped:
 
 - `python/nexus/schemas/library.py:291` (`LibraryMediaItemOut.kind`)
-- `python/nexus/schemas/media_activity.py:54` (`MediaActivityMediaItemOut.media_kind`)
+- `python/nexus/schemas/imports.py` (`MediaKind`, `ImportItem.media_kind`)
 - `python/nexus/schemas/imports.py` (`MediaKind`, added by this cutover)
 - `python/nexus/schemas/consumption.py:34` reorders the same members as
   `ConsumptionMediaKind`
 - `python/nexus/schemas/media.py:285` is `kind: str  # "web_article", ...`, so
-  `nexus/services/media_activity.py` has to `cast(...)` the value back into the
+  `nexus/services/imports.py` has to `cast(...)` the value back into the
   Literal at every projection.
 
 Adding a media kind therefore fails to type-error in every consumer, which is

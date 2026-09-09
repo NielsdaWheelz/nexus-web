@@ -6,7 +6,7 @@ static `/media/<literal>` path here is declared before this router's dynamic
 router (see create_api_router) so the literals are not parsed as UUIDs.
 """
 
-from typing import Annotated
+from typing import Annotated, assert_never
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request, Response
@@ -24,11 +24,23 @@ from nexus.schemas.media import (
     ConfirmUploadSessionRequest,
     CreateUploadSessionRequest,
     FromUrlRequest,
+    MediaRepairRequest,
+    RetryMetadataRequest,
     RetryRequest,
+    RetrySourceRequest,
     RetryUploadSessionRequest,
+    SearchRepairRequest,
+    SourceRepairRequest,
     UploadTransportFailureRequest,
 )
-from nexus.services import media_ingest, media_retry, media_source_ingest, media_upload_sessions
+from nexus.services import (
+    content_indexing,
+    media_ingest,
+    media_source_ingest,
+    media_upload_sessions,
+    metadata_lifecycle,
+)
+from nexus.services.capabilities import ViewerRecovery
 
 router = APIRouter(tags=["media"])
 
@@ -221,13 +233,63 @@ def retry_ingest(
     db: Annotated[Session, Depends(get_db)],
     request: Request,
 ) -> dict:
-    """Retry processing or re-enrich metadata for a viewer's media."""
-    result = media_retry.retry_for_viewer(
-        db=db,
+    """Admit a new source attempt, or re-enrich metadata, for a viewer's media."""
+    request_id = getattr(request.state, "request_id", None)
+    match body:
+        case RetrySourceRequest():
+            return ok(
+                media_source_ingest.retry_source_for_viewer(
+                    db,
+                    viewer_id=viewer.user_id,
+                    media_id=media_id,
+                    client_mutation_id=body.client_mutation_id,
+                    expected_attempt_id=body.expected_attempt_id,
+                    request_id=request_id,
+                )
+            )
+        case RetryMetadataRequest():
+            return success_response(
+                metadata_lifecycle.retry_metadata_for_viewer(
+                    db, viewer.user_id, media_id, request_id=request_id
+                )
+            )
+        case _:
+            assert_never(body)
+
+
+@router.post("/media/{media_id}/repair", status_code=202)
+def repair_media(
+    media_id: UUID,
+    body: MediaRepairRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Requeue the exact dead job the viewer inspected: source or search."""
+    actor = ViewerRecovery(
         viewer_id=viewer.user_id,
-        media_id=media_id,
-        from_stage=body.from_stage,
-        request_id=getattr(request.state, "request_id", None),
-        idempotency_key=request.headers.get("Idempotency-Key"),
+        is_admin="admin" in viewer.roles,
+        client_mutation_id=body.client_mutation_id,
     )
-    return success_response(result)
+    match body:
+        case SourceRepairRequest():
+            return ok(
+                media_source_ingest.repair_dead_source_execution(
+                    db,
+                    actor=actor,
+                    media_id=media_id,
+                    expected_attempt_id=body.expected_attempt_id,
+                    expected_job_id=body.expected_job_id,
+                )
+            )
+        case SearchRepairRequest():
+            return ok(
+                content_indexing.repair_dead_media_reindex(
+                    db,
+                    actor=actor,
+                    media_id=media_id,
+                    expected_revision=body.expected_revision,
+                    expected_job_id=body.expected_job_id,
+                )
+            )
+        case _:
+            assert_never(body)

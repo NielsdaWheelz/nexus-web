@@ -7,7 +7,7 @@ import {
   type UploadSessionOutcome,
 } from "./ingestionClient";
 import { acceptanceErrorMessage } from "@/components/nexus/addContentSessionModel";
-import { uploadSessionActionErrorMessage } from "@/lib/status/mediaActivity";
+import { uploadSessionActionErrorMessage } from "@/lib/status/imports";
 
 /**
  * Oracle: the upload-session API contract — the per-endpoint error table this
@@ -128,12 +128,15 @@ const DECLARED_CODES: readonly [
     "Unresolved",
   ],
   ["Retry", 500, "E_SIGN_UPLOAD_FAILED", { kind: "Unresolved" }, "Unresolved"],
+  // A stale identity is a known outcome, not an unknown one: the Add sheet
+  // states that the import changed rather than sending the reader to check a
+  // status Nexus already knows (Track E copy owner).
   [
     "Retry",
     409,
     "E_RESOURCE_CONFLICT",
     { kind: "Conflicted" },
-    "Unresolved",
+    "Rejected",
   ],
   ["Confirm", 400, "E_INVALID_REQUEST", { kind: "IntentMalformed" }, "Defect"],
   [
@@ -236,7 +239,7 @@ describe("upload-session error contract", () => {
   it.each(
     DECLARED_CODES.filter(([, , , outcome]) => outcome.kind !== "IntentMalformed"),
   )(
-    "gives %s %d %s one truthful Import Activity next step",
+    "gives %s %d %s one truthful Imports next step",
     (_endpoint, _status, _code, outcome) => {
       expect(
         uploadSessionActionErrorMessage(new UploadSessionError(outcome)).length,

@@ -1854,33 +1854,44 @@ def supersede_unclaimed_job(
     *,
     job_id: UUID,
     kind: str,
-) -> JobRow:
-    """Complete one obsolete waiting operation without touching running/dead history."""
-    row = (
-        db.execute(
-            text(
-                """
-                UPDATE background_jobs
-                SET
-                    status = 'succeeded',
-                    result = '{"status":"superseded"}'::jsonb,
-                    lease_expires_at = NULL,
-                    claimed_by = NULL,
-                    finished_at = now(),
-                    updated_at = now()
+) -> None:
+    """Complete one obsolete waiting operation without touching running/dead history.
+
+    The guarded, non-blocking candidate select is the whole conditional. A row a
+    concurrent transaction holds is left to that transaction: the X-post completion
+    calls this under the quote media's ``FOR UPDATE`` while a worker settling that
+    same queue row needs the media as ``KEY SHARE`` for the seam's history insert,
+    so waiting on a foreign row lock here would close a wait cycle. A caller that
+    already locked the row supersedes it -- ``SKIP LOCKED`` never skips a row the
+    current transaction holds -- and owns whatever postcondition its coalescing
+    invariant needs.
+    """
+    db.execute(
+        text(
+            """
+            WITH waiting AS (
+                SELECT id
+                FROM background_jobs
                 WHERE id = :job_id
                   AND kind = :kind
                   AND status IN ('pending', 'failed')
                   AND claimed_by IS NULL
-                RETURNING *
-                """
-            ),
-            {"job_id": job_id, "kind": kind},
-        )
-        .mappings()
-        .one()
+                FOR UPDATE SKIP LOCKED
+            )
+            UPDATE background_jobs
+            SET
+                status = 'succeeded',
+                result = '{"status":"superseded"}'::jsonb,
+                lease_expires_at = NULL,
+                claimed_by = NULL,
+                finished_at = now(),
+                updated_at = now()
+            FROM waiting
+            WHERE background_jobs.id = waiting.id
+            """
+        ),
+        {"job_id": job_id, "kind": kind},
     )
-    return _row_to_job(row)
 
 
 def current_dead_job_for_payload(

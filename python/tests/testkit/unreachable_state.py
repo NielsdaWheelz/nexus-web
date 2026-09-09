@@ -499,6 +499,23 @@ def forget_job_execution_id(db: Session, *, job_id: UUID) -> None:
     assert updated == job_id
 
 
+def retarget_job_kind(db: Session, *, job_id: UUID, kind: str) -> None:
+    """Relabel one synthetic job with a private kind no other row carries, so a
+    scanning worker restricted to that kind can reach only this proof's row."""
+    updated = db.execute(
+        text(
+            """
+            UPDATE background_jobs
+            SET kind = :kind, updated_at = now()
+            WHERE id = :job_id
+            RETURNING id
+            """
+        ),
+        {"job_id": job_id, "kind": kind},
+    ).scalar_one()
+    assert updated == job_id
+
+
 def read_content_index_state(db: Session, *, owner_id: UUID) -> tuple[str, int]:
     """The stored ``(status, revision)`` of one media index owner, read outside every owner lock."""
     row = db.execute(

@@ -104,6 +104,7 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
   const abortRef = useRef<AbortController | null>(null);
   const dirtyReadRef = useRef(false);
   const wakeRequestedRef = useRef(false);
+  const wakeGenerationRef = useRef(0);
   const summaryRef = useRef<ImportSummary | null>(null);
   const observedPlacementRevisionRef = useRef(placementChange.revision);
   const windowFocusedRef = useRef(true);
@@ -114,11 +115,14 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
         if (!automatic) dirtyReadRef.current = true;
         return inFlightRef.current;
       }
+      // The observation window belongs to the wake that opened it, not to a
+      // read: only a failed automatic read may end one, and only while it is
+      // still the window this read was asked for. A reader gesture or an
+      // invalidation raised while this read is in flight opens the next window
+      // and queues the trailing read above, so neither this read's failure nor
+      // that trailing read may close what the reader just opened.
+      const askedInWakeGeneration = wakeGenerationRef.current;
       const request = (async () => {
-        // Only a failed automatic read may end the observation window. A queued
-        // trailing read is asked for by a reader gesture or an invalidation
-        // (above), so it inherits nothing from the read it waited behind.
-        let iterationIsAutomatic = automatic;
         let again = true;
         while (again && mountedRef.current) {
           dirtyReadRef.current = false;
@@ -150,15 +154,16 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
                 setLoadState({ kind: "Failed", error });
               }
             }
-            // A failed automatic read ends this observation window; the
+            // A failed automatic read ends its observation window; the
             // last-good summary stays on screen until a wake signal or a
             // manual refresh asks again.
-            if (iterationIsAutomatic) setAutomaticReadsEnded(true);
+            if (automatic && wakeGenerationRef.current === askedInWakeGeneration) {
+              setAutomaticReadsEnded(true);
+            }
           } finally {
             if (abortRef.current === controller) abortRef.current = null;
           }
           again = dirtyReadRef.current;
-          iterationIsAutomatic = false;
         }
       })().finally(() => {
         if (inFlightRef.current === request) inFlightRef.current = null;
@@ -178,6 +183,7 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
   const wake = useCallback(
     (rekey: boolean): Promise<void> => {
       wakeRequestedRef.current = true;
+      wakeGenerationRef.current += 1;
       setLastWakeAtMs(Date.now());
       setAutomaticReadsEnded(false);
       if (rekey) {

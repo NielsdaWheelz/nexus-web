@@ -1,6 +1,6 @@
-"""Owner-API builders for the media activity projection's synthetic backlog.
+"""Owner-API builders for the Imports query's synthetic backlog.
 
-Activity projects three independent owners — source attempts, their queue rows,
+Imports projects three independent owners — source attempts, their queue rows,
 and upload sessions — so every proof of that projection has to stand one up
 before it can assert anything. These builders own that plumbing alone; each
 scenario still writes its own states and assertions.
@@ -57,7 +57,7 @@ def create_source_media(
         attempt_no=attempt_no,
         run_count=1,
         status=attempt_status,
-        intent_key=f"activity-{uuid4()}",
+        intent_key=f"imports-{uuid4()}",
         processing_stage="Extract",
         progress_completed=progress[0] if progress else 0,
         progress_total=progress[1] if progress else None,
@@ -127,8 +127,8 @@ def create_upload_session(
         filename=filename,
         content_type="application/epub+zip",
         expected_size_bytes=4096,
-        idempotency_key=f"activity-upload-{uuid4()}",
-        request_id=f"activity-request-{uuid4()}",
+        idempotency_key=f"imports-upload-{uuid4()}",
+        request_id=f"imports-request-{uuid4()}",
         upload_generation=1,
         upload_url_expires_at=expires_at,
         transport_failure_kind=transport_failure_kind,

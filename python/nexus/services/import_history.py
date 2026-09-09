@@ -13,6 +13,7 @@ column `NULL` (`docs/rules/boundaries.md`).
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 from uuid import UUID
 
@@ -139,6 +140,20 @@ def _owner_sources(owner: HistoryOwner) -> tuple[list[tuple[HistoryTable, str]],
     return [(PROCESSING_EVENTS_TABLE, "media_id = :media_id")], {"media_id": owner.media_id}
 
 
+def events_of_import_sql(*, session_id_expr: str, media_id_expr: str) -> str:
+    """Set-wise twin of `_owner_sources` for a query over many imports at once:
+    every event whose owner the two SQL expressions name (a NULL expression
+    names none), in the column shape `history_entry` decodes."""
+    return " UNION ALL ".join(
+        f"SELECT '{table}' AS event_table, id, occurred_at, event_type, stage, failure_code,"
+        f" payload FROM {table} WHERE {column} = {expr}"
+        for table, column, expr in (
+            (UPLOAD_EVENTS_TABLE, "session_id", session_id_expr),
+            (PROCESSING_EVENTS_TABLE, "media_id", media_id_expr),
+        )
+    )
+
+
 def read_history_page(
     db: Session,
     *,
@@ -166,19 +181,40 @@ def read_history_page(
         text(f"{branches} ORDER BY occurred_at DESC, id DESC LIMIT :limit"), params
     ).all()
     return [
-        HistoryEntry.model_validate(
-            {
-                "id": row.id,
-                "occurred_at": row.occurred_at,
-                "stage": presence_from_nullable(row.stage),
-                "failure_code": presence_from_nullable(row.failure_code),
-                "facts": history_facts(
-                    table=row.source_table, event_type=row.event_type, payload=row.payload
-                ),
-            }
+        history_entry(
+            table=row.source_table,
+            event_id=row.id,
+            occurred_at=row.occurred_at,
+            event_type=row.event_type,
+            stage=row.stage,
+            failure_code=row.failure_code,
+            payload=row.payload,
         )
         for row in rows
     ]
+
+
+def history_entry(
+    *,
+    table: HistoryTable,
+    event_id: UUID,
+    occurred_at: datetime,
+    event_type: str,
+    stage: str | None,
+    failure_code: str | None,
+    payload: Mapping[str, object],
+) -> HistoryEntry:
+    """Decode one stored event row (this module's page reads and the Imports
+    query's correlated match both read the same columns)."""
+    return HistoryEntry.model_validate(
+        {
+            "id": event_id,
+            "occurred_at": occurred_at,
+            "stage": presence_from_nullable(stage),
+            "failure_code": presence_from_nullable(failure_code),
+            "facts": history_facts(table=table, event_type=event_type, payload=payload),
+        }
+    )
 
 
 def history_coverage(db: Session, *, owner: HistoryOwner) -> HistoryCoverage:

@@ -39,67 +39,51 @@ export function useImportDetail(
   // A live detail belongs to the key it was read for, so it is dropped as that
   // key leaves: reselecting an earlier import must never shadow the read that
   // key is making now with a detail captured before the detour.
-  const keyRef = useRef(cacheKey);
-  if (keyRef.current !== cacheKey) {
-    keyRef.current = cacheKey;
-    if (live !== null) setLive(null);
-  }
+  if (live !== null && live.key !== cacheKey) setLive(null);
 
   const keyedDetail = keyed.status === "ready" ? keyed.data : null;
   const detail =
-    live !== null && cacheKey !== null && live.key === cacheKey
-      ? live.detail
-      : keyedDetail;
+    live !== null && live.key === cacheKey ? live.detail : keyedDetail;
 
-  const shownRef = useRef<{
-    readonly key: string;
-    readonly ref: ImportRef;
-    readonly active: boolean;
-  } | null>(null);
-  shownRef.current =
-    detail === null || cacheKey === null || ref === null
-      ? null
-      : { key: cacheKey, ref, active: detail.item.state.kind === "Active" };
+  // Only work still in flight is worth re-reading, and the state committed with
+  // the key the effect runs for is the one it must judge.
+  const activeRef = useRef(false);
+  activeRef.current = detail !== null && detail.item.state.kind === "Active";
 
-  // A new revision re-keys the read above, so the observation carrying it is
-  // already answered by that read and must not read the detail a second time.
-  const rekeyedRef = useRef(false);
-  const revisionRef = useRef(observation.revision);
-  if (revisionRef.current !== observation.revision) {
-    revisionRef.current = observation.revision;
-    rekeyedRef.current = true;
-  }
+  // The observation revision the shown detail was read for. An observation that
+  // moved the revision re-keyed the read above and is answered by that keyed
+  // read alone, so it must not read the detail a second time; every later
+  // observation is this pane's five-second tick. Only the provider's revision
+  // marks it: selecting another import re-keys the read too, and it is not an
+  // observation, so it must not cost the reader a tick.
+  const revision = observation.revision;
+  const tickedRevisionRef = useRef(revision);
 
   const observedAt = observation.observedAt;
   const lastObservedRef = useRef<string | null>(null);
   useEffect(() => {
     const previous = lastObservedRef.current;
     lastObservedRef.current = observedAt;
-    const shown = shownRef.current;
     // The provider's first observation is the read the keyed resource made.
     if (previous === null || previous === observedAt) return;
-    if (rekeyedRef.current) {
-      rekeyedRef.current = false;
-      return;
-    }
-    if (shown === null || !shown.active) return;
+    const ticked = tickedRevisionRef.current;
+    tickedRevisionRef.current = revision;
+    if (ticked !== revision) return;
+    if (cacheKey === null || ref === null || !activeRef.current) return;
     const controller = new AbortController();
     void (async () => {
       let next: ImportDetail;
       try {
-        next = await fetchImportDetail({
-          ref: shown.ref,
-          signal: controller.signal,
-        });
+        next = await fetchImportDetail({ ref, signal: controller.signal });
       } catch (error: unknown) {
         absorbRereadFailure(error, controller.signal);
         return;
       }
       if (controller.signal.aborted) return;
-      setLive({ key: shown.key, detail: next });
+      setLive({ key: cacheKey, detail: next });
     })();
     return () => controller.abort();
-  }, [absorbRereadFailure, observedAt]);
+  }, [absorbRereadFailure, cacheKey, observedAt, ref, revision]);
 
   return detail === null ? keyed : { status: "ready", data: detail };
 }

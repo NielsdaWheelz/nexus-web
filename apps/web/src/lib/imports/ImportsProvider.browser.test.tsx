@@ -40,10 +40,12 @@ function jsonResponse(body: unknown): Response {
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
-  const promise = new Promise<T>((resolvePromise) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
     resolve = resolvePromise;
+    reject = rejectPromise;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 /** A distinct observation instant per read, so a tick is observable. */
@@ -858,6 +860,41 @@ describe("Imports provider observation", () => {
     });
   });
 
+  it("keeps the window when a refresh outlives the automatic read behind it", async () => {
+    // The mirror of the case above. The window belongs to the wake that started
+    // it, not to whichever read fails: an automatic read that fails after the
+    // reader refreshed cannot end the window the reader just opened (D10).
+    const blocked = deferred<Response>();
+    let reads = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), window.location.origin);
+      if (url.pathname !== "/api/imports/summary") {
+        return jsonResponse(pageBody([]));
+      }
+      reads += 1;
+      if (reads === 1) return jsonResponse(summaryBody(1, 1, observedAt(1)));
+      if (reads === 2) return await blocked.promise;
+      return jsonResponse(summaryBody(2, 1, observedAt(reads)));
+    });
+
+    renderImports();
+    await waitFor(() => expect(summary()).toHaveTextContent("1 attention, 1 active"));
+    // The automatic five-second read is in flight when the reader asks again.
+    await waitFor(() => expect(reads).toBe(2), { timeout: 6_500 });
+    await userEvent.click(screen.getByRole("button", { name: "Refresh imports" }));
+    blocked.reject(new TypeError("offline"));
+
+    // The reader's trailing read answers with fresh counts, so nothing on
+    // screen says the pane stopped observing — and it must not have.
+    await waitFor(() => expect(summary()).toHaveTextContent("2 attention, 1 active"));
+    expect(
+      screen.getByRole("status", { name: "Imports load state" }),
+    ).toHaveTextContent("Ready");
+    await waitFor(() => expect(reads).toBeGreaterThanOrEqual(4), {
+      timeout: 6_500,
+    });
+  });
+
   it("re-keys the page and the detail exactly once for one invalidation", async () => {
     const blockedSummary = deferred<Response>();
     let pageReads = 0;
@@ -995,6 +1032,93 @@ describe("Imports provider observation", () => {
         expect(
           screen.getByRole("status", { name: "Imports detail" }),
         ).toHaveTextContent("Detail 3"),
+      { timeout: 2_000 },
+    );
+  });
+
+  it("keeps the five-second cadence across a filter and a selection change", async () => {
+    const pageReads = new Map<string, number>();
+    const detailReads = new Map<string, number>();
+    let summaryReads = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), window.location.origin);
+      if (url.pathname === "/api/imports/summary") {
+        summaryReads += 1;
+        return jsonResponse(summaryBody(0, 1, observedAt(summaryReads)));
+      }
+      if (url.pathname === "/api/imports") {
+        const filter = url.searchParams.get("q") ?? "Unfiltered";
+        const read = (pageReads.get(filter) ?? 0) + 1;
+        pageReads.set(filter, read);
+        return jsonResponse(pageBody([mediaItem(MEDIA_ID, `${filter} ${read}`)]));
+      }
+      if (url.pathname.endsWith("/history")) {
+        return jsonResponse(historyBody([], null));
+      }
+      const ref = decodeURIComponent(url.pathname.slice("/api/imports/".length));
+      const read = (detailReads.get(ref) ?? 0) + 1;
+      detailReads.set(ref, read);
+      return jsonResponse(
+        detailBody(
+          mediaItem(
+            ref === `media:${MEDIA_ID}` ? MEDIA_ID : OTHER_MEDIA_ID,
+            `Detail ${read}`,
+          ),
+        ),
+      );
+    });
+
+    const { rerender } = renderImports({
+      selected: importRef(`media:${MEDIA_ID}`),
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Open imports" }));
+    await waitFor(() =>
+      expect(screen.getByRole("status", { name: "Imports page" })).toHaveTextContent(
+        "Unfiltered 1",
+      ),
+    );
+    // One live tick, so the next one is a whole interval away and the assertion
+    // below measures the cadence rather than the tail of this one.
+    await waitFor(
+      () =>
+        expect(
+          screen.getByRole("status", { name: "Imports page" }),
+        ).toHaveTextContent("Unfiltered 2"),
+      { timeout: 6_500 },
+    );
+
+    rerender(
+      importsTree({
+        selected: importRef(`media:${OTHER_MEDIA_ID}`),
+        filter: "alpha",
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("status", { name: "Imports page" })).toHaveTextContent(
+        "alpha 1",
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("status", { name: "Imports detail" }),
+      ).toHaveTextContent("Detail 1"),
+    );
+
+    // A key the reader changed is not an observation, so it must not cost the
+    // next tick: page one and the newly selected detail are read again on the
+    // provider's five-second observation (contract D10).
+    await waitFor(
+      () =>
+        expect(
+          screen.getByRole("status", { name: "Imports page" }),
+        ).toHaveTextContent("alpha 2"),
+      { timeout: 6_500 },
+    );
+    await waitFor(
+      () =>
+        expect(
+          screen.getByRole("status", { name: "Imports detail" }),
+        ).toHaveTextContent("Detail 2"),
       { timeout: 2_000 },
     );
   });

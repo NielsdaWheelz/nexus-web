@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 from nexus.db.models import Media, MediaSourceAttempt
 from nexus.db.session import create_session_factory, transaction
 from nexus.errors import ApiError, ApiErrorCode
+from nexus.jobs.history_projections import RetryScheduled, apply_history_projection
 from nexus.jobs.queue import (
     JobExecutionContext,
     JobRow,
@@ -42,10 +43,14 @@ from nexus.services.capabilities import ViewerRecovery
 from nexus.services.content_indexing import request_media_content_reindex
 from nexus.services.media import list_media_for_viewer_by_ids
 from nexus.services.media_source_ingest import (
+    accept_embedded_source,
+    complete_x_post_snapshot_attempt,
+    enqueue_accepted_source_attempt_in_transaction,
     repair_dead_source_execution,
     retry_source_for_viewer,
 )
 from nexus.services.media_upload_sessions import confirm_upload_session, create_upload_session
+from nexus.services.reader_publication import replace_reader_publication
 from nexus.services.sealed_handles import unseal_upload_session
 from nexus.services.source_attempt_failures import (
     ResourceLimitedSourceAttempt,
@@ -53,15 +58,18 @@ from nexus.services.source_attempt_failures import (
     publish_resource_limited_source_attempt,
     publish_source_attempt_failure,
 )
+from nexus.services.x_identity import canonical_x_post_url
 from nexus.storage.client import get_storage_client
 from nexus.storage.paths import build_upload_session_staging_storage_path
 from tests.testkit.auth import UserRecord
 from tests.testkit.unreachable_state import (
+    delete_jobs_by_ids,
     expire_heavy_job_claim,
     forget_job_execution_id,
     make_failed_job_retryable,
     make_pending_job_due,
     read_events,
+    retarget_job_kind,
     set_pending_job_max_attempts,
 )
 from tests.testkit.upload_sessions import ingest_job_count, upload_request
@@ -92,15 +100,21 @@ def _crash_after_publication(*, payload: Mapping[str, Any], context: JobExecutio
     raise RuntimeError("synthetic crash after the source publication committed")
 
 
-def _worker(engine: Engine, *, handler_path: str | None = None) -> JobWorker:
+def _worker(
+    engine: Engine, *, handler_path: str | None = None, kind: str = _SOURCE_KIND
+) -> JobWorker:
+    """The real source worker, restricted to one kind. ``kind`` names a private
+    probe kind when the proof drives the scanning reaper, which would otherwise
+    reach every due ingest row in the shared run database."""
     definition = get_default_registry()[_SOURCE_KIND]
-    if handler_path is not None:
-        definition = dataclasses.replace(definition, handler_path=handler_path)
+    definition = dataclasses.replace(
+        definition, kind=kind, handler_path=handler_path or definition.handler_path
+    )
     return JobWorker(
         session_factory=create_session_factory(engine),
         worker_id=f"source-recovery-{uuid4()}",
-        registry={_SOURCE_KIND: definition},
-        allowed_kinds=(_SOURCE_KIND,),
+        registry={definition.kind: definition},
+        allowed_kinds=(definition.kind,),
     )
 
 
@@ -499,6 +513,135 @@ def test_handler_failure_schedules_a_retry_without_waiting_on_the_owners_media_l
     assert _job(db, first.job_id).execution_id != job.execution_id
 
 
+def test_a_quote_completion_settles_beside_its_running_ingest_transition(
+    import_owner: tuple[Session, UserRecord], engine: Engine
+) -> None:
+    """The X-thread phase completes an embedded quote's in-flight attempt while it
+    holds that quote media ``FOR UPDATE``; the quote's own worker holds the queue
+    row it is failing and needs the media's ``KEY SHARE`` for the seam's history
+    insert. The completion must read the attempt's queue rows without locking
+    them: locking the running row closes the cycle and PostgreSQL kills one side.
+    """
+    db, user = import_owner
+    parent = _publish_small_pdf(db, user, label="x-quote-parent")
+    post_id = str(uuid4().int % 10**18)
+    quote_url = canonical_x_post_url(post_id)
+    accepted = accept_embedded_source(
+        db=db,
+        viewer_id=user.id,
+        url=quote_url,
+        parent_media_id=parent.media_id,
+        document_embed_key=f"x-quote-post:{post_id}",
+        library_ids=[],
+        request_id=None,
+    )
+    enqueue_accepted_source_attempt_in_transaction(
+        db,
+        media_id=accepted.media_id,
+        attempt_id=accepted.source_attempt_id,
+        actor_user_id=user.id,
+        request_id=None,
+    )
+    db.commit()
+    quote_job_id = _attempt(db, accepted.source_attempt_id).job_id
+    assert quote_job_id is not None, "the accepted quote attempt bound no ingest job"
+
+    quote_media_locked = threading.Event()
+    completions: list[str] = []
+
+    def complete_the_quote_under_its_media_lock() -> None:
+        def hold(locked: Media) -> Media:
+            quote_media_locked.set()
+            return locked
+
+        with Session(engine) as phase:
+            quote_media = replace_reader_publication(
+                phase,
+                media_id=accepted.media_id,
+                expected_kind="web_article",
+                replace_projection=hold,
+            )
+            complete_x_post_snapshot_attempt(
+                phase,
+                media=quote_media,
+                source_attempt_id=accepted.source_attempt_id,
+                viewer_id=user.id,
+                post_id=post_id,
+                canonical_url=quote_url,
+                request_id=None,
+            )
+            phase.commit()
+            completions.append("completed")
+
+    thread_phase = threading.Thread(target=complete_the_quote_under_its_media_lock)
+    try:
+        claimed = claim_job(
+            db,
+            job_id=quote_job_id,
+            worker_id="x-quote-worker",
+            lease_seconds=300,
+            heavy_kinds=(_SOURCE_KIND,),
+        )
+        assert claimed is not None
+        db.commit()
+        with Session(engine) as worker:
+            # The worker's own failure transition: fail_job holds the queue row and
+            # the seam records the outcome in that same transaction, exactly as
+            # worker.py settles a handler failure.
+            assert (
+                fail_job(
+                    worker,
+                    job_id=quote_job_id,
+                    worker_id="x-quote-worker",
+                    attempt_no=claimed.job.attempts,
+                    error_code="E_WORKER_HANDLER_FAILED",
+                    error_message="synthetic quote execution failure",
+                    retry_delays_seconds=(60,),
+                )
+                == "failed"
+            )
+            failing = _job(worker, quote_job_id)
+            thread_phase.start()
+            try:
+                assert quote_media_locked.wait(timeout=30), (
+                    "the thread phase never locked the quote media"
+                )
+                apply_history_projection(
+                    worker,
+                    projection="SourceAttempt",
+                    job=failing,
+                    outcome=RetryScheduled(
+                        next_attempt_at=failing.available_at,
+                        error_code="E_WORKER_HANDLER_FAILED",
+                    ),
+                )
+                worker.commit()
+            finally:
+                thread_phase.join(timeout=30)
+        assert completions == ["completed"], (
+            "the quote completion never settled beside its running job's failed transition"
+        )
+
+        completed = _attempt(db, accepted.source_attempt_id)
+        assert (completed.status, completed.error_code) == ("succeeded", None)
+        assert _job(db, quote_job_id).status == "failed"
+        history = _history(db, accepted.media_id)
+        assert [(kind, stage, code) for kind, stage, code, _ in history] == [
+            ("Accepted", "SourceProcessing", None),
+            ("Failed", "SourceProcessing", "E_WORKER_HANDLER_FAILED"),
+            ("RetryScheduled", "SourceProcessing", None),
+            ("Succeeded", "SourceProcessing", None),
+        ], f"history does not narrate the completion beside the failed execution: {history}"
+        assert history[3][3] == {
+            "source_attempt_id": str(accepted.source_attempt_id),
+            "execution_id": {"kind": "Absent"},
+        }
+    finally:
+        db.rollback()
+        delete_jobs_by_ids(db, job_ids=(parent.job_id, quote_job_id))
+        db.commit()
+
+
 def test_expired_claims_record_the_displaced_execution_then_the_terminal_interruption(
     import_owner: tuple[Session, UserRecord], engine: Engine
 ) -> None:
@@ -542,11 +685,11 @@ def test_expired_claims_record_the_displaced_execution_then_the_terminal_interru
     forget_job_execution_id(db, job_id=first.job_id)
     expire_heavy_job_claim(db, job_id=first.job_id)
     db.commit()
-    reaper = _worker(engine)
-    for _ in range(20):
-        if _job(db, first.job_id).status == "dead":
-            break
-        assert reaper.run_once() is True, "no expired exhausted claim was dead-lettered"
+    reaper_kind = "import_source_recovery_expired_lease_probe"
+    retarget_job_kind(db, job_id=first.job_id, kind=reaper_kind)
+    db.commit()
+    reaper = _worker(engine, kind=reaper_kind)
+    assert reaper.run_once() is True, "no expired exhausted claim was dead-lettered"
     dead = _job(db, first.job_id)
     assert (dead.status, dead.error_code, dead.execution_id) == (
         "dead",

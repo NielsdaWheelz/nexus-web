@@ -1468,11 +1468,7 @@ export default function MediaPaneBody() {
             kind: "Source",
             processingStatus: media.processing_status,
             lastErrorCode: media.last_error_code,
-            capabilities: {
-              can_retry: media.capabilities?.can_retry === true,
-              can_refresh_source:
-                media.capabilities?.can_refresh_source === true,
-            },
+            capabilities: { can_retry: media.capabilities?.can_retry === true },
             sourceUrl: media.canonical_source_url,
           });
           return {
@@ -7324,10 +7320,7 @@ export default function MediaPaneBody() {
     kind: "Source",
     processingStatus: media.processing_status,
     lastErrorCode: media.last_error_code,
-    capabilities: {
-      can_retry: media.capabilities?.can_retry === true,
-      can_refresh_source: media.capabilities?.can_refresh_source === true,
-    },
+    capabilities: { can_retry: media.capabilities?.can_retry === true },
     sourceUrl: media.canonical_source_url,
   });
   const retrievalError = mediaErrorMessage({

@@ -18,16 +18,29 @@ from datetime import UTC, datetime
 from typing import Annotated, Literal, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 from pydantic_core import core_schema
 
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.import_history import HistoryCoverage, HistoryEntry, SafeFailureCode, Stage
 from nexus.schemas.media import SourceProgress
 from nexus.schemas.presence import Presence, Present
+from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 from nexus.services.sealed_handles import UploadSessionHandle
 
 NonemptyString = Annotated[str, Field(min_length=1)]
+
+
+def _media_resource_ref(value: str) -> str:
+    parsed = parse_resource_ref(value)
+    if isinstance(parsed, ResourceRefParseFailure) or parsed.scheme != "media":
+        raise ValueError("media_ref must be a canonical media resource ref")
+    return value
+
+
+# The linked media named in the resource-action grammar (`media:<uuid>`), the
+# identity every media action speaks (contract D16).
+MediaResourceRef = Annotated[str, AfterValidator(_media_resource_ref)]
 MediaKind = Literal["web_article", "epub", "pdf", "podcast_episode", "video"]
 WaitingReason = Literal["Queue", "Capacity", "RetryBackoff"]
 ImportView = Literal["NeedsAttention", "InProgress", "History"]
@@ -213,7 +226,7 @@ class ImportItem(BaseModel):
     title: NonemptyString
     media_kind: MediaKind
     source_label: Presence[NonemptyString]
-    media_ref: Presence[UUID]
+    media_ref: Presence[MediaResourceRef]
     state: ImportState
     accepted_at: datetime
     updated_at: datetime
@@ -302,7 +315,7 @@ class ImportListQuery(BaseModel):
     cursor: str | None = None
     limit: int = Field(default=50, ge=1, le=100)
 
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
     def _normalize_and_reject_uncorrelatable_filters(self) -> Self:

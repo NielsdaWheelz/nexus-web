@@ -702,15 +702,6 @@
       "expected_failure": "PDF resource-limit projection lost its typed carrier"
     },
     {
-      "id": "document-import-activity-upload-omission",
-      "patch": "testdata/faults/document-import-activity-upload-omission.patch",
-      "sha256": "9b8b9fc6c27806bb047da3db49597c88d57f3d4464e6e8c2b909a1e124284e30",
-      "proofs": [
-        "pytest:python/tests/service/test_media_activity.py::test_activity_projects_only_upload_obligations_with_strict_precedence"
-      ],
-      "expected_failure": "assert 0 == 3"
-    },
-    {
       "id": "document-import-reconciler-readiness-bypass",
       "patch": "testdata/faults/document-import-reconciler-readiness-bypass.patch",
       "sha256": "6745f440dd18b8424b582891df4639b0d6fb51e5ba0ddd5ec8fe5a2181e42254",
@@ -765,24 +756,6 @@
         "pytest:python/tests/service/test_upload_confirm_failed_fact.py"
       ],
       "expected_failure": "assert ['ConfirmStarted'] == ['ConfirmStar...onfirmFailed']"
-    },
-    {
-      "id": "document-import-upload-publication-silence-bypass",
-      "patch": "testdata/faults/document-import-upload-publication-silence-bypass.patch",
-      "sha256": "7ed32911f0ffd4576efdb7a275ec84f6620fa335fd81ef9d608d8271a36011c2",
-      "proofs": [
-        "pytest:python/tests/service/test_media_activity_published_upload_silence.py"
-      ],
-      "expected_failure": "== ['unpublished.epub']"
-    },
-    {
-      "id": "document-import-activity-upload-badge-truncation",
-      "patch": "testdata/faults/document-import-activity-upload-badge-truncation.patch",
-      "sha256": "0d84ce1bf234d5684efe9824981a7df4693bcbdddb69d0e7885c704b809b8737",
-      "proofs": [
-        "pytest:python/tests/service/test_media_activity_upload_badge_bound.py"
-      ],
-      "expected_failure": "assert 2 == 3"
     },
     {
       "id": "document-import-epub2-doctype-rejection",

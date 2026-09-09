@@ -92,6 +92,7 @@ import type { OfflineMediaInventoryItem } from "@/lib/offlineMedia/clientStore";
 import { useOfflineReadingCapability } from "@/lib/offlineReading/OfflineReadingProvider";
 import type { ReadingAvailability } from "@/lib/offlineReading/contract";
 import { present } from "@/lib/api/presence";
+import { IMPORTS_CONFLICT_NOTICE } from "@/lib/status/imports";
 import { useShareController } from "@/lib/sharing/controller";
 import {
   useLibraryPlacementController,
@@ -1259,9 +1260,24 @@ function confirmResourceAction(
 
 /** The one exhaustive owner mapping an expected dispatch error to HUD copy. */
 function dispatchErrorContent(
+  intent: ResourceActionIntent,
   actionLabel: string,
   error: unknown,
 ): FeedbackContent {
+  // An import recovery that named an identity the server has already moved past
+  // is not a failed action: the reader is looking at work that changed under
+  // them, and the copy owner words that one way for every surface that plans
+  // these three intents (contract §5, D7). No other subject carries an
+  // inspected identity, so no other subject gets import wording.
+  if (
+    (intent.kind === "RetrySource" ||
+      intent.kind === "RepairSource" ||
+      intent.kind === "RepairSearch") &&
+    isApiError(error) &&
+    error.code === "E_RESOURCE_CONFLICT"
+  ) {
+    return { ...IMPORTS_CONFLICT_NOTICE, requestId: error.requestId };
+  }
   const message =
     isApiError(error) || error instanceof Error ? error.message : undefined;
   const requestId = isApiError(error) ? error.requestId : undefined;
@@ -1604,6 +1620,7 @@ export function ResourceActionRuntimeProvider({
               currentPorts.feedback.publish({
                 kind: "Hud",
                 content: dispatchErrorContent(
+                  input.intent,
                   input.label,
                   settlement.commandError,
                 ),
@@ -1635,7 +1652,7 @@ export function ResourceActionRuntimeProvider({
           if (isApiError(error) && !isSameSystemApiDefect(error)) {
             currentPorts.feedback.publish({
               kind: "Hud",
-              content: dispatchErrorContent(input.label, error),
+              content: dispatchErrorContent(input.intent, input.label, error),
             });
             return;
           }

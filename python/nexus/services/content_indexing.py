@@ -1546,6 +1546,40 @@ def repair_dead_media_reindex(
     return admit_serializable(db, "repair_dead_media_reindex", admit)
 
 
+def current_search_repair_offer(db: Session, *, media_id: UUID) -> RepairSearchOffer | None:
+    """The search repair an operator could admit for this media right now, or
+    ``None``. The read ends here: an internal route resolves the identity it
+    will name, then the admission opens its own serializable transaction."""
+    revision = db.execute(
+        text(
+            """
+            SELECT revision
+            FROM content_index_states
+            WHERE owner_kind = 'media' AND owner_id = :media_id
+            """
+        ),
+        {"media_id": media_id},
+    ).scalar_one_or_none()
+    offer = None
+    if revision is not None:
+        revision = _validated_media_revision(revision)
+        dead = current_dead_job_for_payload(
+            db,
+            kind=MEDIA_CONTENT_REINDEX_JOB_KIND,
+            expected_payload_match={"media_id": str(media_id), "revision": revision},
+        )
+        offer = search_recovery(
+            SearchRecoveryFacts(
+                revision=revision,
+                dead_job_id=None if dead is None else dead.id,
+                is_creator=False,
+                is_admin=True,
+            )
+        )
+    db.rollback()
+    return offer if isinstance(offer, RepairSearchOffer) else None
+
+
 def _lock_media_for_reindex(db: Session, media_id: UUID) -> None:
     """Hold the media row for a transaction that goes on to lock its queue rows.
 

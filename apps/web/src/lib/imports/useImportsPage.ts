@@ -93,32 +93,26 @@ export function useImportsPage(
   // key leaves: returning to an earlier key (filters back and forth on one
   // revision) must never shadow the read that key is making now with a page
   // captured before the detour.
-  const keyRef = useRef(cacheKey);
-  if (keyRef.current !== cacheKey) {
-    keyRef.current = cacheKey;
-    if (live !== null) setLive(null);
-  }
+  if (live !== null && live.key !== cacheKey) setLive(null);
 
   const keyedPage = keyed.status === "ready" ? keyed.data : null;
   const page = live !== null && live.key === cacheKey ? live.page : keyedPage;
 
-  const shownRef = useRef<{ readonly key: string; readonly page: ImportPage } | null>(
-    null,
-  );
-  shownRef.current = page === null ? null : { key: cacheKey, page };
+  // What the effect below re-reads: the page committed with the key it is
+  // running for, since an effect runs against the render that scheduled it.
+  const shownRef = useRef<ImportPage | null>(null);
+  shownRef.current = page;
   const activeRef = useRef(0);
   activeRef.current = summary?.activeCount ?? 0;
-  const queryRef = useRef(query);
-  queryRef.current = query;
 
-  // A new revision re-keys the read above, so the observation carrying it is
-  // already answered by that read and must not read page one a second time.
-  const rekeyedRef = useRef(false);
-  const revisionRef = useRef(observation.revision);
-  if (revisionRef.current !== observation.revision) {
-    revisionRef.current = observation.revision;
-    rekeyedRef.current = true;
-  }
+  // The observation revision the shown page was read for. An observation that
+  // moved the revision re-keyed the read above and is answered by that keyed
+  // read alone, so it must not read page one a second time; every later
+  // observation is this pane's five-second tick. Only the provider's revision
+  // marks it: a query the reader changed re-keys the read too, and it is not an
+  // observation, so it must not cost the reader a tick.
+  const revision = observation.revision;
+  const tickedRevisionRef = useRef(revision);
 
   // The provider's observation is the only clock here: a new `observedAt` is one
   // successful summary read, which is this pane's five-second tick.
@@ -127,20 +121,19 @@ export function useImportsPage(
   useEffect(() => {
     const previous = lastObservedRef.current;
     lastObservedRef.current = observedAt;
-    const shown = shownRef.current;
     // The provider's first observation is the read the keyed resource made.
     if (previous === null || previous === observedAt) return;
-    if (rekeyedRef.current) {
-      rekeyedRef.current = false;
-      return;
-    }
+    const ticked = tickedRevisionRef.current;
+    tickedRevisionRef.current = revision;
+    if (ticked !== revision) return;
+    const shown = shownRef.current;
     if (shown === null || activeRef.current === 0) return;
     const controller = new AbortController();
     void (async () => {
       let next: ImportPage;
       try {
         next = await fetchImportPage({
-          query: new URLSearchParams(queryRef.current),
+          query: new URLSearchParams(query),
           cursor: absent(),
           signal: controller.signal,
         });
@@ -149,11 +142,11 @@ export function useImportsPage(
         return;
       }
       if (controller.signal.aborted) return;
-      if (shownItems(next) === shownItems(shown.page)) return;
-      setLive({ key: shown.key, page: next });
+      if (shownItems(next) === shownItems(shown)) return;
+      setLive({ key: cacheKey, page: next });
     })();
     return () => controller.abort();
-  }, [absorbRereadFailure, observedAt]);
+  }, [absorbRereadFailure, cacheKey, observedAt, query, revision]);
 
   const firstPage = useMemo<AsyncResource<CursorPage<ImportItem>>>(() => {
     if (page !== null) return { status: "ready", data: cursorPage(page) };

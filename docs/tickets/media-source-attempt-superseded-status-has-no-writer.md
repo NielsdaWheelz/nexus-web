@@ -9,7 +9,7 @@
 
 `ck_media_source_attempts_status` has admitted `'superseded'` since
 `migrations/alembic/versions/0133_media_source_attempts.py:67`, and
-`services/media_activity.py` classifies it as terminal-complete alongside
+`services/imports.py` classifies it as terminal-complete alongside
 `'succeeded'` (lines 160–192). No code in `python/nexus/` ever writes it:
 `services/media_source_ingest.py` returns a `{"status": "superseded"}` *job
 result*, never an attempt status, and no migration sets one.

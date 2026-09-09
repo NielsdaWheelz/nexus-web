@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.imports import (
@@ -28,7 +28,13 @@ from nexus.schemas.imports import (
     format_import_ref,
     parse_import_ref,
 )
-from nexus.schemas.media import SourceCountedProgress, SourceRepairRequest
+from nexus.schemas.media import (
+    MediaRepairRequest,
+    RetryRequest,
+    RetryUploadSessionRequest,
+    SourceCountedProgress,
+    SourceRepairRequest,
+)
 from nexus.schemas.presence import absent, present
 
 SESSION_HANDLE = "nup1.ERERERERQRGBEREREREREQ.AAECAwQFBgcICQoLDA0ODw"
@@ -247,7 +253,7 @@ def test_import_page_round_trips_the_row_the_pane_renders() -> None:
                 title="The Darkness That Comes Before",
                 media_kind="pdf",
                 source_label=present("uploaded file"),
-                media_ref=present(MEDIA_ID),
+                media_ref=present(f"media:{MEDIA_ID}"),
                 state=ImportStateActive(
                     status="Processing",
                     stage="Extract",
@@ -289,7 +295,7 @@ def test_import_page_round_trips_the_row_the_pane_renders() -> None:
                 "title": "The Darkness That Comes Before",
                 "media_kind": "pdf",
                 "source_label": {"kind": "Present", "value": "uploaded file"},
-                "media_ref": {"kind": "Present", "value": str(MEDIA_ID)},
+                "media_ref": {"kind": "Present", "value": f"media:{MEDIA_ID}"},
                 "state": {
                     "kind": "Active",
                     "status": "Processing",
@@ -334,3 +340,89 @@ def test_import_page_round_trips_the_row_the_pane_renders() -> None:
                 "items": [{**dumped["items"][0], "source_label": {"kind": "Present", "value": ""}}],
             }
         )
+    # The linked media is the resource-action grammar's ref, never a bare id.
+    with pytest.raises(ValidationError, match="media resource ref"):
+        ImportPage.model_validate(
+            {
+                **dumped,
+                "items": [
+                    {**dumped["items"][0], "media_ref": {"kind": "Present", "value": str(MEDIA_ID)}}
+                ],
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    ("case", "body"),
+    [
+        ("retry_without_a_stage", {"client_mutation_id": CLIENT_MUTATION_ID}),
+        ("retry_from_an_unknown_stage", {"from_stage": "index"}),
+        (
+            "source_retry_without_its_inspected_attempt",
+            {"from_stage": "source", "client_mutation_id": CLIENT_MUTATION_ID},
+        ),
+        (
+            "metadata_retry_carrying_source_fields",
+            {"from_stage": "metadata", "expected_attempt_id": str(MEDIA_ID)},
+        ),
+    ],
+)
+def test_retry_request_admits_only_one_closed_stage_variant(
+    case: str, body: dict[str, object]
+) -> None:
+    with pytest.raises(ValidationError):
+        TypeAdapter(RetryRequest).validate_python(body)
+
+
+@pytest.mark.parametrize(
+    ("case", "body"),
+    [
+        ("repair_without_a_kind", {"client_mutation_id": CLIENT_MUTATION_ID}),
+        ("repair_of_an_unknown_kind", {**_repair_body(CLIENT_MUTATION_ID), "kind": "Metadata"}),
+        (
+            "search_repair_carrying_source_identity",
+            {
+                "kind": "Search",
+                "client_mutation_id": CLIENT_MUTATION_ID,
+                "expected_attempt_id": str(MEDIA_ID),
+                "expected_job_id": str(JOB_ID),
+            },
+        ),
+        (
+            "search_repair_without_its_revision",
+            {
+                "kind": "Search",
+                "client_mutation_id": CLIENT_MUTATION_ID,
+                "expected_job_id": str(JOB_ID),
+            },
+        ),
+    ],
+)
+def test_repair_request_admits_only_one_closed_scope_variant(
+    case: str, body: dict[str, object]
+) -> None:
+    with pytest.raises(ValidationError):
+        TypeAdapter(MediaRepairRequest).validate_python(body)
+
+
+@pytest.mark.parametrize(
+    ("case", "omitted"),
+    [
+        ("without_its_replay_key", "client_mutation_id"),
+        ("without_the_generation_it_inspected", "expected_generation"),
+    ],
+)
+def test_upload_retry_request_requires_its_replay_key_and_inspected_generation(
+    case: str, omitted: str
+) -> None:
+    body: dict[str, object] = {
+        "filename": "book.epub",
+        "content_type": "application/epub+zip",
+        "size_bytes": 4096,
+        "client_mutation_id": CLIENT_MUTATION_ID,
+        "expected_generation": 2,
+    }
+    del body[omitted]
+
+    with pytest.raises(ValidationError, match=omitted):
+        RetryUploadSessionRequest.model_validate(body)

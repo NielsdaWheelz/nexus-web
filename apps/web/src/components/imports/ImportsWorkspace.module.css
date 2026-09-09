@@ -1,0 +1,175 @@
+.workspace {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.brief {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.freshness {
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+}
+
+.search {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+/* No shared date control exists; this is the raw input with a visible label. */
+.dateField {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+}
+
+.dateField input {
+  min-height: var(--size-xl);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: var(--text-sm);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.rowActions {
+  display: contents;
+}
+
+.rowStatus {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.rowStatusLine {
+  color: var(--ink);
+}
+
+.rowReason,
+.rowMatched {
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  color: var(--ink-muted);
+}
+
+.empty strong {
+  color: var(--ink);
+  font-size: var(--text-md);
+}
+
+.inspector {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.inspectorState {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.inspectorActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.inspectorEmpty {
+  padding: var(--space-4);
+  color: var(--ink-muted);
+}
+
+.attempt {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding-block: var(--space-2);
+  border-top: 1px solid var(--edge-subtle);
+}
+
+.attemptTitle {
+  font-size: var(--text-sm);
+  color: var(--ink-muted);
+}
+
+.attemptEvents {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+}
+
+.attemptEvents li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: space-between;
+}
+
+.attemptEvents time {
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+}
+
+.diagnostics {
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+}
+
+.diagnostics dl {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+
+.diagnostics div {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.diagnostics dt {
+  min-width: var(--space-20);
+  color: var(--ink-faint);
+}
+
+/* Touch keeps every command at a full target while the desktop rows stay compact. */
+@media (pointer: coarse) {
+  .rowActions button,
+  .rowActions [role="button"],
+  .inspectorActions button {
+    min-height: var(--size-xl);
+  }
+}

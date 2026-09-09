@@ -42,7 +42,7 @@ from nexus.jobs.queue import (
     JobExecutionContext,
     current_dead_job_for_payload,
     enqueue_job,
-    lock_jobs_for_payload,
+    find_nonterminal_jobs_for_payload,
     requeue_dead_job,
     supersede_unclaimed_job,
 )
@@ -459,7 +459,14 @@ def complete_x_post_snapshot_attempt(
             # ownership yet.
             raise AssertionError("accepted X-post source attempt unexpectedly owns a job")
         if attempt.status in {_ATTEMPT_QUEUED, _ATTEMPT_RUNNING}:
-            jobs = lock_jobs_for_payload(
+            # This runs under the quote media's publication lock, which the queue
+            # seam's history insert needs as KEY SHARE: waiting on any queue row a
+            # worker holds would wait on the worker that is waiting on this media.
+            # So read the attempt's jobs unlocked and supersede without waiting
+            # (``supersede_unclaimed_job`` skips a row another transaction holds);
+            # a claimed execution cannot publish over the succeeded attempt this
+            # commits (``require_source_publication`` fences on attempt status).
+            jobs = find_nonterminal_jobs_for_payload(
                 db,
                 kind="ingest_media_source",
                 expected_payload_match={"attempt_id": str(attempt.id)},
@@ -467,7 +474,7 @@ def complete_x_post_snapshot_attempt(
             exact_jobs = [job for job in jobs if job.id == attempt.job_id]
             if len(exact_jobs) != 1:
                 # justify-defect: an in-flight source attempt owns one exact
-                # durable ingest job through its job_id and payload.
+                # nonterminal ingest job through its job_id and payload.
                 raise AssertionError("in-flight X-post attempt has no exact ingest job")
             job = exact_jobs[0]
             if (
@@ -1986,6 +1993,25 @@ def repair_dead_source_execution(
         return admission
 
     return admit_serializable(db, "repair_dead_source_execution", admit)
+
+
+def current_source_repair_offer(db: Session, *, media_id: UUID) -> RepairSourceOffer | None:
+    """The source repair an operator could admit for this media right now, or
+    ``None``. The read ends here: an internal route resolves the identity it
+    will name, then the admission opens its own serializable transaction."""
+    media = db.get(Media, media_id)
+    attempt = None if media is None else _latest_source_attempt(db, media_id)
+    offer = (
+        None
+        if media is None or attempt is None
+        else source_recovery(
+            _source_recovery_facts(
+                db, media=media, attempt=attempt, is_creator=False, is_admin=True
+            )
+        )
+    )
+    db.rollback()
+    return offer if isinstance(offer, RepairSourceOffer) else None
 
 
 def refresh_source_for_viewer(

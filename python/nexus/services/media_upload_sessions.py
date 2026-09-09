@@ -498,6 +498,17 @@ def create_upload_session(
     idempotency_key: str | None,
     storage_client: StorageClientBase | None = None,
 ) -> UploadSessionResponse:
+    """Accept one upload intent and mint the capability for its current generation.
+
+    The idempotency key identifies the intent, not one capability: every create is
+    a new explicit command, so a live generation is re-signed here and its expiry
+    extended, while a stolen verification lease, a transport failure, or a lapsed
+    capability advances the generation instead (fencing the abandoned bytes behind
+    a new staging path). ``retry_upload_session`` is the other half of that
+    contract: its replay re-mints only the generation it memoized, for that memo's
+    remaining life, so a replayed retry reports ``CapabilityExpired`` where a fresh
+    create still hands back a usable capability.
+    """
     intent = _normalize_intent(request)
     clean_key = _clean_idempotency_key(idempotency_key)
     clean_request_id = _clean_request_id(request_id)
