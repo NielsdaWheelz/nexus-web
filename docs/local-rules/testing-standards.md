@@ -452,6 +452,14 @@ push runs `./scripts/test full`, which is the release proof. `scripts/test`
 is a thin locked launcher; `scripts/agency_verify.sh` is a thin `confidence`
 adapter. The Makefile deliberately has no test/check/verify aliases.
 
+The controller gives real-stack browser capabilities one clean data epoch. It
+recreates the exact run-owned application database from the immutable template
+and empties the exact run-owned bucket under the run lifecycle lock before any
+browser API or worker process starts. It refuses an absent/malformed resource
+or an active database consumer. Committed service/evaluation proof state must
+never become an implicit journey fixture; browser capabilities may share the
+resulting epoch only after that explicit boundary.
+
 On a persistent self-hosted runner, a workflow artifact MUST contain only the
 single `test-results/runs/<run-id>` directory claimed by that workflow's test
 invocation. The CI adapter snapshots the existing run namespace before calling
@@ -460,7 +468,11 @@ symlinks, special files, foreign ownership, or concurrent ambiguity, and stages
 that directory beneath the runner-owned private temporary root. It never
 deletes local historical evidence to manufacture isolation. The upload is
 mandatory whenever an exact directory was claimed, including a failing run,
-and the exact staging directory is removed after the upload attempt.
+and the exact staging directory is removed after the upload attempt. Because
+GitHub discards step outputs from a failed step, the adapter returns success
+only after staging validated evidence and publishes the canonical proof result
+as data. A final always-run step enforces that result after upload and cleanup;
+an adapter, upload, cleanup, `fail`, or `not_run` outcome still fails the job.
 
 | Command | Required meaning |
 |---|---|

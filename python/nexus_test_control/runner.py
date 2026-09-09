@@ -120,6 +120,7 @@ from nexus_test_control.services import (
     new_run_id,
     prepare_run,
     required_platform_process_tools,
+    reset_run_data_plane,
     resolve_adb,
     run_environment,
     start_python_process,
@@ -707,6 +708,14 @@ class _RunnerPorts:
     ) -> None:
         clean_run(repo_root, environment, run_id, supabase=supabase)
 
+    def reset_run_data_plane(
+        self,
+        repo_root: Path,
+        environment: Mapping[str, str],
+        run: TestRun,
+    ) -> None:
+        reset_run_data_plane(repo_root, environment, run)
+
     def browser_installed(self, repo_root: Path, environment: Mapping[str, str]) -> bool:
         return _browser_installed(repo_root, environment)
 
@@ -841,6 +850,7 @@ class _WorkflowExecution:
     external_protocol_started: bool = False
     provider_api_peer: ProviderApiPeer | None = None
     journey_runtime_started: bool = False
+    browser_data_plane_prepared: bool = False
     preparation_attempted: bool = False
     preparation_failure: CapabilityResult | None = None
 
@@ -2741,6 +2751,13 @@ def _ensure_browser_processes(
     if execution.build is None:
         raise AssertionError("browser runtime requires the retained standalone artifact")
     try:
+        if not execution.browser_data_plane_prepared:
+            execution.ports.reset_run_data_plane(
+                context.repo_root,
+                {"NEXUS_ENV": "test"},
+                prepared,
+            )
+            execution.browser_data_plane_prepared = True
         protocol_failure = execution.ensure_external_protocol(capability, prepared)
         if protocol_failure is not None:
             return protocol_failure
@@ -2843,7 +2860,7 @@ def _ensure_browser_processes(
         return _not_run(
             capability, f"owned browser runtime could not start: {error.strerror or error}"
         )
-    except RuntimeContractError as error:
+    except (BotoCoreError, RuntimeContractError, psycopg.Error) as error:
         return _fail(capability, f"owned browser runtime failed: {error}")
     execution.journey_runtime_started = True
     return None

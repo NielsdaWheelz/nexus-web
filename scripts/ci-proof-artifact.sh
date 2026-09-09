@@ -201,6 +201,7 @@ run_proof() {
 
   local summary="$run_directory/summary.json"
   local run_context="$run_directory/run-context.json"
+  local proof_result="incomplete"
   if [ -f "$summary" ]; then
     if [ ! -f "$run_context" ]; then
       die "terminal run evidence has no run-context artifact"
@@ -222,10 +223,9 @@ run_proof() {
       ' "$summary" >/dev/null; then
       die "terminal run evidence does not match the CI invocation"
     fi
-    local summary_status
-    summary_status="$(jq -r .status "$summary")"
-    if { [ "$test_status" -eq 0 ] && [ "$summary_status" != "pass" ]; } \
-      || { [ "$test_status" -ne 0 ] && [ "$summary_status" = "pass" ]; }; then
+    proof_result="$(jq -r .status "$summary")"
+    if { [ "$test_status" -eq 0 ] && [ "$proof_result" != "pass" ]; } \
+      || { [ "$test_status" -ne 0 ] && [ "$proof_result" = "pass" ]; }; then
       die "terminal run evidence disagrees with the test exit status"
     fi
   elif [ "$test_status" -eq 0 ]; then
@@ -238,9 +238,26 @@ run_proof() {
   evidence_workspace="$(validated_evidence_workspace "$evidence_workspace")"
   mkdir -m 700 -- "$evidence_workspace/runs"
   cp --archive --reflink=auto -- "$run_directory" "$evidence_workspace/runs/"
-  printf 'path=%s\n' "$evidence_workspace" >>"$github_output"
+  printf 'path=%s\nresult=%s\n' \
+    "$evidence_workspace" "$proof_result" >>"$github_output"
 
-  return "$test_status"
+  # GitHub does not publish GITHUB_OUTPUT values from a failed step. Return
+  # success only after the exact evidence is validated and staged; the workflow
+  # enforces proof_result after its mandatory upload and guarded cleanup.
+  return 0
+}
+
+enforce() {
+  if [ "$#" -ne 1 ]; then
+    die "enforce expects one proof result"
+  fi
+  case "$1" in
+    pass) return 0 ;;
+    fail|not_run|incomplete)
+      die "canonical test proof concluded $1"
+      ;;
+    *) die "proof result is absent or invalid" ;;
+  esac
 }
 
 cleanup() {
@@ -261,6 +278,7 @@ if [ "$#" -gt 0 ]; then
 fi
 case "$operation" in
   run) run_proof "$@" ;;
+  enforce) enforce "$@" ;;
   cleanup) cleanup "$@" ;;
-  *) die "usage: ci-proof-artifact.sh run TEST-ARGS...|cleanup PATH" ;;
+  *) die "usage: ci-proof-artifact.sh run TEST-ARGS...|enforce RESULT|cleanup PATH" ;;
 esac

@@ -391,6 +391,8 @@ def test_ci_routes_dispatch_only_to_exact_pr_recovery_and_keeps_full_on_main_pus
     assert workflow.count("include-hidden-files: true") == 2
     assert "path: test-results/" not in workflow
     assert workflow.count('scripts/ci-proof-artifact.sh cleanup "$NEXUS_CI_EVIDENCE_PATH"') == 2
+    assert workflow.count('scripts/ci-proof-artifact.sh enforce "$NEXUS_CI_PROOF_RESULT"') == 2
+    assert workflow.count("NEXUS_CI_PROOF_RESULT: ${{ steps.proof.outputs.result }}") == 2
     recovery = _step_script("Construct the exact PR merge")
     step_environment = _step_environment("Construct the exact PR merge")
     assert {key: step_environment.get(key) for key in SYNTHETIC_IDENTITY} == (SYNTHETIC_IDENTITY)
@@ -441,12 +443,15 @@ def test_ci_artifact_owner_stages_only_the_run_claimed_by_this_invocation(
         text=True,
     )
 
-    assert completed.returncode == test_status, completed.stderr
+    assert completed.returncode == 0, completed.stderr
     assert completed.stdout == ""
     assert completed.stderr == ""
     output = github_output.read_text(encoding="utf-8")
-    assert output.startswith("path=") and output.endswith("\n") and output.count("\n") == 1
-    evidence_workspace = Path(output.removeprefix("path=").strip())
+    output_lines = output.splitlines()
+    assert len(output_lines) == 2
+    assert output_lines[0].startswith("path=")
+    assert output_lines[1] == f"result={'pass' if test_status == 0 else 'fail'}"
+    evidence_workspace = Path(output_lines[0].removeprefix("path="))
     assert evidence_workspace.parent == runner_temp
     assert evidence_workspace.name.startswith("nexus-ci-evidence.")
     assert evidence_workspace.stat().st_mode & 0o777 == 0o700
@@ -490,6 +495,49 @@ def test_ci_artifact_owner_stages_only_the_run_claimed_by_this_invocation(
     )
     assert cleaned.returncode == 0, cleaned.stderr
     assert not evidence_workspace.exists()
+
+    enforced = subprocess.run(
+        (str(CI_ARTIFACT_OWNER), "enforce", output_lines[1].removeprefix("result=")),
+        cwd=repository,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert enforced.returncode == (0 if test_status == 0 else 1)
+    assert enforced.stdout == ""
+    assert enforced.stderr == (
+        "" if test_status == 0 else "error: canonical test proof concluded fail\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("result", "expected_status", "expected_error"),
+    (
+        ("pass", 0, ""),
+        ("fail", 1, "error: canonical test proof concluded fail\n"),
+        ("not_run", 1, "error: canonical test proof concluded not_run\n"),
+        ("incomplete", 1, "error: canonical test proof concluded incomplete\n"),
+        ("", 1, "error: proof result is absent or invalid\n"),
+        ("unexpected", 1, "error: proof result is absent or invalid\n"),
+    ),
+)
+def test_ci_artifact_owner_enforces_every_proof_result(
+    result: str,
+    expected_status: int,
+    expected_error: str,
+) -> None:
+    completed = subprocess.run(
+        (str(CI_ARTIFACT_OWNER), "enforce", result),
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == expected_status
+    assert completed.stdout == ""
+    assert completed.stderr == expected_error
 
 
 def test_ci_artifact_owner_rejects_ambiguous_new_run_evidence(tmp_path: Path) -> None:
