@@ -360,7 +360,9 @@ async def _prove_total_policy_and_frozen_admission() -> None:
         )
         admitted[operation] = spec
         assert spec.selection == operation_policy.selection
-        assert spec.policy_revision == policy.revision
+        assert spec.policy_revision == policy.revision, (
+            "background admission replaced the frozen policy revision"
+        )
         assert spec.selection_source == "BackgroundPolicy"
         assert generation_spec_document(spec).value == spec.model_dump(mode="json", by_alias=True)
 

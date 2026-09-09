@@ -366,7 +366,9 @@ async def _prove_machine_authorship_lifecycle(engine: Engine) -> None:
     )
     for tool_id, expected_kinds in expected_target_kinds.items():
         tool = writes[tool_id]
-        assert tuple(item.target_kind for item in tool.machine_authorships) == expected_kinds
+        assert tuple(item.target_kind for item in tool.machine_authorships) == expected_kinds, (
+            "trust projection omitted durable machine authorship from a successful additive write"
+        )
         ref_targets = {
             (result_kind_to_target_kind[str(ref["kind"])], UUID(str(ref["id"])))
             for ref in tool.result_refs

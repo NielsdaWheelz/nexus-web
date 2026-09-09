@@ -109,6 +109,20 @@ behavioral assertion. Each exception pins one reviewed exact owner and one
 product-only fault with an explicit assertion fingerprint. Existing unrelated
 BASE proofs retain their original sensitivity mode.
 
+Five retained exact owners also use coherent faults. The transport-plan and
+generation-policy fixtures require `ToolBinding.implementation_revision`, which
+the baseline dependency rejects before either contract is exercised. The
+machine-authorship scenario awaits the now-asynchronous executor factory; the
+baseline factory returns a synchronous object. The backend event-projection
+owner includes adapted runtime support, but its native-evidence boundary is
+unchanged from BASE. Browse's provider fixture adds the new
+attempt callback while preserving its existing result/provenance contract,
+which BASE already implements. Their faults respectively omit provider tool
+publication, substitute frozen policy identity, omit machine authorship from
+the trust projection, expose private continuation material, and discard opaque
+search provenance. The immutable-tools-pin owner retains BASE: its exact pin
+assertion remains reachable before dependency-specific behavior executes.
+
 New independent faults cover native and API terminal tails, implementation
 authority, database event-loop progress, atomic effect/receipt settlement,
 historical read-only projection, migration drain, durable orchestration stops,

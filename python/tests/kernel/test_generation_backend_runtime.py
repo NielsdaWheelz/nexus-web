@@ -187,7 +187,9 @@ def test_closed_backend_event_projection_retains_codex_terminal_truth() -> None:
     assert isinstance(public_outcome, Succeeded)
     assert public_outcome.meta is meta
     assert public_outcome.response.content.text == "safe answer"
-    assert isinstance(public_outcome.response.continuation, RuntimeAbsent)
+    assert isinstance(public_outcome.response.continuation, RuntimeAbsent), (
+        "observable terminal exposed private provider continuation material"
+    )
     assert "must-not-cross-observer-boundary" not in repr(provider_terminal)
 
 

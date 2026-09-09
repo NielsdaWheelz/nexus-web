@@ -968,6 +968,61 @@
       "expected_failure": "host cancellation replaced the original paid native terminal",
       "changed_owner_red": "coherent-fault",
       "changed_owner_sha256": "2e3adaa7f5ee61b9e22e68e3c2f42910429d782664e17b9e59922053dab4ebbc"
+    },
+    {
+      "id": "generation-observer-continuation-disclosure",
+      "patch": "testdata/faults/generation-observer-continuation-disclosure.patch",
+      "sha256": "1b1eb6669af9a1890448f4d79adcf251df8e7cb7a116fc32f9c6957a5554ecd4",
+      "proofs": [
+        "pytest:python/tests/kernel/test_generation_backend_runtime.py::test_closed_backend_event_projection_retains_codex_terminal_truth"
+      ],
+      "expected_failure": "observable terminal exposed private provider continuation material",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "76bd914ede2b93193676e4992c0822c64abdc7eb626ff739a2b6655d44c6efc5"
+    },
+    {
+      "id": "generation-provider-publication-omission",
+      "patch": "testdata/faults/generation-provider-publication-omission.patch",
+      "sha256": "1641fafff99afe9a4fe5d0478d756f6789593ead5fd79685863ce884c75add8f",
+      "proofs": [
+        "pytest:python/tests/kernel/test_generation_transport_projection.py::test_one_plan_lowers_to_both_transport_contracts"
+      ],
+      "expected_failure": "Native model-tool plan lost its provider publication",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "beef9bc531d3011c97f071788fa841f6a59a9e08efae42f2aa9d249779d9f566"
+    },
+    {
+      "id": "generation-frozen-policy-substitution",
+      "patch": "testdata/faults/generation-frozen-policy-substitution.patch",
+      "sha256": "e1b1c1260a38091819bb9b36967dfa374c3e78415de9b6ac14eb3321924b055a",
+      "proofs": [
+        "pytest:python/tests/service/test_generation_policy.py::test_total_policy_and_frozen_admission_contract"
+      ],
+      "expected_failure": "background admission replaced the frozen policy revision",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "8d2f2c6bd1b771c30b232883de4bc9e9a6583f3f319f1848f83fe3d8fb4fd3d4"
+    },
+    {
+      "id": "browse-search-provenance-omission",
+      "patch": "testdata/faults/browse-search-provenance-omission.patch",
+      "sha256": "5a3ec81e9522b8fee7047fc448594c8476590a447b5b53a9b8f32a44e3bdaa4b",
+      "proofs": [
+        "pytest:python/tests/service/test_llm_tools_browse.py::test_browse_preserves_normalized_provider_results_after_rename"
+      ],
+      "expected_failure": "Browse target discarded the provider's opaque search provenance",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "6f175a0aa204c67ea0703ceaa41fdcc806a67895da4edf30b992d0cb02fb9c2f"
+    },
+    {
+      "id": "machine-authorship-trust-projection-omission",
+      "patch": "testdata/faults/machine-authorship-trust-projection-omission.patch",
+      "sha256": "5a5449d44aaeccf12dff28ce797c5f203e47e2527be3d10bbd9a6dff5f839fea",
+      "proofs": [
+        "pytest:python/tests/service/test_machine_authorship.py::test_all_additive_writes_publish_durable_authorship_into_later_model_reads"
+      ],
+      "expected_failure": "trust projection omitted durable machine authorship from a successful additive write",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "4dd9736c43d300a33a3c5fa32f8e48c0ccdf1678de2da0d10eb383c111b6a537"
     }
   ]
 }

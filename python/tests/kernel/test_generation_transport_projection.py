@@ -205,7 +205,7 @@ def test_one_plan_lowers_to_both_transport_contracts() -> None:
 
     chat_read = runtime.operations["ChatRead"]
     provider = project_provider_model_tools(chat_read)
-    assert provider is not None
+    assert provider is not None, "Native model-tool plan lost its provider publication"
     expected_aliases = tuple(value.replace(".", "__") for value in expected["ChatRead"][0])
     assert tuple(tool.name for tool in provider.tools) == expected_aliases
     for tool, spec in zip(provider.tools, operation_tool_specs(chat_read), strict=True):
