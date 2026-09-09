@@ -1570,8 +1570,6 @@ export function useNexusController(): NexusController {
               sessionId: startAddSession(detail.seed),
               activation: PROGRAMMATIC_ADOPT_NEXUS_TARGET_ACTIVATION,
             });
-          } else if (detail.kind === "Activity") {
-            setPage({ kind: "Activity" });
           } else if (detail.kind === "UnsupportedLink") {
             setPage({ kind: "UnsupportedLink" });
           } else {
@@ -1781,9 +1779,7 @@ export function useNexusController(): NexusController {
       ? addSession.state.branch === "Opml"
         ? "Import OPML"
         : "Add content"
-      : page.kind === "Activity"
-        ? "Activity"
-        : "Nexus";
+      : "Nexus";
   const focusKey =
     page.kind === "Add"
       ? `${addSession.state.sessionId}:${addSession.state.branch}:${addSession.state.initialFocus}`

@@ -265,7 +265,7 @@
       ],
       "expected_failure": "expired attempt failed the reclaimed live attempt",
       "changed_owner_red": "coherent-fault",
-      "changed_owner_sha256": "a0a3c95e3a5298fc7a9f91549b0b2ffeadcad5ed9986a7291f76cd7ed180fe1a"
+      "changed_owner_sha256": "3bd799577cdd5035bf445de2835b67d9071dc969ea602ca6f1b244b669638f11"
     },
     {
       "id": "durable-generation-accepted-loss-redispatch",
@@ -710,16 +710,52 @@
       ],
       "expected_failure": "database readiness admitted no successful reconciler cycle",
       "changed_owner_red": "coherent-fault",
-      "changed_owner_sha256": "510e674dc061dcf7a9363450221f6723c6ab571eda5e1c42f7fecf5a814631b3"
+      "changed_owner_sha256": "8ff51ba606abe36330f912e2c9680f934fe06f2b03fd3abedbe46a952624c523"
     },
     {
       "id": "document-import-upload-retry-ui-bypass",
       "patch": "testdata/faults/document-import-upload-retry-ui-bypass.patch",
-      "sha256": "8e13d15cb2c2aab5a218575a79a73b17a76e3919505a3f4d31ede73c650c70b2",
+      "sha256": "a71008e136d205d88f6faa41a968edfdd8ea2aae5da0b122f5a407b3dcd8bb03",
       "proofs": [
-        "vitest:apps/web/src/components/nexus/MediaActivityPage.browser.test.tsx"
+        "vitest:apps/web/src/components/imports/ImportsWorkspace.browser.test.tsx"
       ],
-      "expected_failure": "offered no Retry upload capability"
+      "expected_failure": "Unable to find an accessible element with the role \"button\" and name \"Retry upload\""
+    },
+    {
+      "id": "imports-history-baseline-omission",
+      "patch": "testdata/faults/imports-history-baseline-omission.patch",
+      "sha256": "f09bbfabb88488c96c96441533a5120a1aaacc33d66c5a020046008c234f9960",
+      "proofs": [
+        "pytest:python/tests/migrations/test_imports_history_migration.py::test_0225_records_one_baseline_per_extant_upload_session_and_source_attempt"
+      ],
+      "expected_failure": "0225 must record exactly one processing baseline per attempt"
+    },
+    {
+      "id": "import-source-repair-terminal-bypass",
+      "patch": "testdata/faults/import-source-repair-terminal-bypass.patch",
+      "sha256": "1734275cb5312186d823ec3d3f012dcfc9d84937ce43901fe93e0693c60ae05a",
+      "proofs": [
+        "pytest:python/tests/service/test_import_source_recovery.py::test_succeeded_attempt_with_a_later_dead_job_is_complete_and_unrepairable"
+      ],
+      "expected_failure": "a published source with a later dead job is complete, not suspended"
+    },
+    {
+      "id": "import-search-repair-revision-bypass",
+      "patch": "testdata/faults/import-search-repair-revision-bypass.patch",
+      "sha256": "e265def5879a06aa6b35e40d35733c422493b7eeea4d663b766942bbb949ca3c",
+      "proofs": [
+        "pytest:python/tests/service/test_import_index_recovery.py::test_stale_revision_cannot_requeue_a_dead_reindex_job"
+      ],
+      "expected_failure": "DID NOT RAISE"
+    },
+    {
+      "id": "imports-history-correlation-bypass",
+      "patch": "testdata/faults/imports-history-correlation-bypass.patch",
+      "sha256": "3c92ed732e77278685aa1f0b9458ac9798a4dab28707afbf255d2d510042263b",
+      "proofs": [
+        "pytest:python/tests/service/test_imports.py::test_history_stage_and_date_filters_must_be_satisfied_by_one_event"
+      ],
+      "expected_failure": "an old Extract failure and a recent Index event are two events, not one match"
     },
     {
       "id": "document-import-confirm-replay-conflict",

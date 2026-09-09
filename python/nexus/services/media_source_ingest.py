@@ -1995,10 +1995,11 @@ def repair_dead_source_execution(
     return admit_serializable(db, "repair_dead_source_execution", admit)
 
 
-def current_source_repair_offer(db: Session, *, media_id: UUID) -> RepairSourceOffer | None:
-    """The source repair an operator could admit for this media right now, or
-    ``None``. The read ends here: an internal route resolves the identity it
-    will name, then the admission opens its own serializable transaction."""
+def current_source_repair_offer(db: Session, *, media_id: UUID) -> RepairSourceOffer:
+    """The source repair an operator must admit for this media right now, or the
+    refusal that says why there is none. The read ends here: an internal route
+    resolves the identity it will name, then the admission opens its own
+    serializable transaction."""
     media = db.get(Media, media_id)
     attempt = None if media is None else _latest_source_attempt(db, media_id)
     offer = (
@@ -2011,7 +2012,13 @@ def current_source_repair_offer(db: Session, *, media_id: UUID) -> RepairSourceO
         )
     )
     db.rollback()
-    return offer if isinstance(offer, RepairSourceOffer) else None
+    if media is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    if not isinstance(offer, RepairSourceOffer):
+        raise ConflictError(
+            ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Media has no dead source job to repair."
+        )
+    return offer
 
 
 def refresh_source_for_viewer(

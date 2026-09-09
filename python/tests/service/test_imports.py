@@ -30,6 +30,7 @@ from nexus.db.models import (
 from nexus.jobs.queue import complete_job, enqueue_job, fail_job, get_job
 from nexus.schemas.import_history import (
     IndexSucceeded,
+    MediaHistoryOwner,
     SourceAccepted,
     SourceFailed,
     SourceSucceeded,
@@ -54,6 +55,7 @@ from tests.testkit.unreachable_state import (
     expire_heavy_job_claim,
     insert_processing_event,
     insert_upload_event,
+    read_events,
 )
 
 INGEST_FAILURE_CODE = "E_INGEST_FAILED"
@@ -1296,6 +1298,114 @@ def test_repair_routes_admit_only_the_inspected_dead_job(
     no_index = authenticated_client.post(f"/internal/ingest/content-index/{media_id}/retry-dead")
     assert no_index.status_code == 409, no_index.text
     assert no_index.json()["error"]["code"] == "E_REPAIR_NOT_ALLOWED"
+
+
+def test_operator_repair_requeues_the_medias_current_dead_source_job(
+    db_session: Session,
+    test_user: UserRecord,
+    authenticated_client: TestClient,
+) -> None:
+    """The operator route carries no inspected identity: it resolves the media's
+    current dead source execution through the owner and requeues that one job."""
+    media_id, attempt = create_source_media(
+        db_session, viewer_id=test_user.id, title="Stopped extraction", attempt_no=1
+    )
+    job = enqueue_source_job(db_session, media_id=media_id, attempt=attempt, max_attempts=1)
+    claim = claim_heavy_job(db_session, job.id, "stopped-worker")
+    assert (
+        fail_job(
+            db_session,
+            job_id=job.id,
+            worker_id="stopped-worker",
+            attempt_no=claim.attempts,
+            error_code="E_WORKER_INTERRUPTED",
+            error_message="worker interrupted",
+            retry_delays_seconds=(),
+        )
+        == "dead"
+    ), "the operator route needs a dead execution to repair"
+    # The owner read ends its own transaction, so the backlog it resolves has to
+    # be durable before the route runs.
+    db_session.commit()
+
+    unknown = authenticated_client.post(f"/internal/ingest/source/{uuid4()}/retry-dead")
+    assert unknown.status_code == 404, unknown.text
+    assert unknown.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
+
+    repaired = authenticated_client.post(f"/internal/ingest/source/{media_id}/retry-dead")
+
+    assert repaired.status_code == 202, repaired.text
+    assert repaired.json()["data"] == {"media_id": str(media_id), "job_id": str(job.id)}
+    requeued = get_job(db_session, job.id)
+    assert requeued is not None and requeued.status == "pending", "the exact dead job runs again"
+    assert [
+        event["event_type"]
+        for event in read_events(db_session, owner=MediaHistoryOwner(media_id=media_id))
+    ] == ["RecoveryAccepted"], "an operator repair is recorded like any other recovery"
+    assert [item["ref"] for item in _page(authenticated_client, "view=InProgress")["items"]] == [
+        _media_ref(media_id)
+    ], "the repaired import is active work again"
+
+
+def test_operator_repair_requeues_the_dead_job_of_the_current_index_revision(
+    db_session: Session,
+    test_user: UserRecord,
+    authenticated_client: TestClient,
+) -> None:
+    """The search route resolves the dead reindex job of the media's current
+    index revision and requeues that one job."""
+    media_id, attempt = create_source_media(
+        db_session,
+        viewer_id=test_user.id,
+        title="Stopped indexing",
+        attempt_no=1,
+        processing_status=ProcessingStatus.ready_for_reading,
+        kind=MediaKind.epub,
+    )
+    attempt.status = "succeeded"
+    db_session.add(
+        ContentIndexState(owner_kind="media", owner_id=media_id, revision=1, status="failed")
+    )
+    job = enqueue_job(
+        db_session,
+        kind="media_content_reindex_job",
+        payload={"media_id": str(media_id), "revision": 1},
+        max_attempts=1,
+    )
+    claim = claim_heavy_job(
+        db_session, job.id, "index-worker", allowed_kinds=("media_content_reindex_job",)
+    )
+    assert (
+        fail_job(
+            db_session,
+            job_id=job.id,
+            worker_id="index-worker",
+            attempt_no=claim.attempts,
+            error_code="E_WORKER_INTERRUPTED",
+            error_message="worker interrupted",
+            retry_delays_seconds=(),
+        )
+        == "dead"
+    ), "the operator route needs a dead reindex execution to repair"
+    db_session.commit()
+
+    unknown = authenticated_client.post(f"/internal/ingest/content-index/{uuid4()}/retry-dead")
+    assert unknown.status_code == 404, unknown.text
+    assert unknown.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
+
+    repaired = authenticated_client.post(f"/internal/ingest/content-index/{media_id}/retry-dead")
+
+    assert repaired.status_code == 202, repaired.text
+    assert repaired.json()["data"] == {"media_id": str(media_id), "job_id": str(job.id)}
+    requeued = get_job(db_session, job.id)
+    assert requeued is not None and requeued.status == "pending", "the exact dead job runs again"
+    assert [
+        event["event_type"]
+        for event in read_events(db_session, owner=MediaHistoryOwner(media_id=media_id))
+    ] == ["RecoveryAccepted"], "an operator repair is recorded like any other recovery"
+    assert [item["ref"] for item in _page(authenticated_client, "view=InProgress")["items"]] == [
+        _media_ref(media_id)
+    ], "the repaired index obligation is active work again"
 
 
 def test_attention_reports_the_attempts_domain_code_over_a_stale_queue_code(

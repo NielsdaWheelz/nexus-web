@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
-import type { APIResponse } from "playwright/test";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
+import type { APIResponse, Page, TestInfo } from "playwright/test";
 import { TOOL_PROJECTION_HEADER } from "@/lib/api/client";
 import { TOOL_PROJECTION_REVISION } from "@/lib/conversations/toolContractProjection";
 import { captureReadableArticle } from "../articleFixture";
@@ -22,35 +24,34 @@ import { pageRequest, type ExactOriginRequest } from "../request";
 
 test.use({ journeyId: "durable-ingest-reader-open" });
 
-interface ActivityItem {
-  kind: "Media";
-  media_id: string;
+type Presence<T> = { kind: "Absent" } | { kind: "Present"; value: T };
+
+interface ImportItem {
+  ref: string;
+  title: string;
+  media_ref: Presence<string>;
   state:
     | {
         kind: "Active";
         status: "Queued" | "Processing";
-        stage: "Validate" | "Extract" | "Finalize" | "Index";
-        progress:
-          | { kind: "Absent" }
+        stage: string;
+        progress: Presence<
+          | { kind: "Stage"; stage: string }
           | {
-              kind: "Present";
-              value:
-                | { kind: "Stage"; stage: string }
-                | {
-                    kind: "Counted";
-                    stage: "Extract";
-                    completed: number;
-                    total: number;
-                    unit: "Page" | "Chapter";
-                  };
-            };
+              kind: "Counted";
+              stage: "Extract";
+              completed: number;
+              total: number;
+              unit: "Page" | "Chapter";
+            }
+        >;
       }
     | {
         kind: "NeedsAttention";
-        scope: "Source" | "Search";
-        stage: "Validate" | "Extract" | "Finalize" | "Index";
-        failure_code: { kind: "Absent" } | { kind: "Present"; value: string };
-      };
+        stage: string;
+        failure_code: Presence<string>;
+      }
+    | { kind: "Complete" };
 }
 
 async function readBody(response: APIResponse) {
@@ -68,7 +69,7 @@ async function acceptPdfUpload(
   payload: Buffer,
   filename: string,
   idempotencyKey: string,
-): Promise<{ media_id: string; source_attempt_id: string }> {
+): Promise<{ ref: string; media_id: string; source_attempt_id: string }> {
   const published = await uploadDocument({
     api,
     objects,
@@ -78,21 +79,59 @@ async function acceptPdfUpload(
     idempotencyKey,
   });
   return {
+    ref: `upload:${published.sessionHandle}`,
     media_id: published.mediaId,
     source_attempt_id: published.sourceAttemptId,
   };
 }
 
-async function activityItem(
+/** One import as its own owner reports it, addressed by its canonical ref. */
+async function importDetail(
   api: ExactOriginRequest,
-  mediaId: string,
-): Promise<ActivityItem | undefined> {
-  const response = await api.get("/api/media/activity?limit=20");
-  const payload = (await readBody(response)) as {
-    data: { items: Array<ActivityItem | { kind: "UploadSession" }> };
-  };
-  return payload.data.items.find(
-    (item): item is ActivityItem => item.kind === "Media" && item.media_id === mediaId,
+  ref: string,
+): Promise<ImportItem> {
+  const response = await api.get(`/api/imports/${encodeURIComponent(ref)}`);
+  const payload = (await readBody(response)) as { data: { item: ImportItem } };
+  return payload.data.item;
+}
+
+async function importsIn(
+  api: ExactOriginRequest,
+  view: "NeedsAttention" | "InProgress" | "History",
+): Promise<ImportItem[]> {
+  const response = await api.get(`/api/imports?view=${view}&limit=100`);
+  const payload = (await readBody(response)) as { data: { items: ImportItem[] } };
+  return payload.data.items;
+}
+
+/**
+ * The deliberate desktop visual/assistive review the cutover requires: a
+ * screenshot and the real accessibility tree at each reviewed state, written
+ * beside the run's other artifacts. These are review evidence, not assertions.
+ */
+async function captureImportsReview(
+  page: Page,
+  testInfo: TestInfo,
+  state: string,
+): Promise<void> {
+  const target = testInfo.outputPath("imports-review", `${state}.png`);
+  await mkdir(path.dirname(target), { recursive: true });
+  await page.screenshot({ path: target, fullPage: false });
+  // Narrow viewports swap the rail for the mobile pane bar, so the navigation
+  // landmark is recorded when the chrome under review has one.
+  const navigation = page.getByRole("navigation").first();
+  const tree = [
+    "# navigation",
+    (await navigation.count()) === 0
+      ? "(this chrome renders no navigation landmark)"
+      : await navigation.ariaSnapshot(),
+    "# pane",
+    await page.getByRole("main").first().ariaSnapshot(),
+  ].join("\n");
+  await writeFile(
+    testInfo.outputPath("imports-review", `${state}.aria.txt`),
+    tree,
+    "utf8",
   );
 }
 
@@ -134,18 +173,15 @@ test("an accepted EPUB publishes in the default Library and opens through its re
     filename: "canonical-reader-durable-ingest.epub",
     idempotencyKey: `durable-ingest-${journeyUser.id}`,
     beforeConfirm: async ({ session_handle: sessionHandle }) => {
-      const response = await api.get("/api/media/activity?limit=20");
-      const activity = (await readBody(response)) as {
-        data: { items: Array<{ kind: string; session_handle?: string }> };
-      };
+      const pending = await importDetail(api, `upload:${sessionHandle}`);
       expect(
-        activity.data.items.some(
-          (item) =>
-            item.kind === "UploadSession" &&
-            item.session_handle === sessionHandle,
-        ),
-        "An uploaded but unconfirmed session must not publish media or create an Activity obligation.",
-      ).toBe(false);
+        pending.media_ref.kind,
+        "An uploaded but unconfirmed session must not publish media.",
+      ).toBe("Absent");
+      expect(
+        pending.state.kind,
+        "An uploaded but unconfirmed session is work in progress, not an obligation on the reader.",
+      ).toBe("Active");
     },
   });
   const mediaId = published.mediaId;
@@ -210,7 +246,7 @@ test("an accepted EPUB publishes in the default Library and opens through its re
 test("bounded Heavy ingest preserves API and Light-worker service through complete indexing and typed rejection", async ({
   page,
   journeyUser,
-}) => {
+}, testInfo) => {
   await signIn(page, journeyUser);
   // The bounded-child executor runs each Heavy job in a fresh process, so a
   // document’s ingest/enrich/reindex pipeline plus the fresh-database
@@ -235,12 +271,12 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
   await expect
     .poll(
       async () => {
-        const item = await activityItem(api, bounded.media_id);
+        const item = await importDetail(api, bounded.ref);
         const progress =
-          item?.state.kind === "Active" && item.state.progress.kind === "Present"
+          item.state.kind === "Active" && item.state.progress.kind === "Present"
             ? item.state.progress.value
             : undefined;
-        return item?.state.kind === "Active" &&
+        return item.state.kind === "Active" &&
           item.state.status === "Processing" &&
           progress?.kind === "Counted" &&
           progress.unit === "Page" &&
@@ -248,7 +284,7 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
           progress.completed > 0 &&
           progress.completed < progress.total
           ? "active"
-          : JSON.stringify(item ?? null);
+          : JSON.stringify(item);
       },
       {
         message: `Heavy source ${bounded.media_id} never exposed in-flight counted 712-page progress.`,
@@ -257,30 +293,9 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
     )
     .toBe("active");
 
-  // The active Heavy import is real worker-owned state. Account is its only
-  // navigation owner: opening Import activity must present that same active work
-  // in Nexus, without inventing a pane route or relying on a component stub.
-  await gotoWithStrictCsp(page, "/");
-  const account = page.getByRole("button", { name: /^Account(?:,|$)/ });
-  await expect(
-    account,
-    `The active Heavy import ${bounded.media_id} did not surface through the Account menu.`,
-  ).toHaveAttribute("data-import-count", "1", { timeout: 60_000 });
-  await account.click();
-  const accountMenu = page.getByRole("menu");
-  await expect(accountMenu).toBeVisible();
-  await accountMenu
-    .getByRole("menuitem", { name: "Import activity", exact: true })
-    .click();
-  await expect(
-    page.getByRole("heading", { name: "Activity", exact: true }),
-    "Import activity from Account did not open the real Nexus Activity surface.",
-  ).toBeVisible();
-  await expect(
-    page.getByText("1 in progress", { exact: true }),
-    `Nexus Activity did not project the independently observed active import ${bounded.media_id}.`,
-  ).toBeVisible();
-
+  // The API and its authenticated reads keep serving while that Heavy source is
+  // still extracting — asserted here, where the poll above has just proved the
+  // work is in flight.
   const readiness = await directApi.get("/readyz");
   expect(
     readiness.ok(),
@@ -292,12 +307,169 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
     `Authenticated read failed during Heavy source ${bounded.media_id}: ${profile.status()} ${await profile.text()}`,
   ).toBeTruthy();
 
+  // The active Heavy import is real worker-owned state. The rail's Imports
+  // utility link is its navigation owner: it must open the workspace pane on
+  // that same active work, through the real route, provider and API.
+  await gotoWithStrictCsp(page, "/");
+  await page.getByRole("link", { name: "Imports", exact: true }).click();
+  await expect(page).toHaveURL(/\/imports(?:[?#]|$)/);
+  await expect(
+    page.getByRole("tab", { name: /^In progress/ }),
+    "An entry with active work and nothing needing attention must land on In progress.",
+  ).toHaveAttribute("aria-selected", "true", { timeout: 60_000 });
+  const boundedRow = page.locator(`[data-import-ref="${bounded.ref}"]`);
+  await expect(
+    boundedRow,
+    `The Imports pane did not list the independently observed active import ${bounded.media_id}.`,
+  ).toBeVisible({ timeout: 60_000 });
+  await expect
+    .poll(
+      async () => (await boundedRow.innerText()).replace(/\s+/g, " "),
+      {
+        message: `The Imports pane did not project counted 712-page progress for ${bounded.media_id}.`,
+        timeout: 60_000,
+      },
+    )
+    .toMatch(/Extracting page \d+ of 712/);
+  await captureImportsReview(page, testInfo, "in-progress-counted");
+
+  // A real recovery, end to end: an upload session whose transport failed is an
+  // obligation the reader can see and discharge from this pane, and the retry
+  // it offers is the real client upload, not a re-request of the same command.
+  const recovered = uniqueCanonicalReaderEpub(`${journeyUser.id}-imports-recovery`);
+  const recoveredFilename = "imports-recovery-canonical-reader.epub";
+  const strandedSession = (await readBody(
+    await api.post("/api/media/uploads", {
+      headers: {
+        origin: webOrigin,
+        "Idempotency-Key": `imports-recovery-${journeyUser.id}`,
+      },
+      data: {
+        kind: "Epub",
+        filename: recoveredFilename,
+        content_type: "application/epub+zip",
+        size_bytes: recovered.byteLength,
+        library_ids: [],
+      },
+    }),
+  )) as { data: { session_handle: string; generation: number } };
+  const recoveredRef = `upload:${strandedSession.data.session_handle}`;
+  const transportFailure = await api.post(
+    `/api/media/uploads/${encodeURIComponent(strandedSession.data.session_handle)}/transport-failure`,
+    {
+      headers: { origin: webOrigin },
+      data: {
+        kind: "Network",
+        generation: strandedSession.data.generation,
+        duration_ms: 1_200,
+        request_id: randomUUID(),
+      },
+    },
+  );
+  expect(
+    transportFailure.status(),
+    `Recording the upload transport failure for ${recoveredRef} was refused.`,
+  ).toBe(204);
+
+  await expect(
+    page.getByRole("link", { name: "Imports, 1 needs attention", exact: true }),
+    `The rail's Imports badge never carried the exact attention count for ${recoveredRef}.`,
+  ).toBeVisible({ timeout: 60_000 });
+  await captureImportsReview(page, testInfo, "rail-badge");
+  // The collapsed rail is icon-only, and the attention count still has to paint.
+  await page.getByRole("button", { name: "Collapse navigation" }).click();
+  await captureImportsReview(page, testInfo, "rail-badge-collapsed");
+  await page.getByRole("button", { name: "Expand navigation" }).click();
+  await page.getByRole("tab", { name: /^Needs attention/ }).click();
+  const recoveredRow = page.locator(`[data-import-ref="${recoveredRef}"]`);
+  await expect(
+    recoveredRow,
+    `Needs attention did not list the stranded upload ${recoveredRef}.`,
+  ).toBeVisible({ timeout: 60_000 });
+  await expect(
+    recoveredRow.getByText("Upload failed", { exact: true }),
+    `The stranded upload ${recoveredRef} did not read as a failed upload.`,
+  ).toBeVisible();
+  await recoveredRow.getByRole("button", { name: recoveredFilename, exact: true }).click();
+  await expect(
+    page.getByTestId("workspace-secondary-pane"),
+    `Selecting ${recoveredRef} did not open its inspector.`,
+  ).toBeVisible();
+  await captureImportsReview(page, testInfo, "needs-attention-selected");
+
+  const chooser = page.waitForEvent("filechooser");
+  await recoveredRow
+    .getByRole("button", { name: "Retry upload", exact: true })
+    .click();
+  await (
+    await chooser
+  ).setFiles({
+    name: recoveredFilename,
+    mimeType: "application/epub+zip",
+    buffer: recovered,
+  });
+  await expect
+    .poll(
+      async () => (await importDetail(api, recoveredRef)).media_ref.kind,
+      {
+        message: `Retrying ${recoveredRef} from the pane never published its media.`,
+        timeout: 90_000,
+      },
+    )
+    .toBe("Present");
+  await expect
+    .poll(
+      async () => (await importDetail(api, recoveredRef)).state.kind,
+      {
+        message: `The recovered import ${recoveredRef} never finished its source and index work.`,
+        timeout: 180_000,
+      },
+    )
+    .toBe("Complete");
+
+  await page.getByRole("tab", { name: /^History/ }).click();
+  await expect(
+    recoveredRow,
+    `History did not retain the recovered import ${recoveredRef}.`,
+  ).toBeVisible({ timeout: 60_000 });
+  await expect(
+    recoveredRow.getByText(/^Matched: /),
+    `History listed ${recoveredRef} without the evidence that matched it.`,
+  ).toBeVisible();
+  await recoveredRow.getByRole("button", { name: recoveredFilename, exact: true }).click();
+  await captureImportsReview(page, testInfo, "history-recovered");
+  expect(
+    (await importsIn(api, "NeedsAttention")).map((item) => item.ref),
+    `The recovered import ${recoveredRef} still needs attention after a successful recovery.`,
+  ).not.toContain(recoveredRef);
+
+  // The layout review, captured last because nothing after this step drives the
+  // page. Browser zoom divides the layout viewport rather than magnifying the
+  // painted output, and the layout viewport is what the media and container
+  // queries answer to, so 200% of this window is a 640 px layout.
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await captureImportsReview(page, testInfo, "viewport-1280x720");
+  await page.setViewportSize({ width: 640, height: 720 });
+  await captureImportsReview(page, testInfo, "zoom-200");
+
   const rejected = await acceptPdfUpload(
     api,
     objects,
     adversarialTruncatedPdf(),
     "truncated-parser-boundary.pdf",
     `truncated-pdf-${journeyUser.id}`,
+  );
+  // Heavy capacity is one attempt globally, so this second bounded 712-page
+  // source — accepted immediately before the interactive run, behind the
+  // adversarial one — is queued or extracting for the whole round trip. Its
+  // state is read again once the chat completes, which is the conjunction this
+  // journey exists to prove: a Light run finishing while Heavy work is unfinished.
+  const heldBack = await acceptPdfUpload(
+    api,
+    objects,
+    boundedCitationPdf(),
+    "bounded-media-processing-evidence-corpus-held-back.pdf",
+    `bounded-pdf-held-back-${journeyUser.id}`,
   );
   const conversationResponse = await api.post("/api/conversations", {
     headers: { origin: webOrigin },
@@ -377,17 +549,19 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
     )
     .toBe(true);
 
-  const duringLightCompletion = await activityItem(api, bounded.media_id);
+  const duringLightCompletion = await importDetail(api, heldBack.ref);
   expect(
-    duringLightCompletion?.state.kind === "Active",
-    `Heavy work ${bounded.media_id} completed before the Light-worker outcome was observed: ${JSON.stringify(duringLightCompletion ?? null)}.`,
-  ).toBeTruthy();
+    duringLightCompletion.state.kind,
+    `Heavy work ${heldBack.media_id} settled before the Light-worker outcome was observed: ${JSON.stringify(duringLightCompletion.state)}.`,
+  ).toBe("Active");
 
   await expect
     .poll(
       async () => {
-        const item = await activityItem(api, bounded.media_id);
-        return item === undefined ? "complete" : JSON.stringify(item);
+        const item = await importDetail(api, bounded.ref);
+        return item.state.kind === "Complete"
+          ? "complete"
+          : JSON.stringify(item.state);
       },
       {
         message: `Bounded source ${bounded.media_id} did not complete its Heavy content-index operation.`,
@@ -395,14 +569,18 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
       },
     )
     .toBe("complete");
+  expect(
+    (await importsIn(api, "InProgress")).map((item) => item.ref),
+    `Bounded source ${bounded.media_id} stayed in progress after completing.`,
+  ).not.toContain(bounded.ref);
   await expect
     .poll(
       async () => {
-        const item = await activityItem(api, rejected.media_id);
-        return item?.state.kind === "NeedsAttention" &&
+        const item = await importDetail(api, rejected.ref);
+        return item.state.kind === "NeedsAttention" &&
           item.state.failure_code.kind === "Present"
           ? item.state.failure_code.value
-          : JSON.stringify(item ?? null);
+          : JSON.stringify(item.state);
       },
       {
         message: `Adversarial source ${rejected.media_id} did not publish its exact typed parser rejection.`,

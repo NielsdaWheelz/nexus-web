@@ -11,6 +11,7 @@ import AccountMenu from "@/components/appnav/AccountMenu";
 import {
   isAccountDestinationId,
   NAV_ACCOUNT,
+  NAV_UTILITIES,
   type NavItem,
 } from "@/components/appnav/navModel";
 import {
@@ -24,7 +25,6 @@ import AddPanelBoundary from "@/components/nexus/AddPanelBoundary";
 import ChooseBrowsePage from "@/components/nexus/ChooseBrowsePage";
 import ChooseCreatePage from "@/components/nexus/ChooseCreatePage";
 import ManageTabsPage from "@/components/nexus/ManageTabsPage";
-import MediaActivityPage from "@/components/nexus/MediaActivityPage";
 import type { AddContentSessionController } from "@/components/nexus/useAddContentSession";
 import type {
   NexusManagedClosedPane,
@@ -184,6 +184,8 @@ export default function SwitchboardTask({
   const accountActiveId = isAccountDestinationId(activeDestinationId)
     ? activeDestinationId
     : null;
+  const utilityActiveId =
+    activeDestinationId === NAV_UTILITIES.imports.id ? activeDestinationId : null;
   const activate = (
     action: NexusAction,
     activation: NexusTargetActivation,
@@ -239,6 +241,7 @@ export default function SwitchboardTask({
     <AccountMenu
       account={NAV_ACCOUNT}
       activeId={accountActiveId}
+      utilityActiveId={utilityActiveId}
       placement="below"
       align="end"
       renderTrigger={(trigger) => (
@@ -293,20 +296,6 @@ export default function SwitchboardTask({
             onEscapeRoot={escape}
             onUnavailable={controller.announceUnavailable}
             onRetry={controller.retry}
-          />
-        );
-      case "Activity":
-        return (
-          <MediaActivityPage
-            visible={active}
-            onBack={back}
-            onOpenMedia={(mediaId) =>
-              controller.openTarget({
-                kind: "InternalHref",
-                href: `/media/${mediaId}`,
-                labelHint: "Media",
-              })
-            }
           />
         );
       case "EntryActions":

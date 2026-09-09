@@ -15,11 +15,13 @@ import styles from "./AppNav.module.css";
 export default function NavAccount({
   account,
   activeId,
+  utilityActiveId,
   collapsed,
   onNavigate,
 }: {
   account: AccountNavigation;
   activeId: NavItem["id"] | null;
+  utilityActiveId: NavItem["id"] | null;
   collapsed: boolean;
   onNavigate: (
     event: MouseEvent<HTMLElement>,
@@ -31,6 +33,7 @@ export default function NavAccount({
     <AccountMenu
       account={account}
       activeId={activeId}
+      utilityActiveId={utilityActiveId}
       placement="above"
       align="start"
       renderTrigger={(trigger) => (

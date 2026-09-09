@@ -10,11 +10,12 @@
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { assertNever } from "@/lib/assertNever";
-import { formatRelativeTime } from "@/lib/display/format";
-import type {
-  ImportStage,
-  ImportStateKind,
-  SafeFailureCode,
+import { formatDisplayDate, formatRelativeTime } from "@/lib/display/format";
+import {
+  uploadSessionHandle,
+  type ImportStage,
+  type ImportStateKind,
+  type SafeFailureCode,
 } from "@/lib/imports/importRef";
 import type {
   HistoryEntry,
@@ -440,10 +441,13 @@ function progressLine(progress: MediaSourceProgress): string {
 /**
  * An import whose obligation is still the upload itself: an upload session the
  * server has not published. Its Validate stage is server-side verification of
- * the bytes this reader sent, not extraction of a source Nexus fetched.
+ * the bytes this reader sent, not extraction of a source Nexus fetched. The ref
+ * owner is the only module that reads the grammar of a ref.
  */
-function isUploadObligation(item: ImportItem): boolean {
-  return item.ref.startsWith("upload:") && item.mediaRef.kind === "Absent";
+export function isUploadObligation(item: ImportItem): boolean {
+  return (
+    uploadSessionHandle(item.ref) !== null && item.mediaRef.kind === "Absent"
+  );
 }
 
 function attentionLine(item: ImportItem, state: Extract<ImportState, { kind: "NeedsAttention" }>): string {
@@ -464,7 +468,12 @@ export function importStatusLine(item: ImportItem): string {
     case "Active":
       switch (state.status) {
         case "Queued":
-          if (state.waitingReason.kind === "Absent") return "Waiting in queue";
+          // Why this is waiting was not recorded: name the stage it is queued
+          // for rather than claim the queue as the reason (spec, absent
+          // evidence).
+          if (state.waitingReason.kind === "Absent") {
+            return `${IMPORT_STAGE_COPY[state.stage].label} queued`;
+          }
           switch (state.waitingReason.value) {
             case "Queue":
               return "Waiting in queue";
@@ -662,7 +671,10 @@ function historyEventLabel(entry: HistoryEntry): string {
     case "SourceHistoryBaseline":
       return "Detailed execution history was not recorded";
     case "UploadFailed":
-      return "Upload failed";
+      // The row calls a rejected upload exactly this (`attentionLine`).
+      return facts.transport.kind === "Present"
+        ? "Upload failed"
+        : "Upload rejected";
     case "UploadPublished":
       return "Upload published";
     case "SourceAccepted":
@@ -712,10 +724,16 @@ function historyEventLabel(entry: HistoryEntry): string {
 export function historyEventLine(entry: HistoryEntry): string {
   const label = historyEventLabel(entry);
   const facts = entry.facts;
+  const reason =
+    entry.failureCode.kind === "Present"
+      ? ` ${IMPORT_FAILURE_COPY[entry.failureCode.value].reason}.`
+      : "";
   if (facts.kind === "UploadFailed") {
+    // A transport failure records what the transport did; a rejection records
+    // only the verification code. Either way the recorded reason is said once.
     return facts.transport.kind === "Present"
-      ? `${label}. ${transportFailureLine(facts.transport.value)}`
-      : label;
+      ? `${label}. ${transportFailureLine(facts.transport.value)}.`
+      : `${label}.${reason}`;
   }
   if (facts.kind !== "SourceFailed" && facts.kind !== "IndexFailed") {
     return label;
@@ -725,16 +743,80 @@ export function historyEventLine(entry: HistoryEntry): string {
   const outcome = facts.terminal
     ? "No more automatic retries."
     : "An automatic retry follows.";
-  const reason =
-    entry.failureCode.kind === "Present"
-      ? ` ${IMPORT_FAILURE_COPY[entry.failureCode.value].reason}.`
-      : "";
   return `${label}. ${cause}.${reason} ${outcome}`;
 }
 
+type DisplayContext = Pick<
+  RenderEnvironment,
+  "displayLocale" | "displayTimeZone"
+>;
+
+/**
+ * Every instant this owner formats reached it through the strict decoders, so a
+ * formatter that cannot read one is a decode defect — never a raw instant to
+ * put in front of a reader.
+ */
+function formattedInstant(value: string, formatted: string | null): string {
+  // justify-defect: the Imports decoders admit instants and nothing else.
+  if (formatted === null) {
+    throw new Error(`Imports was given a value that is not an instant: ${value}`);
+  }
+  return formatted;
+}
+
+/** A recorded instant as the short day a `Matched:` clause names. */
+function importDayText(value: string, context: DisplayContext): string {
+  return formattedInstant(
+    value,
+    formatDisplayDate(value, context, { month: "short", day: "numeric" }),
+  );
+}
+
+/** A recorded instant as the date and time an attempt list shows. */
+export function importMomentText(value: string, context: DisplayContext): string {
+  return formattedInstant(
+    value,
+    formatDisplayDate(value, context, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }),
+  );
+}
+
 /** The `Matched:` line that explains why a row matched a history filter. */
-export function historyMatchLine(entry: HistoryEntry, when: string): string {
-  return `Matched: ${historyEventLabel(entry)} · ${when}`;
+export function historyMatchLine(
+  entry: HistoryEntry,
+  context: DisplayContext,
+): string {
+  return `Matched: ${historyEventLabel(entry)} · ${importDayText(entry.occurredAt, context)}`;
+}
+
+export interface ImportAge {
+  readonly dateTime: string;
+  readonly text: string;
+}
+
+/**
+ * How old what a row says is: work still running is dated from when this work
+ * unit was accepted, and work that stopped or finished from its last recorded
+ * change, so a three-minute-old failure never reads like a three-month-old one
+ * (spec content rubric "Rows / status design").
+ */
+export function importAgeLine(
+  item: ImportItem,
+  context: Pick<RenderEnvironment, "displayLocale">,
+  now: Date,
+): ImportAge {
+  const active = item.state.kind === "Active";
+  const value = active ? item.acceptedAt : item.updatedAt;
+  const relative = formattedInstant(
+    value,
+    formatRelativeTime(value, context, now),
+  );
+  return {
+    dateTime: value,
+    text: `${active ? "Started" : "Updated"} ${relative}`,
+  };
 }
 
 /**
@@ -747,11 +829,17 @@ export function importsFreshnessLine(
   context: Pick<RenderEnvironment, "displayLocale">,
   now: Date,
 ): string {
-  return `Last checked ${formatRelativeTime(observedAt, context, now) ?? observedAt}`;
+  return `Last checked ${formattedInstant(observedAt, formatRelativeTime(observedAt, context, now))}`;
 }
 
-export function historyCoverageLine(recordedSince: string): string {
-  return `Detailed execution history was recorded from ${recordedSince}.`;
+export function historyCoverageLine(
+  recordedSince: string,
+  context: DisplayContext,
+): string {
+  return `Detailed execution history was recorded from ${formattedInstant(
+    recordedSince,
+    formatDisplayDate(recordedSince, context, { dateStyle: "medium" }),
+  )}.`;
 }
 
 export const IMPORT_UNAVAILABLE_LINE = "This import is no longer available";

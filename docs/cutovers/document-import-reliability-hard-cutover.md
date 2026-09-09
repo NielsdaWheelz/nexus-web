@@ -1,8 +1,11 @@
 # Document Import Reliability Hard Cutover
 
-Status: implemented
+Status: implemented; its reader-facing surface is superseded by
+[`imports-workspace-hard-cutover.md`](imports-workspace-hard-cutover.md) (the
+Import Activity page and `GET /media/activity` are gone; the durable acceptance,
+Heavy extraction, and ingest-operations clauses below remain in force)
 Scope owner: Media ingestion
-Applies to: uploaded PDF/EPUB acceptance, Heavy extraction, Import Activity, ingest operations
+Applies to: uploaded PDF/EPUB acceptance, Heavy extraction, the Imports workspace, ingest operations
 Supersedes: the uploaded-file acceptance/cleanup clauses of `durable-source-ingest-hard-cutover.md` and the in-process Heavy-extraction assumption of `bounded-resource-media-processing-hard-cutover.md`
 
 ## 0. Governing rules

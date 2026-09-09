@@ -26,10 +26,18 @@ interface AppNavigationDefinition {
     AppNavigationDestinationDefinition,
     ...AppNavigationDestinationDefinition[],
   ];
+  /** Destinations that live beside Add and Account rather than in the rail list. */
+  utilities: {
+    imports: AppNavigationDestinationDefinition;
+  };
   account: {
     stats: AppNavigationDestinationDefinition;
     settings: AppNavigationDestinationDefinition;
   };
+}
+
+export interface UtilityNavigation {
+  imports: NavItem;
 }
 
 export interface AccountNavigation {
@@ -49,6 +57,9 @@ export const APP_NAVIGATION = {
     { id: "atlas" },
     { id: "oracle", presentation: "accent" },
   ],
+  utilities: {
+    imports: { id: "imports" },
+  },
   account: {
     stats: { id: "stats" },
     settings: { id: "settings" },
@@ -69,6 +80,9 @@ function resolveNavDestination(
 export const NAV_MODEL: readonly NavItem[] =
   APP_NAVIGATION.destinations.map(resolveNavDestination);
 export const NAV_HOME = resolveNavDestination(APP_NAVIGATION.destinations[0]);
+export const NAV_UTILITIES: UtilityNavigation = {
+  imports: resolveNavDestination(APP_NAVIGATION.utilities.imports),
+};
 export const NAV_ACCOUNT: AccountNavigation = {
   stats: resolveNavDestination(APP_NAVIGATION.account.stats),
   settings: resolveNavDestination(APP_NAVIGATION.account.settings),

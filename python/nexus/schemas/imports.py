@@ -349,11 +349,11 @@ class ImportListQuery(BaseModel):
         return {
             "view": self.view,
             "q": self.q,
-            "mediaKind": self.media_kind,
+            "media_kind": self.media_kind,
             "stage": self.stage,
-            "failureCode": self.failure_code,
+            "failure_code": self.failure_code,
             "state": self.state,
-            "hadFailures": self.had_failures,
+            "had_failures": self.had_failures,
             "from": None if self.matched_from is None else self.matched_from.isoformat(),
             "before": None if self.before is None else self.before.isoformat(),
         }

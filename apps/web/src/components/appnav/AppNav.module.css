@@ -251,6 +251,29 @@
   display: none;
 }
 
+/* The footer utility link renders a label plus its own count badge. */
+.utilityLabel {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* Collapsed, the same link is icon-only, so its count paints as a corner chip
+   over the icon rather than beside a label that is no longer there. */
+.utilityLink {
+  position: relative;
+}
+
+.utilityChip {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  pointer-events: none;
+}
+
 /* Optional fixed-navigation accent, owned by APP_NAVIGATION. */
 .item[data-presentation="accent"] .itemIcon {
   filter: drop-shadow(0 0 4px color-mix(in srgb, var(--accent) 40%, transparent));
@@ -364,30 +387,6 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-}
-
-.account [data-import-count]::after {
-  content: attr(data-import-count);
-  min-width: 1.35rem;
-  margin-left: auto;
-  padding: 1px var(--space-1);
-  border-radius: var(--radius-full);
-  background: var(--accent-muted);
-  color: var(--accent);
-  font-size: var(--text-xs);
-  font-variant-numeric: tabular-nums;
-  line-height: 1rem;
-  text-align: center;
-}
-
-.collapsed .account [data-import-count]::after {
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  min-width: 1rem;
-  margin: 0;
-  padding-inline: 3px;
-  font-size: 0.625rem;
 }
 
 .menuItem {

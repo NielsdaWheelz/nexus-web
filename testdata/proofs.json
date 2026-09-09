@@ -639,8 +639,6 @@
         "apps/web/src/lib/media/ingestionClient.ts",
         "apps/web/src/lib/media/uploadVerification.ts",
         "apps/web/src/lib/media/captureFeedback.ts",
-        "apps/web/src/lib/media/activityClient.ts",
-        "apps/web/src/lib/media/MediaActivityProvider.tsx",
         "apps/web/src/lib/status/imports.ts",
         "apps/web/src/components/connections/ConnectionsSurface.tsx",
         "apps/web/src/components/nexus/AddPanel.tsx",
@@ -648,7 +646,18 @@
         "apps/web/src/components/nexus/addContentSessionModel.ts",
         "apps/web/src/components/nexus/useAddContentSession.ts",
         "apps/web/src/components/nexus/useNexusController.ts",
-        "apps/web/src/components/notes/NoteBodyEditor.tsx"
+        "apps/web/src/components/notes/NoteBodyEditor.tsx",
+        "migrations/alembic/versions/0225_imports_history.py",
+        "python/nexus/schemas/import_history.py",
+        "python/nexus/services/import_history.py",
+        "python/nexus/services/content_indexing.py",
+        "python/nexus/services/source_attempt_failures.py",
+        "python/nexus/services/source_publication.py",
+        "python/nexus/jobs/history_projections.py",
+        "python/nexus/api/routes/imports.py",
+        "apps/web/src/app/(authenticated)/imports/**/*",
+        "apps/web/src/app/api/imports/**/*",
+        "apps/web/src/lib/imports/**/*"
       ],
       "proofs": [
         "pytest:python/tests/migrations/test_document_import_reliability_migration.py::test_0220_0221_backfill_is_resumable_fail_closed_and_hard_contracts_schema",
@@ -668,7 +677,10 @@
         "pytest:python/tests/service/test_ingest_reconciliation_readiness.py",
         "pytest:python/tests/service/test_ingest_reconciliation_readiness.py::test_deployed_database_readiness_requires_the_latest_reconciler_to_succeed_freshly",
         "vitest:apps/web/src/components/imports/ImportsWorkspace.browser.test.tsx",
-        "vitest:apps/web/src/lib/media/ingestionClient.unit.test.ts"
+        "vitest:apps/web/src/lib/media/ingestionClient.unit.test.ts",
+        "pytest:python/tests/migrations/test_imports_history_migration.py::test_0225_records_one_baseline_per_extant_upload_session_and_source_attempt",
+        "pytest:python/tests/service/test_import_source_recovery.py::test_succeeded_attempt_with_a_later_dead_job_is_complete_and_unrepairable",
+        "pytest:python/tests/service/test_import_index_recovery.py::test_stale_revision_cannot_requeue_a_dead_reindex_job"
       ],
       "capabilities": [
         "migrations",
@@ -1186,16 +1198,18 @@
         "apps/web/src/app/api/imports/**/*",
         "apps/web/src/app/api/media/uploads/**/*",
         "apps/web/src/components/appnav/AccountMenu.tsx",
-        "apps/web/src/components/nexus/MediaActivityPage.tsx",
         "apps/web/src/components/nexus/Nexus.tsx",
-        "apps/web/src/lib/media/MediaActivityProvider.tsx",
-        "apps/web/src/lib/media/activityClient.ts",
         "apps/web/src/lib/media/ingestionClient.ts",
         "apps/web/src/lib/media/uploadVerification.ts",
         "apps/web/src/lib/media/captureFeedback.ts",
         "apps/web/e2e/documentUploadFixture.ts",
         "apps/web/src/lib/panes/paneRenderRegistry.tsx",
-        "apps/web/src/app/api/llm-catalog/route.ts"
+        "apps/web/src/app/api/llm-catalog/route.ts",
+        "apps/web/src/app/(authenticated)/imports/**/*",
+        "apps/web/src/lib/imports/**/*",
+        "apps/web/src/components/imports/**/*",
+        "apps/web/src/components/appnav/NavRail.tsx",
+        "python/nexus/services/import_history.py"
       ],
       "risks": [
         "database-object-convergence",

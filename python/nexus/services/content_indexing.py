@@ -1522,6 +1522,9 @@ def repair_dead_media_reindex(
         if not requeue_dead_job(db, job_id=offer.expected_job_id):
             # justify-defect: current_dead_job_for_payload locked this exact dead row.
             raise AssertionError("locked dead reindex job could not be requeued")
+        mark_content_index_pending(
+            db, owner=IndexOwner(kind="media", id=media_id), reason="operator_repair"
+        )
         _record_index_event(
             db,
             media_id=media_id,
@@ -1546,10 +1549,14 @@ def repair_dead_media_reindex(
     return admit_serializable(db, "repair_dead_media_reindex", admit)
 
 
-def current_search_repair_offer(db: Session, *, media_id: UUID) -> RepairSearchOffer | None:
-    """The search repair an operator could admit for this media right now, or
-    ``None``. The read ends here: an internal route resolves the identity it
-    will name, then the admission opens its own serializable transaction."""
+def current_search_repair_offer(db: Session, *, media_id: UUID) -> RepairSearchOffer:
+    """The search repair an operator must admit for this media right now, or the
+    refusal that says why there is none. The read ends here: an internal route
+    resolves the identity it will name, then the admission opens its own
+    serializable transaction."""
+    media_exists = db.execute(
+        text("SELECT 1 FROM media WHERE id = :media_id"), {"media_id": media_id}
+    ).scalar_one_or_none()
     revision = db.execute(
         text(
             """
@@ -1577,7 +1584,13 @@ def current_search_repair_offer(db: Session, *, media_id: UUID) -> RepairSearchO
             )
         )
     db.rollback()
-    return offer if isinstance(offer, RepairSearchOffer) else None
+    if media_exists is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    if not isinstance(offer, RepairSearchOffer):
+        raise ConflictError(
+            ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Media has no dead content-index job to repair."
+        )
+    return offer
 
 
 def _lock_media_for_reindex(db: Session, media_id: UUID) -> None:

@@ -462,15 +462,21 @@ function ImportsHarness({ initial }: { initial: string }) {
   const [state, setState] = useState<ImportsUrlState>(() =>
     decodeImportsUrlState(new URLSearchParams(initial)),
   );
+  // The pane spends its ShellScroll return memento on this report, so the
+  // harness stands in for the pane and shows what it was told.
+  const [listSettled, setListSettled] = useState(false);
   const selected =
     state.selected.kind === "Present" ? state.selected.value : null;
   return (
     <>
       <a href="/imports">
-        <ImportsBadge label="Imports" />
+        <ImportsBadge label="Imports" labelVisible />
       </a>
       <output aria-label="Imports url">
         {encodeImportsUrlState(state, new URLSearchParams()).toString()}
+      </output>
+      <output aria-label="Imports list settled">
+        {listSettled ? "settled" : "unsettled"}
       </output>
       <ImportsWorkspace
         state={state}
@@ -482,6 +488,7 @@ function ImportsHarness({ initial }: { initial: string }) {
             selected: ref === null ? ABSENT : { kind: "Present", value: ref },
           }))
         }
+        onListSettled={setListSettled}
       />
       {selected === null ? null : (
         <div role="complementary" aria-label="Import detail">
@@ -558,6 +565,13 @@ function selectedTab(): HTMLElement {
 
 function importsUrl(): string {
   return screen.getByRole("status", { name: "Imports url" }).textContent ?? "";
+}
+
+function listSettledReport(): string {
+  return (
+    screen.getByRole("status", { name: "Imports list settled" }).textContent ??
+    ""
+  );
 }
 
 /**
@@ -652,6 +666,65 @@ describe("Imports workspace", () => {
       await waitFor(() => expect(selectedTab()).toHaveTextContent(expected));
     },
   );
+
+  it("offers a retry, not a spinner, when the first read of an unqualified entry fails", async () => {
+    installBff({
+      summary: (read) =>
+        read === 1
+          ? jsonResponse(
+              { error: { code: "E_UPSTREAM", message: "Upstream is down." } },
+              502,
+            )
+          : summaryBody(1, 0, read),
+      page: () =>
+        pageBody([attentionMediaItem()], {
+          groups: [{ stage: "Extract", count: 1 }],
+        }),
+    });
+
+    renderImports("");
+
+    expect(
+      await screen.findByText("Imports couldn’t be loaded"),
+      "an entry whose first read failed left the reader on a spinner",
+    ).toBeVisible();
+
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+
+    await waitFor(() =>
+      expect(selectedTab()).toHaveTextContent("Needs attention"),
+    );
+    expect(await screen.findByText(LONG_TITLE)).toBeVisible();
+  });
+
+  it("reports its list unsettled until the first page read answers", async () => {
+    let answerFirstPage = () => {};
+    const deferredFirstPage = new Promise<unknown>((resolve) => {
+      answerFirstPage = () => resolve(pageBody([activeMediaItem()]));
+    });
+    installBff({
+      summary: () => summaryBody(0, 1, 1),
+      page: () => deferredFirstPage,
+    });
+
+    renderImports("?view=InProgress");
+
+    await waitFor(() =>
+      expect(
+        listSettledReport(),
+        "the pane was told the list had settled before its first page read answered",
+      ).toBe("unsettled"),
+    );
+    answerFirstPage();
+
+    expect(await screen.findByText("A bounded PDF")).toBeVisible();
+    await waitFor(() =>
+      expect(
+        listSettledReport(),
+        "the pane was never told the list had settled once its rows were on screen",
+      ).toBe("settled"),
+    );
+  });
 
   it("keeps the view the URL names even when the counts would choose another", async () => {
     installBff({
@@ -993,7 +1066,7 @@ describe("Imports workspace", () => {
     ).toBeVisible();
   });
 
-  it("returns focus to the row the inspector was opened from", async () => {
+  it("restores the row list and the focus a narrow viewport left behind", async () => {
     installBff({
       summary: () => summaryBody(2, 0, 1),
       page: () => pageBody([attentionMediaItem(), indexMediaItem()], {
@@ -1007,6 +1080,8 @@ describe("Imports workspace", () => {
     });
 
     renderImports("?view=NeedsAttention");
+    await screen.findByText("A readable report");
+    setViewportWidth(390);
 
     const target = await screen.findByRole("button", { name: "A readable report" });
     target.focus();
@@ -1015,6 +1090,10 @@ describe("Imports workspace", () => {
     const inspector = await screen.findByRole("complementary", {
       name: "Import detail",
     });
+    expect(
+      screen.getByRole("listitem", { name: /A readable report/ }),
+      "the selected row was not exposed as the current one",
+    ).toHaveAttribute("aria-current", "true");
     expect(
       within(inspector).getByText(
         "Search indexing failed. You can still read this document.",
@@ -1034,6 +1113,14 @@ describe("Imports workspace", () => {
         "closing the inspector dropped focus to the document",
       ).toHaveFocus(),
     );
+    expect(
+      screen.getByRole("listitem", { name: new RegExp(LONG_TITLE.slice(0, 20)) }),
+      "dismissing the inspector did not bring the list back",
+    ).toBeVisible();
+    expect(
+      screen.getByRole("listitem", { name: /A readable report/ }),
+      "a dismissed inspector left its row marked current",
+    ).not.toHaveAttribute("aria-current");
   });
 
   it("keeps a long title, a full touch target and every refinement reachable at 200% zoom", async () => {
@@ -1064,6 +1151,79 @@ describe("Imports workspace", () => {
     expect(screen.getByRole("combobox", { name: "Type" })).toBeVisible();
     expect(screen.getByRole("combobox", { name: "Stage" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Refresh" })).toBeVisible();
+  });
+
+  it("dates every row by the age of what it states", async () => {
+    const minutesAgo = (minutes: number) =>
+      new Date(Date.now() - minutes * 60_000).toISOString();
+    installBff({
+      summary: () => summaryBody(1, 1, 1),
+      page: (query) =>
+        query.get("view") === "InProgress"
+          ? pageBody([
+              {
+                ...activeMediaItem(),
+                accepted_at: minutesAgo(5),
+                updated_at: minutesAgo(1),
+              },
+            ])
+          : pageBody([{ ...attentionMediaItem(), updated_at: minutesAgo(180) }], {
+              groups: [{ stage: "Extract", count: 1 }],
+            }),
+    });
+
+    renderImports("?view=NeedsAttention");
+
+    const attention = await screen.findByRole("listitem", {
+      name: new RegExp(LONG_TITLE.slice(0, 20)),
+    });
+    expect(
+      within(attention).getByText("Updated 3 hours ago"),
+      "a stopped import did not say how old its failure is",
+    ).toBeVisible();
+
+    await userEvent.click(screen.getByRole("tab", { name: /In progress/ }));
+
+    const active = await screen.findByRole("listitem", { name: "A bounded PDF" });
+    expect(
+      within(active).getByText("Started 5 minutes ago"),
+      "running work was not dated from its acceptance",
+    ).toBeVisible();
+  });
+
+  it("reaches the next row and a row's own recovery with the keyboard alone", async () => {
+    installBff({
+      summary: () => summaryBody(2, 0, 1),
+      page: () =>
+        pageBody(
+          [
+            uploadItem(UPLOAD_ONE, "Field notes.pdf"),
+            uploadItem(UPLOAD_TWO, "Second notes.pdf"),
+          ],
+          { groups: [{ stage: "Upload", count: 2 }] },
+        ),
+    });
+
+    renderImports("?view=NeedsAttention");
+
+    const first = await screen.findByRole("button", { name: "Field notes.pdf" });
+    const second = screen.getByRole("button", { name: "Second notes.pdf" });
+    const retry = within(
+      screen.getByRole("listitem", { name: "Field notes.pdf" }),
+    ).getByRole("button", { name: "Retry upload" });
+    first.focus();
+
+    // Tab forward until the expected control has focus, in the order a reader
+    // meets them: the row's own recovery, then the next row.
+    const tabUntil = async (element: HTMLElement, missed: string) => {
+      for (let step = 0; step < 6 && !element.matches(":focus"); step += 1) {
+        await userEvent.tab();
+      }
+      expect(element, missed).toHaveFocus();
+    };
+
+    await tabUntil(retry, "a row's own recovery was not reachable by Tab");
+    await tabUntil(second, "Tab traversal never reached the next row");
   });
 
   it("states the queue reason and counted progress of active work", async () => {

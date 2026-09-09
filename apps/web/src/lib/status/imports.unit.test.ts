@@ -15,6 +15,7 @@ import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import {
   IMPORTS_SETTLED_LINE,
   IMPORT_FAILURE_COPY,
+  importAgeLine,
   importConsequenceLine,
   importReasonLine,
   importStatusLine,
@@ -71,6 +72,8 @@ function uploadImport(state: ImportState): ImportItem {
 }
 
 const ATTEMPT_ID = "22222222-2222-4222-8222-222222222222";
+const JOB_ID = "44444444-4444-4444-8444-444444444444";
+const DISPLAY = { displayLocale: "en-US", displayTimeZone: "UTC" } as const;
 
 function failedExtraction(): HistoryEntry {
   return {
@@ -86,6 +89,16 @@ function failedExtraction(): HistoryEntry {
       terminal: false,
       progress: absent(),
     },
+  };
+}
+
+function failedUpload(facts: HistoryEntry["facts"]): HistoryEntry {
+  return {
+    id: "55555555-5555-4555-8555-555555555555",
+    occurredAt: "2026-09-06T08:00:00Z",
+    stage: present("Upload"),
+    failureCode: present("E_UPLOAD_TRANSPORT_FAILED"),
+    facts,
   };
 }
 
@@ -118,6 +131,18 @@ describe("Imports copy owner", () => {
         nextRetryAt: absent(),
       }),
       "Waiting for capacity",
+    ],
+    [
+      "a queued import whose waiting reason was never recorded",
+      mediaImport({
+        kind: "Active",
+        status: "Queued",
+        stage: "Extract",
+        waitingReason: absent(),
+        progress: absent(),
+        nextRetryAt: absent(),
+      }),
+      "Extraction queued",
     ],
     [
       "a queued import waiting out its retry backoff",
@@ -248,12 +273,89 @@ describe("Imports copy owner", () => {
   });
 
   it("explains a filter match in one clause and the attempt itself in full", () => {
-    expect(historyMatchLine(failedExtraction(), "Sep 6")).toBe(
+    expect(historyMatchLine(failedExtraction(), DISPLAY)).toBe(
       "Matched: Extraction failed · Sep 6",
     );
     expect(historyEventLine(failedExtraction())).toBe(
       "Extraction failed. The source was refused. Source could not be fetched. An automatic retry follows.",
     );
+  });
+
+  it("narrates an upload and an index event with the reason that was recorded", () => {
+    expect(
+      historyEventLine(
+        failedUpload({
+          kind: "UploadFailed",
+          generation: 2,
+          transport: present({ kind: "HttpRejected", status: 503 }),
+        }),
+      ),
+    ).toBe("Upload failed. The storage service rejected this upload (503).");
+    const rejected: HistoryEntry = {
+      ...failedUpload({
+        kind: "UploadFailed",
+        generation: 2,
+        transport: absent(),
+      }),
+      stage: present("Validate"),
+      failureCode: present("E_SOURCE_INTEGRITY"),
+    };
+    expect(
+      historyEventLine(rejected),
+      "a rejected upload was narrated without the code the server recorded",
+    ).toBe(`Upload rejected. ${IMPORT_FAILURE_COPY.E_SOURCE_INTEGRITY.reason}.`);
+    expect(
+      historyMatchLine(rejected, DISPLAY),
+      "the attempt list and the row named one fact two ways",
+    ).toBe("Matched: Upload rejected · Sep 6");
+    expect(
+      historyEventLine({
+        id: "66666666-6666-4666-8666-666666666666",
+        occurredAt: "2026-09-06T08:00:00Z",
+        stage: present("Index"),
+        failureCode: present("E_WORKER_HANDLER_FAILED"),
+        facts: {
+          kind: "IndexFailed",
+          revision: 3,
+          jobId: JOB_ID,
+          executionId: absent(),
+          origin: "Execution",
+          terminal: true,
+        },
+      }),
+    ).toBe(
+      `Search indexing failed. The run failed. ${IMPORT_FAILURE_COPY.E_WORKER_HANDLER_FAILED.reason}. No more automatic retries.`,
+    );
+  });
+
+  it("dates a row by the age of what it states", () => {
+    const now = new Date("2026-09-06T12:00:00Z");
+    expect(
+      importAgeLine(
+        mediaImport({
+          kind: "NeedsAttention",
+          stage: "Extract",
+          failureCode: present("E_SOURCE_TOO_LARGE"),
+        }),
+        DISPLAY,
+        now,
+      ),
+    ).toEqual({ dateTime: "2026-09-06T09:00:00Z", text: "Updated 3 hours ago" });
+    expect(
+      importAgeLine(
+        mediaImport({
+          kind: "Active",
+          status: "Processing",
+          stage: "Extract",
+          waitingReason: absent(),
+          progress: absent(),
+          nextRetryAt: absent(),
+        }),
+        DISPLAY,
+        now,
+      ),
+      "running work was dated from a change instead of its acceptance",
+    ).toEqual({ dateTime: "2026-09-06T08:00:00Z", text: "Started 4 hours ago" });
   });
 
   it("dates the last observation in words the reader can place", () => {

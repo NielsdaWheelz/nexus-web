@@ -67,7 +67,8 @@
 }
 
 .rowReason,
-.rowMatched {
+.rowMatched,
+.rowAge {
   color: var(--ink-muted);
   font-size: var(--text-xs);
 }

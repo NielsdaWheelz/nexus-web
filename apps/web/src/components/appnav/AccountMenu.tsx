@@ -1,24 +1,24 @@
 "use client";
 
 import { useState, type MouseEvent, type ReactNode } from "react";
-import { Download, ListTodo, LogOut } from "lucide-react";
+import { Download, LogOut } from "lucide-react";
 import Link from "next/link";
+import ImportsBadge from "@/components/imports/ImportsBadge";
 import ActionMenu from "@/components/ui/ActionMenu";
 import { requestDownloadsOpen } from "@/components/offlineMedia/downloadsSurfaceIngress";
-import { useMediaActivity } from "@/lib/media/MediaActivityProvider";
-import { requestNexusOpen } from "@/lib/nexus/events";
 import { useOfflineMediaCapability } from "@/lib/offlineMedia/OfflineMediaProvider";
 import { useOfflineReadingCapability } from "@/lib/offlineReading/OfflineReadingProvider";
 import { useAndroidShell } from "@/lib/renderEnvironment/provider";
 import type { AppNavActivationResult } from "@/lib/panes/targetLinkActivation";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
-import type { AccountNavigation, NavItem } from "./navModel";
+import { NAV_UTILITIES, type AccountNavigation, type NavItem } from "./navModel";
 import styles from "./AppNav.module.css";
 import { accountSignOutOwner } from "./accountSignOut";
 
 export default function AccountMenu({
   account,
   activeId,
+  utilityActiveId,
   placement,
   align,
   renderTrigger,
@@ -26,6 +26,8 @@ export default function AccountMenu({
 }: {
   account: AccountNavigation;
   activeId: NavItem["id"] | null;
+  /** The utility destination the workspace is on, which is not an Account one. */
+  utilityActiveId: NavItem["id"] | null;
   placement: "above" | "below";
   align: "start" | "center" | "end";
   renderTrigger: Parameters<typeof ActionMenu>[0]["renderTrigger"];
@@ -37,16 +39,14 @@ export default function AccountMenu({
   const { stats, settings } = account;
   const StatsIcon = stats.icon;
   const SettingsIcon = settings.icon;
-  const { snapshot } = useMediaActivity();
   const offlineMedia = useOfflineMediaCapability();
   const offlineReading = useOfflineReadingCapability();
   const androidShell = useAndroidShell();
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState<string | null>(null);
   const signOutOwner = accountSignOutOwner(androidShell, offlineReading.kind);
-  const importCount = snapshot
-    ? snapshot.needsAttentionCount + snapshot.activeCount
-    : 0;
+  const imports = NAV_UTILITIES.imports;
+  const ImportsIcon = imports.icon;
   const options: ActionDescriptor[] = [
     {
       kind: "custom",
@@ -72,21 +72,24 @@ export default function AccountMenu({
     },
     {
       kind: "custom",
-      id: "import-activity",
-      label: "Import activity",
-      render: ({ closeMenuWithoutFocus }) => (
-        <button
-          type="button"
+      id: "imports",
+      label: imports.label,
+      render: ({ closeMenu, closeMenuWithoutFocus }) => (
+        <Link
+          href={imports.href}
           role="menuitem"
           className={styles.menuItem}
-          onClick={() => {
-            closeMenuWithoutFocus();
-            requestNexusOpen({ kind: "Activity" });
+          aria-current={utilityActiveId === imports.id ? "page" : undefined}
+          onClick={(event) => {
+            const result = onNavigate(event, imports);
+            if (result === "unhandled") return;
+            if (result === "handled-source-focus") closeMenu();
+            else closeMenuWithoutFocus();
           }}
         >
-          <ListTodo size={16} aria-hidden="true" />
-          Import activity
-        </button>
+          <ImportsIcon size={16} aria-hidden="true" />
+          <ImportsBadge label={imports.label} labelVisible />
+        </Link>
       ),
     },
   ];
@@ -188,19 +191,10 @@ export default function AccountMenu({
     <>
     <ActionMenu
       className={styles.account}
-      label={
-        importCount === 0
-          ? "Account"
-          : `Account, ${importCount} open ${
-              importCount === 1 ? "import" : "imports"
-            }`
-      }
+      label="Account"
       placement={placement}
       align={align}
       renderTrigger={renderTrigger}
-      triggerAttributes={{
-        "data-import-count": importCount > 0 ? String(importCount) : undefined,
-      }}
       options={options}
     />
     {signOutError === null ? null : <p role="alert">{signOutError}</p>}

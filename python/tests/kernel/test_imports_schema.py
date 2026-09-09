@@ -155,6 +155,17 @@ def test_import_list_query_binds_one_cursor_identity_to_one_filter_meaning() -> 
     blank_search = ImportListQuery.model_validate({"view": "History", "q": "   "})
 
     assert plain.matched_from == datetime(2026, 9, 1, tzinfo=UTC)
+    assert plain.normalized() == {
+        "view": "History",
+        "q": "Bakker",
+        "media_kind": None,
+        "stage": None,
+        "failure_code": None,
+        "state": None,
+        "had_failures": None,
+        "from": "2026-09-01T00:00:00+00:00",
+        "before": None,
+    }, "the cursor identity is spelled in the wire names the filters arrive under"
     assert plain.normalized() == respelled.normalized()
     assert plain.normalized() != other_window.normalized()
     assert blank_search.q is None

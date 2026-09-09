@@ -12,7 +12,6 @@ import {
 } from "@/lib/actions/resourceActionRuntime";
 import type { ResourceActionId } from "@/lib/actions/resourceActions";
 import { assertNever } from "@/lib/assertNever";
-import { formatDisplayDate } from "@/lib/display/format";
 import type { ImportRef } from "@/lib/imports/importRef";
 import {
   importsPendingKey,
@@ -31,12 +30,14 @@ import {
   IMPORT_RECOVERY_PENDING_LABEL,
   IMPORT_RETRY_UPLOAD_LABEL,
   historyMatchLine,
+  importAgeLine,
   importKindLabel,
   importOriginalFileFeedback,
   importUploadCommandFeedback,
   importReasonLine,
   importStateLabel,
   importStatusLine,
+  isUploadObligation,
 } from "@/lib/status/imports";
 import styles from "./ImportsWorkspace.module.css";
 
@@ -56,9 +57,7 @@ const STATE_TONE: Readonly<Record<ImportItem["state"]["kind"], PillTone>> = {
 
 /** The upload this import is still waiting for, if its obligation is the upload. */
 function uploadObligation(item: ImportItem): RecoveryOffer | null {
-  if (!item.ref.startsWith("upload:") || item.mediaRef.kind === "Present") {
-    return null;
-  }
+  if (!isUploadObligation(item)) return null;
   return item.capabilities.recovery.kind === "Present"
     ? item.capabilities.recovery.value
     : null;
@@ -268,14 +267,9 @@ export default function ImportRow({
   const reason = importReasonLine(item);
   const matched =
     item.matchedEvent.kind === "Present"
-      ? historyMatchLine(
-          item.matchedEvent.value,
-          formatDisplayDate(item.matchedEvent.value.occurredAt, display, {
-            month: "short",
-            day: "numeric",
-          }) ?? item.matchedEvent.value.occurredAt,
-        )
+      ? historyMatchLine(item.matchedEvent.value, display)
       : null;
+  const age = importAgeLine(item, display, new Date());
   return (
     <ResourceRow
       as="li"
@@ -312,6 +306,9 @@ export default function ImportRow({
           {reason === null ? null : (
             <span className={styles.rowReason}>{reason}</span>
           )}
+          <time className={styles.rowAge} dateTime={age.dateTime}>
+            {age.text}
+          </time>
           {matched === null ? null : (
             <span className={styles.rowMatched}>{matched}</span>
           )}

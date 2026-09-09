@@ -66,6 +66,11 @@ export interface ImportsWorkspaceProps {
   readonly onStateChange: (next: ImportsUrlState) => void;
   readonly selectedRef: ImportRef | null;
   readonly onSelect: (ref: ImportRef | null) => void;
+  /**
+   * Reports whether the listed page has settled (ready or failed). The pane
+   * owns the return memento and cannot see this read, so the list reports it.
+   */
+  readonly onListSettled: (settled: boolean) => void;
 }
 
 const REASON_OPTIONS = [...SAFE_FAILURE_CODES].sort((left, right) =>
@@ -97,8 +102,9 @@ export default function ImportsWorkspace({
   onStateChange,
   selectedRef,
   onSelect,
+  onListSettled,
 }: ImportsWorkspaceProps) {
-  const { summary } = useImports();
+  const { summary, loadState, refresh } = useImports();
   const { displayTimeZone } = useRenderEnvironment();
   const explicitView = state.view.kind === "Present" ? state.view.value : null;
   // The counts choose a view once. A later observation must never move the
@@ -130,7 +136,18 @@ export default function ImportsWorkspace({
   }, [displayTimeZone, explicitView, resolvedView]);
 
   if (resolvedView === null) {
-    return <PaneLoadingState label="Loading imports" announcement="Polite" />;
+    // The counts choose the view, so a first read that never arrived leaves no
+    // view for the failure below to be reported inside: this entry carries its
+    // own recovery.
+    return loadState.kind === "Failed" ? (
+      <FeedbackNotice
+        content={importsLoadErrorMessage(loadState.error)}
+        announcement="Assertive"
+        actions={[{ label: "Try again", onClick: () => void refresh() }]}
+      />
+    ) : (
+      <PaneLoadingState label="Loading imports" announcement="Polite" />
+    );
   }
   return (
     <ImportsWorkspaceView
@@ -139,6 +156,7 @@ export default function ImportsWorkspace({
       onStateChange={onStateChange}
       selectedRef={selectedRef}
       onSelect={onSelect}
+      onListSettled={onListSettled}
     />
   );
 }
@@ -149,12 +167,18 @@ function ImportsWorkspaceView({
   onStateChange,
   selectedRef,
   onSelect,
+  onListSettled,
 }: ImportsWorkspaceProps & { readonly view: ImportsView }) {
   const { summary, loadState, observation, refresh } = useImports();
   const display = useRenderEnvironment();
   const page = useImportsPage(view, state);
   const chips = appliedImportsFilters(view, state);
   const listRef = useRef<HTMLDivElement>(null);
+
+  const listSettled = page.status !== "loading";
+  useEffect(() => {
+    onListSettled(listSettled);
+  }, [listSettled, onListSettled]);
 
   const [draft, setDraft] = useState(() => text(state.q));
   const committedRef = useRef(text(state.q));

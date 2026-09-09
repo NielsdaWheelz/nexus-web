@@ -1,6 +1,6 @@
 # Imports workspace hard cutover
 
-Status: proposed; implementation and runtime verification NOT_RUN. Desktop first.
+Status: implemented; verification recorded in the PR. Desktop first.
 
 ## Contract and scope
 

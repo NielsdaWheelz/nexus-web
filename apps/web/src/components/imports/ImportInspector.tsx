@@ -6,7 +6,6 @@ import PaneSection from "@/components/ui/PaneSection";
 import Pill from "@/components/ui/Pill";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { isApiError } from "@/lib/api/client";
-import { formatDisplayDate } from "@/lib/display/format";
 import type { ImportRef } from "@/lib/imports/importRef";
 import { useImportDetail } from "@/lib/imports/useImportDetail";
 import { useImportHistory } from "@/lib/imports/useImportHistory";
@@ -18,6 +17,7 @@ import {
   historyMatchLine,
   importConsequenceLine,
   importKindLabel,
+  importMomentText,
   importRecoveryRestrictionLine,
   importRecoveryScopeLine,
   importStageLabel,
@@ -69,13 +69,7 @@ export default function ImportInspector({
       : null;
   const matched =
     item.matchedEvent.kind === "Present"
-      ? historyMatchLine(
-          item.matchedEvent.value,
-          formatDisplayDate(item.matchedEvent.value.occurredAt, display, {
-            month: "short",
-            day: "numeric",
-          }) ?? item.matchedEvent.value.occurredAt,
-        )
+      ? historyMatchLine(item.matchedEvent.value, display)
       : null;
 
   return (
@@ -114,11 +108,7 @@ export default function ImportInspector({
         title="Attempts"
         description={
           historyCoverage.kind === "Partial"
-            ? historyCoverageLine(
-                formatDisplayDate(historyCoverage.recordedSince, display, {
-                  dateStyle: "medium",
-                }) ?? historyCoverage.recordedSince,
-              )
+            ? historyCoverageLine(historyCoverage.recordedSince, display)
             : undefined
         }
       >
@@ -140,10 +130,7 @@ export default function ImportInspector({
                     <li key={entry.id}>
                       <span>{historyEventLine(entry)}</span>
                       <time dateTime={entry.occurredAt}>
-                        {formatDisplayDate(entry.occurredAt, display, {
-                          dateStyle: "medium",
-                          timeStyle: "short",
-                        }) ?? entry.occurredAt}
+                        {importMomentText(entry.occurredAt, display)}
                       </time>
                     </li>
                   ))}
@@ -192,10 +179,7 @@ export default function ImportInspector({
             <dt>Accepted</dt>
             <dd>
               <time dateTime={item.acceptedAt}>
-                {formatDisplayDate(item.acceptedAt, display, {
-                  dateStyle: "medium",
-                  timeStyle: "short",
-                }) ?? item.acceptedAt}
+                {importMomentText(item.acceptedAt, display)}
               </time>
             </dd>
           </div>
@@ -203,10 +187,7 @@ export default function ImportInspector({
             <dt>Updated</dt>
             <dd>
               <time dateTime={item.updatedAt}>
-                {formatDisplayDate(item.updatedAt, display, {
-                  dateStyle: "medium",
-                  timeStyle: "short",
-                }) ?? item.updatedAt}
+                {importMomentText(item.updatedAt, display)}
               </time>
             </dd>
           </div>

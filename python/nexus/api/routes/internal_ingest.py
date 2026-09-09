@@ -7,7 +7,6 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
 from nexus.db.session import get_db
-from nexus.errors import ApiErrorCode, ConflictError
 from nexus.responses import ok
 from nexus.schemas.ingest import (
     IngestReconcileEnqueueOut,
@@ -54,17 +53,13 @@ def get_reconcile_stale_ingest_health(
     return ok(out)
 
 
-@router.post("/internal/ingest/content-index/{media_id}/retry-dead")
+@router.post("/internal/ingest/content-index/{media_id}/retry-dead", status_code=202)
 def retry_dead_content_index(
     media_id: UUID,
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     """Requeue the dead reindex job of the media's current index revision."""
     offer = current_search_repair_offer(db, media_id=media_id)
-    if offer is None:
-        raise ConflictError(
-            ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Media has no dead content-index job to repair."
-        )
     admission = repair_dead_media_reindex(
         db,
         actor=OperatorRecovery(),
@@ -75,17 +70,13 @@ def retry_dead_content_index(
     return ok(IngestRecoveryJobOut(media_id=media_id, job_id=admission.job_id))
 
 
-@router.post("/internal/ingest/source/{media_id}/retry-dead")
+@router.post("/internal/ingest/source/{media_id}/retry-dead", status_code=202)
 def retry_dead_source(
     media_id: UUID,
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     """Requeue the dead job of the media's latest source attempt."""
     offer = current_source_repair_offer(db, media_id=media_id)
-    if offer is None:
-        raise ConflictError(
-            ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Media has no dead source job to repair."
-        )
     admission = repair_dead_source_execution(
         db,
         actor=OperatorRecovery(),
