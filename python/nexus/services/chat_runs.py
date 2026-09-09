@@ -1229,14 +1229,39 @@ async def _dispatch_generation_step(
     # Close both shapes before health, UDS, or MCP I/O begins.
     db.commit()
 
-    def resolve_terminal(terminal_db: Session, terminal: BackendTerminal) -> BackendTerminal:
+    def encode_native_terminal(
+        terminal: BackendTerminal, *, host_cancelled: bool = False
+    ) -> EncodedGenerationTerminal:
+        return EncodedGenerationTerminal(
+            terminal_result=encode_step_result(
+                GenerationStepResultEnvelope(
+                    root=_chat_generation_terminal_result(
+                        terminal,
+                        observed_text="".join(observed_text_parts),
+                        observed_text_by_child=observed_text_by_child,
+                        observed_usage_by_child=observed_usage_by_child,
+                        last_sequence=observed_event_count + 1,
+                        generation_id=generation_id,
+                        host_cancelled=host_cancelled,
+                    )
+                )
+            ),
+            orchestration_stop="cancelled" if host_cancelled else None,
+        )
+
+    def resolve_terminal(
+        terminal_db: Session, terminal: BackendTerminal
+    ) -> EncodedGenerationTerminal:
         locked_run = lock_chat_run_for_update(terminal_db, run.id)
         if locked_run is None:
             raise AssertionError("chat run disappeared before generation terminal")
-        if locked_run.cancel_requested_at is None or _backend_terminal_is_cancelled(terminal):
-            return terminal
-        cancel_signal.set()
-        return _cancelled_backend_terminal(terminal)
+        host_cancelled = (
+            locked_run.cancel_requested_at is not None
+            and not _backend_terminal_is_cancelled(terminal)
+        )
+        if host_cancelled:
+            cancel_signal.set()
+        return encode_native_terminal(terminal, host_cancelled=host_cancelled)
 
     tool_executor = None
     admission_binder = None
@@ -1297,20 +1322,7 @@ async def _dispatch_generation_step(
             cancel_signal=cancel_signal,
             before_terminal=before_terminal,
             resolve_terminal=resolve_terminal,
-            encode_terminal=lambda terminal: EncodedGenerationTerminal(
-                terminal_result=encode_step_result(
-                    GenerationStepResultEnvelope(
-                        root=_chat_generation_terminal_result(
-                            terminal,
-                            observed_text="".join(observed_text_parts),
-                            observed_text_by_child=observed_text_by_child,
-                            observed_usage_by_child=observed_usage_by_child,
-                            last_sequence=observed_event_count + 1,
-                            generation_id=generation_id,
-                        )
-                    )
-                )
-            ),
+            encode_terminal=encode_native_terminal,
             encode_failure=lambda code, detail: _encode_chat_failure(
                 code,
                 detail=detail,
@@ -1346,6 +1358,7 @@ def _chat_generation_terminal_result(
     observed_usage_by_child: dict[int, dict[str, JsonValue]],
     last_sequence: int | None,
     generation_id: UUID,
+    host_cancelled: bool = False,
 ) -> AssistantTurn | ExpectedFailure | CancelledGeneration:
     terminal_usage = _terminal_usage_document(terminal)
     usages = dict(observed_usage_by_child)
@@ -1394,7 +1407,7 @@ def _chat_generation_terminal_result(
     else:
         assert_never(terminal.evidence)
 
-    if status == "cancelled":
+    if host_cancelled or status == "cancelled":
         return CancelledGeneration(
             assistant_content=observed_text,
             usage=_owned_usage(usage),
@@ -1530,34 +1543,6 @@ def _backend_terminal_is_cancelled(terminal: BackendTerminal) -> bool:
     if isinstance(evidence, ProviderTerminalEvidence):
         return isinstance(evidence.outcome, ProviderCancelled)
     assert_never(evidence)
-
-
-def _cancelled_backend_terminal(terminal: BackendTerminal) -> BackendTerminal:
-    evidence = terminal.evidence
-    if isinstance(evidence, CodexTerminalEvidence):
-        cancelled = evidence.native.model_copy(
-            update={
-                "status": "cancelled",
-                "failure": None,
-                "final_text": "",
-                "structured_output": None,
-                "diagnostics": ("worker: durable chat cancellation won terminal linearization",),
-            }
-        )
-        replacement = CodexTerminalEvidence(native=cancelled)
-    elif isinstance(evidence, ProviderTerminalEvidence):
-        replacement = ProviderTerminalEvidence(
-            outcome=ProviderCancelled(meta=evidence.outcome.meta),
-            correlation=evidence.correlation,
-        )
-    else:
-        assert_never(evidence)
-    return BackendTerminal(
-        route=terminal.route,
-        child_seq=terminal.child_seq,
-        backend_seq=terminal.backend_seq,
-        evidence=replacement,
-    )
 
 
 def _encode_chat_failure(

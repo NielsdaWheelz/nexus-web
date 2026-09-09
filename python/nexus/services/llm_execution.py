@@ -154,7 +154,7 @@ type GenerationFailureCode = NormalizedFailureCode | Literal["cancelled", "turn_
 type EncodeFailure = Callable[[GenerationFailureCode, str], str]
 type ObserveEvent = Callable[[BackendEvent], Awaitable[None]]
 type BeforeTerminal = Callable[[], Awaitable[None]]
-type ResolveTerminal = Callable[[Session, BackendTerminal], BackendTerminal]
+type ResolveTerminal = Callable[[Session, BackendTerminal], "EncodedGenerationTerminal"]
 type BindAdmission = CodexAdmissionBinder
 type BindAdmissionFactory = Callable[[GenerationSpec], BindAdmission]
 type ToolExecutorFactory = Callable[[GenerationSpec], BackendToolExecutor]
@@ -533,6 +533,11 @@ class AcceptedGenerationFailure:
 class EncodedGenerationTerminal:
     terminal_result: str
     accepted_failure: AcceptedGenerationFailure | None = None
+    orchestration_stop: Literal["cancelled"] | None = None
+
+    def __post_init__(self) -> None:
+        if self.accepted_failure is not None and self.orchestration_stop is not None:
+            raise ValueError("generation projection cannot both fail and cancel")
 
 
 type GenerationExecutionResult = CompletedGeneration | RescheduleRequested
@@ -872,11 +877,6 @@ class _LedgerChildLifecycle:
             if state.dispatch_phase is not Uncertain:
                 raise AssertionError("model child terminal requires an Uncertain owner")
             effective_terminal = _terminal_for_durable_landing(completion.terminal)
-            if is_final and self._resolve_terminal is not None:
-                effective_terminal = _terminal_for_durable_landing(
-                    self._resolve_terminal(db, effective_terminal)
-                )
-                _assert_terminal_identity(effective_terminal, completion.terminal)
             effective = BackendChildCompletion(
                 child=completion.child,
                 terminal=effective_terminal,
@@ -908,7 +908,11 @@ class _LedgerChildLifecycle:
             )
             encoded: EncodedGenerationTerminal | None = None
             if is_final:
-                encoded = self._encode_terminal(effective_terminal)
+                encoded = (
+                    self._resolve_terminal(db, effective_terminal)
+                    if self._resolve_terminal is not None
+                    else self._encode_terminal(effective_terminal)
+                )
                 complete_generation_in_current_transaction(
                     db,
                     owner=request.owner,
@@ -917,6 +921,7 @@ class _LedgerChildLifecycle:
                         child_terminal,
                         final_child_seq=completion.child.child_seq,
                         accepted_failure=encoded.accepted_failure,
+                        orchestration_stop=encoded.orchestration_stop,
                     ),
                 )
                 landed = request.journal.complete(
@@ -1288,7 +1293,15 @@ def _parent_terminal_document(
     *,
     final_child_seq: int,
     accepted_failure: AcceptedGenerationFailure | None,
+    orchestration_stop: Literal["cancelled"] | None = None,
 ) -> dict[str, object]:
+    if orchestration_stop is not None:
+        return {
+            "kind": "Cancelled",
+            "orchestration_stop": orchestration_stop,
+            "final_model_turn_seq": final_child_seq,
+            "model_turn_terminal": dict(child_terminal),
+        }
     if accepted_failure is None:
         document = {
             "kind": child_terminal["kind"],
@@ -1468,7 +1481,6 @@ def reconcile_uncertain_generation_in_current_transaction(
     request: GenerationReconciliationRequest,
     *,
     encode_terminal: EncodeTerminal,
-    resolve_terminal: ResolveTerminal | None = None,
 ) -> StepReplayState:
     """Stage one exact Codex terminal repair in the caller-owned transaction."""
 
@@ -1509,10 +1521,6 @@ def reconcile_uncertain_generation_in_current_transaction(
             evidence=CodexTerminalEvidence(native=native),
         )
     )
-    if resolve_terminal is not None:
-        resolved = _terminal_for_durable_landing(resolve_terminal(db, terminal))
-        _assert_terminal_identity(resolved, terminal)
-        terminal = resolved
     encoded = encode_terminal(terminal)
     lock_generation_owner_in_current_transaction(db, request.owner)
     generation = lock_generation_for_authority_in_current_transaction(
@@ -1548,6 +1556,7 @@ def reconcile_uncertain_generation_in_current_transaction(
             child_terminal,
             final_child_seq=1,
             accepted_failure=encoded.accepted_failure,
+            orchestration_stop=encoded.orchestration_stop,
         ),
     )
     return StepReplayState(
@@ -1561,15 +1570,6 @@ def reconcile_uncertain_generation_in_current_transaction(
 def _assert_expected_state(observed: StepReplayState | None, expected: StepReplayState) -> None:
     if observed != expected:
         raise AssertionError("generation journal changed during checkpoint transition")
-
-
-def _assert_terminal_identity(observed: BackendTerminal, expected: BackendTerminal) -> None:
-    if (observed.route, observed.child_seq, observed.backend_seq) != (
-        expected.route,
-        expected.child_seq,
-        expected.backend_seq,
-    ):
-        raise AssertionError("domain terminal resolution changed backend identity")
 
 
 __all__ = [

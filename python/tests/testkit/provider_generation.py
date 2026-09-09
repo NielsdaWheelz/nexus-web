@@ -42,7 +42,10 @@ from nexus.services.generation_backend import (
 from nexus.services.generation_spec import (
     GenerationSpec,
 )
-from nexus.services.provider_generation_backend import ProviderGenerationBackend
+from nexus.services.provider_generation_backend import (
+    ProviderGenerationBackend,
+    ProviderGenerationRuntime,
+)
 from nexus.services.provider_generation_contract import ProviderModelTools
 from nexus.services.tool_runtime.composition import (
     FrozenToolOperation,
@@ -56,7 +59,14 @@ def tool_decision_generation_backend(
 ) -> tuple[GenerationBackend, ToolDecisionPeer]:
     """Real generation composition around one controlled external provider boundary."""
     peer = ToolDecisionPeer()
-    backend = GenerationBackend(
+    return provider_generation_backend(operation, peer), peer
+
+
+def provider_generation_backend(
+    operation: FrozenToolOperation, peer: ProviderGenerationRuntime
+) -> GenerationBackend:
+    """Keep production composition around the supplied external provider boundary."""
+    return GenerationBackend(
         GenerationBackendComposition(
             codex=_UnusedCodex(),
             codex_projection=_UnusedCodexProjection(),
@@ -64,7 +74,6 @@ def tool_decision_generation_backend(
             provider_tools=_FrozenProviderTools(operation),
         )
     )
-    return backend, peer
 
 
 class ToolDecisionPeer:

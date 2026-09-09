@@ -70,6 +70,11 @@ Scoped asynchronous PostgreSQL connections preserve transaction ownership and
 event-loop responsiveness; unpooled connections trade connection setup cost for
 safe use from the worker and MCP event-loop lifetimes.
 
+Generation-only imports do not initialize the structured-agent tool runtime.
+The shared package's existing flat API loads that stack on first API access or
+full introspection; the trade-off is deferred dependency initialization and
+import errors at that boundary, with one unchanged export inventory.
+
 Deployment must drain incompatible active generations before the schema change.
 Historical admission documents remain immutable; read projections consume
 historical presentation facts, never reconstruct executable old authority.
@@ -115,3 +120,7 @@ proof exhausts both admission boundaries and verifies that stopping preserves
 another execution's occupied slot.
 Cancellation of an armed unknown call still requires reconciliation; cancellation
 cannot manufacture evidence that the provider did not execute it.
+If cancellation wins after a native terminal arrives, the parent and Chat memo
+record cancellation while the paid child retains its original outcome, content
+and usage. These records land in one transaction. Native cancellation remains
+native evidence; host cancellation is an explicit orchestration projection.

@@ -957,6 +957,17 @@
       "expected_failure": "cancelled recovery remained pending on provider dispatch readiness",
       "changed_owner_red": "coherent-fault",
       "changed_owner_sha256": "7d1fa9220ed084c9c27a3b235aea4876ef274478ca449cf5e962d1ac4c442a91"
+    },
+    {
+      "id": "chat-native-terminal-cancellation",
+      "patch": "testdata/faults/chat-native-terminal-cancellation.patch",
+      "sha256": "77fa308163c3a22687d3a720c34dd7b3d62988e0f69daa27b57436821b24882d",
+      "proofs": [
+        "pytest:python/tests/service/test_chat_terminal_cancellation.py::test_late_chat_cancellation_preserves_native_child_and_paid_usage"
+      ],
+      "expected_failure": "host cancellation replaced the original paid native terminal",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "2e3adaa7f5ee61b9e22e68e3c2f42910429d782664e17b9e59922053dab4ebbc"
     }
   ]
 }

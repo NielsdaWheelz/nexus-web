@@ -60,7 +60,7 @@ packages = ["nexus"]
 
 [tool.uv.sources]
 provider-runtime = { git = "https://github.com/NielsdaWheelz/llm-calling", rev = "8fde23ac56571a63c65cfcff55c73a0976f83eb4" }
-llm-agent-kernel = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git", rev = "35f42b91bc214f556c1b5b6a36d9629ed00e574d" }
+llm-agent-kernel = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git", rev = "41c68bdb6497a8ee76ac5ba94bd7a0b48a1fe1af" }
 llm-tools = { git = "https://github.com/NielsdaWheelz/llm-tools.git", rev = "9e6d155f3b64f03495911435b7cae8b8d131f9a2" }
 
 [tool.ruff]

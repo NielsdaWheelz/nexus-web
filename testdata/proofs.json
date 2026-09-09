@@ -454,7 +454,8 @@
         "python/tests/service/test_chat_generation_recovery_usage.py",
         "python/tests/testkit/provider_generation.py",
         "python/tests/service/test_chat_cancel_recovery_admission.py",
-        "python/tests/testkit/chat_generation_recovery.py"
+        "python/tests/testkit/chat_generation_recovery.py",
+        "python/tests/service/test_chat_terminal_cancellation.py"
       ],
       "proofs": [
         "pytest:python/tests/service/test_durable_job_replay.py",
@@ -478,7 +479,8 @@
         "pytest:python/tests/service/test_shared_generation_stop.py::test_stopped_parent_retains_paid_child_and_cannot_resume_its_successor",
         "pytest:python/tests/kernel/test_provider_terminal_acceptance.py::test_late_provider_evidence_cannot_commit_publish_or_execute_a_tool_decision",
         "pytest:python/tests/service/test_chat_generation_recovery_usage.py::test_resumed_chat_stop_publishes_original_paid_usage_and_retires_continuation",
-        "pytest:python/tests/service/test_chat_cancel_recovery_admission.py::test_cancelled_recovery_ignores_provider_and_inflight_admission"
+        "pytest:python/tests/service/test_chat_cancel_recovery_admission.py::test_cancelled_recovery_ignores_provider_and_inflight_admission",
+        "pytest:python/tests/service/test_chat_terminal_cancellation.py::test_late_chat_cancellation_preserves_native_child_and_paid_usage"
       ],
       "capabilities": [
         "service",
