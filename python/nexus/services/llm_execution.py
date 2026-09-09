@@ -668,18 +668,19 @@ async def execute_generation(
     replay, resume = _read_replay(session_factory, request, runtime.continuation_cipher)
     if replay is not None:
         return replay
-    try:
-        await runtime.admission.require_dispatch_ready(request.spec)
-    except GenerationOperationUnavailable as error:
-        if not isinstance(error.reason, CapacityPaused):
-            raise
-        return _handle_capacity_pause(
-            session_factory,
-            request,
-            pause=error.reason,
-            encode_failure=encode_failure,
-            continuation_is_safe=resume is not None,
-        )
+    if cancel_signal is None or not cancel_signal.is_set():
+        try:
+            await runtime.admission.require_dispatch_ready(request.spec)
+        except GenerationOperationUnavailable as error:
+            if not isinstance(error.reason, CapacityPaused):
+                raise
+            return _handle_capacity_pause(
+                session_factory,
+                request,
+                pause=error.reason,
+                encode_failure=encode_failure,
+                continuation_is_safe=resume is not None,
+            )
     with session_factory() as db:
         request.journal.clear_capacity_pause(db)
         db.commit()

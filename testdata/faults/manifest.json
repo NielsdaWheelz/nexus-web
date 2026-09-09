@@ -866,9 +866,9 @@
       "proofs": [
         "pytest:python/tests/kernel/test_tool_implementation_authority.py::test_frozen_tool_snapshot_and_bearer_digest_bind_handler_implementation"
       ],
-      "expected_failure": "bearer authority ignored a handler implementation change with unchanged tool schema",
+      "expected_failure": "tool grant digest ignored a handler implementation change with unchanged tool schema",
       "changed_owner_red": "coherent-fault",
-      "changed_owner_sha256": "ee22039199f9c92ae46d38ecd73a50ca84f7dce3fb63749128394eaddd80f713"
+      "changed_owner_sha256": "3be806b143df95d219cc3eebb2ad560796beae678a9db1737648f3c86643bb82"
     },
     {
       "id": "tool-database-event-loop-block",
@@ -945,7 +945,18 @@
       ],
       "expected_failure": "resumed Chat discarded or double-counted original paid child usage",
       "changed_owner_red": "coherent-fault",
-      "changed_owner_sha256": "3a8761d0281ebdd89529c09d0739a50f91d4d7f01dd2830fae301019a9988fee"
+      "changed_owner_sha256": "34f725dcef265054074926289dfee2eff8d19106593d60df8d80883c5603cb4c"
+    },
+    {
+      "id": "chat-cancel-dispatch-admission",
+      "patch": "testdata/faults/chat-cancel-dispatch-admission.patch",
+      "sha256": "9d62d81f2e229123d99a16a680801b95ce77fe7ad48afa76762d59cc6b564c38",
+      "proofs": [
+        "pytest:python/tests/service/test_chat_cancel_recovery_admission.py::test_cancelled_recovery_ignores_provider_and_inflight_admission"
+      ],
+      "expected_failure": "cancelled recovery remained pending on provider dispatch readiness",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "7d1fa9220ed084c9c27a3b235aea4876ef274478ca449cf5e962d1ac4c442a91"
     }
   ]
 }

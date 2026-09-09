@@ -109,5 +109,9 @@ authority, database event-loop progress, atomic effect/receipt settlement,
 historical read-only projection, migration drain, durable orchestration stops,
 and resumed Chat usage. Chat's recovery proof consumes original accepted child
 usage from the ledger and publishes it once while retiring the continuation.
+An already requested cancellation of a validated continuation needs neither
+provider readiness nor a new Chat inflight slot. The independent cancellation
+proof exhausts both admission boundaries and verifies that stopping preserves
+another execution's occupied slot.
 Cancellation of an armed unknown call still requires reconciliation; cancellation
 cannot manufacture evidence that the provider did not execute it.

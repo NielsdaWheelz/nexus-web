@@ -452,7 +452,9 @@
         "docs/cutovers/shared-agent-kernel-hard-cutover.md",
         "python/tests/kernel/test_provider_terminal_acceptance.py",
         "python/tests/service/test_chat_generation_recovery_usage.py",
-        "python/tests/testkit/provider_generation.py"
+        "python/tests/testkit/provider_generation.py",
+        "python/tests/service/test_chat_cancel_recovery_admission.py",
+        "python/tests/testkit/chat_generation_recovery.py"
       ],
       "proofs": [
         "pytest:python/tests/service/test_durable_job_replay.py",
@@ -475,7 +477,8 @@
         "pytest:python/tests/migrations/test_shared_agent_kernel_cutover.py::test_shared_kernel_cutover_requires_drain_and_preserves_history",
         "pytest:python/tests/service/test_shared_generation_stop.py::test_stopped_parent_retains_paid_child_and_cannot_resume_its_successor",
         "pytest:python/tests/kernel/test_provider_terminal_acceptance.py::test_late_provider_evidence_cannot_commit_publish_or_execute_a_tool_decision",
-        "pytest:python/tests/service/test_chat_generation_recovery_usage.py::test_resumed_chat_stop_publishes_original_paid_usage_and_retires_continuation"
+        "pytest:python/tests/service/test_chat_generation_recovery_usage.py::test_resumed_chat_stop_publishes_original_paid_usage_and_retires_continuation",
+        "pytest:python/tests/service/test_chat_cancel_recovery_admission.py::test_cancelled_recovery_ignores_provider_and_inflight_admission"
       ],
       "capabilities": [
         "service",

@@ -36,7 +36,7 @@ def test_frozen_tool_snapshot_and_bearer_digest_bind_handler_implementation() ->
     second = compose_tool_runtime(web, nexus_bindings=changed).operations["LibraryDossierRead"]
     updated = freeze_tool_plan_snapshot(second)
     assert tool_binding_revisions_digest(snapshot) != tool_binding_revisions_digest(updated), (
-        "bearer authority ignored a handler implementation change with unchanged tool schema"
+        "tool grant digest ignored a handler implementation change with unchanged tool schema"
     )
     with pytest.raises(ValueError, match="differs from current authority"):
         validate_tool_plan_snapshot(snapshot.model_dump_json(), operation=second)

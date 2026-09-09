@@ -1044,11 +1044,14 @@ async def _execute_chat_run(
         return SkippedChatExecution(reason="Terminal")
     generation_path = "generation/1"
     generation_state = steps.read(generation_path, ReplayPolicy.BilledOnce)
-    if is_cancel_requested(db, run.id) and generation_state is None:
+    cancellation_requested = is_cancel_requested(db, run.id)
+    if cancellation_requested and generation_state is None:
         return _finalize_cancelled_execution(db, run=run, steps=steps)
 
     rate_limiter = get_rate_limiter()
-    rate_limiter.acquire_inflight_slot(run.owner_user_id)
+    inflight_acquired = not cancellation_requested
+    if inflight_acquired:
+        rate_limiter.acquire_inflight_slot(run.owner_user_id)
     try:
         full_content = ""
         final_usage: dict[str, JsonValue] | None = None
@@ -1104,7 +1107,8 @@ async def _execute_chat_run(
             last_provider_event_seq=last_provider_event_seq,
         )
     finally:
-        rate_limiter.release_inflight_slot(run.owner_user_id)
+        if inflight_acquired:
+            rate_limiter.release_inflight_slot(run.owner_user_id)
 
 
 def _frozen_chat_admission(
