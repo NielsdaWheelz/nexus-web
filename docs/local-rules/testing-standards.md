@@ -452,6 +452,16 @@ push runs `./scripts/test full`, which is the release proof. `scripts/test`
 is a thin locked launcher; `scripts/agency_verify.sh` is a thin `confidence`
 adapter. The Makefile deliberately has no test/check/verify aliases.
 
+On a persistent self-hosted runner, a workflow artifact MUST contain only the
+single `test-results/runs/<run-id>` directory claimed by that workflow's test
+invocation. The CI adapter snapshots the existing run namespace before calling
+`./scripts/test`, requires exactly one new canonical 16-hex directory, rejects
+symlinks, special files, foreign ownership, or concurrent ambiguity, and stages
+that directory beneath the runner-owned private temporary root. It never
+deletes local historical evidence to manufacture isolation. The upload is
+mandatory whenever an exact directory was claimed, including a failing run,
+and the exact staging directory is removed after the upload attempt.
+
 | Command | Required meaning |
 |---|---|
 | `./scripts/test changed [--base REF] [PATH_OR_NODE ...]` | changed static paths plus selected affected proof |

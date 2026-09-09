@@ -181,6 +181,19 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         ("uv sync --all-extras --locked", "bun install --frozen-lockfile"),
         ("DATABASE_URL_TEST", "nexus_test", "tests/test_db.py", "make test"),
     ),
+    "scripts/ci-proof-artifact.sh": (
+        (
+            "test-results/.nexus-ignore-contract",
+            "CI evidence staging admits only changed or full",
+            "test invocation did not claim exactly one new run evidence directory",
+            "run evidence contains a symlink, special file, or foreign owner",
+            "terminal run evidence does not match the CI invocation",
+            "nexus-ci-evidence.XXXXXXXX",
+            'cp --archive --reflink=auto -- "$run_directory" "$evidence_workspace/runs/"',
+            'rm --recursive --force --one-file-system -- "$evidence_workspace"',
+        ),
+        ('rm --recursive --force --one-file-system -- "$runs"',),
+    ),
     ".github/workflows/ci.yml": (
         (
             "workflow_dispatch:",
@@ -198,13 +211,21 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
             'merge_timestamp="$(git show --no-patch --format=%cI "$EXPECTED_HEAD_SHA")"',
             'GIT_COMMITTER_DATE="$merge_timestamp"',
             "git rev-list --parents -n 1 HEAD",
-            'run: ./scripts/test changed --base "$NEXUS_TEST_BASE_SHA"',
+            'run: scripts/ci-proof-artifact.sh run changed --base "$NEXUS_TEST_BASE_SHA"',
             "if: github.event_name == 'push'",
-            "run: ./scripts/test full",
-            "if: always()",
+            "run: scripts/ci-proof-artifact.sh run full",
+            "if: ${{ always() && steps.proof.outputs.path != '' }}",
+            "path: ${{ steps.proof.outputs.path }}/",
+            "if-no-files-found: error",
+            "include-hidden-files: true",
+            'scripts/ci-proof-artifact.sh cleanup "$NEXUS_CI_EVIDENCE_PATH"',
         ),
         (
             "github.event_name != 'workflow_dispatch'",
+            'run: ./scripts/test changed --base "$NEXUS_TEST_BASE_SHA"',
+            "run: ./scripts/test full",
+            "path: test-results/",
+            "if-no-files-found: ignore",
             "make test",
             "pytest",
             "playwright test",
@@ -708,9 +729,20 @@ def _executable_route_violations(repo_root: Path) -> tuple[PolicyViolation, ...]
 
     for relative, text in surfaces.items():
         for line_number, line in _executable_lines(text):
-            for match in re.finditer(
-                r"(?:^|[;&|]\s*|\bexec\s+)\./scripts/test\s+([a-z-]+)\b", line
-            ):
+            controller_matches = list(
+                re.finditer(
+                    r"(?:^|[;&|]\s*|\bexec\s+)\./scripts/test\s+([a-z-]+)\b",
+                    line,
+                )
+            )
+            controller_matches.extend(
+                re.finditer(
+                    r"(?:^|[;&|]\s*)(?:\./)?scripts/ci-proof-artifact\.sh\s+run\s+"
+                    r"(changed|full)\b",
+                    line,
+                )
+            )
+            for match in controller_matches:
                 command = match.group(1)
                 controller_counts[(relative, command)] = (
                     controller_counts.get((relative, command), 0) + 1

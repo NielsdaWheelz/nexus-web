@@ -815,6 +815,7 @@
         "python/pyproject.toml",
         "python/nexus/release_artifact.py",
         "python/uv.lock",
+        "scripts/ci-proof-artifact.sh",
         "python/tests/testkit/host_release.py",
         "python/tests/testkit/production_deploy.py",
         "python/tests/testkit/release_bundle.py"
@@ -925,6 +926,7 @@
         "python/tests/kernel/nexus_test_control/test_llm_tools_capability.py",
         "python/tests/llm_tools_contract/**/*.py",
         "python/uv.lock",
+        "scripts/ci-proof-artifact.sh",
         "testdata/proofs.json",
         ".dockerignore",
         "python/nexus/services/node_ingest.py",

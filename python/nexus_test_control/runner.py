@@ -249,8 +249,10 @@ _WEB_STATIC_SUFFIXES = (".cjs", ".css", ".js", ".jsx", ".mjs", ".ts", ".tsx")
 _PLATFORM_SHELL_OWNERS = (
     "deploy/cloudflare/apply-r2-cors.sh",
     "deploy/cloudflare/apply-r2-lifecycle.sh",
+    "deploy/hetzner/backend-publisher-workspace.sh",
     "deploy/hetzner/deploy.sh",
     "deploy/hetzner/fetch-release-bundle.sh",
+    "deploy/hetzner/prove-codex-capacity.sh",
     "deploy/hetzner/provision.sh",
     "deploy/hetzner/reconcile-oracle.sh",
     "deploy/hetzner/sync-env.sh",
@@ -258,6 +260,7 @@ _PLATFORM_SHELL_OWNERS = (
     "deploy/supabase/verify-auth-config.sh",
     "deploy/vercel/sync-env.sh",
     "deploy/vercel/sync-resource-sharing-firewall.sh",
+    "scripts/ci-proof-artifact.sh",
 )
 _PLATFORM_PRODUCTION_COMPOSE_OWNER = "deploy/hetzner/docker-compose.yml"
 _PLATFORM_LOCAL_COMPOSE_OWNERS = (

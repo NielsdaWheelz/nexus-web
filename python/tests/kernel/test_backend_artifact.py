@@ -500,6 +500,41 @@ def test_backend_publisher_is_exact_main_source_ci_and_builds_each_target_once(
     assert cleaned.returncode == 0, cleaned.stderr
     assert not release_workspace.exists()
 
+    fresh_checkout = tmp_path / "fresh-checkout"
+    _initialize_publisher_checkout(fresh_checkout)
+    (fresh_checkout / "stale-output").write_text("unowned\n", encoding="utf-8")
+    fresh_github_output = runner_temp / "fresh-github-output"
+    fresh_github_output.touch()
+    fresh_environment = {
+        **environment,
+        "GITHUB_OUTPUT": str(fresh_github_output),
+        "GITHUB_WORKSPACE": str(fresh_checkout),
+    }
+    fresh_prepared = subprocess.run(
+        (str(workspace_owner), "prepare"),
+        cwd=fresh_checkout,
+        env=fresh_environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert fresh_prepared.returncode == 0, fresh_prepared.stderr
+    assert not (fresh_checkout / ".nexus-test").exists()
+    assert not (fresh_checkout / "stale-output").exists()
+    fresh_workspace = Path(
+        fresh_github_output.read_text(encoding="utf-8").removeprefix("path=").strip()
+    )
+    fresh_cleaned = subprocess.run(
+        (str(workspace_owner), "cleanup", str(fresh_workspace)),
+        cwd=fresh_checkout,
+        env=fresh_environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert fresh_cleaned.returncode == 0, fresh_cleaned.stderr
+    assert not fresh_workspace.exists()
+
     hostile_checkout = tmp_path / "hostile-checkout"
     _initialize_publisher_checkout(hostile_checkout)
     hostile_target = tmp_path / "foreign-runtime"

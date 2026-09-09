@@ -150,16 +150,25 @@ jobs:
       - uses: ./.github/actions/setup-test
 
       - name: Run the changed proof
-        run: ./scripts/test changed --base "$NEXUS_TEST_BASE_SHA"
+        id: proof
+        shell: bash
+        run: scripts/ci-proof-artifact.sh run changed --base "$NEXUS_TEST_BASE_SHA"
 
       - name: Upload run evidence
-        if: always()
+        if: ${{ always() && steps.proof.outputs.path != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: nexus-test-pr-${{ github.run_id }}
-          path: test-results/
-          if-no-files-found: ignore
+          path: ${{ steps.proof.outputs.path }}/
+          if-no-files-found: error
+          include-hidden-files: true
           retention-days: 14
+
+      - name: Remove run evidence staging
+        if: ${{ always() && steps.proof.outputs.path != '' }}
+        env:
+          NEXUS_CI_EVIDENCE_PATH: ${{ steps.proof.outputs.path }}
+        run: scripts/ci-proof-artifact.sh cleanup "$NEXUS_CI_EVIDENCE_PATH"
 
   candidate-full:
     name: Candidate full proof
@@ -204,13 +213,22 @@ jobs:
           provider-runtime: "true"
 
       - name: Run the candidate full gate
-        run: ./scripts/test full
+        id: proof
+        shell: bash
+        run: scripts/ci-proof-artifact.sh run full
 
       - name: Upload run evidence
-        if: always()
+        if: ${{ always() && steps.proof.outputs.path != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: nexus-test-full-${{ github.run_id }}
-          path: test-results/
-          if-no-files-found: ignore
+          path: ${{ steps.proof.outputs.path }}/
+          if-no-files-found: error
+          include-hidden-files: true
           retention-days: 14
+
+      - name: Remove run evidence staging
+        if: ${{ always() && steps.proof.outputs.path != '' }}
+        env:
+          NEXUS_CI_EVIDENCE_PATH: ${{ steps.proof.outputs.path }}
+        run: scripts/ci-proof-artifact.sh cleanup "$NEXUS_CI_EVIDENCE_PATH"
