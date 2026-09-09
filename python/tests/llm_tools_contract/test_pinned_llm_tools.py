@@ -52,7 +52,7 @@ def test_exact_pins_round_trip_one_canonical_native_tool(
         },
     )
     assert (provider_url, provider_vcs) == (
-        "https://github.com/NielsdaWheelz/llm-calling",
+        "https://github.com/NielsdaWheelz/llm-calling.git",
         {
             "vcs": "git",
             "requested_revision": provider_runtime_sha,
