@@ -39,7 +39,6 @@ from nexus.services.artifacts.dossier_types import SubjectResource
 from nexus.services.artifacts.engine import read_head
 from nexus.services.codex_generation_contract import (
     GenerationTerminal,
-    NormalizedFailureCode,
 )
 from nexus.services.generation_intent import GenerationIntent, TextOutput
 from nexus.services.generation_spec import ImmutablePromptPayloadRef, generation_fact_digest
@@ -49,6 +48,7 @@ from nexus.services.llm_execution import (
     EncodedGenerationTerminal,
     ExecutionRuntime,
     GenerationDispatchAborted,
+    GenerationFailureCode,
     GenerationUncertain,
     GenerationUncertainResolution,
     JobGenerationJournal,
@@ -417,8 +417,8 @@ def _encode_dawn_write_terminal(
     )
 
 
-def _encode_dawn_write_preaccept_failure(
-    code: NormalizedFailureCode,
+def _encode_dawn_write_failure(
+    code: GenerationFailureCode,
     detail: str,
 ) -> str:
     return _COMPLETED_DAWN_WRITE_ADAPTER.dump_json(
@@ -673,7 +673,7 @@ async def generate_dawn_write(
                 encode_terminal=lambda terminal: _encode_dawn_write_terminal(
                     codex_terminal_evidence(terminal)
                 ),
-                encode_preaccept_failure=_encode_dawn_write_preaccept_failure,
+                encode_failure=_encode_dawn_write_failure,
             )
         except GenerationDispatchAborted:
             complete_prepared_dawn_write_without_dispatch(

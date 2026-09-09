@@ -1,0 +1,12 @@
+diff --git a/python/nexus/services/generation_events.py b/python/nexus/services/generation_events.py
+--- a/python/nexus/services/generation_events.py
++++ b/python/nexus/services/generation_events.py
+@@ -222,7 +222,7 @@
+         meta=outcome.meta,
+         response=ResponsePayload(
+             content=outcome.response.content,
+-            continuation=RuntimeAbsent(),
++            continuation=outcome.response.continuation,
+         ),
+     )
+ 

@@ -369,3 +369,20 @@ def build_text_embeddings(texts: list[str]) -> tuple[str, list[list[float]]]:
 def build_text_embedding(text: str) -> tuple[str, list[float]]:
     model_name, vectors = build_text_embeddings([text])
     return model_name, (vectors[0] if vectors else [0.0] * transcript_embedding_dimensions())
+
+
+async def build_text_embedding_async(text: str) -> tuple[str, list[float]]:
+    """Build one query embedding on the caller's event loop, without DB state."""
+    import httpx
+
+    settings = get_settings()
+    dimensions = transcript_embedding_dimensions()
+    model_name = current_transcript_embedding_model()
+    async with httpx.AsyncClient(trust_env=False) as client:
+        vectors = await _embed_with_openai_async(
+            [str(text or "").strip()],
+            dimensions=dimensions,
+            settings=settings,
+            http_client=client,
+        )
+    return model_name, vectors[0]

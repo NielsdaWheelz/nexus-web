@@ -249,7 +249,7 @@ class ProviderGenerationBackend:
         turn: ProviderTurnRequest,
         *,
         cancel: CancelSignal | None = None,
-    ) -> AsyncIterator[ProviderGenerationEvent]:
+    ) -> AsyncGenerator[ProviderGenerationEvent]:
         """Stream one bounded call; tool proposals publish only after success."""
 
         bounds = turn.spec.bounds
@@ -267,6 +267,11 @@ class ProviderGenerationBackend:
         terminal_seen = False
         try:
             async for envelope in source:
+                if terminal_seen:
+                    raise ProviderGenerationDefect(
+                        origin="provider_stream",
+                        message="ProviderRuntime emitted an event after terminal",
+                    )
                 if envelope.seq != expected_provider_seq:
                     raise ProviderGenerationDefect(
                         origin="provider_stream",
@@ -352,8 +357,6 @@ class ProviderGenerationBackend:
                         )
                     case other:
                         assert_never(other)
-                if terminal_seen:
-                    return
         finally:
             if isinstance(source, AsyncGenerator):
                 await source.aclose()

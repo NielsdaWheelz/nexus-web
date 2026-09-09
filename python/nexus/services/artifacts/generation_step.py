@@ -39,7 +39,6 @@ from nexus.services.artifacts.model_tools import (
     DossierToolExecutionProjection,
     dossier_candidates_from_ledger,
 )
-from nexus.services.codex_generation_contract import NormalizedFailureCode
 from nexus.services.generation_admission import FrozenHostEvidence
 from nexus.services.generation_backend import BackendToolExecutor, CodexAdmissionBinder
 from nexus.services.generation_events import BackendTerminal
@@ -58,6 +57,7 @@ from nexus.services.llm_execution import (
     AcceptedGenerationFailure,
     EncodedGenerationTerminal,
     GenerationExecutionRequest,
+    GenerationFailureCode,
     JobGenerationJournal,
     admit_job_generation,
     codex_terminal_evidence,
@@ -331,7 +331,7 @@ class ArtifactGenerationStep:
             result = ArtifactGenerationCancelled()
         else:
             code, detail = outcome_failure_facts(native)
-            normalized = cast(NormalizedFailureCode, code)
+            normalized = cast(GenerationFailureCode, code)
             if normalized == "invalid_output":
                 result = ArtifactGenerationInvalid(
                     rejected_output="",
@@ -347,7 +347,9 @@ class ArtifactGenerationStep:
             accepted_failure=accepted_failure,
         )
 
-    def encode_preaccept_failure(self, code: NormalizedFailureCode, detail: str) -> str:
+    def encode_failure(self, code: GenerationFailureCode, detail: str) -> str:
+        if code == "cancelled":
+            return ArtifactGenerationCancelled().model_dump_json()
         return ArtifactGenerationFailure(
             code=_dossier_failure_code(code),
             detail=detail,
@@ -523,7 +525,7 @@ def _publishable_document(result: ArtifactGenerationAccepted) -> PublishableDoss
     )
 
 
-def _dossier_failure_code(code: NormalizedFailureCode) -> DossierBuildFailureCode:
+def _dossier_failure_code(code: GenerationFailureCode) -> DossierBuildFailureCode:
     match code:
         case "auth":
             return DossierBuildFailureCode.Auth
@@ -531,7 +533,7 @@ def _dossier_failure_code(code: NormalizedFailureCode) -> DossierBuildFailureCod
             return DossierBuildFailureCode.Quota
         case "timeout":
             return DossierBuildFailureCode.Timeout
-        case "output_limit":
+        case "output_limit" | "turn_limit":
             return DossierBuildFailureCode.OutputLimit
         case "invalid_output":
             return DossierBuildFailureCode.InvalidOutput
@@ -543,5 +545,7 @@ def _dossier_failure_code(code: NormalizedFailureCode) -> DossierBuildFailureCod
             return DossierBuildFailureCode.CapacityUnavailable
         case "context_too_large":
             return DossierBuildFailureCode.ContextTooLarge
+        case "cancelled":
+            raise AssertionError("cancellation has its own artifact outcome")
         case unreachable:
             assert_never(unreachable)

@@ -64,7 +64,6 @@ from nexus.services import generation_policy
 from nexus.services.codex_generation_contract import (
     GenerationCommandDraft,
     GenerationTerminal,
-    NormalizedFailureCode,
 )
 from nexus.services.generation_intent import GenerationIntent
 from nexus.services.generation_spec import (
@@ -80,6 +79,7 @@ from nexus.services.llm_execution import (
     ExecutionRuntime,
     GenerationAdmissionInputsChanged,
     GenerationDispatchAborted,
+    GenerationFailureCode,
     GenerationReconciliationRequest,
     GenerationUncertain,
     GenerationUncertainResolution,
@@ -677,8 +677,8 @@ def _encode_media_unit_terminal(
     )
 
 
-def _encode_media_unit_preaccept_failure(
-    code: NormalizedFailureCode,
+def _encode_media_unit_failure(
+    code: GenerationFailureCode,
     detail: str,
 ) -> str:
     return _COMPLETED_RESULT_ADAPTER.dump_json(
@@ -1138,7 +1138,7 @@ async def run_media_unit_build(
                     codex_terminal_evidence(terminal),
                     candidates=candidates,
                 ),
-                encode_preaccept_failure=_encode_media_unit_preaccept_failure,
+                encode_failure=_encode_media_unit_failure,
             )
         except GenerationAdmissionInputsChanged:
             current_job = get_job(db, ctx.job_id)

@@ -44,7 +44,7 @@ _WRITE_IDS = (
 
 async def _unused_handler(value: object, context: object) -> HandlerSuccess[dict[str, object]]:
     del value, context
-    return HandlerSuccess(value={})
+    return HandlerSuccess(value={}, actual_attempts=0)
 
 
 def _binding(
@@ -56,6 +56,7 @@ def _binding(
         spec=spec,
         execute=Available(_unused_handler),
         replay_policy=replay_policy,
+        implementation_revision="test_generation_transport_projection.v1",
         policy_epoch=PolicyEpoch("generation-transport-proof-v1"),
         policy_inputs={"owner": "generation-transport-proof"},
     )
@@ -204,7 +205,7 @@ def test_one_plan_lowers_to_both_transport_contracts() -> None:
 
     chat_read = runtime.operations["ChatRead"]
     provider = project_provider_model_tools(chat_read)
-    assert provider is not None
+    assert provider is not None, "Native model-tool plan lost its provider publication"
     expected_aliases = tuple(value.replace(".", "__") for value in expected["ChatRead"][0])
     assert tuple(tool.name for tool in provider.tools) == expected_aliases
     for tool, spec in zip(provider.tools, operation_tool_specs(chat_read), strict=True):

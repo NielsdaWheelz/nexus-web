@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
-import threading
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -34,8 +35,10 @@ from llm_tools import (
     raw_input_digest,
 )
 from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session, sessionmaker
 
+from nexus.db.async_session import open_async_session
 from nexus.db.models import LLMCall, LLMToolPosition
 from nexus.jobs.queue import JobExecutionContext, JobRow, get_job, lock_running_job_claim
 from nexus.schemas.presence import Present
@@ -251,7 +254,7 @@ class ToolAuthority:
     projection: ToolExecutionProjection = field(repr=False, compare=False)
 
     @classmethod
-    def from_claimed_generation_attempt(
+    async def from_claimed_generation_attempt(
         cls,
         *,
         session_factory: sessionmaker[Session],
@@ -265,34 +268,39 @@ class ToolAuthority:
         """Bind executable handlers once to already-persisted semantic authority."""
 
         selected_projection: ToolExecutionProjection = projection or _NoToolExecutionProjection()
-        with session_factory() as db, db.begin():
-            generation, spec, job = _lock_authority(
-                db,
+
+        def bind(db: Session) -> ToolAuthority:
+            with db.begin():
+                generation, spec, job = _lock_authority(
+                    db,
+                    user_id=user_id,
+                    owner=owner,
+                    generation_id=generation_id,
+                    job_context=job_context,
+                    projection=selected_projection,
+                )
+                plan, effect_mode, refs = _model_tool_facts(spec)
+                if plan != freeze_tool_plan_snapshot(operation):
+                    raise ToolAuthorityRefused("runtime operation differs from frozen plan")
+                _assert_job_attempt(job, job_context)
+            return cls(
+                session_factory=session_factory,
                 user_id=user_id,
                 owner=owner,
                 generation_id=generation_id,
+                generation_seq=generation.generation_seq,
+                spec=spec,
                 job_context=job_context,
+                operation=operation,
+                effect_mode=effect_mode,
+                admitted_resource_uris=refs,
+                binding_revisions_digest=tool_binding_revisions_digest(plan),
+                budget_digest=tool_budget_digest(plan, effect_mode=effect_mode),
                 projection=selected_projection,
             )
-            plan, effect_mode, refs = _model_tool_facts(spec)
-            if plan != freeze_tool_plan_snapshot(operation):
-                raise ToolAuthorityRefused("runtime operation differs from frozen plan")
-            _assert_job_attempt(job, job_context)
-        return cls(
-            session_factory=session_factory,
-            user_id=user_id,
-            owner=owner,
-            generation_id=generation_id,
-            generation_seq=generation.generation_seq,
-            spec=spec,
-            job_context=job_context,
-            operation=operation,
-            effect_mode=effect_mode,
-            admitted_resource_uris=refs,
-            binding_revisions_digest=tool_binding_revisions_digest(plan),
-            budget_digest=tool_budget_digest(plan, effect_mode=effect_mode),
-            projection=selected_projection,
-        )
+
+        async with open_async_session(session_factory) as database:
+            return await database.run_sync(bind)
 
     @property
     def scope_digest(self) -> str:
@@ -348,7 +356,7 @@ class ToolAuthority:
             raise ToolAuthorityRefused("bearer differs from frozen generation authority")
         return generation, job
 
-    def prepare_position(
+    async def prepare_position(
         self,
         *,
         transport_kind: ToolTransportKind,
@@ -377,90 +385,95 @@ class ToolAuthority:
             grant.id == str(tool_id) for grant in plan.value.grants
         ):
             raise ToolAuthorityRefused("tool is outside the frozen plan")
-        with self.session_factory() as db, db.begin():
-            generation, _spec, _job = self._lock(db)
-            from nexus.services.tool_runtime.resource_scope import (
-                tool_arguments_within_admitted_scope,
-            )
 
-            if not tool_arguments_within_admitted_scope(
-                db,
-                tool_id=str(tool_id),
-                arguments=arguments,
-                admitted_resource_uris=self.admitted_resource_uris,
-            ):
-                raise ToolAuthorityRefused("tool arguments widen the frozen resource scope")
-            existing = db.scalar(
-                select(LLMToolPosition)
-                .where(
-                    LLMToolPosition.generation_id == self.generation_id,
-                    LLMToolPosition.transport_kind == transport_kind,
-                    LLMToolPosition.model_turn_seq == model_turn_seq,
-                    LLMToolPosition.transport_call_id == transport_call_id,
+        def prepare(db: Session) -> ToolPositionRecord:
+            with db.begin():
+                generation, _spec, _job = self._lock(db)
+                from nexus.services.tool_runtime.resource_scope import (
+                    tool_arguments_within_admitted_scope,
                 )
-                .with_for_update()
-            )
-            if existing is not None:
-                record = _position_record(existing, generation_seq=generation.generation_seq)
-                _assert_position_identity(
-                    record,
-                    tool_id=tool_id,
-                    input_digest=input_digest,
-                    binding_revision=binding.policy_revision,
+
+                if not tool_arguments_within_admitted_scope(
+                    db,
+                    tool_id=str(tool_id),
+                    arguments=arguments,
+                    admitted_resource_uris=self.admitted_resource_uris,
+                ):
+                    raise ToolAuthorityRefused("tool arguments widen the frozen resource scope")
+                existing = db.scalar(
+                    select(LLMToolPosition)
+                    .where(
+                        LLMToolPosition.generation_id == self.generation_id,
+                        LLMToolPosition.transport_kind == transport_kind,
+                        LLMToolPosition.model_turn_seq == model_turn_seq,
+                        LLMToolPosition.transport_call_id == transport_call_id,
+                    )
+                    .with_for_update()
+                )
+                if existing is not None:
+                    record = _position_record(existing, generation_seq=generation.generation_seq)
+                    _assert_position_identity(
+                        record,
+                        tool_id=tool_id,
+                        input_digest=input_digest,
+                        binding_revision=binding.policy_revision,
+                        tool_contract_revision=binding.spec.tool_contract_revision,
+                        authority=self,
+                    )
+                    return record
+                next_position = db.scalar(
+                    select(func.coalesce(func.max(LLMToolPosition.position), 0) + 1).where(
+                        LLMToolPosition.generation_id == self.generation_id
+                    )
+                )
+                if next_position is None:
+                    raise AssertionError("tool position allocation returned no scalar")
+                position = int(next_position)
+                position_path = self.position_path(position)
+                position_id = stable_generation_id(self.generation_id, position_path)
+                effect_identity: dict[str, object] | None = None
+                if binding.spec.effect is ToolEffect.Write:
+                    effect_identity = {
+                        "effect_id": str(position_id),
+                        "generation_id": str(self.generation_id),
+                        "position_path": position_path,
+                    }
+                row = LLMToolPosition(
+                    id=position_id,
+                    generation_id=self.generation_id,
+                    position=position,
+                    transport_kind=transport_kind,
+                    model_turn_seq=model_turn_seq,
+                    transport_call_id=transport_call_id,
+                    canonical_tool_id=str(tool_id),
+                    canonical_input_digest=input_digest,
                     tool_contract_revision=binding.spec.tool_contract_revision,
+                    plan_revision=plan.value.plan_revision,
+                    binding_revision=binding.policy_revision,
+                    scope_digest=self.scope_digest,
+                    budget_digest=self.budget_digest,
+                    reservation=None,
+                    dispatch_claim=None,
+                    abandoned_attempts=0,
+                    result_evidence=None,
+                    effect_identity=effect_identity,
+                    settlement=None,
+                    replay_status="Prepared",
+                )
+                db.add(row)
+                db.flush()
+                record = _position_record(row, generation_seq=generation.generation_seq)
+                self.projection.stage_started(
+                    db,
                     authority=self,
+                    position=record,
+                    provider_wire_name=provider_wire_name,
+                    arguments=arguments,
                 )
                 return record
-            next_position = db.scalar(
-                select(func.coalesce(func.max(LLMToolPosition.position), 0) + 1).where(
-                    LLMToolPosition.generation_id == self.generation_id
-                )
-            )
-            if next_position is None:
-                raise AssertionError("tool position allocation returned no scalar")
-            position = int(next_position)
-            position_path = self.position_path(position)
-            position_id = stable_generation_id(self.generation_id, position_path)
-            effect_identity: dict[str, object] | None = None
-            if binding.spec.effect is ToolEffect.Write:
-                effect_identity = {
-                    "effect_id": str(position_id),
-                    "generation_id": str(self.generation_id),
-                    "position_path": position_path,
-                }
-            row = LLMToolPosition(
-                id=position_id,
-                generation_id=self.generation_id,
-                position=position,
-                transport_kind=transport_kind,
-                model_turn_seq=model_turn_seq,
-                transport_call_id=transport_call_id,
-                canonical_tool_id=str(tool_id),
-                canonical_input_digest=input_digest,
-                tool_contract_revision=binding.spec.tool_contract_revision,
-                plan_revision=plan.value.plan_revision,
-                binding_revision=binding.policy_revision,
-                scope_digest=self.scope_digest,
-                budget_digest=self.budget_digest,
-                reservation=None,
-                dispatch_claim=None,
-                abandoned_attempts=0,
-                result_evidence=None,
-                effect_identity=effect_identity,
-                settlement=None,
-                replay_status="Prepared",
-            )
-            db.add(row)
-            db.flush()
-            record = _position_record(row, generation_seq=generation.generation_seq)
-            self.projection.stage_started(
-                db,
-                authority=self,
-                position=record,
-                provider_wire_name=provider_wire_name,
-                arguments=arguments,
-            )
-            return record
+
+        async with open_async_session(self.session_factory) as database:
+            return await database.run_sync(prepare)
 
     def read_positions(self, db: Session) -> tuple[ToolPositionRecord, ...]:
         rows = db.scalars(
@@ -491,6 +504,7 @@ class _PositionBudgetState:
     def __init__(self, recorder: ToolPositionRecorder, limits: RunLimits) -> None:
         self._recorder = recorder
         self._limits = limits
+        self.deadline = 0.0
 
     @property
     def limits(self) -> RunLimits:
@@ -498,7 +512,14 @@ class _PositionBudgetState:
 
     @property
     def remaining_elapsed_seconds(self) -> float:
-        db = self._recorder.db
+        return max(0.0, self.deadline - time.monotonic())
+
+    async def refresh(self) -> None:
+        observed_at = time.monotonic()
+        remaining = await self._recorder.database.run_sync(self._remaining_at_database_clock)
+        self.deadline = observed_at + remaining
+
+    def _remaining_at_database_clock(self, db: Session) -> float:
         if db.in_transaction():
             raise RuntimeError("tool budget clock requires a closed prior phase")
         with db.begin():
@@ -512,10 +533,10 @@ class _PositionBudgetState:
             elapsed = (database_now - started_at).total_seconds()
         return max(0.0, float(self._limits.max_elapsed_seconds) - elapsed)
 
-    def reserve(self, position: InvocationPosition, reservation: Reservation) -> bool:
-        return self._recorder.budget_accepts(position, reservation)
+    async def reserve(self, position: InvocationPosition, reservation: Reservation) -> bool:
+        return await self._recorder.budget_accepts(position, reservation)
 
-    def settle(self, position: InvocationPosition, settlement: Settlement) -> None:
+    async def settle(self, position: InvocationPosition, settlement: Settlement) -> None:
         self._recorder.validate_settlement(position, settlement)
 
 
@@ -525,18 +546,19 @@ class ToolPositionRecorder:
     def __init__(
         self,
         *,
-        db: Session,
+        db: AsyncSession,
         authority: ToolAuthority,
         position: ToolPositionRecord,
     ) -> None:
-        self.db = db
+        self.database = db
+        self.db = db.sync_session
         self.authority = authority
         self.position_record = position
         self.position = InvocationPosition(position.path)
         self.catalog_view: PlanCatalogView = authority.operation.plan.catalog_view
         self.max_live_writes = authority.operation.definition.max_live_writes
         self.audit: dict[str, object] = {}
-        self.budgets: BudgetState = _PositionBudgetState(
+        self.budgets = _PositionBudgetState(
             self,
             authority.operation.profile.run_limits,
         )
@@ -570,7 +592,7 @@ class ToolPositionRecorder:
     def authorize_effect_in_current_transaction(self, db: Session) -> None:
         self.authority._lock(db)
 
-    def occupy(
+    async def occupy(
         self,
         *,
         position: InvocationPosition,
@@ -581,111 +603,123 @@ class ToolPositionRecorder:
         input_digest: str,
         replay_policy: ReplayPolicy,
     ) -> PositionState:
-        self._check_position(position)
-        if self.db.in_transaction():
-            raise RuntimeError("tool occupy requires a closed prior phase")
-        with self.db.begin():
-            self.authority._lock(self.db)
-            row = _lock_position(
-                self.db,
-                self.authority.generation_id,
-                self.position_record.position,
-            )
-            record = _position_record(row, generation_seq=self.authority.generation_seq)
-            _assert_position_identity(
-                record,
-                tool_id=tool_id,
-                input_digest=input_digest,
-                binding_revision=policy_revision,
-                tool_contract_revision=tool_contract_revision,
-                authority=self.authority,
-            )
-            if record.plan_revision != plan_revision:
-                raise ValueError("tool position plan revision changed")
-            if record.replay_status == "Uncertain" and replay_policy is ReplayPolicy.ReDispatchable:
-                claim = _dispatch_claim(record)
-                if cast(int, claim["attempt_no"]) < self.authority.job_context.attempt_no:
-                    row.replay_status = "Prepared"
-                    row.dispatch_claim = None
-                    self.db.flush()
-                    record = _position_record(row, generation_seq=self.authority.generation_seq)
-            self.position_record = record
-            return _portable_position_state(record)
+        def operation(_db: Session) -> PositionState:
+            self._check_position(position)
+            if self.db.in_transaction():
+                raise RuntimeError("tool occupy requires a closed prior phase")
+            with self.db.begin():
+                self.authority._lock(self.db)
+                row = _lock_position(
+                    self.db,
+                    self.authority.generation_id,
+                    self.position_record.position,
+                )
+                record = _position_record(row, generation_seq=self.authority.generation_seq)
+                _assert_position_identity(
+                    record,
+                    tool_id=tool_id,
+                    input_digest=input_digest,
+                    binding_revision=policy_revision,
+                    tool_contract_revision=tool_contract_revision,
+                    authority=self.authority,
+                )
+                if record.plan_revision != plan_revision:
+                    raise ValueError("tool position plan revision changed")
+                if (
+                    record.replay_status == "Uncertain"
+                    and replay_policy is ReplayPolicy.ReDispatchable
+                ):
+                    claim = _dispatch_claim(record)
+                    if cast(int, claim["attempt_no"]) < self.authority.job_context.attempt_no:
+                        row.replay_status = "Prepared"
+                        row.dispatch_claim = None
+                        self.db.flush()
+                        record = _position_record(row, generation_seq=self.authority.generation_seq)
+                self.position_record = record
+                return _portable_position_state(record)
 
-    def reserve(
+        return await self.database.run_sync(operation)
+
+    async def reserve(
         self,
         *,
         position: InvocationPosition,
         budgets: BudgetState,
         reservation: Reservation,
     ) -> bool:
-        self._check_position(position)
-        if budgets is not self.budgets:
-            raise ValueError("position used a different durable budget owner")
-        if self.db.in_transaction():
-            raise RuntimeError("tool reservation requires a closed prior phase")
-        with self.db.begin():
-            self.authority._lock(self.db)
-            row = _lock_position(
-                self.db,
-                self.authority.generation_id,
-                self.position_record.position,
-            )
-            requested = _reservation_document(reservation, accepted=False)
-            if row.reservation is not None:
-                stored = _reservation(row)
-                if any(stored[key] != requested[key] for key in requested if key != "accepted"):
-                    raise ValueError("durable tool budget reservation changed")
-                return cast(bool, stored["accepted"])
-            if row.replay_status != "Prepared":
-                raise ValueError("only a prepared tool position may reserve budget")
-            accepted = self._budget_accepts_in_current_transaction(self.db, reservation)
-            row.reservation = _reservation_document(reservation, accepted=accepted)
-            self.db.flush()
-            return accepted
+        def operation(_db: Session) -> bool:
+            self._check_position(position)
+            if budgets is not self.budgets:
+                raise ValueError("position used a different durable budget owner")
+            if self.db.in_transaction():
+                raise RuntimeError("tool reservation requires a closed prior phase")
+            with self.db.begin():
+                self.authority._lock(self.db)
+                row = _lock_position(
+                    self.db,
+                    self.authority.generation_id,
+                    self.position_record.position,
+                )
+                requested = _reservation_document(reservation, accepted=False)
+                if row.reservation is not None:
+                    stored = _reservation(row)
+                    if any(stored[key] != requested[key] for key in requested if key != "accepted"):
+                        raise ValueError("durable tool budget reservation changed")
+                    return cast(bool, stored["accepted"])
+                if row.replay_status != "Prepared":
+                    raise ValueError("only a prepared tool position may reserve budget")
+                accepted = self._budget_accepts_in_current_transaction(self.db, reservation)
+                row.reservation = _reservation_document(reservation, accepted=accepted)
+                self.db.flush()
+                return accepted
 
-    def dispatch_started(
+        return await self.database.run_sync(operation)
+
+    async def dispatch_started(
         self,
         *,
         position: InvocationPosition,
         replay_policy: ReplayPolicy,
     ) -> PositionState:
-        self._check_position(position)
-        if self.db.in_transaction():
-            raise RuntimeError("tool dispatch requires a closed prior phase")
-        with self.db.begin():
-            self.authority._lock(self.db)
-            row = _lock_position(
-                self.db,
-                self.authority.generation_id,
-                self.position_record.position,
-            )
-            record = _position_record(row, generation_seq=self.authority.generation_seq)
-            if record.replay_status in {"Completed", "Uncertain"}:
-                return _portable_position_state(record)
-            reservation = _reservation(row)
-            if not reservation["accepted"]:
-                raise ValueError("dispatch requires an accepted reservation")
-            binding = self.catalog_view.binding(ToolId(record.canonical_tool_id))
-            if binding.replay_policy is not replay_policy:
-                raise ValueError("durable tool replay policy changed")
-            row.dispatch_claim = {
-                "attempt_no": self.authority.job_context.attempt_no,
-                "worker_id": self.authority.job_context.worker_id,
-            }
-            row.replay_status = "Uncertain"
-            self.db.flush()
-            self.position_record = _position_record(
-                row,
-                generation_seq=self.authority.generation_seq,
-            )
-            return PositionState(
-                terminal_result=None,
-                uncertain=False,
-                actual_attempts=row.abandoned_attempts,
-            )
+        def operation(_db: Session) -> PositionState:
+            self._check_position(position)
+            if self.db.in_transaction():
+                raise RuntimeError("tool dispatch requires a closed prior phase")
+            with self.db.begin():
+                self.authority._lock(self.db)
+                row = _lock_position(
+                    self.db,
+                    self.authority.generation_id,
+                    self.position_record.position,
+                )
+                record = _position_record(row, generation_seq=self.authority.generation_seq)
+                if record.replay_status in {"Completed", "Uncertain"}:
+                    return _portable_position_state(record)
+                reservation = _reservation(row)
+                if not reservation["accepted"]:
+                    raise ValueError("dispatch requires an accepted reservation")
+                binding = self.catalog_view.binding(ToolId(record.canonical_tool_id))
+                if binding.replay_policy is not replay_policy:
+                    raise ValueError("durable tool replay policy changed")
+                row.dispatch_claim = {
+                    "attempt_no": self.authority.job_context.attempt_no,
+                    "worker_id": self.authority.job_context.worker_id,
+                }
+                row.replay_status = "Uncertain"
+                self.db.flush()
+                self.position_record = _position_record(
+                    row,
+                    generation_seq=self.authority.generation_seq,
+                )
+                return PositionState(
+                    terminal_result=None,
+                    uncertain=False,
+                    actual_attempts=row.abandoned_attempts,
+                )
 
-    def dispatch_abandoned(
+        return await self.database.run_sync(operation)
+
+    async def dispatch_abandoned(
         self,
         *,
         position: InvocationPosition,
@@ -693,42 +727,48 @@ class ToolPositionRecorder:
         actual_attempts: int,
         lease_recovered: bool,
     ) -> None:
-        self._check_position(position)
-        if replay_policy is not ReplayPolicy.ReDispatchable or not lease_recovered:
-            raise ValueError("only verified ReDispatchable work may be re-admitted")
-        if self.db.in_transaction():
-            raise RuntimeError("tool recovery requires a closed prior phase")
-        with self.db.begin():
-            self.authority._lock(self.db)
-            row = _lock_position(
-                self.db,
-                self.authority.generation_id,
-                self.position_record.position,
-            )
-            if row.replay_status != "Uncertain":
-                raise ValueError("only uncertain tool work may be abandoned")
-            _dispatch_claim(_position_record(row, generation_seq=self.authority.generation_seq))
-            if actual_attempts < row.abandoned_attempts:
-                raise ValueError("abandoned tool attempt accounting moved backwards")
-            row.abandoned_attempts = actual_attempts
-            row.dispatch_claim = None
-            row.replay_status = "Prepared"
+        def operation(_db: Session) -> None:
+            self._check_position(position)
+            if replay_policy is not ReplayPolicy.ReDispatchable or not lease_recovered:
+                raise ValueError("only verified ReDispatchable work may be re-admitted")
+            if self.db.in_transaction():
+                raise RuntimeError("tool recovery requires a closed prior phase")
+            with self.db.begin():
+                self.authority._lock(self.db)
+                row = _lock_position(
+                    self.db,
+                    self.authority.generation_id,
+                    self.position_record.position,
+                )
+                if row.replay_status != "Uncertain":
+                    raise ValueError("only uncertain tool work may be abandoned")
+                _dispatch_claim(_position_record(row, generation_seq=self.authority.generation_seq))
+                if actual_attempts < row.abandoned_attempts:
+                    raise ValueError("abandoned tool attempt accounting moved backwards")
+                row.abandoned_attempts = actual_attempts
+                row.dispatch_claim = None
+                row.replay_status = "Prepared"
 
-    def uncertain(self, *, position: InvocationPosition) -> None:
-        self._check_position(position)
-        if self.db.in_transaction():
-            raise RuntimeError("tool uncertainty check requires a closed prior phase")
-        with self.db.begin():
-            self.authority._lock(self.db)
-            row = _lock_position(
-                self.db,
-                self.authority.generation_id,
-                self.position_record.position,
-            )
-            if row.replay_status != "Uncertain":
-                raise ValueError("only dispatched tool work may remain uncertain")
+        return await self.database.run_sync(operation)
 
-    def terminalize_and_settle(
+    async def uncertain(self, *, position: InvocationPosition) -> None:
+        def operation(_db: Session) -> None:
+            self._check_position(position)
+            if self.db.in_transaction():
+                raise RuntimeError("tool uncertainty check requires a closed prior phase")
+            with self.db.begin():
+                self.authority._lock(self.db)
+                row = _lock_position(
+                    self.db,
+                    self.authority.generation_id,
+                    self.position_record.position,
+                )
+                if row.replay_status != "Uncertain":
+                    raise ValueError("only dispatched tool work may remain uncertain")
+
+        return await self.database.run_sync(operation)
+
+    async def terminalize_and_settle(
         self,
         *,
         position: InvocationPosition,
@@ -736,68 +776,74 @@ class ToolPositionRecorder:
         result: ToolResult,
         settlement: Settlement,
     ) -> ToolResult:
-        self._check_position(position)
-        if budgets is not self.budgets:
-            raise ValueError("position used a different durable budget owner")
-        evidence = _tool_result_evidence(result)
-        try:
-            self.authority._lock(self.db)
-            row = _lock_position(
-                self.db,
-                self.authority.generation_id,
-                self.position_record.position,
-            )
-            record = _position_record(row, generation_seq=self.authority.generation_seq)
-            if record.replay_status == "Completed":
-                if record.result_evidence != evidence:
-                    raise ValueError("terminal result differs from completed durable position")
+        def operation(_db: Session) -> ToolResult:
+            self._check_position(position)
+            if budgets is not self.budgets:
+                raise ValueError("position used a different durable budget owner")
+            evidence = _tool_result_evidence(result)
+            try:
+                self.authority._lock(self.db)
+                row = _lock_position(
+                    self.db,
+                    self.authority.generation_id,
+                    self.position_record.position,
+                )
+                record = _position_record(row, generation_seq=self.authority.generation_seq)
+                if record.replay_status == "Completed":
+                    if record.result_evidence != evidence:
+                        raise ValueError("terminal result differs from completed durable position")
+                    self.position_record = record
+                    self.db.commit()
+                    return result
+                reservation = _reservation(row)
+                stored_settlement = settlement
+                if not reservation["accepted"]:
+                    stored_settlement = Settlement(actual_attempts=0, actual_output_bytes=0)
+                self.validate_settlement(position, stored_settlement)
+                if (
+                    stored_settlement.actual_attempts < row.abandoned_attempts
+                    or stored_settlement.actual_attempts > cast(int, reservation["max_attempts"])
+                    or stored_settlement.actual_output_bytes
+                    > cast(int, reservation["max_output_bytes"])
+                ):
+                    raise ValueError("durable tool settlement exceeds its reservation")
+                row.result_evidence = evidence
+                row.settlement = {
+                    "actual_attempts": stored_settlement.actual_attempts,
+                    "actual_output_bytes": stored_settlement.actual_output_bytes,
+                }
+                row.replay_status = "Completed"
+                row.completed_at = func.now()
+                self.db.flush()
+                record = _position_record(row, generation_seq=self.authority.generation_seq)
+                self.authority.projection.stage_terminal(
+                    self.db,
+                    authority=self.authority,
+                    position=record,
+                    result=result,
+                    audit=self.audit,
+                )
                 self.position_record = record
+                # Handler-owned domain effects, the canonical terminal receipt, and
+                # any optional projection become visible atomically.
                 self.db.commit()
-                return result
-            reservation = _reservation(row)
-            stored_settlement = settlement
-            if not reservation["accepted"]:
-                stored_settlement = Settlement(actual_attempts=0, actual_output_bytes=0)
-            self.validate_settlement(position, stored_settlement)
-            if (
-                stored_settlement.actual_attempts < row.abandoned_attempts
-                or stored_settlement.actual_attempts > cast(int, reservation["max_attempts"])
-                or stored_settlement.actual_output_bytes
-                > cast(int, reservation["max_output_bytes"])
-            ):
-                raise ValueError("durable tool settlement exceeds its reservation")
-            row.result_evidence = evidence
-            row.settlement = {
-                "actual_attempts": stored_settlement.actual_attempts,
-                "actual_output_bytes": stored_settlement.actual_output_bytes,
-            }
-            row.replay_status = "Completed"
-            row.completed_at = func.now()
-            self.db.flush()
-            record = _position_record(row, generation_seq=self.authority.generation_seq)
-            self.authority.projection.stage_terminal(
-                self.db,
-                authority=self.authority,
-                position=record,
-                result=result,
-                audit=self.audit,
-            )
-            self.position_record = record
-            # Handler-owned domain effects, the canonical terminal receipt, and
-            # any optional projection become visible atomically.
-            self.db.commit()
-        except BaseException:
-            self.db.rollback()
-            raise
-        return result
+            except BaseException:
+                self.db.rollback()
+                raise
+            return result
 
-    def budget_accepts(self, position: InvocationPosition, reservation: Reservation) -> bool:
-        self._check_position(position)
-        if self.db.in_transaction():
-            raise RuntimeError("tool budget check requires a closed prior phase")
-        with self.db.begin():
-            self.authority._lock(self.db)
-            return self._budget_accepts_in_current_transaction(self.db, reservation)
+        return await self.database.run_sync(operation)
+
+    async def budget_accepts(self, position: InvocationPosition, reservation: Reservation) -> bool:
+        def operation(_db: Session) -> bool:
+            self._check_position(position)
+            if self.db.in_transaction():
+                raise RuntimeError("tool budget check requires a closed prior phase")
+            with self.db.begin():
+                self.authority._lock(self.db)
+                return self._budget_accepts_in_current_transaction(self.db, reservation)
+
+        return await self.database.run_sync(operation)
 
     def validate_settlement(
         self,
@@ -808,26 +854,29 @@ class ToolPositionRecorder:
         if settlement.actual_attempts < 0 or settlement.actual_output_bytes < 0:
             raise ValueError("tool settlement cannot be negative")
 
-    def render_output(self, result: ToolResult) -> str:
-        if self.db.in_transaction():
-            raise RuntimeError("tool output rendering requires a committed terminal phase")
-        with self.db.begin():
-            row = _lock_position(
-                self.db,
-                self.authority.generation_id,
-                self.position_record.position,
-            )
-            record = _position_record(row, generation_seq=self.authority.generation_seq)
-            if record.replay_status != "Completed" or record.result_evidence != (
-                _tool_result_evidence(result)
-            ):
-                raise ValueError("model output requires the completed durable tool result")
-            return self.authority.projection.render_output(
-                self.db,
-                authority=self.authority,
-                position=record,
-                result=result,
-            )
+    async def render_output(self, result: ToolResult) -> str:
+        def operation(_db: Session) -> str:
+            if self.db.in_transaction():
+                raise RuntimeError("tool output rendering requires a committed terminal phase")
+            with self.db.begin():
+                row = _lock_position(
+                    self.db,
+                    self.authority.generation_id,
+                    self.position_record.position,
+                )
+                record = _position_record(row, generation_seq=self.authority.generation_seq)
+                if record.replay_status != "Completed" or record.result_evidence != (
+                    _tool_result_evidence(result)
+                ):
+                    raise ValueError("model output requires the completed durable tool result")
+                return self.authority.projection.render_output(
+                    self.db,
+                    authority=self.authority,
+                    position=record,
+                    result=result,
+                )
+
+        return await self.database.run_sync(operation)
 
     def _budget_accepts_in_current_transaction(
         self,
@@ -870,15 +919,21 @@ class ToolPositionRecorder:
 class _AuthorityCancellation:
     def __init__(self, authority: ToolAuthority) -> None:
         self._authority = authority
+        self._cancelled = False
 
     @property
     def cancelled(self) -> bool:
-        try:
-            with self._authority.session_factory() as db, db.begin():
+        return self._cancelled
+
+    async def refresh(self, database: AsyncSession) -> None:
+        def check(db: Session) -> None:
+            with db.begin():
                 self._authority._lock(db)
+
+        try:
+            await database.run_sync(check)
         except ToolAuthorityRefused:
-            return True
-        return False
+            self._cancelled = True
 
 
 class _ToolTelemetry:
@@ -917,7 +972,7 @@ class GenerationToolExecutor:
                 arguments=proposal.arguments,
             )
         elif isinstance(proposal, RejectedToolArguments):
-            result = self.refuse_known_call(
+            result = await self.refuse_known_call(
                 transport_kind="ProviderApi",
                 model_turn_seq=request.child_seq,
                 transport_call_id=proposal.provider_call_id,
@@ -946,7 +1001,7 @@ class GenerationToolExecutor:
         arguments: Mapping[str, object],
     ) -> ModelToolExecutionResult:
         raw = ParsedJson(dict(arguments))
-        record = self.authority.prepare_position(
+        record = await self.authority.prepare_position(
             transport_kind=transport_kind,
             model_turn_seq=model_turn_seq,
             transport_call_id=transport_call_id,
@@ -955,8 +1010,11 @@ class GenerationToolExecutor:
             provider_wire_name=provider_wire_name,
             arguments=arguments,
         )
-        with self.authority.session_factory() as db:
+        async with open_async_session(self.authority.session_factory) as db:
             recorder = ToolPositionRecorder(db=db, authority=self.authority, position=record)
+            await recorder.budgets.refresh()
+            cancellation = _AuthorityCancellation(self.authority)
+            await cancellation.refresh(db)
             binding = self.authority.operation.plan.catalog_view.binding(tool_id)
             effect_id = None
             if binding.spec.effect is ToolEffect.Write:
@@ -974,11 +1032,11 @@ class GenerationToolExecutor:
                 budgets=recorder.budgets,
                 principal=Principal(str(self.authority.user_id)),
                 scope=Scope(self.authority.projection.scope_label),
-                cancellation=_AuthorityCancellation(self.authority),
+                cancellation=cancellation,
                 telemetry=_ToolTelemetry(),
             )
             result = await ToolExecutor.execute(binding, raw, context)
-            output = recorder.render_output(result)
+            output = await recorder.render_output(result)
             return ModelToolExecutionResult(
                 model_output=ToolModelOutput(
                     call_id=transport_call_id,
@@ -988,7 +1046,7 @@ class GenerationToolExecutor:
                 position=recorder.position_record,
             )
 
-    def refuse_known_call(
+    async def refuse_known_call(
         self,
         *,
         transport_kind: ToolTransportKind,
@@ -998,7 +1056,7 @@ class GenerationToolExecutor:
         tool_id: ToolId,
         reason: Literal["InvalidJson", "InputTooLarge"],
     ) -> ModelToolExecutionResult:
-        record = self.authority.prepare_position(
+        record = await self.authority.prepare_position(
             transport_kind=transport_kind,
             model_turn_seq=model_turn_seq,
             transport_call_id=transport_call_id,
@@ -1009,14 +1067,14 @@ class GenerationToolExecutor:
             provider_wire_name=provider_wire_name,
             arguments={"refusal": reason},
         )
-        with self.authority.session_factory() as db:
+        async with open_async_session(self.authority.session_factory) as db:
             recorder = ToolPositionRecorder(db=db, authority=self.authority, position=record)
             result: ToolResult = {
                 "type": "Failure",
                 "error": {"type": "InvalidInput" if reason == "InvalidJson" else "BudgetExceeded"},
             }
             grant = self.authority.operation.plan.grant(tool_id)
-            recorder.reserve(
+            await recorder.reserve(
                 position=recorder.position,
                 budgets=recorder.budgets,
                 reservation=Reservation(
@@ -1026,13 +1084,13 @@ class GenerationToolExecutor:
                     max_output_bytes=grant.limits.max_output_bytes,
                 ),
             )
-            recorder.terminalize_and_settle(
+            await recorder.terminalize_and_settle(
                 position=recorder.position,
                 budgets=recorder.budgets,
                 result=result,
                 settlement=Settlement(actual_attempts=0, actual_output_bytes=0),
             )
-            output = recorder.render_output(result)
+            output = await recorder.render_output(result)
             return ModelToolExecutionResult(
                 model_output=ToolModelOutput(
                     call_id=transport_call_id,
@@ -1067,9 +1125,9 @@ class GenerationToolAuthorityComposition:
     operation: FrozenToolOperation = field(repr=False, compare=False)
     projection: ToolExecutionProjection | None = field(default=None, repr=False, compare=False)
 
-    def open(self) -> GenerationToolExecutor:
+    async def open(self) -> GenerationToolExecutor:
         return GenerationToolExecutor(
-            authority=ToolAuthority.from_claimed_generation_attempt(
+            authority=await ToolAuthority.from_claimed_generation_attempt(
                 session_factory=self.session_factory,
                 user_id=self.user_id,
                 owner=self.owner,
@@ -1087,22 +1145,23 @@ class DeferredGenerationToolExecutor:
 
     composition: GenerationToolAuthorityComposition
     _executor: GenerationToolExecutor | None = field(default=None, init=False, repr=False)
-    _lock: Any = field(default_factory=threading.Lock, init=False, repr=False)
+    _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
 
-    def open(self) -> GenerationToolExecutor:
-        with self._lock:
+    async def open(self) -> GenerationToolExecutor:
+        async with self._lock:
             if self._executor is None:
-                self._executor = self.composition.open()
+                self._executor = await self.composition.open()
             return self._executor
 
     async def execute(
         self,
         request: BackendToolExecutionRequest,
     ) -> BackendToolExecutionResult:
-        return await self.open().execute(request)
+        executor = await self.open()
+        return await executor.execute(request)
 
 
-def compose_generation_tool_executor(
+async def compose_generation_tool_executor(
     *,
     session_factory: sessionmaker[Session],
     user_id: UUID,
@@ -1114,7 +1173,7 @@ def compose_generation_tool_executor(
 ) -> GenerationToolExecutor:
     """Compose the one executable model-tool boundary for either transport."""
 
-    return GenerationToolAuthorityComposition(
+    return await GenerationToolAuthorityComposition(
         session_factory=session_factory,
         user_id=user_id,
         owner=owner,
@@ -1162,6 +1221,7 @@ def tool_binding_revisions_digest(plan: object) -> str:
             {
                 "binding_policy_revision": grant.binding_policy_revision,
                 "id": grant.id,
+                "implementation_revision": grant.implementation_revision,
                 "replay_policy": grant.replay_policy,
                 "tool_contract_revision": grant.tool_contract_revision,
             }

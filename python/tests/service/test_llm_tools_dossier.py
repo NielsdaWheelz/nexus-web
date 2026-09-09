@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib.util import find_spec
@@ -119,9 +119,13 @@ class _CancelledWebSearch:
         self.transport_dispatches = 0
         self.cross_transport = cross_transport
 
-    async def search(self, request: WebSearchRequest) -> WebSearchResponse:
+    async def search(
+        self, request: WebSearchRequest, *, attempt_started: Callable[[], None] | None = None
+    ) -> WebSearchResponse:
         self.adapter_calls += 1
         if self.cross_transport:
+            if attempt_started is not None:
+                attempt_started()
             self.transport_dispatches += 1
         del request
         raise asyncio.CancelledError
@@ -131,7 +135,11 @@ class _SuccessfulWebSearch:
     def __init__(self) -> None:
         self.requests: list[WebSearchRequest] = []
 
-    async def search(self, request: WebSearchRequest) -> WebSearchResponse:
+    async def search(
+        self, request: WebSearchRequest, *, attempt_started: Callable[[], None] | None = None
+    ) -> WebSearchResponse:
+        if attempt_started is not None:
+            attempt_started()
         self.requests.append(request)
         request_id = f"dossier-search-{len(self.requests)}"
         return WebSearchResponse(
@@ -161,7 +169,9 @@ class _NeverSearch:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def search(self, request: WebSearchRequest) -> WebSearchResponse:
+    async def search(
+        self, request: WebSearchRequest, *, attempt_started: Callable[[], None] | None = None
+    ) -> WebSearchResponse:
         self.calls += 1
         raise AssertionError(f"Dossier automatically reissued a durable search: {request!r}")
 
@@ -314,7 +324,7 @@ class _NeverGenerationRuntime(ExecutionRuntime):
     async def health(self) -> GenerationHealth:
         raise AssertionError("Dossier research replay reached generation health")
 
-    async def stream(self, command: GenerationCommand) -> AsyncIterator[GenerationFrame]:
+    async def stream(self, command: GenerationCommand) -> AsyncGenerator[GenerationFrame]:
         del command
         raise AssertionError("Dossier research replay dispatched generation")
         if False:
@@ -381,11 +391,13 @@ def _assert_exact_host_plan(snapshot: dict[str, object]) -> None:
     assert set(grant) == {
         "binding_policy_revision",
         "id",
+        "implementation_revision",
         "limits",
         "replay_policy",
         "tool_contract_revision",
     }
     assert grant["id"] == "web.search"
+    assert grant["implementation_revision"] == "llm-tools-web-search-v2"
     assert grant["limits"] == {
         "deadline_seconds": 15.0,
         "max_attempts": 2,

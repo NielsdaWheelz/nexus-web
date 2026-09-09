@@ -132,8 +132,8 @@ from nexus.services.artifacts.subject_policy import (
     ResolvedSubject,
     SubjectPolicy,
 )
-from nexus.services.codex_generation_contract import NormalizedFailureCode
 from nexus.services.generation_events import BackendTerminal
+from nexus.services.generation_history import GenerationHistory, read_generation_history
 from nexus.services.generation_intent import GenerationIntent
 from nexus.services.generation_spec import (
     GenerationSpec,
@@ -150,6 +150,7 @@ from nexus.services.llm_execution import (
     GenerationAdmissionInputsChanged,
     GenerationCapacityPaused,
     GenerationDispatchAborted,
+    GenerationFailureCode,
     GenerationUncertain,
     admit_job_generation,
     cancel_prepared_generation_without_dispatch_in_current_transaction,
@@ -412,7 +413,7 @@ def reconcile_uncertain_build(
 class DossierBuildAdmittedGeneration:
     """The build's latest ledger generation: frozen spec plus journaled tool positions."""
 
-    spec: GenerationSpec
+    spec: GenerationHistory
     tool_positions: int
 
 
@@ -1177,8 +1178,8 @@ def _encode_idea_resolution_terminal(
     return EncodedGenerationTerminal(terminal_result=envelope.model_dump_json())
 
 
-def _encode_idea_resolution_preaccept_failure(
-    code: NormalizedFailureCode,
+def _encode_idea_resolution_failure(
+    code: GenerationFailureCode,
     detail: str,
 ) -> str:
     del code, detail
@@ -1365,7 +1366,7 @@ async def _run_idea_resolution_step(
                 session_factory=get_session_factory(),
                 runtime=runtime,
                 encode_terminal=_encode_idea_resolution_terminal,
-                encode_preaccept_failure=_encode_idea_resolution_preaccept_failure,
+                encode_failure=_encode_idea_resolution_failure,
             )
         except GenerationDispatchAborted:
             return await _await_uncertain_idea_resolution(
@@ -2054,7 +2055,7 @@ async def _run_synthesis_step(
             session_factory=get_session_factory(),
             runtime=runtime.llm_runtime,
             encode_terminal=step.encode_terminal,
-            encode_preaccept_failure=step.encode_preaccept_failure,
+            encode_failure=step.encode_failure,
             cancel_signal=cast(CancellationSignal, guard.cancel_signal),
             before_terminal=admission.before_terminal,
         )
@@ -2234,7 +2235,7 @@ async def _run_document_repair_step(
             session_factory=get_session_factory(),
             runtime=runtime.llm_runtime,
             encode_terminal=step.encode_terminal,
-            encode_preaccept_failure=step.encode_preaccept_failure,
+            encode_failure=step.encode_failure,
             cancel_signal=cast(CancellationSignal, guard.cancel_signal),
             before_terminal=admission.before_terminal,
         )
@@ -3995,7 +3996,7 @@ def _admitted_generation(db: Session, build_id: UUID) -> DossierBuildAdmittedGen
     if record is None:
         return None
     return DossierBuildAdmittedGeneration(
-        spec=decode_generation_spec_document(record.spec.value),
+        spec=read_generation_history(dict(record.spec.value)),
         tool_positions=len(read_tool_positions(db, generation_id=record.id)),
     )
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from fastapi.testclient import TestClient
 from llm_tools import (
     WebSearchRequest,
@@ -18,7 +20,11 @@ class _RecordingBrowseProvider:
     def __init__(self) -> None:
         self.requests: list[WebSearchRequest] = []
 
-    async def search(self, request: WebSearchRequest) -> WebSearchResponse:
+    async def search(
+        self, request: WebSearchRequest, *, attempt_started: Callable[[], None] | None = None
+    ) -> WebSearchResponse:
+        if attempt_started is not None:
+            attempt_started()
         self.requests.append(request)
         return WebSearchResponse(
             results=(
@@ -115,5 +121,7 @@ def test_browse_preserves_normalized_provider_results_after_rename(
     target = unseal_target(item["resolution"]["target"])
     assert isinstance(target, BraveWebArticleTarget)
     assert target.canonical_url == "https://example.com/evidence?b=2&a=1"
-    assert isinstance(target.search_provenance, Present)
+    assert isinstance(target.search_provenance, Present), (
+        "Browse target discarded the provider's opaque search provenance"
+    )
     assert target.search_provenance.value.value == "brave-result-opaque-17"

@@ -158,6 +158,8 @@ def bind_nexus_tools(
                 spec=entry.spec,
                 execute=Available(handler),
                 replay_policy=ReplayPolicy.ReDispatchable,
+                # Rotate when a handler or its transitive domain behavior changes.
+                implementation_revision="nexus-tools.v2",
                 policy_epoch=PolicyEpoch("nexus-v1"),
                 policy_inputs=_POLICY_INPUTS[str(tool_id)],
             )

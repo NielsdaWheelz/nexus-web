@@ -334,6 +334,8 @@ calls/waits for reconcile.
 Manual PR-check recovery accepts `pull_request_number`, `expected_head_sha`, and
 `expected_base_sha`; requires an open same-repository PR to `main`; proves the
 synthetic merge's parents; then runs the same `Deterministic PR proof` job.
+The optional `proof` choice defaults to `changed`; `pr` runs the complete PR
+portfolio with same-run sensitivity on the same verified merge and Linux runner.
 SHA tags are discoverability only; production consumes manifest digests.
 
 ### Application release

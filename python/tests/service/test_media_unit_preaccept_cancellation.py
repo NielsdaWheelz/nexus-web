@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass
 from importlib.util import find_spec
 from typing import TYPE_CHECKING, Literal
@@ -83,10 +83,10 @@ class _CapacityTransport:
         draft: GenerationCommandDraft,
         *,
         bind_admission: Callable[[GenerationAdmission], Awaitable[GenerationCommand]],
-    ) -> AsyncIterator[GenerationFrame]:
+    ) -> AsyncGenerator[GenerationFrame]:
         _ = draft, bind_admission
 
-        async def frames() -> AsyncIterator[GenerationFrame]:
+        async def frames() -> AsyncGenerator[GenerationFrame]:
             self.dispatches += 1
             raise CodexGenerationCapacityUnavailable("test host is at capacity")
             yield GenerationFrame.model_construct()
@@ -104,7 +104,7 @@ class _NoDispatchTransport:
         draft: GenerationCommandDraft,
         *,
         bind_admission: Callable[[GenerationAdmission], Awaitable[GenerationCommand]],
-    ) -> AsyncIterator[GenerationFrame]:
+    ) -> AsyncGenerator[GenerationFrame]:
         del draft, bind_admission
         raise AssertionError("owner cancellation must precede host health and dispatch")
 
@@ -124,14 +124,14 @@ class _AbortAtOwnerFenceTransport:
         draft: GenerationCommandDraft,
         *,
         bind_admission: Callable[[GenerationAdmission], Awaitable[GenerationCommand]],
-    ) -> AsyncIterator[GenerationFrame]:
+    ) -> AsyncGenerator[GenerationFrame]:
         with Session(self._engine) as db:
             summary = db.get(MediaSummary, self._summary_id)
             assert summary is not None
             summary.status = "ready"
             db.commit()
 
-        async def frames() -> AsyncIterator[GenerationFrame]:
+        async def frames() -> AsyncGenerator[GenerationFrame]:
             await bind_test_codex_admission(draft, bind_admission)
             self.dispatches += 1
             raise AssertionError("an invalidated owner fence must prevent dispatch")

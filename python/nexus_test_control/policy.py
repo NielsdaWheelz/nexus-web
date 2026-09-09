@@ -184,7 +184,7 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "scripts/ci-proof-artifact.sh": (
         (
             "test-results/.nexus-ignore-contract",
-            "CI evidence staging admits only changed or full",
+            "CI evidence staging admits only changed, pr, or full",
             "nexus-test-run-claim.XXXXXXXX",
             "NEXUS_TEST_RUN_CLAIM_FD",
             "test controller did not publish one exact run claim",
@@ -203,6 +203,10 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
             "pull_request_number:",
             "expected_head_sha:",
             "expected_base_sha:",
+            "type: choice",
+            "default: changed",
+            "NEXUS_CI_EVENT_NAME: ${{ github.event_name }}",
+            "NEXUS_CI_PROOF: ${{ inputs.proof }}",
             "permissions: {}",
             "pull-requests: read",
             "refs/pull/{0}/head",
@@ -214,7 +218,11 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
             'merge_timestamp="$(git show --no-patch --format=%cI "$EXPECTED_HEAD_SHA")"',
             'GIT_COMMITTER_DATE="$merge_timestamp"',
             "git rev-list --parents -n 1 HEAD",
-            'run: scripts/ci-proof-artifact.sh run changed --base "$NEXUS_TEST_BASE_SHA"',
+            'scripts/ci-proof-artifact.sh run changed --base "$NEXUS_TEST_BASE_SHA"',
+            "scripts/ci-proof-artifact.sh run pr",
+            "pull_request:*|workflow_dispatch:changed)",
+            "workflow_dispatch:pr)",
+            "unsupported CI proof selection",
             "if: github.event_name == 'push'",
             "run: scripts/ci-proof-artifact.sh run full",
             "if: ${{ always() && steps.proof.outputs.path != '' }}",
@@ -315,6 +323,7 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
 _CONTROLLER_COMMAND_OWNERS: dict[str, str] = {
     "confidence": "scripts/agency_verify.sh",
     "changed": ".github/workflows/ci.yml",
+    "pr": ".github/workflows/ci.yml",
     "full": ".github/workflows/ci.yml",
     "nightly": ".github/workflows/nightly.yml",
     "release": ".github/workflows/release.yml",
@@ -741,7 +750,7 @@ def _executable_route_violations(repo_root: Path) -> tuple[PolicyViolation, ...]
             controller_matches.extend(
                 re.finditer(
                     r"(?:^|[;&|]\s*)(?:\./)?scripts/ci-proof-artifact\.sh\s+run\s+"
-                    r"(changed|full)\b",
+                    r"(changed|pr|full)\b",
                     line,
                 )
             )

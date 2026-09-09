@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from datetime import UTC, date, datetime
 from uuid import UUID, uuid4
 
@@ -63,11 +63,11 @@ class _SuccessfulDawnTransport:
         draft: GenerationCommandDraft,
         *,
         bind_admission: Callable[[GenerationAdmission], Awaitable[GenerationCommand]],
-    ) -> AsyncIterator[GenerationFrame]:
+    ) -> AsyncGenerator[GenerationFrame]:
         self._observe_entry("health")
         self._observe_entry("stream")
 
-        async def frames() -> AsyncIterator[GenerationFrame]:
+        async def frames() -> AsyncGenerator[GenerationFrame]:
             command = await bind_test_codex_admission(draft, bind_admission)
             self.commands.append(command)
             yield GenerationFrame(
@@ -117,10 +117,10 @@ class _CapacityDawnTransport:
         draft: GenerationCommandDraft,
         *,
         bind_admission: Callable[[GenerationAdmission], Awaitable[GenerationCommand]],
-    ) -> AsyncIterator[GenerationFrame]:
+    ) -> AsyncGenerator[GenerationFrame]:
         _ = draft, bind_admission
 
-        async def frames() -> AsyncIterator[GenerationFrame]:
+        async def frames() -> AsyncGenerator[GenerationFrame]:
             self.dispatches += 1
             raise CodexGenerationCapacityUnavailable("host capacity is occupied")
             yield GenerationFrame.model_construct()

@@ -1,0 +1,11 @@
+diff --git a/python/nexus/services/provider_generation_backend.py b/python/nexus/services/provider_generation_backend.py
+--- a/python/nexus/services/provider_generation_backend.py
++++ b/python/nexus/services/provider_generation_backend.py
+@@ -355,6 +355,7 @@
+                             correlation=_correlation(outcome),
+                             successor=successor,
+                         )
++                        return
+                     case other:
+                         assert_never(other)
+         finally:

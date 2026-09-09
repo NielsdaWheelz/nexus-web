@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass, field
 from importlib.util import find_spec
 from typing import TYPE_CHECKING, cast
@@ -187,7 +187,9 @@ def test_closed_backend_event_projection_retains_codex_terminal_truth() -> None:
     assert isinstance(public_outcome, Succeeded)
     assert public_outcome.meta is meta
     assert public_outcome.response.content.text == "safe answer"
-    assert isinstance(public_outcome.response.continuation, RuntimeAbsent)
+    assert isinstance(public_outcome.response.continuation, RuntimeAbsent), (
+        "observable terminal exposed private provider continuation material"
+    )
     assert "must-not-cross-observer-boundary" not in repr(provider_terminal)
 
 
@@ -414,7 +416,10 @@ async def _api_tool_loop_scenario() -> None:
     resume_material = first_successor.value
     resume_timeline: list[str] = []
     resume_runtime = _TwoTurnProviderRuntime()
-    resume_lifecycle = _Lifecycle(timeline=resume_timeline)
+    resume_lifecycle = _Lifecycle(
+        timeline=resume_timeline,
+        continuation_by_source={1: resume_material.canonical_bytes},
+    )
     resume_observer = _Observer()
     resumed = await GenerationBackend(
         GenerationBackendComposition(
@@ -440,7 +445,7 @@ async def _api_tool_loop_scenario() -> None:
     assert resumed.child_seq == 2
     assert resume_runtime.turns == [2], "resume redispatched the already-terminal provider child"
     assert [child.child_seq for child in resume_lifecycle.armed] == [2]
-    assert resume_timeline == ["tool:1", "arm:2", "complete:2"]
+    assert resume_timeline == ["tool:1", "open:1", "arm:2", "complete:2"]
     assert not any(isinstance(event, BackendToolProposed) for event in resume_observer.events)
 
 
@@ -674,9 +679,9 @@ class _CodexProjection:
 
 @dataclass(frozen=True, slots=True)
 class _ProviderTools:
-    tools: ProviderModelTools
+    tools: ProviderModelTools | None
 
-    def resolve(self, _spec: GenerationSpec) -> ProviderModelTools:
+    def resolve(self, _spec: GenerationSpec) -> ProviderModelTools | None:
         return self.tools
 
 
@@ -686,7 +691,7 @@ class _UnusedCodex:
         _draft: GenerationCommandDraft,
         *,
         bind_admission: CodexAdmissionBinder,
-    ) -> AsyncIterator[GenerationFrame]:
+    ) -> AsyncGenerator[GenerationFrame]:
         del bind_admission
         raise AssertionError("frozen ProviderApi selection fell through to Codex")
 
@@ -706,7 +711,7 @@ class _CancellableCodex:
         draft: GenerationCommandDraft,
         *,
         bind_admission: CodexAdmissionBinder,
-    ) -> AsyncIterator[GenerationFrame]:
+    ) -> AsyncGenerator[GenerationFrame]:
         dispatched = await bind_admission(
             GenerationAdmission(
                 request_id=draft.request_id,
@@ -749,7 +754,7 @@ class _ImmediateCodex:
         draft: GenerationCommandDraft,
         *,
         bind_admission: CodexAdmissionBinder,
-    ) -> AsyncIterator[GenerationFrame]:
+    ) -> AsyncGenerator[GenerationFrame]:
         self.dispatched = await bind_admission(
             GenerationAdmission(
                 request_id=draft.request_id,
@@ -774,7 +779,7 @@ class _CapacityRefusingCodex:
         _draft: GenerationCommandDraft,
         *,
         bind_admission: CodexAdmissionBinder,
-    ) -> AsyncIterator[GenerationFrame]:
+    ) -> AsyncGenerator[GenerationFrame]:
         del bind_admission
         if False:
             yield cast(GenerationFrame, None)

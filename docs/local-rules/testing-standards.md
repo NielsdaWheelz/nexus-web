@@ -452,6 +452,11 @@ push runs `./scripts/test full`, which is the release proof. `scripts/test`
 is a thin locked launcher; `scripts/agency_verify.sh` is a thin `confidence`
 adapter. The Makefile deliberately has no test/check/verify aliases.
 
+Manual CI recovery verifies the exact open PR head and base, then constructs
+their synthetic merge. Its `proof` choice defaults to `changed`; select `pr`
+to run the complete PR portfolio and same-run sensitivity on the Linux runner.
+Only that manual `pr` job has a 480-minute limit; ordinary PR proof keeps 90.
+
 The controller gives real-stack browser capabilities one clean data epoch. It
 recreates the exact run-owned application database from the immutable template
 and empties the exact run-owned bucket under the run lifecycle lock before any

@@ -7,7 +7,7 @@ import json
 import multiprocessing
 import os
 import socket
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncGenerator, AsyncIterator, Iterator
 from pathlib import Path
 from tempfile import gettempdir
 from typing import Any
@@ -352,7 +352,7 @@ def _bound_stream(
     client: CodexGenerationClient,
     draft: GenerationCommandDraft,
     admissions: list[GenerationAdmission] | None = None,
-) -> AsyncIterator[GenerationFrame]:
+) -> AsyncGenerator[GenerationFrame]:
     async def bind_admission(admission: GenerationAdmission) -> GenerationCommand:
         if admissions is not None:
             admissions.append(admission)

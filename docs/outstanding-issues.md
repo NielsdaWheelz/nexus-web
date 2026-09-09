@@ -30,4 +30,4 @@ area · opened YYYY-MM-DD by <who> · P2
 
 ## Open
 
-None.
+- **OPEN · infrastructure · 2026-09-09 · P1:** [Docker Desktop VM crashes block trustworthy database/process verification](tickets/docker-desktop-virtualization-crash.md); recover the shared engine, then clean only owned interrupted resources and repeat the blocked checks.

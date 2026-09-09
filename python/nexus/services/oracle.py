@@ -79,7 +79,6 @@ from nexus.services import (
 )
 from nexus.services.codex_generation_contract import (
     GenerationTerminal,
-    NormalizedFailureCode,
 )
 from nexus.services.generation_intent import GenerationIntent
 from nexus.services.generation_spec import ImmutablePromptPayloadRef, generation_fact_digest
@@ -90,6 +89,7 @@ from nexus.services.llm_execution import (
     ExecutionRuntime,
     GenerationAdmissionInputsChanged,
     GenerationDispatchAborted,
+    GenerationFailureCode,
     GenerationUncertain,
     GenerationUncertainResolution,
     JobGenerationJournal,
@@ -846,13 +846,15 @@ def _encode_oracle_terminal(
     )
 
 
-def _encode_oracle_preaccept_failure(
-    code: NormalizedFailureCode,
+def _encode_oracle_failure(
+    code: GenerationFailureCode,
     detail: str,
 ) -> str:
     return _COMPLETED_ORACLE_ADAPTER.dump_json(
         _CompletedOracleFailure(
-            error_code=oracle_reading_failure_code(code),
+            error_code=oracle_reading_failure_code(
+                "output_limit" if code == "turn_limit" else code
+            ),
             error_detail=detail,
         )
     ).decode("utf-8")
@@ -1383,7 +1385,7 @@ async def execute_reading(
                     plate=plate,
                     requires_user_content=requires_user_content,
                 ),
-                encode_preaccept_failure=_encode_oracle_preaccept_failure,
+                encode_failure=_encode_oracle_failure,
             )
         except GenerationAdmissionInputsChanged:
             db.rollback()

@@ -29,14 +29,26 @@ def _step_script(name: str) -> str:
     step = f"      - name: {name}"
     try:
         step_index = lines.index(step)
+        step_end = next(
+            (
+                index
+                for index in range(step_index + 1, len(lines))
+                if lines[index].startswith("      - ")
+            ),
+            len(lines),
+        )
         run_index = next(
-            index for index in range(step_index + 1, len(lines)) if lines[index] == "        run: |"
+            index
+            for index in range(step_index + 1, step_end)
+            if lines[index].startswith("        run: ")
         )
     except (ValueError, StopIteration) as error:
         raise AssertionError(
             f"workflow step is absent or has no owned shell body: {name}"
         ) from error
 
+    if lines[run_index] != "        run: |":
+        return lines[run_index].removeprefix("        run: ") + "\n"
     body: list[str] = []
     for line in lines[run_index + 1 :]:
         if line and not line.startswith("          "):
@@ -76,6 +88,23 @@ def _step_environment(name: str) -> dict[str, str]:
         if in_environment:
             break
     return environment
+
+
+def _pr_proof_step_name() -> str:
+    lines = WORKFLOW.read_text(encoding="utf-8").splitlines()
+    job_start = lines.index("  pr:")
+    name: str | None = None
+    for line in lines[job_start + 1 :]:
+        if line.startswith("  ") and not line.startswith("    "):
+            break
+        if line.startswith("      - name: "):
+            name = line.removeprefix("      - name: ")
+        elif line.startswith("      - "):
+            name = None
+        elif line == "        id: proof":
+            assert name is not None, "PR proof step has no shell owner"
+            return name
+    raise AssertionError("PR job has no canonical proof step")
 
 
 def _git(repository: Path, *arguments: str) -> str:
@@ -354,6 +383,62 @@ def test_manual_recovery_rejects_noncanonical_pull_request_identity_before_merge
     assert _git(repository, "rev-parse", "HEAD") == head_sha
 
 
+@pytest.mark.parametrize(
+    ("event", "proof", "expected_workflow"),
+    (
+        ("pull_request", "", "changed"),
+        ("pull_request", "pr", "changed"),
+        ("workflow_dispatch", "changed", "changed"),
+        ("workflow_dispatch", "pr", "pr"),
+        ("workflow_dispatch", "full", None),
+        ("workflow_dispatch", "", None),
+        ("workflow_dispatch", "pr; touch injected", None),
+        ("push", "pr", None),
+    ),
+)
+def test_manual_pr_proof_routes_only_the_explicit_bounded_workflow(
+    tmp_path: Path,
+    event: str,
+    proof: str,
+    expected_workflow: str | None,
+) -> None:
+    owner = tmp_path / "scripts/ci-proof-artifact.sh"
+    owner.parent.mkdir()
+    owner.write_text(
+        '#!/usr/bin/env bash\nset -euo pipefail\nprintf \'%s\\0\' "$@" > "$CAPTURE"\n',
+        encoding="utf-8",
+    )
+    owner.chmod(0o755)
+    capture = tmp_path / "invocation"
+    base = "b" * 40
+    completed = subprocess.run(
+        ("bash", "-euo", "pipefail", "-c", _step_script(_pr_proof_step_name())),
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "CAPTURE": str(capture),
+            "NEXUS_CI_EVENT_NAME": event,
+            "NEXUS_CI_PROOF": proof,
+            "NEXUS_TEST_BASE_SHA": base,
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if expected_workflow is None:
+        assert completed.returncode != 0, "CI admitted an unsupported manual proof"
+        assert not capture.exists(), "invalid proof reached the evidence owner"
+    else:
+        assert completed.returncode == 0, completed.stderr
+        expected = ["run", expected_workflow]
+        if expected_workflow == "changed":
+            expected.extend(("--base", base))
+        assert capture.read_bytes().split(b"\0")[:-1] == [value.encode() for value in expected], (
+            "manual PR recovery did not run the requested same-run sensitivity gate"
+        )
+    assert not (tmp_path / "injected").exists()
+
+
 def test_ci_routes_dispatch_only_to_exact_pr_recovery_and_keeps_full_on_main_push() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
@@ -375,21 +460,34 @@ def test_ci_routes_dispatch_only_to_exact_pr_recovery_and_keeps_full_on_main_pus
 
     assert "permissions: {}" in workflow
     assert "pull-requests: read" in workflow
+    assert re.search(
+        r"(?ms)^      proof:\n.*?^        required: true$.*?^        type: choice$"
+        r".*?^        default: changed$.*?^        options:\n"
+        r"          - changed\n          - pr$",
+        dispatch_body,
+    ), "manual recovery must expose only changed and pr with changed as the default"
     assert (
-        workflow.count(
-            'run: scripts/ci-proof-artifact.sh run changed --base "$NEXUS_TEST_BASE_SHA"'
-        )
+        "timeout-minutes: ${{ github.event_name == 'workflow_dispatch' "
+        "&& inputs.proof == 'pr' && 480 || 90 }}"
+    ) in workflow
+    assert _step_environment("Run the selected PR proof") == {
+        "NEXUS_CI_EVENT_NAME": "${{ github.event_name }}",
+        "NEXUS_CI_PROOF": "${{ inputs.proof }}",
+    }
+    assert (
+        workflow.count('scripts/ci-proof-artifact.sh run changed --base "$NEXUS_TEST_BASE_SHA"')
         == 1
     )
+    assert workflow.count("scripts/ci-proof-artifact.sh run pr") == 1
     assert workflow.count("run: scripts/ci-proof-artifact.sh run full") == 1
     assert "github.event_name != 'workflow_dispatch'" not in workflow
     assert re.search(
         r"(?ms)^  pr:\n.*?^    if: github\.event_name == 'pull_request' "
         r"\|\| github\.event_name == 'workflow_dispatch'$"
-        r".*?^      - name: Run the changed proof\n"
+        r".*?^      - name: Run the selected PR proof\n"
         r"        id: proof\n"
         r"        shell: bash\n"
-        r'        run: scripts/ci-proof-artifact\.sh run changed --base "\$NEXUS_TEST_BASE_SHA"$',
+        r"        env:\n.*?^        run: \|$",
         workflow,
     )
     assert re.search(
@@ -428,9 +526,11 @@ def test_ci_routes_dispatch_only_to_exact_pr_recovery_and_keeps_full_on_main_pus
 
 
 @pytest.mark.parametrize("test_status", (0, 17))
+@pytest.mark.parametrize("workflow", ("full", "pr"))
 def test_ci_artifact_owner_stages_only_the_run_claimed_by_this_invocation(
     tmp_path: Path,
     test_status: int,
+    workflow: str,
 ) -> None:
     repository = _ci_artifact_repository(tmp_path)
     old_run = repository / "test-results/runs/1111111111111111"
@@ -450,7 +550,7 @@ def test_ci_artifact_owner_stages_only_the_run_claimed_by_this_invocation(
     }
 
     completed = subprocess.run(
-        (str(CI_ARTIFACT_OWNER), "run", "full"),
+        (str(CI_ARTIFACT_OWNER), "run", workflow),
         cwd=repository,
         env=environment,
         check=False,
@@ -483,7 +583,7 @@ def test_ci_artifact_owner_stages_only_the_run_claimed_by_this_invocation(
     ]
     assert (evidence_workspace / "runs/2222222222222222/invocation.txt").read_text(
         encoding="utf-8"
-    ) == "full\n"
+    ) == f"{workflow}\n"
     assert (old_run / "summary.json").read_text(encoding="utf-8") == ('{"status":"not_run"}\n')
 
     rejected_cleanup = subprocess.run(
@@ -777,6 +877,6 @@ def test_ci_artifact_owner_rejects_a_non_ci_workflow_before_test_execution(
 
     assert completed.returncode != 0
     assert completed.stdout == ""
-    assert completed.stderr == "error: CI evidence staging admits only changed or full\n"
+    assert completed.stderr == "error: CI evidence staging admits only changed, pr, or full\n"
     assert not (repository / "test-results").exists()
     assert github_output.read_text(encoding="utf-8") == ""
