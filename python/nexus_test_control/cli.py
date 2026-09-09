@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import time
@@ -77,6 +78,9 @@ from nexus_test_control.services import clean_owned_runtime, new_run_id, test_en
 _PROOF_RUNNERS = frozenset({"gradle", "node-test", "playwright", "pytest", "static", "vitest"})
 _FAULT_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 _RUN_ID = re.compile(r"[0-9a-f]{16}\Z")
+_RUN_CLAIM_DESCRIPTOR = re.compile(r"[1-9][0-9]*\Z")
+_RUN_CLAIM_ENV = "NEXUS_TEST_RUN_CLAIM_FD"
+_RUN_CLAIM_VERSION = 1
 
 
 class ControlPlaneError(ValueError):
@@ -287,6 +291,7 @@ def _execute_workflow(
     started = time.monotonic_ns()
     reporter.arm(started)
     run_id, results_directory = _claim_results_directory(repo_root)
+    _publish_run_claim(environment, run_id)
     run_context = RunContextRecorder()
     invocation = InvocationEvidence(
         ui=command.ui,
@@ -305,6 +310,7 @@ def _execute_workflow(
         "NEXUS_TEST_RUN_ID": run_id,
         "PARSER_TEMP_ROOT": str(results_directory / "parser-tmp"),
     }
+    owned_environment.pop(_RUN_CLAIM_ENV, None)
     if command.android_visual is not None:
         owned_environment["NEXUS_ANDROID_VISUAL_SHA"] = command.android_visual.sha
         owned_environment["NEXUS_ANDROID_VISUAL_PATH"] = command.android_visual.path
@@ -408,6 +414,53 @@ def _execute_workflow(
     relative_summary = write_summary(repo_root, evidence, environment_secrets(environment))
     output.write(f"{command.workflow.value}: {evidence.status.value}; summary={relative_summary}\n")
     return 0 if evidence.status is RunStatus.PASS else 1
+
+
+def _publish_run_claim(environment: Mapping[str, str], run_id: str) -> None:
+    """Transfer the top-level run identity through an inherited private file.
+
+    The descriptor is a one-use control-plane channel. It is closed before any
+    capability process starts and removed from the capability environment, so
+    it cannot become an execution input or leak into a child process.
+    """
+    raw_descriptor = environment.get(_RUN_CLAIM_ENV)
+    if raw_descriptor is None:
+        return
+    if _RUN_CLAIM_DESCRIPTOR.fullmatch(raw_descriptor) is None:
+        raise ControlPlaneError("run claim descriptor is not canonical")
+    descriptor = int(raw_descriptor)
+    if descriptor <= 2:
+        raise ControlPlaneError("run claim descriptor must not be a standard stream")
+    try:
+        descriptor_stat = os.fstat(descriptor)
+    except OSError as error:
+        raise ControlPlaneError("run claim descriptor is not open") from error
+    try:
+        if not stat.S_ISREG(descriptor_stat.st_mode):
+            raise ControlPlaneError("run claim descriptor must name a regular file")
+        if descriptor_stat.st_uid != os.getuid():
+            raise ControlPlaneError("run claim descriptor must be owned by the test user")
+        if stat.S_IMODE(descriptor_stat.st_mode) != 0o600:
+            raise ControlPlaneError("run claim descriptor must be private")
+        if descriptor_stat.st_size != 0 or os.lseek(descriptor, 0, os.SEEK_CUR) != 0:
+            raise ControlPlaneError("run claim descriptor must be empty")
+        receipt = {
+            "directory": f"test-results/runs/{run_id}",
+            "run_id": run_id,
+            "version": _RUN_CLAIM_VERSION,
+        }
+        payload = (json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n").encode()
+        with os.fdopen(descriptor, "wb", closefd=False) as target:
+            target.write(payload)
+            target.flush()
+            os.fsync(target.fileno())
+    except OSError as error:
+        raise ControlPlaneError("could not publish the exact run claim") from error
+    finally:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
 
 
 def _execute_diagnose(

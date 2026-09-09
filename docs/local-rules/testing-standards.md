@@ -462,17 +462,23 @@ resulting epoch only after that explicit boundary.
 
 On a persistent self-hosted runner, a workflow artifact MUST contain only the
 single `test-results/runs/<run-id>` directory claimed by that workflow's test
-invocation. The CI adapter snapshots the existing run namespace before calling
-`./scripts/test`, requires exactly one new canonical 16-hex directory, rejects
-symlinks, special files, foreign ownership, or concurrent ambiguity, and stages
-that directory beneath the runner-owned private temporary root. It never
-deletes local historical evidence to manufacture isolation. The upload is
-mandatory whenever an exact directory was claimed, including a failing run,
-and the exact staging directory is removed after the upload attempt. Because
-GitHub discards step outputs from a failed step, the adapter returns success
-only after staging validated evidence and publishes the canonical proof result
-as data. A final always-run step enforces that result after upload and cleanup;
-an adapter, upload, cleanup, `fail`, or `not_run` outcome still fails the job.
+invocation. The CI adapter snapshots existing run identities, creates a private
+mode-600 claim file under the runner temporary root, and passes only its open
+descriptor to `./scripts/test`. Immediately after claiming the top-level run
+directory, the controller writes its exact 16-hex identity and relative path to
+that descriptor, closes it, and removes it from every capability environment.
+Nested capability proofs may create subordinate run directories, but namespace
+timing cannot make one of them the workflow artifact. The adapter rejects an
+absent, malformed, pre-existing, or noncanonical claim, plus symlinks, special
+files, or foreign ownership, and stages only the claimed directory beneath the
+runner-owned private temporary root. It never deletes local historical evidence
+to manufacture isolation. The upload is mandatory whenever an exact directory
+was claimed, including a failing or interrupted run, and the exact staging
+directory is removed after the upload attempt. Because GitHub discards step
+outputs from a failed step, the adapter returns success only after staging
+validated evidence and publishes the canonical proof result as data. A final
+always-run step enforces that result after upload and cleanup; an adapter,
+upload, cleanup, `fail`, or `not_run` outcome still fails the job.
 
 | Command | Required meaning |
 |---|---|

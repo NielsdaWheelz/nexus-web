@@ -204,7 +204,10 @@ def _minimal_repository(root: Path) -> None:
         "scripts/ci-proof-artifact.sh",
         "test-results/.nexus-ignore-contract\n"
         "CI evidence staging admits only changed or full\n"
-        "test invocation did not claim exactly one new run evidence directory\n"
+        "nexus-test-run-claim.XXXXXXXX\n"
+        "NEXUS_TEST_RUN_CLAIM_FD\n"
+        "test controller did not publish one exact run claim\n"
+        "test controller claimed a pre-existing run evidence directory\n"
         "run evidence contains a symlink, special file, or foreign owner\n"
         "terminal run evidence does not match the CI invocation\n"
         "nexus-ci-evidence.XXXXXXXX\n"

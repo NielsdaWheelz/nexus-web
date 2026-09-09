@@ -185,7 +185,10 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         (
             "test-results/.nexus-ignore-contract",
             "CI evidence staging admits only changed or full",
-            "test invocation did not claim exactly one new run evidence directory",
+            "nexus-test-run-claim.XXXXXXXX",
+            "NEXUS_TEST_RUN_CLAIM_FD",
+            "test controller did not publish one exact run claim",
+            "test controller claimed a pre-existing run evidence directory",
             "run evidence contains a symlink, special file, or foreign owner",
             "terminal run evidence does not match the CI invocation",
             "nexus-ci-evidence.XXXXXXXX",
