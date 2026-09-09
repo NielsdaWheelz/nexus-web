@@ -172,7 +172,7 @@ targets remain representable in developer-policy diagnostics and generation
 history, but cannot start a new run.
 
 At the implemented immutable `llm-calling` dependency and conformance pin
-`1353881d80ffeee916b78e163b5620fc967d09bd`, the ProviderRuntime catalog is
+`16499e1c4783a890063f51bb16b64d48b0cdbe3b`, the ProviderRuntime catalog is
 exactly:
 
 | Provider | Model reference | Supported reasoning | Source default |
@@ -1565,12 +1565,12 @@ meaningful RED before GREEN.
 
 | Ownership boundary | Canonical proof owner | Named scenarios |
 |---|---|---|
-| `llm-calling` model catalogs | `llm-calling@1353881d80ffeee916b78e163b5620fc967d09bd` `pytest:tests/test_model_catalogs.py` | two-page/repeated-cursor Codex catalog; incomplete-source refusal; exact immutable API rows/default Presence/private registry |
-| `llm-calling` authenticated catalog query | `llm-calling@1353881d80ffeee916b78e163b5620fc967d09bd` `pytest:tests/test_agent_runtime.py::test_model_catalog_is_an_authenticated_route_query_without_session_effects` | authenticated query; no session-open effect |
-| `llm-calling` tagged Agent request | `llm-calling@1353881d80ffeee916b78e163b5620fc967d09bd` `pytest:tests/test_agent_runtime.py::test_open_session_rejects_values_outside_the_tagged_request_union` | closed request union; foreign value refused before auth or adapter effect |
-| `llm-calling` continuation codec | `llm-calling@1353881d80ffeee916b78e163b5620fc967d09bd` `pytest:tests/test_continuation.py::test_continuation_round_trip_is_canonical_bound_and_recursively_immutable` | canonical round trip; recursive immutability |
-| `llm-calling` continuation binding | `llm-calling@1353881d80ffeee916b78e163b5620fc967d09bd` `pytest:tests/test_continuation.py::test_continuation_decode_rejects_target_codec_and_noncanonical_bytes` | target/codec mismatch and noncanonical bytes refuse |
-| `llm-calling` package surface | `llm-calling@1353881d80ffeee916b78e163b5620fc967d09bd` hosted `test` and `test-without-optional-sdk` jobs | clean base wheel imports AgentRuntime without `llm_tools` or either SDK; each optional extra remains independently installable |
+| `llm-calling` model catalogs | `llm-calling@16499e1c4783a890063f51bb16b64d48b0cdbe3b` `pytest:tests/test_model_catalogs.py` | two-page/repeated-cursor Codex catalog; incomplete-source refusal; exact immutable API rows/default Presence/private registry |
+| `llm-calling` authenticated catalog query | `llm-calling@16499e1c4783a890063f51bb16b64d48b0cdbe3b` `pytest:tests/test_agent_runtime.py::test_model_catalog_is_an_authenticated_route_query_without_session_effects`; `pytest:tests/test_agent_codex_sdk.py::test_model_catalog_accepts_initialize_user_agent_without_server_info` | authenticated query; no session-open effect; exact low-level initialize response without optional `serverInfo` |
+| `llm-calling` tagged Agent request | `llm-calling@16499e1c4783a890063f51bb16b64d48b0cdbe3b` `pytest:tests/test_agent_runtime.py::test_open_session_rejects_values_outside_the_tagged_request_union` | closed request union; foreign value refused before auth or adapter effect |
+| `llm-calling` continuation codec | `llm-calling@16499e1c4783a890063f51bb16b64d48b0cdbe3b` `pytest:tests/test_continuation.py::test_continuation_round_trip_is_canonical_bound_and_recursively_immutable` | canonical round trip; recursive immutability |
+| `llm-calling` continuation binding | `llm-calling@16499e1c4783a890063f51bb16b64d48b0cdbe3b` `pytest:tests/test_continuation.py::test_continuation_decode_rejects_target_codec_and_noncanonical_bytes` | target/codec mismatch and noncanonical bytes refuse |
+| `llm-calling` package surface | `llm-calling@16499e1c4783a890063f51bb16b64d48b0cdbe3b` devbox workflow-equivalent `test` and `test-without-optional-sdk` lanes | clean base wheel imports AgentRuntime without `llm_tools` or either SDK; each optional extra remains independently installable |
 | Nexus catalog/selection | `pytest:python/tests/service/test_generation_catalog.py::test_complete_catalog_and_selection_contract` (canonical node; the whole file stays registered, so its sibling nodes remain priority-routed) | complete configured set; source-controlled qualification binding; private HTTP projection; semantic-vs-readiness revision; stale/invalid exact pair |
 | Developer policy facts | `pytest:python/tests/kernel/test_generation_policy.py::test_exact_generation_policy_is_total_content_derived_and_profile_free` | exact seed and fourteen rows; content-derived revision; no profile vocabulary |
 | Developer policy/admission | `pytest:python/tests/service/test_generation_policy.py::test_total_policy_and_frozen_admission_contract` | exact frozen selections/specs/policy revision/tool modes |
