@@ -135,8 +135,8 @@ run_proof() {
     die "run expects a test workflow"
   fi
   case "$1" in
-    changed|full) ;;
-    *) die "CI evidence staging admits only changed or full" ;;
+    changed|pr|full) ;;
+    *) die "CI evidence staging admits only changed, pr, or full" ;;
   esac
   local workflow="$1"
 

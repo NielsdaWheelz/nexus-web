@@ -19,6 +19,14 @@ on:
         description: Exact 40-character lowercase main SHA used as merge base.
         required: true
         type: string
+      proof:
+        description: Changed proof, or the complete PR portfolio with same-run sensitivity.
+        required: true
+        type: choice
+        default: changed
+        options:
+          - changed
+          - pr
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || inputs.pull_request_number || github.ref }}
@@ -35,10 +43,9 @@ jobs:
     # gate runs on the lab runner. Restore `ubuntu-latest` when billing allows.
     runs-on: [self-hosted, linux, x64]
     # A pull request proves its changed static paths plus the proofs its diff
-    # affects; the deterministic `pr` portfolio with same-run sensitivity stays
-    # the local pre-merge command, and `full` on the main push is the release
-    # proof. A broad cutover can still select most of the portfolio here.
-    timeout-minutes: 90
+    # affects. Manual recovery can select the complete `pr` portfolio with
+    # same-run sensitivity; `full` on the main push is the release proof.
+    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.proof == 'pr' && 480 || 90 }}
     permissions:
       contents: read
       pull-requests: read
@@ -149,10 +156,26 @@ jobs:
 
       - uses: ./.github/actions/setup-test
 
-      - name: Run the changed proof
+      - name: Run the selected PR proof
         id: proof
         shell: bash
-        run: scripts/ci-proof-artifact.sh run changed --base "$NEXUS_TEST_BASE_SHA"
+        env:
+          NEXUS_CI_EVENT_NAME: ${{ github.event_name }}
+          NEXUS_CI_PROOF: ${{ inputs.proof }}
+        run: |
+          set -euo pipefail
+          case "$NEXUS_CI_EVENT_NAME:$NEXUS_CI_PROOF" in
+            pull_request:*|workflow_dispatch:changed)
+              scripts/ci-proof-artifact.sh run changed --base "$NEXUS_TEST_BASE_SHA"
+              ;;
+            workflow_dispatch:pr)
+              scripts/ci-proof-artifact.sh run pr
+              ;;
+            *)
+              echo "unsupported CI proof selection" >&2
+              exit 1
+              ;;
+          esac
 
       - name: Upload run evidence
         if: ${{ always() && steps.proof.outputs.path != '' }}

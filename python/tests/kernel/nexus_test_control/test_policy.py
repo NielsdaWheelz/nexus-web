@@ -203,7 +203,7 @@ def _minimal_repository(root: Path) -> None:
         root,
         "scripts/ci-proof-artifact.sh",
         "test-results/.nexus-ignore-contract\n"
-        "CI evidence staging admits only changed or full\n"
+        "CI evidence staging admits only changed, pr, or full\n"
         "nexus-test-run-claim.XXXXXXXX\n"
         "NEXUS_TEST_RUN_CLAIM_FD\n"
         "test controller did not publish one exact run claim\n"
@@ -221,6 +221,10 @@ def _minimal_repository(root: Path) -> None:
         "pull_request_number:\n"
         "expected_head_sha:\n"
         "expected_base_sha:\n"
+        "type: choice\n"
+        "default: changed\n"
+        "NEXUS_CI_EVENT_NAME: ${{ github.event_name }}\n"
+        "NEXUS_CI_PROOF: ${{ inputs.proof }}\n"
         "permissions: {}\n"
         "pull-requests: read\n"
         "refs/pull/{0}/head\n"
@@ -232,7 +236,11 @@ def _minimal_repository(root: Path) -> None:
         'merge_timestamp="$(git show --no-patch --format=%cI "$EXPECTED_HEAD_SHA")"\n'
         'GIT_COMMITTER_DATE="$merge_timestamp"\n'
         "git rev-list --parents -n 1 HEAD\n"
-        'run: scripts/ci-proof-artifact.sh run changed --base "$NEXUS_TEST_BASE_SHA"\n'
+        'scripts/ci-proof-artifact.sh run changed --base "$NEXUS_TEST_BASE_SHA"\n'
+        "scripts/ci-proof-artifact.sh run pr\n"
+        "pull_request:*|workflow_dispatch:changed)\n"
+        "workflow_dispatch:pr)\n"
+        "unsupported CI proof selection\n"
         "if: github.event_name == 'push'\n"
         "run: scripts/ci-proof-artifact.sh run full\n"
         "if: ${{ always() && steps.proof.outputs.path != '' }}\n"
@@ -561,6 +569,8 @@ def test_repository_guard_rejects_rogue_workflow_test_route(tmp_path: Path) -> N
     (
         "scripts/ci-proof-artifact.sh run full",
         "./scripts/ci-proof-artifact.sh run full",
+        "scripts/ci-proof-artifact.sh run pr",
+        "./scripts/ci-proof-artifact.sh run pr",
     ),
 )
 def test_repository_guard_rejects_rogue_ci_artifact_adapter_route(
