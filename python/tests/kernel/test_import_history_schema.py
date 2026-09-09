@@ -245,6 +245,31 @@ def test_safe_failure_code_catalog_names_every_owner_failure_code() -> None:
     )
 
 
+def test_browser_failure_code_catalog_mirrors_the_python_catalog() -> None:
+    """Contract D18: the browser narrows `failure_code` to its own `as const`
+    mirror of this catalog, so a code one side does not know reaches a reader as
+    a decode defect or an unexplained token. The two lists are compared as sets,
+    read from the repository root so neither side can drift silently."""
+    repository_root = Path(__file__).parents[3]
+    browser_source = (repository_root / "apps/web/src/lib/imports/importRef.ts").read_text()
+    literal = re.search(
+        r"export const SAFE_FAILURE_CODES = \[(?P<codes>.*?)\] as const;", browser_source, re.DOTALL
+    )
+    assert literal is not None, (
+        "importRef.ts no longer declares SAFE_FAILURE_CODES as an array literal"
+    )
+    browser_codes = re.findall(r'"(E_[A-Z0-9_]+)"', literal.group("codes"))
+
+    assert len(browser_codes) == len(set(browser_codes)), (
+        f"the browser catalog repeats a code: {sorted(browser_codes)}"
+    )
+    assert set(browser_codes) == SAFE_FAILURE_CODES, (
+        "browser and Python failure-code catalogs differ: browser-only="
+        f"{sorted(set(browser_codes) - SAFE_FAILURE_CODES)} python-only="
+        f"{sorted(SAFE_FAILURE_CODES - set(browser_codes))}"
+    )
+
+
 def test_queue_failure_code_is_total_and_assume_defects_on_an_uncatalogued_code() -> None:
     assert queue_failure_code("E_WORKER_INTERRUPTED") == "E_WORKER_INTERRUPTED"
     assert queue_failure_code("E_WORKER_CHILD_DEFECT") == "E_WORKER_HANDLER_FAILED", (

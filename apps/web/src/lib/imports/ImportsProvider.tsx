@@ -115,6 +115,10 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
         return inFlightRef.current;
       }
       const request = (async () => {
+        // Only a failed automatic read may end the observation window. A queued
+        // trailing read is asked for by a reader gesture or an invalidation
+        // (above), so it inherits nothing from the read it waited behind.
+        let iterationIsAutomatic = automatic;
         let again = true;
         while (again && mountedRef.current) {
           dirtyReadRef.current = false;
@@ -149,11 +153,12 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
             // A failed automatic read ends this observation window; the
             // last-good summary stays on screen until a wake signal or a
             // manual refresh asks again.
-            if (automatic) setAutomaticReadsEnded(true);
+            if (iterationIsAutomatic) setAutomaticReadsEnded(true);
           } finally {
             if (abortRef.current === controller) abortRef.current = null;
           }
           again = dirtyReadRef.current;
+          iterationIsAutomatic = false;
         }
       })().finally(() => {
         if (inFlightRef.current === request) inFlightRef.current = null;

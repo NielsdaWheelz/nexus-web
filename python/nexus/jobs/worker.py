@@ -42,6 +42,7 @@ from nexus.jobs.queue import (
     HEAVY_CAPACITY_OCCUPIED_SQL,
     ClaimedJob,
     JobExecutionContext,
+    JobFailureTransition,
     JobRow,
     RescheduleRequested,
     ScheduleAfter,

@@ -184,7 +184,13 @@ const NEEDS_ATTENTION_STATE = decodeImportsUrlState(
   new URLSearchParams({ view: "NeedsAttention" }),
 );
 
-function Probe({ selected }: { selected: ImportRef | null }) {
+function Probe({
+  selected,
+  filter,
+}: {
+  selected: ImportRef | null;
+  filter: string | null;
+}) {
   const {
     summary,
     loadState,
@@ -194,7 +200,14 @@ function Probe({ selected }: { selected: ImportRef | null }) {
     setPaneOpen,
     dispatchUpload,
   } = useImports();
-  const page = useImportsPage("NeedsAttention", NEEDS_ATTENTION_STATE);
+  const page = useImportsPage(
+    "NeedsAttention",
+    filter === null
+      ? NEEDS_ATTENTION_STATE
+      : decodeImportsUrlState(
+          new URLSearchParams({ view: "NeedsAttention", q: filter }),
+        ),
+  );
   const detail = useImportDetail(selected);
   const history = useImportHistory(selected);
   const [dispatchFailures, setDispatchFailures] = useState(0);
@@ -272,12 +285,21 @@ function Probe({ selected }: { selected: ImportRef | null }) {
   );
 }
 
-function renderImports({ selected = null }: { selected?: ImportRef | null } = {}) {
-  return render(
+interface ImportsTree {
+  readonly selected?: ImportRef | null;
+  readonly filter?: string | null;
+}
+
+function importsTree({ selected = null, filter = null }: ImportsTree) {
+  return (
     <ImportsProvider>
-      <Probe selected={selected} />
-    </ImportsProvider>,
+      <Probe selected={selected} filter={filter} />
+    </ImportsProvider>
   );
+}
+
+function renderImports(tree: ImportsTree = {}) {
+  return render(importsTree(tree));
 }
 
 function hideDocument(): void {
@@ -798,6 +820,182 @@ describe("Imports provider observation", () => {
       expect(
         screen.getByRole("status", { name: "Imports observed at" }),
       ).toHaveTextContent("2026-09-08T12:00:01Z"),
+    );
+  });
+
+  it("keeps the window when the read a reader asked for is the one that fails", async () => {
+    // The trailing read of a single-flight pair belongs to the reader, not to
+    // the poller: only a failed *automatic* read may end the window (D10).
+    const blocked = deferred<Response>();
+    let reads = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), window.location.origin);
+      if (url.pathname !== "/api/imports/summary") {
+        return jsonResponse(pageBody([]));
+      }
+      reads += 1;
+      if (reads === 1) return jsonResponse(summaryBody(1, 1, observedAt(1)));
+      if (reads === 2) return blocked.promise;
+      if (reads === 3) throw new TypeError("offline");
+      return jsonResponse(summaryBody(2, 1, observedAt(reads)));
+    });
+
+    renderImports();
+    await waitFor(() => expect(summary()).toHaveTextContent("1 attention, 1 active"));
+    // The automatic five-second read is in flight when the reader asks again,
+    // so the reader's read is the trailing one.
+    await waitFor(() => expect(reads).toBe(2), { timeout: 6_500 });
+    await userEvent.click(screen.getByRole("button", { name: "Refresh imports" }));
+    blocked.resolve(jsonResponse(summaryBody(1, 1, observedAt(2))));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("status", { name: "Imports load state" }),
+      ).toHaveTextContent("Failed"),
+    );
+
+    await waitFor(() => expect(summary()).toHaveTextContent("2 attention, 1 active"), {
+      timeout: 6_500,
+    });
+  });
+
+  it("re-keys the page and the detail exactly once for one invalidation", async () => {
+    const blockedSummary = deferred<Response>();
+    let pageReads = 0;
+    let detailReads = 0;
+    let summaryReads = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), window.location.origin);
+      if (url.pathname === "/api/imports/summary") {
+        summaryReads += 1;
+        if (summaryReads === 2) return blockedSummary.promise;
+        return jsonResponse(summaryBody(0, 1, observedAt(summaryReads)));
+      }
+      if (url.pathname === "/api/imports") {
+        pageReads += 1;
+        return jsonResponse(pageBody([mediaItem(MEDIA_ID, `Page ${pageReads}`)]));
+      }
+      if (url.pathname.endsWith("/history")) {
+        return jsonResponse(historyBody([], null));
+      }
+      detailReads += 1;
+      return jsonResponse(detailBody(mediaItem(MEDIA_ID, `Detail ${detailReads}`)));
+    });
+
+    renderImports({ selected: importRef(`media:${MEDIA_ID}`) });
+    await waitFor(() =>
+      expect(screen.getByRole("status", { name: "Imports page" })).toHaveTextContent(
+        "Page 1",
+      ),
+    );
+
+    publishImportsInvalidation();
+    // Both re-keyed reads win the race with the summary read that re-keyed them.
+    await waitFor(() =>
+      expect(screen.getByRole("status", { name: "Imports page" })).toHaveTextContent(
+        "Page 2",
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("status", { name: "Imports detail" }),
+      ).toHaveTextContent("Detail 2"),
+    );
+    blockedSummary.resolve(jsonResponse(summaryBody(0, 1, observedAt(2))));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("status", { name: "Imports observed at" }),
+      ).toHaveTextContent(observedAt(2)),
+    );
+
+    // That observation is the one the re-key already answered, so the live
+    // channel must not read the same page or detail again.
+    await expect(
+      waitFor(() => expect(pageReads + detailReads).toBeGreaterThan(4), {
+        timeout: 1_500,
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("drops a live page and detail when the reader returns to an earlier key", async () => {
+    const detailReads = new Map<string, number>();
+    let pageReads = 0;
+    let summaryReads = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), window.location.origin);
+      if (url.pathname === "/api/imports/summary") {
+        summaryReads += 1;
+        return jsonResponse(summaryBody(0, 1, observedAt(summaryReads)));
+      }
+      if (url.pathname === "/api/imports") {
+        pageReads += 1;
+        return jsonResponse(pageBody([mediaItem(MEDIA_ID, `Page ${pageReads}`)]));
+      }
+      if (url.pathname.endsWith("/history")) {
+        return jsonResponse(historyBody([], null));
+      }
+      const ref = decodeURIComponent(url.pathname.slice("/api/imports/".length));
+      const read = (detailReads.get(ref) ?? 0) + 1;
+      detailReads.set(ref, read);
+      return jsonResponse(
+        detailBody(
+          mediaItem(
+            ref === `media:${MEDIA_ID}` ? MEDIA_ID : OTHER_MEDIA_ID,
+            `Detail ${read}`,
+          ),
+        ),
+      );
+    });
+
+    const first = importRef(`media:${MEDIA_ID}`);
+    const second = importRef(`media:${OTHER_MEDIA_ID}`);
+    const { rerender } = renderImports({ selected: first });
+    await waitFor(() =>
+      expect(screen.getByRole("status", { name: "Imports page" })).toHaveTextContent(
+        "Page 1",
+      ),
+    );
+    // One five-second observation gives both hooks a live overlay for this key.
+    await waitFor(
+      () =>
+        expect(
+          screen.getByRole("status", { name: "Imports page" }),
+        ).toHaveTextContent("Page 2"),
+      { timeout: 6_500 },
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("status", { name: "Imports detail" }),
+      ).toHaveTextContent("Detail 2"),
+    );
+
+    rerender(importsTree({ selected: second, filter: "alpha" }));
+    await waitFor(() =>
+      expect(screen.getByRole("status", { name: "Imports page" })).toHaveTextContent(
+        "Page 3",
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("status", { name: "Imports detail" }),
+      ).toHaveTextContent("Detail 1"),
+    );
+
+    rerender(importsTree({ selected: first, filter: null }));
+    // Back on the first key: an overlay may only ever be newer than the keyed
+    // read it shadows, so the read now in flight wins.
+    await waitFor(
+      () =>
+        expect(
+          screen.getByRole("status", { name: "Imports page" }),
+        ).toHaveTextContent("Page 4"),
+      { timeout: 2_000 },
+    );
+    await waitFor(
+      () =>
+        expect(
+          screen.getByRole("status", { name: "Imports detail" }),
+        ).toHaveTextContent("Detail 3"),
+      { timeout: 2_000 },
     );
   });
 });

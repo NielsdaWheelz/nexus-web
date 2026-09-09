@@ -89,6 +89,16 @@ export function useImportsPage(
     readonly page: ImportPage;
   } | null>(null);
 
+  // A live page belongs to the key it was read for, so it is dropped as that
+  // key leaves: returning to an earlier key (filters back and forth on one
+  // revision) must never shadow the read that key is making now with a page
+  // captured before the detour.
+  const keyRef = useRef(cacheKey);
+  if (keyRef.current !== cacheKey) {
+    keyRef.current = cacheKey;
+    if (live !== null) setLive(null);
+  }
+
   const keyedPage = keyed.status === "ready" ? keyed.data : null;
   const page = live !== null && live.key === cacheKey ? live.page : keyedPage;
 
@@ -101,6 +111,15 @@ export function useImportsPage(
   const queryRef = useRef(query);
   queryRef.current = query;
 
+  // A new revision re-keys the read above, so the observation carrying it is
+  // already answered by that read and must not read page one a second time.
+  const rekeyedRef = useRef(false);
+  const revisionRef = useRef(observation.revision);
+  if (revisionRef.current !== observation.revision) {
+    revisionRef.current = observation.revision;
+    rekeyedRef.current = true;
+  }
+
   // The provider's observation is the only clock here: a new `observedAt` is one
   // successful summary read, which is this pane's five-second tick.
   const observedAt = observation.observedAt;
@@ -111,6 +130,10 @@ export function useImportsPage(
     const shown = shownRef.current;
     // The provider's first observation is the read the keyed resource made.
     if (previous === null || previous === observedAt) return;
+    if (rekeyedRef.current) {
+      rekeyedRef.current = false;
+      return;
+    }
     if (shown === null || activeRef.current === 0) return;
     const controller = new AbortController();
     void (async () => {

@@ -6,7 +6,6 @@ import hashlib
 import json
 import posixpath
 import re
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal, cast
@@ -1906,9 +1905,7 @@ def repair_dead_source_execution(
             case ViewerRecovery(viewer_id=viewer_id, is_admin=is_admin):
                 if not can_read_media(db, viewer_id, media_id):
                     raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-                creator_id = db.scalar(
-                    select(Media.created_by_user_id).where(Media.id == media_id)
-                )
+                creator_id = db.scalar(select(Media.created_by_user_id).where(Media.id == media_id))
                 if creator_id is None:
                     raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
                 is_creator = creator_id == viewer_id
@@ -2090,7 +2087,9 @@ def repair_source_for_system_media(
     clone attempts for audit, enforce reacquirability, clear stale artifacts, and
     enqueue ``ingest_media_source`` through the canonical job owner.
     """
-    media = db.execute(select(Media).where(Media.id == media_id).with_for_update(key_share=True)).scalar()
+    media = db.execute(
+        select(Media).where(Media.id == media_id).with_for_update(key_share=True)
+    ).scalar()
     if media is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     if media.created_by_user_id != actor_user_id:
@@ -2721,7 +2720,9 @@ def enqueue_podcast_episode_transcript_source_attempt(
     request_id: str | None,
 ) -> Literal["created", "idempotent"]:
     """Bind podcast transcript source work inside the caller-owned transaction."""
-    media = db.execute(select(Media).where(Media.id == media_id).with_for_update(key_share=True)).scalar()
+    media = db.execute(
+        select(Media).where(Media.id == media_id).with_for_update(key_share=True)
+    ).scalar()
     if media is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     if media.kind != MediaKind.podcast_episode.value:
@@ -2825,7 +2826,9 @@ def _load_owned_media_for_source_action(
 ) -> Media:
     if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    media = db.execute(select(Media).where(Media.id == media_id).with_for_update(key_share=True)).scalar()
+    media = db.execute(
+        select(Media).where(Media.id == media_id).with_for_update(key_share=True)
+    ).scalar()
     if media is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     if media.created_by_user_id != viewer_id:
@@ -2874,7 +2877,9 @@ def _dispatch_requeue_attempt(
             attempt_id=attempt_id,
             storage_client=get_storage_client(),
         )
-        media = db.execute(select(Media).where(Media.id == media_id).with_for_update(key_share=True)).scalar()
+        media = db.execute(
+            select(Media).where(Media.id == media_id).with_for_update(key_share=True)
+        ).scalar()
         attempt = (
             db.execute(
                 select(MediaSourceAttempt)

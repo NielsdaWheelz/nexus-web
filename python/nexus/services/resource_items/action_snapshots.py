@@ -30,8 +30,8 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from nexus.schemas.consumption import PlayerDescriptor
-from nexus.schemas.offline_reading_package import OFFLINE_READING_MAX_TITLE_CODEPOINTS
 from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
+from nexus.schemas.offline_reading_package import OFFLINE_READING_MAX_TITLE_CODEPOINTS
 from nexus.schemas.presence import Present
 from nexus.schemas.resource_action_snapshots import (
     ConsumptionResourceActionCapabilityOut,

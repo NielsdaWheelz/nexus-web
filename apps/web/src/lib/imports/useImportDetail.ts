@@ -36,6 +36,15 @@ export function useImportDetail(
     readonly detail: ImportDetail;
   } | null>(null);
 
+  // A live detail belongs to the key it was read for, so it is dropped as that
+  // key leaves: reselecting an earlier import must never shadow the read that
+  // key is making now with a detail captured before the detour.
+  const keyRef = useRef(cacheKey);
+  if (keyRef.current !== cacheKey) {
+    keyRef.current = cacheKey;
+    if (live !== null) setLive(null);
+  }
+
   const keyedDetail = keyed.status === "ready" ? keyed.data : null;
   const detail =
     live !== null && cacheKey !== null && live.key === cacheKey
@@ -52,6 +61,15 @@ export function useImportDetail(
       ? null
       : { key: cacheKey, ref, active: detail.item.state.kind === "Active" };
 
+  // A new revision re-keys the read above, so the observation carrying it is
+  // already answered by that read and must not read the detail a second time.
+  const rekeyedRef = useRef(false);
+  const revisionRef = useRef(observation.revision);
+  if (revisionRef.current !== observation.revision) {
+    revisionRef.current = observation.revision;
+    rekeyedRef.current = true;
+  }
+
   const observedAt = observation.observedAt;
   const lastObservedRef = useRef<string | null>(null);
   useEffect(() => {
@@ -60,6 +78,10 @@ export function useImportDetail(
     const shown = shownRef.current;
     // The provider's first observation is the read the keyed resource made.
     if (previous === null || previous === observedAt) return;
+    if (rekeyedRef.current) {
+      rekeyedRef.current = false;
+      return;
+    }
     if (shown === null || !shown.active) return;
     const controller = new AbortController();
     void (async () => {

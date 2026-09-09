@@ -78,7 +78,7 @@ const MEDIA_SNAPSHOT = {
       availability: { kind: "Available" },
       offer: {
         kind: "RetrySource",
-        expected_attempt_id: "44444444-4444-4444-8444-444444444444",
+        expectedAttemptId: "44444444-4444-4444-8444-444444444444",
         input: "RefetchSource",
       },
     },
