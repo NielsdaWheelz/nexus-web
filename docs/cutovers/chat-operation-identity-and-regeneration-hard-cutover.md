@@ -1,8 +1,17 @@
 # Chat Operation Identity And Regeneration Hard Cutover
 
-**Status:** PROPOSED · **Date:** 2026-08-03 · **Scope:** chat launch,
+**Status:** SUPERSEDED FOR SEND/RECOVERY by
+[chat admission and recovery](chat-admission-recovery-hard-cutover.md) ·
+**Date:** 2026-08-03 · **Scope:** chat launch,
 browser send recovery, and assistant candidate actions only · **Doctrine:** hard
 cut; one owner; exact replay; immutable history; no compatibility path
+
+Current candidate-command authority is also the shared
+`ResourceMutation(scope="chat:admission")` ledger. Rerun and regeneration keep
+their rich HTTP projections, but key lookup, request mismatch, and immutable
+Accepted identity belong to that ledger; replay hydrates the run through the
+canonical read owner. Historical send schemas and API statements below are
+superseded by the linked cutover.
 
 **Generation-backend target amendment (2026-09-01):**
 [`generation-backends-hard-cutover.md`](generation-backends-hard-cutover.md)
@@ -114,12 +123,18 @@ serializes it. `Conversation` passes `paneRuntime.visitId` for an empty
 type ChatSendCommand = Readonly<{
   idempotencyKey: string;
   request: ChatRunCreateRequest;
+  origin: { identity: string; accountId: string };
 }>;
 
 type ChatSendOperation =
   | { kind: "Absent" }
   | { kind: "Submitting"; command: ChatSendCommand }
-  | { kind: "ReconcileRequired"; command: ChatSendCommand };
+  | { kind: "ReconcileRequired"; command: ChatSendCommand }
+  | {
+      kind: "Acknowledged";
+      command: ChatSendCommand;
+      receipt: AcceptedChatAdmission;
+    };
 
 type ChatDraftRecord = Readonly<{
   text: string;
@@ -132,7 +147,8 @@ type ChatDraftRecord = Readonly<{
 Rules:
 
 - `ChatComposer` resolves input and calls `buildChatRunBody` once.
-- The operation owner mints a key and synchronously persists
+- The operation owner mints a key, captures the current view identity and
+  authenticated account, and synchronously persists
   `{ kind: "Submitting", command }` before `POST /api/chat-runs` starts.
 - Persist failure prevents POST and reports a defect. There is no memory fallback.
 - Reload/remount promotes persisted `Submitting` to `ReconcileRequired`.
@@ -141,7 +157,10 @@ Rules:
 - Known API rejection transitions to `Absent`, retaining editable text,
   selection, and tool authority;
   a later explicit send assembles a new command and key.
-- Success deletes the complete draft record before canonical route replacement.
+- Success persists `Acknowledged` before presentation work. Only the exact
+  originating view in the same account may auto-adopt; another same-account
+  view requires explicit **Open response**. Canonical GET hydration precedes
+  deletion of the complete draft record.
 - Switching `ChatDraftKey` selects the new record synchronously; no effect-driven
   stale record may render or mutate under another key.
 
@@ -177,6 +196,11 @@ second invocation. `E_NETWORK` exposes an explicit retry that posts the same
 endpoint and key; never mint or auto-create another candidate. After full
 reload, the committed branch tree is authoritative, so persisting these
 action-attempts separately is out of scope.
+
+Both commands use the shared `ResourceMutation(scope="chat:admission")`
+key/mismatch authority and store an internal Accepted receipt atomically with
+the candidate. Exact replay reads the named run through the canonical fresh
+read owner before returning the command's existing rich response.
 
 The source assistant must map to exactly one owning `ChatRun`. Missing or
 duplicate ownership is a defect; never scan for the “latest” run.
@@ -223,8 +247,10 @@ model, or a reusable app-wide operation abstraction.
 - Browser storage is parsed once at ingress; malformed current data defects.
 - No old-shape decoder, migrator, bridge, fallback, in-memory mirror, or dual write.
 - `path:new`, `SendAttempt`, `SendAttemptStatus`, and `payloadIdentity` are deleted.
-- Operational prerequisite: close all Nexus tabs before deployment. This clears
-  the one user’s tab-scoped old records without committed migration code.
+- Every pre-cutover non-`Absent` operation lacks the final durable origin and
+  must be settled under the old release. Only `Absent` records may cross the
+  cut. Preserve open tabs and their `sessionStorage`, then reload after the new
+  release is healthy; do not clear storage as a migration mechanism.
 
 No database schema change is required. Existing parent/branch fields are the
 canonical candidate lineage; do not duplicate them with `source_run_id`,
@@ -234,7 +260,8 @@ canonical candidate lineage; do not duplicate them with `source_run_id`,
 
 Retain unchanged:
 
-- `POST /chat-runs` request/response and strict payload fingerprint;
+- `POST /chat-runs` request and strict payload fingerprint; its response is now
+  the receipt defined by the superseding admission cutover;
 - `POST /messages/{assistant_message_id}/rerun` for eligible failure recovery;
 - BFF proxy ownership and `Idempotency-Key` requirement.
 

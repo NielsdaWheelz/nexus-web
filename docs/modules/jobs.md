@@ -27,9 +27,10 @@ its capacity holder and renews both to one expiry in a queue-owned transaction;
 every terminal or retry transition follows that same job-before-capacity order.
 Claim is atomic (`FOR UPDATE SKIP LOCKED`), so
 the worker is horizontally scalable even though one instance is
-single-concurrency. The worker installs the process-global rate limiter at
-startup (see [llms.md](llms.md)) so the first job of any kind has a working
-limiter.
+single-concurrency. The interactive and background lane processes are the sole
+local execution-capacity owners. The worker installs the process-global request
+rate and token-budget service at startup (see [llms.md](llms.md)); there is no
+second anonymous per-user in-flight counter.
 
 The interactive lane dispatches in-process. The background lane instead runs every
 handler in a fresh bounded child through `jobs/process_executor.py`

@@ -13,18 +13,27 @@
 
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { ArrowUp, RotateCcw, Square } from "lucide-react";
 import {
-  apiFetch,
-  decodeApiPayload,
   isApiError,
   isSameSystemApiDefect,
   isToolProjectionReloadRequired,
   type ApiError,
 } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
+import {
+  FeedbackNotice,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import { absent, type Presence } from "@/lib/api/presence";
 import type { ReaderSelectionInput } from "@/lib/api/sse/requests";
 import { buildChatRunBody } from "@/lib/conversations/chatRunBody";
@@ -35,29 +44,29 @@ import {
   readinessAction,
   type RunSelectionOut,
 } from "@/lib/conversations/generationCatalog";
-import { decodeChatRunResponse } from "@/lib/conversations/messageWire";
-import type { PendingTurnContext } from "@/lib/conversations/pendingTurnContext";
 import {
-  decodeReaderSelectionPreview,
-  type ReaderSelectionOut,
-  type ReaderSelectionPreview,
-} from "@/lib/conversations/readerSelection";
+  chatAdmissionErrorMessage,
+  type AcceptedChatAdmission,
+} from "@/lib/conversations/chatAdmission";
+import type { ChatSendCommand } from "@/lib/conversations/chatDraftStore";
+import type { PendingTurnContext } from "@/lib/conversations/pendingTurnContext";
+import { type ReaderSelectionOut } from "@/lib/conversations/readerSelection";
 import { readerSelectionKeyToWire } from "@/lib/conversations/readerSelectionKey";
-import { isRecord } from "@/lib/validation";
 import BranchComposerHeader from "@/components/chat/BranchComposerHeader";
 import GenerationSelectionPicker from "@/components/chat/GenerationSelectionPicker";
 import { useGenerationCatalog } from "@/components/chat/useGenerationCatalog";
 import QuotedPassageCard from "@/components/chat/QuotedPassageCard";
 import ToolProjectionReloadNotice from "@/components/chat/ToolProjectionReloadNotice";
-import { useChatDraft, type ChatSendCommand } from "@/components/chat/useChatDraft";
+import { useChatDraft } from "@/components/chat/useChatDraft";
 import Button from "@/components/ui/Button";
 import Textarea from "@/components/ui/Textarea";
 import type {
   BranchDraft,
   ChatSendCapability,
-  ChatRunResponse,
 } from "@/lib/conversations/types";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import { withClientDefectContext } from "@/lib/telemetry/clientDefects";
+import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { assertNever } from "@/lib/assertNever";
 import styles from "./ChatComposer.module.css";
 
@@ -68,13 +77,20 @@ import styles from "./ChatComposer.module.css";
 interface ChatComposerProps {
   /** Existing conversation ID (null for new conversation). */
   conversationId: string | null;
-  /** Called when the chat run has been created. */
-  onChatRunCreated?: (data: ChatRunResponse["data"]) => void;
+  /** Hydrate and adopt only while the originating view still owns the send. */
+  onAdmitted: (
+    receipt: AcceptedChatAdmission,
+    isCurrent: () => boolean,
+  ) => Promise<boolean>;
+  /** Pane visit identity fences completion across same-component navigation. */
+  viewIdentity: string;
+  /** The originating pane must still be active to restore composer focus. */
+  isPaneActive: boolean;
   /** Called after message sent (for refreshing lists). */
   onMessageSent?: () => void;
   /** Called when a valid send begins. */
   onSendStarted?: () => void;
-  /** Focus the composer textarea after mount or when focusKey changes. */
+  /** Request focus once for this view/key; inactive panes discard the request. */
   autoFocus?: boolean;
   /** Stable key used to refocus the composer for a newly attached quote. */
   focusKey?: string;
@@ -99,10 +115,6 @@ interface ChatComposerProps {
   onRemovePendingContext?: () => void;
   /** Re-run pending-quote hydration after a retryable load failure. */
   onRetryHydration?: () => void;
-  /** Replace the pending preview with the fresh one a stale send returns. */
-  onReaderSelectionStale?: (preview: ReaderSelectionPreview) => void;
-  /** Consume the launch intent after a successful run so Back cannot rehydrate. */
-  onIntentConsumed?: () => void;
   /** Refresh the conversation after an `Empty` insertion loses the race. */
   onConversationRefresh?: () => void;
   /** Activate the reader source for a pending or sent quote card. */
@@ -153,19 +165,28 @@ function chatRunErrorMessage(
       return {
         tone: "Danger",
         requestId: error.requestId,
-        title: operation === "Start" ? "This message can’t be sent as written." : "This response can’t be stopped right now.",
+        title:
+          operation === "Start"
+            ? "This message can’t be sent as written."
+            : "This response can’t be stopped right now.",
       };
     case "E_FORBIDDEN":
       return {
         tone: "Danger",
         requestId: error.requestId,
-        title: operation === "Start" ? "You don’t have permission to start this chat." : "You don’t have permission to stop this response.",
+        title:
+          operation === "Start"
+            ? "You don’t have permission to start this chat."
+            : "You don’t have permission to stop this response.",
       };
     case "E_NOT_FOUND":
       return {
         tone: "Danger",
         requestId: error.requestId,
-        title: operation === "Start" ? "This chat is no longer available." : "This response is no longer available.",
+        title:
+          operation === "Start"
+            ? "This chat is no longer available."
+            : "This response is no longer available.",
       };
     default:
       throw error;
@@ -178,7 +199,9 @@ function chatRunErrorMessage(
 
 export default function ChatComposer({
   conversationId,
-  onChatRunCreated,
+  onAdmitted,
+  viewIdentity,
+  isPaneActive,
   onMessageSent,
   onSendStarted,
   autoFocus = false,
@@ -193,8 +216,6 @@ export default function ChatComposer({
   pendingContext = absent(),
   onRemovePendingContext,
   onRetryHydration,
-  onReaderSelectionStale,
-  onIntentConsumed,
   onConversationRefresh,
   onActivateSource,
   sendCapability,
@@ -203,15 +224,22 @@ export default function ChatComposer({
   onCancelRun,
   projectionReloadRequestId: inheritedProjectionReloadRequestId = null,
 }: ChatComposerProps) {
-  const [sending, setSending] = useState(false);
+  if (!viewIdentity.trim())
+    throw new TypeError("Chat view identity must not be empty");
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<FeedbackContent | null>(null);
-  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(null);
+  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(
+    null,
+  );
   const [localProjectionReloadRequestId, setLocalProjectionReloadRequestId] =
     useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
   const restoreFocusAfterSendRef = useRef(false);
+  const paneIsActiveRef = useRef(isPaneActive);
+  useLayoutEffect(() => {
+    paneIsActiveRef.current = isPaneActive;
+  }, [isPaneActive]);
   const seededDraftKeyRef = useRef<string | null>(null);
   const isMobileViewport = useIsMobileViewport();
   const writeDescriptionId = useId();
@@ -219,6 +247,7 @@ export default function ChatComposer({
   const [writeAnnouncement, setWriteAnnouncement] = useState("");
   const [selectionRequiresConfirmation, setSelectionRequiresConfirmation] =
     useState(false);
+  const { accountId } = useAuthenticatedAccount();
 
   const {
     content,
@@ -227,17 +256,60 @@ export default function ChatComposer({
     setSelection,
     toolAuthority,
     setToolAuthority,
-    retiredDraftDiscarded,
     restored,
     activeDraftKey,
+    editableDraftKey,
+    recoveryConflict,
+    recoveredFromAnotherDraft,
     operation,
     reconciling,
     beginSubmit,
     retrySubmit,
-    requireReconcile,
-    clearOperation,
-    resolveSuccess,
-  } = useChatDraft({ draftKey, initialContent });
+    store,
+  } = useChatDraft({
+    draftKey,
+    initialContent,
+    conversationId,
+    view: { identity: viewIdentity, accountId },
+  });
+  const [mountedAccountId] = useState(accountId);
+  const sending = operation.kind === "Submitting";
+  const acknowledged = operation.kind === "Acknowledged";
+  const viewToken = useMemo(
+    () => ({
+      owner: store,
+      identity: viewIdentity,
+      accountId,
+      editableDraftKey,
+      recoveryConflict,
+    }),
+    [store, viewIdentity, accountId, editableDraftKey, recoveryConflict],
+  );
+  const consumedFocusRequest = useRef<{
+    view: typeof viewToken;
+    key: string | null;
+  } | null>(null);
+  const [readState, setReadState] = useState<{
+    view: typeof viewToken;
+    key: string;
+    kind: "Loading" | "Available" | "Failed" | "Removed";
+  } | null>(null);
+  const activeView = useRef<typeof viewToken | null>(null);
+  const readingRef = useRef<{ view: typeof viewToken; key: string } | null>(
+    null,
+  );
+  useLayoutEffect(() => {
+    activeView.current = viewToken;
+    return () => {
+      if (activeView.current === viewToken) activeView.current = null;
+    };
+  }, [viewToken]);
+  const currentRead =
+    acknowledged &&
+    readState?.view === viewToken &&
+    readState.key === operation.command.idempotencyKey
+      ? readState.kind
+      : null;
   const {
     catalog,
     loading: catalogLoading,
@@ -246,7 +318,10 @@ export default function ChatComposer({
     retry: retryCatalog,
   } = useGenerationCatalog({ pickerOpen });
   const effectiveSelection =
-    selection ?? inheritedRunSelection?.selection ?? catalog?.chat_seed.selection ?? null;
+    selection ??
+    inheritedRunSelection?.selection ??
+    catalog?.chat_seed.selection ??
+    null;
   const effectiveCandidate =
     catalog === null || effectiveSelection === null
       ? null
@@ -262,6 +337,7 @@ export default function ChatComposer({
     "Retry after generation availability has been restored.";
 
   useEffect(() => {
+    if (!restored) return;
     if (seededDraftKeyRef.current === activeDraftKey) return;
     if (selection !== null) {
       seededDraftKeyRef.current = activeDraftKey;
@@ -274,14 +350,24 @@ export default function ChatComposer({
     activeDraftKey,
     catalog,
     inheritedRunSelection,
+    restored,
     selection,
     setSelection,
   ]);
 
   useEffect(() => {
-    if (!autoFocus) return;
-    textareaRef.current?.focus({ preventScroll: true });
-  }, [autoFocus, focusKey]);
+    if (!autoFocus) {
+      consumedFocusRequest.current = null;
+      return;
+    }
+    const key = focusKey ?? null;
+    const consumed = consumedFocusRequest.current;
+    if (consumed?.view === viewToken && consumed.key === key) return;
+    // A request belongs to the view active when it arrives. Consuming it before
+    // the activity check prevents later activation from replaying stale focus.
+    consumedFocusRequest.current = { view: viewToken, key };
+    if (isPaneActive) textareaRef.current?.focus({ preventScroll: true });
+  }, [autoFocus, focusKey, isPaneActive, viewToken]);
 
   useEffect(() => {
     setError(null);
@@ -299,8 +385,8 @@ export default function ChatComposer({
   useEffect(() => {
     if (sending || !restoreFocusAfterSendRef.current) return;
     restoreFocusAfterSendRef.current = false;
-    textareaRef.current?.focus({ preventScroll: true });
-  }, [sending]);
+    if (isPaneActive) textareaRef.current?.focus({ preventScroll: true });
+  }, [sending, error, isPaneActive]);
 
   // The pending turn context resolves to one of four kinds; only a hydrated
   // `ReaderHighlight` is sendable. Loading / LoadFailed / NonSendable block send.
@@ -315,159 +401,208 @@ export default function ChatComposer({
   // Send operation (owns the one exact idempotent command)
   // --------------------------------------------------------------------------
 
-  // POST one exact command (a persisted `Submitting`) and reconcile the outcome.
-  // A fresh send and a "Retry send" share this: once the command exists the
-  // current route/UI is irrelevant, so replay is byte-for-byte the same request.
   const postCommand = useCallback(
     async (command: ChatSendCommand) => {
-      setSending(true);
+      const view = activeView.current;
+      const isCurrent = () => view !== null && activeView.current === view;
       setError(null);
       onSendStarted?.();
       try {
-        const rawResponse = await apiFetch<unknown>("/api/chat-runs", {
-          method: "POST",
-          body: JSON.stringify(command.request),
-          headers: { "Idempotency-Key": command.idempotencyKey },
-        });
-        const runResponse = decodeApiPayload(
-          rawResponse,
-          decodeChatRunResponse,
-          "Create chat run",
-        );
-        // Delete the complete draft record before canonical route replacement.
-        resolveSuccess();
-        setPickerOpen(false);
-        setWriteAnnouncement("Writes are off for the next reply.");
-        restoreFocusAfterSendRef.current = true;
-        onChatRunCreated?.(runResponse.data);
-        onIntentConsumed?.();
-        onMessageSent?.();
-        onClearBranchDraft?.();
-      } catch (err) {
-        if (handleUnauthenticatedApiError(err)) {
-          // The auth boundary owns recovery; consume the command (editable draft).
-          clearOperation();
+        const receipt = await store.submit(command);
+        if (!isCurrent()) return;
+        if (receipt.outcome.kind === "Rejected") {
+          const code = receipt.outcome.reason.code;
+          if (
+            code === "E_CATALOG_DEFINITION_STALE" ||
+            code === "E_GENERATION_SELECTION_UNAVAILABLE" ||
+            code === "E_INVALID_GENERATION_SELECTION"
+          ) {
+            setSelectionRequiresConfirmation(true);
+            restoreFocusAfterSendRef.current = false;
+            retryCatalog();
+            if (paneIsActiveRef.current) setPickerOpen(true);
+            setError({
+              tone: "Warning",
+              title: chatAdmissionErrorMessage(receipt.outcome.reason),
+              message:
+                "Your message and selection were kept. Nothing was substituted.",
+            });
+            return;
+          }
           restoreFocusAfterSendRef.current = true;
-          return;
+          setError({
+            tone: "Warning",
+            title: chatAdmissionErrorMessage(receipt.outcome.reason),
+          });
+          if (receipt.outcome.reason.code === "E_READER_SELECTION_STALE")
+            onRetryHydration?.();
+          if (receipt.outcome.reason.code === "E_CONVERSATION_NO_LONGER_EMPTY")
+            onConversationRefresh?.();
         }
-        if (!isApiError(err) || isSameSystemApiDefect(err)) {
-          setAsyncDefect({ error: err });
-          return;
-        }
-        if (err.code === "E_NETWORK") {
-          // The request may have reached the service despite the missing
-          // response: lock the exact command for replay without mutation.
-          requireReconcile();
-          return;
-        }
+      } catch (err) {
+        if (!isCurrent()) return;
+        if (handleUnauthenticatedApiError(err)) return;
         if (isToolProjectionReloadRequired(err)) {
-          clearOperation();
           setLocalProjectionReloadRequestId(err.requestId ?? "");
           return;
         }
         if (
-          err.code === "E_CATALOG_DEFINITION_STALE" ||
-          err.code === "E_GENERATION_SELECTION_UNAVAILABLE"
-        ) {
-          clearOperation();
-          setSelectionRequiresConfirmation(true);
-          // Recovery opens the exact-selection owner, whose lifecycle moves
-          // focus to search. Returning focus to the composer would immediately
-          // dismiss the non-modal desktop dialog before reconfirmation.
-          restoreFocusAfterSendRef.current = false;
-          retryCatalog();
-          setPickerOpen(true);
-          setError({
-            tone: "Warning",
-            title:
-              err.code === "E_CATALOG_DEFINITION_STALE"
-                ? "Model availability changed — review and confirm again."
-                : "That exact model and reasoning are unavailable.",
-            message: "Your message and selection were kept. Nothing was substituted.",
-            requestId: err.requestId,
-          });
+          isApiError(err) &&
+          (err.code === "E_NETWORK" ||
+            err.code === "E_UPSTREAM" ||
+            err.code === "E_UPSTREAM_TIMEOUT" ||
+            err.code === "E_GENERATION_RUNTIME_UNAVAILABLE" ||
+            err.code === "E_RATE_LIMITER_UNAVAILABLE")
+        )
           return;
-        }
-        // Every remaining outcome is a definite rejection: it consumes the
-        // command, so the next explicit send mints a new key. An unknown code —
-        // including E_IDEMPOTENCY_KEY_REPLAY_MISMATCH, an invariant defect — is
-        // reported as a defect, never recovery UI.
-        const known =
-          err.code === "E_READER_SELECTION_STALE" ||
-          err.code === "E_CONVERSATION_NO_LONGER_EMPTY" ||
-          err.code === "E_INVALID_GENERATION_SELECTION" ||
-          err.code === "E_BAD_REQUEST" ||
-          err.code === "E_FORBIDDEN" ||
-          err.code === "E_NOT_FOUND";
-        if (!known) {
-          setAsyncDefect({ error: err });
-          return;
-        }
-        clearOperation();
-        restoreFocusAfterSendRef.current = true;
-        if (err.code === "E_INVALID_GENERATION_SELECTION") {
-          setSelectionRequiresConfirmation(true);
-          setError({
-            tone: "Danger",
-            title: "That model selection is invalid.",
-            message: "Review the exact model and reasoning before sending again.",
-            requestId: err.requestId,
-          });
-          setPickerOpen(true);
-        } else if (err.code === "E_READER_SELECTION_STALE") {
-          const fresh = decodeReaderSelectionPreview(
-            isRecord(err.details) ? err.details.preview : undefined,
-          );
-          if (fresh) {
-            onReaderSelectionStale?.(fresh);
-            setError({
-              tone: "Warning",
-              title: "The quoted passage changed — review it and send again.",
-              requestId: err.requestId,
-            });
-          } else {
-            setError(chatRunErrorMessage(err, "Start"));
-          }
-        } else if (err.code === "E_CONVERSATION_NO_LONGER_EMPTY") {
-          // Another tab created the first message: refresh so the next send
-          // replies to the active leaf — a new insertion mints a new key.
-          onConversationRefresh?.();
-          setError({
-            tone: "Warning",
-            title: "This chat already has messages — send again to continue it.",
-            requestId: err.requestId,
-          });
-        } else {
-          setError(chatRunErrorMessage(err, "Start"));
-        }
-      } finally {
-        setSending(false);
+        setAsyncDefect({
+          error: withClientDefectContext(err, {
+            phase: "Admission",
+            commandId: command.idempotencyKey,
+          }),
+        });
       }
     },
     [
-      clearOperation,
-      onChatRunCreated,
-      onClearBranchDraft,
-      onConversationRefresh,
-      onIntentConsumed,
-      onMessageSent,
-      onReaderSelectionStale,
+      store,
       onSendStarted,
-      requireReconcile,
-      resolveSuccess,
+      onRetryHydration,
+      onConversationRefresh,
       retryCatalog,
     ],
   );
+
+  const readAcknowledgment = useCallback(
+    async (explicit = false) => {
+      if (recoveryConflict) return;
+      const operation = store.getSnapshot().operation;
+      if (operation.kind !== "Acknowledged") return;
+      if (
+        readingRef.current?.view === viewToken &&
+        readingRef.current.key === operation.command.idempotencyKey
+      )
+        return;
+      // A recovered command does not own the current editable path. Opening it
+      // is explicit; a subsequent path change still invalidates this view token.
+      if (
+        (recoveredFromAnotherDraft && !explicit) ||
+        !store.claimAcknowledgment(operation.command, viewToken, explicit)
+      ) {
+        setReadState({
+          view: viewToken,
+          key: operation.command.idempotencyKey,
+          kind: "Available",
+        });
+        return;
+      }
+      const reading = {
+        view: viewToken,
+        key: operation.command.idempotencyKey,
+      };
+      readingRef.current = reading;
+      const view = activeView.current;
+      const isCurrent = () =>
+        view !== null &&
+        activeView.current === view &&
+        store.ownsAcknowledgment(operation.command, view);
+      setReadState({
+        view: viewToken,
+        key: operation.command.idempotencyKey,
+        kind: "Loading",
+      });
+      try {
+        const adopted = await onAdmitted(operation.receipt, isCurrent);
+        if (!adopted) return;
+        // The adoption owner verified IDs and committed canonical navigation.
+        store.complete(operation.command, viewToken);
+        // Completing P exposes Q's editable draft. React may not have committed
+        // that view switch yet, so no completion callback or focus request owns Q.
+        if (recoveredFromAnotherDraft) return;
+        if (activeView.current !== view) return;
+        setPickerOpen(false);
+        setWriteAnnouncement("Writes are off for the next reply.");
+        restoreFocusAfterSendRef.current = true;
+        onMessageSent?.();
+        onClearBranchDraft?.();
+      } catch (err) {
+        if (!isCurrent()) return;
+        if (handleUnauthenticatedApiError(err)) return;
+        if (isToolProjectionReloadRequired(err)) {
+          setLocalProjectionReloadRequestId(err.requestId ?? "");
+          return;
+        }
+        if (
+          isApiError(err) &&
+          (err.code === "E_NOT_FOUND" ||
+            err.code === "E_CONVERSATION_NOT_FOUND")
+        ) {
+          setReadState({
+            view: viewToken,
+            key: operation.command.idempotencyKey,
+            kind: "Removed",
+          });
+        } else if (
+          isApiError(err) &&
+          (err.code === "E_NETWORK" ||
+            err.code === "E_UPSTREAM" ||
+            err.code === "E_UPSTREAM_TIMEOUT" ||
+            err.code === "E_BRANCH_PATH_INVALID" ||
+            err.code === "E_MESSAGE_NOT_FOUND")
+        ) {
+          setReadState({
+            view: viewToken,
+            key: operation.command.idempotencyKey,
+            kind: "Failed",
+          });
+        } else {
+          setAsyncDefect({
+            error: withClientDefectContext(err, {
+              phase: "Read",
+              commandId: operation.command.idempotencyKey,
+              runId: operation.receipt.outcome.run_id,
+            }),
+          });
+        }
+      } finally {
+        if (readingRef.current === reading) readingRef.current = null;
+        if (
+          activeView.current === view &&
+          store.getSnapshot().operation.kind === "Acknowledged" &&
+          !store.ownsAcknowledgment(operation.command, viewToken)
+        )
+          setReadState({
+            view: viewToken,
+            key: operation.command.idempotencyKey,
+            kind: "Available",
+          });
+      }
+    },
+    [
+      store,
+      viewToken,
+      recoveredFromAnotherDraft,
+      recoveryConflict,
+      onAdmitted,
+      onMessageSent,
+      onClearBranchDraft,
+    ],
+  );
+  useEffect(() => {
+    if (acknowledged && !recoveryConflict && currentRead === null)
+      void readAcknowledgment();
+  }, [acknowledged, recoveryConflict, currentRead, readAcknowledgment]);
 
   const handleSend = useCallback(() => {
     const trimmed = content.trim();
     if (
       !trimmed ||
       sending ||
+      recoveryConflict ||
       sendCapability.kind !== "Available" ||
       catalog === null ||
       effectiveSelection === null ||
       !selectionIsSelectable ||
+      selectionRequiresConfirmation ||
       pendingBlocksSend
     ) {
       return;
@@ -492,17 +627,18 @@ export default function ChatComposer({
       parentMessageId,
       readerSelection,
     });
-    let command: ChatSendCommand;
+    let command: ChatSendCommand | null;
     try {
-      command = beginSubmit(request);
+      command = beginSubmit(request, viewToken);
     } catch (persistError) {
       // Persist failure prevents POST and reports a defect — no memory fallback.
       setAsyncDefect({ error: persistError });
       return;
     }
-    void postCommand(command);
+    if (command !== null) void postCommand(command);
   }, [
     beginSubmit,
+    viewToken,
     branchDraft,
     content,
     conversationId,
@@ -514,21 +650,23 @@ export default function ChatComposer({
     readerHighlight,
     sendCapability,
     sending,
+    recoveryConflict,
     selectionIsSelectable,
+    selectionRequiresConfirmation,
     toolAuthority,
   ]);
 
   const handleRetry = useCallback(() => {
-    if (operation.kind !== "ReconcileRequired") return;
-    let command: ChatSendCommand;
+    if (operation.kind !== "ReconcileRequired" || recoveryConflict) return;
+    let command: ChatSendCommand | null;
     try {
-      command = retrySubmit();
+      command = retrySubmit(viewToken);
     } catch (persistError) {
       setAsyncDefect({ error: persistError });
       return;
     }
-    void postCommand(command);
-  }, [operation, postCommand, retrySubmit]);
+    if (command !== null) void postCommand(command);
+  }, [operation, postCommand, retrySubmit, viewToken, recoveryConflict]);
 
   const handleCancelRun = useCallback(async () => {
     if (!activeRunId || !onCancelRun || cancelling) return;
@@ -574,19 +712,14 @@ export default function ChatComposer({
       if (e.metaKey || e.ctrlKey || e.altKey) {
         e.preventDefault();
         const { selectionStart, selectionEnd } = e.currentTarget;
-        e.currentTarget.setRangeText(
-          "\n",
-          selectionStart,
-          selectionEnd,
-          "end",
-        );
+        e.currentTarget.setRangeText("\n", selectionStart, selectionEnd, "end");
         setContent(e.currentTarget.value);
       }
       return;
     }
     if (e.shiftKey) return;
     e.preventDefault();
-    if (!reconciling) void handleSend();
+    if (operation.kind === "Absent") void handleSend();
   };
 
   // --------------------------------------------------------------------------
@@ -598,12 +731,11 @@ export default function ChatComposer({
   const projectionReloadRequestId =
     localProjectionReloadRequestId ?? inheritedProjectionReloadRequestId;
   const projectionReloadRequired = projectionReloadRequestId !== null;
-  // Not editable before the draft is restored: input typed into the server
-  // markup before hydration commits is adopted silently and then wiped.
   const composerDisabled =
-    sending || reconciling || projectionReloadRequired || !restored;
+    operation.kind !== "Absent" || projectionReloadRequired || !restored;
   const sendDisabled =
-    sending ||
+    recoveryConflict ||
+    operation.kind !== "Absent" ||
     sendCapability.kind !== "Available" ||
     catalog === null ||
     effectiveSelection === null ||
@@ -613,6 +745,12 @@ export default function ChatComposer({
     pendingBlocksSend ||
     projectionReloadRequired;
 
+  if (mountedAccountId !== accountId) {
+    // justify-defect: this mounted view must never transfer a pending command
+    // to another authenticated account. Retain its storage for the owning user.
+    throw new Error("Chat view authentication changed");
+  }
+  if (restored) store.assertAccount(accountId);
   if (asyncDefect !== null) throw asyncDefect.error;
 
   return (
@@ -626,6 +764,13 @@ export default function ChatComposer({
             <FeedbackNotice content={error} announcement="Assertive" />
           </div>
         ) : null}
+        {recoveryConflict ? (
+          <div className={styles.composerError} role="alert">
+            Saved send operations need review before this chat can send again.
+            Your drafts and responses were preserved.{" "}
+            <code>E_CHAT_RECOVERY_CONFLICT</code>
+          </div>
+        ) : null}
         {projectionReloadRequired ? (
           <div className={styles.composerError}>
             <ToolProjectionReloadNotice
@@ -633,18 +778,55 @@ export default function ChatComposer({
             />
           </div>
         ) : null}
-        {retiredDraftDiscarded ? (
-          <div className={styles.composerWarning} role="status">
-            A legacy Chat draft was discarded because its model choice could not
-            be reconstructed safely. Only v3 drafts are restored.
-          </div>
-        ) : null}
-        {reconciling && (
+        {reconciling && !recoveryConflict && !projectionReloadRequired && (
           <div className={styles.composerError} role="alert">
             Send status unknown. The original exact selection and write
             authority are locked for retry.
           </div>
         )}
+
+        {acknowledged && !recoveryConflict && !projectionReloadRequired ? (
+          <div className={styles.composerError} role="status">
+            {currentRead === "Removed" ? (
+              <>
+                Your message was received, but its conversation is no longer
+                available.{" "}
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    const current = store.getSnapshot().operation;
+                    if (current.kind === "Acknowledged")
+                      store.complete(current.command, viewToken);
+                  }}
+                >
+                  Dismiss sent message
+                </Button>
+              </>
+            ) : currentRead === "Available" ? (
+              <>
+                Your message was received.{" "}
+                <Button
+                  variant="ghost"
+                  onClick={() => void readAcknowledgment(true)}
+                >
+                  Open response
+                </Button>
+              </>
+            ) : currentRead === "Failed" ? (
+              <>
+                Your message was received. The response couldn’t load.{" "}
+                <Button
+                  variant="ghost"
+                  onClick={() => void readAcknowledgment(true)}
+                >
+                  Retry read
+                </Button>
+              </>
+            ) : (
+              "Your message was received. Loading the response…"
+            )}
+          </div>
+        ) : null}
 
         {branchDraft ? (
           <BranchComposerHeader
@@ -702,10 +884,10 @@ export default function ChatComposer({
             <span className={styles.selectionStatus} role="status">
               Loading model availability…
             </span>
-          ) : reconciling ? (
+          ) : reconciling || acknowledged ? (
             <span className={styles.selectionStatus}>
               Original model, reasoning, catalog revision, and write authority
-              locked for retry.
+              preserved.
             </span>
           ) : catalog !== null ? (
             <GenerationSelectionPicker
@@ -726,7 +908,7 @@ export default function ChatComposer({
             />
           ) : null}
 
-          {reconciling ? (
+          {reconciling && !recoveryConflict && !projectionReloadRequired ? (
             <Button
               variant="ghost"
               size="md"

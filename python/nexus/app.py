@@ -214,7 +214,6 @@ async def lifespan(app: FastAPI):
     rate_limiter = RateLimiter(
         session_factory=get_session_factory(),
         rpm_limit=settings.rate_limit_rpm,
-        concurrent_limit=settings.rate_limit_concurrent,
     )
     set_rate_limiter(rate_limiter)
 

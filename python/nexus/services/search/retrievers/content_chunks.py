@@ -100,28 +100,49 @@ def _search_content_chunks(
     scope_filter, scope_params = scope_clause
     params.update(scope_params)
 
-    if semantic_query_embedding is not None:
-        leading_ctes = f"""visible_media AS ({visible_media_ids_cte_sql()}),
-                media_contributor_credits AS ({contributor_credits_rollup_cte_sql("media_id")}),
-                {query_embedding_cte_sql(embedding_dims)},
+    # Ranking carries only identity, tsvector, embedding identity and recency.
+    # The materialized final limit is the evaluation boundary for snippets and
+    # contributor metadata; neither belongs in the multiply-read eligible CTE.
+    headline = """ts_headline(
+                    'english', cc.chunk_text, websearch_to_tsquery('english', :query),
+                    'MaxWords=50, MinWords=10, MaxFragments=1'
+                )"""
+    snippet = (
+        headline
+        if semantic_query_embedding is not None
+        else f"CASE WHEN :has_query THEN {headline} ELSE left(cc.chunk_text, 300) END"
+    )
+    final_projection = f"""
+            , ranked_media AS (
+                SELECT DISTINCT cc.owner_id AS media_id
+                FROM ranked_candidates ranked
+                JOIN content_chunks cc ON cc.id = ranked.id
+            ), media_contributor_credits AS (
+                {contributor_credits_rollup_cte_sql("media_id", owner_predicate="cc.media_id IN (SELECT media_id FROM ranked_media)")}
+            )
+            SELECT
+                cc.id,
+                cc.owner_id AS media_id,
+                m.kind,
+                m.title,
+                m.published_date,
+                mcc.contributor_credits,
+                cc.chunk_text,
+                {snippet} AS snippet,
+                cc.source_kind,
+                cc.primary_evidence_span_id,
+                cc.summary_locator,
+                ranked.raw_score
+            FROM ranked_candidates ranked
+            JOIN content_chunks cc ON cc.id = ranked.id
+            JOIN media m ON m.id = cc.owner_id
+            LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
+            ORDER BY ranked.raw_score DESC, ranked.id ASC
+        """
+    eligible_chunks = f"""
                 eligible_chunks AS (
                     SELECT
                         cc.id,
-                        cc.owner_id AS media_id,
-                        m.kind,
-                        m.title,
-                        m.published_date,
-                        mcc.contributor_credits,
-                        cc.chunk_text,
-                        ts_headline(
-                            'english',
-                            cc.chunk_text,
-                            websearch_to_tsquery('english', :query),
-                            'MaxWords=50, MinWords=10, MaxFragments=1'
-                        ) AS snippet,
-                        cc.source_kind,
-                        cc.primary_evidence_span_id,
-                        cc.summary_locator,
                         cc.created_at,
                         cc.chunk_text_tsv,
                         mcis.active_embedding_provider,
@@ -132,37 +153,19 @@ def _search_content_chunks(
                     JOIN content_index_states mcis ON mcis.owner_kind = cc.owner_kind
                         AND mcis.owner_id = cc.owner_id
                         AND mcis.status = 'ready'
-                    LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
                     WHERE TRUE
                     {scope_filter}
                     {content_kind_filter}
                     {contributor_credit_filter}
                 )"""
+    if semantic_query_embedding is not None:
         query = hybrid_content_chunk_tail_sql(
-            leading_ctes=leading_ctes,
+            leading_ctes=f"""visible_media AS ({visible_media_ids_cte_sql()}),
+                {query_embedding_cte_sql(embedding_dims)},
+                {eligible_chunks}""",
             embedding_dims=embedding_dims,
-            scored_passthrough_columns="""ec.media_id,
-                        ec.kind,
-                        ec.title,
-                        ec.published_date,
-                        ec.contributor_credits,
-                        ec.chunk_text,
-                        ec.snippet,
-                        ec.source_kind,
-                        ec.primary_evidence_span_id,
-                        ec.summary_locator,
-                        ec.created_at,""",
-            final_select_columns="""id,
-                media_id,
-                kind,
-                title,
-                published_date,
-                contributor_credits,
-                chunk_text,
-                snippet,
-                source_kind,
-                primary_evidence_span_id,
-                summary_locator,""",
+            scored_passthrough_columns="ec.created_at,",
+            final_projection_sql=final_projection,
             order_by_id="id",
             include_recency_decay=True,
         )
@@ -170,69 +173,37 @@ def _search_content_chunks(
         query = f"""
             WITH
                 visible_media AS ({visible_media_ids_cte_sql()}),
-                media_contributor_credits AS ({contributor_credits_rollup_cte_sql("media_id")}),
+                {eligible_chunks},
                 lexical_candidates AS (
                     SELECT
-                        cc.id,
-                        cc.owner_id AS media_id,
-                        m.kind,
-                        m.title,
-                        m.published_date,
-                        mcc.contributor_credits,
-                        cc.chunk_text,
-                        CASE WHEN :has_query THEN ts_headline(
-                            'english',
-                            cc.chunk_text,
-                            websearch_to_tsquery('english', :query),
-                            'MaxWords=50, MinWords=10, MaxFragments=1'
-                        ) ELSE left(cc.chunk_text, 300) END AS snippet,
-                        cc.source_kind,
-                        cc.primary_evidence_span_id,
-                        cc.summary_locator,
-                        cc.created_at,
+                        ec.id,
+                        ec.created_at,
                         CASE WHEN :has_query THEN
-                            ts_rank_cd(cc.chunk_text_tsv, websearch_to_tsquery('english', :query))
+                            ts_rank_cd(ec.chunk_text_tsv, websearch_to_tsquery('english', :query))
                         ELSE 0.0 END AS lexical_score
-                    FROM content_chunks cc
-                    JOIN media m ON m.id = cc.owner_id AND cc.owner_kind = 'media'
-                    JOIN visible_media vm ON vm.media_id = cc.owner_id
-                    JOIN content_index_states mcis ON mcis.owner_kind = cc.owner_kind
-                        AND mcis.owner_id = cc.owner_id
-                        AND mcis.status = 'ready'
-                    LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
+                    FROM eligible_chunks ec
                     WHERE
-                        (:has_query IS FALSE OR cc.chunk_text_tsv @@ websearch_to_tsquery('english', :query))
-                    {scope_filter}
-                    {content_kind_filter}
-                    {contributor_credit_filter}
-                    ORDER BY lexical_score DESC, cc.id ASC
+                        (:has_query IS FALSE OR ec.chunk_text_tsv @@ websearch_to_tsquery('english', :query))
+                    ORDER BY lexical_score DESC, ec.id ASC
                     LIMIT :ann_limit
+                ),
+                ranked_candidates AS MATERIALIZED (
+                    SELECT id,
+                        (
+                            (0.20 * GREATEST(lexical_score, 0.0))
+                            + (
+                                0.05 * GREATEST(
+                                    0.0,
+                                    1.0 - LEAST(EXTRACT(EPOCH FROM (now() - created_at)) / 604800.0, 1.0)
+                                )
+                            )
+                        ) AS raw_score
+                    FROM lexical_candidates
+                    WHERE :has_query IS FALSE OR lexical_score > 0.0
+                    ORDER BY raw_score DESC, id ASC
+                    LIMIT :limit
                 )
-            SELECT
-                id,
-                media_id,
-                kind,
-                title,
-                published_date,
-                contributor_credits,
-                chunk_text,
-                snippet,
-                source_kind,
-                primary_evidence_span_id,
-                summary_locator,
-                (
-                    (0.20 * GREATEST(lexical_score, 0.0))
-                    + (
-                        0.05 * GREATEST(
-                            0.0,
-                            1.0 - LEAST(EXTRACT(EPOCH FROM (now() - created_at)) / 604800.0, 1.0)
-                        )
-                    )
-                ) AS raw_score
-            FROM lexical_candidates
-            WHERE :has_query IS FALSE OR lexical_score > 0.0
-            ORDER BY raw_score DESC, id ASC
-            LIMIT :limit
+            {final_projection}
         """
     rows = db.execute(text(query), params).fetchall()
     results: list[InternalSearchResult] = []

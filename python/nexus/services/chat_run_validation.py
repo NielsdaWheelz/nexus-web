@@ -51,7 +51,6 @@ def validate_model_pre_phase(
 
     rate_limiter = get_rate_limiter()
     rate_limiter.check_rpm_limit(viewer_id)
-    rate_limiter.check_concurrent_limit(viewer_id)
 
 
 def load_valid_parent_for_send(

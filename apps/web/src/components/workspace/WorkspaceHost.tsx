@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  Component,
   memo,
   useCallback,
   useEffect,
@@ -96,8 +95,8 @@ import type {
   WorkspaceTargetActivationRequest,
   WorkspaceTargetActivationResult,
 } from "@/lib/workspace/targetActivation";
-import Button from "@/components/ui/Button";
 import { usePaneCanvas } from "./usePaneCanvas";
+import { PaneRouteErrorBoundary } from "./PaneRouteErrorBoundary";
 import PaneRouteBoundary from "./PaneRouteBoundary";
 import {
   getPaneSecondaryPublication,
@@ -180,119 +179,6 @@ interface PaneTransientSecondaryActivationRecord {
   surfaceId: PaneTransientSecondarySurfaceId;
   expanded: boolean;
   widthPx: number;
-}
-
-// ---------------------------------------------------------------------------
-// PaneRouteErrorBoundary — class component (must remain a class component
-// because getDerivedStateFromError requires it).
-// ---------------------------------------------------------------------------
-
-interface PaneRouteErrorBoundaryProps {
-  children: React.ReactNode;
-  paneId: string;
-  resetKey: string;
-  slotMinWidth: string;
-}
-
-class PaneRouteErrorBoundary extends Component<
-  PaneRouteErrorBoundaryProps,
-  { hasError: boolean; resetKey: string; retryKey: number }
-> {
-  private failureRegion: HTMLElement | null = null;
-
-  constructor(props: PaneRouteErrorBoundaryProps) {
-    super(props);
-    this.state = { hasError: false, resetKey: props.resetKey, retryKey: 0 };
-  }
-
-  static getDerivedStateFromProps(
-    props: PaneRouteErrorBoundaryProps,
-    state: { hasError: boolean; resetKey: string; retryKey: number },
-  ): { hasError: false; resetKey: string; retryKey: number } | null {
-    // A route/visit change clears the error latch but must NOT reset retryKey:
-    // retryKey identifies an explicit user retry and keys the child subtree, so
-    // resetting it here would remount the whole PaneShell on ordinary in-pane
-    // navigation after a prior retry. Only an explicit retry advances retryKey.
-    return props.resetKey === state.resetKey
-      ? null
-      : { hasError: false, resetKey: props.resetKey, retryKey: state.retryKey };
-  }
-
-  static getDerivedStateFromError(): { hasError: true } {
-    return { hasError: true };
-  }
-
-  componentDidCatch(error: unknown): void {
-    // Keep the pane host stable, but never make a routed-pane defect
-    // operationally invisible.
-    console.error(
-      `Workspace pane ${this.props.paneId} failed to render:`,
-      error,
-    );
-  }
-
-  componentDidMount(): void {
-    if (this.state.hasError) {
-      this.failureRegion?.focus();
-    }
-  }
-
-  componentDidUpdate(
-    _previousProps: PaneRouteErrorBoundaryProps,
-    previousState: { hasError: boolean; resetKey: string; retryKey: number },
-  ): void {
-    if (!previousState.hasError && this.state.hasError) {
-      this.failureRegion?.focus();
-    }
-  }
-
-  private retry = (): void => {
-    // This remounts only the routed pane subtree. It does not alter the visit,
-    // close the pane, or invoke any domain operation.
-    this.setState((state) => ({
-      hasError: false,
-      resetKey: state.resetKey,
-      retryKey: state.retryKey + 1,
-    }));
-  };
-
-  render() {
-    return (
-      <div
-        className={styles.paneErrorBoundaryShell}
-        data-pane-error-boundary-shell="true"
-        data-testid={`pane-error-boundary-${this.props.paneId}`}
-        style={{ minWidth: this.props.slotMinWidth }}
-      >
-        {this.state.hasError ? (
-          <section
-            ref={(element) => {
-              this.failureRegion = element;
-            }}
-            className={styles.paneFailure}
-            role="alert"
-            aria-labelledby={`pane-failure-heading-${this.props.paneId}`}
-            tabIndex={-1}
-          >
-            <h2 id={`pane-failure-heading-${this.props.paneId}`}>
-              This pane couldn’t load
-            </h2>
-            <p>Retry this pane. Your other panes are still available.</p>
-            <Button variant="secondary" size="sm" onClick={this.retry}>
-              Retry pane
-            </Button>
-          </section>
-        ) : (
-          <div
-            key={this.state.retryKey}
-            className={styles.paneFailureRetryRoot}
-          >
-            {this.props.children}
-          </div>
-        )}
-      </div>
-    );
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -433,6 +319,7 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
     (pid: string, h: string, options: PaneNavigationCommandOptions) =>
       navigatePane(pid, h, {
         replace: true,
+        activate: options.activate,
         labelHint: options.labelHint,
         modality: options.modality,
       }),
@@ -1619,11 +1506,7 @@ function WorkspaceHost() {
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [
-    state.activePrimaryPaneId,
-    keybindings,
-    isMobile,
-  ]);
+  }, [state.activePrimaryPaneId, keybindings, isMobile]);
 
   useAdjacentPaneKeybindings({ onActivated: requestPaneFocus });
 
@@ -1674,6 +1557,8 @@ function WorkspaceHost() {
             >
               <PaneRouteErrorBoundary
                 paneId={pane.paneId}
+                visitId={pane.visitId}
+                isActive={pane.isActive}
                 resetKey={`${pane.paneId}:${pane.routeKey}`}
                 slotMinWidth={
                   isMobile

@@ -18,16 +18,17 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
-from sqlalchemy import text
+from sqlalchemy import Engine, text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import MessageToolCall
+from nexus.db.models import ChatRun, MessageToolCall
 from nexus.db.session import create_session_factory
 from nexus.middleware.stream_cors import StreamCORSMiddleware
 from nexus.schemas.conversation import ToolProjectionOut
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.rate_limit import RateLimiter, get_rate_limiter, set_rate_limiter
 from tests.testkit.auth import UserRecord
+from tests.testkit.unreachable_state import cleanup_committed_chat_user
 
 _PROJECTION_HEADER = "X-Nexus-Tool-Projection"
 _RELOAD_REQUIRED_CODE = "E_TOOL_PROJECTION_RELOAD_REQUIRED"
@@ -118,6 +119,28 @@ def _projection_request(
 
 
 @pytest.fixture
+def db_session(engine: Engine) -> Generator[Session, None, None]:
+    """This API proof publishes setup before independent request snapshots."""
+    with Session(engine) as db:
+        yield db
+
+
+@pytest.fixture
+def test_user(db_session: Session, engine: Engine) -> Generator[UserRecord, None, None]:
+    from nexus.services.bootstrap import ensure_user_and_default_library
+
+    user_id = uuid4()
+    email = f"projection-proof-{user_id}@example.invalid"
+    library_id = ensure_user_and_default_library(db_session, user_id, email)
+    db_session.commit()
+    try:
+        yield UserRecord(id=user_id, email=email, default_library_id=library_id)
+    finally:
+        db_session.rollback()
+        cleanup_committed_chat_user(engine, user_id=user_id)
+
+
+@pytest.fixture
 def projection_rate_limiter(db_session: Session) -> Generator[None, None, None]:
     previous = get_rate_limiter()
     set_rate_limiter(RateLimiter(session_factory=create_session_factory(db_session.get_bind())))
@@ -133,19 +156,32 @@ def test_revision_gates_every_changed_chat_projection_boundary(
     test_user: UserRecord,
     projection_rate_limiter: None,
     monkeypatch: pytest.MonkeyPatch,
+    engine: Engine,
 ) -> None:
     assert _GENERATION_CUTOVER_PRESENT, "the exact-selection generation cutover is absent"
+    from nexus.db.session import get_db, get_repeatable_read_db
     from tests.testkit.generation_catalog import (
         CHAT_TEST_SELECTION,
         configured_chat_catalog_service,
     )
     from tests.testkit.llm_tool_scenarios import compose_available_product_tool_runtime
 
+    def request_session() -> Generator[Session, None, None]:
+        with Session(engine) as db:
+            yield db
+
+    # Seed rows are committed; the real dependency may now establish its strict
+    # snapshot on each fresh request session after awaited catalog I/O.
+    app = authenticated_client.app
+    assert isinstance(app, FastAPI)
+    monkeypatch.setitem(app.dependency_overrides, get_db, request_session)
+    monkeypatch.delitem(app.dependency_overrides, get_repeatable_read_db)
+
     catalog = configured_chat_catalog_service()
     catalog_snapshot = asyncio.run(catalog.read_chat())
-    monkeypatch.setattr(authenticated_client.app.state, "generation_catalog_service", catalog)
+    monkeypatch.setattr(app.state, "generation_catalog_service", catalog)
     monkeypatch.setattr(
-        authenticated_client.app.state,
+        app.state,
         "tool_runtime",
         compose_available_product_tool_runtime(),
     )
@@ -247,18 +283,28 @@ def test_revision_gates_every_changed_chat_projection_boundary(
     assert current_send.status_code == 200, (
         f"current projection could not create one Chat run: {current_send.text}"
     )
-    created = current_send.json()["data"]
+    receipt = current_send.json()["data"]
+    accepted = receipt.get("outcome")
+    assert (
+        isinstance(accepted, dict)
+        and set(accepted) == {"kind", "conversation_id", "run_id", "assistant_message_id"}
+        and accepted.get("kind") == "Accepted"
+    ), f"current projection did not return an Accepted admission: {receipt!r}"
     assert _chat_row_counts(db_session, test_user.id) == tuple(
         value + delta for value, delta in zip(before_rejected_sends, (1, 2, 1, 1), strict=True)
     )
+    run = db_session.get(ChatRun, UUID(accepted["run_id"]))
+    assert run is not None
+    assert run.conversation_id == UUID(accepted["conversation_id"])
+    assert run.assistant_message_id == UUID(accepted["assistant_message_id"])
 
     # This is a setup-only current_execution row. Its raw nullable audit code
     # remains storage-owned; the public same-system shape derives and emits the
     # closed presentation fields instead.
     tool_call = MessageToolCall(
-        conversation_id=UUID(created["conversation"]["id"]),
-        user_message_id=UUID(created["user_message"]["id"]),
-        assistant_message_id=UUID(created["assistant_message"]["id"]),
+        conversation_id=run.conversation_id,
+        user_message_id=run.user_message_id,
+        assistant_message_id=run.assistant_message_id,
         canonical_tool_id="nexus.document.search",
         provider_wire_name=None,
         record_kind="current_execution",
@@ -279,7 +325,7 @@ def test_revision_gates_every_changed_chat_projection_boundary(
     db_session.commit()
 
     run_response = authenticated_client.get(
-        f"/chat-runs/{created['run']['id']}",
+        f"/chat-runs/{accepted['run_id']}",
         headers={_PROJECTION_HEADER: current_revision},
     )
     assert run_response.status_code == 200, run_response.text

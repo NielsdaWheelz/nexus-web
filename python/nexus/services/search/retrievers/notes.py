@@ -181,12 +181,6 @@ def _search_note_chunks(
             SELECT
                 cc.id,
                 cc.owner_id AS note_block_id,
-                cc.chunk_text,
-                ts_headline('english', cc.chunk_text,
-                    websearch_to_tsquery('english', :query),
-                    'MaxWords=50, MinWords=10, MaxFragments=1') AS snippet,
-                cc.summary_locator,
-                cc.created_at,
                 cc.chunk_text_tsv,
                 mcis.active_embedding_provider,
                 mcis.active_embedding_model
@@ -200,6 +194,16 @@ def _search_note_chunks(
             {scope_filter}
         )
     """
+    final_projection = """
+            SELECT ranked.note_block_id, cc.chunk_text,
+                ts_headline('english', cc.chunk_text,
+                    websearch_to_tsquery('english', :query),
+                    'MaxWords=50, MinWords=10, MaxFragments=1') AS snippet,
+                cc.summary_locator, ranked.raw_score
+            FROM ranked_candidates ranked
+            JOIN content_chunks cc ON cc.id = ranked.id
+            ORDER BY ranked.raw_score DESC, ranked.note_block_id ASC
+        """
     if semantic_query_embedding is not None:
         embedding_model, query_embedding = semantic_query_embedding
         params["query_embedding"] = to_pgvector_literal(query_embedding)
@@ -211,14 +215,8 @@ def _search_note_chunks(
             leading_ctes=f"""{eligible_chunks},
                 {query_embedding_cte_sql(embedding_dims)}""",
             embedding_dims=embedding_dims,
-            scored_passthrough_columns="""ec.note_block_id,
-                        ec.chunk_text,
-                        ec.snippet,
-                        ec.summary_locator,""",
-            final_select_columns="""note_block_id,
-                chunk_text,
-                snippet,
-                summary_locator,""",
+            scored_passthrough_columns="ec.note_block_id,",
+            final_projection_sql=final_projection,
             order_by_id="note_block_id",
             include_recency_decay=False,
         )
@@ -228,24 +226,24 @@ def _search_note_chunks(
                 {eligible_chunks},
                 lexical_candidates AS (
                     SELECT
+                        ec.id,
                         ec.note_block_id,
-                        ec.chunk_text,
-                        ec.snippet,
-                        ec.summary_locator,
                         ts_rank_cd(ec.chunk_text_tsv, websearch_to_tsquery('english', :query))
                             AS lexical_score
                     FROM eligible_chunks ec
                     WHERE ec.chunk_text_tsv @@ websearch_to_tsquery('english', :query)
                     ORDER BY lexical_score DESC, ec.note_block_id ASC
                     LIMIT :ann_limit
+                ),
+                ranked_candidates AS MATERIALIZED (
+                    SELECT id, note_block_id,
+                        (0.20 * GREATEST(lexical_score, 0.0)) AS raw_score
+                    FROM lexical_candidates
+                    WHERE lexical_score > 0.0
+                    ORDER BY raw_score DESC, note_block_id ASC
+                    LIMIT :limit
                 )
-            SELECT
-                note_block_id, chunk_text, snippet, summary_locator,
-                (0.20 * GREATEST(lexical_score, 0.0)) AS raw_score
-            FROM lexical_candidates
-            WHERE lexical_score > 0.0
-            ORDER BY raw_score DESC, note_block_id ASC
-            LIMIT :limit
+            {final_projection}
         """
     rows = db.execute(text(query), params).mappings().all()
 

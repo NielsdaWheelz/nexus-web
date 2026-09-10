@@ -164,7 +164,6 @@ from nexus.services.llm_ledger import (
     lock_generation_owner_in_current_transaction,
     read_latest_generation_for_owner,
 )
-from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.resource_graph.citations import replace_citations_for_output
 from nexus.services.resource_graph.refs import RESOURCE_SCHEMES, ResourceRef, ResourceScheme
 from nexus.services.resource_graph.schemas import CitationInput
@@ -1343,11 +1342,7 @@ async def _run_idea_resolution_step(
         raise AssertionError(f"unexpected Idea-resolution phase {state.dispatch_phase!r}")
 
     db.commit()
-    rate_limiter = get_rate_limiter()
-    inflight_acquired = False
     try:
-        rate_limiter.acquire_inflight_slot(requester_user_id)
-        inflight_acquired = True
         execution_request = await admit_job_generation(
             owner=LlmCallOwner(kind="artifact_learn_request", id=request.request_id),
             generation_id=generation_id,
@@ -1388,9 +1383,6 @@ async def _run_idea_resolution_step(
         if not _expire_learn_resolver_lease(db, request_id=request.request_id):
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Highlight not found") from None
         raise
-    finally:
-        if inflight_acquired:
-            rate_limiter.release_inflight_slot(requester_user_id)
 
     if isinstance(execution_result, RescheduleRequested):
         raise AssertionError("request-scoped Idea resolution cannot reschedule")
@@ -1762,7 +1754,7 @@ async def run_build(
     requester_user_id = build.requester_user_id
     instruction = build.instruction
     if requester_user_id is None:
-        return  # requester deleted: no concurrency-admission identity remains
+        return  # requester deleted: no authority remains for generation
     audience = _audience_from_head(head)
     resolved = visible_persisted_subject(
         db,
@@ -1783,7 +1775,7 @@ async def run_build(
             ctx=ctx,
         )
         return
-    requester = policy.requester_admission(resolved, requester_user_id)
+    policy.requester_admission(resolved, requester_user_id)
     try:
         policy.authorize_generate(db, resolved, requester_user_id)
     except NotFoundError:
@@ -1799,8 +1791,6 @@ async def run_build(
         return
 
     db.commit()
-    rate_limiter = get_rate_limiter()
-    rate_limiter.acquire_inflight_slot(requester)
     try:
         try:
             collected = await binding.collect(db, resolved, audience, runtime)
@@ -1929,7 +1919,6 @@ async def run_build(
     finally:
         if db.in_transaction():
             db.rollback()
-        rate_limiter.release_inflight_slot(requester)
 
 
 async def _run_synthesis_step(

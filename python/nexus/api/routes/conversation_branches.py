@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from nexus.api.deps import get_generation_catalog_service, require_tool_projection_revision
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db
+from nexus.db.session import get_db, get_repeatable_read_db
 from nexus.responses import ok
 from nexus.schemas.conversation import RenameBranchRequest, SetActivePathRequest
 from nexus.services import conversation_branches as conversation_branches_service
@@ -40,6 +40,7 @@ async def get_conversation_tree(
     catalog: Annotated[GenerationCatalogService, Depends(get_generation_catalog_service)],
 ) -> dict:
     catalog_snapshot = await catalog.read_chat()
+    get_repeatable_read_db(db)
     result = conversation_branches_service.get_conversation_tree(
         db=db,
         viewer_id=viewer.user_id,
@@ -75,7 +76,7 @@ async def set_conversation_active_path(
 def list_conversation_forks(
     conversation_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: Annotated[Session, Depends(get_repeatable_read_db)],
     search: str | None = Query(default=None, description="Fork search query"),
 ) -> dict:
     result = conversation_branches_service.list_forks(

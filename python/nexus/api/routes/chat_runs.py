@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from nexus.api.deps import get_generation_catalog_service, require_tool_projection_revision
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db
+from nexus.db.session import get_db, get_repeatable_read_db
 from nexus.responses import ok
 from nexus.schemas.conversation import (
     CHAT_RUN_STATUS_FILTER,
@@ -71,6 +71,7 @@ async def list_chat_runs(
     status: Annotated[CHAT_RUN_STATUS_FILTER, Query()] = "active",
 ) -> dict:
     snapshot = await catalog.read_chat()
+    get_repeatable_read_db(db)
     results = chat_runs_service.list_chat_runs_for_conversation(
         db=db,
         viewer_id=viewer.user_id,
@@ -89,6 +90,7 @@ async def get_chat_run(
     catalog: Annotated[GenerationCatalogService, Depends(get_generation_catalog_service)],
 ) -> dict:
     snapshot = await catalog.read_chat()
+    get_repeatable_read_db(db)
     result = chat_runs_service.get_chat_run(
         db=db,
         viewer_id=viewer.user_id,

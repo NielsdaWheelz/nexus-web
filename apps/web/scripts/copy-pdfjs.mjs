@@ -10,8 +10,16 @@
 //   - the packaged APK shelf's `nexus-offline/pdfjs`
 //     (scripts/build-offline-reading.mjs).
 // There is no second copy list.
-import { cpSync, copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmdirSync,
+  unlinkSync,
+} from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const webDir = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -71,17 +79,49 @@ export function assertPdfJsRuntimeClosure(root, label) {
   }
 }
 
+function removeGeneratedTree(root) {
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const path = join(root, entry.name);
+    if (entry.isDirectory()) removeGeneratedTree(path);
+    else unlinkSync(path);
+  }
+  rmdirSync(root);
+}
+
+function copyGeneratedTree(source, target) {
+  mkdirSync(target);
+  for (const entry of readdirSync(source, { withFileTypes: true })) {
+    const from = join(source, entry.name);
+    const to = join(target, entry.name);
+    if (entry.isDirectory()) copyGeneratedTree(from, to);
+    else if (entry.isFile()) copyFileSync(from, to);
+    else throw new Error(`Unsupported pdf.js runtime asset: ${from}`);
+  }
+}
+
+function removeGeneratedEntry(path) {
+  const entry = readdirSync(dirname(path), { withFileTypes: true }).find(
+    (candidate) => candidate.name === basename(path),
+  );
+  if (entry === undefined) return;
+  if (entry.isDirectory()) removeGeneratedTree(path);
+  else unlinkSync(path);
+}
+
 /** Copies the exact worker/viewer/CMaps/standard-fonts/WASM set into `targetDir`. */
 export function copyPdfJsRuntime(targetDir) {
   assertInstalledVersion();
-  mkdirSync(targetDir, { recursive: true });
+  const parent = dirname(targetDir);
+  mkdirSync(parent, { recursive: true });
+  // Dirents avoid statting unreadable generated leaves. Symlinks and other
+  // non-directory entries are unlinked without traversing outside this root.
+  removeGeneratedEntry(targetDir);
+  mkdirSync(targetDir);
   for (const [from, to] of RUNTIME_FILES) {
     copyFileSync(join(sourceDir, from), join(targetDir, to));
   }
   for (const directory of RUNTIME_DIRECTORIES) {
-    cpSync(join(sourceDir, directory), join(targetDir, directory), {
-      recursive: true,
-    });
+    copyGeneratedTree(join(sourceDir, directory), join(targetDir, directory));
   }
 }
 

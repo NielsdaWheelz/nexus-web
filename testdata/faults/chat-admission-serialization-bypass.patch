@@ -1,0 +1,29 @@
+diff --git a/python/nexus/services/chat_runs.py b/python/nexus/services/chat_runs.py
+--- a/python/nexus/services/chat_runs.py
++++ b/python/nexus/services/chat_runs.py
+@@ -122,7 +122,6 @@
+ from nexus.services.chat_run_idempotency import (
+     accepted_chat_admission,
+     chat_run_request_bytes,
+-    lock_idempotency_key,
+     log_chat_admission,
+     lookup_chat_admission,
+     normalize_idempotency_key,
+@@ -596,7 +595,7 @@
+     # Existing immutable decisions require no current catalog/provider access.
+     # Release this read lock before external catalog I/O; settlement rechecks it.
+     try:
+-        lock_idempotency_key(db, viewer_id, normalized_key)
++        db.flush()
+         receipt = lookup_chat_admission(
+             db, viewer_id=viewer_id, idempotency_key=normalized_key, request_bytes=request_bytes
+         )
+@@ -625,7 +624,7 @@
+     )
+     try:
+         lock_chat_generation_admission_in_current_transaction(db)
+-        lock_idempotency_key(db, viewer_id, normalized_key)
++        db.flush()
+         receipt = lookup_chat_admission(
+             db, viewer_id=viewer_id, idempotency_key=normalized_key, request_bytes=request_bytes
+         )

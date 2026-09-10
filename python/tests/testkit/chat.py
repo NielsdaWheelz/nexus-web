@@ -6,9 +6,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from nexus.db.models import ChatRun
 from nexus.db.session import create_session_factory
 from nexus.schemas.conversation import NewChatDestination
 from nexus.services.billing_entitlements import grant_entitlement_override
@@ -63,11 +64,12 @@ async def create_entitled_chat(
         reason="durable chat proof",
         actor_label="nexus-test",
     )
+    prior_run_ids = set(db.scalars(select(ChatRun.id).where(ChatRun.owner_user_id == owner_id)))
     previous_limiter = get_rate_limiter()
     set_rate_limiter(RateLimiter(session_factory=create_session_factory(db.get_bind())))
     exact_idempotency_key = idempotency_key or f"durable-chat-proof-{uuid4()}"
     try:
-        response = await create_chat_run(
+        await create_chat_run(
             db,
             viewer_id=owner_id,
             destination=NewChatDestination(),
@@ -82,7 +84,18 @@ async def create_entitled_chat(
         )
     finally:
         set_rate_limiter(previous_limiter)
-    run_id = response.run.id
+    # Durable-chat fixtures depend on persisted identity, not the admission wire contract.
+    new_runs = db.execute(
+        select(ChatRun.id, ChatRun.conversation_id).where(
+            ChatRun.owner_user_id == owner_id,
+            ChatRun.id.not_in(prior_run_ids),
+        )
+    ).all()
+    assert len(new_runs) == 1, (
+        "entitled chat setup must persist exactly one new run: "
+        f"owner={owner_id}, prior_count={len(prior_run_ids)}, new_runs={new_runs!r}"
+    )
+    run_id, conversation_id = new_runs[0]
     job_id = db.execute(
         text("SELECT id FROM background_jobs WHERE kind = 'chat_run' AND dedupe_key = :dedupe_key"),
         {"dedupe_key": f"chat_run:{run_id}"},
@@ -90,7 +103,7 @@ async def create_entitled_chat(
     db.commit()
     return EntitledChat(
         user_id=owner_id,
-        conversation_id=response.conversation.id,
+        conversation_id=conversation_id,
         run_id=run_id,
         job_id=job_id,
         idempotency_key=exact_idempotency_key,

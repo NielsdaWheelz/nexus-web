@@ -1,8 +1,9 @@
 /**
  * `PendingTurnContext` — the composer's one turn-context prop.
  *
- * `Conversation` owns launch intent: it parses the pane hash, hydrates the
- * canonical preview through the reader-selection API, and passes exactly one
+ * `Conversation` owns launch intent parsing and
+ * `usePendingReaderSelection` owns canonical preview hydration through the
+ * reader-selection API. Their composition passes exactly one
  * `PendingTurnContext` to `ChatComposer`. Only the hydrated `ReaderHighlight`
  * variant is sendable. `Loading` and `LoadFailed` block send; `NonSendable` is
  * an authoritative forbidden/geometry-only/over-limit state. A missing

@@ -497,17 +497,34 @@ expansion. The semantic figure has zero outer margin and cannot exceed its
 containing pane. `ConversationDestinationOverlay` is the existing-chat picker
 (title search over `GET /conversations?q=`). `useChatDraft` persists text, an
 explicit `GenerationSelectionSpec`, per-run tool authority, and the exact send
-operation — one idempotency key plus the immutable `ChatRunCreateRequest`
-assembled once before dispatch — in
-`sessionStorage`, keyed by the structured `ChatDraftKey`. The operation FSM is
-`Absent | Submitting | ReconcileRequired`: a persisted `Submitting` promotes to
-`ReconcileRequired` at ingress, so an unknown-status ambiguous outcome (network
-loss or reload) locks reconciliation and replays that exact command — the same
-key and byte-for-byte request — regardless of the current catalog, route, or
-quote. A definite rejection consumes the command (the next explicit send mints a
-new key), and success deletes the record. The picker is hidden behind one locked
-retry status during reconciliation, so current catalog choices cannot
-misrepresent or mutate the replay.
+operation — one idempotency key, immutable `ChatRunCreateRequest`, and
+originating view identity/account
+assembled once before dispatch — in `sessionStorage`, keyed by the structured
+`ChatDraftKey`. `chatDraftStore.ts` is the single storage, transition, and
+dispatch-deduplication owner. The operation FSM is
+`Absent | Submitting | ReconcileRequired | Acknowledged`: a persisted
+`Submitting` promotes to `ReconcileRequired` at ingress, so an ambiguous outcome
+locks reconciliation and replays the exact key and request. A modeled Rejected
+receipt consumes only the operation and retains editable text/selection. An
+Accepted receipt is persisted as `Acknowledged` before any presentation work;
+reloads resume `GET /chat-runs/{run_id}` and never POST. Only the exact origin in
+the same account may adopt automatically. Another view in that account exposes
+an explicit **Open response** action, and an account mismatch is a same-system
+ownership defect. The original record is deleted only after an authorized view
+reads matching conversation, run, and assistant identities and adopts
+`?message=<assistant_message_id>`. A deleted target remains acknowledged until
+explicit dismissal.
+
+`POST /chat-runs` is a receipt boundary. Under the viewer/key advisory lock it
+first replays the immutable `ResourceMutation(scope="chat:admission")` decision
+or validates a new admission. Accepted run/messages/event/job and receipt commit
+atomically. A modeled rejection rolls provisional writes back to a savepoint and
+commits only its closed reason. The response is
+`{data:{idempotency_key,outcome:Accepted|Rejected}}`; it contains no run
+projection, prompt, quote, or mutable detail. Accepted presentation always comes
+from the canonical repeatable-read run GET. Rerun and regeneration keep their
+existing rich HTTP responses while sharing the same key/mismatch ledger and
+requiring a fresh exact selection with `ReadOnly` authority.
 
 The unmarked `GET /conversations` primary index and its `scope` variants return
 the strict complete-collection page and drain automatically in
