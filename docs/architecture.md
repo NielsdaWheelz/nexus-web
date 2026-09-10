@@ -383,7 +383,7 @@ application-validated `event_type`, nullable `stage`/`failure_code` query
 columns, and a closed typed `payload`. `services/import_history.py` is their
 only writer: transaction-scoped helpers with no commit, scheduling, or
 domain-policy authority, recording each fact atomically with the transition it
-documents. Migration `0225` records one `HistoryBaseline` per extant upload
+documents. Migration `0226` records one `HistoryBaseline` per extant upload
 session and source attempt at recording time, which is why pre-cut coverage is
 `Partial` and a baseline can never satisfy a dated historical-failure query.
 

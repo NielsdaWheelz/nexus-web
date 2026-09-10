@@ -797,6 +797,7 @@ class HostReleaseHarness:
                             "CapAdd": ["NET_BIND_SERVICE"],
                             "DeviceRequests": None,
                             "Devices": [],
+                            "Init": True,
                             "IpcMode": "private",
                             "NetworkMode": "nexus_codex_private",
                             "PidMode": "",
@@ -859,6 +860,7 @@ class HostReleaseHarness:
                 "codex_state_live_bind_kind": "exact",
                 "codex_state_boot_guard_enabled": True,
                 "codex_host_startup_failure": False,
+                "codex_host_startup_oom": False,
                 "codex_host_mcp_probe_failure": False,
                 "codex_host_network_probe_failure": False,
                 # The deployed predecessor Caddy predates a Docker-native
@@ -1464,6 +1466,8 @@ def _container_inspect(state: dict[str, Any], container_id: str) -> dict[str, ob
         mutation = state["codex_host_contract_mutation"]
         if mutation == "policy_privileged":
             container["host_config"]["Privileged"] = True
+        elif mutation == "policy_init_missing":
+            container["host_config"].pop("Init", None)
         inspected["Mounts"] = []
         inspected["NetworkSettings"] = {
             "Networks": {
@@ -1686,6 +1690,12 @@ def _handle_compose(state: dict[str, Any], operation: list[str]) -> None:
                 container["image_id"] = state["activation_worker_image_id"]
                 container["config"]["Image"] = state["candidate_worker_image"]
         state["service_mutations"].append({"operation": "up", "services": services})
+        if services == ["nexus-codex-agent-host"] and state["codex_host_startup_oom"] is True:
+            container = state["containers"]["nexus-codex-agent-host"]
+            container["running"] = False
+            container["oom_killed"] = True
+            _save_state(Path(os.environ["NEXUS_FAKE_DOCKER_STATE"]), state)
+            raise SystemExit(72)
         if services == ["nexus-codex-agent-host"] and state["codex_host_startup_failure"] is True:
             _save_state(Path(os.environ["NEXUS_FAKE_DOCKER_STATE"]), state)
             raise SystemExit(72)

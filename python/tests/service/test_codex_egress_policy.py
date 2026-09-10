@@ -7,7 +7,7 @@ import socket
 import ssl
 import struct
 from importlib.util import find_spec
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, cast
 
 import pytest
 
@@ -270,3 +270,20 @@ def test_codex_tls_listener_relays_only_admitted_sni_to_public_addresses(
             await egress_policy._public_connection("chatgpt.com")
 
     asyncio.run(prove_non_global_resolution_is_refused())
+
+
+def test_codex_egress_transport_cleanup_absorbs_an_already_reset_peer() -> None:
+    """Risk: routine TLS peer teardown escapes as an unhandled server task."""
+
+    class ResetWriter:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+        async def wait_closed(self) -> None:
+            raise ConnectionResetError("peer reset during close")
+
+    writer = ResetWriter()
+    asyncio.run(egress_policy._close_writer(cast(asyncio.StreamWriter, writer)))
+    assert writer.closed is True

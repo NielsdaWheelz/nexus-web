@@ -26,7 +26,7 @@ from nexus.services.search.constants import (
     MIN_QUERY_LENGTH,
 )
 from nexus.services.search.cursor import decode_search_cursor, encode_search_cursor
-from nexus.services.search.embedding import _query_has_full_text_terms
+from nexus.services.search.embedding import PreparedSearchEmbedding, _query_has_full_text_terms
 from nexus.services.search.projection import _result_to_out
 from nexus.services.search.query import SearchQuery
 from nexus.services.search.scope import authorize_scope
@@ -60,7 +60,13 @@ def _enrich_results_with_media_summaries(db: Session, results: list[SearchResult
             source.summary_md = projection.summary_md
 
 
-def search(db: Session, viewer_id: UUID, query: SearchQuery) -> SearchResponse:
+def search(
+    db: Session,
+    viewer_id: UUID,
+    query: SearchQuery,
+    *,
+    prepared_embedding: PreparedSearchEmbedding | None = None,
+) -> SearchResponse:
     """Execute hybrid search across all visible content for one ``SearchQuery``.
 
     ``SearchQuery`` is the sole input (spec §5.2): the HTTP route and the chat tool
@@ -118,6 +124,7 @@ def search(db: Session, viewer_id: UUID, query: SearchQuery) -> SearchResponse:
         content_kinds=content_kinds,
         highlight_notes_only=query.highlight_notes_only,
         transaction_active_at_entry=transaction_active_at_entry,
+        prepared_embedding=prepared_embedding,
     )
 
     # Apply offset pagination

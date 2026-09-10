@@ -111,12 +111,6 @@ backend · opened 2026-09-08 by Claude (imports cutover, Track C2) · P3
 snapshot, and the service fixture cannot prove that isolation. See
 [docs/tickets/imports-page-read-runs-two-statements-under-one-snapshot.md](tickets/imports-page-read-runs-two-statements-under-one-snapshot.md).
 
-### [DEFERRED] OI-018 — Evaluate adopting llm-agent-kernel as the generation kernel
-backend · opened 2026-09-06 by Claude (owner request, PR #203) · P3
-Not adopted in PR #203; re-evaluate as its own hard cutover once the recorded
-prerequisites exist. See
-[docs/tickets/llm-agent-kernel-adoption.md](tickets/llm-agent-kernel-adoption.md).
-
 ### [OPEN] OI-019 — The media-kind Literal has no single owner
 backend · opened 2026-09-08 by Claude (imports cutover, Track C1) · P3
 The media-kind literal is re-listed in several wire schemas instead of being
@@ -131,7 +125,7 @@ proof can run without an embedding peer; accepted until a loopback peer exists. 
 
 ### [OPEN] OI-021 — `media_source_attempts.status = 'superseded'` has no writer
 backend · opened 2026-09-08 by Claude (imports cutover, Track A) · P3
-The status CHECK admits a value nothing writes; migration 0225 is fail-closed
+The status CHECK admits a value nothing writes; migration 0226 is fail-closed
 against it, so the allowed value is dead vocabulary. See
 [docs/tickets/media-source-attempt-superseded-status-has-no-writer.md](tickets/media-source-attempt-superseded-status-has-no-writer.md).
 
@@ -228,7 +222,7 @@ edge, which clips it; the proof measures the default root only. See
 backend · opened 2026-09-09 by Claude (imports cutover, Phase 6 chain P review) · P2
 `_item` now raises for any media whose content index reports `failed`, including
 the shape the previous classifier rendered as a repairable `NeedsAttention` row;
-0225's preflight surveys attempt codes only, so no evidence says such rows are
+0226's preflight surveys attempt codes only, so no evidence says such rows are
 absent from production. See
 [docs/tickets/imports-ingress-defect-has-no-preflight-over-extant-index-rows.md](tickets/imports-ingress-defect-has-no-preflight-over-extant-index-rows.md).
 
@@ -296,3 +290,10 @@ cutover's Linux runner, with every failure reading as an IndexedDB write that
 never landed. `lib/consumption/**` is untouched by this cutover, but any change
 broad enough to select that suite inherits the failure. See
 [docs/tickets/durable-activity-outbox-suite-fails-in-the-imports-runner.md](tickets/durable-activity-outbox-suite-fails-in-the-imports-runner.md).
+
+### [OPEN] OI-054 — Docker Desktop VM crashes block trustworthy database/process verification
+infrastructure · opened 2026-09-09 by Claude (shared-kernel worktree) · P1
+Docker Desktop's Apple Virtualization VM stops with `VZErrorInternal` during
+verification; recover the shared engine, then clean only owned interrupted
+resources and repeat the blocked checks. See
+[docs/tickets/docker-desktop-virtualization-crash.md](tickets/docker-desktop-virtualization-crash.md).

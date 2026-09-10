@@ -452,6 +452,45 @@ push runs `./scripts/test full`, which is the release proof. `scripts/test`
 is a thin locked launcher; `scripts/agency_verify.sh` is a thin `confidence`
 adapter. The Makefile deliberately has no test/check/verify aliases.
 
+Manual CI recovery verifies the exact open PR head and base, then constructs
+their synthetic merge. Its `proof` choice defaults to `changed`; select `pr`
+to run the complete PR portfolio and same-run sensitivity on the Linux runner.
+Only that manual `pr` job has a 480-minute limit; ordinary PR proof keeps 90.
+
+The controller gives real-stack browser capabilities one clean data epoch. It
+recreates the exact run-owned application database from the immutable template
+and empties the exact run-owned bucket under the run lifecycle lock before any
+browser API or worker process starts. It refuses an absent/malformed resource
+or an active database consumer. Committed service/evaluation proof state must
+never become an implicit journey fixture; browser capabilities may share the
+resulting epoch only after that explicit boundary.
+
+On a persistent self-hosted runner, a workflow artifact MUST contain only the
+single `test-results/runs/<run-id>` directory claimed by that workflow's test
+invocation. The CI adapter snapshots existing run identities, creates a private
+mode-600 claim file under the runner temporary root, and passes only its open
+descriptor to `./scripts/test`. Immediately after claiming the top-level run
+directory, the controller writes its exact 16-hex identity and relative path to
+that descriptor, closes it, and removes it from every capability environment.
+Nested capability proofs may create subordinate run directories, but namespace
+timing cannot make one of them the workflow artifact. The adapter rejects an
+absent, malformed, pre-existing, or noncanonical claim, plus symlinks, special
+files, or foreign ownership, and stages only the claimed directory beneath the
+runner-owned private temporary root. It never deletes local historical evidence
+to manufacture isolation. The upload is mandatory whenever an exact directory
+was claimed, including a failing or interrupted run, and the exact staging
+directory is removed after the upload attempt. Because GitHub discards step
+outputs from a failed step, the adapter returns success only after staging
+validated evidence and publishes the canonical proof result as data. A final
+always-run step enforces that result after upload and cleanup; an adapter,
+upload, cleanup, `fail`, or `not_run` outcome still fails the job.
+The adapter launches the controller in its own process group and forwards
+HUP/INT/TERM as an owned TERM before staging interrupted evidence. Every command
+spawned by the controller preserves the Actions runner's inherited process
+tracking identity, without admitting a caller replacement, so the runner can
+reap the complete proof tree even if cancellation escalates past cooperative
+controller cleanup.
+
 | Command | Required meaning |
 |---|---|
 | `./scripts/test changed [--base REF] [PATH_OR_NODE ...]` | changed static paths plus selected affected proof |
@@ -528,6 +567,25 @@ still apply. A direct invocation is not a workflow verdict.
 
 The controller owns one persistent, health-checked, workspace-local
 PostgreSQL/MinIO/Supabase-test stack recorded in `.nexus-test/runtime.json`.
+Memory-heavy proof is serialized by one host lock for every independent clone
+and linked worktree with the same complete Git lineage roots. Shallow history
+fails closed because it cannot establish that stable identity; a synthetic
+checkout without committed lineage falls back to its common Git directory.
+This conservative lease prevents a local run and the self-hosted Actions runner
+from producing nominally green but resource-contended evidence on the same
+devbox.
+Before `full` or a higher local workflow, `scripts/agency_setup.sh` hydrates the
+exact pinned `provider-runtime` and `llm-tools` commits and all of their locked
+artifacts. It requires adjacent `llm-calling` and `llm-tools` Git checkouts,
+fetches only a missing pinned commit object, and MUST NOT move either checkout's
+HEAD or refs or alter its index, tracked files, or untracked files. The test
+controller then archives that immutable object into its owned checkout and
+materializes the suite with network disabled. Android proof honors an explicit,
+consistent `ANDROID_HOME` or `ANDROID_SDK_ROOT`; when both are absent, the
+controller discovers only the conventional `$HOME/Android/Sdk` Linux install or
+`$HOME/Library/Android/sdk` macOS install and publishes it to owned Android
+children. An invalid, relative, or conflicting explicit SDK setting remains a
+fail-closed prerequisite error and is never masked by discovery.
 Initial allocation MUST exclude the host kernel's ephemeral client-port range;
 when the kernel range interface is absent, the controller excludes ports
 `32768–65535`; an unreadable or malformed present interface fails closed.

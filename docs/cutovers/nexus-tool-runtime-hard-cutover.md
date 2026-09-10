@@ -572,7 +572,7 @@ the deterministic safety eval, and backend/browser projection proofs listed in
 §12. Superseded proof owners have no documentary alias.
 
 Current representative sensitivity ids are
-`llm-write-tool-authorization-bypass`, `llm-tool-safety-prompt-bypass`,
+`llm-write-tool-authorization-bypass`, `llm-generation-tool-scope-bypass`,
 `nexus-tool-declaration-effect-bypass`,
 `nexus-read-empty-admission-scope-bypass`,
 `dossier-uncertain-search-redispatch-bypass`,

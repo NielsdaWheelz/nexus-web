@@ -22,6 +22,7 @@ _ACTIVE_LOCK = threading.Lock()
 _ACTIVE_PROCESS: subprocess.Popen[str] | None = None
 _CAPTURED_OUTPUT_TAIL_BYTES = 64 * 1024
 _CAPTURED_MARKER_LINES_BYTES = 16 * 1024
+_RUNNER_PROCESS_TRACKING_ENV = "RUNNER_TRACKING_ID"
 _UNBLOCK_AND_EXEC = (
     "import os, signal, sys; "
     "signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT, signal.SIGTERM}); "
@@ -50,10 +51,19 @@ def run_command(
     blocked = {signal.SIGINT, signal.SIGTERM}
     previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, blocked)
     try:
+        child_environment = dict(env)
+        # GitHub's final cancellation sweep identifies descendants by this
+        # inherited value. Keep the real supervisor identity across the
+        # controller's isolation boundary, but never accept a replacement.
+        runner_tracking_id = os.environ.get(_RUNNER_PROCESS_TRACKING_ENV)
+        if runner_tracking_id:
+            child_environment[_RUNNER_PROCESS_TRACKING_ENV] = runner_tracking_id
+        else:
+            child_environment.pop(_RUNNER_PROCESS_TRACKING_ENV, None)
         process = subprocess.Popen(
             unblock_and_exec_command(command),
             cwd=cwd,
-            env=dict(env),
+            env=child_environment,
             stdout=stdout_file,
             stderr=stderr_file,
             text=True,

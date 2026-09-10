@@ -1,7 +1,7 @@
 """Install import history storage and baseline every extant import.
 
-Revision ID: 0225
-Revises: 0224
+Revision ID: 0226
+Revises: 0225
 Create Date: 2026-09-08
 """
 
@@ -28,15 +28,15 @@ from nexus.schemas.import_history import (
     history_payload,
 )
 
-revision: str = "0225"
-down_revision: str | Sequence[str] | None = "0224"
+revision: str = "0226"
+down_revision: str | Sequence[str] | None = "0225"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
 def _assert_every_import_has_a_recordable_baseline(bind: Connection) -> None:
     """Reject, before any DDL, a database whose extant imports cannot be stated
-    as history. A rejected preflight leaves the schema at 0224."""
+    as history. A rejected preflight leaves the schema at 0225."""
     unrecordable = bind.execute(
         sa.text(
             """
@@ -50,7 +50,7 @@ def _assert_every_import_has_a_recordable_baseline(bind: Connection) -> None:
     ).all()
     if unrecordable:
         raise RuntimeError(
-            "0225 preflight: source attempts have no recordable baseline outcome: "
+            "0226 preflight: source attempts have no recordable baseline outcome: "
             + ", ".join(
                 f"{row.id} (status={row.status!r}, error_code={row.error_code!r})"
                 for row in unrecordable
@@ -78,7 +78,7 @@ def _assert_every_import_has_a_recordable_baseline(bind: Connection) -> None:
     uncatalogued = [code for code in recorded_codes if code not in SAFE_FAILURE_CODES]
     if uncatalogued:
         raise RuntimeError(
-            "0225 preflight: recorded failure codes are not in the import history catalog: "
+            "0226 preflight: recorded failure codes are not in the import history catalog: "
             + ", ".join(uncatalogued)
         )
 
@@ -235,4 +235,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    raise NotImplementedError("0225 is an irreversible imports-history hard cutover")
+    raise NotImplementedError("0226 is an irreversible imports-history hard cutover")

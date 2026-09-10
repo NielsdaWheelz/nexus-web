@@ -1,6 +1,6 @@
-diff --git a/migrations/alembic/versions/0225_imports_history.py b/migrations/alembic/versions/0225_imports_history.py
---- a/migrations/alembic/versions/0225_imports_history.py
-+++ b/migrations/alembic/versions/0225_imports_history.py
+diff --git a/migrations/alembic/versions/0226_imports_history.py b/migrations/alembic/versions/0226_imports_history.py
+--- a/migrations/alembic/versions/0226_imports_history.py
++++ b/migrations/alembic/versions/0226_imports_history.py
 @@ -231,7 +231,6 @@
          sa.Column("execution_id", postgresql.UUID(as_uuid=True), nullable=True),
      )

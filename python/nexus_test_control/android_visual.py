@@ -55,6 +55,7 @@ from nexus_test_control.runtime import (
 from nexus_test_control.services import (
     SupabaseCredentials,
     TestRun,
+    android_sdk_available,
     android_tool_environment,
     authorized_device_serials,
     clean_run,
@@ -351,15 +352,6 @@ def issue_handoff(
 # --- ADB transport ----------------------------------------------------------
 
 
-def _android_sdk_available(repo_root: Path, environment: Mapping[str, str]) -> bool:
-    if (repo_root / "apps/android/local.properties").is_file():
-        return True
-    return any(
-        environment.get(key) and Path(environment[key]).is_dir()
-        for key in ("ANDROID_HOME", "ANDROID_SDK_ROOT")
-    )
-
-
 def _adb(
     adb: Path,
     serial: str,
@@ -606,7 +598,7 @@ def _ensure_debug_apk(
     state = _read_apk_state(state_path)
     cached = _cached_debug_apk(state_path, state, fingerprint)
     if cached is None:
-        if not _android_sdk_available(root, environment):
+        if not android_sdk_available(root / "apps/android", environment):
             raise _NotRun("the Android SDK is required to build the debug APK for the local origin")
         _assemble_debug_apk(root, environment, flags)
         cached = _snapshot_debug_apk(shared_apk, state_path.parent / "artifacts")

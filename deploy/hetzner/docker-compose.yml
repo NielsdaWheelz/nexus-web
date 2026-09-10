@@ -180,6 +180,7 @@ services:
   codex-egress-policy:
     image: ${WORKER_IMAGE:?set an immutable candidate digest}
     restart: unless-stopped
+    init: true
     mem_reservation: 32m
     mem_limit: 64m
     memswap_limit: 64m

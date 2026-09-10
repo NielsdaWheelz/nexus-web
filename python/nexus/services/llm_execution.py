@@ -18,6 +18,7 @@ from enum import Enum
 from typing import Literal, Protocol, assert_never
 from uuid import UUID, uuid5
 
+from llm_agent_kernel.generation import GenerationStopped
 from provider_runtime.types import (
     Absent as RuntimeAbsent,
 )
@@ -91,6 +92,7 @@ from nexus.services.generation_backend import (
     BackendChildCompletion,
     BackendChildDispatch,
     BackendEventObserver,
+    BackendGenerationOutcome,
     BackendGenerationRequest,
     BackendToolExecutionRequest,
     BackendToolExecutionResult,
@@ -140,6 +142,7 @@ from nexus.services.llm_ledger import (
     reset_generation_after_proven_non_dispatch_in_current_transaction,
     start_generation_in_current_transaction,
     start_model_turn_in_current_transaction,
+    stop_generation_in_current_transaction,
 )
 from nexus.services.provider_generation_contract import (
     provider_turn_continuation_fingerprint,
@@ -147,10 +150,11 @@ from nexus.services.provider_generation_contract import (
 
 type LockedDispatch = Callable[[Session], JobRow | None]
 type EncodeTerminal = Callable[[BackendTerminal], "EncodedGenerationTerminal"]
-type EncodePreacceptFailure = Callable[[NormalizedFailureCode, str], str]
+type GenerationFailureCode = NormalizedFailureCode | Literal["cancelled", "turn_limit"]
+type EncodeFailure = Callable[[GenerationFailureCode, str], str]
 type ObserveEvent = Callable[[BackendEvent], Awaitable[None]]
 type BeforeTerminal = Callable[[], Awaitable[None]]
-type ResolveTerminal = Callable[[Session, BackendTerminal], BackendTerminal]
+type ResolveTerminal = Callable[[Session, BackendTerminal], "EncodedGenerationTerminal"]
 type BindAdmission = CodexAdmissionBinder
 type BindAdmissionFactory = Callable[[GenerationSpec], BindAdmission]
 type ToolExecutorFactory = Callable[[GenerationSpec], BackendToolExecutor]
@@ -167,7 +171,7 @@ class ExecutionRuntime(Protocol):
     @property
     def admission(self) -> GenerationAdmissionPort: ...
 
-    async def execute(self, execution: GenerationBackendExecution) -> BackendTerminal: ...
+    async def execute(self, execution: GenerationBackendExecution) -> BackendGenerationOutcome: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,7 +180,7 @@ class ComposedExecutionRuntime:
     continuation_cipher: GenerationContinuationCipher = field(repr=False)
     admission: GenerationAdmissionPort
 
-    async def execute(self, execution: GenerationBackendExecution) -> BackendTerminal:
+    async def execute(self, execution: GenerationBackendExecution) -> BackendGenerationOutcome:
         return await self.backend.execute(execution)
 
 
@@ -529,6 +533,11 @@ class AcceptedGenerationFailure:
 class EncodedGenerationTerminal:
     terminal_result: str
     accepted_failure: AcceptedGenerationFailure | None = None
+    orchestration_stop: Literal["cancelled"] | None = None
+
+    def __post_init__(self) -> None:
+        if self.accepted_failure is not None and self.orchestration_stop is not None:
+            raise ValueError("generation projection cannot both fail and cancel")
 
 
 type GenerationExecutionResult = CompletedGeneration | RescheduleRequested
@@ -653,7 +662,7 @@ async def execute_generation(
     session_factory: sessionmaker[Session],
     runtime: ExecutionRuntime,
     encode_terminal: EncodeTerminal,
-    encode_preaccept_failure: EncodePreacceptFailure,
+    encode_failure: EncodeFailure,
     observe_event: ObserveEvent | None = None,
     cancel_signal: CancellationSignal | None = None,
     before_terminal: BeforeTerminal | None = None,
@@ -664,18 +673,19 @@ async def execute_generation(
     replay, resume = _read_replay(session_factory, request, runtime.continuation_cipher)
     if replay is not None:
         return replay
-    try:
-        await runtime.admission.require_dispatch_ready(request.spec)
-    except GenerationOperationUnavailable as error:
-        if not isinstance(error.reason, CapacityPaused):
-            raise
-        return _handle_capacity_pause(
-            session_factory,
-            request,
-            pause=error.reason,
-            encode_preaccept_failure=encode_preaccept_failure,
-            continuation_is_safe=resume is not None,
-        )
+    if cancel_signal is None or not cancel_signal.is_set():
+        try:
+            await runtime.admission.require_dispatch_ready(request.spec)
+        except GenerationOperationUnavailable as error:
+            if not isinstance(error.reason, CapacityPaused):
+                raise
+            return _handle_capacity_pause(
+                session_factory,
+                request,
+                pause=error.reason,
+                encode_failure=encode_failure,
+                continuation_is_safe=resume is not None,
+            )
     with session_factory() as db:
         request.journal.clear_capacity_pause(db)
         db.commit()
@@ -710,13 +720,54 @@ async def execute_generation(
             return _capacity_refusal(
                 session_factory,
                 request,
-                encode_preaccept_failure=encode_preaccept_failure,
+                encode_failure=encode_failure,
             )
         if _journal_is_uncertain(session_factory, request):
             raise GenerationUncertain(
                 f"generation {request.generation_id} failed after durable dispatch"
             ) from error
         raise
+    if isinstance(terminal, GenerationStopped):
+        if before_terminal is not None:
+            await before_terminal()
+        detail = (
+            "Generation cancelled before the next dispatch."
+            if terminal.reason == "cancelled"
+            else "Generation reached its frozen model-turn limit."
+        )
+        terminal_result = encode_failure(terminal.reason, detail)
+        with session_factory() as db:
+            lock_generation_owner_in_current_transaction(db, request.owner)
+            state = _require_journal_state(db, request)
+            if terminal.last_ordinal == 0:
+                if state.dispatch_phase is not Prepared:
+                    raise AssertionError("undispatched cancellation has an armed owner")
+            else:
+                if state.dispatch_phase is not Uncertain:
+                    raise AssertionError("generation stop requires its armed owner")
+                stop_generation_in_current_transaction(
+                    db,
+                    owner=request.owner,
+                    generation_id=request.generation_id,
+                    source_turn_seq=terminal.last_ordinal,
+                    reason=terminal.reason,
+                )
+            landed = request.journal.complete(
+                db,
+                expected=state,
+                next_state=StepReplayState(
+                    generation_id=request.generation_id,
+                    dispatch_phase=Completed,
+                    request_fingerprint=present(request.spec.fingerprint),
+                    terminal_result=present(terminal_result),
+                ),
+            )
+            if not landed:
+                raise GenerationUncertain(
+                    f"generation {request.generation_id} lost its claim while stopping"
+                )
+            db.commit()
+        return CompletedGeneration(terminal_result=terminal_result, terminal=None, replayed=False)
     if lifecycle.completed is None or lifecycle.completed.terminal is not terminal:
         raise AssertionError("backend returned a terminal not committed by its lifecycle")
     if lifecycle.encoded is None:
@@ -826,11 +877,6 @@ class _LedgerChildLifecycle:
             if state.dispatch_phase is not Uncertain:
                 raise AssertionError("model child terminal requires an Uncertain owner")
             effective_terminal = _terminal_for_durable_landing(completion.terminal)
-            if is_final and self._resolve_terminal is not None:
-                effective_terminal = _terminal_for_durable_landing(
-                    self._resolve_terminal(db, effective_terminal)
-                )
-                _assert_terminal_identity(effective_terminal, completion.terminal)
             effective = BackendChildCompletion(
                 child=completion.child,
                 terminal=effective_terminal,
@@ -862,7 +908,11 @@ class _LedgerChildLifecycle:
             )
             encoded: EncodedGenerationTerminal | None = None
             if is_final:
-                encoded = self._encode_terminal(effective_terminal)
+                encoded = (
+                    self._resolve_terminal(db, effective_terminal)
+                    if self._resolve_terminal is not None
+                    else self._encode_terminal(effective_terminal)
+                )
                 complete_generation_in_current_transaction(
                     db,
                     owner=request.owner,
@@ -871,6 +921,7 @@ class _LedgerChildLifecycle:
                         child_terminal,
                         final_child_seq=completion.child.child_seq,
                         accepted_failure=encoded.accepted_failure,
+                        orchestration_stop=encoded.orchestration_stop,
                     ),
                 )
                 landed = request.journal.complete(
@@ -978,7 +1029,7 @@ def _capacity_refusal(
     session_factory: sessionmaker[Session],
     request: GenerationExecutionRequest,
     *,
-    encode_preaccept_failure: EncodePreacceptFailure,
+    encode_failure: EncodeFailure,
 ) -> GenerationExecutionResult:
     """Park background quota or close Chat before model-call admission."""
 
@@ -991,7 +1042,7 @@ def _capacity_refusal(
         session_factory,
         request,
         pause=_fallback_capacity_pause(detail),
-        encode_preaccept_failure=encode_preaccept_failure,
+        encode_failure=encode_failure,
         continuation_is_safe=False,
     )
 
@@ -1001,7 +1052,7 @@ def _handle_capacity_pause(
     request: GenerationExecutionRequest,
     *,
     pause: CapacityPaused,
-    encode_preaccept_failure: EncodePreacceptFailure,
+    encode_failure: EncodeFailure,
     continuation_is_safe: bool,
 ) -> GenerationExecutionResult:
     if request.owner.kind != "chat_run" or continuation_is_safe:
@@ -1011,7 +1062,7 @@ def _handle_capacity_pause(
         if request.owner.kind == "artifact_learn_request":
             raise GenerationCapacityPaused(pause)
         return RescheduleRequested(schedule=GenerationCapacityPaused(pause).schedule)
-    terminal_result = encode_preaccept_failure(
+    terminal_result = encode_failure(
         "capacity_unavailable",
         pause.explanation,
     )
@@ -1242,7 +1293,15 @@ def _parent_terminal_document(
     *,
     final_child_seq: int,
     accepted_failure: AcceptedGenerationFailure | None,
+    orchestration_stop: Literal["cancelled"] | None = None,
 ) -> dict[str, object]:
+    if orchestration_stop is not None:
+        return {
+            "kind": "Cancelled",
+            "orchestration_stop": orchestration_stop,
+            "final_model_turn_seq": final_child_seq,
+            "model_turn_terminal": dict(child_terminal),
+        }
     if accepted_failure is None:
         document = {
             "kind": child_terminal["kind"],
@@ -1422,7 +1481,6 @@ def reconcile_uncertain_generation_in_current_transaction(
     request: GenerationReconciliationRequest,
     *,
     encode_terminal: EncodeTerminal,
-    resolve_terminal: ResolveTerminal | None = None,
 ) -> StepReplayState:
     """Stage one exact Codex terminal repair in the caller-owned transaction."""
 
@@ -1463,10 +1521,6 @@ def reconcile_uncertain_generation_in_current_transaction(
             evidence=CodexTerminalEvidence(native=native),
         )
     )
-    if resolve_terminal is not None:
-        resolved = _terminal_for_durable_landing(resolve_terminal(db, terminal))
-        _assert_terminal_identity(resolved, terminal)
-        terminal = resolved
     encoded = encode_terminal(terminal)
     lock_generation_owner_in_current_transaction(db, request.owner)
     generation = lock_generation_for_authority_in_current_transaction(
@@ -1502,6 +1556,7 @@ def reconcile_uncertain_generation_in_current_transaction(
             child_terminal,
             final_child_seq=1,
             accepted_failure=encoded.accepted_failure,
+            orchestration_stop=encoded.orchestration_stop,
         ),
     )
     return StepReplayState(
@@ -1515,15 +1570,6 @@ def reconcile_uncertain_generation_in_current_transaction(
 def _assert_expected_state(observed: StepReplayState | None, expected: StepReplayState) -> None:
     if observed != expected:
         raise AssertionError("generation journal changed during checkpoint transition")
-
-
-def _assert_terminal_identity(observed: BackendTerminal, expected: BackendTerminal) -> None:
-    if (observed.route, observed.child_seq, observed.backend_seq) != (
-        expected.route,
-        expected.child_seq,
-        expected.backend_seq,
-    ):
-        raise AssertionError("domain terminal resolution changed backend identity")
 
 
 __all__ = [

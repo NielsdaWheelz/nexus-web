@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import time
+from collections.abc import Mapping
 from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Literal, assert_never
@@ -41,7 +42,7 @@ from provider_runtime.types import (
 from provider_runtime.types import (
     Succeeded as ProviderSucceeded,
 )
-from pydantic import JsonValue
+from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -201,7 +202,7 @@ from nexus.services.llm_execution import (
     JobGenerationJournal,
     execute_generation,
 )
-from nexus.services.llm_ledger import LlmCallOwner
+from nexus.services.llm_ledger import LlmCallOwner, read_model_turns
 from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.redact import safe_kv
 from nexus.services.resource_graph.context import (
@@ -1041,18 +1042,21 @@ async def _execute_chat_run(
     if run.status in TERMINAL_RUN_STATUSES:
         steps.clear()
         return SkippedChatExecution(reason="Terminal")
-    if is_cancel_requested(db, run.id):
+    generation_path = "generation/1"
+    generation_state = steps.read(generation_path, ReplayPolicy.BilledOnce)
+    cancellation_requested = is_cancel_requested(db, run.id)
+    if cancellation_requested and generation_state is None:
         return _finalize_cancelled_execution(db, run=run, steps=steps)
 
     rate_limiter = get_rate_limiter()
-    rate_limiter.acquire_inflight_slot(run.owner_user_id)
+    inflight_acquired = not cancellation_requested
+    if inflight_acquired:
+        rate_limiter.acquire_inflight_slot(run.owner_user_id)
     try:
         full_content = ""
         final_usage: dict[str, JsonValue] | None = None
         last_provider_event_seq: int | None = None
         emitter = ChatRunEventEmitter(db, run, lease_fence=steps.lock_active_attempt)
-        generation_path = "generation/1"
-        generation_state = steps.read(generation_path, ReplayPolicy.BilledOnce)
         if generation_state is None:
             generation_state = steps.prepare(
                 generation_path,
@@ -1103,7 +1107,8 @@ async def _execute_chat_run(
             last_provider_event_seq=last_provider_event_seq,
         )
     finally:
-        rate_limiter.release_inflight_slot(run.owner_user_id)
+        if inflight_acquired:
+            rate_limiter.release_inflight_slot(run.owner_user_id)
 
 
 def _frozen_chat_admission(
@@ -1177,7 +1182,8 @@ async def _dispatch_generation_step(
 
     observed_text_parts: list[str] = []
     observed_text_by_child: dict[int, list[str]] = {}
-    observed_usage_by_child: dict[int, dict[str, JsonValue]] = {}
+    observed_usage_by_child = _recorded_chat_usage(db, generation_id=generation_id)
+    recorded_usage_by_child = dict(observed_usage_by_child)
     observed_event_count = 0
     text_coalescer = _ChatTextCoalescer(emitter)
 
@@ -1201,7 +1207,11 @@ async def _dispatch_generation_step(
                 provider_event_seq_end=sequence,
             )
         elif isinstance(event, BackendUsageObserved):
-            observed_usage_by_child[event.child_seq] = _usage_document(event.usage)
+            usage = _usage_document(event.usage)
+            recorded_usage = recorded_usage_by_child.get(event.child_seq)
+            if recorded_usage is not None and recorded_usage != usage:
+                raise AssertionError("Chat streamed usage differs from its accepted child ledger")
+            observed_usage_by_child[event.child_seq] = usage
 
     projection = ChatToolExecutionProjection(
         run_id=run.id,
@@ -1210,6 +1220,8 @@ async def _dispatch_generation_step(
     codex_binding = None
 
     cancel_signal = asyncio.Event()
+    if is_cancel_requested(db, run.id):
+        cancel_signal.set()
     cancel_watcher: asyncio.Task[None] | None = None
 
     # First dispatch commits through the prepare step, while a Prepared capacity
@@ -1217,14 +1229,39 @@ async def _dispatch_generation_step(
     # Close both shapes before health, UDS, or MCP I/O begins.
     db.commit()
 
-    def resolve_terminal(terminal_db: Session, terminal: BackendTerminal) -> BackendTerminal:
+    def encode_native_terminal(
+        terminal: BackendTerminal, *, host_cancelled: bool = False
+    ) -> EncodedGenerationTerminal:
+        return EncodedGenerationTerminal(
+            terminal_result=encode_step_result(
+                GenerationStepResultEnvelope(
+                    root=_chat_generation_terminal_result(
+                        terminal,
+                        observed_text="".join(observed_text_parts),
+                        observed_text_by_child=observed_text_by_child,
+                        observed_usage_by_child=observed_usage_by_child,
+                        last_sequence=observed_event_count + 1,
+                        generation_id=generation_id,
+                        host_cancelled=host_cancelled,
+                    )
+                )
+            ),
+            orchestration_stop="cancelled" if host_cancelled else None,
+        )
+
+    def resolve_terminal(
+        terminal_db: Session, terminal: BackendTerminal
+    ) -> EncodedGenerationTerminal:
         locked_run = lock_chat_run_for_update(terminal_db, run.id)
         if locked_run is None:
             raise AssertionError("chat run disappeared before generation terminal")
-        if locked_run.cancel_requested_at is None or _backend_terminal_is_cancelled(terminal):
-            return terminal
-        cancel_signal.set()
-        return _cancelled_backend_terminal(terminal)
+        host_cancelled = (
+            locked_run.cancel_requested_at is not None
+            and not _backend_terminal_is_cancelled(terminal)
+        )
+        if host_cancelled:
+            cancel_signal.set()
+        return encode_native_terminal(terminal, host_cancelled=host_cancelled)
 
     tool_executor = None
     admission_binder = None
@@ -1285,24 +1322,14 @@ async def _dispatch_generation_step(
             cancel_signal=cancel_signal,
             before_terminal=before_terminal,
             resolve_terminal=resolve_terminal,
-            encode_terminal=lambda terminal: EncodedGenerationTerminal(
-                terminal_result=encode_step_result(
-                    GenerationStepResultEnvelope(
-                        root=_chat_generation_terminal_result(
-                            terminal,
-                            observed_text="".join(observed_text_parts),
-                            observed_text_by_child=observed_text_by_child,
-                            observed_usage_by_child=observed_usage_by_child,
-                            last_sequence=observed_event_count + 1,
-                            generation_id=generation_id,
-                        )
-                    )
-                )
-            ),
-            encode_preaccept_failure=lambda code, detail: _encode_chat_preaccept_failure(
+            encode_terminal=encode_native_terminal,
+            encode_failure=lambda code, detail: _encode_chat_failure(
                 code,
                 detail=detail,
                 generation_id=generation_id,
+                observed_text="".join(observed_text_parts),
+                usage=_aggregate_usage(observed_usage_by_child),
+                last_sequence=observed_event_count,
             ),
         )
     finally:
@@ -1331,6 +1358,7 @@ def _chat_generation_terminal_result(
     observed_usage_by_child: dict[int, dict[str, JsonValue]],
     last_sequence: int | None,
     generation_id: UUID,
+    host_cancelled: bool = False,
 ) -> AssistantTurn | ExpectedFailure | CancelledGeneration:
     terminal_usage = _terminal_usage_document(terminal)
     usages = dict(observed_usage_by_child)
@@ -1379,7 +1407,7 @@ def _chat_generation_terminal_result(
     else:
         assert_never(terminal.evidence)
 
-    if status == "cancelled":
+    if host_cancelled or status == "cancelled":
         return CancelledGeneration(
             assistant_content=observed_text,
             usage=_owned_usage(usage),
@@ -1460,14 +1488,36 @@ def _aggregate_usage(
     return result
 
 
-def _usage_int(usage: dict[str, JsonValue], key: str) -> int:
+def _recorded_chat_usage(db: Session, *, generation_id: UUID) -> dict[int, dict[str, JsonValue]]:
+    """Restore accepted paid usage without publishing historical stream events again."""
+
+    usages: dict[int, dict[str, JsonValue]] = {}
+    token_presence = TypeAdapter(owned_presence.Presence[int])
+    for child in read_model_turns(db, generation_id=generation_id):
+        if child.usage is None:
+            continue
+        usage: dict[str, JsonValue] = {
+            key: _usage_int(child.usage, key)
+            for key in ("input_tokens", "output_tokens", "total_tokens")
+        }
+        for key in ("reasoning_tokens", "cache_read_input_tokens", "cache_write_input_tokens"):
+            value = child.usage.get(key)
+            if child.route_request_identity["kind"] == "ProviderApi":
+                presence = token_presence.validate_python(value, strict=True)
+                value = presence.value if isinstance(presence, owned_presence.Present) else None
+            usage[key] = None if value is None else _usage_optional_int(value, key=key)
+        usages[child.turn_seq] = usage
+    return usages
+
+
+def _usage_int(usage: Mapping[str, object], key: str) -> int:
     value = usage.get(key)
     if type(value) is not int or value < 0:
         raise AssertionError(f"Chat usage {key} is not a non-negative integer")
     return value
 
 
-def _usage_optional_int(value: JsonValue, *, key: str) -> int:
+def _usage_optional_int(value: object, *, key: str) -> int:
     if type(value) is not int or value < 0:
         raise AssertionError(f"Chat usage {key} is not a non-negative integer")
     return value
@@ -1495,52 +1545,33 @@ def _backend_terminal_is_cancelled(terminal: BackendTerminal) -> bool:
     assert_never(evidence)
 
 
-def _cancelled_backend_terminal(terminal: BackendTerminal) -> BackendTerminal:
-    evidence = terminal.evidence
-    if isinstance(evidence, CodexTerminalEvidence):
-        cancelled = evidence.native.model_copy(
-            update={
-                "status": "cancelled",
-                "failure": None,
-                "final_text": "",
-                "structured_output": None,
-                "diagnostics": ("worker: durable chat cancellation won terminal linearization",),
-            }
-        )
-        replacement = CodexTerminalEvidence(native=cancelled)
-    elif isinstance(evidence, ProviderTerminalEvidence):
-        replacement = ProviderTerminalEvidence(
-            outcome=ProviderCancelled(meta=evidence.outcome.meta),
-            correlation=evidence.correlation,
-        )
-    else:
-        assert_never(evidence)
-    return BackendTerminal(
-        route=terminal.route,
-        child_seq=terminal.child_seq,
-        backend_seq=terminal.backend_seq,
-        evidence=replacement,
-    )
-
-
-def _encode_chat_preaccept_failure(
+def _encode_chat_failure(
     code: str,
     *,
     detail: str,
     generation_id: UUID,
+    observed_text: str,
+    usage: dict[str, JsonValue] | None,
+    last_sequence: int,
 ) -> str:
     del detail
-    return encode_step_result(
-        GenerationStepResultEnvelope(
-            root=ExpectedFailure(
-                assistant_content="",
-                error_code=code,
-                usage=owned_presence.absent(),
-                support_id=_owned_text(generation_id.hex[:12]),
-                last_provider_event_seq=owned_presence.absent(),
-            )
+    last_event = owned_presence.present(last_sequence) if last_sequence else owned_presence.absent()
+    result: ExpectedFailure | CancelledGeneration
+    if code == "cancelled":
+        result = CancelledGeneration(
+            assistant_content=observed_text,
+            usage=_owned_usage(usage),
+            last_provider_event_seq=last_event,
         )
-    )
+    else:
+        result = ExpectedFailure(
+            assistant_content=observed_text,
+            error_code=code,
+            usage=_owned_usage(usage),
+            support_id=_owned_text(generation_id.hex[:12]),
+            last_provider_event_seq=last_event,
+        )
+    return encode_step_result(GenerationStepResultEnvelope(root=result))
 
 
 def _fold_generation_terminal(

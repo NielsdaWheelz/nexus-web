@@ -49,6 +49,7 @@ from nexus_test_control.services import (
     clean_owned_runtime,
     clean_run,
     new_run_id,
+    reset_run_data_plane,
     run_environment,
     start_python_process,
     start_web_process,
@@ -97,6 +98,91 @@ def _process_is_running(process_id: int) -> bool:
         state = next((line for line in status.splitlines() if line.startswith("State:")), "")
         return "Z (zombie)" not in state
     return True
+
+
+@pytest.mark.parametrize("relative", ("Android/Sdk", "Library/Android/sdk"))
+def test_android_sdk_discovery_uses_conventional_home_install(
+    tmp_path: Path,
+    relative: str,
+) -> None:
+    developer_home = tmp_path / "developer"
+    sdk = developer_home / relative
+    sdk.mkdir(parents=True)
+    environment = {"HOME": str(developer_home), "PATH": "/usr/bin"}
+
+    assert services.resolve_android_sdk(environment) == sdk.resolve()
+    assert services.resolved_android_environment(environment) == {
+        **environment,
+        "ANDROID_HOME": str(sdk.resolve()),
+    }
+    assert services.android_tool_environment(environment)["ANDROID_HOME"] == str(sdk.resolve())
+    assert "ANDROID_HOME" not in environment
+
+
+def test_android_sdk_discovery_does_not_mask_invalid_explicit_configuration(
+    tmp_path: Path,
+) -> None:
+    developer_home = tmp_path / "developer"
+    (developer_home / "Android/Sdk").mkdir(parents=True)
+    invalid = tmp_path / "missing-sdk"
+    environment = {
+        "HOME": str(developer_home),
+        "ANDROID_HOME": str(invalid),
+    }
+
+    assert services.resolve_android_sdk(environment) is None
+    assert services.resolved_android_environment(environment) == environment
+
+
+def test_android_sdk_discovery_rejects_conflicting_explicit_roots(tmp_path: Path) -> None:
+    android_home = tmp_path / "android-home"
+    android_sdk_root = tmp_path / "android-sdk-root"
+    android_home.mkdir()
+    android_sdk_root.mkdir()
+
+    assert (
+        services.resolve_android_sdk(
+            {
+                "ANDROID_HOME": str(android_home),
+                "ANDROID_SDK_ROOT": str(android_sdk_root),
+            }
+        )
+        is None
+    )
+
+
+def test_adb_resolution_does_not_fall_back_from_an_invalid_explicit_sdk(
+    tmp_path: Path,
+) -> None:
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    adb = tools / "adb"
+    adb.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    adb.chmod(0o755)
+
+    assert (
+        services.resolve_adb(
+            {
+                "ANDROID_HOME": str(tmp_path / "missing-sdk"),
+                "PATH": str(tools),
+            }
+        )
+        is None
+    )
+
+
+def test_adb_resolution_uses_path_only_when_no_sdk_is_configured_or_discovered(
+    tmp_path: Path,
+) -> None:
+    developer_home = tmp_path / "developer"
+    developer_home.mkdir()
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    adb = tools / "adb"
+    adb.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    adb.chmod(0o755)
+
+    assert services.resolve_adb({"HOME": str(developer_home), "PATH": str(tools)}) == adb
 
 
 def test_port_probe_rejects_an_existing_dual_stack_wildcard_listener() -> None:
@@ -1397,6 +1483,22 @@ def test_run_environment_contains_only_exact_local_resources_and_no_admin_key(
         "SUPABASE_SERVICE_KEY",
         "SUPABASE_SERVICE_ROLE_KEY",
     }.intersection(environment)
+
+
+def test_browser_data_plane_reset_rejects_foreign_resource_identity_before_io(
+    tmp_path: Path,
+) -> None:
+    run = _owned_run(tmp_path)
+    foreign = replace(run, bucket="nexus-run-fedcba9876543210")
+    before = read_ledger(tmp_path, RUN_ID).entries
+
+    with pytest.raises(
+        RuntimeContractError,
+        match="browser data plane does not belong to the exact test run",
+    ):
+        reset_run_data_plane(tmp_path, TEST_ENV, foreign)
+
+    assert read_ledger(tmp_path, RUN_ID).entries == before
 
 
 def test_embedding_peer_materializes_one_exact_client_identity(tmp_path: Path) -> None:

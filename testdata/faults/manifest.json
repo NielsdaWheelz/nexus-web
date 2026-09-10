@@ -34,7 +34,7 @@
     {
       "id": "test-control-output-bounds-bypass",
       "patch": "testdata/faults/test-control-output-bounds-bypass.patch",
-      "sha256": "ef0990a8f12b7b5aa852009755caf0b6392864d55f46842c8082356e31cf3039",
+      "sha256": "4dedb3c93d29df1130dc2c091986a3a6324e47f4fb38c02291b6a69bc035fe09",
       "proofs": [
         "pytest:python/tests/kernel/nexus_test_control/test_process.py::test_captured_child_output_is_drained_without_retaining_unbounded_logs"
       ],
@@ -274,7 +274,9 @@
       "proofs": [
         "pytest:python/tests/service/test_generation_execution.py::test_provider_crash_after_accepted_child_resumes_one_successor_without_redispatch"
       ],
-      "expected_failure": "generation dispatch did not persist the Uncertain checkpoint atomically"
+      "expected_failure": "generation dispatch did not persist the Uncertain checkpoint atomically",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "016c1d99b57cbe987b9e5b5b33f8d0317f3734ef3403c44f203394df60c76c46"
     },
     {
       "id": "generation-reconciliation-fingerprint-bypass",
@@ -382,7 +384,9 @@
       "proofs": [
         "pytest:python/tests/service/test_generation_tool_authority.py::test_frozen_plan_is_transport_neutral_and_fenced"
       ],
-      "expected_failure": "lost job lease still authorized an MCP receipt"
+      "expected_failure": "DID NOT RAISE",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "478f6d9e6cad0a92ac05eebbfc76dab91b8f65680b715e4277e1a0e606dcbd26"
     },
     {
       "id": "agent-tool-mcp-grant-gate-bypass",
@@ -391,7 +395,9 @@
       "proofs": [
         "pytest:python/tests/service/test_agent_tools_mcp_gate.py::test_public_mcp_mount_admits_only_a_live_bearer_on_the_exact_protocol"
       ],
-      "expected_failure": "an unauthorized grant crossed the public MCP mount"
+      "expected_failure": "an unauthorized grant crossed the public MCP mount",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "b1b905ef0c5fee7139cf80c5679c270e92002dfb5feab6d917d802624ab2006b"
     },
     {
       "id": "llm-write-tool-authorization-bypass",
@@ -403,13 +409,15 @@
       "expected_failure": "foreign mutating tool crossed owner authorization"
     },
     {
-      "id": "llm-tool-safety-prompt-bypass",
-      "patch": "testdata/faults/llm-tool-safety-prompt-bypass.patch",
-      "sha256": "ec4e995b8aeb1b8aa5c17bece91e61f549f2c2b2e1f573baa311afd667be4b1d",
+      "id": "llm-generation-tool-scope-bypass",
+      "patch": "testdata/faults/llm-generation-tool-scope-bypass.patch",
+      "sha256": "d2631e66fb46f57313c1e9626e172ef0af4dbdcd6eec83e6143b2b3e253891e2",
       "proofs": [
         "pytest:python/tests/evals/test_tool_safety_eval.py::test_generation_tool_plans_refuse_untrusted_escalation"
       ],
-      "expected_failure": "production prompt lost a reviewed tool-safety instruction"
+      "expected_failure": "DID NOT RAISE",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "65e3d3fa813679344a2455582f98009b526e4f7791f3221656f3ca62d96b6e4c"
     },
     {
       "id": "nexus-tool-declaration-effect-bypass",
@@ -423,7 +431,7 @@
     {
       "id": "nexus-read-empty-admission-scope-bypass",
       "patch": "testdata/faults/nexus-read-empty-admission-scope-bypass.patch",
-      "sha256": "a8eb7894808809513331627494136e95f4e3bd3938082c28870b445edf72c957",
+      "sha256": "2743fc0429ad0077c4400fc56d2dc0e71b1c7845486279b54f815070c35b37e5",
       "proofs": [
         "pytest:python/tests/service/test_llm_tools_reads.py::test_nexus_reads_are_scoped_citable_and_closed"
       ],
@@ -432,11 +440,13 @@
     {
       "id": "dossier-uncertain-search-redispatch-bypass",
       "patch": "testdata/faults/dossier-uncertain-search-redispatch-bypass.patch",
-      "sha256": "928a884a21f1bd98b17cda32f2f1e0913a09c8b9b3c5bd2c3cd8e505d7232b1b",
+      "sha256": "1a6f06d29089fd7b95d455eeacc2794f39ddfcfd6fc4c93e1d84f8eaa8a07295",
       "proofs": [
         "pytest:python/tests/service/test_llm_tools_dossier.py::test_dossier_freezes_host_plan_and_does_not_automatically_reissue_uncertain_search"
       ],
-      "expected_failure": "Dossier automatically reissued a durable search"
+      "expected_failure": "Dossier automatically reissued a durable search",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "625c3f448c54d471c96a06410af172f85ca98e812c89faa913502fd682086250"
     },
     {
       "id": "llm-tool-projection-gate-bypass",
@@ -522,7 +532,7 @@
     {
       "id": "android-device-method-scope-bypass",
       "patch": "testdata/faults/android-device-method-scope-bypass.patch",
-      "sha256": "7b46a2b441d4dcc18513e536f85c192e4d259a205d4cf79bb2d98357ebe8b240",
+      "sha256": "991c99fe5d265e649e117871207754fc0df2a9db46498b978c27212cf3d3fcef",
       "proofs": [
         "pytest:python/tests/kernel/nexus_test_control/test_android_device_method_scope.py::test_exact_android_device_proof_uses_one_instrumentation_method"
       ],
@@ -724,11 +734,11 @@
     {
       "id": "imports-history-baseline-omission",
       "patch": "testdata/faults/imports-history-baseline-omission.patch",
-      "sha256": "f09bbfabb88488c96c96441533a5120a1aaacc33d66c5a020046008c234f9960",
+      "sha256": "897efaf4fab4e8e0e5e912cf0fce4ade71bca04a5d32b7090170546b40c20372",
       "proofs": [
-        "pytest:python/tests/migrations/test_imports_history_migration.py::test_0225_records_one_baseline_per_extant_upload_session_and_source_attempt"
+        "pytest:python/tests/migrations/test_imports_history_migration.py::test_0226_records_one_baseline_per_extant_upload_session_and_source_attempt"
       ],
-      "expected_failure": "0225 must record exactly one processing baseline per attempt"
+      "expected_failure": "0226 must record exactly one processing baseline per attempt"
     },
     {
       "id": "import-source-repair-terminal-bypass",
@@ -864,6 +874,182 @@
         "vitest:apps/web/src/components/appnav/NavRail.browser.test.tsx"
       ],
       "expected_failure": "the collapsed count is not the smaller chip a 48px rail has room for"
+    },
+    {
+      "id": "shared-kernel-terminal-tail-discard",
+      "patch": "testdata/faults/shared-kernel-terminal-tail-discard.patch",
+      "sha256": "c6eaf19a0d852bbea3c967c08b30cdfb803423289dca231cd8e1babe496691bf",
+      "proofs": [
+        "pytest:python/tests/kernel/test_generation_terminal_acceptance.py::test_late_native_evidence_cannot_commit_or_publish_a_generation_terminal"
+      ],
+      "expected_failure": "DID NOT RAISE",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "3a0f995cdc74ea0a67341515bc3ec8d614f91bce8a7b160442c1333d996f5e72"
+    },
+    {
+      "id": "tool-implementation-authority-omission",
+      "patch": "testdata/faults/tool-implementation-authority-omission.patch",
+      "sha256": "907cb0f204811adce2e51584b13dcdb351105d1436c8911ddf6e55fdb8cd8748",
+      "proofs": [
+        "pytest:python/tests/kernel/test_tool_implementation_authority.py::test_frozen_tool_snapshot_and_bearer_digest_bind_handler_implementation"
+      ],
+      "expected_failure": "tool grant digest ignored a handler implementation change with unchanged tool schema",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "3be806b143df95d219cc3eebb2ad560796beae678a9db1737648f3c86643bb82"
+    },
+    {
+      "id": "tool-database-event-loop-block",
+      "patch": "testdata/faults/tool-database-event-loop-block.patch",
+      "sha256": "130ac8043467191713699795f99ec2246070bae308f5d6a0fb4d4ad94b06e241",
+      "proofs": [
+        "pytest:python/tests/service/test_tool_database_scheduling.py::test_tool_database_wait_keeps_the_provider_event_loop_live"
+      ],
+      "expected_failure": "tool database I/O blocked the provider event loop until the lock watchdog",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "dcb64ab8400b4710e6e149dfb5c88041fd9d9941f7d713e2b7e5a3fa160c47c0"
+    },
+    {
+      "id": "tool-effect-receipt-early-commit",
+      "patch": "testdata/faults/tool-effect-receipt-early-commit.patch",
+      "sha256": "84e0a52893d102c2f485fc78b7acb63eb2a8f7a5bb6afd13f6db82be563e74bb",
+      "proofs": [
+        "pytest:python/tests/service/test_tool_async_transactions.py::test_network_releases_database_and_cancelled_write_preserves_atomic_receipt"
+      ],
+      "expected_failure": "cancelled tool published a domain effect without its terminal receipt",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "fd3c7d58bb5f7198232ed8a65f2b3cca4e1df1346126b46ac8a696513136bcd2"
+    },
+    {
+      "id": "historical-generation-executable-rehydration",
+      "patch": "testdata/faults/historical-generation-executable-rehydration.patch",
+      "sha256": "77e71f1a54256d1c376ae09f3a9dd5ff8c22546654e5d6416fd8d6cdf07c7692",
+      "proofs": [
+        "pytest:python/tests/kernel/test_generation_history.py::test_historical_selection_survives_without_accepting_old_tool_authority"
+      ],
+      "expected_failure": "historical selection attempted to reconstruct executable tool authority",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "48505a59bbfb69c734688173511887e229182b6712e190c0fefe42326756eef6"
+    },
+    {
+      "id": "shared-kernel-migration-drain-bypass",
+      "patch": "testdata/faults/shared-kernel-migration-drain-bypass.patch",
+      "sha256": "7073da18f525186684f767fecaf0d7ac5559923c83eea20af6c0ce3246132910",
+      "proofs": [
+        "pytest:python/tests/migrations/test_shared_agent_kernel_cutover.py::test_shared_kernel_cutover_requires_drain_and_preserves_history"
+      ],
+      "expected_failure": "DID NOT RAISE",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "cbf1eda0c63f8bb46a95352369518a929cd98afbd77646501c7f39139a66e9bd"
+    },
+    {
+      "id": "shared-kernel-stop-journal-bypass",
+      "patch": "testdata/faults/shared-kernel-stop-journal-bypass.patch",
+      "sha256": "9e351f7e17a204d7346d6bd62b2afcdbbb86deea76490ca3b0ffff7661ff52a6",
+      "proofs": [
+        "pytest:python/tests/service/test_shared_generation_stop.py::test_stopped_parent_retains_paid_child_and_cannot_resume_its_successor"
+      ],
+      "expected_failure": "stopped generation did not commit its explicit non-success parent outcome",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "c4ce4bc40b62bda0e12befb1e280eb4a1240c6a69a06a647e64e1cd308771552"
+    },
+    {
+      "id": "provider-terminal-tail-discard",
+      "patch": "testdata/faults/provider-terminal-tail-discard.patch",
+      "sha256": "42a1dbf8a965dffea2f9d07e9a0acf4d9d573e6f2daae1aa3330ed058ce177a2",
+      "proofs": [
+        "pytest:python/tests/kernel/test_provider_terminal_acceptance.py::test_late_provider_evidence_cannot_commit_publish_or_execute_a_tool_decision"
+      ],
+      "expected_failure": "a malformed provider stream crossed a forbidden boundary",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "04e82e0e7938c6cab33ecce95fc8d6b7990e0693254770373a792e3baf897d42"
+    },
+    {
+      "id": "chat-recovery-paid-usage-omission",
+      "patch": "testdata/faults/chat-recovery-paid-usage-omission.patch",
+      "sha256": "b3f705202aebd1e1cb25c9b385eab3159783a7b47de0565e7e9e0bef57e54ab2",
+      "proofs": [
+        "pytest:python/tests/service/test_chat_generation_recovery_usage.py::test_resumed_chat_stop_publishes_original_paid_usage_and_retires_continuation"
+      ],
+      "expected_failure": "resumed Chat discarded or double-counted original paid child usage",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "34f725dcef265054074926289dfee2eff8d19106593d60df8d80883c5603cb4c"
+    },
+    {
+      "id": "chat-cancel-dispatch-admission",
+      "patch": "testdata/faults/chat-cancel-dispatch-admission.patch",
+      "sha256": "9d62d81f2e229123d99a16a680801b95ce77fe7ad48afa76762d59cc6b564c38",
+      "proofs": [
+        "pytest:python/tests/service/test_chat_cancel_recovery_admission.py::test_cancelled_recovery_ignores_provider_and_inflight_admission"
+      ],
+      "expected_failure": "cancelled recovery remained pending on provider dispatch readiness",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "7d1fa9220ed084c9c27a3b235aea4876ef274478ca449cf5e962d1ac4c442a91"
+    },
+    {
+      "id": "chat-native-terminal-cancellation",
+      "patch": "testdata/faults/chat-native-terminal-cancellation.patch",
+      "sha256": "748f9fe47d9a849a5cd6f4d2d974406dc1c00618d90f85bce9aeeb61e3081c2e",
+      "proofs": [
+        "pytest:python/tests/service/test_chat_terminal_cancellation.py::test_late_chat_cancellation_preserves_native_child_and_paid_usage"
+      ],
+      "expected_failure": "host cancellation replaced the original paid native terminal",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "2e3adaa7f5ee61b9e22e68e3c2f42910429d782664e17b9e59922053dab4ebbc"
+    },
+    {
+      "id": "generation-observer-continuation-disclosure",
+      "patch": "testdata/faults/generation-observer-continuation-disclosure.patch",
+      "sha256": "1b1eb6669af9a1890448f4d79adcf251df8e7cb7a116fc32f9c6957a5554ecd4",
+      "proofs": [
+        "pytest:python/tests/kernel/test_generation_backend_runtime.py::test_closed_backend_event_projection_retains_codex_terminal_truth"
+      ],
+      "expected_failure": "observable terminal exposed private provider continuation material",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "76bd914ede2b93193676e4992c0822c64abdc7eb626ff739a2b6655d44c6efc5"
+    },
+    {
+      "id": "generation-provider-publication-omission",
+      "patch": "testdata/faults/generation-provider-publication-omission.patch",
+      "sha256": "1641fafff99afe9a4fe5d0478d756f6789593ead5fd79685863ce884c75add8f",
+      "proofs": [
+        "pytest:python/tests/kernel/test_generation_transport_projection.py::test_one_plan_lowers_to_both_transport_contracts"
+      ],
+      "expected_failure": "Native model-tool plan lost its provider publication",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "beef9bc531d3011c97f071788fa841f6a59a9e08efae42f2aa9d249779d9f566"
+    },
+    {
+      "id": "generation-frozen-policy-substitution",
+      "patch": "testdata/faults/generation-frozen-policy-substitution.patch",
+      "sha256": "e1b1c1260a38091819bb9b36967dfa374c3e78415de9b6ac14eb3321924b055a",
+      "proofs": [
+        "pytest:python/tests/service/test_generation_policy.py::test_total_policy_and_frozen_admission_contract"
+      ],
+      "expected_failure": "background admission replaced the frozen policy revision",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "8d2f2c6bd1b771c30b232883de4bc9e9a6583f3f319f1848f83fe3d8fb4fd3d4"
+    },
+    {
+      "id": "browse-search-provenance-omission",
+      "patch": "testdata/faults/browse-search-provenance-omission.patch",
+      "sha256": "5a3ec81e9522b8fee7047fc448594c8476590a447b5b53a9b8f32a44e3bdaa4b",
+      "proofs": [
+        "pytest:python/tests/service/test_llm_tools_browse.py::test_browse_preserves_normalized_provider_results_after_rename"
+      ],
+      "expected_failure": "Browse target discarded the provider's opaque search provenance",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "6f175a0aa204c67ea0703ceaa41fdcc806a67895da4edf30b992d0cb02fb9c2f"
+    },
+    {
+      "id": "machine-authorship-trust-projection-omission",
+      "patch": "testdata/faults/machine-authorship-trust-projection-omission.patch",
+      "sha256": "5a5449d44aaeccf12dff28ce797c5f203e47e2527be3d10bbd9a6dff5f839fea",
+      "proofs": [
+        "pytest:python/tests/service/test_machine_authorship.py::test_all_additive_writes_publish_durable_authorship_into_later_model_reads"
+      ],
+      "expected_failure": "trust projection omitted durable machine authorship from a successful additive write",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "5dccea7777434a3de061b5827166f28a44da2d46ff10fafe2bd9d7f19b7c5cad"
     }
   ]
 }

@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 import importlib.metadata
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from pathlib import Path
 from uuid import UUID
 
@@ -162,7 +162,7 @@ class CodexGenerationClient:
         draft: GenerationCommandDraft,
         *,
         bind_admission: Callable[[GenerationAdmission], Awaitable[GenerationCommand]],
-    ) -> AsyncIterator[GenerationFrame]:
+    ) -> AsyncGenerator[GenerationFrame]:
         """Admit grant-free facts, bind dispatch authority, then stream exactly once."""
 
         await self.health()
@@ -322,7 +322,7 @@ class CodexGenerationClient:
 async def _validated_frames(
     response: httpx.Response,
     command: GenerationCommand | GenerationCommandDraft,
-) -> AsyncIterator[GenerationFrame]:
+) -> AsyncGenerator[GenerationFrame]:
     validator = _GenerationFrameStreamValidator(command)
     async for chunk in response.aiter_bytes():
         for frame in validator.feed(chunk):

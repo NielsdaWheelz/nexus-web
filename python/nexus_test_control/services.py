@@ -501,6 +501,52 @@ def run_environment(
     return values
 
 
+def reset_run_data_plane(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    run: TestRun,
+) -> None:
+    """Give browser proofs a fresh exact database and object-store epoch.
+
+    Service and evaluation proofs intentionally exercise committed-state
+    recovery. Their rows and objects are evidence for those capabilities, not
+    fixtures for a later real-stack browser suite. Recreate only the current
+    run's owned data plane, under its lifecycle lock, before any browser app or
+    worker process is allowed to start.
+    """
+    require_test_environment(environment)
+    require_run_id(run.run_id)
+    root = canonical_repo_root(repo_root)
+    expected_database = run_database_name(run.run_id)
+    expected_bucket = run_bucket_name(run.run_id)
+    if (
+        run.database_url != _database_url(root, environment, expected_database)
+        or run.bucket != expected_bucket
+        or run.supabase.url != runtime_endpoint(root, environment, EndpointKind.SUPABASE)
+    ):
+        raise RuntimeContractError("browser data plane does not belong to the exact test run")
+
+    with run_lifecycle_lock(root, environment, run.run_id):
+        entries = read_ledger(root, run.run_id).entries
+        _require_created_run_resource(
+            entries,
+            Resource(ResourceKind.RUN_DATABASE, expected_database),
+        )
+        _require_created_run_resource(
+            entries,
+            Resource(ResourceKind.BUCKET, expected_bucket),
+        )
+        fingerprint = _repository_template_fingerprint(root)
+        with template_lifecycle_lock(root, environment, fingerprint):
+            _recreate_idle_run_database(
+                root,
+                environment,
+                database=expected_database,
+                template=template_database_name(fingerprint),
+            )
+        _empty_existing_run_bucket(root, environment, expected_bucket)
+
+
 def _expected_migration_database_url(
     repo_root: Path,
     environment: Mapping[str, str],
@@ -544,22 +590,83 @@ _ANDROID_TOOL_ENV = (
     "TMPDIR",
     "TZ",
 )
+_ANDROID_SDK_HOME_RELATIVE_PATHS = (
+    Path("Android/Sdk"),
+    Path("Library/Android/sdk"),
+)
+
+
+def resolve_android_sdk(environment: Mapping[str, str]) -> Path | None:
+    """Resolve an explicit or conventional Android SDK without masking bad config."""
+    configured = tuple(
+        Path(value)
+        for key in ("ANDROID_HOME", "ANDROID_SDK_ROOT")
+        if (value := environment.get(key))
+    )
+    if configured:
+        if any(not path.is_absolute() for path in configured):
+            return None
+        try:
+            resolved = tuple(path.resolve() for path in configured)
+        except (OSError, RuntimeError):
+            return None
+        if len(set(resolved)) != 1:
+            return None
+        sdk = resolved[0]
+        return sdk if sdk.is_dir() else None
+
+    home_value = environment.get("HOME")
+    if not home_value:
+        return None
+    developer_home = Path(home_value)
+    if not developer_home.is_absolute():
+        return None
+    for relative in _ANDROID_SDK_HOME_RELATIVE_PATHS:
+        try:
+            candidate = (developer_home / relative).resolve()
+        except (OSError, RuntimeError):
+            continue
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def resolved_android_environment(environment: Mapping[str, str]) -> dict[str, str]:
+    """Copy caller state and publish a discovered SDK through the canonical variable."""
+    child = dict(environment)
+    if not any(environment.get(key) for key in ("ANDROID_HOME", "ANDROID_SDK_ROOT")):
+        sdk = resolve_android_sdk(environment)
+        if sdk is not None:
+            child["ANDROID_HOME"] = str(sdk)
+    return child
+
+
+def android_sdk_available(android_root: Path, environment: Mapping[str, str]) -> bool:
+    """Admit Gradle only through one coherent explicit, local, or standard SDK."""
+    if any(environment.get(key) for key in ("ANDROID_HOME", "ANDROID_SDK_ROOT")):
+        return resolve_android_sdk(environment) is not None
+    if (android_root / "local.properties").is_file():
+        return True
+    return resolve_android_sdk(environment) is not None
 
 
 def android_tool_environment(environment: Mapping[str, str]) -> dict[str, str]:
     """The safe child environment for owned adb/Gradle subprocesses."""
-    child = {key: value for key in _ANDROID_TOOL_ENV if (value := environment.get(key))}
+    resolved = resolved_android_environment(environment)
+    child = {key: value for key in _ANDROID_TOOL_ENV if (value := resolved.get(key))}
     child["NEXUS_ENV"] = "test"
     return child
 
 
 def resolve_adb(environment: Mapping[str, str]) -> Path | None:
     """Resolve the one adb transport from the SDK or PATH, without inventing another."""
-    sdk = environment.get("ANDROID_HOME") or environment.get("ANDROID_SDK_ROOT")
-    if sdk:
-        candidate = Path(sdk) / "platform-tools/adb"
-        if candidate.is_file():
-            return candidate
+    has_explicit_sdk = any(environment.get(key) for key in ("ANDROID_HOME", "ANDROID_SDK_ROOT"))
+    sdk = resolve_android_sdk(environment)
+    if sdk is not None:
+        candidate = sdk / "platform-tools/adb"
+        return candidate if candidate.is_file() else None
+    if has_explicit_sdk:
+        return None
     found = shutil.which("adb", path=environment.get("PATH"))
     return Path(found) if found else None
 
@@ -2813,6 +2920,44 @@ def _drop_database(repo_root: Path, environment: Mapping[str, str], database: st
         connection.execute(sql.SQL("DROP DATABASE {}").format(sql.Identifier(database)))
 
 
+def _recreate_idle_run_database(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    *,
+    database: str,
+    template: str,
+) -> None:
+    """Replace one exact idle run database from its finalized template."""
+    with _postgres_admin(repo_root, environment) as connection:
+        database_shape = connection.execute(
+            "SELECT datallowconn, datistemplate FROM pg_database WHERE datname = %s",
+            (database,),
+        ).fetchone()
+        if database_shape != (True, False):
+            raise RuntimeContractError("run database is absent or has an invalid lifecycle shape")
+        template_shape = connection.execute(
+            "SELECT datallowconn, datistemplate FROM pg_database WHERE datname = %s",
+            (template,),
+        ).fetchone()
+        if template_shape != (False, True):
+            raise RuntimeContractError("run database template is absent or not finalized")
+        consumers = connection.execute(
+            "SELECT pid FROM pg_stat_activity WHERE datname = %s ORDER BY pid",
+            (database,),
+        ).fetchall()
+        if consumers:
+            raise RuntimeContractError(
+                "browser data-plane isolation found an active run database consumer"
+            )
+        connection.execute(sql.SQL("DROP DATABASE {}").format(sql.Identifier(database)))
+        connection.execute(
+            sql.SQL("CREATE DATABASE {} TEMPLATE {}").format(
+                sql.Identifier(database),
+                sql.Identifier(template),
+            )
+        )
+
+
 def _terminate_database_connections(connection: psycopg.Connection, name: str) -> None:
     connection.execute(
         "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
@@ -2879,20 +3024,39 @@ def _create_bucket(repo_root: Path, environment: Mapping[str, str], run_id: str)
 def _delete_bucket(repo_root: Path, environment: Mapping[str, str], bucket: str) -> None:
     client = _s3(repo_root, environment)
     try:
-        while True:
-            response = client.list_objects_v2(Bucket=bucket)
-            contents = response.get("Contents", [])
-            if contents:
-                client.delete_objects(
-                    Bucket=bucket,
-                    Delete={"Objects": [{"Key": item["Key"]} for item in contents]},
-                )
-            if not response.get("IsTruncated"):
-                break
+        _empty_bucket(client, bucket)
         client.delete_bucket(Bucket=bucket)
     except ClientError as exc:
         if exc.response.get("Error", {}).get("Code") not in {"NoSuchBucket", "404"}:
             raise
+
+
+def _empty_existing_run_bucket(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    bucket: str,
+) -> None:
+    client = _s3(repo_root, environment)
+    try:
+        client.head_bucket(Bucket=bucket)
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") in {"NoSuchBucket", "404"}:
+            raise RuntimeContractError("run bucket is absent before browser isolation") from exc
+        raise
+    _empty_bucket(client, bucket)
+
+
+def _empty_bucket(client: BaseClient, bucket: str) -> None:
+    while True:
+        response = client.list_objects_v2(Bucket=bucket)
+        contents = response.get("Contents", [])
+        if contents:
+            client.delete_objects(
+                Bucket=bucket,
+                Delete={"Objects": [{"Key": item["Key"]} for item in contents]},
+            )
+        if not response.get("IsTruncated"):
+            return
 
 
 def _delete_supabase_user(

@@ -3,16 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import os
 import ssl
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
-from importlib.util import find_spec
 from types import MappingProxyType, SimpleNamespace
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import httpx
@@ -25,241 +23,140 @@ from llm_tools import (
     ReplayPolicy,
     ToolBinding,
 )
+from provider_runtime.registry import api_model_catalog
+from provider_runtime.types import (
+    Absent as RuntimeAbsent,
+)
+from provider_runtime.types import (
+    AttemptRecord,
+    CallMeta,
+    CancelSignal,
+    ExpectedModelFailure,
+    Failed,
+    FinalAttempt,
+    GenerateIntent,
+    PossiblyBillable,
+    RuntimeStreamEvent,
+    StreamStart,
+    TerminalEvent,
+    TextContent,
+    TokenUsage,
+)
+from provider_runtime.types import (
+    Present as RuntimePresent,
+)
+from provider_runtime.types import (
+    Succeeded as ProviderSucceeded,
+)
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
-# BASE sensitivity overlays this proof without candidate production owners.
-_CUTOVER_PRESENT = find_spec("nexus.services.generation_continuations") is not None
-
-if TYPE_CHECKING or _CUTOVER_PRESENT:
-    from provider_runtime.registry import api_model_catalog
-    from provider_runtime.types import (
-        Absent as RuntimeAbsent,
-    )
-    from provider_runtime.types import (
-        AttemptRecord,
-        CallMeta,
-        CancelSignal,
-        ExpectedModelFailure,
-        Failed,
-        FinalAttempt,
-        GenerateIntent,
-        PossiblyBillable,
-        RuntimeStreamEvent,
-        StreamStart,
-        TerminalEvent,
-        TextContent,
-        TokenUsage,
-    )
-    from provider_runtime.types import (
-        Present as RuntimePresent,
-    )
-    from provider_runtime.types import (
-        Succeeded as ProviderSucceeded,
-    )
-
-    from nexus.config import Settings
-    from nexus.db.models import LLMModelTurn, LLMModelTurnContinuation
-    from nexus.db.session import create_session_factory
-    from nexus.jobs.queue import JobExecutionContext, enqueue_job, get_job, lock_job
-    from nexus.schemas.presence import Present, absent, present
-    from nexus.services import generation_policy
-    from nexus.services.codex_generation_contract import NormalizedFailureCode
-    from nexus.services.durable_step_journal import Completed, Uncertain
-    from nexus.services.generation_backend import (
-        BackendGenerationRequest,
-        BackendToolExecutionRequest,
-        BackendToolExecutionResult,
-        BackendToolExecutor,
-        GenerationBackend,
-        GenerationBackendComposition,
-        PreparedCodexChild,
-    )
-    from nexus.services.generation_continuations import (
-        GenerationContinuationAuthenticationError,
-        GenerationContinuationCipher,
-        GenerationContinuationContext,
-    )
-    from nexus.services.generation_events import BackendTerminal, ProviderTerminalEvidence
-    from nexus.services.generation_intent import GenerationIntent, TextOutput
-    from nexus.services.generation_selection import ProviderApiSelection
-    from nexus.services.generation_service import GenerationService
-    from nexus.services.generation_spec import (
-        FrozenToolScope,
-        GenerationSpec,
-        ImmutablePromptPayloadRef,
-        generation_fact_digest,
-    )
-    from nexus.services.llm_execution import (
-        CompletedGeneration,
-        ComposedExecutionRuntime,
-        EncodedGenerationTerminal,
-        GenerationExecutionRequest,
-        GenerationUncertain,
-        JobGenerationJournal,
-        admit_job_generation,
-        execute_generation,
-    )
-    from nexus.services.llm_ledger import (
-        DispatchableModelTurn,
-        GenerationStart,
-        LlmCallOwner,
-        ModelTurnCompletion,
-        ModelTurnStart,
-        PendingGenerationContinuation,
-        RedispatchForbiddenModelTurn,
-        arm_model_turn_dispatch_in_current_transaction,
-        arm_resumed_model_turn_dispatch_in_current_transaction,
-        complete_generation_in_current_transaction,
-        complete_model_turn_in_current_transaction,
-        generation_spec_document,
-        lock_generation_owner_in_current_transaction,
-        open_generation_continuation_in_current_transaction,
-        read_generation,
-        read_model_turns,
-        read_pending_generation_continuation_in_current_transaction,
-        resume_generation_continuation_in_current_transaction,
-        start_generation_in_current_transaction,
-        start_model_turn_in_current_transaction,
-    )
-    from nexus.services.provider_generation_backend import (
-        ProviderGenerationBackend,
-        ProviderGenerationWiring,
-        build_provider_generation_backend,
-    )
-    from nexus.services.provider_generation_contract import ProviderModelTools
-    from nexus.services.tool_authority import (
-        compose_deferred_generation_tool_executor,
-        read_tool_positions,
-    )
-    from nexus.services.tool_runtime.composition import (
-        ComposedToolRuntime,
-        FrozenToolOperation,
-        compose_provider_model_tools,
-        compose_tool_runtime,
-        freeze_tool_plan_snapshot,
-    )
-    from nexus.services.tool_runtime.declarations import NEXUS_TOOL_DECLARATIONS
-    from tests.testkit.generation_catalog import (
-        CHAT_TEST_SELECTION,
-        configured_chat_catalog_service,
-    )
-    from tests.testkit.queue_claims import claim_job_row
-    from tests.testkit.unreachable_state import delete_jobs_by_ids, expire_job_claim
-
-
-def _generation_spec() -> dict[str, object]:
-    output_contract = {"kind": "Text"}
-    document: dict[str, object] = {
-        "schema_version": "nexus-generation-spec.v1",
-        "operation": "metadata_enrichment",
-        "selection": {
-            "route": "ProviderApi",
-            "model_ref": "openai:gpt-5.6-luna",
-            "reasoning": "low",
-        },
-        "selection_source": "BackgroundPolicy",
-        "resolved_dispatch_target": {
-            "kind": "ProviderApi",
-            "model_ref": "openai:gpt-5.6-luna",
-            "provider": "openai",
-            "model_id": "gpt-5.6-luna",
-            "engine": "responses",
-            "base_url": {"kind": "Absent"},
-            "correlation": "header",
-            "routing": {"kind": "Absent"},
-            "continuation_codec": "openai.responses.v1",
-            "registry_revision": "registry.1",
-        },
-        "source_catalog_definition_revision": "provider-catalog.1",
-        "source_row_fingerprint": "1" * 64,
-        "agent_definition_revision": {"kind": "Absent"},
-        "source_context_window": {"kind": "Present", "value": 128_000},
-        "source_max_output_tokens": {"kind": "Present", "value": 16_384},
-        "effective_context_budget_tokens": 32_000,
-        "effective_output_budget_tokens": 4_096,
-        "bounds": {
-            "instructions_max_bytes": 65_536,
-            "input_max_bytes": 1_048_576,
-            "turn_timeout_seconds": 180,
-            "session_open_timeout_seconds": 30,
-            "runtime_close_timeout_seconds": 10,
-            "transport_margin_seconds": 5,
-            "transport_deadline_seconds": 185,
-            "stream": {
-                "max_frames": 10_000,
-                "max_frame_bytes": 1_048_576,
-                "max_stream_bytes": 16_777_216,
-                "text_flush_interval_ms": {"kind": "Absent"},
-                "text_flush_bytes": {"kind": "Absent"},
-            },
-        },
-        "prompt_template_revision": "metadata.prompt.1",
-        "prompt_payload_ref": {
-            "kind": "DomainPromptPayload",
-            "owner_kind": "media_enrichment",
-            "owner_id": "proof-owner",
-            "revision": "metadata.prompt.1",
-            "payload_digest": "2" * 64,
-        },
-        "instructions_digest": "3" * 64,
-        "input_digest": "4" * 64,
-        "output_contract": output_contract,
-        "output_contract_fingerprint": hashlib.sha256(
-            json.dumps(
-                output_contract,
-                ensure_ascii=True,
-                allow_nan=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode()
-        ).hexdigest(),
-        "display_at_dispatch": {
-            "route_label": "OpenAI API",
-            "model_label": "GPT-5.6 Luna",
-            "reasoning_label": "Low",
-            "billing": {"kind": "MeteredApi", "label": "Metered API"},
-            "privacy": {
-                "summary": "OpenAI API processes this generation.",
-                "retention": "Configured API retention applies.",
-                "training": "Configured API training policy applies.",
-            },
-            "processor_chain": {"processors": ("Nexus", "OpenAI API")},
-        },
-        "host_tool_plan_snapshot": {"kind": "Absent"},
-        "host_evidence_revision": {"kind": "Absent"},
-        "model_tool_plan_snapshot": {"kind": "Absent"},
-        "tool_effect_mode": {"kind": "Absent"},
-        "admitted_tool_scope": {"kind": "Absent"},
-        "admitted_tool_scope_digest": {"kind": "Absent"},
-        "catalog_definition_revision": "8" * 64,
-        "policy_revision": "generation-policy.1",
-        "backend_contract_revision": "provider-runtime.1",
-        "provider_registry_revision": {"kind": "Present", "value": "registry.1"},
-    }
-    document["fingerprint"] = hashlib.sha256(
-        json.dumps(
-            document,
-            ensure_ascii=True,
-            allow_nan=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode()
-    ).hexdigest()
-    return GenerationSpec.model_validate(document).model_dump(mode="json", by_alias=True)
+from nexus.config import Settings
+from nexus.db.models import LLMModelTurn, LLMModelTurnContinuation
+from nexus.db.session import create_session_factory
+from nexus.jobs.queue import JobExecutionContext, enqueue_job, get_job, lock_job
+from nexus.schemas.presence import Present, absent, present
+from nexus.services import generation_policy
+from nexus.services.codex_generation_contract import GenerationFrame
+from nexus.services.durable_step_journal import Completed, Uncertain
+from nexus.services.generation_backend import (
+    BackendGenerationRequest,
+    BackendToolExecutionRequest,
+    BackendToolExecutionResult,
+    BackendToolExecutor,
+    GenerationBackend,
+    GenerationBackendComposition,
+    PreparedCodexChild,
+)
+from nexus.services.generation_continuations import (
+    GenerationContinuationAuthenticationError,
+    GenerationContinuationCipher,
+    GenerationContinuationContext,
+)
+from nexus.services.generation_events import BackendTerminal, ProviderTerminalEvidence
+from nexus.services.generation_intent import GenerationIntent, TextOutput
+from nexus.services.generation_selection import ProviderApiSelection
+from nexus.services.generation_service import GenerationService
+from nexus.services.generation_spec import (
+    FrozenToolScope,
+    GenerationSpec,
+    ImmutablePromptPayloadRef,
+    generation_fact_digest,
+)
+from nexus.services.llm_execution import (
+    CompletedGeneration,
+    ComposedExecutionRuntime,
+    EncodedGenerationTerminal,
+    GenerationExecutionRequest,
+    GenerationFailureCode,
+    GenerationUncertain,
+    JobGenerationJournal,
+    admit_job_generation,
+    execute_generation,
+)
+from nexus.services.llm_ledger import (
+    DispatchableModelTurn,
+    GenerationStart,
+    LlmCallOwner,
+    ModelTurnCompletion,
+    ModelTurnStart,
+    PendingGenerationContinuation,
+    RedispatchForbiddenModelTurn,
+    arm_model_turn_dispatch_in_current_transaction,
+    arm_resumed_model_turn_dispatch_in_current_transaction,
+    complete_generation_in_current_transaction,
+    complete_model_turn_in_current_transaction,
+    generation_spec_document,
+    lock_generation_owner_in_current_transaction,
+    open_generation_continuation_in_current_transaction,
+    read_generation,
+    read_model_turns,
+    read_pending_generation_continuation_in_current_transaction,
+    resume_generation_continuation_in_current_transaction,
+    start_generation_in_current_transaction,
+    start_model_turn_in_current_transaction,
+)
+from nexus.services.provider_generation_backend import (
+    ProviderGenerationBackend,
+    ProviderGenerationWiring,
+    build_provider_generation_backend,
+)
+from nexus.services.provider_generation_contract import ProviderModelTools
+from nexus.services.tool_authority import (
+    compose_deferred_generation_tool_executor,
+    read_tool_positions,
+)
+from nexus.services.tool_runtime.composition import (
+    ComposedToolRuntime,
+    FrozenToolOperation,
+    compose_provider_model_tools,
+    compose_tool_runtime,
+    freeze_tool_plan_snapshot,
+)
+from nexus.services.tool_runtime.declarations import NEXUS_TOOL_DECLARATIONS
+from tests.testkit.generation_catalog import (
+    CHAT_TEST_SELECTION,
+    configured_chat_catalog_service,
+)
+from tests.testkit.generation_ledger import generation_spec_fixture
+from tests.testkit.queue_claims import claim_job_row
+from tests.testkit.unreachable_state import (
+    delete_generations_by_ids,
+    delete_jobs_by_ids,
+    expire_job_claim,
+)
 
 
 def test_parent_child_tool_replay_is_exactly_once(request: pytest.FixtureRequest) -> None:
     """Risk: crash replay duplicates a billable child or successor dispatch."""
 
-    assert _CUTOVER_PRESENT, "sealed generation continuation ownership is absent"
     request.getfixturevalue("committed_chat_state_isolation")
     engine = cast(Engine, request.getfixturevalue("engine"))
     generation_id = uuid4()
     first_turn_id = uuid4()
     second_turn_id = uuid4()
     owner = LlmCallOwner(kind="media_enrichment", id=uuid4())
-    spec = generation_spec_document(_generation_spec())
+    spec = generation_spec_document(generation_spec_fixture())
     cipher = GenerationContinuationCipher(b"k" * 32)
     context = GenerationContinuationContext(
         generation_id=generation_id,
@@ -518,7 +415,6 @@ def test_foreign_provider_failure_is_refused_not_relabelled(
 ) -> None:
     """Risk: an llm-calling failure variant Nexus does not know is renamed into the ledger."""
 
-    assert _CUTOVER_PRESENT, "route-neutral generation execution ownership is absent"
     request.getfixturevalue("committed_chat_state_isolation")
     engine = cast(Engine, request.getfixturevalue("engine"))
     asyncio.run(_prove_foreign_provider_failure_is_refused(engine))
@@ -581,7 +477,7 @@ async def _prove_foreign_provider_failure_is_refused(engine: Engine) -> None:
                 session_factory=session_factory,
                 runtime=runtime,
                 encode_terminal=_encode_any_terminal,
-                encode_preaccept_failure=_refuse_preaccept,
+                encode_failure=_refuse_preaccept,
             )
         cause = refused.value.__cause__
         assert isinstance(cause, AssertionError) and "unreachable" in str(cause), (
@@ -654,7 +550,7 @@ def _encode_any_terminal(terminal: BackendTerminal) -> EncodedGenerationTerminal
     return EncodedGenerationTerminal(terminal_result='{"kind":"foreign-failure-proof"}')
 
 
-def _refuse_preaccept(code: NormalizedFailureCode, detail: str) -> str:
+def _refuse_preaccept(code: GenerationFailureCode, detail: str) -> str:
     raise AssertionError(f"a ready ProviderApi row refused before acceptance: {code} {detail}")
 
 
@@ -717,7 +613,7 @@ class _ForeignFailureProviderRuntime:
 
 
 class _UnusedCodex:
-    def stream(self, *_args: object, **_kwargs: object) -> AsyncIterator[object]:
+    def stream(self, *_args: object, **_kwargs: object) -> AsyncGenerator[GenerationFrame]:
         raise AssertionError("ProviderApi Dawn admission fell through to Codex")
 
     async def cancel(self, request_id: UUID) -> None:
@@ -741,17 +637,28 @@ class _ToolFreeProviderTools:
 
 
 def test_provider_crash_after_accepted_child_resumes_one_successor_without_redispatch(
-    request: pytest.FixtureRequest,
+    engine: Engine,
 ) -> None:
     """Risk: a worker crash after an accepted API child reissues billed model work."""
 
-    assert _CUTOVER_PRESENT, "route-neutral durable generation execution is absent"
-    request.getfixturevalue("committed_chat_state_isolation")
-    engine = cast(Engine, request.getfixturevalue("engine"))
-    asyncio.run(_prove_provider_crash_resumes_exactly_once(engine))
+    generation_id = uuid4()
+    owned_job_ids: list[UUID] = []
+    try:
+        asyncio.run(
+            _prove_provider_crash_resumes_exactly_once(
+                engine, generation_id=generation_id, owned_job_ids=owned_job_ids
+            )
+        )
+    finally:
+        with Session(engine) as db:
+            delete_generations_by_ids(db, generation_ids=(generation_id,))
+            delete_jobs_by_ids(db, job_ids=owned_job_ids)
+            db.commit()
 
 
-async def _prove_provider_crash_resumes_exactly_once(engine: Engine) -> None:
+async def _prove_provider_crash_resumes_exactly_once(
+    engine: Engine, *, generation_id: UUID, owned_job_ids: list[UUID]
+) -> None:
     settings = Settings()
     endpoint_overrides = json.loads(os.environ["GENERATION_API_BASE_URLS"])
     ca_certificates = json.loads(os.environ["NEXUS_TEST_TLS_CA_CERTS"])
@@ -789,7 +696,6 @@ async def _prove_provider_crash_resumes_exactly_once(engine: Engine) -> None:
         ),
     )
     owner = LlmCallOwner(kind="chat_run", id=uuid4())
-    generation_id = uuid4()
     user_id = uuid4()
     factory = sessionmaker(bind=engine, expire_on_commit=False)
 
@@ -816,6 +722,7 @@ async def _prove_provider_crash_resumes_exactly_once(engine: Engine) -> None:
         )
         with Session(engine) as db:
             job = enqueue_job(db, kind="generation_execution_proof", max_attempts=2)
+            owned_job_ids.append(job.id)
             claimed = claim_job_row(
                 db,
                 job_id=job.id,
@@ -871,7 +778,7 @@ async def _prove_provider_crash_resumes_exactly_once(engine: Engine) -> None:
                 session_factory=factory,
                 runtime=runtime,
                 encode_terminal=_encode_terminal,
-                encode_preaccept_failure=_refuse_preaccept,
+                encode_failure=_refuse_preaccept,
             )
         except Exception as error:
             # The queue worker fails its attempt on any exception; durable truth
@@ -960,7 +867,7 @@ async def _prove_provider_crash_resumes_exactly_once(engine: Engine) -> None:
             session_factory=factory,
             runtime=runtime,
             encode_terminal=_encode_terminal,
-            encode_preaccept_failure=_refuse_preaccept,
+            encode_failure=_refuse_preaccept,
         )
 
     assert isinstance(completed, CompletedGeneration), completed
@@ -1052,6 +959,7 @@ def _fail_loud_tool_runtime() -> ComposedToolRuntime:
             spec=entry.spec,
             execute=Available(unexpected),
             replay_policy=ReplayPolicy.ReDispatchable,
+            implementation_revision="test_generation_execution.v1",
             policy_epoch=PolicyEpoch("generation-execution-proof-v1"),
             policy_inputs={"owner": "generation-execution-proof"},
         )
@@ -1062,6 +970,7 @@ def _fail_loud_tool_runtime() -> ComposedToolRuntime:
             spec=WEB_SEARCH_SPEC,
             execute=Available(unexpected),
             replay_policy=ReplayPolicy.BilledOnce,
+            implementation_revision="test_generation_execution.v1",
             policy_epoch=PolicyEpoch("generation-execution-proof-v1"),
             policy_inputs={"owner": "generation-execution-proof"},
         ),

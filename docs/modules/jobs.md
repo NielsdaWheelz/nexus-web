@@ -32,7 +32,7 @@ non-resetting UUID that identifies exactly one attempt at running this job. It
 is persisted on `background_jobs`, carried in `JobExecutionContext` and the
 bounded-child protocol, and named by every history payload and source
 publication fence, so a repaired or requeued job never reuses an execution
-identity. Rows last claimed before migration 0225 have none, and history that
+identity. Rows last claimed before migration 0226 have none, and history that
 would name such an execution says so with an Absent value. The worker installs the process-global rate limiter at
 startup (see [llms.md](llms.md)) so the first job of any kind has a working
 limiter.

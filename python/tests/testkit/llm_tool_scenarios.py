@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID, uuid4
@@ -38,7 +39,9 @@ if TYPE_CHECKING:
 
 
 class _AdmissionAvailableWebSearch:
-    async def search(self, request: WebSearchRequest) -> WebSearchResponse:
+    async def search(
+        self, request: WebSearchRequest, *, attempt_started: Callable[[], None] | None = None
+    ) -> WebSearchResponse:
         del request
         raise AssertionError("admission-only Web search must not execute")
 
@@ -209,17 +212,19 @@ def compose_chat_tool_generation(
         ),
     )
     db.commit()
-    executor = compose_generation_tool_executor(
-        session_factory=sessionmaker(bind=db.get_bind(), expire_on_commit=False),
-        user_id=run.owner_user_id,
-        owner=owner,
-        generation_id=generation_id,
-        job_context=job_context,
-        operation=operation,
-        projection=ChatToolExecutionProjection(
-            run_id=run.id,
-            initial_citation_ordinal=1,
-        ),
+    executor = asyncio.run(
+        compose_generation_tool_executor(
+            session_factory=sessionmaker(bind=db.get_bind(), expire_on_commit=False),
+            user_id=run.owner_user_id,
+            owner=owner,
+            generation_id=generation_id,
+            job_context=job_context,
+            operation=operation,
+            projection=ChatToolExecutionProjection(
+                run_id=run.id,
+                initial_citation_ordinal=1,
+            ),
+        )
     )
     return ChatToolGeneration(generation_id=generation_id, executor=executor)
 

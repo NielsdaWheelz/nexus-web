@@ -7,9 +7,10 @@ import errno
 import os
 import socket
 import stat
+import sys
 from pathlib import Path
+from typing import Never
 
-import uvicorn
 from apps.codex_agent import sandbox_health
 from apps.codex_agent.auth_environment import (
     reject_ambient_codex_home,
@@ -26,13 +27,6 @@ from apps.codex_agent.credential_state import (
     sync_enrolled_auth_file,
     validate_runtime_auth_link,
 )
-from apps.codex_agent.host import (
-    CODEX_AGENT_HOST_REQUEST_DRAIN_SECONDS,
-    CODEX_AGENT_HOST_TEARDOWN_DEADLINE_SECONDS,
-    create_codex_agent_app,
-    resolve_runtime_versions,
-    turn_lifecycle,
-)
 from apps.codex_agent.path_environment import required_absolute_path
 from provider_runtime.agent_runtime import (
     AgentRuntime,
@@ -40,32 +34,21 @@ from provider_runtime.agent_runtime import (
     CredentialRef,
 )
 
-from nexus.services.codex_generation_operations import (
-    compose_codex_model_tool_plan_registry,
-)
-
 _SOCKET_ENV = "NEXUS_CODEX_AGENT_SOCKET"
 _CREDENTIAL_FILE_ENV = "NEXUS_CODEX_CREDENTIAL_FILE"
 _WORKING_DIRECTORY_ROOT_ENV = "NEXUS_CODEX_WORKING_DIRECTORY_ROOT"
 _MCP_ORIGIN_ENV = "NEXUS_CODEX_MCP_ORIGIN"
 _MODEL_TOOL_NETWORK_ATTESTED_ENV = "NEXUS_CODEX_MODEL_TOOL_NETWORK_ATTESTED"
+_SERVE_AFTER_AUTH_ARGUMENT = "_serve-after-authenticated-bootstrap"
 
 
-async def run() -> None:
-    socket_path = required_absolute_path(_SOCKET_ENV)
-    credential_file = required_absolute_path(_CREDENTIAL_FILE_ENV)
-    working_directory_root = required_absolute_path(_WORKING_DIRECTORY_ROOT_ENV)
-    mcp_origin = _required_environment(_MCP_ORIGIN_ENV)
-    model_tool_network_attested = _required_model_tool_network_attestation()
-    reject_subscription_api_key_auth()
-    reject_ambient_codex_home()
-    _prepare_working_directory_root(working_directory_root)
-    _validate_directories(socket_path, working_directory_root)
-    require_private_executable_runtime_mount(working_directory_root)
-    require_writable_credential_mount(credential_file)
-    _remove_proven_stale_socket(socket_path)
-    sandbox_health.check(working_directory_root)
-    versions = resolve_runtime_versions()
+async def _authenticated_bootstrap() -> None:
+    """Authenticate once, sync the durable credential, and release probe state."""
+
+    socket_path, credential_file, working_directory_root, _mcp_origin, _attested = (
+        _runtime_configuration()
+    )
+    _prepare_runtime_boundary(socket_path, credential_file, working_directory_root)
     probe_paths = create_ephemeral_runtime_paths(working_directory_root, "startup-auth")
     credential_identity = enrolled_auth_identity(credential_file)
     probe_auth_link: Path | None = None
@@ -82,9 +65,31 @@ async def run() -> None:
                 )
         finally:
             remove_ephemeral_runtime_paths(probe_paths, root=working_directory_root)
+    _validate_directories(socket_path, working_directory_root)
+    require_writable_credential_mount(credential_file)
 
-    def runtime_factory(config: AgentRuntimeConfig) -> AgentRuntime:
-        return create_confined_runtime(config)
+
+async def _serve_after_authenticated_bootstrap() -> None:
+    """Build the long-lived server only in the fresh post-bootstrap process."""
+
+    import uvicorn
+    from apps.codex_agent.host import (
+        CODEX_AGENT_HOST_REQUEST_DRAIN_SECONDS,
+        CODEX_AGENT_HOST_TEARDOWN_DEADLINE_SECONDS,
+        create_codex_agent_app,
+        resolve_runtime_versions,
+        turn_lifecycle,
+    )
+
+    from nexus.services.codex_generation_operations import (
+        compose_codex_model_tool_plan_registry,
+    )
+
+    socket_path, credential_file, working_directory_root, mcp_origin, attested = (
+        _runtime_configuration()
+    )
+    _prepare_runtime_boundary(socket_path, credential_file, working_directory_root)
+    versions = resolve_runtime_versions()
 
     app = create_codex_agent_app(
         runtime_factory=runtime_factory,
@@ -93,7 +98,7 @@ async def run() -> None:
         versions=versions,
         model_tool_registry=compose_codex_model_tool_plan_registry(),
         mcp_origin=mcp_origin,
-        model_tool_network_attested=model_tool_network_attested,
+        model_tool_network_attested=attested,
     )
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     owned_identity: tuple[int, int] | None = None
@@ -119,6 +124,40 @@ async def run() -> None:
         # admitted turn it interrupted is still closing its runtime. Reap it here so the
         # native process tree never outlives this container's graceful stop.
         await turn_lifecycle(app).drain(CODEX_AGENT_HOST_TEARDOWN_DEADLINE_SECONDS)
+
+
+def _runtime_configuration() -> tuple[Path, Path, Path, str, bool]:
+    socket_path = required_absolute_path(_SOCKET_ENV)
+    credential_file = required_absolute_path(_CREDENTIAL_FILE_ENV)
+    working_directory_root = required_absolute_path(_WORKING_DIRECTORY_ROOT_ENV)
+    mcp_origin = _required_environment(_MCP_ORIGIN_ENV)
+    model_tool_network_attested = _required_model_tool_network_attestation()
+    return (
+        socket_path,
+        credential_file,
+        working_directory_root,
+        mcp_origin,
+        model_tool_network_attested,
+    )
+
+
+def _prepare_runtime_boundary(
+    socket_path: Path,
+    credential_file: Path,
+    working_directory_root: Path,
+) -> None:
+    reject_subscription_api_key_auth()
+    reject_ambient_codex_home()
+    _prepare_working_directory_root(working_directory_root)
+    _validate_directories(socket_path, working_directory_root)
+    require_private_executable_runtime_mount(working_directory_root)
+    require_writable_credential_mount(credential_file)
+    _remove_proven_stale_socket(socket_path)
+    sandbox_health.check(working_directory_root)
+
+
+def runtime_factory(config: AgentRuntimeConfig) -> AgentRuntime:
+    return create_confined_runtime(config)
 
 
 async def _probe_chatgpt_auth(state_root: Path) -> None:
@@ -245,8 +284,27 @@ def _unlink_owned_socket(path: Path, identity: tuple[int, int] | None) -> None:
     path.unlink()
 
 
+def _exec_server_after_auth() -> Never:
+    os.execv(
+        sys.executable,
+        (
+            sys.executable,
+            "-m",
+            "apps.codex_agent.main",
+            _SERVE_AFTER_AUTH_ARGUMENT,
+        ),
+    )
+
+
 def main() -> None:
-    asyncio.run(run())
+    arguments = tuple(sys.argv[1:])
+    if not arguments:
+        asyncio.run(_authenticated_bootstrap())
+        _exec_server_after_auth()
+    if arguments == (_SERVE_AFTER_AUTH_ARGUMENT,):
+        asyncio.run(_serve_after_authenticated_bootstrap())
+        return
+    raise SystemExit("usage: python -m apps.codex_agent.main")
 
 
 if __name__ == "__main__":

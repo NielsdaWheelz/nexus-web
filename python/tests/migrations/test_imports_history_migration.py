@@ -1,4 +1,4 @@
-"""0225 proof: import history storage installs and baselines every extant import.
+"""0226 proof: import history storage installs and baselines every extant import.
 
 Risk: migration failure and schema/data incompatibility. The Imports workspace
 reads `media_upload_events` / `media_processing_events` as the only record of
@@ -237,12 +237,12 @@ def _seed_supported_snapshot(engine: Engine) -> dict[str, UUID]:
     return identities
 
 
-def test_0225_installs_history_storage_agreeing_with_the_orm_declaration(
+def test_0226_installs_history_storage_agreeing_with_the_orm_declaration(
     empty_migration_database_url: str,
 ) -> None:
     config = _migration_config()
 
-    command.upgrade(config, "0225")
+    command.upgrade(config, "0226")
 
     engine = create_engine(empty_migration_database_url)
     try:
@@ -257,9 +257,9 @@ def test_0225_installs_history_storage_agreeing_with_the_orm_declaration(
     finally:
         engine.dispose()
 
-    assert actual_head == "0225", f"0225 did not become the applied head: {actual_head!r}"
-    assert ScriptDirectory.from_config(config).get_current_head() == "0225", (
-        "0225 must be the migration catalog head"
+    assert actual_head == "0226", f"0226 did not become the applied head: {actual_head!r}"
+    assert ScriptDirectory.from_config(config).get_current_head() == "0226", (
+        "0226 must be the migration catalog head"
     )
     for name in _HISTORY_TABLES:
         assert reflected[name] == declared[name], (
@@ -279,16 +279,16 @@ def test_0225_installs_history_storage_agreeing_with_the_orm_declaration(
     )
 
 
-def test_0225_records_one_baseline_per_extant_upload_session_and_source_attempt(
+def test_0226_records_one_baseline_per_extant_upload_session_and_source_attempt(
     empty_migration_database_url: str,
 ) -> None:
     config = _migration_config()
-    command.upgrade(config, "0224")
+    command.upgrade(config, "0225")
     engine = create_engine(empty_migration_database_url)
     try:
         identities = _seed_supported_snapshot(engine)
 
-        command.upgrade(config, "0225")
+        command.upgrade(config, "0226")
 
         upload_events = _events(engine, _UPLOAD_EVENTS_QUERY)
         processing_events = _events(engine, _PROCESSING_EVENTS_QUERY)
@@ -305,16 +305,16 @@ def test_0225_records_one_baseline_per_extant_upload_session_and_source_attempt(
     assert retained_attempts == {
         identities["failed_attempt_id"],
         identities["succeeded_attempt_id"],
-    }, f"0225 lost pre-cut source attempts: {retained_attempts!r}"
+    }, f"0226 lost pre-cut source attempts: {retained_attempts!r}"
     assert retained_sessions == {
         identities["open_session_id"],
         identities["published_session_id"],
-    }, f"0225 lost pre-cut upload sessions: {retained_sessions!r}"
+    }, f"0226 lost pre-cut upload sessions: {retained_sessions!r}"
 
     assert [event["event_type"] for event in upload_events] == [
         "HistoryBaseline",
         "HistoryBaseline",
-    ], f"0225 must record exactly one upload baseline per session: {upload_events!r}"
+    ], f"0226 must record exactly one upload baseline per session: {upload_events!r}"
     assert {event["owner_id"]: event["payload"] for event in upload_events} == {
         identities["open_session_id"]: {"generation": 3},
         identities["published_session_id"]: {"generation": 1},
@@ -323,7 +323,7 @@ def test_0225_records_one_baseline_per_extant_upload_session_and_source_attempt(
     assert [event["event_type"] for event in processing_events] == [
         "HistoryBaseline",
         "HistoryBaseline",
-    ], f"0225 must record exactly one processing baseline per attempt: {processing_events!r}"
+    ], f"0226 must record exactly one processing baseline per attempt: {processing_events!r}"
     assert [event["payload"] for event in processing_events] == [
         {
             "source_attempt_id": str(identities["failed_attempt_id"]),
@@ -346,11 +346,11 @@ def test_0225_records_one_baseline_per_extant_upload_session_and_source_attempt(
         )
 
 
-def test_0225_preflight_rejects_an_uncatalogued_attempt_error_code(
+def test_0226_preflight_rejects_an_uncatalogued_attempt_error_code(
     empty_migration_database_url: str,
 ) -> None:
     config = _migration_config()
-    command.upgrade(config, "0224")
+    command.upgrade(config, "0225")
     engine = create_engine(empty_migration_database_url)
     try:
         identities = _seed_supported_snapshot(engine)
@@ -361,7 +361,7 @@ def test_0225_preflight_rejects_an_uncatalogued_attempt_error_code(
             )
 
         with pytest.raises(RuntimeError) as rejection:
-            command.upgrade(config, "0225")
+            command.upgrade(config, "0226")
 
         with engine.connect() as connection:
             actual_head = connection.scalar(text("SELECT version_num FROM alembic_version"))
@@ -372,18 +372,18 @@ def test_0225_preflight_rejects_an_uncatalogued_attempt_error_code(
     assert "E_NOT_A_CATALOGUED_CODE" in str(rejection.value), (
         f"the preflight must name the offending code: {rejection.value}"
     )
-    assert actual_head == "0224", (
-        f"a rejected preflight leaves the schema at 0224: head={actual_head!r}"
+    assert actual_head == "0225", (
+        f"a rejected preflight leaves the schema at 0225: head={actual_head!r}"
     )
     assert not history_tables, (
         f"a rejected preflight runs before any DDL: {sorted(history_tables)!r}"
     )
 
 
-def test_0225_downgrade_is_unsupported() -> None:
+def test_0226_downgrade_is_unsupported() -> None:
     config = _migration_config()
 
-    module = ScriptDirectory.from_config(config).get_revision("0225").module
+    module = ScriptDirectory.from_config(config).get_revision("0226").module
 
     with pytest.raises(NotImplementedError):
         module.downgrade()
@@ -393,11 +393,11 @@ def test_history_recorded_after_the_cut_reads_back_over_the_baseline_and_dies_wi
     empty_migration_database_url: str,
 ) -> None:
     config = _migration_config()
-    command.upgrade(config, "0224")
+    command.upgrade(config, "0225")
     engine = create_engine(empty_migration_database_url)
     try:
         identities = _seed_supported_snapshot(engine)
-        command.upgrade(config, "0225")
+        command.upgrade(config, "0226")
         owner = UploadHistoryOwner(
             session_id=identities["published_session_id"],
             media_id=present(identities["media_id"]),

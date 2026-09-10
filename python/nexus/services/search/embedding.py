@@ -9,15 +9,50 @@ platform credentials remain a deployment defect.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from provider_runtime.errors import NonGenerationCallFailed
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
-from nexus.services.semantic_chunks import build_text_embedding, transcript_embedding_dimensions
+from nexus.services.semantic_chunks import (
+    build_text_embedding,
+    build_text_embedding_async,
+    transcript_embedding_dimensions,
+)
 
 logger = get_logger(__name__)
+
+SEMANTIC_RESULT_TYPES = ("content_chunk", "page", "note_block")
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedSearchEmbedding:
+    """Completed external query preparation, including a classified unavailable result."""
+
+    query: str
+    value: tuple[str, list[float]] | None
+
+
+async def prepare_search_embedding(q: str, result_types: list[str]) -> PreparedSearchEmbedding:
+    """Await query preparation outside the retrieval transaction."""
+    try:
+        embedding = await build_text_embedding_async(q)
+    except NonGenerationCallFailed as exc:
+        logger.warning(
+            "search_semantic_embedding_unavailable_lexical_fallback",
+            error=type(exc.failure).__name__,
+            result_types=",".join(result_types),
+        )
+        return PreparedSearchEmbedding(q, None)
+    if len(embedding[1]) != transcript_embedding_dimensions():
+        raise ApiError(
+            ApiErrorCode.E_APP_SEARCH_FAILED,
+            "Embedding provider returned an invalid response.",
+        )
+    return PreparedSearchEmbedding(q, embedding)
 
 
 def _query_has_full_text_terms(db: Session, q: str) -> bool:

@@ -7,6 +7,7 @@ import json
 import os
 import re
 import stat
+import subprocess
 import tempfile
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -656,17 +657,57 @@ def _state_lock(repo_root: Path, name: str) -> Iterator[None]:
 
 @contextmanager
 def workspace_heavy_lock(repo_root: Path, *, blocking: bool = True) -> Iterator[Path]:
-    """Serialize memory-heavy work across every controller for one checkout.
+    """Serialize memory-heavy work across every clone of one repository.
 
     ``blocking=False`` acquires the lock without waiting and raises
     ``BlockingIOError`` when another run already holds it, so a single-active-run
     lane can report ``NOT_RUN`` instead of queueing behind the first run.
     """
     root = canonical_repo_root(repo_root)
-    identity = hashlib.sha256(os.fsencode(_git_common_identity(root))).hexdigest()[:16]
-    path = Path(tempfile.gettempdir()) / f"nexus-test-heavy-{identity}.lock"
+    lineage = _git_lineage_identity(root)
+    owner = f"lineage:{lineage}" if lineage is not None else f"git:{_git_common_identity(root)}"
+    identity = hashlib.sha256(os.fsencode(owner)).hexdigest()[:16]
+    path = Path("/tmp") / f"nexus-test-heavy-{identity}.lock"
     with _locked_path(path, blocking=blocking):
         yield path
+
+
+def _git_lineage_identity(repo_root: Path) -> str | None:
+    try:
+        shallow = subprocess.run(
+            ("git", "-C", str(repo_root), "rev-parse", "--is-shallow-repository"),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as error:
+        raise RuntimeContractError("could not inspect Git history for the host lock") from error
+    if shallow.returncode != 0:
+        return None
+    shallow_value = shallow.stdout.strip()
+    if shallow_value == "true":
+        raise RuntimeContractError(
+            "memory-heavy proof requires complete Git history for its host lock"
+        )
+    if shallow_value != "false":
+        raise RuntimeContractError("Git returned an invalid shallow-repository state")
+    try:
+        roots = subprocess.run(
+            ("git", "-C", str(repo_root), "rev-list", "--max-parents=0", "HEAD"),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as error:
+        raise RuntimeContractError("could not inspect Git lineage for the host lock") from error
+    if roots.returncode != 0:
+        return None
+    revisions = tuple(sorted(set(roots.stdout.splitlines())))
+    if not revisions:
+        return None
+    if any(_FINGERPRINT.fullmatch(revision) is None for revision in revisions):
+        raise RuntimeContractError("Git returned an invalid repository lineage root")
+    return ",".join(revisions)
 
 
 def _git_common_identity(repo_root: Path) -> Path:

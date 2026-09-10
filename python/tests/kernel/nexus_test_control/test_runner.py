@@ -818,8 +818,10 @@ def test_complete_static_platform_runs_every_owned_check(tmp_path: Path) -> None
     shell_paths = (
         "deploy/cloudflare/apply-r2-cors.sh",
         "deploy/cloudflare/apply-r2-lifecycle.sh",
+        "deploy/hetzner/backend-publisher-workspace.sh",
         "deploy/hetzner/deploy.sh",
         "deploy/hetzner/fetch-release-bundle.sh",
+        "deploy/hetzner/prove-codex-capacity.sh",
         "deploy/hetzner/provision.sh",
         "deploy/hetzner/reconcile-oracle.sh",
         "deploy/hetzner/sync-env.sh",
@@ -827,6 +829,7 @@ def test_complete_static_platform_runs_every_owned_check(tmp_path: Path) -> None
         "deploy/supabase/verify-auth-config.sh",
         "deploy/vercel/sync-env.sh",
         "deploy/vercel/sync-resource-sharing-firewall.sh",
+        "scripts/ci-proof-artifact.sh",
     )
     for path in shell_paths:
         _write(tmp_path / path, "#!/usr/bin/env bash\nset -eu\n")
@@ -994,8 +997,10 @@ def test_complete_fast_commands_are_fixed_to_their_final_owners(tmp_path: Path) 
     for path in (
         "deploy/cloudflare/apply-r2-cors.sh",
         "deploy/cloudflare/apply-r2-lifecycle.sh",
+        "deploy/hetzner/backend-publisher-workspace.sh",
         "deploy/hetzner/deploy.sh",
         "deploy/hetzner/fetch-release-bundle.sh",
+        "deploy/hetzner/prove-codex-capacity.sh",
         "deploy/hetzner/provision.sh",
         "deploy/hetzner/reconcile-oracle.sh",
         "deploy/hetzner/sync-env.sh",
@@ -1003,6 +1008,7 @@ def test_complete_fast_commands_are_fixed_to_their_final_owners(tmp_path: Path) 
         "deploy/supabase/verify-auth-config.sh",
         "deploy/vercel/sync-env.sh",
         "deploy/vercel/sync-resource-sharing-firewall.sh",
+        "scripts/ci-proof-artifact.sh",
     ):
         _write(tmp_path / path, "#!/usr/bin/env bash\nset -eu\n")
     _write(tmp_path / "deploy/hetzner/docker-compose.yml", "services: {}\n")
@@ -1457,10 +1463,11 @@ def test_release_artifact_image_build_failure_is_setup_and_skips_pytest(
     assert [command["tool"] for command in _commands(repo_root)] == ["git", "docker"]
 
 
-def test_android_host_uses_the_fixed_synthetic_client_and_host_test_task(tmp_path: Path) -> None:
+def test_android_host_discovers_the_sdk_and_uses_the_fixed_host_contract(
+    tmp_path: Path,
+) -> None:
     android_root = tmp_path / "apps/android"
-    sdk = tmp_path / "android-sdk"
-    sdk.mkdir()
+    (tmp_path / "Android/Sdk").mkdir(parents=True)
     _write(
         android_root / "app/src/test/java/app/nexus/SampleTest.kt",
         "package app.nexus\nclass SampleTest\n",
@@ -1469,7 +1476,6 @@ def test_android_host_uses_the_fixed_synthetic_client_and_host_test_task(tmp_pat
     _write_executable(android_root / "gradlew")
     environment = {
         **_tool_environment(tmp_path),
-        "ANDROID_HOME": str(sdk),
         "NEXUS_GOOGLE_WEB_CLIENT_ID": "production-shaped-value",
     }
     context = CapabilityContext(tmp_path, Workflow.FULL, ())
@@ -1479,7 +1485,39 @@ def test_android_host_uses_the_fixed_synthetic_client_and_host_test_task(tmp_pat
     assert result.evidence.status is RunStatus.PASS
     command = _commands(tmp_path)[0]
     assert command["argv"] == ["--no-daemon", ":app:testDebugUnitTest"]
+    assert "ANDROID_HOME" in command["environment"]
     assert command["google_client_id"] == "nexus-test.apps.googleusercontent.com"
+
+
+def test_android_host_does_not_mask_conflicting_sdk_roots_with_local_properties(
+    tmp_path: Path,
+) -> None:
+    android_root = tmp_path / "apps/android"
+    first_sdk = tmp_path / "first-sdk"
+    second_sdk = tmp_path / "second-sdk"
+    first_sdk.mkdir()
+    second_sdk.mkdir()
+    _write(
+        android_root / "app/src/test/java/app/nexus/SampleTest.kt",
+        "package app.nexus\nclass SampleTest\n",
+    )
+    _write(android_root / "local.properties", f"sdk.dir={first_sdk}\n")
+    _write_executable(android_root / "gradlew")
+    environment = {
+        **_tool_environment(tmp_path),
+        "ANDROID_HOME": str(first_sdk),
+        "ANDROID_SDK_ROOT": str(second_sdk),
+    }
+
+    result = run_capability(
+        CapabilityContext(tmp_path, Workflow.FULL, ()),
+        Capability.ANDROID_HOST,
+        environment,
+    )
+
+    assert result.evidence.status is RunStatus.NOT_RUN
+    assert result.detail == "Android SDK is absent"
+    assert not (tmp_path / "commands.jsonl").exists()
 
 
 def test_android_release_control_owns_physical_device_and_exact_signed_methods(
@@ -3402,10 +3440,20 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
     password_users: list[str] = []
     invited_users: list[str] = []
     entitlements: list[str] = []
+    data_plane_resets: list[str] = []
     artifact = tmp_path / ".nexus-test/builds/fingerprint"
     _write(artifact / "server.js", "export {};\n")
 
     class Ports(runner._RunnerPorts):
+        def reset_run_data_plane(
+            self,
+            _repo_root: Path,
+            _environment: Mapping[str, str],
+            run: OwnedTestRun,
+        ) -> None:
+            assert process_roles == []
+            data_plane_resets.append(run.run_id)
+
         def browser_installed(self, _repo_root: Path, _environment: Mapping[str, str]) -> bool:
             return True
 
@@ -3599,6 +3647,7 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
     assert bundle.evidence.status is RunStatus.PASS
     assert journeys.evidence.status is RunStatus.PASS
     assert build_calls == ["build"]
+    assert data_plane_resets == ["0123456789abcdef"]
     assert process_roles == [
         "external",
         "provider-api-peer",

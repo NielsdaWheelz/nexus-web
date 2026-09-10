@@ -435,7 +435,27 @@
         "apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingScheduler.kt",
         "apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingStateCodec.kt",
         "apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingStore.kt",
-        "apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingTransferJobService.kt"
+        "apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingTransferJobService.kt",
+        "python/nexus/services/generation_backend.py",
+        "python/tests/kernel/test_generation_terminal_acceptance.py",
+        "python/tests/kernel/test_tool_implementation_authority.py",
+        "python/tests/service/test_tool_database_scheduling.py",
+        "python/nexus/services/tool_runtime/execution.py",
+        "python/tests/service/test_tool_async_transactions.py",
+        "python/nexus/services/generation_history.py",
+        "python/tests/kernel/test_generation_history.py",
+        "migrations/alembic/versions/0225_shared_agent_kernel.py",
+        "python/tests/migrations/test_shared_agent_kernel_cutover.py",
+        "python/nexus/db/async_session.py",
+        "python/nexus/services/provider_generation_backend.py",
+        "python/tests/service/test_shared_generation_stop.py",
+        "docs/cutovers/shared-agent-kernel-hard-cutover.md",
+        "python/tests/kernel/test_provider_terminal_acceptance.py",
+        "python/tests/service/test_chat_generation_recovery_usage.py",
+        "python/tests/testkit/provider_generation.py",
+        "python/tests/service/test_chat_cancel_recovery_admission.py",
+        "python/tests/testkit/chat_generation_recovery.py",
+        "python/tests/service/test_chat_terminal_cancellation.py"
       ],
       "proofs": [
         "pytest:python/tests/service/test_durable_job_replay.py",
@@ -449,11 +469,24 @@
         "pytest:python/tests/service/test_agent_tools_mcp_gate.py::test_public_mcp_mount_admits_only_a_live_bearer_on_the_exact_protocol",
         "gradle:apps/android/app/src/test/java/app/nexus/android/offline/OfflineMediaStoreContractTest.kt",
         "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingLifecycleTest.kt",
-        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingSchedulerStoreBoundaryTest.kt"
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingSchedulerStoreBoundaryTest.kt",
+        "pytest:python/tests/kernel/test_generation_terminal_acceptance.py::test_late_native_evidence_cannot_commit_or_publish_a_generation_terminal",
+        "pytest:python/tests/kernel/test_tool_implementation_authority.py::test_frozen_tool_snapshot_and_bearer_digest_bind_handler_implementation",
+        "pytest:python/tests/service/test_tool_database_scheduling.py::test_tool_database_wait_keeps_the_provider_event_loop_live",
+        "pytest:python/tests/service/test_tool_async_transactions.py::test_network_releases_database_and_cancelled_write_preserves_atomic_receipt",
+        "pytest:python/tests/kernel/test_generation_history.py::test_historical_selection_survives_without_accepting_old_tool_authority",
+        "pytest:python/tests/migrations/test_shared_agent_kernel_cutover.py::test_shared_kernel_cutover_requires_drain_and_preserves_history",
+        "pytest:python/tests/service/test_shared_generation_stop.py::test_stopped_parent_retains_paid_child_and_cannot_resume_its_successor",
+        "pytest:python/tests/kernel/test_provider_terminal_acceptance.py::test_late_provider_evidence_cannot_commit_publish_or_execute_a_tool_decision",
+        "pytest:python/tests/service/test_chat_generation_recovery_usage.py::test_resumed_chat_stop_publishes_original_paid_usage_and_retires_continuation",
+        "pytest:python/tests/service/test_chat_cancel_recovery_admission.py::test_cancelled_recovery_ignores_provider_and_inflight_admission",
+        "pytest:python/tests/service/test_chat_terminal_cancellation.py::test_late_chat_cancellation_preserves_native_child_and_paid_usage"
       ],
       "capabilities": [
         "service",
-        "android-host"
+        "android-host",
+        "kernel-python",
+        "migrations"
       ]
     },
     {
@@ -543,6 +576,7 @@
         "pytest:python/tests/kernel/nexus_test_control/test_runner.py",
         "pytest:python/tests/kernel/nexus_test_control/test_provider_runtime_pin.py::test_provider_runtime_is_materialized_from_the_pin_without_retargeting_source",
         "pytest:python/tests/kernel/nexus_test_control/test_android_device_method_scope.py::test_exact_android_device_proof_uses_one_instrumentation_method",
+        "pytest:python/tests/kernel/test_codex_host_process_lifecycle.py::test_codex_host_separates_bootstrap_server_and_health_memory_lifetimes",
         "pytest:python/tests/kernel/test_generation_contract.py",
         "pytest:python/tests/kernel/test_generation_operation_adapters.py",
         "pytest:python/tests/kernel/test_generation_policy.py::test_exact_generation_policy_is_total_content_derived_and_profile_free",
@@ -648,7 +682,7 @@
         "apps/web/src/components/nexus/useAddContentSession.ts",
         "apps/web/src/components/nexus/useNexusController.ts",
         "apps/web/src/components/notes/NoteBodyEditor.tsx",
-        "migrations/alembic/versions/0225_imports_history.py",
+        "migrations/alembic/versions/0226_imports_history.py",
         "python/nexus/schemas/import_history.py",
         "python/nexus/services/import_history.py",
         "python/nexus/services/content_indexing.py",
@@ -681,7 +715,7 @@
         "vitest:apps/web/src/components/imports/ImportsWorkspace.browser.test.tsx",
         "vitest:apps/web/src/app/(authenticated)/imports/ImportsPaneBody.browser.test.tsx",
         "vitest:apps/web/src/lib/media/ingestionClient.unit.test.ts",
-        "pytest:python/tests/migrations/test_imports_history_migration.py::test_0225_records_one_baseline_per_extant_upload_session_and_source_attempt",
+        "pytest:python/tests/migrations/test_imports_history_migration.py::test_0226_records_one_baseline_per_extant_upload_session_and_source_attempt",
         "pytest:python/tests/service/test_import_source_recovery.py::test_succeeded_attempt_with_a_later_dead_job_is_complete_and_unrepairable",
         "pytest:python/tests/service/test_import_index_recovery.py::test_stale_revision_cannot_requeue_a_dead_reindex_job"
       ],
@@ -828,6 +862,7 @@
         "python/pyproject.toml",
         "python/nexus/release_artifact.py",
         "python/uv.lock",
+        "scripts/ci-proof-artifact.sh",
         "python/tests/testkit/host_release.py",
         "python/tests/testkit/production_deploy.py",
         "python/tests/testkit/release_bundle.py"
@@ -938,6 +973,7 @@
         "python/tests/kernel/nexus_test_control/test_llm_tools_capability.py",
         "python/tests/llm_tools_contract/**/*.py",
         "python/uv.lock",
+        "scripts/ci-proof-artifact.sh",
         "testdata/proofs.json",
         ".dockerignore",
         "python/nexus/services/node_ingest.py",

@@ -70,7 +70,7 @@ _ROW_FINGERPRINT = "c" * 64
 
 async def _unused_web(value: object, context: object) -> HandlerSuccess[dict[str, object]]:
     del value, context
-    return HandlerSuccess(value={})
+    return HandlerSuccess(value={}, actual_attempts=0)
 
 
 def _tools():
@@ -79,6 +79,7 @@ def _tools():
             spec=entry.spec,
             execute=Available(_unused_web),
             replay_policy=ReplayPolicy.ReDispatchable,
+            implementation_revision="test_generation_policy.v1",
             policy_epoch=PolicyEpoch("generation-policy-proof-v1"),
             policy_inputs={"owner": "generation-policy-proof"},
         )
@@ -89,6 +90,7 @@ def _tools():
             spec=WEB_SEARCH_SPEC,
             execute=Available(_unused_web),
             replay_policy=ReplayPolicy.BilledOnce,
+            implementation_revision="test_generation_policy.v1",
             policy_epoch=PolicyEpoch("generation-policy-proof-v1"),
             policy_inputs={"owner": "generation-policy-proof"},
         ),
@@ -358,7 +360,9 @@ async def _prove_total_policy_and_frozen_admission() -> None:
         )
         admitted[operation] = spec
         assert spec.selection == operation_policy.selection
-        assert spec.policy_revision == policy.revision
+        assert spec.policy_revision == policy.revision, (
+            "background admission replaced the frozen policy revision"
+        )
         assert spec.selection_source == "BackgroundPolicy"
         assert generation_spec_document(spec).value == spec.model_dump(mode="json", by_alias=True)
 

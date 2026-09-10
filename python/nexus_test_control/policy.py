@@ -179,7 +179,30 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     ),
     "scripts/agency_setup.sh": (
         ("uv sync --all-extras --locked", "bun install --frozen-lockfile"),
-        ("DATABASE_URL_TEST", "nexus_test", "tests/test_db.py", "make test"),
+        (
+            "DATABASE_URL_TEST",
+            "DATABASE_URL_TEST_MIGRATIONS",
+            "nexus_test",
+            "nexus_test_migrations",
+            "tests/test_db.py",
+            "make test",
+        ),
+    ),
+    "scripts/ci-proof-artifact.sh": (
+        (
+            "test-results/.nexus-ignore-contract",
+            "CI evidence staging admits only changed, pr, or full",
+            "nexus-test-run-claim.XXXXXXXX",
+            "NEXUS_TEST_RUN_CLAIM_FD",
+            "test controller did not publish one exact run claim",
+            "test controller claimed a pre-existing run evidence directory",
+            "run evidence contains a symlink, special file, or foreign owner",
+            "terminal run evidence does not match the CI invocation",
+            "nexus-ci-evidence.XXXXXXXX",
+            'cp --archive --reflink=auto -- "$run_directory" "$evidence_workspace/runs/"',
+            'rm --recursive --force --one-file-system -- "$evidence_workspace"',
+        ),
+        ('rm --recursive --force --one-file-system -- "$runs"',),
     ),
     ".github/workflows/ci.yml": (
         (
@@ -187,6 +210,10 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
             "pull_request_number:",
             "expected_head_sha:",
             "expected_base_sha:",
+            "type: choice",
+            "default: changed",
+            "NEXUS_CI_EVENT_NAME: ${{ github.event_name }}",
+            "NEXUS_CI_PROOF: ${{ inputs.proof }}",
             "permissions: {}",
             "pull-requests: read",
             "refs/pull/{0}/head",
@@ -198,13 +225,25 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
             'merge_timestamp="$(git show --no-patch --format=%cI "$EXPECTED_HEAD_SHA")"',
             'GIT_COMMITTER_DATE="$merge_timestamp"',
             "git rev-list --parents -n 1 HEAD",
-            'run: ./scripts/test changed --base "$NEXUS_TEST_BASE_SHA"',
+            'scripts/ci-proof-artifact.sh run changed --base "$NEXUS_TEST_BASE_SHA"',
+            "scripts/ci-proof-artifact.sh run pr",
+            "pull_request:*|workflow_dispatch:changed)",
+            "workflow_dispatch:pr)",
+            "unsupported CI proof selection",
             "if: github.event_name == 'push'",
-            "run: ./scripts/test full",
-            "if: always()",
+            "run: scripts/ci-proof-artifact.sh run full",
+            "if: ${{ always() && steps.proof.outputs.path != '' }}",
+            "path: ${{ steps.proof.outputs.path }}/",
+            "if-no-files-found: error",
+            "include-hidden-files: true",
+            'scripts/ci-proof-artifact.sh cleanup "$NEXUS_CI_EVIDENCE_PATH"',
         ),
         (
             "github.event_name != 'workflow_dispatch'",
+            'run: ./scripts/test changed --base "$NEXUS_TEST_BASE_SHA"',
+            "run: ./scripts/test full",
+            "path: test-results/",
+            "if-no-files-found: ignore",
             "make test",
             "pytest",
             "playwright test",
@@ -291,6 +330,7 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
 _CONTROLLER_COMMAND_OWNERS: dict[str, str] = {
     "confidence": "scripts/agency_verify.sh",
     "changed": ".github/workflows/ci.yml",
+    "pr": ".github/workflows/ci.yml",
     "full": ".github/workflows/ci.yml",
     "nightly": ".github/workflows/nightly.yml",
     "release": ".github/workflows/release.yml",
@@ -708,9 +748,20 @@ def _executable_route_violations(repo_root: Path) -> tuple[PolicyViolation, ...]
 
     for relative, text in surfaces.items():
         for line_number, line in _executable_lines(text):
-            for match in re.finditer(
-                r"(?:^|[;&|]\s*|\bexec\s+)\./scripts/test\s+([a-z-]+)\b", line
-            ):
+            controller_matches = list(
+                re.finditer(
+                    r"(?:^|[;&|]\s*|\bexec\s+)\./scripts/test\s+([a-z-]+)\b",
+                    line,
+                )
+            )
+            controller_matches.extend(
+                re.finditer(
+                    r"(?:^|[;&|]\s*)(?:\./)?scripts/ci-proof-artifact\.sh\s+run\s+"
+                    r"(changed|pr|full)\b",
+                    line,
+                )
+            )
+            for match in controller_matches:
                 command = match.group(1)
                 controller_counts[(relative, command)] = (
                     controller_counts.get((relative, command), 0) + 1
@@ -1192,7 +1243,11 @@ def repository_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
             continue
         text = path.read_text(encoding="utf-8")
         missing = tuple(fragment for fragment in required if fragment not in text)
-        stale = tuple(fragment for fragment in forbidden if fragment in text)
+        stale = tuple(
+            fragment
+            for fragment in forbidden
+            if _forbidden_route_fragment_is_present(text, fragment)
+        )
         if missing or stale:
             violations.append(
                 PolicyViolation(
@@ -1217,6 +1272,18 @@ def repository_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
     violations.extend(_package_runner_violations(repo_root))
     violations.extend(_codex_agent_runtime_construction_violations(repo_root))
     return _sorted(violations)
+
+
+def _forbidden_route_fragment_is_present(text: str, fragment: str) -> bool:
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", fragment) is None:
+        return fragment in text
+    return (
+        re.search(
+            rf"(?<![A-Za-z0-9_]){re.escape(fragment)}(?![A-Za-z0-9_])",
+            text,
+        )
+        is not None
+    )
 
 
 def _load_json(

@@ -30,6 +30,7 @@ class FrozenRunLimitsSnapshot(_FrozenSnapshot):
 class FrozenToolGrantSnapshot(_FrozenSnapshot):
     binding_policy_revision: str
     id: str
+    implementation_revision: str
     limits: FrozenToolLimitsSnapshot
     replay_policy: Literal["BilledOnce", "ReDispatchable"]
     tool_contract_revision: str

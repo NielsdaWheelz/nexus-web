@@ -20,6 +20,14 @@ require_tool supabase
 # Sensitivity builds fresh offline environments. Reinstalling hydrates every
 # locked artifact even when this workspace's existing venv is already current.
 uv sync --all-extras --locked --reinstall --directory "$repo_root/python"
+
+# Full and higher gates archive the immutable provider-runtime and llm-tools
+# commits from adjacent developer clones, then materialize them offline. Fetch
+# only missing objects and hydrate their exact locks without moving either
+# developer checkout's HEAD, refs, index, or working tree.
+PYTHONPATH="$repo_root/python" "$repo_root/python/.venv/bin/python" \
+    -m nexus_test_control.setup_dependencies --repo-root "$repo_root"
+
 bun install --frozen-lockfile --cwd "$repo_root/apps/web"
 bun install --frozen-lockfile --cwd "$repo_root/node/ingest"
 

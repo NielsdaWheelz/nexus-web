@@ -38,6 +38,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
+from nexus.db.async_session import open_async_session
 from nexus.services.agent_tool_grants import AgentToolGrantClaims, verify_agent_tool_grant
 from nexus.services.tool_authority import (
     GenerationToolExecutor,
@@ -193,9 +194,9 @@ class ActiveAgentToolRegistry:
         with self._registry_lock:
             return self._authorities.get(claims.jti)
 
-    def database_now(self) -> datetime:
-        with self.session_factory() as db:
-            value = db.scalar(text("SELECT clock_timestamp()"))
+    async def database_now(self) -> datetime:
+        async with open_async_session(self.session_factory) as db:
+            value = await db.scalar(text("SELECT clock_timestamp()"))
         if not isinstance(value, datetime):
             raise RuntimeError("database clock did not return a timestamp")
         return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
@@ -395,7 +396,7 @@ class AgentToolAuthority:
         """Authenticate the bearer facts and revalidate live durable authority."""
 
         try:
-            self._authorize_claims(claims)
+            await self._authorize_claims(claims)
         except ToolAuthorityRefused:
             await self._notify_once(on_policy_violation)
             return False
@@ -416,7 +417,7 @@ class AgentToolAuthority:
             self._call_started()
             started = True
             async with self._lock:
-                self._authorize_claims(claims)
+                await self._authorize_claims(claims)
                 return await self.executor.execute_canonical(
                     transport_kind="CodexMcp",
                     model_turn_seq=1,
@@ -447,7 +448,7 @@ class AgentToolAuthority:
             self._call_started()
             started = True
             async with self._lock:
-                self._authorize_claims(claims)
+                await self._authorize_claims(claims)
                 return self.executor.refuse_unknown_call(
                     transport_call_id=f"mcp:{request_id.key()}"
                 )
@@ -458,12 +459,17 @@ class AgentToolAuthority:
             if started:
                 self._call_finished()
 
-    def _authorize_claims(self, claims: AgentToolGrantClaims) -> None:
+    async def _authorize_claims(self, claims: AgentToolGrantClaims) -> None:
         if claims.jti != self.grant_jti:
             raise ToolAuthorityRefused("bearer nonce differs from mounted generation authority")
         authority = self.executor.authority
-        with authority.session_factory() as db, db.begin():
-            authority.authorize_in_current_transaction(db, claims)
+
+        def authorize(db: Session) -> None:
+            with db.begin():
+                authority.authorize_in_current_transaction(db, claims)
+
+        async with open_async_session(authority.session_factory) as database:
+            await database.run_sync(authorize)
 
     def _call_started(self) -> None:
         with self._activity_lock:
@@ -546,7 +552,7 @@ class CodexGenerationToolBinding:
             if admission.runtime_deadline_seconds != self.spec.bounds.turn_timeout_seconds:
                 raise ValueError("Codex admission runtime deadline differs from frozen bounds")
 
-            executor = compose_generation_tool_executor(
+            executor = await compose_generation_tool_executor(
                 session_factory=self.session_factory,
                 user_id=self.user_id,
                 owner=self.owner,
@@ -559,18 +565,25 @@ class CodexGenerationToolBinding:
                 raise ToolAuthorityRefused(
                     "Codex tool binding spec differs from the durable generation"
                 )
-            with self.session_factory() as db, db.begin():
-                if not lock_running_job_claim(db, context=self.job_context):
-                    raise ToolAuthorityRefused(
-                        "generation tool grant lost its claimed worker lease"
-                    )
-                job = get_job(db, self.job_context.job_id)
-                database_now = db.execute(text("SELECT clock_timestamp()")).scalar_one()
-                if job is None or job.lease_expires_at is None:
-                    raise ToolAuthorityRefused("generation tool grant has no live lease")
-                if not isinstance(database_now, datetime):
-                    raise AssertionError("database clock did not return a timestamp")
-                lease_expires_at = job.lease_expires_at
+
+            def read_lease(db: Session) -> tuple[datetime, datetime]:
+                with db.begin():
+                    if not lock_running_job_claim(db, context=self.job_context):
+                        raise ToolAuthorityRefused(
+                            "generation tool grant lost its claimed worker lease"
+                        )
+                    job = get_job(db, self.job_context.job_id)
+                    database_now = db.execute(text("SELECT clock_timestamp()")).scalar_one()
+                    if job is None or job.lease_expires_at is None:
+                        raise ToolAuthorityRefused("generation tool grant has no live lease")
+                    if not isinstance(database_now, datetime):
+                        raise AssertionError("database clock did not return a timestamp")
+                    lease_expires_at = job.lease_expires_at
+
+                    return database_now, lease_expires_at
+
+            async with open_async_session(self.session_factory) as database:
+                database_now, lease_expires_at = await database.run_sync(read_lease)
 
             admitted_at = datetime.fromisoformat(admission.admitted_at.removesuffix("Z") + "+00:00")
             issued = issue_generation_tool_grant(
@@ -744,7 +757,7 @@ def _create_mcp_app_for_authority(
     authority: Any,
     signing_key: SecretStr,
     on_policy_violation: Callable[[UUID], Awaitable[None]],
-    clock: Callable[[], datetime],
+    clock: Callable[[], Awaitable[datetime]],
     lifespan: Callable[[Any], AbstractAsyncContextManager[Any]] | None = None,
     mcp_origin: str,
 ) -> Any:
@@ -964,7 +977,7 @@ class _GrantGate(BaseHTTPMiddleware):
         app: Any,
         *,
         signing_key: SecretStr,
-        clock: Callable[[], datetime],
+        clock: Callable[[], Awaitable[datetime]],
         authorize_request: AgentToolRequestAuthorizer,
         max_body_bytes: int,
     ) -> None:
@@ -984,7 +997,7 @@ class _GrantGate(BaseHTTPMiddleware):
             claims = verify_agent_tool_grant(
                 authorization.removeprefix("Bearer "),
                 signing_key=self._signing_key,
-                now=self._clock(),
+                now=await self._clock(),
             )
         except ValueError:
             return Response(status_code=401)

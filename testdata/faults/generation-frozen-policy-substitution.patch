@@ -1,0 +1,12 @@
+diff --git a/python/nexus/services/generation_service.py b/python/nexus/services/generation_service.py
+--- a/python/nexus/services/generation_service.py
++++ b/python/nexus/services/generation_service.py
+@@ -189,7 +189,7 @@
+             selection_source="BackgroundPolicy",
+             pair=pair,
+             catalog_definition_revision=snapshot.catalog.definition_revision,
+-            policy_revision=self._policy.revision,
++            policy_revision="faulted-policy-revision",
+             workflow=operation_policy.workflow,
+             intent=intent,
+             prompt_template_revision=prompt_template_revision,

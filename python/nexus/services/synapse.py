@@ -63,7 +63,6 @@ from nexus.services import durable_step_journal as step_journal
 from nexus.services import generation_policy
 from nexus.services.codex_generation_contract import (
     GenerationTerminal,
-    NormalizedFailureCode,
 )
 from nexus.services.generation_intent import GenerationIntent
 from nexus.services.generation_spec import ImmutablePromptPayloadRef, generation_fact_digest
@@ -74,6 +73,7 @@ from nexus.services.llm_execution import (
     ExecutionRuntime,
     GenerationAdmissionInputsChanged,
     GenerationDispatchAborted,
+    GenerationFailureCode,
     GenerationUncertain,
     GenerationUncertainResolution,
     JobGenerationJournal,
@@ -261,8 +261,8 @@ def _encode_synapse_terminal(
     )
 
 
-def _encode_synapse_preaccept_failure(
-    code: NormalizedFailureCode,
+def _encode_synapse_failure(
+    code: GenerationFailureCode,
     detail: str,
 ) -> str:
     return _COMPLETED_SYNAPSE_ADAPTER.dump_json(
@@ -713,7 +713,7 @@ async def run_synapse_scan(
                     codex_terminal_evidence(terminal),
                     candidates=candidates,
                 ),
-                encode_preaccept_failure=_encode_synapse_preaccept_failure,
+                encode_failure=_encode_synapse_failure,
             )
         except GenerationAdmissionInputsChanged:
             db.rollback()

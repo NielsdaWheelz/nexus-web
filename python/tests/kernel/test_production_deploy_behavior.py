@@ -87,7 +87,9 @@ def test_codex_agent_host_is_private_worker_image_with_credential_and_socket_iso
         encoding="utf-8"
     )
     worker_image = (REPO_ROOT / "docker/Dockerfile.backend").read_text(encoding="utf-8")
+    policy_start = compose.index("\n  codex-egress-policy:\n") + 1
     start = compose.index("\n  nexus-codex-agent-host:\n") + 1
+    policy = compose[policy_start:start]
     end = compose.index("  migration:\n", start)
     host = compose[start:end]
     background_start = compose.index("  worker-background:\n")
@@ -113,6 +115,8 @@ def test_codex_agent_host_is_private_worker_image_with_credential_and_socket_iso
     assert "mem_limit: 384m" in host
     assert "memswap_limit: 384m" in host
     assert "cpus: 1.0" in host
+    assert "init: true" in host
+    assert "init: true" in policy
     assert "cap_drop:" in host and "- ALL" in host
     assert "no-new-privileges:true" in host
     assert "seccomp=unconfined" in host

@@ -29,7 +29,6 @@ from nexus.logging import get_logger
 from nexus.schemas.presence import Presence, Present, absent, present
 from nexus.services.codex_generation_contract import (
     GenerationTerminal,
-    NormalizedFailureCode,
     normalized_failure,
     retained_terminal_error_detail,
 )
@@ -68,6 +67,7 @@ from nexus.services.llm_execution import (
     ExecutionRuntime,
     GenerationAdmissionInputsChanged,
     GenerationDispatchAborted,
+    GenerationFailureCode,
     GenerationUncertain,
     GenerationUncertainResolution,
     JobGenerationJournal,
@@ -484,7 +484,7 @@ def enrich_metadata(
             encode_terminal=lambda terminal: _encode_metadata_terminal(
                 codex_terminal_evidence(terminal)
             ),
-            encode_preaccept_failure=_encode_metadata_preaccept_failure,
+            encode_failure=_encode_metadata_failure,
         )
 
     try:
@@ -704,15 +704,17 @@ def _normalize_terminal(
             assert_never(unreachable)
 
 
-def _failure_code(kind: NormalizedFailureCode) -> ApiErrorCode:
+def _failure_code(kind: GenerationFailureCode) -> ApiErrorCode:
     match kind:
+        case "cancelled":
+            return ApiErrorCode.E_GENERATION_CANCELLED
         case "quota":
             return ApiErrorCode.E_GENERATION_QUOTA
         case "timeout":
             return ApiErrorCode.E_GENERATION_TIMEOUT
         case "invalid_output":
             return ApiErrorCode.E_GENERATION_INVALID_OUTPUT
-        case "output_limit":
+        case "output_limit" | "turn_limit":
             return ApiErrorCode.E_GENERATION_OUTPUT_LIMIT
         case "context_too_large":
             return ApiErrorCode.E_GENERATION_CONTEXT_TOO_LARGE
@@ -744,8 +746,8 @@ def _encode_metadata_terminal(terminal: GenerationTerminal) -> EncodedGeneration
     )
 
 
-def _encode_metadata_preaccept_failure(
-    code: NormalizedFailureCode,
+def _encode_metadata_failure(
+    code: GenerationFailureCode,
     detail: str,
 ) -> str:
     return encode_step_result(_failed_result(error_code=_failure_code(code), detail=detail))

@@ -8,12 +8,10 @@ import json
 from collections.abc import Mapping
 from contextlib import AsyncExitStack
 from datetime import timedelta
-from importlib.util import find_spec
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any
 from uuid import UUID, uuid4
 
 import httpx
-import pytest
 from llm_tools import (
     WEB_SEARCH_SPEC,
     Available,
@@ -26,62 +24,59 @@ from pydantic import SecretStr
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-# BASE sensitivity overlays this proof without candidate production owners.
-_CUTOVER_PRESENT = find_spec("nexus.services.agent_tools_mcp") is not None
-
-if TYPE_CHECKING or _CUTOVER_PRESENT:
-    from nexus.jobs.queue import JobExecutionContext, enqueue_job
-    from nexus.schemas.llm import (
-        PrivacyDisclosure,
-        ProcessorChain,
-        SelectionPresentation,
-        SubscriptionBilling,
-    )
-    from nexus.schemas.presence import Absent, Present
-    from nexus.services.agent_tool_grants import issue_generation_tool_grant
-    from nexus.services.agent_tools_mcp import (
-        MAX_MCP_REQUEST_BODY_BYTES,
-        MCP_GRANT_RATE_BURST,
-        MCP_PATH,
-        MCP_PROTOCOL_VERSION,
-        MCP_SOURCE_RATE_BURST,
-        ActiveAgentToolRegistry,
-        AgentToolAuthority,
-        create_routed_agent_tools_mcp_app,
-    )
-    from nexus.services.generation_selection import CodexPersonalSelection
-    from nexus.services.generation_spec import (
-        CodexDispatchTargetSnapshot,
-        FrozenToolScope,
-        GenerationBounds,
-        GenerationSpec,
-        GenerationSpecFacts,
-        GenerationStreamBounds,
-        ImmutablePromptPayloadRef,
-        TextOutputSnapshot,
-        generation_fact_digest,
-        tool_scope_digest,
-    )
-    from nexus.services.llm_ledger import (
-        GenerationStart,
-        LlmCallOwner,
-        generation_spec_document,
-        start_generation_in_current_transaction,
-    )
-    from nexus.services.tool_authority import (
-        compose_generation_tool_executor,
-        read_tool_positions,
-    )
-    from nexus.services.tool_runtime.composition import (
-        ComposedToolRuntime,
-        compose_tool_runtime,
-        freeze_tool_plan_snapshot,
-    )
-    from nexus.services.tool_runtime.declarations import (
-        NEXUS_TOOL_DECLARATIONS,
-        NexusSearchSuccess,
-    )
-    from tests.testkit.queue_claims import claim_job_row
+from nexus.jobs.queue import JobExecutionContext, enqueue_job
+from nexus.schemas.llm import (
+    PrivacyDisclosure,
+    ProcessorChain,
+    SelectionPresentation,
+    SubscriptionBilling,
+)
+from nexus.schemas.presence import Absent, Present
+from nexus.services.agent_tool_grants import issue_generation_tool_grant
+from nexus.services.agent_tools_mcp import (
+    MAX_MCP_REQUEST_BODY_BYTES,
+    MCP_GRANT_RATE_BURST,
+    MCP_PATH,
+    MCP_PROTOCOL_VERSION,
+    MCP_SOURCE_RATE_BURST,
+    ActiveAgentToolRegistry,
+    AgentToolAuthority,
+    create_routed_agent_tools_mcp_app,
+)
+from nexus.services.generation_selection import CodexPersonalSelection
+from nexus.services.generation_spec import (
+    CodexDispatchTargetSnapshot,
+    FrozenToolScope,
+    GenerationBounds,
+    GenerationSpec,
+    GenerationSpecFacts,
+    GenerationStreamBounds,
+    ImmutablePromptPayloadRef,
+    TextOutputSnapshot,
+    generation_fact_digest,
+    tool_scope_digest,
+)
+from nexus.services.llm_ledger import (
+    GenerationStart,
+    LlmCallOwner,
+    generation_spec_document,
+    start_generation_in_current_transaction,
+)
+from nexus.services.tool_authority import (
+    compose_generation_tool_executor,
+    read_tool_positions,
+)
+from nexus.services.tool_runtime.composition import (
+    ComposedToolRuntime,
+    compose_tool_runtime,
+    freeze_tool_plan_snapshot,
+)
+from nexus.services.tool_runtime.declarations import (
+    NEXUS_TOOL_DECLARATIONS,
+    NexusSearchSuccess,
+)
+from tests.testkit.queue_claims import claim_job_row
+from tests.testkit.unreachable_state import delete_generations_by_ids, delete_jobs_by_ids
 
 _MCP_ORIGIN = "https://mcp.nexus.example.com/internal/agent-tools/mcp"
 _MCP_HOST = "https://mcp.nexus.example.com"
@@ -92,17 +87,28 @@ _WIRE_HEADERS = {
 
 
 def test_public_mcp_mount_admits_only_a_live_bearer_on_the_exact_protocol(
-    request: pytest.FixtureRequest,
+    engine: Engine,
 ) -> None:
     """Risk: the public MCP mount serves a bearer without live generation authority."""
 
-    assert _CUTOVER_PRESENT, "the grant-routed agent-tools MCP mount is absent"
-    request.getfixturevalue("committed_chat_state_isolation")
-    engine = cast(Engine, request.getfixturevalue("engine"))
-    asyncio.run(_prove_public_mcp_mount_gate(engine))
+    generation_id = uuid4()
+    owned_job_ids: list[UUID] = []
+    try:
+        asyncio.run(
+            _prove_public_mcp_mount_gate(
+                engine, generation_id=generation_id, owned_job_ids=owned_job_ids
+            )
+        )
+    finally:
+        with Session(engine) as db:
+            delete_generations_by_ids(db, generation_ids=(generation_id,))
+            delete_jobs_by_ids(db, job_ids=owned_job_ids)
+            db.commit()
 
 
-async def _prove_public_mcp_mount_gate(engine: Engine) -> None:
+async def _prove_public_mcp_mount_gate(
+    engine: Engine, *, generation_id: UUID, owned_job_ids: list[UUID]
+) -> None:
     invocations: list[str] = []
 
     async def execute_search(value: Any, context: Any) -> HandlerSuccess[NexusSearchSuccess]:
@@ -118,13 +124,13 @@ async def _prove_public_mcp_mount_gate(engine: Engine) -> None:
     scope = FrozenToolScope(admitted_refs=("library:proof",), predicates=())
     spec = _generation_spec(operation=operation, scope=scope)
     owner = LlmCallOwner(kind="artifact_build", id=uuid4())
-    generation_id = uuid4()
     worker_id = "agent-tools-mcp-gate-proof"
     user_id = uuid4()
     factory = sessionmaker(bind=engine, expire_on_commit=False)
 
     with Session(engine) as db:
         job = enqueue_job(db, kind="agent_tools_mcp_gate_proof", max_attempts=2)
+        owned_job_ids.append(job.id)
         claimed = claim_job_row(
             db,
             job_id=job.id,
@@ -150,7 +156,7 @@ async def _prove_public_mcp_mount_gate(engine: Engine) -> None:
         )
         db.commit()
 
-    executor = compose_generation_tool_executor(
+    executor = await compose_generation_tool_executor(
         session_factory=factory,
         user_id=user_id,
         owner=owner,
@@ -161,7 +167,7 @@ async def _prove_public_mcp_mount_gate(engine: Engine) -> None:
     signing_key = SecretStr("agent-tools-mcp-gate-proof-signing-key-0123456789")
     registry = ActiveAgentToolRegistry(session_factory=factory)
     registry.bind_operations((operation,))
-    now = registry.database_now()
+    now = await registry.database_now()
     grant_authority = executor.authority.grant_authority()
     issued = issue_generation_tool_grant(
         grant_authority,
@@ -408,6 +414,7 @@ def _controlled_runtime(handlers: Mapping[str, Any]) -> ComposedToolRuntime:
             spec=entry.spec,
             execute=Available(handlers.get(str(entry.spec.id), unexpected)),
             replay_policy=ReplayPolicy.ReDispatchable,
+            implementation_revision="test_agent_tools_mcp_gate.v1",
             policy_epoch=PolicyEpoch("agent-tools-mcp-gate-proof-v1"),
             policy_inputs={"owner": "agent-tools-mcp-gate-proof"},
         )
@@ -418,6 +425,7 @@ def _controlled_runtime(handlers: Mapping[str, Any]) -> ComposedToolRuntime:
             spec=WEB_SEARCH_SPEC,
             execute=Available(unexpected),
             replay_policy=ReplayPolicy.BilledOnce,
+            implementation_revision="test_agent_tools_mcp_gate.v1",
             policy_epoch=PolicyEpoch("agent-tools-mcp-gate-proof-v1"),
             policy_inputs={"owner": "agent-tools-mcp-gate-proof"},
         ),
