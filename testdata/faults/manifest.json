@@ -34,7 +34,7 @@
     {
       "id": "test-control-output-bounds-bypass",
       "patch": "testdata/faults/test-control-output-bounds-bypass.patch",
-      "sha256": "ef0990a8f12b7b5aa852009755caf0b6392864d55f46842c8082356e31cf3039",
+      "sha256": "4dedb3c93d29df1130dc2c091986a3a6324e47f4fb38c02291b6a69bc035fe09",
       "proofs": [
         "pytest:python/tests/kernel/nexus_test_control/test_process.py::test_captured_child_output_is_drained_without_retaining_unbounded_logs"
       ],
@@ -532,7 +532,7 @@
     {
       "id": "android-device-method-scope-bypass",
       "patch": "testdata/faults/android-device-method-scope-bypass.patch",
-      "sha256": "7b46a2b441d4dcc18513e536f85c192e4d259a205d4cf79bb2d98357ebe8b240",
+      "sha256": "991c99fe5d265e649e117871207754fc0df2a9db46498b978c27212cf3d3fcef",
       "proofs": [
         "pytest:python/tests/kernel/nexus_test_control/test_android_device_method_scope.py::test_exact_android_device_proof_uses_one_instrumentation_method"
       ],

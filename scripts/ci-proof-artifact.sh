@@ -7,8 +7,45 @@ die() {
 }
 
 run_claim_to_cleanup=""
+active_test_process_group=""
+test_interruption_status=0
+
+terminate_active_test() {
+  local process_group="$active_test_process_group"
+  [ -n "$process_group" ] || return 0
+
+  # The controller receives TERM cooperatively and tears down the one
+  # separately-sessioned command it owns. The bounded KILL is only a final
+  # backstop for the controller session itself; GitHub's inherited process
+  # tracking identity remains the hard-cancellation backstop for descendants.
+  if kill -0 -- "-$process_group" 2>/dev/null; then
+    kill -TERM -- "-$process_group" 2>/dev/null || true
+    local attempt
+    for ((attempt = 0; attempt < 100; attempt += 1)); do
+      if ! kill -0 -- "-$process_group" 2>/dev/null; then
+        break
+      fi
+      sleep 0.1
+    done
+    if kill -0 -- "-$process_group" 2>/dev/null; then
+      kill -KILL -- "-$process_group" 2>/dev/null || true
+    fi
+  fi
+  wait "$process_group" 2>/dev/null || true
+  active_test_process_group=""
+}
+
+interrupt_active_test() {
+  # Normalize shell HUP/INT/TERM to the controller's owned TERM path. The
+  # adapter must remain alive long enough to validate and stage interrupted
+  # evidence when the runner grants it a cancellation grace period.
+  trap '' HUP INT TERM
+  test_interruption_status=143
+  terminate_active_test
+}
 
 cleanup_run_claim() {
+  terminate_active_test
   local claim="$run_claim_to_cleanup"
   if [ -n "$claim" ] && [ -f "$claim" ] && [ ! -L "$claim" ]; then
     rm -- "$claim"
@@ -141,7 +178,7 @@ run_proof() {
   local workflow="$1"
 
   local command
-  for command in cp find git id jq mktemp realpath stat; do
+  for command in cp env find git id jq mktemp realpath setsid sleep stat; do
     command -v "$command" >/dev/null 2>&1 || die "$command is not installed"
   done
 
@@ -194,14 +231,34 @@ run_proof() {
   local run_claim_descriptor
   exec {run_claim_descriptor}>"$run_claim"
 
-  local test_status
-  if (
+  test_interruption_status=0
+  trap interrupt_active_test HUP INT TERM
+  (
     cd "$checkout"
-    NEXUS_TEST_RUN_CLAIM_FD="$run_claim_descriptor" "$checkout/scripts/test" "$@"
-  ); then
-    test_status=0
+    exec setsid env NEXUS_TEST_RUN_CLAIM_FD="$run_claim_descriptor" \
+      "$checkout/scripts/test" "$@"
+  ) &
+  local test_process_group=$!
+  active_test_process_group="$test_process_group"
+  if [ "$test_interruption_status" -ne 0 ]; then
+    terminate_active_test
+  fi
+
+  local observed_test_status
+  if wait "$test_process_group" 2>/dev/null; then
+    observed_test_status=0
   else
-    test_status=$?
+    observed_test_status=$?
+  fi
+  if [ -n "$active_test_process_group" ] \
+    && kill -0 -- "-$test_process_group" 2>/dev/null; then
+    terminate_active_test
+    die "test controller exited while its owned process group remained active"
+  fi
+  active_test_process_group=""
+  local test_status="$observed_test_status"
+  if [ "$test_interruption_status" -ne 0 ]; then
+    test_status="$test_interruption_status"
   fi
   exec {run_claim_descriptor}>&-
   if ! git -C "$checkout" diff --quiet --ignore-submodules=none -- \

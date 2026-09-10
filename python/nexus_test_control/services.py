@@ -590,22 +590,83 @@ _ANDROID_TOOL_ENV = (
     "TMPDIR",
     "TZ",
 )
+_ANDROID_SDK_HOME_RELATIVE_PATHS = (
+    Path("Android/Sdk"),
+    Path("Library/Android/sdk"),
+)
+
+
+def resolve_android_sdk(environment: Mapping[str, str]) -> Path | None:
+    """Resolve an explicit or conventional Android SDK without masking bad config."""
+    configured = tuple(
+        Path(value)
+        for key in ("ANDROID_HOME", "ANDROID_SDK_ROOT")
+        if (value := environment.get(key))
+    )
+    if configured:
+        if any(not path.is_absolute() for path in configured):
+            return None
+        try:
+            resolved = tuple(path.resolve() for path in configured)
+        except (OSError, RuntimeError):
+            return None
+        if len(set(resolved)) != 1:
+            return None
+        sdk = resolved[0]
+        return sdk if sdk.is_dir() else None
+
+    home_value = environment.get("HOME")
+    if not home_value:
+        return None
+    developer_home = Path(home_value)
+    if not developer_home.is_absolute():
+        return None
+    for relative in _ANDROID_SDK_HOME_RELATIVE_PATHS:
+        try:
+            candidate = (developer_home / relative).resolve()
+        except (OSError, RuntimeError):
+            continue
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def resolved_android_environment(environment: Mapping[str, str]) -> dict[str, str]:
+    """Copy caller state and publish a discovered SDK through the canonical variable."""
+    child = dict(environment)
+    if not any(environment.get(key) for key in ("ANDROID_HOME", "ANDROID_SDK_ROOT")):
+        sdk = resolve_android_sdk(environment)
+        if sdk is not None:
+            child["ANDROID_HOME"] = str(sdk)
+    return child
+
+
+def android_sdk_available(android_root: Path, environment: Mapping[str, str]) -> bool:
+    """Admit Gradle only through one coherent explicit, local, or standard SDK."""
+    if any(environment.get(key) for key in ("ANDROID_HOME", "ANDROID_SDK_ROOT")):
+        return resolve_android_sdk(environment) is not None
+    if (android_root / "local.properties").is_file():
+        return True
+    return resolve_android_sdk(environment) is not None
 
 
 def android_tool_environment(environment: Mapping[str, str]) -> dict[str, str]:
     """The safe child environment for owned adb/Gradle subprocesses."""
-    child = {key: value for key in _ANDROID_TOOL_ENV if (value := environment.get(key))}
+    resolved = resolved_android_environment(environment)
+    child = {key: value for key in _ANDROID_TOOL_ENV if (value := resolved.get(key))}
     child["NEXUS_ENV"] = "test"
     return child
 
 
 def resolve_adb(environment: Mapping[str, str]) -> Path | None:
     """Resolve the one adb transport from the SDK or PATH, without inventing another."""
-    sdk = environment.get("ANDROID_HOME") or environment.get("ANDROID_SDK_ROOT")
-    if sdk:
-        candidate = Path(sdk) / "platform-tools/adb"
-        if candidate.is_file():
-            return candidate
+    has_explicit_sdk = any(environment.get(key) for key in ("ANDROID_HOME", "ANDROID_SDK_ROOT"))
+    sdk = resolve_android_sdk(environment)
+    if sdk is not None:
+        candidate = sdk / "platform-tools/adb"
+        return candidate if candidate.is_file() else None
+    if has_explicit_sdk:
+        return None
     found = shutil.which("adb", path=environment.get("PATH"))
     return Path(found) if found else None
 

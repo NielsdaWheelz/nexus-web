@@ -1463,10 +1463,11 @@ def test_release_artifact_image_build_failure_is_setup_and_skips_pytest(
     assert [command["tool"] for command in _commands(repo_root)] == ["git", "docker"]
 
 
-def test_android_host_uses_the_fixed_synthetic_client_and_host_test_task(tmp_path: Path) -> None:
+def test_android_host_discovers_the_sdk_and_uses_the_fixed_host_contract(
+    tmp_path: Path,
+) -> None:
     android_root = tmp_path / "apps/android"
-    sdk = tmp_path / "android-sdk"
-    sdk.mkdir()
+    (tmp_path / "Android/Sdk").mkdir(parents=True)
     _write(
         android_root / "app/src/test/java/app/nexus/SampleTest.kt",
         "package app.nexus\nclass SampleTest\n",
@@ -1475,7 +1476,6 @@ def test_android_host_uses_the_fixed_synthetic_client_and_host_test_task(tmp_pat
     _write_executable(android_root / "gradlew")
     environment = {
         **_tool_environment(tmp_path),
-        "ANDROID_HOME": str(sdk),
         "NEXUS_GOOGLE_WEB_CLIENT_ID": "production-shaped-value",
     }
     context = CapabilityContext(tmp_path, Workflow.FULL, ())
@@ -1485,7 +1485,39 @@ def test_android_host_uses_the_fixed_synthetic_client_and_host_test_task(tmp_pat
     assert result.evidence.status is RunStatus.PASS
     command = _commands(tmp_path)[0]
     assert command["argv"] == ["--no-daemon", ":app:testDebugUnitTest"]
+    assert "ANDROID_HOME" in command["environment"]
     assert command["google_client_id"] == "nexus-test.apps.googleusercontent.com"
+
+
+def test_android_host_does_not_mask_conflicting_sdk_roots_with_local_properties(
+    tmp_path: Path,
+) -> None:
+    android_root = tmp_path / "apps/android"
+    first_sdk = tmp_path / "first-sdk"
+    second_sdk = tmp_path / "second-sdk"
+    first_sdk.mkdir()
+    second_sdk.mkdir()
+    _write(
+        android_root / "app/src/test/java/app/nexus/SampleTest.kt",
+        "package app.nexus\nclass SampleTest\n",
+    )
+    _write(android_root / "local.properties", f"sdk.dir={first_sdk}\n")
+    _write_executable(android_root / "gradlew")
+    environment = {
+        **_tool_environment(tmp_path),
+        "ANDROID_HOME": str(first_sdk),
+        "ANDROID_SDK_ROOT": str(second_sdk),
+    }
+
+    result = run_capability(
+        CapabilityContext(tmp_path, Workflow.FULL, ()),
+        Capability.ANDROID_HOST,
+        environment,
+    )
+
+    assert result.evidence.status is RunStatus.NOT_RUN
+    assert result.detail == "Android SDK is absent"
+    assert not (tmp_path / "commands.jsonl").exists()
 
 
 def test_android_release_control_owns_physical_device_and_exact_signed_methods(

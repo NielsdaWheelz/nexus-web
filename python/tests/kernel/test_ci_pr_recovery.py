@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import os
 import re
+import signal
 import subprocess
+import threading
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -181,6 +183,9 @@ def _ci_artifact_repository(tmp_path: Path) -> Path:
         "fi\n"
         'printf \'%s\\n\' "$*" >"$run_directory/invocation.txt"\n'
         "printf 'hidden\\n' >\"$run_directory/.hidden-evidence\"\n"
+        'if [ -n "${FAKE_SIGNAL_CONTROLLER:-}" ]; then\n'
+        '  exec "$FAKE_SIGNAL_CONTROLLER"\n'
+        "fi\n"
         'git_sha="$(git rev-parse HEAD)"\n'
         'status="pass"\n'
         'if [ "${FAKE_TEST_STATUS:-0}" -ne 0 ]; then status="fail"; fi\n'
@@ -661,6 +666,106 @@ def test_ci_artifact_owner_stages_claimed_interrupted_run_before_failing_job(
     assert (staged_run / "invocation.txt").is_file()
     assert not (staged_run / "summary.json").exists()
     assert list(runner_temp.glob("nexus-test-run-claim.*")) == []
+
+
+@pytest.mark.parametrize(
+    "adapter_signal",
+    (signal.SIGHUP, signal.SIGINT, signal.SIGTERM),
+    ids=("SIGHUP", "SIGINT", "SIGTERM"),
+)
+def test_ci_artifact_owner_forwards_cancellation_and_reaps_the_owned_process_tree(
+    tmp_path: Path, adapter_signal: signal.Signals
+) -> None:
+    repository = _ci_artifact_repository(tmp_path)
+    runner_temp = tmp_path / "runner-temp"
+    runner_temp.mkdir()
+    github_output = runner_temp / "github-output"
+    github_output.touch()
+    child_pid_path = tmp_path / "signal-child.pid"
+    signal_receipt = tmp_path / "signal-receipt.txt"
+    signal_controller = tmp_path / "signal-controller.py"
+    signal_controller.write_text(
+        """#!/usr/bin/env python3
+import os
+import signal
+import subprocess
+import sys
+from pathlib import Path
+
+child = subprocess.Popen(
+    (sys.executable, "-c", "import signal; signal.pause()"),
+    start_new_session=True,
+)
+
+
+def terminate(signum: int, _frame: object) -> None:
+    Path(os.environ["FAKE_SIGNAL_RECEIPT"]).write_text(
+        signal.Signals(signum).name,
+        encoding="utf-8",
+    )
+    try:
+        os.killpg(child.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    child.wait(timeout=3)
+    raise SystemExit(128 + signum)
+
+
+signal.signal(signal.SIGTERM, terminate)
+Path(os.environ["FAKE_CHILD_PID_PATH"]).write_text(str(child.pid), encoding="utf-8")
+child.wait()
+""",
+        encoding="utf-8",
+    )
+    signal_controller.chmod(0o755)
+    environment = {
+        **os.environ,
+        "FAKE_CHILD_PID_PATH": str(child_pid_path),
+        "FAKE_RUN_ID": "8888888888888888",
+        "FAKE_SIGNAL_CONTROLLER": str(signal_controller),
+        "FAKE_SIGNAL_RECEIPT": str(signal_receipt),
+        "FAKE_SKIP_SUMMARY": "1",
+        "GITHUB_OUTPUT": str(github_output),
+        "GITHUB_WORKSPACE": str(repository),
+        "RUNNER_TEMP": str(runner_temp),
+    }
+    adapter = subprocess.Popen(
+        (str(CI_ARTIFACT_OWNER), "run", "full"),
+        cwd=repository,
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    for _attempt in range(500):
+        if child_pid_path.is_file() or adapter.poll() is not None:
+            break
+        threading.Event().wait(0.01)
+    assert child_pid_path.is_file()
+    child_pid = int(child_pid_path.read_text(encoding="utf-8"))
+
+    try:
+        os.kill(adapter.pid, adapter_signal)
+        stdout, stderr = adapter.communicate(timeout=15)
+
+        assert adapter.returncode == 0, (stdout, stderr)
+        assert signal_receipt.read_text(encoding="utf-8") == "SIGTERM"
+        with pytest.raises(ProcessLookupError):
+            os.kill(child_pid, 0)
+        output = dict(line.split("=", 1) for line in github_output.read_text().splitlines())
+        assert output["result"] == "incomplete"
+        staged_run = Path(output["path"]) / "runs/8888888888888888"
+        assert (staged_run / "invocation.txt").is_file()
+        assert not (staged_run / "summary.json").exists()
+        assert list(runner_temp.glob("nexus-test-run-claim.*")) == []
+    finally:
+        if adapter.poll() is None:
+            adapter.kill()
+            adapter.wait(timeout=3)
+        try:
+            os.killpg(child_pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
 
 
 @pytest.mark.parametrize(

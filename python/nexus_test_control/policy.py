@@ -179,7 +179,14 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     ),
     "scripts/agency_setup.sh": (
         ("uv sync --all-extras --locked", "bun install --frozen-lockfile"),
-        ("DATABASE_URL_TEST", "nexus_test", "tests/test_db.py", "make test"),
+        (
+            "DATABASE_URL_TEST",
+            "DATABASE_URL_TEST_MIGRATIONS",
+            "nexus_test",
+            "nexus_test_migrations",
+            "tests/test_db.py",
+            "make test",
+        ),
     ),
     "scripts/ci-proof-artifact.sh": (
         (
@@ -1236,7 +1243,11 @@ def repository_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
             continue
         text = path.read_text(encoding="utf-8")
         missing = tuple(fragment for fragment in required if fragment not in text)
-        stale = tuple(fragment for fragment in forbidden if fragment in text)
+        stale = tuple(
+            fragment
+            for fragment in forbidden
+            if _forbidden_route_fragment_is_present(text, fragment)
+        )
         if missing or stale:
             violations.append(
                 PolicyViolation(
@@ -1261,6 +1272,18 @@ def repository_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
     violations.extend(_package_runner_violations(repo_root))
     violations.extend(_codex_agent_runtime_construction_violations(repo_root))
     return _sorted(violations)
+
+
+def _forbidden_route_fragment_is_present(text: str, fragment: str) -> bool:
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", fragment) is None:
+        return fragment in text
+    return (
+        re.search(
+            rf"(?<![A-Za-z0-9_]){re.escape(fragment)}(?![A-Za-z0-9_])",
+            text,
+        )
+        is not None
+    )
 
 
 def _load_json(
