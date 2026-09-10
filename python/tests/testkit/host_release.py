@@ -1671,9 +1671,7 @@ def _handle_compose(state: dict[str, Any], operation: list[str]) -> None:
                         "seccomp=unconfined",
                     ]
                 if state["codex_host_isolation_drift"] == "security_duplicate":
-                    container["host_config"]["SecurityOpt"].append(
-                        "no-new-privileges:true"
-                    )
+                    container["host_config"]["SecurityOpt"].append("no-new-privileges:true")
                 if state["codex_host_isolation_drift"] == "devices":
                     container["host_config"]["Devices"] = [
                         {
