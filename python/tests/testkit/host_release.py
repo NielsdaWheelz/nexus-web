@@ -1504,7 +1504,7 @@ def _container_inspect(state: dict[str, Any], container_id: str) -> dict[str, ob
         mounts: list[dict[str, object]] = [
             {
                 "Destination": "/run/nexus-codex-credential/auth.json",
-                "Mode": "rw",
+                "Mode": "",
                 "RW": True,
                 "Source": str(root / "srv/nexus/codex-state/codex/codex-personal/auth.json"),
                 "Type": "bind",
@@ -1530,6 +1530,10 @@ def _container_inspect(state: dict[str, Any], container_id: str) -> dict[str, ob
             mounts[0]["RW"] = False
         elif live_bind == "shared_propagation":
             mounts[0]["Propagation"] = "rshared"
+        elif live_bind == "legacy_explicit_rw":
+            mounts[0]["Mode"] = "rw"
+        elif live_bind == "extra_mode":
+            mounts[0]["Mode"] = "rw,Z"
         if mutation == "environment_credential_residue":
             container["config"]["Env"].append("AWS_SESSION_TOKEN=credential-residue")
         elif mutation == "host_cmd":
@@ -1541,6 +1545,8 @@ def _container_inspect(state: dict[str, Any], container_id: str) -> dict[str, ob
             mounts[0]["Name"] = "nexus_unapproved_state"
         elif mutation == "mount_wrong_source":
             mounts[1]["Source"] = "/var/lib/docker/volumes/nexus_unapproved_run/_data"
+        elif mutation == "mount_extra_bind_mode":
+            mounts[0]["Mode"] = "rw,Z"
         elif mutation == "mount_readonly_docker_socket":
             mounts.append(
                 {
