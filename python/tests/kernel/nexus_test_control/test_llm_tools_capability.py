@@ -21,7 +21,8 @@ def test_full_and_higher_ci_prepare_the_pinned_llm_tools_object_source() -> None
     assert "inputs.llm-tools == 'true'" in setup
     assert "https://github.com/NielsdaWheelz/llm-tools.git" in setup
     assert 'test "$(git -C "$checkout" rev-parse HEAD)" = "$revision"' in setup
-    assert 'uv sync --all-extras --locked --directory "$checkout"' in setup
+    assert "-m nexus_test_control.setup_dependencies" in setup
+    assert 'prepared_suites+=(--suite "$package")' in setup
     for path in (
         ".github/workflows/ci.yml",
         ".github/workflows/nightly.yml",

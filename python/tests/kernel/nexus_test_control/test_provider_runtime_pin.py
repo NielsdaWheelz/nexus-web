@@ -8,6 +8,7 @@ from nexus_test_control.runner import _ensure_provider_runtime_checkout
 from nexus_test_control.setup_dependencies import (
     PinnedSuiteSource,
     SetupDependencyError,
+    _select_pinned_suites,
     hydrate_pinned_python_suites,
 )
 
@@ -126,6 +127,13 @@ def test_local_setup_fetches_and_hydrates_pin_without_retargeting_dirty_source(
         tools / "uv",
         "#!/bin/sh\n"
         "set -eu\n"
+        'case " $* " in\n'
+        '  *" --offline "*)\n'
+        f"    cat contract.txt >> {log}\n"
+        "    mkdir -p .venv\n"
+        "    exit 0\n"
+        "    ;;\n"
+        "esac\n"
         "directory=''\n"
         'while [ "$#" -gt 0 ]; do\n'
         '  if [ "$1" = --directory ]; then directory="$2"; shift 2; else shift; fi\n'
@@ -158,7 +166,74 @@ def test_local_setup_fetches_and_hydrates_pin_without_retargeting_dirty_source(
     )
     assert (source / "developer.txt").read_text(encoding="utf-8") == "tracked local edit\n"
     assert (source / "untracked.txt").read_text(encoding="utf-8") == "preserve me\n"
-    assert log.read_text(encoding="utf-8") == "pinned\n"
+    assert log.read_text(encoding="utf-8") == "pinned\npinned\n"
+
+
+def test_local_setup_fails_when_fresh_offline_materialization_is_unavailable(
+    tmp_path: Path,
+) -> None:
+    """A warm installed venv is not proof that a later fresh offline venv can be built."""
+    remote = tmp_path / "provider-remote"
+    remote.mkdir()
+    _run_git(remote, "init", "-q")
+    _write(remote / "pyproject.toml", "[project]\nname='provider-runtime'\nversion='1'\n")
+    _write(remote / "uv.lock", "version = 1\nrevision = 1\nrequires-python = '>=3.12'\n")
+    _commit(remote, "pinned")
+    revision = _run_git(remote, "rev-parse", "HEAD").stdout.strip()
+
+    _run_git(tmp_path, "clone", "-q", str(remote), "llm-calling")
+    source = tmp_path / "llm-calling"
+    before_head = _run_git(source, "rev-parse", "HEAD").stdout
+    before_status = _run_git(
+        source,
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=all",
+    ).stdout
+    repo_root = tmp_path / "nexus"
+    _write(
+        repo_root / "python/pyproject.toml",
+        "[tool.uv.sources]\n"
+        f"provider-runtime = {{ git = 'https://example.invalid/provider', rev = '{revision}' }}\n",
+    )
+    tools = tmp_path / "bin"
+    _write(
+        tools / "uv",
+        '#!/bin/sh\nset -eu\ncase " $* " in\n  *" --offline "*) exit 17 ;;\nesac\nexit 0\n',
+    )
+    (tools / "uv").chmod(0o755)
+    environment = dict(os.environ)
+    environment["PATH"] = f"{tools}{os.pathsep}{environment['PATH']}"
+
+    with pytest.raises(
+        SetupDependencyError,
+        match="could not verify fresh offline provider-runtime materialization",
+    ):
+        hydrate_pinned_python_suites(
+            repo_root,
+            environment=environment,
+            suites=(
+                PinnedSuiteSource(
+                    package="provider-runtime",
+                    source_directory="llm-calling",
+                    repository=str(remote),
+                ),
+            ),
+        )
+
+    assert _run_git(source, "rev-parse", "HEAD").stdout == before_head
+    assert (
+        _run_git(source, "status", "--porcelain=v1", "--untracked-files=all").stdout
+        == before_status
+    )
+
+
+def test_setup_suite_selection_is_exact_and_rejects_duplicates() -> None:
+    selected = _select_pinned_suites(("provider-runtime",))
+
+    assert tuple(suite.package for suite in selected) == ("provider-runtime",)
+    with pytest.raises(SetupDependencyError, match="may be selected only once"):
+        _select_pinned_suites(("provider-runtime", "provider-runtime"))
 
 
 def test_local_setup_checks_developer_state_even_when_hydration_fails(
