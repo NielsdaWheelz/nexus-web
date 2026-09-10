@@ -194,6 +194,13 @@ recovery state. The desktop Account menu retains its existing focus contract.
 In the collapsed desktop rail, the brand and Expand control remain separate,
 non-overlapping hit targets. The expand control must never be stretched over the
 brand mark, because that makes an apparent Home activation trigger rail chrome.
+For the same reason the Imports count is painted clear of its icon rather than
+over it: at 48px the rail has no room for a chip on the glyph, so the badge is
+anchored in the link's own top-right corner, above the icon, on the rail's own
+opaque ground. The link carries the band the chip needs, unconditionally, so
+the whole chip is inside the control it counts for — a click on the count is a
+click on Imports — and the clearance above the icon survives the rail's hover
+lift.
 
 ## Home and workspace restore
 

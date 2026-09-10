@@ -37,13 +37,6 @@ and detail without delivering a tick, so the next successful observation is
 suppressed and the 5 s cadence of contract D10 slips once. See
 [docs/tickets/imports-live-reread-loses-one-tick-after-a-failed-rekey.md](tickets/imports-live-reread-loses-one-tick-after-a-failed-rekey.md).
 
-### [OPEN] OI-004 — An Imports invalidation unmounts the rows it is refreshing
-frontend · opened 2026-09-08 by Claude (imports cutover, Track E) · P3
-Every invalidation re-keys `useImportsPage`, so the visible rows unmount for one
-round trip and any row-local state goes with them; the false empty state this
-caused is fixed, the churn is not. See
-[docs/tickets/imports-invalidation-unmounts-the-visible-rows.md](tickets/imports-invalidation-unmounts-the-visible-rows.md).
-
 ### [OPEN] OI-005 — The Imports upload retry guard cannot check the file's size
 frontend · opened 2026-09-08 by Claude (imports cutover, Track E) · P3
 `ImportItem` carries no upload size, so a same-named file of a different size is
@@ -112,13 +105,6 @@ backend · opened 2026-09-08 by Claude (imports cutover, Track C1) · P3
 and the pane-level proof of the calendar-day contract is still owed. See
 [docs/tickets/imports-history-date-bounds-require-an-explicit-offset.md](tickets/imports-history-date-bounds-require-an-explicit-offset.md).
 
-### [OPEN] OI-016 — The mobile Account-menu entrance to Imports has no proof
-frontend · opened 2026-09-08 by Claude (imports cutover, Track E) · P2
-The pane body's readiness token and `imports-inspector` sheet are now proved by
-`ImportsPaneBody.browser.test.tsx`; the mobile entrance is not, because neither
-`AccountMenu` nor `SwitchboardTask` has ever been rendered by a test. See
-[docs/tickets/imports-mobile-account-entrance-has-no-proof.md](tickets/imports-mobile-account-entrance-has-no-proof.md).
-
 ### [OPEN] OI-017 — The Imports page read runs two statements under one snapshot
 backend · opened 2026-09-08 by Claude (imports cutover, Track C2) · P3
 `read_import_page` runs its CTE twice under the route's REPEATABLE READ
@@ -161,25 +147,11 @@ A pre-existing defect surfaced while fixing the completion's lock cycle: quote
 completion raises when its ingest job is not running. See
 [docs/tickets/x-quote-completion-defects-when-its-ingest-job-is-not-running.md](tickets/x-quote-completion-defects-when-its-ingest-job-is-not-running.md).
 
-### [OPEN] OI-024 — A media content index is never marked `failed` when its reindex job dies
-backend · opened 2026-09-08 by Claude (imports cutover, Track C2) · P2
-`media_content_reindex_job` declares no dead-letter projection, so the Imports
-classifier's `index_status = 'failed'` defect branch guards a state only the
-note reindex can reach. See
-[docs/tickets/media-content-index-failed-status-has-no-writer.md](tickets/media-content-index-failed-status-has-no-writer.md).
-
 ### [OPEN] OI-025 — The `operator_repair` media-reindex reason has no producer
 backend · opened 2026-09-08 by Claude (imports cutover, Track C2) · P3
 `MEDIA_CONTENT_REINDEX_REASONS` admits a payload reason nothing writes; repair
 requeues the existing job and keeps its original reason. See
 [docs/tickets/media-reindex-operator-repair-reason-has-no-producer.md](tickets/media-reindex-operator-repair-reason-has-no-producer.md).
-
-### [OPEN] OI-029 — `Refresh source` is offered where the dead-job guard always refuses it
-backend · opened 2026-09-09 by Claude (imports cutover, Track C2) · P3
-`can_refresh_source` does not read the dead `ingest_media_source` job that
-`_raise_if_source_action_not_reacquirable` refuses on, so a published import
-whose queue row later died offers a refresh that always returns 409. See
-[docs/tickets/refresh-source-is-offered-where-a-dead-job-always-refuses-it.md](tickets/refresh-source-is-offered-where-a-dead-job-always-refuses-it.md).
 
 ### [OPEN] OI-030 — The source-refusal sentence is duplicated in Python with no mirror
 backend · opened 2026-09-09 by Claude (imports cutover, Track C2) · P3
@@ -195,23 +167,132 @@ carries the same column as `Literal["Page", "Chapter"]`, so the copy owner
 lowercases the recorded unit instead of matching it exhaustively. See
 [docs/tickets/history-failure-progress-unit-is-free-text-on-the-wire.md](tickets/history-failure-progress-unit-is-free-text-on-the-wire.md).
 
-### [OPEN] OI-032 — The collapsed rail paints its attention count on top of the Imports icon
-frontend · opened 2026-09-09 by Claude (imports cutover, Track F) · P3
-Collapsed, `.utilityChip` puts the `Pill` over the `ListTodo` glyph, so the digit
-is unreadable while the accessible name stays exact. See
-[docs/tickets/collapsed-rail-count-is-illegible-over-its-icon.md](tickets/collapsed-rail-count-is-illegible-over-its-icon.md).
+### [OPEN] OI-035 — The Imports summary counts a row its own page read would reject
+backend · opened 2026-09-09 by Claude (imports cutover, Phase 6 chain P) · P3
+Every Imports defect check is now per row in `_item`/`_state`, and
+`read_import_summary` materializes no row, so the badge is computed from a state
+no owner transition produces. See
+[docs/tickets/imports-summary-read-cannot-see-a-per-row-defect.md](tickets/imports-summary-read-cannot-see-a-per-row-defect.md).
 
-### [OPEN] OI-033 — A browser proof's testing-library failure loses its diagnostic in the controller
-test-control · opened 2026-09-09 by Claude (imports cutover, Track F) · P2
-`_decisive_output` keeps only lines carrying an assertion marker past its 1900
-character bound, and `TestingLibraryElementError:` carries none, so a missing
-element red collapses to `Tests N failed`, so a browser fault can only be
-fingerprinted by putting a marked assertion ahead of the query. See
-[docs/tickets/controller-drops-testing-library-query-errors-from-proof-diagnostics.md](tickets/controller-drops-testing-library-query-errors-from-proof-diagnostics.md).
+### [OPEN] OI-036 — The Imports Reason filter's X options read as a placeholder
+frontend · opened 2026-09-09 by Claude (imports cutover, D15 visual review) · P3
+Five of the 46 alphabetised Reason options begin with a bare `X`, which in a flat
+menu reads as an unsubstituted template variable rather than the platform name;
+the row and inspector copy, where the source is on screen, reads correctly. See
+[docs/tickets/imports-reason-filter-x-options-read-as-a-placeholder.md](tickets/imports-reason-filter-x-options-read-as-a-placeholder.md).
 
-### [OPEN] OI-034 — The Imports freshness line opens with a bare separator
-frontend · opened 2026-09-09 by Claude (imports cutover, Track F re-review) · P3
-`ImportsWorkspace.tsx` renders the ` · ` separator whenever a freshness stamp
-exists, but its first segment is empty until the page read is `ready`, so a
-loading pane reads `· Last checked now`. See
-[docs/tickets/imports-freshness-line-opens-with-a-bare-separator.md](tickets/imports-freshness-line-opens-with-a-bare-separator.md).
+### [OPEN] OI-037 — The label-hidden badge case is subsumed by the collapsed-rail proof
+frontend · opened 2026-09-09 by Claude (imports cutover, Phase 6 chain W2) · P3
+`ImportsWorkspace.browser.test.tsx` still renders `ImportsBadge` alone to prove
+its label-hidden branch; `NavRail.browser.test.tsx` now proves that branch in the
+collapsed rail it exists for, with the chip geometry as well. See
+[docs/tickets/label-hidden-badge-case-is-subsumed-by-the-rail-proof.md](tickets/label-hidden-badge-case-is-subsumed-by-the-rail-proof.md).
+
+### [OPEN] OI-038 — The Imports pane's wrapping geometry has no automated gate
+frontend · opened 2026-09-09 by Claude (imports cutover, chain W1) · P3
+`Refresh`'s fixed slot and the row separator's adjacency are both layout facts
+the browser proof cannot reach: `setViewportWidth` only redefines
+`window.innerWidth`, so no toolbar row re-wraps and no container query changes
+branch. The D15 recapture is their only gate. See
+[docs/tickets/imports-toolbar-wrapping-geometry-has-no-automated-gate.md](tickets/imports-toolbar-wrapping-geometry-has-no-automated-gate.md).
+
+### [OPEN] OI-040 — The narrow `ResourceRow` state layout is unreviewed for Collections
+frontend · opened 2026-09-09 by Claude (imports cutover, chain W1) · P3
+Closing the Imports rows' orphaned `·` stopped the shared supporting cell from
+growing, which also moves `CollectionRow`'s narrow state block off the trailing
+edge; no proof or capture covers that second consumer. See
+[docs/tickets/resource-row-narrow-state-layout-is-unreviewed-for-collections.md](tickets/resource-row-narrow-state-layout-is-unreviewed-for-collections.md).
+
+### [OPEN] OI-041 — The mobile switchboard's Account-menu host has no proof
+frontend · opened 2026-09-09 by Claude (imports cutover, Phase 6 chain W2) · P3
+`NavRail.browser.test.tsx` proves the shared Account menu's `Imports` item, but
+nothing renders `SwitchboardTask` or asserts it hands the switchboard pages an
+Account menu with the utilities and the active utility id. See
+[docs/tickets/mobile-switchboard-account-menu-host-has-no-proof.md](tickets/mobile-switchboard-account-menu-host-has-no-proof.md).
+
+### [OPEN] OI-042 — Any appnav edit selects the whole document-import-reliability risk
+test-control · opened 2026-09-09 by Claude (imports cutover, Phase 6 chain W2) · P3
+Registering the rail proof required `components/appnav/**/*` in that priority
+risk's source globs, so an edit to any navigation file now selects the risk's
+migration and service nodes too. See
+[docs/tickets/appnav-glob-selects-the-whole-import-reliability-risk.md](tickets/appnav-glob-selects-the-whole-import-reliability-risk.md).
+
+### [OPEN] OI-043 — The collapsed count chip scales out of its fixed-width rail
+frontend · opened 2026-09-09 by Claude (imports cutover, Phase 6 chain W2) · P3
+The collapsed rail is fixed px while the count chip anchored inside it is sized
+in rem, so a large document root font size grows the chip past the rail's left
+edge, which clips it; the proof measures the default root only. See
+[docs/tickets/collapsed-count-chip-scales-out-of-its-fixed-width-rail.md](tickets/collapsed-count-chip-scales-out-of-its-fixed-width-rail.md).
+
+### [OPEN] OI-044 — The new `failed` content-index defect has no preflight over extant rows
+backend · opened 2026-09-09 by Claude (imports cutover, Phase 6 chain P review) · P2
+`_item` now raises for any media whose content index reports `failed`, including
+the shape the previous classifier rendered as a repairable `NeedsAttention` row;
+0225's preflight surveys attempt codes only, so no evidence says such rows are
+absent from production. See
+[docs/tickets/imports-ingress-defect-has-no-preflight-over-extant-index-rows.md](tickets/imports-ingress-defect-has-no-preflight-over-extant-index-rows.md).
+
+### [OPEN] OI-045 — The collapsed rail's count capture has no reviewer verdict
+frontend · opened 2026-09-09 by Claude (imports cutover, Phase 6 chain W2 re-review) · P3
+Successor to OI-032. The D15 journey run records the post-fix capture
+(`F-imports-review-6/rail-badge-collapsed.png`), so the capture clause is met;
+the D15 collapsed-rail gate stays `not_run` until the visual reviewer reads it. See
+[docs/tickets/collapsed-rail-count-has-no-recorded-review-capture.md](tickets/collapsed-rail-count-has-no-recorded-review-capture.md).
+
+### [OPEN] OI-047 — `Pill`'s danger and accent tones fail AA contrast against their own fill
+frontend · opened 2026-09-09 by Claude (imports cutover, Phase 6 chain W4) · P2
+`.toneDanger` and `.toneAccent` still paint their text in the tone over an 18%
+mix of the same tone, measuring 3.07:1 to 4.16:1 against their own fill — below
+WCAG AA for text at `--text-xs`. The info, success and warning tones were fixed
+with per-palette `--*-ink` steps in Phase 7 chain Z; these two are painted only
+by surfaces outside the imports cutover's ownership. See
+[docs/tickets/pill-tone-text-fails-aa-contrast-against-its-own-fill.md](tickets/pill-tone-text-fails-aa-contrast-against-its-own-fill.md).
+
+### [OPEN] OI-048 — The mobile Imports entry has no D15 capture
+frontend · opened 2026-09-09 by Claude (imports cutover, Phase 6 chain W4) · P3
+Contract D9's mobile entry — the shared `AccountMenu` item `Imports` with its
+`Pill` badge — is captured in no D15 artifact set, so the visual gate reads it
+from the browser proof alone. See
+[docs/tickets/mobile-imports-entry-has-no-d15-capture.md](tickets/mobile-imports-entry-has-no-d15-capture.md).
+
+### [OPEN] OI-049 — `player_descriptor` is installed after the media DTO is built
+backend · opened 2026-09-08 by Claude (imports cutover, Phase 4 chain M) · P3
+`_media_out_from_row` builds every `MediaOut` with an absent `playerDescriptor`
+and `_apply_consumption_state` then rebuilds the whole DTO through
+`model_validate` to install the derived one, so the descriptor's owner is a
+second pass over an already-built object. See
+[docs/tickets/media-player-descriptor-is-installed-after-construction.md](tickets/media-player-descriptor-is-installed-after-construction.md).
+
+### [OPEN] OI-050 — Four rules outside `Pill` paint a tone as text over its own tint
+frontend · opened 2026-09-10 by Claude (imports cutover, Phase 7 chain Z review) · P2
+`.mismatchBanner` and `.partialCoverageWarning` (media pane) and `.error`
+(`PdfReader`) paint `--warning` / `--danger` over a 10% mix of the same token and
+measure 4.20:1 to 4.47:1 on their worst ground — under WCAG AA for `--text-sm`
+body copy. Sibling of OI-047, which owns the two remaining `Pill` tones. See
+[docs/tickets/tone-text-on-its-own-tint-fails-aa-outside-pill.md](tickets/tone-text-on-its-own-tint-fails-aa-outside-pill.md).
+
+### [OPEN] OI-051 — The packaged offline reader bundle drifted from its sources for five phases
+frontend · opened 2026-09-10 by Claude (imports cutover, Phase 7 chain Z review) · P2
+Five declared inputs of `nexus-offline/source-manifest.sha256` went stale between
+`4d457ab1` and `26b8161b` without a regeneration; chain Z added a sixth and
+regenerated, absorbing all six. The regeneration also grew the declared input set
+from 119 to 126 lines, so the packaged shelf now ships seven modules it never
+carried before — none of which the Android offline-reading proof has run
+against. See
+[docs/tickets/offline-reader-bundle-drifted-for-five-phases.md](tickets/offline-reader-bundle-drifted-for-five-phases.md).
+
+### [OPEN] OI-052 — The offline-bundle staleness gate is unreachable from the sources it guards
+tooling · opened 2026-09-10 by Claude (imports cutover, Phase 7 chain Z review) · P2
+`immutable-production-release` owns the only proof that runs Gradle's
+`verifyOfflineReadingAssets`, but its `source_globs` cover none of the ~110
+shared web sources the bundle's source manifest pins, so a change that breaks the
+gate can never select it. Cause of OI-051. See
+[docs/tickets/offline-bundle-gate-is-not-selected-by-its-own-sources.md](tickets/offline-bundle-gate-is-not-selected-by-its-own-sources.md).
+
+### [OPEN] OI-053 — The durable activity outbox suite fails in the imports runner container
+frontend · opened 2026-09-10 by Claude (imports cutover, Phase 7 chain Z2) · P2
+`activityRuntime.browser.test.ts` fails 8 of 13 cases deterministically in the
+cutover's Linux runner, with every failure reading as an IndexedDB write that
+never landed. `lib/consumption/**` is untouched by this cutover, but any change
+broad enough to select that suite inherits the failure. See
+[docs/tickets/durable-activity-outbox-suite-fails-in-the-imports-runner.md](tickets/durable-activity-outbox-suite-fails-in-the-imports-runner.md).

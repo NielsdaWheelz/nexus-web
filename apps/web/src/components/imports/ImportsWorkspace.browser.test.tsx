@@ -3,6 +3,7 @@ import { useState, type ReactNode } from "react";
 import { cdp, userEvent } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import "@/app/globals.css";
+import { contrastRatio } from "@/__tests__/helpers/contrast";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount";
@@ -633,6 +634,56 @@ function listSettledReport(): string {
   );
 }
 
+/**
+ * The sRGB pixel a stack of CSS colours paints, composited bottom layer first
+ * over the white the viewport paints under everything. The browser does the
+ * compositing and the colour-space parsing, so any serialization it hands back
+ * — `rgba()`, `color(srgb …)`, `oklab()` — is read exactly as it paints.
+ */
+function paintedColor(
+  layers: readonly string[],
+): readonly [number, number, number] {
+  const canvas = document.createElement("canvas");
+  canvas.width = 1;
+  canvas.height = 1;
+  const surface = canvas.getContext("2d");
+  if (surface === null) throw new Error("The page has no 2D canvas to paint on");
+  surface.fillStyle = "#ffffff";
+  surface.fillRect(0, 0, 1, 1);
+  for (const layer of layers) {
+    surface.fillStyle = layer;
+    surface.fillRect(0, 0, 1, 1);
+  }
+  const [red, green, blue] = surface.getImageData(0, 0, 1, 1).data;
+  return [red, green, blue];
+}
+
+/** What this element's text is painted on: every background behind it, in paint order. */
+function effectiveBackground(
+  element: HTMLElement,
+): readonly [number, number, number] {
+  const layers: string[] = [];
+  for (
+    let node: HTMLElement | null = element;
+    node !== null;
+    node = node.parentElement
+  ) {
+    layers.push(getComputedStyle(node).backgroundColor);
+  }
+  return paintedColor(layers.reverse());
+}
+
+/**
+ * The room the page is painting in. `null` is the state the page opens in — no
+ * `data-theme`, so the system-preference block decides — and each name is one of
+ * the explicit rooms, which is where the ink steps this measures are declared.
+ */
+function paintIn(palette: string | null): void {
+  const root = document.documentElement;
+  if (palette === null) root.removeAttribute("data-theme");
+  else root.setAttribute("data-theme", palette);
+}
+
 function setViewportWidth(width: number): void {
   Object.defineProperty(window, "innerWidth", {
     configurable: true,
@@ -646,6 +697,7 @@ const originalInnerWidth = window.innerWidth;
 describe("Imports workspace", () => {
   afterEach(() => {
     setViewportWidth(originalInnerWidth);
+    document.documentElement.removeAttribute("data-theme");
     vi.unstubAllGlobals();
   });
 
@@ -783,6 +835,23 @@ describe("Imports workspace", () => {
         "the pane was told the list had settled before its first page read answered",
       ).toBe("unsettled"),
     );
+    expect(
+      await screen.findByText(/^Last checked /),
+      "an unread pane never said how fresh what it shows is",
+    ).toBeVisible();
+    expect(
+      listSettledReport(),
+      "the first page read answered before the unread brief could be read",
+    ).toBe("unsettled");
+    expect(
+      screen.queryByText("1 in progress"),
+      "the pane stated what every import is doing above a list it had not read",
+    ).toBeNull();
+    expect(
+      screen.queryByText("·"),
+      "the brief opened with the separator of a segment this read does not have",
+    ).toBeNull();
+
     answerFirstPage();
 
     expect(await screen.findByText("A bounded PDF")).toBeVisible();
@@ -792,6 +861,68 @@ describe("Imports workspace", () => {
         "the pane was never told the list had settled once its rows were on screen",
       ).toBe("settled"),
     );
+    expect(
+      screen.getByText("1 in progress"),
+      "a read list never stated what the reader's imports are doing",
+    ).toBeVisible();
+    // eslint-disable-next-line testing-library/no-node-access
+    const brief = screen.getByText("1 import in this view").closest("p");
+    expect(
+      brief?.textContent,
+      "a read brief never joined what this view holds to how fresh it is",
+    ).toMatch(/^1 import in this view · , Last checked /);
+  });
+
+  it("carries the summary sentence once, in the region that speaks its changes", async () => {
+    // Contract §6: one polite count announcement. The sentence the reader sees
+    // is the sentence the live region carries, so a reader browsing the pane
+    // linearly meets it exactly once and a later change is spoken where it is
+    // read.
+    const refreshed = deferred<Response>();
+    let summaryReads = 0;
+    installBff({
+      summary: (read) => {
+        summaryReads = read;
+        return read === 1 ? summaryBody(0, 1, read) : refreshed.promise;
+      },
+      page: () => pageBody([activeMediaItem()]),
+    });
+
+    renderImports("?view=InProgress");
+    await screen.findByText("A bounded PDF");
+
+    const region = await screen.findByText(/^1 in progress\.?$/);
+
+    await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(summaryReads).toBe(2));
+    expect(
+      region,
+      "a manual refresh blanked the sentence the reader already had",
+    ).toHaveTextContent(/^1 in progress\.?$/);
+
+    refreshed.resolve(jsonResponse(summaryBody(1, 1, 2)));
+    await waitFor(() =>
+      expect(
+        region,
+        "the counts changed without the region the reader hears following them",
+      ).toHaveTextContent(/^1 needs attention · 1 in progress\.?$/),
+    );
+    expect(
+      screen.getAllByText(/^1 needs attention · 1 in progress\.?$/),
+      "the pane put its summary sentence in the accessible tree more than once",
+    ).toHaveLength(1);
+    expect(
+      region.getAttribute("role"),
+      "the sentence on screen is not the region that announces its changes",
+    ).toBe("status");
+    expect(
+      region.getAttribute("aria-live"),
+      "the summary region interrupts the reader instead of waiting its turn",
+    ).toBe("polite");
+    expect(
+      region.getAttribute("aria-atomic"),
+      "a changed count is announced without the sentence that frames it",
+    ).toBe("true");
   });
 
   it("keeps the view the URL names even when the counts would choose another", async () => {
@@ -849,19 +980,19 @@ describe("Imports workspace", () => {
 
   it("narrows the list by a filter and clears every filter at once", async () => {
     const queries: string[] = [];
+    const filteredRead = deferred<unknown>();
     installBff({
       summary: () => summaryBody(2, 0, 1),
       page: (query) => {
         queries.push(query.toString());
-        const filtered = query.get("q") !== null;
-        return pageBody(filtered ? [indexMediaItem()] : [attentionMediaItem(), indexMediaItem()], {
-          groups: filtered
-            ? [{ stage: "Index", count: 1 }]
-            : [
+        return query.get("q") !== null
+          ? filteredRead.promise
+          : pageBody([attentionMediaItem(), indexMediaItem()], {
+              groups: [
                 { stage: "Extract", count: 1 },
                 { stage: "Index", count: 1 },
               ],
-        });
+            });
       },
     });
 
@@ -876,8 +1007,32 @@ describe("Imports workspace", () => {
     await waitFor(() =>
       expect(screen.queryByText(LONG_TITLE), "a filtered read kept an unmatched row").toBeNull(),
     );
+    // The sentence about what every import is doing is read against the list
+    // under it, and this refinement's list has not been read: a placeholder
+    // list must not carry a claim about the reader's imports above it.
+    expect(
+      screen.queryByText("2 need attention"),
+      "the pane stated what every import is doing above a refinement it had not read",
+    ).toBeNull();
+    expect(
+      listSettledReport(),
+      "the refinement's list was reported settled before its read answered",
+    ).toBe("unsettled");
+
+    filteredRead.resolve(
+      pageBody([indexMediaItem()], { groups: [{ stage: "Index", count: 1 }] }),
+    );
+    expect(await screen.findByText("A readable report")).toBeVisible();
+    expect(
+      screen.getByText("2 need attention"),
+      "a read refinement never stated what the reader's imports are doing",
+    ).toBeVisible();
     expect(queries.at(-1)).toContain("q=report");
     expect(screen.getByText("Search: report")).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Remove filter: Search: report" }),
+      "the control that clears a filter was named like the one that deletes an import",
+    ).toBeVisible();
 
     await userEvent.click(screen.getByRole("button", { name: "Clear all" }));
 
@@ -913,7 +1068,7 @@ describe("Imports workspace", () => {
       "the date range never said which recorded time it bounds",
     ).toBeVisible();
     expect(
-      screen.getByText("Failed on or after 2026-08-09"),
+      screen.getByText("Failed on or after Aug 9, 2026"),
       "an applied date filter read as a URL parameter instead of a sentence",
     ).toBeVisible();
 
@@ -942,7 +1097,12 @@ describe("Imports workspace", () => {
     expect(marked[0]).toHaveTextContent(
       "Extraction failed. The import could not use this source. Source could not be fetched. No more automatic retries.",
     );
-    expect(within(marked[0] as HTMLElement).getByText("Matched")).toBeVisible();
+    const mark = within(marked[0] as HTMLElement);
+    expect(mark.getByText("Matched")).toBeVisible();
+    expect(
+      mark.getByText("Matched by your filter"),
+      "the mark on the matched attempt never said what it matched",
+    ).toBeInTheDocument();
     expect(
       within(inspector).getByText(
         "Extraction failed. The run failed. Processing was interrupted. An automatic retry follows.",
@@ -958,6 +1118,7 @@ describe("Imports workspace", () => {
       detail: () => detailBody({ ...historyMediaItem(), matched_event: ABSENT }),
       history: () =>
         historyBody([
+          interruptedRunEvent(RETRY_EVENT_ID, "2026-09-06T08:30:00Z"),
           failedSourceEvent(EVENT_ID, "2026-09-06T08:00:00Z"),
           acceptedSourceEvent(OTHER_EVENT_ID, "2026-09-06T07:00:00Z", 2),
         ]),
@@ -992,7 +1153,10 @@ describe("Imports workspace", () => {
         ),
       detail: () => detailBody({ ...historyMediaItem(), matched_event: ABSENT }),
       history: () =>
-        historyBody([failedSourceEvent(EVENT_ID, "2026-09-06T08:00:00Z")]),
+        historyBody([
+          interruptedRunEvent(RETRY_EVENT_ID, "2026-09-06T08:30:00Z"),
+          failedSourceEvent(EVENT_ID, "2026-09-06T08:00:00Z"),
+        ]),
     });
 
     renderImports(
@@ -1110,7 +1274,9 @@ describe("Imports workspace", () => {
       "one pending row disabled another row's own recovery",
     ).toBeEnabled();
 
-    await userEvent.click(within(second).getByRole("button", { name: "Remove" }));
+    await userEvent.click(
+      within(second).getByRole("button", { name: "Remove Second notes.pdf" }),
+    );
     expect(
       await within(second).findByRole("button", { name: "Starting…" }),
     ).toBeVisible();
@@ -1147,7 +1313,7 @@ describe("Imports workspace", () => {
       expect(
         within(
           screen.getByRole("listitem", { name: "Second notes.pdf" }),
-        ).getByRole("button", { name: "Remove" }),
+        ).getByRole("button", { name: "Remove Second notes.pdf" }),
       ).toBeVisible(),
     );
   });
@@ -1274,7 +1440,12 @@ describe("Imports workspace", () => {
     ).toBeVisible();
     expect(screen.queryByText("Couldn’t refresh imports")).toBeNull();
 
-    await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    // Where `Refresh` sits as the filter set wraps is a geometry fact this
+    // suite cannot reach — `setViewportWidth` redefines `window.innerWidth`
+    // and moves no layout — so the D15 recapture is that gate (OI-038).
+    const refresh = screen.getByRole("button", { name: "Refresh" });
+
+    await userEvent.click(refresh);
     await waitFor(() =>
       expect(
         requests.filter((request) => request.path === "/api/imports/summary"),
@@ -1309,6 +1480,58 @@ describe("Imports workspace", () => {
       screen.getByText(LONG_TITLE),
       "a failed refresh discarded the last good rows",
     ).toBeVisible();
+  });
+
+  it("keeps the listed rows under the stale notice when a refresh's page read fails", async () => {
+    // Every attempt of the failing read, not one of them: a 5xx page read is
+    // retried three times before the hook reports it (`retryPolicy`).
+    let pageReadFails = false;
+    installBff({
+      summary: (read) => summaryBody(1, 0, read),
+      page: () =>
+        pageReadFails
+          ? jsonResponse(
+              { error: { code: "E_UPSTREAM", message: "Upstream is down." } },
+              502,
+            )
+          : pageBody([attentionMediaItem()], {
+              groups: [{ stage: "Extract", count: 1 }],
+            }),
+    });
+
+    renderImports("?view=NeedsAttention");
+    await screen.findByText(LONG_TITLE);
+
+    pageReadFails = true;
+    await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
+
+    await waitFor(
+      () =>
+        expect(
+          screen.getByText("Couldn’t refresh imports"),
+          "a failed page re-read never told the reader the refresh had failed",
+        ).toBeVisible(),
+      { timeout: 3_000 },
+    );
+    expect(
+      screen.getByText(LONG_TITLE),
+      "a failed page re-read discarded the rows the browser was still holding",
+    ).toBeVisible();
+    expect(
+      screen.queryByText("Imports couldn’t be loaded"),
+      "a view holding last-good rows was reported as a failed load",
+    ).toBeNull();
+
+    pageReadFails = false;
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText("Couldn’t refresh imports"),
+        "a successful retry left the reader looking at a stale-refresh notice",
+      ).toBeNull(),
+    );
+    expect(screen.getByText(LONG_TITLE)).toBeVisible();
   });
 
   it("restores the row list and the focus a narrow viewport left behind", async () => {
@@ -1415,7 +1638,7 @@ describe("Imports workspace", () => {
     ).toBeVisible();
   });
 
-  it("reaches the next row and a row's own recovery with the keyboard alone", async () => {
+  it("stops the keyboard on every visible command and on nothing else", async () => {
     installBff({
       summary: () => summaryBody(2, 0, 1),
       page: () =>
@@ -1431,23 +1654,34 @@ describe("Imports workspace", () => {
     renderImports("?view=NeedsAttention");
 
     const first = await screen.findByRole("button", { name: "Field notes.pdf" });
-    const second = screen.getByRole("button", { name: "Second notes.pdf" });
-    const retry = within(
-      screen.getByRole("listitem", { name: "Field notes.pdf" }),
-    ).getByRole("button", { name: "Retry upload" });
+    const row = screen.getByRole("listitem", { name: "Field notes.pdf" });
+    // The order a reader meets them, and the whole of it: a tab stop the
+    // reader cannot see is a focus ring that vanishes (WCAG 2.4.7), so the
+    // screen-reader-only file input behind the retry offer and the
+    // screen-reader-only search submit must not be stops at all.
+    const stops: readonly (readonly [string, HTMLElement])[] = [
+      ["the row's own recovery", within(row).getByRole("button", { name: "Retry upload" })],
+      [
+        "the row's Remove command",
+        within(row).getByRole("button", { name: "Remove Field notes.pdf" }),
+      ],
+      ["the next row", screen.getByRole("button", { name: "Second notes.pdf" })],
+    ];
     first.focus();
+    for (const [name, target] of stops) {
+      await userEvent.tab();
+      expect(
+        target,
+        `Tab from the control before it did not reach ${name}`,
+      ).toHaveFocus();
+    }
 
-    // Tab forward until the expected control has focus, in the order a reader
-    // meets them: the row's own recovery, then the next row.
-    const tabUntil = async (element: HTMLElement, missed: string) => {
-      for (let step = 0; step < 6 && !element.matches(":focus"); step += 1) {
-        await userEvent.tab();
-      }
-      expect(element, missed).toHaveFocus();
-    };
-
-    await tabUntil(retry, "a row's own recovery was not reachable by Tab");
-    await tabUntil(second, "Tab traversal never reached the next row");
+    screen.getByRole("searchbox", { name: "Search imports" }).focus();
+    await userEvent.tab();
+    expect(
+      screen.getByRole("button", { name: "Refresh" }),
+      "Tab out of the search box did not reach the pane's Refresh command",
+    ).toHaveFocus();
   });
 
   it("states the queue reason and counted progress of active work", async () => {
@@ -1462,21 +1696,215 @@ describe("Imports workspace", () => {
     expect(screen.getByText("Waiting for capacity")).toBeVisible();
   });
 
+  it("keeps the listed rows on screen while an invalidation re-reads them", async () => {
+    vi.stubGlobal("confirm", () => true);
+    const refreshed = deferred<unknown>();
+    let reads = 0;
+    installBff({
+      summary: () => summaryBody(2, 0, 1),
+      page: () => {
+        reads += 1;
+        return reads === 1
+          ? pageBody(
+              [
+                uploadItem(UPLOAD_ONE, "Field notes.pdf"),
+                uploadItem(UPLOAD_TWO, "Second notes.pdf"),
+              ],
+              { groups: [{ stage: "Upload", count: 2 }] },
+            )
+          : refreshed.promise;
+      },
+      command: () => new Response(null, { status: 204 }),
+    });
+
+    renderImports("?view=NeedsAttention");
+
+    const second = await screen.findByRole("listitem", {
+      name: "Second notes.pdf",
+    });
+    await userEvent.click(
+      within(second).getByRole("button", { name: "Remove Second notes.pdf" }),
+    );
+
+    await waitFor(() => expect(reads).toBeGreaterThan(1));
+    expect(
+      screen.queryByText("Loading imports"),
+      "an invalidation unmounted the rows it was refreshing",
+    ).toBeNull();
+    expect(
+      screen.getByRole("listitem", { name: "Field notes.pdf" }),
+      "a row the removal never touched left the screen while the new read was in flight",
+    ).toBeVisible();
+    expect(
+      screen.queryByText("No imports need attention"),
+      "a read that had not answered yet was reported as an empty view",
+    ).toBeNull();
+
+    refreshed.resolve(
+      pageBody([uploadItem(UPLOAD_ONE, "Field notes.pdf")], {
+        groups: [{ stage: "Upload", count: 1 }],
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("listitem", { name: "Second notes.pdf" }),
+        "the removed row stayed listed after the new read answered",
+      ).toBeNull(),
+    );
+  });
+
+  it("keeps the selected row marked while the reader hovers or focuses it", async () => {
+    installBff({
+      summary: () => summaryBody(2, 0, 1),
+      page: () =>
+        pageBody([attentionMediaItem(), indexMediaItem()], {
+          groups: [
+            { stage: "Extract", count: 1 },
+            { stage: "Index", count: 1 },
+          ],
+        }),
+      detail: () => detailBody(indexMediaItem(), { canRead: true }),
+    });
+
+    renderImports("?view=NeedsAttention");
+
+    // The colour a selection is painted in, resolved by the browser from the
+    // theme rather than restated here.
+    const probe = document.createElement("div");
+    probe.style.backgroundColor = "var(--accent-muted)";
+    document.body.append(probe);
+    const selectedBackground = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+
+    const primary = await screen.findByRole("button", {
+      name: "A readable report",
+    });
+    primary.focus();
+    await userEvent.keyboard("{Enter}");
+
+    const row = screen.getByRole("listitem", { name: /A readable report/ });
+    await waitFor(() => expect(row).toHaveAttribute("aria-current", "true"));
+    expect(
+      primary,
+      "selecting a row from the keyboard dropped the focus that selected it",
+    ).toHaveFocus();
+    await waitFor(() =>
+      expect(
+        getComputedStyle(row).backgroundColor,
+        "a focused selection painted like every unselected row",
+      ).toBe(selectedBackground),
+    );
+    expect(
+      getComputedStyle(row).boxShadow,
+      "the selected row carried its selection by colour alone",
+    ).toContain("inset");
+
+    await userEvent.hover(primary);
+    await waitFor(() =>
+      expect(
+        getComputedStyle(row).backgroundColor,
+        "hovering the selected row erased the only mark of the selection",
+      ).toBe(selectedBackground),
+    );
+  });
+
+  // WCAG 1.4.3 for the one ink the pane paints on a tinted fill. `Pill` fills
+  // with an 18% mix of a tone token, so a label painted in that same token can
+  // only ever differ from its fill by the mix. The pill labels are uppercase
+  // `--text-xs`, nowhere near the 18.66px bold that would let the 3:1 large-text
+  // allowance apply, so the threshold is 4.5:1. Three tones, which are the three
+  // the Imports pane paints: warning (Needs attention, the tab count and the rail
+  // badge), info (In progress) and success (Complete). Each is read on the
+  // selected row, whose wash carries every palette's ground toward its own ink —
+  // so it is the worst pairing the pane produces, and one that holds here holds
+  // on the plain page ground too. Every palette is measured, since each declares
+  // its own ink steps.
+  it("paints every status pill label at AA contrast over its own tinted fill", async () => {
+    installBff({
+      summary: () => summaryBody(1, 1, 1),
+      page: () =>
+        pageBody([attentionMediaItem(), activeMediaItem(), historyMediaItem()]),
+      detail: (ref) =>
+        detailBody(
+          [attentionMediaItem(), activeMediaItem(), historyMediaItem()].find(
+            (item) => item.ref === ref,
+          ) ?? attentionMediaItem(),
+        ),
+    });
+
+    renderImports();
+    await screen.findByText(LONG_TITLE);
+
+    const pills: readonly (readonly [string, string, string])[] = [
+      ["warning", LONG_TITLE, "Needs attention"],
+      ["info", "A bounded PDF", "In progress"],
+      ["success", "A recovered essay", "Complete"],
+    ];
+    for (const [tone, title, label] of pills) {
+      await userEvent.click(screen.getByRole("button", { name: title }));
+      const row = screen.getByRole("listitem", { name: title });
+      await waitFor(() =>
+        expect(
+          row,
+          `the ${tone} row never took the selection its pill is read on`,
+        ).toHaveAttribute("aria-current", "true"),
+      );
+      for (const palette of [null, "light", "dark", "elvish"]) {
+        paintIn(palette);
+        // The selection wash is a transition, and each palette washes in its own
+        // colour, so the measurement waits for the row to have arrived at it
+        // rather than reading a frame on the way there. The token is resolved
+        // through a probe element, outside the wait: mutating the DOM inside one
+        // re-enters its observer.
+        const probe = document.createElement("div");
+        probe.style.backgroundColor = "var(--accent-muted)";
+        document.body.append(probe);
+        const selectedBackground = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        await waitFor(() =>
+          expect(
+            getComputedStyle(row).backgroundColor,
+            `the ${tone} row never settled on the selected wash of the ${palette ?? "system-default"} palette`,
+          ).toBe(selectedBackground),
+        );
+        const pill = within(row).getByText(label);
+        const ratio = contrastRatio(
+          paintedColor([getComputedStyle(pill).color]),
+          effectiveBackground(pill),
+        );
+        expect(
+          ratio,
+          `the ${tone} pill paints its label at ${ratio.toFixed(2)}:1 over its own fill in the ${palette ?? "system-default"} palette, under the 4.5:1 AA minimum small text needs`,
+        ).toBeGreaterThanOrEqual(4.5);
+      }
+      paintIn(null);
+    }
+  });
+
   // Declared last, and the only scenario that touches CDP: enabling touch input
   // is what moves Chromium's `pointer` feature, and disabling it again leaves
   // the page `pointer: none` rather than back at `fine`
   // (`SelectionActionDock.browser.test.tsx` records those measurements), so the
   // toggle must outlive no other scenario. Each test file gets its own page.
-  it("keeps a long title, a full touch target and every refinement reachable at 200% zoom", async () => {
+  it("keeps a long title, every refinement and a full touch target at 200% zoom", async () => {
     installBff({
       summary: () => summaryBody(2, 1, 1),
       page: () =>
-        pageBody([attentionMediaItem(), uploadItem(UPLOAD_ONE, "Field notes.pdf")], {
-          groups: [{ stage: "Upload", count: 1 }, { stage: "Extract", count: 1 }],
-        }),
+        pageBody([attentionMediaItem(), uploadItem(UPLOAD_ONE, "Field notes.pdf")]),
+      capabilities: () => [
+        {
+          kind: "Recovery",
+          availability: { kind: "Available" },
+          offer: {
+            kind: "RetrySource",
+            expectedAttemptId: ATTEMPT_ID,
+            input: "StoredSource",
+          },
+        },
+      ],
     });
 
-    renderImports("?view=NeedsAttention");
+    renderImports("?view=History&had_failures=true&from=2026-08-09");
     await screen.findByText(LONG_TITLE);
 
     setViewportWidth(320);
@@ -1485,23 +1913,71 @@ describe("Imports workspace", () => {
       screen.getByRole("button", { name: LONG_TITLE }),
       "a truncated title stopped naming itself",
     ).toBeVisible();
-    expect(screen.getByRole("searchbox", { name: "Search imports" })).toBeVisible();
-    expect(screen.getByRole("combobox", { name: "Type" })).toBeVisible();
-    expect(screen.getByRole("combobox", { name: "Stage" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Refresh" })).toBeVisible();
 
     await cdp().send("Emulation.setTouchEmulationEnabled", {
       enabled: true,
       maxTouchPoints: 1,
     });
-    await waitFor(() =>
-      expect(
-        screen
-          .getByRole("button", { name: "Retry upload" })
-          .getBoundingClientRect().height,
-        "a row command is below the 44px target a touch reader needs",
-      ).toBe(44),
-    );
+
+    const hadFailuresSwitch = screen.getByRole("checkbox", {
+      name: "Had failures",
+    });
+    // A switch paints its target on the label; the input carrying the role is
+    // screen-reader-only, so the label is the box a touch reader can hit.
+    // eslint-disable-next-line testing-library/no-node-access
+    const hadFailures = hadFailuresSwitch.closest("label");
+    if (hadFailures === null) throw new Error("The toggle paints no target");
+    const targets: readonly (readonly [string, HTMLElement])[] = [
+      ["Search imports", screen.getByRole("searchbox", { name: "Search imports" })],
+      ["Type", screen.getByRole("combobox", { name: "Type" })],
+      ["Stage", screen.getByRole("combobox", { name: "Stage" })],
+      ["Reason", screen.getByRole("combobox", { name: "Reason" })],
+      ["State", screen.getByRole("combobox", { name: "State" })],
+      ["Had failures", hadFailures],
+      ["From", screen.getByLabelText("From")],
+      ["Before", screen.getByLabelText("Before")],
+      ["Refresh", screen.getByRole("button", { name: "Refresh" })],
+      [
+        "Remove filter: Had failures",
+        screen.getByRole("button", { name: "Remove filter: Had failures" }),
+      ],
+      [
+        "Remove filter: Failed on or after Aug 9, 2026",
+        screen.getByRole("button", {
+          name: "Remove filter: Failed on or after Aug 9, 2026",
+        }),
+      ],
+      ["Clear all", screen.getByRole("button", { name: "Clear all" })],
+      ["Retry upload", screen.getByRole("button", { name: "Retry upload" })],
+      [
+        "Remove Field notes.pdf",
+        screen.getByRole("button", { name: "Remove Field notes.pdf" }),
+      ],
+      [
+        "Retry source processing",
+        await screen.findByRole("button", { name: "Retry source processing" }),
+      ],
+      [
+        "More actions",
+        screen.getByRole("button", { name: `More actions for ${LONG_TITLE}` }),
+      ],
+    ];
+
+    // A target is the box a finger lands on, so both axes are measured: the
+    // narrowest commands in the pane paint a 14px cross and a 32px trigger.
+    await waitFor(() => {
+      for (const [name, target] of targets) {
+        const box = target.getBoundingClientRect();
+        expect(
+          box.width,
+          `${name} is narrower than the 44px target a touch reader needs`,
+        ).toBeGreaterThanOrEqual(44);
+        expect(
+          box.height,
+          `${name} is shorter than the 44px target a touch reader needs`,
+        ).toBeGreaterThanOrEqual(44);
+      }
+    });
     await cdp().send("Emulation.setTouchEmulationEnabled", { enabled: false });
   });
 });

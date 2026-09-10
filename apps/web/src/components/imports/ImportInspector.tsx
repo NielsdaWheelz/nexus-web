@@ -12,6 +12,7 @@ import { useImportDetail } from "@/lib/imports/useImportDetail";
 import { useImportHistory } from "@/lib/imports/useImportHistory";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import {
+  IMPORT_MATCHED_ATTEMPT_ANNOUNCEMENT,
   IMPORT_MATCHED_ATTEMPT_LABEL,
   IMPORT_UNAVAILABLE_LINE,
   historyCoverageLine,
@@ -148,7 +149,12 @@ export default function ImportInspector({
                         <span>{historyEventLine(entry)}</span>
                         {isMatch ? (
                           <Pill tone="info" size="sm">
-                            {IMPORT_MATCHED_ATTEMPT_LABEL}
+                            <span aria-hidden="true">
+                              {IMPORT_MATCHED_ATTEMPT_LABEL}
+                            </span>
+                            <span className="sr-only">
+                              {IMPORT_MATCHED_ATTEMPT_ANNOUNCEMENT}
+                            </span>
                           </Pill>
                         ) : null}
                         <time dateTime={entry.occurredAt}>

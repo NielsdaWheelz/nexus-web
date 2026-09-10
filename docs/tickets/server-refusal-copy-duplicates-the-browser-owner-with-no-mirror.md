@@ -39,8 +39,7 @@ and `apps/web/src/lib/status/imports.ts` from the repository root).
 Either (1) add a case to that kernel proof asserting the server sentence is
 exactly the browser's suspended title plus its second explanation sentence,
 with the `RepairSource` catalog label substituted, or (2) decide the server
-message is diagnostic-only, and state the fact without quoting reader copy —
-as the sibling refusal at `media_source_ingest.py:2584-2589` now does.
+message is diagnostic-only, and state the fact without quoting reader copy.
 
 ## Acceptance
 

@@ -63,6 +63,12 @@ const FACTS_REVISION = "3".repeat(64);
 const RESOLVE_PATH = "/api/resource-items/action-snapshots/resolve";
 /** Short enough that a listed page always overflows it. */
 const PANE_HEIGHT_PX = 240;
+/**
+ * The band the mobile chrome protects at the bottom of the window. Published as
+ * the safe-area inset, which is the one input `MobileViewportProvider` takes
+ * that needs no app-chrome surface registered in this harness.
+ */
+const PROTECTED_BAND_PX = 60;
 const CAPTURED_SCROLL_TOP_PX = 300;
 const HREF_WITH_VIEW = "/imports?view=NeedsAttention";
 /** No view named, so the counts choose one — and a failed count chooses none. */
@@ -245,11 +251,18 @@ function ImportsPaneHost({
   initialHref,
   isMobile,
   paneMounted,
+  fillsWindow,
 }: {
   readonly initialHref: string;
   readonly isMobile: boolean;
   /** False stands for the reader leaving this pane and coming back to it. */
   readonly paneMounted: boolean;
+  /**
+   * The mobile shell gives the pane the whole window, so its body ends where the
+   * floating chrome the reader has to clear begins. Only the clearance case
+   * needs that geometry; every other case reads a short pane on purpose.
+   */
+  readonly fillsWindow: boolean;
 }) {
   const [href, setHref] = useState(initialHref);
   const [publication, setPublication] =
@@ -291,7 +304,11 @@ function ImportsPaneHost({
         {paneMounted ? (
         <div
           data-pane-id={PANE_ID}
-          style={{ display: "flex", height: PANE_HEIGHT_PX }}
+          style={
+            fillsWindow
+              ? { position: "fixed", inset: 0, display: "flex" }
+              : { display: "flex", height: PANE_HEIGHT_PX }
+          }
         >
           <PaneShell
             paneId={PANE_ID}
@@ -352,10 +369,12 @@ function ImportsPane({
   href = HREF_WITH_VIEW,
   isMobile = false,
   paneMounted = true,
+  fillsWindow = false,
 }: {
   readonly href?: string;
   readonly isMobile?: boolean;
   readonly paneMounted?: boolean;
+  readonly fillsWindow?: boolean;
 }) {
   return withRenderEnvironment(
     <AuthenticatedAccountProvider
@@ -385,6 +404,7 @@ function ImportsPane({
                                 initialHref={href}
                                 isMobile={isMobile}
                                 paneMounted={paneMounted}
+                                fillsWindow={fillsWindow}
                               />
                             </ImportsProvider>
                             <ResourceActionOverlays />
@@ -435,6 +455,7 @@ function recordTheReadersPlace(href: string): void {
 
 afterEach(() => {
   mementoCommands.current = null;
+  document.documentElement.style.removeProperty("--viewport-safe-bottom");
   vi.unstubAllGlobals();
 });
 
@@ -504,6 +525,55 @@ describe("Imports pane", () => {
         paneLandmark(),
         "a failed first read withheld the pane's return token, so the reader was left waiting for a list that can never settle",
       ).toHaveFocus(),
+    );
+  });
+
+  // The mobile chrome floats the switchboard's Nexus control over the bottom of
+  // the window, and every mobile pane body reserves the band it covers through
+  // `--mobile-content-bottom-clearance` so no row can come to rest under it. The
+  // switchboard is app chrome and mounts outside this pane harness, so what is
+  // asserted here is the reservation the Imports pane is owed: its scrollport
+  // ends the list exactly the published band above its own bottom edge, which is
+  // where the floating control begins.
+  it("keeps the trailing row clear of the protected band under the mobile chrome", async () => {
+    installBff({
+      summary: () => summaryBody(),
+      page: () => pageBody(),
+    });
+    document.documentElement.style.setProperty(
+      "--viewport-safe-bottom",
+      `${PROTECTED_BAND_PX}px`,
+    );
+
+    render(<ImportsPane isMobile fillsWindow />);
+    await screen.findByRole("button", { name: "A stalled report" });
+    const listed = scrollport();
+    await waitFor(() =>
+      expect(
+        Number.parseFloat(getComputedStyle(listed).paddingBottom),
+        "the Imports pane spent none of the band the mobile chrome protects",
+      ).toBe(PROTECTED_BAND_PX),
+    );
+
+    // The consequence the reader gets: scrolled to its last rest position, the
+    // trailing row — the `More actions` control it carries with it — has come
+    // out from under the band the floating control occupies.
+    listed.scrollTop = listed.scrollHeight;
+    const trailingTitle = LISTED_ITEMS[LISTED_ITEMS.length - 1].title;
+    const trailing = screen.getByRole("listitem", { name: trailingTitle });
+    expect(
+      within(trailing).getByRole("button", {
+        name: `More actions for ${trailingTitle}`,
+      }),
+      "the trailing row carries no More actions control to be covered",
+    ).toBeVisible();
+    await waitFor(() =>
+      expect(
+        trailing.getBoundingClientRect().bottom,
+        "the list has no rest position that brings its trailing row out from under the band the floating control covers",
+      ).toBeLessThanOrEqual(
+        listed.getBoundingClientRect().bottom - PROTECTED_BAND_PX,
+      ),
     );
   });
 

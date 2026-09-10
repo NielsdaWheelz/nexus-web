@@ -26,7 +26,7 @@ import {
   importsAttentionPhrase,
   importsDateChipLabel,
   importsDateFilterLabel,
-  importsFreshnessLine,
+  importsBriefSegments,
   importsSummaryLine,
   uploadSessionActionErrorMessage,
 } from "@/lib/status/imports";
@@ -450,18 +450,21 @@ describe("Imports copy owner", () => {
   it("names which recorded time a History date range bounds", () => {
     expect(importsDateFilterLabel("Failure")).toBe("Failed during");
     expect(importsDateFilterLabel("AnyEvent")).toBe("Recorded during");
+    // The bound is a UTC calendar day (contract D17) named the way every other
+    // date this owner writes is named — never the URL's own spelling, and never
+    // the day before it, whatever zone the reader is in.
     expect(
-      importsDateChipLabel("Failure", "From", "2026-08-09"),
+      importsDateChipLabel("Failure", "From", "2026-08-09", "en-US"),
       "an applied date filter named the URL parameter instead of the bound",
-    ).toBe("Failed on or after 2026-08-09");
-    expect(importsDateChipLabel("Failure", "Before", "2026-08-09")).toBe(
-      "Failed before 2026-08-09",
+    ).toBe("Failed on or after Aug 9, 2026");
+    expect(importsDateChipLabel("Failure", "Before", "2026-08-09", "en-US")).toBe(
+      "Failed before Aug 9, 2026",
     );
-    expect(importsDateChipLabel("AnyEvent", "From", "2026-08-09")).toBe(
-      "Recorded on or after 2026-08-09",
+    expect(importsDateChipLabel("AnyEvent", "From", "2026-08-09", "en-US")).toBe(
+      "Recorded on or after Aug 9, 2026",
     );
-    expect(importsDateChipLabel("AnyEvent", "Before", "2026-08-09")).toBe(
-      "Recorded before 2026-08-09",
+    expect(importsDateChipLabel("AnyEvent", "Before", "2026-08-09", "en-US")).toBe(
+      "Recorded before Aug 9, 2026",
     );
   });
 
@@ -550,14 +553,21 @@ describe("Imports copy owner", () => {
     ).toEqual({ dateTime: "2026-09-06T08:00:00Z", text: "Started 4 hours ago" });
   });
 
-  it("dates the last observation in words the reader can place", () => {
+  it("joins only the brief segments this read has, so no separator opens the line", () => {
+    const now = new Date("2026-09-08T12:00:00Z");
     expect(
-      importsFreshnessLine(
-        "2026-09-08T11:58:00Z",
-        { displayLocale: "en-US" },
-        new Date("2026-09-08T12:00:00Z"),
-      ),
-    ).toBe("Last checked 2 minutes ago");
+      importsBriefSegments(4, "2026-09-08T11:58:00Z", DISPLAY, now),
+      "a read page and its observation were not both stated",
+    ).toEqual(["4 imports in this view", "Last checked 2 minutes ago"]);
+    expect(
+      importsBriefSegments(null, "2026-09-08T11:58:00Z", DISPLAY, now),
+      "an unread page still carried the separator the count it lacks would need",
+    ).toEqual(["Last checked 2 minutes ago"]);
+    expect(
+      importsBriefSegments(1, null, DISPLAY, now),
+      "a page read before any observation landed carried a stray separator",
+    ).toEqual(["1 import in this view"]);
+    expect(importsBriefSegments(null, null, DISPLAY, now)).toEqual([]);
   });
 
   it("counts attention for the navigation without a plural it cannot claim", () => {

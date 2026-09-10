@@ -2067,7 +2067,7 @@ def refresh_source_for_viewer(
             ApiErrorCode.E_RETRY_INVALID_STATE,
             "Source ingest is already queued or running.",
         )
-    _raise_if_source_action_not_reacquirable(db, media, attempt)
+    _raise_if_source_action_not_reacquirable(media, attempt)
     refresh_attempt = _clone_attempt_for_media(
         db,
         media=media,
@@ -2182,7 +2182,7 @@ def repair_source_for_system_media(
             "Latest source attempt is not repairable.",
         )
 
-    _raise_if_source_action_not_reacquirable(db, media, attempt)
+    _raise_if_source_action_not_reacquirable(media, attempt)
     repair_attempt = _clone_attempt_for_media(
         db,
         media=media,
@@ -2567,29 +2567,16 @@ def _verify_source_requeue_storage(
         )
 
 
-def _raise_if_source_action_not_reacquirable(
-    db: Session,
-    media: Media,
-    attempt: MediaSourceAttempt,
-) -> None:
-    if attempt.job_id is not None:
-        from nexus.jobs.queue import current_dead_job_for_payload
-
-        dead = current_dead_job_for_payload(
-            db,
-            kind="ingest_media_source",
-            expected_payload_match={"attempt_id": str(attempt.id)},
-        )
-        if dead is not None and dead.id == attempt.job_id:
-            raise ConflictError(
-                ApiErrorCode.E_RETRY_NOT_ALLOWED,
-                "Automatic retries are used up for the latest source attempt, so the "
-                "source is not fetched again for it. Imports shows any recovery this "
-                "import is offered.",
-            )
+def _raise_if_source_action_not_reacquirable(media: Media, attempt: MediaSourceAttempt) -> None:
+    """Both callers act on a settled attempt, whose queue rows restrict no later
+    action; only the source can. The refusal reads `media.last_error_code`, the
+    column the offers read (`derive_capabilities`, `_SOURCE_REFRESH_AVAILABLE_SQL`),
+    so an action is never refused on a fact the offer could not see; a failed
+    attempt's `error_code` is written from that same code in the same
+    transaction, so `source_recovery` reads the same fact through the attempt."""
     restriction = _source_reacquisition_restriction(
         source_type=attempt.source_type,
-        error_code=media.last_error_code or attempt.error_code,
+        error_code=media.last_error_code,
     )
     if restriction is not None:
         raise ConflictError(ApiErrorCode.E_RETRY_NOT_ALLOWED, _RESTRICTION_MESSAGES[restriction])

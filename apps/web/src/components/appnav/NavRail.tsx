@@ -199,8 +199,9 @@ export default function NavRail({
             <ImportsIcon size={20} strokeWidth={2} aria-hidden="true" />
           </span>
           {/* Collapsed hides every rail label, but not the attention count: the
-              badge drops its visible label and paints as a corner chip over the
-              icon, and its accessible text still names this link. */}
+              badge drops its visible label and paints as a chip in this link's
+              own top-right corner, above its icon, and its accessible text
+              still names the link. */}
           <span className={collapsed ? styles.utilityChip : styles.utilityLabel}>
             <ImportsBadge
               label={utilities.imports.label}

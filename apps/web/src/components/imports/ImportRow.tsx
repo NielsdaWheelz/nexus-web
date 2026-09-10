@@ -186,6 +186,10 @@ function UploadActions({
             ref={inputRef}
             className="sr-only"
             type="file"
+            // The offer's one tab stop is the button beside it, which opens
+            // this chooser. A clipped control that took focus of its own would
+            // paint its focus ring inside a 1px box (WCAG 2.4.7).
+            tabIndex={-1}
             aria-label={`Choose ${item.title} to retry the upload`}
             accept=".pdf,.epub,application/pdf,application/epub+zip"
             disabled={retryPending}
@@ -209,8 +213,9 @@ function UploadActions({
       ) : null}
       {item.capabilities.canRemove ? (
         <Button
-          variant="ghost"
+          variant="secondary"
           size="sm"
+          aria-label={removePending ? undefined : `Remove ${item.title}`}
           disabled={removePending}
           onClick={remove}
         >

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import AppliedFilters from "@/components/search/AppliedFilters";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
@@ -42,11 +42,10 @@ import {
   IMPORT_STATE_KIND_LABEL,
   importKindLabel,
   importStageLabel,
+  importsBriefSegments,
   importsEmptyCopy,
   importsDateFilterLabel,
-  importsFreshnessLine,
   importsLoadErrorMessage,
-  importsMatchedLine,
   importsSummaryLine,
 } from "@/lib/status/imports";
 import ImportRow from "./ImportRow";
@@ -186,7 +185,7 @@ function ImportsWorkspaceView({
   const { summary, loadState, observation, refresh } = useImports();
   const display = useRenderEnvironment();
   const page = useImportsPage(view, state);
-  const chips = appliedImportsFilters(view, state);
+  const chips = appliedImportsFilters(view, state, display.displayLocale);
   const listRef = useRef<HTMLDivElement>(null);
 
   const listSettled = page.status !== "loading";
@@ -218,19 +217,6 @@ function ImportsWorkspaceView({
     setDraft(committedRef.current);
   }
 
-  // A live region carries new information, never a summary of what was already
-  // on screen when the pane opened.
-  const announcedRef = useRef<string | null>(null);
-  const [announcement, setAnnouncement] = useState("");
-  useEffect(() => {
-    if (summary === null) return;
-    const line = importsSummaryLine(summary);
-    const previous = announcedRef.current;
-    announcedRef.current = line;
-    if (previous === null || previous === line) return;
-    setAnnouncement(`${line}.`);
-  }, [summary]);
-
   // Dismissing the inspector returns the reader to the row it was opened from,
   // rather than dropping focus to the document.
   const lastSelectedRef = useRef<ImportRef | null>(selectedRef);
@@ -253,11 +239,19 @@ function ImportsWorkspaceView({
       ? summary.needsAttentionCount
       : summary.activeCount;
   };
-  const observedAt = observation.observedAt;
-  const freshness =
-    observedAt === null
-      ? null
-      : importsFreshnessLine(observedAt, display, new Date());
+  // What every import is doing is a claim the reader reads against the list
+  // under it, so it is published only over a list that states facts: the page
+  // this view is showing has been read. `useImportsPage` keeps the last-read
+  // page across a re-key of the same query, so a refresh — successful or
+  // failed — keeps the sentence, while a view whose own read has never
+  // answered (a first load, a changed filter) shows a placeholder list with no
+  // sentence claiming a state above it.
+  const brief = importsBriefSegments(
+    page.status === "ready" ? page.matchedCount : null,
+    observation.observedAt,
+    display,
+    new Date(),
+  );
   const empty = importsEmptyCopy(view, chips.length > 0);
   const datesBound = importsDateFilterLabel(importsDateBounds(state));
   const sections = importStageSections(page.groups, page.items);
@@ -320,21 +314,27 @@ function ImportsWorkspaceView({
         <PaneSurface
           brief={
             <div className={styles.brief}>
-              <p>{summary === null ? "" : importsSummaryLine(summary)}</p>
-              <p className={styles.freshness}>
-                {page.status === "ready"
-                  ? importsMatchedLine(page.matchedCount)
-                  : ""}
-                {freshness === null ? null : (
-                  <>
-                    <span aria-hidden="true"> · </span>
-                    <span className="sr-only">, </span>
-                    <span>{freshness}</span>
-                  </>
-                )}
+              {/* The sentence the reader sees is the one an assistive reader
+                  hears: one element, so browsing the pane linearly meets it
+                  once, and a count that changes under a settled list is spoken
+                  politely where it is read (contract §6). */}
+              <p role="status" aria-live="polite" aria-atomic="true">
+                {summary === null || page.status !== "ready"
+                  ? ""
+                  : importsSummaryLine(summary)}
               </p>
-              <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
-                {announcement}
+              <p className={styles.freshness}>
+                {brief.map((segment, index) => (
+                  <Fragment key={segment}>
+                    {index === 0 ? null : (
+                      <>
+                        <span aria-hidden="true"> · </span>
+                        <span className="sr-only">, </span>
+                      </>
+                    )}
+                    <span>{segment}</span>
+                  </Fragment>
+                ))}
               </p>
             </div>
           }
@@ -343,25 +343,42 @@ function ImportsWorkspaceView({
               <PaneToolbar
                 variant="Refinement"
                 search={
-                  <form
-                    className={styles.search}
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      const value = draft.trim();
-                      update({ q: value === "" ? absent() : present(value) });
-                    }}
-                  >
-                    <Input
-                      type="search"
-                      aria-label="Search imports"
-                      placeholder="Search titles, files and sources"
-                      value={draft}
-                      onChange={(event) => setDraft(event.target.value)}
-                    />
-                    <button type="submit" className="sr-only">
-                      Apply search
-                    </button>
-                  </form>
+                  // The pane's one refresh command keeps a fixed slot beside
+                  // the search box: a control the reader has to find after a
+                  // failed read must not migrate between toolbar rows as the
+                  // filter set changes width.
+                  <div className={styles.searchRow}>
+                    <form
+                      className={styles.search}
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        const value = draft.trim();
+                        update({ q: value === "" ? absent() : present(value) });
+                      }}
+                    >
+                      <Input
+                        type="search"
+                        aria-label="Search imports"
+                        placeholder="Search titles, files and sources"
+                        value={draft}
+                        onChange={(event) => setDraft(event.target.value)}
+                      />
+                      {/* Enter in the box submits the form; this names
+                          that command for a reader who cannot see the box it
+                          belongs to. It is clipped, so it is not a stop a
+                          sighted reader would ever see focus land on. */}
+                      <button type="submit" className="sr-only" tabIndex={-1}>
+                        Apply search
+                      </button>
+                    </form>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => void refresh()}
+                    >
+                      Refresh
+                    </Button>
+                  </div>
                 }
                 filters={
                   <>
@@ -509,11 +526,6 @@ function ImportsWorkspaceView({
                     )}
                   </>
                 }
-                controls={
-                  <Button variant="ghost" size="sm" onClick={() => void refresh()}>
-                    Refresh
-                  </Button>
-                }
               />
               <AppliedFilters
                 chips={chips.map((chip) => ({ id: chip.id, label: chip.label }))}
@@ -528,26 +540,31 @@ function ImportsWorkspaceView({
           }
           state={
             <>
-              {loadState.kind === "Failed" ? (
-                summary === null ? (
-                  <FeedbackNotice
-                    content={importsLoadErrorMessage(loadState.error)}
-                    announcement="Assertive"
-                    actions={[{ label: "Try again", onClick: () => void refresh() }]}
-                  />
-                ) : (
-                  <FeedbackNotice
-                    content={IMPORTS_STALE_REFRESH_NOTICE}
-                    announcement="Polite"
-                    actions={[{ label: "Try again", onClick: () => void refresh() }]}
-                  />
-                )
+              {loadState.kind === "Failed" && summary === null ? (
+                <FeedbackNotice
+                  content={importsLoadErrorMessage(loadState.error)}
+                  announcement="Assertive"
+                  actions={[{ label: "Try again", onClick: () => void refresh() }]}
+                />
               ) : null}
               {page.status === "error" && page.error !== null ? (
                 <FeedbackNotice
                   content={importsLoadErrorMessage(page.error)}
                   announcement="Assertive"
                   actions={[{ label: "Try again", onClick: page.retry }]}
+                />
+              ) : null}
+              {/* A read that failed over facts the reader still has is a
+                  freshness fact, not a failure of the list: the counts or the
+                  rows below are the last update, and the assertive error above
+                  is kept for a view with nothing to show. `Refresh` re-keys
+                  both reads, so one recovery answers either failure. */}
+              {(loadState.kind === "Failed" && summary !== null) ||
+              page.refreshFailed ? (
+                <FeedbackNotice
+                  content={IMPORTS_STALE_REFRESH_NOTICE}
+                  announcement="Polite"
+                  actions={[{ label: "Try again", onClick: () => void refresh() }]}
                 />
               ) : null}
               {page.status === "loading" ? (

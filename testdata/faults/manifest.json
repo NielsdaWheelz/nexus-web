@@ -855,6 +855,15 @@
         "pytest:python/tests/service/test_resource_action_snapshots.py::test_document_media_subtypes_publish_their_exact_action_families"
       ],
       "expected_failure": "assert 'OfflineReading' not in"
+    },
+    {
+      "id": "imports-collapsed-count-chip-is-full-size",
+      "patch": "testdata/faults/imports-collapsed-count-chip-is-full-size.patch",
+      "sha256": "b3259442e26a9e208d4832fff17ab7ce893f9354ea3296ed7cb9721bdef84f78",
+      "proofs": [
+        "vitest:apps/web/src/components/appnav/NavRail.browser.test.tsx"
+      ],
+      "expected_failure": "the collapsed count is not the smaller chip a 48px rail has room for"
     }
   ]
 }

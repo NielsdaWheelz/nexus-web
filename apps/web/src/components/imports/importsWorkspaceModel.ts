@@ -274,6 +274,7 @@ export interface ImportsFilterChip {
 export function appliedImportsFilters(
   view: ImportsView,
   state: ImportsUrlState,
+  locale: string,
 ): readonly ImportsFilterChip[] {
   const chips: ImportsFilterChip[] = [];
   if (state.q.kind === "Present") {
@@ -316,13 +317,13 @@ export function appliedImportsFilters(
   if (state.from.kind === "Present") {
     chips.push({
       id: "from",
-      label: importsDateChipLabel(dated, "From", state.from.value),
+      label: importsDateChipLabel(dated, "From", state.from.value, locale),
     });
   }
   if (state.before.kind === "Present") {
     chips.push({
       id: "before",
-      label: importsDateChipLabel(dated, "Before", state.before.value),
+      label: importsDateChipLabel(dated, "Before", state.before.value, locale),
     });
   }
   return chips;

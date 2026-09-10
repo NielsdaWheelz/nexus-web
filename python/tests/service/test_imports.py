@@ -313,6 +313,7 @@ def test_history_lists_each_import_once_in_evidence_order_without_foreign_rows(
     )
     settled_attempt.status = "succeeded"
     published_at = datetime(2026, 9, 3, 12, 0, tzinfo=UTC)
+    indexed_at = datetime(2026, 9, 4, 12, 0, tzinfo=UTC)
     older_at = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
     published_event_id = insert_upload_event(
         db_session,
@@ -325,6 +326,17 @@ def test_history_lists_each_import_once_in_evidence_order_without_foreign_rows(
         stage=present("Upload"),
         failure_code=absent(),
         occurred_at=published_at,
+    )
+    # The published upload's later work is recorded against its media, so this
+    # import's evidence spans both event tables and its newest event is not the
+    # upload event a stage filter matches.
+    insert_processing_event(
+        db_session,
+        media_id=published_media_id,
+        facts=IndexSucceeded(revision=1, job_id=uuid4(), execution_id=uuid4()),
+        stage=present("Index"),
+        failure_code=absent(),
+        occurred_at=indexed_at,
     )
     insert_upload_event(
         db_session,
@@ -361,7 +373,19 @@ def test_history_lists_each_import_once_in_evidence_order_without_foreign_rows(
     }, "the linked media is named by its resource ref, the grammar every media action speaks"
     assert published_item["state"] == {"kind": "Complete"}
     assert published_item["title"] == "published.epub"
-    assert published_item["matched_event"] == {
+    assert published_item["matched_event"] == {"kind": "Absent"}, (
+        "an unfiltered row matches on its own newest event, which its current outcome "
+        "already states, so there is nothing for a match line to explain"
+    )
+
+    # A filter that reaches past the row's newest event names the upload event
+    # itself, so the upload arm of the union is read, correlated to this
+    # viewer's session, and decoded as the upload fact it stores.
+    upload_stage = _page(authenticated_client, "view=History&stage=Upload&limit=50")
+    published_upload = next(
+        item for item in upload_stage["items"] if item["ref"] == _upload_ref(published)
+    )
+    assert published_upload["matched_event"] == {
         "kind": "Present",
         "value": {
             "id": str(published_event_id),
@@ -375,7 +399,7 @@ def test_history_lists_each_import_once_in_evidence_order_without_foreign_rows(
                 "source_attempt_id": str(published_attempt.id),
             },
         },
-    }, "the newest event of an unfiltered History row is its match"
+    }, "an upload-origin row explains itself with the upload event that matched"
 
     attention = _page(authenticated_client, "view=NeedsAttention&limit=50")
     assert [item["ref"] for item in attention["items"]] == [_upload_ref(unpublished)]
@@ -459,6 +483,7 @@ def test_history_stage_and_date_filters_must_be_satisfied_by_one_event(
     attempt.status = "succeeded"
     old_failure_at = datetime(2026, 1, 5, 9, 0, tzinfo=UTC)
     recent_index_at = datetime(2026, 9, 5, 9, 0, tzinfo=UTC)
+    reindexed_at = datetime(2026, 9, 9, 9, 0, tzinfo=UTC)
     insert_processing_event(
         db_session,
         media_id=media_id,
@@ -480,6 +505,16 @@ def test_history_stage_and_date_filters_must_be_satisfied_by_one_event(
         stage=present("Index"),
         failure_code=absent(),
         occurred_at=recent_index_at,
+    )
+    # A later reindex outside the window: every match below is the newest event
+    # that satisfies its filter, never the import's newest event.
+    insert_processing_event(
+        db_session,
+        media_id=media_id,
+        facts=IndexSucceeded(revision=2, job_id=uuid4(), execution_id=uuid4()),
+        stage=present("Index"),
+        failure_code=absent(),
+        occurred_at=reindexed_at,
     )
     db_session.flush()
 
@@ -503,6 +538,84 @@ def test_history_stage_and_date_filters_must_be_satisfied_by_one_event(
     assert matched_index["items"][0]["matched_event"]["value"]["occurred_at"] == (
         recent_index_at.isoformat().replace("+00:00", "Z")
     )
+
+
+def test_history_omits_a_match_that_is_the_rows_own_newest_event(
+    db_session: Session,
+    test_user: UserRecord,
+    authenticated_client: TestClient,
+) -> None:
+    """A row's newest event is the outcome the row already states, so naming it
+    as the match explains nothing; the order key still follows the match."""
+    first_id, first_attempt = create_source_media(
+        db_session,
+        viewer_id=test_user.id,
+        title="Accepted late, settled first",
+        attempt_no=1,
+        processing_status=ProcessingStatus.ready_for_reading,
+        kind=MediaKind.epub,
+    )
+    first_attempt.status = "succeeded"
+    second_id, second_attempt = create_source_media(
+        db_session,
+        viewer_id=test_user.id,
+        title="Accepted early, settled second",
+        attempt_no=1,
+        processing_status=ProcessingStatus.ready_for_reading,
+        kind=MediaKind.epub,
+    )
+    second_attempt.status = "succeeded"
+    first_accepted_at = datetime(2026, 9, 4, 9, 0, tzinfo=UTC)
+    second_accepted_at = datetime(2026, 9, 1, 9, 0, tzinfo=UTC)
+    first_settled_at = datetime(2026, 9, 5, 9, 0, tzinfo=UTC)
+    second_settled_at = datetime(2026, 9, 6, 9, 0, tzinfo=UTC)
+    # Acceptance runs against settlement, so only the matched event explains the order.
+    first_attempt.created_at = first_accepted_at
+    second_attempt.created_at = second_accepted_at
+    for media_id, attempt, accepted_at, settled_at in (
+        (first_id, first_attempt, first_accepted_at, first_settled_at),
+        (second_id, second_attempt, second_accepted_at, second_settled_at),
+    ):
+        insert_processing_event(
+            db_session,
+            media_id=media_id,
+            facts=SourceAccepted(source_attempt_id=attempt.id, attempt_no=1),
+            stage=present("Validate"),
+            failure_code=absent(),
+            occurred_at=accepted_at,
+        )
+        insert_processing_event(
+            db_session,
+            media_id=media_id,
+            facts=SourceSucceeded(source_attempt_id=attempt.id, execution_id=absent()),
+            stage=present("Finalize"),
+            failure_code=absent(),
+            occurred_at=settled_at,
+        )
+    db_session.flush()
+
+    settled = _page(authenticated_client, "view=History&stage=Finalize&limit=50")
+
+    assert [item["ref"] for item in settled["items"]] == [
+        _media_ref(second_id),
+        _media_ref(first_id),
+    ], "the newest matching event orders the row even where it is not reported"
+    assert [item["matched_event"] for item in settled["items"]] == [
+        {"kind": "Absent"},
+        {"kind": "Absent"},
+    ], "a match that is the row's newest event repeats the row's own outcome"
+    assert settled["matched_count"] == 2
+
+    accepted = _page(authenticated_client, "view=History&stage=Validate&limit=50")
+
+    assert [item["ref"] for item in accepted["items"]] == [
+        _media_ref(first_id),
+        _media_ref(second_id),
+    ], "an older match reorders the same two rows"
+    assert [item["matched_event"]["value"]["occurred_at"] for item in accepted["items"]] == [
+        first_accepted_at.isoformat().replace("+00:00", "Z"),
+        second_accepted_at.isoformat().replace("+00:00", "Z"),
+    ], "a match older than the row's newest event is the evidence the row was listed for"
 
 
 @pytest.mark.parametrize(
@@ -681,18 +794,16 @@ def test_unknown_source_failure_code_is_a_defect_not_an_import_state(
         )
 
 
-@pytest.mark.parametrize("exact_status", [None, "pending", "failed", "running", "succeeded"])
-def test_failed_index_without_its_exact_dead_job_is_still_a_defect(
+def test_media_content_index_reported_failed_is_a_defect_no_owner_writes(
     db_session: Session,
     test_user: UserRecord,
-    exact_status: str | None,
 ) -> None:
-    """A failed index state is repairable only through its exact dead job; any
-    other queue shape beside it is a state no owner transition produces."""
+    """`failed` is a note-index status; no media owner transition writes it, so
+    the read surfaces the row instead of classifying an impossible state."""
     media_id, attempt = create_source_media(
         db_session,
         viewer_id=test_user.id,
-        title=f"Failed index beside {exact_status or 'no'} job",
+        title="Failed media content index",
         attempt_no=1,
         processing_status=ProcessingStatus.ready_for_reading,
         kind=MediaKind.epub,
@@ -701,40 +812,21 @@ def test_failed_index_without_its_exact_dead_job_is_still_a_defect(
     db_session.add(
         ContentIndexState(owner_kind="media", owner_id=media_id, revision=1, status="failed")
     )
-    if exact_status is not None:
-        job = enqueue_job(
-            db_session,
-            kind="media_content_reindex_job",
-            payload={"media_id": str(media_id), "revision": 1},
-        )
-        if exact_status != "pending":
-            claim = claim_heavy_job(
-                db_session, job.id, "index-worker", allowed_kinds=("media_content_reindex_job",)
-            )
-        if exact_status == "failed":
-            assert (
-                fail_job(
-                    db_session,
-                    job_id=job.id,
-                    worker_id="index-worker",
-                    attempt_no=claim.attempts,
-                    error_code="E_INDEX_RETRY",
-                    error_message="retryable index failure",
-                    retry_delays_seconds=(300,),
-                )
-                == "failed"
-            )
-        elif exact_status == "succeeded":
-            assert complete_job(
-                db_session, job_id=job.id, worker_id="index-worker", attempt_no=claim.attempts
-            )
+    insert_processing_event(
+        db_session,
+        media_id=media_id,
+        facts=SourceSucceeded(source_attempt_id=attempt.id, execution_id=absent()),
+        stage=present("Finalize"),
+        failure_code=absent(),
+        occurred_at=datetime(2026, 9, 5, 8, 0, tzinfo=UTC),
+    )
     db_session.flush()
 
-    with pytest.raises(AssertionError, match="invariant defect"):
+    with pytest.raises(AssertionError, match="content index"):
         read_import_page(
             db_session,
             viewer_id=test_user.id,
-            query=ImportListQuery(view="NeedsAttention"),
+            query=ImportListQuery(view="History"),
             is_admin=False,
         )
 
@@ -1520,7 +1612,7 @@ def test_search_matches_title_upload_filename_and_source_host_literally(
     assert by_ref[_upload_ref(upload)]["source_label"] == {"kind": "Absent"}
 
 
-def test_history_state_filter_keeps_the_newest_event_as_the_match(
+def test_history_state_filter_narrows_membership_to_the_current_state(
     db_session: Session,
     test_user: UserRecord,
     authenticated_client: TestClient,
@@ -1549,7 +1641,7 @@ def test_history_state_filter_keeps_the_newest_event_as_the_match(
             failure_code=absent(),
             occurred_at=accepted_at,
         )
-    succeeded_event_id = insert_processing_event(
+    insert_processing_event(
         db_session,
         media_id=complete_id,
         facts=SourceSucceeded(source_attempt_id=complete_attempt.id, execution_id=absent()),
@@ -1557,7 +1649,7 @@ def test_history_state_filter_keeps_the_newest_event_as_the_match(
         failure_code=absent(),
         occurred_at=settled_at,
     )
-    failed_event_id = insert_processing_event(
+    insert_processing_event(
         db_session,
         media_id=failed_id,
         facts=SourceFailed(
@@ -1576,14 +1668,10 @@ def test_history_state_filter_keeps_the_newest_event_as_the_match(
     complete = _page(authenticated_client, "view=History&state=Complete&limit=50")
     assert [item["ref"] for item in complete["items"]] == [_media_ref(complete_id)]
     assert complete["items"][0]["state"] == {"kind": "Complete"}
-    assert complete["items"][0]["matched_event"]["value"]["id"] == str(succeeded_event_id), (
-        "a state filter narrows membership; the match stays the newest event"
-    )
     assert complete["groups"] == [], "a settled import has no current stage to group"
 
     attention = _page(authenticated_client, "view=History&state=NeedsAttention&limit=50")
     assert [item["ref"] for item in attention["items"]] == [_media_ref(failed_id)]
-    assert attention["items"][0]["matched_event"]["value"]["id"] == str(failed_event_id)
     assert attention["groups"] == [{"stage": "Extract", "count": 1}], (
         "History groups its filtered set by current stage like every other view"
     )

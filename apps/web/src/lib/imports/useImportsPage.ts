@@ -30,6 +30,12 @@ export interface ImportsPageResult {
   readonly groups: readonly ImportStageGroup[];
   readonly hasMore: boolean;
   readonly loadingMore: boolean;
+  /**
+   * The newest read of this query failed and the rows on screen are the ones
+   * read before it. `status` stays `ready` in that case: the list is last-good
+   * data, and only the freshness notice changes.
+   */
+  readonly refreshFailed: boolean;
   loadMore(): void;
   retry(): void;
 }
@@ -96,7 +102,29 @@ export function useImportsPage(
   if (live !== null && live.key !== cacheKey) setLive(null);
 
   const keyedPage = keyed.status === "ready" ? keyed.data : null;
-  const page = live !== null && live.key === cacheKey ? live.page : keyedPage;
+  const read = live !== null && live.key === cacheKey ? live.page : keyedPage;
+
+  // An invalidation or a manual refresh re-keys the read above without changing
+  // what is being asked for, and a re-keyed read has no data: the rows the
+  // reader is looking at would unmount for one round trip. The page last read
+  // for this exact query stands in until the new read answers, so a removal or
+  // a recovery never empties the list it is refreshing. It stands in when that
+  // read fails too — "Failed refresh keeps last-good data" — so a transport
+  // failure never throws away rows the browser is still holding; only a query
+  // with no page ever read for it has nothing to show.
+  const lastGoodRef = useRef<{
+    readonly query: string;
+    readonly page: ImportPage;
+  } | null>(null);
+  if (read !== null) lastGoodRef.current = { query, page: read };
+  const lastGood = lastGoodRef.current;
+  const page =
+    read ?? (lastGood !== null && lastGood.query === query ? lastGood.page : null);
+
+  // The newest read of this query failed while the page above is the one read
+  // before it: the reader is looking at facts, not at a failure, so the pane
+  // says the refresh failed rather than replacing the list with an error.
+  const refreshFailed = keyed.status === "error" && read === null && page !== null;
 
   // What the effect below re-reads: the page committed with the key it is
   // running for, since an effect runs against the render that scheduled it.
@@ -148,13 +176,20 @@ export function useImportsPage(
     return () => controller.abort();
   }, [absorbRereadFailure, cacheKey, observedAt, query, revision]);
 
+  // The continuation is owned by the page object, so the projection of one page
+  // must not be rebuilt while the reader is still on it: a re-keyed read hands
+  // back a fresh resource object on every render until it answers.
+  const firstData = useMemo(
+    () => (page === null ? null : cursorPage(page)),
+    [page],
+  );
   const firstPage = useMemo<AsyncResource<CursorPage<ImportItem>>>(() => {
-    if (page !== null) return { status: "ready", data: cursorPage(page) };
+    if (firstData !== null) return { status: "ready", data: firstData };
     if (keyed.status === "error") {
       return { status: "error", error: keyed.error, retry: keyed.retry };
     }
     return { status: "loading" };
-  }, [keyed, page]);
+  }, [firstData, keyed]);
 
   const pagination = useCursorPagination<ImportItem>({
     firstPage,
@@ -178,6 +213,7 @@ export function useImportsPage(
     groups: page?.groups ?? [],
     hasMore: pagination.hasMore,
     loadingMore: pagination.loadingMore,
+    refreshFailed,
     loadMore: pagination.loadMore,
     retry: pagination.retry,
   };

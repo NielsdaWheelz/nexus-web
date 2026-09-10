@@ -471,22 +471,35 @@ def test_succeeded_attempt_with_a_later_dead_job_is_complete_and_unrepairable(
     assert refused.value.code is ApiErrorCode.E_REPAIR_NOT_ALLOWED
     assert _job(db, first.job_id).status == "dead", "a refused repair requeued the dead job"
 
-    with pytest.raises(ApiError) as refused_refresh:
+    # The dead job of a settled attempt restricts nothing later: the refresh this
+    # complete import is offered runs, and only a state change since the offer refuses.
+    assert projected.capabilities.can_refresh_source is True
+    refreshed = refresh_source_for_viewer(
+        db=db,
+        viewer_id=user.id,
+        media_id=first.media_id,
+        request_id="published-then-dead-refresh",
+    )
+    assert refreshed["idempotency_outcome"] == "refreshed"
+    assert refreshed["source_attempt_id"] != str(first.attempt_id)
+    assert refreshed["ingest_enqueued"] is True
+    assert ingest_job_count(db, media_id=first.media_id) == 2
+
+    reoffered = list_media_for_viewer_by_ids(db, user.id, [first.media_id])[0]
+    assert reoffered.capabilities.can_refresh_source is False, (
+        "the refresh under way withdraws the offer that started it"
+    )
+    with pytest.raises(ApiError) as refused_again:
         refresh_source_for_viewer(
             db=db,
             viewer_id=user.id,
             media_id=first.media_id,
-            request_id="published-then-dead-refresh",
+            request_id="published-then-dead-refresh-again",
         )
-    assert refused_refresh.value.code is ApiErrorCode.E_RETRY_NOT_ALLOWED
-    assert refused_refresh.value.message == (
-        "Automatic retries are used up for the latest source attempt, so the source is "
-        "not fetched again for it. Imports shows any recovery this import is offered."
-    ), (
-        "the refusal must state the dead job it reads, not a suspension and an operator "
-        f"repair that this complete import is offered nowhere: {refused_refresh.value.message}"
+    assert refused_again.value.code is ApiErrorCode.E_MEDIA_NOT_READY, (
+        "the only refusal left is the state the viewer's own refresh moved the media into"
     )
-    assert ingest_job_count(db, media_id=first.media_id) == 1, "a refused refresh cloned an attempt"
+    assert ingest_job_count(db, media_id=first.media_id) == 2, "a refused refresh cloned an attempt"
 
 
 def _next_attempt_at(payload: dict[str, Any]) -> datetime:

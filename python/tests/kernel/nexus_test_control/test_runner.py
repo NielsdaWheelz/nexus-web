@@ -4009,6 +4009,66 @@ def test_exact_proof_failure_kinds_are_stable_and_setup_assertions_are_not_behav
     assert f"proof_id={proof}|" in assertion.detail
 
 
+def test_bounded_browser_failure_retains_its_testing_library_query_error() -> None:
+    """A missing element is the most common browser red, and its query error is
+    the whole diagnostic; past the output bound it has to survive on its own."""
+    query_error = (
+        "TestingLibraryElementError: Unable to find an accessible element with the "
+        'role "button" and name "Retry upload"'
+    )
+    matcher_error = "expect(element).toBeVisible() failed"
+    noise = "\n".join(
+        f"stdout | ImportsWorkspace.browser.test.tsx > offers the retry > step {step}"
+        for step in range(200)
+    )
+    captured = (
+        f"{noise}\n"
+        " FAIL  src/components/imports/ImportsWorkspace.browser.test.tsx > offers the retry\n"
+        f"{query_error}\n"
+        "Ignored nodes: comments, script, style\n"
+        f"{matcher_error}\n"
+        f"{noise}\n"
+        " Test Files  1 failed (1)\n"
+        "      Tests  1 failed | 16 passed (27)\n"
+    )
+    assert len(captured) > 1900, "the capture must exceed the bound this case is about"
+
+    detail = runner._command_result_detail(
+        1,
+        subprocess.CompletedProcess(("bun", "run", "vitest"), 1, captured, ""),
+    )
+
+    assert query_error in detail, detail
+    assert matcher_error in detail, detail
+    assert "step 0" not in detail, "the bound still drops the reporter's own noise"
+
+
+def test_bounded_capture_keeps_the_first_red_and_the_runner_summary() -> None:
+    """The bound is a whole command's capture, not one test's: a browser file
+    reds every case a removed control breaks. The fingerprint a registered fault
+    is matched against is the first of those reds, and the runner's own summary
+    line is what classifies the result, so both ends have to survive."""
+    fingerprint = "the stranded upload stopped offering the retry it accepts"
+    later_reds = "\n".join(
+        "TestingLibraryElementError: Unable to find an accessible element with "
+        f'the role "button" and name "Retry upload" in case {case}'
+        for case in range(40)
+    )
+    captured = (
+        " FAIL  src/components/imports/ImportsWorkspace.browser.test.tsx > offers the retry\n"
+        f"AssertionError: {fingerprint}\n"
+        f"{later_reds}\n"
+        "      Tests  5 failed | 16 passed (27)\n"
+    )
+
+    bounded = runner._decisive_output(captured)
+
+    assert len(bounded) <= 1900, "the bound still holds"
+    assert fingerprint in bounded, bounded
+    assert "Tests  5 failed" in bounded, bounded
+    assert "in case 20" not in bounded, "the middle is what a full set gives up"
+
+
 def test_exact_node_tap_assertion_retains_the_first_bounded_oracle() -> None:
     evidence = CapabilityEvidence(Capability.INGEST_NODE, RunStatus.FAIL, 1, 0)
     proof = "node-test:node/ingest/test/accepted_url_egress.test.mjs"

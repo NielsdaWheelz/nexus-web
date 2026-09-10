@@ -5,9 +5,12 @@ every viewer-visible media row that has a source attempt. An upload keeps its
 `upload:` identity after publication and carries its media's classification, so
 the standalone media branch omits the media this viewer's sessions published.
 Summary, page, and detail read the same CTE, so a badge count, a page count, and
-a row can never disagree; every current-state fact a filter or an order needs is
-computed set-wise here, and the recovery offer on each row comes from the source
-and search owners' own policies.
+a row can never disagree about a classification; every current-state fact a
+filter or an order needs is computed set-wise here, and the recovery offer on
+each row comes from the source and search owners' own policies. Detecting an
+impossible row belongs to the reads that render one (`_item`, `_state`): the
+summary counts classifications and materializes no row, so it cannot see a
+per-row defect (OI-035).
 """
 
 from __future__ import annotations
@@ -140,8 +143,7 @@ def _catalogued_queue_code(column: str) -> str:
 
 
 # One classified row per import. `media_state` is the former Activity CTE:
-# source state owns the projection until publication, then the content index
-# does; a failed index without its exact current repair job is a defect.
+# source state owns the projection until publication, then the content index does.
 _IMPORTS_CTE = f"""
 WITH visible_media AS (
     {visible_media_ids_cte_sql()}
@@ -238,15 +240,9 @@ WITH visible_media AS (
                 THEN 'NeedsAttention'
             WHEN attempt_status NOT IN ('succeeded', 'superseded')
                 THEN 'Active'
-            WHEN index_status = 'failed'
-             AND NOT (
-                COALESCE(exact_index_job_count, 0) = 1
-                AND index_job_status = 'dead'
-             )
-                THEN 'InvariantDefect'
             WHEN index_job_status = 'dead'
                 THEN 'NeedsAttention'
-            WHEN index_status IN ('pending', 'indexing', 'failed')
+            WHEN index_status IN ('pending', 'indexing')
               OR index_job_status IN ('pending', 'failed', 'running')
                 THEN 'Active'
             ELSE 'Complete'
@@ -395,6 +391,7 @@ WITH visible_media AS (
         w.source_job_exact,
         w.source_job_status,
         w.source_job_available_at,
+        w.index_status,
         w.index_revision,
         w.index_job_id,
         w.index_job_status,
@@ -410,8 +407,6 @@ WITH visible_media AS (
 _EVENTS_OF_IMPORT_SQL = events_of_import_sql(
     session_id_expr="i.session_id", media_id_expr="i.media_id"
 )
-
-_INVARIANT_DEFECTS_SQL = "(SELECT count(*) FROM imports WHERE classification = 'InvariantDefect')"
 
 
 def _base_params(viewer_id: UUID) -> dict[str, object]:
@@ -469,7 +464,13 @@ def _filtered_cte(query: ImportListQuery, params: dict[str, object]) -> str:
         SELECT e.event_table AS matched_table, e.id AS matched_id,
                e.occurred_at AS matched_at, e.event_type AS matched_type,
                e.stage AS matched_stage, e.failure_code AS matched_failure_code,
-               e.payload AS matched_payload
+               e.payload AS matched_payload,
+               -- The row's own outcome already states its newest event, so only
+               -- a match older than that one explains why the row was listed.
+               EXISTS (
+                   SELECT 1 FROM ({_EVENTS_OF_IMPORT_SQL}) newer
+                   WHERE (newer.occurred_at, newer.id) > (e.occurred_at, e.id)
+               ) AS matched_precedes_newest
         FROM ({_EVENTS_OF_IMPORT_SQL}) e
         WHERE {" AND ".join(event_conditions) or "TRUE"}
         ORDER BY e.occurred_at DESC, e.id DESC
@@ -494,13 +495,6 @@ def _filtered_cte(query: ImportListQuery, params: dict[str, object]) -> str:
 )"""
 
 
-def _require_no_invariant_defect(count: object) -> None:
-    if int(cast(int, count)) > 0:
-        # justify-defect: a failed content index whose current revision has no
-        # exact dead repair job is a state no owner transition produces.
-        raise AssertionError("Imports classification contains an invariant defect")
-
-
 def read_import_summary(db: Session, *, viewer_id: UUID) -> ImportSummary:
     """Global attention and active counts, independent of any list filter."""
     row = (
@@ -511,9 +505,7 @@ def read_import_summary(db: Session, *, viewer_id: UUID) -> ImportSummary:
                     now() AS observed_at,
                     count(*) FILTER (WHERE classification = 'NeedsAttention')::integer
                         AS needs_attention_count,
-                    count(*) FILTER (WHERE classification = 'Active')::integer AS active_count,
-                    count(*) FILTER (WHERE classification = 'InvariantDefect')::integer
-                        AS invariant_defects
+                    count(*) FILTER (WHERE classification = 'Active')::integer AS active_count
                 FROM imports
                 """
             ),
@@ -522,7 +514,6 @@ def read_import_summary(db: Session, *, viewer_id: UUID) -> ImportSummary:
         .mappings()
         .one()
     )
-    _require_no_invariant_defect(row["invariant_defects"])
     return ImportSummary(
         observed_at=row["observed_at"],
         needs_attention_count=int(row["needs_attention_count"]),
@@ -556,7 +547,6 @@ def read_import_page(
                 f"""{_IMPORTS_CTE}, {filtered}
                 SELECT
                     now() AS observed_at,
-                    {_INVARIANT_DEFECTS_SQL}::integer AS invariant_defects,
                     (SELECT count(*) FROM filtered)::integer AS matched_count,
                     (
                         SELECT COALESCE(jsonb_object_agg(current_stage, n), '{{}}'::jsonb)
@@ -574,7 +564,6 @@ def read_import_page(
         .mappings()
         .one()
     )
-    _require_no_invariant_defect(totals["invariant_defects"])
 
     keyset_sql = ""
     if query.cursor is not None:
@@ -643,7 +632,7 @@ def read_import_page(
                             payload=row["matched_payload"],
                         )
                     )
-                    if query.view == "History"
+                    if query.view == "History" and row["matched_precedes_newest"]
                     else absent()
                 ),
             )
@@ -669,8 +658,6 @@ def _import_row(db: Session, *, viewer_id: UUID, ref: ParsedImportRef) -> RowMap
     )
     if row is None:
         raise NotFoundError(ApiErrorCode.E_IMPORT_NOT_FOUND, "Import not found")
-    if row["classification"] == "InvariantDefect":
-        _require_no_invariant_defect(1)
     return row
 
 
@@ -832,8 +819,8 @@ def _state(row: RowMapping, media: MediaOut | None) -> ImportState:
         case "Complete":
             return ImportStateComplete()
         case other:
-            # justify-defect: the CTE's classification CASE is closed and the
-            # defect variant is refused before any row reaches here.
+            # justify-defect: the CTE's classification CASE is closed, so an
+            # unknown classification is not a state this owner can produce.
             raise AssertionError(f"import row carries an unknown classification {other!r}")
 
 
@@ -915,6 +902,9 @@ def _item(
     if int(row["exact_index_job_count"] or 0) > 1:
         # justify-defect: one revision has at most one exact reindex job.
         raise AssertionError("multiple exact content-index jobs match one current revision")
+    if row["index_status"] == "failed":
+        # justify-defect: `failed` is a note-index status; no media owner writes it.
+        raise AssertionError("media content index reports a status no owner writes")
     if row["ref_kind"] == "upload":
         ref = format_import_ref(
             UploadImportRef(session_handle=seal_upload_session(row["session_id"]))

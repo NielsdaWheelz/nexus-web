@@ -573,12 +573,25 @@ export function importsDateChipLabel(
   bounds: ImportsDateBounds,
   edge: "From" | "Before",
   date: string,
+  locale: string,
 ): string {
+  // The URL carries UTC calendar days (contract D17), so the day is named in
+  // UTC — the viewer's own zone would name the day before the one they bounded
+  // — and it carries its year: a bound read away from the inputs names one
+  // absolute day, whatever range the reader asked for.
+  const day = formattedInstant(
+    date,
+    formatDisplayDate(
+      `${date}T00:00:00Z`,
+      { displayLocale: locale, displayTimeZone: "UTC" },
+      { year: "numeric", month: "short", day: "numeric" },
+    ),
+  );
   switch (edge) {
     case "From":
-      return `${importsDateVerb(bounds)} on or after ${date}`;
+      return `${importsDateVerb(bounds)} on or after ${day}`;
     case "Before":
-      return `${importsDateVerb(bounds)} before ${date}`;
+      return `${importsDateVerb(bounds)} before ${day}`;
     default:
       return assertNever(edge, "Unreachable date filter edge");
   }
@@ -929,6 +942,13 @@ export function importMomentText(value: string, context: DisplayContext): string
 /** The mark on the one recorded attempt a History filter matched. */
 export const IMPORT_MATCHED_ATTEMPT_LABEL = "Matched";
 
+/**
+ * The same mark for a reader who meets it inside the attempt's sentence, where
+ * a bare `Matched` would close that sentence in a participle and never say
+ * matched what.
+ */
+export const IMPORT_MATCHED_ATTEMPT_ANNOUNCEMENT = "Matched by your filter";
+
 /** The `Matched:` line that explains why a row matched a history filter. */
 export function historyMatchLine(
   entry: HistoryEntry,
@@ -964,19 +984,6 @@ export function importAgeLine(
     dateTime: value,
     text: `${active ? "Started" : "Updated"} ${relative}`,
   };
-}
-
-/**
- * When the counts and rows on screen were last read from the server. The reader
- * is told the age of what they are looking at, never a time they cannot place
- * (spec content rubric "Freshness/conflict", contract §6).
- */
-export function importsFreshnessLine(
-  observedAt: string,
-  context: Pick<RenderEnvironment, "displayLocale">,
-  now: Date,
-): string {
-  return `Last checked ${formattedInstant(observedAt, formatRelativeTime(observedAt, context, now))}`;
 }
 
 export function historyCoverageLine(
@@ -1016,8 +1023,30 @@ export function importsSummaryLine(summary: ImportSummary): string {
   return parts.length === 0 ? IMPORTS_SETTLED_LINE : parts.join(" · ");
 }
 
-export function importsMatchedLine(count: number): string {
-  return `${pluralize(count, "import")} in this view`;
+/**
+ * The brief's second line, in the order a reader reads it: how much this view
+ * matched, then how old what they are looking at is (spec content rubric
+ * "Freshness/conflict", contract §6). Only the segments this read actually has
+ * are returned — a count the page has not answered yet, or an observation that
+ * has not landed, takes its separator with it, so the line can never open with
+ * one.
+ */
+export function importsBriefSegments(
+  matchedCount: number | null,
+  observedAt: string | null,
+  context: Pick<RenderEnvironment, "displayLocale">,
+  now: Date,
+): readonly string[] {
+  const segments: string[] = [];
+  if (matchedCount !== null) {
+    segments.push(`${pluralize(matchedCount, "import")} in this view`);
+  }
+  if (observedAt !== null) {
+    segments.push(
+      `Last checked ${formattedInstant(observedAt, formatRelativeTime(observedAt, context, now))}`,
+    );
+  }
+  return segments;
 }
 
 // --- Notices ---------------------------------------------------------------
