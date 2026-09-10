@@ -2365,8 +2365,8 @@ def test_host_apply_rejects_a_runtime_identical_but_different_activated_image(
     ("drift", "message"),
     [
         ("security", "Codex agent host privilege isolation differs"),
-        ("systempaths_missing", "Codex agent host privilege isolation differs"),
-        ("systempaths_mutated", "Codex agent host privilege isolation differs"),
+        ("security_duplicate", "Codex agent host privilege isolation differs"),
+        ("devices", "Codex agent host privilege isolation differs"),
         ("nanocpus", "Codex agent host privilege isolation differs"),
         ("masked_paths", "Codex agent host privilege isolation differs"),
         ("readonly_paths", "Codex agent host privilege isolation differs"),
@@ -2573,10 +2573,25 @@ def test_host_apply_rejects_an_unhealthy_codex_egress_policy(
     assert final_state["containers"]["codex-egress-policy"]["running"] is False
 
 
-def test_host_apply_accepts_the_exact_compose_systempaths_security_option(
+def test_host_apply_accepts_engine_canonicalized_isolation_evidence(
     host_release_harness: HostReleaseHarness,
 ) -> None:
+    """Risk: release rejects Docker's safe canonical inspect representation."""
+
     harness = host_release_harness
+    state = harness.state()
+    host_config = state["containers"]["nexus-codex-agent-host"]["host_config"]
+    policy_config = state["containers"]["codex-egress-policy"]["host_config"]
+    assert host_config["Devices"] is None
+    assert host_config["SecurityOpt"] == [
+        "no-new-privileges:true",
+        "seccomp=unconfined",
+        "apparmor=nexus-codex-agent-host",
+    ]
+    assert host_config["MaskedPaths"] == []
+    assert host_config["ReadonlyPaths"] == []
+    assert policy_config["CapAdd"] == ["CAP_NET_BIND_SERVICE"]
+    assert policy_config["Devices"] is None
 
     completed = harness.run_apply()
 
@@ -2716,7 +2731,15 @@ def test_host_apply_rejects_api_generation_socket_surface_drift(
     assert attempt.phase is release.ReleasePhase.ForwardFixRequired
 
 
-@pytest.mark.parametrize("mutation", ["policy_privileged", "policy_init_missing"])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "policy_privileged",
+        "policy_init_missing",
+        "policy_capability_extra",
+        "policy_device_mapping",
+    ],
+)
 def test_host_apply_rejects_an_unconfined_codex_egress_policy(
     host_release_harness: HostReleaseHarness,
     mutation: str,
