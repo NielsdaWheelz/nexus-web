@@ -20,7 +20,14 @@ or host-home mount.
   content-addressed process supervisor beside the profile state, so this exact
   tmpfs is executable; general `/tmp` remains a separate `noexec` tmpfs. Host
   startup rejects any other mount shape and then exercises the real SDK
-  launcher during the authenticated model-catalog startup probe. Nexus passes
+  launcher during the authenticated model-catalog startup probe. After the
+  probe closes its runtime, validates the credential inode, power-syncs any
+  refresh, and removes its whole turn root, the entrypoint `exec`s a fresh
+  Python serving phase. Bootstrap SDK/catalog allocations therefore cannot
+  survive into the long-lived server. Docker readiness uses one bounded
+  standard-library HTTP-over-UDS exchange and validates the complete exact
+  health identity; it never imports a second FastAPI, Pydantic, Nexus, or
+  provider-runtime graph into the measured cgroup. Nexus passes
   the public typed `CodexSandboxControls` contract to every `AgentRuntime` path;
   it sets `TMPDIR` to that turn's `tmp/` and fixes
   Codex workspace-write policy to exclude bare `/tmp` while retaining only
@@ -38,6 +45,10 @@ or host-home mount.
   confinement only. The host's exact `NEXUS_CODEX_MCP_ORIGIN`, release
   attestation, and Caddy's exact MCP mount jointly own the required
   `/internal/agent-tools/mcp` path.
+- The egress policy runs behind Docker's init process so `SIGTERM` reaches a
+  non-PID-1 Python process and child transports are reaped. Expected peer-reset
+  errors during TLS close are absorbed at the transport owner; they never
+  escape as unhandled server tasks.
 - The API and both worker lanes mount
   `nexus_codex_run:/run/nexus-codex:ro`; this gives the request-scoped dossier
   resolver the same private client capability without any credential mount.
@@ -336,7 +347,10 @@ when the encrypted credential state has less than 128 MiB free. A pre-accept
 capacity refusal is `not_run`; authentication/quota refusal is
 `subscription_blocked`; a pre-accept loss or accepted transport loss is
 `transport_retriable`. Those outcomes write no qualifying evidence. A measured
-resource or exact-contract breach writes immutable failed evidence.
+resource or exact-contract breach writes immutable failed evidence. That
+includes an exact candidate host that Docker reports as cgroup-OOM-killed while
+`up --wait` is still starting it; an ordinary Docker or authenticated-startup
+failure without that kernel fact remains retryable and writes no false breach.
 
 An interrupted run may reclaim only its own labeled canary. A foreign
 same-named container is never name-only deletion authority. Do not stop other
