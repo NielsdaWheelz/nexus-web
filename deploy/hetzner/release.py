@@ -83,11 +83,14 @@ _CODEX_AGENT_HOST_IP = "172.30.0.3"
 _CODEX_PRIVATE_BRIDGE_IP = "172.30.0.1"
 _CODEX_PRIVATE_NETWORK_OPTIONS = {"com.docker.network.bridge.gateway_mode_ipv4": "isolated"}
 _CODEX_ISOLATED_GATEWAY_MINIMUM_DOCKER_MAJOR = 28
-_CODEX_AGENT_SECURITY_OPTIONS = {
+# Docker CLI consumes `systempaths=unconfined` client-side and translates it
+# into empty `MaskedPaths`/`ReadonlyPaths`; the directive is therefore absent
+# from the Engine inspect response. Keep the effective-path checks below as the
+# runtime attestation and require the remaining round-tripped options exactly.
+_CODEX_AGENT_INSPECT_SECURITY_OPTIONS = {
     "apparmor=nexus-codex-agent-host",
     "no-new-privileges:true",
     "seccomp=unconfined",
-    "systempaths=unconfined",
 }
 # The host's published graceful-stop budget (apps/codex_agent/host.py): request drain,
 # interrupted-turn runtime close, and exit margin. Every stop of the host grants it.
@@ -5133,14 +5136,15 @@ class HostRelease:
             or host_config.get("CapDrop") != ["ALL"]
             or host_config.get("CapAdd") not in (None, [])
             or host_config.get("Privileged") is not False
-            or host_config.get("Devices") != []
+            or host_config.get("Devices") not in (None, [])
             or host_config.get("DeviceRequests") not in (None, [])
             or host_config.get("PidMode") not in ("", "private")
             or host_config.get("IpcMode") not in ("", "private")
             or host_config.get("Init") is not True
             or str(host_config.get("NetworkMode", "")).startswith(("host", "container:"))
             or host_config.get("NanoCpus") != 1_000_000_000
-            or set(security_options) != _CODEX_AGENT_SECURITY_OPTIONS
+            or len(security_options) != len(_CODEX_AGENT_INSPECT_SECURITY_OPTIONS)
+            or set(security_options) != _CODEX_AGENT_INSPECT_SECURITY_OPTIONS
             or host_config.get("MaskedPaths") != []
             or host_config.get("ReadonlyPaths") != []
             or host_config.get("RestartPolicy") != {"MaximumRetryCount": 0, "Name": "no"}
@@ -5200,9 +5204,9 @@ class HostRelease:
             }
             or host_config.get("ReadonlyRootfs") is not True
             or host_config.get("CapDrop") != ["ALL"]
-            or host_config.get("CapAdd") != ["NET_BIND_SERVICE"]
+            or host_config.get("CapAdd") != ["CAP_NET_BIND_SERVICE"]
             or host_config.get("Privileged") is not False
-            or host_config.get("Devices") != []
+            or host_config.get("Devices") not in (None, [])
             or host_config.get("DeviceRequests") not in (None, [])
             or host_config.get("PidMode") not in ("", "private")
             or host_config.get("IpcMode") not in ("", "private")
