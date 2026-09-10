@@ -5279,7 +5279,11 @@ class HostRelease:
             or credential_mount.get("Source") != str(self.paths.codex_enrolled_auth)
             or credential_mount.get("RW") is not True
             or credential_mount.get("Propagation") != "rprivate"
-            or credential_mount.get("Mode") != "rw"
+            # Structured Engine mounts report effective writability in `RW`
+            # and may leave the user-option string empty. Older daemons can
+            # retain an explicit `rw`; admit only those equivalent forms so
+            # relabel, consistency, or other mount options still fail closed.
+            or credential_mount.get("Mode") not in ("", "rw")
             or set(credential_mount)
             - {"Destination", "Mode", "RW", "Source", "Type", "Propagation"}
         ):

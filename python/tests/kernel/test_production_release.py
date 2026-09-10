@@ -2598,6 +2598,72 @@ def test_host_apply_accepts_engine_canonicalized_isolation_evidence(
     assert completed.returncode == 0, completed.stderr
 
 
+def test_host_apply_accepts_legacy_explicit_read_write_bind_mode(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: a supported daemon retains redundant explicit read-write mode."""
+
+    harness = host_release_harness
+    harness.update_state(codex_state_live_bind_kind="legacy_explicit_rw")
+
+    completed = harness.run_apply()
+
+    assert completed.returncode == 0, completed.stderr
+
+
+@pytest.mark.parametrize("mode", ["", "rw"])
+def test_codex_host_mount_attestation_accepts_supported_read_write_mode_serializations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+) -> None:
+    """Risk: Docker's equivalent inspect serialization blocks a safe release."""
+
+    release = _release_module()
+    paths = release.ReleasePaths.under(tmp_path)
+    volume_name = "nexus_nexus_codex_run"
+    volume_source = "/var/lib/docker/volumes/nexus_nexus_codex_run/_data"
+    monkeypatch.setattr(
+        release,
+        "_inspect_volume_one",
+        lambda _volume_name, _label: {
+            "Name": volume_name,
+            "Driver": "local",
+            "Scope": "local",
+            "Options": None,
+            "Mountpoint": volume_source,
+        },
+    )
+
+    accepted = True
+    try:
+        release.HostRelease(paths)._validate_codex_agent_host_mounts(
+            {
+                "Mounts": [
+                    {
+                        "Type": "bind",
+                        "Source": str(paths.codex_enrolled_auth),
+                        "Destination": "/run/nexus-codex-credential/auth.json",
+                        "Mode": mode,
+                        "RW": True,
+                        "Propagation": "rprivate",
+                    },
+                    {
+                        "Type": "volume",
+                        "Name": volume_name,
+                        "Source": volume_source,
+                        "Destination": "/run/nexus-codex",
+                        "RW": True,
+                    },
+                ]
+            }
+        )
+    except release.PermanentReleaseFailure:
+        accepted = False
+
+    assert accepted, f"supported Docker read-write mode was rejected: {mode!r}"
+
+
 @pytest.mark.parametrize(
     ("public_mcp_mode", "message"),
     [
@@ -2679,6 +2745,7 @@ def test_host_apply_classifies_public_mcp_availability_as_external(
         "host_privileged",
         "mount_wrong_named_volume",
         "mount_wrong_source",
+        "mount_extra_bind_mode",
         "mount_readonly_docker_socket",
         "mount_readonly_host_home",
     ],
@@ -3059,7 +3126,13 @@ def test_resume_codex_agent_host_rejects_every_malformed_direct_bind_and_stops(
     finalized = harness.run_finalize()
     assert finalized.returncode == 0, finalized.stderr
 
-    for live_kind in ("wrong_source", "wrong_type", "readonly", "shared_propagation"):
+    for live_kind in (
+        "wrong_source",
+        "wrong_type",
+        "readonly",
+        "shared_propagation",
+        "extra_mode",
+    ):
         state = harness.state()
         containers = state["containers"]
         assert isinstance(containers, dict)
