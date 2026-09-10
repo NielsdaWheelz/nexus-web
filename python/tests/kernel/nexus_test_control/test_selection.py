@@ -538,6 +538,11 @@ def test_codex_generation_sources_route_to_the_exact_contract_and_host_proofs(
                 "test_exact_android_device_proof_uses_one_instrumentation_method",
             ),
             (
+                Capability.KERNEL_PYTHON,
+                "pytest:python/tests/kernel/test_codex_host_process_lifecycle.py::"
+                "test_codex_host_separates_bootstrap_server_and_health_memory_lifetimes",
+            ),
+            (
                 Capability.SERVICE,
                 "pytest:python/tests/service/test_codex_egress_policy.py::"
                 "test_codex_egress_allows_only_subscription_auth_and_mcp_sni",
@@ -739,6 +744,8 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "test_bound_coherent_fault_is_admitted_routed_and_invalidated_on_owner_drift",
                 "pytest:python/tests/kernel/nexus_test_control/test_policy.py",
                 "pytest:python/tests/kernel/test_backend_artifact.py",
+                "pytest:python/tests/kernel/test_codex_host_process_lifecycle.py::"
+                "test_codex_host_separates_bootstrap_server_and_health_memory_lifetimes",
                 "pytest:python/tests/kernel/test_generation_contract.py",
                 "pytest:python/tests/kernel/test_generation_operation_adapters.py",
                 "pytest:python/tests/kernel/test_generation_policy.py::"
@@ -895,6 +902,7 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/kernel/nexus_test_control/test_runner.py",
                 "pytest:python/tests/kernel/nexus_test_control/test_provider_runtime_pin.py::test_provider_runtime_is_materialized_from_the_pin_without_retargeting_source",
                 "pytest:python/tests/kernel/nexus_test_control/test_android_device_method_scope.py::test_exact_android_device_proof_uses_one_instrumentation_method",
+                "pytest:python/tests/kernel/test_codex_host_process_lifecycle.py::test_codex_host_separates_bootstrap_server_and_health_memory_lifetimes",
                 "pytest:python/tests/kernel/test_generation_contract.py",
                 "pytest:python/tests/kernel/test_generation_operation_adapters.py",
                 "pytest:python/tests/kernel/test_generation_policy.py::"

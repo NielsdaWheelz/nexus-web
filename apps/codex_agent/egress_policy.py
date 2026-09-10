@@ -191,8 +191,17 @@ async def _serve_dns_tcp(
     except (asyncio.IncompleteReadError, ConnectionError, PolicyError):
         pass
     finally:
+        await _close_writer(writer)
+
+
+async def _close_writer(writer: asyncio.StreamWriter) -> None:
+    """Close a transport without promoting an already-lost peer into a task error."""
+
+    try:
         writer.close()
         await writer.wait_closed()
+    except OSError:
+        pass
 
 
 def _read_u16(value: bytes, offset: int) -> tuple[int, int]:
@@ -283,7 +292,9 @@ def client_hello_sni(records: bytes) -> str:
         offset = record_end
 
 
-async def _public_connection(host: str) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+async def _public_connection(
+    host: str,
+) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
     loop = asyncio.get_running_loop()
     addresses = await loop.getaddrinfo(host, _TLS_PORT, type=socket.SOCK_STREAM)
     last_error: OSError | None = None
@@ -351,10 +362,8 @@ async def _serve_tls(
         pass
     finally:
         if upstream_writer is not None:
-            upstream_writer.close()
-            await upstream_writer.wait_closed()
-        writer.close()
-        await writer.wait_closed()
+            await _close_writer(upstream_writer)
+        await _close_writer(writer)
 
 
 async def serve(policy: EgressPolicy) -> None:

@@ -4739,21 +4739,38 @@ class HostRelease:
         config_path: Path,
     ) -> None:
         for service in (_CODEX_EGRESS_POLICY, _CODEX_AGENT_HOST):
-            self._compose(
+            self._start_codex_runtime_service(
                 bundle=bundle,
                 candidate=candidate,
                 config_path=config_path,
-                arguments=(
-                    "up",
-                    "--detach",
-                    "--no-deps",
-                    "--wait",
-                    "--wait-timeout",
-                    "90",
-                    service,
-                ),
-                timeout_seconds=120,
+                service=service,
             )
+
+    def _start_codex_runtime_service(
+        self,
+        *,
+        bundle: Path,
+        candidate: CandidateManifest,
+        config_path: Path,
+        service: str,
+    ) -> None:
+        if service not in {_CODEX_EGRESS_POLICY, _CODEX_AGENT_HOST}:
+            raise ReleaseDefect("unsupported Codex runtime service")
+        self._compose(
+            bundle=bundle,
+            candidate=candidate,
+            config_path=config_path,
+            arguments=(
+                "up",
+                "--detach",
+                "--no-deps",
+                "--wait",
+                "--wait-timeout",
+                "90",
+                service,
+            ),
+            timeout_seconds=120,
+        )
 
     def _stop_codex_runtime(
         self,
@@ -5189,6 +5206,7 @@ class HostRelease:
             or host_config.get("DeviceRequests") not in (None, [])
             or host_config.get("PidMode") not in ("", "private")
             or host_config.get("IpcMode") not in ("", "private")
+            or host_config.get("Init") is not True
             or str(host_config.get("NetworkMode", "")).startswith(("host", "container:"))
             or host_config.get("SecurityOpt") != ["no-new-privileges:true"]
             or host_config.get("RestartPolicy")
@@ -5557,6 +5575,62 @@ class HostRelease:
         if initial:
             raise ReleaseBlocked(message)
         raise CodexCapacityBreach(message)
+
+    def _classify_codex_capacity_startup_failure(
+        self,
+        *,
+        bundle: Path,
+        candidate: CandidateManifest,
+        config_path: Path,
+        expected_worker_image_id: str,
+        cause: BaseException,
+    ) -> BaseException:
+        """Promote only an observed startup cgroup OOM into a capacity breach."""
+
+        try:
+            observed = (
+                self._compose(
+                    bundle=bundle,
+                    candidate=candidate,
+                    config_path=config_path,
+                    arguments=("ps", "--all", "--quiet", _CODEX_AGENT_HOST),
+                )
+                .stdout.decode("ascii")
+                .strip()
+            )
+            identifiers = tuple(observed.splitlines()) if observed else ()
+            if len(identifiers) > 1 or any(
+                _CONTAINER_ID.fullmatch(identifier) is None for identifier in identifiers
+            ):
+                raise ReleaseDefect("Codex capacity startup container listing is malformed")
+            if not identifiers:
+                return cause
+            inspected = _inspect_one(
+                identifiers[0],
+                "Codex capacity startup host inspect",
+            )
+            image_id = _require_match(
+                "Codex capacity startup host image id",
+                inspected.get("Image"),
+                _IMAGE_ID,
+            )
+            if image_id != expected_worker_image_id:
+                raise ReleaseDefect("Codex capacity startup host image differs from candidate")
+            state = _mapping(
+                inspected.get("State"),
+                "Codex capacity startup host state",
+            )
+            oom_killed = state.get("OOMKilled")
+            if type(oom_killed) is not bool:
+                raise ReleaseDefect("Codex capacity startup OOM evidence is malformed")
+        except BaseException as inspection_error:
+            cause.add_note(f"Codex capacity startup classification failed: {inspection_error}")
+            return cause
+        if oom_killed:
+            return CodexCapacityBreach(
+                "Codex agent host was OOM-killed during capacity qualification startup"
+            )
+        return cause
 
     def _codex_capacity_cgroup(self, container_id: str) -> Path:
         """Resolve the host-side cgroup v2 directory of the measured container.
@@ -6447,6 +6521,27 @@ class HostRelease:
             },
         )
 
+    def _record_codex_capacity_breach(
+        self,
+        *,
+        source_sha: str,
+        worker_image_id: str,
+        breach: CodexCapacityBreach,
+    ) -> BaseException:
+        try:
+            self._write_codex_capacity_failure(
+                source_sha=source_sha,
+                worker_image_id=worker_image_id,
+            )
+        except BaseException as evidence_error:
+            unrecorded = ReleaseDefect(
+                "Codex capacity breach could not be recorded as immutable evidence"
+            )
+            unrecorded.add_note(f"unrecorded Codex capacity breach: {breach}")
+            unrecorded.__cause__ = evidence_error
+            return unrecorded
+        return breach
+
     def _codex_capacity_canary_ids(self, name: str) -> tuple[str, ...]:
         observed = _stdout(
             (
@@ -6571,15 +6666,14 @@ class HostRelease:
         """Run the one pre-promotion, candidate-bound existing-VPS qualification.
 
         Classification is the run's product. A breach proven by the canary
-        contract, by the isolation policy, by the background sampler, or by the
-        assembled evidence writes immutable failed evidence and disqualifies this
-        source SHA forever, and only stdout that parses as the canary's own
-        evidence contract can prove one. Everything that measured nothing about
-        the envelope stays retriable and writes nothing: Docker, transport,
-        cleanup, a sampler fault, and a canary that crashed or was OOM-killed
-        before stating a contract terminal — empty or unparseable stdout, or an
-        exit code the contract does not define. A rerun may replace only expired
-        passing evidence, never failed evidence.
+        contract, the exact host's startup OOM state, the isolation policy, the
+        background sampler, or the assembled evidence writes immutable failed
+        evidence and disqualifies this source SHA forever. Only stdout that
+        parses as the canary's own evidence contract can prove an in-canary
+        breach. Everything that measured nothing about the envelope stays
+        retriable and writes nothing: Docker, transport, cleanup, a sampler
+        fault, or a canary that crashed before stating a contract terminal. A
+        rerun may replace only expired passing evidence, never failed evidence.
         """
 
         self.store.assert_no_oracle_attempt()
@@ -6606,15 +6700,33 @@ class HostRelease:
             self._validate_codex_state_boot_guard()
             self._preflight_codex_agent_host_security(bundle)
             self._prepare_codex_agent_host_security(bundle)
-            # `up --wait` can fail after creating the host (for example while
-            # its account-auth readiness probe is still failing), so cleanup
-            # must not depend on a completed Compose response.
-            host_may_be_started = True
-            self._start_codex_agent_host(
+            self._start_codex_runtime_service(
                 bundle=bundle,
                 candidate=candidate,
                 config_path=config.path,
+                service=_CODEX_EGRESS_POLICY,
             )
+            # Host `up --wait` can fail after creating the container, so cleanup
+            # and OOM classification must not depend on a completed response.
+            host_may_be_started = True
+            try:
+                self._start_codex_runtime_service(
+                    bundle=bundle,
+                    candidate=candidate,
+                    config_path=config.path,
+                    service=_CODEX_AGENT_HOST,
+                )
+            except BaseException as exc:
+                classified = self._classify_codex_capacity_startup_failure(
+                    bundle=bundle,
+                    candidate=candidate,
+                    config_path=config.path,
+                    expected_worker_image_id=worker_image_id,
+                    cause=exc,
+                )
+                if classified is exc:
+                    raise
+                raise classified from exc
             self._prove_codex_agent_host(
                 bundle=bundle,
                 candidate=candidate,
@@ -6648,9 +6760,16 @@ class HostRelease:
                 _CONTAINER_ID,
             )
         except BaseException as exc:
-            # Startup/auth failure is deliberately retriable after device
-            # enrollment. It is fail-closed, but cannot honestly be classified
-            # as a permanent capacity qualification failure.
+            # Device-auth, Docker, and observation failures remain retriable.
+            # A cgroup OOM read from the exact attempted host is a measured
+            # breach and must become immutable before teardown removes context.
+            startup_error: BaseException = exc
+            if isinstance(exc, CodexCapacityBreach):
+                startup_error = self._record_codex_capacity_breach(
+                    source_sha=source_sha,
+                    worker_image_id=worker_image_id,
+                    breach=exc,
+                )
             cleanup_failures = self._cleanup_codex_capacity_runtime(
                 bundle=bundle,
                 candidate=candidate,
@@ -6659,8 +6778,10 @@ class HostRelease:
                 stop_host=host_may_be_started,
             )
             for cleanup_failure in cleanup_failures:
-                exc.add_note(f"Codex capacity cleanup also failed: {cleanup_failure}")
-            raise
+                startup_error.add_note(f"Codex capacity cleanup also failed: {cleanup_failure}")
+            if startup_error is exc:
+                raise
+            raise startup_error from startup_error.__cause__
         name = f"nexus-codex-capacity-{source_sha}"
         canary_id = ""
         canary_may_exist = False
@@ -6911,18 +7032,13 @@ class HostRelease:
             # state lands before the external teardown, and a record that could
             # not be written is a defect of its own -- never a breach quietly
             # demoted to a retriable note that leaves the SHA re-qualifiable.
-            try:
-                self._write_codex_capacity_failure(
-                    source_sha=source_sha,
-                    worker_image_id=worker_image_id,
-                )
-            except BaseException as evidence_error:
-                unrecorded = ReleaseDefect(
-                    "Codex capacity breach could not be recorded as immutable evidence"
-                )
-                unrecorded.add_note(f"unrecorded Codex capacity breach: {proof_error}")
-                unrecorded.__cause__ = evidence_error
-                proof_error = unrecorded
+            if not isinstance(proof_error, CodexCapacityBreach):
+                raise AssertionError("capacity breach classification lost its typed error")
+            proof_error = self._record_codex_capacity_breach(
+                source_sha=source_sha,
+                worker_image_id=worker_image_id,
+                breach=proof_error,
+            )
         cleanup_failures = self._cleanup_codex_capacity_runtime(
             bundle=bundle,
             candidate=candidate,

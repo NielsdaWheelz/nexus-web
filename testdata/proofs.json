@@ -576,6 +576,7 @@
         "pytest:python/tests/kernel/nexus_test_control/test_runner.py",
         "pytest:python/tests/kernel/nexus_test_control/test_provider_runtime_pin.py::test_provider_runtime_is_materialized_from_the_pin_without_retargeting_source",
         "pytest:python/tests/kernel/nexus_test_control/test_android_device_method_scope.py::test_exact_android_device_proof_uses_one_instrumentation_method",
+        "pytest:python/tests/kernel/test_codex_host_process_lifecycle.py::test_codex_host_separates_bootstrap_server_and_health_memory_lifetimes",
         "pytest:python/tests/kernel/test_generation_contract.py",
         "pytest:python/tests/kernel/test_generation_operation_adapters.py",
         "pytest:python/tests/kernel/test_generation_policy.py::test_exact_generation_policy_is_total_content_derived_and_profile_free",

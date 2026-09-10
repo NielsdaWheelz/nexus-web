@@ -48,6 +48,7 @@ from provider_runtime.agent_runtime import (
 _CUTOVER_PRESENT = find_spec("nexus.services.generation_spec") is not None
 
 if TYPE_CHECKING or _CUTOVER_PRESENT:
+    from apps.codex_agent import health as codex_health
     from apps.codex_agent.host import close_runtime_before_release
     from provider_runtime import Absent as RuntimeAbsent
     from provider_runtime import Present as RuntimePresent
@@ -143,6 +144,117 @@ def _short_socket_path() -> Path:
     socket_path = Path(gettempdir()) / f"nexus-generation-{uuid4().hex[:16]}.sock"
     assert len(str(socket_path).encode()) < _LINUX_SUN_PATH_BYTES
     return socket_path
+
+
+def _expected_health() -> dict[str, str]:
+    return {
+        "schema_version": "nexus-generation-health.v2",
+        "status": "ready",
+        "backend": "codex",
+        "transport": "sdk",
+        "auth_profile": "codex-personal",
+        "command_schema_version": "nexus-generation-command.v3",
+        "sdk_version": "0.144.4",
+        "runtime_version": "0.144.4",
+    }
+
+
+def _health_body_response(body: bytes) -> bytes:
+    return (
+        b"HTTP/1.1 200 OK\r\n"
+        b"content-type: application/json\r\n"
+        + f"content-length: {len(body)}\r\n".encode()
+        + b"connection: close\r\n\r\n"
+        + body
+    )
+
+
+def _health_response(payload: object) -> bytes:
+    body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return _health_body_response(body)
+
+
+def test_container_health_probe_uses_one_bounded_low_dependency_uds_exchange() -> None:
+    """Risk: Docker readiness imports a second full product graph into the host cgroup."""
+
+    socket_path = _short_socket_path()
+    ready = threading.Event()
+    requests: list[bytes] = []
+    server_errors: list[BaseException] = []
+
+    def serve_once() -> None:
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+                listener.bind(str(socket_path))
+                listener.listen(1)
+                ready.set()
+                connection, _address = listener.accept()
+                with connection:
+                    request = bytearray()
+                    while b"\r\n\r\n" not in request:
+                        chunk = connection.recv(4096)
+                        if not chunk:
+                            raise AssertionError("health probe closed before its HTTP request")
+                        request.extend(chunk)
+                        if len(request) > 4096:
+                            raise AssertionError("health probe request exceeded its test bound")
+                    requests.append(bytes(request))
+                    response = _health_response(_expected_health())
+                    connection.sendall(response[:31])
+                    connection.sendall(response[31:])
+        except BaseException as error:
+            server_errors.append(error)
+            ready.set()
+        finally:
+            socket_path.unlink(missing_ok=True)
+
+    server = threading.Thread(target=serve_once)
+    server.start()
+    assert ready.wait(2)
+    observed = codex_health.check(socket_path)
+    server.join(2)
+
+    assert not server.is_alive()
+    assert server_errors == []
+    assert observed == _expected_health()
+    assert requests == [
+        b"GET /health HTTP/1.1\r\n"
+        b"Host: nexus-codex\r\n"
+        b"Accept: application/json\r\n"
+        b"Connection: close\r\n\r\n"
+    ]
+
+
+def test_container_health_probe_rejects_ambiguous_or_foreign_wire_identity() -> None:
+    foreign = _expected_health()
+    foreign["runtime_version"] = "foreign-runtime"
+    with pytest.raises(RuntimeError, match="identity differs"):
+        codex_health._parse_health_response(_health_response(foreign))
+
+    valid = _health_response(_expected_health())
+    ambiguous = valid.replace(
+        b"content-length:",
+        b"content-length: 1\r\ncontent-length:",
+        1,
+    )
+    with pytest.raises(RuntimeError, match="headers are malformed"):
+        codex_health._parse_health_response(ambiguous)
+
+    duplicate_body = json.dumps(_expected_health(), sort_keys=True, separators=(",", ":"))
+    duplicate_body = duplicate_body.replace(
+        '"status":"ready"',
+        '"status":"ready","status":"ready"',
+    ).encode()
+    with pytest.raises(RuntimeError, match="body is malformed"):
+        codex_health._parse_health_response(_health_body_response(duplicate_body))
+
+    invalid_header = valid.replace(b"connection: close", b"connection: close\x00", 1)
+    with pytest.raises(RuntimeError, match="headers are malformed"):
+        codex_health._parse_health_response(invalid_header)
+
+    oversized = _health_response(_expected_health()) + b" " * (4 * 1024)
+    with pytest.raises(RuntimeError, match="HTTP envelope is malformed"):
+        codex_health._parse_health_response(oversized)
 
 
 def _capacity_paths(root: Path) -> CapacityPaths:

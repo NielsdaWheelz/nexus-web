@@ -31,6 +31,10 @@ from apps.codex_agent.credential_state import (
     validate_enrolled_auth_file,
     validate_runtime_auth_link,
 )
+from apps.codex_agent.health_contract import (
+    PINNED_CODEX_VERSION,
+    expected_health_identity,
+)
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 from provider_runtime import Absent as RuntimeAbsent
@@ -115,7 +119,6 @@ from nexus.services.codex_generation_operations import (
 
 _SDK_DISTRIBUTION = "openai-codex"
 _RUNTIME_DISTRIBUTION = "openai-codex-cli-bin"
-_PINNED_CODEX_VERSION = "0.144.4"
 _SYNTHESIS_TEXT_RUN_BYTES = 32 * 1024
 _CATALOG_DEADLINE_SECONDS = 90.0
 _GENERATION_ADMISSION_START_GRACE_SECONDS = 15.0
@@ -383,8 +386,8 @@ def create_codex_agent_app(
     if not isinstance(model_tool_registry, CodexModelToolPlanRegistry):
         raise TypeError("model_tool_registry must be CodexModelToolPlanRegistry")
     if versions != RuntimeVersions(
-        sdk=_PINNED_CODEX_VERSION,
-        runtime=_PINNED_CODEX_VERSION,
+        sdk=PINNED_CODEX_VERSION,
+        runtime=PINNED_CODEX_VERSION,
     ):
         raise ValueError("Codex credential persistence is qualified only for pinned 0.144.4")
     _validate_host_configuration(
@@ -394,6 +397,12 @@ def create_codex_agent_app(
         model_tool_network_attested=model_tool_network_attested,
     )
     validate_enrolled_auth_file(credential_file)
+    health_identity = GenerationHealth(
+        sdk_version=versions.sdk,
+        runtime_version=versions.runtime,
+    )
+    if health_identity.model_dump(mode="json") != expected_health_identity():
+        raise ValueError("Codex generation health identity differs from its probe contract")
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     slot = _TurnSlot()
     admissions = _AdmissionLifecycle(slot)
@@ -404,10 +413,7 @@ def create_codex_agent_app(
     async def health() -> GenerationHealth:
         if not lifecycle.ready:
             raise HTTPException(status_code=503, detail="Codex generation host is not ready")
-        return GenerationHealth(
-            sdk_version=versions.sdk,
-            runtime_version=versions.runtime,
-        )
+        return health_identity
 
     @app.get("/v2/model-catalog", response_model=CodexModelCatalog)
     async def model_catalog(request: Request) -> Response | CodexModelCatalog:

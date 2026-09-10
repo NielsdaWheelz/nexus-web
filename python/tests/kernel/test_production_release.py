@@ -1240,6 +1240,61 @@ def test_existing_vps_capacity_startup_failure_is_retriable_without_failed_evide
     ]
 
 
+def test_existing_vps_capacity_startup_oom_writes_immutable_failed_evidence(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: a measured startup cgroup OOM is laundered as a retriable Docker fault."""
+
+    harness = host_release_harness
+    evidence = harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json"
+    evidence.unlink()
+    harness.update_state(codex_host_startup_oom=True)
+
+    failed = harness.run_qualify_codex_capacity()
+
+    assert failed.returncode != 0
+    assert "OOM-killed during capacity qualification startup" in failed.stderr
+    metadata = evidence.stat()
+    assert metadata.st_uid == 0 and metadata.st_mode & 0o777 == 0o444
+    payload = json.loads(evidence.read_text(encoding="utf-8"))
+    assert payload["status"] == "failed"
+    assert payload["turns"] == []
+    assert payload["cgroup_memory_peak"] == 0
+    assert harness.state()["service_mutations"] == [
+        {"operation": "up", "services": ["codex-egress-policy"]},
+        {"operation": "up", "services": ["nexus-codex-agent-host"]},
+        {
+            "operation": "stop",
+            "services": ["nexus-codex-agent-host", "codex-egress-policy"],
+        },
+    ]
+
+    rerun = harness.run_qualify_codex_capacity()
+    assert rerun.returncode != 0
+    assert "Codex capacity qualification failed evidence is immutable" in rerun.stderr
+
+
+def test_existing_vps_capacity_startup_oom_from_a_foreign_image_writes_no_evidence(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: stale container state permanently disqualifies an unrelated candidate."""
+
+    harness = host_release_harness
+    evidence = harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json"
+    evidence.unlink()
+    harness.update_state(
+        codex_host_startup_oom=True,
+        activation_worker_image_id="sha256:" + "6" * 64,
+    )
+
+    failed = harness.run_qualify_codex_capacity()
+
+    assert failed.returncode != 0
+    assert "Codex capacity startup host image differs from candidate" in failed.stderr
+    assert "OOM-killed during capacity qualification startup" not in failed.stderr
+    assert not evidence.exists()
+
+
 def _stored_attempt(module: ModuleType, tmp_path: Path):
     return module.ReleaseStore(module.ReleasePaths.under(tmp_path)).load_attempt(SOURCE_SHA)
 
@@ -2661,14 +2716,16 @@ def test_host_apply_rejects_api_generation_socket_surface_drift(
     assert attempt.phase is release.ReleasePhase.ForwardFixRequired
 
 
-def test_host_apply_rejects_a_privileged_codex_egress_policy(
+@pytest.mark.parametrize("mutation", ["policy_privileged", "policy_init_missing"])
+def test_host_apply_rejects_an_unconfined_codex_egress_policy(
     host_release_harness: HostReleaseHarness,
+    mutation: str,
 ) -> None:
-    """Risk: the network boundary quietly gains host-level device authority."""
+    """Risk: the policy gains host authority or cannot receive lifecycle signals."""
 
     release = _release_module()
     harness = host_release_harness
-    harness.update_state(codex_host_contract_mutation="policy_privileged")
+    harness.update_state(codex_host_contract_mutation=mutation)
 
     failed = harness.run_apply()
 
