@@ -256,8 +256,8 @@ def _hydrate_suite(
             with tempfile.TemporaryDirectory(prefix="nexus-pinned-suite-") as temporary:
                 temporary_root = Path(temporary)
                 archive = temporary_root / "source.tar"
-                checkout = temporary_root / "source"
-                checkout.mkdir(mode=0o700)
+                hydrated_checkout = temporary_root / "hydrated-source"
+                hydrated_checkout.mkdir(mode=0o700)
                 _run(
                     (
                         "git",
@@ -272,7 +272,7 @@ def _hydrate_suite(
                     environment=environment,
                 )
                 with tarfile.open(archive, mode="r:") as bundle:
-                    bundle.extractall(checkout, filter="data")
+                    bundle.extractall(hydrated_checkout, filter="data")
                 _run(
                     (
                         "uv",
@@ -282,11 +282,39 @@ def _hydrate_suite(
                         "--reinstall",
                         "--no-progress",
                         "--directory",
-                        str(checkout),
+                        str(hydrated_checkout),
                     ),
                     cwd=repo_root,
                     environment=environment,
                 )
+
+                offline_checkout = temporary_root / "offline-source"
+                offline_checkout.mkdir(mode=0o700)
+                try:
+                    with tarfile.open(archive, mode="r:") as bundle:
+                        bundle.extractall(offline_checkout, filter="data")
+                    _run(
+                        (
+                            "uv",
+                            "sync",
+                            "--all-extras",
+                            "--locked",
+                            "--offline",
+                            "--no-editable",
+                            "--reinstall-package",
+                            suite.package,
+                        ),
+                        cwd=offline_checkout,
+                        environment=environment,
+                    )
+                    if not (offline_checkout / ".venv").is_dir():
+                        raise SetupDependencyError(
+                            f"fresh offline {suite.package} materialization did not create a venv"
+                        )
+                except (OSError, subprocess.CalledProcessError, tarfile.TarError) as error:
+                    raise SetupDependencyError(
+                        f"could not verify fresh offline {suite.package} materialization"
+                    ) from error
         except (OSError, subprocess.CalledProcessError, tarfile.TarError) as error:
             raise SetupDependencyError(
                 f"could not hydrate locked {suite.package} artifacts at {revision}"
@@ -323,14 +351,34 @@ def hydrate_pinned_python_suites(
         _hydrate_suite(root, suite, child_environment)
 
 
+def _select_pinned_suites(suite_names: Sequence[str] | None) -> tuple[PinnedSuiteSource, ...]:
+    if suite_names is None:
+        return PINNED_SUITE_SOURCES
+    if len(suite_names) != len(set(suite_names)):
+        raise SetupDependencyError("each pinned suite may be selected only once")
+    by_package = {suite.package: suite for suite in PINNED_SUITE_SOURCES}
+    try:
+        return tuple(by_package[name] for name in suite_names)
+    except KeyError as error:
+        raise SetupDependencyError(f"unknown pinned suite: {error.args[0]}") from error
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Hydrate exact external-suite artifacts for offline Nexus proof."
     )
     parser.add_argument("--repo-root", required=True, type=Path)
+    parser.add_argument(
+        "--suite",
+        action="append",
+        choices=tuple(suite.package for suite in PINNED_SUITE_SOURCES),
+        dest="suite_names",
+        help="hydrate only this pinned suite; repeat to select multiple suites",
+    )
     arguments = parser.parse_args(argv)
     try:
-        hydrate_pinned_python_suites(arguments.repo_root)
+        suites = _select_pinned_suites(arguments.suite_names)
+        hydrate_pinned_python_suites(arguments.repo_root, suites=suites)
     except SetupDependencyError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

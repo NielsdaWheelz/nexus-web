@@ -60,6 +60,21 @@ def test_ci_setup_survives_a_persistent_self_hosted_workspace() -> None:
     assert "steps.container.outputs.docker == 'true'" in setup
 
 
+def test_ci_setup_delegates_external_suite_hydration_to_the_canonical_owner() -> None:
+    """CI must prove the same fresh-offline handoff consumed by the controller."""
+    setup = (REPO_ROOT / ".github/actions/setup-test/action.yml").read_text(
+        encoding="utf-8",
+    )
+
+    assert "python/.venv/bin/python" in setup
+    assert "-m nexus_test_control.setup_dependencies" in setup
+    assert 'prepared_suites+=(--suite "$package")' in setup
+    assert '"${prepared_suites[@]}"' in setup
+    assert 'uv sync --all-extras --locked --directory "$checkout"' not in setup, (
+        "the workflow bypasses the canonical cache-hydration and offline-handoff proof"
+    )
+
+
 def test_deploy_is_one_exact_immutable_staged_release_path() -> None:
     script = (REPO_ROOT / "deploy/hetzner/deploy.sh").read_text(encoding="utf-8")
     resolver = (REPO_ROOT / "deploy/hetzner/fetch-release-bundle.sh").read_text(encoding="utf-8")
