@@ -50,7 +50,6 @@ from nexus_test_control.runtime import (
     read_runtime,
     runtime_endpoint,
     runtime_state_dir,
-    workspace_heavy_lock,
 )
 from nexus_test_control.services import (
     SupabaseCredentials,
@@ -61,6 +60,7 @@ from nexus_test_control.services import (
     clean_run,
     ensure_services,
     prepare_run,
+    recovered_workspace_heavy_lock,
     resolve_adb,
     run_environment,
     start_python_process,
@@ -407,7 +407,7 @@ def run_android_visual(
             raise _NotRun("the Android SDK platform-tools adb is absent")
         serial = resolve_serial(adb, alias, environment, root)
         try:
-            with workspace_heavy_lock(root, blocking=False):
+            with recovered_workspace_heavy_lock(root, environment, blocking=False):
                 return _run_locked(
                     root,
                     environment,

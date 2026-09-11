@@ -9,6 +9,7 @@ import socket
 import subprocess
 import sys
 import threading
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
@@ -36,6 +37,7 @@ from nexus_test_control.runtime import (
     record_planned,
     run_bucket_name,
     run_database_name,
+    workspace_heavy_lock,
 )
 from nexus_test_control.services import (
     TEST_EXTENSION_ID,
@@ -197,6 +199,162 @@ def test_port_probe_rejects_an_existing_dual_stack_wildcard_listener() -> None:
         assert not services._port_available(port), (
             "an existing dual-stack listener was misclassified as an available test port"
         )
+
+
+def test_owned_process_preserves_the_trusted_runner_cancellation_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    initialize_runtime(tmp_path, TEST_ENV, _ports())
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    identity_path = tmp_path / "runner-tracking-id.txt"
+    trusted_identity = "trusted-actions-runner-identity"
+    monkeypatch.setenv("RUNNER_TRACKING_ID", trusted_identity)
+    started = _start_owned_process(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        "api",
+        (
+            sys.executable,
+            "-c",
+            (
+                "import os,pathlib,signal,sys; "
+                "pathlib.Path(sys.argv[1]).write_text("
+                "os.environ.get('RUNNER_TRACKING_ID', 'absent')); "
+                "signal.pause()"
+            ),
+            str(identity_path),
+        ),
+        cwd=tmp_path,
+        process_environment={
+            "NEXUS_TEST_RUN_ID": RUN_ID,
+            "RUNNER_TRACKING_ID": "untrusted-capability-replacement",
+        },
+    )
+    try:
+        for _attempt in range(500):
+            if identity_path.is_file():
+                break
+            threading.Event().wait(0.01)
+        assert identity_path.read_text(encoding="utf-8") == trusted_identity, (
+            "the isolated owned process lost or replaced the runner cancellation identity"
+        )
+    finally:
+        clean_run(tmp_path, TEST_ENV, RUN_ID)
+        try:
+            os.killpg(started.process_group_id, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    monkeypatch.delenv("RUNNER_TRACKING_ID")
+    assert "RUNNER_TRACKING_ID" not in services._child_environment(
+        {"RUNNER_TRACKING_ID": "untrusted-capability-replacement"}
+    )
+
+
+def test_heavy_admission_waits_for_the_owner_then_recovers_its_abandoned_process(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    recovered_lock = getattr(services, "recovered_workspace_heavy_lock", None)
+    assert recovered_lock is not None, (
+        "heavy-work admission has no ledger-owned abandoned-run recovery"
+    )
+    subprocess.run(("git", "init", "--quiet", str(tmp_path)), check=True)
+    initialize_runtime(tmp_path, TEST_ENV, _ports())
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    started = _start_owned_process(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        "api",
+        (sys.executable, "-c", "import signal; signal.pause()"),
+        cwd=tmp_path,
+        process_environment={"NEXUS_TEST_RUN_ID": RUN_ID},
+    )
+    credentials = SupabaseCredentials(
+        "http://127.0.0.1:25421",
+        "public-anon-key",
+        "fixture-admin-key",
+    )
+    ensure_calls: list[Path] = []
+
+    def ensure_stub(root: Path, environment: Mapping[str, str]) -> SupabaseCredentials:
+        assert environment == TEST_ENV
+        ensure_calls.append(root)
+        return credentials
+
+    admitted = threading.Event()
+
+    def recover() -> None:
+        with recovered_lock(
+            tmp_path,
+            TEST_ENV,
+            service_ensurer=ensure_stub,
+        ):
+            admitted.set()
+
+    caplog.set_level(logging.WARNING, logger=services.__name__)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            with workspace_heavy_lock(tmp_path):
+                recovery = executor.submit(recover)
+                assert not admitted.wait(timeout=0.2), (
+                    "recovery bypassed the live runtime owner's heavy-work lease"
+                )
+                assert _process_is_running(started.process_group_id)
+            recovery.result(timeout=10)
+
+        assert admitted.is_set()
+        assert not _process_is_running(started.process_group_id)
+        assert ensure_calls == [tmp_path.resolve()]
+        assert read_runtime(tmp_path).owned_run_ids == ()
+        recovery_record = next(
+            record
+            for record in caplog.records
+            if getattr(record, "event", None) == "nexus_test.abandoned_runs_recovered"
+        )
+        assert getattr(recovery_record, "run_ids", None) == (RUN_ID,)
+    finally:
+        if RUN_ID in read_runtime(tmp_path).owned_run_ids:
+            clean_run(tmp_path, TEST_ENV, RUN_ID)
+        try:
+            os.killpg(started.process_group_id, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
+def test_heavy_admission_fails_closed_and_retains_ownership_when_recovery_cannot_start(
+    tmp_path: Path,
+) -> None:
+    recovered_lock = getattr(services, "recovered_workspace_heavy_lock", None)
+    assert recovered_lock is not None, (
+        "heavy-work admission has no ledger-owned abandoned-run recovery"
+    )
+    initialize_runtime(tmp_path, TEST_ENV, _ports())
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    entered = False
+
+    def unavailable_services(
+        _root: Path,
+        _environment: Mapping[str, str],
+    ) -> SupabaseCredentials:
+        raise OSError("synthetic local service failure")
+
+    with pytest.raises(
+        RuntimeContractError,
+        match="abandoned test run recovery failed: synthetic local service failure",
+    ):
+        with recovered_lock(
+            tmp_path,
+            TEST_ENV,
+            service_ensurer=unavailable_services,
+        ):
+            entered = True
+
+    assert not entered
+    assert read_runtime(tmp_path).owned_run_ids == (RUN_ID,)
+    clean_run(tmp_path, TEST_ENV, RUN_ID)
 
 
 def _owned_run(
