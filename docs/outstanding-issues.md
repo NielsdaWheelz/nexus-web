@@ -324,3 +324,20 @@ hashes the owner test file alone, so strengthening the containment probe module
 produced no owner drift and no review. Extend the digest or narrow the sentence. See
 [docs/tickets/coherent-fault-owner-digest-omits-imported-support.md](tickets/coherent-fault-owner-digest-omits-imported-support.md).
 
+### [OPEN] OI-058 — `pr` sensitivity cannot accept a new or repointed vitest proof owner
+testing · opened 2026-09-11 by Claude (imports cutover, final gates) · P2
+BASE replay of a vitest owner that is new or imports a new module fails at
+module resolution, never at a behavioral assertion, and coherent-fault is
+Python-only, so a hard cutover with new vitest owners cannot turn `pr` green
+even when every owner's fault reddens it. Let a fault-owned vitest owner opt into
+coherent-fault, or state that `pr` sensitivity is Python-only. See
+[docs/tickets/pr-sensitivity-cannot-accept-new-vitest-owners.md](tickets/pr-sensitivity-cannot-accept-new-vitest-owners.md).
+
+### [OPEN] OI-059 — Three changed Python proof owners on the imports branch lack a coherent-fault witness
+testing · opened 2026-09-11 by Claude (imports cutover, final gates) · P2
+Two claim-adapted service nodes have no registered fault and one fault owns a
+whole file, so `pr` routes them to a BASE that cannot load the branch's testkit.
+Register a product-only fault for each node, repoint the whole-file fault at its
+exact node, mark all three coherent-fault. See
+[docs/tickets/three-changed-python-owners-lack-a-coherent-fault-witness.md](tickets/three-changed-python-owners-lack-a-coherent-fault-witness.md).
+
