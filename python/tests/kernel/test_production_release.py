@@ -299,7 +299,7 @@ def test_existing_vps_capacity_qualification_writes_exact_immutable_candidate_ev
     payload = json.loads(evidence.read_text(encoding="utf-8"))
     assert payload["source_sha"] == SOURCE_SHA
     assert payload["worker_image_id"] == "sha256:" + "9" * 64
-    assert payload["cgroup_memory_max"] == 384 * 1024 * 1024
+    assert payload["cgroup_memory_max"] == 448 * 1024 * 1024
     assert payload["cgroup_memory_peak"] == 64 * 1024 * 1024
     assert re.fullmatch(
         r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z",
@@ -863,7 +863,7 @@ def _restore_healthy_capacity_host(harness: HostReleaseHarness) -> None:
         encoding="ascii",
     )
     host_cgroup = harness.root / _HOST_CGROUP_RELATIVE
-    (host_cgroup / "memory.max").write_text("402653184\n", encoding="ascii")
+    (host_cgroup / "memory.max").write_text("469762048\n", encoding="ascii")
     (host_cgroup / "memory.current").write_text("33554432\n", encoding="ascii")
     (host_cgroup / "memory.peak").write_text("67108864\n", encoding="ascii")
     (host_cgroup / "memory.events").write_text(
@@ -908,9 +908,9 @@ def test_each_enumerated_capacity_breach_writes_immutable_failed_evidence(
     evidence.unlink()
     host_cgroup = harness.root / _HOST_CGROUP_RELATIVE
     if scenario == "cgroup-peak":
-        (host_cgroup / "memory.peak").write_text(f"{336 * 1024 * 1024}\n", encoding="ascii")
+        (host_cgroup / "memory.peak").write_text(f"{400 * 1024 * 1024}\n", encoding="ascii")
     elif scenario == "cgroup-current":
-        (host_cgroup / "memory.current").write_text(f"{384 * 1024 * 1024 + 1}\n", encoding="ascii")
+        (host_cgroup / "memory.current").write_text(f"{448 * 1024 * 1024 + 1}\n", encoding="ascii")
     elif scenario == "host-headroom":
         harness.update_state(
             codex_capacity_during_canary_host_writes={"proc/meminfo": _LOW_HEADROOM_MEMINFO}
@@ -1095,7 +1095,7 @@ def test_measured_breach_outranks_a_retriable_canary_terminal(
     evidence.unlink()
     host_cgroup = harness.root / _HOST_CGROUP_RELATIVE
     if scenario == "cgroup-peak":
-        (host_cgroup / "memory.peak").write_text(f"{336 * 1024 * 1024}\n", encoding="ascii")
+        (host_cgroup / "memory.peak").write_text(f"{400 * 1024 * 1024}\n", encoding="ascii")
     elif scenario == "oom-kill-delta":
         harness.update_state(
             codex_capacity_during_canary_host_writes={
@@ -1142,7 +1142,7 @@ def test_unrecordable_breach_is_a_defect_not_a_retriable_run(
     # and the breach record cannot be created.
     evidence_dir.write_text("", encoding="ascii")
     (harness.root / _HOST_CGROUP_RELATIVE / "memory.peak").write_text(
-        f"{336 * 1024 * 1024}\n", encoding="ascii"
+        f"{400 * 1024 * 1024}\n", encoding="ascii"
     )
 
     refused = harness.run_qualify_codex_capacity()
@@ -1238,6 +1238,33 @@ def test_existing_vps_capacity_startup_failure_is_retriable_without_failed_evide
             "services": ["nexus-codex-agent-host", "codex-egress-policy"],
         },
     ]
+
+
+def test_existing_vps_capacity_samples_startup_pressure_before_docker_wait_fails(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: startup reclaim is hidden behind a generic failed Docker health wait."""
+
+    harness = host_release_harness
+    evidence = harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json"
+    evidence.unlink()
+    harness.update_state(
+        codex_host_startup_failure=True,
+        codex_capacity_host_startup_delay_seconds=2.5,
+        codex_capacity_during_startup_host_writes={
+            f"{_HOST_CGROUP_RELATIVE}/memory.peak": f"{400 * 1024 * 1024}\n"
+        },
+    )
+
+    failed = harness.run_qualify_codex_capacity()
+
+    assert failed.returncode != 0
+    assert "Codex capacity qualification cgroup envelope differs" in failed.stderr
+    payload = json.loads(evidence.read_text(encoding="utf-8"))
+    assert payload["status"] == "failed"
+    assert payload["turns"] == []
+    metadata = evidence.stat()
+    assert metadata.st_uid == 0 and metadata.st_mode & 0o777 == 0o444
 
 
 def test_existing_vps_capacity_startup_oom_writes_immutable_failed_evidence(

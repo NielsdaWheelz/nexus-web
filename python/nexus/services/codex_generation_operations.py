@@ -32,7 +32,7 @@ from nexus.services.generation_spec import (
 )
 from nexus.services.tool_runtime.composition import (
     FrozenToolOperation,
-    compose_product_tool_runtime,
+    compose_projection_tool_runtime,
     freeze_tool_plan_snapshot,
     project_codex_model_tools,
 )
@@ -93,7 +93,7 @@ class CodexModelToolPlanRegistry:
 def compose_codex_model_tool_plan_registry() -> CodexModelToolPlanRegistry:
     """Build the credential-free host projection of every Native Nexus plan."""
 
-    runtime = compose_product_tool_runtime(None)
+    runtime = compose_projection_tool_runtime()
     return CodexModelToolPlanRegistry(
         tuple(
             operation

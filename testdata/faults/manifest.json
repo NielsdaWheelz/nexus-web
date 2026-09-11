@@ -958,7 +958,7 @@
       ],
       "expected_failure": "tool grant digest ignored a handler implementation change with unchanged tool schema",
       "changed_owner_red": "coherent-fault",
-      "changed_owner_sha256": "3be806b143df95d219cc3eebb2ad560796beae678a9db1737648f3c86643bb82"
+      "changed_owner_sha256": "e47ee217359145c5e5cbc9d3d1bd21be1482a09a8101f7f117bbb4eb24035e76"
     },
     {
       "id": "tool-database-event-loop-block",

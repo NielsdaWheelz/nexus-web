@@ -95,7 +95,8 @@ _CODEX_AGENT_INSPECT_SECURITY_OPTIONS = {
 # The host's published graceful-stop budget (apps/codex_agent/host.py): request drain,
 # interrupted-turn runtime close, and exit margin. Every stop of the host grants it.
 _CODEX_AGENT_STOP_GRACE_SECONDS = 45
-_CODEX_AGENT_MEMORY_LIMIT_BYTES = 384 * 1024 * 1024
+_CODEX_AGENT_MEMORY_LIMIT_BYTES = 448 * 1024 * 1024
+_CODEX_AGENT_MEMORY_PEAK_LIMIT_BYTES = 384 * 1024 * 1024
 _CODEX_AGENT_EPHEMERAL_FILE_LIMIT_BYTES = 77_594_624
 _CODEX_AGENT_EPHEMERAL_ROOT_BYTES = 188_743_680
 # The private executable tmpfs exists only because the pinned SDK launches a
@@ -250,7 +251,7 @@ _RESOURCE_LIMITS = {
     "worker-interactive": (128 * 1024 * 1024, 256 * 1024 * 1024, 256),
     "worker-background": (128 * 1024 * 1024, 448 * 1024 * 1024, 256),
     "codex-egress-policy": (32 * 1024 * 1024, 64 * 1024 * 1024, 32),
-    _CODEX_AGENT_HOST: (128 * 1024 * 1024, 384 * 1024 * 1024, 64),
+    _CODEX_AGENT_HOST: (256 * 1024 * 1024, 448 * 1024 * 1024, 64),
     "migration": (256 * 1024 * 1024, 512 * 1024 * 1024, 256),
 }
 _CODEX_SANDBOX_PROBE = ("python", "-m", "apps.codex_agent.sandbox_health")
@@ -267,7 +268,7 @@ _WORKER_HEALTH_RECEIPT_MAX_AGE_SECONDS = 20.0
 _MIN_AVAILABLE_MEMORY_BYTES = 256 * 1024 * 1024
 _MIN_SWAP_BYTES = 1024 * 1024 * 1024
 _MIN_PARSER_TEMP_FREE_BYTES = 512 * 1024 * 1024
-_CODEX_CAPACITY_SCHEMA_VERSION = "nexus-codex-capacity.v2"
+_CODEX_CAPACITY_SCHEMA_VERSION = "nexus-codex-capacity.v3"
 _CODEX_CAPACITY_CANARY_SCHEMA_VERSION = "nexus-codex-capacity-canary.v4"
 # The canary owns its phase sequence and exit-code table as the public
 # `apps.codex_agent.capacity_canary.TURNS` and `.EXIT_CODES`. This
@@ -5644,7 +5645,7 @@ class HostRelease:
         """Resolve the host-side cgroup v2 directory of the measured container.
 
         The measurement must never enter the cgroup it measures: an exec'd
-        sampler is charged to the same 384 MiB limit and 64-process budget the
+        sampler is charged to the same 448 MiB limit and 64-process budget the
         proof asserts against a 64 MiB margin.
         """
 
@@ -6322,8 +6323,8 @@ class HostRelease:
         ):
             raise CodexCapacityBreach("Codex capacity qualification cgroup limit differs")
         peak = _nonnegative_integer(evidence, "cgroup_memory_peak")
-        if peak > 320 * 1024 * 1024:
-            raise CodexCapacityBreach("Codex capacity qualification cgroup peak exceeds 320 MiB")
+        if peak > _CODEX_AGENT_MEMORY_PEAK_LIMIT_BYTES:
+            raise CodexCapacityBreach("Codex capacity qualification cgroup peak exceeds 384 MiB")
         if (
             _nonnegative_integer(evidence, "cgroup_memory_current")
             > _RESOURCE_LIMITS[_CODEX_AGENT_HOST][1]
@@ -6674,9 +6675,9 @@ class HostRelease:
         """Run the one pre-promotion, candidate-bound existing-VPS qualification.
 
         Classification is the run's product. A breach proven by the canary
-        contract, the exact host's startup OOM state, the isolation policy, the
-        background sampler, or the assembled evidence writes immutable failed
-        evidence and disqualifies this source SHA forever. Only stdout that
+        contract, the exact host's startup cgroup/pressure observations, the
+        isolation policy, the background sampler, or the assembled evidence
+        writes immutable failed evidence and disqualifies this source SHA forever. Only stdout that
         parses as the canary's own evidence contract can prove an in-canary
         breach. Everything that measured nothing about the envelope stays
         retriable and writes nothing: Docker, transport, cleanup, a sampler
@@ -6696,9 +6697,107 @@ class HostRelease:
             source_sha=source_sha,
             worker_image_id=worker_image_id,
         )
-        self._require_qualification_host_sample(self._qualification_host_sample(), initial=True)
+        initial_host_sample = self._qualification_host_sample()
+        self._require_qualification_host_sample(initial_host_sample, initial=True)
         config = self._config_snapshot()
+        host_samples = [initial_host_sample]
+        cgroup_samples: list[tuple[int, int, int, int]] = []
+        sampled_host_ids: list[str] = []
+        sampled_host_cgroups: list[Path] = []
+        sample_failure: list[Exception] = []
+        sample_breach: list[CodexCapacityBreach] = []
+        sample_lock = threading.Lock()
+        sampler_stop = threading.Event()
+
+        def sample_once(*, require_container: bool = False) -> None:
+            """Measure host pressure and the exact candidate cgroup from process start."""
+
+            with sample_lock:
+                if sampled_host_ids:
+                    # The container id and its cgroup path are immutable for the
+                    # lifetime being measured. Re-querying Docker here adds no
+                    # identity proof, creates observer load during the canary,
+                    # and can race daemon state transitions. A missing cgroup is
+                    # classified through Docker below because that is the one
+                    # point where retained kernel counters can no longer speak.
+                    container_id = sampled_host_ids[0]
+                else:
+                    observed = (
+                        self._compose(
+                            bundle=bundle,
+                            candidate=candidate,
+                            config_path=config.path,
+                            arguments=("ps", "--all", "--quiet", _CODEX_AGENT_HOST),
+                        )
+                        .stdout.decode("ascii")
+                        .strip()
+                    )
+                    identifiers = tuple(observed.splitlines()) if observed else ()
+                    if len(identifiers) > 1 or any(
+                        _CONTAINER_ID.fullmatch(identifier) is None for identifier in identifiers
+                    ):
+                        raise ReleaseDefect("Codex capacity sampled host listing is malformed")
+                    if not identifiers:
+                        if require_container:
+                            raise ReleaseDefect("Codex capacity sampled host is absent")
+                        return
+
+                    container_id = identifiers[0]
+                    inspected = _inspect_one(container_id, "Codex capacity sampled host inspect")
+                    state = _mapping(inspected.get("State"), "Codex capacity sampled host state")
+                    if state.get("Running") is not True:
+                        if require_container:
+                            raise ExternalCommandFailed(
+                                "Codex capacity sampled host is not running"
+                            )
+                        return
+                    image_id = _require_match(
+                        "Codex capacity sampled host image id",
+                        inspected.get("Image"),
+                        _IMAGE_ID,
+                    )
+                    if image_id != worker_image_id:
+                        raise ReleaseDefect("Codex capacity sampled host differs from candidate")
+                    sampled_host_ids.append(container_id)
+                    sampled_host_cgroups.append(self._codex_capacity_cgroup(container_id))
+
+                try:
+                    metrics = self._codex_capacity_cgroup_metrics(sampled_host_cgroups[0])
+                except ReleaseBlocked as exc:
+                    raise self._classify_codex_host_cgroup_loss(container_id, exc) from exc
+                host_sample = self._qualification_host_sample()
+                self._require_qualification_host_sample(host_sample, initial=False)
+                host_samples.append(host_sample)
+                cgroup_samples.append(metrics)
+                if (
+                    metrics[0] != _RESOURCE_LIMITS[_CODEX_AGENT_HOST][1]
+                    or metrics[2] > _CODEX_AGENT_MEMORY_PEAK_LIMIT_BYTES
+                    or metrics[3] != 0
+                ):
+                    raise CodexCapacityBreach(
+                        "Codex capacity qualification cgroup envelope differs"
+                    )
+
+        def sample_runtime() -> None:
+            # justify-polling: host and cgroup counters expose no event source.
+            while not sampler_stop.wait(_CODEX_CAPACITY_SAMPLE_INTERVAL_SECONDS):
+                try:
+                    sample_once()
+                except CodexCapacityBreach as exc:
+                    sample_breach.append(exc)
+                    sampler_stop.set()
+                except Exception as exc:
+                    sample_failure.append(exc)
+                    sampler_stop.set()
+
+        sampler = threading.Thread(target=sample_runtime, daemon=True)
+
+        def stop_sampler() -> None:
+            sampler_stop.set()
+            sampler.join(timeout=_CODEX_CAPACITY_SAMPLER_JOIN_SECONDS)
+
         host_may_be_started = False
+        sampler_started = False
         try:
             # Credential storage is operator-provisioned. Prove the LUKS2 ->
             # mapper -> ext4 chain and the locked-boot guard before starting
@@ -6714,6 +6813,11 @@ class HostRelease:
                 config_path=config.path,
                 service=_CODEX_EGRESS_POLICY,
             )
+            # Start observing before Docker starts the measured host. The
+            # cgroup's retained memory.peak then covers bootstrap even when
+            # the first successful read occurs after that allocation ended.
+            sampler.start()
+            sampler_started = True
             # Host `up --wait` can fail after creating the container, so cleanup
             # and OOM classification must not depend on a completed response.
             host_may_be_started = True
@@ -6767,16 +6871,35 @@ class HostRelease:
                 policy_container_id,
                 _CONTAINER_ID,
             )
+            if sample_breach:
+                raise sample_breach[0]
+            if sample_failure:
+                raise ReleaseDefect("Codex capacity sampler failed") from sample_failure[0]
+            sample_once(require_container=True)
+            if sampled_host_ids != [host_container_id]:
+                raise ReleaseDefect("Codex capacity sampled host identity differs")
         except BaseException as exc:
             # Device-auth, Docker, and observation failures remain retriable.
             # A cgroup OOM read from the exact attempted host is a measured
             # breach and must become immutable before teardown removes context.
+            if sampler_started:
+                stop_sampler()
             startup_error: BaseException = exc
+            if sample_breach:
+                startup_error = sample_breach[0]
+            elif sampler.is_alive():
+                startup_error = ExternalCommandFailed("Codex capacity sampler did not stop")
+            elif sample_failure:
+                sampling_defect = ReleaseDefect("Codex capacity sampler failed")
+                sampling_defect.__cause__ = sample_failure[0]
+                startup_error = sampling_defect
             if isinstance(exc, CodexCapacityBreach):
+                startup_error = exc
+            if isinstance(startup_error, CodexCapacityBreach):
                 startup_error = self._record_codex_capacity_breach(
                     source_sha=source_sha,
                     worker_image_id=worker_image_id,
-                    breach=exc,
+                    breach=startup_error,
                 )
             cleanup_failures = self._cleanup_codex_capacity_runtime(
                 bundle=bundle,
@@ -6789,7 +6912,7 @@ class HostRelease:
                 startup_error.add_note(f"Codex capacity cleanup also failed: {cleanup_failure}")
             if startup_error is exc:
                 raise
-            raise startup_error from startup_error.__cause__
+            raise startup_error from exc
         name = f"nexus-codex-capacity-{source_sha}"
         canary_id = ""
         canary_may_exist = False
@@ -6884,40 +7007,7 @@ class HostRelease:
                 image_environment=self._codex_agent_image_environment(candidate.images.worker),
                 expected_input_source=input_path,
             )
-            host_cgroup = self._codex_capacity_cgroup(host_container_id)
-            sampled: list[tuple[tuple[int, float, float], tuple[int, int, int, int]]] = []
-            sample_failure: list[Exception] = []
-            sample_breach: list[CodexCapacityBreach] = []
-            sampler_stop = threading.Event()
-
-            def sample_once() -> None:
-                host_sample = self._qualification_host_sample()
-                try:
-                    cgroup_metrics = self._codex_capacity_cgroup_metrics(host_cgroup)
-                except ReleaseBlocked as exc:
-                    # The kernel removes a cgroup with its container, so an
-                    # unreadable counter may be the measured host dying under
-                    # the envelope rather than a transient read fault.
-                    raise self._classify_codex_host_cgroup_loss(host_container_id, exc) from exc
-                sampled.append((host_sample, cgroup_metrics))
-
-            sample_once()
-            self._require_qualification_host_sample(sampled[-1][0], initial=True)
-
-            def sample_during_turns() -> None:
-                # justify-polling: host and cgroup counters expose no event source.
-                while not sampler_stop.wait(_CODEX_CAPACITY_SAMPLE_INTERVAL_SECONDS):
-                    try:
-                        sample_once()
-                    except CodexCapacityBreach as exc:  # a measurement, not a sampler fault
-                        sample_breach.append(exc)
-                        sampler_stop.set()
-                    except Exception as exc:  # retained only as a typed failure
-                        sample_failure.append(exc)
-                        sampler_stop.set()
-
-            sampler = threading.Thread(target=sample_during_turns, daemon=True)
-            sampler.start()
+            sample_once(require_container=True)
             try:
                 result = _run_observed(
                     (
@@ -6931,8 +7021,7 @@ class HostRelease:
                     timeout_seconds=420,
                 )
             finally:
-                sampler_stop.set()
-                sampler.join(timeout=_CODEX_CAPACITY_SAMPLER_JOIN_SECONDS)
+                stop_sampler()
             if sample_breach:
                 # The sampler observed the ceiling itself during the turns. That
                 # is the measurement §11 enumerates, not a sampler fault, so the
@@ -6946,20 +7035,22 @@ class HostRelease:
             if sample_failure:
                 raise ReleaseDefect("Codex capacity sampler failed") from sample_failure[0]
             # The controller's own measurements classify first, whatever the
-            # canary went on to say: a cgroup peak above the 320 MiB margin, a
+            # canary went on to say: a cgroup peak above the 384 MiB margin, a
             # changed memory.max, an OOM kill, or host headroom/pressure outside
             # the envelope while the host ran is the §8 breach §11 enumerates,
             # and a canary that then lost its transport or was refused
             # admission must not downgrade it to a retriable, evidence-free run.
-            sample_once()
-            for sample, _ in sampled:
+            sample_once(require_container=True)
+            for sample in host_samples:
                 self._require_qualification_host_sample(sample, initial=False)
-            metrics = tuple(item[1] for item in sampled)
+            metrics = tuple(cgroup_samples)
+            if not metrics:
+                raise ReleaseDefect("Codex capacity cgroup was never sampled")
             initial_metrics, final_metrics = metrics[0], metrics[-1]
             if (
                 any(metric[0] != _RESOURCE_LIMITS[_CODEX_AGENT_HOST][1] for metric in metrics)
-                or max(metric[2] for metric in metrics) > 320 * 1024 * 1024
-                or final_metrics[3] - initial_metrics[3] != 0
+                or max(metric[2] for metric in metrics) > _CODEX_AGENT_MEMORY_PEAK_LIMIT_BYTES
+                or any(metric[3] != 0 for metric in metrics)
             ):
                 raise CodexCapacityBreach("Codex capacity qualification cgroup envelope differs")
             # Classify by evidence first, never by the exit code alone. Only
@@ -7013,9 +7104,9 @@ class HostRelease:
                 "cgroup_memory_max": final_metrics[0],
                 "cgroup_memory_current": final_metrics[1],
                 "cgroup_memory_peak": max(metric[2] for metric in metrics),
-                "minimum_mem_available": min(sample[0] for sample, _ in sampled),
-                "maximum_memory_psi_some": max(sample[1] for sample, _ in sampled),
-                "maximum_memory_psi_full": max(sample[2] for sample, _ in sampled),
+                "minimum_mem_available": min(sample[0] for sample in host_samples),
+                "maximum_memory_psi_some": max(sample[1] for sample in host_samples),
+                "maximum_memory_psi_full": max(sample[2] for sample in host_samples),
                 "oom_kill_delta": final_metrics[3] - initial_metrics[3],
                 "services": list(services),
             }
@@ -7027,13 +7118,25 @@ class HostRelease:
         except CodexCapacityBreach as exc:
             # Only a measured breach disqualifies the source SHA forever, and
             # the immutable failed evidence it writes can never be replaced.
-            proof_error = exc
+            stop_sampler()
+            proof_error = sample_breach[0] if sample_breach else exc
             write_failure_evidence = True
         except BaseException as exc:
             # Docker, transport, sampler and host-read failures measured no
             # breach. They stay retriable and write nothing, exactly like the
             # startup block above.
-            proof_error = exc
+            stop_sampler()
+            if sample_breach:
+                proof_error = sample_breach[0]
+                write_failure_evidence = True
+            elif sampler.is_alive():
+                proof_error = ExternalCommandFailed("Codex capacity sampler did not stop")
+            elif sample_failure:
+                sampling_defect = ReleaseDefect("Codex capacity sampler failed")
+                sampling_defect.__cause__ = sample_failure[0]
+                proof_error = sampling_defect
+            else:
+                proof_error = exc
 
         if proof_error is not None and write_failure_evidence:
             # The immutable failed record is the run's product: local durable

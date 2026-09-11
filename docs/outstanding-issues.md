@@ -30,4 +30,5 @@ area · opened YYYY-MM-DD by <who> · P2
 
 ## Open
 
+- **OPEN · background jobs / semantic search · 2026-09-11 · P1:** [Production synapse scans repeatedly time out](tickets/production-synapse-scan-statement-timeout-backlog.md); deploy the current execution cutover, then prove the inherited backlog converges without new unexpected timeouts.
 - **OPEN · infrastructure · 2026-09-09 · P1:** [Docker Desktop VM crashes block trustworthy database/process verification](tickets/docker-desktop-virtualization-crash.md); recover the shared engine, then clean only owned interrupted resources and repeat the blocked checks.

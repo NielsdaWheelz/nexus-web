@@ -274,7 +274,7 @@ def _capacity_paths(root: Path) -> CapacityPaths:
         encoding="ascii",
     )
     current.write_text(f"{128 * 1024 * 1024}\n", encoding="ascii")
-    maximum.write_text(f"{384 * 1024 * 1024}\n", encoding="ascii")
+    maximum.write_text(f"{448 * 1024 * 1024}\n", encoding="ascii")
     return CapacityPaths(
         meminfo=meminfo,
         memory_pressure=pressure,
@@ -1706,7 +1706,7 @@ def test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot(
                 )
 
                 paths.memory_current.write_text(
-                    f"{385 * 1024 * 1024}\n",
+                    f"{449 * 1024 * 1024}\n",
                     encoding="ascii",
                 )
                 capacity_refusal = await _post(client, _command(12, "capacity-refusal"))

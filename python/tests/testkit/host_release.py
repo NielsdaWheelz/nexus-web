@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import importlib.util
 import json
@@ -35,7 +36,7 @@ _RESOURCE_LIMITS = {
     "worker-interactive": (128 * 1024 * 1024, 256 * 1024 * 1024, 256),
     "worker-background": (128 * 1024 * 1024, 448 * 1024 * 1024, 256),
     "codex-egress-policy": (32 * 1024 * 1024, 64 * 1024 * 1024, 32),
-    "nexus-codex-agent-host": (128 * 1024 * 1024, 384 * 1024 * 1024, 64),
+    "nexus-codex-agent-host": (256 * 1024 * 1024, 448 * 1024 * 1024, 64),
     "migration": (256 * 1024 * 1024, 512 * 1024 * 1024, 256),
 }
 _MIGRATION_COMMAND = [
@@ -202,9 +203,56 @@ def _load_state(path: Path) -> dict[str, Any]:
 
 
 def _save_state(path: Path, state: dict[str, Any]) -> None:
-    temporary = path.with_suffix(".partial")
+    temporary = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.partial")
     temporary.write_bytes(_canonical_json(state))
     os.replace(temporary, path)
+
+
+@dataclass(slots=True)
+class _FakeDockerStateLease:
+    """Serialize fake-daemon transactions while allowing observed long calls."""
+
+    state_path: Path
+    descriptor: int
+    held: bool = False
+
+    @classmethod
+    def acquire_for(cls, state_path: Path) -> _FakeDockerStateLease:
+        lock_path = state_path.with_suffix(".lock")
+        descriptor = os.open(lock_path, os.O_RDONLY | os.O_CREAT, 0o644)
+        lease = cls(state_path=state_path, descriptor=descriptor)
+        lease.acquire()
+        return lease
+
+    def acquire(self) -> None:
+        if self.held:
+            raise AssertionError("fake Docker state lease is already held")
+        fcntl.flock(self.descriptor, fcntl.LOCK_EX)
+        self.held = True
+
+    def release(self) -> None:
+        if not self.held:
+            raise AssertionError("fake Docker state lease is not held")
+        fcntl.flock(self.descriptor, fcntl.LOCK_UN)
+        self.held = False
+
+    def wait_observably(self, state: dict[str, Any], seconds: float) -> None:
+        """Publish state, yield the daemon lease, then resume from fresh state."""
+
+        _save_state(self.state_path, state)
+        self.release()
+        try:
+            threading.Event().wait(seconds)
+        finally:
+            self.acquire()
+        current = _load_state(self.state_path)
+        state.clear()
+        state.update(current)
+
+    def close(self) -> None:
+        if self.held:
+            self.release()
+        os.close(self.descriptor)
 
 
 def _root_own(paths: tuple[Path, ...]) -> None:
@@ -295,7 +343,7 @@ def write_codex_capacity_qualification(
     path.write_bytes(
         _canonical_json(
             {
-                "schema_version": "nexus-codex-capacity.v2",
+                "schema_version": "nexus-codex-capacity.v3",
                 "source_sha": source_sha,
                 "worker_image_id": worker_image_id,
                 "status": status,
@@ -325,7 +373,7 @@ def write_codex_capacity_qualification(
                     if status == "passed"
                     else []
                 ),
-                "cgroup_memory_max": 384 * 1024 * 1024,
+                "cgroup_memory_max": 448 * 1024 * 1024,
                 "cgroup_memory_current": 32 * 1024 * 1024 if status == "passed" else 0,
                 "cgroup_memory_peak": 64 * 1024 * 1024 if status == "passed" else 0,
                 "minimum_mem_available": 256 * 1024 * 1024 if status == "passed" else 0,
@@ -379,9 +427,13 @@ class _PublicTLSProxy(socketserver.ThreadingTCPServer):
         host: str,
         path: str,
     ) -> tuple[int, dict[str, object] | None, dict[str, str]]:
-        state = _load_state(self.state_path)
-        state["public_requests"].append({"host": host, "path": path})
-        _save_state(self.state_path, state)
+        lease = _FakeDockerStateLease.acquire_for(self.state_path)
+        try:
+            state = _load_state(self.state_path)
+            state["public_requests"].append({"host": host, "path": path})
+            _save_state(self.state_path, state)
+        finally:
+            lease.close()
         headers = {"Cache-Control": "no-store"}
         if method == "POST" and host == "api.example.test" and path == "/internal/agent-tools/mcp":
             mode = state["public_mcp_mode"]
@@ -664,7 +716,7 @@ class HostReleaseHarness:
         (host_proc / "cgroup").write_text(f"0::/{_CODEX_HOST_CGROUP_RELATIVE}\n", encoding="ascii")
         host_cgroup = root / "sys/fs/cgroup" / _CODEX_HOST_CGROUP_RELATIVE
         host_cgroup.mkdir(parents=True)
-        (host_cgroup / "memory.max").write_text("402653184\n", encoding="ascii")
+        (host_cgroup / "memory.max").write_text("469762048\n", encoding="ascii")
         (host_cgroup / "memory.current").write_text("33554432\n", encoding="ascii")
         (host_cgroup / "memory.peak").write_text("67108864\n", encoding="ascii")
         (host_cgroup / "memory.events").write_text(
@@ -852,6 +904,8 @@ class HostReleaseHarness:
                 "codex_capacity_canary_status": "passed",
                 "codex_capacity_canary_delay_seconds": 0.0,
                 "codex_capacity_during_canary_host_writes": {},
+                "codex_capacity_during_startup_host_writes": {},
+                "codex_capacity_host_startup_delay_seconds": 0.0,
                 # None, "oom_killed", or "exited": the measured host container
                 # leaves during the canary turns and its cgroup vanishes with it.
                 "codex_capacity_host_exit_during_canary": None,
@@ -1300,12 +1354,20 @@ class HostReleaseHarness:
         )
 
     def state(self) -> dict[str, Any]:
-        return _load_state(self.state_path)
+        lease = _FakeDockerStateLease.acquire_for(self.state_path)
+        try:
+            return _load_state(self.state_path)
+        finally:
+            lease.close()
 
     def update_state(self, **changes: object) -> None:
-        state = self.state()
-        state.update(changes)
-        _save_state(self.state_path, state)
+        lease = _FakeDockerStateLease.acquire_for(self.state_path)
+        try:
+            state = _load_state(self.state_path)
+            state.update(changes)
+            _save_state(self.state_path, state)
+        finally:
+            lease.close()
 
 
 def _attempt_phase() -> str | None:
@@ -1619,7 +1681,28 @@ def _stop_timeout_matches(operation: list[str]) -> bool:
     return timeout == "30"
 
 
-def _handle_compose(state: dict[str, Any], operation: list[str]) -> None:
+def _apply_capacity_host_writes(writes: dict[str, object]) -> None:
+    """Atomically apply scripted host/cgroup observations during qualification."""
+
+    root = Path(os.environ["NEXUS_FAKE_RELEASE_ATTEMPT"]).parents[5]
+    for relative, contents in writes.items():
+        # The controller reads concurrently. Preserve owner/mode while replacing
+        # atomically so a half-written fake counter can never create a flaky proof.
+        target = root / str(relative)
+        original = target.stat()
+        staged = target.with_name(target.name + ".capacity-write")
+        staged.write_text(str(contents), encoding="ascii")
+        os.chmod(staged, original.st_mode & 0o7777)
+        os.chown(staged, original.st_uid, original.st_gid)
+        os.replace(staged, target)
+
+
+def _handle_compose(
+    state: dict[str, Any],
+    operation: list[str],
+    *,
+    lease: _FakeDockerStateLease,
+) -> None:
     if operation == ["config", "--quiet"]:
         return
     if operation[:3] == ["ps", "--all", "--quiet"]:
@@ -1706,6 +1789,14 @@ def _handle_compose(state: dict[str, Any], operation: list[str]) -> None:
                 container["image_id"] = state["activation_worker_image_id"]
                 container["config"]["Image"] = state["candidate_worker_image"]
         state["service_mutations"].append({"operation": "up", "services": services})
+        if services == ["nexus-codex-agent-host"]:
+            _apply_capacity_host_writes(state["codex_capacity_during_startup_host_writes"])
+            startup_delay = float(state["codex_capacity_host_startup_delay_seconds"])
+            if startup_delay:
+                # Publish the running container and yield the daemon transaction
+                # before fake `up --wait` blocks, matching Docker's real
+                # create/start/readiness ordering and admitting sampler reads.
+                lease.wait_observably(state, startup_delay)
         if services == ["nexus-codex-agent-host"] and state["codex_host_startup_oom"] is True:
             container = state["containers"]["nexus-codex-agent-host"]
             container["running"] = False
@@ -1970,8 +2061,8 @@ def _handle_compose(state: dict[str, Any], operation: list[str]) -> None:
     raise AssertionError(f"unsupported fake Compose operation: {operation!r}")
 
 
-def fake_docker_main() -> int:
-    state_path = Path(os.environ["NEXUS_FAKE_DOCKER_STATE"])
+def _fake_docker_main(lease: _FakeDockerStateLease) -> int:
+    state_path = lease.state_path
     state = _load_state(state_path)
     arguments = sys.argv[2:]
     state["commands"].append(arguments)
@@ -2012,7 +2103,7 @@ def fake_docker_main() -> int:
     if arguments[:3] == ["version", "--format", "{{.Server.Version}}"]:
         sys.stdout.write(str(state["docker_server_version"]) + "\n")
     elif arguments[0] == "compose":
-        _handle_compose(state, _compose_operation(arguments))
+        _handle_compose(state, _compose_operation(arguments), lease=lease)
     elif arguments[:2] == ["image", "inspect"]:
         image = arguments[2]
         image_map = {
@@ -2273,23 +2364,8 @@ def fake_docker_main() -> int:
             # A real host's counters move while the canary turns run: apply the
             # scripted mid-turn host mutations before responding so the
             # controller's own sampling observes them.
-            root = Path(os.environ["NEXUS_FAKE_RELEASE_ATTEMPT"]).parents[5]
             host_writes = state["codex_capacity_during_canary_host_writes"]
-            for relative, contents in host_writes.items():
-                # Atomic replace: the controller's sampler thread reads these
-                # files concurrently, and a torn in-place write would let a
-                # breach proof flake on a half-written counter instead of the
-                # scripted mutation. The staged file keeps the target's exact
-                # owner and mode -- this fake runs under sudo, so a plain
-                # replace would leave a root-owned file the test process could
-                # no longer restore in its healthy-host teardown.
-                target = root / str(relative)
-                original = target.stat()
-                staged = target.with_name(target.name + ".canary-write")
-                staged.write_text(str(contents), encoding="ascii")
-                os.chmod(staged, original.st_mode & 0o7777)
-                os.chown(staged, original.st_uid, original.st_gid)
-                os.replace(staged, target)
+            _apply_capacity_host_writes(host_writes)
             host_exit = state["codex_capacity_host_exit_during_canary"]
             if host_exit is not None:
                 # The kernel removes a dead container's cgroup; the controller's
@@ -2298,6 +2374,7 @@ def fake_docker_main() -> int:
                 host["running"] = False
                 host["oom_killed"] = host_exit == "oom_killed"
                 _save_state(state_path, state)
+                root = Path(os.environ["NEXUS_FAKE_RELEASE_ATTEMPT"]).parents[5]
                 cgroup = root / "sys/fs/cgroup" / _CODEX_HOST_CGROUP_RELATIVE
                 for counter in ("memory.max", "memory.current", "memory.peak", "memory.events"):
                     (cgroup / counter).unlink()
@@ -2306,7 +2383,7 @@ def fake_docker_main() -> int:
                 # justify-polling: the canary is the timed subject under
                 # measurement here; holding its exec open past one sampler
                 # interval is the condition the sampler-breach proof observes.
-                threading.Event().wait(delay_seconds)
+                lease.wait_observably(state, delay_seconds)
             status = str(state["codex_capacity_canary_status"])
             if status == "crashed":
                 # The canary died before reaching any of its documented
@@ -2610,6 +2687,14 @@ def fake_docker_main() -> int:
         raise AssertionError(f"unsupported fake Docker command: {arguments!r}")
     _save_state(state_path, state)
     return 0
+
+
+def fake_docker_main() -> int:
+    lease = _FakeDockerStateLease.acquire_for(Path(os.environ["NEXUS_FAKE_DOCKER_STATE"]))
+    try:
+        return _fake_docker_main(lease)
+    finally:
+        lease.close()
 
 
 def fake_apparmor_parser_main() -> int:

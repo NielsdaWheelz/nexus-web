@@ -485,7 +485,7 @@ def test_production_compose_declares_the_exact_resource_envelope() -> None:
         ("worker-interactive", "128m", "256m", 256),
         ("worker-background", "128m", "448m", 256),
         ("codex-egress-policy", "32m", "64m", 32),
-        ("nexus-codex-agent-host", "128m", "384m", 64),
+        ("nexus-codex-agent-host", "256m", "448m", 64),
         ("migration", "256m", "512m", 256),
     )
     for index, (service, reservation, hard, pids) in enumerate(expected):
@@ -576,7 +576,7 @@ def test_codex_production_boundary_declares_real_caddy_health_and_encrypted_stat
     assert "--opt com.docker.network.bridge.enable_icc=false" in enrollment
     assert '--network "$ENROLLMENT_NETWORK"' in enrollment
     assert "--cap-drop ALL --security-opt no-new-privileges:true" in enrollment
-    assert "--memory 384m --memory-swap 384m" in enrollment
+    assert "--memory 448m --memory-swap 448m" in enrollment
     assert "--pids-limit 64 --cpus 1.0" in enrollment
     assert (
         "--tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m,mode=0700,uid=10001,gid=10001" in enrollment
