@@ -46,15 +46,17 @@ from nexus.schemas.media import (
     UploadSessionCapabilities,
     UploadSessionFailure,
     UploadSessionResponse,
-    UploadTransportAbortedFailure,
     UploadTransportFailureRequest,
+    VerificationFailed,
+)
+from nexus.schemas.presence import Presence, absent, present
+from nexus.schemas.upload_failures import (
+    UploadTransportAbortedFailure,
     UploadTransportHttpRejectedFailure,
     UploadTransportNetworkFailure,
     UploadTransportTimeoutFailure,
     UploadVerificationFailureCode,
-    VerificationFailed,
 )
-from nexus.schemas.presence import Presence, absent, present
 from nexus.services import library_entries, library_governance, media_source_ingest
 from nexus.services.file_ingest_validation import (
     has_valid_file_signature,

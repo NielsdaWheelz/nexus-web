@@ -34,8 +34,8 @@ from nexus.schemas.import_history import (
     UploadFailed,
     UploadHistoryOwner,
 )
-from nexus.schemas.media import UploadTransportHttpRejectedFailure
 from nexus.schemas.presence import absent, present
+from nexus.schemas.upload_failures import UploadTransportHttpRejectedFailure
 from nexus.services.import_history import (
     append_processing_event,
     append_upload_event,

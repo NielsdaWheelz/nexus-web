@@ -7,9 +7,11 @@ transition, so a committed execution failure can never lack its history. The
 seam records only what the queue knows -- execution identity, the safe code,
 the next attempt time -- and reads the owner's row for the stage it was at.
 
-Import discipline matches ``dead_letter_projections``: SQLAlchemy and the
-history schema at module scope, the source owner's stage helper inside its own
-branch, never a parser, provider, or storage client. Every branch is total:
+Import discipline matches ``dead_letter_projections``: SQLAlchemy, the history
+schema, and the source-history leaf at module scope, never the ORM, a parser, a
+provider, or a storage client -- the supervisor imports this module through the
+registry and stays slim (`tests/testkit/background_process_containment_probe.py`
+names what it may not load). Every branch is total:
 ``queue_failure_code`` maps any code, and a missing owner row (the media was
 torn down under a dying job) records nothing rather than aborting the transition.
 """
@@ -34,6 +36,7 @@ from nexus.schemas.import_history import (
 )
 from nexus.schemas.presence import Presence, absent, presence_from_nullable, present
 from nexus.services.import_history import append_processing_event
+from nexus.services.source_history import source_failure_progress, source_history_stage
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -120,8 +123,6 @@ def apply_history_projection(
 def _record_source_attempt(
     db: Session, job: JobRow, *, failure: _Failure | None, retry: _Retry | None
 ) -> None:
-    from nexus.services.source_publication import source_failure_progress, source_history_stage
-
     attempt_id = UUID(str(job.payload["attempt_id"]))
     media_id = UUID(str(job.payload["media_id"]))
     attempt = (

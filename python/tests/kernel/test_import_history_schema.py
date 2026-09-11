@@ -62,8 +62,11 @@ from nexus.schemas.import_history import (
     history_payload,
     queue_failure_code,
 )
-from nexus.schemas.media import UploadTransportHttpRejectedFailure, UploadVerificationFailureCode
 from nexus.schemas.presence import absent, present
+from nexus.schemas.upload_failures import (
+    UploadTransportHttpRejectedFailure,
+    UploadVerificationFailureCode,
+)
 from nexus.services.capabilities import _SAME_SOURCE_TERMINAL_ERROR_CODES
 from nexus.services.media_source_ingest import _TERMINAL_SOURCE_FAILURE_CODES
 

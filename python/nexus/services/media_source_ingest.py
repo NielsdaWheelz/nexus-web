@@ -147,6 +147,7 @@ from nexus.services.source_attempt_failures import (
     publish_source_attempt_failure,
     source_attempt_failure_stage,
 )
+from nexus.services.source_history import source_failure_progress, source_history_stage
 from nexus.services.source_publication import (
     SourcePublicationFence,
     SourcePublicationSuperseded,
@@ -154,8 +155,6 @@ from nexus.services.source_publication import (
     record_source_finalizing,
     reset_source_progress,
     run_source_publication_phase,
-    source_failure_progress,
-    source_history_stage,
 )
 from nexus.services.transcripts.request_reason import (
     TranscriptRequestReason,

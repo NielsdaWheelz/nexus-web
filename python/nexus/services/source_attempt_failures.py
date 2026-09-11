@@ -23,7 +23,7 @@ from nexus.services.podcasts.transcription_failure import (
     PodcastTranscriptionFailure,
     publish_podcast_transcription_failure,
 )
-from nexus.services.source_publication import source_failure_progress, source_history_stage
+from nexus.services.source_history import source_failure_progress, source_history_stage
 from nexus.services.transcripts.state import set_media_transcript_state
 
 _ACTIVE_ATTEMPT_STATUSES = frozenset({"accepted", "queued", "running"})

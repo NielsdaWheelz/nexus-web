@@ -35,10 +35,10 @@ from nexus.schemas.media import (
     TransportFailed,
     UploadHttpRejectedFailureRequest,
     UploadNetworkFailureRequest,
-    UploadTransportHttpRejectedFailure,
     VerificationFailed,
 )
 from nexus.schemas.presence import present
+from nexus.schemas.upload_failures import UploadTransportHttpRejectedFailure
 from nexus.services import library_entries, library_governance, media_deletion
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.media_upload_sessions import (

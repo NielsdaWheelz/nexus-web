@@ -21,8 +21,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
-from nexus.schemas.media import UploadTransportFailure, UploadVerificationFailureCode
 from nexus.schemas.presence import Presence
+from nexus.schemas.upload_failures import (
+    UploadTransportFailure,
+    UploadVerificationFailureCode,
+)
 
 Stage = Literal["Upload", "Validate", "Extract", "Finalize", "Index", "SourceProcessing"]
 

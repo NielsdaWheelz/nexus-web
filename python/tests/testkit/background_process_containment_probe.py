@@ -24,8 +24,9 @@ MEMORY_LIMIT_BYTES = BACKGROUND_WORKER_MEMORY_LIMIT_BYTES
 SUPERVISOR_RESIDENT_KIB_LIMIT = 96 * 1024
 
 # Any of these in the supervisor's module table means a parser, provider, storage,
-# or task graph leaked across the process boundary -- through a handler dispatch or
-# through the dead-letter transition, which runs in the supervisor by design.
+# task graph, or the whole ORM and its media schemas leaked across the process
+# boundary -- through a handler dispatch, through the dead-letter transition, or
+# through the history projection, all of which run in the supervisor by design.
 _FORBIDDEN_MODULE_NAMES = frozenset(
     {
         "anthropic",
@@ -33,6 +34,8 @@ _FORBIDDEN_MODULE_NAMES = frozenset(
         "botocore",
         "httpx",
         "lxml",
+        "nexus.db.models",
+        "nexus.schemas.media",
         "nexus.services.content_indexing",
         "nexus.services.podcasts.backfill",
         "nexus.services.podcasts.sync",

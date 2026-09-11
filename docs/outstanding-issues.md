@@ -297,3 +297,30 @@ Docker Desktop's Apple Virtualization VM stops with `VZErrorInternal` during
 verification; recover the shared engine, then clean only owned interrupted
 resources and repeat the blocked checks. See
 [docs/tickets/docker-desktop-virtualization-crash.md](tickets/docker-desktop-virtualization-crash.md).
+
+### [OPEN] OI-055 — The supervisor residency limit is 19 MiB looser than the supervisor it guards
+backend · opened 2026-09-10 by Claude (imports cutover, Phase 9) · P2
+`SUPERVISOR_RESIDENT_KIB_LIMIT` (96 MiB) is asserted once, after a real
+eight-job run, while main's supervisor imports at 73 MiB; a 19 MiB import leak
+(the ORM reached the supervisor through the history projections) surfaced only
+as a marginal run-time overshoot. Assert the import-only residency in a cheap
+kernel case at the boundary that owns it. See
+[docs/tickets/supervisor-residency-limit-hides-import-growth.md](tickets/supervisor-residency-limit-hides-import-growth.md).
+
+### [OPEN] OI-056 — Fault patches with no leading context can reverse onto another occurrence
+testing · opened 2026-09-10 by Claude (imports cutover, Phase 9) · P2
+`applied_fault` reverses a registered patch by context; a hunk with one context
+line and none leading can bind to a different occurrence than it was cut from,
+so `prove` fails "fault reversal did not restore the isolated checkout" (or
+reverses the wrong site). Five registered patches still have that shape.
+Regenerate them with default context and reject such hunks at registration. See
+[docs/tickets/zero-context-fault-patches-can-reverse-onto-another-occurrence.md](tickets/zero-context-fault-patches-can-reverse-onto-another-occurrence.md).
+
+### [OPEN] OI-057 — The coherent-fault owner digest omits the imports and support modules the standard says it pins
+testing · opened 2026-09-10 by Claude (imports cutover, Phase 9 review) · P3
+testing-standards §3 says a coherent-fault owner pin covers the exact test "plus
+its imports and non-test module support"; `python_exact_proof_owner_sha256`
+hashes the owner test file alone, so strengthening the containment probe module
+produced no owner drift and no review. Extend the digest or narrow the sentence. See
+[docs/tickets/coherent-fault-owner-digest-omits-imported-support.md](tickets/coherent-fault-owner-digest-omits-imported-support.md).
+

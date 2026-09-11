@@ -170,6 +170,7 @@ include = [
     "nexus/services/run_kit.py",
     "nexus/services/semantic_chunks.py",
     "nexus/services/seq.py",
+    "nexus/services/source_history.py",
     "nexus/services/structured_synthesis.py",
     "nexus/services/synapse.py",
     "nexus/services/text_quote.py",

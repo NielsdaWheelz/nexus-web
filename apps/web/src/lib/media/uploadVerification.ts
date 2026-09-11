@@ -20,7 +20,7 @@ export const UPLOAD_VERIFICATION_CODES = [
 
 export type UploadVerificationCode = (typeof UPLOAD_VERIFICATION_CODES)[number];
 
-/** The `UploadTransportFailure` union of `python/nexus/schemas/media.py`. */
+/** The `UploadTransportFailure` union of `python/nexus/schemas/upload_failures.py`. */
 export type UploadTransportFailure =
   | { readonly kind: "Network" | "Timeout" | "Aborted" }
   | { readonly kind: "HttpRejected"; readonly status: number };

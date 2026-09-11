@@ -96,7 +96,7 @@ from nexus.services.signed_keyset_cursor import (
     decode_signed_keyset_cursor,
     encode_signed_keyset_cursor,
 )
-from nexus.services.source_publication import COUNTED_PROGRESS_SOURCE_TYPES
+from nexus.services.source_history import COUNTED_PROGRESS_SOURCE_TYPES
 
 _HISTORY_CURSOR_FAMILY = "imports:history"
 

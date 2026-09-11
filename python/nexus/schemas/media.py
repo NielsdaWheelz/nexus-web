@@ -15,6 +15,10 @@ from nexus.schemas.collection_page import CollectionRevision
 from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.contributors import ContributorCreditOut
 from nexus.schemas.presence import Presence
+from nexus.schemas.upload_failures import (
+    UploadTransportFailure,
+    UploadVerificationFailureCode,
+)
 from nexus.services.offline_download_source import (
     OFFLINE_DOWNLOAD_SOURCE_URL_MAX_LENGTH,
     OFFLINE_DOWNLOAD_TITLE_MAX_LENGTH,
@@ -513,60 +517,12 @@ class Published(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-UploadVerificationFailureCode = Literal[
-    "E_SOURCE_INTEGRITY",
-    "E_INVALID_FILE_TYPE",
-    "E_FILE_TOO_LARGE",
-]
-"""The closed set of deterministic upload rejections recorded on a session.
-
-Every producer and every egress projection of a terminal verification fact reuses
-this alias, so widening it is a type error in each consumer. It is a plain alias
-rather than a ``type`` statement so the same declaration is also the single
-runtime source of the codes (``typing.get_args``).
-"""
-
-
 class VerificationFailed(BaseModel):
     kind: Literal["VerificationFailed"] = "VerificationFailed"
     code: UploadVerificationFailureCode
     failed_at: datetime
 
     model_config = ConfigDict(extra="forbid")
-
-
-class UploadTransportNetworkFailure(BaseModel):
-    kind: Literal["Network"] = "Network"
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class UploadTransportTimeoutFailure(BaseModel):
-    kind: Literal["Timeout"] = "Timeout"
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class UploadTransportHttpRejectedFailure(BaseModel):
-    kind: Literal["HttpRejected"] = "HttpRejected"
-    status: int = Field(ge=100, le=599)
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class UploadTransportAbortedFailure(BaseModel):
-    kind: Literal["Aborted"] = "Aborted"
-
-    model_config = ConfigDict(extra="forbid")
-
-
-UploadTransportFailure = Annotated[
-    UploadTransportNetworkFailure
-    | UploadTransportTimeoutFailure
-    | UploadTransportHttpRejectedFailure
-    | UploadTransportAbortedFailure,
-    Field(discriminator="kind"),
-]
 
 
 class TransportFailed(BaseModel):
