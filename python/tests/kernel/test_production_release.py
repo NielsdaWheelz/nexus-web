@@ -1259,7 +1259,8 @@ def test_existing_vps_capacity_samples_startup_pressure_before_docker_wait_fails
     failed = harness.run_qualify_codex_capacity()
 
     assert failed.returncode != 0
-    assert "Codex capacity qualification cgroup envelope differs" in failed.stderr
+    if "Codex capacity qualification cgroup envelope differs" not in failed.stderr:
+        pytest.fail("startup pressure was not classified from retained cgroup counters")
     payload = json.loads(evidence.read_text(encoding="utf-8"))
     assert payload["status"] == "failed"
     assert payload["turns"] == []
