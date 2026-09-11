@@ -92,7 +92,9 @@
       "proofs": [
         "pytest:python/tests/service/test_chat_execution_privacy.py::test_suspended_chat_exposes_only_phase_and_masks_its_private_journal"
       ],
-      "expected_failure": "DID NOT RAISE"
+      "expected_failure": "DID NOT RAISE",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "0763de2873b206251b95bbb5caaaa46cb48632d8a596b3ac196914cc4599ec52"
     },
     {
       "id": "destructive-shared-media-teardown",
@@ -357,7 +359,9 @@
       "proofs": [
         "pytest:python/tests/service/test_conversation_deletion.py::test_conversation_delete_removes_its_dead_chat_journal_only"
       ],
-      "expected_failure": "conversation deletion retained its private chat journal"
+      "expected_failure": "conversation deletion retained its private chat journal",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "bb2e08d6820cfcd88e0846ca785dd7e4bc57d04d5bcd88a4002f7e64b42e7285"
     },
     {
       "id": "database-object-delete-obligation-bypass",
@@ -709,7 +713,9 @@
       "proofs": [
         "pytest:python/tests/service/test_bounded_media_extraction.py::test_lifecycle_preserves_declared_resource_dimension_on_api_error"
       ],
-      "expected_failure": "PDF resource-limit projection lost its typed carrier"
+      "expected_failure": "PDF resource-limit projection lost its typed carrier",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "821595c83e7f14f430139765315c84f2430d96052de53519d51bf03607a03870"
     },
     {
       "id": "document-import-reconciler-readiness-bypass",
@@ -738,7 +744,9 @@
       "proofs": [
         "pytest:python/tests/migrations/test_imports_history_migration.py::test_0226_records_one_baseline_per_extant_upload_session_and_source_attempt"
       ],
-      "expected_failure": "0226 must record exactly one processing baseline per attempt"
+      "expected_failure": "0226 must record exactly one processing baseline per attempt",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "6fb69b64e7969fb37c386b6de6e2b3e4c27333a64890ecfdab17663005e9178f"
     },
     {
       "id": "import-source-repair-terminal-bypass",
@@ -747,7 +755,9 @@
       "proofs": [
         "pytest:python/tests/service/test_import_source_recovery.py::test_succeeded_attempt_with_a_later_dead_job_is_complete_and_unrepairable"
       ],
-      "expected_failure": "a published source with a later dead job is complete, not suspended"
+      "expected_failure": "a published source with a later dead job is complete, not suspended",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "715976d92d2acc63ffd9e743265ed1269f1cbd1363e36ebf11c9bd9240a45d61"
     },
     {
       "id": "import-search-repair-revision-bypass",
@@ -756,7 +766,9 @@
       "proofs": [
         "pytest:python/tests/service/test_import_index_recovery.py::test_stale_revision_cannot_requeue_a_dead_reindex_job"
       ],
-      "expected_failure": "DID NOT RAISE <class 'nexus.errors.ApiError'>"
+      "expected_failure": "DID NOT RAISE <class 'nexus.errors.ApiError'>",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "9ea254f835539f292118b4a67ce3e272a8470a79cb3b70c7a1ef0d76e8e4364c"
     },
     {
       "id": "imports-history-correlation-bypass",
@@ -765,7 +777,9 @@
       "proofs": [
         "pytest:python/tests/service/test_imports.py::test_history_stage_and_date_filters_must_be_satisfied_by_one_event"
       ],
-      "expected_failure": "an old Extract failure and a recent Index event are two events, not one match"
+      "expected_failure": "an old Extract failure and a recent Index event are two events, not one match",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "93638c36c9939857013db6258e9e6e97b631f0358f2f2c75c1e3447d6dc2e3f0"
     },
     {
       "id": "imports-pane-return-token-published-early",
@@ -864,7 +878,9 @@
       "proofs": [
         "pytest:python/tests/service/test_resource_action_snapshots.py::test_document_media_subtypes_publish_their_exact_action_families"
       ],
-      "expected_failure": "assert 'OfflineReading' not in"
+      "expected_failure": "assert 'OfflineReading' not in",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "14bd7b2b91e2d19e5c1333f2f22f0a5b0cb7397487f2ee68a257168ae8de27af"
     },
     {
       "id": "imports-collapsed-count-chip-is-full-size",
