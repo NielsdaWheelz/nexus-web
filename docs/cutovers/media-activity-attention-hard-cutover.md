@@ -1,6 +1,11 @@
 # Media Activity attention hard cutover
 
-**Status:** Implemented · 2026-08-11
+**Status:** Superseded · 2026-09-08 by
+[`imports-workspace-hard-cutover.md`](imports-workspace-hard-cutover.md), which
+replaced `GET /media/activity`, the Nexus Activity task, and the Account
+total-open badge with the `/imports` workspace pane. This document is retained
+as the historical record of the attention model those surfaces used; the file
+paths it names no longer exist.
 
 **Type:** One-release hard cutover. No flag, dual response, compatibility
 decoder, fallback, or legacy presentation survives.

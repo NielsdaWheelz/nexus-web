@@ -13,10 +13,18 @@ from nexus.schemas.ingest import (
     IngestRecoveryHealthOut,
     IngestRecoveryJobOut,
 )
+from nexus.services.capabilities import OperatorRecovery
+from nexus.services.content_indexing import (
+    current_search_repair_offer,
+    repair_dead_media_reindex,
+)
 from nexus.services.ingest_recovery import (
     enqueue_stale_ingest_reconcile,
     get_ingest_recovery_health,
-    repair_media_work,
+)
+from nexus.services.media_source_ingest import (
+    current_source_repair_offer,
+    repair_dead_source_execution,
 )
 
 router = APIRouter(tags=["internal"])
@@ -45,19 +53,35 @@ def get_reconcile_stale_ingest_health(
     return ok(out)
 
 
-@router.post("/internal/ingest/content-index/{media_id}/retry-dead")
+@router.post("/internal/ingest/content-index/{media_id}/retry-dead", status_code=202)
 def retry_dead_content_index(
     media_id: UUID,
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    job_id = repair_media_work(db, media_id=media_id, scope="Search")
-    return ok(IngestRecoveryJobOut(media_id=media_id, job_id=job_id))
+    """Requeue the dead reindex job of the media's current index revision."""
+    offer = current_search_repair_offer(db, media_id=media_id)
+    admission = repair_dead_media_reindex(
+        db,
+        actor=OperatorRecovery(),
+        media_id=media_id,
+        expected_revision=offer.expected_revision,
+        expected_job_id=offer.expected_job_id,
+    )
+    return ok(IngestRecoveryJobOut(media_id=media_id, job_id=admission.job_id))
 
 
-@router.post("/internal/ingest/source/{media_id}/retry-dead")
+@router.post("/internal/ingest/source/{media_id}/retry-dead", status_code=202)
 def retry_dead_source(
     media_id: UUID,
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    job_id = repair_media_work(db, media_id=media_id, scope="Source")
-    return ok(IngestRecoveryJobOut(media_id=media_id, job_id=job_id))
+    """Requeue the dead job of the media's latest source attempt."""
+    offer = current_source_repair_offer(db, media_id=media_id)
+    admission = repair_dead_source_execution(
+        db,
+        actor=OperatorRecovery(),
+        media_id=media_id,
+        expected_attempt_id=offer.expected_attempt_id,
+        expected_job_id=offer.expected_job_id,
+    )
+    return ok(IngestRecoveryJobOut(media_id=media_id, job_id=admission.job_id))

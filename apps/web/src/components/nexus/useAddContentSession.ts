@@ -295,7 +295,7 @@ export function useAddContentSession(): AddContentSessionController {
         tone: "Warning",
         title: "Upload stopped",
         message:
-          "Use Import Activity to retry or remove any accepted upload, or restage this file as a new import.",
+          "Use Imports to retry or remove any accepted upload, or restage this file as a new import.",
       },
       operationFeedback: {
         tone: "Warning",
@@ -543,7 +543,7 @@ export function useAddContentSession(): AddContentSessionController {
           defects.push(failure.error);
           return;
         case "Superseded":
-          // The session moved on without this attempt. Import Activity owns
+          // The session moved on without this attempt. Imports owns
           // the truth, so the foreground stops claiming this item at all.
           apply({ kind: "RemoveItem", itemId: item.id });
           return;

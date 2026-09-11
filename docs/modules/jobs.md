@@ -27,10 +27,17 @@ its capacity holder and renews both to one expiry in a queue-owned transaction;
 every terminal or retry transition follows that same job-before-capacity order.
 Claim is atomic (`FOR UPDATE SKIP LOCKED`), so
 the worker is horizontally scalable even though one instance is
-single-concurrency. The interactive and background lane processes are the sole
-local execution-capacity owners. The worker installs the process-global request
-rate and token-budget service at startup (see [llms.md](llms.md)); there is no
-second anonymous per-user in-flight counter.
+single-concurrency. The claim UPDATE also allocates the row's `execution_id`, a
+non-resetting UUID that identifies exactly one attempt at running this job. It
+is persisted on `background_jobs`, carried in `JobExecutionContext` and the
+bounded-child protocol, and named by every history payload and source
+publication fence, so a repaired or requeued job never reuses an execution
+identity. Rows last claimed before migration 0227 have none, and history that
+would name such an execution says so with an Absent value. The interactive and
+background lane processes are the sole local execution-capacity owners. The
+worker installs the process-global request rate and token-budget service at
+startup (see [llms.md](llms.md)); there is no second anonymous per-user
+in-flight counter.
 
 The interactive lane dispatches in-process. The background lane instead runs every
 handler in a fresh bounded child through `jobs/process_executor.py`
@@ -95,6 +102,14 @@ kind is a frozen `JobDefinition`:
   applied once retries are exhausted; a projection may finalize domain state,
   project suspension, or only record safe diagnostics according to that kind's
   contract.
+- `history_projection` — a member of the closed
+  `"None" | "SourceAttempt" | "ContentIndex"` set naming which import-history
+  rows a queue-envelope outcome records. `jobs/history_projections.py` applies
+  it inside the same transaction that commits the queue transition, so an
+  automatic retry, a dead-letter, a reclaimed expired lease, or a reschedule is
+  recorded with the transition it documents. It is not part of the
+  task-contract digest, and it never aborts a queue transition: its failure-code
+  input is total.
 
 `get_task_contract_digest()` is a stable SHA-256 fingerprint over the registry's
 kind/attempts/delays/lease policy. API `/version` and each worker heartbeat expose

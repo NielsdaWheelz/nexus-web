@@ -28,7 +28,6 @@ from nexus.db.models import (
 from nexus.errors import ApiErrorCode
 from nexus.jobs.queue import (
     JobExecutionContext,
-    claim_job,
     find_nonterminal_jobs_for_payload,
     get_job,
 )
@@ -45,6 +44,7 @@ from nexus.services.transcript_segments import TranscriptSegmentInput
 from nexus.services.transcripts.current import publish_source_transcript
 from tests.testkit.auth import UserRecord
 from tests.testkit.external_server import NASA_TRANSCRIPT_URL
+from tests.testkit.queue_claims import claim_job_row
 
 
 def _seed_transcription_episode(
@@ -113,7 +113,7 @@ def _run_claimed_transcript_source_attempt(
         select(MediaSourceAttempt).where(MediaSourceAttempt.media_id == media_id)
     ).one()
     assert attempt.job_id is not None
-    claimed = claim_job(
+    claimed = claim_job_row(
         db,
         job_id=attempt.job_id,
         worker_id=worker_id,
@@ -141,6 +141,7 @@ def _run_claimed_transcript_source_attempt(
             worker_id=worker_id,
             attempt_no=claimed.attempts,
             resource_class="Heavy",
+            execution_id=claimed.execution_id,
         ),
     )
 
@@ -1053,7 +1054,7 @@ def test_podcast_transcript_resource_terminal_repairs_domain_state_once(
     ).one()
     assert attempt.job_id is not None
     worker_id = "podcast-resource-terminal-worker"
-    claimed = claim_job(
+    claimed = claim_job_row(
         db_session,
         job_id=attempt.job_id,
         worker_id=worker_id,

@@ -17,7 +17,7 @@ from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.db.models import ConsumptionQueueItem, LLMToolPosition
-from nexus.jobs.queue import JobExecutionContext, claim_job, enqueue_job
+from nexus.jobs.queue import JobExecutionContext, enqueue_job
 from nexus.services import generation_policy
 from nexus.services.llm_ledger import (
     GenerationStart,
@@ -36,6 +36,7 @@ from nexus.services.tool_runtime.composition import (
     freeze_tool_plan_snapshot,
 )
 from tests.testkit.codex_generation import codex_generation_draft
+from tests.testkit.queue_claims import claim_job_row
 from tests.testkit.unreachable_state import delete_generations_by_ids, delete_jobs_by_ids
 
 _GENERATION_CASES_PATH = Path(__file__).parent / "cases" / "generation_plans.v2.json"
@@ -156,7 +157,7 @@ async def _start_executor(
         with factory() as db:
             job = enqueue_job(db, kind=f"tool_safety_{operation}", max_attempts=1)
             job_id = job.id
-            claimed = claim_job(
+            claimed = claim_job_row(
                 db,
                 job_id=job_id,
                 worker_id=worker_id,
@@ -169,6 +170,7 @@ async def _start_executor(
                 worker_id=worker_id,
                 attempt_no=claimed.attempts,
                 resource_class="Light",
+                execution_id=claimed.execution_id,
             )
             start_generation_in_current_transaction(
                 db,

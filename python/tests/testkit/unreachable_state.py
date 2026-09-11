@@ -4,13 +4,31 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
-from typing import Literal, assert_never
+from datetime import datetime
+from typing import Any, Literal, assert_never
 from uuid import UUID
 
-from sqlalchemy import Engine, text
+from sqlalchemy import Engine, Row, text
 from sqlalchemy.orm import Session
 
-from nexus.schemas.presence import Presence, Present, present
+from nexus.ids import new_uuid7
+from nexus.schemas.import_history import (
+    HistoryOwner,
+    IndexFacts,
+    SafeFailureCode,
+    SourceFacts,
+    Stage,
+    UploadFacts,
+    UploadHistoryOwner,
+    history_event_type,
+    history_payload,
+)
+from nexus.schemas.presence import (
+    Presence,
+    Present,
+    nullable_from_presence,
+    present,
+)
 from nexus.services.durable_step_journal import (
     Completed,
     ToolExecutionState,
@@ -83,11 +101,31 @@ def cleanup_committed_upload_user(engine: Engine, *, user_id: UUID) -> None:
             .scalars()
             .all()
         )
+        media_ids = (
+            connection.execute(
+                text("SELECT id::text FROM media WHERE created_by_user_id = :user_id"),
+                {"user_id": user_id},
+            )
+            .scalars()
+            .all()
+        )
         connection.execute(
             text(
                 """
                 DELETE FROM media_upload_session_destinations
                 WHERE upload_session_id IN (
+                    SELECT id FROM media_upload_sessions
+                    WHERE created_by_user_id = :user_id
+                )
+                """
+            ),
+            {"user_id": user_id},
+        )
+        connection.execute(
+            text(
+                """
+                DELETE FROM media_upload_events
+                WHERE session_id IN (
                     SELECT id FROM media_upload_sessions
                     WHERE created_by_user_id = :user_id
                 )
@@ -118,9 +156,18 @@ def cleanup_committed_upload_user(engine: Engine, *, user_id: UUID) -> None:
                 DELETE FROM background_jobs
                 WHERE payload->>'actor_user_id' = :user_id
                    OR payload->>'uploadSessionId' = ANY(:session_ids)
+                   OR payload->>'media_id' = ANY(:media_ids)
                 """
             ),
-            {"user_id": str(user_id), "session_ids": upload_session_ids},
+            {
+                "user_id": str(user_id),
+                "session_ids": upload_session_ids,
+                "media_ids": media_ids,
+            },
+        )
+        connection.execute(
+            text("DELETE FROM resource_mutations WHERE user_id = :user_id"),
+            {"user_id": user_id},
         )
         connection.execute(
             text(
@@ -135,6 +182,15 @@ def cleanup_committed_upload_user(engine: Engine, *, user_id: UUID) -> None:
             text(
                 """
                 DELETE FROM pdf_page_text_spans
+                WHERE media_id IN (SELECT id FROM media WHERE created_by_user_id = :user_id)
+                """
+            ),
+            {"user_id": user_id},
+        )
+        connection.execute(
+            text(
+                """
+                DELETE FROM media_processing_events
                 WHERE media_id IN (SELECT id FROM media WHERE created_by_user_id = :user_id)
                 """
             ),
@@ -281,6 +337,40 @@ def expire_upload_verification_lease(db: Session, *, session_id: UUID) -> UUID:
     return UUID(str(token))
 
 
+def expire_upload_retry_capability(db: Session, *, session_id: UUID) -> datetime:
+    """Lapse the admitted upload capability in place, in both owners at once.
+
+    A retry admission memoizes the generation's expiry and stamps the same instant
+    on the session, so time passing expires both together. The proof reaches that
+    instant directly rather than waiting for the signed-URL lifetime.
+    """
+    expired_at = db.execute(
+        text(
+            """
+            UPDATE media_upload_sessions
+            SET upload_url_expires_at = now() - interval '1 second'
+            WHERE id = :session_id
+            RETURNING upload_url_expires_at
+            """
+        ),
+        {"session_id": session_id},
+    ).scalar_one()
+    db.execute(
+        text(
+            """
+            UPDATE resource_mutations
+            SET response_json = jsonb_set(
+                response_json, '{expires_at}', to_jsonb(CAST(:expired_at AS text))
+            )
+            WHERE mutation_scope = :scope
+            """
+        ),
+        {"scope": f"media_upload_retry:{session_id}", "expired_at": expired_at.isoformat()},
+    )
+    db.commit()
+    return expired_at
+
+
 def make_upload_cleanup_job_available_before_its_fence(db: Session, *, job_id: UUID) -> None:
     """Expose one cleanup job while preserving its future durable writer fences."""
     db.execute(
@@ -390,6 +480,56 @@ def assign_dead_job_to_heavy_capacity(db: Session, *, job_id: UUID) -> None:
     ).first()
     if updated is None:
         raise AssertionError("expected unheld Heavy capacity")
+
+
+def forget_job_execution_id(db: Session, *, job_id: UUID) -> None:
+    """Model a running row claimed before migration 0227: its execution has no identity."""
+    updated = db.execute(
+        text(
+            """
+            UPDATE background_jobs
+            SET execution_id = NULL
+            WHERE id = :job_id
+              AND status = 'running'
+            RETURNING id
+            """
+        ),
+        {"job_id": job_id},
+    ).scalar_one()
+    assert updated == job_id
+
+
+def retarget_job_kind(db: Session, *, job_id: UUID, kind: str) -> None:
+    """Relabel one synthetic job with a private kind no other row carries, so a
+    scanning worker restricted to that kind can reach only this proof's row."""
+    updated = db.execute(
+        text(
+            """
+            UPDATE background_jobs
+            SET kind = :kind, updated_at = now()
+            WHERE id = :job_id
+            RETURNING id
+            """
+        ),
+        {"job_id": job_id, "kind": kind},
+    ).scalar_one()
+    assert updated == job_id
+
+
+def read_content_index_state(db: Session, *, owner_id: UUID) -> tuple[str, int]:
+    """The stored ``(status, revision)`` of one media index owner, read outside every owner lock."""
+    row = db.execute(
+        text(
+            """
+            SELECT status, revision
+            FROM content_index_states
+            WHERE owner_kind = 'media'
+              AND owner_id = :owner_id
+            """
+        ),
+        {"owner_id": owner_id},
+    ).one()
+    return str(row[0]), int(row[1])
 
 
 def make_failed_job_retryable(db: Session, *, job_id: UUID) -> None:
@@ -805,6 +945,10 @@ def delete_source_probe_owners_by_job_kind(db: Session, *, kind: str) -> None:
         )
     if media_ids:
         db.execute(
+            text("DELETE FROM media_processing_events WHERE media_id = ANY(CAST(:ids AS uuid[]))"),
+            {"ids": media_ids},
+        )
+        db.execute(
             text("DELETE FROM pdf_page_text_spans WHERE media_id = ANY(CAST(:ids AS uuid[]))"),
             {"ids": media_ids},
         )
@@ -1054,6 +1198,10 @@ def delete_source_attempts_and_media(
         {"attempt_ids": list(attempt_ids)},
     )
     db.execute(
+        text("DELETE FROM media_processing_events WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    db.execute(
         text("DELETE FROM pdf_page_text_spans WHERE media_id = :media_id"),
         {"media_id": media_id},
     )
@@ -1108,4 +1256,120 @@ def publish_source_probe_success(
             """
         ),
         {"media_id": media_id},
+    )
+
+
+def insert_upload_event(
+    db: Session,
+    *,
+    session_id: UUID,
+    facts: UploadFacts,
+    stage: Presence[Stage],
+    failure_code: Presence[SafeFailureCode],
+    occurred_at: datetime,
+) -> UUID:
+    """Record one upload event at a chosen past instant.
+
+    The owner helper always stamps the database clock, so historical fixtures —
+    an old failure a later date filter must not match — are unreachable through
+    it. The stored shape is the owner's own codec, so the row stays decodable.
+    """
+    event_id = new_uuid7()
+    db.execute(
+        text(
+            """
+            INSERT INTO media_upload_events (
+                id, session_id, occurred_at, event_type, stage, failure_code, payload
+            ) VALUES (
+                :id, :session_id, :occurred_at, :event_type, :stage, :failure_code,
+                CAST(:payload AS jsonb)
+            )
+            """
+        ),
+        {
+            "id": event_id,
+            "session_id": session_id,
+            "occurred_at": occurred_at,
+            "event_type": history_event_type(facts),
+            "stage": nullable_from_presence(stage),
+            "failure_code": nullable_from_presence(failure_code),
+            "payload": json.dumps(history_payload(facts)),
+        },
+    )
+    return event_id
+
+
+def insert_processing_event(
+    db: Session,
+    *,
+    media_id: UUID,
+    facts: SourceFacts | IndexFacts,
+    stage: Presence[Stage],
+    failure_code: Presence[SafeFailureCode],
+    occurred_at: datetime,
+) -> UUID:
+    """Record one source or index event at a chosen past instant."""
+    event_id = new_uuid7()
+    db.execute(
+        text(
+            """
+            INSERT INTO media_processing_events (
+                id, media_id, occurred_at, event_type, stage, failure_code, payload
+            ) VALUES (
+                :id, :media_id, :occurred_at, :event_type, :stage, :failure_code,
+                CAST(:payload AS jsonb)
+            )
+            """
+        ),
+        {
+            "id": event_id,
+            "media_id": media_id,
+            "occurred_at": occurred_at,
+            "event_type": history_event_type(facts),
+            "stage": nullable_from_presence(stage),
+            "failure_code": nullable_from_presence(failure_code),
+            "payload": json.dumps(history_payload(facts)),
+        },
+    )
+    return event_id
+
+
+def read_events(db: Session, *, owner: HistoryOwner) -> list[dict[str, object]]:
+    """Every stored history row for one import, oldest first, exactly as
+    written. An independent oracle for the owner's decode path."""
+    rows: list[Row[Any]] = []
+    if isinstance(owner, UploadHistoryOwner):
+        rows.extend(
+            db.execute(
+                text(
+                    """
+                    SELECT 'media_upload_events' AS source_table, id, occurred_at, event_type,
+                           stage, failure_code, payload
+                    FROM media_upload_events
+                    WHERE session_id = :session_id
+                    """
+                ),
+                {"session_id": owner.session_id},
+            ).all()
+        )
+        media_id = owner.media_id.value if isinstance(owner.media_id, Present) else None
+    else:
+        media_id = owner.media_id
+    if media_id is not None:
+        rows.extend(
+            db.execute(
+                text(
+                    """
+                    SELECT 'media_processing_events' AS source_table, id, occurred_at, event_type,
+                           stage, failure_code, payload
+                    FROM media_processing_events
+                    WHERE media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            ).all()
+        )
+    return sorted(
+        (dict(row._mapping) for row in rows),
+        key=lambda event: (event["occurred_at"], event["id"]),
     )

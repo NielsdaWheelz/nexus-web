@@ -6,6 +6,7 @@ import hashlib
 from datetime import UTC, datetime, timedelta
 from threading import Event, Thread
 from typing import cast
+from urllib.parse import parse_qs, urlparse
 from uuid import UUID, uuid4
 
 import pytest
@@ -25,16 +26,19 @@ from nexus.db.models import (
 )
 from nexus.db.session import transaction
 from nexus.errors import ApiError, ApiErrorCode
+from nexus.jobs.queue import find_nonterminal_jobs_for_payload
 from nexus.jobs.worker import JobWorker
+from nexus.schemas.import_history import UploadHistoryOwner
 from nexus.schemas.library import CreateLibraryRequest
 from nexus.schemas.media import (
     RetryUploadSessionRequest,
     TransportFailed,
     UploadHttpRejectedFailureRequest,
     UploadNetworkFailureRequest,
-    UploadTransportHttpRejectedFailure,
     VerificationFailed,
 )
+from nexus.schemas.presence import present
+from nexus.schemas.upload_failures import UploadTransportHttpRejectedFailure
 from nexus.services import library_entries, library_governance, media_deletion
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.media_upload_sessions import (
@@ -54,10 +58,12 @@ from tests.testkit.auth import UserRecord
 from tests.testkit.unreachable_state import (
     cleanup_committed_upload_user,
     delete_jobs_by_ids,
+    expire_upload_retry_capability,
     expire_upload_verification_lease,
     force_upload_cleanup_job_due,
     install_deferred_media_insert_failure,
     make_upload_cleanup_job_available_before_its_fence,
+    read_events,
     remove_deferred_media_insert_failure,
 )
 from tests.testkit.upload_sessions import (
@@ -274,6 +280,8 @@ def test_upload_session_fences_generations_and_atomically_publishes_or_converges
             filename="reliable.pdf",
             content_type="application/pdf",
             size_bytes=len(payload),
+            client_mutation_id=str(uuid4()),
+            expected_generation=2,
         ),
         storage_client=storage,
     )
@@ -300,6 +308,8 @@ def test_upload_session_fences_generations_and_atomically_publishes_or_converges
                 filename="reliable.pdf",
                 content_type="application/pdf",
                 size_bytes=len(payload),
+                client_mutation_id=str(uuid4()),
+                expected_generation=3,
             ),
             storage_client=storage,
         )
@@ -898,6 +908,8 @@ def test_expired_verifier_candidate_cannot_overwrite_the_published_source(
                     filename="fenced.pdf",
                     content_type="application/pdf",
                     size_bytes=len(winning_payload),
+                    client_mutation_id=str(uuid4()),
+                    expected_generation=1,
                 ),
                 storage_client=storage,
             )
@@ -912,6 +924,8 @@ def test_expired_verifier_candidate_cannot_overwrite_the_published_source(
                 filename="fenced.pdf",
                 content_type="application/pdf",
                 size_bytes=len(winning_payload),
+                client_mutation_id=str(uuid4()),
+                expected_generation=1,
             ),
             storage_client=storage,
         )
@@ -1004,6 +1018,8 @@ def test_retry_capability_is_cleanup_fenced_before_concurrent_remove(
                         filename="retry-remove.pdf",
                         content_type="application/pdf",
                         size_bytes=len(payload),
+                        client_mutation_id=str(uuid4()),
+                        expected_generation=1,
                     ),
                     storage_client=cast(StorageClientBase, blocking_storage),
                 )
@@ -1117,3 +1133,163 @@ def test_retry_capability_is_cleanup_fenced_before_concurrent_remove(
             )
         delete_jobs_by_ids(db_session, job_ids=cleanup_job_ids)
         db_session.commit()
+
+
+def test_retry_admission_replays_once_and_fences_stale_generations(
+    committed_upload_support: tuple[Session, UserRecord],
+) -> None:
+    """One admitted retry advances the generation once; a replay returns that exact
+    admission, a stale inspected generation cannot touch a newer one, and the
+    failed upload's history survives every recovery."""
+    db_session, test_user = committed_upload_support
+    storage = get_storage_client()
+    payload = b"%PDF-1.7\nretry admission source\n%%EOF"
+    created = create_upload_session(
+        db_session,
+        viewer_id=test_user.id,
+        request=upload_request(filename="retry-admission.pdf", size_bytes=len(payload)),
+        request_id="retry-admission-create",
+        idempotency_key="retry-admission",
+        storage_client=storage,
+    )
+    assert created.kind == "UploadRequired"
+    session = db_session.execute(
+        select(MediaUploadSession).where(MediaUploadSession.idempotency_key == "retry-admission")
+    ).scalar_one()
+    record_transport_failure(
+        db_session,
+        viewer_id=test_user.id,
+        session_handle=created.session_handle,
+        failure=UploadNetworkFailureRequest(
+            kind="Network", generation=1, duration_ms=10, request_id="retry-admission-put"
+        ),
+    )
+
+    def retry(*, client_mutation_id: str, expected_generation: int, size_bytes: int = len(payload)):
+        return retry_upload_session(
+            db_session,
+            viewer_id=test_user.id,
+            session_handle=created.session_handle,
+            request=RetryUploadSessionRequest(
+                filename="retry-admission.pdf",
+                content_type="application/pdf",
+                size_bytes=size_bytes,
+                client_mutation_id=client_mutation_id,
+                expected_generation=expected_generation,
+            ),
+            storage_client=storage,
+        )
+
+    def signed_seconds(upload_url: str) -> int:
+        return int(parse_qs(urlparse(upload_url).query)["X-Amz-Expires"][0])
+
+    command = str(uuid4())
+    admitted = retry(client_mutation_id=command, expected_generation=1)
+    assert admitted.kind == "UploadRequired" and admitted.generation == 2
+    db_session.expire_all()
+    session = db_session.get(MediaUploadSession, session.id)
+    assert session is not None and session.upload_generation == 2
+    assert admitted.expires_at == session.upload_url_expires_at
+    assert signed_seconds(admitted.upload_url) <= get_settings().signed_url_expiry_s
+
+    remaining_before_replay = int(
+        (admitted.expires_at - db_session.execute(select(func.now())).scalar_one()).total_seconds()
+    )
+    replayed = retry(client_mutation_id=command, expected_generation=1)
+    assert replayed.kind == "UploadRequired"
+    assert (replayed.generation, replayed.expires_at) == (2, admitted.expires_at), (
+        "an exact replay must return the admitted generation and its original expiry"
+    )
+    assert (
+        remaining_before_replay - 2
+        <= signed_seconds(replayed.upload_url)
+        <= remaining_before_replay
+    ), "a replayed capability must be signed for the remaining life of the admitted generation"
+    db_session.expire_all()
+    assert db_session.get(MediaUploadSession, session.id).upload_generation == 2
+    generation_two_cleanups = find_nonterminal_jobs_for_payload(
+        db_session,
+        kind="storage_object_cleanup",
+        expected_payload_match={
+            "ownerKind": "UploadSession",
+            "uploadSessionId": str(session.id),
+            "storagePath": build_upload_session_staging_storage_path(session.id, 2, "pdf"),
+        },
+    )
+    assert len(generation_two_cleanups) == 1, "the replay reserved generation-2 cleanup twice"
+
+    with pytest.raises(ApiError) as stale:
+        retry(client_mutation_id=str(uuid4()), expected_generation=1)
+    assert stale.value.code is ApiErrorCode.E_RESOURCE_CONFLICT
+    assert stale.value.details == {"current": {"generation": 2}}
+    with pytest.raises(ApiError) as mismatch:
+        retry(client_mutation_id=command, expected_generation=1, size_bytes=len(payload) + 1)
+    assert mismatch.value.code is ApiErrorCode.E_IDEMPOTENCY_KEY_REPLAY_MISMATCH
+    db_session.expire_all()
+    assert db_session.get(MediaUploadSession, session.id).upload_generation == 2
+
+    expired_at = expire_upload_retry_capability(db_session, session_id=session.id)
+    expired = retry(client_mutation_id=command, expected_generation=1)
+    assert expired.kind == "NeedsAttention"
+    assert expired.failure.kind == "CapabilityExpired"
+    assert expired.failure.expired_at == expired_at
+    db_session.expire_all()
+    session = db_session.get(MediaUploadSession, session.id)
+    assert (session.upload_generation, session.upload_url_expires_at) == (2, expired_at), (
+        "an expired replay extended or advanced the admitted generation"
+    )
+
+    renewed = retry(client_mutation_id=str(uuid4()), expected_generation=2)
+    assert renewed.kind == "UploadRequired" and renewed.generation == 3
+    storage.put_object(
+        build_upload_session_staging_storage_path(session.id, 3, "pdf"), payload, "application/pdf"
+    )
+    published = confirm_upload_session(
+        db_session,
+        viewer_id=test_user.id,
+        session_handle=created.session_handle,
+        generation=3,
+        request_id="retry-admission-publish",
+        storage_client=storage,
+    )
+    assert published.kind == "Published"
+
+    history = [
+        (event["event_type"], event["stage"], event["failure_code"], dict(event["payload"]))
+        for event in read_events(
+            db_session,
+            owner=UploadHistoryOwner(session_id=session.id, media_id=present(published.media_id)),
+        )
+    ]
+    assert [(kind, stage, code) for kind, stage, code, _ in history[:5]] == [
+        ("Accepted", "Upload", None),
+        ("Failed", "Upload", "E_UPLOAD_TRANSPORT_FAILED"),
+        ("RecoveryAccepted", "Upload", None),
+        ("RecoveryAccepted", "Upload", None),
+        ("ExecutionStarted", "Validate", None),
+    ], f"upload history does not narrate the recovery: {history}"
+    assert history[1][3] == {
+        "generation": 1,
+        "transport": {"kind": "Present", "value": {"kind": "Network"}},
+    }
+    assert [event[3]["generation"] for event in history[:5]] == [1, 1, 2, 3, 3]
+    # Publication and the media's first source attempt commit together, so the
+    # upload-origin import keeps one identity across both history tables.
+    assert sorted(history[5:], key=lambda event: event[0]) == [
+        (
+            "Accepted",
+            "Validate",
+            None,
+            {"source_attempt_id": str(published.source_attempt_id), "attempt_no": 1},
+        ),
+        (
+            "Published",
+            "Upload",
+            None,
+            {
+                "generation": 3,
+                "media_id": str(published.media_id),
+                "source_attempt_id": str(published.source_attempt_id),
+            },
+        ),
+    ], f"publication did not link the upload and its media history: {history[5:]}"

@@ -40,7 +40,7 @@ from nexus.config import get_settings
 from nexus.db.models import Page
 from nexus.db.session import create_session_factory, get_repeatable_read_db
 from nexus.job_topology import BACKGROUND_WORKER_JOB_KINDS, INTERACTIVE_WORKER_JOB_KINDS
-from nexus.jobs.queue import JobExecutionContext, claim_job, complete_job, enqueue_job, get_job
+from nexus.jobs.queue import JobExecutionContext, complete_job, enqueue_job, get_job
 from nexus.schemas.conversation import NewChatDestination
 from nexus.services import generation_policy
 from nexus.services.billing_entitlements import grant_entitlement_override
@@ -58,6 +58,7 @@ from nexus.services.rate_limit import RateLimiter, get_rate_limiter, set_rate_li
 from tests.testkit.generation_catalog import CHAT_TEST_SELECTION, configured_chat_catalog_service
 from tests.testkit.llm_tool_scenarios import compose_available_product_tool_runtime
 from tests.testkit.provider_generation import provider_generation_backend
+from tests.testkit.queue_claims import claim_job_row
 from tests.testkit.unreachable_state import delete_jobs_by_ids
 
 pytestmark = pytest.mark.usefixtures("committed_chat_state_isolation")
@@ -92,7 +93,7 @@ async def _prove_background_capacity_isolation(engine: Engine) -> None:
             kind="synapse_scan",
             payload={"user_id": str(owner), "ref": f"page:{page.id}", "reason": "page_edit"},
         )
-        background_claim = claim_job(
+        background_claim = claim_job_row(
             db,
             job_id=background_job.id,
             worker_id=f"background-{owner}",
@@ -146,7 +147,7 @@ async def _prove_background_capacity_isolation(engine: Engine) -> None:
             )
             assert chat_job_id is not None
             worker_id = f"foreground-{owner}"
-            chat_claim = claim_job(
+            chat_claim = claim_job_row(
                 db,
                 job_id=chat_job_id,
                 worker_id=worker_id,
@@ -165,6 +166,7 @@ async def _prove_background_capacity_isolation(engine: Engine) -> None:
                     worker_id=worker_id,
                     attempt_no=chat_claim.attempts,
                     resource_class="Light",
+                    execution_id=chat_claim.execution_id,
                 ),
                 session_factory=session_factory,
                 runtime=runtime,

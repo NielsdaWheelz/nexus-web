@@ -8,13 +8,17 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, JsonValue
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, FiniteFloat, JsonValue
 from pydantic.alias_generators import to_camel
 
 from nexus.schemas.collection_page import CollectionRevision
 from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.contributors import ContributorCreditOut
 from nexus.schemas.presence import Presence
+from nexus.schemas.upload_failures import (
+    UploadTransportFailure,
+    UploadVerificationFailureCode,
+)
 from nexus.services.offline_download_source import (
     OFFLINE_DOWNLOAD_SOURCE_URL_MAX_LENGTH,
     OFFLINE_DOWNLOAD_TITLE_MAX_LENGTH,
@@ -419,10 +423,27 @@ class CreateUploadSessionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+def _canonical_uuid_text(value: str) -> str:
+    """Replay keys are text columns, so two spellings of one UUID would be two
+    different memo rows for one intent. Only the canonical spelling is a key."""
+    try:
+        parsed = UUID(value)
+    except ValueError as exc:
+        raise ValueError("client_mutation_id must be canonical lowercase UUID text") from exc
+    if str(parsed) != value:
+        raise ValueError("client_mutation_id must be canonical lowercase UUID text")
+    return value
+
+
+ClientMutationUuidText = Annotated[str, AfterValidator(_canonical_uuid_text)]
+
+
 class RetryUploadSessionRequest(BaseModel):
     filename: str = Field(min_length=1, max_length=255)
     content_type: str
     size_bytes: int = Field(gt=0)
+    client_mutation_id: ClientMutationUuidText
+    expected_generation: int = Field(ge=1)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -496,60 +517,12 @@ class Published(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-UploadVerificationFailureCode = Literal[
-    "E_SOURCE_INTEGRITY",
-    "E_INVALID_FILE_TYPE",
-    "E_FILE_TOO_LARGE",
-]
-"""The closed set of deterministic upload rejections recorded on a session.
-
-Every producer and every egress projection of a terminal verification fact reuses
-this alias, so widening it is a type error in each consumer. It is a plain alias
-rather than a ``type`` statement so the same declaration is also the single
-runtime source of the codes (``typing.get_args``).
-"""
-
-
 class VerificationFailed(BaseModel):
     kind: Literal["VerificationFailed"] = "VerificationFailed"
     code: UploadVerificationFailureCode
     failed_at: datetime
 
     model_config = ConfigDict(extra="forbid")
-
-
-class UploadTransportNetworkFailure(BaseModel):
-    kind: Literal["Network"] = "Network"
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class UploadTransportTimeoutFailure(BaseModel):
-    kind: Literal["Timeout"] = "Timeout"
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class UploadTransportHttpRejectedFailure(BaseModel):
-    kind: Literal["HttpRejected"] = "HttpRejected"
-    status: int = Field(ge=100, le=599)
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class UploadTransportAbortedFailure(BaseModel):
-    kind: Literal["Aborted"] = "Aborted"
-
-    model_config = ConfigDict(extra="forbid")
-
-
-UploadTransportFailure = Annotated[
-    UploadTransportNetworkFailure
-    | UploadTransportTimeoutFailure
-    | UploadTransportHttpRejectedFailure
-    | UploadTransportAbortedFailure,
-    Field(discriminator="kind"),
-]
 
 
 class TransportFailed(BaseModel):
@@ -621,10 +594,85 @@ class ArticleCaptureResponse(BaseModel):
     ingest_enqueued: bool
 
 
-class RetryRequest(BaseModel):
-    """Body for POST /media/{id}/retry."""
+class RetrySourceRequest(BaseModel):
+    """Body for POST /media/{id}/retry that admits a new source attempt."""
 
-    from_stage: Literal["source", "metadata"]
+    from_stage: Literal["source"]
+    client_mutation_id: ClientMutationUuidText
+    expected_attempt_id: UUID
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class RetryMetadataRequest(BaseModel):
+    """Body for POST /media/{id}/retry that re-enriches metadata; its owner and
+    its (absent) idempotency contract are unchanged by the imports cutover."""
+
+    from_stage: Literal["metadata"]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+RetryRequest = Annotated[
+    RetrySourceRequest | RetryMetadataRequest,
+    Field(discriminator="from_stage"),
+]
+
+
+class SourceRepairRequest(BaseModel):
+    """Requeue the exact dead job of one nonterminal source attempt."""
+
+    kind: Literal["Source"]
+    client_mutation_id: ClientMutationUuidText
+    expected_attempt_id: UUID
+    expected_job_id: UUID
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SearchRepairRequest(BaseModel):
+    """Requeue the exact dead reindex job of one content-index revision."""
+
+    kind: Literal["Search"]
+    client_mutation_id: ClientMutationUuidText
+    expected_revision: int = Field(ge=1)
+    expected_job_id: UUID
+
+    model_config = ConfigDict(extra="forbid")
+
+
+MediaRepairRequest = Annotated[
+    SourceRepairRequest | SearchRepairRequest,
+    Field(discriminator="kind"),
+]
+
+
+class SourceRetryAdmission(BaseModel):
+    """The immutable receipt of an admitted source retry: the new attempt and
+    the one job that will run it."""
+
+    kind: Literal["SourceRetry"] = "SourceRetry"
+    media_id: UUID
+    source_attempt_id: UUID
+    job_id: UUID
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SourceRepairAdmission(BaseModel):
+    kind: Literal["SourceRepair"] = "SourceRepair"
+    media_id: UUID
+    source_attempt_id: UUID
+    job_id: UUID
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SearchRepairAdmission(BaseModel):
+    kind: Literal["SearchRepair"] = "SearchRepair"
+    media_id: UUID
+    revision: int = Field(ge=1)
+    job_id: UUID
 
     model_config = ConfigDict(extra="forbid")
 

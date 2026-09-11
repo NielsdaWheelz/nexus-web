@@ -74,10 +74,10 @@ def _start_build(db: Session, *, requester_user_id: UUID, subject: ResourceRef) 
 
 def _claim(db: Session, build: _StartedBuild) -> _Claim:
     """Hold the one heavy `dossier_build` lease the way a worker does before parking."""
-    from nexus.jobs.queue import claim_job
+    from tests.testkit.queue_claims import claim_job_row
 
     worker_id = f"build-detail-{build.job_id}"
-    claimed = claim_job(
+    claimed = claim_job_row(
         db,
         job_id=build.job_id,
         worker_id=worker_id,

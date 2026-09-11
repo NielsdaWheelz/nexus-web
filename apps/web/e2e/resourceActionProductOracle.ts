@@ -378,11 +378,33 @@ export const RESOURCE_ACTION_LEDGER = [
     id: "ResourceOperation.Media.RetryProcessing",
     group: "Manage",
     order: 10,
-    label: "Retry processing",
+    label: "Retry source processing",
     icon: "RotateCcw",
     tone: "default",
     confirmation: null,
-    appliesWhen: "Media processing failed and retry is meaningful.",
+    appliesWhen: "The source owner offers a new attempt for this media.",
+  }),
+  action({
+    id: "ResourceOperation.Media.RepairSource",
+    group: "Manage",
+    order: 12,
+    label: "Retry stopped processing",
+    icon: "Wrench",
+    tone: "default",
+    confirmation: null,
+    appliesWhen:
+      "The source attempt never finished and its execution is dead.",
+  }),
+  action({
+    id: "ResourceOperation.Media.RepairSearch",
+    group: "Manage",
+    order: 14,
+    label: "Rebuild search index",
+    icon: "Search",
+    tone: "default",
+    confirmation: null,
+    appliesWhen:
+      "The current search index revision has a dead indexing execution.",
   }),
   action({
     id: "ResourceOperation.Media.RefreshSource",
@@ -565,6 +587,8 @@ export const ACTIONS_BY_SCHEME = {
     "ResourceAction.Share",
     "ResourceOperation.Media.DownloadOriginal",
     "ResourceOperation.Media.RetryProcessing",
+    "ResourceOperation.Media.RepairSource",
+    "ResourceOperation.Media.RepairSearch",
     "ResourceOperation.Media.RefreshSource",
     "ResourceOperation.Media.RetryMetadata",
     "ResourceOperation.Media.EditAuthors",
@@ -829,7 +853,7 @@ export const REQUIRED_RESOURCE_ACTION_SURFACES = [
   { id: "desktop-pane-header", host: "SurfaceHeader" },
   { id: "primary-mobile-pane-header", host: "MobilePaneBar" },
   { id: "secondary-mobile-pane-header", host: "MobileSecondaryPaneHost" },
-  { id: "media-activity-row", host: "MediaActivityPage" },
+  { id: "import-row", host: "ImportRow" },
 ] as const;
 
 /** Commands that remain named controls because their operand is not a Resource. */

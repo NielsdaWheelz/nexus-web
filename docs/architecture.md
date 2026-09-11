@@ -376,6 +376,17 @@ has a same-row STORED `plain_text_word_count` derivative), `media_file` (private
 original-file object metadata), `project_gutenberg_catalog`,
 `user_media_deletions`.
 
+**Import history** — `media_upload_events` (owner `media_upload_sessions`) and
+`media_processing_events` (owner `media`) are the two append-only lifecycle
+tables the Imports workspace reads. Each carries `occurred_at`, an
+application-validated `event_type`, nullable `stage`/`failure_code` query
+columns, and a closed typed `payload`. `services/import_history.py` is their
+only writer: transaction-scoped helpers with no commit, scheduling, or
+domain-policy authority, recording each fact atomically with the transition it
+documents. Migration `0227` records one `HistoryBaseline` per extant upload
+session and source attempt at recording time, which is why pre-cut coverage is
+`Partial` and a baseline can never satisfy a dated historical-failure query.
+
 **Reader content / fragments** — `fragments` (current render units carrying
 `canonical_text` + `html_sanitized` and a same-row STORED
 `canonical_text_word_count` derivative), `fragment_blocks`, EPUB structure
@@ -613,8 +624,12 @@ same entrypoint with fixed `interactive` and `background` lanes:
 - **Job loop**: `claim_next_job` atomically picks one due row with
   `FOR UPDATE SKIP LOCKED` (new work _or_ a crashed job whose lease expired),
   admits it through its registry-owned `Light | Heavy` class, flips it to
-  `running` with a lease, dispatches to the registered handler under a heartbeat
-  thread, then commits a terminal/retry transition. One queue-owned capacity
+  `running` with a lease, allocates the attempt's non-resetting `execution_id`,
+  dispatches to the registered handler under a heartbeat
+  thread, then commits a terminal/retry transition. Each committed transition
+  also applies the kind's `history_projection`
+  (`jobs/history_projections.py`) so the retry, dead-letter, reclaim, or
+  reschedule is recorded as import history in the same transaction. One queue-owned capacity
   row permits at most one Heavy attempt globally without blocking eligible
   Light work. Retries are bounded
   per-kind (`max_attempts`, `retry_delays_seconds`, `lease_seconds`); exhaustion
@@ -1133,6 +1148,16 @@ response returns the stable media and source-attempt identities. Non-upload sour
 network, sanitization, extraction, and post-acceptance storage failures update
 the existing media row and latest source attempt; the user retries by creating a
 new source attempt through `POST /media/{id}/retry`.
+
+**Imports workspace:** the `/imports` pane is the one reader-facing view of
+this pipeline. `services/imports.py` classifies every upload session and every
+media with a source attempt into `Active | NeedsAttention | Complete`, answers
+`GET /imports{,/summary,/{ref},/{ref}/history}`, and reuses the same owner
+policies the catalog does — `media_source_ingest.source_recovery` for source
+retry/repair and `content_indexing` for search repair — so counts, membership,
+and offered recovery cannot disagree. A published upload keeps its
+`upload:<handle>` identity for life, so one import is one row from acceptance to
+History. See `docs/cutovers/imports-workspace-hard-cutover.md`.
 
 **Recovery/deletion:** `reconcile_stale_ingest_media` requeues/fails stale
 `extracting` rows and repairs content/semantic indexes. Upload-session expiry is
@@ -1965,7 +1990,10 @@ they open over Resume and never become panes.
   `Connections | Dossier`), and Podcast/Author/Page/Note
   (`Connections | Dossier`). One visible Companion action opens the same group
   on desktop and mobile; open state, active tab, width, and viewed Dossier
-  revision are workspace-local.
+  revision are workspace-local. The Imports pane publishes the one other
+  secondary group, `imports-inspector` (`Import details`), the same way, because
+  its selection is a row rather than a resource; its selection lives in the pane
+  URL (`selected=<ref>`).
   Every supported route declares a typed `Section`/`Resource` header contract.
   `PaneShell` combines that contract, the pane runtime label, and one
   primary-chrome publication into the pane's single route-level `<h1>`, and
@@ -1980,7 +2008,8 @@ they open over Resume and never become panes.
   panes or the workspace.
 - **App navigation is a curated projection, not a feature directory.**
   `lib/navigation/destinations.ts` owns destination identity;
-  `components/appnav/navModel.ts` independently owns the flat desktop rail and
+  `components/appnav/navModel.ts` independently owns the flat desktop rail, the
+  footer utility link (Imports), and the
   mobile Places projections. Mobile global access is the bottom Nexus control
   plus its full-screen task, not a navigation drawer, bottom sheet, or second
   desktop palette. Section routes
@@ -2276,6 +2305,7 @@ The things most likely to bite you, distilled:
 | Background jobs / worker                                          | `python/nexus/jobs/`, `python/nexus/tasks/`, `apps/worker/`                                                                                                                                            |
 | Generation backends                                               | `python/nexus/services/{generation_catalog,generation_policy,generation_service,generation_spec,generation_backend,provider_generation_backend,codex_generation_client,llm_execution,llm_ledger,tool_authority}.py`, `apps/codex_agent/`, [`modules/llms.md`](modules/llms.md) |
 | Media catalog and ingest owners                                   | `python/nexus/services/media.py`, `media_ingest.py`, `media_source_ingest.py`, `source_attempt_failures.py`, `media_failure_projection.py`, `media_fact_revisions.py`, `x_ingest.py`, `youtube_video_ingest.py`, `remote_file_ingest.py`, `remote_file_client.py`, `media_processing_state.py` |
+| Imports workspace (query owner, history, pane)                    | `python/nexus/services/{imports,import_history}.py`, `python/nexus/api/routes/imports.py`, `apps/web/src/lib/imports/`, `apps/web/src/components/imports/`, `apps/web/src/app/(authenticated)/imports/`                                              |
 | Reader/highlights backend                                         | `python/nexus/services/{reader,epub_*,pdf_*,fragment_blocks,highlights,passage_anchors,locator_resolver,text_quote,pdf_quote_match}.py`                                                                |
 | Chat / conversations                                              | `python/nexus/services/chat_runs.py` + `chat_run_*`, `context_assembler.py`, `conversations.py`                                                                                                        |
 | Oracle                                                            | `python/nexus/services/oracle.py`, `python/nexus/services/oracle_corpus.py`, `python/nexus/services/oracle_plates.py`                                                                                  |

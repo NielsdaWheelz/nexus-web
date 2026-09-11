@@ -20,8 +20,16 @@
   background: var(--surface-1);
 }
 
-.selected {
+/* Selection outranks hover and focus by weight, not by order: the wash above
+   is a heavier selector than a bare class, so a selected row a reader points
+   at or tabs into would otherwise lose the only mark that it is selected. The
+   left rule is that mark in a form colour cannot take away. */
+.row.selected,
+.row.selected:has(a.primary:hover),
+.row.selected:has(button.primary:hover:not(:disabled)),
+.row.selected:focus-within {
   background: var(--accent-muted);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .titleCell {
@@ -190,7 +198,10 @@ button.primary:disabled {
   }
 
   .supporting {
-    flex: 1 1 auto;
+    /* Adjacency, not geometry, positions the separator after this cell: a
+       supporting cell that grows leaves its own separator stranded against
+       the state block on the far side of the row. */
+    flex: 0 1 auto;
     grid-column: auto;
     grid-row: auto;
   }
@@ -296,14 +307,8 @@ button.primary:disabled {
   transition: opacity var(--duration-fast) var(--ease-glide);
 }
 
-/* Selected takes a brass left rule as an inset shadow — zero geometry, over the
-   existing `--accent-muted` wash — terminating in the leaf at full strength.
-   The rule is state colour, not ornament, so it survives `--ornament: 0` the
-   way the hairline does. */
-:global([data-theme="elvish"]) .selected {
-  box-shadow: inset 2px 0 0 var(--accent);
-}
-
+/* The selected row's brass left rule is the base layer's now; here the leaf at
+   its foot burns at full strength. */
 :global([data-theme="elvish"]) .selected::after {
   opacity: calc(1 * var(--ornament));
 }

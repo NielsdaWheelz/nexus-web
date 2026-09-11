@@ -6,13 +6,26 @@ export interface WorkspaceSecondaryWidthPolicy {
   maxWidthPx: number;
 }
 
-// One workspace-local secondary group: the Resource Inspector (Companion). Every
-// eligible subject pane composes its published surfaces into this single group, so
-// there is one width policy and one region-id scheme across the workspace.
+// Every secondary group resizes on the same policy: one Companion column, so a
+// reader who sizes it once keeps that size whichever pane opens it.
+const COMPANION_WIDTH_POLICY: WorkspaceSecondaryWidthPolicy = {
+  defaultWidthPx: 360,
+  minWidthPx: 280,
+  maxWidthPx: 720,
+};
+
+// The workspace-local secondary groups. The Resource Inspector (Companion) is
+// the one every eligible subject pane composes its published surfaces into; the
+// Imports pane publishes its selected import into its own group because that
+// selection is a row, not a resource. Both share the region-id scheme.
 const PANE_SECONDARY_GROUP_BASE = {
   "resource-inspector": {
     title: "Companion",
-    width: { defaultWidthPx: 360, minWidthPx: 280, maxWidthPx: 720 },
+    width: COMPANION_WIDTH_POLICY,
+  },
+  "imports-inspector": {
+    title: "Import details",
+    width: COMPANION_WIDTH_POLICY,
   },
 } as const satisfies Record<
   string,
@@ -36,10 +49,11 @@ export function isPaneSecondaryRegionId(
     .some((groupId) => paneSecondaryRegionId(primaryPaneId, groupId) === candidateId);
 }
 
-// The seven Inspector surfaces. `title` is the VISIBLE tab label (not just an aria
-// name); `iconId` selects the tab glyph. Which of these a given pane publishes is
-// decided by the subject's capability + `useResourceInspector`; this registry only
-// owns their identity, label, icon, and group membership.
+// The secondary surfaces of both groups. `title` is the VISIBLE tab label (not
+// just an aria name); `iconId` selects the tab glyph. Which Inspector surface a
+// given pane publishes is decided by the subject's capability +
+// `useResourceInspector`, and the Imports pane publishes its one import detail;
+// this registry only owns their identity, label, icon, and group membership.
 export const PANE_SECONDARY_SURFACE_DEFINITIONS = [
   {
     id: "resource-contents",
@@ -81,6 +95,12 @@ export const PANE_SECONDARY_SURFACE_DEFINITIONS = [
     id: "resource-dossier",
     groupId: "resource-inspector",
     title: "Dossier",
+    iconId: "file-text",
+  },
+  {
+    id: "import-detail",
+    groupId: "imports-inspector",
+    title: "Import details",
     iconId: "file-text",
   },
 ] as const satisfies readonly {

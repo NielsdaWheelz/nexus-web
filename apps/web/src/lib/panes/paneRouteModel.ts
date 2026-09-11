@@ -373,6 +373,22 @@ export const PANE_ROUTE_MODELS = [
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
+    id: "imports",
+    header: {
+      kind: "Section",
+      destinationId: "imports",
+      context: "None",
+    },
+    pattern: ["imports"],
+    defaultLabel: "Imports",
+    labelMode: "static",
+    queryNavigation: "in-place",
+    returnMemento: { kind: "ShellScroll" },
+    bodyMode: "standard",
+    secondaryGroups: ["imports-inspector"],
+    ...STANDARD_WIDTH_CONTRACT,
+  }),
+  route({
     id: "stats",
     header: {
       kind: "Section",

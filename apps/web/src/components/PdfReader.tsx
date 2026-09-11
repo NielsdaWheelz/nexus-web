@@ -448,7 +448,7 @@ function pdfReaderErrorMessage(error: unknown): string {
       kind: "Source",
       processingStatus: "failed",
       lastErrorCode: "E_PDF_PASSWORD_REQUIRED",
-      capabilities: { can_retry: false, can_refresh_source: false },
+      capabilities: { can_retry: false },
       sourceUrl: null,
     });
     if (!presentation) {

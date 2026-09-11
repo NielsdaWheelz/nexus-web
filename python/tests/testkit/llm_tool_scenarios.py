@@ -148,9 +148,9 @@ def claim_chat_tool_job(
 ) -> JobExecutionContext:
     """Claim the production Chat job and return its worker fencing identity."""
 
-    from nexus.jobs.queue import claim_job
+    from tests.testkit.queue_claims import claim_job_row
 
-    claimed = claim_job(
+    claimed = claim_job_row(
         db,
         job_id=job_id,
         worker_id=worker_id,
@@ -165,6 +165,7 @@ def claim_chat_tool_job(
         worker_id=worker_id,
         attempt_no=claimed.attempts,
         resource_class="Light",
+        execution_id=claimed.execution_id,
     )
 
 

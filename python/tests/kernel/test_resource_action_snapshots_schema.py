@@ -124,7 +124,16 @@ def test_capability_union_discriminates_every_kind_and_carries_availability() ->
             "availability": {"kind": "Blocked", "reason": "PermissionDenied"},
         },
         {"kind": "OpenSource", "availability": {"kind": "Available"}, "href": "https://src"},
-        {"kind": "RetryProcessing", "availability": {"kind": "Blocked", "reason": "Processing"}},
+        {
+            "kind": "Recovery",
+            "availability": {"kind": "Blocked", "reason": "PermissionDenied"},
+            "offer": {
+                "kind": "RepairSource",
+                "expected_attempt_id": "00000000-0000-0000-0000-000000000003",
+                "expected_job_id": "00000000-0000-0000-0000-000000000004",
+                "input": "StoredSource",
+            },
+        },
         {"kind": "RefreshSource", "availability": {"kind": "Available"}},
         {"kind": "RetryMetadata", "availability": {"kind": "Available"}},
         {"kind": "EditAuthors", "availability": {"kind": "Available"}},
@@ -174,6 +183,13 @@ def test_capability_union_discriminates_every_kind_and_carries_availability() ->
         "reason": "PermissionDenied",
     }
     assert by_kind["OpenSource"]["href"] == "https://src"
+    # the nested offer is camelCased with the rest of the snapshot
+    assert by_kind["Recovery"]["offer"] == {
+        "kind": "RepairSource",
+        "expectedAttemptId": "00000000-0000-0000-0000-000000000003",
+        "expectedJobId": "00000000-0000-0000-0000-000000000004",
+        "input": "StoredSource",
+    }
     assert by_kind["Consumption"]["state"] == "InProgress"
     assert by_kind["EpisodeConsumption"]["state"] == "Played"
     assert by_kind["PodcastSubscription"]["state"] == "Subscribed"

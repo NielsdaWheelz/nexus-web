@@ -18,7 +18,6 @@ from nexus.db.session import create_session_factory
 from nexus.jobs.queue import (
     JobExecutionContext,
     RescheduleRequested,
-    claim_job,
     complete_job,
     enqueue_job,
     get_job,
@@ -42,6 +41,7 @@ from tests.testkit.codex_generation import (
     bind_test_codex_admission,
     compose_codex_execution_runtime,
 )
+from tests.testkit.queue_claims import claim_job_row
 
 _LOCAL_DATE = date(2026, 8, 24)
 
@@ -182,7 +182,7 @@ def test_dawn_write_terminal_journal_publishes_once_and_replays_without_dispatch
                 max_attempts=2,
             )
             db.commit()
-            claimed = claim_job(
+            claimed = claim_job_row(
                 db,
                 job_id=job.id,
                 worker_id=worker_id,
@@ -196,6 +196,7 @@ def test_dawn_write_terminal_journal_publishes_once_and_replays_without_dispatch
                 worker_id=worker_id,
                 attempt_no=claimed.attempts,
                 resource_class="Light",
+                execution_id=claimed.execution_id,
             )
             db.commit()
             transport = _SuccessfulDawnTransport(db)
@@ -328,7 +329,7 @@ def test_dawn_write_no_signals_closes_preaccept_capacity_without_a_ledger(
                 max_attempts=2,
             )
             db.commit()
-            claimed = claim_job(
+            claimed = claim_job_row(
                 db,
                 job_id=job.id,
                 worker_id=worker_id,
@@ -342,6 +343,7 @@ def test_dawn_write_no_signals_closes_preaccept_capacity_without_a_ledger(
                 worker_id=worker_id,
                 attempt_no=claimed.attempts,
                 resource_class="Light",
+                execution_id=claimed.execution_id,
             )
             db.commit()
 

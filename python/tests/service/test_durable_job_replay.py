@@ -12,13 +12,14 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import NoteBlock, User
 from nexus.db.session import create_session_factory
-from nexus.jobs.queue import claim_job, complete_job, enqueue_job, fail_job
+from nexus.jobs.queue import complete_job, enqueue_job, fail_job
 from nexus.jobs.registry import get_default_registry
 from nexus.jobs.worker import JobWorker
 from nexus.services.auth_handoff_codes import create_auth_handoff_code
 from nexus.services.note_indexing import enqueue_note_reindex
 from nexus_test_control import services as test_services
 from tests.testkit.openai_embedding_server import running_openai_embedding_server
+from tests.testkit.queue_claims import claim_job_row
 from tests.testkit.unreachable_state import (
     expire_claim_and_handoff_code,
     expire_job_claim,
@@ -97,7 +98,7 @@ def test_expired_claim_replays_once_and_fences_the_crashed_worker(engine: Engine
             max_attempts=3,
         )
         db.commit()
-        crashed_claim = claim_job(
+        crashed_claim = claim_job_row(
             db,
             job_id=job.id,
             worker_id="crashed-worker",
@@ -159,7 +160,7 @@ def test_reused_worker_identity_cannot_settle_a_reclaimed_attempt(engine: Engine
             max_attempts=3,
         )
         db.commit()
-        expired = claim_job(
+        expired = claim_job_row(
             db,
             job_id=job.id,
             worker_id=worker_id,
@@ -170,7 +171,7 @@ def test_reused_worker_identity_cannot_settle_a_reclaimed_attempt(engine: Engine
         assert expired is not None, "first attempt did not acquire its synthetic claim"
         expire_job_claim(db, job_id=job.id)
         db.commit()
-        reclaimed = claim_job(
+        reclaimed = claim_job_row(
             db,
             job_id=job.id,
             worker_id=worker_id,

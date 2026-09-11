@@ -14,8 +14,6 @@ from nexus.db.models import Media, MediaKind, MediaSourceAttempt, ProcessingStat
 from nexus.db.session import create_session_factory
 from nexus.jobs import queue as job_queue
 from nexus.jobs.queue import (
-    claim_job,
-    claim_next_job,
     complete_job,
     enqueue_job,
     fail_job,
@@ -26,6 +24,14 @@ from nexus.jobs.worker import JobWorker
 from nexus.runtime_health import is_database_ready
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.ingest_recovery import get_ingest_recovery_health
+from tests.testkit.auth import UserRecord
+from tests.testkit.imports import (
+    claim_heavy_job,
+    create_source_media,
+    create_upload_session,
+    enqueue_source_job,
+)
+from tests.testkit.queue_claims import claim_job_row, claim_next_job_row
 from tests.testkit.unreachable_state import (
     age_completed_job,
     delete_jobs_by_ids,
@@ -64,7 +70,7 @@ def test_deployed_database_readiness_requires_the_latest_reconciler_to_succeed_f
 
     with session_factory() as db:
         make_pending_job_due(db, job_id=job.id)
-        claimed = claim_job(
+        claimed = claim_job_row(
             db,
             job_id=job.id,
             worker_id="readiness-proof-worker",
@@ -134,7 +140,7 @@ def test_ingest_health_uses_last_success_while_pending_and_surfaces_later_dead_c
             created_job_ids.append(succeeded.id)
             db.commit()
             make_pending_job_due(db, job_id=succeeded.id)
-            claimed = claim_job(
+            claimed = claim_job_row(
                 db,
                 job_id=succeeded.id,
                 worker_id="operator-health-success-worker",
@@ -173,7 +179,7 @@ def test_ingest_health_uses_last_success_while_pending_and_surfaces_later_dead_c
             created_job_ids.append(failed.id)
             db.commit()
             make_pending_job_due(db, job_id=failed.id)
-            claimed_failed = claim_job(
+            claimed_failed = claim_job_row(
                 db,
                 job_id=failed.id,
                 worker_id="operator-health-failed-worker",
@@ -204,6 +210,76 @@ def test_ingest_health_uses_last_success_while_pending_and_surfaces_later_dead_c
         with session_factory() as cleanup:
             delete_jobs_by_ids(cleanup, job_ids=tuple(created_job_ids))
             cleanup.commit()
+
+
+def test_ingest_health_projects_upload_publication_and_resource_facts(
+    db_session: Session,
+    test_user: UserRecord,
+) -> None:
+    now = datetime.now(UTC)
+    create_upload_session(
+        db_session,
+        viewer_id=test_user.id,
+        filename="expired.epub",
+        expires_at=now - timedelta(minutes=1),
+    )
+    create_upload_session(
+        db_session,
+        viewer_id=test_user.id,
+        filename="failed.epub",
+        expires_at=now + timedelta(minutes=1),
+        transport_failure_kind="Network",
+    )
+    verifying = create_upload_session(
+        db_session,
+        viewer_id=test_user.id,
+        filename="verifying.epub",
+        expires_at=now - timedelta(minutes=1),
+    )
+    verifying.verification_token = uuid4()
+    verifying.verification_generation = verifying.upload_generation
+    verifying.verification_expires_at = now + timedelta(minutes=1)
+    create_source_media(
+        db_session,
+        viewer_id=test_user.id,
+        title="Accepted without exact job",
+        attempt_no=1,
+        attempt_status="accepted",
+    )
+    limited_id, limited_attempt = create_source_media(
+        db_session,
+        viewer_id=test_user.id,
+        title="Bounded child exhausted",
+        attempt_no=2,
+        attempt_status="running",
+    )
+    limited_job = enqueue_source_job(
+        db_session, media_id=limited_id, attempt=limited_attempt, max_attempts=1
+    )
+    limited_claim = claim_heavy_job(db_session, limited_job.id, "resource-worker")
+    assert (
+        fail_job(
+            db_session,
+            job_id=limited_job.id,
+            worker_id="resource-worker",
+            attempt_no=limited_claim.attempts,
+            error_code="E_RESOURCE_LIMIT",
+            error_message="bounded child exceeded memory",
+            retry_delays_seconds=(),
+        )
+        == "dead"
+    )
+    limited_attempt.status = "failed"
+    db_session.flush()
+
+    health = get_ingest_recovery_health(db_session)
+
+    assert health["expired_upload_session_count"] == 1
+    assert health["failed_upload_session_count"] == 1
+    assert health["active_upload_verification_lease_count"] == 1
+    assert health["accepted_jobless_source_attempt_count"] == 1
+    assert health["resource_limited_source_job_count"] == 1
+    assert health["degraded"] is True
 
 
 def test_deployed_readiness_requires_one_exact_owned_nonsucceeded_source_job(
@@ -257,7 +333,7 @@ def test_deployed_readiness_requires_one_exact_owned_nonsucceeded_source_job(
             reconciler_job_id = reconciler.id
             db.commit()
             make_pending_job_due(db, job_id=reconciler.id)
-            claimed_reconciler = claim_job(
+            claimed_reconciler = claim_job_row(
                 db,
                 job_id=reconciler.id,
                 worker_id="readiness-owner-worker",
@@ -302,7 +378,7 @@ def test_deployed_readiness_requires_one_exact_owned_nonsucceeded_source_job(
 
         with Session(engine) as db:
             make_pending_job_due(db, job_id=exact.id)
-            claimed_exact = claim_job(
+            claimed_exact = claim_job_row(
                 db,
                 job_id=exact.id,
                 worker_id="readiness-source-worker",
@@ -342,7 +418,7 @@ def test_deployed_readiness_requires_one_exact_owned_nonsucceeded_source_job(
             attempt.job_id = dead.id
             db.commit()
             make_pending_job_due(db, job_id=dead.id)
-            claimed_dead = claim_job(
+            claimed_dead = claim_job_row(
                 db,
                 job_id=dead.id,
                 worker_id="readiness-dead-worker",
@@ -382,7 +458,7 @@ def test_deployed_readiness_requires_one_exact_owned_nonsucceeded_source_job(
             exact_job_ids.append(duplicate.id)
             db.commit()
             make_pending_job_due(db, job_id=duplicate.id)
-            claimed_duplicate = claim_job(
+            claimed_duplicate = claim_job_row(
                 db,
                 job_id=duplicate.id,
                 worker_id="readiness-succeeded-worker",
@@ -452,7 +528,7 @@ def test_reconciler_scheduler_priority_preempts_older_ordinary_background_backlo
         assert worker.run_scheduler_once(now=datetime(2020, 1, 1, tzinfo=UTC)) == 1
 
         with session_factory() as db:
-            claimed = claim_next_job(
+            claimed = claim_next_job_row(
                 db,
                 worker_id=worker_id,
                 lease_seconds=30,
@@ -512,7 +588,7 @@ def test_default_periodic_work_yields_to_new_ordinary_background_work(
             )
             assert scheduled_id is not None
             created_job_ids.append(scheduled_id)
-            claimed = claim_next_job(
+            claimed = claim_next_job_row(
                 db,
                 worker_id=worker_id,
                 lease_seconds=30,
@@ -608,7 +684,7 @@ def test_scheduler_reconciles_persisted_periodic_priority_without_rewriting_exec
             assert reconciled["created_at"] == persisted_periodic.created_at
             assert reconciled["updated_at"] == persisted_periodic.updated_at
 
-            claimed = claim_next_job(
+            claimed = claim_next_job_row(
                 db,
                 worker_id=worker_id,
                 lease_seconds=30,
@@ -713,7 +789,7 @@ def test_scheduler_reconciles_older_persisted_periodic_priority_before_claim(
             assert preserved_manual["available_at"] == manual_same_kind.available_at
             assert preserved_manual["updated_at"] == manual_same_kind.updated_at
 
-            claimed = claim_next_job(
+            claimed = claim_next_job_row(
                 db,
                 worker_id=worker_id,
                 lease_seconds=30,
@@ -772,7 +848,7 @@ def test_scheduler_reconciles_persisted_periodic_replay_priority_only(
             db.commit()
 
         with session_factory() as db:
-            claimed = claim_job(
+            claimed = claim_job_row(
                 db,
                 job_id=persisted.id,
                 worker_id=owner_id,
@@ -991,7 +1067,7 @@ def test_scheduler_revisits_terminal_periodic_jobs_with_registry_owned_checkpoin
             db.commit()
 
         with session_factory() as db:
-            claimed = claim_job(
+            claimed = claim_job_row(
                 db,
                 job_id=scheduled.id,
                 worker_id=worker_id,

@@ -31,6 +31,7 @@ from pydantic import (
 from pydantic.alias_generators import to_camel
 
 from nexus.schemas.consumption import PlayerDescriptor
+from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services.resource_mutation_replay import canonical_json_bytes
 
@@ -87,7 +88,6 @@ SimpleResourceActionCapabilityKind = Literal[
     "Chat",
     "PlayNext",
     "DownloadOriginal",
-    "RetryProcessing",
     "RefreshSource",
     "RetryMetadata",
     "EditAuthors",
@@ -123,6 +123,36 @@ SimpleResourceActionCapabilityKind = Literal[
 class SimpleResourceActionCapabilityOut(BaseModel):
     kind: SimpleResourceActionCapabilityKind
     availability: ServerActionAvailabilityOut
+
+    model_config = _OUT_CONFIG
+
+
+class RetrySourceOfferOut(RetrySourceOffer):
+    model_config = _OUT_CONFIG
+
+
+class RepairSourceOfferOut(RepairSourceOffer):
+    model_config = _OUT_CONFIG
+
+
+class RepairSearchOfferOut(RepairSearchOffer):
+    model_config = _OUT_CONFIG
+
+
+MediaRecoveryOfferOut = Annotated[
+    RetrySourceOfferOut | RepairSourceOfferOut | RepairSearchOfferOut,
+    Field(discriminator="kind"),
+]
+"""The Imports owner's media offers, camelCased like every other snapshot field."""
+
+
+class RecoveryResourceActionCapabilityOut(BaseModel):
+    """The one recovery a media menu may plan, carrying the identity the viewer
+    inspected so a stale offer conflicts instead of acting on newer work."""
+
+    kind: Literal["Recovery"] = "Recovery"
+    availability: ServerActionAvailabilityOut
+    offer: MediaRecoveryOfferOut
 
     model_config = _OUT_CONFIG
 
@@ -263,6 +293,7 @@ class HighlightNoteResourceActionCapabilityOut(BaseModel):
 
 ResourceActionCapabilityOut = Annotated[
     SimpleResourceActionCapabilityOut
+    | RecoveryResourceActionCapabilityOut
     | OfflineReadingResourceActionCapabilityOut
     | OpenSourceResourceActionCapabilityOut
     | PlaybackResourceActionCapabilityOut

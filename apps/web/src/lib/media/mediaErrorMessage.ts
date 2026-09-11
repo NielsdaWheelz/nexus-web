@@ -1,8 +1,22 @@
+/**
+ * The reader-facing presentation of a media failure. It holds no reason
+ * dictionary of its own: the one record per `SafeFailureCode` lives in
+ * `lib/status/imports.ts`, and this module maps that record plus this viewer's
+ * capabilities, source URL and retrieval status to what the screen shows
+ * (contract §6).
+ */
+
+import { RESOURCE_ACTION_CATALOG } from "@/lib/actions/resourceActions";
+import { assertNever } from "@/lib/assertNever";
+import { SAFE_FAILURE_CODES } from "@/lib/imports/importRef";
+import {
+  IMPORT_FAILURE_COPY,
+  type ImportFailureCopy,
+} from "@/lib/status/imports";
 import type { MediaProcessingProjectionStatus } from "./documentReadiness";
 
 interface SourceCapabilities {
   can_retry: boolean;
-  can_refresh_source: boolean;
 }
 
 type MediaErrorInput =
@@ -42,6 +56,49 @@ export function mediaErrorMessage(
   }
 }
 
+/**
+ * A failed import whose owner recorded no code says only what the catalog says
+ * about an import that stopped; it never invents a cause.
+ */
+function failureCopy(raw: string | null | undefined): ImportFailureCopy {
+  if (raw === null || raw === undefined) return IMPORT_FAILURE_COPY.E_INGEST_FAILED;
+  const code = SAFE_FAILURE_CODES.find((candidate) => candidate === raw);
+  if (code === undefined) {
+    // justify-defect: last_error_code is decoded same-system source state.
+    throw new Error(`Unsupported media source error code: ${raw}`);
+  }
+  return IMPORT_FAILURE_COPY[code];
+}
+
+function sourceAction(
+  recovery: ImportFailureCopy["recovery"],
+  capabilities: SourceCapabilities,
+  sourceUrl: string | null,
+): MediaErrorAction {
+  switch (recovery) {
+    case "SameSource":
+      return capabilities.can_retry ? { kind: "Retry" } : { kind: "None" };
+    case "OpenOriginal":
+      return sourceUrl === null
+        ? { kind: "None" }
+        : { kind: "OpenSource", href: sourceUrl };
+    case "None":
+      return { kind: "None" };
+    default:
+      return assertNever(recovery, "Unreachable failure recovery");
+  }
+}
+
+/**
+ * A stopped import and a stopped search index are both states the reader is
+ * offered a command for in Imports, so this names the command the action
+ * catalog owns rather than repeating its wording here.
+ */
+const REPAIR_SOURCE_LABEL =
+  RESOURCE_ACTION_CATALOG["ResourceOperation.Media.RepairSource"].label;
+const REPAIR_SEARCH_LABEL =
+  RESOURCE_ACTION_CATALOG["ResourceOperation.Media.RepairSearch"].label;
+
 function sourceErrorMessage(
   input: Extract<MediaErrorInput, { kind: "Source" }>,
 ): MediaErrorPresentation | null {
@@ -49,138 +106,20 @@ function sourceErrorMessage(
     return {
       kind: "Source",
       severity: "error",
-      title: "Import stopped; repair required.",
-      explanation:
-        "Automatic retries are exhausted. The stopped import remains visible for operator repair.",
+      title: "Processing stopped before this import finished.",
+      explanation: `Automatic retries are used up. Imports offers ${REPAIR_SOURCE_LABEL}, which runs the stopped attempt again without creating a new one.`,
       action: { kind: "None" },
     };
   }
   if (input.processingStatus !== "failed") return null;
-
-  switch (input.lastErrorCode) {
-    case "E_SOURCE_ACCESS_DENIED":
-      return {
-        kind: "Source",
-        severity: "error",
-        title: "This page blocked the import.",
-        explanation:
-          "Open the original page in your browser and use Nexus Capture there.",
-        action: input.sourceUrl
-          ? { kind: "OpenSource", href: input.sourceUrl }
-          : { kind: "None" },
-      };
-    case "E_INVALID_FILE_TYPE":
-      return {
-        kind: "Source",
-        severity: "error",
-        title: "This link is not a valid PDF or EPUB.",
-        explanation: "Use a valid direct download link or upload the file.",
-        action: input.capabilities.can_retry
-          ? { kind: "Retry" }
-          : { kind: "None" },
-      };
-    case "E_SOURCE_TOO_LARGE":
-      return {
-        kind: "Source",
-        severity: "error",
-        title: "This document is too large to import.",
-        explanation: "Use a smaller PDF or EPUB, or upload a smaller file.",
-        action: input.capabilities.can_retry
-          ? { kind: "Retry" }
-          : { kind: "None" },
-      };
-    case "E_SOURCE_NOT_READABLE":
-      return {
-        kind: "Source",
-        severity: "error",
-        title: "Nexus could not find a readable article.",
-        explanation:
-          "Use a different source, or open the original page and capture it from your browser.",
-        action: input.sourceUrl
-          ? { kind: "OpenSource", href: input.sourceUrl }
-          : { kind: "None" },
-      };
-    case "E_PDF_PASSWORD_REQUIRED":
-      return {
-        kind: "Source",
-        severity: "error",
-        title: "This PDF is password-protected.",
-        explanation: "Upload an unlocked PDF to read it in Nexus.",
-        action: input.capabilities.can_retry
-          ? { kind: "Retry" }
-          : { kind: "None" },
-      };
-    case "E_ARCHIVE_UNSAFE":
-      return {
-        kind: "Source",
-        severity: "error",
-        title: "This EPUB cannot be opened safely.",
-        explanation: "Use a valid EPUB from a trusted source.",
-        action: input.capabilities.can_retry
-          ? { kind: "Retry" }
-          : { kind: "None" },
-      };
-    case "E_BILLING_REQUIRED":
-      // Retrying the same source cannot clear a billing requirement, so the
-      // copy is causal and offers no futile Retry.
-      return {
-        kind: "Source",
-        severity: "error",
-        title: "Import needs billing set up.",
-        explanation: "This import isn’t available on the current plan.",
-        action: { kind: "None" },
-      };
-    case "E_PODCAST_QUOTA_EXCEEDED":
-    case "E_X_PROVIDER_CREDITS_DEPLETED":
-      // An exhausted import allowance is not cleared by retrying the same
-      // source, so the copy is causal and offers no futile Retry.
-      return {
-        kind: "Source",
-        severity: "error",
-        title: "Import allowance reached.",
-        explanation:
-          "This source can’t be imported right now because an import allowance was used up.",
-        action: { kind: "None" },
-      };
-    case null:
-    case undefined:
-    case "E_CAPTURE_TOO_LARGE":
-    case "E_FILE_TOO_LARGE":
-    case "E_INGEST_FAILED":
-    case "E_INGEST_TIMEOUT":
-    case "E_INVALID_CONTENT_TYPE":
-    case "E_INVALID_REQUEST":
-    case "E_PODCAST_PROVIDER_UNAVAILABLE":
-    case "E_SANITIZATION_FAILED":
-    case "E_SIGN_UPLOAD_FAILED":
-    case "E_SOURCE_FETCH_FAILED":
-    case "E_SSRF_BLOCKED":
-    case "E_STORAGE_ERROR":
-    case "E_STORAGE_MISSING":
-    case "E_TRANSCRIPTION_FAILED":
-    case "E_TRANSCRIPTION_TIMEOUT":
-    case "E_TRANSCRIPT_UNAVAILABLE":
-    case "E_X_POST_UNAVAILABLE":
-    case "E_X_PROVIDER_AUTH_REJECTED":
-    case "E_X_PROVIDER_RATE_LIMITED":
-    case "E_X_PROVIDER_TIMEOUT":
-      return {
-        kind: "Source",
-        severity: "error",
-        title: "Import failed.",
-        explanation: input.capabilities.can_retry
-          ? "The source could not be imported. You can retry the same source."
-          : "The source could not be imported. Use a different source.",
-        action: input.capabilities.can_retry
-          ? { kind: "Retry" }
-          : { kind: "None" },
-      };
-    default:
-      // justify-defect: last_error_code is decoded same-system source state.
-      throw new Error(
-        `Unsupported media source error code: ${input.lastErrorCode}`,
-      );
-  }
+  const copy = failureCopy(input.lastErrorCode);
+  return {
+    kind: "Source",
+    severity: "error",
+    title: copy.title,
+    explanation: copy.explanation,
+    action: sourceAction(copy.recovery, input.capabilities, input.sourceUrl),
+  };
 }
 
 function retrievalErrorMessage(
@@ -212,8 +151,8 @@ function retrievalErrorMessage(
       return {
         kind: "Retrieval",
         severity: "error",
-        title: "Search and AI stopped and need repair.",
-        explanation: "Reading remains available; repair is an internal operation.",
+        title: "Search indexing stopped. You can still read this document.",
+        explanation: `${REPAIR_SEARCH_LABEL} in Imports rebuilds it from the text already imported; the source is not fetched or extracted again.`,
         action: { kind: "None" },
       };
     case "no_text":

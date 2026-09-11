@@ -1,0 +1,12 @@
+diff --git a/apps/web/src/app/(authenticated)/imports/ImportsPaneBody.tsx b/apps/web/src/app/(authenticated)/imports/ImportsPaneBody.tsx
+--- a/apps/web/src/app/(authenticated)/imports/ImportsPaneBody.tsx
++++ b/apps/web/src/app/(authenticated)/imports/ImportsPaneBody.tsx
+@@ -45,7 +45,7 @@
+   // going to get: the workspace reports its page read, and a first summary read
+   // that failed leaves no list to wait for.
+   const [listSettled, setListSettled] = useState(false);
+-  usePaneReturnReady(listSettled || loadState.kind === "Failed");
++  usePaneReturnReady(true);
+ 
+   // The provider polls a closed pane only inside its bounded window; an open
+   // pane is the live one (contract D10).

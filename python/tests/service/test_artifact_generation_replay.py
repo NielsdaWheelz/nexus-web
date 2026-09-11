@@ -24,7 +24,6 @@ from nexus.jobs.queue import (
     PENDING,
     JobExecutionContext,
     JobRow,
-    claim_job,
     complete_job,
     fail_job,
     find_nonterminal_jobs_for_payload,
@@ -61,6 +60,7 @@ from tests.testkit.codex_generation import (
     bind_test_codex_admission,
     compose_codex_execution_runtime,
 )
+from tests.testkit.queue_claims import claim_job_row
 from tests.testkit.unreachable_state import set_pending_job_max_attempts
 
 
@@ -184,7 +184,7 @@ def _create_note_build(db: Session) -> _NoteBuild:
 
 
 def _claim(db: Session, build: _NoteBuild, *, worker_id: str) -> tuple[JobRow, JobExecutionContext]:
-    job = claim_job(
+    job = claim_job_row(
         db,
         job_id=build.job_id,
         worker_id=worker_id,
@@ -198,6 +198,7 @@ def _claim(db: Session, build: _NoteBuild, *, worker_id: str) -> tuple[JobRow, J
         worker_id=worker_id,
         attempt_no=job.attempts,
         resource_class="Heavy",
+        execution_id=job.execution_id,
     )
     db.commit()
     return job, context
