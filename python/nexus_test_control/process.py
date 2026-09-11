@@ -51,15 +51,7 @@ def run_command(
     blocked = {signal.SIGINT, signal.SIGTERM}
     previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, blocked)
     try:
-        child_environment = dict(env)
-        # GitHub's final cancellation sweep identifies descendants by this
-        # inherited value. Keep the real supervisor identity across the
-        # controller's isolation boundary, but never accept a replacement.
-        runner_tracking_id = os.environ.get(_RUNNER_PROCESS_TRACKING_ENV)
-        if runner_tracking_id:
-            child_environment[_RUNNER_PROCESS_TRACKING_ENV] = runner_tracking_id
-        else:
-            child_environment.pop(_RUNNER_PROCESS_TRACKING_ENV, None)
+        child_environment = trusted_runner_environment(env)
         process = subprocess.Popen(
             unblock_and_exec_command(command),
             cwd=cwd,
@@ -105,6 +97,20 @@ def run_command(
             stderr=completed.stderr,
         )
     return completed
+
+
+def trusted_runner_environment(environment: Mapping[str, str]) -> dict[str, str]:
+    """Preserve only the real GitHub runner identity across child isolation."""
+    child = dict(environment)
+    # GitHub's final cancellation sweep identifies descendants by this
+    # inherited value. Keep the real supervisor identity across the
+    # controller's isolation boundary, but never accept a replacement.
+    runner_tracking_id = os.environ.get(_RUNNER_PROCESS_TRACKING_ENV)
+    if runner_tracking_id:
+        child[_RUNNER_PROCESS_TRACKING_ENV] = runner_tracking_id
+    else:
+        child.pop(_RUNNER_PROCESS_TRACKING_ENV, None)
+    return child
 
 
 def _output_tail(output: BinaryIO | None, markers: Sequence[str] = ()) -> str | None:
