@@ -1,0 +1,12 @@
+diff --git a/apps/web/src/lib/telemetry/clientDefects.ts b/apps/web/src/lib/telemetry/clientDefects.ts
+--- a/apps/web/src/lib/telemetry/clientDefects.ts
++++ b/apps/web/src/lib/telemetry/clientDefects.ts
+@@ -138,7 +138,7 @@
+       isApiError(error) && error.requestId
+         ? present(error.requestId.slice(0, 200))
+         : absent(),
+-    component_stack: view.componentStack.slice(0, 8000),
++    component_stack: "",
+   };
+   try {
+     navigator.sendBeacon(

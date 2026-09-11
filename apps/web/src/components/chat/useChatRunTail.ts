@@ -126,7 +126,6 @@ export function useChatRunTail({
   onRunFinished,
   onFirstDelta,
   onRunDone,
-  onConversationAvailable,
   onContextRefAdded,
   onProjectionReloadRequired,
   onDefect,
@@ -140,7 +139,6 @@ export function useChatRunTail({
   onRunFinished?: (runId: string) => void;
   onFirstDelta?: (runId: string) => void;
   onRunDone?: (runId: string, status: TerminalRunStatus) => void;
-  onConversationAvailable?: (conversationId: string, runId: string) => void;
   onContextRefAdded?: (data: SSEContextRefAddedEvent["data"]) => void;
   onProjectionReloadRequired?: (error: ApiError) => void;
   onDefect?: (error: unknown) => void;
@@ -369,7 +367,6 @@ export function useChatRunTail({
       }
 
       mergeRunMessagesIfVisible(runData);
-      onConversationAvailable?.(runData.conversation.id, runId);
 
       // Aborting this stops the SSE connection (its signal feeds the opener) and,
       // because the opener honors the signal post-mint, also cancels a tail that
@@ -436,7 +433,6 @@ export function useChatRunTail({
             persisted.user_message.id,
             persisted.assistant_message.id,
           ]);
-          onConversationAvailable?.(persisted.conversation.id, runId);
           currentUserId = persisted.user_message.id;
           currentAssistantId = persisted.assistant_message.id;
           if (persisted.stream_state.folded_event_seq > 0) {
@@ -496,7 +492,6 @@ export function useChatRunTail({
                       currentAssistantId,
                     );
                   }
-                  onConversationAvailable?.(event.data.conversation_id, runId);
                   break;
                 case "assistant_activity":
                   flushDeltas();
@@ -657,7 +652,6 @@ export function useChatRunTail({
       shouldFoldEvent,
       mergeRunMessages,
       onFirstDelta,
-      onConversationAvailable,
       onRunDone,
       onRunFinished,
       onDefect,

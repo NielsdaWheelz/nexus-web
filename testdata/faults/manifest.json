@@ -849,6 +849,96 @@
       "expected_failure": "assert 'OfflineReading' not in"
     },
     {
+      "id": "chat-background-capacity-coupling",
+      "patch": "testdata/faults/chat-background-capacity-coupling.patch",
+      "sha256": "052f4e1e0d1741b21ada6aafe8601f1699778508e88d2b48d14e147d33c8ca7c",
+      "proofs": [
+        "pytest:python/tests/service/test_chat_background_capacity_isolation.py::test_running_background_claim_does_not_block_foreground_chat_publication"
+      ],
+      "expected_failure": "consumed foreground chat capacity"
+    },
+    {
+      "id": "chat-admission-serialization-bypass",
+      "patch": "testdata/faults/chat-admission-serialization-bypass.patch",
+      "sha256": "1c64e16feaff270e06e5d9a1aef27c91c77c2373d96d24711b99b338f88a9921",
+      "proofs": [
+        "pytest:python/tests/service/test_chat_admission_recovery.py"
+      ],
+      "expected_failure": "duplicate never waited on the admission operation lock"
+    },
+    {
+      "id": "chat-admission-rejection-unlock-bypass",
+      "patch": "testdata/faults/chat-admission-rejection-unlock-bypass.patch",
+      "sha256": "35a5a9429e70ee960d6847ac6240ef04a0a80981b10a0346421f3562a621b5c2",
+      "proofs": [
+        "vitest:apps/web/src/components/chat/chatAdmission.browser.test.tsx"
+      ],
+      "expected_failure": "expect(element).toBeEnabled()"
+    },
+    {
+      "id": "chat-hydration-snapshot-bypass",
+      "patch": "testdata/faults/chat-hydration-snapshot-bypass.patch",
+      "sha256": "468d34abf56dd7859e5783d4ea9b4380ff5d20dd1d55d661b28446c30cb10288",
+      "proofs": [
+        "pytest:python/tests/service/test_chat_read_snapshot.py::test_chat_hydration_is_one_snapshot_across_worker_terminal_commit"
+      ],
+      "expected_failure": "succeeded durable job has no active execution phase"
+    },
+    {
+      "id": "chat-search-candidate-union-loss",
+      "patch": "testdata/faults/chat-search-candidate-union-loss.patch",
+      "sha256": "bc48d95c9e0ba1d5fc6ebf57cc37009be64c2302ffa9f842a29dcc63f402ce7c",
+      "proofs": [
+        "pytest:python/tests/service/test_chat_search_query_budget.py::test_hybrid_search_projects_only_finalists_with_identical_visible_ranking"
+      ],
+      "expected_failure": "candidate union changed visible ranking"
+    },
+    {
+      "id": "chat-note-search-candidate-intersection",
+      "patch": "testdata/faults/chat-note-search-candidate-intersection.patch",
+      "sha256": "bc48d95c9e0ba1d5fc6ebf57cc37009be64c2302ffa9f842a29dcc63f402ce7c",
+      "proofs": [
+        "pytest:python/tests/service/test_notes_search_result_resolution.py::test_note_search_unions_lexical_and_semantic_hits_into_owned_citable_results"
+      ],
+      "expected_failure": "candidate union changed owned note recall"
+    },
+    {
+      "id": "client-defect-component-stack-loss",
+      "patch": "testdata/faults/client-defect-component-stack-loss.patch",
+      "sha256": "d2de1c915d32596b0e46dbcfb93fb7689c8e93e932b9337c10a4b1d8ecfbf960",
+      "proofs": [
+        "vitest:apps/web/src/lib/telemetry/clientDefects.browser.test.tsx"
+      ],
+      "expected_failure": "expected '' to contain 'BrokenPane'"
+    },
+    {
+      "id": "client-defect-private-payload-acceptance",
+      "patch": "testdata/faults/client-defect-private-payload-acceptance.patch",
+      "sha256": "309efadb393d822e2da8943b23b8eb0971a7d5d4287a516ee5e75fa0500be9c6",
+      "proofs": [
+        "pytest:python/tests/service/test_client_defect_telemetry.py::test_client_defect_report_is_authenticated_bounded_and_structural"
+      ],
+      "expected_failure": "assert 200 == 400"
+    },
+    {
+      "id": "client-defect-auth-carrier-loss",
+      "patch": "testdata/faults/client-defect-auth-carrier-loss.patch",
+      "sha256": "54ceda76c562df6e05263d8898e0b5eba8974c9e6573ebd52d416026d8f8d492",
+      "proofs": [
+        "vitest:apps/web/src/app/api/telemetry/client-defects/route.unit.test.ts"
+      ],
+      "expected_failure": "expected 403 to be 204"
+    },
+    {
+      "id": "chat-admission-migration-history-gate-bypass",
+      "patch": "testdata/faults/chat-admission-migration-history-gate-bypass.patch",
+      "sha256": "3a6996583619166ba9dec9454dc6ae78469aaa2448bdc029a29221fd6e475ad1",
+      "proofs": [
+        "pytest:python/tests/migrations/test_chat_admission_recovery_migration.py::test_chat_admission_cutover_requires_empty_history_and_sole_receipt_ownership"
+      ],
+      "expected_failure": "pre-receipt chat history bypassed the hard-cut maintenance gate"
+    },
+    {
       "id": "shared-kernel-terminal-tail-discard",
       "patch": "testdata/faults/shared-kernel-terminal-tail-discard.patch",
       "sha256": "c6eaf19a0d852bbea3c967c08b30cdfb803423289dca231cd8e1babe496691bf",
@@ -952,11 +1042,11 @@
       "patch": "testdata/faults/chat-cancel-dispatch-admission.patch",
       "sha256": "9d62d81f2e229123d99a16a680801b95ce77fe7ad48afa76762d59cc6b564c38",
       "proofs": [
-        "pytest:python/tests/service/test_chat_cancel_recovery_admission.py::test_cancelled_recovery_ignores_provider_and_inflight_admission"
+        "pytest:python/tests/service/test_chat_cancel_recovery_admission.py::test_cancelled_recovery_ignores_unavailable_provider_admission"
       ],
       "expected_failure": "cancelled recovery remained pending on provider dispatch readiness",
       "changed_owner_red": "coherent-fault",
-      "changed_owner_sha256": "7d1fa9220ed084c9c27a3b235aea4876ef274478ca449cf5e962d1ac4c442a91"
+      "changed_owner_sha256": "b75051d0251673ad93540f86212799957c36cb1da91957dc15d5bb36f50fde44"
     },
     {
       "id": "chat-native-terminal-cancellation",

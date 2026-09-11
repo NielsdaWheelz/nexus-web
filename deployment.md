@@ -238,6 +238,23 @@ landing its successor. The only code-level exception is provider-free settlement
 of an already durable `RollbackRequired` or `ForwardFixPending` attempt from its
 installed bundle; this is recovery authority, not permission to unfreeze main.
 
+For the chat-admission hard cutover, keep the no-use window closed until the
+operator has inventoried every outstanding browser `nx_chat_draft.v3:` command.
+The final decoder requires a durable command origin, so every pre-cutover record
+whose operation is not `Absent` is incompatible and must be settled under the
+old release before deployment; only an `Absent` record may cross the cut.
+Resolve any historical deleted-run command that lacks authoritative replay
+evidence. Preserve open tabs and their `sessionStorage`; reload them only after
+the release is healthy. Stop and prove the API and both worker lanes stopped,
+retain unresolved provider/journal evidence, and let migration `0226` block on
+any pre-receipt `chat_runs` row or live queue claim before it drops the obsolete
+counter. Migration `0224` reset chat history; while writers remain stopped at
+`0225`, delete, archive outside the live schema, or otherwise explicitly dispose
+every chat run admitted under the old fingerprint. Migration `0226` never
+backfills those unverifiable identities. Absence of a historical run never
+authorizes a resend. There is no
+counter reset, storage clear, compatibility decoder, or legacy runtime lookup.
+
 The command performs the complete protocol:
 
 1. validates Git, CI, bundle, manifest, staged Vercel identity, and the exact

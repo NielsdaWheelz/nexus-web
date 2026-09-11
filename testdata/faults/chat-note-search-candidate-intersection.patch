@@ -1,0 +1,12 @@
+diff --git a/python/nexus/services/search/sql.py b/python/nexus/services/search/sql.py
+--- a/python/nexus/services/search/sql.py
++++ b/python/nexus/services/search/sql.py
+@@ -90,7 +90,7 @@
+                 ),
+                 candidate_ids AS (
+                     SELECT id FROM semantic_candidates
+-                    UNION
++                    INTERSECT
+                     SELECT id FROM lexical_candidates
+                 ),
+                 scored_candidates AS (

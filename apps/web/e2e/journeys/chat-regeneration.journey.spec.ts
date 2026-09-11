@@ -1,5 +1,7 @@
 import { captureReadableArticle } from "../articleFixture";
 import { TOOL_PROJECTION_HEADER } from "@/lib/api/client";
+import { decodeChatAdmissionResponse } from "@/lib/conversations/chatAdmission";
+import { decodeChatRunData } from "@/lib/conversations/messageWire";
 import { TOOL_PROJECTION_REVISION } from "@/lib/conversations/toolContractProjection";
 import {
   expect,
@@ -11,6 +13,13 @@ import {
 import { matchesResponse, pageRequest } from "../request";
 
 test.use({ journeyId: "chat-regeneration" });
+
+function acceptedChatTarget(raw: unknown, commandKey: string) {
+  const receipt = decodeChatAdmissionResponse(raw, commandKey);
+  if (receipt.outcome.kind !== "Accepted")
+    throw new Error("The source chat was not admitted");
+  return receipt.outcome;
+}
 
 interface TreeMessage {
   id: string;
@@ -68,6 +77,16 @@ test("regenerating a completed answer creates a navigable sibling that survives 
   await input.fill(
     "What did SOFIA establish about water in Clavius Crater? Use the attached source.",
   );
+  let chatCommandKey = "";
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (
+      request.method() === "POST" &&
+      url.origin === webOrigin &&
+      url.pathname === "/api/chat-runs"
+    )
+      chatCommandKey = request.headers()["idempotency-key"];
+  });
   const firstRunPromise = page.waitForResponse((response) =>
     matchesResponse(response, webOrigin, "POST", "/api/chat-runs"),
   );
@@ -77,14 +96,38 @@ test("regenerating a completed answer creates a navigable sibling that survives 
     firstRun.ok(),
     `Chat admission for conversation ${conversationId} failed: ${firstRun.status()}`,
   ).toBeTruthy();
-  const admitted = (
-    JSON.parse(await firstRun.text()) as {
-      data: {
-        run: { run_selection: { selection: unknown } };
-        assistant_message: { id: string };
-      };
-    }
-  ).data;
+  expect(
+    chatCommandKey,
+    "Chat admission omitted its operation identity",
+  ).toBeTruthy();
+  const target = acceptedChatTarget(
+    JSON.parse(await firstRun.text()),
+    chatCommandKey,
+  );
+  const canonicalResponse = await api.get(
+    `/api/chat-runs/${target.run_id}`,
+    { headers: { [TOOL_PROJECTION_HEADER]: TOOL_PROJECTION_REVISION } },
+  );
+  expect(
+    canonicalResponse.ok(),
+    `Accepted chat ${target.run_id} could not be hydrated: ${canonicalResponse.status()}`,
+  ).toBeTruthy();
+  const admitted = decodeChatRunData(
+    ((await canonicalResponse.json()) as { data: unknown }).data,
+  );
+  expect({
+    run_id: admitted.run.id,
+    run_conversation_id: admitted.run.conversation_id,
+    conversation_id: admitted.conversation.id,
+    run_assistant_message_id: admitted.run.assistant_message_id,
+    assistant_message_id: admitted.assistant_message.id,
+  }).toEqual({
+    run_id: target.run_id,
+    run_conversation_id: target.conversation_id,
+    conversation_id: target.conversation_id,
+    run_assistant_message_id: target.assistant_message_id,
+    assistant_message_id: target.assistant_message_id,
+  });
   const originalAssistantId = admitted.assistant_message.id;
   expect(admitted.run.run_selection.selection).toBeTruthy();
   await expect(

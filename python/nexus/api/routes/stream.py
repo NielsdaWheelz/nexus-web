@@ -30,7 +30,7 @@ from nexus.api.routes._sse import (
     tail_cursor_stream,
     tail_snapshot_stream,
 )
-from nexus.db.session import get_session_factory
+from nexus.db.session import get_repeatable_read_db, get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.schemas.execution import (
@@ -122,6 +122,7 @@ async def make_cursor_stream_response(
 
     def read_after(after: int) -> tuple[Sequence[Any], bool]:
         with get_session_factory()() as db:
+            get_repeatable_read_db(db)
             kind.assert_viewer(db, viewer_id, entity_id)
             return kind.read_after(db, viewer_id, entity_id, after)
 
@@ -129,6 +130,7 @@ async def make_cursor_stream_response(
         if kind.read_advisory is None:
             return None
         with get_session_factory()() as db:
+            get_repeatable_read_db(db)
             kind.assert_viewer(db, viewer_id, entity_id)
             phase = kind.read_advisory(db, viewer_id, entity_id)
             if phase is None:

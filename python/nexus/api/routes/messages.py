@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from nexus.api.deps import get_generation_catalog_service, require_tool_projection_revision
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db
+from nexus.db.session import get_db, get_repeatable_read_db
 from nexus.responses import ok, ok_page
 from nexus.services import conversations as conversations_service
 from nexus.services.generation_catalog import GenerationCatalogService
@@ -52,6 +52,7 @@ async def list_messages(
         E_INVALID_CURSOR (400): Cursor is malformed or unparseable.
     """
     catalog_snapshot = await catalog.read_chat()
+    get_repeatable_read_db(db)
     messages, page = conversations_service.list_messages(
         db=db,
         viewer_id=viewer.user_id,

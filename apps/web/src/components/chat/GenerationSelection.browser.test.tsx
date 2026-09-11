@@ -2,7 +2,7 @@
 
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { page, userEvent } from "vitest/browser";
-import { useState, type ComponentType } from "react";
+import { useState, type ComponentType, type ReactNode } from "react";
 import {
   afterEach,
   beforeAll,
@@ -13,6 +13,7 @@ import {
   vi,
 } from "vitest";
 import "@/app/globals.css";
+import { adoptComposerAdmission } from "@/__tests__/helpers/chatAdmission";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import { absent } from "@/lib/api/presence";
@@ -28,6 +29,34 @@ import type { GenerationSelectionSpec } from "@/lib/conversations/generationCata
 import ChatComposer from "./ChatComposer";
 import ChatFailureCard from "./ChatFailureCard";
 import { useConversation } from "./useConversation";
+import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount";
+
+function withChatAccount(children: ReactNode) {
+  return (
+    <AuthenticatedAccountProvider
+      account={{
+        accountId: "11111111-1111-4111-8111-111111111111",
+        calendarTimeZone: "UTC",
+      }}
+    >
+      {children}
+    </AuthenticatedAccountProvider>
+  );
+}
+
+function acceptedAdmission(init: RequestInit) {
+  return {
+    data: {
+      idempotency_key: new Headers(init.headers).get("Idempotency-Key"),
+      outcome: {
+        kind: "Accepted",
+        conversation_id: CONVERSATION_ID,
+        run_id: RUN_ID,
+        assistant_message_id: ASSISTANT_ID,
+      },
+    },
+  };
+}
 
 interface RunSelectionFixture extends Readonly<Record<string, unknown>> {
   readonly selection: Readonly<Record<string, unknown>>;
@@ -271,6 +300,9 @@ function admittedRun(toolAuthority: "ReadOnly" | "AdditiveWrites") {
 function Composer() {
   return (
     <ChatComposer
+      viewIdentity="generation-composer-visit"
+      isPaneActive={true}
+      onAdmitted={adoptComposerAdmission}
       conversationId={CONVERSATION_ID}
       draftKey={draftKey}
       inheritedRunSelection={null}
@@ -620,6 +652,8 @@ function ConversationHarness() {
         </button>
       ) : null}
       <ChatComposer
+        viewIdentity="generation-conversation-visit"
+        isPaneActive={true}
         conversationId={convo.conversationId}
         draftKey={
           branchDraft
@@ -637,7 +671,7 @@ function ConversationHarness() {
         inheritedRunSelection={convo.inheritedRunSelection}
         sendCapability={convo.sendCapability}
         writeGrantResetVersion={convo.writeGrantResetVersion}
-        onChatRunCreated={convo.onChatRunCreated}
+        onAdmitted={convo.adoptAdmittedRun}
         onClearBranchDraft={branch ? () => branch.setBranchDraft(null) : undefined}
       />
     </>
@@ -713,13 +747,16 @@ describe("Generation selection browser contract", () => {
         }
         if (path === "/api/chat-runs" && init?.method === "POST") {
           requests.push(JSON.parse(String(init.body)) as ChatRunCreateRequest);
+          return json(acceptedAdmission(init));
+        }
+        if (path === `/api/chat-runs/${RUN_ID}`) {
           return json(admittedRun("AdditiveWrites"));
         }
         throw new Error(`Unexpected generation request: ${path}`);
       },
     );
 
-    render(withRenderEnvironment(<Composer />));
+    render(withRenderEnvironment(withChatAccount(<Composer />)));
     const trigger = await screen.findByRole("button", {
       name: /Change model.*Codex Personal.*GPT-5\.6 Terra.*Medium.*Codex subscription/u,
     });
@@ -823,22 +860,21 @@ describe("Generation selection browser contract", () => {
           return json(GENERATION_CATALOG_RESPONSE);
         }
         if (path === "/api/chat-runs" && init?.method === "POST") {
-          return json(
-            {
-              error: {
-                code: "E_CATALOG_DEFINITION_STALE",
-                message: "stale catalog",
-                request_id: "catalog-stale-proof",
+          return json({
+            data: {
+              idempotency_key: new Headers(init.headers).get("Idempotency-Key"),
+              outcome: {
+                kind: "Rejected",
+                reason: { code: "E_CATALOG_DEFINITION_STALE" },
               },
             },
-            409,
-          );
+          });
         }
         throw new Error(`Unexpected generation request: ${path}`);
       },
     );
 
-    render(withRenderEnvironment(<Composer />));
+    render(withRenderEnvironment(withChatAccount(<Composer />)));
     const input = await screen.findByRole("textbox", { name: "Ask anything" });
     await userEvent.type(input, "Preserve this exact draft");
     await userEvent.click(screen.getByRole("button", { name: "Send message" }));
@@ -867,13 +903,16 @@ describe("Generation selection browser contract", () => {
         }
         if (path === "/api/chat-runs" && init?.method === "POST") {
           dispatchCount += 1;
+          return json(acceptedAdmission(init));
+        }
+        if (path === `/api/chat-runs/${RUN_ID}`) {
           return json(admittedRun("ReadOnly"));
         }
         throw new Error(`Unexpected generation request: ${path}`);
       },
     );
 
-    render(withRenderEnvironment(<Composer />));
+    render(withRenderEnvironment(withChatAccount(<Composer />)));
     const input = await screen.findByRole("textbox", { name: "Ask anything" });
     await userEvent.type(input, "Keep this draft editable");
 
@@ -900,10 +939,12 @@ describe("Generation selection browser contract", () => {
     vi.stubGlobal("fetch", async () => json(GENERATION_CATALOG_RESPONSE));
     render(
       withRenderEnvironment(
-        <>
-          <button type="button">Transcript action</button>
-          <Composer />
-        </>,
+        withChatAccount(
+          <>
+            <button type="button">Transcript action</button>
+            <Composer />
+          </>,
+        ),
       ),
     );
     const transcriptAction = screen.getByRole("button", {
@@ -1258,13 +1299,16 @@ describe("Generation selection browser contract", () => {
         if (path === "/api/llm-catalog") return json({ data: catalog });
         if (path === "/api/chat-runs" && init?.method === "POST") {
           requests.push(JSON.parse(String(init.body)) as ChatRunCreateRequest);
+          return json(acceptedAdmission(init));
+        }
+        if (path === `/api/chat-runs/${RUN_ID}`) {
           return json(admittedRun("ReadOnly"));
         }
         throw new Error(`Unexpected generation request: ${path}`);
       },
     );
 
-    render(withRenderEnvironment(<Composer />));
+    render(withRenderEnvironment(withChatAccount(<Composer />)));
     const input = await screen.findByRole("textbox", { name: "Ask anything" });
     await userEvent.type(input, "Answer with a replacement model");
     expect(
@@ -1316,15 +1360,39 @@ describe("Generation selection browser contract", () => {
 
   it("inherits the selected-path leaf pair for a continuation and the branch parent pair for a fork reply", async () => {
     const requests: ChatRunCreateRequest[] = [];
-    stubConversationFetch(twoTurnTree("complete"), (pathname, init) => {
+    const initialTree = twoTurnTree("complete");
+    const admitted = admittedRun("ReadOnly");
+    admitted.data.user_message.parent_message_id = FIRST_ASSISTANT_ID;
+    const selectedPath = [
+      ...initialTree.data.selected_path.slice(0, 2),
+      admitted.data.user_message,
+      admitted.data.assistant_message,
+    ];
+    stubConversationFetch(initialTree, (pathname, init) => {
       if (pathname === "/api/chat-runs" && init?.method === "POST") {
         requests.push(JSON.parse(String(init.body)) as ChatRunCreateRequest);
-        return json(admittedRun("ReadOnly"));
+        return json(acceptedAdmission(init));
+      }
+      if (pathname === `/api/chat-runs/${RUN_ID}`) {
+        return json(admitted);
+      }
+      if (
+        pathname === `/api/conversations/${CONVERSATION_ID}/tree` &&
+        requests.length > 0
+      ) {
+        return json({
+          data: {
+            ...initialTree.data,
+            selected_path: selectedPath,
+            active_leaf_message_id: ASSISTANT_ID,
+            path_cache_by_leaf_id: { [ASSISTANT_ID]: selectedPath },
+          },
+        });
       }
       return undefined;
     });
 
-    render(withRenderEnvironment(<ConversationHarness />));
+    render(withRenderEnvironment(withChatAccount(<ConversationHarness />)));
     expect(
       await screen.findByRole("button", {
         name: "Change model. Codex Personal, GPT-5.6 Terra, High, Codex subscription",
@@ -1355,24 +1423,34 @@ describe("Generation selection browser contract", () => {
     });
   });
 
-  it("replays an identical rerun retry but mints a new identity for a confirmed replacement after a network loss", async () => {
+  it("replays identical rerun retries after network and runtime unavailability but mints a new identity for a confirmed replacement", async () => {
     const { CATALOG_REVISION } = requireCutoverSupport().fixtures;
     const rerunRequests: Array<{
       key: string | null;
       body: ChatRunCandidateRequest;
     }> = [];
-    let networkLost = true;
+    let runtimeUnavailable = true;
     stubConversationFetch(twoTurnTree("error"), (pathname, init) => {
       if (pathname !== `/api/messages/${SECOND_ASSISTANT_ID}/rerun`) return undefined;
       rerunRequests.push({
         key: new Headers(init?.headers).get("Idempotency-Key"),
         body: JSON.parse(String(init?.body)) as ChatRunCandidateRequest,
       });
-      if (networkLost) throw new TypeError("offline");
+      if (rerunRequests.length === 1) throw new TypeError("offline");
+      if (runtimeUnavailable)
+        return json(
+          {
+            error: {
+              code: "E_GENERATION_RUNTIME_UNAVAILABLE",
+              message: "Generation runtime unavailable",
+            },
+          },
+          503,
+        );
       return json(admittedRerun());
     });
 
-    render(withRenderEnvironment(<ConversationHarness />));
+    render(withRenderEnvironment(withChatAccount(<ConversationHarness />)));
     await userEvent.click(await screen.findByRole("button", { name: "Rerun" }));
     expect(
       await screen.findByText("This response couldn’t be run again."),
@@ -1382,8 +1460,14 @@ describe("Generation selection browser contract", () => {
     expect(rerunRequests[0].key).not.toBeNull();
     expect(rerunRequests[1]).toEqual(rerunRequests[0]);
     expect(rerunRequests[0].body.selection).toEqual(TERRA_HIGH);
+    expect(
+      await screen.findByText("This response couldn’t be run again."),
+    ).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Rerun" }));
+    await waitFor(() => expect(rerunRequests).toHaveLength(3));
+    expect(rerunRequests[2]).toEqual(rerunRequests[0]);
 
-    networkLost = false;
+    runtimeUnavailable = false;
     await userEvent.click(
       screen.getByRole("button", { name: "Rerun with a different model" }),
     );
@@ -1395,13 +1479,13 @@ describe("Generation selection browser contract", () => {
       "claude",
     );
     await userEvent.keyboard("{Enter}");
-    await waitFor(() => expect(rerunRequests).toHaveLength(3));
-    expect(rerunRequests[2].body).toEqual({
+    await waitFor(() => expect(rerunRequests).toHaveLength(4));
+    expect(rerunRequests[3].body).toEqual({
       catalog_definition_revision: CATALOG_REVISION,
       selection: CLAUDE_HIGH,
       tool_authority: "ReadOnly",
     });
-    expect(rerunRequests[2].key).not.toBe(rerunRequests[0].key);
+    expect(rerunRequests[3].key).not.toBe(rerunRequests[0].key);
   });
 
   it("re-arms the additive-write grant to off after a successful rerun while a fork reply draft is open", async () => {
@@ -1412,7 +1496,7 @@ describe("Generation selection browser contract", () => {
         : undefined,
     );
 
-    render(withRenderEnvironment(<ConversationHarness />));
+    render(withRenderEnvironment(withChatAccount(<ConversationHarness />)));
     await screen.findByRole("button", { name: "Rerun" });
     await userEvent.click(
       screen.getByRole("button", { name: "Fork from the first answer" }),

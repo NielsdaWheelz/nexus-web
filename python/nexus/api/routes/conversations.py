@@ -121,7 +121,7 @@ def create_conversation(
 def get_conversation(
     conversation_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: Annotated[Session, Depends(get_repeatable_read_db)],
 ) -> dict:
     """Get a conversation by ID.
 
@@ -165,6 +165,11 @@ async def undo_tool_call(
         conversation_id=conversation_id,
         tool_call_id=tool_call_id,
     )
+    # The write owner committed (or performed a read-only replay). Hydrate the
+    # returned trail from a fresh snapshot, never its retained pre-commit rows.
+    db.rollback()
+    get_repeatable_read_db(db)
+    db.expire_all()
     trail = build_assistant_trust_trail(
         db,
         viewer_id=viewer.user_id,

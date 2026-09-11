@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 
 from provider_runtime.agent_runtime import (
@@ -19,6 +20,7 @@ from nexus.config import GenerationApiProvider
 from nexus.schemas.llm import Ready
 from nexus.services import generation_policy
 from nexus.services.generation_catalog import (
+    CatalogReadinessSnapshot,
     GenerationCatalogService,
     readiness_snapshot,
     source_controlled_qualification_snapshot,
@@ -103,6 +105,7 @@ def policy_complete_codex_catalog() -> AgentModelCatalog:
 def configured_chat_catalog_service(
     *,
     configured_api_providers: tuple[GenerationApiProvider, ...] = ("openai",),
+    readiness_loader: Callable[[], Awaitable[CatalogReadinessSnapshot]] | None = None,
 ) -> GenerationCatalogService:
     """Compose one real catalog service with a controlled external source adapter."""
 
@@ -127,7 +130,7 @@ def configured_chat_catalog_service(
         load_agent_catalog=load_agent_catalog,
         load_api_catalog=api_model_catalog,
         load_qualifications=source_controlled_qualification_snapshot,
-        load_readiness=load_readiness,
+        load_readiness=readiness_loader or load_readiness,
         clock=lambda: CHAT_CATALOG_NOW,
     )
 

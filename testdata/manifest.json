@@ -12,6 +12,16 @@
       ]
     },
     {
+      "path": "testdata/contracts/chat-admission-receipts.json",
+      "sha256": "4f17ac5c221191fb110b74cb7987060d64d7bed5b0b4f989772082726891575f",
+      "source": "repo-authored: independently reviewed chat admission receipt cases",
+      "license": "Repository-owned test data; retained as the cross-language chat admission receipt oracle",
+      "purpose": [
+        "Cross-language accepted and rejected receipt decoding and exhaustive presentation",
+        "Strict request, idempotency-key, and persisted acknowledgment conformance"
+      ]
+    },
+    {
       "path": "testdata/consumption/canonical_word_policy.json",
       "sha256": "f4fafd95b12bcc1e135e2975bf95011d04dbea2a39485b6b2fc29c4aa7322113",
       "source": "repo-authored: canonical consumption word-policy cases",
@@ -141,6 +151,16 @@
         "Transfer conformance: accepted response headers plus encoding, redirect, length, package-origin, account, and generation faults",
         "Canonical PDF, EPUB with declared local asset, and text-only web-article reader contracts",
         "Offline-reading product copy: explicit downloaded-copy and web-image-omission disclosures"
+      ]
+    },
+    {
+      "path": "testdata/search/chat_search_before.sql",
+      "sha256": "8d03ff7b4f931f548bac178ebca06a10fc9cd84646a2a99132987266944f6af4",
+      "source": "repo-authored: frozen pre-cutover global hybrid document query",
+      "license": "Repository-owned test data; retained as the chat search query-plan oracle",
+      "purpose": [
+        "Visible ranking equivalence across the finalist-only snippet projection cutover",
+        "Bounded final-result snippet work and query-budget sensitivity"
       ]
     }
   ]

@@ -306,33 +306,24 @@ def rerunnable_assistant_message_ids(
     viewer_id: UUID,
     assistant_message_ids: Sequence[UUID],
 ) -> set[UUID]:
-    """The subset of ``assistant_message_ids`` whose latest chat run is
-    terminal-failed/cancelled and eligible for rerun (`chat_failure.
-    rerun_eligibility`, the one policy owner). One read per message: each
-    message's *latest* run only — an earlier failed run superseded by a
-    completed rerun is not itself rerunnable."""
+    """Messages whose unique owning run is failed/cancelled and rerunnable."""
     if not assistant_message_ids:
         return set()
 
     runs = (
         db.execute(
-            select(ChatRun)
-            .where(
+            select(ChatRun).where(
                 ChatRun.owner_user_id == viewer_id,
                 ChatRun.assistant_message_id.in_(assistant_message_ids),
                 ChatRun.status.in_(("error", "cancelled")),
             )
-            .order_by(ChatRun.created_at.desc(), ChatRun.id.desc())
         )
         .scalars()
         .all()
     )
-    latest_by_message_id: dict[UUID, ChatRun] = {}
-    for run in runs:
-        latest_by_message_id.setdefault(run.assistant_message_id, run)
-
     rerunnable: set[UUID] = set()
-    for message_id, run in latest_by_message_id.items():
+    for run in runs:
+        message_id = run.assistant_message_id
         error_code = "cancelled" if run.status == "cancelled" else run.error_code
         if error_code is None:
             continue
@@ -982,20 +973,16 @@ def message_action_facts(
     runs = (
         list(
             db.scalars(
-                select(ChatRun)
-                .where(
+                select(ChatRun).where(
                     ChatRun.assistant_message_id.in_(assistant_ids),
                     ChatRun.status.in_(("complete", "error", "cancelled")),
                 )
-                .order_by(ChatRun.created_at.desc(), ChatRun.id.desc())
             )
         )
         if assistant_ids
         else []
     )
-    latest_run_by_message: dict[UUID, ChatRun] = {}
-    for run in runs:
-        latest_run_by_message.setdefault(run.assistant_message_id, run)
+    run_by_message = {run.assistant_message_id: run for run in runs}
     citation_counts = citation_counts_for_sources(
         db,
         source_scheme="message",
@@ -1006,10 +993,10 @@ def message_action_facts(
         message_id = UUID(str(row["id"]))
         is_assistant = str(row["role"]) == "assistant"
         is_complete = str(row["status"]) == "complete"
-        latest_run = latest_run_by_message.get(message_id)
+        owning_run = run_by_message.get(message_id)
         terminal_run = (
-            latest_run
-            if latest_run is not None and latest_run.status in ("error", "cancelled")
+            owning_run
+            if owning_run is not None and owning_run.status in ("error", "cancelled")
             else None
         )
         rerun_applicable = False
@@ -1024,7 +1011,7 @@ def message_action_facts(
                     selection_selectable=True,
                 )
         complete_run = (
-            latest_run if latest_run is not None and latest_run.status == "complete" else None
+            owning_run if owning_run is not None and owning_run.status == "complete" else None
         )
         facts[message_id] = MessageActionFacts(
             is_owner=UUID(str(row["owner_user_id"])) == viewer_id,

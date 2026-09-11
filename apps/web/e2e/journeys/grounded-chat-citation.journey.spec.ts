@@ -1,4 +1,6 @@
 import { captureReadableArticle } from "../articleFixture";
+import { TOOL_PROJECTION_HEADER } from "@/lib/api/client";
+import { TOOL_PROJECTION_REVISION } from "@/lib/conversations/toolContractProjection";
 import {
   expect,
   gotoWithStrictCsp,
@@ -7,8 +9,17 @@ import {
   webOrigin,
 } from "../fixtures";
 import { matchesResponse, pageRequest } from "../request";
+import { decodeChatAdmissionResponse } from "../../src/lib/conversations/chatAdmission";
+import { decodeChatRunData } from "../../src/lib/conversations/messageWire";
 
 test.use({ journeyId: "grounded-chat-citation" });
+
+function acceptedChatTarget(raw: unknown, commandKey: string) {
+  const receipt = decodeChatAdmissionResponse(raw, commandKey);
+  if (receipt.outcome.kind !== "Accepted")
+    throw new Error("The grounded chat was not admitted");
+  return receipt.outcome;
+}
 
 test("a source-grounded answer publishes a citation that opens its exact reader evidence", async ({
   page,
@@ -87,6 +98,7 @@ test("a source-grounded answer publishes a citation that opens its exact reader 
   const input = page.getByRole("textbox", { name: /ask anything/i });
   await expect(input).toBeVisible();
   let chatAdmissions = 0;
+  let chatCommandKey = "";
   page.on("request", (request) => {
     const url = new URL(request.url());
     if (
@@ -95,6 +107,7 @@ test("a source-grounded answer publishes a citation that opens its exact reader 
       url.pathname === "/api/chat-runs"
     ) {
       chatAdmissions += 1;
+      chatCommandKey = request.headers()["idempotency-key"];
     }
   });
   await input.fill(
@@ -113,20 +126,30 @@ test("a source-grounded answer publishes a citation that opens its exact reader 
   const runResponse = await runResponsePromise;
   const runText = await runResponse.text();
   expect(
-    runResponse.ok(),
+    runResponse.status(),
     `Chat admission for conversation ${conversationId} failed: ${runResponse.status()} ${runText}`,
-  ).toBeTruthy();
-  const admitted = JSON.parse(runText) as {
-    data: {
-      run: {
-        run_selection: {
-          selection: unknown;
-          catalog_definition_revision: string;
-        };
-      };
-    };
-  };
-  expect(admitted.data.run.run_selection.catalog_definition_revision).toMatch(
+  ).toBe(200);
+  expect(chatCommandKey, "Chat admission omitted its operation identity").toBeTruthy();
+  const target = acceptedChatTarget(JSON.parse(runText), chatCommandKey);
+  expect(target.conversation_id).toBe(conversationId);
+  const canonicalResponse = await api.get(`/api/chat-runs/${target.run_id}`, {
+    headers: { [TOOL_PROJECTION_HEADER]: TOOL_PROJECTION_REVISION },
+  });
+  const canonicalText = await canonicalResponse.text();
+  expect(
+    canonicalResponse.status(),
+    `Accepted run ${target.run_id} could not be hydrated: ${canonicalText}`,
+  ).toBe(200);
+  const canonical = decodeChatRunData(JSON.parse(canonicalText).data);
+  expect(canonical.conversation.id).toBe(target.conversation_id);
+  expect(canonical.assistant_message.id).toBe(target.assistant_message_id);
+  expect(canonical.run).toMatchObject({
+    id: target.run_id,
+    conversation_id: target.conversation_id,
+    assistant_message_id: target.assistant_message_id,
+    user_message_id: canonical.user_message.id,
+  });
+  expect(canonical.run.run_selection.catalog_definition_revision).toMatch(
     /^[0-9a-f]{64}$/u,
   );
 

@@ -15,6 +15,7 @@ from nexus.db.models import (
     ConversationBranch,
     Message,
 )
+from nexus.db.session import get_repeatable_read_db
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.schemas.conversation import (
     BRANCH_ANCHOR_KINDS,
@@ -199,12 +200,17 @@ def set_active_path(
         active_leaf_message_id=active_leaf_message_id,
     )
     db.commit()
-    return get_conversation_tree(
-        db,
-        viewer_id=viewer_id,
-        conversation_id=conversation_id,
-        catalog_snapshot=catalog_snapshot,
-    )
+    get_repeatable_read_db(db)
+    db.expire_all()
+    try:
+        return get_conversation_tree(
+            db,
+            viewer_id=viewer_id,
+            conversation_id=conversation_id,
+            catalog_snapshot=catalog_snapshot,
+        )
+    finally:
+        db.rollback()
 
 
 def persist_active_leaf(
@@ -407,17 +413,20 @@ def rename_branch(
         ),
         {"branch_id": branch.id, "title": title.strip() if title is not None else None},
     )
-    db.flush()
-    db.refresh(branch)
-    option = _fork_option_for_user_message(
-        db,
-        branch_user_message_id=branch.branch_user_message_id,
-        active_path_message_ids=set(
-            active_path_message_ids(db, viewer_id=viewer_id, conversation_id=conversation_id)
-        ),
-    )
+    branch_user_message_id = branch.branch_user_message_id
     db.commit()
-    return option
+    get_repeatable_read_db(db)
+    db.expire_all()
+    try:
+        return _fork_option_for_user_message(
+            db,
+            branch_user_message_id=branch_user_message_id,
+            active_path_message_ids=set(
+                active_path_message_ids(db, viewer_id=viewer_id, conversation_id=conversation_id)
+            ),
+        )
+    finally:
+        db.rollback()
 
 
 def delete_branch(
@@ -892,14 +901,11 @@ def _run_status_by_assistant_id(
     if not assistant_message_ids:
         return {}
     rows = db.execute(
-        select(ChatRun.assistant_message_id, ChatRun.status)
-        .where(ChatRun.assistant_message_id.in_(list(assistant_message_ids)))
-        .order_by(ChatRun.created_at.desc(), ChatRun.id.desc())
+        select(ChatRun.assistant_message_id, ChatRun.status).where(
+            ChatRun.assistant_message_id.in_(list(assistant_message_ids))
+        )
     ).all()
-    statuses: dict[UUID, str] = {}
-    for assistant_message_id, status in rows:
-        statuses.setdefault(assistant_message_id, status)
-    return statuses
+    return {assistant_message_id: status for assistant_message_id, status in rows}
 
 
 def _subtree_metadata(
@@ -1106,9 +1112,9 @@ def _fork_status(
 ) -> Literal["complete", "pending", "error", "cancelled"]:
     if assistant_message is None:
         return "pending"
-    run_status = db.scalar(
-        select(ChatRun.status).where(ChatRun.assistant_message_id == assistant_message.id).limit(1)
-    )
+    run_status = db.execute(
+        select(ChatRun.status).where(ChatRun.assistant_message_id == assistant_message.id)
+    ).scalar_one_or_none()
     if run_status == "cancelled":
         return "cancelled"
     if assistant_message.status == "pending":

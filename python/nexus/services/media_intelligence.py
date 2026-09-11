@@ -41,7 +41,6 @@ from nexus.db.models import MediaSummary
 from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
 from nexus.errors import (
-    ApiError,
     ApiErrorCode,
     InvalidRequestError,
     NotFoundError,
@@ -103,7 +102,6 @@ from nexus.services.media_intelligence_lifecycle import (
     current_content_fingerprint,
     ensure_media_unit,
 )
-from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.structured_synthesis import (
     INDEX_GROUNDING_RULE,
@@ -1047,145 +1045,113 @@ async def run_media_unit_build(
         if state.dispatch_phase is not step_journal.Prepared:
             raise AssertionError(f"unknown media unit dispatch phase {state.dispatch_phase!r}")
 
-    # All request-shaping reads are complete before the external rate-limit and
-    # generation boundaries.
+    # All request-shaping reads are complete before the generation boundary.
     db.commit()
-    rate_limiter = get_rate_limiter()
-    try:
-        rate_limiter.acquire_inflight_slot(owner_user_id)
-    except ApiError as exc:
-        completed = _CompletedFailure(
-            error_code=exc.code.value,
-            error_detail=present(exc.message),
+
+    def lock_dispatch(dispatch_db: Session) -> JobRow | None:
+        locked_summary = dispatch_db.scalar(
+            select(MediaSummary).where(MediaSummary.id == summary_id).with_for_update()
         )
+        jobs = lock_jobs_for_payload(
+            dispatch_db,
+            kind=_MEDIA_UNIT_JOB_KIND,
+            expected_payload_match={
+                "media_id": str(media_id),
+                "content_fingerprint": content_fingerprint,
+            },
+        )
+        locked_job = next(
+            (candidate for candidate in jobs if candidate.id == ctx.job_id),
+            None,
+        )
+        if (
+            locked_summary is None
+            or locked_summary.status != "building"
+            or locked_summary.content_fingerprint != content_fingerprint
+            or current_content_fingerprint(dispatch_db, media_id=media_id) != content_fingerprint
+        ):
+            return None
+        return locked_job
+
+    # A first dispatch reloads the prepared job; a replay may retain an earlier
+    # read snapshot. Neither may cross the generation host I/O boundary.
+    db.commit()
+    journal = JobGenerationJournal(
+        context=ctx,
+        step_path=_MEDIA_UNIT_STEP_PATH,
+        lock_dispatch=lock_dispatch,
+    )
+    try:
+        execution_request = await admit_job_generation(
+            owner=LlmCallOwner(kind="media_summary", id=summary_id),
+            generation_id=generation_id,
+            operation="media_summary",
+            intent=intent,
+            prompt_template_revision=generation_policy.operation_revision(MEDIA_UNIT_OPERATION),
+            prompt_payload_ref=ImmutablePromptPayloadRef(
+                owner_kind="media_summary",
+                owner_id=str(summary_id),
+                revision=generation_policy.operation_revision(MEDIA_UNIT_OPERATION),
+                payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
+            ),
+            journal=journal,
+            session_factory=get_session_factory(),
+            runtime=runtime,
+        )
+        execution_result = await execute_generation(
+            execution_request,
+            session_factory=get_session_factory(),
+            runtime=runtime,
+            encode_terminal=lambda terminal: _encode_media_unit_terminal(
+                codex_terminal_evidence(terminal),
+                candidates=candidates,
+            ),
+            encode_failure=_encode_media_unit_failure,
+        )
+    except GenerationAdmissionInputsChanged:
+        current_job = get_job(db, ctx.job_id)
+        current_state = (
+            None
+            if current_job is None
+            else step_journal.read_step_states(current_job).get(_MEDIA_UNIT_STEP_PATH)
+        )
+        if current_state is not None and current_state.dispatch_phase is step_journal.Prepared:
+            _complete_prepared_media_unit_without_dispatch(
+                db,
+                owner=owner,
+                ctx=ctx,
+                state=current_state,
+                result=_CompletedSkip(reason="request_fingerprint_changed"),
+                reason="media synthesis inputs changed before redispatch",
+            )
+        return "ok"
+    except GenerationDispatchAborted:
         if state is not None and state.dispatch_phase is step_journal.Prepared:
-            if not _complete_prepared_media_unit_without_dispatch(
+            _complete_prepared_media_unit_without_dispatch(
                 db,
                 owner=owner,
                 ctx=ctx,
                 state=state,
-                result=completed,
-                reason="media generation inflight admission was rejected before redispatch",
-            ):
-                return "ok"
-        fail_media_unit(
-            db,
-            summary_id=summary_id,
-            expected_fingerprint=content_fingerprint,
-            ctx=ctx,
-            error_code=completed.error_code,
-            error_detail=nullable_from_presence(completed.error_detail),
-        )
-        return "failed"
-    try:
-
-        def lock_dispatch(dispatch_db: Session) -> JobRow | None:
-            locked_summary = dispatch_db.scalar(
-                select(MediaSummary).where(MediaSummary.id == summary_id).with_for_update()
+                result=_CompletedSkip(reason="dispatch_aborted"),
+                reason="media owner fence aborted generation before redispatch",
             )
-            jobs = lock_jobs_for_payload(
-                dispatch_db,
-                kind=_MEDIA_UNIT_JOB_KIND,
-                expected_payload_match={
-                    "media_id": str(media_id),
-                    "content_fingerprint": content_fingerprint,
-                },
-            )
-            locked_job = next(
-                (candidate for candidate in jobs if candidate.id == ctx.job_id),
-                None,
-            )
-            if (
-                locked_summary is None
-                or locked_summary.status != "building"
-                or locked_summary.content_fingerprint != content_fingerprint
-                or current_content_fingerprint(dispatch_db, media_id=media_id)
-                != content_fingerprint
-            ):
-                return None
-            return locked_job
-
-        # A first dispatch reloads the prepared job; a replay may retain an earlier
-        # read snapshot. Neither may cross the generation host I/O boundary.
-        db.commit()
-        journal = JobGenerationJournal(
-            context=ctx,
-            step_path=_MEDIA_UNIT_STEP_PATH,
-            lock_dispatch=lock_dispatch,
-        )
-        try:
-            execution_request = await admit_job_generation(
-                owner=LlmCallOwner(kind="media_summary", id=summary_id),
-                generation_id=generation_id,
-                operation="media_summary",
-                intent=intent,
-                prompt_template_revision=generation_policy.operation_revision(MEDIA_UNIT_OPERATION),
-                prompt_payload_ref=ImmutablePromptPayloadRef(
-                    owner_kind="media_summary",
-                    owner_id=str(summary_id),
-                    revision=generation_policy.operation_revision(MEDIA_UNIT_OPERATION),
-                    payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
-                ),
-                journal=journal,
-                session_factory=get_session_factory(),
-                runtime=runtime,
-            )
-            execution_result = await execute_generation(
-                execution_request,
-                session_factory=get_session_factory(),
-                runtime=runtime,
-                encode_terminal=lambda terminal: _encode_media_unit_terminal(
-                    codex_terminal_evidence(terminal),
-                    candidates=candidates,
-                ),
-                encode_failure=_encode_media_unit_failure,
-            )
-        except GenerationAdmissionInputsChanged:
-            current_job = get_job(db, ctx.job_id)
-            current_state = (
-                None
-                if current_job is None
-                else step_journal.read_step_states(current_job).get(_MEDIA_UNIT_STEP_PATH)
-            )
-            if current_state is not None and current_state.dispatch_phase is step_journal.Prepared:
-                _complete_prepared_media_unit_without_dispatch(
-                    db,
-                    owner=owner,
-                    ctx=ctx,
-                    state=current_state,
-                    result=_CompletedSkip(reason="request_fingerprint_changed"),
-                    reason="media synthesis inputs changed before redispatch",
-                )
-            return "ok"
-        except GenerationDispatchAborted:
-            if state is not None and state.dispatch_phase is step_journal.Prepared:
-                _complete_prepared_media_unit_without_dispatch(
-                    db,
-                    owner=owner,
-                    ctx=ctx,
-                    state=state,
-                    result=_CompletedSkip(reason="dispatch_aborted"),
-                    reason="media owner fence aborted generation before redispatch",
-                )
-            return "ok"
-        except GenerationUncertain as exc:
-            raise _UncertainMediaUnitReplayDefect(str(exc)) from exc
-        if isinstance(execution_result, RescheduleRequested):
-            return execution_result
-        if not isinstance(execution_result, CompletedGeneration):
-            raise AssertionError("media unit generation result is not exhaustive")
-        completed = _COMPLETED_RESULT_ADAPTER.validate_json(execution_result.terminal_result)
-        return _apply_completed_result(
-            db,
-            media_id=media_id,
-            owner_user_id=owner_user_id,
-            summary_id=summary_id,
-            content_fingerprint=content_fingerprint,
-            ctx=ctx,
-            result=completed,
-        )
-    finally:
-        rate_limiter.release_inflight_slot(owner_user_id)
+        return "ok"
+    except GenerationUncertain as exc:
+        raise _UncertainMediaUnitReplayDefect(str(exc)) from exc
+    if isinstance(execution_result, RescheduleRequested):
+        return execution_result
+    if not isinstance(execution_result, CompletedGeneration):
+        raise AssertionError("media unit generation result is not exhaustive")
+    completed = _COMPLETED_RESULT_ADAPTER.validate_json(execution_result.terminal_result)
+    return _apply_completed_result(
+        db,
+        media_id=media_id,
+        owner_user_id=owner_user_id,
+        summary_id=summary_id,
+        content_fingerprint=content_fingerprint,
+        ctx=ctx,
+        result=completed,
+    )
 
 
 def _media_unit_attempt_active(

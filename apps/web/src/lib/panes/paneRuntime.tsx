@@ -55,11 +55,13 @@ import {
 export interface PaneRouterOptions {
   labelHint?: string;
   viewTransition?: PaneViewTransitionIntent;
+  activate?: boolean;
 }
 
 export interface PaneNavigationCommandOptions {
   readonly labelHint?: string;
   readonly modality: PaneNavigationModality;
+  readonly activate?: boolean;
 }
 
 export interface PaneScopedRouter {
@@ -428,6 +430,9 @@ export function PaneRuntimeProvider({
         const current = commandsRef.current;
         const navigationOptions: PaneNavigationCommandOptions = {
           ...(options?.labelHint ? { labelHint: options.labelHint } : {}),
+          ...(options?.activate !== undefined
+            ? { activate: options.activate }
+            : {}),
           modality: consumeNavigationModality(),
         };
         runPaneNavigation(normalized, options?.viewTransition, () => {
@@ -442,6 +447,9 @@ export function PaneRuntimeProvider({
         const current = commandsRef.current;
         const navigationOptions: PaneNavigationCommandOptions = {
           ...(options?.labelHint ? { labelHint: options.labelHint } : {}),
+          ...(options?.activate !== undefined
+            ? { activate: options.activate }
+            : {}),
           modality: consumeNavigationModality(),
         };
         runPaneNavigation(normalized, options?.viewTransition, () => {

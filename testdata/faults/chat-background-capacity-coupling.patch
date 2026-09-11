@@ -1,0 +1,26 @@
+diff --git a/python/nexus/services/chat_run_validation.py b/python/nexus/services/chat_run_validation.py
+--- a/python/nexus/services/chat_run_validation.py
++++ b/python/nexus/services/chat_run_validation.py
+@@ -10,7 +10,7 @@
+ 
+ from uuid import UUID
+ 
+-from sqlalchemy import func, select
++from sqlalchemy import func, select, text
+ from sqlalchemy.orm import Session
+ 
+ from nexus.db.models import Conversation, Message
+@@ -47,6 +47,13 @@
+         raise ApiError(
+             ApiErrorCode.E_MESSAGE_TOO_LONG,
+             f"Message exceeds {MAX_MESSAGE_CONTENT_LENGTH} character limit",
++        )
++
++    if db.scalar(
++        text("SELECT EXISTS (SELECT 1 FROM background_jobs WHERE status = 'running')")
++    ):
++        raise ApiError(
++            ApiErrorCode.E_RATE_LIMITED, "Shared worker execution capacity exhausted"
+         )
+ 
+     rate_limiter = get_rate_limiter()

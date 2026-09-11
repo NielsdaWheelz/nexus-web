@@ -563,7 +563,6 @@ def compute_concordance(
 def _validate_oracle_pre_enqueue_controls(*, viewer_id: UUID) -> None:
     rate_limiter = get_rate_limiter()
     rate_limiter.check_rpm_limit(viewer_id)
-    rate_limiter.check_concurrent_limit(viewer_id)
 
 
 # ---------- SSE handler dependencies ----------------------------------------
@@ -1209,227 +1208,196 @@ async def execute_reading(
 
     question = reading.question_text
     viewer_id = reading.user_id
-    rate_limiter = get_rate_limiter()
-    inflight_acquired = False
-
-    # Release the transaction opened by owner/job reads before crossing the
-    # external concurrency boundary.
+    # Finish owner/job reads before generation admission I/O.
     db.commit()
-    try:
-        try:
-            rate_limiter.acquire_inflight_slot(viewer_id)
-            inflight_acquired = True
-        except ApiError as exc:
-            if exc.code is not ApiErrorCode.E_RATE_LIMITED:
-                raise
-            db.rollback()
-            result = _stage_oracle_terminal_without_dispatch(
-                db,
-                reading_id=reading_id,
-                context=context,
-                reason="oracle concurrency admission failed before dispatch",
-                error_code=oracle_reading_failure_code(exc.code.value),
-                error_detail=exc.message,
-            )
-            if result is None:
-                db.rollback()
-                return {"status": "pending", "noop": True}
-            db.commit()
-            return result
-
-        readiness = oracle_corpus.get_oracle_corpus_readiness(db)
-        if readiness.status != "ready" or readiness.library_id is None:
-            detail = (
-                f"corpus not ready: {readiness.ready_media_count}/{readiness.work_count} media, "
-                f"{readiness.resolved_anchor_count}/{readiness.anchor_count} anchors, "
-                f"{readiness.ready_plate_count}/{readiness.plate_count} plates"
-            )
-            db.rollback()
-            result = _stage_oracle_terminal_without_dispatch(
-                db,
-                reading_id=reading_id,
-                context=context,
-                reason="oracle corpus was not ready before dispatch",
-                error_code=oracle_reading_failure_code(E_ORACLE_CORPUS_NOT_READY),
-                error_detail=detail,
-            )
-            if result is None:
-                db.rollback()
-                return {"status": "pending", "noop": True}
-            db.commit()
-            return result
-
-        # Embedding construction performs external I/O; the readiness snapshot
-        # is complete and no database transaction may cross that boundary.
-        db.commit()
-        try:
-            query_embedding = build_query_embedding(
-                db, question, ["content_chunk"], transaction_active_at_entry=False
-            )
-            if query_embedding is None:
-                raise ApiError(
-                    ApiErrorCode.E_APP_SEARCH_FAILED,
-                    "Oracle requires semantic embeddings, which are unavailable",
-                )
-            corpus_media_ids = _oracle_corpus_media_ids(db)
-            candidates = _oracle_corpus_candidates(
-                db,
-                viewer_id=viewer_id,
-                question=question,
-                query_embedding=query_embedding,
-                library_id=readiness.library_id,
-            )
-            requires_user_content = _viewer_has_searchable_user_content(db, viewer_id=viewer_id)
-            if requires_user_content:
-                candidates = [
-                    *candidates,
-                    *_personal_candidates(
-                        db,
-                        viewer_id=viewer_id,
-                        query_embedding=query_embedding,
-                        corpus_media_ids=corpus_media_ids,
-                    ),
-                ]
-            plate = _pick_plate(db, question=question, candidates=candidates)
-        except ApiError as exc:
-            if exc.code is not ApiErrorCode.E_APP_SEARCH_FAILED:
-                raise
-            db.rollback()
-            result = _stage_oracle_terminal_without_dispatch(
-                db,
-                reading_id=reading_id,
-                context=context,
-                reason="oracle retrieval failed before dispatch",
-                error_code=oracle_reading_failure_code(exc.code.value),
-                error_detail=exc.message,
-            )
-            if result is None:
-                db.rollback()
-                return {"status": "pending", "noop": True}
-            db.commit()
-            return result
-
-        if len(candidates) < 3:
-            db.rollback()
-            # justify-defect: a ready Oracle corpus is required to yield three
-            # candidates; persisting E_INTERNAL as a user-facing reading would
-            # conceal a broken retrieval/corpus invariant.
-            raise AssertionError("ready Oracle corpus yielded fewer than three candidates")
-        if requires_user_content and not _candidate_set_includes_user_media(candidates):
-            detail = "user content is searchable but yielded no user_media candidate"
-            db.rollback()
-            result = _stage_oracle_terminal_without_dispatch(
-                db,
-                reading_id=reading_id,
-                context=context,
-                reason="oracle user content was unavailable before dispatch",
-                error_code=oracle_reading_failure_code(ApiErrorCode.E_APP_SEARCH_FAILED.value),
-                error_detail=detail,
-            )
-            if result is None:
-                db.rollback()
-                return {"status": "pending", "noop": True}
-            db.commit()
-            return result
-
-        user_content = _build_oracle_user_content(question=question, candidates=candidates)
-        intent = _oracle_intent(user_content=user_content)
-
-        def lock_dispatch(dispatch_db: Session) -> JobRow | None:
-            locked_reading = dispatch_db.scalar(
-                select(OracleReading).where(OracleReading.id == reading_id).with_for_update()
-            )
-            locked_job = lock_job(dispatch_db, context.job_id)
-            if (
-                locked_reading is None
-                or locked_reading.status != "pending"
-                or locked_job is None
-                or locked_job.kind != "oracle_reading_generate"
-                or locked_job.payload.get("reading_id") != str(reading_id)
-            ):
-                return None
-            return locked_job
-
-        # A first dispatch reloads the prepared job; a replay may retain an earlier
-        # read snapshot. Neither may cross the generation host I/O boundary.
-        db.commit()
-        journal = JobGenerationJournal(
-            context=context,
-            step_path=_SYNTHESIS_STEP_PATH,
-            lock_dispatch=lock_dispatch,
+    readiness = oracle_corpus.get_oracle_corpus_readiness(db)
+    if readiness.status != "ready" or readiness.library_id is None:
+        detail = (
+            f"corpus not ready: {readiness.ready_media_count}/{readiness.work_count} media, "
+            f"{readiness.resolved_anchor_count}/{readiness.anchor_count} anchors, "
+            f"{readiness.ready_plate_count}/{readiness.plate_count} plates"
         )
-        try:
-            execution_request = await admit_job_generation(
-                owner=LlmCallOwner(kind="oracle_reading", id=reading_id),
-                generation_id=generation_id,
-                operation="oracle",
-                intent=intent,
-                prompt_template_revision=generation_policy.operation_revision(ORACLE_OPERATION),
-                prompt_payload_ref=ImmutablePromptPayloadRef(
-                    owner_kind="oracle_reading",
-                    owner_id=str(reading_id),
-                    revision=generation_policy.operation_revision(ORACLE_OPERATION),
-                    payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
-                ),
-                journal=journal,
-                session_factory=get_session_factory(),
-                runtime=runtime,
-            )
-            execution_result = await execute_generation(
-                execution_request,
-                session_factory=get_session_factory(),
-                runtime=runtime,
-                encode_terminal=lambda terminal: _encode_oracle_terminal(
-                    codex_terminal_evidence(terminal),
-                    candidates=candidates,
-                    plate=plate,
-                    requires_user_content=requires_user_content,
-                ),
-                encode_failure=_encode_oracle_failure,
-            )
-        except GenerationAdmissionInputsChanged:
-            db.rollback()
-            result = _stage_oracle_terminal_without_dispatch(
-                db,
-                reading_id=reading_id,
-                context=context,
-                reason="oracle input changed before dispatch",
-                error_code=oracle_reading_failure_code(
-                    ApiErrorCode.E_GENERATION_SOURCE_CHANGED.value
-                ),
-                error_detail="Oracle input changed after the generation was prepared",
-            )
-            if result is None:
-                db.rollback()
-                return {"status": "pending", "noop": True}
-            db.commit()
-            return result
-        except GenerationDispatchAborted:
-            result = _stage_oracle_terminal_without_dispatch(
-                db,
-                reading_id=reading_id,
-                context=context,
-                reason="oracle dispatch invalidated before acceptance",
-            )
-            if result is None:
-                db.rollback()
-                return {"status": "pending", "noop": True}
-            db.commit()
-            return result
-        if isinstance(execution_result, RescheduleRequested):
-            return execution_result
-        if not isinstance(execution_result, CompletedGeneration):
-            raise AssertionError("oracle generation result is not exhaustive")
-        completed = _COMPLETED_ORACLE_ADAPTER.validate_json(execution_result.terminal_result)
-        return _apply_completed_oracle(
+        db.rollback()
+        result = _stage_oracle_terminal_without_dispatch(
             db,
             reading_id=reading_id,
             context=context,
-            completed=completed,
+            reason="oracle corpus was not ready before dispatch",
+            error_code=oracle_reading_failure_code(E_ORACLE_CORPUS_NOT_READY),
+            error_detail=detail,
         )
-    finally:
-        if inflight_acquired:
-            rate_limiter.release_inflight_slot(viewer_id)
+        if result is None:
+            db.rollback()
+            return {"status": "pending", "noop": True}
+        db.commit()
+        return result
+
+    # Embedding construction performs external I/O; the readiness snapshot
+    # is complete and no database transaction may cross that boundary.
+    db.commit()
+    try:
+        query_embedding = build_query_embedding(
+            db, question, ["content_chunk"], transaction_active_at_entry=False
+        )
+        if query_embedding is None:
+            raise ApiError(
+                ApiErrorCode.E_APP_SEARCH_FAILED,
+                "Oracle requires semantic embeddings, which are unavailable",
+            )
+        corpus_media_ids = _oracle_corpus_media_ids(db)
+        candidates = _oracle_corpus_candidates(
+            db,
+            viewer_id=viewer_id,
+            question=question,
+            query_embedding=query_embedding,
+            library_id=readiness.library_id,
+        )
+        requires_user_content = _viewer_has_searchable_user_content(db, viewer_id=viewer_id)
+        if requires_user_content:
+            candidates = [
+                *candidates,
+                *_personal_candidates(
+                    db,
+                    viewer_id=viewer_id,
+                    query_embedding=query_embedding,
+                    corpus_media_ids=corpus_media_ids,
+                ),
+            ]
+        plate = _pick_plate(db, question=question, candidates=candidates)
+    except ApiError as exc:
+        if exc.code is not ApiErrorCode.E_APP_SEARCH_FAILED:
+            raise
+        db.rollback()
+        result = _stage_oracle_terminal_without_dispatch(
+            db,
+            reading_id=reading_id,
+            context=context,
+            reason="oracle retrieval failed before dispatch",
+            error_code=oracle_reading_failure_code(exc.code.value),
+            error_detail=exc.message,
+        )
+        if result is None:
+            db.rollback()
+            return {"status": "pending", "noop": True}
+        db.commit()
+        return result
+
+    if len(candidates) < 3:
+        db.rollback()
+        # justify-defect: a ready Oracle corpus is required to yield three
+        # candidates; persisting E_INTERNAL as a user-facing reading would
+        # conceal a broken retrieval/corpus invariant.
+        raise AssertionError("ready Oracle corpus yielded fewer than three candidates")
+    if requires_user_content and not _candidate_set_includes_user_media(candidates):
+        detail = "user content is searchable but yielded no user_media candidate"
+        db.rollback()
+        result = _stage_oracle_terminal_without_dispatch(
+            db,
+            reading_id=reading_id,
+            context=context,
+            reason="oracle user content was unavailable before dispatch",
+            error_code=oracle_reading_failure_code(ApiErrorCode.E_APP_SEARCH_FAILED.value),
+            error_detail=detail,
+        )
+        if result is None:
+            db.rollback()
+            return {"status": "pending", "noop": True}
+        db.commit()
+        return result
+
+    user_content = _build_oracle_user_content(question=question, candidates=candidates)
+    intent = _oracle_intent(user_content=user_content)
+
+    def lock_dispatch(dispatch_db: Session) -> JobRow | None:
+        locked_reading = dispatch_db.scalar(
+            select(OracleReading).where(OracleReading.id == reading_id).with_for_update()
+        )
+        locked_job = lock_job(dispatch_db, context.job_id)
+        if (
+            locked_reading is None
+            or locked_reading.status != "pending"
+            or locked_job is None
+            or locked_job.kind != "oracle_reading_generate"
+            or locked_job.payload.get("reading_id") != str(reading_id)
+        ):
+            return None
+        return locked_job
+
+    # A first dispatch reloads the prepared job; a replay may retain an earlier
+    # read snapshot. Neither may cross the generation host I/O boundary.
+    db.commit()
+    journal = JobGenerationJournal(
+        context=context,
+        step_path=_SYNTHESIS_STEP_PATH,
+        lock_dispatch=lock_dispatch,
+    )
+    try:
+        execution_request = await admit_job_generation(
+            owner=LlmCallOwner(kind="oracle_reading", id=reading_id),
+            generation_id=generation_id,
+            operation="oracle",
+            intent=intent,
+            prompt_template_revision=generation_policy.operation_revision(ORACLE_OPERATION),
+            prompt_payload_ref=ImmutablePromptPayloadRef(
+                owner_kind="oracle_reading",
+                owner_id=str(reading_id),
+                revision=generation_policy.operation_revision(ORACLE_OPERATION),
+                payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
+            ),
+            journal=journal,
+            session_factory=get_session_factory(),
+            runtime=runtime,
+        )
+        execution_result = await execute_generation(
+            execution_request,
+            session_factory=get_session_factory(),
+            runtime=runtime,
+            encode_terminal=lambda terminal: _encode_oracle_terminal(
+                codex_terminal_evidence(terminal),
+                candidates=candidates,
+                plate=plate,
+                requires_user_content=requires_user_content,
+            ),
+            encode_failure=_encode_oracle_failure,
+        )
+    except GenerationAdmissionInputsChanged:
+        db.rollback()
+        result = _stage_oracle_terminal_without_dispatch(
+            db,
+            reading_id=reading_id,
+            context=context,
+            reason="oracle input changed before dispatch",
+            error_code=oracle_reading_failure_code(ApiErrorCode.E_GENERATION_SOURCE_CHANGED.value),
+            error_detail="Oracle input changed after the generation was prepared",
+        )
+        if result is None:
+            db.rollback()
+            return {"status": "pending", "noop": True}
+        db.commit()
+        return result
+    except GenerationDispatchAborted:
+        result = _stage_oracle_terminal_without_dispatch(
+            db,
+            reading_id=reading_id,
+            context=context,
+            reason="oracle dispatch invalidated before acceptance",
+        )
+        if result is None:
+            db.rollback()
+            return {"status": "pending", "noop": True}
+        db.commit()
+        return result
+    if isinstance(execution_result, RescheduleRequested):
+        return execution_result
+    if not isinstance(execution_result, CompletedGeneration):
+        raise AssertionError("oracle generation result is not exhaustive")
+    completed = _COMPLETED_ORACLE_ADAPTER.validate_json(execution_result.terminal_result)
+    return _apply_completed_oracle(
+        db,
+        reading_id=reading_id,
+        context=context,
+        completed=completed,
+    )
 
 
 # ---------- internal: ownership ---------------------------------------------

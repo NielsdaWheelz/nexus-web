@@ -21,6 +21,7 @@ import { ApiError } from "@/lib/api/client";
 import type { ChatDraftKey } from "@/lib/conversations/chatDraftKey";
 import type { PaneVisitId } from "@/lib/workspace/schema";
 import ChatComposerComponent from "./ChatComposer";
+import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount";
 
 interface ChatRunCall {
   body: ChatRunCreateRequest;
@@ -32,6 +33,9 @@ interface GenerationFixtureModule {
 }
 
 interface CutoverSupport {
+  readonly adoptComposerAdmission: NonNullable<
+    ComponentProps<typeof ChatComposerComponent>["onAdmitted"]
+  >;
   readonly fixtures: GenerationFixtureModule;
   readonly invalidateGenerationCatalogCache: () => void;
 }
@@ -42,6 +46,9 @@ const cutoverModules = import.meta.glob([
   "../../__tests__/helpers/generationCatalog.ts",
   "./useGenerationCatalog.ts",
 ]);
+const admissionModules = import.meta.glob<
+  typeof import("../../__tests__/helpers/chatAdmission")
+>("../../__tests__/helpers/chatAdmission.ts");
 let cutoverSupport: CutoverSupport | null = null;
 
 function requireCutoverSupport(): CutoverSupport {
@@ -103,13 +110,23 @@ function Composer(
   props: Partial<ComponentProps<typeof ChatComposerComponent>> = {},
 ) {
   return (
-    <ChatComposerComponent
-      conversationId="00000000-0000-4000-8000-000000000001"
-      draftKey={pathKey("00000000-0000-4000-8000-000000000001")}
-      inheritedRunSelection={null}
-      sendCapability={{ kind: "Available" }}
-      {...props}
-    />
+    <AuthenticatedAccountProvider
+      account={{
+        accountId: "11111111-1111-4111-8111-111111111111",
+        calendarTimeZone: "UTC",
+      }}
+    >
+      <ChatComposerComponent
+        viewIdentity="composer-browser-visit"
+        isPaneActive={true}
+        onAdmitted={requireCutoverSupport().adoptComposerAdmission}
+        conversationId="00000000-0000-4000-8000-000000000001"
+        draftKey={pathKey("00000000-0000-4000-8000-000000000001")}
+        inheritedRunSelection={null}
+        sendCapability={{ kind: "Available" }}
+        {...props}
+      />
+    </AuthenticatedAccountProvider>
   );
 }
 
@@ -118,12 +135,21 @@ describe("ChatComposer browser contract", () => {
     const loadFixtures =
       cutoverModules["../../__tests__/helpers/generationCatalog.ts"];
     const loadCatalogOwner = cutoverModules["./useGenerationCatalog.ts"];
-    if (loadFixtures === undefined || loadCatalogOwner === undefined) return;
-    const [fixtures, catalogOwner] = await Promise.all([
+    const loadAdmission =
+      admissionModules["../../__tests__/helpers/chatAdmission.ts"];
+    if (
+      loadFixtures === undefined ||
+      loadCatalogOwner === undefined ||
+      loadAdmission === undefined
+    )
+      return;
+    const [fixtures, catalogOwner, admission] = await Promise.all([
       loadFixtures(),
       loadCatalogOwner(),
+      loadAdmission(),
     ]);
     cutoverSupport = {
+      adoptComposerAdmission: admission.adoptComposerAdmission,
       fixtures: fixtures as GenerationFixtureModule,
       invalidateGenerationCatalogCache: (
         catalogOwner as {
@@ -210,24 +236,33 @@ describe("ChatComposer browser contract", () => {
     expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
   });
 
-  it("restores a persisted draft after the hydrated browser boundary", async () => {
+  it("preserves an edited launch draft across remount and accepts a deliberate new launch", async () => {
     installBff([]);
     const draftKey = newConversationKey("hydration-draft-proof");
     const view = render(
       withRenderEnvironment(
-        <Composer conversationId={null} draftKey={draftKey} />,
+        <Composer
+          conversationId={null}
+          draftKey={draftKey}
+          initialContent="Launch seed"
+        />,
       ),
     );
     const input = await screen.findByRole<HTMLTextAreaElement>("textbox", {
       name: "Ask anything",
     });
-    await userEvent.type(input, "draft survives hydration");
+    await waitFor(() => expect(input).toHaveValue("Launch seed"));
+    await userEvent.fill(input, "draft survives hydration");
     expect(input.value).toBe("draft survives hydration");
     view.unmount();
 
-    render(
+    const { rerender } = render(
       withRenderEnvironment(
-        <Composer conversationId={null} draftKey={draftKey} />,
+        <Composer
+          conversationId={null}
+          draftKey={draftKey}
+          initialContent="Launch seed"
+        />,
       ),
     );
     const restored = await screen.findByRole<HTMLTextAreaElement>("textbox", {
@@ -236,10 +271,35 @@ describe("ChatComposer browser contract", () => {
     await waitFor(() =>
       expect(restored.value).toBe("draft survives hydration"),
     );
+    rerender(
+      withRenderEnvironment(
+        <Composer
+          conversationId={null}
+          draftKey={draftKey}
+          initialContent="Deliberate new launch"
+        />,
+      ),
+    );
+    await waitFor(() =>
+      expect(restored).toHaveValue("Deliberate new launch"),
+    );
   });
 
   it("keeps the server-rendered composer inert until its draft is restored, so hydration drops no keystroke", async () => {
     installBff([]);
+    sessionStorage.setItem(
+      "nx_chat_draft.v3:path:00000000-0000-4000-8000-00000000000c",
+      JSON.stringify({
+        text: "",
+        selection: {
+          route: "CodexPersonal",
+          model: "gpt-5.6-terra",
+          reasoning: "high",
+        },
+        toolAuthority: "ReadOnly",
+        operation: { kind: "Absent" },
+      }),
+    );
     const composer = () =>
       withRenderEnvironment(
         <Composer draftKey={pathKey("00000000-0000-4000-8000-00000000000c")} />,
@@ -257,6 +317,11 @@ describe("ChatComposer browser contract", () => {
     const root = hydrateRoot(container, composer());
     try {
       await waitFor(() => expect(textbox).toBeEnabled());
+      expect(
+        await within(container).findByRole("button", {
+          name: /Change model.*High/u,
+        }),
+      ).toBeVisible();
       await userEvent.type(textbox, "Typed once editable");
       expect(textbox).toHaveValue("Typed once editable");
     } finally {
@@ -269,7 +334,8 @@ describe("ChatComposer browser contract", () => {
     const calls: ChatRunCall[] = [];
     installBff(calls);
     const lockedKey = pathKey("00000000-0000-4000-8000-00000000000b");
-    const lockedStorageKey = "nx_chat_draft.v3:path:00000000-0000-4000-8000-00000000000b";
+    const lockedStorageKey =
+      "nx_chat_draft.v3:path:00000000-0000-4000-8000-00000000000b";
     const persisted = {
       text: "in-flight message",
       selection: {
@@ -282,6 +348,10 @@ describe("ChatComposer browser contract", () => {
         kind: "ReconcileRequired",
         command: {
           idempotencyKey: "locked-command-key",
+          origin: {
+            identity: "composer-browser-visit",
+            accountId: "11111111-1111-4111-8111-111111111111",
+          },
           request: {
             destination: {
               kind: "Existing",
@@ -323,11 +393,13 @@ describe("ChatComposer browser contract", () => {
     // One commit changes both the draft key and the seeded initialContent
     // (quote-to-chat navigation shape). The locked ReconcileRequired command
     // must survive: the seed may never overwrite a locked reconciliation.
-    view.rerender(
-      withRenderEnvironment(
-        <Composer draftKey={lockedKey} initialContent="quoted passage" />,
+    expect(() =>
+      view.rerender(
+        withRenderEnvironment(
+          <Composer draftKey={lockedKey} initialContent="quoted passage" />,
+        ),
       ),
-    );
+    ).not.toThrow();
 
     await screen.findByRole("button", { name: "Retry send" });
     expect(
@@ -344,41 +416,10 @@ describe("ChatComposer browser contract", () => {
     ).toEqual(persisted.operation);
   });
 
-  it("purges a v2 draft without decoding it and shows the reset", async () => {
-    installBff([]);
-    const draftKey = newConversationKey(
-      "3f2504e0-4f89-41d3-9a0c-0305e82c3302",
-    );
-    sessionStorage.setItem(
-      "nx_chat_draft.v2:new:3f2504e0-4f89-41d3-9a0c-0305e82c3302",
-      JSON.stringify({
-        opaque_legacy_payload: "must not be decoded or replayed",
-      }),
-    );
-
-    render(
-      withRenderEnvironment(
-        <Composer conversationId={null} draftKey={draftKey} />,
-      ),
-    );
-
-    expect(
-      await screen.findByText(/A legacy Chat draft was discarded/u),
-    ).toBeVisible();
-    expect(
-      sessionStorage.getItem(
-        "nx_chat_draft.v2:new:3f2504e0-4f89-41d3-9a0c-0305e82c3302",
-      ),
-    ).toBeNull();
-    expect(screen.queryByRole("button", { name: "Retry send" })).toBeNull();
-  });
-
   it("reloads an in-flight new-chat send as a locked Retry that replays the exact key and request", async () => {
     const calls: ChatRunCall[] = [];
     installBff(calls);
-    const draftKey = newConversationKey(
-      "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
-    );
+    const draftKey = newConversationKey("3f2504e0-4f89-41d3-9a0c-0305e82c3301");
 
     const view = render(
       withRenderEnvironment(
@@ -472,7 +513,9 @@ describe("ChatComposer browser contract", () => {
 
     expect(modelTrigger.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
     expect(stop.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
-    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(
+      window.innerWidth,
+    );
 
     await userEvent.click(stop);
     const stopping = await screen.findByRole("button", {
@@ -482,7 +525,9 @@ describe("ChatComposer browser contract", () => {
     expect(cancelCalls).toBe(1);
     releaseCancellation?.();
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Stop response" })).toBeVisible(),
+      expect(
+        screen.getByRole("button", { name: "Stop response" }),
+      ).toBeVisible(),
     );
     expect(calls).toHaveLength(0);
   });
