@@ -341,3 +341,10 @@ Register a product-only fault for each node, repoint the whole-file fault at its
 exact node, mark all three coherent-fault. See
 [docs/tickets/three-changed-python-owners-lack-a-coherent-fault-witness.md](tickets/three-changed-python-owners-lack-a-coherent-fault-witness.md).
 
+### [OPEN] OI-060 — Production synapse scans repeatedly time out
+background jobs / semantic search · opened 2026-09-11 by Codex (production deployment) · P1
+The production background worker repeatedly records PostgreSQL statement
+timeouts while scanning synapses, leaving inherited work pending. Deploy the
+current execution cutover, then prove the backlog converges without new
+unexpected timeouts. See
+[docs/tickets/production-synapse-scan-statement-timeout-backlog.md](tickets/production-synapse-scan-statement-timeout-backlog.md).

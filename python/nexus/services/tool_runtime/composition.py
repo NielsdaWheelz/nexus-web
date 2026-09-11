@@ -97,8 +97,6 @@ def _validate_binding_metadata(
     if web_search_binding.replay_policy is not ReplayPolicy.BilledOnce:
         raise ValueError("web.search must remain BilledOnce")
     for binding in nexus_bindings:
-        if not isinstance(binding.execute, Available):
-            raise ValueError(f"Nexus binding must be available: {binding.spec.id!s}")
         if (
             binding.spec.effect is ToolEffect.Write
             and binding.replay_policy is not ReplayPolicy.ReDispatchable
@@ -108,17 +106,24 @@ def _validate_binding_metadata(
             raise ValueError(f"Nexus binding must be ReDispatchable: {binding.spec.id!s}")
 
 
-def compose_tool_runtime(
+def _require_nexus_execution(
+    nexus_bindings: tuple[ToolBinding[Any, Any, Any], ...],
+    *,
+    available: bool,
+) -> None:
+    label = "available" if available else "unavailable"
+    for binding in nexus_bindings:
+        if available and not isinstance(binding.execute, Available):
+            raise ValueError(f"Nexus binding must be {label}: {binding.spec.id!s}")
+        if not available and not isinstance(binding.execute, Unavailable):
+            raise ValueError(f"Nexus binding must be {label}: {binding.spec.id!s}")
+
+
+def _compose_tool_runtime(
     web_search_binding: ToolBinding[Any, Any, Any],
     *,
-    nexus_bindings: tuple[ToolBinding[Any, Any, Any], ...] | None = None,
+    nexus_bindings: tuple[ToolBinding[Any, Any, Any], ...],
 ) -> ComposedToolRuntime:
-    """Freeze every reviewed operation plan against one exact tool catalogue."""
-
-    if nexus_bindings is None:
-        from nexus.services.tool_runtime.bindings import NEXUS_TOOL_BINDINGS
-
-        nexus_bindings = NEXUS_TOOL_BINDINGS
     _validate_binding_metadata(web_search_binding, nexus_bindings)
     catalog = ToolCatalog.compose(
         (
@@ -145,6 +150,21 @@ def compose_tool_runtime(
         operations_by_id[definition.plan_id] = operation
     operations = MappingProxyType(operations_by_id)
     return ComposedToolRuntime(catalog=catalog, operations=operations)
+
+
+def compose_tool_runtime(
+    web_search_binding: ToolBinding[Any, Any, Any],
+    *,
+    nexus_bindings: tuple[ToolBinding[Any, Any, Any], ...] | None = None,
+) -> ComposedToolRuntime:
+    """Freeze every reviewed operation plan against one exact tool catalogue."""
+
+    if nexus_bindings is None:
+        from nexus.services.tool_runtime.bindings import NEXUS_TOOL_BINDINGS
+
+        nexus_bindings = NEXUS_TOOL_BINDINGS
+    _require_nexus_execution(nexus_bindings, available=True)
+    return _compose_tool_runtime(web_search_binding, nexus_bindings=nexus_bindings)
 
 
 def _validate_frozen_operation(operation: FrozenToolOperation) -> None:
@@ -276,6 +296,28 @@ def compose_product_tool_runtime(
     return compose_tool_runtime(web_search_binding)
 
 
+def compose_projection_tool_runtime() -> ComposedToolRuntime:
+    """Compose exact plan metadata for a process that never dispatches tools."""
+
+    from nexus.services.tool_runtime.binding_contract import compose_nexus_bindings
+
+    portable = ToolCatalog.compose((web_family(),)).binding(WEB_SEARCH_SPEC.id)
+    web_search_binding: ToolBinding[Any, Any, Any] = ToolBinding(
+        spec=WEB_SEARCH_SPEC,
+        execute=Unavailable("Projection processes do not dispatch web.search"),
+        replay_policy=ReplayPolicy.BilledOnce,
+        implementation_revision=portable.implementation_revision,
+        policy_epoch=portable.policy_epoch,
+        policy_inputs={**portable.policy_inputs, **_WEB_SEARCH_POLICY_INPUTS},
+    )
+    unavailable = Unavailable("Projection processes dispatch Nexus tools through MCP")
+    nexus_bindings = compose_nexus_bindings(
+        {entry.spec.id: unavailable for entry in NEXUS_TOOL_DECLARATIONS}
+    )
+    _require_nexus_execution(nexus_bindings, available=False)
+    return _compose_tool_runtime(web_search_binding, nexus_bindings=nexus_bindings)
+
+
 def compose_configured_web_search_provider(
     client: httpx.AsyncClient,
     *,
@@ -361,6 +403,7 @@ __all__ = [
     "compose_configured_web_search_provider",
     "compose_provider_model_tools",
     "compose_product_tool_runtime",
+    "compose_projection_tool_runtime",
     "compose_tool_runtime",
     "encode_tool_plan_snapshot",
     "freeze_tool_plan_snapshot",

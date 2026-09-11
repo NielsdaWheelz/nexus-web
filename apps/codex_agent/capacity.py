@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
-_EXPECTED_MEMORY_MAX_BYTES = 384 * 1024 * 1024
+_EXPECTED_MEMORY_MAX_BYTES = 448 * 1024 * 1024
 _HOST_HEADROOM_BYTES = 256 * 1024 * 1024
 _MAX_INPUT_BYTES = 16 * 1024
 _PSI_AVG10_MAX = Decimal("5")

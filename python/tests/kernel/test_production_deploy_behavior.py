@@ -111,9 +111,9 @@ def test_codex_agent_host_is_private_worker_image_with_credential_and_socket_iso
     assert "working_dir: /tmp" in host
     assert "NEXUS_CODEX_AGENT_SOCKET: /run/nexus-codex/agent.sock" in host
     assert "read_only: true" in host
-    assert "mem_reservation: 128m" in host
-    assert "mem_limit: 384m" in host
-    assert "memswap_limit: 384m" in host
+    assert "mem_reservation: 256m" in host
+    assert "mem_limit: 448m" in host
+    assert "memswap_limit: 448m" in host
     assert "cpus: 1.0" in host
     assert "init: true" in host
     assert "init: true" in policy

@@ -310,11 +310,13 @@
     {
       "id": "durable-codex-host-capacity-admission-bypass",
       "patch": "testdata/faults/durable-codex-host-capacity-admission-bypass.patch",
-      "sha256": "7d1826f60dc345e1a2318cca18c80533f6fbba03afafa8b795fbfd57b5aa15d2",
+      "sha256": "376e51a071dc80a5bd0c5c86f03f1a8ce9e64acbcde3b0558734d804cb302376",
       "proofs": [
         "pytest:python/tests/service/test_codex_generation_host.py::test_real_uds_v2_host_lowers_tools_confines_grants_and_owns_abort_slot"
       ],
-      "expected_failure": "non-admissible capacity must be the exact 503 rejection before runtime construction"
+      "expected_failure": "non-admissible capacity must be the exact 503 rejection before runtime construction",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "f289ac978da384beb3f81c923b300ea31b43d695225825ef40f8e930b13603cc"
     },
     {
       "id": "durable-codex-state-encryption-admission-bypass",
@@ -323,7 +325,9 @@
       "proofs": [
         "pytest:python/tests/kernel/test_production_release.py::test_codex_capacity_requires_exact_encrypted_state_before_starting_runtime"
       ],
-      "expected_failure": "unencrypted Codex state reached runtime admission"
+      "expected_failure": "unencrypted Codex state reached runtime admission",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "0d9cd4577735094d6d8a800c8af3a1617cfccf77a680c08a591de4dfff8db1a9"
     },
     {
       "id": "durable-codex-diagnostic-retention-bypass",
@@ -1001,7 +1005,7 @@
       ],
       "expected_failure": "tool grant digest ignored a handler implementation change with unchanged tool schema",
       "changed_owner_red": "coherent-fault",
-      "changed_owner_sha256": "3be806b143df95d219cc3eebb2ad560796beae678a9db1737648f3c86643bb82"
+      "changed_owner_sha256": "e47ee217359145c5e5cbc9d3d1bd21be1482a09a8101f7f117bbb4eb24035e76"
     },
     {
       "id": "tool-database-event-loop-block",

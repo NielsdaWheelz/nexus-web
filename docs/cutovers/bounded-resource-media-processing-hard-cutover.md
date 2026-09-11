@@ -338,16 +338,27 @@ Use non-Swarm Compose `mem_limit`, `mem_reservation`, and `pids_limit`:
 | API | 192 MiB | 320 MiB | 256 |
 | interactive worker | 128 MiB | 256 MiB | 256 |
 | background worker | 128 MiB | 448 MiB | 256 |
+| Codex egress policy | 32 MiB | 64 MiB | 32 |
+| Codex generation host | 256 MiB | 448 MiB | 64 |
 
-Hard sum: `1,584 MiB`; host reserve: at least `320 MiB`; swap is excluded.
+Reservation sum: `1,024 MiB`; hard-cap sum: `2,096 MiB`; host reserve: at
+least `320 MiB`; service swap is excluded. Hard caps are containment ceilings,
+not an allocation budget: their sum deliberately exceeds host memory, while the
+complete reservation sum plus the host reserve fits the committed real
+`MemTotal`. Admission rejects pressure or insufficient headroom before bounded
+work starts, and the Codex host has a separate candidate-bound live
+qualification.
 
 The envelope is sized against real `MemTotal`, not the host's nominal RAM. A
 nominal 2 GiB instance reports `1,919.6 MiB`. The interactive worker's measured
 peak reached `223 MiB`; its former `224 MiB` limit plus the former full-runtime
 health subprocess caused a production cgroup OOM. The health subprocess is now
 stdlib-only, and the `256 MiB` limit leaves measured process margin while the
-complete service envelope still reserves `335.6 MiB`. The background worker
-keeps `448 MiB` because that is the measured bounded-parser envelope.
+complete reservation envelope leaves `895.6 MiB` on that measured host before
+ordinary host allocation. The background worker keeps `448 MiB` because that
+is the measured bounded-parser envelope. The Codex host reserves `256 MiB`, is
+contained at `448 MiB`, and must qualify below a `384 MiB` retained peak before
+its first promotion.
 Migration job: `512 MiB`, `256` PIDs after application writers stop.
 
 Before merge, isolated parser-process RSS probes validate representative bounded

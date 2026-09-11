@@ -12,7 +12,7 @@ or host-home mount.
 - The immutable worker image contains the pinned Codex SDK/runtime and the
   repository-owned bwrap/seccomp launcher. API and migration images do not.
 - The host runs as `10001:10001`, read-only, capability-free, with
-  `no-new-privileges`, the named AppArmor profile, a 384 MiB cgroup, and one
+  `no-new-privileges`, the named AppArmor profile, a 448 MiB cgroup, and one
   exact encrypted `auth.json` bind mounted writable. Each turn creates private
   `state/`, empty `workspace/`, and `tmp/` directories under one random root in
   the bounded, mode-`0700` `/run/nexus-codex-turns` tmpfs and links only the
@@ -27,7 +27,10 @@ or host-home mount.
   survive into the long-lived server. Docker readiness uses one bounded
   standard-library HTTP-over-UDS exchange and validates the complete exact
   health identity; it never imports a second FastAPI, Pydantic, Nexus, or
-  provider-runtime graph into the measured cgroup. Nexus passes
+  provider-runtime graph into the measured cgroup. The serving process builds
+  frozen MCP publication plans from the same canonical binding metadata as the
+  application, but imports no executable Nexus/DB dispatch owner; the MCP
+  service remains the sole tool executor. Nexus passes
   the public typed `CodexSandboxControls` contract to every `AgentRuntime` path;
   it sets `TMPDIR` to that turn's `tmp/` and fixes
   Codex workspace-write policy to exclude bare `/tmp` while retaining only
@@ -212,7 +215,7 @@ docker network create --driver bridge \
   "$ENROLLMENT_NETWORK" >/dev/null
 docker run --rm --interactive --tty --user 10001:10001 --read-only \
   --cap-drop ALL --security-opt no-new-privileges:true \
-  --memory 384m --memory-swap 384m --pids-limit 64 --cpus 1.0 \
+  --memory 448m --memory-swap 448m --pids-limit 64 --cpus 1.0 \
   --network "$ENROLLMENT_NETWORK" \
   --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m,mode=0700,uid=10001,gid=10001 \
   --mount type=bind,source=/srv/nexus/codex-state,target=/var/lib/nexus-codex \
@@ -333,13 +336,15 @@ varying only `request_id`. It never resolves a model, reasoning value, policy,
 or tool plan locally.
 
 The bounded result is `nexus-codex-capacity-canary.v4`; the enclosing immutable
-qualification remains `nexus-codex-capacity.v2`. It records only phase,
+qualification remains `nexus-codex-capacity.v3`. It records only phase,
 operation, frozen-spec fingerprint, model/reasoning identity, terminal class,
 usage presence, SDK/runtime versions, and tool/permission event counts. It
 records no prompt, model output, grant, session identifier, account identifier,
 or credential fact.
 
-The release controller measures the 384 MiB host cgroup, host headroom,
+The release controller measures the 448 MiB host cgroup from startup through
+the final canary turn and rejects a peak above 384 MiB, preserving 64 MiB for
+bounded runtime variance. It also measures host headroom,
 pressure, swap, OOM counters, and unchanged long-lived service health. Passing
 root-owned `0444` evidence is written under
 `/var/lib/nexus/releases/codex-capacity/<source-sha>.json`. The run refuses
@@ -347,10 +352,12 @@ when the encrypted credential state has less than 128 MiB free. A pre-accept
 capacity refusal is `not_run`; authentication/quota refusal is
 `subscription_blocked`; a pre-accept loss or accepted transport loss is
 `transport_retriable`. Those outcomes write no qualifying evidence. A measured
-resource or exact-contract breach writes immutable failed evidence. That
-includes an exact candidate host that Docker reports as cgroup-OOM-killed while
-`up --wait` is still starting it; an ordinary Docker or authenticated-startup
-failure without that kernel fact remains retryable and writes no false breach.
+resource or exact-contract breach writes immutable failed evidence. Sampling
+starts before the host's `up --wait`, so retained cgroup peak/OOM counters and
+one-second host-pressure samples cover authenticated bootstrap, readiness,
+input materialization, and every canary turn. An ordinary Docker or
+authenticated-startup failure without a measured kernel-envelope breach
+remains retryable and writes no false breach.
 
 An interrupted run may reclaim only its own labeled canary. A foreign
 same-named container is never name-only deletion authority. Do not stop other

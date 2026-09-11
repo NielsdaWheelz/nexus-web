@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fetch/install one immutable candidate bundle, then stop after its bounded
-# existing-VPS Codex capacity qualification: one v2 qualification wrapper
+# existing-VPS Codex capacity qualification: one v3 qualification wrapper
 # containing the v4 three-turn dawn_write/Terra-medium canary.
 # This script never calls apply.
 set -euo pipefail
