@@ -20,7 +20,6 @@ from nexus.config import get_settings
 from nexus.db.models import DawnWrite
 from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
-from nexus.errors import ApiError
 from nexus.jobs.queue import (
     JobExecutionContext,
     JobRow,
@@ -59,7 +58,6 @@ from nexus.services.llm_execution import (
     prove_uncertain_generation_not_dispatched_in_current_transaction,
 )
 from nexus.services.llm_ledger import LlmCallOwner, lock_generation_owner_in_current_transaction
-from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.structured_synthesis import outcome_failure_facts
 
@@ -610,93 +608,71 @@ async def generate_dawn_write(
     user_content = _render_signals(signals)
     intent = _dawn_write_intent(user_content=user_content)
     db.commit()
-    rate_limiter = get_rate_limiter()
-    try:
-        rate_limiter.acquire_inflight_slot(user_id)
-    except ApiError as exc:
-        logger.info(
-            "dawn_write_skipped",
-            reason="llm_rejected",
-            user_id=str(user_id),
-            error=str(exc),
+
+    def lock_dispatch(dispatch_db: Session) -> JobRow | None:
+        locked_job = lock_job(dispatch_db, context.job_id)
+        if locked_job is None or locked_job.kind != "dawn_write_job":
+            return None
+        existing = dispatch_db.scalar(
+            select(DawnWrite.id).where(
+                DawnWrite.user_id == user_id,
+                DawnWrite.local_date == local_date,
+            )
         )
+        return None if existing is not None else locked_job
+
+    journal = JobGenerationJournal(
+        context=context,
+        step_path=step_path,
+        lock_dispatch=lock_dispatch,
+    )
+
+    try:
+        execution_request = await admit_job_generation(
+            owner=LlmCallOwner(kind="dawn_write", id=generation_id),
+            generation_id=generation_id,
+            operation="dawn_write",
+            intent=intent,
+            prompt_template_revision=generation_policy.operation_revision(DAWN_WRITE_OPERATION),
+            prompt_payload_ref=ImmutablePromptPayloadRef(
+                owner_kind="dawn_write",
+                owner_id=str(generation_id),
+                revision=generation_policy.operation_revision(DAWN_WRITE_OPERATION),
+                payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
+            ),
+            journal=journal,
+            session_factory=get_session_factory(),
+            runtime=runtime,
+        )
+        execution_result = await execute_generation(
+            execution_request,
+            session_factory=get_session_factory(),
+            runtime=runtime,
+            encode_terminal=lambda terminal: _encode_dawn_write_terminal(
+                codex_terminal_evidence(terminal)
+            ),
+            encode_failure=_encode_dawn_write_failure,
+        )
+    except GenerationDispatchAborted:
         complete_prepared_dawn_write_without_dispatch(
             db,
             user_id=user_id,
             local_date=local_date,
             context=context,
-            reason="llm_rejected",
+            reason="pre_dispatch_aborted",
         )
         db.commit()
         return None
-    try:
-
-        def lock_dispatch(dispatch_db: Session) -> JobRow | None:
-            locked_job = lock_job(dispatch_db, context.job_id)
-            if locked_job is None or locked_job.kind != "dawn_write_job":
-                return None
-            existing = dispatch_db.scalar(
-                select(DawnWrite.id).where(
-                    DawnWrite.user_id == user_id,
-                    DawnWrite.local_date == local_date,
-                )
-            )
-            return None if existing is not None else locked_job
-
-        journal = JobGenerationJournal(
-            context=context,
-            step_path=step_path,
-            lock_dispatch=lock_dispatch,
-        )
-
-        try:
-            execution_request = await admit_job_generation(
-                owner=LlmCallOwner(kind="dawn_write", id=generation_id),
-                generation_id=generation_id,
-                operation="dawn_write",
-                intent=intent,
-                prompt_template_revision=generation_policy.operation_revision(DAWN_WRITE_OPERATION),
-                prompt_payload_ref=ImmutablePromptPayloadRef(
-                    owner_kind="dawn_write",
-                    owner_id=str(generation_id),
-                    revision=generation_policy.operation_revision(DAWN_WRITE_OPERATION),
-                    payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
-                ),
-                journal=journal,
-                session_factory=get_session_factory(),
-                runtime=runtime,
-            )
-            execution_result = await execute_generation(
-                execution_request,
-                session_factory=get_session_factory(),
-                runtime=runtime,
-                encode_terminal=lambda terminal: _encode_dawn_write_terminal(
-                    codex_terminal_evidence(terminal)
-                ),
-                encode_failure=_encode_dawn_write_failure,
-            )
-        except GenerationDispatchAborted:
-            complete_prepared_dawn_write_without_dispatch(
-                db,
-                user_id=user_id,
-                local_date=local_date,
-                context=context,
-                reason="pre_dispatch_aborted",
-            )
-            db.commit()
-            return None
-        if isinstance(execution_result, RescheduleRequested):
-            return execution_result
-        if not isinstance(execution_result, CompletedGeneration):
-            raise AssertionError("dawn write generation result is not exhaustive")
-        completed = _COMPLETED_DAWN_WRITE_ADAPTER.validate_json(execution_result.terminal_result)
-        return _apply_completed_dawn_write(
-            db,
-            generation_id=generation_id,
-            user_id=user_id,
-            local_date=local_date,
-            context=context,
-            completed=completed,
-        )
-    finally:
-        rate_limiter.release_inflight_slot(user_id)
+    if isinstance(execution_result, RescheduleRequested):
+        return execution_result
+    if not isinstance(execution_result, CompletedGeneration):
+        raise AssertionError("dawn write generation result is not exhaustive")
+    completed = _COMPLETED_DAWN_WRITE_ADAPTER.validate_json(execution_result.terminal_result)
+    return _apply_completed_dawn_write(
+        db,
+        generation_id=generation_id,
+        user_id=user_id,
+        local_date=local_date,
+        context=context,
+        completed=completed,
+    )

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-from uuid import uuid4
+import hashlib
+from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import Engine, select, text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import ChatRun, Message
+from nexus.db.models import ChatRun, Message, ResourceMutation
 from nexus.services.chat_run_candidates import regenerate_assistant_response
 from nexus.services.chat_run_finalize import finalize_run
 from nexus.services.generation_spec import decode_generation_spec_document
@@ -19,22 +20,29 @@ from tests.testkit.generation_catalog import (
     configured_chat_catalog_service,
 )
 from tests.testkit.llm_tool_scenarios import compose_available_product_tool_runtime
+from tests.testkit.unreachable_state import cleanup_committed_chat_user
 
 pytestmark = pytest.mark.usefixtures("committed_chat_state_isolation")
 
 
-def test_regeneration_creates_one_exact_read_only_sibling(db_session: Session) -> None:
+def test_regeneration_creates_one_exact_read_only_sibling(engine: Engine) -> None:
     """Risk: repeat mutates its source, duplicates work, or inherits write authority."""
 
-    asyncio.run(_prove_regeneration_creates_one_exact_read_only_sibling(db_session))
+    owner = uuid4()
+    try:
+        with Session(engine) as db:
+            asyncio.run(_prove_regeneration_creates_one_exact_read_only_sibling(db, owner))
+    finally:
+        cleanup_committed_chat_user(engine, user_id=owner)
 
 
-async def _prove_regeneration_creates_one_exact_read_only_sibling(db: Session) -> None:
+async def _prove_regeneration_creates_one_exact_read_only_sibling(db: Session, owner: UUID) -> None:
     catalog = configured_chat_catalog_service()
     snapshot = await catalog.read_chat()
     tools = compose_available_product_tool_runtime()
     source = await create_entitled_chat(
         db,
+        user_id=owner,
         content="Regenerate this answer without changing its exact source prompt.",
         catalog_definition_revision=snapshot.catalog.definition_revision,
         selection=CHAT_TEST_SELECTION,
@@ -95,6 +103,24 @@ async def _prove_regeneration_creates_one_exact_read_only_sibling(db: Session) -
     assert persisted_source is not None and persisted_source.status == "complete"
     assert source_assistant is not None and source_assistant.content == "Original completed answer."
     assert candidate is not None and candidate.status == "queued"
+    receipt = db.scalars(
+        select(ResourceMutation).where(
+            ResourceMutation.user_id == source.user_id,
+            ResourceMutation.mutation_scope == "chat:admission",
+            ResourceMutation.client_mutation_id
+            == hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest(),
+        )
+    ).one_or_none()
+    assert receipt is not None, "regeneration did not retain its accepted admission receipt"
+    assert receipt.response_json == {
+        "idempotency_key": idempotency_key,
+        "outcome": {
+            "kind": "Accepted",
+            "conversation_id": str(candidate.conversation_id),
+            "run_id": str(candidate.id),
+            "assistant_message_id": str(candidate.assistant_message_id),
+        },
+    }
     candidate_spec = decode_generation_spec_document(candidate.generation_spec)
     assert candidate_spec.selection == CHAT_TEST_SELECTION
     assert candidate_spec.tool_effect_mode.value == "ReadOnly"

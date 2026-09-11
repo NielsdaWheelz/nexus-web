@@ -120,6 +120,7 @@ from nexus_test_control.services import (
     materialize_provider_api_peer,
     new_run_id,
     prepare_run,
+    recovered_workspace_heavy_lock,
     required_platform_process_tools,
     reset_run_data_plane,
     resolve_adb,
@@ -683,7 +684,7 @@ class _RunnerPorts:
 
     @contextmanager
     def heavy_lock(self, repo_root: Path) -> Iterator[Path]:
-        with workspace_heavy_lock(repo_root) as path:
+        with recovered_workspace_heavy_lock(repo_root, {"NEXUS_ENV": "test"}) as path:
             yield path
 
     def prepare_run(

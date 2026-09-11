@@ -130,7 +130,7 @@ def assume_safe_failure_code(raw: str) -> SafeFailureCode:
     URL's attempt is born with)."""
     if raw not in SAFE_FAILURE_CODES:
         # justify-defect: a kernel proof scans every module that writes those
-        # columns at those moments for the codes it writes, and migration 0225
+        # columns at those moments for the codes it writes, and migration 0227
         # rejects a database whose attempt or verification columns hold one this
         # catalog does not name.
         raise AssertionError(f"uncatalogued import failure code {raw!r}")

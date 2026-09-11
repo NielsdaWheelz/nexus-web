@@ -17,7 +17,7 @@ text layer is not extractable, and OCR would be required. `processing_status`
 stays `ready_for_reading`; `failure_stage` and `failed_at` are set anyway.
 
 The catalog now names the code (otherwise `assume_safe_failure_code` defects and
-the 0226 preflight would refuse a database holding it on
+the 0227 preflight would refuse a database holding it on
 `media_source_attempts.error_code`, which
 `media_source_ingest.py:491-494` can copy from `media.last_error_code`). But
 every other member of `SafeFailureCode` names a real failure, and two owners

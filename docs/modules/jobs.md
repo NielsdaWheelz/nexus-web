@@ -32,10 +32,12 @@ non-resetting UUID that identifies exactly one attempt at running this job. It
 is persisted on `background_jobs`, carried in `JobExecutionContext` and the
 bounded-child protocol, and named by every history payload and source
 publication fence, so a repaired or requeued job never reuses an execution
-identity. Rows last claimed before migration 0226 have none, and history that
-would name such an execution says so with an Absent value. The worker installs the process-global rate limiter at
-startup (see [llms.md](llms.md)) so the first job of any kind has a working
-limiter.
+identity. Rows last claimed before migration 0227 have none, and history that
+would name such an execution says so with an Absent value. The interactive and
+background lane processes are the sole local execution-capacity owners. The
+worker installs the process-global request rate and token-budget service at
+startup (see [llms.md](llms.md)); there is no second anonymous per-user
+in-flight counter.
 
 The interactive lane dispatches in-process. The background lane instead runs every
 handler in a fresh bounded child through `jobs/process_executor.py`

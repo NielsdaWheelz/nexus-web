@@ -248,7 +248,6 @@ def create_worker(
             RateLimiter(
                 session_factory=session_factory,
                 rpm_limit=settings.rate_limit_rpm,
-                concurrent_limit=settings.rate_limit_concurrent,
             )
         )
     return JobWorker(

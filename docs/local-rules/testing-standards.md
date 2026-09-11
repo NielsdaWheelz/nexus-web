@@ -491,6 +491,16 @@ tracking identity, without admitting a caller replacement, so the runner can
 reap the complete proof tree even if cancellation escalates past cooperative
 controller cleanup.
 
+Every controller path that may create local runtime resources MUST acquire the
+lineage-wide heavy-work lock before admission and hold it through exact run
+cleanup. The lock is also the active owner's liveness lease: after acquiring it,
+the next heavy admission MUST treat any run still named by that checkout's
+mutable recovery ledger as abandoned, start or attest the checkout's local test
+services, and replay exact ledger-driven cleanup before creating a new run. It
+MUST fail closed and retain the outstanding ledger when service attestation or
+any cleanup owner fails. Recovery MUST NOT scan for, infer, or delete foreign or
+unrecorded processes, containers, databases, buckets, users, or checkouts.
+
 | Command | Required meaning |
 |---|---|
 | `./scripts/test changed [--base REF] [PATH_OR_NODE ...]` | changed static paths plus selected affected proof |

@@ -36,7 +36,6 @@ from nexus.db.models import Highlight, Media, NoteBlock, Page, SynapseSuppressio
 from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
 from nexus.errors import (
-    ApiError,
     ApiErrorCode,
     ConflictError,
     NotFoundError,
@@ -85,7 +84,6 @@ from nexus.services.llm_execution import (
 )
 from nexus.services.llm_ledger import LlmCallOwner, lock_generation_owner_in_current_transaction
 from nexus.services.media_intelligence import NotReady, get_current
-from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.resource_graph.connections import query_connections
 from nexus.services.resource_graph.edges import (
     delete_edge,
@@ -609,145 +607,133 @@ async def run_synapse_scan(
         return ScanResult("skipped")
 
     db.commit()
-    rate_limiter = get_rate_limiter()
-    try:
-        rate_limiter.acquire_inflight_slot(user_id)
-    except ApiError as exc:
-        # Inflight-slot contention is transient — another attempt is warranted.
-        logger.warning("synapse_scan_rate_limited", ref=ref.uri, error_code=exc.code.value)
-        return ScanResult("failed", error_code=exc.code.value)
-    try:
-        dossier = _build_dossier(db, user_id=user_id, ref=ref)
-        if dossier is None:
-            logger.info("synapse_scan_skipped", ref=ref.uri, reason="dossier_unavailable")
-            if state is not None:
-                db.rollback()
-                return _apply_completed_synapse(
-                    db,
-                    user_id=user_id,
-                    ref=ref,
-                    context=context,
-                    completed=_CompletedSynapseSkipped(reason="dossier_unavailable"),
-                    preaccept_reason="synapse dossier unavailable before dispatch",
-                )
-            return ScanResult("skipped")
-
-        # Close the dossier read transaction before semantic retrieval crosses
-        # the embedding transport. ``search`` then owns and closes its own
-        # pre-I/O read transaction. Over-fetch: the
-        # self/kin/connected/suppressed exclusion happens after retrieval, and
-        # the source's own chunks often dominate the top hits.
-        db.commit()
-        response = search(
-            db,
-            user_id,
-            SearchQuery(
-                text=dossier.query
-                if dossier.query is not None
-                else dossier.text[:SYNAPSE_QUERY_CHAR_BUDGET],
-                requested_kinds=frozenset({"documents", "notes"}),
-                limit=min(50, SYNAPSE_CANDIDATE_LIMIT * 4),
-            ),
-        )
-        candidates = _map_candidates(
-            response.results,
-            excluded=_excluded_refs(db, user_id=user_id, ref=ref, kin=dossier.kin_refs),
-        )
-        if not candidates:
-            # Current-only (D6): the engine currently sees nothing.
-            if state is not None:
-                db.rollback()
-            return _apply_completed_synapse(
-                db,
-                user_id=user_id,
-                ref=ref,
-                context=context,
-                completed=_CompletedSynapseSuccess(edges=()),
-                preaccept_reason=(
-                    "synapse candidate set became empty before dispatch"
-                    if state is not None
-                    else None
-                ),
-            )
-
-        user_content = _build_synapse_user_content(dossier.text, candidates)
-        intent = _synapse_intent(user_content=user_content)
-
-        def lock_dispatch(dispatch_db: Session) -> JobRow | None:
-            try:
-                assert_ref_visible(dispatch_db, viewer_id=user_id, ref=ref)
-            except NotFoundError:
-                return None
-            return get_job(dispatch_db, context.job_id)
-
-        # A first dispatch reloads the prepared job; a replay may retain an earlier
-        # read snapshot. Neither may cross the generation host I/O boundary.
-        db.commit()
-        journal = JobGenerationJournal(
-            context=context,
-            step_path=_SYNTHESIS_STEP_PATH,
-            lock_dispatch=lock_dispatch,
-        )
-        try:
-            execution_request = await admit_job_generation(
-                owner=LlmCallOwner(kind="synapse_scan", id=ref.id),
-                generation_id=generation_id,
-                operation="synapse",
-                intent=intent,
-                prompt_template_revision=generation_policy.operation_revision(SYNAPSE_OPERATION),
-                prompt_payload_ref=ImmutablePromptPayloadRef(
-                    owner_kind="synapse_scan",
-                    owner_id=str(ref.id),
-                    revision=generation_policy.operation_revision(SYNAPSE_OPERATION),
-                    payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
-                ),
-                journal=journal,
-                session_factory=get_session_factory(),
-                runtime=runtime,
-            )
-            execution_result = await execute_generation(
-                execution_request,
-                session_factory=get_session_factory(),
-                runtime=runtime,
-                encode_terminal=lambda terminal: _encode_synapse_terminal(
-                    codex_terminal_evidence(terminal),
-                    candidates=candidates,
-                ),
-                encode_failure=_encode_synapse_failure,
-            )
-        except GenerationAdmissionInputsChanged:
+    dossier = _build_dossier(db, user_id=user_id, ref=ref)
+    if dossier is None:
+        logger.info("synapse_scan_skipped", ref=ref.uri, reason="dossier_unavailable")
+        if state is not None:
             db.rollback()
             return _apply_completed_synapse(
                 db,
                 user_id=user_id,
                 ref=ref,
                 context=context,
-                completed=_CompletedSynapseSkipped(reason="input_changed"),
-                preaccept_reason="synapse input changed before dispatch",
+                completed=_CompletedSynapseSkipped(reason="dossier_unavailable"),
+                preaccept_reason="synapse dossier unavailable before dispatch",
             )
-        except GenerationDispatchAborted:
-            return _apply_completed_synapse(
-                db,
-                user_id=user_id,
-                ref=ref,
-                context=context,
-                completed=_CompletedSynapseSkipped(reason="pre_dispatch_aborted"),
-                preaccept_reason="synapse dispatch invalidated before acceptance",
-            )
-        if isinstance(execution_result, RescheduleRequested):
-            return execution_result
-        if not isinstance(execution_result, CompletedGeneration):
-            raise AssertionError("synapse generation result is not exhaustive")
-        completed = _COMPLETED_SYNAPSE_ADAPTER.validate_json(execution_result.terminal_result)
+        return ScanResult("skipped")
+
+    # Close the dossier read transaction before semantic retrieval crosses
+    # the embedding transport. ``search`` then owns and closes its own
+    # pre-I/O read transaction. Over-fetch: the
+    # self/kin/connected/suppressed exclusion happens after retrieval, and
+    # the source's own chunks often dominate the top hits.
+    db.commit()
+    response = search(
+        db,
+        user_id,
+        SearchQuery(
+            text=dossier.query
+            if dossier.query is not None
+            else dossier.text[:SYNAPSE_QUERY_CHAR_BUDGET],
+            requested_kinds=frozenset({"documents", "notes"}),
+            limit=min(50, SYNAPSE_CANDIDATE_LIMIT * 4),
+        ),
+    )
+    candidates = _map_candidates(
+        response.results,
+        excluded=_excluded_refs(db, user_id=user_id, ref=ref, kin=dossier.kin_refs),
+    )
+    if not candidates:
+        # Current-only (D6): the engine currently sees nothing.
+        if state is not None:
+            db.rollback()
         return _apply_completed_synapse(
             db,
             user_id=user_id,
             ref=ref,
             context=context,
-            completed=completed,
+            completed=_CompletedSynapseSuccess(edges=()),
+            preaccept_reason=(
+                "synapse candidate set became empty before dispatch" if state is not None else None
+            ),
         )
-    finally:
-        rate_limiter.release_inflight_slot(user_id)
+
+    user_content = _build_synapse_user_content(dossier.text, candidates)
+    intent = _synapse_intent(user_content=user_content)
+
+    def lock_dispatch(dispatch_db: Session) -> JobRow | None:
+        try:
+            assert_ref_visible(dispatch_db, viewer_id=user_id, ref=ref)
+        except NotFoundError:
+            return None
+        return get_job(dispatch_db, context.job_id)
+
+    # A first dispatch reloads the prepared job; a replay may retain an earlier
+    # read snapshot. Neither may cross the generation host I/O boundary.
+    db.commit()
+    journal = JobGenerationJournal(
+        context=context,
+        step_path=_SYNTHESIS_STEP_PATH,
+        lock_dispatch=lock_dispatch,
+    )
+    try:
+        execution_request = await admit_job_generation(
+            owner=LlmCallOwner(kind="synapse_scan", id=ref.id),
+            generation_id=generation_id,
+            operation="synapse",
+            intent=intent,
+            prompt_template_revision=generation_policy.operation_revision(SYNAPSE_OPERATION),
+            prompt_payload_ref=ImmutablePromptPayloadRef(
+                owner_kind="synapse_scan",
+                owner_id=str(ref.id),
+                revision=generation_policy.operation_revision(SYNAPSE_OPERATION),
+                payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
+            ),
+            journal=journal,
+            session_factory=get_session_factory(),
+            runtime=runtime,
+        )
+        execution_result = await execute_generation(
+            execution_request,
+            session_factory=get_session_factory(),
+            runtime=runtime,
+            encode_terminal=lambda terminal: _encode_synapse_terminal(
+                codex_terminal_evidence(terminal),
+                candidates=candidates,
+            ),
+            encode_failure=_encode_synapse_failure,
+        )
+    except GenerationAdmissionInputsChanged:
+        db.rollback()
+        return _apply_completed_synapse(
+            db,
+            user_id=user_id,
+            ref=ref,
+            context=context,
+            completed=_CompletedSynapseSkipped(reason="input_changed"),
+            preaccept_reason="synapse input changed before dispatch",
+        )
+    except GenerationDispatchAborted:
+        return _apply_completed_synapse(
+            db,
+            user_id=user_id,
+            ref=ref,
+            context=context,
+            completed=_CompletedSynapseSkipped(reason="pre_dispatch_aborted"),
+            preaccept_reason="synapse dispatch invalidated before acceptance",
+        )
+    if isinstance(execution_result, RescheduleRequested):
+        return execution_result
+    if not isinstance(execution_result, CompletedGeneration):
+        raise AssertionError("synapse generation result is not exhaustive")
+    completed = _COMPLETED_SYNAPSE_ADAPTER.validate_json(execution_result.terminal_result)
+    return _apply_completed_synapse(
+        db,
+        user_id=user_id,
+        ref=ref,
+        context=context,
+        completed=completed,
+    )
 
 
 def dismiss_synapse_edge(db: Session, *, viewer_id: UUID, edge_id: UUID) -> None:

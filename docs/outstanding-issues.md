@@ -125,7 +125,7 @@ proof can run without an embedding peer; accepted until a loopback peer exists. 
 
 ### [OPEN] OI-021 — `media_source_attempts.status = 'superseded'` has no writer
 backend · opened 2026-09-08 by Claude (imports cutover, Track A) · P3
-The status CHECK admits a value nothing writes; migration 0226 is fail-closed
+The status CHECK admits a value nothing writes; migration 0227 is fail-closed
 against it, so the allowed value is dead vocabulary. See
 [docs/tickets/media-source-attempt-superseded-status-has-no-writer.md](tickets/media-source-attempt-superseded-status-has-no-writer.md).
 
@@ -222,7 +222,7 @@ edge, which clips it; the proof measures the default root only. See
 backend · opened 2026-09-09 by Claude (imports cutover, Phase 6 chain P review) · P2
 `_item` now raises for any media whose content index reports `failed`, including
 the shape the previous classifier rendered as a repairable `NeedsAttention` row;
-0226's preflight surveys attempt codes only, so no evidence says such rows are
+0227's preflight surveys attempt codes only, so no evidence says such rows are
 absent from production. See
 [docs/tickets/imports-ingress-defect-has-no-preflight-over-extant-index-rows.md](tickets/imports-ingress-defect-has-no-preflight-over-extant-index-rows.md).
 

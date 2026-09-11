@@ -483,7 +483,7 @@ def assign_dead_job_to_heavy_capacity(db: Session, *, job_id: UUID) -> None:
 
 
 def forget_job_execution_id(db: Session, *, job_id: UUID) -> None:
-    """Model a running row claimed before migration 0225: its execution has no identity."""
+    """Model a running row claimed before migration 0227: its execution has no identity."""
     updated = db.execute(
         text(
             """
@@ -966,6 +966,48 @@ def delete_jobs_by_ids(db: Session, *, job_ids: Sequence[UUID]) -> None:
         text("DELETE FROM background_jobs WHERE id = ANY(CAST(:job_ids AS uuid[]))"),
         {"job_ids": list(job_ids)},
     )
+
+
+def cleanup_committed_chat_user(engine: Engine, *, user_id: UUID) -> None:
+    """Remove the exact synthetic user's committed chat and bootstrap state."""
+    from nexus.services.conversations import delete_conversation_rows_without_commit
+
+    with Session(engine) as db:
+        parameters = {"user_id": user_id}
+        generation_ids = db.scalars(
+            text(
+                "SELECT id FROM llm_calls WHERE owner_kind='chat_run' AND owner_id IN "
+                "(SELECT id FROM chat_runs WHERE owner_user_id=:user_id)"
+            ),
+            parameters,
+        ).all()
+        job_ids = db.scalars(
+            text(
+                "SELECT id FROM background_jobs WHERE kind='chat_run' AND payload->>'run_id' IN "
+                "(SELECT id::text FROM chat_runs WHERE owner_user_id=:user_id)"
+            ),
+            parameters,
+        ).all()
+        delete_generations_by_ids(db, generation_ids=generation_ids)
+        conversation_ids = db.scalars(
+            text("SELECT id FROM conversations WHERE owner_user_id=:user_id"), parameters
+        ).all()
+        for conversation_id in conversation_ids:
+            delete_conversation_rows_without_commit(db, conversation_id)
+        delete_jobs_by_ids(db, job_ids=job_ids)
+        for table in (
+            "resource_mutations",
+            "rate_limit_request_log",
+            "billing_entitlement_override_events",
+            "billing_entitlement_overrides",
+        ):
+            db.execute(text(f"DELETE FROM {table} WHERE user_id=:user_id"), parameters)
+        db.execute(text("DELETE FROM libraries WHERE owner_user_id=:user_id"), parameters)
+        db.execute(
+            text("DELETE FROM viewer_collection_revisions WHERE viewer_id=:user_id"), parameters
+        )
+        db.execute(text("DELETE FROM users WHERE id=:user_id"), parameters)
+        db.commit()
 
 
 type GenerationLedgerCorruption = Literal[

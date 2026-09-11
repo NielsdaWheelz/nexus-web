@@ -31,6 +31,7 @@ import ConversationForksPanel from "@/components/chat/ConversationForksPanel";
 import ConversationContextRefsSurface from "@/components/chat/ConversationContextRefsSurface";
 import { useConversation } from "@/components/chat/useConversation";
 import { useConversationPaneFind } from "@/components/chat/useConversationPaneFind";
+import { usePendingReaderSelection } from "@/components/chat/usePendingReaderSelection";
 import { useConversationContextRefs } from "@/lib/conversations/useConversationContextRefs";
 import {
   readerTargetFromReaderSelection,
@@ -42,39 +43,24 @@ import {
   type ChatDraftKey,
 } from "@/lib/conversations/chatDraftKey";
 import {
-  ApiError,
-  apiFetch,
-  isApiError,
-  isSameSystemApiDefect,
-  type ApiPath,
-} from "@/lib/api/client";
-import { absent, present, type Presence } from "@/lib/api/presence";
-import { useResource } from "@/lib/api/useResource";
-import type { PendingTurnContext } from "@/lib/conversations/pendingTurnContext";
-import {
   chatDestinationFromConversationId,
   parseReaderSelectionHash,
   readerHighlightChatIntent,
   type ReaderHighlightChatIntent,
 } from "@/lib/conversations/readerHighlightChatIntent";
-import {
-  decodeReaderSelectionPreview,
-  type ReaderSelectionOut,
-  type ReaderSelectionPreview,
-} from "@/lib/conversations/readerSelection";
+import type { ReaderSelectionOut } from "@/lib/conversations/readerSelection";
 import {
   activateResource,
   type ResourceActivation,
 } from "@/lib/resources/activation";
-import {
-  FeedbackNotice,
-  type FeedbackContent,
-} from "@/components/feedback/Feedback";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
 import type { SSEContextRefAddedEvent } from "@/lib/api/sse/events";
 import type { ContextRefOut } from "@/lib/resourceGraph/contextRefs";
+import type { AcceptedChatAdmission } from "@/lib/conversations/chatAdmission";
 import type { BranchDraft, ForkOption } from "@/lib/conversations/types";
 import {
   usePaneHash,
+  usePaneIsActive,
   usePaneParam,
   usePaneRouter,
   requirePaneRuntime,
@@ -93,207 +79,10 @@ import type { PaneFindOccurrencesPublication } from "@/lib/panes/paneSearch";
 import styles from "@/app/(authenticated)/conversations/page.module.css";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 
-// ---------------------------------------------------------------------------
-// Pending reader-selection hydration (route-owned launch intent)
-// ---------------------------------------------------------------------------
-
-function conversationErrorMessage(
-  error: ApiError,
-  operation: "LoadQuote" | "Delete" | "Load",
-): FeedbackContent {
-  switch (error.code) {
-    case "E_NOT_FOUND":
-    case "E_CONVERSATION_NOT_FOUND":
-      return {
-        tone: "Danger",
-        requestId: error.requestId,
-        title:
-          operation === "Delete"
-            ? "This chat is no longer available."
-            : operation === "LoadQuote"
-              ? "This quote is no longer available."
-              : "This chat is no longer available.",
-      };
-    case "E_FORBIDDEN":
-      return {
-        tone: "Danger",
-        title: "You don’t have access to this chat.",
-        requestId: error.requestId,
-      };
-    case "E_NETWORK":
-      if (operation === "Delete") {
-        return {
-          tone: "Danger",
-          requestId: error.requestId,
-          title: "It’s unclear whether the chat was deleted.",
-          message: "Check your chats before trying again.",
-        };
-      }
-      return {
-        tone: "Danger",
-        requestId: error.requestId,
-        title:
-          operation === "LoadQuote"
-            ? "This quote couldn’t be loaded."
-            : "This chat couldn’t be loaded.",
-      };
-    case "E_BAD_REQUEST":
-    case "E_INVALID_REQUEST":
-      return {
-        tone: "Danger",
-        requestId: error.requestId,
-        title:
-          operation === "Delete"
-            ? "This chat couldn’t be deleted."
-            : operation === "LoadQuote"
-              ? "This quote couldn’t be loaded."
-              : "This chat couldn’t be loaded.",
-      };
-    default:
-      throw error;
-  }
-}
-
-/** Map a hydration error onto the one pending-context projection.
- *  Authoritative forbidden/geometry/over-limit are `NonSendable`; a not-found
- *  for an accepted launch is projection drift (reported, retryable — NOT
- *  NonSendable); anything else is a retryable transport `LoadFailed`. */
-function mapHydrationError(
-  err: unknown,
-  intent: ReaderHighlightChatIntent,
-): PendingTurnContext {
-  if (isApiError(err)) {
-    switch (err.code) {
-      case "E_READER_SELECTION_FORBIDDEN":
-        return { kind: "NonSendable", intent, reason: "Forbidden" };
-      case "E_READER_SELECTION_GEOMETRY_ONLY":
-        return { kind: "NonSendable", intent, reason: "GeometryOnly" };
-      case "E_READER_SELECTION_TOO_LARGE":
-        return { kind: "NonSendable", intent, reason: "TooLarge" };
-      case "E_READER_SELECTION_NOT_FOUND": {
-        // justify-ignore-error: a not-found for a client-accepted launch is a
-        // reported invariant defect (projection drift), never a NonSendable.
-        console.error(
-          "Reader-selection projection drift: highlight not found for an accepted launch",
-          intent.selection,
-        );
-        const defect: FeedbackContent = {
-          tone: "Danger",
-          title: "This quote is temporarily unavailable.",
-          message:
-            "Its highlight hasn't finished syncing yet. Retry the quote to try again.",
-          requestId: err.requestId,
-        };
-        return { kind: "LoadFailed", intent, error: defect };
-      }
-      case "E_INVALID_RESPONSE":
-        throw err;
-    }
-  }
-  if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
-  return {
-    kind: "LoadFailed",
-    intent,
-    error: conversationErrorMessage(err, "LoadQuote"),
-  };
-}
-
-interface PendingReaderSelection {
-  pendingContext: Presence<PendingTurnContext>;
-  retryHydration: () => void;
-  replaceWithPreview: (preview: ReaderSelectionPreview) => void;
-}
-
-/** `Conversation` is the sole launch-intent owner: it hydrates one canonical
- *  preview from the reader-selection API and yields exactly one
- *  `Presence<PendingTurnContext>` for `ChatComposer`. Absent when there is no
- *  valid intent hash. */
-function usePendingReaderSelection(
-  intent: ReaderHighlightChatIntent | null,
-): PendingReaderSelection {
-  const selectionResource = useResource<ReaderSelectionPreview>({
-    cacheKey: intent
-      ? `chat-reader-selection:${intent.selection.mediaId}:${intent.selection.highlightId}`
-      : null,
-    load: async (signal) => {
-      if (intent === null) {
-        throw new Error("Cannot load a reader selection without an intent");
-      }
-      const response = await apiFetch<{ data: unknown }>(
-        `/api/chat-reader-selections/highlights/${intent.selection.highlightId}?${new URLSearchParams(
-          { media_id: intent.selection.mediaId },
-        )}` as ApiPath,
-        { signal },
-      );
-      const preview = decodeReaderSelectionPreview(response.data);
-      if (preview === null) {
-        throw new ApiError(
-          200,
-          "E_INVALID_RESPONSE",
-          "Reader-selection preview response is invalid",
-        );
-      }
-      return preview;
-    },
-  });
-  const [replacement, setReplacement] = useState<{
-    intent: ReaderHighlightChatIntent;
-    preview: ReaderSelectionPreview;
-  } | null>(null);
-
-  let pendingContext: Presence<PendingTurnContext>;
-  if (intent === null) {
-    pendingContext = absent();
-  } else if (replacement?.intent === intent) {
-    pendingContext = present({
-      kind: "ReaderHighlight",
-      preview: replacement.preview,
-    });
-  } else {
-    switch (selectionResource.status) {
-      case "idle":
-      case "loading":
-        pendingContext = present({ kind: "Loading", intent });
-        break;
-      case "ready":
-        pendingContext = present({
-          kind: "ReaderHighlight",
-          preview: selectionResource.data,
-        });
-        break;
-      case "error": {
-        pendingContext = present(
-          mapHydrationError(selectionResource.error, intent),
-        );
-        break;
-      }
-      default: {
-        const exhaustive: never = selectionResource;
-        throw new Error(`Unexpected reader selection resource: ${exhaustive}`);
-      }
-    }
-  }
-
-  const retryHydration = useCallback(() => {
-    if (selectionResource.status === "error") {
-      selectionResource.retry();
-    }
-  }, [selectionResource]);
-  const replaceWithPreview = useCallback(
-    (preview: ReaderSelectionPreview) => {
-      if (intent !== null) {
-        setReplacement({ intent, preview });
-      }
-    },
-    [intent],
-  );
-
-  return { pendingContext, retryHydration, replaceWithPreview };
-}
-
 export default function Conversation() {
   const conversationId = usePaneParam("id");
   const router = usePaneRouter();
+  const isPaneActive = usePaneIsActive();
   const paneRuntime = requirePaneRuntime(usePaneRuntime(), "Conversation");
   const { walk, startWalk, next, prev, leave } = useDocentWalk({
     activateTarget: paneRuntime.activateTarget,
@@ -305,7 +94,7 @@ export default function Conversation() {
 
   // Sole launch-intent owner: strictly parse the pane-local hash into a reader
   // selection key, combine it with the pane path (New / Existing) into one typed
-  // intent, and hydrate one canonical pending preview from it.
+  // intent, then delegate canonical preview hydration to its focused owner.
   const paneHash = usePaneHash();
   const hashResult = useMemo(
     () => parseReaderSelectionHash(paneHash),
@@ -333,7 +122,7 @@ export default function Conversation() {
       );
     }
   }, [readerIntentHashInvalid, paneHash]);
-  const { pendingContext, retryHydration, replaceWithPreview } =
+  const { pendingContext, retryHydration } =
     usePendingReaderSelection(readerIntent);
   const [readerAnnouncement, setReaderAnnouncement] = useState("");
 
@@ -357,26 +146,10 @@ export default function Conversation() {
     [],
   );
 
-  // Finalize the provisional /conversations/new location in this same pane once
-  // its first send resolves an id. This is current-visit/history replacement,
-  // not a user target activation: the engine retains its optimistic turn and
-  // resumes active runs on the next load, so no `?run=` replay param is needed.
-  const startedOnNewRouteRef = useRef(conversationId === null);
-  const navigatedRef = useRef(false);
-  const onConversationCreated = useCallback(
-    (createdId: string) => {
-      if (!startedOnNewRouteRef.current || navigatedRef.current) return;
-      navigatedRef.current = true;
-      router.replace(`/conversations/${createdId}`);
-    },
-    [router],
-  );
-
   const convo = useConversation({
     conversationId,
     branching: true,
     onContextRefAdded,
-    onConversationCreated,
   });
   activeConversationIdRef.current = convo.conversationId;
   const routeTargetKey = initialTargetMessageId
@@ -643,36 +416,33 @@ export default function Conversation() {
     setReaderAnnouncement("Quote removed");
   }, [stripReaderIntentHash]);
 
-  const handleIntentConsumed = useCallback(() => {
-    // A successful New send navigates to /conversations/{id}, dropping the hash
-    // on its own; only the existing-conversation case needs an explicit strip so
-    // Back cannot rehydrate a consumed intent.
-    if (conversationId !== null) stripReaderIntentHash();
-  }, [conversationId, stripReaderIntentHash]);
-
-  const handleReaderSelectionStale = useCallback(
-    (preview: ReaderSelectionPreview) => {
-      replaceWithPreview(preview);
+  const adoptAdmittedRun = convo.adoptAdmittedRun;
+  const handleAdmitted = useCallback(
+    async (
+      receipt: AcceptedChatAdmission,
+      isCurrent: () => boolean,
+    ): Promise<boolean> => {
+      if (!(await adoptAdmittedRun(receipt, isCurrent))) return false;
+      router.replace(
+        `/conversations/${receipt.outcome.conversation_id}?message=${receipt.outcome.assistant_message_id}`,
+        { activate: false },
+      );
+      return true;
     },
-    [replaceWithPreview],
+    [adoptAdmittedRun, router],
   );
 
   const handleRefreshConversation = useCallback(() => {
     void convo.branch?.reload();
   }, [convo.branch]);
 
-  // New-chat launch focuses the composer once its quote finishes hydrating.
-  const [quoteFocusSignal, setQuoteFocusSignal] = useState("");
-  const lastFocusedQuoteRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (conversationId !== null) return;
-    const ctx = pendingContext.kind === "Present" ? pendingContext.value : null;
-    if (ctx?.kind !== "ReaderHighlight") return;
-    const highlightId = ctx.preview.key.highlightId;
-    if (lastFocusedQuoteRef.current === highlightId) return;
-    lastFocusedQuoteRef.current = highlightId;
-    setQuoteFocusSignal(`quote:${highlightId}`);
-  }, [conversationId, pendingContext]);
+  // The composer consumes a ready quote's focus request in its current view.
+  const quoteFocusKey =
+    conversationId === null &&
+    pendingContext.kind === "Present" &&
+    pendingContext.value.kind === "ReaderHighlight"
+      ? `quote:${pendingContext.value.preview.key.highlightId}`
+      : null;
 
   // --------------------------------------------------------------------------
   // Pane chrome: action menu + Resource Inspector surfaces
@@ -952,7 +722,9 @@ export default function Conversation() {
                 projectionReloadRequestId={convo.projectionReloadRequestId}
                 activeRunId={convo.activeRunId}
                 onCancelRun={convo.cancelActiveRun}
-                onChatRunCreated={convo.onChatRunCreated}
+                onAdmitted={handleAdmitted}
+                viewIdentity={`${paneRuntime.visitId}:${paneRuntime.href}`}
+                isPaneActive={isPaneActive}
                 onClearBranchDraft={
                   branch ? () => branch.setBranchDraft(null) : undefined
                 }
@@ -960,13 +732,11 @@ export default function Conversation() {
                 pendingContext={pendingContext}
                 onRemovePendingContext={handleRemovePendingContext}
                 onRetryHydration={retryHydration}
-                onReaderSelectionStale={handleReaderSelectionStale}
-                onIntentConsumed={handleIntentConsumed}
                 onConversationRefresh={handleRefreshConversation}
                 onActivateSource={handleActivateReaderSelection}
                 initialContent={draft}
-                autoFocus={Boolean(branchDraft) || quoteFocusSignal !== ""}
-                focusKey={branchFocusKey || quoteFocusSignal}
+                autoFocus={Boolean(branchDraft) || quoteFocusKey !== null}
+                focusKey={branchFocusKey || quoteFocusKey || undefined}
               />
             }
           />

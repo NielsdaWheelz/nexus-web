@@ -16,6 +16,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    field_validator,
     model_serializer,
     model_validator,
 )
@@ -950,6 +951,67 @@ ChatDestination = Annotated[
     NewChatDestination | ExistingChatDestination,
     Field(discriminator="kind"),
 ]
+
+
+ChatAdmissionRejectionCode = Literal[
+    "E_RATE_LIMITED",
+    "E_MESSAGE_TOO_LONG",
+    "E_CATALOG_DEFINITION_STALE",
+    "E_INVALID_GENERATION_SELECTION",
+    "E_GENERATION_SELECTION_UNAVAILABLE",
+    "E_INVALID_REQUEST",
+    "E_BRANCH_PATH_INVALID",
+    "E_BRANCH_ANCHOR_INVALID",
+    "E_FORBIDDEN",
+    "E_NOT_FOUND",
+    "E_CONVERSATION_NOT_FOUND",
+    "E_MESSAGE_NOT_FOUND",
+    "E_READER_SELECTION_STALE",
+    "E_READER_SELECTION_NOT_FOUND",
+    "E_READER_SELECTION_FORBIDDEN",
+    "E_READER_SELECTION_GEOMETRY_ONLY",
+    "E_READER_SELECTION_TOO_LARGE",
+    "E_CONVERSATION_NO_LONGER_EMPTY",
+    "E_BILLING_REQUIRED",
+]
+
+
+class ChatAdmissionRejection(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    code: ChatAdmissionRejectionCode
+
+
+class AcceptedChatAdmission(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["Accepted"] = "Accepted"
+    conversation_id: UUID
+    run_id: UUID
+    assistant_message_id: UUID
+
+
+class RejectedChatAdmission(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["Rejected"] = "Rejected"
+    reason: ChatAdmissionRejection
+
+
+class ChatAdmissionReceipt(BaseModel):
+    """Immutable committed send decision, independent of run presentation."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    idempotency_key: str = Field(min_length=1, max_length=128)
+    outcome: Annotated[AcceptedChatAdmission | RejectedChatAdmission, Field(discriminator="kind")]
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def _normalized_key(cls, value: str) -> str:
+        if value != value.strip():
+            raise ValueError("receipt idempotency key must already be normalized")
+        return value
 
 
 class ChatRunCreateRequest(BaseModel):

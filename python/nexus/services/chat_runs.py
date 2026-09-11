@@ -13,7 +13,7 @@ import time
 from collections.abc import Mapping
 from contextlib import suppress
 from datetime import UTC, datetime
-from typing import Literal, assert_never
+from typing import Literal, assert_never, cast, get_args
 from uuid import UUID, uuid4
 
 from provider_runtime.types import (
@@ -75,17 +75,23 @@ from nexus.schemas.chat_reader_selection import ReaderSelectionInput
 from nexus.schemas.conversation import (
     CHAT_RUN_STATUS_FILTER,
     BranchAnchorRequest,
+    ChatAdmissionReceipt,
+    ChatAdmissionRejection,
+    ChatAdmissionRejectionCode,
     ChatDestination,
     ChatRunResponse,
     EmptyInsertion,
     ExistingChatDestination,
     NoBranchAnchorRequest,
+    RejectedChatAdmission,
     ReplyInsertion,
 )
 from nexus.schemas.llm import (
     CatalogDefinitionStale,
     GenerationSelectionUnavailable,
+    Ineligible,
     InvalidGenerationSelection,
+    Retired,
     RunSelectionOut,
     Selectable,
 )
@@ -116,15 +122,17 @@ from nexus.services.chat_run_finalize import (
     finalize_run,
 )
 from nexus.services.chat_run_idempotency import (
-    compute_payload_hash,
-    get_run_by_idempotency_key,
+    accepted_chat_admission,
+    chat_run_request_bytes,
     lock_idempotency_key,
+    log_chat_admission,
+    lookup_chat_admission,
     normalize_idempotency_key,
-    raise_if_payload_mismatch,
+    record_chat_admission,
 )
 from nexus.services.chat_run_message_prep import prepare_messages
 from nexus.services.chat_run_prompt_tracking import reconcile_prompt_retrievals
-from nexus.services.chat_run_response import build_chat_run_response
+from nexus.services.chat_run_response import build_chat_run_response, read_chat_run_response
 from nexus.services.chat_run_selection import chat_generation_spec, run_selection_out
 from nexus.services.chat_run_steps import (
     AssistantTurn,
@@ -165,6 +173,7 @@ from nexus.services.durable_step_journal import (
 from nexus.services.generation_admission import GenerationOperationUnavailable
 from nexus.services.generation_catalog import (
     CatalogDefinitionStaleError,
+    GenerationCatalogRefreshError,
     GenerationCatalogService,
     GenerationCatalogSnapshot,
     GenerationSelectionUnavailableError,
@@ -203,7 +212,6 @@ from nexus.services.llm_execution import (
     execute_generation,
 )
 from nexus.services.llm_ledger import LlmCallOwner, read_model_turns
-from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.redact import safe_kv
 from nexus.services.resource_graph.context import (
     add_context_ref_without_commit,
@@ -458,6 +466,11 @@ async def admit_chat_selection(
             catalog_definition_revision=catalog_definition_revision,
             selection=selection,
         )
+    except GenerationCatalogRefreshError as error:
+        raise ApiError(
+            ApiErrorCode.E_GENERATION_RUNTIME_UNAVAILABLE,
+            "Generation availability could not be refreshed; retry the same command",
+        ) from error
     except CatalogDefinitionStaleError as error:
         failure = CatalogDefinitionStale(
             current_definition_revision=error.current_definition_revision
@@ -480,6 +493,13 @@ async def admit_chat_selection(
     except GenerationSelectionUnavailableError as error:
         if isinstance(error.pair.state, Selectable):
             raise AssertionError("unavailable selection carried Selectable state") from error
+        if not isinstance(error.pair.state, Ineligible | Retired):
+            # Readiness is volatile operational evidence, not an immutable
+            # rejection of this exact command. Keep its key unsettled.
+            raise ApiError(
+                ApiErrorCode.E_GENERATION_RUNTIME_UNAVAILABLE,
+                "The selected generation route is unavailable; retry the same command",
+            ) from error
         failure = GenerationSelectionUnavailable(
             selection=error.pair.selection,
             state=error.pair.state,
@@ -578,222 +598,240 @@ async def create_chat_run(
     idempotency_key: str | None,
     catalog: GenerationCatalogService,
     tool_runtime: ComposedToolRuntime,
-) -> ChatRunResponse:
+) -> ChatAdmissionReceipt:
     normalized_key = normalize_idempotency_key(idempotency_key)
-    selection_key = reader_selection.key if reader_selection is not None else None
-
-    # 1. Hash answer-determining identity only — no live source resolution.
-    payload_hash = compute_payload_hash(
+    request_bytes = chat_run_request_bytes(
         destination=destination,
         content=content,
         catalog_definition_revision=catalog_definition_revision,
         selection=selection,
         tool_authority=tool_authority,
-        reader_selection_key=selection_key,
+        reader_selection_key=reader_selection.key if reader_selection is not None else None,
     )
-
-    existing = get_run_by_idempotency_key(db, viewer_id, normalized_key)
-    if existing is not None:
-        raise_if_payload_mismatch(existing, payload_hash, viewer_id, normalized_key)
-        existing_id = existing.id
-        db.rollback()
-        snapshot = await catalog.read_chat()
-        existing = db.get(ChatRun, existing_id)
-        if existing is None or existing.owner_user_id != viewer_id:
-            raise AssertionError("idempotent Chat run disappeared")
-        return build_chat_run_response(
-            db,
-            viewer_id,
-            existing,
-            run_selection=run_selection_out(existing, catalog_snapshot=snapshot),
+    # Existing immutable decisions require no current catalog/provider access.
+    # Release this read lock before external catalog I/O; settlement rechecks it.
+    try:
+        lock_idempotency_key(db, viewer_id, normalized_key)
+        receipt = lookup_chat_admission(
+            db, viewer_id=viewer_id, idempotency_key=normalized_key, request_bytes=request_bytes
         )
+    finally:
+        db.rollback()
+    if receipt is not None:
+        log_chat_admission(receipt, viewer_id=viewer_id, replayed=True)
+        return receipt
 
-    # Rate + destination fast-fail (no catalog resolution: a replay
-    # whose live source has since changed must still return before we touch it).
-    validate_pre_phase(
-        db,
-        viewer_id,
-        destination=destination,
-        content=content,
-    )
-    db.rollback()
-    pair = await admit_chat_selection(
-        catalog,
-        catalog_definition_revision=catalog_definition_revision,
-        selection=selection,
-    )
+    pair: ResolvedCatalogPair | None = None
+    catalog_error: ApiError | None = None
+    try:
+        pair = await admit_chat_selection(
+            catalog,
+            catalog_definition_revision=catalog_definition_revision,
+            selection=selection,
+        )
+    except ApiError as exc:
+        # A competing admission may commit while the catalog request is in
+        # flight. No catalog outcome can settle this operation before recheck.
+        catalog_error = exc
     generation_service = GenerationService(
         catalog=catalog,
         policy=generation_policy.GENERATION_POLICY,
         tools=tool_runtime,
     )
-
     try:
-        # 2. Idempotency lock; a matching replay returns before source/revision
-        #    validation, while a payload mismatch fails.
         lock_chat_generation_admission_in_current_transaction(db)
         lock_idempotency_key(db, viewer_id, normalized_key)
-        existing = get_run_by_idempotency_key(db, viewer_id, normalized_key)
-        if existing is not None:
-            raise_if_payload_mismatch(existing, payload_hash, viewer_id, normalized_key)
-            db.commit()
-            return build_chat_run_response(
-                db,
-                viewer_id,
-                existing,
-                run_selection=run_selection_out(
-                    existing,
-                    pair=pair,
-                    observed_at=datetime.now(UTC),
-                ),
-            )
-
-        # 3. Resolve the destination conversation + insertion inside the tx.
-        conversation_id, parent_message_id, branch_anchor = _resolve_destination(
-            db, viewer_id, destination
+        receipt = lookup_chat_admission(
+            db, viewer_id=viewer_id, idempotency_key=normalized_key, request_bytes=request_bytes
         )
-
-        # 4. Selection: lock+authorize the Highlight, snapshot, derive
-        #    subject/companion, verify the compare-on-send revision.
-        snapshot_json: dict[str, object] | None = None
-        subject_ref: ResourceRef | None = None
-        companion_ref: ResourceRef | None = None
-        if reader_selection is not None:
-            db.execute(
-                text("SELECT id FROM highlights WHERE id = :id FOR UPDATE"),
-                {"id": reader_selection.key.highlight_id},
-            )
-            snapshot = build_reader_selection_snapshot(
-                db, viewer_id=viewer_id, key=reader_selection.key
-            )
-            fresh_revision = compute_reader_selection_revision(snapshot)
-            if fresh_revision != reader_selection.revision:
-                # Stale precondition: raise before creating any run/replay row so
-                # the idempotency key remains unconsumed and the UI can refresh
-                # and explicitly resend.
-                preview = reader_selection_out(db, viewer_id=viewer_id, snapshot=snapshot)
-                raise ApiError(
-                    ApiErrorCode.E_READER_SELECTION_STALE,
-                    "Reader selection changed since it was previewed",
-                    details={
-                        "preview": {
-                            **preview.model_dump(mode="json"),
-                            "revision": fresh_revision,
-                        }
-                    },
+        replayed = receipt is not None
+        if receipt is None:
+            try:
+                # Every domain check and provisional write belongs to this
+                # savepoint under the settlement lock, never the catalog phase.
+                with db.begin_nested():
+                    if catalog_error is not None:
+                        raise catalog_error
+                    if pair is None:
+                        raise AssertionError("catalog admission lost its resolved selection")
+                    run = _admit_chat_run(
+                        db,
+                        viewer_id=viewer_id,
+                        destination=destination,
+                        reader_selection=reader_selection,
+                        content=content,
+                        catalog_definition_revision=catalog_definition_revision,
+                        tool_authority=tool_authority,
+                        pair=pair,
+                        generation_service=generation_service,
+                    )
+                    receipt = accepted_chat_admission(run, normalized_key)
+            except ApiError as exc:
+                if exc.code.value not in get_args(ChatAdmissionRejectionCode):
+                    raise
+                receipt = ChatAdmissionReceipt(
+                    idempotency_key=normalized_key,
+                    outcome=RejectedChatAdmission(
+                        reason=ChatAdmissionRejection(
+                            code=cast(ChatAdmissionRejectionCode, exc.code.value)
+                        )
+                    ),
                 )
-            snapshot_json = encode_reader_selection_snapshot(snapshot)
-            subject_ref = ResourceRef(scheme="highlight", id=reader_selection.key.highlight_id)
-            companion_ref = ResourceRef(scheme="media", id=reader_selection.key.media_id)
-
-        # 5 + 6. Derived subject/companion context edges (selection turns only).
-        subject_context_edge_id: UUID | None = None
-        if subject_ref is not None:
-            assert companion_ref is not None
-            subject_edge = add_context_ref_without_commit(
-                db,
-                viewer_id=viewer_id,
-                conversation_id=conversation_id,
-                target=subject_ref,
-                origin="user",
+            record_chat_admission(
+                db, viewer_id=viewer_id, request_bytes=request_bytes, receipt=receipt
             )
-            subject_context_edge_id = subject_edge.edge_id
-            add_context_ref_without_commit(
-                db,
-                viewer_id=viewer_id,
-                conversation_id=conversation_id,
-                target=companion_ref,
-                origin="system",
-            )
-
-        # 7. User message (with snapshot), pending assistant, and transient run.
-        prepared = prepare_messages(
-            db,
-            viewer_id,
-            conversation_id,
-            parent_message_id,
-            branch_anchor,
-            content,
-            snapshot_json,
-        )
-        run_id = uuid4()
-        run = ChatRun(
-            id=run_id,
-            owner_user_id=viewer_id,
-            conversation_id=prepared.conversation.id,
-            user_message_id=prepared.user_message.id,
-            assistant_message_id=prepared.assistant_message.id,
-            idempotency_key=normalized_key,
-            payload_hash=payload_hash,
-            status="queued",
-        )
-        turn_context = None
-        if subject_ref is not None:
-            turn_context = ChatRunTurnContext(
-                chat_run_id=run.id,
-                requested_subject_scheme=subject_ref.scheme,
-                requested_subject_id=subject_ref.id,
-                subject_scheme=subject_ref.scheme,
-                subject_id=subject_ref.id,
-                subject_context_edge_id=subject_context_edge_id,
-            )
-
-        # 8. Render/freeze the complete prompt, scope, tool plan, and exact
-        #    catalog receipt before the durable run or job can exist.
-        spec, run_selection = persist_frozen_chat_admission_in_current_transaction(
-            db,
-            run=run,
-            turn_context=turn_context,
-            pair=pair,
-            catalog_definition_revision=catalog_definition_revision,
-            tool_authority=tool_authority,
-            generation_service=generation_service,
-        )
-        ChatRunEventEmitter(db, run).meta(
-            {
-                "run_id": str(run.id),
-                "conversation_id": str(prepared.conversation.id),
-                "user_message_id": str(prepared.user_message.id),
-                "assistant_message_id": str(prepared.assistant_message.id),
-                "run_selection": run_selection.model_dump(mode="python"),
-                "chat_subject": (
-                    {
-                        "requested_resource_ref": subject_ref.uri,
-                        "resource_ref": subject_ref.uri,
-                        "context_edge_id": (
-                            str(subject_context_edge_id)
-                            if subject_context_edge_id is not None
-                            else None
-                        ),
-                        "companions": [companion_ref.uri] if companion_ref is not None else [],
-                    }
-                    if subject_ref is not None
-                    else None
-                ),
-            }
-        )
-        enqueue_job(
-            db,
-            kind="chat_run",
-            payload={
-                "run_id": str(run.id),
-                "generation_spec_fingerprint": spec.fingerprint,
-            },
-            priority=50,
-            max_attempts=3,
-            dedupe_key=f"chat_run:{run.id}",
-        )
         db.commit()
     except Exception:
         db.rollback()
         raise
+    log_chat_admission(receipt, viewer_id=viewer_id, replayed=replayed)
+    return receipt
 
-    return build_chat_run_response(
+
+def _admit_chat_run(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    destination: ChatDestination,
+    reader_selection: ReaderSelectionInput | None,
+    content: str,
+    catalog_definition_revision: str,
+    tool_authority: ChatToolAuthority,
+    pair: ResolvedCatalogPair,
+    generation_service: GenerationService,
+) -> ChatRun:
+    validate_pre_phase(db, viewer_id, destination=destination, content=content)
+    # 3. Resolve the destination conversation + insertion inside the tx.
+    conversation_id, parent_message_id, branch_anchor = _resolve_destination(
+        db, viewer_id, destination
+    )
+
+    # 4. Selection: lock+authorize the Highlight, snapshot, derive
+    #    subject/companion, verify the compare-on-send revision.
+    snapshot_json: dict[str, object] | None = None
+    subject_ref: ResourceRef | None = None
+    companion_ref: ResourceRef | None = None
+    if reader_selection is not None:
+        db.execute(
+            text("SELECT id FROM highlights WHERE id = :id FOR UPDATE"),
+            {"id": reader_selection.key.highlight_id},
+        )
+        snapshot = build_reader_selection_snapshot(
+            db, viewer_id=viewer_id, key=reader_selection.key
+        )
+        fresh_revision = compute_reader_selection_revision(snapshot)
+        if fresh_revision != reader_selection.revision:
+            preview = reader_selection_out(db, viewer_id=viewer_id, snapshot=snapshot)
+            raise ApiError(
+                ApiErrorCode.E_READER_SELECTION_STALE,
+                "Reader selection changed since it was previewed",
+                details={
+                    "preview": {
+                        **preview.model_dump(mode="json"),
+                        "revision": fresh_revision,
+                    }
+                },
+            )
+        snapshot_json = encode_reader_selection_snapshot(snapshot)
+        subject_ref = ResourceRef(scheme="highlight", id=reader_selection.key.highlight_id)
+        companion_ref = ResourceRef(scheme="media", id=reader_selection.key.media_id)
+
+    # 5 + 6. Derived subject/companion context edges (selection turns only).
+    subject_context_edge_id: UUID | None = None
+    if subject_ref is not None:
+        assert companion_ref is not None
+        subject_edge = add_context_ref_without_commit(
+            db,
+            viewer_id=viewer_id,
+            conversation_id=conversation_id,
+            target=subject_ref,
+            origin="user",
+        )
+        subject_context_edge_id = subject_edge.edge_id
+        add_context_ref_without_commit(
+            db,
+            viewer_id=viewer_id,
+            conversation_id=conversation_id,
+            target=companion_ref,
+            origin="system",
+        )
+
+    # 7. User message (with snapshot), pending assistant, and transient run.
+    prepared = prepare_messages(
         db,
         viewer_id,
-        run,
-        run_selection=run_selection,
+        conversation_id,
+        parent_message_id,
+        branch_anchor,
+        content,
+        snapshot_json,
     )
+    run_id = uuid4()
+    run = ChatRun(
+        id=run_id,
+        owner_user_id=viewer_id,
+        conversation_id=prepared.conversation.id,
+        user_message_id=prepared.user_message.id,
+        assistant_message_id=prepared.assistant_message.id,
+        status="queued",
+    )
+    turn_context = None
+    if subject_ref is not None:
+        turn_context = ChatRunTurnContext(
+            chat_run_id=run.id,
+            requested_subject_scheme=subject_ref.scheme,
+            requested_subject_id=subject_ref.id,
+            subject_scheme=subject_ref.scheme,
+            subject_id=subject_ref.id,
+            subject_context_edge_id=subject_context_edge_id,
+        )
+
+    # 8. Render/freeze the complete prompt, scope, tool plan, and exact
+    #    catalog receipt before the durable run or job can exist.
+    spec, run_selection = persist_frozen_chat_admission_in_current_transaction(
+        db,
+        run=run,
+        turn_context=turn_context,
+        pair=pair,
+        catalog_definition_revision=catalog_definition_revision,
+        tool_authority=tool_authority,
+        generation_service=generation_service,
+    )
+    ChatRunEventEmitter(db, run).meta(
+        {
+            "run_id": str(run.id),
+            "conversation_id": str(prepared.conversation.id),
+            "user_message_id": str(prepared.user_message.id),
+            "assistant_message_id": str(prepared.assistant_message.id),
+            "run_selection": run_selection.model_dump(mode="python"),
+            "chat_subject": (
+                {
+                    "requested_resource_ref": subject_ref.uri,
+                    "resource_ref": subject_ref.uri,
+                    "context_edge_id": (
+                        str(subject_context_edge_id)
+                        if subject_context_edge_id is not None
+                        else None
+                    ),
+                    "companions": [companion_ref.uri] if companion_ref is not None else [],
+                }
+                if subject_ref is not None
+                else None
+            ),
+        }
+    )
+    enqueue_job(
+        db,
+        kind="chat_run",
+        payload={
+            "run_id": str(run.id),
+            "generation_spec_fingerprint": spec.fingerprint,
+        },
+        priority=50,
+        max_attempts=3,
+        dedupe_key=f"chat_run:{run.id}",
+    )
+    return run
 
 
 def _resolve_destination(
@@ -930,12 +968,8 @@ def cancel_chat_run(
     if run is None or run.owner_user_id != viewer_id:
         raise AssertionError("owned chat run disappeared before cancellation")
     if run.status in TERMINAL_RUN_STATUSES:
-        return build_chat_run_response(
-            db,
-            viewer_id,
-            run,
-            run_selection=run_selection_out(run, catalog_snapshot=catalog_snapshot),
-        )
+        db.rollback()
+        return read_chat_run_response(db, viewer_id, run_id, catalog_snapshot=catalog_snapshot)
     if run.cancel_requested_at is None:
         run.cancel_requested_at = datetime.now(UTC)
         run.updated_at = datetime.now(UTC)
@@ -946,17 +980,13 @@ def cancel_chat_run(
     )
     if dead_job is not None and not requeue_dead_job(db, job_id=dead_job.id):
         raise AssertionError("suspended chat job changed while locked")
+    status = run.status
     db.commit()
     logger.info(
         "chat_run.cancel_requested",
-        **safe_kv(chat_run_id=str(run.id), status=run.status),
+        **safe_kv(chat_run_id=str(run_id), status=status),
     )
-    return build_chat_run_response(
-        db,
-        viewer_id,
-        run,
-        run_selection=run_selection_out(run, catalog_snapshot=catalog_snapshot),
-    )
+    return read_chat_run_response(db, viewer_id, run_id, catalog_snapshot=catalog_snapshot)
 
 
 def assert_chat_run_owner(db: Session, *, viewer_id: UUID, run_id: UUID) -> None:
@@ -1048,67 +1078,59 @@ async def _execute_chat_run(
     if cancellation_requested and generation_state is None:
         return _finalize_cancelled_execution(db, run=run, steps=steps)
 
-    rate_limiter = get_rate_limiter()
-    inflight_acquired = not cancellation_requested
-    if inflight_acquired:
-        rate_limiter.acquire_inflight_slot(run.owner_user_id)
-    try:
-        full_content = ""
-        final_usage: dict[str, JsonValue] | None = None
-        last_provider_event_seq: int | None = None
-        emitter = ChatRunEventEmitter(db, run, lease_fence=steps.lock_active_attempt)
-        if generation_state is None:
-            generation_state = steps.prepare(
-                generation_path,
-                spec.fingerprint,
-            )
-        elif generation_state.dispatch_phase not in {Prepared, Uncertain, Completed}:
-            raise AssertionError("chat generation step is not dispatchable")
-
-        generation_result = await _dispatch_generation_step(
-            db,
-            run=run,
-            steps=steps,
-            path=generation_path,
-            generation_id=generation_state.generation_id,
-            spec=spec,
-            intent=intent,
-            operation=operation,
-            session_factory=session_factory,
-            settings=settings,
-            emitter=emitter,
+    full_content = ""
+    final_usage: dict[str, JsonValue] | None = None
+    last_provider_event_seq: int | None = None
+    emitter = ChatRunEventEmitter(db, run, lease_fence=steps.lock_active_attempt)
+    if generation_state is None:
+        generation_state = steps.prepare(
+            generation_path,
+            spec.fingerprint,
         )
-        if isinstance(generation_result, RescheduleRequested):
-            return generation_result
-        terminal = _fold_generation_terminal(db, run=run, steps=steps, result=generation_result)
-        if terminal is not None:
-            return terminal
-        assert isinstance(generation_result, AssistantTurn)
-        full_content = generation_result.text
-        final_usage = _owned_value(generation_result.usage)
-        last_provider_event_seq = _owned_value(generation_result.last_provider_event_seq)
+    elif generation_state.dispatch_phase not in {Prepared, Uncertain, Completed}:
+        raise AssertionError("chat generation step is not dispatchable")
 
-        if is_cancel_requested(db, run.id):
-            return _finalize_cancelled_execution(
-                db,
-                run=run,
-                steps=steps,
-                assistant_content=full_content,
-                usage=final_usage,
-                last_provider_event_seq=last_provider_event_seq,
-            )
-        return _publish_chat_run(
+    generation_result = await _dispatch_generation_step(
+        db,
+        run=run,
+        steps=steps,
+        path=generation_path,
+        generation_id=generation_state.generation_id,
+        spec=spec,
+        intent=intent,
+        operation=operation,
+        session_factory=session_factory,
+        settings=settings,
+        emitter=emitter,
+    )
+    if isinstance(generation_result, RescheduleRequested):
+        return generation_result
+    terminal = _fold_generation_terminal(db, run=run, steps=steps, result=generation_result)
+    if terminal is not None:
+        return terminal
+    assert isinstance(generation_result, AssistantTurn)
+    full_content = generation_result.text
+    final_usage = _owned_value(generation_result.usage)
+    last_provider_event_seq = _owned_value(generation_result.last_provider_event_seq)
+
+    if is_cancel_requested(db, run.id):
+        return _finalize_cancelled_execution(
             db,
             run=run,
             steps=steps,
-            emitter=emitter,
-            full_content=full_content,
+            assistant_content=full_content,
             usage=final_usage,
             last_provider_event_seq=last_provider_event_seq,
         )
-    finally:
-        if inflight_acquired:
-            rate_limiter.release_inflight_slot(run.owner_user_id)
+    return _publish_chat_run(
+        db,
+        run=run,
+        steps=steps,
+        emitter=emitter,
+        full_content=full_content,
+        usage=final_usage,
+        last_provider_event_seq=last_provider_event_seq,
+    )
 
 
 def _frozen_chat_admission(

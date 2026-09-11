@@ -292,11 +292,15 @@ def contributor_fts_text_sql() -> str:
     """
 
 
-def contributor_credits_rollup_cte_sql(owner_column: Literal["media_id", "podcast_id"]) -> str:
+def contributor_credits_rollup_cte_sql(
+    owner_column: Literal["media_id", "podcast_id"], *, owner_predicate: str = "TRUE"
+) -> str:
     """Return SQL for a CTE that pre-aggregates contributor credits per owner row.
 
     owner_column selects the ``contributor_credits`` foreign key to group by. It is a
     fixed internal literal, never user input, so interpolating it into SQL is safe.
+    `owner_predicate` is also a fixed internal SQL literal. A bounded caller can
+    restrict it to its finalist owners before the metadata aggregation.
 
     The per-credit JSON is the narrowed embedded ``ContributorCreditOut`` (D-33):
     handle, display name, href, credited name, role, raw role, and order — no credit
@@ -337,6 +341,7 @@ def contributor_credits_rollup_cte_sql(owner_column: Literal["media_id", "podcas
             GROUP BY contributor_id
         ) alias_text ON alias_text.contributor_id = c.id
         WHERE cc.{owner_column} IS NOT NULL
+          AND {owner_predicate}
         GROUP BY cc.{owner_column}
     """
 

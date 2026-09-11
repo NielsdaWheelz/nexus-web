@@ -48,7 +48,11 @@ from nexus.release_artifact import (
 )
 from nexus_test_control.build import StandaloneBuild
 from nexus_test_control.model import Resource, ResourceKind
-from nexus_test_control.process import run_command, unblock_and_exec_command
+from nexus_test_control.process import (
+    run_command,
+    trusted_runner_environment,
+    unblock_and_exec_command,
+)
 from nexus_test_control.provider_api_contract import (
     PROVIDER_API_NAMES,
     TEST_GENERATION_CONTINUATION_ENCRYPTION_KEY,
@@ -97,6 +101,7 @@ from nexus_test_control.runtime import (
     template_fingerprint,
     template_lifecycle_lock,
     upgrade_runtime_to_current,
+    workspace_heavy_lock,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -2542,7 +2547,12 @@ def clean_run(
         release_run(root, environment, run_id)
 
 
-def clean_owned_runs(repo_root: Path, environment: Mapping[str, str]) -> tuple[str, ...]:
+def clean_owned_runs(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    *,
+    supabase: SupabaseCredentials | None = None,
+) -> tuple[str, ...]:
     require_test_environment(environment)
     root = canonical_repo_root(repo_root)
     if not runtime_record_path(root).exists():
@@ -2551,12 +2561,54 @@ def clean_owned_runs(repo_root: Path, environment: Mapping[str, str]) -> tuple[s
     failures: list[Exception] = []
     for run_id in run_ids:
         try:
-            clean_run(root, environment, run_id)
+            clean_run(root, environment, run_id, supabase=supabase)
         except Exception as error:
             failures.append(RuntimeContractError(f"run cleanup failed for {run_id}: {error}"))
     if failures:
         raise ExceptionGroup("owned run cleanup failed", failures)
     return run_ids
+
+
+ServiceEnsurer = Callable[[Path, Mapping[str, str]], SupabaseCredentials]
+
+
+@contextmanager
+def recovered_workspace_heavy_lock(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    *,
+    blocking: bool = True,
+    service_ensurer: ServiceEnsurer = ensure_services,
+) -> Iterator[Path]:
+    """Admit heavy work only after recovering exact resources abandoned by its predecessor.
+
+    The lineage-wide heavy lock is the runtime owner's liveness lease. Every
+    controller path that creates local runtime resources holds it until those
+    resources are cleaned. Once this acquisition succeeds, any run still in
+    the repository-owned ledger is therefore abandoned rather than concurrent.
+    Recovery remains ledger-driven and resumable: it neither scans for nor
+    terminates an unrecorded process, container, database, bucket, or user.
+    """
+    require_test_environment(environment)
+    root = canonical_repo_root(repo_root)
+    with workspace_heavy_lock(root, blocking=blocking) as lock_path:
+        recovered: tuple[str, ...] = ()
+        try:
+            if runtime_record_path(root).exists() and read_runtime(root).owned_run_ids:
+                supabase = service_ensurer(root, environment)
+                recovered = clean_owned_runs(root, environment, supabase=supabase)
+        except Exception as error:
+            raise RuntimeContractError(f"abandoned test run recovery failed: {error}") from error
+        if recovered:
+            _LOGGER.warning(
+                "recovered abandoned test runs before heavy admission: %s",
+                ",".join(recovered),
+                extra={
+                    "event": "nexus_test.abandoned_runs_recovered",
+                    "run_ids": recovered,
+                },
+            )
+        yield lock_path
 
 
 CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
@@ -3769,7 +3821,7 @@ def _parse_darwin_lsof_listener_process_ids(
 def _child_environment(environment: Mapping[str, str]) -> dict[str, str]:
     child = {key: os.environ[key] for key in _SAFE_CHILD_ENV if key in os.environ}
     child.update(environment)
-    return child
+    return trusted_runner_environment(child)
 
 
 def _run(

@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun, ChatRunEvent, Conversation, Message
+from nexus.db.session import get_repeatable_read_db
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.conversation import (
     ChatRunOut,
@@ -24,6 +25,8 @@ from nexus.schemas.presence import presence_from_nullable
 from nexus.services.chat_failure import (
     chat_failure_projection,
 )
+from nexus.services.chat_run_access import get_run_for_owner
+from nexus.services.chat_run_selection import run_selection_out
 from nexus.services.conversations import (
     conversation_to_out,
     get_message_count,
@@ -31,7 +34,30 @@ from nexus.services.conversations import (
     regeneratable_assistant_message_ids,
     rerunnable_assistant_message_ids,
 )
+from nexus.services.generation_catalog import GenerationCatalogSnapshot
 from nexus.services.message_trust_trails import build_assistant_trust_trail
+
+
+def read_chat_run_response(
+    db: Session,
+    viewer_id: UUID,
+    run_id: UUID,
+    *,
+    catalog_snapshot: GenerationCatalogSnapshot,
+) -> ChatRunResponse:
+    """Read a committed command from one fresh bounded database snapshot."""
+    get_repeatable_read_db(db)
+    db.expire_all()
+    try:
+        run = get_run_for_owner(db, viewer_id, run_id)
+        return build_chat_run_response(
+            db,
+            viewer_id,
+            run,
+            run_selection=run_selection_out(run, catalog_snapshot=catalog_snapshot),
+        )
+    finally:
+        db.rollback()
 
 
 def build_chat_run_response(

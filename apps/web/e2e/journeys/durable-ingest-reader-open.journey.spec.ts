@@ -3,6 +3,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { APIResponse, Locator, Page, TestInfo } from "playwright/test";
 import { TOOL_PROJECTION_HEADER } from "@/lib/api/client";
+import { decodeChatAdmissionResponse } from "@/lib/conversations/chatAdmission";
+import { decodeChatRunData } from "@/lib/conversations/messageWire";
 import { TOOL_PROJECTION_REVISION } from "@/lib/conversations/toolContractProjection";
 import { captureReadableArticle } from "../articleFixture";
 import {
@@ -23,6 +25,13 @@ import {
 import { pageRequest, type ExactOriginRequest } from "../request";
 
 test.use({ journeyId: "durable-ingest-reader-open" });
+
+function acceptedChatTarget(raw: unknown, commandKey: string) {
+  const receipt = decodeChatAdmissionResponse(raw, commandKey);
+  if (receipt.outcome.kind !== "Accepted")
+    throw new Error("Interactive chat was not admitted during Heavy work");
+  return receipt.outcome;
+}
 
 type Presence<T> = { kind: "Absent" } | { kind: "Present"; value: T };
 
@@ -718,10 +727,11 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
       chat_seed: { selection: unknown };
     };
   };
+  const chatCommandKey = `bounded-interactive-${randomUUID()}`;
   const chatResponse = await api.post("/api/chat-runs", {
     headers: {
       origin: webOrigin,
-      "Idempotency-Key": `bounded-interactive-${randomUUID()}`,
+      "Idempotency-Key": chatCommandKey,
       [TOOL_PROJECTION_HEADER]: TOOL_PROJECTION_REVISION,
     },
     data: {
@@ -738,43 +748,57 @@ test("bounded Heavy ingest preserves API and Light-worker service through comple
       reader_selection: { kind: "Absent" },
     },
   });
-  const admittedChat = (await readBody(chatResponse)) as {
-    data: { run: { id: string; status: string } };
-  };
+  const admittedChat = acceptedChatTarget(
+    await readBody(chatResponse),
+    chatCommandKey,
+  );
+  expect(admittedChat.conversation_id).toBe(conversation.data.id);
+  const admittedResponse = await api.get(`/api/chat-runs/${admittedChat.run_id}`, {
+    headers: { [TOOL_PROJECTION_HEADER]: TOOL_PROJECTION_REVISION },
+  });
+  const admitted = decodeChatRunData(
+    ((await readBody(admittedResponse)) as { data: unknown }).data,
+  );
   expect(
-    admittedChat.data.run.status,
-    `Interactive chat ${admittedChat.data.run.id} was not durably queued during Heavy source ${bounded.media_id}.`,
-  ).toBe("queued");
+    {
+      run_id: admitted.run.id,
+      run_conversation_id: admitted.run.conversation_id,
+      conversation_id: admitted.conversation.id,
+      run_assistant_message_id: admitted.run.assistant_message_id,
+      assistant_message_id: admitted.assistant_message.id,
+    },
+    `Interactive admission identities changed while Heavy source ${bounded.media_id} was running.`,
+  ).toEqual({
+    run_id: admittedChat.run_id,
+    run_conversation_id: admittedChat.conversation_id,
+    conversation_id: admittedChat.conversation_id,
+    run_assistant_message_id: admittedChat.assistant_message_id,
+    assistant_message_id: admittedChat.assistant_message_id,
+  });
   await expect
     .poll(
       async () => {
-        const response = await api.get(`/api/chat-runs/${admittedChat.data.run.id}`, {
+        const response = await api.get(`/api/chat-runs/${admittedChat.run_id}`, {
           headers: { [TOOL_PROJECTION_HEADER]: TOOL_PROJECTION_REVISION },
         });
         if (!response.ok()) return `http-${response.status()}`;
-        const payload = (await response.json()) as {
-          data: {
-            run: { status: string };
-            assistant_message: {
-              status: string;
-              message_document: {
-                blocks: Array<{ type: string; text?: string }>;
-              };
-            };
-          };
-        };
+        const payload = decodeChatRunData(
+          ((await response.json()) as { data: unknown }).data,
+        );
         if (
-          payload.data.run.status !== "complete" ||
-          payload.data.assistant_message.status !== "complete"
+          payload.run.status !== "complete" ||
+          payload.assistant_message.status !== "complete"
         ) {
-          return payload.data.run.status;
+          return payload.run.status;
         }
-        return payload.data.assistant_message.message_document.blocks.some(
+        const messageDocument = payload.assistant_message.message_document;
+        if (messageDocument === undefined) return "missing-message-document";
+        return messageDocument.blocks.some(
           (block) => block.type === "text" && block.text?.includes("Clavius Crater"),
         );
       },
       {
-        message: `Interactive worker did not complete chat ${admittedChat.data.run.id} during Heavy source ${bounded.media_id}.`,
+        message: `Interactive worker did not complete chat ${admittedChat.run_id} during Heavy source ${bounded.media_id}.`,
         timeout: 90_000,
       },
     )

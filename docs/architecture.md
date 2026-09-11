@@ -383,7 +383,7 @@ application-validated `event_type`, nullable `stage`/`failure_code` query
 columns, and a closed typed `payload`. `services/import_history.py` is their
 only writer: transaction-scoped helpers with no commit, scheduling, or
 domain-policy authority, recording each fact atomically with the transition it
-documents. Migration `0226` records one `HistoryBaseline` per extant upload
+documents. Migration `0227` records one `HistoryBaseline` per extant upload
 session and source attempt at recording time, which is why pre-cut coverage is
 `Partial` and a baseline can never satisfy a dated historical-failure query.
 
@@ -535,9 +535,10 @@ state without deleting history or Lectern membership. See
 [`modules/consumption-activity.md`](modules/consumption-activity.md) and
 [`cutovers/media-progress-reset-hard-cutover.md`](cutovers/media-progress-reset-hard-cutover.md).
 
-**Jobs** — `background_jobs` (raw-SQL-only durable queue), plus rate-limiter
-tables (`rate_limit_request_log`, `rate_limit_inflight`) and stream-token replay
-claims.
+**Jobs** — `background_jobs` (raw-SQL-only durable queue), plus request-rate
+records (`rate_limit_request_log`) and stream-token replay claims. Worker lane
+topology and exact queue claims own local execution capacity; no anonymous
+in-flight counter participates in admission or execution.
 
 **Oracle** — the public-domain corpus is a real `libraries` row
 (`system_key = 'oracle_corpus'`) of ordinary `media`; its text and embeddings live
@@ -747,9 +748,11 @@ Both routes use `generation/{generation_seq}/tool/{n}` with one monotonic
 parent-generation ordinal, the same receipts, evidence, citations, trust, and
 Undo.
 
-The worker installs the process-global rate limiter at startup so the first job
-of any kind has a working limiter. SERIALIZABLE retries everywhere (including
-the scheduler loop) go through the one helper `db/retries.py:retry_serializable`.
+The worker installs the process-global request-rate limiter at startup so the
+first job of any kind has a working limiter. Local execution capacity belongs
+to the single-process interactive/background lanes and queue claims.
+SERIALIZABLE retries everywhere (including the scheduler loop) go through the
+one helper `db/retries.py:retry_serializable`.
 
 ### 7.4 Auth, identity & bootstrap
 
@@ -804,13 +807,15 @@ Other identity surfaces:
   via `stripe_webhook_events`). Tiers: `free | plus | ai_plus | ai_pro`.
 - **Entitlements** (`services/billing_entitlements.py`): derived from the effective
   billing plan for sharing and transcription. Generation uses operator-owned
-  subscription/API credentials and has no product entitlement or token quota. **Internal
-  overrides** (`billing_entitlement_overrides`, CLI-managed via
+  subscription/API credentials and has no product entitlement or token quota.
+  **Internal overrides** (`billing_entitlement_overrides`, CLI-managed via
   `ops/entitlement_overrides.py`) can raise a plan upward and grant unlimited
   transcription, with a full audit trail.
 - **Rate limiting** (`services/rate_limit.py`): a PostgreSQL-backed limiter using
-  per-scope advisory locks; it limits requests per minute and concurrent
-  in-flight generations, failing closed on acquire and open on release.
+  per-scope advisory locks; it limits requests per minute and fails closed on
+  checks. Local execution capacity belongs to the existing single-worker
+  interactive/background lanes, exact queue claims, and Heavy capacity; no
+  anonymous in-flight counter participates in admission or execution.
 
 ### 7.6 Search, retrieval & the embedding pipeline
 
@@ -1297,13 +1302,17 @@ The AI chat: durable, branchable, streamed, RAG-grounded. Backend:
   **branch**. `conversation_active_paths` stores a **per-viewer** selected leaf;
   history assembly only includes messages on the current path, so sibling branches
   never leak into context.
-- **One send = one durable `ChatRun`.** HTTP never opens generation. `POST
-/chat-runs` validates + (idempotently, keyed on `Idempotency-Key` + a payload
-  hash) creates the run and enqueues a `chat_run` job, then returns. The **worker**
-  executes: assemble context → run the exact frozen Codex/API selection and
+- **One send = one immutable admission decision.** HTTP never calls the provider.
+  `POST /chat-runs` serializes by viewer and normalized `Idempotency-Key`, then
+  replays or commits one `ResourceMutation(scope="chat:admission")` receipt.
+  Accepted run/messages/event/job and receipt are atomic; a modeled rejection
+  commits only the receipt. The small Accepted receipt names conversation, run,
+  and assistant IDs. The browser persists it before canonical
+  `GET /chat-runs/{id}` hydration. The **worker** executes accepted work: assemble
+  context → run the exact frozen Codex/API selection and
   tool plan → append route-neutral events → finalize. The client merely
-  tails `chat_run_events` over SSE and reconciles via `GET /chat-runs/{id}` on
-  each stream boundary.
+  tails `chat_run_events` over SSE and reconciles through bounded repeatable-read
+  `GET /chat-runs/{id}` snapshots.
 - **Context assembly** (`context_assembler.py`, `prompt_budget.py`): a
   context-admitted, lane-ordered plan (system → scope → attached context → retrieved
   evidence → web evidence → history → current user). The prompt plan stores
@@ -2061,7 +2070,13 @@ they open over Resume and never become panes.
   the previously active pane.
 - **Measurement loop.** `nexus:web-vitals` → `WebVitalsReporter` subscriber →
   `sendBeacon` → BFF `/api/telemetry/web-vitals` → FastAPI `/telemetry/web-vitals` →
-  structlog `rum.web_vital` (request-id-correlated). A CI **First Load JS budget**
+  structlog `rum.web_vital` (request-id-correlated). The workspace pane boundary
+  separately emits one bounded, authenticated structural failure through
+  `/api/telemetry/client-defects`; the BFF injects the serving release and
+  FastAPI logs `rum.client_defect`. It carries pane/visit, phase, command/run,
+  structural error code, request ID, and React component stack, never exception
+  messages, request bodies, draft text, tokens, or provider payloads. A CI
+  **First Load JS budget**
   (typed `bundle` capability, ≤ 115 kB gz vs ~104 kB measured) runs in the
   strict-CSP standalone build. Kept
   constraints: nonce-CSP + **streaming only** — no PPR, no `next/dynamic`, no

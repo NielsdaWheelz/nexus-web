@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID, uuid4
 
@@ -12,21 +11,21 @@ from sqlalchemy.orm import Session
 from nexus.db.models import ChatRun, ChatRunTurnContext, Conversation, Message
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.jobs.queue import enqueue_job, lock_chat_generation_admission_in_current_transaction
-from nexus.schemas.conversation import ChatRunResponse
+from nexus.schemas.conversation import AcceptedChatAdmission, ChatRunResponse
 from nexus.services import generation_policy
 from nexus.services.chat_failure import rerun_eligibility
 from nexus.services.chat_run_event_store import ChatRunEventEmitter
 from nexus.services.chat_run_idempotency import (
-    compute_regeneration_payload_hash,
-    compute_rerun_payload_hash,
-    get_run_by_idempotency_key,
+    accepted_chat_admission,
+    candidate_request_bytes,
     lock_idempotency_key,
+    log_chat_admission,
+    lookup_chat_admission,
     normalize_idempotency_key,
-    raise_if_payload_mismatch,
+    record_chat_admission,
 )
 from nexus.services.chat_run_message_blocks import message_document
-from nexus.services.chat_run_response import build_chat_run_response
-from nexus.services.chat_run_selection import run_selection_out
+from nexus.services.chat_run_response import read_chat_run_response
 from nexus.services.chat_runs import (
     ExactChatSelection,
     admit_chat_selection,
@@ -107,120 +106,83 @@ async def _repeat_assistant_response(
     tool_runtime: ComposedToolRuntime,
 ) -> ChatRunResponse:
     normalized_key = normalize_idempotency_key(idempotency_key)
-    source_assistant, _, source_run, source_user = _resolve_source(
-        db,
-        viewer_id=viewer_id,
-        assistant_message_id=assistant_message_id,
-    )
-    payload_hash = _repeat_payload_hash(
+    request_bytes = candidate_request_bytes(
         operation=operation,
-        assistant_message_id=assistant_message_id,
-        source_run=source_run,
-        source_user=source_user,
+        source_assistant_message_id=assistant_message_id,
         catalog_definition_revision=catalog_definition_revision,
         selection=selection,
         tool_authority=tool_authority,
     )
-    existing = get_run_by_idempotency_key(db, viewer_id, normalized_key)
-    if existing is not None:
-        raise_if_payload_mismatch(existing, payload_hash, viewer_id, normalized_key)
-        existing_id = existing.id
-        db.rollback()
-        snapshot = await catalog.read_chat()
-        replay = db.get(ChatRun, existing_id)
-        if replay is None or replay.owner_user_id != viewer_id:
-            raise AssertionError("idempotent Chat candidate disappeared")
-        return build_chat_run_response(
-            db,
-            viewer_id,
-            replay,
-            run_selection=run_selection_out(replay, catalog_snapshot=snapshot),
+    try:
+        lock_idempotency_key(db, viewer_id, normalized_key)
+        receipt = lookup_chat_admission(
+            db, viewer_id=viewer_id, idempotency_key=normalized_key, request_bytes=request_bytes
         )
-    _assert_repeat_eligible(operation, source_run, source_assistant)
+    finally:
+        db.rollback()
+    if receipt is not None:
+        if not isinstance(receipt.outcome, AcceptedChatAdmission):
+            raise AssertionError("candidate admission has a rejected receipt")
+        log_chat_admission(receipt, viewer_id=viewer_id, replayed=True)
+        snapshot = await catalog.read_chat()
+        return read_chat_run_response(
+            db, viewer_id, receipt.outcome.run_id, catalog_snapshot=snapshot
+        )
 
-    # Catalog/readiness I/O never spans a database transaction. The mutation
-    # transaction below re-resolves every source authority fact.
-    db.rollback()
-    pair = await admit_chat_selection(
-        catalog,
-        catalog_definition_revision=catalog_definition_revision,
-        selection=selection,
-    )
+    pair: ResolvedCatalogPair | None = None
+    catalog_error: ApiError | None = None
+    try:
+        pair = await admit_chat_selection(
+            catalog,
+            catalog_definition_revision=catalog_definition_revision,
+            selection=selection,
+        )
+    except ApiError as exc:
+        catalog_error = exc
     generation_service = GenerationService(
         catalog=catalog,
         policy=generation_policy.GENERATION_POLICY,
         tools=tool_runtime,
     )
-
     try:
         lock_chat_generation_admission_in_current_transaction(db)
         lock_idempotency_key(db, viewer_id, normalized_key)
-        source_assistant, _, source_run, source_user = _resolve_source(
-            db,
-            viewer_id=viewer_id,
-            assistant_message_id=assistant_message_id,
+        receipt = lookup_chat_admission(
+            db, viewer_id=viewer_id, idempotency_key=normalized_key, request_bytes=request_bytes
         )
-        payload_hash = _repeat_payload_hash(
-            operation=operation,
-            assistant_message_id=assistant_message_id,
-            source_run=source_run,
-            source_user=source_user,
-            catalog_definition_revision=catalog_definition_revision,
-            selection=selection,
-            tool_authority=tool_authority,
-        )
-        existing = get_run_by_idempotency_key(db, viewer_id, normalized_key)
-        if existing is not None:
-            raise_if_payload_mismatch(existing, payload_hash, viewer_id, normalized_key)
-            db.commit()
-            return build_chat_run_response(
-                db,
-                viewer_id,
-                existing,
-                run_selection=run_selection_out(
-                    existing,
-                    pair=pair,
-                    observed_at=datetime.now(UTC),
-                ),
+        replayed = receipt is not None
+        if receipt is None:
+            if catalog_error is not None:
+                raise catalog_error
+            if pair is None:
+                raise AssertionError("catalog admission lost its resolved selection")
+            source_assistant, _, source_run, source_user = _resolve_source(
+                db, viewer_id=viewer_id, assistant_message_id=assistant_message_id
             )
-        _assert_repeat_eligible(operation, source_run, source_assistant)
-        return _create_sibling_candidate(
-            db,
-            viewer_id=viewer_id,
-            source_run=source_run,
-            source_user_message=source_user,
-            normalized_key=normalized_key,
-            payload_hash=payload_hash,
-            catalog_definition_revision=catalog_definition_revision,
-            pair=pair,
-            generation_service=generation_service,
-        )
+            _assert_repeat_eligible(operation, source_run, source_assistant)
+            run = _create_sibling_candidate(
+                db,
+                viewer_id=viewer_id,
+                source_run=source_run,
+                source_user_message=source_user,
+                catalog_definition_revision=catalog_definition_revision,
+                pair=pair,
+                generation_service=generation_service,
+            )
+            receipt = accepted_chat_admission(run, normalized_key)
+            record_chat_admission(
+                db, viewer_id=viewer_id, request_bytes=request_bytes, receipt=receipt
+            )
+        if not isinstance(receipt.outcome, AcceptedChatAdmission):
+            raise AssertionError("candidate admission has a rejected receipt")
+        run_id = receipt.outcome.run_id
+        db.commit()
     except Exception:
         db.rollback()
         raise
-
-
-def _repeat_payload_hash(
-    *,
-    operation: RepeatOperation,
-    assistant_message_id: UUID,
-    source_run: ChatRun,
-    source_user: Message,
-    catalog_definition_revision: str,
-    selection: ExactChatSelection,
-    tool_authority: Literal["ReadOnly"],
-) -> str:
-    compute = (
-        compute_rerun_payload_hash if operation == "rerun" else compute_regeneration_payload_hash
-    )
-    return compute(
-        source_assistant_message_id=assistant_message_id,
-        source_run=source_run,
-        source_user_message=source_user,
-        catalog_definition_revision=catalog_definition_revision,
-        selection=selection,
-        tool_authority=tool_authority,
-    )
+    log_chat_admission(receipt, viewer_id=viewer_id, replayed=replayed)
+    snapshot = await catalog.read_chat()
+    return read_chat_run_response(db, viewer_id, run_id, catalog_snapshot=snapshot)
 
 
 def _resolve_source(
@@ -229,11 +191,22 @@ def _resolve_source(
     viewer_id: UUID,
     assistant_message_id: UUID,
 ) -> tuple[Message, Conversation, ChatRun, Message]:
-    assistant_message = db.get(Message, assistant_message_id)
-    if assistant_message is None or assistant_message.role != "assistant":
+    # Source deletion takes the same parent lock. Once first admission resolves
+    # its source, deletion cannot invalidate its snapshot before publication.
+    conversation = db.scalar(
+        select(Conversation)
+        .join(Message, Message.conversation_id == Conversation.id)
+        .where(
+            Message.id == assistant_message_id,
+            Message.role == "assistant",
+            Conversation.owner_user_id == viewer_id,
+        )
+        .with_for_update(of=Conversation)
+    )
+    if conversation is None:
         raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
-    conversation = db.get(Conversation, assistant_message.conversation_id)
-    if conversation is None or conversation.owner_user_id != viewer_id:
+    assistant_message = db.get(Message, assistant_message_id)
+    if assistant_message is None:
         raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
     owning_runs = list(
         db.scalars(
@@ -260,12 +233,10 @@ def _create_sibling_candidate(
     viewer_id: UUID,
     source_run: ChatRun,
     source_user_message: Message,
-    normalized_key: str,
-    payload_hash: str,
     catalog_definition_revision: str,
     pair: ResolvedCatalogPair,
     generation_service: GenerationService,
-) -> ChatRunResponse:
+) -> ChatRun:
     user_message = Message(
         conversation_id=source_run.conversation_id,
         seq=assign_next_message_seq(db, source_run.conversation_id),
@@ -318,8 +289,6 @@ def _create_sibling_candidate(
         conversation_id=source_run.conversation_id,
         user_message_id=user_message.id,
         assistant_message_id=assistant_message.id,
-        idempotency_key=normalized_key,
-        payload_hash=payload_hash,
         status="queued",
     )
     source_context = db.get(ChatRunTurnContext, source_run.id)
@@ -365,13 +334,7 @@ def _create_sibling_candidate(
         max_attempts=3,
         dedupe_key=f"chat_run:{run.id}",
     )
-    db.commit()
-    return build_chat_run_response(
-        db,
-        viewer_id,
-        run,
-        run_selection=selection_out,
-    )
+    return run
 
 
 def _assert_repeat_eligible(

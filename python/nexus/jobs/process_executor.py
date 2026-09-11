@@ -735,7 +735,6 @@ def _initialize_child_runtime(runtime: Literal["Base", "Llm"]) -> None:
         RateLimiter(
             session_factory=get_session_factory(),
             rpm_limit=settings.rate_limit_rpm,
-            concurrent_limit=settings.rate_limit_concurrent,
         )
     )
 

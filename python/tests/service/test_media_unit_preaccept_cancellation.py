@@ -26,7 +26,6 @@ if TYPE_CHECKING or _CUTOVER_PRESENT:
         MediaSummary,
         ProcessingStatus,
     )
-    from nexus.db.session import create_session_factory
     from nexus.jobs.queue import (
         JobExecutionContext,
         JobRow,
@@ -51,7 +50,6 @@ if TYPE_CHECKING or _CUTOVER_PRESENT:
     )
     from nexus.services.llm_ledger import read_generation
     from nexus.services.media_intelligence import ensure_media_unit, run_media_unit_build
-    from nexus.services.rate_limit import RateLimiter, get_rate_limiter, set_rate_limiter
     from nexus.services.tool_runtime.composition import compose_product_tool_runtime
     from tests.testkit.codex_generation import (
         bind_test_codex_admission,
@@ -332,8 +330,6 @@ def _mutate_owner_precondition(
             )
             assert evidence is not None
             evidence.span_text = "changed offered evidence"
-        case "inflight_rejected":
-            pass
         case _:
             raise AssertionError(f"unknown media cancellation case {case}")
     db.commit()
@@ -349,7 +345,6 @@ def _mutate_owner_precondition(
         ("no_owner", "failed", "failure"),
         ("no_candidates", "failed", "failure"),
         ("request_fingerprint_changed", "ok", "skip"),
-        ("inflight_rejected", "failed", "failure"),
     ],
 )
 def test_prepared_media_owner_exit_closes_without_dispatch_or_ledger(
@@ -362,41 +357,34 @@ def test_prepared_media_owner_exit_closes_without_dispatch_or_ledger(
 
     _require_cutover()
     seeded = _seed_build(engine)
-    previous_limiter = get_rate_limiter()
-    set_rate_limiter(RateLimiter(session_factory=create_session_factory(engine)))
-    try:
-        _restore_prepared(engine, seeded)
-        with Session(engine) as db:
-            _mutate_owner_precondition(db, seeded=seeded, case=case)
-        if case == "inflight_rejected":
-            set_rate_limiter(RateLimiter())
+    _restore_prepared(engine, seeded)
+    with Session(engine) as db:
+        _mutate_owner_precondition(db, seeded=seeded, case=case)
 
-        with Session(engine) as db:
-            result = asyncio.run(
-                run_media_unit_build(
-                    db,
-                    media_id=seeded.media_id,
-                    content_fingerprint=seeded.content_fingerprint,
-                    ctx=seeded.context,
-                    runtime=compose_codex_execution_runtime(
-                        _NoDispatchTransport(),
-                        tools=compose_product_tool_runtime(None),
-                    ),
-                )
+    with Session(engine) as db:
+        result = asyncio.run(
+            run_media_unit_build(
+                db,
+                media_id=seeded.media_id,
+                content_fingerprint=seeded.content_fingerprint,
+                ctx=seeded.context,
+                runtime=compose_codex_execution_runtime(
+                    _NoDispatchTransport(),
+                    tools=compose_product_tool_runtime(None),
+                ),
             )
-        assert result == expected_result
+        )
+    assert result == expected_result
 
-        with Session(engine) as db:
-            job = get_job(db, seeded.job.id)
-            record = read_generation(db, generation_id=seeded.generation_id)
-            assert job is not None
-            completed = read_step_states(job)["synthesis"]
-            assert completed.dispatch_phase is Completed
-            assert isinstance(completed.terminal_result, Present)
-            assert record is None
-            assert json.loads(completed.terminal_result.value)["outcome"] == expected_memo_outcome
-    finally:
-        set_rate_limiter(previous_limiter)
+    with Session(engine) as db:
+        job = get_job(db, seeded.job.id)
+        record = read_generation(db, generation_id=seeded.generation_id)
+        assert job is not None
+        completed = read_step_states(job)["synthesis"]
+        assert completed.dispatch_phase is Completed
+        assert isinstance(completed.terminal_result, Present)
+        assert record is None
+        assert json.loads(completed.terminal_result.value)["outcome"] == expected_memo_outcome
 
 
 def test_prepared_media_dispatch_abort_closes_without_fabricating_a_ledger(
@@ -406,38 +394,33 @@ def test_prepared_media_dispatch_abort_closes_without_fabricating_a_ledger(
 
     _require_cutover()
     seeded = _seed_build(engine)
-    previous_limiter = get_rate_limiter()
-    set_rate_limiter(RateLimiter(session_factory=create_session_factory(engine)))
-    try:
-        _restore_prepared(engine, seeded)
-        transport = _AbortAtOwnerFenceTransport(engine, seeded.summary_id)
-        with Session(engine) as db:
-            result = asyncio.run(
-                run_media_unit_build(
-                    db,
-                    media_id=seeded.media_id,
-                    content_fingerprint=seeded.content_fingerprint,
-                    ctx=seeded.context,
-                    runtime=compose_codex_execution_runtime(
-                        transport,
-                        tools=compose_product_tool_runtime(None),
-                    ),
-                )
+    _restore_prepared(engine, seeded)
+    transport = _AbortAtOwnerFenceTransport(engine, seeded.summary_id)
+    with Session(engine) as db:
+        result = asyncio.run(
+            run_media_unit_build(
+                db,
+                media_id=seeded.media_id,
+                content_fingerprint=seeded.content_fingerprint,
+                ctx=seeded.context,
+                runtime=compose_codex_execution_runtime(
+                    transport,
+                    tools=compose_product_tool_runtime(None),
+                ),
             )
-        assert result == "ok"
-        assert transport.dispatches == 0
+        )
+    assert result == "ok"
+    assert transport.dispatches == 0
 
-        with Session(engine) as db:
-            job = get_job(db, seeded.job.id)
-            record = read_generation(db, generation_id=seeded.generation_id)
-            assert job is not None
-            completed = read_step_states(job)["synthesis"]
-            assert completed.dispatch_phase is Completed
-            assert isinstance(completed.terminal_result, Present)
-            assert json.loads(completed.terminal_result.value) == {
-                "outcome": "skip",
-                "reason": "dispatch_aborted",
-            }
-            assert record is None
-    finally:
-        set_rate_limiter(previous_limiter)
+    with Session(engine) as db:
+        job = get_job(db, seeded.job.id)
+        record = read_generation(db, generation_id=seeded.generation_id)
+        assert job is not None
+        completed = read_step_states(job)["synthesis"]
+        assert completed.dispatch_phase is Completed
+        assert isinstance(completed.terminal_result, Present)
+        assert json.loads(completed.terminal_result.value) == {
+            "outcome": "skip",
+            "reason": "dispatch_aborted",
+        }
+        assert record is None

@@ -5,11 +5,11 @@ from __future__ import annotations
 import asyncio
 from importlib.util import find_spec
 from typing import TYPE_CHECKING
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select, text
+from sqlalchemy import Engine, func, select, text
 from sqlalchemy.orm import Session
 
 # BASE sensitivity overlays this proof without candidate production owners.
@@ -18,6 +18,7 @@ _CUTOVER_PRESENT = find_spec("nexus.services.generation_selection") is not None
 if TYPE_CHECKING or _CUTOVER_PRESENT:
     from nexus.db.models import ChatPromptAssembly, ChatRun, Conversation, Message
     from nexus.errors import ApiError, ApiErrorCode
+    from nexus.schemas.conversation import NewChatDestination
     from nexus.schemas.llm import (
         AssistantUnavailableChatFailure,
         ExpectedChatFailure,
@@ -30,7 +31,7 @@ if TYPE_CHECKING or _CUTOVER_PRESENT:
         rerun_assistant_response,
     )
     from nexus.services.chat_run_finalize import finalize_run
-    from nexus.services.chat_runs import admit_chat_selection, get_chat_run
+    from nexus.services.chat_runs import admit_chat_selection, create_chat_run, get_chat_run
     from nexus.services.conversation_branches import get_conversation_tree
     from nexus.services.conversations import list_messages
     from nexus.services.generation_selection import ProviderApiSelection
@@ -43,6 +44,7 @@ if TYPE_CHECKING or _CUTOVER_PRESENT:
         configured_chat_catalog_service,
     )
     from tests.testkit.llm_tool_scenarios import compose_available_product_tool_runtime
+    from tests.testkit.unreachable_state import cleanup_committed_chat_user
 
 # The committed-state isolation fixture is a candidate-only service conftest
 # fixture, and BASE sensitivity overlays this proof without that conftest.
@@ -52,15 +54,20 @@ pytestmark = [pytest.mark.usefixtures("committed_chat_state_isolation")] if _CUT
 
 
 def test_exact_selection_and_authority_cross_every_chat_projection(
-    db_session: Session,
+    engine: Engine,
 ) -> None:
     """Risk: a queued/replayed/repeated run loses or silently changes billable dispatch facts."""
 
     assert _CUTOVER_PRESENT, "the final exact Chat generation selection is absent"
-    asyncio.run(_prove_exact_selection_and_authority(db_session))
+    owner = uuid4()
+    try:
+        with Session(engine) as db:
+            asyncio.run(_prove_exact_selection_and_authority(db, owner))
+    finally:
+        cleanup_committed_chat_user(engine, user_id=owner)
 
 
-async def _prove_exact_selection_and_authority(db_session: Session) -> None:
+async def _prove_exact_selection_and_authority(db_session: Session, owner: UUID) -> None:
     catalog = configured_chat_catalog_service()
     snapshot = await catalog.read_chat()
     tool_runtime = compose_available_product_tool_runtime()
@@ -74,19 +81,30 @@ async def _prove_exact_selection_and_authority(db_session: Session) -> None:
         tool_authority="AdditiveWrites",
         catalog=catalog,
         tool_runtime=tool_runtime,
+        user_id=owner,
     )
-    replay = await create_entitled_chat(
+    replay = await create_chat_run(
         db_session,
+        viewer_id=created.user_id,
+        destination=NewChatDestination(),
+        reader_selection=None,
         content="Explain the ownership boundary.",
         catalog_definition_revision=revision,
         selection=CHAT_TEST_SELECTION,
         tool_authority="AdditiveWrites",
         catalog=catalog,
         tool_runtime=tool_runtime,
-        user_id=created.user_id,
         idempotency_key=created.idempotency_key,
     )
-    assert replay.run_id == created.run_id
+    source_run = db_session.get(ChatRun, created.run_id)
+    assert source_run is not None
+    replay_document = replay.model_dump(mode="json")
+    assert replay_document.get("outcome") == {
+        "kind": "Accepted",
+        "conversation_id": str(created.conversation_id),
+        "run_id": str(created.run_id),
+        "assistant_message_id": str(source_run.assistant_message_id),
+    }, "exact replay did not return the retained immutable admission identities"
 
     run = db_session.get(ChatRun, created.run_id)
     assert run is not None
@@ -160,10 +178,9 @@ async def _prove_exact_selection_and_authority(db_session: Session) -> None:
     assert regenerated.run.run_selection.tool_authority == "ReadOnly"
     regenerated_row = db_session.get(ChatRun, regenerated.run.id)
     assert regenerated_row is not None
-    assert (
-        decode_generation_spec_document(regenerated_row.generation_spec).tool_effect_mode.value
-        == "ReadOnly"
-    )
+    regenerated_spec = decode_generation_spec_document(regenerated_row.generation_spec)
+    assert regenerated_spec.tool_effect_mode.kind == "Present"
+    assert regenerated_spec.tool_effect_mode.value == "ReadOnly"
 
     tree = get_conversation_tree(
         db_session,

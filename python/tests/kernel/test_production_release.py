@@ -2365,8 +2365,8 @@ def test_host_apply_rejects_a_runtime_identical_but_different_activated_image(
     ("drift", "message"),
     [
         ("security", "Codex agent host privilege isolation differs"),
-        ("systempaths_missing", "Codex agent host privilege isolation differs"),
-        ("systempaths_mutated", "Codex agent host privilege isolation differs"),
+        ("security_duplicate", "Codex agent host privilege isolation differs"),
+        ("devices", "Codex agent host privilege isolation differs"),
         ("nanocpus", "Codex agent host privilege isolation differs"),
         ("masked_paths", "Codex agent host privilege isolation differs"),
         ("readonly_paths", "Codex agent host privilege isolation differs"),
@@ -2573,14 +2573,95 @@ def test_host_apply_rejects_an_unhealthy_codex_egress_policy(
     assert final_state["containers"]["codex-egress-policy"]["running"] is False
 
 
-def test_host_apply_accepts_the_exact_compose_systempaths_security_option(
+def test_host_apply_accepts_engine_canonicalized_isolation_evidence(
     host_release_harness: HostReleaseHarness,
 ) -> None:
+    """Risk: release rejects Docker's safe canonical inspect representation."""
+
     harness = host_release_harness
+    state = harness.state()
+    host_config = state["containers"]["nexus-codex-agent-host"]["host_config"]
+    policy_config = state["containers"]["codex-egress-policy"]["host_config"]
+    assert host_config["Devices"] is None
+    assert host_config["SecurityOpt"] == [
+        "no-new-privileges:true",
+        "seccomp=unconfined",
+        "apparmor=nexus-codex-agent-host",
+    ]
+    assert host_config["MaskedPaths"] == []
+    assert host_config["ReadonlyPaths"] == []
+    assert policy_config["CapAdd"] == ["CAP_NET_BIND_SERVICE"]
+    assert policy_config["Devices"] is None
 
     completed = harness.run_apply()
 
     assert completed.returncode == 0, completed.stderr
+
+
+def test_host_apply_accepts_legacy_explicit_read_write_bind_mode(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: a supported daemon retains redundant explicit read-write mode."""
+
+    harness = host_release_harness
+    harness.update_state(codex_state_live_bind_kind="legacy_explicit_rw")
+
+    completed = harness.run_apply()
+
+    assert completed.returncode == 0, completed.stderr
+
+
+@pytest.mark.parametrize("mode", ["", "rw"])
+def test_codex_host_mount_attestation_accepts_supported_read_write_mode_serializations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+) -> None:
+    """Risk: Docker's equivalent inspect serialization blocks a safe release."""
+
+    release = _release_module()
+    paths = release.ReleasePaths.under(tmp_path)
+    volume_name = "nexus_nexus_codex_run"
+    volume_source = "/var/lib/docker/volumes/nexus_nexus_codex_run/_data"
+    monkeypatch.setattr(
+        release,
+        "_inspect_volume_one",
+        lambda _volume_name, _label: {
+            "Name": volume_name,
+            "Driver": "local",
+            "Scope": "local",
+            "Options": None,
+            "Mountpoint": volume_source,
+        },
+    )
+
+    accepted = True
+    try:
+        release.HostRelease(paths)._validate_codex_agent_host_mounts(
+            {
+                "Mounts": [
+                    {
+                        "Type": "bind",
+                        "Source": str(paths.codex_enrolled_auth),
+                        "Destination": "/run/nexus-codex-credential/auth.json",
+                        "Mode": mode,
+                        "RW": True,
+                        "Propagation": "rprivate",
+                    },
+                    {
+                        "Type": "volume",
+                        "Name": volume_name,
+                        "Source": volume_source,
+                        "Destination": "/run/nexus-codex",
+                        "RW": True,
+                    },
+                ]
+            }
+        )
+    except release.PermanentReleaseFailure:
+        accepted = False
+
+    assert accepted, f"supported Docker read-write mode was rejected: {mode!r}"
 
 
 @pytest.mark.parametrize(
@@ -2664,6 +2745,7 @@ def test_host_apply_classifies_public_mcp_availability_as_external(
         "host_privileged",
         "mount_wrong_named_volume",
         "mount_wrong_source",
+        "mount_extra_bind_mode",
         "mount_readonly_docker_socket",
         "mount_readonly_host_home",
     ],
@@ -2716,7 +2798,15 @@ def test_host_apply_rejects_api_generation_socket_surface_drift(
     assert attempt.phase is release.ReleasePhase.ForwardFixRequired
 
 
-@pytest.mark.parametrize("mutation", ["policy_privileged", "policy_init_missing"])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "policy_privileged",
+        "policy_init_missing",
+        "policy_capability_extra",
+        "policy_device_mapping",
+    ],
+)
 def test_host_apply_rejects_an_unconfined_codex_egress_policy(
     host_release_harness: HostReleaseHarness,
     mutation: str,
@@ -3036,7 +3126,13 @@ def test_resume_codex_agent_host_rejects_every_malformed_direct_bind_and_stops(
     finalized = harness.run_finalize()
     assert finalized.returncode == 0, finalized.stderr
 
-    for live_kind in ("wrong_source", "wrong_type", "readonly", "shared_propagation"):
+    for live_kind in (
+        "wrong_source",
+        "wrong_type",
+        "readonly",
+        "shared_propagation",
+        "extra_mode",
+    ):
         state = harness.state()
         containers = state["containers"]
         assert isinstance(containers, dict)

@@ -2,9 +2,9 @@
  * The conversation-message wire boundary: decode nested transport values once,
  * where server messages enter the client.
  *
- * A `ConversationMessage` arrives from several transports (the messages GET, the
- * conversation tree, and the `POST /chat-runs` family — create, rerun, reconcile,
- * reconnect, active-runs). Each carries a `reader_selection` field that is a
+ * A `ConversationMessage` arrives from several transports (the messages GET,
+ * conversation tree, canonical run reads, candidate actions, reconnect, and
+ * active-runs). Each carries a `reader_selection` field that is a
  * `Presence<ReaderSelectionOut>` on the forward wire. These helpers decode it
  * into the owned `Presence<ReaderSelectionOut>` the model and view code consume
  * (`docs/rules/boundaries.md`: decode once at the boundary).
@@ -348,8 +348,9 @@ export function decodeConversationMessages(
 
 /**
  * Decode the reader-quote snapshot on the user and assistant messages of a
- * `POST /chat-runs` response (`ChatRunData`), preserving the run, conversation,
- * and stream-state fields.
+ * rich `ChatRunData` projection from canonical run reads and candidate-action
+ * responses, preserving the run, conversation, and stream-state fields. Send
+ * admission returns a receipt and is decoded by its separate boundary.
  */
 export function decodeChatRunData(raw: unknown): ChatRunResponse["data"] {
   const data = expectExactRecord(
@@ -375,7 +376,7 @@ export function decodeChatRunData(raw: unknown): ChatRunResponse["data"] {
   };
 }
 
-/** Decode the common create/read/cancel/rerun chat-run response envelope. */
+/** Decode the common read/cancel/rerun chat-run response envelope. */
 export function decodeChatRunResponse(raw: unknown): ChatRunResponse {
   const response = expectExactRecord(raw, ["data"], "chat run response");
   return { data: decodeChatRunData(response.data) };

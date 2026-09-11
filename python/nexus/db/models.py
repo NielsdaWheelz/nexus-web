@@ -5488,8 +5488,6 @@ class ChatRun(Base):
         ForeignKey("messages.id"),
         nullable=False,
     )
-    idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
-    payload_hash: Mapped[str] = mapped_column(Text, nullable=False)
     generation_spec: Mapped[dict[str, object]] = mapped_column(
         JSONB(none_as_null=True),
         nullable=False,
@@ -5521,15 +5519,7 @@ class ChatRun(Base):
             "status IN ('queued', 'running', 'complete', 'error', 'cancelled')",
             name="ck_chat_runs_status",
         ),
-        CheckConstraint(
-            "length(idempotency_key) >= 1 AND length(idempotency_key) <= 128",
-            name="ck_chat_runs_idempotency_key_length",
-        ),
-        UniqueConstraint(
-            "owner_user_id",
-            "idempotency_key",
-            name="uix_chat_runs_owner_idempotency_key",
-        ),
+        UniqueConstraint("assistant_message_id", name="uq_chat_runs_assistant_message"),
         Index("idx_chat_runs_owner_created", "owner_user_id", "created_at", "id"),
     )
 

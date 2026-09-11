@@ -112,17 +112,11 @@ def build_assistant_trust_trails(
         )
     }
     run_rows = (
-        db.execute(
-            select(ChatRun)
-            .where(ChatRun.assistant_message_id.in_(message_ids))
-            .order_by(ChatRun.created_at.desc(), ChatRun.id.desc())
-        )
+        db.execute(select(ChatRun).where(ChatRun.assistant_message_id.in_(message_ids)))
         .scalars()
         .all()
     )
-    runs_by_message: dict[UUID, ChatRun] = {}
-    for run in run_rows:
-        runs_by_message.setdefault(run.assistant_message_id, run)
+    runs_by_message = {run.assistant_message_id: run for run in run_rows}
 
     runs = list(runs_by_message.values())
     run_ids = [run.id for run in runs]

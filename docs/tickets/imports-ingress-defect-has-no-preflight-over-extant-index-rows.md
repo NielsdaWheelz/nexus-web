@@ -4,7 +4,7 @@
 **Origin:** Imports workspace cutover, Phase 6 chain P review (OI-024 fix),
 2026-09-09
 **Area:** `python/nexus/services/imports.py` (`_item`),
-`migrations/alembic/versions/0226_imports_history.py` (preflight)
+`migrations/alembic/versions/0227_imports_history.py` (preflight)
 
 ## What is wrong
 
@@ -28,7 +28,7 @@ nothing has surveyed the **stored rows**. If any `content_index_states` row with
 an owner that has since been deleted or renamed — the cut turns a row that used
 to render as `NeedsAttention` into a 500 on the pane a viewer lands on.
 
-Migration 0226's preflight
+Migration 0227's preflight
 (`_assert_every_import_has_a_recordable_baseline`) is the repository's own
 pattern for exactly this class of assumption, but it asserts only over
 `media_upload_sessions.verification_error_code` and
@@ -38,7 +38,7 @@ pattern for exactly this class of assumption, but it asserts only over
 ## Prerequisites
 
 None. The predicate is one select; the decision is where it belongs, since the
-0226 preflight's stated claim is about *history recordability*, not about what
+0227 preflight's stated claim is about *history recordability*, not about what
 the Imports read can classify.
 
 ## Proposed fix
@@ -48,7 +48,7 @@ Either:
 1. run `SELECT count(*) FROM content_index_states WHERE owner_kind = 'media' AND
    status = 'failed'` against production before the cut and record the result
    (zero rows retires this ticket outright); or
-2. add that predicate to 0226 as its own named preflight — `RuntimeError` naming
+2. add that predicate to 0227 as its own named preflight — `RuntimeError` naming
    the offending media ids — so a database that cannot be read by the new
    classifier is refused at 0224 instead of failing at read time. That edit is
    Track A's file and needs a case in

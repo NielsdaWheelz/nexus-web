@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { page, userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@/app/globals.css";
+import { adoptComposerAdmission } from "@/__tests__/helpers/chatAdmission";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import { GENERATION_CATALOG_RESPONSE } from "@/__tests__/helpers/generationCatalog";
 import { apiFetch, type ApiPath } from "@/lib/api/client";
@@ -23,6 +24,7 @@ import { decodeConversationMessage } from "@/lib/conversations/messageWire";
 import type { PaneVisitId } from "@/lib/workspace/schema";
 import AssistantMessage from "./AssistantMessage";
 import ChatComposer from "./ChatComposer";
+import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount";
 import { invalidateGenerationCatalogCache } from "./useGenerationCatalog";
 
 vi.mock("next/server", () => {
@@ -333,9 +335,7 @@ describe("Chat tool projection protocol", () => {
     const { error_type: _missingErrorType, ...missingErrorType } = variants[0];
     expect(() =>
       decodeConversationMessage(
-        assistantMessage([
-          missingErrorType as unknown as MessageToolCall,
-        ]),
+        assistantMessage([missingErrorType as unknown as MessageToolCall]),
       ),
     ).toThrow(/error_type/);
     expect(() =>
@@ -397,15 +397,25 @@ describe("Chat tool projection protocol", () => {
     );
     render(
       withRenderEnvironment(
-        <ChatComposer
-          conversationId={null}
-          draftKey={{
-            kind: "NewConversation",
-            visitId: "projection-reload-proof" as PaneVisitId,
+        <AuthenticatedAccountProvider
+          account={{
+            accountId: "11111111-1111-4111-8111-111111111111",
+            calendarTimeZone: "UTC",
           }}
-          inheritedRunSelection={null}
-          sendCapability={{ kind: "Available" }}
-        />,
+        >
+          <ChatComposer
+            viewIdentity="projection-browser-visit"
+            isPaneActive={true}
+            onAdmitted={adoptComposerAdmission}
+            conversationId={null}
+            draftKey={{
+              kind: "NewConversation",
+              visitId: "projection-reload-proof" as PaneVisitId,
+            }}
+            inheritedRunSelection={null}
+            sendCapability={{ kind: "Available" }}
+          />
+        </AuthenticatedAccountProvider>,
       ),
     );
     await screen.findByRole("button", { name: /Change model/u });
@@ -414,7 +424,8 @@ describe("Chat tool projection protocol", () => {
     });
     await userEvent.click(composer);
     await userEvent.keyboard("Keep this draft{Enter}");
-    const reloadNotice = await screen.findByRole("alert");
+    await screen.findByText("Reload Nexus to continue");
+    const reloadNotice = screen.getByRole("alert");
     expect(reloadNotice).toHaveTextContent("Reload Nexus to continue");
     expect(
       screen.getByText(

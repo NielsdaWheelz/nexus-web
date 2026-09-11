@@ -104,7 +104,8 @@ def _codex_host_privilege_config() -> dict[str, object]:
         "CapAdd": None,
         "CapDrop": ["ALL"],
         "DeviceRequests": None,
-        "Devices": [],
+        # Engine inspect encodes an omitted device slice as JSON null.
+        "Devices": None,
         "Init": True,
         "IpcMode": "private",
         "MaskedPaths": [],
@@ -120,7 +121,6 @@ def _codex_host_privilege_config() -> dict[str, object]:
             "no-new-privileges:true",
             "seccomp=unconfined",
             "apparmor=nexus-codex-agent-host",
-            "systempaths=unconfined",
         ],
         "Tmpfs": {
             "/run/nexus-codex-turns": (
@@ -794,9 +794,9 @@ class HostReleaseHarness:
                         if service == "nexus-codex-agent-host"
                         else {
                             "CapDrop": ["ALL"],
-                            "CapAdd": ["NET_BIND_SERVICE"],
+                            "CapAdd": ["CAP_NET_BIND_SERVICE"],
                             "DeviceRequests": None,
-                            "Devices": [],
+                            "Devices": None,
                             "Init": True,
                             "IpcMode": "private",
                             "NetworkMode": "nexus_codex_private",
@@ -1468,6 +1468,19 @@ def _container_inspect(state: dict[str, Any], container_id: str) -> dict[str, ob
             container["host_config"]["Privileged"] = True
         elif mutation == "policy_init_missing":
             container["host_config"].pop("Init", None)
+        elif mutation == "policy_capability_extra":
+            container["host_config"]["CapAdd"] = [
+                "CAP_NET_BIND_SERVICE",
+                "CAP_NET_ADMIN",
+            ]
+        elif mutation == "policy_device_mapping":
+            container["host_config"]["Devices"] = [
+                {
+                    "CgroupPermissions": "rwm",
+                    "PathInContainer": "/dev/fuse",
+                    "PathOnHost": "/dev/fuse",
+                }
+            ]
         inspected["Mounts"] = []
         inspected["NetworkSettings"] = {
             "Networks": {
@@ -1491,7 +1504,7 @@ def _container_inspect(state: dict[str, Any], container_id: str) -> dict[str, ob
         mounts: list[dict[str, object]] = [
             {
                 "Destination": "/run/nexus-codex-credential/auth.json",
-                "Mode": "rw",
+                "Mode": "",
                 "RW": True,
                 "Source": str(root / "srv/nexus/codex-state/codex/codex-personal/auth.json"),
                 "Type": "bind",
@@ -1517,6 +1530,10 @@ def _container_inspect(state: dict[str, Any], container_id: str) -> dict[str, ob
             mounts[0]["RW"] = False
         elif live_bind == "shared_propagation":
             mounts[0]["Propagation"] = "rshared"
+        elif live_bind == "legacy_explicit_rw":
+            mounts[0]["Mode"] = "rw"
+        elif live_bind == "extra_mode":
+            mounts[0]["Mode"] = "rw,Z"
         if mutation == "environment_credential_residue":
             container["config"]["Env"].append("AWS_SESSION_TOKEN=credential-residue")
         elif mutation == "host_cmd":
@@ -1528,6 +1545,8 @@ def _container_inspect(state: dict[str, Any], container_id: str) -> dict[str, ob
             mounts[0]["Name"] = "nexus_unapproved_state"
         elif mutation == "mount_wrong_source":
             mounts[1]["Source"] = "/var/lib/docker/volumes/nexus_unapproved_run/_data"
+        elif mutation == "mount_extra_bind_mode":
+            mounts[0]["Mode"] = "rw,Z"
         elif mutation == "mount_readonly_docker_socket":
             mounts.append(
                 {
@@ -1657,18 +1676,15 @@ def _handle_compose(state: dict[str, Any], operation: list[str]) -> None:
                         "no-new-privileges:true",
                         "seccomp=unconfined",
                     ]
-                if state["codex_host_isolation_drift"] == "systempaths_missing":
-                    container["host_config"]["SecurityOpt"] = [
-                        "no-new-privileges:true",
-                        "seccomp=unconfined",
-                        "apparmor=nexus-codex-agent-host",
-                    ]
-                if state["codex_host_isolation_drift"] == "systempaths_mutated":
-                    container["host_config"]["SecurityOpt"] = [
-                        "no-new-privileges:true",
-                        "seccomp=unconfined",
-                        "apparmor=nexus-codex-agent-host",
-                        "systempaths=confined",
+                if state["codex_host_isolation_drift"] == "security_duplicate":
+                    container["host_config"]["SecurityOpt"].append("no-new-privileges:true")
+                if state["codex_host_isolation_drift"] == "devices":
+                    container["host_config"]["Devices"] = [
+                        {
+                            "CgroupPermissions": "rwm",
+                            "PathInContainer": "/dev/fuse",
+                            "PathOnHost": "/dev/fuse",
+                        }
                     ]
                 if state["codex_host_isolation_drift"] == "nanocpus":
                     container["host_config"]["NanoCpus"] = 2_000_000_000

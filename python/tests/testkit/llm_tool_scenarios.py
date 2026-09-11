@@ -79,7 +79,11 @@ async def create_scoped_entitled_chat(
     from sqlalchemy import text
 
     from nexus.db.session import create_session_factory
-    from nexus.schemas.conversation import EmptyInsertion, ExistingChatDestination
+    from nexus.schemas.conversation import (
+        AcceptedChatAdmission,
+        EmptyInsertion,
+        ExistingChatDestination,
+    )
     from nexus.services.billing_entitlements import grant_entitlement_override
     from nexus.services.chat_runs import create_chat_run
     from nexus.services.rate_limit import RateLimiter, get_rate_limiter, set_rate_limiter
@@ -99,7 +103,7 @@ async def create_scoped_entitled_chat(
     set_rate_limiter(RateLimiter(session_factory=create_session_factory(db.get_bind())))
     idempotency_key = f"canonical-chat-tool-proof-{uuid4()}"
     try:
-        response = await create_chat_run(
+        receipt = await create_chat_run(
             db,
             viewer_id=user_id,
             destination=ExistingChatDestination(
@@ -118,15 +122,19 @@ async def create_scoped_entitled_chat(
         )
     finally:
         set_rate_limiter(previous_limiter)
+    outcome = receipt.outcome
+    assert isinstance(outcome, AcceptedChatAdmission), (
+        f"canonical Chat tool proof was rejected: {outcome.model_dump(mode='json')!r}"
+    )
     job_id = db.execute(
         text("SELECT id FROM background_jobs WHERE kind = 'chat_run' AND dedupe_key = :dedupe_key"),
-        {"dedupe_key": f"chat_run:{response.run.id}"},
+        {"dedupe_key": f"chat_run:{outcome.run_id}"},
     ).scalar_one()
     db.commit()
     return EntitledChat(
         user_id=user_id,
-        conversation_id=response.conversation.id,
-        run_id=response.run.id,
+        conversation_id=outcome.conversation_id,
+        run_id=outcome.run_id,
         job_id=job_id,
         idempotency_key=idempotency_key,
     )
