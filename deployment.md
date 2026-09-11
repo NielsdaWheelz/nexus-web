@@ -255,6 +255,14 @@ backfills those unverifiable identities. Absence of a historical run never
 authorizes a resend. There is no
 counter reset, storage clear, compatibility decoder, or legacy runtime lookup.
 
+Migration `0224` refuses every pending, running, or retryable generation job and
+every dead domain-owned generation job. Its only terminal queue exception is a
+dead `synapse_scan` after the separate nonterminal-`llm_calls` and
+`Uncertain`-journal preflights prove that no ambiguous provider effect remains;
+the reset then deletes that headless scan state while retaining its previously
+published edge set. Never update or delete production queue rows manually to
+force migration admission.
+
 The command performs the complete protocol:
 
 1. validates Git, CI, bundle, manifest, staged Vercel identity, and the exact

@@ -1,5 +1,6 @@
 """Focused PostgreSQL admission proof for the destructive generation reset."""
 
+import re
 from pathlib import Path
 from uuid import uuid4
 
@@ -20,7 +21,7 @@ def _migration_config() -> Config:
 def test_0224_refuses_the_only_undrained_generation_job_before_history_reset(
     request: pytest.FixtureRequest,
 ) -> None:
-    """Risk: destructive history reset starts while admitted generation work is live."""
+    """Risk: destructive history reset admits live or ambiguous generation work."""
 
     config = _migration_config()
     reset_revision = next(
@@ -40,6 +41,7 @@ def test_0224_refuses_the_only_undrained_generation_job_before_history_reset(
     command.upgrade(config, "0223")
     engine = create_engine(migration_database_url)
     generation_job_id = uuid4()
+    llm_call_id = uuid4()
     try:
         with engine.begin() as connection:
             connection.execute(
@@ -51,28 +53,149 @@ def test_0224_refuses_the_only_undrained_generation_job_before_history_reset(
             )
 
         expected_error = f"0224 preflight: generation jobs must be drained: ['{generation_job_id}']"
-        try:
+        with pytest.raises(RuntimeError, match=rf"^{re.escape(expected_error)}$"):
             command.upgrade(config, "0224")
-        except RuntimeError as error:
-            assert str(error) == expected_error, (
-                "0224 refused the isolated undrained job at the wrong preflight boundary; "
-                f"job_id={generation_job_id}; expected={expected_error!r}; actual={str(error)!r}"
-            )
-        else:
-            pytest.fail(
-                "0224 accepted an undrained generation job into the destructive history reset; "
-                f"job_id={generation_job_id}"
-            )
 
         with engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0223"
             observed_job = connection.execute(
-                text("SELECT kind, status, attempts FROM background_jobs WHERE id = :job_id"),
+                text(
+                    "SELECT kind, payload, status, attempts FROM background_jobs WHERE id = :job_id"
+                ),
                 {"job_id": generation_job_id},
             ).one_or_none()
-            assert observed_job == ("chat_run", "pending", 0), (
+            assert observed_job == ("chat_run", {}, "pending", 0), (
                 "0224 mutated the isolated undrained job despite refusing admission; "
                 f"job_id={generation_job_id}; observed={observed_job!r}"
             )
+
+        with engine.begin() as connection:
+            connection.execute(
+                text("UPDATE background_jobs SET status = 'dead' WHERE id = :job_id"),
+                {"job_id": generation_job_id},
+            )
+
+        with pytest.raises(RuntimeError, match=rf"^{re.escape(expected_error)}$"):
+            command.upgrade(config, "0224")
+
+        with engine.connect() as connection:
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0223"
+            observed_job = connection.execute(
+                text(
+                    "SELECT kind, payload, status, attempts FROM background_jobs WHERE id = :job_id"
+                ),
+                {"job_id": generation_job_id},
+            ).one_or_none()
+            assert observed_job == ("chat_run", {}, "dead", 0), (
+                "0224 accepted or mutated a dead domain-owned generation job; "
+                f"job_id={generation_job_id}; observed={observed_job!r}"
+            )
+
+        with engine.begin() as connection:
+            connection.execute(
+                text("UPDATE background_jobs SET kind = 'synapse_scan' WHERE id = :job_id"),
+                {"job_id": generation_job_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO llm_calls "
+                    "(id, owner_kind, owner_id, call_seq, provider, model_name, "
+                    "llm_operation, streaming, cost_status) VALUES "
+                    "(:call_id, 'synapse_scan', :job_id, 1, 'openai', "
+                    "'gpt-5.6-terra', 'synapse', false, 'missing_usage')"
+                ),
+                {"call_id": llm_call_id, "job_id": generation_job_id},
+            )
+
+        nonterminal_call_error = f"0224 preflight: llm_calls must be terminal: ['{llm_call_id}']"
+        with pytest.raises(RuntimeError, match=rf"^{re.escape(nonterminal_call_error)}$"):
+            command.upgrade(config, "0224")
+
+        with engine.connect() as connection:
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0223"
+            observed_job = connection.execute(
+                text(
+                    "SELECT kind, payload, status, attempts FROM background_jobs WHERE id = :job_id"
+                ),
+                {"job_id": generation_job_id},
+            ).one_or_none()
+            assert observed_job == ("synapse_scan", {}, "dead", 0), (
+                "0224 mutated a dead Synapse scan while its model call was nonterminal; "
+                f"job_id={generation_job_id}; observed={observed_job!r}"
+            )
+            assert (
+                connection.scalar(
+                    text("SELECT outcome FROM llm_calls WHERE id = :call_id"),
+                    {"call_id": llm_call_id},
+                )
+                is None
+            ), (
+                "0224 mutated the nonterminal Synapse model call despite refusing admission; "
+                f"call_id={llm_call_id}"
+            )
+
+        with engine.begin() as connection:
+            connection.execute(
+                text("UPDATE llm_calls SET outcome = 'succeeded' WHERE id = :call_id"),
+                {"call_id": llm_call_id},
+            )
+            connection.execute(
+                text(
+                    "UPDATE background_jobs "
+                    "SET payload = jsonb_build_object("
+                    "'journal', jsonb_build_object('dispatch_phase', 'Uncertain')) "
+                    "WHERE id = :job_id"
+                ),
+                {"job_id": generation_job_id},
+            )
+
+        uncertain_error = (
+            f"0224 preflight: queue journals contain Uncertain dispatches: ['{generation_job_id}']"
+        )
+        with pytest.raises(RuntimeError, match=rf"^{re.escape(uncertain_error)}$"):
+            command.upgrade(config, "0224")
+
+        with engine.connect() as connection:
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0223"
+            observed_job = connection.execute(
+                text(
+                    "SELECT kind, payload, status, attempts FROM background_jobs WHERE id = :job_id"
+                ),
+                {"job_id": generation_job_id},
+            ).one_or_none()
+            assert observed_job == (
+                "synapse_scan",
+                {"journal": {"dispatch_phase": "Uncertain"}},
+                "dead",
+                0,
+            ), (
+                "0224 mutated an uncertain dead Synapse scan despite refusing admission; "
+                f"job_id={generation_job_id}; observed={observed_job!r}"
+            )
+
+        with engine.begin() as connection:
+            connection.execute(
+                text("UPDATE background_jobs SET payload = '{}'::jsonb WHERE id = :job_id"),
+                {"job_id": generation_job_id},
+            )
+
+        command.upgrade(config, "0224")
+
+        with engine.connect() as connection:
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0224"
+            assert (
+                connection.scalar(
+                    text("SELECT count(*) FROM background_jobs WHERE id = :job_id"),
+                    {"job_id": generation_job_id},
+                )
+                == 0
+            ), "0224 retained an unambiguous dead Synapse scan outside its generation reset"
+            assert (
+                connection.scalar(
+                    text("SELECT count(*) FROM llm_calls WHERE id = :call_id"),
+                    {"call_id": llm_call_id},
+                )
+                == 0
+            ), "0224 retained the terminal Synapse call outside its generation reset"
     finally:
         engine.dispose()
