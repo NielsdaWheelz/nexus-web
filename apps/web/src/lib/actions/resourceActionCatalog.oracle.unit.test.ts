@@ -34,7 +34,7 @@ describe("RESOURCE_ACTION_CATALOG product oracle", () => {
     ).toEqual([...MEDIA_SUBTYPES].sort());
   });
 
-  it("matches all 43 independently reviewed identities and presentation fields exactly", () => {
+  it("matches all 45 independently reviewed identities and presentation fields exactly", () => {
     const actual = Object.values(RESOURCE_ACTION_CATALOG).map((entry) => {
       const oracle = RESOURCE_ACTION_LEDGER.find(({ id }) => id === entry.id);
       if (!oracle) throw new Error(`Unclassified production action ${entry.id}`);
@@ -69,7 +69,7 @@ describe("RESOURCE_ACTION_CATALOG product oracle", () => {
 
     expect(
       actual,
-      `the production catalog must match the independent 43-action ledger exactly; actual=${JSON.stringify(actual)}`,
+      `the production catalog must match the independent 45-action ledger exactly; actual=${JSON.stringify(actual)}`,
     ).toEqual(expected);
   });
 

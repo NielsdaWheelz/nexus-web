@@ -23,6 +23,7 @@ import {
   RefreshCw,
   RotateCcw,
   Rss,
+  Search,
   Settings,
   Share2,
   Sparkles,
@@ -31,6 +32,7 @@ import {
   Undo2,
   Users,
   Waypoints,
+  Wrench,
   XCircle,
   type LucideIcon,
 } from "lucide-react";
@@ -447,10 +449,28 @@ export const RESOURCE_ACTION_CATALOG = Object.freeze({
 
   "ResourceOperation.Media.RetryProcessing": catalogEntry({
     id: "ResourceOperation.Media.RetryProcessing",
-    label: "Retry processing",
+    label: "Retry source processing",
     icon: RotateCcw,
     group: "Manage",
     order: 10,
+    tone: "default",
+    confirmation: NONE,
+  }),
+  "ResourceOperation.Media.RepairSource": catalogEntry({
+    id: "ResourceOperation.Media.RepairSource",
+    label: "Retry stopped processing",
+    icon: Wrench,
+    group: "Manage",
+    order: 12,
+    tone: "default",
+    confirmation: NONE,
+  }),
+  "ResourceOperation.Media.RepairSearch": catalogEntry({
+    id: "ResourceOperation.Media.RepairSearch",
+    label: "Rebuild search index",
+    icon: Search,
+    group: "Manage",
+    order: 14,
     tone: "default",
     confirmation: NONE,
   }),
@@ -670,7 +690,17 @@ export type ResourceActionIntent =
   | { readonly kind: "MakeArtifactRevisionCurrent" }
   | { readonly kind: "Share" }
   | { readonly kind: "DownloadOriginal" }
-  | { readonly kind: "RetryProcessing" }
+  | { readonly kind: "RetrySource"; readonly expectedAttemptId: string }
+  | {
+      readonly kind: "RepairSource";
+      readonly expectedAttemptId: string;
+      readonly expectedJobId: string;
+    }
+  | {
+      readonly kind: "RepairSearch";
+      readonly expectedRevision: number;
+      readonly expectedJobId: string;
+    }
   | { readonly kind: "RefreshSource" }
   | { readonly kind: "RetryMetadata" }
   | { readonly kind: "EditAuthors" }
@@ -1234,13 +1264,47 @@ function planCapability(
         busyIds,
         { kind: "DownloadOriginal" },
       );
-    case "RetryProcessing":
-      return planned(
-        "ResourceOperation.Media.RetryProcessing",
-        availability,
-        busyIds,
-        { kind: "RetryProcessing" },
-      );
+    case "Recovery":
+      switch (capability.offer.kind) {
+        case "RetrySource":
+          return planned(
+            "ResourceOperation.Media.RetryProcessing",
+            availability,
+            busyIds,
+            {
+              kind: "RetrySource",
+              expectedAttemptId: capability.offer.expectedAttemptId,
+            },
+          );
+        case "RepairSource":
+          return planned(
+            "ResourceOperation.Media.RepairSource",
+            availability,
+            busyIds,
+            {
+              kind: "RepairSource",
+              expectedAttemptId: capability.offer.expectedAttemptId,
+              expectedJobId: capability.offer.expectedJobId,
+            },
+          );
+        case "RepairSearch":
+          return planned(
+            "ResourceOperation.Media.RepairSearch",
+            availability,
+            busyIds,
+            {
+              kind: "RepairSearch",
+              expectedRevision: capability.offer.expectedRevision,
+              expectedJobId: capability.offer.expectedJobId,
+            },
+          );
+        default: {
+          const exhaustive: never = capability.offer;
+          throw new Error(
+            `Unsupported recovery offer: ${JSON.stringify(exhaustive)}`,
+          );
+        }
+      }
     case "RefreshSource":
       return planned(
         "ResourceOperation.Media.RefreshSource",

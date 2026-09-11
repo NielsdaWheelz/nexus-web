@@ -12,7 +12,7 @@ from llm_tools import HandlerSuccess, ToolId
 from sqlalchemy import Engine, text
 from sqlalchemy.orm import sessionmaker
 
-from nexus.jobs.queue import JobExecutionContext, claim_job, enqueue_job
+from nexus.jobs.queue import JobExecutionContext, enqueue_job
 from nexus.services.generation_spec import FrozenToolScope
 from nexus.services.llm_ledger import (
     GenerationStart,
@@ -27,6 +27,7 @@ from tests.testkit.generation_tool_authority import (
     generation_tool_spec,
     search_arguments,
 )
+from tests.testkit.queue_claims import claim_job_row
 from tests.testkit.unreachable_state import delete_jobs_by_ids
 
 
@@ -48,7 +49,7 @@ def test_tool_database_wait_keeps_the_provider_event_loop_live(
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     with factory() as db:
         job = enqueue_job(db, kind="generation_tool_scheduling_proof", max_attempts=1)
-        claimed = claim_job(
+        claimed = claim_job_row(
             db,
             job_id=job.id,
             worker_id="tool-database-scheduling-proof",
@@ -61,6 +62,7 @@ def test_tool_database_wait_keeps_the_provider_event_loop_live(
             worker_id="tool-database-scheduling-proof",
             attempt_no=claimed.attempts,
             resource_class="Light",
+            execution_id=claimed.execution_id,
         )
         start_generation_in_current_transaction(
             db,

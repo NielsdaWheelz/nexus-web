@@ -14,7 +14,7 @@ import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount";
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
-import { MediaActivityProvider } from "@/lib/media/MediaActivityProvider";
+import { ImportsProvider } from "@/lib/imports/ImportsProvider";
 import { NEXUS_OPEN_PERFORMANCE } from "@/lib/nexus/performance";
 import { writeDailyDraft } from "@/lib/notes/dailyDraftStore";
 import { resolveDailyLocalDate } from "@/lib/notes/openDailyPage";
@@ -375,13 +375,12 @@ function installBff() {
       if (url.pathname === "/api/lectern") {
         return jsonResponse({ data: { items: [] } });
       }
-      if (url.pathname === "/api/media/activity") {
+      if (url.pathname === "/api/imports/summary") {
         return jsonResponse({
           data: {
+            observed_at: "2026-09-08T00:00:00Z",
             needs_attention_count: 0,
             active_count: 0,
-            has_more: false,
-            items: [],
           },
         });
       }
@@ -464,10 +463,10 @@ function renderNexus(
                     >
                       <GlobalPlayerProvider>
                         <ShareControllerProvider>
-                          <MediaActivityProvider>
+                          <ImportsProvider>
                             <WorkspaceProbe />
                             <Nexus />
-                          </MediaActivityProvider>
+                          </ImportsProvider>
                         </ShareControllerProvider>
                       </GlobalPlayerProvider>
                     </OfflineMediaProvider>

@@ -52,6 +52,7 @@ from nexus.services.content_indexing import IndexOwner, delete_content_index
 from nexus.services.document_embeds import (
     reconcile_document_embed_parent_edges_for_viewer,
 )
+from nexus.services.import_history import delete_processing_history_in_current_transaction
 from nexus.services.reader_apparatus import delete_media_apparatus
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.refs import ResourceRef
@@ -694,6 +695,7 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
         db,
         media_id=media_id,
     )
+    delete_processing_history_in_current_transaction(db, media_id=media_id)
     db.execute(
         text("DELETE FROM media_source_attempts WHERE media_id = :media_id"),
         {"media_id": media_id},

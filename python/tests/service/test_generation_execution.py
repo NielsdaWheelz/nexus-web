@@ -54,7 +54,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from nexus.config import Settings
 from nexus.db.models import LLMModelTurn, LLMModelTurnContinuation
 from nexus.db.session import create_session_factory
-from nexus.jobs.queue import JobExecutionContext, claim_job, enqueue_job, get_job, lock_job
+from nexus.jobs.queue import JobExecutionContext, enqueue_job, get_job, lock_job
 from nexus.schemas.presence import Present, absent, present
 from nexus.services import generation_policy
 from nexus.services.codex_generation_contract import GenerationFrame
@@ -139,6 +139,7 @@ from tests.testkit.generation_catalog import (
     configured_chat_catalog_service,
 )
 from tests.testkit.generation_ledger import generation_spec_fixture
+from tests.testkit.queue_claims import claim_job_row
 from tests.testkit.unreachable_state import (
     delete_generations_by_ids,
     delete_jobs_by_ids,
@@ -523,7 +524,7 @@ def _claim_dawn_write_job(engine: Engine, *, worker_id: str) -> tuple[UUID, JobE
             max_attempts=1,
         )
         db.commit()
-        claimed = claim_job(
+        claimed = claim_job_row(
             db,
             job_id=job.id,
             worker_id=worker_id,
@@ -538,6 +539,7 @@ def _claim_dawn_write_job(engine: Engine, *, worker_id: str) -> tuple[UUID, JobE
             worker_id=worker_id,
             attempt_no=claimed.attempts,
             resource_class="Light",
+            execution_id=claimed.execution_id,
         )
 
 
@@ -721,7 +723,7 @@ async def _prove_provider_crash_resumes_exactly_once(
         with Session(engine) as db:
             job = enqueue_job(db, kind="generation_execution_proof", max_attempts=2)
             owned_job_ids.append(job.id)
-            claimed = claim_job(
+            claimed = claim_job_row(
                 db,
                 job_id=job.id,
                 worker_id="crashed-worker",
@@ -735,6 +737,7 @@ async def _prove_provider_crash_resumes_exactly_once(
             worker_id="crashed-worker",
             attempt_no=claimed.attempts,
             resource_class="Light",
+            execution_id=claimed.execution_id,
         )
         crashed_journal = JobGenerationJournal(
             context=crashed_context,
@@ -821,7 +824,7 @@ async def _prove_provider_crash_resumes_exactly_once(
         with Session(engine) as db:
             expire_job_claim(db, job_id=job.id)
             db.commit()
-            reclaimed = claim_job(
+            reclaimed = claim_job_row(
                 db,
                 job_id=job.id,
                 worker_id="recovery-worker",
@@ -835,6 +838,7 @@ async def _prove_provider_crash_resumes_exactly_once(
             worker_id="recovery-worker",
             attempt_no=reclaimed.attempts,
             resource_class="Light",
+            execution_id=reclaimed.execution_id,
         )
         recovery_journal = JobGenerationJournal(
             context=recovery_context,

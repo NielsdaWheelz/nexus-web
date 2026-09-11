@@ -24,7 +24,7 @@ from pydantic import SecretStr
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from nexus.jobs.queue import JobExecutionContext, claim_job, enqueue_job
+from nexus.jobs.queue import JobExecutionContext, enqueue_job
 from nexus.schemas.llm import (
     PrivacyDisclosure,
     ProcessorChain,
@@ -75,6 +75,7 @@ from nexus.services.tool_runtime.declarations import (
     NEXUS_TOOL_DECLARATIONS,
     NexusSearchSuccess,
 )
+from tests.testkit.queue_claims import claim_job_row
 from tests.testkit.unreachable_state import delete_generations_by_ids, delete_jobs_by_ids
 
 _MCP_ORIGIN = "https://mcp.nexus.example.com/internal/agent-tools/mcp"
@@ -130,7 +131,7 @@ async def _prove_public_mcp_mount_gate(
     with Session(engine) as db:
         job = enqueue_job(db, kind="agent_tools_mcp_gate_proof", max_attempts=2)
         owned_job_ids.append(job.id)
-        claimed = claim_job(
+        claimed = claim_job_row(
             db,
             job_id=job.id,
             worker_id=worker_id,
@@ -143,6 +144,7 @@ async def _prove_public_mcp_mount_gate(
             worker_id=worker_id,
             attempt_no=claimed.attempts,
             resource_class="Light",
+            execution_id=claimed.execution_id,
         )
         start_generation_in_current_transaction(
             db,

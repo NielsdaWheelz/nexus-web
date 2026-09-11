@@ -30,7 +30,9 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from nexus.schemas.consumption import PlayerDescriptor
+from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
 from nexus.schemas.offline_reading_package import OFFLINE_READING_MAX_TITLE_CODEPOINTS
+from nexus.schemas.presence import Present
 from nexus.schemas.resource_action_snapshots import (
     ConsumptionResourceActionCapabilityOut,
     EpisodeConsumptionResourceActionCapabilityOut,
@@ -40,9 +42,13 @@ from nexus.schemas.resource_action_snapshots import (
     OpenSourceResourceActionCapabilityOut,
     PlaybackResourceActionCapabilityOut,
     PodcastSubscriptionResourceActionCapabilityOut,
+    RecoveryResourceActionCapabilityOut,
+    RepairSearchOfferOut,
+    RepairSourceOfferOut,
     ResourceActionCapabilityOut,
     ResourceActionSnapshotOut,
     ResourceActionSnapshotResolveResponse,
+    RetrySourceOfferOut,
     ServerActionAvailabilityAvailableOut,
     ServerActionAvailabilityBlockedOut,
     ServerActionAvailabilityOut,
@@ -56,7 +62,11 @@ from nexus.services import conversations, highlights, library_governance, reader
 from nexus.services.artifacts import engine as artifact_engine
 from nexus.services.capabilities import can_rename_contributor
 from nexus.services.consumption import service as consumption_service
-from nexus.services.media import CollectionMedia, list_collection_media_for_viewer_by_ids
+from nexus.services.media import (
+    CollectionMedia,
+    MediaRecoveryOffer,
+    list_collection_media_for_viewer_by_ids,
+)
 from nexus.services.podcasts.subscriptions_query import (
     existing_podcast_ids,
     failed_backfill_podcast_ids,
@@ -428,6 +438,36 @@ def _authorized(allowed: bool) -> ServerActionAvailabilityOut:
     return _available() if allowed else _blocked("PermissionDenied")
 
 
+def _recovery(media: CollectionMedia) -> RecoveryResourceActionCapabilityOut | None:
+    """The viewer's own offer is actionable; the offer a creator or admin would
+    be given stays discoverable but permission-blocked, like every other
+    authorized capability."""
+    if isinstance(media.recovery, Present):
+        return RecoveryResourceActionCapabilityOut(
+            availability=_available(), offer=_recovery_offer_out(media.recovery.value)
+        )
+    if isinstance(media.applicable_recovery, Present):
+        return RecoveryResourceActionCapabilityOut(
+            availability=_blocked("PermissionDenied"),
+            offer=_recovery_offer_out(media.applicable_recovery.value),
+        )
+    return None
+
+
+def _recovery_offer_out(
+    offer: MediaRecoveryOffer,
+) -> RetrySourceOfferOut | RepairSourceOfferOut | RepairSearchOfferOut:
+    match offer:
+        case RetrySourceOffer():
+            return RetrySourceOfferOut.model_validate(offer.model_dump())
+        case RepairSourceOffer():
+            return RepairSourceOfferOut.model_validate(offer.model_dump())
+        case RepairSearchOffer():
+            return RepairSearchOfferOut.model_validate(offer.model_dump())
+        case _ as unreachable:
+            assert_never(unreachable)
+
+
 def _simple(
     kind: SimpleResourceActionCapabilityKind,
     availability: ServerActionAvailabilityOut | None = None,
@@ -532,8 +572,9 @@ def _extend_media(
     if media.has_original_file:
         capabilities.append(_simple("DownloadOriginal"))
     ops = media.capabilities
-    if ops.retry_applicable:
-        capabilities.append(_simple("RetryProcessing", _authorized(ops.can_retry)))
+    recovery = _recovery(media)
+    if recovery is not None:
+        capabilities.append(recovery)
     if ops.refresh_source_applicable:
         capabilities.append(_simple("RefreshSource", _authorized(ops.can_refresh_source)))
     if ops.retry_metadata_applicable:

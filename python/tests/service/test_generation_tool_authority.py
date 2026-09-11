@@ -29,7 +29,7 @@ from nexus.db.models import (
     User,
     ViewerCollectionRevision,
 )
-from nexus.jobs.queue import JobExecutionContext, claim_job, enqueue_job
+from nexus.jobs.queue import JobExecutionContext, enqueue_job
 from nexus.services import bootstrap
 from nexus.services.agent_tool_grants import (
     issue_generation_tool_grant,
@@ -76,6 +76,7 @@ from tests.testkit.generation_tool_authority import (
     search_arguments,
 )
 from tests.testkit.llm_tool_scenarios import compose_available_product_tool_runtime
+from tests.testkit.queue_claims import claim_job_row
 from tests.testkit.unreachable_state import (
     delete_generations_by_ids,
     delete_jobs_by_ids,
@@ -118,7 +119,7 @@ async def _prove_frozen_plan_is_transport_neutral_and_fenced(engine: Engine) -> 
         with Session(engine) as db:
             job = enqueue_job(db, kind="generation_tool_authority_proof", max_attempts=2)
             job_id = job.id
-            claimed = claim_job(
+            claimed = claim_job_row(
                 db,
                 job_id=job.id,
                 worker_id=worker_id,
@@ -131,6 +132,7 @@ async def _prove_frozen_plan_is_transport_neutral_and_fenced(engine: Engine) -> 
                 worker_id=worker_id,
                 attempt_no=claimed.attempts,
                 resource_class="Light",
+                execution_id=claimed.execution_id,
             )
             deferred_provider_executor = compose_deferred_generation_tool_executor(
                 session_factory=factory,
@@ -444,7 +446,7 @@ async def _prove_dossier_projection_uses_only_completed_read_evidence(
             )
             job = enqueue_job(db, kind="dossier_tool_projection_proof", max_attempts=2)
             job_id = job.id
-            claimed = claim_job(
+            claimed = claim_job_row(
                 db,
                 job_id=job.id,
                 worker_id=worker_id,
@@ -457,6 +459,7 @@ async def _prove_dossier_projection_uses_only_completed_read_evidence(
                 worker_id=worker_id,
                 attempt_no=claimed.attempts,
                 resource_class="Light",
+                execution_id=claimed.execution_id,
             )
             start_generation_in_current_transaction(
                 db,

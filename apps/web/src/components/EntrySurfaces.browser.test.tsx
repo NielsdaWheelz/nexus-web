@@ -12,6 +12,7 @@ import EntryCanvas from "@/components/EntryCanvas";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import { parseAuthReturnTarget } from "@/lib/auth/redirects";
+import { contrastRatio, parseRgb } from "@/__tests__/helpers/contrast";
 
 /**
  * Risk: entry content becomes clipped, horizontally scrollable, too small to
@@ -112,49 +113,13 @@ function expectNoHorizontalOverflow(caseName: string) {
   ).toBeLessThanOrEqual(window.innerWidth);
 }
 
-function parseRgb(color: string): readonly [number, number, number] {
-  const match = /^rgba?\(\s*([\d.]+)[, ]+\s*([\d.]+)[, ]+\s*([\d.]+)/u.exec(
-    color,
-  );
-  if (!match?.[1] || !match[2] || !match[3]) {
-    throw new Error(`Unsupported computed color: ${color}`);
-  }
-  return [Number(match[1]), Number(match[2]), Number(match[3])];
-}
-
-function relativeLuminance(color: string): number {
-  const channels = parseRgb(color).map((channel) => {
-    const normalized = channel / 255;
-    return normalized <= 0.04045
-      ? normalized / 12.92
-      : ((normalized + 0.055) / 1.055) ** 2.4;
-  });
-  return (
-    0.2126 * (channels[0] ?? 0) +
-    0.7152 * (channels[1] ?? 0) +
-    0.0722 * (channels[2] ?? 0)
-  );
-}
-
-function contrastRatio(foreground: string, background: string): number {
-  const lighter = Math.max(
-    relativeLuminance(foreground),
-    relativeLuminance(background),
-  );
-  const darker = Math.min(
-    relativeLuminance(foreground),
-    relativeLuminance(background),
-  );
-  return (lighter + 0.05) / (darker + 0.05);
-}
-
 function expectContrast(
   foreground: string,
   background: string,
   minimum: number,
   caseName: string,
 ) {
-  const ratio = contrastRatio(foreground, background);
+  const ratio = contrastRatio(parseRgb(foreground), parseRgb(background));
   expect(
     ratio,
     `${caseName}: computed ${ratio.toFixed(2)}:1 from ${foreground} on ${background}`,

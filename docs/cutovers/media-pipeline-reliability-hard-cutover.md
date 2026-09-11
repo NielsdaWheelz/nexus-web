@@ -901,6 +901,15 @@ text because their current contracts do not carry detailed errors.
 
 Required behavior:
 
+> The reader-facing copy in this table is superseded by
+> [`imports-workspace-hard-cutover.md`](imports-workspace-hard-cutover.md): the
+> one copy owner is `apps/web/src/lib/status/imports.ts` (presented by
+> `apps/web/src/lib/media/mediaErrorMessage.ts`), a stopped source job reads
+> **Processing stopped before this import finished.** with the offered command
+> **Retry stopped processing**, and a stopped search index reads **Search
+> indexing stopped. You can still read this document.** with **Rebuild search
+> index**. No reader-facing state says repair is an operator job.
+
 | State | Presentation |
 | --- | --- |
 | retrieval pending/indexing | “Search and AI are still preparing.” Reader remains open. |

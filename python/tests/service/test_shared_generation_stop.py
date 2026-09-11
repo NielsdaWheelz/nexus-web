@@ -13,7 +13,7 @@ from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import sessionmaker
 
 from nexus.db.models import LLMModelTurnContinuation
-from nexus.jobs.queue import JobExecutionContext, claim_job, enqueue_job, get_job
+from nexus.jobs.queue import JobExecutionContext, enqueue_job, get_job
 from nexus.schemas.presence import Present
 from nexus.services import generation_policy
 from nexus.services.durable_step_journal import Completed, Uncertain
@@ -48,6 +48,7 @@ from nexus.services.tool_authority import (
 from tests.testkit.generation_catalog import CHAT_TEST_SELECTION, configured_chat_catalog_service
 from tests.testkit.generation_tool_authority import controlled_tool_runtime
 from tests.testkit.provider_generation import tool_decision_generation_backend
+from tests.testkit.queue_claims import claim_job_row
 from tests.testkit.unreachable_state import delete_jobs_by_ids, expire_job_claim
 
 
@@ -103,13 +104,17 @@ async def _prove_stopped_generation(
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     with factory() as db:
         job = enqueue_job(db, kind="shared_generation_stop_proof", max_attempts=2)
-        claimed = claim_job(
+        claimed = claim_job_row(
             db, job_id=job.id, worker_id="stop-worker", lease_seconds=300, heavy_kinds=()
         )
         assert claimed is not None
         db.commit()
     context = JobExecutionContext(
-        job_id=job.id, worker_id="stop-worker", attempt_no=claimed.attempts, resource_class="Light"
+        job_id=job.id,
+        worker_id="stop-worker",
+        attempt_no=claimed.attempts,
+        resource_class="Light",
+        execution_id=claimed.execution_id,
     )
     journal = JobGenerationJournal(
         context=context, step_path="generation", lock_dispatch=lambda db: get_job(db, job.id)
@@ -210,7 +215,7 @@ async def _prove_stopped_generation(
         with factory() as db:
             expire_job_claim(db, job_id=job.id)
             db.commit()
-            reclaimed = claim_job(
+            reclaimed = claim_job_row(
                 db, job_id=job.id, worker_id="retry-worker", lease_seconds=300, heavy_kinds=()
             )
             assert reclaimed is not None and reclaimed.attempts == 2
@@ -220,6 +225,7 @@ async def _prove_stopped_generation(
             worker_id="retry-worker",
             attempt_no=reclaimed.attempts,
             resource_class="Light",
+            execution_id=reclaimed.execution_id,
         )
         retry = replace(
             execution,

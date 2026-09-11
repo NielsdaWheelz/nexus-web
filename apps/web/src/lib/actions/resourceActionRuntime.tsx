@@ -92,6 +92,7 @@ import type { OfflineMediaInventoryItem } from "@/lib/offlineMedia/clientStore";
 import { useOfflineReadingCapability } from "@/lib/offlineReading/OfflineReadingProvider";
 import type { ReadingAvailability } from "@/lib/offlineReading/contract";
 import { present } from "@/lib/api/presence";
+import { IMPORTS_CONFLICT_NOTICE } from "@/lib/status/imports";
 import { useShareController } from "@/lib/sharing/controller";
 import {
   useLibraryPlacementController,
@@ -99,8 +100,16 @@ import {
 } from "@/lib/libraries/placementController";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
-import { runSourceProcessingAction } from "@/lib/media/sourceActions";
-import { retryMediaMetadata } from "@/lib/media/ingestionClient";
+import {
+  publishImportsInvalidation,
+  repairSearchImport,
+  repairSourceImport,
+  retrySourceImport,
+} from "@/lib/imports/importsClient";
+import {
+  refreshMediaSource,
+  retryMediaMetadata,
+} from "@/lib/media/ingestionClient";
 import { confirmAndDeleteMedia } from "@/lib/media/mediaLibraries";
 import { deleteMemberLibrary } from "@/lib/libraries/client";
 import { deleteConversation } from "@/lib/conversations/indexMutation";
@@ -677,19 +686,34 @@ async function runResourceActionEffect(
       window.location.assign(response.data.url);
       return;
     }
-    case "RetryProcessing":
-      await runSourceProcessingAction({
+    case "RetrySource":
+      await retrySourceImport({
         mediaId: requireRefId(target),
-        action: "retry",
-        successTitle: "Retrying source processing",
+        expectedAttemptId: intent.expectedAttemptId,
+        clientMutationId: crypto.randomUUID(),
       });
+      publishImportsInvalidation();
+      return;
+    case "RepairSource":
+      await repairSourceImport({
+        mediaId: requireRefId(target),
+        expectedAttemptId: intent.expectedAttemptId,
+        expectedJobId: intent.expectedJobId,
+        clientMutationId: crypto.randomUUID(),
+      });
+      publishImportsInvalidation();
+      return;
+    case "RepairSearch":
+      await repairSearchImport({
+        mediaId: requireRefId(target),
+        expectedRevision: intent.expectedRevision,
+        expectedJobId: intent.expectedJobId,
+        clientMutationId: crypto.randomUUID(),
+      });
+      publishImportsInvalidation();
       return;
     case "RefreshSource":
-      await runSourceProcessingAction({
-        mediaId: requireRefId(target),
-        action: "refresh",
-        successTitle: "Refreshing source",
-      });
+      await refreshMediaSource(requireRefId(target));
       return;
     case "RetryMetadata":
       await retryMediaMetadata(requireRefId(target));
@@ -1162,7 +1186,9 @@ function reconciliationScopeFor(
     case "RetryTranscript":
     case "AddToLectern":
     case "RemoveFromLectern":
-    case "RetryProcessing":
+    case "RetrySource":
+    case "RepairSource":
+    case "RepairSearch":
     case "RefreshSource":
     case "RetryMetadata":
     case "RefreshPodcast":
@@ -1234,9 +1260,24 @@ function confirmResourceAction(
 
 /** The one exhaustive owner mapping an expected dispatch error to HUD copy. */
 function dispatchErrorContent(
+  intent: ResourceActionIntent,
   actionLabel: string,
   error: unknown,
 ): FeedbackContent {
+  // An import recovery that named an identity the server has already moved past
+  // is not a failed action: the reader is looking at work that changed under
+  // them, and the copy owner words that one way for every surface that plans
+  // these three intents (contract §5, D7). No other subject carries an
+  // inspected identity, so no other subject gets import wording.
+  if (
+    (intent.kind === "RetrySource" ||
+      intent.kind === "RepairSource" ||
+      intent.kind === "RepairSearch") &&
+    isApiError(error) &&
+    error.code === "E_RESOURCE_CONFLICT"
+  ) {
+    return { ...IMPORTS_CONFLICT_NOTICE, requestId: error.requestId };
+  }
   const message =
     isApiError(error) || error instanceof Error ? error.message : undefined;
   const requestId = isApiError(error) ? error.requestId : undefined;
@@ -1579,6 +1620,7 @@ export function ResourceActionRuntimeProvider({
               currentPorts.feedback.publish({
                 kind: "Hud",
                 content: dispatchErrorContent(
+                  input.intent,
                   input.label,
                   settlement.commandError,
                 ),
@@ -1610,7 +1652,7 @@ export function ResourceActionRuntimeProvider({
           if (isApiError(error) && !isSameSystemApiDefect(error)) {
             currentPorts.feedback.publish({
               kind: "Hud",
-              content: dispatchErrorContent(input.label, error),
+              content: dispatchErrorContent(input.intent, input.label, error),
             });
             return;
           }

@@ -11,7 +11,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun
-from nexus.jobs.queue import claim_job, complete_job
+from nexus.jobs.queue import complete_job
 from nexus.schemas.conversation import ChatRunResponse
 from nexus.services import chat_run_response
 from nexus.services.chat_run_finalize import finalize_cancelled
@@ -19,6 +19,7 @@ from nexus.services.conversation_branches import set_active_path
 from tests.testkit.chat import create_entitled_chat
 from tests.testkit.generation_catalog import CHAT_TEST_SELECTION, configured_chat_catalog_service
 from tests.testkit.llm_tool_scenarios import compose_available_product_tool_runtime
+from tests.testkit.queue_claims import claim_job_row
 
 pytestmark = pytest.mark.usefixtures("committed_chat_state_isolation")
 
@@ -47,7 +48,7 @@ def test_chat_hydration_is_one_snapshot_across_worker_terminal_commit(
                 tool_runtime=compose_available_product_tool_runtime(),
             )
         )
-        claimed = claim_job(
+        claimed = claim_job_row(
             setup,
             job_id=chat.job_id,
             worker_id=worker_id,

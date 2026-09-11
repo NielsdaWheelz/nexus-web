@@ -14,6 +14,7 @@ from uuid import UUID
 
 from nexus.config import get_settings
 from nexus.jobs.dead_letter_projections import DeadLetterProjection
+from nexus.jobs.history_projections import HistoryProjection
 from nexus.jobs.queue import (
     JobExecutionContext,
     JobResourceClass,
@@ -47,6 +48,10 @@ class JobDefinition:
     periodic_checkpoint_keys: frozenset[str] = frozenset()
     failed_result_statuses: tuple[str, ...] = ()
     dead_letter_projection: DeadLetterProjection = "None"
+    # Which import-history owner records this kind's queue-envelope outcomes
+    # (retry scheduled, dead, interrupted, rescheduled). Not part of the task
+    # contract digest: it changes what is recorded, never how the job runs.
+    history_projection: HistoryProjection = "None"
     wall_timeout_seconds: float = 900.0
     resource_failure_projection: ResourceFailureProjection = "Job"
     child_runtime: ChildRuntime = "Base"
@@ -134,6 +139,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             wall_timeout_seconds=settings.background_process_wall_timeout_seconds,
             resource_failure_projection="SourceAttemptMedia",
             child_exit_cleanup="SourceAttemptParserTemp",
+            history_projection="SourceAttempt",
             never_prune_dead=True,
         ),
         "media_content_reindex_job": JobDefinition(
@@ -143,6 +149,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             max_attempts=3,
             retry_delays_seconds=(60, 300),
             lease_seconds=900,
+            history_projection="ContentIndex",
             never_prune_dead=True,
         ),
         "enrich_metadata": JobDefinition(

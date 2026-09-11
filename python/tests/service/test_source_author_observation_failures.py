@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.db.models import Contributor, MediaSourceAttempt
-from nexus.jobs.queue import JobExecutionContext, claim_job
+from nexus.jobs.queue import JobExecutionContext
 from nexus.services.contributor_taxonomy import contributor_handle_candidates
 from nexus.services.media_source_ingest import (
     accept_browser_article_capture,
@@ -16,6 +16,7 @@ from nexus.services.media_source_ingest import (
 )
 from nexus.storage.client import get_storage_client
 from tests.testkit.auth import UserRecord
+from tests.testkit.queue_claims import claim_job_row
 from tests.testkit.upload_sessions import delete_storage_prefix
 
 
@@ -41,7 +42,7 @@ def test_source_author_identity_defect_is_not_persisted_as_ingest_failure(
     assert attempt is not None and attempt.job_id is not None
     job_id = attempt.job_id
     worker_id = "source-author-defect-worker"
-    claimed = claim_job(
+    claimed = claim_job_row(
         db_session,
         job_id=job_id,
         worker_id=worker_id,
@@ -75,6 +76,7 @@ def test_source_author_identity_defect_is_not_persisted_as_ingest_failure(
                     worker_id=worker_id,
                     attempt_no=claimed.attempts,
                     resource_class="Heavy",
+                    execution_id=claimed.execution_id,
                 ),
             )
 

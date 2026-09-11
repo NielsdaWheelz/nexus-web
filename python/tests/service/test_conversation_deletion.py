@@ -11,8 +11,9 @@ import pytest
 from sqlalchemy import Engine, text
 from sqlalchemy.orm import Session
 
-from nexus.jobs.queue import claim_job, enqueue_job, fail_job, update_running_job_payload
+from nexus.jobs.queue import enqueue_job, fail_job, update_running_job_payload
 from nexus.services.conversations import delete_conversation
+from tests.testkit.queue_claims import claim_job_row
 
 _CUTOVER_PRESENT = find_spec("nexus.services.generation_selection") is not None
 
@@ -35,7 +36,7 @@ def test_conversation_delete_removes_its_dead_chat_journal_only(
     with Session(engine) as db:
         chat = asyncio.run(_create_deletion_chat(db))
         for attempt in range(1, 4):
-            claimed = claim_job(
+            claimed = claim_job_row(
                 db,
                 job_id=chat.job_id,
                 worker_id=worker_id,

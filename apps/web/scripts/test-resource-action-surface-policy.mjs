@@ -469,8 +469,7 @@ const directProofs = {
     assertContextualMenu("src/components/appnav/MobilePaneBar.tsx"),
   "secondary-mobile-pane-header": () =>
     assertCanonicalMenu("src/components/workspace/MobileSecondaryPaneHost.tsx"),
-  "media-activity-row": () =>
-    assertCanonicalMenu("src/components/nexus/MediaActivityPage.tsx"),
+  "import-row": () => assertCanonicalMenu("src/components/imports/ImportRow.tsx"),
 };
 
 const canonicalConsumerClassifications = [
@@ -563,9 +562,15 @@ const canonicalConsumerClassifications = [
   },
   {
     kind: "ResourceActionMenu",
-    path: "src/components/nexus/MediaActivityPage.tsx",
+    path: "src/components/imports/ImportRow.tsx",
     occurrences: 1,
-    surfaceIds: ["media-activity-row"],
+    surfaceIds: ["import-row"],
+  },
+  {
+    kind: "useResourceActionMenuModel",
+    path: "src/components/imports/ImportRow.tsx",
+    occurrences: 1,
+    surfaceIds: ["import-row"],
   },
   {
     kind: "useResourceActionMenuModel",

@@ -19,7 +19,12 @@ export default function PaneToolbar({
   className,
 }: {
   variant: PaneToolbarVariant;
-  search?: ReactNode; // a text input the pane owns
+  /**
+   * The toolbar's leading row: the text input the pane owns, and any
+   * command that must keep one place beside it rather than migrate
+   * between rows as the wrapping filter set changes width.
+   */
+  search?: ReactNode;
   filters?: ReactNode; // filter chips/selects the pane owns
   controls?: ReactNode; // right-aligned contextual toolbar controls
   className?: string;

@@ -38,7 +38,7 @@ async def _prove_machine_authorship_lifecycle(engine: Engine) -> None:
         Fragment,
         MessageToolCall,
     )
-    from nexus.jobs.queue import JobExecutionContext, claim_job, enqueue_job
+    from nexus.jobs.queue import JobExecutionContext, enqueue_job
     from nexus.schemas.chat_reader_selection import ReaderSelectionInput, ReaderSelectionKey
     from nexus.schemas.library import CreateLibraryRequest
     from nexus.schemas.presence import Present
@@ -80,6 +80,7 @@ async def _prove_machine_authorship_lifecycle(engine: Engine) -> None:
         compose_available_product_tool_runtime,
         create_readable_media,
     )
+    from tests.testkit.queue_claims import claim_job_row
 
     session_factory = sessionmaker(bind=engine, expire_on_commit=False)
     catalog = configured_chat_catalog_service()
@@ -650,7 +651,7 @@ async def _prove_machine_authorship_lifecycle(engine: Engine) -> None:
             kind="machine_authorship_retrieval_proof",
             max_attempts=2,
         )
-        claimed = claim_job(
+        claimed = claim_job_row(
             db,
             job_id=read_job.id,
             worker_id=read_worker,
@@ -663,6 +664,7 @@ async def _prove_machine_authorship_lifecycle(engine: Engine) -> None:
             worker_id=read_worker,
             attempt_no=claimed.attempts,
             resource_class="Light",
+            execution_id=claimed.execution_id,
         )
         start_generation_in_current_transaction(
             db,

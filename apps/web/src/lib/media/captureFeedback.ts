@@ -7,7 +7,10 @@ import {
   UploadSessionError,
   type UploadSessionOutcome,
 } from "@/lib/media/ingestionClient";
-import { uploadVerificationFailureCopy } from "@/lib/status/mediaActivity";
+import {
+  IMPORTS_CONFLICT_MESSAGE,
+  uploadVerificationFailureCopy,
+} from "@/lib/status/imports";
 import { assertNever } from "@/lib/assertNever";
 
 export type MediaCaptureOperation = "SaveSource" | "AddAttachment";
@@ -23,23 +26,25 @@ function mediaCaptureTitle(operation: MediaCaptureOperation): string {
 
 /**
  * The capture surfaces attach one file at a time and own no session row, so
- * every upload-session outcome resolves to one message plus, where Import
- * Activity holds the obligation, a pointer to it.
+ * every upload-session outcome resolves to one message plus, where Imports
+ * holds the obligation, a pointer to it.
  */
 function uploadSessionCaptureMessage(
   outcome: Exclude<UploadSessionOutcome, { kind: "IntentMalformed" }>,
 ): string {
   switch (outcome.kind) {
     case "NeedsAttention":
-      return "Open Import Activity for the available next step.";
+      return "Open Imports for the available next step.";
     case "VerificationRejected":
       return uploadVerificationFailureCopy(outcome.code);
     case "BytesMissing":
       return "Nexus never received this file. Attach it again.";
     case "Superseded":
-      return "This upload finished elsewhere. Open Import Activity to find it.";
+      return "This upload finished elsewhere. Open Imports to find it.";
+    case "Conflicted":
+      return IMPORTS_CONFLICT_MESSAGE;
     case "Unresolved":
-      return "Nexus couldn’t confirm this upload. Open Import Activity before attaching it again.";
+      return "Nexus couldn’t confirm this upload. Open Imports before attaching it again.";
     case "UnsupportedFileType":
       return "This file type isn’t supported. Use a PDF or EPUB.";
     case "FileTooLarge":

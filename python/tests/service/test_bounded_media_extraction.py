@@ -31,7 +31,6 @@ from nexus.db.session import create_session_factory
 from nexus.errors import ApiError, ApiErrorCode, ResourceLimitError
 from nexus.jobs.queue import (
     JobExecutionContext,
-    claim_job,
     complete_job,
     enqueue_job,
     parser_operation_has_live_job,
@@ -54,6 +53,8 @@ from nexus.services.latex_apparatus import (
     LATEX_APPARATUS_MAX_ITEMS,
     LATEX_SELECTED_SOURCE_MAX_BYTES,
 )
+from nexus.services.library_entries import delete_entry, ensure_entry, media_target
+from nexus.services.media import get_media_for_viewer, list_visible_media
 from nexus.services.parser_temp import (
     StorageObjectIntegrityError,
     parser_attempt_directory,
@@ -82,6 +83,7 @@ from tests.testkit.epub_fixtures import (
     epub2_payload,
     zip_payload,
 )
+from tests.testkit.queue_claims import claim_job_row
 from tests.testkit.unreachable_state import (
     delete_jobs_by_ids,
     delete_source_attempts_and_media,
@@ -2153,7 +2155,7 @@ def test_source_progress_is_monotonic_and_rejects_a_lost_heavy_fence(engine: Eng
         )
         attempt.job_id = job.id
         db.commit()
-        claimed = claim_job(
+        claimed = claim_job_row(
             db,
             job_id=job.id,
             worker_id=worker_id,
@@ -2169,6 +2171,7 @@ def test_source_progress_is_monotonic_and_rejects_a_lost_heavy_fence(engine: Eng
         worker_id=worker_id,
         attempt_no=1,
         resource_class="Heavy",
+        execution_id=claimed.execution_id,
     )
     fence = SourcePublicationFence.from_context(attempt_id=attempt_id, context=context)
     session_factory = create_session_factory(engine)
@@ -2232,6 +2235,101 @@ def test_source_progress_is_monotonic_and_rejects_a_lost_heavy_fence(engine: Eng
         assert persisted is not None
         assert persisted.processing_stage == "Finalize"
         assert persisted.progress_completed == 0
+        delete_jobs_by_ids(db, job_ids=(job.id,))
+        delete_source_attempts_and_media(
+            db,
+            attempt_ids=(attempt_id,),
+            media_id=media_id,
+        )
+        db.commit()
+
+
+def test_in_flight_source_progress_reaches_the_media_wire(engine: Engine) -> None:
+    viewer_id, media_id = _persist_test_media(engine, kind=MediaKind.pdf)
+    attempt_id = uuid4()
+    worker_id = "media-wire-worker"
+    with Session(engine) as db:
+        library_id = ensure_user_and_default_library(db, viewer_id)
+        ensure_entry(db, library_id, media_target(media_id))
+        attempt = MediaSourceAttempt(
+            id=attempt_id,
+            media_id=media_id,
+            created_by_user_id=viewer_id,
+            source_type="uploaded_pdf_file",
+            attempt_no=1,
+            run_count=1,
+            status="running",
+            intent_key=f"media-wire-progress-{attempt_id}",
+            processing_stage="Validate",
+        )
+        db.add(attempt)
+        job = enqueue_job(
+            db,
+            kind="ingest_media_source",
+            payload={"media_id": str(media_id), "attempt_id": str(attempt_id)},
+        )
+        attempt.job_id = job.id
+        db.commit()
+        claimed = claim_job_row(
+            db,
+            job_id=job.id,
+            worker_id=worker_id,
+            lease_seconds=300,
+            heavy_kinds=("ingest_media_source",),
+        )
+        db.commit()
+        assert claimed is not None
+
+    session_factory = create_session_factory(engine)
+    fence = SourcePublicationFence.from_context(
+        attempt_id=attempt_id,
+        context=JobExecutionContext(
+            job_id=job.id,
+            worker_id=worker_id,
+            attempt_no=1,
+            resource_class="Heavy",
+            execution_id=claimed.execution_id,
+        ),
+    )
+    record_source_extraction_progress(
+        session_factory=session_factory,
+        fence=fence,
+        media_id=media_id,
+        completed=3,
+        total=12,
+        unit="Page",
+    )
+
+    with Session(engine) as db:
+        counted = get_media_for_viewer(db, viewer_id, media_id).model_dump(mode="json")
+    counted_progress = counted["source_progress"]
+    assert counted_progress["kind"] == "Present", counted_progress
+    assert counted_progress["value"]["kind"] == "Counted", counted_progress
+    assert counted_progress["value"]["stage"] == "Extract", counted_progress
+    assert counted_progress["value"]["completed"] == 3, counted_progress
+    assert counted_progress["value"]["total"] == 12, counted_progress
+    assert counted_progress["value"]["unit"] == "Page", counted_progress
+    assert counted_progress["value"]["run_count"] == 1, counted_progress
+
+    record_source_finalizing(
+        session_factory=session_factory,
+        fence=fence,
+        media_id=media_id,
+    )
+    with Session(engine) as db:
+        listed, _cursor = list_visible_media(db, viewer_id)
+    matched = [media for media in listed if media.id == media_id]
+    assert len(matched) == 1, [media.id for media in listed]
+    staged_progress = matched[0].model_dump(mode="json")["source_progress"]
+    assert staged_progress["kind"] == "Present", staged_progress
+    assert staged_progress["value"]["kind"] == "Stage", staged_progress
+    assert staged_progress["value"]["stage"] == "Finalize", staged_progress
+    assert staged_progress["value"]["run_count"] == 1, staged_progress
+
+    with Session(engine) as db:
+        assert complete_job(db, job_id=job.id, worker_id=worker_id, attempt_no=claimed.attempts)
+        db.commit()
+        delete_entry(db, library_id, media_target(media_id))
         delete_jobs_by_ids(db, job_ids=(job.id,))
         delete_source_attempts_and_media(
             db,

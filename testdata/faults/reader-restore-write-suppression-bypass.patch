@@ -1,6 +1,12 @@
 diff --git a/apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx b/apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx
+index 34edcb7..1791cab 100644
 --- a/apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx
 +++ b/apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx
-@@ -3101,2 +3101,1 @@ export default function MediaPaneBody() {
+@@ -2558,7 +2558,6 @@ export default function MediaPaneBody() {
+         // movement, so seed that captured boundary without echoing a cursor
+         // write. This also fences remote handoff adoption from writing the
+         // position it just accepted back to the server.
 -        mediaFindPreviewLease.armCaptureSuppressionUntilGenuineInput();
          scrollRestoreAppliedRef.current = true;
+         lastSavedTextAnchorOffsetRef.current = resumeOffset;
+         releaseChrome();

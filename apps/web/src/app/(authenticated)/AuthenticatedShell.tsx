@@ -13,7 +13,7 @@ import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 import { OfflineMediaProvider } from "@/lib/offlineMedia/OfflineMediaProvider";
 import { OfflineReadingProvider } from "@/lib/offlineReading/OfflineReadingProvider";
-import { MediaActivityProvider } from "@/lib/media/MediaActivityProvider";
+import { ImportsProvider } from "@/lib/imports/ImportsProvider";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { CompletionUndoFeedbackOwner } from "@/lib/lectern/useCompletionUndo";
 import { WalknoteSessionProvider } from "@/lib/walknotes/walknoteSession";
@@ -161,7 +161,7 @@ function AuthenticatedWorkspace({
                       <ResourceOverlaysProvider>
                         <GlobalPlayerProvider accountId={accountId}>
                           <ResourceActionRuntimeProvider>
-                            <MediaActivityProvider>
+                            <ImportsProvider>
                               <Nexus />
                               <ResourceActionOverlays />
                               <div
@@ -177,7 +177,7 @@ function AuthenticatedWorkspace({
                                   </WalknoteSessionProvider>
                                 </main>
                               </div>
-                            </MediaActivityProvider>
+                            </ImportsProvider>
                           </ResourceActionRuntimeProvider>
                         </GlobalPlayerProvider>
                       </ResourceOverlaysProvider>

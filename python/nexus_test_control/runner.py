@@ -5998,6 +5998,26 @@ def _command_result_detail(
     return f"fixed command {index} exited {completed.returncode}: {decisive}"
 
 
+# The line a JavaScript matcher prints when it fails, whatever the receiver. One
+# grammar: the decisive-line set matches it and the preceding-diff rule reads its
+# receiver, so the two never drift apart.
+_MATCHER_FAILURE_LINE = r"expect\((?P<receiver>[A-Za-z]+)\)\.(?:\w+\.)*to[A-Za-z]+\("
+_MATCHER_FAILURE_RE = re.compile(_MATCHER_FAILURE_LINE, re.IGNORECASE)
+# Playwright prints the failing oracle and its `Locator:` / `Received:` diff on
+# the lines above these two receivers, so those lines are part of the message.
+# Vitest's matcher line stands under a query error that already names the same
+# element, above a DOM dump that is noise.
+_DIFFED_MATCHER_RECEIVERS = frozenset({"locator", "received"})
+_DECISIVE_LINE_RE = re.compile(
+    r"(?:^|\s)(?:E\s+(?:assert|AssertionError|Failed:)|FAILED\s|"
+    r"AssertionError:|TestingLibraryElementError:|Unable to find\s|"
+    rf"Error:\s*expect\(|{_MATCHER_FAILURE_LINE}|"
+    r"Tests\s+\d+\s+failed|falsifying example:)",
+    re.IGNORECASE,
+)
+_ELIDED_MIDDLE = "\n[...]\n"
+
+
 def _decisive_output(value: str, limit: int = 1900) -> str:
     stripped = _ANSI_ESCAPE_RE.sub("", value).strip()
     if len(stripped) <= limit:
@@ -6008,18 +6028,26 @@ def _decisive_output(value: str, limit: int = 1900) -> str:
     lines = stripped.splitlines()
     decisive_lines: set[int] = set()
     for index, line in enumerate(lines):
-        if re.search(
-            r"(?:^|\s)(?:E\s+(?:assert|AssertionError|Failed:)|FAILED\s|"
-            r"AssertionError:|Error:\s*expect\(|expect\((?:locator|received)\)\.to[A-Za-z]+\(|"
-            r"Tests\s+\d+\s+failed|falsifying example:)",
-            line,
-            re.IGNORECASE,
-        ):
-            decisive_lines.add(index)
-            if re.search(r"expect\((?:locator|received)\)\.", line, re.IGNORECASE):
-                decisive_lines.update(range(max(0, index - 4), index))
+        if _DECISIVE_LINE_RE.search(line) is None:
+            continue
+        decisive_lines.add(index)
+        matcher = _MATCHER_FAILURE_RE.search(line)
+        if matcher is not None and matcher["receiver"].casefold() in _DIFFED_MATCHER_RECEIVERS:
+            decisive_lines.update(range(max(0, index - 4), index))
     decisive = "\n".join(lines[index] for index in sorted(decisive_lines))
-    return (decisive or stripped)[-limit:]
+    if not decisive:
+        return stripped[-limit:]
+    if len(decisive) <= limit:
+        return decisive
+    # A whole command's output is captured here, not one test's, so a file that
+    # reds many cases at once can carry more decisive lines than the bound. Give
+    # up the middle and never an end: the head holds the first failing test's
+    # oracle, which is what a registered fault's `expected_failure` is matched
+    # against, and the tail holds the runner's own summary, which is what
+    # `_classified_exact_result` reads when nothing else survives.
+    head = (limit - len(_ELIDED_MIDDLE)) // 2
+    tail = limit - len(_ELIDED_MIDDLE) - head
+    return decisive[:head] + _ELIDED_MIDDLE + decisive[-tail:]
 
 
 def _first_node_tap_assertion_block(value: str, limit: int) -> str | None:

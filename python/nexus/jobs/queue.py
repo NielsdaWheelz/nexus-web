@@ -23,6 +23,9 @@ DEAD = "dead"
 
 TERMINAL_STATUSES = frozenset({SUCCEEDED, DEAD})
 
+type JobFailureTransition = Literal["failed", "dead"]
+"""The two outcomes of a failed attempt: scheduled retry or dead letter."""
+
 PERIODIC_PRIORITY_RECONCILIATION_LIMIT = 256
 _PERIODIC_IDENTITY_PAYLOAD_KEYS = frozenset({"request_id", "scheduler_identity"})
 
@@ -104,6 +107,7 @@ class JobRow:
     available_at: datetime
     lease_expires_at: datetime | None
     claimed_by: str | None
+    execution_id: UUID | None
     dedupe_key: str | None
     error_code: str | None
     last_error: str | None
@@ -123,13 +127,31 @@ class JobExecutionContext:
     Handlers that need a durable checkpoint or self-reschedule use these exact
     values (job_id, worker_id, attempt_no) with the lease-fenced primitives
     below -- queue-owned checkpoint writes from a worker require that exact
-    running attempt, claimant, and unexpired lease.
+    running attempt, claimant, and unexpired lease. ``execution_id`` is the
+    claim's non-resetting identity: ``(job_id, attempts)`` repeats across a
+    dead-job repair, this never does, so history names executions by it.
     """
 
     job_id: UUID
     worker_id: str
     attempt_no: int
     resource_class: JobResourceClass
+    execution_id: UUID
+
+
+@dataclass(frozen=True)
+class InterruptedExecution:
+    """A claim reclaimed an expired running row; ``execution_id`` is that row's
+    previous execution, ``None`` when it was claimed before execution identity
+    existed."""
+
+    execution_id: UUID | None
+
+
+@dataclass(frozen=True)
+class ClaimedJob:
+    job: JobRow
+    interrupted: InterruptedExecution | None
 
 
 @dataclass(frozen=True)
@@ -398,7 +420,7 @@ def _claim_locked_job(
     worker_id: str,
     lease_seconds: int,
     heavy_kinds: Collection[str],
-) -> JobRow | None:
+) -> ClaimedJob | None:
     is_heavy = str(candidate["kind"]) in heavy_kinds
     if is_heavy:
         capacity = _lock_heavy_capacity(db)
@@ -413,6 +435,7 @@ def _claim_locked_job(
                 SET status = 'running',
                     attempts = attempts + 1,
                     claimed_by = :worker_id,
+                    execution_id = gen_random_uuid(),
                     started_at = COALESCE(started_at, clock_timestamp()),
                     lease_expires_at =
                         clock_timestamp()
@@ -466,7 +489,13 @@ def _claim_locked_job(
         # lock and the capacity lock under the global job-before-capacity order.
         if acquired is None:
             raise AssertionError("Heavy job claim did not acquire capacity")
-    return _row_to_job(claimed)
+    interrupted = None
+    if was_interrupted:
+        previous = candidate["execution_id"]
+        interrupted = InterruptedExecution(
+            execution_id=None if previous is None else UUID(str(previous))
+        )
+    return ClaimedJob(job=_row_to_job(claimed), interrupted=interrupted)
 
 
 def _insert_job_row(
@@ -775,7 +804,7 @@ def claim_next_job(
     lease_seconds: int,
     heavy_kinds: Sequence[str],
     allowed_kinds: Sequence[str] | None = None,
-) -> JobRow | None:
+) -> ClaimedJob | None:
     """Claim the first due capacity-eligible job in canonical queue order."""
     if allowed_kinds is not None and len(allowed_kinds) == 0:
         return None
@@ -847,7 +876,7 @@ def claim_job(
     lease_seconds: int,
     heavy_kinds: Sequence[str],
     allowed_kinds: Sequence[str] | None = None,
-) -> JobRow | None:
+) -> ClaimedJob | None:
     """Claim one exact due operation through the canonical queue transition.
 
     Normal workers use :func:`claim_next_job`; exact-operation drivers such as
@@ -1825,33 +1854,44 @@ def supersede_unclaimed_job(
     *,
     job_id: UUID,
     kind: str,
-) -> JobRow:
-    """Complete one obsolete waiting operation without touching running/dead history."""
-    row = (
-        db.execute(
-            text(
-                """
-                UPDATE background_jobs
-                SET
-                    status = 'succeeded',
-                    result = '{"status":"superseded"}'::jsonb,
-                    lease_expires_at = NULL,
-                    claimed_by = NULL,
-                    finished_at = now(),
-                    updated_at = now()
+) -> None:
+    """Complete one obsolete waiting operation without touching running/dead history.
+
+    The guarded, non-blocking candidate select is the whole conditional. A row a
+    concurrent transaction holds is left to that transaction: the X-post completion
+    calls this under the quote media's ``FOR UPDATE`` while a worker settling that
+    same queue row needs the media as ``KEY SHARE`` for the seam's history insert,
+    so waiting on a foreign row lock here would close a wait cycle. A caller that
+    already locked the row supersedes it -- ``SKIP LOCKED`` never skips a row the
+    current transaction holds -- and owns whatever postcondition its coalescing
+    invariant needs.
+    """
+    db.execute(
+        text(
+            """
+            WITH waiting AS (
+                SELECT id
+                FROM background_jobs
                 WHERE id = :job_id
                   AND kind = :kind
                   AND status IN ('pending', 'failed')
                   AND claimed_by IS NULL
-                RETURNING *
-                """
-            ),
-            {"job_id": job_id, "kind": kind},
-        )
-        .mappings()
-        .one()
+                FOR UPDATE SKIP LOCKED
+            )
+            UPDATE background_jobs
+            SET
+                status = 'succeeded',
+                result = '{"status":"superseded"}'::jsonb,
+                lease_expires_at = NULL,
+                claimed_by = NULL,
+                finished_at = now(),
+                updated_at = now()
+            FROM waiting
+            WHERE background_jobs.id = waiting.id
+            """
+        ),
+        {"job_id": job_id, "kind": kind},
     )
-    return _row_to_job(row)
 
 
 def current_dead_job_for_payload(
@@ -2114,7 +2154,7 @@ def fail_job(
     error_message: str,
     retry_delays_seconds: Sequence[int],
     result_payload: Mapping[str, Any] | None = None,
-) -> str | None:
+) -> JobFailureTransition | None:
     """Apply retry/dead transition for one exact, live running attempt."""
     row = _lock_running_job_attempt(
         db,
@@ -2130,12 +2170,13 @@ def fail_job(
     max_attempts = row.max_attempts
     should_dead_letter = attempts >= max_attempts
 
+    new_status: JobFailureTransition
     if should_dead_letter:
-        new_status = DEAD
+        new_status = "dead"
         retry_delay_seconds = 0
     else:
         retry_delay_seconds = _retry_delay_for_attempt(attempts, retry_delays_seconds)
-        new_status = FAILED
+        new_status = "failed"
 
     db.execute(
         text(
@@ -2172,7 +2213,7 @@ def fail_job(
         if capacity.worker_id != worker_id or capacity.attempt_no != attempts:
             raise AssertionError("Heavy capacity holder does not match failed attempt")
         _clear_heavy_capacity(db, capacity)
-    if new_status == FAILED:
+    if new_status == "failed":
         db.execute(
             text("SELECT pg_notify('nexus_background_jobs', :kind)"),
             {"kind": row.kind},
@@ -2252,6 +2293,7 @@ def _row_to_job(row: Mapping[Any, Any]) -> JobRow:
         available_at=row["available_at"],
         lease_expires_at=row["lease_expires_at"],
         claimed_by=row["claimed_by"],
+        execution_id=None if row["execution_id"] is None else UUID(str(row["execution_id"])),
         dedupe_key=row["dedupe_key"],
         error_code=row["error_code"],
         last_error=row["last_error"],
