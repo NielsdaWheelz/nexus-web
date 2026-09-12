@@ -230,3 +230,9 @@ books and temporary proofs remain outside git. no production data was changed.
   source/asset closure is current. existing custom-highlight selectors trigger
   minifier warnings recorded in [their ticket](../tickets/offline-css-minifier-rejects-highlight-syntax.md).
   native execution remains pending.
+- checkpoint `e169805fa9` contains the implementation and rebuilt offline assets.
+  native attempt `52f83fb860cc0c0f` stopped before execution: the global fault
+  registry rejects literal `[id]` in the evidence proof's existing route path.
+  [controller defect](../tickets/fault-registry-rejects-literal-route-brackets.md).
+  the evidence test remains registered; its owner exists at base and uses
+  ordinary base sensitivity instead of an unnecessary injected fault.

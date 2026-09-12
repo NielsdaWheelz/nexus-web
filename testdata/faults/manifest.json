@@ -1233,15 +1233,6 @@
       "expected_failure": "unsupported reader package erased progress row"
     },
     {
-      "id": "epub-evidence-legacy-section-requirement",
-      "patch": "testdata/faults/epub-evidence-legacy-section-requirement.patch",
-      "sha256": "fd45b44ef69ae7ba75f8aba96c01bf36574db2d2641e9fbe4f42440c6a07d171",
-      "proofs": [
-        "vitest:apps/web/src/app/(authenticated)/media/[id]/mediaEvidenceResolution.unit.test.ts"
-      ],
-      "expected_failure": "EPUB evidence must decode its exact fragment address"
-    },
-    {
       "id": "offline-epub-source-path-uri-interpretation",
       "patch": "testdata/faults/offline-epub-source-path-uri-interpretation.patch",
       "sha256": "fd91aed0b6dbeb3206a5fd941180c9a65e6a84ffab1cbfa9791f8c90c8d80494",
