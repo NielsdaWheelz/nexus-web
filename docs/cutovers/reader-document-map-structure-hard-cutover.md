@@ -1,7 +1,7 @@
 # reader document map structure hard cutover
 
-status: implemented on `codex/reader-document-map`; final repository gates and
-operator acceptance pending. approved direction:
+status: implemented on `codex/reader-document-map`; pr gate blocked;
+operator and release acceptance open. approved direction:
 [council review](reader-document-map-council-review.md). this document owns the
 implementation contract; the review owns research and rationale.
 

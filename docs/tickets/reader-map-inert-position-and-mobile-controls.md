@@ -8,8 +8,10 @@ named position, return, mobile disclosure, section and dense-member controls are
 implemented. hosted sensitivity `8b0b983d002cd181`, rail sensitivity
 `00e6ce31846dcf19`, detail sensitivity `c6cbe7a83935ec23`, and phone witnesses
 `933ea7a501a0bd64` prove exact arrivals, quiet navigation, pointer/keyboard
-activation, focus return and bounded layout. they do not prove actual touch or
-screen-reader usability.
+activation, focus return and bounded layout. input proof `9f9267423390484c`
+also exercises trusted browser touch events, completed prose taps, one-finger
+movement and zoom exclusion. these automated proofs do not establish physical
+touch or screen-reader usability.
 
 `docs/local-rules/testing-standards.md:784` requires deliberate manual
 assistive-technology review for consequential interaction changes. none is

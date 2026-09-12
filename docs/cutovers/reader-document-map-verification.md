@@ -1,6 +1,6 @@
 # reader document map verification
 
-status: implemented; final repository gates and operator acceptance pending.
+status: implemented; pr gate blocked; operator and release acceptance open.
 branch: `codex/reader-document-map`.
 base: `7fa89b88c8342bca9edfb46a6d20053c49555fb2`.
 contract: [hard cutover](reader-document-map-structure-hard-cutover.md).
@@ -12,8 +12,8 @@ receipts live under `test-results/runs/<id>/summary.json` in the worktree named 
 | publication/api | `7ff9ac2851cd984a` | `b7af98b43051abbc`, `d83e2e133eaabbde` | persisted positions, package kernel and final evidence/search consumers pass |
 | migration | `d12d8b1df08293be` in sibling `nexus-reader-structure-red` at base; citation assertion `dce6a2e50cc9a2a3` | `213fa58f8de1a6f0` | atomic rollback, exact/anchor/manual cursor conversion, citation snapshot/replay links, durable reference preservation and repeatability pass |
 | rail/browser | `fcf20dc59bbc7f22` | `bb3b9046b63d607f` | 31 ticks with 18px gaps collapse under predecessor grouping; fixed-cell hit groups keep exact source ticks |
-| offline | `2cb243a45b4aeeb2`, `c5fae5708c454ef1` (native); `096a2704a6612428` (pixel sensitivity) | same sensitivity receipts; `bb3b9046b63d607f` | reader2 only; unique content; exact canonical capture, bounded phone layout, literal paths and unsupported pending-progress preservation; final packaged assets pass native host proof |
-| integration | `4cf713e3c75e2b98` (hosted eof); `8b0b983d002cd181` (restore-write sensitivity) | exact editions `933ea7a501a0bd64`; hosted `8b0b983d002cd181` | actual same-fragment section tracking, source-order toolbar, exact eof/reflow, quiet map/return/restore, away/back and reset pass |
+| offline | `2cb243a45b4aeeb2`, `81f5329ef596fbb5` (native); `096a2704a6612428` (pixel sensitivity) | same sensitivity receipts; `1057e44bfb062fb1` | reader2 only; unique content; exact canonical capture, bounded phone layout, literal paths and unsupported pending-progress preservation; final packaged assets pass native host proof |
+| integration | `4cf713e3c75e2b98` (hosted eof); `adaddce6428458c8` (restore-write sensitivity) | exact editions `933ea7a501a0bd64`; hosted `adaddce6428458c8` | actual same-fragment section tracking, source-order toolbar, exact eof/reflow, quiet map/return/restore, away/back and reset pass |
 
 format/import/setup failures are not behavioral reds. `fecdacafad31ee49`
 exposed whitespace in the authored source fixture; adjacent source tags now
@@ -497,10 +497,24 @@ trusted completed-touch-click admission. this closes oi-083; the complete
 migration proof above closes oi-082. physical-device/operator acceptance remains
 separate. rebuilt offline assets contain `index-CgyIPDsa.js` (416.38 kb before
 gzip); source/asset manifests are regenerated. the same existing custom-highlight
-minifier warnings remain in oi-078. final native artifact proof remains pending.
+minifier warnings remain in oi-078.
 
 `./scripts/test changed apps/web/eslint.config.mjs` passes as
 `1057e44bfb062fb1`: the controller's full web selection executes css validation,
 eslint, typescript, all web kernel owners and all browser-component owners after
 the citation/input corrections. this is independent web evidence; it does not
 replace the blocked pr gate or convert interrupted confidence into a pass.
+
+the latest reviewed source/proof changes and regenerated assets are committed
+as `1a36e8dbbb`. the preceding focused and full-web runs used `01e5862d89` plus
+that reviewed diff. native fault run `81f5329ef596fbb5` uses the committed
+candidate: deliberate pending-progress deletion reaches its assertion, and the
+clean host portfolio passes against `index-CgyIPDsa.js` and its manifests.
+
+hosted sensitivity `adaddce6428458c8` passes on that same committed candidate:
+the central capture-suppression fault reaches its assertion; the clean real-stack
+journey passes. both production builds also pass the existing javascript budget.
+migration sensitivity attempt `0317efd734c9f52b` is rejected before execution
+because these receipt documentation edits were uncommitted. committing the
+documentation restores the required clean-checkout prerequisite; no behavioral
+result or gate waiver is inferred from that attempt.
