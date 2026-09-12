@@ -3816,10 +3816,11 @@ def _retire_linux_process_scope(run_id: str, owner_token: str) -> None:
         return
     unit = _linux_process_scope_unit(run_id, owner_token)
     stopped = _run_user_systemctl("stop", unit)
+    if _linux_process_scope_identities(run_id, owner_token) is None:
+        return
     if stopped.returncode != 0:
         raise RuntimeContractError("owned Linux process scope could not be stopped")
-    if _linux_process_scope_identities(run_id, owner_token) is not None:
-        raise RuntimeContractError("owned Linux process scope was not collected")
+    raise RuntimeContractError("owned Linux process scope was not collected")
 
 
 def _owned_process_group_map(

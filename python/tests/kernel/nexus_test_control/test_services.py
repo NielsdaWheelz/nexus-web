@@ -504,6 +504,55 @@ def test_owned_process_cleanup_rejects_a_different_owner_without_signaling(
         clean_run(tmp_path, TEST_ENV, RUN_ID)
 
 
+def test_linux_scope_retirement_accepts_collection_racing_the_stop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if sys.platform != "linux":
+        pytest.skip("Linux owns transient process scopes")
+    observations = iter(([], None))
+    commands: list[tuple[str, ...]] = []
+
+    monkeypatch.setattr(
+        services,
+        "_linux_process_scope_identities",
+        lambda _run_id, _owner_token: next(observations),
+    )
+
+    def stopped_after_collection(*arguments: str) -> subprocess.CompletedProcess[str]:
+        commands.append(arguments)
+        return subprocess.CompletedProcess(arguments, 5, "", "Unit not loaded")
+
+    monkeypatch.setattr(services, "_run_user_systemctl", stopped_after_collection)
+
+    services._retire_linux_process_scope(RUN_ID, "a" * 32)
+
+    assert commands == [
+        ("stop", f"nexus-test-process-{RUN_ID}-{'a' * 32}.scope"),
+    ]
+
+
+def test_linux_scope_retirement_rejects_stop_failure_while_scope_remains(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if sys.platform != "linux":
+        pytest.skip("Linux owns transient process scopes")
+    observations = iter(([], []))
+
+    monkeypatch.setattr(
+        services,
+        "_linux_process_scope_identities",
+        lambda _run_id, _owner_token: next(observations),
+    )
+    monkeypatch.setattr(
+        services,
+        "_run_user_systemctl",
+        lambda *arguments: subprocess.CompletedProcess(arguments, 1, "", "stop failed"),
+    )
+
+    with pytest.raises(RuntimeContractError, match="scope could not be stopped"):
+        services._retire_linux_process_scope(RUN_ID, "a" * 32)
+
+
 def test_owned_process_cleanup_waits_for_exact_birth_owner_to_finish_startup(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
