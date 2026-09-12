@@ -560,13 +560,27 @@ open. production has not been changed.
   character lengths could assign an intervening mark to the wrong source.
   literal regression `a91f676cda7a51f6` reaches that assertion. normalization now
   matches each output character's actual decomposed codepoints to source queues.
-- final focused run `561a386b854c5e43` passes literal unicode coordinates,
+- focused python run `561a386b854c5e43` passes literal unicode coordinates,
   parser equivalence, source structure, the unchanged memory budget, and both
   supplied editions' independent source/export witnesses. the parser oracle
   deliberately shares normalization; literal kernel cases own normalization
   expectations independently. private books and their temporary owner remain
   outside git. the existing resource-lifecycle fault's reviewed support digest
   changes only for the strengthened fixture; its contract is unchanged.
+- committed memory proof `cfb1d18db4fb1b99` reaches the resource assertion on
+  `bcf09ede79` and passes on `93fc061b01` with the stronger non-nfc fixture.
+  browser review then finds the corresponding global-decomposition error in
+  `domTextCursor.ts`: valid combining marks throw during cursor construction.
+  chromium regression `290596902dae52f7` reproduces the crash. the browser now
+  consumes actual decomposed codepoints from source-span queues, removing the
+  incorrect intermediate array and redundant token objects.
+- `d6ba6b4d5f9e793f` passes complete web static, kernel and browser-component
+  checks, including literal canonical ranges and their actual dom nodes/utf16
+  spans. its native selection is explicitly deferred to `full`, not executed.
+  offline assets are rebuilt as `index-Cq0-PbGK.js` (416.21 kb before gzip), with
+  reviewed source/asset manifests. the existing minifier warning remains oi-078.
+  hosted run `34694089898` was deliberately cancelled after the browser defect
+  was found; no pass is claimed for that superseded candidate.
 - [pr #238](https://github.com/NielsdaWheelz/nexus-web/pull/238) records the final
-  hosted check and merge disposition. the local pr-controller and operator/
+  native artifact proof, hosted check and merge disposition. the local pr-controller and operator/
   production-release limitations above remain separate.
