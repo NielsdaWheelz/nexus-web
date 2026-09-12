@@ -250,3 +250,16 @@ books and temporary proofs remain outside git. no production data was changed.
   `f1745188b5743c88` and web `3df66a0922474b48`, the three decoders agree on the
   literal-path corpus. oi-077 is resolved and its ticket removed. unsupported
   pending-progress fault sensitivity remains separate and pending.
+- native `176851af2da64494` passes the separate pending-progress sensitivity:
+  deliberately deleting unsupported-package progress fails at the named row
+  preservation assertion; the clean host suite passes. reader1 bytes remain
+  protected without a reader1 decoder.
+- `0538379d1a45427d` passes evidence-decoder sensitivity against the actual
+  base revision: the new fragment-only epub payload fails the old section-bound
+  decoder and passes the current one. no alternate proof path or controller
+  exception was needed.
+- final ticket audit requires two direct hosted interaction witnesses: scrolling
+  through three headings in one fragment changes current context/local progress;
+  previous/next traverses source order once despite reversed toc and coincident
+  section aliases. the existing mandatory journey owns these route interactions;
+  no second journey or production harness abstraction is introduced.

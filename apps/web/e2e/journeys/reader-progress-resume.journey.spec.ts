@@ -130,6 +130,7 @@ test("reader progress resumes, completes, and resets through its product actions
         sections: Array<{
           section_id: string;
           label: string;
+          parent_section_id: { kind: "Absent" } | { kind: "Present"; value: string };
           target: { fragment_id: string; offset: number };
           extent: { kind: "Present"; value: { start: { fragment_id: string; offset: number }; end: { fragment_id: string; offset: number } } };
         }>;
@@ -144,8 +145,49 @@ test("reader progress resumes, completes, and resets through its product actions
     `EPUB ${mediaId} did not expose the fixture-owned Second section.`,
   ).toBeDefined();
 
+  // Independently authored source: three peer headings share one fragment.
+  // Publisher presentation is reversed and Second has a coincident alias.
+  expect(Object.fromEntries(sections.map((section) => [
+    section.label,
+    [section.target.offset, section.extent.value.end.offset],
+  ]))).toEqual({
+    Opening: [0, 2925],
+    Second: [2925, 5827],
+    "Second alias": [2925, 5827],
+    Closing: [5827, 8762],
+  });
+  expect(new Set(sections.map((section) => section.target.fragment_id)).size).toBe(1);
+  expect(sections.map((section) => section.parent_section_id)).toEqual([
+    { kind: "Absent" }, { kind: "Absent" }, { kind: "Absent" }, { kind: "Absent" },
+  ]);
+  const aliases = sections.filter((section) => section.target.offset === 2925);
+  expect(aliases).toHaveLength(2);
+  expect(new Set(aliases.map((section) => section.section_id)).size).toBe(2);
+  // Equal-depth, equal-extent aliases use lexical section identity as the
+  // documented tie-break. Publisher label order is not an ownership oracle.
+  const expectedSecondLabel = aliases[0]!.section_id < aliases[1]!.section_id
+    ? aliases[0]!.label
+    : aliases[1]!.label;
+
   await gotoWithStrictCsp(page, `/media/${mediaId}`);
   const viewport = page.getByTestId("document-viewport");
+  const map = page.getByRole("region", { name: "Document map", exact: true });
+  const outline = map.getByRole("list");
+  const currentContents = () => outline.getByRole("button").evaluateAll((buttons) => buttons
+    .filter((button) => button.getAttribute("aria-current") === "location")
+    .map((button) => button.textContent));
+  const headingDelta = async (name: string): Promise<number> => {
+    const heading = await page.getByRole("heading", { name, exact: true }).boundingBox();
+    const frame = await viewport.boundingBox();
+    if (!heading || !frame) throw new Error(`Missing ${name} source heading or reader viewport.`);
+    // DOM geometry measures the authored source start against the visible
+    // reading line; no reader projection or scroll helper supplies the oracle.
+    const padding = await viewport.evaluate((element) => getComputedStyle(element).scrollPaddingTop);
+    // Desktop leaves CSS at auto and owns a 56px reading margin.
+    const readingLine = padding === "auto" ? 56 : Number.parseFloat(padding);
+    expect(Number.isFinite(readingLine)).toBe(true);
+    return heading.y - frame.y - readingLine;
+  };
   await expect(page.getByRole("heading", { name: "Opening", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Open document map", exact: true }).click();
   await page.getByRole("button", { name: "Second", exact: true }).click();
@@ -154,7 +196,65 @@ test("reader progress resumes, completes, and resets through its product actions
   await page.getByRole("button", { name: "return to reading position", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Opening", exact: true })).toBeVisible();
   expect(await waitForReaderStateWrite(page, mediaId, RESTORE_WRITE_QUIET_WINDOW_MS), "return must not claim reading").toBeNull();
-  await page.getByRole("button", { name: "Second", exact: true }).click();
+
+  await expect(outline.getByRole("button")).toHaveText(["Closing", "Second alias", "Second", "Opening"]);
+  await expect.poll(currentContents).toEqual(["Opening"]);
+  await viewport.hover();
+  await page.mouse.wheel(0, 150);
+  await expect(map.getByText(/^section [1-9][0-9]*%$/)).toBeVisible();
+  await expect.poll(currentContents).toEqual(["Opening"]);
+  let previousGlobal = Number((await map.getByText(/^document [0-9]+%$/).innerText()).match(/[0-9]+/)![0]);
+  for (const [heading, percentage] of [["Second", 33], ["Closing", 67]] as const) {
+    const delta = await headingDelta(heading);
+    expect(delta, `${heading} must follow the actual current source viewport`).toBeGreaterThan(0);
+    await viewport.hover();
+    await page.mouse.wheel(0, delta);
+    await expect.poll(async () => Math.abs(await headingDelta(heading))).toBeLessThanOrEqual(1);
+    await expect.poll(currentContents).toEqual([heading === "Second" ? expectedSecondLabel : heading]);
+    await expect(map.getByText("outside this section", { exact: true })).toBeVisible();
+    await expect(map.getByText(`document ${percentage}%`, { exact: true })).toBeVisible();
+    expect(percentage).toBeGreaterThan(previousGlobal);
+    previousGlobal = percentage;
+    await map.getByRole("button", { name: "current section", exact: true }).click();
+    await expect(map.getByText("section 0%", { exact: true })).toBeVisible();
+  }
+
+  await expect.poll(async () => {
+    const response = await api.get(`/api/media/${mediaId}/reader-state`);
+    expect(response.ok()).toBe(true);
+    const snapshot = (await response.json()) as { data: { state: "Empty" } | PositionedEpubReaderSnapshot };
+    return snapshot.data.state === "Positioned" ? snapshot.data.locator.locations.text_offset : null;
+  }, { message: "genuine scrolling into Closing must settle before toolbar-only navigation" }).toBeGreaterThanOrEqual(5827);
+  expect(await waitForReaderStateWrite(page, mediaId, RESTORE_WRITE_QUIET_WINDOW_MS), "the preceding genuine scroll must finish saving before toolbar observation").toBeNull();
+  const toolbarWrites: Request[] = [];
+  const recordToolbarWrite = (request: Request) => {
+    if (matchesReaderStateWrite(request, mediaId)) toolbarWrites.push(request);
+  };
+  page.on("request", recordToolbarWrite);
+
+  // The hosted controls traverse unique source starts, independent of the
+  // publisher order and whichever coincident Second alias owns current state.
+  await expect(page.getByRole("button", { name: "Next section", exact: true })).toBeDisabled();
+  let previousTop = await viewport.evaluate((element) => element.scrollTop);
+  for (const [direction, heading] of [["Previous", "Second"], ["Previous", "Opening"], ["Next", "Second"], ["Next", "Closing"]] as const) {
+    await page.getByRole("button", { name: `${direction} section`, exact: true }).click();
+    await expect(page.getByRole("heading", { name: heading, exact: true })).toBeInViewport();
+    await expect.poll(currentContents).toEqual([heading === "Second" ? expectedSecondLabel : heading]);
+    await expect.poll(async () => {
+      const delta = await headingDelta(heading);
+      const top = await viewport.evaluate((element) => element.scrollTop);
+      return Math.abs(delta) <= 1 || (top === 0 && delta < 0);
+    }, { message: `${direction} must reveal ${heading} at the reading line, allowing only source-start clamping` }).toBe(true);
+    await expect(page.getByRole("button", { name: "Previous section", exact: true })).toHaveJSProperty("disabled", heading === "Opening");
+    const nextTop = await viewport.evaluate((element) => element.scrollTop);
+    expect((nextTop - previousTop) * (direction === "Previous" ? -1 : 1), `${direction} must move to a distinct ${heading} source position`).toBeGreaterThan(0);
+    previousTop = nextTop;
+  }
+  await expect(page.getByRole("button", { name: "Next section", exact: true })).toBeDisabled();
+  const delayedToolbarWrite = await waitForReaderStateWrite(page, mediaId, RESTORE_WRITE_QUIET_WINDOW_MS);
+  page.off("request", recordToolbarWrite);
+  expect(toolbarWrites[0] ?? delayedToolbarWrite, "section controls must not claim reading through reader-state writes").toBeNull();
+  await outline.getByRole("button", { name: "Second", exact: true }).click();
   await expect(page.getByText(/Omega proves the selected section/).first()).toBeVisible();
   await viewport.hover();
   await page.mouse.wheel(0, 150);
@@ -174,11 +274,15 @@ test("reader progress resumes, completes, and resets through its product actions
                 locator: {
                   kind: string;
                   target?: { fragment_id?: string };
+                  locations?: { text_offset: number | null };
                 };
               };
         };
         return snapshot.data.state === "Positioned" &&
-          snapshot.data.locator.kind === "epub"
+          snapshot.data.locator.kind === "epub" &&
+          typeof snapshot.data.locator.locations?.text_offset === "number" &&
+          snapshot.data.locator.locations.text_offset > 2925 &&
+          snapshot.data.locator.locations.text_offset < 5827
           ? snapshot.data.locator.target?.fragment_id
           : null;
       },

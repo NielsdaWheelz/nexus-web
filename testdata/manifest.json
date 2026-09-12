@@ -174,11 +174,11 @@
     },
     {
       "path": "testdata/epub/reader-map-journey.epub.b64",
-      "sha256": "491704644bb0ee027efb8cf4299c38452f7d38e1e96aaf94e77a3a51ffe0f0d0",
-      "source": "repo-authored: three chapter EPUB with thirty paragraphs per chapter; based on canonical reader fixture",
+      "sha256": "f41978bca1a4b1b150add896b15f3426247ad5af0c7a203901142758f355d46f",
+      "source": "repo-authored: one XHTML fragment with three thirty-paragraph sections, reversed publisher toc and coincident alias; canonical chapter bytes unchanged",
       "license": "Repository-owned test data",
       "purpose": [
-        "Real upload, map jump, exact passage, excursion return, trusted resume and reset journey"
+        "Real upload, same-fragment scrolling/current scope, source-order section controls, exact map jump/return, quiet navigation and trusted resume/reset journey"
       ]
     }
   ]
