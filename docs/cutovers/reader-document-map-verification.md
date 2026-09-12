@@ -657,3 +657,18 @@ open. production has not been changed.
   rejection proofs are unchanged. no behavioral capability ran in this receipt.
   focused `8c632d2311eceb07` passes policy, python static checks and the existing
   policy kernel owner, including rejection of self-routed priority ownership.
+- hosted `34718249742` is cancelled after 90m17s: `The job has exceeded the
+  maximum execution time of 1h30m0s`. it reaches service verification after the
+  kernel suite, but uploads no canonical proof artifact; it is not passing
+  evidence. main `34712797648`, receipt `28bf282776b0105f`, independently passes
+  its full portfolio in 99m40s (job: 101m24s; kernel: 73m44s).
+  ordinary and manual `changed` jobs now allow 120 minutes; manual `pr` retains
+  480. selection, sensitivity and behavioral timeouts are unchanged. this gives
+  18m36s against the observed job, not a p95 guarantee, and permits a stuck job
+  30 minutes longer. [oi-007](../tickets/ci-gate-time-budget.md) remains open for
+  latency. existing ci contract `534f6d59484d6eba` rejects the old job envelope
+  before the workflow is corrected. unrelated setup warnings are recorded as
+  [oi-087](../tickets/ci-buildx-action-deprecated-node-runtime.md) and
+  [oi-088](../tickets/ci-go-cache-has-no-module-owner.md).
+  green `4a1ec13a3875b2df` passes policy, python/workflow static checks, the
+  existing ci kernel owner and the routed service/component protocol proofs.
