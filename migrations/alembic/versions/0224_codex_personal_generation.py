@@ -33,7 +33,17 @@ _GENERATION_JOB_KINDS = (
 )
 _RESET_BLOCKING_JOB_STATUSES = ("pending", "running", "failed", "dead")
 # Preflight still validates calls and journals before any mutation can begin.
-_RESETTABLE_DEAD_JOB_KINDS = ("synapse_scan",)
+_HEADLESS_RESETTABLE_DEAD_JOB_KINDS = ("synapse_scan",)
+_RESETTABLE_ENRICHMENT_FAILURE_REASONS = (
+    "no_provider",
+    "rate_limit_rejected",
+    "llm_rejected",
+    "llm_failed",
+    "parse_failed",
+    "no_fields",
+    "no_applicable_fields",
+    "unexpected_error",
+)
 _HISTORICAL_DOSSIER_FAILURE_CODES = (
     "EntitlementDenied",
     "BudgetExceeded",
@@ -259,17 +269,79 @@ def _preflight(bind: sa.Connection) -> None:
             FROM background_jobs
             WHERE kind = ANY(CAST(:kinds AS text[]))
               AND status = ANY(CAST(:statuses AS text[]))
-              AND NOT (
+              AND NOT ((
                   status = 'dead'
-                  AND kind = ANY(CAST(:resettable_dead_kinds AS text[]))
-              )
+                  AND (
+                      kind = ANY(CAST(:headless_dead_kinds AS text[]))
+                      OR (
+                          kind = 'enrich_metadata'
+                          AND attempts > 0
+                          AND finished_at IS NOT NULL
+                          AND lease_expires_at IS NULL
+                          AND claimed_by IS NULL
+                          AND error_code IS NOT NULL
+                          AND (
+                              result = jsonb_build_object(
+                                  'status', 'failed',
+                                  'reason', result ->> 'reason',
+                                  'error_code', error_code
+                              )
+                              OR (
+                                  result = jsonb_build_object(
+                                      'status', 'failed',
+                                      'reason', result ->> 'reason',
+                                      'error_code', error_code,
+                                      'provider', result ->> 'provider',
+                                      'model', result ->> 'model',
+                                      'attempted_providers', result -> 'attempted_providers'
+                                  )
+                                  AND result ->> 'provider' <> ''
+                                  AND result ->> 'model' <> ''
+                                  AND jsonb_typeof(result -> 'attempted_providers') = 'array'
+                                  AND result -> 'attempted_providers' = (
+                                      SELECT jsonb_agg(
+                                          attempt.value
+                                          ORDER BY attempt.ordinality
+                                      )
+                                      FROM jsonb_array_elements(
+                                          CASE
+                                              WHEN jsonb_typeof(
+                                                  result -> 'attempted_providers'
+                                              ) = 'array'
+                                                  THEN result -> 'attempted_providers'
+                                              ELSE '[]'::jsonb
+                                          END
+                                      ) WITH ORDINALITY AS attempt(value, ordinality)
+                                      WHERE attempt.value = jsonb_build_object(
+                                          'provider', attempt.value ->> 'provider',
+                                          'model', attempt.value ->> 'model'
+                                      )
+                                        AND jsonb_typeof(attempt.value -> 'provider')
+                                            = 'string'
+                                        AND attempt.value ->> 'provider' <> ''
+                                        AND jsonb_typeof(attempt.value -> 'model')
+                                            = 'string'
+                                        AND attempt.value ->> 'model' <> ''
+                                  )
+                                  AND result ->> 'provider'
+                                      = result -> 'attempted_providers' -> -1 ->> 'provider'
+                                  AND result ->> 'model'
+                                      = result -> 'attempted_providers' -> -1 ->> 'model'
+                              )
+                          )
+                          AND result ->> 'reason'
+                              = ANY(CAST(:enrichment_failure_reasons AS text[]))
+                      )
+                  )
+              ) IS TRUE)
             ORDER BY id
             """
         ),
         {
             "kinds": list(_GENERATION_JOB_KINDS),
             "statuses": list(_RESET_BLOCKING_JOB_STATUSES),
-            "resettable_dead_kinds": list(_RESETTABLE_DEAD_JOB_KINDS),
+            "headless_dead_kinds": list(_HEADLESS_RESETTABLE_DEAD_JOB_KINDS),
+            "enrichment_failure_reasons": list(_RESETTABLE_ENRICHMENT_FAILURE_REASONS),
         },
     ).all()
     if active_jobs:

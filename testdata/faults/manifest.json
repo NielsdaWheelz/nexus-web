@@ -108,13 +108,13 @@
     {
       "id": "codex-generation-migration-admission-bypass",
       "patch": "testdata/faults/codex-generation-migration-admission-bypass.patch",
-      "sha256": "94d71aea3f833004420f90eb9eb75e6cc139c787646933abddcba3825c87ce71",
+      "sha256": "4fa6625e1574d12103969e1107512a6048b5ebe6d405c78de9972e14ac7335e5",
       "proofs": [
         "pytest:python/tests/migrations/test_generation_backends_cutover_admission.py::test_0224_refuses_the_only_undrained_generation_job_before_history_reset"
       ],
       "expected_failure": "DID NOT RAISE",
       "changed_owner_red": "coherent-fault",
-      "changed_owner_sha256": "af0c405a919c8113d41ff3db2ad38083d768bb25c9af14063d7b5a5a08aa3449"
+      "changed_owner_sha256": "07013c92f05aa197678f2ba90988507944a7bba6b6a2af5d88ec828c30a6bda8"
     },
     {
       "id": "migration-head-schema-omission",
