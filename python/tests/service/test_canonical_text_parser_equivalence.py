@@ -11,8 +11,8 @@ algorithm every browser implements, and the parser canonicalize itself used befo
 the lxml cutover. It owns the two stages the cutover replaced -- tree construction
 and the document-order walk of the canonicalization rules in the `canonicalize`
 module docstring. It deliberately reuses canonicalize's post-walk transform (NFC,
-blank-line collapse, line trim, offset projection), which the cutover left
-untouched, so a failure here is always a parse or walk divergence.
+blank-line collapse, line trim, offset projection), so this proof isolates parse
+and walk divergence. Literal kernel cases independently own normalization offsets.
 
 Inputs are produced by the real sanitizers -- the only producers of canonicalize
 input in production -- because both parse and re-serialize through lxml, and the
@@ -25,7 +25,6 @@ import random
 import re
 import unicodedata
 import zipfile
-from bisect import bisect_left
 from pathlib import Path
 from xml.dom import Node
 from xml.dom.minidom import Element
@@ -38,7 +37,7 @@ from nexus.services.canonicalize import (
     SKIP_ELEMENTS,
     # The post-walk transform is shared with the oracle on purpose: the cutover
     # replaced only tree construction and the walk, so this isolates parser divergence.
-    _canonical_text_with_sources,
+    _canonical_text_with_offsets,
     generate_canonical_text,
     generate_canonical_text_with_element_offsets,
 )
@@ -127,12 +126,8 @@ def browser_canonical(html: str, element_ids: set[str]) -> tuple[str, dict[str, 
     raw = _RawText()
     raw_offsets: dict[str, int] = {}
     _walk(root, raw, element_ids, raw_offsets)
-    text, source_starts = _canonical_text_with_sources(raw.build())
-    surviving = sorted(source_starts)
-    return text, {
-        element_id: bisect_left(surviving, raw_offset)
-        for element_id, raw_offset in raw_offsets.items()
-    }
+    text, offsets = _canonical_text_with_offsets(raw.build(), raw_offsets.values())
+    return text, {element_id: offsets[raw_offset] for element_id, raw_offset in raw_offsets.items()}
 
 
 def _first_divergence(produced: str, expected: str) -> str:

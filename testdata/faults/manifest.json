@@ -723,7 +723,7 @@
       ],
       "expected_failure": "PDF resource-limit projection lost its typed carrier",
       "changed_owner_red": "coherent-fault",
-      "changed_owner_sha256": "821595c83e7f14f430139765315c84f2430d96052de53519d51bf03607a03870"
+      "changed_owner_sha256": "5d433b0cb55bbdbc5842f94da8b72b09724b863f85f12cb487f04e81ad95dcad"
     },
     {
       "id": "document-import-reconciler-readiness-bypass",

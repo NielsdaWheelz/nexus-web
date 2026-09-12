@@ -544,4 +544,29 @@ open. production has not been changed.
 - the imports owner gains a real rejected-capture/history case. its existing
   correlation assertion is unchanged; its reviewed module-support digest is
   refreshed for the new import. this CI failure is static red, not a behavioral
-  sensitivity receipt. final hosted verification is pending.
+  sensitivity receipt.
+- hosted run `34690093408`, receipt `75873b3981b40c94`, passes static and
+  kernel checks but exposes an epub parser peak of 808 mib against its 352 mib
+  budget. structural offsets had boxed and sorted one source index per character.
+  canonicalization now retains compact requested-boundary buckets and transforms
+  one packed buffer in place. monotone buckets preserve composition minima,
+  reordered origins, whitespace collapse and exact strict boundary ranks. the
+  tradeoff is a boundary lookup per source character; full-source sorting and
+  redundant normalization buffers are removed. resource limits are unchanged.
+- the existing maximum-size resource fixture now includes decomposed accents at
+  identical source byte sizes. `6ade2e3d356c5c10` demonstrates its assertion red;
+  `fb7571bc5d505e64` retains temporary allocation diagnostics, since removed.
+  independent review also found that slicing global decomposition by output
+  character lengths could assign an intervening mark to the wrong source.
+  literal regression `a91f676cda7a51f6` reaches that assertion. normalization now
+  matches each output character's actual decomposed codepoints to source queues.
+- final focused run `561a386b854c5e43` passes literal unicode coordinates,
+  parser equivalence, source structure, the unchanged memory budget, and both
+  supplied editions' independent source/export witnesses. the parser oracle
+  deliberately shares normalization; literal kernel cases own normalization
+  expectations independently. private books and their temporary owner remain
+  outside git. the existing resource-lifecycle fault's reviewed support digest
+  changes only for the strengthened fixture; its contract is unchanged.
+- [pr #238](https://github.com/NielsdaWheelz/nexus-web/pull/238) records the final
+  hosted check and merge disposition. the local pr-controller and operator/
+  production-release limitations above remain separate.

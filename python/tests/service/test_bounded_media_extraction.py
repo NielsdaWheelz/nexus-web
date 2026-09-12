@@ -621,11 +621,14 @@ def _run_parser_resource_probe(case: str, output: Connection) -> None:
             paragraph_count = 992 if case == "epub-maximum-safe" else 1024
             chapter_count = 3
             base_count, remainder = divmod(paragraph_count, chapter_count)
+            # Keep source byte sizes fixed while making the middle chapter non-NFC:
+            # even one decomposed accent requires source mapping for its whole text.
             payload = _epub_spine_payload(
                 {
                     f"chapter-{index}": (
                         b'<html xmlns="http://www.w3.org/1999/xhtml"><body>'
-                        + paragraph * (base_count + (1 if index < remainder else 0))
+                        + (paragraph.replace(b"xxx", b"e\xcc\x81", 1) if index == 1 else paragraph)
+                        * (base_count + (1 if index < remainder else 0))
                         + b"</body></html>"
                     )
                     for index in range(chapter_count)

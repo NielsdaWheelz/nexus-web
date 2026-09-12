@@ -29,9 +29,8 @@ After ready_for_reading, canonical_text is immutable.
 import re
 import unicodedata
 from array import array
-from bisect import bisect_left
-from collections import defaultdict, deque
-from collections.abc import Mapping
+from bisect import bisect_right
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 from lxml.etree import HTMLParser
@@ -279,11 +278,9 @@ def generate_canonical_text_with_element_offsets(
     del parser, target
     if not raw_offsets:
         return _canonical_text_without_sources(raw_text), {}
-    text, final_source_starts = _canonical_text_with_sources(raw_text)
-    source_starts = sorted(final_source_starts)
+    text, source_offsets = _canonical_text_with_offsets(raw_text, raw_offsets.values())
     offsets = {
-        element_id: bisect_left(source_starts, raw_offset)
-        for element_id, raw_offset in raw_offsets.items()
+        element_id: source_offsets[raw_offset] for element_id, raw_offset in raw_offsets.items()
     }
     return text, offsets
 
@@ -297,25 +294,30 @@ def canonicalize_structure(html_sanitized: str) -> CanonicalStructure:
     parser.feed("</div>")
     parser.close()
     raw_text = target.builder.build()
-    if not target.elements:
+    elements = target.elements
+    anchors = target.anchors
+    del parser, target
+    if not elements:
         return CanonicalStructure(_canonical_text_without_sources(raw_text), (), {})
-    text, final_source_starts = _canonical_text_with_sources(raw_text)
-    source_starts = sorted(final_source_starts)
+    text, offsets = _canonical_text_with_offsets(
+        raw_text,
+        (offset for element in elements for offset in (element.start_offset, element.end_offset)),
+    )
     return CanonicalStructure(
         text,
         tuple(
             CanonicalElement(
                 element.tag,
-                bisect_left(source_starts, element.start_offset),
-                bisect_left(source_starts, element.end_offset),
+                offsets[element.start_offset],
+                offsets[element.end_offset],
                 element.parent_container,
                 element.parent_element,
                 element.labelled_by,
                 element.numbering_allowed,
             )
-            for element in target.elements
+            for element in elements
         ),
-        target.anchors,
+        anchors,
     )
 
 
@@ -380,70 +382,103 @@ def _trim_lines_without_sources(text: str) -> str:
     return line_trimmed[start:end]
 
 
-def _canonical_text_with_sources(raw_text: str) -> tuple[str, array]:
-    normalized_text, normalized_sources = _normalize_nfc_with_sources(raw_text)
+def _canonical_text_with_offsets(
+    raw_text: str, raw_offsets: Iterable[int]
+) -> tuple[str, dict[int, int]]:
+    """Count surviving characters before each boundary, including reordered sources."""
+    boundaries = sorted(set(raw_offsets))
+    source_type = "B"
+    if len(boundaries) > 255:
+        source_type = "H"
+    if len(boundaries) > 65_535:
+        source_type = "I"
+    if len(boundaries) > 4_294_967_295:
+        source_type = "Q"
+    normalized_text, normalized_sources = _normalize_nfc_with_sources(
+        raw_text, boundaries, source_type
+    )
     collapsed_text, collapsed_sources = _collapse_blank_lines(
         normalized_text,
         normalized_sources,
     )
-    return _trim_lines(collapsed_text, collapsed_sources)
+    del normalized_text, normalized_sources
+    text, sources = _trim_lines(collapsed_text, collapsed_sources)
+    counts = [0] * (len(boundaries) + 1)
+    for source in sources:
+        counts[source] += 1
+    offsets: dict[int, int] = {}
+    preceding = 0
+    for index, boundary in enumerate(boundaries):
+        preceding += counts[index]
+        offsets[boundary] = preceding
+    return text, offsets
 
 
 def _collapse_blank_lines(text: str, sources: array) -> tuple[str, array]:
     chunks: list[str] = []
-    collapsed_sources = array("Q")
+    written = 0
     index = 0
-    while index < len(text):
-        newline = text.find("\n", index)
-        if newline == -1:
-            chunks.append(text[index:])
-            collapsed_sources.extend(sources[index:])
-            break
-        if newline > index:
-            chunks.append(text[index:newline])
-            collapsed_sources.extend(sources[index:newline])
-        index = newline
+    # Move surviving spans within the packed buffer; slicing an array copies it.
+    with memoryview(sources) as source_view:
+        while index < len(text):
+            newline = text.find("\n", index)
+            span_end = len(text) if newline == -1 else newline
+            if span_end > index:
+                chunks.append(text[index:span_end])
+                length = span_end - index
+                source_view[written : written + length] = source_view[index:span_end]
+                written += length
+            if newline == -1:
+                break
+            index = newline
 
-        end = index + 1
-        newline_count = 1
-        while end < len(text) and _is_whitespace(text[end]):
-            if text[end] == "\n":
-                newline_count += 1
-            end += 1
-        if newline_count < 2:
-            chunks.append("\n")
-            collapsed_sources.append(sources[index])
-            index += 1
-            continue
-        collapsed_source = min(sources[index:end])
-        chunks.append("\n\n")
-        collapsed_sources.extend((collapsed_source, collapsed_source))
-        index = end
-
-    return "".join(chunks), collapsed_sources
+            end = index + 1
+            newline_count = 1
+            while end < len(text) and _is_whitespace(text[end]):
+                if text[end] == "\n":
+                    newline_count += 1
+                end += 1
+            if newline_count < 2:
+                chunks.append("\n")
+                sources[written] = sources[index]
+                written += 1
+                index += 1
+                continue
+            collapsed_source = min(source_view[index:end])
+            chunks.append("\n\n")
+            sources[written] = collapsed_source
+            sources[written + 1] = collapsed_source
+            written += 2
+            index = end
+    del sources[written:]
+    return "".join(chunks), sources
 
 
 def _trim_lines(text: str, sources: array) -> tuple[str, array]:
     chunks: list[str] = []
-    trimmed_sources = array("Q")
+    written = 0
     line_start = 0
-    while line_start <= len(text):
-        newline = text.find("\n", line_start)
-        line_end = len(text) if newline == -1 else newline
-        first = line_start
-        while first < line_end and _is_whitespace(text[first]):
-            first += 1
-        last = line_end - 1
-        while last >= first and _is_whitespace(text[last]):
-            last -= 1
-        if first <= last:
-            chunks.append(text[first : last + 1])
-            trimmed_sources.extend(sources[first : last + 1])
-        if newline == -1:
-            break
-        chunks.append("\n")
-        trimmed_sources.append(sources[newline])
-        line_start = newline + 1
+    with memoryview(sources) as source_view:
+        while line_start <= len(text):
+            newline = text.find("\n", line_start)
+            line_end = len(text) if newline == -1 else newline
+            first = line_start
+            while first < line_end and _is_whitespace(text[first]):
+                first += 1
+            last = line_end - 1
+            while last >= first and _is_whitespace(text[last]):
+                last -= 1
+            if first <= last:
+                chunks.append(text[first : last + 1])
+                length = last + 1 - first
+                source_view[written : written + length] = source_view[first : last + 1]
+                written += length
+            if newline == -1:
+                break
+            chunks.append("\n")
+            sources[written] = sources[newline]
+            written += 1
+            line_start = newline + 1
 
     line_trimmed = "".join(chunks)
     start = 0
@@ -452,37 +487,48 @@ def _trim_lines(text: str, sources: array) -> tuple[str, array]:
     end = len(line_trimmed)
     while end > start and _is_whitespace(line_trimmed[end - 1]):
         end -= 1
-    return line_trimmed[start:end], trimmed_sources[start:end]
+    with memoryview(sources) as source_view:
+        source_view[: end - start] = source_view[start:end]
+    del sources[end - start :]
+    return line_trimmed[start:end], sources
 
 
-def _normalize_nfc_with_sources(text: str) -> tuple[str, array]:
-    if not text:
-        return "", array("Q")
-    if unicodedata.is_normalized("NFC", text):
-        return text, array("Q", range(len(text)))
-
-    decomposed_sources: dict[str, deque[int]] = defaultdict(deque)
-    for source, original_char in enumerate(text):
-        for decomposed_char in unicodedata.normalize("NFD", original_char):
-            decomposed_sources[decomposed_char].append(source)
-    reordered_sources = array(
-        "Q",
-        (
-            decomposed_sources[decomposed_char].popleft()
-            for decomposed_char in unicodedata.normalize("NFD", text)
-        ),
-    )
-
+def _normalize_nfc_with_sources(
+    text: str, boundaries: Sequence[int], source_type: str
+) -> tuple[str, array]:
     normalized_text = unicodedata.normalize("NFC", text)
-    normalized_sources = array("Q")
-    nfd_offset = 0
+    if normalized_text == text:
+        return normalized_text, array(
+            source_type, (bisect_right(boundaries, source) for source in range(len(text)))
+        )
+
+    # Boundary buckets preserve order and minima without storing absolute offsets
+    # for every character. Reordering and trimming retain those same buckets.
+    decomposed_sources: dict[str, array] = {}
+    for source, original_char in enumerate(text):
+        source_bucket = bisect_right(boundaries, source)
+        for decomposed_char in unicodedata.normalize("NFD", original_char):
+            if decomposed_char not in decomposed_sources:
+                decomposed_sources[decomposed_char] = array(source_type)
+            decomposed_sources[decomposed_char].append(source_bucket)
+    source_positions = dict.fromkeys(decomposed_sources, 0)
+    normalized_sources = array(source_type)
     for char in normalized_text:
-        decomposition = unicodedata.normalize("NFD", char)
-        source_start = reordered_sources[nfd_offset]
-        for source_index in range(nfd_offset + 1, nfd_offset + len(decomposition)):
-            source_start = min(source_start, reordered_sources[source_index])
+        source_start = len(boundaries)
+        for decomposed_char in unicodedata.normalize("NFD", char):
+            positions = decomposed_sources[decomposed_char]
+            position = source_positions[decomposed_char]
+            source_start = min(source_start, positions[position])
+            if position + 1 == len(positions):
+                del decomposed_sources[decomposed_char]
+                del source_positions[decomposed_char]
+            elif (position + 1) * 2 >= len(positions):
+                # Release consumed offsets while the normalized output grows.
+                del positions[: position + 1]
+                source_positions[decomposed_char] = 0
+            else:
+                source_positions[decomposed_char] = position + 1
         normalized_sources.append(source_start)
-        nfd_offset += len(decomposition)
     return normalized_text, normalized_sources
 
 
