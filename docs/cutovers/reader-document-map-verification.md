@@ -7,12 +7,12 @@ receipts live under `test-results/runs/<id>/summary.json` in the worktree named 
 
 | boundary | behavioral red | current green | review |
 | --- | --- | --- | --- |
-| source extraction | `8e77c3ff3fc84ce3` | `ef6ee870628e7e2f` (source cases) | independent literal positions; split chapter heading, toc-only parent, alias, container, tail, cross-file entry and emphasized-number counterexamples reviewed |
+| source extraction | `8e77c3ff3fc84ce3`, `e8f051ff1ff46e06`, `0c4f27f0500d19b3`, `ac3776e24d0e3399` | `f815c0ae8b2490bb`, `7bc0d286bf1bab87` | independent literal positions; exact heading ancestry, containers, aliases, tails, numbered entries and publisher/lexical boundaries reviewed |
 | publication/api | `7ff9ac2851cd984a` | `b7af98b43051abbc`, `d83e2e133eaabbde` | persisted positions, package kernel and final evidence/search consumers pass |
 | migration | `d12d8b1df08293be` in sibling `nexus-reader-structure-red` at base | `1df62fc821caee26` | atomic rollback, exact/anchor/manual cursor conversion, durable reference preservation and repeatability pass |
 | rail/browser | `fcf20dc59bbc7f22` | `bb3b9046b63d607f` | 31 ticks with 18px gaps collapse under predecessor grouping; fixed-cell hit groups keep exact source ticks |
-| offline | pending | `bb3b9046b63d607f` (browser) | reader2 only; unique content; exact canonical capture, trusted intent and bounded phone layout; native pending |
-| integration | pending | exact editions `8f92020f20a93dd5`; journey pending | both imported editions pass through the natural phone shelf; full hosted journey outstanding |
+| offline | `2cb243a45b4aeeb2`, `176851af2da64494` (native sensitivity) | `bb3b9046b63d607f` (browser); same native receipts | reader2 only; unique content; exact canonical capture, bounded phone layout, literal paths and unsupported pending-progress preservation; pixel fault pending |
+| integration | `4cf713e3c75e2b98` (hosted eof regression) | exact editions `933ea7a501a0bd64`; journey pending | final source and renderer pass both natural phone-shelf witnesses; hosted journey remains open |
 
 format/import/setup failures are not behavioral reds. `fecdacafad31ee49`
 exposed whitespace in the authored source fixture; adjacent source tags now
@@ -75,7 +75,7 @@ global/local proportions, exact source anchors and visible glyphs, native asset
 resolution, dense-marker activation, return and zero progress writes. source
 books and temporary proofs remain outside git. no production data was changed.
 
-## incomplete runs and release constraints
+## run history and release constraints
 
 - `dca8beee3d3aed58` and `85bbf29efd4d4c83`: web lint failures, corrected;
   no browser or typescript green is implied.
@@ -263,3 +263,91 @@ books and temporary proofs remain outside git. no production data was changed.
   previous/next traverses source order once despite reversed toc and coincident
   section aliases. the existing mandatory journey owns these route interactions;
   no second journey or production harness abstraction is introduced.
+- `4cf713e3c75e2b98`: hosted current-section, pinned local progress, source-order
+  toolbar traversal, coincident aliases and quiet navigation/restore pass. natural
+  end-of-book then saves offset 8274 instead of the independent literal 8762.
+  restore-phase callback changes restart the resize observer and erase a fresh
+  forward gesture. observation now depends explicitly on source/layout identity;
+  its existing callback ref supplies current capture behavior. rerun pending.
+  the retained faulted phase reaches the expected restore-write assertion;
+  failed candidate execution means the combined sensitivity gate is not green.
+- activity `38f298bee272ad66` → `6e6b5b476f5b38d7`: source/control activation
+  incorrectly adopts restored reading; the existing real recorder boundary now
+  stays idle for those activations while prose taps and scroll keys remain valid.
+  epub toolbar and inline links reuse the map's existing positioning/return owner.
+  follow-up review found inherited same-source restore eligibility and Space on
+  owned inline buttons; those additional counterexamples remain under correction.
+- activity `80eb006860477541` → `27c5cc5ba1e23706`: a prose tap adopts one
+  restored viewport, then another restore in the same fragment must become idle.
+  admission now retains the exact adopted viewport instead of a reusable source
+  key. an ordinary `Reader` publication already cleared adoption; the actual
+  defect was a second restoration before that publication. no new epoch or
+  activity lifecycle was introduced.
+- text input `3178da7c476361a5` → `34b5b925426e03fa`: space on the actual
+  inline resource button formerly emitted forward reading intent before its
+  activation. one shared keyboard-direction classifier now excludes control
+  activation while retaining native scrolling over links. the existing text-leaf
+  and activity browser owners pass together; no compatibility type export remains.
+- source `e8f051ff1ff46e06` → `76487e7d2462ea6a`: an unrelated publisher
+  paragraph must not parent the next source heading. actual-book export
+  `96205f8d145565be` then exposed stale lexical context across a later publisher
+  root boundary. the first correction's source green does not prove that second
+  case; final hierarchy correction and book metadata/browser review remain open.
+- source `0c4f27f0500d19b3` → `7f5f00d4cf40c0fb`: a publisher root boundary
+  ends the preceding heading context. the lexical stack is rebuilt from actual
+  heading/container ancestry at every boundary; an ordinary publisher paragraph
+  neither becomes a heading parent nor leaves an expired heading active. literal
+  parentage and all three adjacent end offsets pass, along with the prior source
+  cases. final book export/browser recertification follows this correction.
+- `e1e1e2d52d9197f6` and `ed4a7886d486dcc6`: final source exports and both
+  natural 390px phone-shelf witnesses pass after hierarchy and input corrections.
+  canonical text and every section target are unchanged; all 297 numbered entries
+  retain their metadata. obsolete publisher ancestry changes 73 shadow sections
+  and 30 pillow sections, including 2 and 11 extents respectively. rendered html
+  is unchanged apart from fresh-import uuid names. both final screenshots were
+  inspected for bounded panes and clipping. private inputs/proofs/screenshots are
+  outside git, and temporary serving paths are removed.
+- source review of those metadata changes found opening anchors nested inside
+  headings (`a#int` within `h2#page_ix`, among others). treating the anchor as an
+  unrelated publisher boundary duplicates its heading subject and can discard
+  the heading's lexical context. the selected book checks did not target this relation;
+  their green does not prove it. exact ancestry plus equal canonical start now
+  defines the required heading-subject reconciliation, preserving publisher ids
+  and source jump anchors. the source owner is adding its direct counterexample
+  before correction and renewed book verification.
+- `ac3776e24d0e3399` → `f815c0ae8b2490bb`: a publisher anchor at its containing
+  heading's start now augments that heading rather than producing two section
+  subjects. the original publisher id, anchor and target are retained. the same
+  source proof keeps a coincident sibling anchor distinct and preserves a later
+  inline anchor at offset 18 instead of moving it to heading start 14. full book
+  recertification follows; this is source ancestry, not title/position inference.
+- raw-xml review corrected the preliminary introduction diagnosis: its next
+  heading at fragment 3 offset 5366 is h2, not h3, so the introduction ends there
+  under authored peer-heading semantics. chronology's h2 at 2131 does contain a
+  following h3 and extends to 4275. no inferred introduction hierarchy was added.
+  export `7bc0d286bf1bab87` passes: shadow retains 149 sections; pillow has 567,
+  removing seven duplicate heading/publisher subjects. all 297 inferred entries,
+  their cross-file continuations, appendix starts and canonical text are preserved.
+- book browser `527da545db2ccb39` passes shadow and exact appendix-anchor
+  visibility, then fails its temporary glyph oracle. diagnostic
+  `0a504b9ae7301823` identifies the bad premise: `HtmlRenderer` projects source
+  heading levels beneath the route heading, so source h2 need not render as h2.
+  the oracle now locates the independently authored enclosing id `page_257`;
+  its actual glyph-visibility requirement is unchanged. no product correction
+  or relaxed arrival requirement is justified by this failure.
+- `933ea7a501a0bd64`: both final natural-shelf book witnesses pass against the
+  final ancestry reconciliation and shared input classifier. unique source
+  coordinates, all 297 numbered entries, canonical text, exact arrivals/return,
+  local/global geometry and quiet navigation are retained. shadow has 149 sections;
+  pillow has 567 after seven redundant generated heading subjects are reconciled
+  with their preserved publisher nodes. temporary assets/proofs are removed.
+- final shared-input offline bundle rebuilt successfully: `index-Y7sNzIEk.js`,
+  416.27 kb before gzip; css unchanged. source and asset manifests regenerated.
+  the same existing custom-highlight minifier warnings remain tracked in oi-078.
+- existing web ingest replaces authored heading ids without updating links or
+  labelled-container references. source repair is outside this metadata-only cut,
+  recorded in [oi-080](../tickets/web-ingest-replaces-authored-heading-anchors.md).
+- ordinary pdf page turns already count as genuine reading under the prior
+  continuity contract. that behavior remains. zoom shares their wrapper and can
+  incorrectly renew reading eligibility; this separate control defect is
+  [oi-081](../tickets/pdf-zoom-renews-reading-activity.md), outside map orientation.

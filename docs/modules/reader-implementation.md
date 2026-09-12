@@ -112,12 +112,12 @@ seeks, plays, resumes, mounts a progress seam, or creates an activity seam.
 Partial coverage is explicit in both zero and nonzero result states. Close
 clears marks without returning; Return restores and retires the one origin.
 
-EPUB Find searches canonical fragments through the bounded EPUB Find API.
-Cross-section preview uses a rendered-section override, while committed
+epub find searches canonical fragments through the bounded epub find api.
+cross-fragment preview uses a rendered-fragment override, while committed
 navigation, URL, restore state, progress, completion, and activity remain
-fenced. The first genuine input atomically adopts the rendered section and is
-capture-suppressed; later input resumes ordinary reader behavior. Same-section
-stepping reuses the rendered section without a request.
+fenced. the first genuine input atomically adopts the rendered fragment and is
+capture-suppressed; later input resumes ordinary reader behavior. same-fragment
+stepping reuses the rendered fragment without a request.
 
 PDF Find delegates exact matching and marks to PDF.js while the shared session
 owns query, cancellation, preview, and Return. App-owned page, zoom, restore,
@@ -767,6 +767,12 @@ Consumption Activity's bounded historical facts.
   activity scrollport through one format-neutral adapter contract. Restore,
   navigation, preview, and return intents remain ineligible until genuine
   input returns the source to `Reader`.
+- a prose tap may adopt the exact restored viewport before a new `Reader`
+  publication. that permission cannot carry into a later restoration, even in
+  the same fragment. source links and control activation do not adopt reading;
+  actual scrolling over a link does. the text leaf and activity adapter share
+  one keyboard-direction classifier so activating an inline button with space
+  cannot claim a forward reading gesture.
 - The adapter projects the same semantic viewport that drives document-position
   presentation; it
   never remeasures a scrollbar, writes spans itself, sends a raw device id, or
@@ -890,6 +896,8 @@ of its location-target writes uses.
   (apart from a genuine end-of-document witness); it never borrows a later glyph.
 - map preview, return, and restore do not save progress. one excursion origin
   survives successful subsequent jumps; failed navigation restores departure.
+  epub section controls and internal source links use the same positioning owner
+  and return origin; navigation does not renew reading activity.
   mobile map jumps keep detail open so return remains available; explicit
   dismissal ends the excursion.
 - media metadata owns workspace labels; fragment loading and semantic section

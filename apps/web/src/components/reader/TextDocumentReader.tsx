@@ -13,6 +13,7 @@ import type {
 import { useEffect, useMemo, useRef } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import { composeRefs } from "@/lib/ui/composeRefs";
+import { readerScrollKeyDirection, type TrustedScrollDirection } from "@/lib/reader/readerScrollInput";
 import styles from "./textDocumentReader.module.css";
 
 export type ReaderViewportSnapshot = {
@@ -20,8 +21,6 @@ export type ReaderViewportSnapshot = {
   scrollHeight: number;
   clientHeight: number;
 };
-
-export type TrustedScrollDirection = "forward" | "backward";
 
 /**
  * The hosted decoration port. The leaf's `renderedHtml` input is undecorated
@@ -204,25 +203,8 @@ export default function TextDocumentReader({
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (!event.isTrusted) return;
-    if (event.altKey || event.ctrlKey || event.metaKey) return;
-    if (
-      event.key === "ArrowDown" ||
-      event.key === "PageDown" ||
-      event.key === "End" ||
-      ((event.key === " " || event.key === "Spacebar") && !event.shiftKey)
-    ) {
-      publishTrustedScrollIntent("forward");
-      return;
-    }
-    if (
-      event.key === "ArrowUp" ||
-      event.key === "PageUp" ||
-      event.key === "Home" ||
-      ((event.key === " " || event.key === "Spacebar") && event.shiftKey)
-    ) {
-      publishTrustedScrollIntent("backward");
-    }
+    const direction = readerScrollKeyDirection(event.nativeEvent);
+    if (direction !== null) publishTrustedScrollIntent(direction);
   }
 
   function handlePointerDown(event: PointerEvent<HTMLDivElement>) {

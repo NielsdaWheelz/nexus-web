@@ -40,7 +40,33 @@ function renderLeaf(
   );
 }
 
-describe("TextDocumentReader canonical content and hosted decoration port", () => {
+describe("TextDocumentReader canonical content, input and hosted decoration ports", () => {
+  it("activates an endcap button with Space without claiming reader movement, while source-link scroll keys remain genuine", async () => {
+    const intents: string[] = [];
+    const destinations: string[] = [];
+    renderLeaf({
+      contentState: { status: "ready", renderedHtml: '<p><a href="#source">source link</a></p>' },
+      onTrustedScrollIntent: (direction) => intents.push(direction),
+      endContent: <button type="button" onClick={() => destinations.push("previous resource")}>previous resource</button>,
+    });
+
+    await userEvent.tab();
+    expect(screen.getByRole("region", { name: "Document reading area" })).toHaveFocus();
+    await userEvent.tab();
+    expect(screen.getByRole("link", { name: "source link" })).toHaveFocus();
+    await userEvent.tab();
+    expect(screen.getByRole("button", { name: "previous resource" })).toHaveFocus();
+    await userEvent.keyboard(" ");
+    expect(destinations).toEqual(["previous resource"]);
+    expect(intents, "Space activating a reader navigation button must not publish reading intent").toEqual([]);
+
+    await userEvent.tab({ shift: true });
+    expect(screen.getByRole("link", { name: "source link" })).toHaveFocus();
+    await userEvent.keyboard(" ");
+    await userEvent.keyboard("{ArrowUp}");
+    expect(intents).toEqual(["forward", "backward"]);
+  });
+
   it("renders undecorated canonical HTML when no decorator is supplied (the offline default)", async () => {
     renderLeaf();
 

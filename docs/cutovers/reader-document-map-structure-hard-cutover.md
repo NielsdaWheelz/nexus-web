@@ -69,8 +69,10 @@ services, unrelated testing-platform repairs, or a general navigation framework.
 6. next/previous section uses unique source positions relative to the current
    locus, never publisher presentation order. resource continuation remains
    fragment/spine order and works with an empty outline.
-7. jumps, restore, preview, and return update orientation without claiming
-   reading or completion. keep the existing trusted-input/save fences.
+7. document-map, section, and source-link jumps, restore, preview, and return
+   update orientation without claiming reading or completion. keep the existing
+   trusted-input/save fences. ordinary pdf page-turn intent retains its existing
+   contract; this cut does not redesign those controls.
 
 ## source model, storage, and api
 
@@ -106,6 +108,10 @@ extraction algorithm:
    count their content once and deduplicate sequential visits by coordinate.
    parent and first child remain distinct. a detected heading at an existing
    source element augments its node instead of creating another alias.
+   an authored anchor inside a heading identifies that heading only when source
+   ancestry proves containment and their canonical starts coincide. reconcile
+   before grouping aliases; preserve the publisher id and original jump anchor.
+   sibling anchors and later anchors inside heading text remain distinct.
 3. semantic parent is the nearest source-supported containing section. use
    explicit enclosing structural ends, otherwise the next peer/ancestor start
    in source order. file boundaries alone never terminate a chapter. resolve

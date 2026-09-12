@@ -94,8 +94,16 @@ def build_epub_structure(
             index = fragment.canonical.anchors.get(href_fragment)
             if index is None:
                 continue
-            element_index = present(index)
             node.target_offset = fragment.canonical.elements[index].start_offset
+            ancestor = fragment.canonical.elements[index].parent_element
+            while isinstance(ancestor, Present):
+                element = fragment.canonical.elements[ancestor.value]
+                if element.tag in HEADING_TAGS:
+                    if element.start_offset == node.target_offset:
+                        index = ancestor.value
+                    break
+                ancestor = element.parent_element
+            element_index = present(index)
         else:
             node.target_offset = 0
         if node.nav_type != "toc":
@@ -388,7 +396,7 @@ def build_epub_structure(
             and stack
         ):
             section.parent = present(stack[-1].location_id)
-        # The publisher's explicit hierarchy resets lexical heading context.
+        # Publisher boundaries reset context; only headings and containers can parent it.
         chain: list[_Section] = []
         parent = section.parent
         visited = {section.location_id}
@@ -399,7 +407,11 @@ def build_epub_structure(
             ancestor = by_id[parent.value]
             chain.append(ancestor)
             parent = ancestor.parent
-        stack = list(reversed(chain)) + [section]
+        stack = [
+            ancestor
+            for ancestor in [*reversed(chain), section]
+            if isinstance(ancestor.heading_rank, Present) or ancestor.owns_container
+        ]
 
     if not fragments:
         return []

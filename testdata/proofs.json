@@ -344,6 +344,7 @@
         "apps/web/src/lib/reader/ReaderProgressPort.ts",
         "apps/web/src/lib/reader/readerDocumentPosition.ts",
         "apps/web/src/lib/reader/readerProgress.ts",
+        "apps/web/src/lib/reader/readerScrollInput.ts",
         "apps/web/src/lib/media/documentReadiness.ts",
         "apps/web/src/lib/panes/paneResourceLoaders.ts",
         "apps/web/src/lib/offlineReading/**/*",
@@ -1152,6 +1153,7 @@
         "apps/web/src/app/(authenticated)/AuthenticatedShell.tsx",
         "apps/web/src/app/(authenticated)/stats/**/*",
         "apps/web/src/app/(authenticated)/media/*/ReaderActivityAdapter.ts",
+        "apps/web/src/lib/reader/readerScrollInput.ts",
         "apps/web/src/app/(authenticated)/media/*/MediaPaneBody.tsx",
         "apps/android/app/src/main/java/app/nexus/android/playback/**/*"
       ],
@@ -1361,7 +1363,6 @@
         "apps/web/src/app/(authenticated)/media/*/ReaderActivityAdapter.ts",
         "apps/web/src/app/(authenticated)/media/*/epubHelpers.ts",
         "apps/web/src/app/(authenticated)/media/*/epubRestore.ts",
-        "apps/web/src/app/(authenticated)/media/*/paneTextAnchor.ts",
         "apps/web/src/app/(authenticated)/media/*/useEpubPaneFind.ts",
         "apps/web/src/components/PdfReader.tsx",
         "apps/web/src/lib/media/readerNavigation.ts",

@@ -124,15 +124,21 @@ def _semantic_structure_epub(*, final_entry_number: int) -> bytes:
 <body><nav epub:type="toc"><ol>
 <li><a href="two%2520.xhtml#next">Next</a><ol>
 <li><a href="chapter.xhtml#chapter">Chapter III</a></li></ol></li>
-<li><a href="one.xhtml#part">Part</a><ol>
-<li><a href="one.xhtml#one">One</a></li>
+<li><a href="one.xhtml#part-link">Part</a><ol>
+<li><a href="one.xhtml#one">One</a><ol>
+<li><a href="one.xhtml#one-middle">One ending</a></li></ol></li>
 <li><a href="one.xhtml#one">One alias</a></li>
 <li><a href="two%2520.xhtml#closed">Closed</a><ol>
 <li><a href="two%2520.xhtml#inside">Inside</a></li>
 </ol></li></ol></li>
+<li><a href="one.xhtml#preface">Preface</a></li>
+<li><a href="entries-b.xhtml#not-an-entry">Interlude</a></li>
+<li><a href="one.xhtml#part-sibling">Part boundary</a></li>
 </ol></nav></body></html>""",
-        "one.xhtml": """<html><body><p>Prelude.</p><h1 id="part">Part</h1>
-<h2 id="one">One <span hidden="hidden">excluded</span>🐺</h2><p>First.</p></body></html>""",
+        "one.xhtml": """<html><body><p id="preface">Prelude.</p><a id="part-sibling"></a>
+<h1 id="part"><a id="part-link"></a>Part</h1>
+<h2 id="one">One <span hidden="hidden">excluded</span><a id="one-middle"></a>🐺</h2>
+<p>First.</p></body></html>""",
         "two%20.xhtml": """<html><body><h2 id="second">Two</h2><p>Second.</p>
 <section id="closed"><h3 id="inside">Inside</h3><p>Body.</p></section>
 <p>Tail.</p><section><h1 id="next">Next</h1><p>Last.</p></section>
@@ -150,6 +156,7 @@ def _semantic_structure_epub(*, final_entry_number: int) -> bytes:
 <aside><p id="note">[4] <em>Note</em>.</p></aside>
 <blockquote><p id="quote">[9] <em>Quotation</em>.</p></blockquote>
 <p id="not-an-entry"><em>[8] Not an incipit</em>.</p>
+<h2 id="afterword">Afterword</h2>
 </body></html>""",
     }
     chapter_link = '<li><a href="chapter.xhtml#chapter">Chapter III</a></li>'
@@ -190,10 +197,16 @@ def test_epub_structure_preserves_semantic_sections_across_render_units(
         )
         assert isinstance(plan, EpubExtractionPlan), plan
         locations = plan.nav_locations
+        assert len([location for location in locations if location.label == "Part"]) == 1, (
+            "a leading publisher anchor inside a heading must identify that same heading"
+        )
         assert [location.label for location in locations] == [
+            "Preface",
+            "Part boundary",
             "Part",
             "One",
             "One alias",
+            "One ending",
             "Two",
             "Closed",
             "Inside",
@@ -203,7 +216,10 @@ def test_epub_structure_preserves_semantic_sections_across_render_units(
             "Left",
             "Right",
             "Notebook",
-        ] + (["[1] Morning", "[2] Night", "[3] Again"] if final_entry_number == 3 else []), (
+        ] + (["[1] Morning", "[2] Night", "[3] Again"] if final_entry_number == 3 else []) + [
+            "Interlude",
+            "Afterword",
+        ], (
             "source structure was omitted, ambiguous numbering inferred, or a fake file chapter created"
         )
         fragments = [fragment for fragment, *_rest in plan.fragment_specs]
@@ -213,12 +229,15 @@ def test_epub_structure_preserves_semantic_sections_across_render_units(
             "Unsectioned.",
             "III\nTitle\nBody.\nLeft\nA.\nRight\nB.\nAfter chapter.",
             "Notebook\n[1]* Morning. One.\n[2] Night. Two.",
-            f"Still two.\n[{final_entry_number}] ‘Again’. Three.\n[4] Note.\n[9] Quotation.\n[8] Not an incipit.",
+            f"Still two.\n[{final_entry_number}] ‘Again’. Three.\n[4] Note.\n[9] Quotation.\n[8] Not an incipit.\nAfterword",
         ]
         assert [(location.fragment_idx, location.start_offset) for location in locations] == [
+            (0, 0),
+            (0, 9),
             (0, 9),
             (0, 14),
             (0, 14),
+            (0, 18),
             (1, 0),
             (1, 12),
             (1, 12),
@@ -228,8 +247,42 @@ def test_epub_structure_preserves_semantic_sections_across_render_units(
             (3, 16),
             (3, 24),
             (4, 0),
-        ] + ([(4, 9), (4, 28), (5, 11)] if final_entry_number == 3 else [])
+        ] + ([(4, 9), (4, 28), (5, 11)] if final_entry_number == 3 else []) + [
+            (5, 56),
+            (5, 76),
+        ]
         by_label = {location.label: location for location in locations}
+        assert by_label["Part"].source == "Both"
+        assert by_label["Part"].href_fragment.model_dump() == {
+            "kind": "Present",
+            "value": "part-link",
+        }
+        assert by_label["Part boundary"].source == "Publisher"
+        assert by_label["Part boundary"].location_id != by_label["Part"].location_id
+        assert by_label["One ending"].source == "Publisher"
+        assert by_label["One ending"].start_offset == 18
+        assert by_label["Part"].parent_section_id.model_dump() == {"kind": "Absent"}, (
+            "an unrelated publisher anchor cannot parent source headings"
+        )
+        assert by_label["Preface"].end.model_dump() == {
+            "kind": "Present",
+            "value": {"fragment_idx": 0, "offset": 9},
+        }
+        assert by_label["Afterword"].parent_section_id.model_dump() == {"kind": "Absent"}, (
+            "a publisher root boundary must retire the preceding heading context"
+        )
+        assert by_label["Interlude"].end.model_dump() == {
+            "kind": "Present",
+            "value": {"fragment_idx": 5, "offset": 76},
+        }
+        assert by_label["Notebook"].end.model_dump() == {
+            "kind": "Present",
+            "value": {"fragment_idx": 5, "offset": 56},
+        }
+        assert by_label["Afterword"].end.model_dump() == {
+            "kind": "Present",
+            "value": {"fragment_idx": 5, "offset": 85},
+        }
         assert by_label["One"].location_id == "one.xhtml#one"
         assert by_label["One alias"].location_id != by_label["One"].location_id
         assert by_label["Two"].href_fragment.model_dump() == {
@@ -266,6 +319,9 @@ def test_epub_structure_preserves_semantic_sections_across_render_units(
         assert [node.label for node in plan.toc_nodes if node.parent_node_id is None] == [
             "Next",
             "Part",
+            "Preface",
+            "Interlude",
+            "Part boundary",
         ]
         toc_by_label = {node.label: node for node in plan.toc_nodes}
         toc_by_id = {node.node_id: node for node in plan.toc_nodes}

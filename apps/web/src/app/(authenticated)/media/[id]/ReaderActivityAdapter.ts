@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, type RefObject } from "react";
 import { activityRecorder } from "@/lib/consumption/activityRecorder";
+import { isInteractiveTarget } from "@/lib/ui/interactiveTarget";
+import { readerScrollKeyDirection } from "@/lib/reader/readerScrollInput";
 import { parseMediaRef } from "@/lib/consumption/activityContract";
 import { documentWordBoundaryOrdinal } from "@/lib/consumption/canonicalWordPosition";
 import {
@@ -44,19 +46,6 @@ interface ReaderActivityAdapter {
 
 const READING_IDLE_AFTER_MS = 300_000;
 
-function isReaderScrollKey(event: KeyboardEvent): boolean {
-  return (
-    event.key === "ArrowDown" ||
-    event.key === "ArrowUp" ||
-    event.key === "PageDown" ||
-    event.key === "PageUp" ||
-    event.key === "Home" ||
-    event.key === "End" ||
-    event.key === " " ||
-    event.key === "Spacebar"
-  );
-}
-
 /**
  * Publish one reader pane's eligibility to the tab-local activity recorder.
  * Trusted DOM input is the only operation that refreshes its idle deadline.
@@ -79,16 +68,16 @@ export function useReaderActivityAdapter({
   semanticViewportRef.current = semanticViewport;
   const documentProjectionRef = useRef(documentProjection);
   documentProjectionRef.current = documentProjection;
-  const genuineRestoreSourceKeyRef = useRef<string | undefined>(undefined);
+  const genuineRestoreViewportRef = useRef<ReaderSemanticViewport | null>(null);
   const documentKind = documentProjection?.kind ?? null;
   const updateRef = useRef<() => void>(() => undefined);
 
   const noteGenuineInput = useCallback(() => {
     const currentViewport = semanticViewportRef.current;
-    genuineRestoreSourceKeyRef.current =
+    genuineRestoreViewportRef.current =
       currentViewport?.intent === "Restore"
-        ? currentViewport.sourceKey
-        : undefined;
+        ? currentViewport
+        : null;
     lastGenuineInputMonoRef.current = performance.now();
     updateRef.current();
   }, []);
@@ -138,8 +127,7 @@ export function useReaderActivityAdapter({
           !previewLease.isActive() &&
           (currentSemanticViewport?.intent === "Reader" ||
             (currentSemanticViewport?.intent === "Restore" &&
-              genuineRestoreSourceKeyRef.current ===
-                currentSemanticViewport.sourceKey)) &&
+              genuineRestoreViewportRef.current === currentSemanticViewport)) &&
           document.visibilityState === "visible" &&
           document.hasFocus() &&
           lastGenuineInputMono !== undefined &&
@@ -164,7 +152,11 @@ export function useReaderActivityAdapter({
     });
     const noteInput = (event: Event) => {
       if (!event.isTrusted) return;
-      if (event instanceof KeyboardEvent && !isReaderScrollKey(event)) return;
+      if (
+        (event.type === "pointerdown" || event.type === "touchstart") &&
+        isInteractiveTarget(event.target, root)
+      ) return;
+      if (event instanceof KeyboardEvent && readerScrollKeyDirection(event) === null) return;
       onGenuineReaderInput();
       noteGenuineInput();
     };
@@ -172,6 +164,7 @@ export function useReaderActivityAdapter({
     const unsubscribePreviewLease = previewLease.subscribe(update);
     root.addEventListener("pointerdown", noteInput, { passive: true });
     root.addEventListener("touchstart", noteInput, { passive: true });
+    root.addEventListener("touchmove", noteInput, { passive: true });
     root.addEventListener("wheel", noteInput, { passive: true });
     root.addEventListener("keydown", noteInput);
     document.addEventListener("visibilitychange", update);
@@ -181,6 +174,7 @@ export function useReaderActivityAdapter({
     return () => {
       root.removeEventListener("pointerdown", noteInput);
       root.removeEventListener("touchstart", noteInput);
+      root.removeEventListener("touchmove", noteInput);
       root.removeEventListener("wheel", noteInput);
       root.removeEventListener("keydown", noteInput);
       document.removeEventListener("visibilitychange", update);
@@ -207,10 +201,9 @@ export function useReaderActivityAdapter({
 
   useEffect(() => {
     if (
-      semanticViewport?.intent !== "Restore" ||
-      semanticViewport.sourceKey !== genuineRestoreSourceKeyRef.current
+      semanticViewport !== genuineRestoreViewportRef.current
     ) {
-      genuineRestoreSourceKeyRef.current = undefined;
+      genuineRestoreViewportRef.current = null;
     }
     updateRef.current();
   }, [documentProjection, semanticViewport]);

@@ -259,8 +259,8 @@ import ReaderDocumentMapDetail from "@/components/reader/ReaderDocumentMapDetail
 import TextDocumentReader, {
   type ReaderViewportSnapshot,
   type TextReaderContentDecorator,
-  type TrustedScrollDirection,
 } from "@/components/reader/TextDocumentReader";
+import type { TrustedScrollDirection } from "@/lib/reader/readerScrollInput";
 import TranscriptPlaybackPanel from "./TranscriptPlaybackPanel";
 import { useReaderActivityAdapter } from "./ReaderActivityAdapter";
 import { useActivityRuntimeSnapshot } from "@/lib/consumption/activityRuntime";
@@ -1257,7 +1257,7 @@ export default function MediaPaneBody() {
   const textViewportCaptureFrameRef = useRef(0);
   const epubAdoptionCaptureSuppressionRef = useRef(false);
   const documentMapPositioningRef = useRef(false);
-  const [mapExcursionOrigin, setMapExcursionOrigin] = useState<Presence<DocumentMapOrigin>>(absent());
+  const [mapExcursionOrigin, setMapExcursionOrigin] = useState<DocumentMapOrigin | null>(null);
   const sourceAnchorRef = useRef<{ fragmentId: string; anchorId: Presence<string> } | null>(null);
   const cancelPendingMapPulseRef = useRef<() => void>(() => undefined);
   const pendingPdfMapArrivalRef = useRef<{ requestId: number; resolve: (result: ApplyCursorResult) => void } | null>(null);
@@ -2824,9 +2824,9 @@ export default function MediaPaneBody() {
     if (isPdf) pdfControlsRef.current?.captureResumeState();
     else flushTextSemanticViewportRef.current();
     const publication = semanticViewportPublicationRef.current;
-    let departure: Presence<DocumentMapOrigin> = publication?.mediaId === id
-      ? present({ kind: "Locator", locator: publication.viewport.primaryLocator }) : absent();
-    if (!isPdf && activeContent && departure.kind === "Absent") {
+    let departure: DocumentMapOrigin | null = publication?.mediaId === id
+      ? { kind: "Locator", locator: publication.viewport.primaryLocator } : null;
+    if (!isPdf && activeContent && departure === null) {
       const root = contentRef.current;
       const viewport = textViewportRef.current;
       const remembered = sourceAnchorRef.current;
@@ -2834,24 +2834,24 @@ export default function MediaPaneBody() {
       const anchor = root && anchorId.kind === "Present" ? findSourceAnchor(root, anchorId.value) : activeContent.canonicalText.length === 0 ? root : null;
       const rect = anchor?.getBoundingClientRect();
       const view = viewport?.getBoundingClientRect();
-      if (anchor && viewport && rect && view) departure = present({
+      if (anchor && viewport && rect && view) departure = {
         kind: "SourceAnchor", format: isEpub ? "epub" : "web",
         request: { fragmentId: activeContent.fragmentId, target: anchorId.kind === "Present" ? { kind: "Anchor", anchorId: anchorId.value } : { kind: "Offset", offset: 0 } },
         viewportDelta: rect.top - view.top,
         scrollLeft: viewport.scrollLeft,
-      });
+      };
     }
-    const origin = mapExcursionOrigin.kind === "Present" ? mapExcursionOrigin : departure;
+    const origin = mapExcursionOrigin ?? departure;
     beginDocumentMapPositioning();
     const arrival = position();
     const sessionId = restoreSessionIdRef.current;
     return arrival.then(async (result) => {
       if (sessionId !== restoreSessionIdRef.current) return false;
       if (result !== "applied") {
-        if (departure.kind === "Present") await restoreDocumentMapOrigin(departure.value);
+        if (departure !== null) await restoreDocumentMapOrigin(departure);
         return false;
       }
-      if (intent === "Return") setMapExcursionOrigin(absent());
+      if (intent === "Return") setMapExcursionOrigin(null);
       else if (intent === "Jump") setMapExcursionOrigin(origin);
       return true;
     });
@@ -2861,11 +2861,11 @@ export default function MediaPaneBody() {
     void positionFromDocumentMap(() => applyReaderLocator(semanticViewport.primaryLocator), "Current");
   }, [applyReaderLocator, positionFromDocumentMap, semanticViewport]);
   const returnFromDocumentMap = useCallback(() => {
-    if (mapExcursionOrigin.kind === "Absent") return;
-    void positionFromDocumentMap(() => restoreDocumentMapOrigin(mapExcursionOrigin.value), "Return");
+    if (mapExcursionOrigin === null) return;
+    void positionFromDocumentMap(() => restoreDocumentMapOrigin(mapExcursionOrigin), "Return");
   }, [mapExcursionOrigin, positionFromDocumentMap, restoreDocumentMapOrigin]);
   useLayoutEffect(() => {
-    setMapExcursionOrigin(absent());
+    setMapExcursionOrigin(null);
     sourceAnchorRef.current = null;
     cancelPendingMapPulseRef.current();
     pendingPdfMapArrivalRef.current?.resolve("cancelled_by_user");
@@ -4381,8 +4381,8 @@ export default function MediaPaneBody() {
     if (!section) return;
     appliedRequestedReaderLocRef.current = sectionId;
     replaceReaderLocation({ loc: sectionId });
-    return navigateToEpubRequest(buildEpubSectionRestoreRequest(section));
-  }, [epubSections, navigateToEpubRequest, replaceReaderLocation]);
+    void positionFromDocumentMap(() => navigateToEpubRequest(buildEpubSectionRestoreRequest(section)));
+  }, [epubSections, navigateToEpubRequest, positionFromDocumentMap, replaceReaderLocation]);
   const positionAtEpubDocumentMapPoint = useCallback((point: ReaderNavigationTextPoint) => {
     return navigateToEpubRequest(buildEpubPointRestoreRequest(point));
   }, [navigateToEpubRequest]);
@@ -4609,7 +4609,7 @@ export default function MediaPaneBody() {
     [paneRuntime.paneId],
   );
   const handleGenuineReaderInput = useCallback((): boolean => {
-    setMapExcursionOrigin(absent());
+    setMapExcursionOrigin(null);
     cancelRestoreSession();
     documentMapPositioningRef.current = false;
     mediaFindPreviewLease.consumeCaptureSuppression(true);
@@ -4900,18 +4900,6 @@ export default function MediaPaneBody() {
   );
 
   const { noteGenuineInput: noteGenuineReaderActivityInput } = readerActivity;
-  const navigateToEpubSectionFromGenuineInput = useCallback(
-    (sectionId: string) => {
-      handleGenuineReaderInput();
-      noteGenuineReaderActivityInput();
-      navigateToEpubSection(sectionId);
-    },
-    [
-      handleGenuineReaderInput,
-      navigateToEpubSection,
-      noteGenuineReaderActivityInput,
-    ],
-  );
   const runPdfControlFromGenuineInput = useCallback(
     (action: (controls: PdfReaderControlActions) => void) => {
       handleGenuineReaderInput();
@@ -5122,6 +5110,9 @@ export default function MediaPaneBody() {
       readerLocatorKind,
     ],
   );
+  // Intent changes update capture without restarting source/layout observation.
+  const scheduleTextViewportCaptureRef = useRef(scheduleTextViewportCapture);
+  scheduleTextViewportCaptureRef.current = scheduleTextViewportCapture;
   flushTextSemanticViewportRef.current = () => {
     if (pendingTextViewportPublicationRef.current === null) {
       return;
@@ -5230,7 +5221,7 @@ export default function MediaPaneBody() {
       mediaFindPreviewLease.armNextCaptureSuppression();
       resetTextProgressGeneration();
       textViewportDimensionsRef.current = dimensions;
-      scheduleTextViewportCapture(
+      scheduleTextViewportCaptureRef.current(
         {
           scrollTop: viewport.scrollTop,
           scrollHeight: viewport.scrollHeight,
@@ -5242,12 +5233,12 @@ export default function MediaPaneBody() {
     observer.observe(viewport);
     return () => observer.disconnect();
   }, [
+    activeContent?.fragmentId,
     hyphenationForRoot,
     readerLayoutKey,
     renderedHtml,
     mediaFindPreviewLease,
     resetTextProgressGeneration,
-    scheduleTextViewportCapture,
   ]);
 
   useEffect(
@@ -5771,7 +5762,7 @@ export default function MediaPaneBody() {
                   iconOnly
                   onClick={() => {
                     if (prevSection) {
-                      navigateToEpubSectionFromGenuineInput(
+                      navigateToEpubSection(
                         prevSection.section_id,
                       );
                     }
@@ -5795,7 +5786,7 @@ export default function MediaPaneBody() {
                   iconOnly
                   onClick={() => {
                     if (nextSection) {
-                      navigateToEpubSectionFromGenuineInput(
+                      navigateToEpubSection(
                         nextSection.section_id,
                       );
                     }
@@ -5817,7 +5808,7 @@ export default function MediaPaneBody() {
                             candidate.section_id === event.target.value,
                         );
                         if (section) {
-                          navigateToEpubSectionFromGenuineInput(
+                          navigateToEpubSection(
                             section.section_id,
                           );
                         }
@@ -5856,7 +5847,7 @@ export default function MediaPaneBody() {
     handlePdfActionMenuOpenChange,
     isEpub,
     isPdf,
-    navigateToEpubSectionFromGenuineInput,
+    navigateToEpubSection,
     nextSection,
     pdfControlsState,
     prevSection,
@@ -6562,12 +6553,12 @@ export default function MediaPaneBody() {
         }}
         onActivateMarker={activateDocumentMapMarker}
         onRevealCurrent={revealCurrentDocumentPosition}
-        onReturn={mapExcursionOrigin.kind === "Present" ? present(returnFromDocumentMap) : absent()}
+        onReturn={mapExcursionOrigin !== null ? present(returnFromDocumentMap) : absent()}
       />
     </div>
   ) : null;
   useEffect(() => {
-    if (secondaryPane?.visibility !== "visible") setMapExcursionOrigin(absent());
+    if (secondaryPane?.visibility !== "visible") setMapExcursionOrigin(null);
   }, [secondaryPane?.visibility]);
 
   const documentMapEvidenceMeasureKey = useMemo(
@@ -7417,9 +7408,7 @@ export default function MediaPaneBody() {
               onInternalLinkClick={(link) => {
                 const target = resolveEpubInternalLinkTarget(link);
                 if (target.kind === "Absent") return false;
-                handleGenuineReaderInput();
-                noteGenuineReaderActivityInput();
-                navigateToEpubRequest(target.value);
+                void positionFromDocumentMap(() => navigateToEpubRequest(target.value));
                 return true;
               }}
             />

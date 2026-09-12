@@ -45,15 +45,15 @@ not be added to Next Image `images.localPatterns`.
 ## Find
 
 Readable EPUB panes publish the shared pane-local `FindOccurrences`
-capability. `POST /media/{id}/epub-find` validates the current first-fragment
-witness, then scans one fragment at a time in spine order. It returns only
+capability. `POST /media/{id}/epub-find` validates the publication generation and
+current fragment witness, then scans one fragment at a time in spine order. it returns only
 ordered occurrence locators and plain-text snippets, stops at match 2,001, and
 uses no global search index.
 
-Cross-section results render through an ephemeral preview override. The
-committed section, URL, restore session, reader progress, activity, and
+cross-fragment results render through an ephemeral preview override. the
+committed fragment, url, restore session, reader progress, activity, and
 completion remain unchanged until genuine reader input adopts the rendered
-section. One immutable origin powers **Go back to reading position**.
+fragment. one immutable origin powers **go back to reading position**.
 
 ## Reader Apparatus
 
