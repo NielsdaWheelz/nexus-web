@@ -341,6 +341,16 @@ books and temporary proofs remain outside git. no production data was changed.
   local/global geometry and quiet navigation are retained. shadow has 149 sections;
   pillow has 567 after seven redundant generated heading subjects are reconciled
   with their preserved publisher nodes. temporary assets/proofs are removed.
+- checkpoint `90c1696a15` includes final source/input corrections and the
+  regenerated offline bundle. final screenshots are manually inspected; packaged
+  source/asset manifests contain no private acceptance inputs.
+- hosted `55aeafdd877e53be` receives sigterm during isolated setup, before any
+  executable proof; exact cleanup completes. unchanged retry `c39c87080ba3c3a5`
+  completes the hosted scenario, including exact eof, but its old one-arm-removal
+  fault also passes. that fault is ineffective; this is not sensitivity green.
+  the registered product-only fault now removes the central capture-suppression
+  consume guard while retaining exact locator/equality checks. assertions and
+  the existing no-write fingerprint are unchanged; new red/green remains required.
 - final shared-input offline bundle rebuilt successfully: `index-Y7sNzIEk.js`,
   416.27 kb before gzip; css unchanged. source and asset manifests regenerated.
   the same existing custom-highlight minifier warnings remain tracked in oi-078.
