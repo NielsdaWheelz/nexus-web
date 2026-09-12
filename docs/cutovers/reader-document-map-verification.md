@@ -411,3 +411,14 @@ manual assistive-technology and actual-touch review. pointer/keyboard proof and
 reviewed phone screenshots do not discharge it. mandatory repository gates and
 the predeployment drain/census/coordinated-artifact obligations above remain
 separate from these focused passes.
+
+`69ca1fecb5d3ed24` repeats source fault sensitivity successfully at `faba868779`
+after the stronger long-path witness. the same candidate's actual-base `pr`
+(`NEXUS_TEST_BASE_SHA=7fa89b88c8342bca9edfb46a6d20053c49555fb2 ./scripts/test pr`)
+fails as `f5e5b75ff8fbd0cb`: native BASE replay runs reader2 fixtures through
+reader1 admission and fails before the intended assertion. every ordinary pr
+capability is `not_run`. [oi-058](../tickets/pr-sensitivity-cannot-accept-new-vitest-owners.md)
+records this native instance of the changed-non-python hard-cut limitation.
+controlled fault passes do not waive the mandatory pr gate. independent
+`confidence --base` execution follows for full static/kernel and affected
+service/component evidence.

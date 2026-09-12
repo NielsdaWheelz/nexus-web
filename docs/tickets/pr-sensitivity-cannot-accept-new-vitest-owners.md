@@ -31,6 +31,26 @@ the gap is only visible to whoever runs `pr` by hand.
 - `sensitivity.py:488-540` (`workflow_sensitivity_request`), `:560-575`
   (`_valid_exact_python_owner`), `behavioral_red`.
 
+### reader native hard cut, 2026-09-12
+
+the same changed-non-python BASE restriction also blocks the reader cutover.
+`NEXUS_TEST_BASE_SHA=7fa89b88c8342bca9edfb46a6d20053c49555fb2 ./scripts/test pr`
+at `faba868779` fails in `f5e5b75ff8fbd0cb` before all normal gate capabilities.
+the selected `OfflineReadingSharedContractTest.kt` compiles, then current
+reader2 fixtures reach the base reader1 verifier's
+`UnsupportedOfflineReadingPackageException` at `verifyAssembled:251` before
+the source-path assertion. the host portfolio reports 185 tests, 3 failures;
+the companion store test also hits an unsupported-state cast at line 940.
+these are not behavioral reds and must not be reclassified as assertions.
+retained evidence is the summary's sensitivity capability and its referenced
+`sensitivity/e939e8b941339594/red/1-android-host-1.log/android-host-1.log`.
+
+candidate product-only native faults already demonstrate the actual contracts:
+literal paths `2cb243a45b4aeeb2`; pending-progress preservation on final assets
+`c5fae5708c454ef1`. the owner must also define coherent native hard-cut routing;
+keeping reader1 fixtures/decoders or weakening assertions is not an acceptable
+repair. no native, browser or repository gate waiver is claimed.
+
 ## Prerequisites
 
 None.
