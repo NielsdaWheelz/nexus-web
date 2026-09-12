@@ -649,3 +649,11 @@ open. production has not been changed.
   the background limit remains 448 mib, including the 352 mib parser envelope.
   run `34710490907` was cancelled when this main change landed; it is not
   passing evidence for the combined candidate. fresh hosted ci owns that verdict.
+- hosted `34712925791`, receipt `87be0d1bbacbac06`, stops at policy: the
+  shared cursor-admission proof rename omitted its frozen ownership digest.
+  independent comparison finds only that exact node replacement under
+  `reading-progress`; source globs, capabilities and all other ownership remain
+  identical. the frozen literal is corrected; policy enforcement and its
+  rejection proofs are unchanged. no behavioral capability ran in this receipt.
+  focused `8c632d2311eceb07` passes policy, python static checks and the existing
+  policy kernel owner, including rejection of self-routed priority ownership.
