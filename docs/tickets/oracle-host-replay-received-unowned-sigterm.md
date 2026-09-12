@@ -1,4 +1,4 @@
-# Oracle-host replay received an unowned SIGTERM
+# Test subprocesses received unowned SIGTERMs
 
 **Status:** open
 **Origin:** 2026-09-12 deployment session, cleanup canonical run
@@ -29,18 +29,36 @@ Twelve bounded, exact, signal-traced reproductions all passed. None of 2,301
 trace files recorded a SIGTERM. That is diagnostic evidence, not a passing
 canonical gate, and it does not identify the signal's owner.
 
+The failure recurred in first-attempt main CI run `34666110694` at exact main
+SHA `c2ab56d677c74d3da797342252d378a92311a08d`. Run
+`e73384873e999003` passed the first six capabilities, then the top-level
+`kernel-python` pytest process exited `143` during
+`test_host_apply_reconstructs_codex_host_no_restart_privilege_contract`.
+Artifact `nexus-test-full-34666110694` records the interruption and every later
+capability as `not_run`; its `kernel-python-1.log` lines 419-451 show the
+preceding tests passing through 86 percent before the abrupt terminal line.
+
+The test's privileged driver opened its sudo session at
+`2026-09-12T02:20:03.949624Z` and closed it at
+`2026-09-12T02:20:13.567113Z`. The CI controller observed the interruption by
+`02:20:15Z`. The system journal records no OOM, runner cancellation, sibling
+runner completion, or systemd unit stop in that interval. The runner service
+has no runtime or memory ceiling. Unlike the first occurrence, this SIGTERM
+reached the portfolio's top-level pytest group, so the defect is not confined
+to the Oracle replay helper.
+
 ## Prerequisites
 
-Capture the sender PID, UID, process, and cgroup when the failure recurs. Run
-the signal audit around the full kernel portfolio, where the unexplained
-lifecycle interaction occurred.
+Capture the sender PID, UID, process, and cgroup. Run the signal audit around
+the full kernel portfolio, where the unexplained lifecycle interaction now
+recurred.
 
 ## Proposed fix
 
-Identify the external owner first. If the evidence proves delayed PAM, sudo,
-or service cleanup can reach the replay, give the injected-crash and replay
-harness one explicit isolated lifecycle boundary. Do not add a retry, delay,
-or ignored signal.
+Identify the signal owner first. If the evidence proves a repository cleanup
+or harness lifecycle can reach an unrelated command, repair that ownership
+boundary. If it proves host supervision, isolate the full test command from
+that exact owner. Do not add a retry, delay, or ignored signal.
 
 ## Acceptance
 
