@@ -1,12 +1,11 @@
 diff --git a/migrations/alembic/versions/0224_codex_personal_generation.py b/migrations/alembic/versions/0224_codex_personal_generation.py
 --- a/migrations/alembic/versions/0224_codex_personal_generation.py
 +++ b/migrations/alembic/versions/0224_codex_personal_generation.py
-@@ -262,7 +262,7 @@ def _preflight(bind: sa.Connection) -> None:
-         ),
-         {"kinds": list(_GENERATION_JOB_KINDS), "statuses": list(_ACTIVE_JOB_STATUSES)},
-     ).all()
--    if active_jobs:
-+    if False and active_jobs:
-         _fail(f"generation jobs must be drained: {_ids(active_jobs)}")
- 
-     generation_jobs_with_domain_attempts = bind.execute(
+@@ -261,6 +261,6 @@ def _preflight(bind: sa.Connection) -> None:
+               AND NOT (
+                   status = 'dead'
+-                  AND kind = ANY(CAST(:resettable_dead_kinds AS text[]))
++                  AND kind = ANY(CAST(:kinds AS text[]))
+               )
+             ORDER BY id
+             """

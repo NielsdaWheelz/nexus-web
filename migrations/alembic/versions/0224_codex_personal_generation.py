@@ -31,7 +31,9 @@ _GENERATION_JOB_KINDS = (
     "synapse_scan",
     "dawn_write_job",
 )
-_ACTIVE_JOB_STATUSES = ("pending", "running", "failed", "dead")
+_RESET_BLOCKING_JOB_STATUSES = ("pending", "running", "failed", "dead")
+# Preflight still validates calls and journals before any mutation can begin.
+_RESETTABLE_DEAD_JOB_KINDS = ("synapse_scan",)
 _HISTORICAL_DOSSIER_FAILURE_CODES = (
     "EntitlementDenied",
     "BudgetExceeded",
@@ -257,10 +259,18 @@ def _preflight(bind: sa.Connection) -> None:
             FROM background_jobs
             WHERE kind = ANY(CAST(:kinds AS text[]))
               AND status = ANY(CAST(:statuses AS text[]))
+              AND NOT (
+                  status = 'dead'
+                  AND kind = ANY(CAST(:resettable_dead_kinds AS text[]))
+              )
             ORDER BY id
             """
         ),
-        {"kinds": list(_GENERATION_JOB_KINDS), "statuses": list(_ACTIVE_JOB_STATUSES)},
+        {
+            "kinds": list(_GENERATION_JOB_KINDS),
+            "statuses": list(_RESET_BLOCKING_JOB_STATUSES),
+            "resettable_dead_kinds": list(_RESETTABLE_DEAD_JOB_KINDS),
+        },
     ).all()
     if active_jobs:
         _fail(f"generation jobs must be drained: {_ids(active_jobs)}")
