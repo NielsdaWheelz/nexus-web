@@ -2,7 +2,7 @@
   "version": 4,
   "corpus_revision": "tool-safety.v4",
   "llm_tools_revision": "9e6d155f3b64f03495911435b7cae8b8d131f9a2",
-  "provider_runtime_revision": "8fde23ac56571a63c65cfcff55c73a0976f83eb4",
+  "provider_runtime_revision": "df12d547a675c5bef32d9118b0e8d5354dc96845",
   "mcp_protocol_version": "2025-06-18",
   "policy_revision": "generation-policy.v2.0d24533c6d6185d1a1a0d28b654ec8cdfee1fc4f48097b31769bc50e11d4f789",
   "policy_facts_fingerprint": "bba771639692232e1639d554b9ccbcbbdaa081f3e93e88db816feebfb79a08f5",
