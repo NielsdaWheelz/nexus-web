@@ -241,12 +241,14 @@ def _project_reader(
 
     if projection.kind == "web_article":
         fragments = [
-            WebOfflineFragment(
-                fragment_id=fragment.fragment_id,
-                fragment_idx=fragment.idx,
-                html_sanitized=_offline_html(fragment.html_sanitized, text_only=True),
-                canonical_text=fragment.canonical_text,
-                created_at=fragment.created_at,
+            WebOfflineFragment.model_validate(
+                {
+                    "fragmentId": str(fragment.fragment_id),
+                    "fragmentIdx": fragment.idx,
+                    "htmlSanitized": _offline_html(fragment.html_sanitized, text_only=True),
+                    "canonicalText": fragment.canonical_text,
+                    "createdAt": fragment.created_at,
+                }
             )
             for fragment in projection.fragments
         ]

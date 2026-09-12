@@ -581,6 +581,16 @@ open. production has not been changed.
   reviewed source/asset manifests. the existing minifier warning remains oi-078.
   hosted run `34694089898` was deliberately cancelled after the browser defect
   was found; no pass is claimed for that superseded candidate.
+- hosted run `34695003258`, receipt `7284bad9fae3f370`, passes static/kernel
+  checks, the resource envelope and rejected-capture proof, then finds a
+  web-article export ingress error: the typed fragment constructor supplies a
+  uuid object to the existing canonical-string before-validator. the producer
+  now uses `WebOfflineFragment.model_validate` with its explicit wire mapping,
+  matching the enclosing reader document. the strict schema is unchanged.
+  `71db3872d3ef5b19` passes static checks and the full service portfolio, including
+  the existing article/epub export owner that reproduced the failure. independent
+  review finds no corresponding mismatch in the other typed projections.
 - [pr #238](https://github.com/NielsdaWheelz/nexus-web/pull/238) records the final
-  native artifact proof, hosted check and merge disposition. the local pr-controller and operator/
+  native artifact proof, hosted check and merge disposition. the local
+  pr-controller and operator/
   production-release limitations above remain separate.
