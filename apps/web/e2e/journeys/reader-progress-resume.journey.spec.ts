@@ -109,6 +109,21 @@ async function uploadCanonicalEpub(
   return mediaId;
 }
 
+async function headingReadingLineDelta(page: Page, name: string): Promise<number> {
+  const viewport = page.getByTestId("document-viewport");
+  const heading = await page.getByRole("heading", { name, exact: true }).boundingBox();
+  const frame = await viewport.boundingBox();
+  expect(heading, `Missing ${name} source heading.`).not.toBeNull();
+  expect(frame, "Missing reader viewport.").not.toBeNull();
+  // DOM geometry measures the authored source start against the visible
+  // reading line; no reader projection or scroll helper supplies the oracle.
+  const padding = await viewport.evaluate((element) => getComputedStyle(element).scrollPaddingTop);
+  // Desktop leaves CSS at auto and owns a 56px reading margin.
+  const readingLine = padding === "auto" ? 56 : Number.parseFloat(padding);
+  expect(Number.isFinite(readingLine)).toBe(true);
+  return heading!.y - frame!.y - readingLine;
+}
+
 test("reader progress resumes, completes, and resets through its product actions", async ({
   page,
   journeyUser,
@@ -165,9 +180,8 @@ test("reader progress resumes, completes, and resets through its product actions
   expect(new Set(aliases.map((section) => section.section_id)).size).toBe(2);
   // Equal-depth, equal-extent aliases use lexical section identity as the
   // documented tie-break. Publisher label order is not an ownership oracle.
-  const expectedSecondLabel = aliases[0]!.section_id < aliases[1]!.section_id
-    ? aliases[0]!.label
-    : aliases[1]!.label;
+  const [firstAliasId] = aliases.map((section) => section.section_id).sort();
+  const expectedSecondLabel = aliases.find((section) => section.section_id === firstAliasId)!.label;
 
   await gotoWithStrictCsp(page, `/media/${mediaId}`);
   const viewport = page.getByTestId("document-viewport");
@@ -176,18 +190,6 @@ test("reader progress resumes, completes, and resets through its product actions
   const currentContents = () => outline.getByRole("button").evaluateAll((buttons) => buttons
     .filter((button) => button.getAttribute("aria-current") === "location")
     .map((button) => button.textContent));
-  const headingDelta = async (name: string): Promise<number> => {
-    const heading = await page.getByRole("heading", { name, exact: true }).boundingBox();
-    const frame = await viewport.boundingBox();
-    if (!heading || !frame) throw new Error(`Missing ${name} source heading or reader viewport.`);
-    // DOM geometry measures the authored source start against the visible
-    // reading line; no reader projection or scroll helper supplies the oracle.
-    const padding = await viewport.evaluate((element) => getComputedStyle(element).scrollPaddingTop);
-    // Desktop leaves CSS at auto and owns a 56px reading margin.
-    const readingLine = padding === "auto" ? 56 : Number.parseFloat(padding);
-    expect(Number.isFinite(readingLine)).toBe(true);
-    return heading.y - frame.y - readingLine;
-  };
   await expect(page.getByRole("heading", { name: "Opening", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Open document map", exact: true }).click();
   await page.getByRole("button", { name: "Second", exact: true }).click();
@@ -205,11 +207,11 @@ test("reader progress resumes, completes, and resets through its product actions
   await expect.poll(currentContents).toEqual(["Opening"]);
   let previousGlobal = Number((await map.getByText(/^document [0-9]+%$/).innerText()).match(/[0-9]+/)![0]);
   for (const [heading, percentage] of [["Second", 33], ["Closing", 67]] as const) {
-    const delta = await headingDelta(heading);
+    const delta = await headingReadingLineDelta(page, heading);
     expect(delta, `${heading} must follow the actual current source viewport`).toBeGreaterThan(0);
     await viewport.hover();
     await page.mouse.wheel(0, delta);
-    await expect.poll(async () => Math.abs(await headingDelta(heading))).toBeLessThanOrEqual(1);
+    await expect.poll(async () => Math.abs(await headingReadingLineDelta(page, heading))).toBeLessThanOrEqual(1);
     await expect.poll(currentContents).toEqual([heading === "Second" ? expectedSecondLabel : heading]);
     await expect(map.getByText("outside this section", { exact: true })).toBeVisible();
     await expect(map.getByText(`document ${percentage}%`, { exact: true })).toBeVisible();
@@ -226,11 +228,9 @@ test("reader progress resumes, completes, and resets through its product actions
     return snapshot.data.state === "Positioned" ? snapshot.data.locator.locations.text_offset : null;
   }, { message: "genuine scrolling into Closing must settle before toolbar-only navigation" }).toBeGreaterThanOrEqual(5827);
   expect(await waitForReaderStateWrite(page, mediaId, RESTORE_WRITE_QUIET_WINDOW_MS), "the preceding genuine scroll must finish saving before toolbar observation").toBeNull();
-  const toolbarWrites: Request[] = [];
-  const recordToolbarWrite = (request: Request) => {
-    if (matchesReaderStateWrite(request, mediaId)) toolbarWrites.push(request);
-  };
-  page.on("request", recordToolbarWrite);
+  const toolbarRequests: Request[] = [];
+  const recordToolbarRequest = (request: Request) => toolbarRequests.push(request);
+  page.on("request", recordToolbarRequest);
 
   // The hosted controls traverse unique source starts, independent of the
   // publisher order and whichever coincident Second alias owns current state.
@@ -241,7 +241,7 @@ test("reader progress resumes, completes, and resets through its product actions
     await expect(page.getByRole("heading", { name: heading, exact: true })).toBeInViewport();
     await expect.poll(currentContents).toEqual([heading === "Second" ? expectedSecondLabel : heading]);
     await expect.poll(async () => {
-      const delta = await headingDelta(heading);
+      const delta = await headingReadingLineDelta(page, heading);
       const top = await viewport.evaluate((element) => element.scrollTop);
       return Math.abs(delta) <= 1 || (top === 0 && delta < 0);
     }, { message: `${direction} must reveal ${heading} at the reading line, allowing only source-start clamping` }).toBe(true);
@@ -252,8 +252,9 @@ test("reader progress resumes, completes, and resets through its product actions
   }
   await expect(page.getByRole("button", { name: "Next section", exact: true })).toBeDisabled();
   const delayedToolbarWrite = await waitForReaderStateWrite(page, mediaId, RESTORE_WRITE_QUIET_WINDOW_MS);
-  page.off("request", recordToolbarWrite);
-  expect(toolbarWrites[0] ?? delayedToolbarWrite, "section controls must not claim reading through reader-state writes").toBeNull();
+  page.off("request", recordToolbarRequest);
+  const toolbarWrite = toolbarRequests.find((request) => matchesReaderStateWrite(request, mediaId));
+  expect(toolbarWrite ?? delayedToolbarWrite, "section controls must not claim reading through reader-state writes").toBeNull();
   await outline.getByRole("button", { name: "Second", exact: true }).click();
   await expect(page.getByText(/Omega proves the selected section/).first()).toBeVisible();
   await viewport.hover();

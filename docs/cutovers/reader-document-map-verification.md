@@ -443,3 +443,14 @@ mismatch: lxml's installed stub accepts boolean `create_parent`. its installed
 implementation explicitly converts `True` to the same `div` wrapper, including
 leading-text handling. `epub_read.py` now uses that equivalent supported form;
 no type assertion or ignored diagnostic is introduced.
+
+`3ca3bfd7a235ab5d` passes all four full python static commands, then flags four
+conditional-test lint warnings in the hosted journey. the reviewed refactor
+preserves lexical alias selection, exact DOM reading-line geometry and the full
+toolbar no-write window: required geometry becomes explicit assertions, its
+reused calculation has one helper, and request filtering occurs at the original
+assertion. no lint exception, action, oracle or timeout changes.
+`./scripts/test changed apps/web/e2e/journeys/reader-progress-resume.journey.spec.ts`
+passes as `164f22b3a8eead08` on `51b1764baf` plus that reviewed test diff,
+including lint and the complete hosted journey. earlier `8b0b983d002cd181`
+retains its behavioral red before this proof-only refactor.
