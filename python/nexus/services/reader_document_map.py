@@ -24,6 +24,8 @@ from nexus.services import (
     reader_evidence,
     reader_navigation,
 )
+from nexus.services.capabilities import is_document_status_ready
+from nexus.services.reader_publication import read_publication_generation
 
 
 def get_reader_document_map(
@@ -42,7 +44,7 @@ def get_reader_document_map(
         db.execute(
             text(
                 """
-                SELECT id, kind, title, updated_at, page_count
+                SELECT id, kind, title, updated_at, page_count, processing_status
                 FROM media
                 WHERE id = :media_id
                 """
@@ -79,6 +81,15 @@ def get_reader_document_map(
         fragment_cursor += char_count
 
     media_kind = str(media["kind"])
+    generation = absent()
+    if media_kind in {"epub", "web_article", "pdf"}:
+        publication_generation = read_publication_generation(db, media_id=media_id)
+        if publication_generation is None:
+            if is_document_status_ready(str(media["processing_status"])):
+                # justify-defect: ready canonical content is installed by the publication owner.
+                raise AssertionError("Readable document has no reader publication")
+            raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media has no reader publication")
+        generation = present(publication_generation)
     pdf_page_heights = (
         {
             int(row["page_number"]): float(row["page_height"])
@@ -139,6 +150,24 @@ def get_reader_document_map(
         pdf_page_heights=pdf_page_heights,
     )
 
+    omitted_item_counts = dict(projection.omitted_item_counts)
+    if navigation is not None:
+        unknown_extents = sum(section.extent.kind == "Absent" for section in navigation.sections)
+        if unknown_extents:
+            omitted_item_counts["unknown_section_extent"] = unknown_extents
+            navigation_partial = True
+    if media_kind == "epub":
+        unresolved_targets = db.execute(
+            text("""
+                SELECT count(*) FROM epub_toc_nodes
+                WHERE media_id = :media_id AND href IS NOT NULL AND target_offset IS NULL
+            """),
+            {"media_id": media_id},
+        ).scalar_one()
+        if unresolved_targets:
+            omitted_item_counts["unresolved_navigation_target"] = unresolved_targets
+            navigation_partial = True
+
     all_item_count = projection.evidence.counts.passages + projection.evidence.counts.document
     has_content = bool(
         all_item_count or embed_rows or (navigation is not None and navigation.sections)
@@ -153,6 +182,7 @@ def get_reader_document_map(
     )
     return ReaderDocumentMapOut(
         media_id=media_id,
+        generation=generation,
         media_kind=media_kind,
         title=str(media["title"]),
         status=status,
@@ -173,7 +203,7 @@ def get_reader_document_map(
         evidence=projection.evidence,
         markers=projection.markers,
         diagnostics=ReaderDocumentMapDiagnosticsOut(
-            omitted_item_counts=projection.omitted_item_counts,
+            omitted_item_counts=omitted_item_counts,
         ),
     )
 

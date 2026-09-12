@@ -3304,7 +3304,6 @@ def _run_prepared_html_article(
             embed_source_html=source_html,
             base_url=str(attempt.requested_url or ""),
             fragment_idx=0,
-            media_title=str(payload.get("title") or ""),
             extract_embeds=extract_embeds,
         )
     except ValueError as exc:

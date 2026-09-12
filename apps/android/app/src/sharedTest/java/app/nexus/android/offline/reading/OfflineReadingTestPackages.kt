@@ -126,10 +126,13 @@ internal fun buildWebArticleReadingPackage(
     title: String,
     readerGeneration: Long = 7,
 ): BuiltOfflineReadingPackage {
+    val fragmentId = "018f2e74-5efc-7e2f-8a3a-142857142857"
     val readerJson = (
-        """{"readerContractVersion":1,"mediaId":"$mediaId","mediaKind":"WebArticle",""" +
-            """"title":"$title","navigation":[],"fragments":[{"fragmentId":"intro",""" +
-            """"ordinal":0,"htmlSanitized":"<p>reader</p>","canonicalText":"reader"}]}"""
+        """{"readerContractVersion":2,"mediaId":"$mediaId","mediaKind":"WebArticle",""" +
+            """"title":"$title","navigation":{"media_id":"$mediaId","kind":"web_article",""" +
+            """"generation":$readerGeneration,"fragments":[{"fragment_id":"$fragmentId","fragment_idx":0,"char_count":6}],""" +
+            """"sections":[],"toc_nodes":[],"landmarks":[],"page_list":[]},"fragments":[{"fragmentId":"$fragmentId",""" +
+            """"fragmentIdx":0,"htmlSanitized":"<p>reader</p>","canonicalText":"reader","createdAt":"2026-09-11T00:00:00Z"}]}"""
         ).toByteArray()
     val entry = OfflineReadingManifestEntry(
         "reader.json",
@@ -139,7 +142,7 @@ internal fun buildWebArticleReadingPackage(
     )
     val revision = OfflineReadingRevision.compute(readerGeneration, listOf(entry))
     val manifestJson = (
-        """{"packageSchemaVersion":1,"readerContractVersion":1,"minimumReaderBundleVersion":1,""" +
+        """{"packageSchemaVersion":1,"readerContractVersion":2,"minimumReaderBundleVersion":2,""" +
             """"mediaId":"$mediaId","mediaKind":"WebArticle","title":"$title",""" +
             """"readerGeneration":$readerGeneration,"readerRevisionKey":"$revision",""" +
             """"entries":[{"path":"reader.json","mediaType":"application/json",""" +

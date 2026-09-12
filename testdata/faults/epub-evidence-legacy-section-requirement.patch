@@ -1,0 +1,11 @@
+diff --git a/apps/web/src/app/(authenticated)/media/[id]/mediaEvidenceResolution.ts b/apps/web/src/app/(authenticated)/media/[id]/mediaEvidenceResolution.ts
+--- a/apps/web/src/app/(authenticated)/media/[id]/mediaEvidenceResolution.ts
++++ b/apps/web/src/app/(authenticated)/media/[id]/mediaEvidenceResolution.ts
+@@ -216,6 +216,7 @@
+         "kind",
+         "evidence_span_id",
+         "fragment_id",
++        ...(kind === "epub_text" ? ["section_id"] : []),
+         "start_offset",
+         "end_offset",
+         "text_quote",

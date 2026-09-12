@@ -55,8 +55,8 @@ from nexus.services.capabilities import is_text_document_ready
 from nexus.services.contributor_credits import load_current_source_author_bylines
 from nexus.services.epub_assets import list_public_epub_asset_sources
 from nexus.services.epub_read import (
-    get_epub_section_source,
-    list_epub_section_sources,
+    get_epub_fragment_source,
+    list_epub_fragment_sources,
 )
 from nexus.services.media_file_access import (
     MediaFileSource,
@@ -353,7 +353,7 @@ def get_public_navigation(
     raw_cursor, raw_limit = _parse_page_query(query_items)
     after_ordinal = _parse_cursor(raw_cursor, projection=projection)
     limit = _parse_limit(raw_limit)
-    rows = list_epub_section_sources(
+    rows = list_epub_fragment_sources(
         db,
         media_id=projection.media.media_id,
         after_ordinal=after_ordinal,
@@ -398,7 +398,7 @@ def get_public_section(
     )
     if ordinal is None:
         _masked_not_found()
-    source = get_epub_section_source(
+    source = get_epub_fragment_source(
         db,
         media_id=projection.media.media_id,
         ordinal=ordinal,
@@ -726,7 +726,7 @@ def _projection_shape_supported(
     elif media.kind == "epub":
         if _load_epub_source_owner(db, media_id=media.media_id) is None:
             return False
-        sections = list_epub_section_sources(
+        sections = list_epub_fragment_sources(
             db,
             media_id=media.media_id,
             after_ordinal=None,
@@ -928,11 +928,11 @@ def _highlight_shape_supported(
             section_ordinal = db.execute(
                 text(
                     """
-                    SELECT ordinal FROM epub_nav_locations
-                    WHERE media_id = :media_id AND location_id = :section_id
+                    SELECT idx FROM fragments
+                    WHERE media_id = :media_id AND id = :fragment_id
                     """
                 ),
-                {"media_id": media.media_id, "section_id": target.section_id},
+                {"media_id": media.media_id, "fragment_id": target.fragment_id},
             ).scalar()
             if section_ordinal is None:
                 return False
@@ -1035,13 +1035,13 @@ def _project_highlight(
             section_ordinal = db.execute(
                 text(
                     """
-                    SELECT ordinal
-                    FROM epub_nav_locations
+                    SELECT idx
+                    FROM fragments
                     WHERE media_id = :media_id
-                      AND location_id = :section_id
+                      AND id = :fragment_id
                     """
                 ),
-                {"media_id": media.media_id, "section_id": target.section_id},
+                {"media_id": media.media_id, "fragment_id": target.fragment_id},
             ).scalar()
             if section_ordinal is None:
                 _masked_not_found()
@@ -1121,7 +1121,7 @@ def _source_revision_bytes(db: Session, *, media: _MediaFacts) -> bytes:
             owner.source_type,
         ):
             _digest_part(digest, value.encode("utf-8"))
-        sections = list_epub_section_sources(
+        sections = list_epub_fragment_sources(
             db,
             media_id=media.media_id,
             after_ordinal=None,

@@ -1,0 +1,12 @@
+diff --git a/python/nexus/services/consumption/_reader_cursor_store.py b/python/nexus/services/consumption/_reader_cursor_store.py
+--- a/python/nexus/services/consumption/_reader_cursor_store.py
++++ b/python/nexus/services/consumption/_reader_cursor_store.py
+@@ -114,7 +114,7 @@
+ ) -> ReaderCursorPositioned:
+     """CAS-replace a positioned cursor within the caller's transaction."""
+     validate_locator_for_media(media_kind, write.locator)
+-    if write.locator.kind == "epub":
++    if write.locator.kind == "epub" and write.base_revision < 0:
+         locator = write.locator
+         source = db.execute(
+             text("""

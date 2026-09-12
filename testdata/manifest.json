@@ -143,8 +143,8 @@
     },
     {
       "path": "testdata/offline-reading-contract-v1.json",
-      "sha256": "2c64ccf586dbfe85480623e9a3a6b4c9edd4d10cc5d0aba1140e68a4ec97968b",
-      "source": "repo-authored: independently reviewed Android offline-reading V1 contract cases",
+      "sha256": "aed735235cf5ea552f5e0442732aa38abb9df4d8b4c23618208cb547b09abd9c",
+      "source": "repo-authored: independently reviewed offline-reading archive V1 and reader V2 contract cases",
       "license": "Repository-owned test data; retained as the cross-language offline-reading package and reader-content oracle",
       "purpose": [
         "Cross-language V1 package manifest, member integrity, revision-key, and ZIP conformance",
@@ -161,6 +161,24 @@
       "purpose": [
         "Visible ranking equivalence across the finalist-only snippet projection cutover",
         "Bounded final-result snippet work and query-budget sensitivity"
+      ]
+    },
+    {
+      "path": "testdata/reader-document-position.json",
+      "sha256": "1dad714d30fafb58f8d327af95b32ba044da8c58c65b54eb66aa805b3cf9a997",
+      "source": "repo-authored: independently reviewed canonical section geometry cases",
+      "license": "Repository-owned test data",
+      "purpose": [
+        "Shared Python/TypeScript absolute and local codepoint projection; overlapping extents and uncovered spans"
+      ]
+    },
+    {
+      "path": "testdata/epub/reader-map-journey.epub.b64",
+      "sha256": "491704644bb0ee027efb8cf4299c38452f7d38e1e96aaf94e77a3a51ffe0f0d0",
+      "source": "repo-authored: three chapter EPUB with thirty paragraphs per chapter; based on canonical reader fixture",
+      "license": "Repository-owned test data",
+      "purpose": [
+        "Real upload, map jump, exact passage, excursion return, trusted resume and reset journey"
       ]
     }
   ]

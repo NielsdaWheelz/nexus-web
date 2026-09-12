@@ -348,3 +348,22 @@ timeouts while scanning synapses, leaving inherited work pending. Deploy the
 current execution cutover, then prove the backlog converges without new
 unexpected timeouts. See
 [docs/tickets/production-synapse-scan-statement-timeout-backlog.md](tickets/production-synapse-scan-statement-timeout-backlog.md).
+
+- [open] oi-061 · reader · 2026-09-11 council · epub headings absent from coarse publisher navigation: [ticket](tickets/reader-structure-epub-headings-missing.md).
+- [open] oi-062 · reader · 2026-09-11 council · transitive marker clusters collapse document geography: [ticket](tickets/reader-map-transitive-marker-clusters.md).
+- [open] oi-063 · reader · 2026-09-11 council · navigation intervals cannot represent nested or multi-file chapter extents: [ticket](tickets/reader-structure-epub-semantic-extents.md).
+- [open] oi-064 · reader · 2026-09-11 council · current section ignores scrolling and local section progress is absent: [ticket](tickets/reader-map-active-section-and-local-position.md).
+- [open] oi-065 · reader · 2026-09-11 council · previous/next can follow backward publisher toc targets: [ticket](tickets/reader-structure-epub-reading-order.md).
+- [open] oi-066 · reader · 2026-09-11 council · themed marginalia records a separate, misleading progress history: [ticket](tickets/reader-map-marginalia-parallel-progress.md).
+- [open] oi-067 · offline reader · 2026-09-11 council · web navigation emits document offsets as fragment offsets: [ticket](tickets/reader-map-offline-web-coordinate-mismatch.md).
+- [open] oi-068 · epub ingest · 2026-09-11 council · long colliding section ids can loop indefinitely: [ticket](tickets/reader-structure-long-section-id-loop.md).
+- [open] oi-069 · reader interaction · 2026-09-11 council · requested position/mobile map actions need an explicit contract: [ticket](tickets/reader-map-inert-position-and-mobile-controls.md).
+- [open] oi-070 · reader verification · 2026-09-11 council · inspect the exact shadow & claw and pillow book imports: [ticket](tickets/reader-map-shadow-claw-reproduction.md).
+- [open] oi-071 · offline reader · 2026-09-11 spec review · epub package duplicates complete fragment content per navigation target: [ticket](tickets/reader-map-offline-content-duplication.md).
+- [open] oi-072 · offline reader · 2026-09-11 spec review · text capture/restore estimates exact locators from scroll percentages: [ticket](tickets/reader-map-offline-pixel-locators.md).
+- [open] oi-073 · reader migration · 2026-09-11 adversarial review · retire synthetic section references without breaking stored passages: [ticket](tickets/reader-map-retired-spine-references.md).
+- [open] oi-074 · test infrastructure · 2026-09-11 reader verification · host release harness cannot establish worker-owned parser directory: [ticket](tickets/test-host-release-worker-owner-privilege.md).
+- [open] oi-075 · epub ingest · 2026-09-12 source review · decoded reserved delimiters make stored source urls ambiguous: [ticket](tickets/epub-normalized-href-reserved-delimiters.md).
+- [open] oi-076 · import progress · 2026-09-12 source review · extraction progress calls spine files chapters: [ticket](tickets/epub-import-progress-counts-files-as-chapters.md).
+- [open] oi-077 · offline reader · 2026-09-12 native review · native admission interprets literal source filenames as urls: [ticket](tickets/offline-epub-source-path-validator-disagreement.md).
+- [open] oi-078 · web build · 2026-09-12 offline artifact · css minifier warns on existing custom-highlight syntax: [ticket](tickets/offline-css-minifier-rejects-highlight-syntax.md).

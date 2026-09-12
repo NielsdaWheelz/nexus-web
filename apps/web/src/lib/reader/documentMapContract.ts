@@ -56,6 +56,7 @@ export function decodeReaderDocumentMapContract(
     raw,
     [
       "media_id",
+      "generation",
       "media_kind",
       "title",
       "status",
@@ -94,6 +95,11 @@ export function decodeReaderDocumentMapContract(
   );
   return {
     media_id: expectString(value.media_id, "ReaderDocumentMap.media_id"),
+    generation: decodePresence(value.generation, (generation) => {
+      const result = expectNonnegativeInteger(generation, "ReaderDocumentMap.generation.value");
+      if (result < 1) defect("generation must be positive");
+      return result;
+    }),
     media_kind: expectString(value.media_kind, "ReaderDocumentMap.media_kind"),
     title: expectString(value.title, "ReaderDocumentMap.title"),
     status,
@@ -586,7 +592,7 @@ function decodeMarker(raw: unknown, index: number): ReaderDocumentMapMarker {
   const name = `ReaderDocumentMap.markers[${index}]`;
   const value = expectExactRecord(
     raw,
-    ["id", "kind", "item_id", "position", "tone", "label", "preview"],
+    ["id", "kind", "item_id", "position", "end_position", "tone", "label", "preview"],
     name,
   );
   const position = expectFiniteNumber(value.position, `${name}.position`);
@@ -609,6 +615,11 @@ function decodeMarker(raw: unknown, index: number): ReaderDocumentMapMarker {
     ),
     item_id: expectString(value.item_id, `${name}.item_id`),
     position,
+    end_position: decodePresence(value.end_position, (rawEnd) => {
+      const end = expectFiniteNumber(rawEnd, `${name}.end_position.value`);
+      if (end < position || end > 1) defect(`${name}.end_position must be between position and 1`);
+      return end;
+    }),
     tone: expectOneOf(
       value.tone,
       [

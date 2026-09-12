@@ -2,6 +2,7 @@ package app.nexus.android.offline.reading
 
 import android.net.Network
 import app.nexus.android.BuildConfig
+import app.nexus.android.offline.readingweb.OfflineReadingAccountAttestor
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.Dispatcher
@@ -13,6 +14,7 @@ import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -28,6 +30,8 @@ import java.net.SocketAddress
 import java.time.Instant
 import java.util.Base64
 import java.util.UUID
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.TimeUnit
 import javax.net.SocketFactory
 
 /**
@@ -68,7 +72,7 @@ class OfflineReadingOriginClientTest {
         workDirectory.deleteRecursively()
     }
 
-    private fun realClient(): HttpOfflineReadingOriginClient {
+    private fun realSession(): OfflineReadingHttpSession {
         val hostedOrigin = BuildConfig.NEXUS_BASE_URL.toHttpUrl().requireOfflineReadingOrigin()
         val cookieStore = object : OfflineReadingOwnedOriginCookieStore {
             private val cookies = mutableMapOf(hostedOrigin.toString() to "nexus_session=host-test")
@@ -104,9 +108,12 @@ class OfflineReadingOriginClientTest {
             .followRedirects(false)
             .followSslRedirects(false)
             .build()
-        return HttpOfflineReadingOriginClient { _ ->
-            OfflineReadingHttpSession(okClient, hostedOrigin, cookieStore)
-        }
+        return OfflineReadingHttpSession(okClient, hostedOrigin, cookieStore)
+    }
+
+    private fun realClient(): HttpOfflineReadingOriginClient {
+        val session = realSession()
+        return HttpOfflineReadingOriginClient { _ -> session }
     }
 
     private fun serve(built: BuiltOfflineReadingPackage, baselineGeneration: Long) {
@@ -148,6 +155,29 @@ class OfflineReadingOriginClientTest {
                         )
                     else -> MockResponse().setResponseCode(404)
                 }
+            }
+        }
+    }
+
+    @Test
+    fun `account attestation accepts reader2 and rejects old reader or bundle handshakes`() {
+        val session = realSession()
+        val attestor = OfflineReadingAccountAttestor(session.cookieStore, session.client)
+        for ((reader, bundle) in listOf(2 to 2, 1 to 2, 2 to 1)) {
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"data":{"account_id":"$accountId","protocol_version":1,""" +
+                        """"package_schema_version":1,"reader_contract_version":$reader,""" +
+                        """"minimum_reader_bundle_version":$bundle}}"""
+                )
+            )
+            val result = CompletableFuture<Result<UUID>>()
+            attestor.attest { result.complete(it) }
+            val account = result.get(5, TimeUnit.SECONDS)
+            if (reader == 2 && bundle == 2) {
+                assertEquals(accountId, account.getOrThrow())
+            } else {
+                assertTrue("reader $reader / bundle $bundle must require an update", account.isFailure)
             }
         }
     }

@@ -22,6 +22,7 @@ it("keeps web-pane Find aligned with the canonical text corpus", async () => {
       mediaId: "media-corpus",
       fragments,
       sections: [],
+      generation: 1,
     });
     const adapter = createWebFindAdapter({
       snapshot,

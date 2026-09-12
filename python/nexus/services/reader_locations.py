@@ -47,9 +47,15 @@ def locator_fraction(
     if page is not None and page_count and page_count > 0:
         origin = _pdf_quad_origin(locator)
         page_height = pdf_page_heights.get(page)
-        if origin is None or page_height is None or page_height <= 0:
+        if (
+            origin is None
+            or page_height is None
+            or page_height <= 0
+            or page > page_count
+            or not 0 <= origin[0] <= page_height
+        ):
             return None
-        within_page = min(1.0, max(0.0, origin[0] / page_height))
+        within_page = origin[0] / page_height
         return ((page - 1) + within_page) / page_count
     fragment_id = locator_fragment(locator)
     if fragment_id is None:
@@ -59,9 +65,53 @@ def locator_fraction(
         return None
     fragment_start, fragment_length = fragment_range
     start = locator.get("start_offset")
-    if not isinstance(start, int):
+    if not isinstance(start, int) or isinstance(start, bool) or not 0 <= start <= fragment_length:
         return None
-    return (fragment_start + min(max(start, 0), fragment_length)) / total_fragment_chars
+    return (fragment_start + start) / total_fragment_chars
+
+
+def locator_end_fraction(
+    locator: dict[str, object] | None,
+    fragment_ranges: dict[str, tuple[int, int]],
+    total_fragment_chars: int,
+    page_count: int | None,
+    pdf_page_heights: dict[int, float],
+) -> float | None:
+    """Project an exact range end; a point locator has no fabricated extent."""
+    if not locator:
+        return None
+    end = locator.get("end_offset")
+    if locator_fragment(locator) is not None and isinstance(end, int):
+        return locator_fraction(
+            {**locator, "start_offset": end},
+            fragment_ranges,
+            total_fragment_chars,
+            page_count,
+            pdf_page_heights,
+        )
+    page = locator_page(locator)
+    quads = locator.get("quads")
+    if (
+        page is None
+        or not page_count
+        or page > page_count
+        or not isinstance(quads, list)
+        or not quads
+    ):
+        return None
+    height = pdf_page_heights.get(page)
+    if height is None or height <= 0:
+        return None
+    bottoms: list[float] = []
+    for quad in quads:
+        if not isinstance(quad, dict):
+            return None
+        for index in range(1, 5):
+            y = quad.get(f"y{index}")
+            if not isinstance(y, (int, float)) or not 0 <= y <= height:
+                return None
+            bottoms.append(float(y))
+    return ((page - 1) + max(bottoms) / height) / page_count
 
 
 def order_key_from_locator(
@@ -159,7 +209,6 @@ def resolved_highlight_reader_target(
     media_kind: str,
     anchor_kind: str,
     fragment_id: UUID | None = None,
-    section_id: str | None = None,
     exact: str = "",
     fragment_text: str | None = None,
     start_offset: int | None = None,
@@ -199,10 +248,7 @@ def resolved_highlight_reader_target(
                     end_offset=end_offset,
                 )
             if media_kind == "epub":
-                if not section_id:
-                    return None
                 return EpubTextOffsetsTargetOut(
-                    section_id=section_id,
                     fragment_id=fragment_id,
                     start_offset=start_offset,
                     end_offset=end_offset,

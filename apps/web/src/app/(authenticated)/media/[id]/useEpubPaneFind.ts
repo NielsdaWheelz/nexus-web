@@ -15,17 +15,14 @@ import {
 import {
   createEpubFindSnapshot,
   requestEpubFind,
-  requestEpubSection,
   type EpubFindRequest,
   type EpubFindResultOut,
   type EpubFindSnapshot,
   type EpubFindSnapshotFragment,
-  type EpubSectionContent,
 } from "@/lib/media/epubFind";
-import type {
-  ReaderNavigationFragment,
-  ReaderNavigationSection,
-} from "@/lib/media/readerNavigation";
+import type { MediaNavigation } from "@/lib/media/readerNavigation";
+import { requestEpubFragment, type EpubFragmentContent } from "@/lib/media/epubFragment";
+import { readerSectionAtPosition, readerTextPointOffset } from "@/lib/reader/readerDocumentPosition";
 import {
   createPaneFindResultKey,
   type PaneFindResultKey,
@@ -41,10 +38,11 @@ import type { ReaderScrollPositioner } from "@/lib/reader/paneScroll";
 import { canonicalCpLength } from "@/lib/reader/textOffsets";
 import {
   findFirstVisibleCanonicalOffset,
+  isCanonicalTextAnchorVisible,
   measureCanonicalTextAnchorViewportDelta,
   restoreCanonicalTextAnchorViewportPosition,
   scrollToExactCanonicalTextAnchor,
-} from "./paneTextAnchor";
+} from "@/lib/reader/canonicalTextAnchor";
 import {
   mediaPaneFindErrorMessage,
   type MediaPaneFindError,
@@ -63,7 +61,6 @@ export interface EpubFindPreparedAnchor {
 
 export interface EpubFindOccurrence {
   readonly key: PaneFindResultKey;
-  readonly sectionId: string;
   readonly fragmentId: string;
   readonly fragmentIdx: number;
   readonly startCp: number;
@@ -71,7 +68,6 @@ export interface EpubFindOccurrence {
 }
 
 export interface EpubFindOrigin {
-  readonly sectionId: string;
   readonly fragmentId: string;
   readonly anchorCp: number;
   readonly viewportTopDeltaPx: number;
@@ -79,23 +75,23 @@ export interface EpubFindOrigin {
 }
 
 interface CapturedEpubFindOrigin extends EpubFindOrigin {
-  readonly section: EpubSectionContent;
+  readonly fragment: EpubFragmentContent;
 }
 
 export interface EpubFindRenderedState {
-  readonly section: EpubSectionContent;
+  readonly fragment: EpubFragmentContent;
   readonly cursor: CanonicalCursorResult;
   readonly viewport: HTMLElement;
 }
 
-export type EpubRenderedSectionOverride =
+export type EpubRenderedFragmentOverride =
   | {
       readonly kind: "FindPreview";
-      readonly section: EpubSectionContent;
+      readonly fragment: EpubFragmentContent;
     }
   | {
       readonly kind: "ReturnedOrigin";
-      readonly section: EpubSectionContent;
+      readonly fragment: EpubFragmentContent;
     };
 
 export interface EpubFindPreviewLease {
@@ -121,31 +117,31 @@ type FindOccurrences = (input: {
   readonly signal: AbortSignal;
 }) => Promise<EpubFindResultOut>;
 
-type LoadSection = (input: {
+type LoadFragment = (input: {
   readonly mediaId: string;
-  readonly sectionId: string;
+  readonly fragmentId: string;
   readonly signal: AbortSignal;
-}) => Promise<EpubSectionContent>;
+}) => Promise<EpubFragmentContent>;
 
 interface EpubFindAdapterInput {
   readonly snapshot: EpubFindSnapshot;
   readonly getCurrentSourceKey: () => PaneFindSourceKey | null;
   readonly getRenderedState: () => EpubFindRenderedState | null;
-  readonly getRenderedSectionOverride: () =>
-    | EpubRenderedSectionOverride
+  readonly getRenderedFragmentOverride: () =>
+    | EpubRenderedFragmentOverride
     | null;
-  readonly setRenderedSectionOverride: (
-    value: EpubRenderedSectionOverride | null,
+  readonly setRenderedFragmentOverride: (
+    value: EpubRenderedFragmentOverride | null,
   ) => void;
   readonly previewLease: EpubFindPreviewLease;
   readonly setAwaitingReaderAdoption: (value: boolean) => void;
-  readonly resetRenderedSectionAuxiliaryState: () => void;
+  readonly resetRenderedFragmentAuxiliaryState: () => void;
   readonly onSourceChanged: () => void;
   readonly focusReaderViewport: () => void;
   readonly presentation: CanonicalTextFindPresentationOwner;
   readonly scrollPositioner: ReaderScrollPositioner;
   readonly findOccurrences?: FindOccurrences;
-  readonly loadSection?: LoadSection;
+  readonly loadFragment?: LoadFragment;
 }
 
 interface PreparedSession {
@@ -185,7 +181,7 @@ function isSourceReplacement(error: unknown): boolean {
   return (
     isApiError(error) &&
     (error.code === "E_EPUB_FIND_SOURCE_CHANGED" ||
-      error.code === "E_CHAPTER_NOT_FOUND")
+      error.code === "E_NOT_FOUND")
   );
 }
 
@@ -208,38 +204,36 @@ function assertRenderedState(
 ): EpubFindSnapshotFragment {
   const fragment = snapshotFragment(
     snapshot,
-    rendered.section.fragment_id,
+    rendered.fragment.fragment_id,
   );
   if (
-    rendered.section.fragment_idx !== fragment.fragmentIdx ||
-    rendered.section.char_count !== fragment.charCount ||
-    canonicalCpLength(rendered.section.canonical_text) !==
+    rendered.fragment.generation !== snapshot.generation ||
+    rendered.fragment.fragment_idx !== fragment.fragmentIdx ||
+    rendered.fragment.char_count !== fragment.charCount ||
+    canonicalCpLength(rendered.fragment.canonical_text) !==
       fragment.charCount ||
     !validateCanonicalText(
       rendered.cursor,
-      rendered.section.canonical_text,
-      rendered.section.fragment_id,
+      rendered.fragment.canonical_text,
+      rendered.fragment.fragment_id,
     )
   ) {
-    throw new Error("EPUB Find canonical rendered-section mismatch.");
+    throw new Error("EPUB Find canonical rendered-fragment mismatch.");
   }
   return fragment;
 }
 
-function loadedSectionMatches(
+function loadedFragmentMatches(
   snapshot: EpubFindSnapshot,
   occurrence: EpubFindOccurrence,
-  section: EpubSectionContent,
+  content: EpubFragmentContent,
 ): boolean {
   const fragment = snapshotFragment(snapshot, occurrence.fragmentId);
-  return !(
-    section.section_id !== occurrence.sectionId ||
-    section.fragment_id !== occurrence.fragmentId ||
-    section.fragment_idx !== occurrence.fragmentIdx ||
-    section.section_id !== fragment.activationSectionId ||
-    section.char_count !== fragment.charCount ||
-    canonicalCpLength(section.canonical_text) !== fragment.charCount
-  );
+  return content.generation === snapshot.generation &&
+    content.fragment_id === occurrence.fragmentId &&
+    content.fragment_idx === occurrence.fragmentIdx &&
+    content.char_count === fragment.charCount &&
+    canonicalCpLength(content.canonical_text) === fragment.charCount;
 }
 
 function captureOrigin(
@@ -261,12 +255,11 @@ function captureOrigin(
   return viewportTopDeltaPx === null
     ? null
     : {
-        sectionId: rendered.section.section_id,
-        fragmentId: rendered.section.fragment_id,
+        fragmentId: rendered.fragment.fragment_id,
         anchorCp,
         viewportTopDeltaPx,
         scrollLeft: rendered.viewport.scrollLeft,
-        section: rendered.section,
+        fragment: rendered.fragment,
       };
 }
 
@@ -294,6 +287,7 @@ function assertFindResult(
   result: EpubFindResultOut,
 ): void {
   if (
+    result.source_generation !== snapshot.generation ||
     result.source_witness_fragment_id !==
     snapshot.sourceWitnessFragmentId
   ) {
@@ -319,32 +313,31 @@ function requestFailure(
   throw error;
 }
 
-async function waitForRenderedSection({
+async function waitForRenderedFragment({
   snapshot,
-  section,
+  fragment,
   expectedOverride,
   signal,
   getRenderedState,
-  getRenderedSectionOverride,
+  getRenderedFragmentOverride,
 }: {
   readonly snapshot: EpubFindSnapshot;
-  readonly section: EpubSectionContent;
-  readonly expectedOverride: EpubRenderedSectionOverride;
+  readonly fragment: EpubFragmentContent;
+  readonly expectedOverride: EpubRenderedFragmentOverride;
   readonly signal: AbortSignal;
   readonly getRenderedState: () => EpubFindRenderedState | null;
-  readonly getRenderedSectionOverride: () =>
-    | EpubRenderedSectionOverride
+  readonly getRenderedFragmentOverride: () =>
+    | EpubRenderedFragmentOverride
     | null;
 }): Promise<EpubFindRenderedState> {
   for (let attempt = 0; attempt < RENDER_ATTEMPT_LIMIT; attempt += 1) {
     throwIfAborted(signal);
-    if (getRenderedSectionOverride() !== expectedOverride) {
+    if (getRenderedFragmentOverride() !== expectedOverride) {
       throw abortError("EPUB Find rendered override was superseded.");
     }
     const rendered = getRenderedState();
     if (
-      rendered?.section.section_id === section.section_id &&
-      rendered.section.fragment_id === section.fragment_id
+      rendered?.fragment.fragment_id === fragment.fragment_id
     ) {
       assertRenderedState(snapshot, rendered);
       return rendered;
@@ -353,24 +346,24 @@ async function waitForRenderedSection({
       window.requestAnimationFrame(() => resolve()),
     );
   }
-  throw new Error("EPUB Find preview section did not render.");
+  throw new Error("EPUB Find preview fragment did not render.");
 }
 
 export function createEpubFindAdapter({
   snapshot,
   getCurrentSourceKey,
   getRenderedState,
-  getRenderedSectionOverride,
-  setRenderedSectionOverride,
+  getRenderedFragmentOverride,
+  setRenderedFragmentOverride,
   previewLease,
   setAwaitingReaderAdoption,
-  resetRenderedSectionAuxiliaryState,
+  resetRenderedFragmentAuxiliaryState,
   onSourceChanged,
   focusReaderViewport,
   presentation,
   scrollPositioner,
   findOccurrences = requestEpubFind,
-  loadSection = requestEpubSection,
+  loadFragment = requestEpubFragment,
 }: EpubFindAdapterInput): EpubPaneFindAdapter {
   let preparedBySession = new Map<number, PreparedSession>();
   let occurrencesByKey = new Map<PaneFindResultKey, EpubFindOccurrence>();
@@ -381,9 +374,14 @@ export function createEpubFindAdapter({
   const positionExactAnchor = async (
     rendered: EpubFindRenderedState,
     anchorCp: number,
+    signal: AbortSignal,
+    generation: number,
   ): Promise<boolean> => {
     let positioned = false;
     await scrollPositioner.run((commands) => {
+      assertCurrent(snapshot.sourceKey);
+      throwIfAborted(signal);
+      if (generation !== previewGeneration || getRenderedState()?.cursor !== rendered.cursor) return;
       positioned = scrollToExactCanonicalTextAnchor(
         commands,
         rendered.viewport,
@@ -391,14 +389,22 @@ export function createEpubFindAdapter({
         anchorCp,
       );
     });
-    return positioned;
+    throwIfAborted(signal);
+    return generation === previewGeneration && positioned &&
+      getRenderedState()?.cursor === rendered.cursor &&
+      isCanonicalTextAnchorVisible(rendered.viewport, rendered.cursor, anchorCp);
   };
   const restoreOriginPosition = async (
     rendered: EpubFindRenderedState,
     captured: CapturedEpubFindOrigin,
+    signal: AbortSignal,
+    generation: number,
   ): Promise<boolean> => {
     let restored = false;
     await scrollPositioner.run((commands) => {
+      assertCurrent(snapshot.sourceKey);
+      throwIfAborted(signal);
+      if (generation !== previewGeneration || getRenderedState()?.cursor !== rendered.cursor) return;
       restored = restoreCanonicalTextAnchorViewportPosition(
         commands,
         rendered.viewport,
@@ -408,7 +414,9 @@ export function createEpubFindAdapter({
         captured.scrollLeft,
       );
     });
-    return restored;
+    throwIfAborted(signal);
+    return generation === previewGeneration && restored &&
+      getRenderedState()?.cursor === rendered.cursor;
   };
 
   const assertCurrent = (sourceKey: PaneFindSourceKey) => {
@@ -424,7 +432,7 @@ export function createEpubFindAdapter({
   const publishCurrentRanges = (rendered: EpubFindRenderedState): void => {
     assertRenderedState(snapshot, rendered);
     presentation.publish({
-      fragmentId: rendered.section.fragment_id,
+      fragmentId: rendered.fragment.fragment_id,
       cursor: rendered.cursor,
       viewport: rendered.viewport,
       targets: [...occurrencesByKey.values()],
@@ -435,28 +443,29 @@ export function createEpubFindAdapter({
   const restoreCapturedOrigin = async (
     captured: CapturedEpubFindOrigin,
     signal: AbortSignal,
+    generation: number,
   ): Promise<void> => {
+    assertPreviewCurrent(generation, snapshot.sourceKey, signal);
     const current = getRenderedState();
     if (
-      current?.section.fragment_id !== captured.fragmentId ||
-      current.section.section_id !== captured.sectionId
+      current?.fragment.fragment_id !== captured.fragmentId
     ) {
-      resetRenderedSectionAuxiliaryState();
+      resetRenderedFragmentAuxiliaryState();
     }
-    const returnedOverride: EpubRenderedSectionOverride = {
+    const returnedOverride: EpubRenderedFragmentOverride = {
       kind: "ReturnedOrigin",
-      section: captured.section,
+      fragment: captured.fragment,
     };
-    setRenderedSectionOverride(returnedOverride);
-    const rendered = await waitForRenderedSection({
+    setRenderedFragmentOverride(returnedOverride);
+    const rendered = await waitForRenderedFragment({
       snapshot,
-      section: captured.section,
+      fragment: captured.fragment,
       expectedOverride: returnedOverride,
       signal,
       getRenderedState,
-      getRenderedSectionOverride,
+      getRenderedFragmentOverride,
     });
-    if (!(await restoreOriginPosition(rendered, captured))) {
+    if (!(await restoreOriginPosition(rendered, captured, signal, generation))) {
       throw new Error("EPUB Find reading origin is no longer renderable.");
     }
   };
@@ -478,8 +487,8 @@ export function createEpubFindAdapter({
     activeOccurrence = null;
     origin = null;
     presentation.clear();
-    if (resetAuxiliary) resetRenderedSectionAuxiliaryState();
-    setRenderedSectionOverride(null);
+    if (resetAuxiliary) resetRenderedFragmentAuxiliaryState();
+    setRenderedFragmentOverride(null);
     setAwaitingReaderAdoption(false);
     previewLease.retire();
   };
@@ -523,6 +532,7 @@ export function createEpubFindAdapter({
       await restoreCapturedOrigin(
         captured,
         new AbortController().signal,
+        generation,
       );
       assertPreviewOwned(generation, sourceKey);
     } catch (error) {
@@ -550,9 +560,11 @@ export function createEpubFindAdapter({
         );
         if (anchorCp !== null) {
           anchor = { fragmentIdx: fragment.fragmentIdx, anchorCp };
-          if (fragment.navigationLocationCount === 1) {
-            narrowSectionId = fragment.activationSectionId;
-          }
+          const section = readerSectionAtPosition(snapshot.structure, readerTextPointOffset(snapshot.structure, {
+            fragment_id: fragment.fragmentId,
+            offset: anchorCp,
+          }));
+          if (section.kind === "Present") narrowSectionId = section.value.section.section_id;
         }
       }
       preparedBySession = new Map([
@@ -603,6 +615,7 @@ export function createEpubFindAdapter({
           request: {
             source_witness_fragment_id:
               snapshot.sourceWitnessFragmentId,
+            source_generation: snapshot.generation,
             query: request.query,
             match_case: request.matchCase,
             whole_word: request.wholeWord,
@@ -660,8 +673,6 @@ export function createEpubFindAdapter({
         const fragment = snapshotFragment(snapshot, match.fragment_id);
         if (
           match.fragment_idx !== fragment.fragmentIdx ||
-          match.section_id !== fragment.activationSectionId ||
-          match.section_label !== fragment.label ||
           match.end_offset > fragment.charCount
         ) {
           throw new Error("EPUB Find occurrence contradicts its source.");
@@ -681,7 +692,6 @@ export function createEpubFindAdapter({
         });
         const occurrence: EpubFindOccurrence = {
           key,
-          sectionId: match.section_id,
           fragmentId: match.fragment_id,
           fragmentIdx: match.fragment_idx,
           startCp: match.start_offset,
@@ -702,7 +712,7 @@ export function createEpubFindAdapter({
         occurrencesByKey.set(key, occurrence);
         return {
           key,
-          context: [match.section_label],
+          context: match.section.kind === "Present" ? [match.section.value.label] : [],
           snippet: match.snippet,
         };
       });
@@ -746,7 +756,7 @@ export function createEpubFindAdapter({
       }
       origin ??= candidateOrigin;
       previewLease.acquire();
-      let publishedOverride: EpubRenderedSectionOverride | null = null;
+      let publishedOverride: EpubRenderedFragmentOverride | null = null;
       try {
         const renderedBefore = getRenderedState();
         if (!renderedBefore) {
@@ -754,7 +764,7 @@ export function createEpubFindAdapter({
         }
         assertRenderedState(snapshot, renderedBefore);
         if (
-          renderedBefore.section.fragment_id === occurrence.fragmentId
+          renderedBefore.fragment.fragment_id === occurrence.fragmentId
         ) {
           activeOccurrence = occurrence;
           publishCurrentRanges(renderedBefore);
@@ -762,6 +772,8 @@ export function createEpubFindAdapter({
             !(await positionExactAnchor(
               renderedBefore,
               occurrence.startCp,
+              request.signal,
+              operationGeneration,
             ))
           ) {
             throw new Error(
@@ -769,48 +781,43 @@ export function createEpubFindAdapter({
             );
           }
         } else {
-          const startingOverride = getRenderedSectionOverride();
-          const startingRenderedSection = {
-            sectionId: renderedBefore.section.section_id,
-            fragmentId: renderedBefore.section.fragment_id,
+          const startingOverride = getRenderedFragmentOverride();
+          const startingRenderedFragment = {
+            fragmentId: renderedBefore.fragment.fragment_id,
           };
-          const assertCrossSectionAttemptOwned = () => {
+          const assertCrossFragmentAttemptOwned = () => {
             assertPreviewCurrent(
               operationGeneration,
               request.sourceKey,
               request.signal,
             );
-            const currentOverride = getRenderedSectionOverride();
+            const currentOverride = getRenderedFragmentOverride();
             const currentRendered = getRenderedState();
-            const renderedMatchesStartingSection =
-              currentRendered?.section.section_id ===
-                startingRenderedSection.sectionId &&
-              currentRendered.section.fragment_id ===
-                startingRenderedSection.fragmentId;
+            const renderedMatchesStartingFragment =
+              currentRendered?.fragment.fragment_id ===
+                startingRenderedFragment.fragmentId;
             const renderedMatchesPendingOverride =
               startingOverride !== null &&
-              currentRendered?.section.section_id ===
-                startingOverride.section.section_id &&
-              currentRendered.section.fragment_id ===
-                startingOverride.section.fragment_id;
+              currentRendered?.fragment.fragment_id ===
+                startingOverride.fragment.fragment_id;
             if (
               !previewLease.isActive() ||
               currentOverride !== startingOverride ||
-              (!renderedMatchesStartingSection &&
+              (!renderedMatchesStartingFragment &&
                 !renderedMatchesPendingOverride)
             ) {
               throw abortError("EPUB Find preview was superseded.");
             }
           };
-          let section: EpubSectionContent;
+          let fragment: EpubFragmentContent;
           try {
-            section = await loadSection({
+            fragment = await loadFragment({
               mediaId: snapshot.mediaId,
-              sectionId: occurrence.sectionId,
+              fragmentId: occurrence.fragmentId,
               signal: request.signal,
             });
           } catch (error) {
-            assertCrossSectionAttemptOwned();
+            assertCrossFragmentAttemptOwned();
             if (
               requestFailure(error, cancelForSourceReplacement) ===
               "RequestUnavailable"
@@ -818,9 +825,7 @@ export function createEpubFindAdapter({
               const renderedAfterFailure = getRenderedState();
               const viewMovedFromOrigin =
                 !renderedAfterFailure ||
-                renderedAfterFailure.section.section_id !==
-                  candidateOrigin.sectionId ||
-                renderedAfterFailure.section.fragment_id !==
+                renderedAfterFailure.fragment.fragment_id !==
                   candidateOrigin.fragmentId;
               if (viewMovedFromOrigin) {
                 activeOccurrence = null;
@@ -834,7 +839,7 @@ export function createEpubFindAdapter({
               }
               if (originWasNew) {
                 if (viewMovedFromOrigin) {
-                  setRenderedSectionOverride(null);
+                  setRenderedFragmentOverride(null);
                 }
                 retireUnreportedOrigin();
               }
@@ -852,23 +857,23 @@ export function createEpubFindAdapter({
               "Unreachable EPUB Find preview request classification.",
             );
           }
-          assertCrossSectionAttemptOwned();
-          if (!loadedSectionMatches(snapshot, occurrence, section)) {
+          assertCrossFragmentAttemptOwned();
+          if (!loadedFragmentMatches(snapshot, occurrence, fragment)) {
             cancelForSourceReplacement();
             throw abortError(
-              "EPUB Find section response changed source identity.",
+              "EPUB Find fragment response changed source identity.",
             );
           }
-          resetRenderedSectionAuxiliaryState();
-          publishedOverride = { kind: "FindPreview", section };
-          setRenderedSectionOverride(publishedOverride);
-          const rendered = await waitForRenderedSection({
+          resetRenderedFragmentAuxiliaryState();
+          publishedOverride = { kind: "FindPreview", fragment };
+          setRenderedFragmentOverride(publishedOverride);
+          const rendered = await waitForRenderedFragment({
             snapshot,
-            section,
+            fragment,
             expectedOverride: publishedOverride,
             signal: request.signal,
             getRenderedState,
-            getRenderedSectionOverride,
+            getRenderedFragmentOverride,
           });
           assertPreviewCurrent(
             operationGeneration,
@@ -877,7 +882,7 @@ export function createEpubFindAdapter({
           );
           activeOccurrence = occurrence;
           publishCurrentRanges(rendered);
-          if (!(await positionExactAnchor(rendered, occurrence.startCp))) {
+          if (!(await positionExactAnchor(rendered, occurrence.startCp, request.signal, operationGeneration))) {
             throw new Error(
               "EPUB Find occurrence anchor is not renderable.",
             );
@@ -889,7 +894,7 @@ export function createEpubFindAdapter({
         presentation.clear();
         const overrideStillOwned =
           publishedOverride !== null &&
-          getRenderedSectionOverride() === publishedOverride;
+          getRenderedFragmentOverride() === publishedOverride;
         if (overrideStillOwned) {
           await restorePreviewOriginOrRetire({
             captured: candidateOrigin,
@@ -897,7 +902,7 @@ export function createEpubFindAdapter({
             sourceKey: request.sourceKey,
           });
           if (originWasNew) {
-            setRenderedSectionOverride(null);
+            setRenderedFragmentOverride(null);
           }
         }
         if (originWasNew) retireUnreportedOrigin();
@@ -933,7 +938,7 @@ export function createEpubFindAdapter({
       const captured = origin;
       try {
         previewLease.acquire();
-        await restoreCapturedOrigin(captured, request.signal);
+        await restoreCapturedOrigin(captured, request.signal, operationGeneration);
         assertPreviewCurrent(
           operationGeneration,
           request.sourceKey,
@@ -965,7 +970,7 @@ export function createEpubFindAdapter({
       if (disposed) return;
       disposed = true;
       retireUnsafeFindState({
-        resetAuxiliary: getRenderedSectionOverride() !== null,
+        resetAuxiliary: getRenderedFragmentOverride() !== null,
       });
     },
   };
@@ -973,41 +978,39 @@ export function createEpubFindAdapter({
 
 export function useEpubPaneFind({
   mediaId,
-  fragments,
   navigation,
   renderedStateRef,
-  getRenderedSectionOverride,
-  setRenderedSectionOverride,
+  getRenderedFragmentOverride,
+  setRenderedFragmentOverride,
   previewLease,
   setAwaitingReaderAdoption,
-  resetRenderedSectionAuxiliaryState,
+  resetRenderedFragmentAuxiliaryState,
   onSourceChanged,
   focusReaderViewport,
   scrollPositioner,
 }: {
   readonly mediaId: string;
-  readonly fragments: readonly ReaderNavigationFragment[] | null;
-  readonly navigation: readonly ReaderNavigationSection[] | null;
+  readonly navigation: MediaNavigation | null;
   readonly renderedStateRef: RefObject<EpubFindRenderedState | null>;
-  readonly getRenderedSectionOverride: () =>
-    | EpubRenderedSectionOverride
+  readonly getRenderedFragmentOverride: () =>
+    | EpubRenderedFragmentOverride
     | null;
-  readonly setRenderedSectionOverride: (
-    value: EpubRenderedSectionOverride | null,
+  readonly setRenderedFragmentOverride: (
+    value: EpubRenderedFragmentOverride | null,
   ) => void;
   readonly previewLease: EpubFindPreviewLease;
   readonly setAwaitingReaderAdoption: (value: boolean) => void;
-  readonly resetRenderedSectionAuxiliaryState: () => void;
+  readonly resetRenderedFragmentAuxiliaryState: () => void;
   readonly onSourceChanged: () => void;
   readonly focusReaderViewport: () => void;
   readonly scrollPositioner: ReaderScrollPositioner;
 }): EpubPaneFindCapability {
   const snapshot = useMemo(
     () =>
-      fragments && navigation
-        ? createEpubFindSnapshot({ mediaId, fragments, navigation })
+      navigation
+        ? createEpubFindSnapshot({ mediaId, navigation })
         : null,
-    [fragments, mediaId, navigation],
+    [mediaId, navigation],
   );
   const currentSourceKeyRef = useRef<PaneFindSourceKey | null>(
     snapshot?.sourceKey ?? null,
@@ -1024,11 +1027,11 @@ export function useEpubPaneFind({
             snapshot,
             getCurrentSourceKey: () => currentSourceKeyRef.current,
             getRenderedState: () => renderedStateRef.current,
-            getRenderedSectionOverride,
-            setRenderedSectionOverride,
+            getRenderedFragmentOverride,
+            setRenderedFragmentOverride,
             previewLease,
             setAwaitingReaderAdoption,
-            resetRenderedSectionAuxiliaryState,
+            resetRenderedFragmentAuxiliaryState,
             onSourceChanged,
             focusReaderViewport,
             presentation,
@@ -1037,15 +1040,15 @@ export function useEpubPaneFind({
         : null,
     [
       focusReaderViewport,
-      getRenderedSectionOverride,
+      getRenderedFragmentOverride,
       presentation,
       onSourceChanged,
       previewLease,
       renderedStateRef,
-      resetRenderedSectionAuxiliaryState,
+      resetRenderedFragmentAuxiliaryState,
       scrollPositioner,
       setAwaitingReaderAdoption,
-      setRenderedSectionOverride,
+      setRenderedFragmentOverride,
       snapshot,
     ],
   );

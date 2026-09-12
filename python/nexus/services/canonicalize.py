@@ -32,8 +32,46 @@ from array import array
 from bisect import bisect_left
 from collections import defaultdict, deque
 from collections.abc import Mapping
+from dataclasses import dataclass
 
 from lxml.etree import HTMLParser
+
+from nexus.schemas.presence import Presence, Present, absent, present
+
+HEADING_TAGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
+STRUCTURAL_TAGS = frozenset({"section", "article"})
+
+
+@dataclass(frozen=True)
+class CanonicalElement:
+    """A source element retained for structure or exact named navigation."""
+
+    tag: str
+    start_offset: int
+    end_offset: int
+    parent_container: Presence[int]
+    parent_element: Presence[int]
+    labelled_by: tuple[str, ...]
+    numbering_allowed: bool
+
+
+@dataclass(frozen=True)
+class CanonicalStructure:
+    text: str
+    elements: tuple[CanonicalElement, ...]
+    anchors: dict[str, int]
+
+
+@dataclass
+class _RawElement:
+    tag: str
+    start_offset: int
+    end_offset: int
+    parent_container: Presence[int]
+    parent_element: Presence[int]
+    labelled_by: tuple[str, ...]
+    numbering_allowed: bool
+
 
 # Block-level elements that introduce line breaks
 BLOCK_ELEMENTS = frozenset(
@@ -97,12 +135,20 @@ class _RawTextBuilder:
 class _CanonicalTextTarget:
     """Stream sanitized HTML into canonical raw text without retaining a DOM."""
 
-    def __init__(self, element_ids: set[str]) -> None:
+    def __init__(self, element_ids: set[str], *, capture_structure: bool = False) -> None:
         self.builder = _RawTextBuilder()
         self.element_ids = element_ids
         self.raw_offsets: dict[str, int] = {}
         self._visible_stack: list[bool] = []
         self._tag_stack: list[str] = []
+        self.capture_structure = capture_structure
+        self.elements: list[_RawElement] = []
+        self.anchors: dict[str, int] = {}
+        self._ambiguous_anchors: set[str] = set()
+        self._element_stack: list[Presence[int]] = []
+        self._container_stack: list[int] = []
+        self._numbering_stack: list[bool] = []
+        self._captured_stack: list[int] = []
 
     def start(self, tag: str, attributes: Mapping[str, str]) -> None:
         normalized_tag = tag.lower()
@@ -115,6 +161,13 @@ class _CanonicalTextTarget:
         )
         self._visible_stack.append(visible)
         self._tag_stack.append(normalized_tag)
+        if self.capture_structure:
+            self._element_stack.append(absent())
+            self._numbering_stack.append(
+                (self._numbering_stack[-1] if self._numbering_stack else True)
+                and normalized_tag not in {"aside", "li", "ol", "ul", "blockquote"}
+                and not attributes.get("data-reader-apparatus-kind")
+            )
         if not visible:
             return
         if (
@@ -127,6 +180,36 @@ class _CanonicalTextTarget:
             value = str(attributes.get(attribute) or "")
             if value in self.element_ids:
                 self.raw_offsets.setdefault(value, self.builder.length)
+        if self.capture_structure and (
+            normalized_tag in HEADING_TAGS | STRUCTURAL_TAGS | {"p", "em"}
+            or any(attributes.get(attribute) for attribute in ("id", "name"))
+        ):
+            index = len(self.elements)
+            self.elements.append(
+                _RawElement(
+                    normalized_tag,
+                    self.builder.length,
+                    self.builder.length,
+                    present(self._container_stack[-1]) if self._container_stack else absent(),
+                    present(self._captured_stack[-1]) if self._captured_stack else absent(),
+                    tuple(attributes.get("aria-labelledby", "").split()),
+                    self._numbering_stack[-1],
+                )
+            )
+            self._element_stack[-1] = present(index)
+            self._captured_stack.append(index)
+            for attribute in ("id", "name"):
+                value = str(attributes.get(attribute) or "")
+                if not value or value in self._ambiguous_anchors:
+                    continue
+                previous = self.anchors.get(value)
+                if previous is not None and previous != index:
+                    del self.anchors[value]
+                    self._ambiguous_anchors.add(value)
+                else:
+                    self.anchors[value] = index
+            if normalized_tag in STRUCTURAL_TAGS:
+                self._container_stack.append(index)
         if normalized_tag == "br":
             self.builder.append("\n")
 
@@ -140,6 +223,14 @@ class _CanonicalTextTarget:
     def end(self, _tag: str) -> None:
         normalized_tag = self._tag_stack.pop()
         visible = self._visible_stack.pop()
+        if self.capture_structure:
+            element = self._element_stack.pop()
+            self._numbering_stack.pop()
+            if isinstance(element, Present):
+                self._captured_stack.pop()
+                self.elements[element.value].end_offset = self.builder.length
+                if normalized_tag in STRUCTURAL_TAGS:
+                    self._container_stack.pop()
         if (
             visible
             and normalized_tag in BLOCK_ELEMENTS
@@ -195,6 +286,37 @@ def generate_canonical_text_with_element_offsets(
         for element_id, raw_offset in raw_offsets.items()
     }
     return text, offsets
+
+
+def canonicalize_structure(html_sanitized: str) -> CanonicalStructure:
+    """Bind source structure to the same normalization used by text anchors."""
+    target = _CanonicalTextTarget(set(), capture_structure=True)
+    parser = HTMLParser(target=target)
+    parser.feed("<div>")
+    parser.feed(html_sanitized)
+    parser.feed("</div>")
+    parser.close()
+    raw_text = target.builder.build()
+    if not target.elements:
+        return CanonicalStructure(_canonical_text_without_sources(raw_text), (), {})
+    text, final_source_starts = _canonical_text_with_sources(raw_text)
+    source_starts = sorted(final_source_starts)
+    return CanonicalStructure(
+        text,
+        tuple(
+            CanonicalElement(
+                element.tag,
+                bisect_left(source_starts, element.start_offset),
+                bisect_left(source_starts, element.end_offset),
+                element.parent_container,
+                element.parent_element,
+                element.labelled_by,
+                element.numbering_allowed,
+            )
+            for element in target.elements
+        ),
+        target.anchors,
+    )
 
 
 def _canonical_text_without_sources(raw_text: str) -> str:

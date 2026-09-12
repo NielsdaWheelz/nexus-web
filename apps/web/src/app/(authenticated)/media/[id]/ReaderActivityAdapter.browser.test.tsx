@@ -34,7 +34,7 @@ function textLocator(kind: "web" | "transcript" | "epub"): ReaderResumeState {
   if (kind === "epub") {
     return {
       kind,
-      target: { section_id: "section", href_path: "chapter.xhtml", anchor_id: null },
+      target: { fragment_id: "fragment", href_path: "chapter.xhtml", anchor_id: { kind: "Absent" } },
       locations,
       text,
     };

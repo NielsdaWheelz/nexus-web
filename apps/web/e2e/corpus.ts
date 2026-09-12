@@ -77,7 +77,16 @@ const canonicalReaderEpub = Buffer.from(
 );
 
 export function uniqueCanonicalReaderEpub(runIdentity: string): Buffer {
-  const endOfCentralDirectory = canonicalReaderEpub.lastIndexOf(
+  return epubWithRunIdentity(canonicalReaderEpub, runIdentity);
+}
+
+export function uniqueReaderMapEpub(runIdentity: string): Buffer {
+  const archive = Buffer.from(readFileSync(path.resolve(__dirname, "../../../testdata/epub/reader-map-journey.epub.b64"), "utf8").trim(), "base64");
+  return epubWithRunIdentity(archive, runIdentity);
+}
+
+function epubWithRunIdentity(source: Buffer, runIdentity: string): Buffer {
+  const endOfCentralDirectory = source.lastIndexOf(
     Buffer.from([0x50, 0x4b, 0x05, 0x06]),
   );
   if (endOfCentralDirectory < 0) {
@@ -85,7 +94,7 @@ export function uniqueCanonicalReaderEpub(runIdentity: string): Buffer {
   }
   const comment = Buffer.from(`nexus-test:${runIdentity}`, "utf8");
   const archive = Buffer.from(
-    canonicalReaderEpub.subarray(0, endOfCentralDirectory + 22),
+    source.subarray(0, endOfCentralDirectory + 22),
   );
   archive.writeUInt16LE(comment.byteLength, endOfCentralDirectory + 20);
   return Buffer.concat([archive, comment]);

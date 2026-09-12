@@ -1,6 +1,9 @@
 package app.nexus.android.offline.readingweb
 
 import app.nexus.android.BuildConfig
+import app.nexus.android.offline.reading.OFFLINE_READING_PACKAGE_SCHEMA_VERSION
+import app.nexus.android.offline.reading.OFFLINE_READING_READER_BUNDLE_VERSION
+import app.nexus.android.offline.reading.OFFLINE_READING_READER_CONTRACT_VERSION
 import app.nexus.android.offline.reading.OfflineReadingOwnedOriginCookieStore
 import app.nexus.android.offline.reading.StrictJson
 import app.nexus.android.offline.reading.WebViewOfflineReadingOwnedOriginCookieStore
@@ -76,9 +79,12 @@ internal class OfflineReadingAccountAttestor(
                                     )
                                 )
                                 require(data.getValue("protocol_version").requireLong() == 1L)
-                                require(data.getValue("package_schema_version").requireLong() == 1L)
-                                require(data.getValue("reader_contract_version").requireLong() == 1L)
-                                require(data.getValue("minimum_reader_bundle_version").requireLong() == 1L)
+                                require(data.getValue("package_schema_version").requireLong() ==
+                                    OFFLINE_READING_PACKAGE_SCHEMA_VERSION.toLong())
+                                require(data.getValue("reader_contract_version").requireLong() ==
+                                    OFFLINE_READING_READER_CONTRACT_VERSION.toLong())
+                                require(data.getValue("minimum_reader_bundle_version").requireLong() ==
+                                    OFFLINE_READING_READER_BUNDLE_VERSION.toLong())
                                 val raw = data.getValue("account_id").requireString()
                                 UUID.fromString(raw).also { account -> require(account.toString() == raw) }
                             }

@@ -677,8 +677,6 @@ def build_fragment_indexable_blocks(
     media_id: UUID,
     source_kind: str,
     fragments: Sequence[Any],
-    media_title: str | None,
-    nav_by_fragment_idx: dict[int, dict[str, object]],
     fragment_blocks_by_id: dict[UUID, list[Any]],
 ) -> list[IndexableBlock]:
     """Build fragment blocks from an immutable source snapshot."""
@@ -711,7 +709,6 @@ def build_fragment_indexable_blocks(
                 html_sanitized=html_sanitized,
                 canonical_text=fragment_text,
                 fragment_idx=fragment_idx,
-                media_title=media_title,
             ):
                 block_text = fragment_text[spec.start_offset : spec.end_offset]
                 locator: dict[str, object] = {
@@ -731,12 +728,16 @@ def build_fragment_indexable_blocks(
                 if spec.section_id is not None:
                     locator["section_id"] = spec.section_id
                     metadata["section_id"] = spec.section_id
+                    locator["parent_section_id"] = spec.parent_section_id.model_dump(mode="json")
+                    locator["owns_container"] = spec.owns_container
                 if spec.anchor_id is not None:
                     locator["anchor_id"] = spec.anchor_id
                     metadata["anchor_id"] = spec.anchor_id
                 if spec.heading_level is not None:
                     locator["heading_level"] = spec.heading_level
                     metadata["heading_level"] = spec.heading_level
+                if spec.container_end_offset.kind == "Present":
+                    locator["container_end_offset"] = spec.container_end_offset.value
                 if spec.depth is not None:
                     metadata["depth"] = spec.depth
                 if spec.ordinal is not None:
@@ -767,7 +768,6 @@ def build_fragment_indexable_blocks(
             start_offset = int(row[-2])
             end_offset = int(row[-1])
             block_text = fragment_text[start_offset:end_offset]
-            nav = nav_by_fragment_idx.get(fragment_idx, {})
             locator_kind = "epub_text" if source_kind == "epub" else "web_text"
             locator: dict[str, object] = {
                 "kind": locator_kind,
@@ -777,9 +777,6 @@ def build_fragment_indexable_blocks(
                 "end_offset": end_offset,
                 "text_quote": _text_quote(fragment_text, start_offset, end_offset),
             }
-            if nav:
-                locator.update(nav)
-            heading_path = (str(nav.get("label")),) if nav.get("label") else ()
             blocks.append(
                 IndexableBlock(
                     owner=IndexOwner("media", media_id),
@@ -792,7 +789,7 @@ def build_fragment_indexable_blocks(
                     source_end_offset=source_base + end_offset,
                     locator=locator,
                     selector=locator,
-                    heading_path=heading_path,
+                    heading_path=(),
                     metadata={},
                 )
             )
@@ -1011,7 +1008,6 @@ def prepare_media_content_reindex(
         db,
         media_id=media_id,
         source_kind=source_kind,
-        media_title=str(media["title"] or ""),
         plain_text=str(media["plain_text"] or ""),
     )
     db.execute(
@@ -1131,7 +1127,6 @@ def _snapshot_media_indexable_blocks(
     *,
     media_id: UUID,
     source_kind: str,
-    media_title: str,
     plain_text: str,
 ) -> list[IndexableBlock]:
     if source_kind == "pdf":
@@ -1176,31 +1171,6 @@ def _snapshot_media_indexable_blocks(
         .mappings()
         .all()
     )
-    nav_by_fragment_idx: dict[int, dict[str, object]] = {}
-    if source_kind == "epub":
-        for row in db.execute(
-            text(
-                """
-                SELECT DISTINCT ON (fragment_idx)
-                    fragment_idx,
-                    location_id,
-                    href_path,
-                    href_fragment,
-                    label
-                FROM epub_nav_locations
-                WHERE media_id = :media_id
-                ORDER BY fragment_idx ASC, ordinal ASC
-                """
-            ),
-            {"media_id": media_id},
-        ).fetchall():
-            nav_by_fragment_idx[int(row[0])] = {
-                "section_id": row[1],
-                "href_path": row[2],
-                "anchor_id": row[3],
-                "label": row[4],
-            }
-
     fragment_blocks_by_id: dict[UUID, list[Any]] = {}
     fragment_ids = [UUID(str(fragment["id"])) for fragment in fragments]
     if fragment_ids:
@@ -1220,8 +1190,6 @@ def _snapshot_media_indexable_blocks(
         media_id=media_id,
         source_kind=source_kind,
         fragments=fragments,
-        media_title=media_title if source_kind == "web_article" else None,
-        nav_by_fragment_idx=nav_by_fragment_idx,
         fragment_blocks_by_id=fragment_blocks_by_id,
     )
 

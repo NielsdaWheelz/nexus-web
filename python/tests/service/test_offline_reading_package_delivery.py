@@ -225,9 +225,9 @@ def test_direct_package_is_account_generation_integrity_and_replay_bound(
         "account_id": str(viewer_id),
         "protocol_version": 1,
         "package_schema_version": 1,
-        "reader_contract_version": 1,
-        "minimum_reader_bundle_version": 1,
-    }
+        "reader_contract_version": 2,
+        "minimum_reader_bundle_version": 2,
+    }, "account binding must advertise archive1 and reader2/bundle2"
     assert mint.status_code == 200, mint.text
     assert mint.headers["cache-control"] == "private, no-store"
     assert minted["account_id"] == str(viewer_id)
@@ -310,7 +310,7 @@ def test_article_and_epub_packages_preserve_canonical_reading_inputs_without_rem
                 Media(
                     id=article_media_id,
                     kind=MediaKind.web_article.value,
-                    title="Canonical article",
+                    title="Opening",
                     processing_status=ProcessingStatus.extracting,
                     created_by_user_id=viewer_id,
                 ),
@@ -332,7 +332,7 @@ def test_article_and_epub_packages_preserve_canonical_reading_inputs_without_rem
                         id=article_fragment_ids[0],
                         media_id=article_media_id,
                         idx=0,
-                        canonical_text="Opening canonical paragraph.",
+                        canonical_text="Opening\nOpening canonical paragraph.\nRemote link labelLocal headingEmbed label",
                         html_sanitized=(
                             '<h2 id="opening">Opening</h2>'
                             "<p>Opening canonical paragraph.</p>"
@@ -347,8 +347,8 @@ def test_article_and_epub_packages_preserve_canonical_reading_inputs_without_rem
                         id=article_fragment_ids[1],
                         media_id=article_media_id,
                         idx=1,
-                        canonical_text="Closing canonical paragraph.",
-                        html_sanitized="<p>Closing canonical paragraph.</p>",
+                        canonical_text="Closing\nClosing canonical paragraph.",
+                        html_sanitized="<h2>Closing</h2><p>Closing canonical paragraph.</p>",
                     ),
                 )
             )
@@ -365,7 +365,7 @@ def test_article_and_epub_packages_preserve_canonical_reading_inputs_without_rem
                 id=epub_fragment_ids[0],
                 media_id=epub_media_id,
                 idx=0,
-                canonical_text="Opening chapter canonical text.",
+                canonical_text="Opening chapter\nOpening chapter canonical text.\nContinueExternal label",
                 html_sanitized=(
                     '<h1 id="opening">Opening chapter</h1>'
                     "<p>Opening chapter canonical text.</p>"
@@ -373,7 +373,7 @@ def test_article_and_epub_packages_preserve_canonical_reading_inputs_without_rem
                     '<a href="#opening" aria-label="Local heading"'
                     ' ping="https://remote.invalid/beacon"></a>'
                     '<img src="https://remote.invalid/tracker.png" alt="Remote fallback">'
-                    '<a href="./chapter-2.xhtml#target">Continue</a>'
+                    '<a href="chapter%20-2.xhtml#target">Continue</a>'
                     '<a href="https://remote.invalid/out">External label</a>'
                 ),
             )
@@ -381,7 +381,7 @@ def test_article_and_epub_packages_preserve_canonical_reading_inputs_without_rem
                 id=epub_fragment_ids[1],
                 media_id=epub_media_id,
                 idx=1,
-                canonical_text="Final chapter canonical text.",
+                canonical_text="Final chapter\nFinal chapter canonical text.",
                 html_sanitized=(
                     '<h2 id="target">Final chapter</h2><p>Final chapter canonical text.</p>'
                 ),
@@ -403,7 +403,7 @@ def test_article_and_epub_packages_preserve_canonical_reading_inputs_without_rem
                     EpubFragmentSource(
                         media_id=epub_media_id,
                         fragment_id=second.id,
-                        package_href="chapter-2.xhtml",
+                        package_href="chapter%20-2.xhtml",
                         manifest_item_id="chapter-2",
                         spine_itemref_id="spine-2",
                         media_type="application/xhtml+xml",
@@ -418,6 +418,7 @@ def test_article_and_epub_packages_preserve_canonical_reading_inputs_without_rem
                         label="Opening",
                         href="chapter-1.xhtml#opening",
                         fragment_idx=0,
+                        target_offset=0,
                         depth=0,
                         order_key="0000",
                     ),
@@ -427,8 +428,9 @@ def test_article_and_epub_packages_preserve_canonical_reading_inputs_without_rem
                         nav_type="toc",
                         parent_node_id=None,
                         label="Final",
-                        href="chapter-2.xhtml#target",
+                        href="chapter%20-2.xhtml#target",
                         fragment_idx=1,
+                        target_offset=0,
                         depth=0,
                         order_key="0001",
                     ),
@@ -458,8 +460,9 @@ def test_article_and_epub_packages_preserve_canonical_reading_inputs_without_rem
                         href_path="chapter-1.xhtml",
                         href_fragment="opening",
                         start_offset=0,
-                        end_offset=31,
-                        source="toc",
+                        end_fragment_idx=1,
+                        end_offset=0,
+                        source="Both",
                     ),
                     EpubNavLocation(
                         media_id=epub_media_id,
@@ -468,11 +471,12 @@ def test_article_and_epub_packages_preserve_canonical_reading_inputs_without_rem
                         source_node_id="toc-final",
                         label="Final",
                         fragment_idx=1,
-                        href_path="chapter-2.xhtml",
+                        href_path="chapter%20-2.xhtml",
                         href_fragment="target",
                         start_offset=0,
-                        end_offset=29,
-                        source="toc",
+                        end_fragment_idx=1,
+                        end_offset=len("Final chapter\nFinal chapter canonical text."),
+                        source="Both",
                     ),
                 )
             )
@@ -535,7 +539,7 @@ def test_article_and_epub_packages_preserve_canonical_reading_inputs_without_rem
     } == {
         "mediaId": str(article_media_id),
         "mediaKind": "WebArticle",
-        "title": "Canonical article",
+        "title": "Opening",
         "readerGeneration": 1,
     }
     assert [entry["path"] for entry in article_manifest["entries"]] == ["reader.json"]
@@ -543,19 +547,27 @@ def test_article_and_epub_packages_preserve_canonical_reading_inputs_without_rem
         article_manifest["entries"][0]["sha256"]
         == hashlib.sha256(article_entries["reader.json"]).hexdigest()
     )
-    assert article_reader["navigation"] == [
-        {"fragmentId": str(article_fragment_ids[0]), "label": "Opening canonical paragraph."},
-        {"fragmentId": str(article_fragment_ids[1]), "label": "Closing canonical paragraph."},
+    assert article_reader["readerContractVersion"] == 2
+    assert article_reader["navigation"]["generation"] == 1
+    assert [section["label"] for section in article_reader["navigation"]["sections"]] == [
+        "Opening",
+        "Closing",
+    ]
+    assert [section["anchor_id"] for section in article_reader["navigation"]["sections"]] == [
+        {"kind": "Present", "value": "opening"},
+        {"kind": "Absent"},
     ]
     assert [fragment["canonicalText"] for fragment in article_reader["fragments"]] == [
-        "Opening canonical paragraph.",
-        "Closing canonical paragraph.",
+        "Opening\nOpening canonical paragraph.\nRemote link labelLocal headingEmbed label",
+        "Closing\nClosing canonical paragraph.",
     ]
     article_html = html.fragments_fromstring(article_reader["fragments"][0]["htmlSanitized"])
     article_elements = [
         element for root in article_html if hasattr(root, "iter") for element in root.iter()
     ]
-    article_text = " ".join(element.text_content() for element in article_elements)
+    article_text = html.fragment_fromstring(
+        article_reader["fragments"][0]["htmlSanitized"], create_parent="div"
+    ).text_content()
     assert not any(element.tag in {"img", "iframe", "script"} for element in article_elements)
     assert "Remote diagram" in article_text
     assert "Remote link label" in article_text
@@ -596,56 +608,29 @@ def test_article_and_epub_packages_preserve_canonical_reading_inputs_without_rem
         entry["sha256"] == hashlib.sha256(epub_entries[entry["path"]]).hexdigest()
         for entry in epub_manifest["entries"]
     )
-    assert epub_reader["navigation"] == [
-        {"sectionId": "section-opening", "label": "Opening"},
-        {"sectionId": "section-final", "label": "Final"},
+    assert epub_reader["readerContractVersion"] == 2
+    assert epub_reader["navigation"]["generation"] == 1
+    assert [section["section_id"] for section in epub_reader["navigation"]["sections"]] == [
+        "section-opening",
+        "section-final",
     ]
-    assert [section["canonicalText"] for section in epub_reader["sections"]] == [
-        "Opening chapter canonical text.",
-        "Final chapter canonical text.",
+    assert "sections" not in epub_reader
+    assert [fragment["canonical_text"] for fragment in epub_reader["fragments"]] == [
+        "Opening chapter\nOpening chapter canonical text.\nContinueExternal label",
+        "Final chapter\nFinal chapter canonical text.",
     ]
-    assert [
-        {
-            key: section[key]
-            for key in (
-                "sectionId",
-                "ordinal",
-                "fragmentId",
-                "fragmentIdx",
-                "hrefPath",
-                "anchorId",
-                "startOffset",
-                "endOffset",
-            )
-        }
-        for section in epub_reader["sections"]
-    ] == [
-        {
-            "sectionId": "section-opening",
-            "ordinal": 0,
-            "fragmentId": str(epub_fragment_ids[0]),
-            "fragmentIdx": 0,
-            "hrefPath": "chapter-1.xhtml",
-            "anchorId": "opening",
-            "startOffset": 0,
-            "endOffset": 31,
-        },
-        {
-            "sectionId": "section-final",
-            "ordinal": 1,
-            "fragmentId": str(epub_fragment_ids[1]),
-            "fragmentIdx": 1,
-            "hrefPath": "chapter-2.xhtml",
-            "anchorId": "target",
-            "startOffset": 0,
-            "endOffset": 29,
-        },
+    assert [fragment["fragment_id"] for fragment in epub_reader["fragments"]] == [
+        str(identifier) for identifier in epub_fragment_ids
     ]
-    assert epub_reader["sections"][0]["assetPaths"] == [f"assets/{asset_key}"]
-    assert epub_reader["sections"][1]["assetPaths"] == []
-    first_section = html.fragments_fromstring(epub_reader["sections"][0]["htmlSanitized"])
+    assert [fragment["href_path"] for fragment in epub_reader["fragments"]] == [
+        "chapter-1.xhtml",
+        "chapter%20-2.xhtml",
+    ]
+    assert epub_reader["fragments"][0]["asset_paths"] == [f"assets/{asset_key}"]
+    assert epub_reader["fragments"][1]["asset_paths"] == []
+    first_fragment = html.fragments_fromstring(epub_reader["fragments"][0]["html_sanitized"])
     epub_elements = [
-        element for root in first_section if hasattr(root, "iter") for element in root.iter()
+        element for root in first_fragment if hasattr(root, "iter") for element in root.iter()
     ]
     images = [element for element in epub_elements if element.tag == "img"]
     assert [dict(image.attrib) for image in images] == [
@@ -658,21 +643,23 @@ def test_article_and_epub_packages_preserve_canonical_reading_inputs_without_rem
         element for element in epub_elements if element.text_content() == "Continue"
     )
     assert continuation.attrib == {
-        "href": "#target",
-        "data-nexus-section-id": "section-final",
+        "href": "#",
+        "data-nexus-fragment-id": str(epub_fragment_ids[1]),
+        "data-nexus-anchor-id": "target",
     }
     local_heading = next(
         element for element in epub_elements if element.get("aria-label") == "Local heading"
     )
     assert local_heading.attrib == {
-        "href": "#opening",
+        "href": "#",
         "aria-label": "Local heading",
-        "data-nexus-section-id": "section-opening",
+        "data-nexus-fragment-id": str(epub_fragment_ids[0]),
+        "data-nexus-anchor-id": "opening",
     }
     assert not any(
         value.startswith(("http://", "https://", "//"))
-        for section in epub_reader["sections"]
-        for root in html.fragments_fromstring(section["htmlSanitized"])
+        for fragment in epub_reader["fragments"]
+        for root in html.fragments_fromstring(fragment["html_sanitized"])
         if hasattr(root, "iter")
         for element in root.iter()
         for value in element.attrib.values()

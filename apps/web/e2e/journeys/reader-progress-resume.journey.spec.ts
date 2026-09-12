@@ -3,7 +3,7 @@ import {
   type Page,
   type Request,
 } from "playwright/test";
-import { uniqueCanonicalReaderEpub } from "../corpus";
+import { uniqueReaderMapEpub } from "../corpus";
 import { uploadDocument } from "../documentUploadFixture";
 import {
   expect,
@@ -25,9 +25,9 @@ const RESTORE_WRITE_QUIET_WINDOW_MS = READER_STATE_IDLE_SAVE_DEBOUNCE_MS * 2;
 interface EpubReaderLocator {
   kind: "epub";
   target: {
-    section_id: string;
+    fragment_id: string;
     href_path: string;
-    anchor_id: string | null;
+    anchor_id: { kind: "Absent" } | { kind: "Present"; value: string };
   };
   locations: {
     text_offset: number | null;
@@ -81,7 +81,7 @@ async function uploadCanonicalEpub(
 ): Promise<string> {
   const api = pageRequest(page, webOrigin);
   const objects = pageRequest(page, minioOrigin);
-  const epub = uniqueCanonicalReaderEpub(userId);
+  const epub = uniqueReaderMapEpub(userId);
   const published = await uploadDocument({
     api,
     objects,
@@ -130,13 +130,12 @@ test("reader progress resumes, completes, and resets through its product actions
         sections: Array<{
           section_id: string;
           label: string;
-          href_path: string | null;
-          start_offset: number;
-          end_offset: number | null;
+          target: { fragment_id: string; offset: number };
+          extent: { kind: "Present"; value: { start: { fragment_id: string; offset: number }; end: { fragment_id: string; offset: number } } };
         }>;
       };
     }
-  ).data.sections.filter((section) => section.href_path !== null);
+  ).data.sections;
   const target = sections.find(
     (section) => section.label === "Second",
   );
@@ -146,17 +145,19 @@ test("reader progress resumes, completes, and resets through its product actions
   ).toBeDefined();
 
   await gotoWithStrictCsp(page, `/media/${mediaId}`);
-  const sectionPicker = page.getByLabel("Select section");
-  await expect(sectionPicker).toBeVisible();
-  await sectionPicker.selectOption(target!.section_id);
-  await expect(
-    page.getByRole("heading", { name: target!.label, exact: true }),
-    `Reader did not render selected section ${target!.section_id} (${target!.label}).`,
-  ).toBeVisible();
-  await expect(
-    page.getByText(/Omega proves the selected section/).first(),
-    `Reader section ${target!.section_id} omitted the fixture-owned Second passage.`,
-  ).toBeVisible();
+  const viewport = page.getByTestId("document-viewport");
+  await expect(page.getByRole("heading", { name: "Opening", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Open document map", exact: true }).click();
+  await page.getByRole("button", { name: "Second", exact: true }).click();
+  await expect(page.getByText(/Omega proves the selected section/).first()).toBeVisible();
+  expect(await waitForReaderStateWrite(page, mediaId, RESTORE_WRITE_QUIET_WINDOW_MS), "a map jump must not claim reading").toBeNull();
+  await page.getByRole("button", { name: "return to reading position", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Opening", exact: true })).toBeVisible();
+  expect(await waitForReaderStateWrite(page, mediaId, RESTORE_WRITE_QUIET_WINDOW_MS), "return must not claim reading").toBeNull();
+  await page.getByRole("button", { name: "Second", exact: true }).click();
+  await expect(page.getByText(/Omega proves the selected section/).first()).toBeVisible();
+  await viewport.hover();
+  await page.mouse.wheel(0, 150);
 
   await expect
     .poll(
@@ -172,13 +173,13 @@ test("reader progress resumes, completes, and resets through its product actions
                 state: "Positioned";
                 locator: {
                   kind: string;
-                  target?: { section_id?: string };
+                  target?: { fragment_id?: string };
                 };
               };
         };
         return snapshot.data.state === "Positioned" &&
           snapshot.data.locator.kind === "epub"
-          ? snapshot.data.locator.target?.section_id
+          ? snapshot.data.locator.target?.fragment_id
           : null;
       },
       {
@@ -186,17 +187,11 @@ test("reader progress resumes, completes, and resets through its product actions
         timeout: 15_000,
       },
     )
-    .toBe(target!.section_id);
+    .toBe(target!.target.fragment_id);
 
-  expect(
-    target!.end_offset,
-    `EPUB ${mediaId} did not expose a closed canonical interval for section ${target!.section_id}.`,
-  ).not.toBeNull();
-  const interiorOffset = target!.end_offset! - 1;
-  expect(
-    interiorOffset,
-    `EPUB ${mediaId} section ${target!.section_id} has no interior canonical cursor between ${target!.start_offset} and ${target!.end_offset}.`,
-  ).toBeGreaterThan(target!.start_offset);
+  expect(target!.extent.kind, "the source section must have an exact extent").toBe("Present");
+  const interiorOffset = target!.extent.value.end.offset - 2;
+  expect(interiorOffset).toBeGreaterThan(target!.target.offset);
 
   const persistedResponse = await api.get(
     `/api/media/${mediaId}/reader-state`,
@@ -217,7 +212,7 @@ test("reader progress resumes, completes, and resets through its product actions
     revision: expect.any(Number),
     locator: {
       kind: "epub",
-      target: { section_id: target!.section_id },
+      target: { fragment_id: target!.target.fragment_id },
     },
   });
   expect(persisted.revision).toBeGreaterThan(0);
@@ -296,16 +291,7 @@ test("reader progress resumes, completes, and resets through its product actions
     }
   });
   await gotoWithStrictCsp(page, `/media/${mediaId}`);
-  await expect(
-    page.getByRole("heading", { name: target!.label, exact: true }),
-    `Fresh reader document for ${mediaId} did not resume section ${target!.section_id}.`,
-  ).toBeVisible();
-  const resumedSectionPicker = page.getByLabel("Select section");
-  await expect(resumedSectionPicker).toHaveValue(target!.section_id);
-  await expect(
-    page.getByText(/Omega proves the selected section/).first(),
-    `Fresh reader document for ${mediaId} resumed the label but not the Second passage.`,
-  ).toBeVisible();
+  await expect(viewport).toBeVisible();
 
   const awaitedRestoreWrite = await waitForReaderStateWrite(
     page,
@@ -319,37 +305,19 @@ test("reader progress resumes, completes, and resets through its product actions
     `Programmatic restore for ${mediaId} echoed a reader-state write within the ${RESTORE_WRITE_QUIET_WINDOW_MS}ms detection window: ${resumedReaderStateWriteFingerprints.join(", ")}.`,
   ).toBeNull();
 
-  const targetIndex = sections.findIndex(
-    (section) => section.section_id === target!.section_id,
-  );
-  const genuineNavigationTarget = sections[targetIndex - 1];
-  expect(
-    genuineNavigationTarget,
-    `EPUB ${mediaId} did not expose a section before ${target!.section_id} for genuine navigation.`,
-  ).toBeDefined();
-  const genuineWriteRequestPromise = page.waitForRequest((request) =>
-    matchesReaderStateWrite(request, mediaId),
-  );
-  await page
-    .getByRole("button", { name: "Previous section", exact: true })
-    .click();
-  await expect(
-    page.getByRole("heading", {
-      name: genuineNavigationTarget!.label,
-      exact: true,
-    }),
-    `Genuine reader navigation did not render ${genuineNavigationTarget!.section_id} (${genuineNavigationTarget!.label}).`,
-  ).toBeVisible();
+  const genuineWriteRequestPromise = page.waitForRequest((request) => matchesReaderStateWrite(request, mediaId));
+  await viewport.hover();
+  await page.mouse.wheel(0, -160);
   const genuineWriteRequest = await genuineWriteRequestPromise;
   const genuineWrite = await genuineWriteRequest.response();
   expect(
     genuineWrite,
-    `Genuine reader navigation for ${mediaId} did not receive a BFF response.`,
+    `Genuine reader scrolling for ${mediaId} did not receive a BFF response.`,
   ).not.toBeNull();
   const genuineWriteText = await genuineWrite!.text();
   expect(
     genuineWrite!.ok(),
-    `Genuine reader navigation for ${mediaId} failed to persist: ${genuineWrite!.status()} ${genuineWriteText}`,
+    `Genuine reader scrolling for ${mediaId} failed to persist: ${genuineWrite!.status()} ${genuineWriteText}`,
   ).toBeTruthy();
 
   await page.getByRole("button", { name: "More", exact: true }).click();
@@ -380,6 +348,40 @@ test("reader progress resumes, completes, and resets through its product actions
     })
     .toBe("finished");
 
+  const closing = sections.find((section) => section.label === "Closing");
+  expect(closing, "the authored source must expose its final Closing chapter").toBeDefined();
+  const closingFragmentResponse = await api.get(`/api/media/${mediaId}/fragments/${closing!.target.fragment_id}`);
+  expect(closingFragmentResponse.ok()).toBeTruthy();
+  const closingFragment = (await closingFragmentResponse.json()) as { data: { canonical_text: string } };
+  const finalOffset = Array.from(closingFragment.data.canonical_text).length;
+  await page.getByRole("button", { name: "Open document map", exact: true }).click();
+  await page.getByRole("button", { name: "Closing", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Closing", exact: true })).toBeVisible();
+  const firstEndWrite = page.waitForResponse((response) => matchesResponse(response, webOrigin, "PUT", `/api/media/${mediaId}/reader-state`));
+  await viewport.press("End");
+  const firstEndResponse = await firstEndWrite;
+  expect(firstEndResponse.ok()).toBeTruthy();
+  expect(await firstEndResponse.json()).toMatchObject({
+    data: { state: "Positioned", locator: { target: { fragment_id: closing!.target.fragment_id }, locations: { text_offset: finalOffset } } },
+  });
+  const currentEnd = page.getByRole("button", { name: "Current position, 100% through document", exact: true });
+  await expect(currentEnd, "a genuine source end must remain the current document locus").toBeVisible();
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect(currentEnd, "passive reflow replaced the exact end locus with visible-start").toBeVisible();
+  expect(await waitForReaderStateWrite(page, mediaId, RESTORE_WRITE_QUIET_WINDOW_MS), "passive EOF reflow must not save reading").toBeNull();
+  const awayWrite = page.waitForResponse((response) => matchesResponse(response, webOrigin, "PUT", `/api/media/${mediaId}/reader-state`));
+  await viewport.press("PageUp");
+  expect((await awayWrite).ok()).toBeTruthy();
+  await expect(currentEnd).toHaveCount(0);
+  const secondEndWrite = page.waitForResponse((response) => matchesResponse(response, webOrigin, "PUT", `/api/media/${mediaId}/reader-state`));
+  await viewport.press("End");
+  const secondEndResponse = await secondEndWrite;
+  expect(secondEndResponse.ok()).toBeTruthy();
+  expect(await secondEndResponse.json()).toMatchObject({
+    data: { state: "Positioned", locator: { locations: { text_offset: finalOffset } } },
+  });
+  await expect(currentEnd).toBeVisible();
+
   await page.getByRole("button", { name: "More", exact: true }).click();
   page.once("dialog", async (dialog) => {
     expect(dialog.message()).toBe(
@@ -408,7 +410,5 @@ test("reader progress resumes, completes, and resets through its product actions
     .toBe("Empty");
 
   await gotoWithStrictCsp(page, `/media/${mediaId}`);
-  await expect(page.getByLabel("Select section")).not.toHaveValue(
-    target!.section_id,
-  );
+  await expect(page.getByRole("heading", { name: "Opening", exact: true })).toBeVisible();
 });

@@ -25,7 +25,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import TYPE_CHECKING, BinaryIO, Literal, cast
 from urllib.parse import unquote, urlparse
-from uuid import UUID
+from uuid import UUID, uuid5
 from xml.etree import ElementTree as ET
 
 from defusedxml import ElementTree as DefusedET
@@ -46,7 +46,15 @@ from nexus.db.models import (
     Fragment,
 )
 from nexus.errors import ApiErrorCode, ResourceFailureDimension
-from nexus.services.canonicalize import generate_canonical_text_with_element_offsets
+from nexus.ids import new_uuid7
+from nexus.schemas.presence import Present, nullable_from_presence
+from nexus.services.canonicalize import canonicalize_structure
+from nexus.services.epub_structure import (
+    EpubStructureFragment,
+    EpubStructureSection,
+    EpubStructureTocNode,
+    build_epub_structure,
+)
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.html5_shape import normalize_html5_shape
 from nexus.services.html_tree import (
@@ -126,7 +134,7 @@ _HTML_VOID_TAGS = frozenset(
 @dataclass(frozen=True)
 class EpubExtractionResult:
     status: str = "success"
-    chapter_count: int = 0
+    fragment_count: int = 0
     toc_node_count: int = 0
     asset_count: int = 0
     title: str | None = None
@@ -261,6 +269,9 @@ _EPUB_GLOBAL_ATTRS = frozenset(
         "lang",
         "dir",
         "xml:lang",
+        "hidden",
+        "aria-hidden",
+        "aria-labelledby",
         "data-reader-apparatus-item-id",
         "data-reader-apparatus-kind",
         "data-reader-apparatus-confidence",
@@ -439,18 +450,6 @@ class _StagedChapter:
 
 
 @dataclass
-class _TocNodeSpec:
-    nav_type: str
-    node_id: str
-    parent_node_id: str | None
-    label: str
-    href: str | None
-    fragment_idx: int | None
-    depth: int
-    order_key: str
-
-
-@dataclass
 class _AssetEntry:
     epub_path: str
     manifest_id: str | None
@@ -459,20 +458,6 @@ class _AssetEntry:
     size_bytes: int
     fallback_id: str | None
     properties: str | None
-
-
-@dataclass
-class _NavLocationSpec:
-    location_id: str
-    ordinal: int
-    source_node_id: str | None
-    label: str
-    fragment_idx: int
-    href_path: str | None
-    href_fragment: str | None
-    start_offset: int
-    end_offset: int
-    source: str
 
 
 @dataclass
@@ -500,8 +485,8 @@ class EpubExtractionPlan:
         ...,
     ]
     all_block_specs: tuple[list, ...]
-    toc_nodes: tuple[_TocNodeSpec, ...]
-    nav_locations: tuple[_NavLocationSpec, ...]
+    toc_nodes: tuple[EpubStructureTocNode, ...]
+    nav_locations: tuple[EpubStructureSection, ...]
     asset_entries: tuple[_AssetEntry, ...]
     asset_storage_paths: dict[str, str]
     apparatus_source_fingerprint: str
@@ -760,16 +745,9 @@ def _build_epub_extraction_plan_from_file(
             manifest,
             href_to_frag_idx,
             structural_budget,
+            media_id,
         )
-        requested_targets: dict[int, dict[str, str]] = {}
-        for node in toc_nodes:
-            if node.fragment_idx is None:
-                continue
-            _href_path, href_fragment = _split_href_parts(node.href)
-            if href_fragment is not None:
-                requested_targets.setdefault(node.fragment_idx, {})[href_fragment] = str(node.href)
-
-        # ---- canonicalize once with exact requested anchor starts ----------
+        # ---- canonicalize once with exact source structure -----------------
         fragment_specs: list[
             tuple[
                 Fragment,
@@ -778,30 +756,18 @@ def _build_epub_extraction_plan_from_file(
                 list[dict[str, object]],
             ]
         ] = []
-        anchor_offsets_by_fragment: dict[int, dict[str, int]] = {}
+        structure_fragments: list[EpubStructureFragment] = []
         canonical_text_digest = hashlib.sha256()
         for fragment_idx, (ch, html_sanitized, apparatus_items, apparatus_edges) in enumerate(
             sanitized_chapters
         ):
-            targets = requested_targets.get(fragment_idx, {})
             try:
-                canonical_text, offsets = generate_canonical_text_with_element_offsets(
-                    html_sanitized,
-                    set(targets),
-                )
+                canonical = canonicalize_structure(html_sanitized)
+                canonical_text = canonical.text
             except ValueError as exc:
                 return EpubExtractionError(
                     error_code=ApiErrorCode.E_SANITIZATION_FAILED.value,
                     error_message=f"Canonicalization failed for spine item {ch.spine_idx}: {exc}",
-                )
-            missing = targets.keys() - offsets.keys()
-            if missing:
-                anchor_id = min(missing)
-                return EpubExtractionError(
-                    error_code=ApiErrorCode.E_SOURCE_NOT_READABLE.value,
-                    error_message=(
-                        f"EPUB navigation target {targets[anchor_id]} names a missing anchor"
-                    ),
                 )
             rendered_text_bytes += utf8_byte_length(canonical_text)
             if rendered_text_bytes > EPUB_RENDERED_TEXT_MAX_BYTES:
@@ -812,8 +778,8 @@ def _build_epub_extraction_plan_from_file(
             if fragment_idx:
                 canonical_text_digest.update(b"\n")
             canonical_text_digest.update(canonical_text.encode("utf-8"))
-            anchor_offsets_by_fragment[fragment_idx] = offsets
             fragment = Fragment(
+                id=new_uuid7(),
                 media_id=media_id,
                 idx=fragment_idx,
                 html_sanitized=html_sanitized,
@@ -821,15 +787,18 @@ def _build_epub_extraction_plan_from_file(
                 created_at=now,
             )
             fragment_specs.append((fragment, ch, apparatus_items, apparatus_edges))
+            structure_fragments.append(
+                EpubStructureFragment(fragment.id, fragment_idx, ch.href, canonical)
+            )
             all_block_specs.append(parse_fragment_blocks(canonical_text))
 
         fragments = [frag for frag, _ch, _items, _edges in fragment_specs]
         try:
-            nav_locations = _materialize_nav_locations(
-                toc_nodes,
-                fragments,
-                retained_hrefs,
-                anchor_offsets_by_fragment,
+            nav_locations = build_epub_structure(
+                media_id=media_id,
+                fragments=structure_fragments,
+                toc_nodes=toc_nodes,
+                existing_location_ids={},
             )
         except ValueError as exc:
             return EpubExtractionError(
@@ -890,7 +859,7 @@ def _build_epub_extraction_plan_from_file(
                 raise StorageError(exc.message, exc.code) from exc
 
         result = EpubExtractionResult(
-            chapter_count=len(fragments),
+            fragment_count=len(fragments),
             toc_node_count=len(toc_nodes),
             asset_count=len(asset_entries),
             title=title,
@@ -990,6 +959,7 @@ def publish_epub_extraction_plan(
     fragments: list[Fragment] = []
     for template, _chapter, _items, _edges in plan.fragment_specs:
         fragment = Fragment(
+            id=template.id,
             media_id=media_id,
             idx=template.idx,
             html_sanitized=template.html_sanitized,
@@ -1037,6 +1007,7 @@ def publish_epub_extraction_plan(
                 fragment_idx=node.fragment_idx,
                 depth=node.depth,
                 order_key=node.order_key,
+                target_offset=node.target_offset,
                 created_at=plan.now,
             )
         )
@@ -1056,19 +1027,23 @@ def publish_epub_extraction_plan(
             )
         )
     db.flush()
-    for nav in plan.nav_locations:
+    for ordinal, nav in enumerate(plan.nav_locations):
         db.add(
             EpubNavLocation(
                 media_id=media_id,
                 location_id=nav.location_id,
-                ordinal=nav.ordinal,
-                source_node_id=nav.source_node_id,
+                ordinal=ordinal,
+                source_node_id=nullable_from_presence(nav.source_node_id),
                 label=nav.label,
                 fragment_idx=nav.fragment_idx,
                 href_path=nav.href_path,
-                href_fragment=nav.href_fragment,
+                href_fragment=nullable_from_presence(nav.href_fragment),
                 start_offset=nav.start_offset,
-                end_offset=nav.end_offset,
+                parent_section_id=nullable_from_presence(nav.parent_section_id),
+                end_fragment_idx=nav.end.value.fragment_idx
+                if isinstance(nav.end, Present)
+                else None,
+                end_offset=nav.end.value.offset if isinstance(nav.end, Present) else None,
                 source=nav.source,
                 created_at=plan.now,
             )
@@ -2232,12 +2207,13 @@ def _materialize_toc(
     manifest: dict[str, _ManifestItem],
     href_to_frag_idx: dict[str, int],
     structural_budget: _XmlStructuralBudget,
-) -> list[_TocNodeSpec]:
+    media_id: UUID,
+) -> list[EpubStructureTocNode]:
     """Parse EPUB navigation sources into one persisted node list."""
-    nodes = _parse_epub3_nav(zf, opf, manifest, href_to_frag_idx, structural_budget)
+    nodes = _parse_epub3_nav(zf, opf, manifest, href_to_frag_idx, structural_budget, media_id)
     if any(node.nav_type == "toc" for node in nodes):
         return nodes
-    return nodes + _parse_ncx_toc(zf, opf, manifest, href_to_frag_idx, structural_budget)
+    return nodes + _parse_ncx_toc(zf, opf, manifest, href_to_frag_idx, structural_budget, media_id)
 
 
 def _parse_epub3_nav(
@@ -2246,7 +2222,8 @@ def _parse_epub3_nav(
     manifest: dict[str, _ManifestItem],
     href_to_frag_idx: dict[str, int],
     structural_budget: _XmlStructuralBudget,
-) -> list[_TocNodeSpec]:
+    media_id: UUID,
+) -> list[EpubStructureTocNode]:
     nav_id = None
     for item in opf.findall(".//opf:manifest/opf:item", _NS):
         props = item.get("properties", "")
@@ -2267,7 +2244,7 @@ def _parse_epub3_nav(
         return []
 
     nav_dir = posixpath.dirname(nav_href)
-    nodes: list[_TocNodeSpec] = []
+    nodes: list[EpubStructureTocNode] = []
     for nav_el in nav_tree.iter():
         tag = nav_el.tag if isinstance(nav_el.tag, str) else ""
         if not (tag == "nav" or tag.endswith("}nav")):
@@ -2291,7 +2268,8 @@ def _parse_epub3_nav(
             nav_dir,
             href_to_frag_idx,
             nodes,
-            parent_id=None,
+            media_id,
+            parent_path=None,
             depth=0,
             prefix="",
         )
@@ -2303,8 +2281,9 @@ def _walk_nav_ol(
     nav_type: str,
     nav_dir: str,
     href_to_frag_idx: dict[str, int],
-    nodes: list[_TocNodeSpec],
-    parent_id: str | None,
+    nodes: list[EpubStructureTocNode],
+    media_id: UUID,
+    parent_path: str | None,
     depth: int,
     prefix: str,
 ) -> None:
@@ -2351,13 +2330,14 @@ def _walk_nav_ol(
         # generate node_id
         raw_id = _generate_node_id_token(nav_id_attr, href, label)
         raw_id = _ensure_sibling_unique(raw_id, sibling_ids)
-        node_id = f"{parent_id}/{raw_id}" if parent_id else f"{nav_type}/{raw_id}"
-        node_id = _enforce_id_length(node_id)
+        node_path = f"{parent_path}/{raw_id}" if parent_path else f"{nav_type}/{raw_id}"
+        node_id = _enforce_id_length(media_id, node_path)
+        parent_id = _enforce_id_length(media_id, parent_path) if parent_path else None
 
         order_key = f"{prefix}{ordinal:04d}" if not prefix else f"{prefix}.{ordinal:04d}"
 
         nodes.append(
-            _TocNodeSpec(
+            EpubStructureTocNode(
                 nav_type=nav_type,
                 node_id=node_id,
                 parent_node_id=parent_id,
@@ -2376,7 +2356,8 @@ def _walk_nav_ol(
             nav_dir,
             href_to_frag_idx,
             nodes,
-            parent_id=node_id,
+            media_id,
+            parent_path=node_path,
             depth=depth + 1,
             prefix=order_key,
         )
@@ -2389,7 +2370,8 @@ def _parse_ncx_toc(
     manifest: dict[str, _ManifestItem],
     href_to_frag_idx: dict[str, int],
     structural_budget: _XmlStructuralBudget,
-) -> list[_TocNodeSpec]:
+    media_id: UUID,
+) -> list[EpubStructureTocNode]:
     ncx_id = None
     spine = opf.find(".//opf:spine", _NS)
     if spine is not None:
@@ -2414,14 +2396,15 @@ def _parse_ncx_toc(
     if nav_map is None:
         return []
 
-    nodes: list[_TocNodeSpec] = []
+    nodes: list[EpubStructureTocNode] = []
     _walk_ncx_navpoints(
         nav_map,
         ncx_dir,
         href_to_frag_idx,
         nodes,
+        media_id,
         nav_type="toc",
-        parent_id=None,
+        parent_path=None,
         depth=0,
         prefix="",
     )
@@ -2432,9 +2415,10 @@ def _walk_ncx_navpoints(
     parent_el: ET.Element,
     ncx_dir: str,
     href_to_frag_idx: dict[str, int],
-    nodes: list[_TocNodeSpec],
+    nodes: list[EpubStructureTocNode],
+    media_id: UUID,
     nav_type: str,
-    parent_id: str | None,
+    parent_path: str | None,
     depth: int,
     prefix: str,
 ) -> None:
@@ -2463,13 +2447,14 @@ def _walk_ncx_navpoints(
 
         raw_id = _generate_node_id_token(nav_id_attr, href, label)
         raw_id = _ensure_sibling_unique(raw_id, sibling_ids)
-        node_id = f"{parent_id}/{raw_id}" if parent_id else f"{nav_type}/{raw_id}"
-        node_id = _enforce_id_length(node_id)
+        node_path = f"{parent_path}/{raw_id}" if parent_path else f"{nav_type}/{raw_id}"
+        node_id = _enforce_id_length(media_id, node_path)
+        parent_id = _enforce_id_length(media_id, parent_path) if parent_path else None
 
         order_key = f"{prefix}{ordinal:04d}" if not prefix else f"{prefix}.{ordinal:04d}"
 
         nodes.append(
-            _TocNodeSpec(
+            EpubStructureTocNode(
                 nav_type=nav_type,
                 node_id=node_id,
                 parent_node_id=parent_id,
@@ -2486,8 +2471,9 @@ def _walk_ncx_navpoints(
             ncx_dir,
             href_to_frag_idx,
             nodes,
+            media_id,
             nav_type=nav_type,
-            parent_id=node_id,
+            parent_path=node_path,
             depth=depth + 1,
             prefix=order_key,
         )
@@ -2506,7 +2492,7 @@ def _resolve_nav_target(
     if parsed.scheme:
         return href, None
 
-    path_part = unquote(parsed.path or "")
+    path_part = parsed.path or ""
     anchor = parsed.fragment or None
     resolved_path = _resolve_epub_path(base_dir, path_part) if path_part else None
     canonical_href = resolved_path
@@ -2514,145 +2500,6 @@ def _resolve_nav_target(
         canonical_href = f"{canonical_href}#{anchor}"
     frag_idx = href_to_frag_idx.get(resolved_path) if resolved_path else None
     return canonical_href, frag_idx
-
-
-# ---------------------------------------------------------------------------
-# Navigation location materialization
-# ---------------------------------------------------------------------------
-
-
-def _materialize_nav_locations(
-    toc_nodes: list[_TocNodeSpec],
-    fragments: list[Fragment],
-    retained_hrefs: list[str],
-    anchor_offsets_by_fragment: dict[int, dict[str, int]],
-) -> list[_NavLocationSpec]:
-    """Build canonical section rows in fragment/spine order."""
-    locations: list[_NavLocationSpec] = []
-    toc_by_fragment: dict[int, list[_TocNodeSpec]] = {}
-    seen_section_ids: set[str] = set()
-    ordinal = 0
-
-    for tn in toc_nodes:
-        if tn.nav_type != "toc" or tn.fragment_idx is None:
-            continue
-        toc_by_fragment.setdefault(tn.fragment_idx, []).append(tn)
-
-    for frag in sorted(fragments, key=lambda f: f.idx):
-        chapter_href = retained_hrefs[frag.idx] if 0 <= frag.idx < len(retained_hrefs) else None
-        fragment_toc_nodes = toc_by_fragment.get(frag.idx, [])
-
-        if fragment_toc_nodes:
-            for tn in fragment_toc_nodes:
-                href_path, href_fragment = _split_href_parts(tn.href)
-                href_path = href_path or chapter_href
-                if href_path is None:
-                    continue
-                location_id = _section_location_id(href_path, href_fragment, seen_section_ids)
-                locations.append(
-                    _NavLocationSpec(
-                        location_id=location_id,
-                        ordinal=ordinal,
-                        source_node_id=tn.node_id,
-                        label=tn.label[:512],
-                        fragment_idx=frag.idx,
-                        href_path=href_path,
-                        href_fragment=href_fragment,
-                        start_offset=0,
-                        end_offset=0,
-                        source="toc",
-                    )
-                )
-                ordinal += 1
-            continue
-
-        if chapter_href is None:
-            continue
-
-        location_id = _section_location_id(chapter_href, None, seen_section_ids)
-        locations.append(
-            _NavLocationSpec(
-                location_id=location_id,
-                ordinal=ordinal,
-                source_node_id=None,
-                label=_fallback_fragment_label(frag.canonical_text, frag.idx),
-                fragment_idx=frag.idx,
-                href_path=chapter_href,
-                href_fragment=None,
-                start_offset=0,
-                end_offset=0,
-                source="spine",
-            )
-        )
-        ordinal += 1
-
-    fragments_by_idx = {fragment.idx: fragment for fragment in fragments}
-    indexes_by_fragment: dict[int, list[int]] = {}
-    for index, location in enumerate(locations):
-        location.start_offset = (
-            0
-            if location.href_fragment is None
-            else anchor_offsets_by_fragment[location.fragment_idx][location.href_fragment]
-        )
-        indexes_by_fragment.setdefault(location.fragment_idx, []).append(index)
-
-    for fragment_idx, indexes in indexes_by_fragment.items():
-        fragment = fragments_by_idx[fragment_idx]
-        ordered_starts = sorted({locations[index].start_offset for index in indexes})
-        end_by_start = {
-            start: ordered_starts[position + 1]
-            if position + 1 < len(ordered_starts)
-            else len(fragment.canonical_text)
-            for position, start in enumerate(ordered_starts)
-        }
-        for index in indexes:
-            location = locations[index]
-            location.end_offset = end_by_start[location.start_offset]
-
-    return locations
-
-
-def _split_href_parts(href: str | None) -> tuple[str | None, str | None]:
-    if not href:
-        return None, None
-    if "#" not in href:
-        return href, None
-    path_part, frag_part = href.split("#", 1)
-    return (path_part or None, unquote(frag_part) or None)
-
-
-def _section_location_id(
-    href_path: str,
-    href_fragment: str | None,
-    seen: set[str],
-) -> str:
-    base = href_path if not href_fragment else f"{href_path}#{href_fragment}"
-    candidate = _truncate_section_id(base)
-    if candidate not in seen:
-        seen.add(candidate)
-        return candidate
-
-    suffix = 2
-    while True:
-        unique = _truncate_section_id(f"{base}~{suffix}")
-        if unique not in seen:
-            seen.add(unique)
-            return unique
-        suffix += 1
-
-
-def _truncate_section_id(value: str) -> str:
-    if len(value) <= 255:
-        return value
-    return value[:255]
-
-
-def _fallback_fragment_label(canonical_text: str, idx: int) -> str:
-    for line in canonical_text.splitlines():
-        trimmed = line.strip()
-        if trimmed:
-            return trimmed[:512]
-    return f"Chapter {idx + 1}"
 
 
 # ---------------------------------------------------------------------------
@@ -2689,10 +2536,10 @@ def _ensure_sibling_unique(raw: str, seen: dict[str, int]) -> str:
     return f"{raw}~{seen[raw]}"
 
 
-def _enforce_id_length(node_id: str) -> str:
+def _enforce_id_length(media_id: UUID, node_id: str) -> str:
     if len(node_id) <= 255:
         return node_id
-    return node_id[:255]
+    return str(uuid5(media_id, node_id))
 
 
 def _text_content(el: ET.Element) -> str:

@@ -34,7 +34,7 @@ export interface PdfDocumentLike {
 
 export interface PdfDocumentLoadingTaskLike {
   promise: Promise<PdfDocumentLike>;
-  destroy?: () => void;
+  destroy?: () => Promise<void> | void;
 }
 
 export interface PdfDocumentSourceLike {

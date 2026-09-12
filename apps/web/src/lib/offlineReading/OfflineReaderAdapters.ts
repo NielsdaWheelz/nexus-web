@@ -16,8 +16,6 @@ import {
 } from "./contract";
 import {
   decodeOfflineReaderDocument,
-  offlineEpubNavigation,
-  offlineEpubSection,
   type OfflineReaderDocument,
 } from "./packageContract";
 import type {
@@ -70,11 +68,11 @@ function webFragment(
   return {
     id: fragment.fragmentId,
     media_id: mediaId,
-    idx: fragment.ordinal,
+    idx: fragment.fragmentIdx,
     html_sanitized: fragment.htmlSanitized,
     canonical_text: fragment.canonicalText,
     document_embeds: [],
-    created_at: "1980-01-01T00:00:00Z",
+    created_at: fragment.createdAt,
   };
 }
 
@@ -107,26 +105,23 @@ export class OfflineReaderSource implements ReaderDocumentSource {
     if (document.kind !== "WebArticle") throw new Error("Offline document is not a web article");
     return {
       fragments: document.fragments.map((fragment) => webFragment(document.mediaId, fragment)),
-      navigation: document.navigation.map((item) => ({
-        fragment_id: item.fragmentId,
-        label: item.label,
-      })),
     };
   }
 
-  async loadEpubNavigation(_mediaId: string, _signal: AbortSignal): Promise<ReaderNavigation> {
+  async loadNavigation(_mediaId: string, _signal: AbortSignal): Promise<ReaderNavigation> {
     const document = await this.#document;
-    if (document.kind !== "Epub") throw new Error("Offline document is not an EPUB");
-    return offlineEpubNavigation(document);
+    if (document.kind === "Pdf") throw new Error("Offline PDF has no text navigation");
+    return document.navigation;
   }
 
-  async loadEpubSection(_mediaId: string, sectionId: string, _signal: AbortSignal) {
+  async loadEpubFragment(_mediaId: string, fragmentId: string, _signal: AbortSignal) {
     const document = await this.#document;
     if (document.kind !== "Epub") throw new Error("Offline document is not an EPUB");
-    const section = offlineEpubSection(document, sectionId);
+    const fragment = document.fragments.find((item) => item.fragment_id === fragmentId);
+    if (!fragment) throw new Error("Offline fragment is absent from the verified publication");
     return {
-      ...section,
-      html_sanitized: replaceAssetReferences(section.html_sanitized, this.opened.readerUrl),
+      ...fragment,
+      html_sanitized: replaceAssetReferences(fragment.html_sanitized, this.opened.readerUrl),
     };
   }
 

@@ -20,8 +20,9 @@ import type {
   DocumentReaderSession,
   LoadedDocumentReaderSession,
   ReaderResource,
+  ReaderInitialEpubTarget,
 } from "./DocumentReaderSession";
-import type { EpubSectionContent } from "@/lib/media/epubFind";
+import type { EpubFragmentContent } from "@/lib/media/epubFragment";
 import type {
   ReaderNavigation,
   ReaderTextDocument,
@@ -34,20 +35,21 @@ type SessionProgressOptions = Omit<
 >;
 
 export interface DocumentReaderSessionComposition {
+  readonly reload: () => void;
   readonly progress: ReaderProgress;
   readonly navigation: ReaderResource<ReaderNavigation>;
   readonly textDocument: ReaderResource<ReaderTextDocument>;
   readonly initial: ReaderResource<LoadedDocumentReaderSession>;
-  readonly epubSection: ReaderResource<EpubSectionContent>;
-  readonly activeEpubSection: EpubSectionContent | null;
-  readonly setActiveEpubSection: Dispatch<SetStateAction<EpubSectionContent | null>>;
-  readonly epubSectionLoading: boolean;
-  readonly epubSectionError: unknown | null;
+  readonly epubFragment: ReaderResource<EpubFragmentContent>;
+  readonly activeEpubFragment: EpubFragmentContent | null;
+  readonly setActiveEpubFragment: Dispatch<SetStateAction<EpubFragmentContent | null>>;
+  readonly epubFragmentLoading: boolean;
+  readonly epubFragmentError: unknown | null;
   readonly pdfDocument: ReaderResource<ResolvedPdfDocument>;
 }
 
 export interface DocumentReaderSessionEpubOptions {
-  readonly sectionId: string | null;
+  readonly fragmentId: string | null;
   readonly cacheKey: string | null;
   readonly sourceGeneration: number;
 }
@@ -70,7 +72,7 @@ export function useDocumentReaderSession({
   progress,
   navigation,
   loadCacheKey,
-  initialEpubSectionId,
+  initialEpubTarget,
   epub,
   pdf,
 }: {
@@ -81,11 +83,11 @@ export function useDocumentReaderSession({
     readonly expectedKind: "epub" | "web_article" | null;
   };
   readonly loadCacheKey: string | null;
-  readonly initialEpubSectionId: string | null;
+  readonly initialEpubTarget: ReaderInitialEpubTarget | null;
   readonly epub?: DocumentReaderSessionEpubOptions;
   readonly pdf?: DocumentReaderSessionPdfOptions;
 }): DocumentReaderSessionComposition {
-  session.seedInitialEpubSection(initialEpubSectionId);
+  session.seedInitialEpubTarget(initialEpubTarget);
   const initialKeysRef = useRef<{
     readonly load: string | null;
     readonly navigation: string | null;
@@ -154,35 +156,39 @@ export function useDocumentReaderSession({
   const currentNavigation =
     navigationRefreshKey === null ? navigationResource : refreshedNavigation;
 
-  const [activeEpubSection, setActiveEpubSection] =
-    useState<EpubSectionContent | null>(null);
-  const epubSectionId = epub?.sectionId ?? null;
-  const epubSectionCacheKey = epub?.cacheKey ?? null;
+  const [activeEpubFragment, setActiveEpubFragment] =
+    useState<EpubFragmentContent | null>(null);
+  const epubFragmentId = epub?.fragmentId ?? null;
+  const epubFragmentCacheKey = epub?.cacheKey ?? null;
   const epubSourceGeneration = epub?.sourceGeneration ?? 0;
-  const epubSectionInitial = useMemo(
+  const epubFragmentInitial = useMemo(
     () =>
       initial.status === "ready" &&
       initial.data.document.kind === "Epub" &&
       epubSourceGeneration === 0 &&
-      epubSectionId !== null &&
-      initial.data.document.section.section_id === epubSectionId
-        ? ({ status: "ready", data: initial.data.document.section } as const)
+      epubFragmentId !== null &&
+      initial.data.document.fragment.fragment_id === epubFragmentId
+        ? ({ status: "ready", data: initial.data.document.fragment } as const)
         : null,
-    [epubSectionId, epubSourceGeneration, initial],
+    [epubFragmentId, epubSourceGeneration, initial],
   );
-  const epubSectionFetch = useResource<EpubSectionContent>({
+  const epubFragmentFetch = useResource<EpubFragmentContent>({
     cacheKey:
-      epubSectionId !== null && epubSourceGeneration > 0
-        ? epubSectionCacheKey
-        : initial.status === "ready" && epubSectionId !== null
-          ? epubSectionCacheKey
+      epubFragmentId !== null && epubSourceGeneration > 0
+        ? epubFragmentCacheKey
+        : initial.status === "ready" && epubFragmentId !== null
+          ? epubFragmentCacheKey
           : null,
-    load: (signal) => session.loadEpubSection(epubSectionId ?? "", signal),
+    load: (signal) => {
+      // justify-defect: an enabled fragment resource always has an exact identity.
+      if (epubFragmentId === null) throw new Error("Enabled EPUB resource has no fragment identity");
+      return session.loadEpubFragment(epubFragmentId, signal);
+    },
   });
-  const epubSection = useMemo<ReaderResource<EpubSectionContent>>(
+  const epubFragment = useMemo<ReaderResource<EpubFragmentContent>>(
     () =>
-      epubSectionInitial ??
-      (epubSectionId === null
+      epubFragmentInitial ??
+      (epubFragmentId === null
         ? { status: "idle" as const }
         : epubSourceGeneration === 0 &&
             (initial.status === "loading" || initial.status === "error")
@@ -193,27 +199,27 @@ export function useDocumentReaderSession({
                 error: initial.error,
                 retry: retryLoad,
               }
-          : epubSectionFetch),
+          : epubFragmentFetch),
     [
-      epubSectionId,
+      epubFragmentId,
       epubSourceGeneration,
-      epubSectionFetch,
-      epubSectionInitial,
+      epubFragmentFetch,
+      epubFragmentInitial,
       initial,
       retryLoad,
     ],
   );
 
   useEffect(() => {
-    setActiveEpubSection((current) =>
-      current?.section_id === epubSectionId ? current : null,
+    setActiveEpubFragment((current) =>
+      current?.fragment_id === epubFragmentId ? current : null,
     );
-  }, [epubSectionId]);
+  }, [epubFragmentId]);
   useEffect(() => {
-    if (epubSection.status === "ready") {
-      setActiveEpubSection(epubSection.data);
+    if (epubFragment.status === "ready") {
+      setActiveEpubFragment(epubFragment.data);
     }
-  }, [epubSection]);
+  }, [epubFragment]);
 
   const pdfSourceRefreshToken = pdf?.sourceRefreshToken ?? 0;
   const pdfSourceCacheKey = pdf?.sourceCacheKey ?? null;
@@ -251,12 +257,7 @@ export function useDocumentReaderSession({
             status: "ready",
             data: {
               fragments: initial.data.document.fragments,
-              navigation: initial.data.document.navigation.sections.map(
-                (section) => ({
-                  fragment_id: section.fragment_id,
-                  label: section.label,
-                }),
-              ),
+
             },
           }
         : initial.status === "loading"
@@ -268,16 +269,17 @@ export function useDocumentReaderSession({
   );
 
   return {
+    reload: retryLoad,
     initial,
     progress: readerProgress,
     navigation: currentNavigation,
     textDocument: textDocumentResource,
-    epubSection,
-    activeEpubSection,
-    setActiveEpubSection,
-    epubSectionLoading: epubSection.status === "loading",
-    epubSectionError:
-      epubSection.status === "error" ? epubSection.error : null,
+    epubFragment,
+    activeEpubFragment,
+    setActiveEpubFragment,
+    epubFragmentLoading: epubFragment.status === "loading",
+    epubFragmentError:
+      epubFragment.status === "error" ? epubFragment.error : null,
     pdfDocument,
   };
 }

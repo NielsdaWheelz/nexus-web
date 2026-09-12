@@ -13,7 +13,6 @@ import type {
 import { useEffect, useMemo, useRef } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import { composeRefs } from "@/lib/ui/composeRefs";
-import type { ReaderScrollPositioner } from "@/lib/reader/paneScroll";
 import styles from "./textDocumentReader.module.css";
 
 export type ReaderViewportSnapshot = {
@@ -58,7 +57,6 @@ type TextDocumentContentState =
 export default function TextDocumentReader({
   mediaId,
   additionalViewportRef,
-  scrollPositioner,
   beforeContent,
   readerRootRef,
   contentRef,
@@ -72,6 +70,7 @@ export default function TextDocumentReader({
   decorator,
   onViewportReady,
   onViewportScroll,
+  onViewportScrollEnd,
   onTrustedScrollIntent,
   endContent,
   onContentClick,
@@ -80,13 +79,9 @@ export default function TextDocumentReader({
   onContentFocus,
   onContentBlur,
   onInternalLinkClick,
-  onCanonicalPosition,
-  canonicalLength,
-  initialCanonicalOffset,
 }: {
   mediaId: string;
   additionalViewportRef?: Ref<HTMLDivElement>;
-  scrollPositioner: ReaderScrollPositioner;
   beforeContent?: ReactNode;
   readerRootRef: RefObject<HTMLDivElement | null>;
   contentRef: RefObject<HTMLDivElement | null>;
@@ -101,6 +96,7 @@ export default function TextDocumentReader({
   decorator?: TextReaderContentDecorator;
   onViewportReady: (snapshot: ReaderViewportSnapshot) => void;
   onViewportScroll: (snapshot: ReaderViewportSnapshot) => void;
+  onViewportScrollEnd?: (snapshot: ReaderViewportSnapshot) => void;
   onTrustedScrollIntent: (direction: TrustedScrollDirection) => void;
   endContent: ReactNode;
   onContentClick: (event: MouseEvent<HTMLDivElement>) => void;
@@ -108,10 +104,7 @@ export default function TextDocumentReader({
   onContentPointerOut: (event: PointerEvent<HTMLDivElement>) => void;
   onContentFocus: (event: FocusEvent<HTMLDivElement>) => void;
   onContentBlur: (event: FocusEvent<HTMLDivElement>) => void;
-  onInternalLinkClick?: (href: string | null) => boolean;
-  onCanonicalPosition?: (offset: number) => void;
-  canonicalLength?: number;
-  initialCanonicalOffset?: number;
+  onInternalLinkClick?: (link: HTMLAnchorElement) => boolean;
 }) {
   const viewportRef = useMemo(
     () =>
@@ -133,19 +126,15 @@ export default function TextDocumentReader({
   );
   const onViewportReadyRef = useRef(onViewportReady);
   const onViewportScrollRef = useRef(onViewportScroll);
+  const onViewportScrollEndRef = useRef(onViewportScrollEnd);
   const onTrustedScrollIntentRef = useRef(onTrustedScrollIntent);
   const lastTouchYRef = useRef<number | null>(null);
   const pointerScrollActiveRef = useRef(false);
   const lastScrollTopRef = useRef(0);
-  const canonicalPositionRef = useRef(onCanonicalPosition);
-  const canonicalLengthRef = useRef(canonicalLength);
-  const initialCanonicalOffsetRef = useRef(initialCanonicalOffset);
   onViewportReadyRef.current = onViewportReady;
   onViewportScrollRef.current = onViewportScroll;
+  onViewportScrollEndRef.current = onViewportScrollEnd;
   onTrustedScrollIntentRef.current = onTrustedScrollIntent;
-  canonicalPositionRef.current = onCanonicalPosition;
-  canonicalLengthRef.current = canonicalLength;
-  initialCanonicalOffsetRef.current = initialCanonicalOffset;
 
   useEffect(() => {
     const viewport = textViewportRef.current;
@@ -159,44 +148,27 @@ export default function TextDocumentReader({
       clientHeight: viewport.clientHeight,
     });
 
-    const initialOffset = initialCanonicalOffsetRef.current;
-    const activeCanonicalLength = canonicalLengthRef.current;
-    const maximum = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
-    if (
-      initialOffset !== undefined &&
-      initialOffset > 0 &&
-      activeCanonicalLength !== undefined &&
-      activeCanonicalLength > 0 &&
-      maximum > 0
-    ) {
-      viewport.scrollTop = Math.round(
-        (Math.min(initialOffset, activeCanonicalLength) / activeCanonicalLength) * maximum,
-      );
-    }
     lastScrollTopRef.current = viewport.scrollTop;
     onViewportReadyRef.current(snapshot());
     const publishScroll = (event: Event) => {
       const nextSnapshot = snapshot();
       const delta = nextSnapshot.scrollTop - lastScrollTopRef.current;
       lastScrollTopRef.current = nextSnapshot.scrollTop;
-      onViewportScrollRef.current(nextSnapshot);
-      const publishCanonical = canonicalPositionRef.current;
-      const activeCanonicalLength = canonicalLengthRef.current;
-      if (publishCanonical && activeCanonicalLength !== undefined) {
-        const maximum = Math.max(0, nextSnapshot.scrollHeight - nextSnapshot.clientHeight);
-        publishCanonical(
-          maximum > 0 ? Math.round((nextSnapshot.scrollTop / maximum) * activeCanonicalLength) : 0,
-        );
-      }
       if (pointerScrollActiveRef.current && event.isTrusted && delta !== 0) {
         onTrustedScrollIntentRef.current(
           delta > 0 ? "forward" : "backward",
         );
       }
+      onViewportScrollRef.current(nextSnapshot);
     };
 
     viewport.addEventListener("scroll", publishScroll, { passive: true });
-    return () => viewport.removeEventListener("scroll", publishScroll);
+    const publishScrollEnd = () => onViewportScrollEndRef.current?.(snapshot());
+    viewport.addEventListener("scrollend", publishScrollEnd);
+    return () => {
+      viewport.removeEventListener("scroll", publishScroll);
+      viewport.removeEventListener("scrollend", publishScrollEnd);
+    };
   }, [mediaId, textViewportRef]);
 
   function publishTrustedScrollIntent(direction: TrustedScrollDirection) {
@@ -280,7 +252,7 @@ export default function TextDocumentReader({
         const anchorEl = target.closest("a[href]");
         if (
           anchorEl instanceof HTMLAnchorElement &&
-          onInternalLinkClick(anchorEl.getAttribute("href"))
+          onInternalLinkClick(anchorEl)
         ) {
           event.preventDefault();
           return;
@@ -301,7 +273,6 @@ export default function TextDocumentReader({
         ref={viewportRef}
         className={`${styles.documentViewport} ${styles.textDocumentViewport}`}
         data-testid="document-viewport"
-        data-initial-canonical-offset={initialCanonicalOffset ?? undefined}
         data-pane-content="true"
         tabIndex={0}
         role="region"
@@ -360,7 +331,6 @@ export default function TextDocumentReader({
                   htmlSanitized={presentedHtml ?? ""}
                   className={styles.fragment}
                   mediaId={mediaId}
-                  scrollPositioner={scrollPositioner}
                   headingLevelOffset={1}
                 />
               </div>

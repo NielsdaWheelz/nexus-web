@@ -200,7 +200,6 @@ def test_real_web_article_fragment_canonicalizes_exactly_like_a_browser_parse() 
         html=capture,
         base_url="https://www.nasa.gov/news-release/water-on-the-moon",
         fragment_idx=0,
-        media_title="There's Water on the Moon?",
     )
     anchors = _requested_anchors(prepared.html_sanitized)
 

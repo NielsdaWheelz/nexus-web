@@ -1,4 +1,4 @@
-"""Pure V1 offline-reading package conformance against the shared corpus."""
+"""Archive1 / reader2 conformance against the shared offline-reading corpus."""
 
 from __future__ import annotations
 
@@ -98,6 +98,9 @@ def test_url_text_is_inert_but_the_same_bytes_in_an_attribute_are_remote() -> No
     reader["fragments"][0]["canonicalText"] = (
         "The source text says https://example.invalid without fetching it."
     )
+    reader["navigation"]["fragments"][0]["char_count"] = len(
+        reader["fragments"][0]["canonicalText"]
+    )
     parsed = parse_offline_reader_document(
         json.dumps(reader, separators=(",", ":")).encode("utf-8")
     )
@@ -119,11 +122,11 @@ def test_url_text_is_inert_but_the_same_bytes_in_an_attribute_are_remote() -> No
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     (
-        ("fragmentId", "not-a-uuid", "canonical UUID"),
-        ("hrefPath", "../chapter.xhtml", "traversal"),
-        ("hrefPath", "https://example.invalid/chapter.xhtml", "origin"),
-        ("startOffset", 24, "endOffset"),
-        ("endOffset", 24, "canonicalText"),
+        ("fragment_id", "not-a-uuid", "canonical UUID"),
+        ("href_path", "../chapter.xhtml", "traversal"),
+        ("href_path", "https://example.invalid/chapter.xhtml", "origin"),
+        ("char_count", 24, "canonical_text"),
+        ("generation", 24, "generation"),
     ),
 )
 def test_epub_locator_identity_and_offsets_fail_closed(
@@ -132,7 +135,7 @@ def test_epub_locator_identity_and_offsets_fail_closed(
     message: str,
 ) -> None:
     reader = json.loads(_READERS["epub-with-local-asset"])
-    reader["sections"][0][field] = value
+    reader["fragments"][0][field] = value
 
     with pytest.raises(ValidationError, match=message):
         parse_offline_reader_document(json.dumps(reader, separators=(",", ":")).encode("utf-8"))
@@ -272,14 +275,16 @@ def test_shared_reader_documents_accept_only_the_reviewed_strict_local_projectio
     if isinstance(reader, PdfOfflineReaderDocument):
         assert reader.document_path == expected["documentPath"]
     elif reader.media_kind == "Epub":
-        assert [item.section_id for item in reader.navigation] == expected["navigationOrder"]
-        assert [item.section_id for item in reader.sections] == expected["sectionOrder"]
+        assert [item.section_id for item in reader.navigation.sections] == expected[
+            "navigationOrder"
+        ]
+        assert [str(item.fragment_id) for item in reader.fragments] == expected["fragmentOrder"]
         assert (
-            sorted({path for item in reader.sections for path in item.asset_paths})
+            sorted({path for item in reader.fragments for path in item.asset_paths})
             == expected["referencedAssetPaths"]
         )
     else:
-        assert [item.fragment_id for item in reader.fragments] == expected["fragmentOrder"]
+        assert [str(item.fragment_id) for item in reader.fragments] == expected["fragmentOrder"]
 
 
 @pytest.mark.parametrize("case", _CORPUS["invalidPackageCases"], ids=lambda case: case["name"])

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createDocumentReaderSession,
   type LoadedReaderDocument,
+  type ReaderInitialEpubTarget,
 } from "./DocumentReaderSession";
 import { useDocumentReaderSession } from "./useDocumentReaderSession";
 import { createHostedReaderSource } from "./ReaderDocumentSource";
@@ -28,7 +29,7 @@ const FORMAT_CASES: readonly ReaderFormatCase[] = [
   {
     kind: "epub",
     expectedDocument: "Epub:Chapter two",
-    expectedRestore: "epub:chapter-2",
+    expectedRestore: "epub:fragment-2",
   },
   {
     kind: "pdf",
@@ -77,9 +78,9 @@ function locatorFor(candidate: ReaderFormatCase): Record<string, unknown> {
     ? {
         kind: "epub",
         target: {
-          section_id: "chapter-2",
+          fragment_id: "fragment-2",
           href_path: "chapter-2.xhtml",
-          anchor_id: null,
+          anchor_id: { kind: "Absent" },
         },
         locations,
         text,
@@ -179,87 +180,56 @@ function installHostedReader(
         return json({
           media_id: MEDIA_ID,
           kind: candidate.kind === "web_article" ? "web_article" : "epub",
+          generation: 1,
           fragments: [
             {
               fragment_id: "fragment-1",
               fragment_idx: 0,
-              char_count: 11,
+              char_count: candidate.kind === "web_article" ? 17 : 11,
             },
             {
               fragment_id: "fragment-2",
               fragment_idx: 1,
-              char_count: 11,
+              char_count: candidate.kind === "web_article" ? 18 : 11,
             },
           ],
-          sections: [
-            {
-              section_id: "chapter-1",
-              label: "Chapter one",
-              ordinal: 0,
-              fragment_id: "fragment-1",
-              fragment_idx: 0,
-              level: 1,
-              depth: 0,
-              start_offset: 0,
-              end_offset: 11,
-              href_path: "chapter-1.xhtml",
-              href_fragment: null,
-              anchor_id: null,
-            },
-            {
-              section_id: "chapter-2",
-              label: "Chapter two",
-              ordinal: 1,
-              fragment_id: "fragment-2",
-              fragment_idx: 1,
-              level: 1,
-              depth: 0,
-              start_offset: 0,
-              end_offset: 11,
-              href_path: "chapter-2.xhtml",
-              href_fragment: null,
-              anchor_id: null,
-            },
-          ],
+          sections: [1, 2].map((number) => ({
+            section_id: `chapter-${number}`,
+            anchor_id: { kind: "Absent" },
+            label: number === 1 ? "Chapter one" : "Chapter two",
+            parent_section_id: { kind: "Absent" },
+            target: { fragment_id: `fragment-${number}`, offset: 0 },
+            extent: { kind: "Present", value: {
+              start: { fragment_id: `fragment-${number}`, offset: 0 },
+              end: { fragment_id: `fragment-${number}`, offset: candidate.kind === "web_article" ? (number === 1 ? 17 : 18) : 11 },
+            } },
+            source: "Publisher",
+          })),
           toc_nodes: [],
           landmarks: [],
           page_list: [],
         });
       }
-      if (url.pathname === `/api/media/${MEDIA_ID}/sections/chapter-2`) {
+      if (url.pathname === `/api/media/${MEDIA_ID}/fragments/fragment-2`) {
         return json({
-          section_id: "chapter-2",
-          label: "Chapter two",
+          generation: 1,
           fragment_id: "fragment-2",
           fragment_idx: 1,
           href_path: "chapter-2.xhtml",
-          anchor_id: null,
-          source_node_id: null,
-          source: "spine",
-          ordinal: 1,
-          prev_section_id: "chapter-1",
-          next_section_id: null,
           html_sanitized: "<p>Chapter two</p>",
           canonical_text: "Chapter two",
           char_count: 11,
           word_count: 2,
-          document_word_start: 0,
+          document_word_start: 2,
           created_at: "2026-08-01T12:00:00.000Z",
         });
       }
-      if (url.pathname === `/api/media/${MEDIA_ID}/sections/chapter-1`) {
+      if (url.pathname === `/api/media/${MEDIA_ID}/fragments/fragment-1`) {
         return json({
-          section_id: "chapter-1",
-          label: "Chapter one",
+          generation: 1,
           fragment_id: "fragment-1",
           fragment_idx: 0,
           href_path: "chapter-1.xhtml",
-          anchor_id: null,
-          source_node_id: null,
-          source: "spine",
-          ordinal: 0,
-          prev_section_id: null,
-          next_section_id: "chapter-2",
           html_sanitized: "<p>Chapter one</p>",
           canonical_text: "Chapter one",
           char_count: 11,
@@ -285,7 +255,7 @@ function describeDocument(document: LoadedReaderDocument): string {
     case "WebArticle":
       return `${document.kind}:${document.activeFragment.canonical_text}`;
     case "Epub":
-      return `${document.kind}:${document.section.canonical_text}`;
+      return `${document.kind}:${document.fragment.canonical_text}`;
     case "Pdf":
       return `${document.kind}:${document.document.url}`;
   }
@@ -302,8 +272,8 @@ function describeRestore(
     return `${locator.kind}:${String(locator.page)}`;
   }
   if (locator.kind === "epub" && "target" in locator) {
-    const target = locator.target as { section_id?: unknown };
-    return `${locator.kind}:${String(target.section_id)}`;
+    const target = locator.target as { fragment_id?: unknown };
+    return `${locator.kind}:${String(target.fragment_id)}`;
   }
   if (locator.kind === "web" && "target" in locator) {
     const target = locator.target as { fragment_id?: unknown };
@@ -373,10 +343,10 @@ function SessionHarness() {
 
 function ProductionCompositionHarness({
   candidate,
-  initialEpubSectionId = null,
+  initialEpubTarget = null,
 }: {
   candidate: ReaderFormatCase;
-  initialEpubSectionId?: string | null;
+  initialEpubTarget?: ReaderInitialEpubTarget | null;
 }) {
   const [readyTextPublications, setReadyTextPublications] = useState(0);
   const [readable, setReadable] = useState(true);
@@ -417,7 +387,7 @@ function ProductionCompositionHarness({
       expectedKind: candidate.kind === "pdf" ? null : candidate.kind,
     },
     loadCacheKey: readable ? `session:${candidate.kind}` : null,
-    initialEpubSectionId,
+    initialEpubTarget,
     pdf: {
       sourceCacheKey: `pdf-source:${candidate.kind}`,
       sourceRefreshToken: 0,
@@ -489,17 +459,17 @@ describe("hosted DocumentReaderSession format and restore parity", () => {
     render(
       <ProductionCompositionHarness
         candidate={candidate}
-        initialEpubSectionId="chapter-2"
+        initialEpubTarget={{ kind: "Section", id: "chapter-2" }}
       />,
     );
 
     expect(await screen.findByText("progress:ready")).toBeVisible();
     expect(await screen.findByText("navigation:ready")).toBeVisible();
     expect(
-      hostedRequestCounts.get(`GET /api/media/${MEDIA_ID}/sections/chapter-1`) ?? 0,
+      hostedRequestCounts.get(`GET /api/media/${MEDIA_ID}/fragments/fragment-1`) ?? 0,
     ).toBe(0);
     expect(
-      hostedRequestCounts.get(`GET /api/media/${MEDIA_ID}/sections/chapter-2`) ?? 0,
+      hostedRequestCounts.get(`GET /api/media/${MEDIA_ID}/fragments/fragment-2`) ?? 0,
     ).toBe(1);
   });
 
@@ -541,7 +511,7 @@ describe("hosted DocumentReaderSession format and restore parity", () => {
       ).toBe(candidate.kind === "web_article" ? 1 : 0);
       expect(
         hostedRequestCounts.get(
-          `GET /api/media/${MEDIA_ID}/sections/chapter-2`,
+          `GET /api/media/${MEDIA_ID}/fragments/fragment-2`,
         ) ?? 0,
       ).toBe(candidate.kind === "epub" ? 1 : 0);
       expect(
@@ -652,7 +622,7 @@ describe("hosted DocumentReaderSession format and restore parity", () => {
     ).toBeVisible();
   });
 
-  it("reuses the composed EPUB section once, then honors explicit source invalidation", async () => {
+  it("reuses the composed EPUB fragment once, then honors explicit source invalidation", async () => {
     const candidate = FORMAT_CASES[1];
     if (candidate === undefined) throw new Error("EPUB proof case is absent");
     installHostedReader(candidate);
@@ -664,26 +634,26 @@ describe("hosted DocumentReaderSession format and restore parity", () => {
     const signal = new AbortController().signal;
 
     await session.load(signal);
-    await session.loadEpubSection("chapter-2", signal);
+    await session.loadEpubFragment("fragment-2", signal);
     expect(
       hostedRequestCounts.get(
-        `GET /api/media/${MEDIA_ID}/sections/chapter-2`,
+        `GET /api/media/${MEDIA_ID}/fragments/fragment-2`,
       ),
     ).toBe(1);
 
     await session.loadNavigation(signal);
-    await session.loadEpubSection("chapter-2", signal);
+    await session.loadEpubFragment("fragment-2", signal);
     expect(
       hostedRequestCounts.get(`GET /api/media/${MEDIA_ID}/navigation`),
     ).toBe(2);
     expect(
       hostedRequestCounts.get(
-        `GET /api/media/${MEDIA_ID}/sections/chapter-2`,
+        `GET /api/media/${MEDIA_ID}/fragments/fragment-2`,
       ),
     ).toBe(2);
   });
 
-  it("never serves the pre-invalidation composed section after explicit source invalidation", async () => {
+  it("never serves the pre-invalidation composed fragment after explicit source invalidation", async () => {
     const candidate = FORMAT_CASES[1];
     if (candidate === undefined) throw new Error("EPUB proof case is absent");
     installHostedReader(candidate);
@@ -700,19 +670,19 @@ describe("hosted DocumentReaderSession format and restore parity", () => {
     await session.load(signal);
     expect(
       hostedRequestCounts.get(
-        `GET /api/media/${MEDIA_ID}/sections/chapter-2`,
+        `GET /api/media/${MEDIA_ID}/fragments/fragment-2`,
       ) ?? 0,
     ).toBe(1);
-    await session.loadEpubSection("chapter-1", signal);
+    await session.loadEpubFragment("fragment-1", signal);
 
-    // Explicit source invalidation, then a request for the composed section:
+    // Explicit source invalidation, then a request for the composed fragment:
     // the session must fetch replaced content, never the pre-invalidation
     // cached payload the unused grant still holds.
     await session.loadNavigation(signal);
-    await session.loadEpubSection("chapter-2", signal);
+    await session.loadEpubFragment("fragment-2", signal);
     expect(
       hostedRequestCounts.get(
-        `GET /api/media/${MEDIA_ID}/sections/chapter-2`,
+        `GET /api/media/${MEDIA_ID}/fragments/fragment-2`,
       ) ?? 0,
     ).toBe(2);
   });

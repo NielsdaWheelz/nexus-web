@@ -4,7 +4,6 @@ import { userEvent } from "vitest/browser";
 import { describe, expect, it, vi } from "vitest";
 
 import { applyHighlightsToHtml } from "@/lib/highlights/applySegments";
-import type { ReaderScrollPositioner } from "@/lib/reader/paneScroll";
 import TextDocumentReader, {
   type TextReaderContentDecorator,
 } from "./TextDocumentReader";
@@ -12,23 +11,12 @@ import TextDocumentReader, {
 const CANONICAL_HTML = "<p>Alpha beacon omega</p>";
 const CANONICAL_TEXT = "Alpha beacon omega";
 
-const noopPositioner: ReaderScrollPositioner = {
-  async run(operation) {
-    await operation({
-      setTop: () => undefined,
-      adjustTop: () => undefined,
-      reveal: () => undefined,
-    });
-  },
-};
-
 function renderLeaf(
   props: Partial<Parameters<typeof TextDocumentReader>[0]> = {},
 ) {
   return render(
     <TextDocumentReader
       mediaId="11111111-1111-4111-8111-111111111111"
-      scrollPositioner={noopPositioner}
       readerRootRef={createRef<HTMLDivElement>()}
       contentRef={createRef<HTMLDivElement>()}
       textViewportRef={createRef<HTMLDivElement>()}

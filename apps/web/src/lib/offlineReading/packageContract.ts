@@ -1,5 +1,6 @@
-import type { EpubSectionContent } from "@/lib/media/epubFind";
-import type { ReaderNavigation } from "@/lib/reader/ReaderDocumentSource";
+import { decodeEpubFragmentContent, type EpubFragmentContent } from "@/lib/media/epubFragment";
+import { decodeMediaNavigation, type MediaNavigation } from "@/lib/media/readerNavigation";
+import { canonicalCpLength } from "@/lib/reader/textOffsets";
 import { expectCanonicalRfcUuid as canonicalUuid } from "@/lib/validation";
 
 const SAFE_ENTRY_PATH_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)*$/;
@@ -12,60 +13,22 @@ const EXECUTABLE_TAGS = new Set([
 ]);
 const SUBRESOURCE_TAGS = new Set(["audio", "img", "picture", "source", "track", "video"]);
 const URL_ATTRIBUTES = new Set([
-  "action", "background", "cite", "formaction", "href", "poster", "src", "srcset", "xlink:href",
+  "action", "background", "cite", "formaction", "href", "ping", "poster", "src", "srcset", "xlink:href",
 ]);
 
 export type OfflineReaderDocument =
-  | {
-      readonly kind: "Pdf";
-      readonly mediaId: string;
-      readonly title: string;
-      readonly documentPath: string;
-    }
-  | {
-      readonly kind: "WebArticle";
-      readonly mediaId: string;
-      readonly title: string;
-      readonly fragments: readonly OfflineWebFragment[];
-      readonly navigation: readonly OfflineWebNavigationItem[];
-    }
-  | {
-      readonly kind: "Epub";
-      readonly mediaId: string;
-      readonly title: string;
-      readonly sections: readonly OfflineEpubSection[];
-      readonly navigation: readonly OfflineEpubNavigationItem[];
-    };
+  | { readonly kind: "Pdf"; readonly mediaId: string; readonly title: string; readonly documentPath: string }
+  | { readonly kind: "WebArticle"; readonly mediaId: string; readonly title: string;
+      readonly fragments: readonly OfflineWebFragment[]; readonly navigation: MediaNavigation }
+  | { readonly kind: "Epub"; readonly mediaId: string; readonly title: string;
+      readonly fragments: readonly EpubFragmentContent[]; readonly navigation: MediaNavigation };
 
 export interface OfflineWebFragment {
   readonly fragmentId: string;
-  readonly ordinal: number;
-  readonly htmlSanitized: string;
-  readonly canonicalText: string;
-}
-
-export interface OfflineWebNavigationItem {
-  readonly fragmentId: string;
-  readonly label: string;
-}
-
-export interface OfflineEpubSection {
-  readonly sectionId: string;
-  readonly ordinal: number;
-  readonly fragmentId: string;
   readonly fragmentIdx: number;
-  readonly hrefPath: string;
-  readonly anchorId: string | null;
-  readonly startOffset: number;
-  readonly endOffset: number;
   readonly htmlSanitized: string;
   readonly canonicalText: string;
-  readonly assetPaths: readonly string[];
-}
-
-export interface OfflineEpubNavigationItem {
-  readonly sectionId: string;
-  readonly label: string;
+  readonly createdAt: string;
 }
 
 /**
@@ -97,7 +60,8 @@ export function parseStrictJsonValue(raw: string): unknown {
     throw new TypeError("Unterminated JSON string");
   };
   const value = (depth: number): unknown => {
-    if (depth > 16) throw new TypeError("JSON is too deeply nested");
+    // Source TOCs support 32 levels; each adds an object and a children array.
+    if (depth > 128) throw new TypeError("JSON is too deeply nested");
     whitespace();
     if (raw[offset] === "{") {
       offset += 1;
@@ -295,283 +259,84 @@ function safeHtml(
   return { html: value, referencedAssets };
 }
 
-function webNavigation(raw: unknown): readonly OfflineWebNavigationItem[] {
-  return array(raw, "navigation").map((item, index) => {
-    const value = exactRecord(item, ["fragmentId", "label"], `navigation[${index}]`);
-    return {
-      fragmentId: string(value.fragmentId, `navigation[${index}].fragmentId`, 256),
-      label: string(value.label, `navigation[${index}].label`),
-    };
-  });
-}
-
-function epubNavigation(raw: unknown): readonly OfflineEpubNavigationItem[] {
-  return array(raw, "navigation").map((item, index) => {
-    const value = exactRecord(item, ["sectionId", "label"], `navigation[${index}]`);
-    return {
-      sectionId: string(value.sectionId, `navigation[${index}].sectionId`, 256),
-      label: string(value.label, `navigation[${index}].label`),
-    };
-  });
-}
-
 export function decodeOfflineReaderDocument(raw: string): OfflineReaderDocument {
   if (raw.startsWith("\uFEFF")) throw new TypeError("reader.json must not contain a UTF-8 BOM");
   if (new TextEncoder().encode(raw).length > MAX_READER_JSON_BYTES) {
-    throw new TypeError("reader.json exceeds the V1 byte bound");
+    throw new TypeError("reader.json exceeds the byte bound");
   }
   const parsed = parseStrictJsonValue(raw);
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     throw new TypeError("reader.json must be an object");
   }
   const kind = (parsed as Record<string, unknown>).mediaKind;
+  const value = exactRecord(parsed, [
+    "readerContractVersion", "mediaId", "mediaKind", "title",
+    ...(kind === "Pdf" ? ["documentPath"] : ["navigation", "fragments"]),
+  ], "reader document");
+  if (value.readerContractVersion !== 2) throw new TypeError("Unsupported reader contract");
+  const mediaId = canonicalUuid(value.mediaId, "mediaId");
+  const title = string(value.title, "title");
   if (kind === "Pdf") {
-    const value = exactRecord(
-      parsed,
-      ["readerContractVersion", "mediaId", "mediaKind", "title", "documentPath"],
-      "PDF reader document",
-    );
-    if (value.readerContractVersion !== 1) throw new TypeError("Unsupported reader contract");
     const documentPath = safeEntryPath(value.documentPath, "documentPath");
     if (documentPath !== "document.pdf") throw new TypeError("PDF path must be document.pdf");
-    return {
-      kind,
-      mediaId: canonicalUuid(value.mediaId, "mediaId"),
-      title: string(value.title, "title"),
-      documentPath,
-    };
+    return { kind, mediaId, title, documentPath };
   }
+  if (kind !== "Epub" && kind !== "WebArticle") throw new TypeError("Unsupported reader media kind");
+  const navigation = decodeMediaNavigation(value.navigation);
+  if (navigation.media_id !== mediaId || navigation.kind !== (kind === "Epub" ? "epub" : "web_article")) {
+    throw new TypeError("Navigation identity must match its reader document");
+  }
+  const rawFragments = array(value.fragments, "fragments");
+  if (rawFragments.length === 0 || rawFragments.length !== navigation.fragments.length) {
+    throw new TypeError("Content and navigation require the same nonempty fragment sequence");
+  }
+  const validateFragment = (index: number, id: string, fragmentIdx: number, text: string) => {
+    const expected = navigation.fragments[index]!;
+    if (expected.fragment_id !== id || expected.fragment_idx !== fragmentIdx || expected.char_count !== canonicalCpLength(text)) {
+      throw new TypeError("Navigation fragment lengths and order must match canonical content");
+    }
+  };
   if (kind === "WebArticle") {
-    const value = exactRecord(
-      parsed,
-      ["readerContractVersion", "mediaId", "mediaKind", "title", "navigation", "fragments"],
-      "web reader document",
-    );
-    if (value.readerContractVersion !== 1) throw new TypeError("Unsupported reader contract");
-    const rawFragments = array(value.fragments, "fragments");
-    if (rawFragments.length === 0) throw new TypeError("Web articles require at least one fragment");
-    const fragments = rawFragments.map((item, index) => {
-      const fragment = exactRecord(
-        item,
-        ["fragmentId", "ordinal", "htmlSanitized", "canonicalText"],
-        `fragments[${index}]`,
-      );
-      const ordinal = nonnegativeInteger(fragment.ordinal, `fragments[${index}].ordinal`);
-      if (ordinal !== index) throw new TypeError("Web fragments must be canonically ordered");
-      const sanitized = safeHtml(fragment.htmlSanitized, `fragments[${index}].htmlSanitized`, true);
+    const fragments = rawFragments.map((item, index): OfflineWebFragment => {
+      const fragment = exactRecord(item, ["fragmentId", "fragmentIdx", "htmlSanitized", "canonicalText", "createdAt"], `fragments[${index}]`);
+      const fragmentId = canonicalUuid(fragment.fragmentId, "fragmentId");
+      const fragmentIdx = nonnegativeInteger(fragment.fragmentIdx, "fragmentIdx");
+      const canonicalText = boundedString(fragment.canonicalText, "canonicalText");
+      validateFragment(index, fragmentId, fragmentIdx, canonicalText);
       return {
-        fragmentId: string(fragment.fragmentId, `fragments[${index}].fragmentId`, 256),
-        ordinal,
-        htmlSanitized: sanitized.html,
-        canonicalText: boundedString(fragment.canonicalText, `fragments[${index}].canonicalText`),
+        fragmentId, fragmentIdx, canonicalText,
+        htmlSanitized: safeHtml(fragment.htmlSanitized, "htmlSanitized", true).html,
+        createdAt: string(fragment.createdAt, "createdAt"),
       };
     });
-    const navigation = webNavigation(value.navigation);
-    const fragmentIds = fragments.map((fragment) => fragment.fragmentId);
-    const navigationIds = navigation.map((item) => item.fragmentId);
-    if (new Set(fragmentIds).size !== fragmentIds.length || new Set(navigationIds).size !== navigationIds.length) {
-      throw new TypeError("Web fragment and navigation IDs must be unique");
-    }
-    if (navigationIds.some((fragmentId) => !fragmentIds.includes(fragmentId))) {
-      throw new TypeError("Web navigation must reference a declared fragment");
-    }
-    return {
-      kind,
-      mediaId: canonicalUuid(value.mediaId, "mediaId"),
-      title: string(value.title, "title"),
-      navigation,
-      fragments,
-    };
+    return { kind, mediaId, title, navigation, fragments };
   }
-  if (kind === "Epub") {
-    const value = exactRecord(
-      parsed,
-      ["readerContractVersion", "mediaId", "mediaKind", "title", "navigation", "sections"],
-      "EPUB reader document",
-    );
-    if (value.readerContractVersion !== 1) throw new TypeError("Unsupported reader contract");
-    const rawSections = array(value.sections, "sections");
-    if (rawSections.length === 0) throw new TypeError("EPUBs require at least one section");
-    const sections = rawSections.map((item, index) => {
-      const section = exactRecord(
-        item,
-        [
-          "sectionId",
-          "ordinal",
-          "fragmentId",
-          "fragmentIdx",
-          "hrefPath",
-          "anchorId",
-          "startOffset",
-          "endOffset",
-          "htmlSanitized",
-          "canonicalText",
-          "assetPaths",
-        ],
-        `sections[${index}]`,
-      );
-      const ordinal = nonnegativeInteger(section.ordinal, `sections[${index}].ordinal`);
-      if (ordinal !== index) throw new TypeError("EPUB sections must be canonically ordered");
-      const startOffset = nonnegativeInteger(
-        section.startOffset,
-        `sections[${index}].startOffset`,
-      );
-      const endOffset = nonnegativeInteger(
-        section.endOffset,
-        `sections[${index}].endOffset`,
-      );
-      if (endOffset < startOffset) throw new TypeError("EPUB section offsets are reversed");
-      const anchorId = section.anchorId;
-      if (
-        anchorId !== null &&
-        (typeof anchorId !== "string" || Array.from(anchorId).length > 256 || anchorId.trim().length === 0)
-      ) {
-        throw new TypeError("EPUB anchorId must be nonempty text or null");
-      }
-      const assetPaths = array(section.assetPaths, `sections[${index}].assetPaths`).map(
-        (path, assetIndex) => safeEntryPath(path, `sections[${index}].assetPaths[${assetIndex}]`),
-      );
-      if (
-        new Set(assetPaths).size !== assetPaths.length ||
-        assetPaths.some((path) => !path.startsWith("assets/")) ||
-        assetPaths.some((path, assetIndex) => assetIndex > 0 && assetPaths[assetIndex - 1]! > path)
-      ) {
-        throw new TypeError("EPUB assetPaths must be unique, sorted, and below assets/");
-      }
-      const sanitized = safeHtml(section.htmlSanitized, `sections[${index}].htmlSanitized`, false);
-      const canonicalText = boundedString(section.canonicalText, `sections[${index}].canonicalText`);
-      if (endOffset > Array.from(canonicalText).length) {
-        throw new TypeError("EPUB section offsets must be within canonicalText");
-      }
-      const referencedAssets = sanitized.referencedAssets;
-      if (
-        [...referencedAssets].some((path) => !assetPaths.includes(path)) ||
-        assetPaths.some((path) => !referencedAssets.has(path))
-      ) {
-        throw new TypeError("EPUB asset declarations must match local references");
-      }
-      return {
-        sectionId: string(section.sectionId, `sections[${index}].sectionId`, 256),
-        ordinal,
-        fragmentId: canonicalUuid(section.fragmentId, `sections[${index}].fragmentId`),
-        fragmentIdx: nonnegativeInteger(section.fragmentIdx, `sections[${index}].fragmentIdx`),
-        hrefPath: safeEpubHrefPath(section.hrefPath, `sections[${index}].hrefPath`),
-        anchorId,
-        startOffset,
-        endOffset,
-        htmlSanitized: sanitized.html,
-        canonicalText,
-        assetPaths,
-      };
-    });
-    const navigation = epubNavigation(value.navigation);
-    const sectionIds = sections.map((section) => section.sectionId);
-    const navigationIds = navigation.map((item) => item.sectionId);
-    if (new Set(sectionIds).size !== sectionIds.length || new Set(navigationIds).size !== navigationIds.length) {
-      throw new TypeError("EPUB section and navigation IDs must be unique");
+  let wordStart = 0;
+  const fragments = rawFragments.map((item, index): EpubFragmentContent => {
+    const value = exactRecord(item, [
+      "fragment_id", "fragment_idx", "href_path", "html_sanitized", "canonical_text",
+      "char_count", "word_count", "document_word_start", "created_at", "generation", "asset_paths",
+    ], `fragments[${index}]`);
+    const { asset_paths: rawAssetPaths, ...content } = value;
+    const fragment = decodeEpubFragmentContent({ data: content });
+    canonicalUuid(fragment.fragment_id, "fragment_id");
+    safeEpubHrefPath(fragment.href_path, "href_path");
+    validateFragment(index, fragment.fragment_id, fragment.fragment_idx, fragment.canonical_text);
+    if (fragment.generation !== navigation.generation || fragment.char_count !== canonicalCpLength(fragment.canonical_text)) {
+      throw new TypeError("EPUB fragments must match navigation generation and canonical lengths");
     }
-    if (navigationIds.some((sectionId) => !sectionIds.includes(sectionId))) {
-      throw new TypeError("EPUB navigation must reference a declared section");
+    if (fragment.document_word_start !== wordStart) throw new TypeError("EPUB word prefixes must follow document order");
+    wordStart += fragment.word_count;
+    const assetPaths = array(rawAssetPaths, "asset_paths").map((path) => safeEntryPath(path, "asset path"));
+    if (new Set(assetPaths).size !== assetPaths.length || assetPaths.some((path, index) =>
+      !path.startsWith("assets/") || (index > 0 && assetPaths[index - 1]! > path))) {
+      throw new TypeError("EPUB asset paths must be unique, sorted, and below assets/");
     }
-    return {
-      kind,
-      mediaId: canonicalUuid(value.mediaId, "mediaId"),
-      title: string(value.title, "title"),
-      navigation,
-      sections,
-    };
-  }
-  throw new TypeError("Unsupported reader media kind");
-}
-
-export function offlineEpubNavigation(document: Extract<OfflineReaderDocument, { kind: "Epub" }>): ReaderNavigation {
-  const fragments = new Map<number, { fragment_id: string; fragment_idx: number; char_count: number }>();
-  const fragmentIndexes = new Map<string, number>();
-  for (const section of document.sections) {
-    const existing = fragments.get(section.fragmentIdx);
-    const charCount = Array.from(section.canonicalText).length;
-    if (
-      existing !== undefined &&
-      (existing.fragment_id !== section.fragmentId || existing.char_count !== charCount)
-    ) {
-      throw new TypeError("EPUB fragment index maps to inconsistent canonical content");
+    const referenced = safeHtml(fragment.html_sanitized, "html_sanitized", false).referencedAssets;
+    if (assetPaths.length !== referenced.size || assetPaths.some((path) => !referenced.has(path))) {
+      throw new TypeError("EPUB asset declarations must match local references");
     }
-    const existingIndex = fragmentIndexes.get(section.fragmentId);
-    if (existingIndex !== undefined && existingIndex !== section.fragmentIdx) {
-      throw new TypeError("EPUB fragment identity maps to multiple indexes");
-    }
-    fragmentIndexes.set(section.fragmentId, section.fragmentIdx);
-    fragments.set(section.fragmentIdx, {
-      fragment_id: section.fragmentId,
-      fragment_idx: section.fragmentIdx,
-      char_count: charCount,
-    });
-  }
-  const orderedFragments = [...fragments.values()].sort(
-    (left, right) => left.fragment_idx - right.fragment_idx,
-  );
-  return {
-    media_id: document.mediaId,
-    kind: "epub",
-    fragments: orderedFragments,
-    sections: document.sections.map((section) => ({
-      section_id: section.sectionId,
-      label:
-        document.navigation.find((item) => item.sectionId === section.sectionId)?.label ??
-        section.sectionId,
-      ordinal: section.ordinal,
-      fragment_id: section.fragmentId,
-      fragment_idx: section.fragmentIdx,
-      level: null,
-      depth: null,
-      start_offset: section.startOffset,
-      end_offset: section.endOffset,
-      href_path: section.hrefPath,
-      href_fragment: null,
-      anchor_id: section.anchorId,
-    })),
-    toc_nodes: [],
-    landmarks: [],
-    page_list: [],
-  };
-}
-
-export function offlineEpubSection(
-  document: Extract<OfflineReaderDocument, { kind: "Epub" }>,
-  sectionId: string,
-): EpubSectionContent {
-  const index = document.sections.findIndex((section) => section.sectionId === sectionId);
-  const section = document.sections[index];
-  if (section === undefined) throw new Error(`Unknown EPUB section ${sectionId}`);
-  return {
-    section_id: section.sectionId,
-    label: document.navigation.find((item) => item.sectionId === section.sectionId)?.label ?? section.sectionId,
-    fragment_id: section.fragmentId,
-    fragment_idx: section.fragmentIdx,
-    href_path: section.hrefPath,
-    anchor_id: section.anchorId,
-    source_node_id: null,
-    source: "spine",
-    ordinal: section.ordinal,
-    prev_section_id: document.sections[index - 1]?.sectionId ?? null,
-    next_section_id: document.sections[index + 1]?.sectionId ?? null,
-    html_sanitized: section.htmlSanitized,
-    canonical_text: section.canonicalText,
-    char_count: Array.from(section.canonicalText).length,
-    word_count: canonicalWordCount(section.canonicalText),
-    document_word_start: [...new Map(
-      document.sections
-        .filter((item) => item.fragmentIdx < section.fragmentIdx)
-        .map((item) => [item.fragmentIdx, item.canonicalText] as const),
-    ).values()].reduce(
-      (count, text) => count + canonicalWordCount(text),
-      0,
-    ),
-    created_at: "1980-01-01T00:00:00Z",
-  };
-}
-
-function canonicalWordCount(text: string): number {
-  const normalized = text.trim();
-  return normalized.length === 0 ? 0 : normalized.split(/\s+/u).length;
+    return fragment;
+  });
+  return { kind, mediaId, title, navigation, fragments };
 }

@@ -191,7 +191,7 @@
     {
       "id": "offline-reading-mixed-publication-generation",
       "patch": "testdata/faults/offline-reading-mixed-publication-generation.patch",
-      "sha256": "0ce1e4366b3753d51272a7376185581e99fb31768a5a3dc66f1a6250a983b33f",
+      "sha256": "c58f149f6dcadffa0a524ec71f018d611a45e566c3b0437e03a0a37a997de5e2",
       "proofs": [
         "pytest:python/tests/service/test_reader_publication.py::test_capture_restarts_once_without_mixing_database_and_minio_publications"
       ],
@@ -236,7 +236,7 @@
     {
       "id": "reader-position-fragment-prefix-bypass",
       "patch": "testdata/faults/reader-position-fragment-prefix-bypass.patch",
-      "sha256": "c6bb454eda56feb9518f732644aec2181e455d65f9c621adbce42279390aaaee",
+      "sha256": "1484c0b34db5968c63aa79676aae4cd3086e860f057ab8ab9f9a74e9338ece74",
       "proofs": [
         "vitest:apps/web/src/lib/reader/readerDocumentPosition.unit.test.ts"
       ],
@@ -254,11 +254,13 @@
     {
       "id": "reader-position-end-locus-bypass",
       "patch": "testdata/faults/reader-position-end-locus-bypass.patch",
-      "sha256": "6bfaf98df60d77e179033fdc3a401c1623dfe8de5cc20cf91fad7c3af3859fc3",
+      "sha256": "2c5e4abfad0f864d9eb50f848d7501a2a405f326bfd790951fe8d405c51aa82d",
       "proofs": [
         "pytest:python/tests/service/test_reader_document_positions.py::test_epub_navigation_and_document_map_share_exact_canonical_positions"
       ],
-      "expected_failure": "Document Map used non-canonical section positions"
+      "expected_failure": "Document Map used non-canonical section positions",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "25625e72d8cd5c42c900dbebbd183084766564eee8553aa5f162c65baa406f33"
     },
     {
       "id": "durable-job-fence-bypass",
@@ -614,11 +616,11 @@
     {
       "id": "document-map-pulse-early-release",
       "patch": "testdata/faults/document-map-pulse-early-release.patch",
-      "sha256": "82528e07945fac0efaf1046d365f634481b250c8161e0057e982c1c5501cf395",
+      "sha256": "024fdce01f7221de7a754e72c0db4baabb10afa880b5f8683b6ffe7f9e9ad796",
       "proofs": [
         "vitest:apps/web/src/lib/reader/usePendingDocumentMapPulse.browser.test.tsx"
       ],
-      "expected_failure": "Interrupted render did not retain the pending Document Map highlight"
+      "expected_failure": "document map decoration escaped before exact source arrival"
     },
     {
       "id": "pdf-committed-highlight-projection-bypass",
@@ -632,11 +634,11 @@
     {
       "id": "epub-structural-anchor-preservation-bypass",
       "patch": "testdata/faults/epub-structural-anchor-preservation-bypass.patch",
-      "sha256": "8648d13fc976360e288023344616f34819494977f82e96bbe71fc1d6c0746c35",
+      "sha256": "739b5e11fdc2a27f155d529d14f5b9d55cc4e77c8a54725012ffba6df7190f98",
       "proofs": [
-        "pytest:python/tests/service/test_epub_structural_anchors.py::test_epub_ingest_repairs_structural_anchors_without_reordering_intervals"
+        "pytest:python/tests/service/test_epub_structural_anchors.py::test_epub_structure_preserves_semantic_sections_across_render_units"
       ],
-      "expected_failure": "structural-anchor EPUB did not produce an extraction plan"
+      "expected_failure": "source structure was omitted"
     },
     {
       "id": "epub-offset-interval-validation-bypass",
@@ -1162,6 +1164,91 @@
       "expected_failure": "trust projection omitted durable machine authorship from a successful additive write",
       "changed_owner_red": "coherent-fault",
       "changed_owner_sha256": "5dccea7777434a3de061b5827166f28a44da2d46ff10fafe2bd9d7f19b7c5cad"
+    },
+    {
+      "id": "reader-map-transitive-cluster-bypass",
+      "patch": "testdata/faults/reader-map-transitive-cluster-bypass.patch",
+      "sha256": "0ff0c364358740c888b8091f4fa2617f504bf0d720cc2dd4eb9ccfa3a4c3fc55",
+      "proofs": [
+        "vitest:apps/web/src/components/reader/ReaderDocumentMapOverviewRail.browser.test.tsx"
+      ],
+      "expected_failure": "transitive neighbors collapsed document-wide chapter structure"
+    },
+    {
+      "id": "reader-structure-cursor-migration-bypass",
+      "patch": "testdata/faults/reader-structure-cursor-migration-bypass.patch",
+      "sha256": "68093212b033add5a6d9853d985e53681aefd6b09443c929eb4e03b04690f422",
+      "proofs": [
+        "pytest:python/tests/migrations/test_reader_structure_migration.py::test_reader_structure_repair_preserves_fragment_identity_and_cursor"
+      ],
+      "expected_failure": "reader structure migration changed accepted progress or failed exact fragment conversion"
+    },
+    {
+      "id": "reader-map-detail-scope-follow-bypass",
+      "patch": "testdata/faults/reader-map-detail-scope-follow-bypass.patch",
+      "sha256": "d135a858e59c4023ba6e4b822204a0c457d12f147542ece8e4847c003044446f",
+      "proofs": [
+        "vitest:apps/web/src/components/reader/ReaderDocumentMapDetail.browser.test.tsx"
+      ],
+      "expected_failure": "outside this section"
+    },
+    {
+      "id": "offline-reading-account-binding-reader-version-bypass",
+      "patch": "testdata/faults/offline-reading-account-binding-reader-version-bypass.patch",
+      "sha256": "a55ac29e02595aef9aa38824cc5e6a1252ad264a8c5382cb887e46ac89fe4998",
+      "proofs": [
+        "pytest:python/tests/service/test_offline_reading_package_delivery.py::test_direct_package_is_account_generation_integrity_and_replay_bound"
+      ],
+      "expected_failure": "account binding must advertise archive1 and reader2/bundle2",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "e9b2d5c71d194ea5bcd7cc74b5b09abba0c498787ebca12c3a4cde18114bc851"
+    },
+    {
+      "id": "offline-reader-pixel-offset-bypass",
+      "patch": "testdata/faults/offline-reader-pixel-offset-bypass.patch",
+      "sha256": "973a985d9df677934841511b87b57909b0cfd98d9632a91ada4c7e45f23a0be4",
+      "proofs": [
+        "vitest:apps/web/src/lib/offlineReading/OfflineReading.browser.test.tsx"
+      ],
+      "expected_failure": "offline reading must persist the exact canonical source offset"
+    },
+    {
+      "id": "epub-reader-cursor-source-admission-bypass",
+      "patch": "testdata/faults/epub-reader-cursor-source-admission-bypass.patch",
+      "sha256": "b6e697be0f8d71271d01e644393028df33a9fdc66bf242f6948522f37dfa5819",
+      "proofs": [
+        "pytest:python/tests/service/test_epub_reader_cursor_admission.py::test_epub_cursor_admits_only_owned_exact_offsets_or_unique_source_anchors"
+      ],
+      "expected_failure": "unrestorable EPUB source address was accepted",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "3a71fc2c5d034a5ab96a416e1218edf0bc01a5ab2734bf81d7dd8096b067a02d"
+    },
+    {
+      "id": "offline-reading-unsupported-package-progress-deletion",
+      "patch": "testdata/faults/offline-reading-unsupported-package-progress-deletion.patch",
+      "sha256": "c2f43ca71ff1b8851df24cde8c6bd6ecde6eea8e7d8c30fe342adbe368b215de",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingStoreLifecycleTest.kt"
+      ],
+      "expected_failure": "unsupported reader package erased progress row"
+    },
+    {
+      "id": "epub-evidence-legacy-section-requirement",
+      "patch": "testdata/faults/epub-evidence-legacy-section-requirement.patch",
+      "sha256": "fd45b44ef69ae7ba75f8aba96c01bf36574db2d2641e9fbe4f42440c6a07d171",
+      "proofs": [
+        "vitest:apps/web/src/app/(authenticated)/media/[id]/mediaEvidenceResolution.unit.test.ts"
+      ],
+      "expected_failure": "EPUB evidence must decode its exact fragment address"
+    },
+    {
+      "id": "offline-epub-source-path-uri-interpretation",
+      "patch": "testdata/faults/offline-epub-source-path-uri-interpretation.patch",
+      "sha256": "fd91aed0b6dbeb3206a5fd941180c9a65e6a84ffab1cbfa9791f8c90c8d80494",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingSharedContractTest.kt"
+      ],
+      "expected_failure": "shared accepted reader failed admission: epub-literal-space-source-path"
     }
   ]
 }
