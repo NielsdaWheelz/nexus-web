@@ -348,3 +348,11 @@ timeouts while scanning synapses, leaving inherited work pending. Deploy the
 current execution cutover, then prove the backlog converges without new
 unexpected timeouts. See
 [docs/tickets/production-synapse-scan-statement-timeout-backlog.md](tickets/production-synapse-scan-statement-timeout-backlog.md).
+
+### [OPEN] OI-061 — Oracle-host replay received an unowned SIGTERM
+testing · opened 2026-09-12 by Codex (production deployment) · P1
+A canonical kernel run lost one fault-replay subprocess to an unexplained
+SIGTERM that twelve exact signal-traced repetitions could not reproduce.
+Capture the sender under the full kernel portfolio before changing lifecycle
+behavior. See
+[docs/tickets/oracle-host-replay-received-unowned-sigterm.md](tickets/oracle-host-replay-received-unowned-sigterm.md).
