@@ -288,9 +288,9 @@ def resolved_highlight_reader_target(
         quads: list[HighlightTargetPdfQuadOut] = []
         for raw in pdf_quads:
             quad = HighlightTargetPdfQuadOut.model_validate(raw)
-            if not all(0 <= x <= page_width for x in (quad.x1, quad.x2, quad.x3, quad.x4)) or not all(
-                0 <= y <= page_height for y in (quad.y1, quad.y2, quad.y3, quad.y4)
-            ):
+            if not all(
+                0 <= x <= page_width for x in (quad.x1, quad.x2, quad.x3, quad.x4)
+            ) or not all(0 <= y <= page_height for y in (quad.y1, quad.y2, quad.y3, quad.y4)):
                 return None
             quads.append(quad)
         return PdfPageGeometryTargetOut(page_number=page_number, quads=quads)
