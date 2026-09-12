@@ -365,6 +365,5 @@ unexpected timeouts. See
 - [open] oi-074 · test infrastructure · 2026-09-11 reader verification · host release harness cannot establish worker-owned parser directory: [ticket](tickets/test-host-release-worker-owner-privilege.md).
 - [open] oi-075 · epub ingest · 2026-09-12 source review · decoded reserved delimiters make stored source urls ambiguous: [ticket](tickets/epub-normalized-href-reserved-delimiters.md).
 - [open] oi-076 · import progress · 2026-09-12 source review · extraction progress calls spine files chapters: [ticket](tickets/epub-import-progress-counts-files-as-chapters.md).
-- [open] oi-077 · offline reader · 2026-09-12 native review · native admission interprets literal source filenames as urls: [ticket](tickets/offline-epub-source-path-validator-disagreement.md).
 - [open] oi-078 · web build · 2026-09-12 offline artifact · css minifier warns on existing custom-highlight syntax: [ticket](tickets/offline-css-minifier-rejects-highlight-syntax.md).
 - [open] oi-079 · test controller · 2026-09-12 sensitivity · fault registry rejects literal next route brackets: [ticket](tickets/fault-registry-rejects-literal-route-brackets.md).

@@ -244,3 +244,9 @@ books and temporary proofs remain outside git. no production data was changed.
   the controller's assertion classification remains strict. normal gradle test
   output now retains full exception messages without stack frames, keeping the
   assertion and case identity within the controller's bounded output tail.
+- native `2cb243a45b4aeeb2` passes deliberate-fault sensitivity: adding the old
+  java uri parser rejects the shared literal-space case at its named assertion;
+  the clean candidate passes the host suite. together with python
+  `f1745188b5743c88` and web `3df66a0922474b48`, the three decoders agree on the
+  literal-path corpus. oi-077 is resolved and its ticket removed. unsupported
+  pending-progress fault sensitivity remains separate and pending.
