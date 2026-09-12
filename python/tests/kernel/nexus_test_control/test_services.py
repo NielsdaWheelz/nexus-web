@@ -504,6 +504,74 @@ def test_owned_process_cleanup_rejects_a_different_owner_without_signaling(
         clean_run(tmp_path, TEST_ENV, RUN_ID)
 
 
+def _install_scope_retirement_systemctl(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    unit_disappears: bool,
+) -> Path:
+    fake_bin = tmp_path / "fake-scope-systemctl"
+    fake_bin.mkdir()
+    calls = tmp_path / "systemctl-calls"
+    systemctl = fake_bin / "systemctl"
+    systemctl.write_text(
+        "#!/usr/bin/env python3\n"
+        "import pathlib,sys\n"
+        f"calls=pathlib.Path({json.dumps(str(calls))})\n"
+        f"unit_disappears={unit_disappears!r}\n"
+        "arguments=sys.argv[1:]\n"
+        "prior=calls.read_text(encoding='utf-8').splitlines() if calls.exists() else []\n"
+        "calls.write_text('\\n'.join((*prior,'\\t'.join(arguments)))+'\\n',encoding='utf-8')\n"
+        "if arguments[1]=='show':\n"
+        "    shows=sum(row.startswith('--user\\tshow\\t') for row in prior)+1\n"
+        "    if shows==1 or not unit_disappears:\n"
+        "        print('LoadState=loaded\\nControlGroup=')\n"
+        "    else:\n"
+        "        print('LoadState=not-found\\nControlGroup=')\n"
+        "    raise SystemExit(0)\n"
+        "if arguments[1]=='stop':\n"
+        "    raise SystemExit(5)\n"
+        "raise SystemExit(64)\n",
+        encoding="utf-8",
+    )
+    systemctl.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+    return calls
+
+
+def test_linux_scope_retirement_accepts_collection_racing_the_stop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if sys.platform != "linux":
+        with pytest.raises(RuntimeContractError, match="requested on another platform"):
+            services._retire_linux_process_scope(RUN_ID, "a" * 32)
+        return
+    calls = _install_scope_retirement_systemctl(tmp_path, monkeypatch, unit_disappears=True)
+
+    services._retire_linux_process_scope(RUN_ID, "a" * 32)
+
+    assert [row.split("\t")[1] for row in calls.read_text(encoding="utf-8").splitlines()] == [
+        "show",
+        "stop",
+        "show",
+    ]
+
+
+def test_linux_scope_retirement_rejects_stop_failure_while_scope_remains(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if sys.platform != "linux":
+        with pytest.raises(RuntimeContractError, match="requested on another platform"):
+            services._retire_linux_process_scope(RUN_ID, "a" * 32)
+        return
+    _install_scope_retirement_systemctl(tmp_path, monkeypatch, unit_disappears=False)
+
+    with pytest.raises(RuntimeContractError, match="scope could not be stopped"):
+        services._retire_linux_process_scope(RUN_ID, "a" * 32)
+
+
 def test_owned_process_cleanup_waits_for_exact_birth_owner_to_finish_startup(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
@@ -640,6 +708,149 @@ def test_owned_process_cleanup_waits_for_exact_birth_owner_to_finish_startup(
             marker_path.unlink(missing_ok=True)
 
 
+def test_clean_reaps_the_exact_process_tree_when_linux_environment_becomes_unreadable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    initialize_runtime(tmp_path, TEST_ENV, _ports())
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    child_path = tmp_path / "separate-session-child.txt"
+    script = (
+        "import os,pathlib,signal,subprocess,sys; "
+        "owner_fd=os.environ.get('NEXUS_TEST_PROCESS_OWNER_FD'); "
+        "inherited=() if owner_fd is None else (int(owner_fd),); "
+        "child=subprocess.Popen((sys.executable,'-c','import signal; signal.pause()'),"
+        "start_new_session=True,pass_fds=inherited); "
+        "pathlib.Path(sys.argv[1]).write_text(str(child.pid)); "
+        "signal.pause()"
+    )
+    started = _start_owned_process(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        "api",
+        (sys.executable, "-c", script, str(child_path)),
+        cwd=tmp_path,
+        process_environment={"NEXUS_TEST_RUN_ID": RUN_ID},
+    )
+    child_pid = 0
+    try:
+        for _attempt in range(500):
+            if child_path.is_file():
+                child_pid = int(child_path.read_text(encoding="utf-8"))
+                break
+            threading.Event().wait(0.01)
+        assert child_pid > 1
+
+        if sys.platform == "linux":
+            with monkeypatch.context() as inaccessible_environment:
+                inaccessible_environment.setattr(
+                    services,
+                    "_linux_process_environment",
+                    lambda _process_id: (_ for _ in ()).throw(PermissionError()),
+                )
+                clean_run(tmp_path, TEST_ENV, RUN_ID)
+        else:
+            clean_run(tmp_path, TEST_ENV, RUN_ID)
+
+        assert not services._process_birth_identity_matches(
+            started.process_group_id,
+            started.process_start_token,
+        ), "the exact run-owned process survived cross-credential cleanup"
+        assert not _process_is_running(child_pid), (
+            "a separate-session descendant escaped its exact run-owned scope"
+        )
+        if sys.platform == "linux":
+            assert services._linux_process_scope_identities(RUN_ID, started.owner_token) is None, (
+                "the empty run-owned process scope survived cleanup"
+            )
+        assert read_runtime(tmp_path).owned_run_ids == ()
+    finally:
+        if RUN_ID in read_runtime(tmp_path).owned_run_ids:
+            clean_run(tmp_path, TEST_ENV, RUN_ID)
+        try:
+            os.killpg(started.process_group_id, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        if child_pid > 1:
+            try:
+                os.killpg(child_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+def test_clean_reaps_an_exact_legacy_process_when_linux_environment_becomes_unreadable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    initialize_runtime(tmp_path, TEST_ENV, _ports())
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    owner_token = "a" * 32
+    resource = Resource(ResourceKind.PROCESS, process_resource_identity(RUN_ID, "api"))
+    command = (sys.executable, "-c", "import signal; signal.pause()")
+    record_planned(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        resource,
+        external_id=owner_token,
+        command=command,
+    )
+    owner_descriptor: int | None = None
+    inherited_descriptors: tuple[int, ...] = ()
+    child_environment = {
+        **os.environ,
+        "NEXUS_ENV": "test",
+        "NEXUS_TEST_PROCESS_OWNER": owner_token,
+        "NEXUS_TEST_RUN_ID": RUN_ID,
+    }
+    if sys.platform == "darwin":
+        marker = services._process_owner_marker(tmp_path, RUN_ID, owner_token)
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        owner_descriptor = os.open(marker, os.O_CREAT | os.O_EXCL | os.O_RDONLY, 0o600)
+        inherited_descriptors = (owner_descriptor,)
+        child_environment["NEXUS_TEST_PROCESS_OWNER_FD"] = str(owner_descriptor)
+    try:
+        process = subprocess.Popen(
+            command,
+            env=child_environment,
+            start_new_session=True,
+            pass_fds=inherited_descriptors,
+        )
+    finally:
+        if owner_descriptor is not None:
+            os.close(owner_descriptor)
+    try:
+        start_token = services._process_start_token(process.pid)
+        record_created(
+            tmp_path,
+            TEST_ENV,
+            RUN_ID,
+            resource,
+            process_group_id=process.pid,
+            process_start_token=start_token,
+        )
+        if sys.platform == "linux":
+            with monkeypatch.context() as inaccessible_environment:
+                inaccessible_environment.setattr(
+                    services,
+                    "_linux_process_environment",
+                    lambda _process_id: (_ for _ in ()).throw(PermissionError()),
+                )
+                clean_run(tmp_path, TEST_ENV, RUN_ID)
+        else:
+            clean_run(tmp_path, TEST_ENV, RUN_ID)
+
+        process.wait(timeout=3)
+        assert read_runtime(tmp_path).owned_run_ids == ()
+    finally:
+        if RUN_ID in read_runtime(tmp_path).owned_run_ids:
+            clean_run(tmp_path, TEST_ENV, RUN_ID)
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+
+
 def test_clean_reaps_an_exact_created_process_that_exits_before_owner_scan(
     tmp_path: Path,
 ) -> None:
@@ -768,6 +979,10 @@ def test_clean_stops_owned_children_after_the_recorded_group_leader_exits(
         clean_run(tmp_path, TEST_ENV, RUN_ID)
 
         assert not _process_is_running(child_pid)
+        if sys.platform == "linux":
+            assert services._linux_process_scope_identities(RUN_ID, started.owner_token) is None, (
+                "the empty run-owned process scope survived leader-exit cleanup"
+            )
     finally:
         try:
             os.killpg(started.process_group_id, signal.SIGKILL)

@@ -1,4 +1,4 @@
-import type { BrowserContext, Page, Request } from "playwright/test";
+import type { BrowserContext, Page, Request, Response } from "playwright/test";
 import { ANDROID_PLAYER_PROTOCOL_VERSION } from "@/lib/player/androidPlayerProtocol";
 import { androidPlayerProtocolContractSha256 } from "../../androidPlayerProtocolCorpus";
 import {
@@ -37,8 +37,8 @@ const ENDED_SESSION_PASSWORD = "Nexus-ended-session-password-03!";
 const MAX_COOKIE_VALUE_BYTES = 3_800;
 const PLAYER_PROTOCOL_CONTRACT_SHA256 = androidPlayerProtocolContractSha256();
 
-function isSessionResolutionRequest(request: Request): boolean {
-  const target = new URL(request.url());
+function isSessionResolutionExchange(exchange: Request | Response): boolean {
+  const target = new URL(exchange.url());
   return (
     target.origin === webOrigin && target.pathname === "/auth/session/resolve"
   );
@@ -423,7 +423,7 @@ test("invited user chooses and replaces a password while scanner-safe acceptance
   await expireAccessToken(page.context(), rotated);
   const resolveRequests: { method: string; origin?: string; header?: string }[] = [];
   page.on("request", (request) => {
-    if (new URL(request.url()).pathname !== "/auth/session/resolve") {
+    if (!isSessionResolutionExchange(request)) {
       return;
     }
     resolveRequests.push({
@@ -432,12 +432,12 @@ test("invited user chooses and replaces a password while scanner-safe acceptance
       header: request.headers()["x-nexus-session"],
     });
   });
-  const refreshResolutionRequest = page.waitForRequest(
-    isSessionResolutionRequest,
+  const refreshResolutionResponse = page.waitForResponse(
+    isSessionResolutionExchange,
   );
   await gotoWithStrictCsp(page, "/browse");
-  await refreshResolutionRequest;
-  await expect(page).toHaveURL(/\/browse$/);
+  expect((await refreshResolutionResponse).status()).toBe(204);
+  await page.waitForURL(/\/browse$/, { waitUntil: "load" });
   expect(resolveRequests).toEqual([
     { method: "POST", origin: webOrigin, header: "Resolve" },
   ]);
@@ -450,14 +450,15 @@ test("invited user chooses and replaces a password while scanner-safe acceptance
     refresh_token: "terminal-refresh-token",
   });
   resolveRequests.length = 0;
-  const terminalResolutionRequest = page.waitForRequest(
-    isSessionResolutionRequest,
+  const terminalResolutionResponse = page.waitForResponse(
+    isSessionResolutionExchange,
   );
   await gotoWithStrictCsp(page, "/browse", { waitUntil: "commit" });
-  await terminalResolutionRequest;
-  await expect(page).toHaveURL(
+  expect((await terminalResolutionResponse).status()).toBe(401);
+  await page.waitForURL(
     (url) =>
       url.pathname === "/login" && url.searchParams.get("next") === "/browse",
+    { waitUntil: "load" },
   );
   const terminalFeedback = page.getByRole("status");
   await expect(
