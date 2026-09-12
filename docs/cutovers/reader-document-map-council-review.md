@@ -8,8 +8,9 @@ into arbitrarily large median-position clusters. changing length arithmetic
 alone would leave both failures intact.
 
 the implementation contract is now the [structure hard-cutover spec](reader-document-map-structure-hard-cutover.md).
-this review retains the research and rationale; it is not an implemented cutover. application code was
-not changed. the audit baseline is
+this review retains the research and rationale from the documentation-only audit.
+implementation and final evidence live in the [verification log](reader-document-map-verification.md).
+the audit baseline is
 `7fa89b88c8342bca9edfb46a6d20053c49555fb2`; external sources were checked on
 2026-09-11. the reported affected book is *shadow & claw* by gene wolfe.
 the findings below are static code findings unless explicitly identified as
@@ -17,20 +18,20 @@ product documentation, user reports, or design judgments. no runtime proof of
 that particular imported edition is claimed. the bounded read-only lookup
 could not connect to the existing dev database at `localhost:54320`; both
 ipv4 and ipv6 connections were refused before any query ran. the exact-book
-acceptance work is recorded in the [reproduction ticket](../tickets/reader-map-shadow-claw-reproduction.md).
+acceptance work is recorded in the [verification log](reader-document-map-verification.md#exact-edition-witnesses).
 
 ## demonstrated problems and existing strengths
 
 | finding | evidence and consequence | disposition |
 | --- | --- | --- |
-| missing epub headings | `epub_ingest.py:2536-2585` uses publisher toc entries, otherwise one fallback per xhtml fragment. a file containing many chapters can yield one navigation node. | [structure ticket](../tickets/reader-structure-epub-headings-missing.md) |
-| transitive visual collapse | `ReaderDocumentMapOverviewRail.tsx:590-607` joins each marker to its predecessor when their separation is below 24px, then displays the group at its median. highlights can bridge chapters. | [geometry ticket](../tickets/reader-map-transitive-marker-clusters.md) |
-| section extents lack semantic meaning | `epub_ingest.py:2599-2610` ends a section at the next target in the same fragment. a parent ends at its first child; a chapter cannot span files. this is a representation gap against the requested behavior. | [extent ticket](../tickets/reader-structure-epub-semantic-extents.md) |
-| current section follows navigation state | `MediaPaneBody.tsx:5692,5701` uses the loaded epub target or last selected web section. scrolling through headings in one resource does not update that identity. no section-local projection exists. | [current-section ticket](../tickets/reader-map-active-section-and-local-position.md) |
-| sequential navigation can reverse direction | ingest retains toc order within a fragment; previous/next uses adjacent navigation rows. the accepted structural-anchor fixture explicitly has targets out of source order. | [reading-order ticket](../tickets/reader-structure-epub-reading-order.md) |
-| themed decoration owns another progress history | the rail records viewport reach and dwell in local storage without reading intent, publication revision, or reset semantics. its displayed historical snapshot also stays stale during a session. | [marginalia ticket](../tickets/reader-map-marginalia-parallel-progress.md) |
-| offline web offsets mix coordinate spaces | `DocumentReaderSession.ts:204-220` puts document prefix sums into fields whose shared contract is fragment-relative. lengths 100 and 20 produce second-fragment bounds `[100,120]`, instead of `[0,20]`. | [offline ticket](../tickets/reader-map-offline-web-coordinate-mismatch.md) |
-| long colliding navigation ids can hang ingestion | `epub_ingest.py:2624-2647` appends a uniqueness suffix and then truncates it away. two targets sharing the first 255 characters can loop indefinitely. | [identity ticket](../tickets/reader-structure-long-section-id-loop.md) |
+| missing epub headings | `epub_ingest.py:2536-2585` uses publisher toc entries, otherwise one fallback per xhtml fragment. a file containing many chapters can yield one navigation node. | [resolved](reader-document-map-verification.md#final-focused-acceptance) |
+| transitive visual collapse | `ReaderDocumentMapOverviewRail.tsx:590-607` joins each marker to its predecessor when their separation is below 24px, then displays the group at its median. highlights can bridge chapters. | [resolved](reader-document-map-verification.md#final-focused-acceptance) |
+| section extents lack semantic meaning | `epub_ingest.py:2599-2610` ends a section at the next target in the same fragment. a parent ends at its first child; a chapter cannot span files. this is a representation gap against the requested behavior. | [resolved](reader-document-map-verification.md#final-focused-acceptance) |
+| current section follows navigation state | `MediaPaneBody.tsx:5692,5701` uses the loaded epub target or last selected web section. scrolling through headings in one resource does not update that identity. no section-local projection exists. | [resolved](reader-document-map-verification.md#final-focused-acceptance) |
+| sequential navigation can reverse direction | ingest retains toc order within a fragment; previous/next uses adjacent navigation rows. the accepted structural-anchor fixture explicitly has targets out of source order. | [resolved](reader-document-map-verification.md#final-focused-acceptance) |
+| themed decoration owns another progress history | the rail records viewport reach and dwell in local storage without reading intent, publication revision, or reset semantics. its displayed historical snapshot also stays stale during a session. | [resolved](reader-document-map-verification.md#final-focused-acceptance) |
+| offline web offsets mix coordinate spaces | `DocumentReaderSession.ts:204-220` puts document prefix sums into fields whose shared contract is fragment-relative. lengths 100 and 20 produce second-fragment bounds `[100,120]`, instead of `[0,20]`. | [resolved](reader-document-map-verification.md#final-focused-acceptance) |
+| long colliding navigation ids can hang ingestion | `epub_ingest.py:2624-2647` appends a uniqueness suffix and then truncates it away. two targets sharing the first 255 characters can loop indefinitely. | [resolved](reader-document-map-verification.md#final-focused-acceptance) |
 
 the core position investment is sound. the document-map service sums unique
 canonical fragments once, and source locators project through fragment prefix
@@ -44,8 +45,9 @@ passage, loads its fragment if necessary, and positions the reader. the audit
 does not establish that every marker click is broken. cluster buttons
 deliberately open a member list; the current-position band and themed bud are
 inert; mobile deliberately uses a passive ribbon. those last behaviors are
-product-contract changes under the new request, recorded in the
-[interaction ticket](../tickets/reader-map-inert-position-and-mobile-controls.md).
+product-contract changes under the new request. implementation is complete;
+the [interaction ticket](../tickets/reader-map-inert-position-and-mobile-controls.md)
+retains the remaining operator accessibility review.
 
 the existing [canonical-position cutover](reader-document-map-canonical-position-hard-cutover.md)
 already says position is source truth and progress is a projection. its
@@ -474,10 +476,10 @@ same reachable destinations, including near document end.
 all executable proof goes through `./scripts/test`, using `changed` for
 focused owners, `prove` for defect sensitivity, and `pr` for the deterministic
 pre-merge portfolio. use the applicable offline/android capabilities when
-shared reader inputs or packaged assets change. existing offline-bundle
-verification debt remains in its [registered ticket](../tickets/offline-reader-bundle-drifted-for-five-phases.md);
-it must not be mistaken for a newly verified baseline. no application tests
-were run for this documentation-only audit.
+shared reader inputs or packaged assets change. the later implementation resolves
+offline-bundle verification debt in the
+[final native proof](reader-document-map-verification.md#final-focused-acceptance).
+no application tests were run for this original documentation-only audit.
 
 ## sources
 

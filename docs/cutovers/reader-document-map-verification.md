@@ -1,18 +1,19 @@
 # reader document map verification
 
-status: implementation in progress, branch `codex/reader-document-map`.
+status: implemented; final repository gates and operator acceptance pending.
+branch: `codex/reader-document-map`.
 base: `7fa89b88c8342bca9edfb46a6d20053c49555fb2`.
 contract: [hard cutover](reader-document-map-structure-hard-cutover.md).
 receipts live under `test-results/runs/<id>/summary.json` in the worktree named below.
 
 | boundary | behavioral red | current green | review |
 | --- | --- | --- | --- |
-| source extraction | `8e77c3ff3fc84ce3`, `e8f051ff1ff46e06`, `0c4f27f0500d19b3`, `ac3776e24d0e3399` | `f815c0ae8b2490bb`, `7bc0d286bf1bab87` | independent literal positions; exact heading ancestry, containers, aliases, tails, numbered entries and publisher/lexical boundaries reviewed |
+| source extraction | `8e77c3ff3fc84ce3`, `e8f051ff1ff46e06`, `0c4f27f0500d19b3`, `ac3776e24d0e3399` | `266ee9d2b5c3406e`, `7bc0d286bf1bab87` | independent literal positions; exact heading ancestry, containers, aliases, tails, numbered entries, publisher/lexical boundaries and repeated long-path identities reviewed |
 | publication/api | `7ff9ac2851cd984a` | `b7af98b43051abbc`, `d83e2e133eaabbde` | persisted positions, package kernel and final evidence/search consumers pass |
 | migration | `d12d8b1df08293be` in sibling `nexus-reader-structure-red` at base | `1df62fc821caee26` | atomic rollback, exact/anchor/manual cursor conversion, durable reference preservation and repeatability pass |
 | rail/browser | `fcf20dc59bbc7f22` | `bb3b9046b63d607f` | 31 ticks with 18px gaps collapse under predecessor grouping; fixed-cell hit groups keep exact source ticks |
-| offline | `2cb243a45b4aeeb2`, `176851af2da64494` (native sensitivity) | `bb3b9046b63d607f` (browser); same native receipts | reader2 only; unique content; exact canonical capture, bounded phone layout, literal paths and unsupported pending-progress preservation; pixel fault pending |
-| integration | `4cf713e3c75e2b98` (hosted eof regression) | exact editions `933ea7a501a0bd64`; journey pending | final source and renderer pass both natural phone-shelf witnesses; hosted journey remains open |
+| offline | `2cb243a45b4aeeb2`, `c5fae5708c454ef1` (native); `096a2704a6612428` (pixel sensitivity) | same sensitivity receipts; `bb3b9046b63d607f` | reader2 only; unique content; exact canonical capture, bounded phone layout, literal paths and unsupported pending-progress preservation; final packaged assets pass native host proof |
+| integration | `4cf713e3c75e2b98` (hosted eof); `8b0b983d002cd181` (restore-write sensitivity) | exact editions `933ea7a501a0bd64`; hosted `8b0b983d002cd181` | actual same-fragment section tracking, source-order toolbar, exact eof/reflow, quiet map/return/restore, away/back and reset pass |
 
 format/import/setup failures are not behavioral reds. `fecdacafad31ee49`
 exposed whitespace in the authored source fixture; adjacent source tags now
@@ -361,3 +362,52 @@ books and temporary proofs remain outside git. no production data was changed.
   continuity contract. that behavior remains. zoom shares their wrapper and can
   incorrectly renew reading eligibility; this separate control defect is
   [oi-081](../tickets/pdf-zoom-renews-reading-activity.md), outside map orientation.
+
+## final focused acceptance
+
+all following `./scripts/test prove --proof <owner> --against fault:<id>` runs
+use candidate `3bfa2e2db5`. every retained red reaches its registered assertion;
+every clean candidate passes. the registry names each exact owner and patch.
+
+| fault | red/green receipt |
+| --- | --- |
+| reader-restore-write-suppression-bypass | `8b0b983d002cd181` |
+| reader-position-fragment-prefix-bypass | `18fa8a23d4ba119a` |
+| reader-position-end-locus-bypass | `3d3cd6402f80c476` |
+| document-map-pulse-early-release | `d8d480a6a404202c` |
+| epub-structural-anchor-preservation-bypass | `3dae7bafc1f26d11` |
+| reader-map-transitive-cluster-bypass | `00e6ce31846dcf19` |
+| reader-structure-cursor-migration-bypass | `372632436febeebe` |
+| reader-map-detail-scope-follow-bypass | `c6cbe7a83935ec23` |
+| offline-reading-account-binding-reader-version-bypass | `980f0b30b5640e15` |
+| offline-reader-pixel-offset-bypass | `096a2704a6612428` |
+| epub-reader-cursor-source-admission-bypass | `9c8623df5b423c59` |
+| offline-reading-unsupported-package-progress-deletion | `c5fae5708c454ef1` |
+
+the final native run executes 186 host tests, including 16 request-router tests,
+against the regenerated `index-Y7sNzIEk.js` bundle and its manifests. this resolves
+oi-051's packaged-bundle verification debt; oi-052's selection defect remains.
+it is not physical-device or signed-promotion evidence.
+
+`./scripts/test changed python/tests/service/test_epub_structural_anchors.py`
+passes as `266ee9d2b5c3406e`: two physical resource paths share a 256-character
+prefix; duplicate and distinct publisher targets have bounded unique ids and
+repeat extraction retains those ids. canonical text and all independently
+specified offsets remain unchanged. generated heading ids depend on new fragment
+identities and are correctly excluded from cross-extraction identity equality.
+
+oi-061–068 and oi-070–073 are resolved at their software ownership boundaries.
+oi-070's original actual-book highlight clause is superseded by the approved
+available-target scope: the exact-edition witnesses use the offline shelf, whose
+annotation snapshots are an explicit non-goal. no actual-book highlight proof is
+claimed; the shared rail owner proves clipping preserves the original passage
+activation target.
+oi-071 combines real many-section exports, the independent source census, and
+strict one-to-one fragment/content decoding; its python export proof does not
+contain a literal 23-fragment/567-section paired-count assertion.
+
+[oi-069](../tickets/reader-map-inert-position-and-mobile-controls.md) retains
+manual assistive-technology and actual-touch review. pointer/keyboard proof and
+reviewed phone screenshots do not discharge it. mandatory repository gates and
+the predeployment drain/census/coordinated-artifact obligations above remain
+separate from these focused passes.

@@ -166,6 +166,13 @@ def _semantic_structure_epub(*, final_entry_number: int) -> bytes:
             f'<li><span id="{"group-" + "g" * 60}">Group {depth}</span><ol>{grouped_link}</ol></li>'
         )
     entries["nav.xhtml"] = entries["nav.xhtml"].replace(chapter_link, grouped_link)
+    # Distinct physical resources share more than the old 255-character id budget.
+    prefix = "segment/" * 32
+    for path in ("one.xhtml", "two%20.xhtml"):
+        entries[prefix + path] = entries.pop(path)
+    for path in ("book.opf", "nav.xhtml"):
+        entries[path] = entries[path].replace("one.xhtml", prefix + "one.xhtml")
+        entries[path] = entries[path].replace("two%2520.xhtml", prefix + "two%2520.xhtml")
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
@@ -185,17 +192,21 @@ def test_epub_structure_preserves_semantic_sections_across_render_units(
     storage = get_storage_client()
     storage.put_object(storage_path, payload, "application/epub+zip")
     try:
-        plan = build_epub_extraction_plan(
-            session_factory=create_session_factory(engine),
-            media_id=media_id,
-            attempt_id=uuid4(),
-            storage_path=storage_path,
-            source_size_bytes=len(payload),
-            expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-            storage_client=storage,
-            record_progress=lambda _completed, _total, _unit: None,
-        )
-        assert isinstance(plan, EpubExtractionPlan), plan
+        plans: list[EpubExtractionPlan] = []
+        for _ in range(2):
+            plan = build_epub_extraction_plan(
+                session_factory=create_session_factory(engine),
+                media_id=media_id,
+                attempt_id=uuid4(),
+                storage_path=storage_path,
+                source_size_bytes=len(payload),
+                expected_source_sha256=hashlib.sha256(payload).hexdigest(),
+                storage_client=storage,
+                record_progress=lambda _completed, _total, _unit: None,
+            )
+            assert isinstance(plan, EpubExtractionPlan), plan
+            plans.append(plan)
+        plan, repeated = plans
         locations = plan.nav_locations
         assert len([location for location in locations if location.label == "Part"]) == 1, (
             "a leading publisher anchor inside a heading must identify that same heading"
@@ -283,7 +294,7 @@ def test_epub_structure_preserves_semantic_sections_across_render_units(
             "kind": "Present",
             "value": {"fragment_idx": 5, "offset": 85},
         }
-        assert by_label["One"].location_id == "one.xhtml#one"
+        assert by_label["Chapter III"].location_id == "chapter.xhtml#chapter"
         assert by_label["One alias"].location_id != by_label["One"].location_id
         assert by_label["Two"].href_fragment.model_dump() == {
             "kind": "Present",
@@ -327,6 +338,28 @@ def test_epub_structure_preserves_semantic_sections_across_render_units(
         toc_by_id = {node.node_id: node for node in plan.toc_nodes}
         assert len(toc_by_id) == len(plan.toc_nodes)
         assert all(1 <= len(node.node_id) <= 255 for node in plan.toc_nodes)
+        one_path = ("segment/" * 32) + "one.xhtml"
+        two_path = ("segment/" * 32) + "two%20.xhtml"
+        assert one_path[:255] == two_path[:255] and one_path != two_path
+        assert by_label["One"].href_path == by_label["One alias"].href_path == one_path
+        assert by_label["Two"].href_path == two_path
+        assert by_label["Next"].href_path == two_path
+        assert 1 <= len(by_label["One"].location_id) <= 255
+        assert 1 <= len(by_label["One alias"].location_id) <= 255
+        assert 1 <= len(by_label["Next"].location_id) <= 255
+        assert len({by_label[label].location_id for label in ("One", "One alias", "Next")}) == 3
+        assert [node.node_id for node in repeated.toc_nodes] == [
+            node.node_id for node in plan.toc_nodes
+        ], "long source-target navigation ids must be stable across repeated extraction"
+        assert [
+            (location.source_node_id, location.location_id)
+            for location in repeated.nav_locations
+            if location.source in {"Publisher", "Both"}
+        ] == [
+            (location.source_node_id, location.location_id)
+            for location in plan.nav_locations
+            if location.source in {"Publisher", "Both"}
+        ], "long source-target section ids must be stable across repeated extraction"
         parent_id = toc_by_label["Chapter III"].parent_node_id
         for depth in range(6):
             assert parent_id is not None
