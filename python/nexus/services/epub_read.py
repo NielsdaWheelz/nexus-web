@@ -285,7 +285,7 @@ def rewrite_epub_fragment_links(
     fragment_ids_by_path: Mapping[str, UUID],
 ) -> str:
     """Bind stored package links to render units for hosted and offline readers."""
-    root = fragment_fromstring(html_sanitized, create_parent="div")
+    root = fragment_fromstring(html_sanitized, create_parent=True)
     for link in root.iter("a"):
         href = link.get("href")
         if not href:

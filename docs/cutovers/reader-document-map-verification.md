@@ -437,3 +437,9 @@ guard or sensitivity rule changes. full confidence rerun remains required.
 repair. full python formatting identifies one line-wrap in
 `offline_reading_package.py`; the formatter changes whitespace only. type
 checking and later capabilities have not yet run.
+
+`7a96515d9e5ad4ee` reaches full python type checking and finds one argument
+mismatch: lxml's installed stub accepts boolean `create_parent`. its installed
+implementation explicitly converts `True` to the same `div` wrapper, including
+leading-text handling. `epub_read.py` now uses that equivalent supported form;
+no type assertion or ignored diagnostic is introduced.
