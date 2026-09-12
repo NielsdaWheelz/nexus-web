@@ -157,6 +157,34 @@ def put_in_txn(
                     ApiErrorCode.E_INVALID_REQUEST,
                     "EPUB cursor anchor must identify one source element",
                 )
+    elif write.locator.kind == "web":
+        locator = write.locator
+        try:
+            fragment_id = UUID(locator.target.fragment_id)
+        except ValueError as exc:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, "Web cursor fragment identity must be canonical"
+            ) from exc
+        if str(fragment_id) != locator.target.fragment_id:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, "Web cursor fragment identity must be canonical"
+            )
+        char_count = db.scalar(
+            text("""
+                SELECT char_length(canonical_text) FROM fragments
+                WHERE media_id = :media_id AND id = :fragment_id
+            """),
+            {"media_id": media_id, "fragment_id": fragment_id},
+        )
+        if char_count is None:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, "Web cursor must address an owned source fragment"
+            )
+        offset = locator.locations.text_offset
+        if offset is not None and offset > char_count:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, "Web cursor offset exceeds its source fragment"
+            )
     row = (
         db.execute(
             _SELECT_CURSOR_SQL,

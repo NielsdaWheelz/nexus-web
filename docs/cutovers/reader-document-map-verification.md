@@ -617,6 +617,29 @@ open. production has not been changed.
   removed after the run. these are deterministic corpus results, not a universal
   unicode memory bound: retained wide strings and exceptionally large grapheme
   clusters remain explicit [oi-085](../tickets/epub-utf8-output-cap-does-not-bound-resident-text.md).
+- hosted `34703968888`, receipt `a6fe144cfaeee32b`, passes static, complete
+  kernel, service and component checks, then exposes a stale imports-history
+  assertion that migration 0227 must remain the catalog head. only that assertion
+  is removed; applied-revision, schema, index and data assertions remain.
+  `f2f2c4d7c921aa05` passes the complete migration suite and production bundle.
+  fifteen journeys pass before resource-action parity fails: its invented web
+  fragment `p0` was accepted, and the pane rethrows the resulting source conflict.
+- feedback regression `07fc15b94c0447e5` reproduces the missing finite
+  `E_READER_CONTENT_CHANGED` handling. admission regression `c8ae97e1669f4649`
+  proves that a missing web fragment was accepted. the existing cursor transaction
+  now checks canonical identity, media ownership and supplied codepoint bounds;
+  nullable web offsets remain supported. rejection preserves cursor revision and
+  engagement. the existing source-admission proof now parameterizes both formats
+  under one registered owner, retaining EPUB href/anchor cases and its fault.
+- the resource-action journey reads its actual fragment id and seeds consistent
+  start coordinates. four offline-fence fixtures use valid offset 20 instead of
+  out-of-range 80, preserving account/generation rejection as their sole cause.
+  `6d097686c00fc014` passes python/web static checks, the feedback kernel,
+  complete service and browser-component suites, the production bundle, and
+  routed ingestion, resource-action and sharing journeys. independent review
+  covers each changed boundary. stored web addresses remain a release-census
+  prerequisite; they are never guessed or silently reset. the separate observed
+  telemetry request-branding failure is [oi-086](../tickets/client-defect-telemetry-request-branding-failure.md).
 - [pr #238](https://github.com/NielsdaWheelz/nexus-web/pull/238) records the final
   native artifact proof, hosted check and merge disposition. the local
   pr-controller and operator/production-release limitations above remain separate.

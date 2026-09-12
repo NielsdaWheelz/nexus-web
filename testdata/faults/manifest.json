@@ -1217,11 +1217,11 @@
       "patch": "testdata/faults/epub-reader-cursor-source-admission-bypass.patch",
       "sha256": "b6e697be0f8d71271d01e644393028df33a9fdc66bf242f6948522f37dfa5819",
       "proofs": [
-        "pytest:python/tests/service/test_epub_reader_cursor_admission.py::test_epub_cursor_admits_only_owned_exact_offsets_or_unique_source_anchors"
+        "pytest:python/tests/service/test_reader_cursor_admission.py::test_document_cursor_admits_only_owned_source_addresses"
       ],
       "expected_failure": "unrestorable EPUB source address was accepted",
       "changed_owner_red": "coherent-fault",
-      "changed_owner_sha256": "3a71fc2c5d034a5ab96a416e1218edf0bc01a5ab2734bf81d7dd8096b067a02d"
+      "changed_owner_sha256": "1e14b0b67ceb58323559c01d4135daf530c02c6739900a9a650d7c64d3c4ee45"
     },
     {
       "id": "offline-reading-unsupported-package-progress-deletion",

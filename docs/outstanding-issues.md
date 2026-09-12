@@ -348,6 +348,7 @@ unexpected timeouts. See
 - [open] oi-081 · pdf activity · 2026-09-12 input review · zoom renews reading eligibility through the page-turn control wrapper: [ticket](tickets/pdf-zoom-renews-reading-activity.md).
 - [open] oi-084 · test controller · 2026-09-12 confidence interruption · interruption discards completed capability evidence and reports the wrong owner: [ticket](tickets/test-controller-interrupt-discards-completed-capabilities.md).
 - [open] oi-085 · epub extraction · 2026-09-12 memory review · utf-8 output caps do not bound retained unicode string memory: [ticket](tickets/epub-utf8-output-cap-does-not-bound-resident-text.md).
+- [open] oi-086 · client telemetry · 2026-09-12 reader verification · defect reports fail at next request forwarding with a private-member branding exception: [ticket](tickets/client-defect-telemetry-request-branding-failure.md).
 
 ### [OPEN] OI-061 — Test subprocesses received unowned SIGTERMs
 testing · opened 2026-09-12 by Codex (production deployment) · P1

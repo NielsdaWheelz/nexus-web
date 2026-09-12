@@ -279,7 +279,9 @@ rows b/d; no section-loading consumer survives by omission.
 ## hard-cut migration and release
 
 1. census affected media, source witnesses, cursor revisions, and old offline
-   packages. synchronize pending browser/native progress with the old deployed
+   packages. validate stored web cursor fragment ownership and supplied offset
+   bounds; an unresolved accepted address blocks release, never permits a guessed
+   location or silent reset. synchronize pending browser/native progress with the old deployed
    system before maintenance; inability to drain is a release blocker, never
    permission to discard it. stop old writers before changing schema.
 2. rebuild metadata from stored sanitized html, canonical text, source-fragment

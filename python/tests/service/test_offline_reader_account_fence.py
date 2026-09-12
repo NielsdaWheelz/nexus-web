@@ -167,7 +167,7 @@ def test_a_foreign_expected_account_is_refused_at_every_offline_progress_entry(
     """Read and write both refuse, and the canonical row is never touched."""
     with _committed_published_article(engine) as article:
         accepted = _cursor(article.fragment_id, offset=10)
-        rejected = _cursor(article.fragment_id, offset=80)
+        rejected = _cursor(article.fragment_id, offset=20)
         canonical = consumption.put_reader_cursor(
             article.viewer_id,
             article.media_id,

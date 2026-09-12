@@ -688,6 +688,11 @@ pure black/white to reduce halation under long sessions.
   (`{locator, base_revision}` — no wrapping envelope, no optional sibling
   block). Extra fields, old bare locators, and a top-level `null` clear are
   rejected with `400`.
+  - Web targets require a canonical UUID identifying a fragment owned by this
+    media. A supplied text offset must be within its canonical codepoint length,
+    including EOF; an absent offset remains absent. EPUB targets additionally
+    require the owned package href and an exact offset or unique source anchor.
+    Invalid addresses are rejected before cursor or engagement mutation.
   - Empty + matching `base_revision` writes a Positioned cursor at the next
     revision; only an absent row starts from `0`.
   - A matching `base_revision` replaces the cursor at `revision + 1`.
