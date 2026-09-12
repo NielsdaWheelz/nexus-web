@@ -787,7 +787,7 @@
       ],
       "expected_failure": "an old Extract failure and a recent Index event are two events, not one match",
       "changed_owner_red": "coherent-fault",
-      "changed_owner_sha256": "93638c36c9939857013db6258e9e6e97b631f0358f2f2c75c1e3447d6dc2e3f0"
+      "changed_owner_sha256": "9e0f3be75c02e145bb48ecf85899685ba630956146689cdf04c05452ca07737d"
     },
     {
       "id": "imports-pane-return-token-published-early",

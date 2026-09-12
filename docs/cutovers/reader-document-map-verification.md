@@ -531,3 +531,17 @@ links from closing oi-082/083. pr remains blocked by oi-058; confidence remains
 interrupted, with its evidence-loss defect in oi-084. manual accessibility/touch
 review and the predeployment drain/census/coordinated-artifact obligations remain
 open. production has not been changed.
+
+## merge verification
+
+- pr #238 integrates main `a8d1c0fbc18718047476159e01200621a4f67eb6`;
+  independent review found only the resolved issue-register conflict.
+- initial hosted changed run `34689643782`, receipt `a0bd98a0a1011f85`,
+  failed python static checks with 20 type errors before behavioral capabilities.
+  capture-failure callers now explicitly provide absent execution before enqueue;
+  reader and public-sharing projections retain typed identities and decode at
+  their existing schema boundaries. no suppression or fallback was added.
+- the imports owner gains a real rejected-capture/history case. its existing
+  correlation assertion is unchanged; its reviewed module-support digest is
+  refreshed for the new import. this CI failure is static red, not a behavioral
+  sensitivity receipt. final hosted verification is pending.

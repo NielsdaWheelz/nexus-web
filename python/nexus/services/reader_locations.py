@@ -287,18 +287,12 @@ def resolved_highlight_reader_target(
             return None
         quads: list[HighlightTargetPdfQuadOut] = []
         for raw in pdf_quads:
-            values = {
-                f"{axis}{index}": float(raw[f"{axis}{index}"])
-                for index in range(1, 5)
-                for axis in ("x", "y")
-            }
-            for index in range(1, 5):
-                if not (
-                    0 <= values[f"x{index}"] <= page_width
-                    and 0 <= values[f"y{index}"] <= page_height
-                ):
-                    return None
-            quads.append(HighlightTargetPdfQuadOut(**values))
+            quad = HighlightTargetPdfQuadOut.model_validate(raw)
+            if not all(0 <= x <= page_width for x in (quad.x1, quad.x2, quad.x3, quad.x4)) or not all(
+                0 <= y <= page_height for y in (quad.y1, quad.y2, quad.y3, quad.y4)
+            ):
+                return None
+            quads.append(quad)
         return PdfPageGeometryTargetOut(page_number=page_number, quads=quads)
     except (KeyError, TypeError, ValueError, ValidationError):
         return None
@@ -330,10 +324,15 @@ def _pdf_quad_origin(locator: Mapping[str, object]) -> tuple[float, float] | Non
     for quad in quads:
         if not isinstance(quad, dict):
             return None
-        y_values = [quad.get(f"y{index}") for index in range(1, 5)]
-        x_values = [quad.get(f"x{index}") for index in range(1, 5)]
-        if not all(isinstance(value, (int, float)) for value in (*x_values, *y_values)):
-            return None
-        tops.append(min(float(value) for value in y_values))
-        lefts.append(min(float(value) for value in x_values))
+        y_values: list[float] = []
+        x_values: list[float] = []
+        for index in range(1, 5):
+            y = quad.get(f"y{index}")
+            x = quad.get(f"x{index}")
+            if not isinstance(y, (int, float)) or not isinstance(x, (int, float)):
+                return None
+            y_values.append(float(y))
+            x_values.append(float(x))
+        tops.append(min(y_values))
+        lefts.append(min(x_values))
     return (min(tops), min(lefts))

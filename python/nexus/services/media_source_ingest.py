@@ -873,6 +873,7 @@ def accept_browser_article_capture(
             attempt_id=attempt.id,
             exc=exc,
             stage="upload",
+            execution_id=absent(),
         )
         db.commit()
         media = db.get(Media, media.id) or media
@@ -1228,6 +1229,7 @@ def accept_browser_file_capture(
                 f"Captured file is not a valid {kind.upper()}.",
             ),
             stage="upload",
+            execution_id=absent(),
         )
         db.commit()
         media = db.get(Media, media.id) or media
@@ -1260,6 +1262,7 @@ def accept_browser_file_capture(
             attempt_id=attempt.id,
             exc=exc,
             stage="upload",
+            execution_id=absent(),
         )
         db.commit()
         media = db.get(Media, media.id) or media

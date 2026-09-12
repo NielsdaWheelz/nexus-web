@@ -264,16 +264,15 @@ def _anchor_for_ref(
         if row is None:
             return None
         is_epub = str(row[2]) == "epub"
-        locator: dict[str, object] = {
-            "type": "epub_fragment_offsets" if is_epub else "web_text_offsets",
-            "media_id": str(media_id),
-            "fragment_id": str(ref.id),
-            "start_offset": 0,
-            "end_offset": min(1, len(str(row[1] or ""))),
-            "media_kind": str(row[2]),
-        }
         return ReaderConnectionAnchor(
-            locator=locator,
+            locator={
+                "type": "epub_fragment_offsets" if is_epub else "web_text_offsets",
+                "media_id": str(media_id),
+                "fragment_id": str(ref.id),
+                "start_offset": 0,
+                "end_offset": min(1, len(str(row[1] or ""))),
+                "media_kind": str(row[2]),
+            },
             order_key=f"fragment:{int(row[0]):010d}",
         )
     if ref.scheme == "highlight":
