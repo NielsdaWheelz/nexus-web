@@ -158,6 +158,7 @@ _STATUS_KEYS = frozenset(
     {"API_URL", "ANON_KEY", "PUBLISHABLE_KEY", "SECRET_KEY", "SERVICE_ROLE_KEY"}
 )
 _PROCESS_IDENTITY_GRACE_SECONDS = 2
+_LINUX_PROCESS_SCOPE_PREFIX = "nexus-test-process-"
 _EMBEDDING_PEER_FILES = ("ca.pem", "server-key.pem", "requests.jsonl")
 _PROVIDER_API_PEER_FILES = ("ca.pem", "server-key.pem", "requests.jsonl")
 _CODEX_GENERATION_PEER_AUDIT = "requests.jsonl"
@@ -1743,6 +1744,7 @@ def start_python_process(
     if role == "codex-generation-peer" and overrides:
         raise RuntimeContractError("Codex generation peer environment is controller-owned")
     owned_role_environment: dict[str, str] = {}
+    scope_properties: tuple[str, ...] = ()
     owned_environment = (
         {}
         if role
@@ -1833,20 +1835,10 @@ def start_python_process(
                 "NEXUS_AGENT_TOOLS_MCP_ORIGIN": (f"{mcp_endpoint}/internal/agent-tools/mcp"),
             }
         else:
-            systemd_run = _require_cgroup_delegate()
-            command = (
-                systemd_run,
-                "--user",
-                "--scope",
-                "--quiet",
-                "--collect",
-                "-p",
+            scope_properties = (
                 f"MemoryMax={BACKGROUND_WORKER_MEMORY_LIMIT_BYTES}",
-                "-p",
                 "MemorySwapMax=0",
-                "-p",
                 "OOMPolicy=continue",
-                *command,
             )
     else:
         raise RuntimeContractError(f"Python process role is not owned: {role}")
@@ -1865,7 +1857,6 @@ def start_python_process(
             "NODE_OPTIONS": f"--import={root / 'python/tests/testkit/node-network-guard.mjs'}",
             **(overrides or {}),
             **({"WORKER_LANE": role.removeprefix("worker-")} if role.startswith("worker-") else {}),
-            **(user_systemd_environment() if role == "worker-background" else {}),
             **owned_role_environment,
         }
     )
@@ -1877,6 +1868,7 @@ def start_python_process(
         command,
         cwd=root,
         process_environment=process_environment,
+        scope_properties=scope_properties,
     )
 
 
@@ -2381,9 +2373,32 @@ def _start_owned_process(
     *,
     cwd: Path,
     process_environment: Mapping[str, str],
+    scope_properties: tuple[str, ...] = (),
 ) -> StartedProcess:
     resource = Resource(ResourceKind.PROCESS, process_resource_identity(run_id, role))
     owner_token = secrets.token_hex(16)
+    if sys.platform == "linux":
+        scope_arguments = tuple(
+            argument
+            for property_value in scope_properties
+            for argument in ("--property", property_value)
+        )
+        command = (
+            _require_cgroup_delegate(),
+            "--user",
+            "--scope",
+            "--quiet",
+            "--collect",
+            f"--unit={_linux_process_scope_unit(run_id, owner_token)}",
+            *scope_arguments,
+            *command,
+        )
+        process_environment = {
+            **process_environment,
+            **user_systemd_environment(),
+        }
+    elif scope_properties:
+        raise RuntimeContractError("owned process cgroup properties require Linux")
     record_planned(
         root,
         environment,
@@ -3240,6 +3255,24 @@ def _stop_process_group(
             recorded_group_alive = False
         except PermissionError as exc:
             raise RuntimeContractError("owned process group could not be verified") from exc
+        if (
+            recorded_group_alive
+            and process_group_id not in owned_groups
+            and ledger_phase is ResourcePhase.CREATED
+            and process_start_token is not None
+            and _process_birth_identity_matches(process_group_id, process_start_token)
+            and sys.platform == "linux"
+        ):
+            try:
+                _linux_process_environment(process_group_id)
+            except PermissionError:
+                # A controller resumed through another local credential profile can
+                # retain the uid while Linux denies its access to /proc/<pid>/environ.
+                # The persisted uid, PID, process group, and birth token still identify
+                # the recorded leader exactly. New launches use a scope for descendants.
+                owned_groups[process_group_id] = process_start_token
+            except (FileNotFoundError, ProcessLookupError):
+                recorded_group_alive = False
         if not recorded_group_alive:
             if process_group_id in owned_groups:
                 raise RuntimeContractError(
@@ -3249,6 +3282,8 @@ def _stop_process_group(
             # it may have left behind (parent-death teardown races the ledger cleanup).
             for group_id in sorted(owned_groups):
                 _terminate_process_group(group_id)
+            if sys.platform == "linux":
+                _retire_linux_process_scope(run_id, owner_token)
             return
         if process_group_id in owned_groups:
             break
@@ -3296,9 +3331,11 @@ def _stop_process_group(
         ):
             raise RuntimeContractError("process group no longer belongs to the exact test run")
     # Terminate the recorded worker group and every bounded execution child it
-    # forked into its own session; all carry this run's one secret owner token.
+    # forked into its own session within the exact scope or owner marker.
     for group_id in sorted(owned_groups):
         _terminate_process_group(group_id)
+    if sys.platform == "linux":
+        _retire_linux_process_scope(run_id, owner_token)
 
 
 def _process_ledger_phase(
@@ -3418,6 +3455,14 @@ def _owned_process_identity_matches(
         if sys.platform == "darwin":
             marker = _process_owner_marker(repo_root, run_id, owner_token)
             return process_group_id in _darwin_owner_marker_holders(marker)
+        scoped_identities = _linux_process_scope_identities(run_id, owner_token)
+        if scoped_identities is not None:
+            return any(
+                process_id == process_group_id
+                and identity.process_group_id == process_group_id
+                and identity.start_token == process_start_token
+                for process_id, identity in scoped_identities
+            )
         process_environment = _linux_process_environment(process_group_id)
     except (OSError, ProcessLookupError, RuntimeContractError):
         return False
@@ -3673,6 +3718,110 @@ def _linux_owner_token_identities(
     return holder_identities
 
 
+def _linux_process_scope_unit(run_id: str, owner_token: str) -> str:
+    require_run_id(run_id)
+    if not re.fullmatch(r"[0-9a-f]{32}", owner_token):
+        raise RuntimeContractError("Linux process scope requires an exact owner token")
+    return f"{_LINUX_PROCESS_SCOPE_PREFIX}{run_id}-{owner_token}.scope"
+
+
+def _run_user_systemctl(*arguments: str) -> subprocess.CompletedProcess[str]:
+    systemctl = shutil.which("systemctl")
+    if systemctl is None:
+        raise RuntimeContractError("owned Linux process scope requires systemctl")
+    try:
+        return subprocess.run(
+            (systemctl, "--user", *arguments, "--no-pager"),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+            env=_child_environment(user_systemd_environment()),
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeContractError("owned Linux process scope command failed") from exc
+
+
+def _linux_process_scope_identities(
+    run_id: str,
+    owner_token: str,
+) -> list[tuple[int, _ProcessIdentity]] | None:
+    """Return every process in one exact owned Linux scope, or None for a legacy launch."""
+    if sys.platform != "linux":
+        raise RuntimeContractError("Linux process scope was requested on another platform")
+    unit = _linux_process_scope_unit(run_id, owner_token)
+    inspected = _run_user_systemctl(
+        "show",
+        unit,
+        "--property=LoadState",
+        "--property=ControlGroup",
+    )
+    if inspected.returncode != 0:
+        raise RuntimeContractError("owned Linux process scope inspection failed")
+    properties: dict[str, str] = {}
+    for row in inspected.stdout.splitlines():
+        key, separator, value = row.partition("=")
+        if separator != "=" or key in properties or key not in {"LoadState", "ControlGroup"}:
+            raise RuntimeContractError("owned Linux process scope output was malformed")
+        properties[key] = value
+    if set(properties) != {"LoadState", "ControlGroup"}:
+        raise RuntimeContractError("owned Linux process scope output was incomplete")
+    if properties["LoadState"] == "not-found" and not properties["ControlGroup"]:
+        return None
+    if properties["LoadState"] != "loaded":
+        raise RuntimeContractError("owned Linux process scope is not loaded")
+    control_group = properties["ControlGroup"]
+    if not control_group:
+        return []
+    cgroup_root = Path("/sys/fs/cgroup").resolve(strict=True)
+    user_service = (
+        cgroup_root / "user.slice" / f"user-{os.getuid()}.slice" / f"user@{os.getuid()}.service"
+    ).resolve(strict=True)
+    try:
+        scope = (cgroup_root / control_group.removeprefix("/")).resolve(strict=True)
+    except FileNotFoundError:
+        return []
+    if user_service not in scope.parents or scope.name != unit:
+        raise RuntimeContractError("owned Linux process scope escaped the user service")
+    process_ids: set[int] = set()
+    try:
+        process_files = tuple(scope.rglob("cgroup.procs"))
+        for process_file in process_files:
+            for row in process_file.read_text(encoding="ascii").splitlines():
+                if not row.isdecimal() or int(row) <= 1:
+                    raise RuntimeContractError("owned Linux process scope listed an unsafe process")
+                process_ids.add(int(row))
+    except FileNotFoundError:
+        return []
+    except OSError as exc:
+        raise RuntimeContractError("owned Linux process scope members could not be read") from exc
+    identities: list[tuple[int, _ProcessIdentity]] = []
+    for process_id in sorted(process_ids):
+        try:
+            identity = _read_process_identity(process_id)
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        except (OSError, RuntimeContractError) as exc:
+            raise RuntimeContractError(
+                "owned Linux process scope identity could not be read"
+            ) from exc
+        if identity.uid != os.getuid():
+            raise RuntimeContractError("owned Linux process scope contains a foreign process")
+        identities.append((process_id, identity))
+    return identities
+
+
+def _retire_linux_process_scope(run_id: str, owner_token: str) -> None:
+    if _linux_process_scope_identities(run_id, owner_token) is None:
+        return
+    unit = _linux_process_scope_unit(run_id, owner_token)
+    stopped = _run_user_systemctl("stop", unit)
+    if stopped.returncode != 0:
+        raise RuntimeContractError("owned Linux process scope could not be stopped")
+    if _linux_process_scope_identities(run_id, owner_token) is not None:
+        raise RuntimeContractError("owned Linux process scope was not collected")
+
+
 def _owned_process_group_map(
     repo_root: Path,
     run_id: str,
@@ -3681,16 +3830,21 @@ def _owned_process_group_map(
     """The process groups that make up one owned process's tree.
 
     An owned worker forks bounded execution children into their own sessions --
-    the containment design under proof here -- so a single owner token, a
-    per-launch secret, legitimately spans the worker's group and one group per
-    live child. Every carrier holds that secret, so each group is definitively
-    owned by this run and must be reaped. The value is the group leader's start
-    token when the leader itself carries the token, else ``None``.
+    the containment design under proof here -- so one Linux cgroup or inherited
+    Darwin owner marker legitimately spans the worker's group and one group per
+    live child. Legacy Linux launches retain their environment-token recovery
+    path. The value is the group leader's start token when the leader is still
+    present, else ``None``.
     """
     if sys.platform == "darwin":
         holders = _darwin_owner_marker_identities(repo_root, run_id, owner_token)
     elif sys.platform == "linux":
-        holders = _linux_owner_token_identities(run_id, owner_token)
+        scoped_holders = _linux_process_scope_identities(run_id, owner_token)
+        holders = (
+            _linux_owner_token_identities(run_id, owner_token)
+            if scoped_holders is None
+            else scoped_holders
+        )
     else:
         raise RuntimeContractError("owned process cleanup requires Linux or Darwin")
     groups: dict[int, str | None] = {}
