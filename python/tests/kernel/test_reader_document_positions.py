@@ -78,6 +78,52 @@ def test_requested_element_starts_survive_canonical_unicode_and_whitespace_norma
             },
             id="composition-keeps-intervening-mark-origin",
         ),
+        pytest.param(
+            '<p id="body">'
+            + "x" * 4095
+            + '<span id="starter">e</span><span id="accent">\u0301</span>'
+            '<span id="after">Z</span><a id="end"></a></p>',
+            "x" * 4095 + "\u00e9Z",
+            {
+                "body": (0, 4097),
+                "starter": (4095, 4096),
+                "accent": (4096, 4096),
+                "after": (4096, 4097),
+                "end": (4097, 4097),
+            },
+            id="batch-boundary-keeps-accent-and-global-origins",
+        ),
+        pytest.param(
+            '<p id="body">'
+            + "x" * 4095
+            + '<span id="lead">\u1100</span><span id="vowel">\u1161</span>'
+            '<span id="tail">\u11a8</span><span id="after">Z</span><a id="end"></a></p>',
+            "x" * 4095 + "\uac01Z",
+            {
+                "body": (0, 4097),
+                "lead": (4095, 4096),
+                "vowel": (4096, 4096),
+                "tail": (4096, 4096),
+                "after": (4096, 4097),
+                "end": (4097, 4097),
+            },
+            id="batch-boundary-keeps-hangul-starter-composition",
+        ),
+        pytest.param(
+            '<p id="body">'
+            + "x" * 4095
+            + '<span id="first">\u09c7</span><span id="second">\u09be</span>'
+            'Y<span id="after">Z</span><a id="end"></a></p>',
+            "x" * 4095 + "\u09cbYZ",
+            {
+                "body": (0, 4098),
+                "first": (4095, 4096),
+                "second": (4096, 4096),
+                "after": (4097, 4098),
+                "end": (4098, 4098),
+            },
+            id="batch-boundary-keeps-bengali-starter-composition",
+        ),
     ],
 )
 def test_source_boundaries_keep_exact_ranks_through_unicode_normalization(

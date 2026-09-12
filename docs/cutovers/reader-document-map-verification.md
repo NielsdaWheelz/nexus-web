@@ -590,7 +590,33 @@ open. production has not been changed.
   `71db3872d3ef5b19` passes static checks and the full service portfolio, including
   the existing article/epub export owner that reproduced the failure. independent
   review finds no corresponding mismatch in the other typed projections.
+- hosted `34698720878`, receipt `8ae128f42e7dc7eb`, passes static/kernel checks
+  but measures 370.8 mib on oversized epub rejection against the unchanged
+  352 mib parser budget. prior local greens did not establish sufficient
+  headroom. a trim-copy reduction alone still fails as `3603edcb7ff00697`.
+  phase diagnostic `9bdd5dcbfd701f7e` locates the peak inside whole-chapter
+  `unicodedata.normalize`, not source staging or fixture construction.
+- normalization now batches complete grapheme clusters using the existing
+  required `regex` dependency, with batch-local decomposition queues and
+  absolute source indices. both canonicalization paths share this owner.
+  [unicode's segmentation contract](https://www.unicode.org/reports/tr29/#Normalization)
+  preserves combining and conjoining sequences across normalization. deliberately
+  replacing grapheme batches with fixed codepoint slices produces assertion red
+  `7435cad75ba379f9`. literal accent, hangul and bengali cases also verify source
+  anchors after a batch boundary.
+- diagnostic green `3b6429c27a5fe6b3` measures 317.0 mib for the maximum-safe
+  book and 328.7 mib for oversized rejection. restoring the old whitespace
+  transforms passes as `fe60d42424e7a925` but raises the peak to 340.0 mib.
+  the shared whitespace scans remain for their measured 11.3 mib saving and
+  reduced duplication. the cost is a broader whitespace implementation change;
+  independent review and literal text/source-range proofs cover its semantics.
+  all temporary diagnostics are removed; `epub_ingest.py` has no follow-up diff.
+- final uninstrumented `91a03ce555754bff` passes python static checks, the latest
+  literal boundary owner, and the complete service portfolio, including both
+  supplied editions' source/export witnesses. the temporary private owner is
+  removed after the run. these are deterministic corpus results, not a universal
+  unicode memory bound: retained wide strings and exceptionally large grapheme
+  clusters remain explicit [oi-085](../tickets/epub-utf8-output-cap-does-not-bound-resident-text.md).
 - [pr #238](https://github.com/NielsdaWheelz/nexus-web/pull/238) records the final
   native artifact proof, hosted check and merge disposition. the local
-  pr-controller and operator/
-  production-release limitations above remain separate.
+  pr-controller and operator/production-release limitations above remain separate.

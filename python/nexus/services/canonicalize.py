@@ -30,15 +30,17 @@ import re
 import unicodedata
 from array import array
 from bisect import bisect_right
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 
+import regex
 from lxml.etree import HTMLParser
 
 from nexus.schemas.presence import Presence, Present, absent, present
 
 HEADING_TAGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
 STRUCTURAL_TAGS = frozenset({"section", "article"})
+_NFC_BATCHES = regex.compile(r"(?:\X){1,4096}")
 
 
 @dataclass(frozen=True)
@@ -323,63 +325,93 @@ def canonicalize_structure(html_sanitized: str) -> CanonicalStructure:
 
 def _canonical_text_without_sources(raw_text: str) -> str:
     """Apply the exact canonical transform without per-character source arrays."""
-    normalized_text = unicodedata.normalize("NFC", raw_text)
+    normalized_text = "".join(
+        normalized for _start, _raw, normalized in _normalized_batches(raw_text)
+    )
     return _trim_lines_without_sources(_collapse_blank_lines_without_sources(normalized_text))
+
+
+def _normalized_batches(text: str) -> Iterator[tuple[int, str, str]]:
+    """Normalize across whole grapheme clusters, whose boundaries survive NFC."""
+    if text.isascii():
+        yield 0, text, text
+        return
+    for match in _NFC_BATCHES.finditer(text):
+        raw = match[0]
+        yield match.start(), raw, unicodedata.normalize("NFC", raw)
 
 
 def _collapse_blank_lines_without_sources(text: str) -> str:
     chunks: list[str] = []
+    start = 0
+    for first, end in _blank_line_runs(text):
+        if end - first == 2:
+            continue
+        chunks.append(text[start:first])
+        chunks.append("\n\n")
+        start = end
+    if not chunks:
+        return text
+    chunks.append(text[start:])
+    return "".join(chunks)
+
+
+def _blank_line_runs(text: str) -> Iterator[tuple[int, int]]:
+    """Yield whitespace runs containing at least two newlines."""
     index = 0
     while index < len(text):
         newline = text.find("\n", index)
         if newline == -1:
-            chunks.append(text[index:])
             break
-        if newline > index:
-            chunks.append(text[index:newline])
-        index = newline
-
-        end = index + 1
+        end = newline + 1
         newline_count = 1
         while end < len(text) and _is_whitespace(text[end]):
             if text[end] == "\n":
                 newline_count += 1
             end += 1
         if newline_count < 2:
-            chunks.append("\n")
-            index += 1
+            index = newline + 1
             continue
-        chunks.append("\n\n")
+        yield newline, end
         index = end
-    return "".join(chunks)
 
 
 def _trim_lines_without_sources(text: str) -> str:
-    chunks: list[str] = []
-    line_start = 0
-    while line_start <= len(text):
-        newline = text.find("\n", line_start)
-        line_end = len(text) if newline == -1 else newline
+    return "".join(text[start:end] for start, end in _trimmed_spans(text))
+
+
+def _trimmed_spans(text: str) -> Iterator[tuple[int, int]]:
+    """Yield contiguous source spans after line and document-edge whitespace trim."""
+    start = 0
+    while start < len(text) and _is_whitespace(text[start]):
+        start += 1
+    end = len(text)
+    while end > start and _is_whitespace(text[end - 1]):
+        end -= 1
+    span_start = start
+    line_start = start
+    while line_start < end:
+        newline = text.find("\n", line_start, end)
+        line_end = end if newline == -1 else newline
         first = line_start
         while first < line_end and _is_whitespace(text[first]):
             first += 1
-        last = line_end - 1
-        while last >= first and _is_whitespace(text[last]):
+        last = line_end
+        while last > first and _is_whitespace(text[last - 1]):
             last -= 1
-        if first <= last:
-            chunks.append(text[first : last + 1])
+        if first > line_start:
+            if span_start < line_start:
+                yield span_start, line_start
+            span_start = first
+        if last < line_end:
+            if span_start < last:
+                yield span_start, last
+            span_start = line_end
         if newline == -1:
             break
-        chunks.append("\n")
         line_start = newline + 1
-    line_trimmed = "".join(chunks)
-    start = 0
-    while start < len(line_trimmed) and _is_whitespace(line_trimmed[start]):
-        start += 1
-    end = len(line_trimmed)
-    while end > start and _is_whitespace(line_trimmed[end - 1]):
-        end -= 1
-    return line_trimmed[start:end]
+    if span_start < end:
+        yield span_start, end
 
 
 def _canonical_text_with_offsets(
@@ -416,120 +448,86 @@ def _canonical_text_with_offsets(
 
 def _collapse_blank_lines(text: str, sources: array) -> tuple[str, array]:
     chunks: list[str] = []
+    text_start = 0
+    source_start = 0
     written = 0
-    index = 0
     # Move surviving spans within the packed buffer; slicing an array copies it.
     with memoryview(sources) as source_view:
-        while index < len(text):
-            newline = text.find("\n", index)
-            span_end = len(text) if newline == -1 else newline
-            if span_end > index:
-                chunks.append(text[index:span_end])
-                length = span_end - index
-                source_view[written : written + length] = source_view[index:span_end]
-                written += length
-            if newline == -1:
-                break
-            index = newline
-
-            end = index + 1
-            newline_count = 1
-            while end < len(text) and _is_whitespace(text[end]):
-                if text[end] == "\n":
-                    newline_count += 1
-                end += 1
-            if newline_count < 2:
-                chunks.append("\n")
-                sources[written] = sources[index]
-                written += 1
-                index += 1
-                continue
-            collapsed_source = min(source_view[index:end])
-            chunks.append("\n\n")
+        for first, end in _blank_line_runs(text):
+            length = first - source_start
+            source_view[written : written + length] = source_view[source_start:first]
+            written += length
+            collapsed_source = min(source_view[first:end])
             sources[written] = collapsed_source
             sources[written + 1] = collapsed_source
             written += 2
-            index = end
+            source_start = end
+            if end - first > 2:
+                chunks.append(text[text_start:first])
+                chunks.append("\n\n")
+                text_start = end
+        length = len(text) - source_start
+        source_view[written : written + length] = source_view[source_start:]
+        written += length
     del sources[written:]
+    if not chunks:
+        return text, sources
+    chunks.append(text[text_start:])
     return "".join(chunks), sources
 
 
 def _trim_lines(text: str, sources: array) -> tuple[str, array]:
     chunks: list[str] = []
     written = 0
-    line_start = 0
     with memoryview(sources) as source_view:
-        while line_start <= len(text):
-            newline = text.find("\n", line_start)
-            line_end = len(text) if newline == -1 else newline
-            first = line_start
-            while first < line_end and _is_whitespace(text[first]):
-                first += 1
-            last = line_end - 1
-            while last >= first and _is_whitespace(text[last]):
-                last -= 1
-            if first <= last:
-                chunks.append(text[first : last + 1])
-                length = last + 1 - first
-                source_view[written : written + length] = source_view[first : last + 1]
-                written += length
-            if newline == -1:
-                break
-            chunks.append("\n")
-            sources[written] = sources[newline]
-            written += 1
-            line_start = newline + 1
-
-    line_trimmed = "".join(chunks)
-    start = 0
-    while start < len(line_trimmed) and _is_whitespace(line_trimmed[start]):
-        start += 1
-    end = len(line_trimmed)
-    while end > start and _is_whitespace(line_trimmed[end - 1]):
-        end -= 1
-    with memoryview(sources) as source_view:
-        source_view[: end - start] = source_view[start:end]
-    del sources[end - start :]
-    return line_trimmed[start:end], sources
+        for start, end in _trimmed_spans(text):
+            chunks.append(text[start:end])
+            length = end - start
+            source_view[written : written + length] = source_view[start:end]
+            written += length
+    del sources[written:]
+    return "".join(chunks), sources
 
 
 def _normalize_nfc_with_sources(
     text: str, boundaries: Sequence[int], source_type: str
 ) -> tuple[str, array]:
-    normalized_text = unicodedata.normalize("NFC", text)
-    if normalized_text == text:
-        return normalized_text, array(
-            source_type, (bisect_right(boundaries, source) for source in range(len(text)))
-        )
-
-    # Boundary buckets preserve order and minima without storing absolute offsets
-    # for every character. Reordering and trimming retain those same buckets.
-    decomposed_sources: dict[str, array] = {}
-    for source, original_char in enumerate(text):
-        source_bucket = bisect_right(boundaries, source)
-        for decomposed_char in unicodedata.normalize("NFD", original_char):
-            if decomposed_char not in decomposed_sources:
-                decomposed_sources[decomposed_char] = array(source_type)
-            decomposed_sources[decomposed_char].append(source_bucket)
-    source_positions = dict.fromkeys(decomposed_sources, 0)
+    normalized_chunks: list[str] = []
     normalized_sources = array(source_type)
-    for char in normalized_text:
-        source_start = len(boundaries)
-        for decomposed_char in unicodedata.normalize("NFD", char):
-            positions = decomposed_sources[decomposed_char]
-            position = source_positions[decomposed_char]
-            source_start = min(source_start, positions[position])
-            if position + 1 == len(positions):
-                del decomposed_sources[decomposed_char]
-                del source_positions[decomposed_char]
-            elif (position + 1) * 2 >= len(positions):
-                # Release consumed offsets while the normalized output grows.
-                del positions[: position + 1]
-                source_positions[decomposed_char] = 0
-            else:
-                source_positions[decomposed_char] = position + 1
-        normalized_sources.append(source_start)
-    return normalized_text, normalized_sources
+    for start, raw, normalized in _normalized_batches(text):
+        normalized_chunks.append(normalized)
+        if normalized == raw:
+            normalized_sources.extend(
+                bisect_right(boundaries, source) for source in range(start, start + len(raw))
+            )
+            continue
+
+        # Monotone boundary buckets preserve source order and composition minima.
+        # Queues belong to this normalization-safe batch, not the whole document.
+        decomposed_sources: dict[str, array] = {}
+        for source, original_char in enumerate(raw, start=start):
+            source_bucket = bisect_right(boundaries, source)
+            for decomposed_char in unicodedata.normalize("NFD", original_char):
+                if decomposed_char not in decomposed_sources:
+                    decomposed_sources[decomposed_char] = array(source_type)
+                decomposed_sources[decomposed_char].append(source_bucket)
+        source_positions = dict.fromkeys(decomposed_sources, 0)
+        for char in normalized:
+            source_start = len(boundaries)
+            for decomposed_char in unicodedata.normalize("NFD", char):
+                positions = decomposed_sources[decomposed_char]
+                position = source_positions[decomposed_char]
+                source_start = min(source_start, positions[position])
+                if position + 1 == len(positions):
+                    del decomposed_sources[decomposed_char]
+                    del source_positions[decomposed_char]
+                elif (position + 1) * 2 >= len(positions):
+                    del positions[: position + 1]
+                    source_positions[decomposed_char] = 0
+                else:
+                    source_positions[decomposed_char] = position + 1
+            normalized_sources.append(source_start)
+    return "".join(normalized_chunks), normalized_sources
 
 
 def _is_whitespace(char: str) -> bool:
