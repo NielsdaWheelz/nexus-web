@@ -46,8 +46,8 @@ retained evidence is the summary's sensitivity capability and its referenced
 `sensitivity/e939e8b941339594/red/1-android-host-1.log/android-host-1.log`.
 
 candidate product-only native faults already demonstrate the actual contracts:
-literal paths `2cb243a45b4aeeb2`; pending-progress preservation on final assets
-`c5fae5708c454ef1`. the owner must also define coherent native hard-cut routing;
+literal paths `2cb243a45b4aeeb2`; pending-progress preservation on the final
+`1a36e8dbbb` assets `81f5329ef596fbb5`. the owner must also define coherent native hard-cut routing;
 keeping reader1 fixtures/decoders or weakening assertions is not an acceptable
 repair. no native, browser or repository gate waiver is claimed.
 

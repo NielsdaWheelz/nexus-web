@@ -10,7 +10,7 @@ receipts live under `test-results/runs/<id>/summary.json` in the worktree named 
 | --- | --- | --- | --- |
 | source extraction | `8e77c3ff3fc84ce3`, `e8f051ff1ff46e06`, `0c4f27f0500d19b3`, `ac3776e24d0e3399` | `266ee9d2b5c3406e`, `7bc0d286bf1bab87` | independent literal positions; exact heading ancestry, containers, aliases, tails, numbered entries, publisher/lexical boundaries and repeated long-path identities reviewed |
 | publication/api | `7ff9ac2851cd984a` | `b7af98b43051abbc`, `d83e2e133eaabbde` | persisted positions, package kernel and final evidence/search consumers pass |
-| migration | `d12d8b1df08293be` in sibling `nexus-reader-structure-red` at base; citation assertion `dce6a2e50cc9a2a3` | `213fa58f8de1a6f0` | atomic rollback, exact/anchor/manual cursor conversion, citation snapshot/replay links, durable reference preservation and repeatability pass |
+| migration | `d12d8b1df08293be` in sibling `nexus-reader-structure-red` at base; citation assertion `dce6a2e50cc9a2a3` | `213fa58f8de1a6f0`, sensitivity `1508f3b8924d0bee` | atomic rollback, exact/anchor/manual cursor conversion, citation snapshot/replay links, durable reference preservation and repeatability pass |
 | rail/browser | `fcf20dc59bbc7f22` | `bb3b9046b63d607f` | 31 ticks with 18px gaps collapse under predecessor grouping; fixed-cell hit groups keep exact source ticks |
 | offline | `2cb243a45b4aeeb2`, `81f5329ef596fbb5` (native); `096a2704a6612428` (pixel sensitivity) | same sensitivity receipts; `1057e44bfb062fb1` | reader2 only; unique content; exact canonical capture, bounded phone layout, literal paths and unsupported pending-progress preservation; final packaged assets pass native host proof |
 | integration | `4cf713e3c75e2b98` (hosted eof); `adaddce6428458c8` (restore-write sensitivity) | exact editions `933ea7a501a0bd64`; hosted `adaddce6428458c8` | actual same-fragment section tracking, source-order toolbar, exact eof/reflow, quiet map/return/restore, away/back and reset pass |
@@ -518,3 +518,13 @@ migration sensitivity attempt `0317efd734c9f52b` is rejected before execution
 because these receipt documentation edits were uncommitted. committing the
 documentation restores the required clean-checkout prerequisite; no behavioral
 result or gate waiver is inferred from that attempt.
+
+final migration sensitivity `1508f3b8924d0bee` passes at `f526c95f30` (only
+documentation differs from product commit `1a36e8dbbb`). the cursor-conversion
+fault reaches its registered assertion; the clean owner passes with the new
+citation snapshot/replay cases intact. independent status review finds no
+unsupported repository-gate or operator/device/promotion claims and no dangling
+links from closing oi-082/083. pr remains blocked by oi-058; confidence remains
+interrupted, with its evidence-loss defect in oi-084. manual accessibility/touch
+review and the predeployment drain/census/coordinated-artifact obligations remain
+open. production has not been changed.
