@@ -504,6 +504,74 @@ def test_owned_process_cleanup_rejects_a_different_owner_without_signaling(
         clean_run(tmp_path, TEST_ENV, RUN_ID)
 
 
+def _install_scope_retirement_systemctl(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    unit_disappears: bool,
+) -> Path:
+    fake_bin = tmp_path / "fake-scope-systemctl"
+    fake_bin.mkdir()
+    calls = tmp_path / "systemctl-calls"
+    systemctl = fake_bin / "systemctl"
+    systemctl.write_text(
+        "#!/usr/bin/env python3\n"
+        "import pathlib,sys\n"
+        f"calls=pathlib.Path({json.dumps(str(calls))})\n"
+        f"unit_disappears={unit_disappears!r}\n"
+        "arguments=sys.argv[1:]\n"
+        "prior=calls.read_text(encoding='utf-8').splitlines() if calls.exists() else []\n"
+        "calls.write_text('\\n'.join((*prior,'\\t'.join(arguments)))+'\\n',encoding='utf-8')\n"
+        "if arguments[1]=='show':\n"
+        "    shows=sum(row.startswith('--user\\tshow\\t') for row in prior)+1\n"
+        "    if shows==1 or not unit_disappears:\n"
+        "        print('LoadState=loaded\\nControlGroup=')\n"
+        "    else:\n"
+        "        print('LoadState=not-found\\nControlGroup=')\n"
+        "    raise SystemExit(0)\n"
+        "if arguments[1]=='stop':\n"
+        "    raise SystemExit(5)\n"
+        "raise SystemExit(64)\n",
+        encoding="utf-8",
+    )
+    systemctl.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+    return calls
+
+
+def test_linux_scope_retirement_accepts_collection_racing_the_stop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if sys.platform != "linux":
+        with pytest.raises(RuntimeContractError, match="requested on another platform"):
+            services._retire_linux_process_scope(RUN_ID, "a" * 32)
+        return
+    calls = _install_scope_retirement_systemctl(tmp_path, monkeypatch, unit_disappears=True)
+
+    services._retire_linux_process_scope(RUN_ID, "a" * 32)
+
+    assert [row.split("\t")[1] for row in calls.read_text(encoding="utf-8").splitlines()] == [
+        "show",
+        "stop",
+        "show",
+    ]
+
+
+def test_linux_scope_retirement_rejects_stop_failure_while_scope_remains(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if sys.platform != "linux":
+        with pytest.raises(RuntimeContractError, match="requested on another platform"):
+            services._retire_linux_process_scope(RUN_ID, "a" * 32)
+        return
+    _install_scope_retirement_systemctl(tmp_path, monkeypatch, unit_disappears=False)
+
+    with pytest.raises(RuntimeContractError, match="scope could not be stopped"):
+        services._retire_linux_process_scope(RUN_ID, "a" * 32)
+
+
 def test_owned_process_cleanup_waits_for_exact_birth_owner_to_finish_startup(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
