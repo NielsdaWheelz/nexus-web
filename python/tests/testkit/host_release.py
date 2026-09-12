@@ -48,6 +48,7 @@ CURRENT_SHA = "a" * 40
 CURRENT_DEPLOYMENT_ID = "dpl_Current123"
 _PUBLIC_HOSTS = frozenset({"api.example.test:443", "web.example.test:443"})
 _CODEX_HOST_PID = 4242
+_CODEX_CAPACITY_CANARY_PID = 4252
 _CODEX_CAPACITY_CANARY_EXIT_CODES = {
     "not_run": 20,
     "subscription_blocked": 21,
@@ -98,6 +99,47 @@ _CODEX_IMAGE_ENVIRONMENT = [
     "PYTHON_VERSION=3.12.13",
 ]
 _PLAYER_PROTOCOL_CORPUS = b'{"fixture":"android-player-protocol"}\n'
+
+
+def _container_cgroup_relative(container_id: str) -> str:
+    return f"system.slice/docker-{container_id}.scope"
+
+
+def _write_container_resource_cgroup(
+    root: Path,
+    service: str,
+    container: dict[str, object],
+    *,
+    docker_limits: tuple[int, int, int, int] | None = None,
+    swap_current: int | None = None,
+) -> None:
+    pid = int(container["pid"])
+    relative = _container_cgroup_relative(str(container["id"]))
+    proc = root / "proc" / str(pid)
+    proc.mkdir(parents=True, exist_ok=True)
+    (proc / "cgroup").write_text(f"0::/{relative}\n", encoding="ascii")
+    cgroup = root / "sys/fs/cgroup" / relative
+    cgroup.mkdir(parents=True, exist_ok=True)
+    if docker_limits is None:
+        reservation, memory, pids = _RESOURCE_LIMITS[service]
+        memory_swap = memory
+    else:
+        reservation, memory, memory_swap, pids = docker_limits
+    if memory_swap < memory:
+        raise AssertionError("fake Docker memory-swap limit is below memory limit")
+    swap_current_path = cgroup / "memory.swap.current"
+    if swap_current is None:
+        swap_current = (
+            int(swap_current_path.read_text(encoding="ascii")) if swap_current_path.exists() else 0
+        )
+    for name, value in (
+        ("memory.low", reservation),
+        ("memory.max", memory),
+        ("memory.swap.max", memory_swap - memory),
+        ("memory.swap.current", swap_current),
+        ("pids.max", pids),
+    ):
+        (cgroup / name).write_text(f"{value}\n", encoding="ascii")
 
 
 def _codex_host_privilege_config() -> dict[str, object]:
@@ -708,21 +750,6 @@ class HostReleaseHarness:
         userns_restriction = root / "proc/sys/kernel/apparmor_restrict_unprivileged_userns"
         userns_restriction.parent.mkdir(parents=True, exist_ok=True)
         userns_restriction.write_text("1\n", encoding="ascii")
-        # The capacity sampler reads the measured container's cgroup from the
-        # host side (never `docker exec` into the measured cgroup): resolve the
-        # fake host process's cgroup exactly the way the controller does.
-        host_proc = root / "proc" / str(_CODEX_HOST_PID)
-        host_proc.mkdir(parents=True)
-        (host_proc / "cgroup").write_text(f"0::/{_CODEX_HOST_CGROUP_RELATIVE}\n", encoding="ascii")
-        host_cgroup = root / "sys/fs/cgroup" / _CODEX_HOST_CGROUP_RELATIVE
-        host_cgroup.mkdir(parents=True)
-        (host_cgroup / "memory.max").write_text("469762048\n", encoding="ascii")
-        (host_cgroup / "memory.current").write_text("33554432\n", encoding="ascii")
-        (host_cgroup / "memory.peak").write_text("67108864\n", encoding="ascii")
-        (host_cgroup / "memory.events").write_text(
-            "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n",
-            encoding="ascii",
-        )
         immutable_inputs = (
             *candidate_bundle,
             *current_bundle,
@@ -771,6 +798,9 @@ class HostReleaseHarness:
         ):
             containers[service] = {
                 "id": character * 64,
+                "pid": _CODEX_HOST_PID
+                if service == "nexus-codex-agent-host"
+                else 4300 + int(character, 16),
                 "image_id": (
                     current_worker_image_id
                     if service.startswith("worker-") or service == "nexus-codex-agent-host"
@@ -869,6 +899,24 @@ class HostReleaseHarness:
                 "restart_count": 0,
                 "running": service != "nexus-codex-agent-host",
             }
+
+        # Every running-container resource proof resolves the kernel cgroup
+        # through its host PID. The Codex sampler adds peak and OOM counters at
+        # that same boundary; the capacity client has its own cgroup identity.
+        for service, container in containers.items():
+            _write_container_resource_cgroup(root, service, container)
+        host_cgroup = root / "sys/fs/cgroup" / _CODEX_HOST_CGROUP_RELATIVE
+        (host_cgroup / "memory.current").write_text("33554432\n", encoding="ascii")
+        (host_cgroup / "memory.peak").write_text("67108864\n", encoding="ascii")
+        (host_cgroup / "memory.events").write_text(
+            "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n",
+            encoding="ascii",
+        )
+        _write_container_resource_cgroup(
+            root,
+            "nexus-codex-agent-host",
+            {"id": "c" * 64, "pid": _CODEX_CAPACITY_CANARY_PID},
+        )
 
         state_path = root / "fake-docker-state.json"
         _save_state(
@@ -1443,7 +1491,7 @@ def _container_inspect(state: dict[str, Any], container_id: str) -> dict[str, ob
         "Paused": False,
         "Restarting": False,
         "Running": container["running"],
-        "Pid": _CODEX_HOST_PID if service == "nexus-codex-agent-host" else 1,
+        "Pid": container["pid"] if container["running"] else 0,
     }
     if service == "caddy" and state["caddy_docker_health_present"] is False:
         state_value.pop("Health")
@@ -1751,6 +1799,12 @@ def _handle_compose(
                     "MemorySwap": memory,
                     "PidsLimit": pids,
                 }
+            )
+            _write_container_resource_cgroup(
+                Path(os.environ["NEXUS_FAKE_RELEASE_ATTEMPT"]).parents[5],
+                service,
+                container,
+                swap_current=0,
             )
             if service == "nexus-codex-agent-host":
                 container["host_config"].update(_codex_host_privilege_config())
@@ -2349,6 +2403,12 @@ def _fake_docker_main(lease: _FakeDockerStateLease) -> int:
             }
         )
         service = next(name for name, item in state["containers"].items() if item is container)
+        _write_container_resource_cgroup(
+            Path(os.environ["NEXUS_FAKE_RELEASE_ATTEMPT"]).parents[5],
+            service,
+            container,
+            docker_limits=(reservation, memory, memory_swap, pids),
+        )
         state["resource_mutations"].append(
             {
                 "memory": memory,
@@ -2552,7 +2612,11 @@ def _fake_docker_main(lease: _FakeDockerStateLease) -> int:
                                 ),
                                 "Ports": {},
                             },
-                            "State": {"Health": {"Status": "healthy"}, "Running": True},
+                            "State": {
+                                "Health": {"Status": "healthy"},
+                                "Pid": _CODEX_CAPACITY_CANARY_PID,
+                                "Running": True,
+                            },
                         }
                     ]
                 )
@@ -2660,6 +2724,12 @@ def _fake_docker_main(lease: _FakeDockerStateLease) -> int:
         container = _container(state, arguments[1])
         container["running"] = True
         service = next(name for name, item in state["containers"].items() if item is container)
+        _write_container_resource_cgroup(
+            Path(os.environ["NEXUS_FAKE_RELEASE_ATTEMPT"]).parents[5],
+            service,
+            container,
+            swap_current=0,
+        )
         state["service_mutations"].append({"operation": "start", "services": [service]})
     elif arguments[0] == "logs":
         target = arguments[-1]
