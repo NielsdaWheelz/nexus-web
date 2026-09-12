@@ -554,9 +554,8 @@ def parse_offline_reader_document(payload: bytes) -> OfflineReaderDocument:
         name="reader.json",
     )
     document = _READER_DOCUMENT_ADAPTER.validate_python(value, by_alias=True, by_name=False)
-    if (
-        not isinstance(document, PdfOfflineReaderDocument)
-        and value["navigation"] != document.navigation.model_dump(mode="json")
-    ):
+    if not isinstance(document, PdfOfflineReaderDocument) and value[
+        "navigation"
+    ] != document.navigation.model_dump(mode="json"):
         raise ValueError("packaged navigation must use exact canonical wire values")
     return document

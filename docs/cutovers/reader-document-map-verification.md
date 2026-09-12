@@ -432,3 +432,8 @@ their single fault-bound exact owners, remove the deleted helper glob (the
 existing `lib/reader/**/*` route covers its replacement), then update the reviewed
 ownership pin. no prior risk source coverage or capability is removed; no policy
 guard or sensitivity rule changes. full confidence rerun remains required.
+
+`3082a80b95f84321` passes full policy and policy self-tests after the ownership
+repair. full python formatting identifies one line-wrap in
+`offline_reading_package.py`; the formatter changes whitespace only. type
+checking and later capabilities have not yet run.
