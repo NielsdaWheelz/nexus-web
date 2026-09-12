@@ -282,6 +282,55 @@ def test_existing_vps_capacity_uses_reservations_and_requires_qualification_befo
     assert state["service_mutations"] == []
 
 
+def test_capacity_converges_kernel_limits_and_refuses_retained_predecessor_swap(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: Docker metadata hides swap that poisons the immutable host measurement."""
+
+    harness = host_release_harness
+    evidence = harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json"
+    evidence.unlink()
+    container_characters = {
+        "postgres": "3",
+        "caddy": "4",
+        "api": "5",
+        "worker-interactive": "6",
+        "worker-background": "7",
+    }
+    cgroups = {
+        service: harness.root / "sys/fs/cgroup/system.slice" / f"docker-{character * 64}.scope"
+        for service, character in container_characters.items()
+    }
+    for index, cgroup in enumerate(cgroups.values(), start=1):
+        (cgroup / "memory.swap.max").write_text("max\n", encoding="ascii")
+        (cgroup / "memory.swap.current").write_text(
+            f"{index * 1024 * 1024}\n",
+            encoding="ascii",
+        )
+    background_cgroup = cgroups["worker-background"]
+    (background_cgroup / "memory.swap.current").write_text(
+        f"{512 * 1024 * 1024}\n",
+        encoding="ascii",
+    )
+
+    blocked = harness.run_qualify_codex_capacity()
+
+    assert blocked.returncode != 0
+    assert all(
+        f"{service} container {character * 64} retains" in blocked.stderr
+        for service, character in container_characters.items()
+    )
+    assert f"worker-background container {'7' * 64} retains 536870912 bytes" in blocked.stderr
+    assert not evidence.exists(), "predecessor drift cannot become candidate capacity evidence"
+    state = harness.state()
+    assert [mutation["service"] for mutation in state["resource_mutations"]] == list(cgroups)
+    assert state["service_mutations"] == [], "no candidate runtime may start on a false baseline"
+    assert all(
+        (cgroup / "memory.swap.max").read_text(encoding="ascii") == "0\n"
+        for cgroup in cgroups.values()
+    )
+
+
 def test_existing_vps_capacity_qualification_writes_exact_immutable_candidate_evidence(
     host_release_harness: HostReleaseHarness,
 ) -> None:
@@ -1240,6 +1289,30 @@ def test_existing_vps_capacity_startup_failure_is_retriable_without_failed_evide
     ]
 
 
+def test_capacity_host_kernel_policy_drift_is_retriable_without_failed_evidence(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: a host-enforcement defect is mislabeled as candidate capacity."""
+
+    harness = host_release_harness
+    evidence = harness.root / "var/lib/nexus/releases/codex-capacity" / f"{SOURCE_SHA}.json"
+    evidence.unlink()
+    harness.update_state(
+        codex_capacity_during_startup_host_writes={
+            f"{_HOST_CGROUP_RELATIVE}/memory.swap.max": "max\n"
+        }
+    )
+
+    failed = harness.run_qualify_codex_capacity()
+
+    assert failed.returncode != 0
+    assert "Codex capacity host kernel resource contract differs" in failed.stderr
+    assert not evidence.exists(), "invalid enforcement measured no candidate capacity"
+    assert not any(command[:2] == ["exec", "c" * 64] for command in harness.state()["commands"]), (
+        "the canary must not run under an invalid host cgroup"
+    )
+
+
 def test_existing_vps_capacity_samples_startup_pressure_before_docker_wait_fails(
     host_release_harness: HostReleaseHarness,
 ) -> None:
@@ -1615,6 +1688,7 @@ def test_host_apply_blocks_an_unknown_running_container_before_stopping_a_writer
         "id": "2" * 64,
         "image_id": "sha256:" + "2" * 64,
         "oom_killed": False,
+        "pid": 4299,
         "restart_count": 0,
         "running": True,
     }
