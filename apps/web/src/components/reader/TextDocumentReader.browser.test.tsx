@@ -1,8 +1,9 @@
 import { createRef } from "react";
 import { render, screen } from "@testing-library/react";
-import { userEvent } from "vitest/browser";
+import { cdp, userEvent } from "vitest/browser";
 import { describe, expect, it, vi } from "vitest";
 
+import { toTopLevelCdpCoordinate } from "@/__tests__/helpers/trustedBrowserInput";
 import { applyHighlightsToHtml } from "@/lib/highlights/applySegments";
 import TextDocumentReader, {
   type TextReaderContentDecorator,
@@ -41,11 +42,11 @@ function renderLeaf(
 }
 
 describe("TextDocumentReader canonical content, input and hosted decoration ports", () => {
-  it("activates an endcap button with Space without claiming reader movement, while source-link scroll keys remain genuine", async () => {
+  it("keeps controls and zoom gestures separate from genuine reader movement", async () => {
     const intents: string[] = [];
     const destinations: string[] = [];
     renderLeaf({
-      contentState: { status: "ready", renderedHtml: '<p><a href="#source">source link</a></p>' },
+      contentState: { status: "ready", renderedHtml: '<p><a href="#source">source link</a></p><p>Reader prose</p>' },
       onTrustedScrollIntent: (direction) => intents.push(direction),
       endContent: <button type="button" onClick={() => destinations.push("previous resource")}>previous resource</button>,
     });
@@ -65,6 +66,51 @@ describe("TextDocumentReader canonical content, input and hosted decoration port
     await userEvent.keyboard(" ");
     await userEvent.keyboard("{ArrowUp}");
     expect(intents).toEqual(["forward", "backward"]);
+
+    const area = screen.getByRole("region", { name: "Document reading area" });
+    const wheelEvents: { trusted: boolean; control: boolean }[] = [];
+    area.addEventListener("wheel", (event) => {
+      wheelEvents.push({ trusted: event.isTrusted, control: event.ctrlKey });
+    }, { once: true });
+    await userEvent.keyboard("{Control>}");
+    try {
+      await userEvent.wheel(area, { delta: { y: 100 } });
+    } finally {
+      await userEvent.keyboard("{/Control}");
+    }
+    expect(wheelEvents).toEqual([{ trusted: true, control: true }]);
+    expect(intents, "trusted ctrl-wheel zoom must not publish reading intent").toEqual(["forward", "backward"]);
+    await userEvent.wheel(area, { delta: { y: 100 } });
+    await userEvent.wheel(area, { delta: { y: -100 } });
+    expect(intents).toEqual(["forward", "backward", "forward", "backward"]);
+
+    const proseRect = screen.getByText("Reader prose").getBoundingClientRect();
+    const { x, y } = toTopLevelCdpCoordinate({
+      x: proseRect.left + 20,
+      y: proseRect.top + proseRect.height / 2,
+    });
+    const touchMoves: { trusted: boolean; contacts: number }[] = [];
+    area.addEventListener("touchmove", (event) => {
+      touchMoves.push({ trusted: event.isTrusted, contacts: event.touches.length });
+    });
+    await cdp().send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 2 });
+    try {
+      await cdp().send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y, id: 1 }] });
+      await cdp().send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y, id: 1 }, { x: x + 40, y, id: 2 }] });
+      await cdp().send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y: y - 40, id: 1 }, { x: x + 40, y: y + 40, id: 2 }] });
+      expect(touchMoves).toContainEqual({ trusted: true, contacts: 2 });
+      expect(intents, "trusted multi-touch zoom must not publish reading intent").toEqual(["forward", "backward", "forward", "backward"]);
+      await cdp().send("Input.dispatchTouchEvent", { type: "touchCancel", touchPoints: [] });
+
+      await cdp().send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y, id: 1 }] });
+      await cdp().send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y: y - 40, id: 1 }] });
+      expect(touchMoves).toContainEqual({ trusted: true, contacts: 1 });
+      expect(intents).toEqual(["forward", "backward", "forward", "backward", "forward"]);
+    } finally {
+      await cdp().send("Input.dispatchTouchEvent", { type: "touchCancel", touchPoints: [] });
+      await cdp().send("Emulation.setTouchEmulationEnabled", { enabled: false });
+      await cdp().send("Emulation.resetPageScaleFactor");
+    }
   });
 
   it("renders undecorated canonical HTML when no decorator is supplied (the offline default)", async () => {

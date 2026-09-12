@@ -28,6 +28,39 @@ depends_on = None
 def _repair_references(
     connection: Connection, media_id: UUID, retired: set[str], fragments: dict[str, int]
 ) -> None:
+    def resource_address(scheme: str, identity: UUID) -> dict | None:
+        if scheme == "evidence_span":
+            query = "SELECT selector FROM evidence_spans WHERE id = :id AND owner_kind = 'media' AND owner_id = :media"
+        elif scheme == "content_chunk":
+            query = "SELECT summary_locator FROM content_chunks WHERE id = :id AND owner_kind = 'media' AND owner_id = :media"
+        elif scheme == "passage_anchor":
+            query = "SELECT selector->'locator_hint' FROM passage_anchors WHERE id = :id AND owner_scheme = 'media' AND owner_id = :media"
+        else:
+            return None
+        return connection.scalar(sa.text(query), {"id": identity, "media": media_id})
+
+    def citation_address(identity: UUID) -> dict | None:
+        # A fragment citation can name a finer passage than its target grain.
+        # Chat's retained retrieval owns that original range, not the whole file.
+        row = (
+            connection.execute(
+                sa.text(
+                    "SELECT edge.target_scheme, edge.target_id, retrieval.locator "
+                    "FROM resource_edges edge LEFT JOIN message_retrievals retrieval "
+                    "ON retrieval.cited_edge_id = edge.id AND retrieval.media_id = :media "
+                    "WHERE edge.id = :id AND edge.origin = 'citation'"
+                ),
+                {"id": identity, "media": media_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if row is None:
+            return None
+        if row["locator"] is not None:
+            return row["locator"]
+        return resource_address(row["target_scheme"], row["target_id"])
+
     def repair_link(link: str, locator: dict) -> str:
         parts = urlsplit(link)
         query = parse_qsl(parts.query, keep_blank_values=True)
@@ -160,6 +193,26 @@ def _repair_references(
                 {"id": row["id"], "link": updated},
             )
 
+    for row in connection.execute(
+        sa.text(
+            "SELECT id, snapshot FROM resource_edges "
+            "WHERE origin = 'citation' AND snapshot ? 'deep_link'"
+        )
+    ).mappings():
+        snapshot = row["snapshot"]
+        link = snapshot["deep_link"]
+        if not isinstance(link, str) or urlsplit(link).path != f"/media/{media_id}":
+            continue
+        address = citation_address(row["id"])
+        updated = repair(snapshot, address if isinstance(address, dict) else {})
+        if updated != snapshot:
+            connection.execute(
+                sa.text(
+                    "UPDATE resource_edges SET snapshot = CAST(:value AS jsonb) WHERE id = :id"
+                ),
+                {"id": row["id"], "value": json.dumps(updated)},
+            )
+
     def belongs_to_media(value: dict) -> bool:
         locator = value.get("locator")
         return value.get("media_id") == str(media_id) or (
@@ -202,15 +255,18 @@ def _repair_references(
                 ],
             }
         elif row["event_type"] == "citation_index":
-            updated = {
-                **payload,
-                "citations": [
-                    {**item, "citation": repair(item["citation"], item["citation"])}
-                    if belongs_to_media(item["citation"])
-                    else item
-                    for item in payload["citations"]
-                ],
-            }
+            citations = []
+            for item in payload["citations"]:
+                citation = item["citation"]
+                if belongs_to_media(citation):
+                    address = citation.get("locator")
+                    if not isinstance(address, dict):
+                        address = citation_address(UUID(item["citation_edge_id"]))
+                    citation = repair(
+                        citation, address if isinstance(address, dict) else {}
+                    )
+                citations.append({**item, "citation": citation})
+            updated = {**payload, "citations": citations}
         else:
             activation = payload["activation"]
             href = activation.get("href")
@@ -218,25 +274,7 @@ def _repair_references(
                 continue
             reference = payload["resource_ref"]
             scheme, _, identity = reference.partition(":")
-            if scheme == "evidence_span":
-                address = connection.scalar(
-                    sa.text(
-                        "SELECT selector FROM evidence_spans WHERE id = :id AND owner_kind = 'media' AND owner_id = :media"
-                    ),
-                    {"id": UUID(identity), "media": media_id},
-                )
-            elif scheme == "passage_anchor":
-                selector = connection.scalar(
-                    sa.text(
-                        "SELECT selector FROM passage_anchors WHERE id = :id AND owner_scheme = 'media' AND owner_id = :media"
-                    ),
-                    {"id": UUID(identity), "media": media_id},
-                )
-                address = (
-                    selector.get("locator_hint") if isinstance(selector, dict) else None
-                )
-            else:
-                address = None
+            address = resource_address(scheme, UUID(identity))
             updated = repair(payload, address if isinstance(address, dict) else {})
         if updated != payload:
             connection.execute(

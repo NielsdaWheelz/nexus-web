@@ -150,10 +150,14 @@ export function useReaderActivityAdapter({
       deviceClass: viewport.kind === "mobile" ? "Mobile" : "Desktop",
       eligible: false,
     });
-    const noteInput = (event: Event) => {
+    const noteInput = (event: KeyboardEvent | PointerEvent | TouchEvent | WheelEvent) => {
       if (!event.isTrusted) return;
+      if (event instanceof WheelEvent && event.ctrlKey) return;
+      if ("touches" in event && event.touches.length !== 1) return;
+      if (event.type === "pointerdown" && event instanceof PointerEvent && event.pointerType === "touch") return;
+      if (event.type === "click" && (!(event instanceof PointerEvent) || event.pointerType !== "touch")) return;
       if (
-        (event.type === "pointerdown" || event.type === "touchstart") &&
+        (event.type === "pointerdown" || event.type === "click") &&
         isInteractiveTarget(event.target, root)
       ) return;
       if (event instanceof KeyboardEvent && readerScrollKeyDirection(event) === null) return;
@@ -163,7 +167,7 @@ export function useReaderActivityAdapter({
     updateRef.current = update;
     const unsubscribePreviewLease = previewLease.subscribe(update);
     root.addEventListener("pointerdown", noteInput, { passive: true });
-    root.addEventListener("touchstart", noteInput, { passive: true });
+    root.addEventListener("click", noteInput, { passive: true });
     root.addEventListener("touchmove", noteInput, { passive: true });
     root.addEventListener("wheel", noteInput, { passive: true });
     root.addEventListener("keydown", noteInput);
@@ -173,7 +177,7 @@ export function useReaderActivityAdapter({
     update();
     return () => {
       root.removeEventListener("pointerdown", noteInput);
-      root.removeEventListener("touchstart", noteInput);
+      root.removeEventListener("click", noteInput);
       root.removeEventListener("touchmove", noteInput);
       root.removeEventListener("wheel", noteInput);
       root.removeEventListener("keydown", noteInput);

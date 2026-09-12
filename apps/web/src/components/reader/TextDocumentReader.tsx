@@ -175,18 +175,24 @@ export default function TextDocumentReader({
   }
 
   function handleWheel(event: WheelEvent<HTMLDivElement>) {
-    if (!event.isTrusted) return;
+    if (!event.isTrusted || event.ctrlKey) return;
     if (event.deltaY === 0) return;
     publishTrustedScrollIntent(event.deltaY > 0 ? "forward" : "backward");
   }
 
   function handleTouchStart(event: TouchEvent<HTMLDivElement>) {
     if (!event.isTrusted) return;
-    lastTouchYRef.current = event.touches[0]?.clientY ?? null;
+    lastTouchYRef.current = event.touches.length === 1
+      ? event.touches[0]?.clientY ?? null
+      : null;
   }
 
   function handleTouchMove(event: TouchEvent<HTMLDivElement>) {
     if (!event.isTrusted) return;
+    if (event.touches.length !== 1) {
+      lastTouchYRef.current = null;
+      return;
+    }
     const touchY = event.touches[0]?.clientY;
     const previousTouchY = lastTouchYRef.current;
     lastTouchYRef.current = touchY ?? null;
@@ -209,7 +215,7 @@ export default function TextDocumentReader({
 
   function handlePointerDown(event: PointerEvent<HTMLDivElement>) {
     pointerScrollActiveRef.current =
-      event.isTrusted && event.target === event.currentTarget;
+      event.isTrusted && event.pointerType !== "touch" && event.target === event.currentTarget;
   }
 
   function handleRenderedContentClick(event: MouseEvent<HTMLDivElement>) {

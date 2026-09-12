@@ -10,7 +10,7 @@ receipts live under `test-results/runs/<id>/summary.json` in the worktree named 
 | --- | --- | --- | --- |
 | source extraction | `8e77c3ff3fc84ce3`, `e8f051ff1ff46e06`, `0c4f27f0500d19b3`, `ac3776e24d0e3399` | `266ee9d2b5c3406e`, `7bc0d286bf1bab87` | independent literal positions; exact heading ancestry, containers, aliases, tails, numbered entries, publisher/lexical boundaries and repeated long-path identities reviewed |
 | publication/api | `7ff9ac2851cd984a` | `b7af98b43051abbc`, `d83e2e133eaabbde` | persisted positions, package kernel and final evidence/search consumers pass |
-| migration | `d12d8b1df08293be` in sibling `nexus-reader-structure-red` at base | `1df62fc821caee26` | atomic rollback, exact/anchor/manual cursor conversion, durable reference preservation and repeatability pass |
+| migration | `d12d8b1df08293be` in sibling `nexus-reader-structure-red` at base; citation assertion `dce6a2e50cc9a2a3` | `213fa58f8de1a6f0` | atomic rollback, exact/anchor/manual cursor conversion, citation snapshot/replay links, durable reference preservation and repeatability pass |
 | rail/browser | `fcf20dc59bbc7f22` | `bb3b9046b63d607f` | 31 ticks with 18px gaps collapse under predecessor grouping; fixed-cell hit groups keep exact source ticks |
 | offline | `2cb243a45b4aeeb2`, `c5fae5708c454ef1` (native); `096a2704a6612428` (pixel sensitivity) | same sensitivity receipts; `bb3b9046b63d607f` | reader2 only; unique content; exact canonical capture, bounded phone layout, literal paths and unsupported pending-progress preservation; final packaged assets pass native host proof |
 | integration | `4cf713e3c75e2b98` (hosted eof); `8b0b983d002cd181` (restore-write sensitivity) | exact editions `933ea7a501a0bd64`; hosted `8b0b983d002cd181` | actual same-fragment section tracking, source-order toolbar, exact eof/reflow, quiet map/return/restore, away/back and reset pass |
@@ -454,3 +454,53 @@ assertion. no lint exception, action, oracle or timeout changes.
 passes as `164f22b3a8eead08` on `51b1764baf` plus that reviewed test diff,
 including lint and the complete hosted journey. earlier `8b0b983d002cd181`
 retains its behavioral red before this proof-only refactor.
+
+`b769ea9c59cb2671` is interrupted after cross-owner review identifies two
+additional product gaps: citation edge snapshots retain retired section links,
+and ctrl-wheel zoom is admitted as reading input. both corrections belong to
+this cutover and are under direct regression verification. the controller
+returns a failed receipt and completes cleanup. its summary incorrectly assigns
+interruption to policy and loses completed stage evidence, recorded in
+[oi-084](../tickets/test-controller-interrupt-discards-completed-capabilities.md).
+observed kernel progress is diagnostic only; no confidence pass is claimed.
+
+citation snapshot regression `dce6a2e50cc9a2a3` reaches `DID NOT RAISE` when
+the retained fragment target has no exact passage address. the existing migration
+owner then supplies the cited retrieval's independently specified 10..16 range
+and requires only the snapshot link to change, preserving edge identity, ordinal,
+timestamp and quoted text. earlier `f48c38898c908249` stopped at formatting and
+is not a behavioral red. correction and green remain pending.
+
+`2ceef32cc300136c` is canceled while queued on the repository heavy-test lock,
+before execution, to include the newly identified citation replay case.
+`12878a9417e6e1dc` then reaches the actual migration and rejects a recoverable
+`citation_index` event whose locator is null. this is a product migration
+failure, not a registered assertion-red receipt. the event's citation edge
+retains the exact retrieval address. one shared lookup now supplies snapshots
+and replay; existing non-null event locators remain authoritative. current
+producers share those exact resolver ranges, independently checked in review.
+the second target-owned fixture uses a real content-chunk citation, preserving
+the same literal 10..16 range. `213fa58f8de1a6f0` passes the complete migration
+owner, including unsafe-address rollback and unchanged citation identities,
+quotes, ordinals, timestamps, event shapes, source bodies and cursor revisions.
+
+input regression `341a92e3f4727744` observes trusted ctrl-wheel adding forward
+reading intent; `e38d7129f7f038b6` observes initial trusted touch contact changing
+idle to recording. the two existing admission owners now exclude ctrl-wheel
+and multi-touch movement. completed noninteractive touch clicks and one-finger
+scrolling still adopt reading; initial touch contact alone cannot distinguish
+a pinch. keyboard and capture lifecycles are unchanged. proofs reuse the
+existing nexus frame-coordinate helper and reset the native pinch's potentially
+changed page scale during cleanup; no scale-change result is claimed. combined
+input/helper-consumer proof passes as `9f9267423390484c`, including actual
+trusted completed-touch-click admission. this closes oi-083; the complete
+migration proof above closes oi-082. physical-device/operator acceptance remains
+separate. rebuilt offline assets contain `index-CgyIPDsa.js` (416.38 kb before
+gzip); source/asset manifests are regenerated. the same existing custom-highlight
+minifier warnings remain in oi-078. final native artifact proof remains pending.
+
+`./scripts/test changed apps/web/eslint.config.mjs` passes as
+`1057e44bfb062fb1`: the controller's full web selection executes css validation,
+eslint, typescript, all web kernel owners and all browser-component owners after
+the citation/input corrections. this is independent web evidence; it does not
+replace the blocked pr gate or convert interrupted confidence into a pass.

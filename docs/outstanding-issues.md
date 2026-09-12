@@ -346,3 +346,4 @@ unexpected timeouts. See
 - [open] oi-079 · test controller · 2026-09-12 sensitivity · fault registry rejects literal next route brackets: [ticket](tickets/fault-registry-rejects-literal-route-brackets.md).
 - [open] oi-080 · web ingest · 2026-09-12 source review · generated heading ids replace authored link and container targets: [ticket](tickets/web-ingest-replaces-authored-heading-anchors.md).
 - [open] oi-081 · pdf activity · 2026-09-12 input review · zoom renews reading eligibility through the page-turn control wrapper: [ticket](tickets/pdf-zoom-renews-reading-activity.md).
+- [open] oi-084 · test controller · 2026-09-12 confidence interruption · interruption discards completed capability evidence and reports the wrong owner: [ticket](tickets/test-controller-interrupt-discards-completed-capabilities.md).

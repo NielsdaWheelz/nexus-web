@@ -72,7 +72,9 @@ services, unrelated testing-platform repairs, or a general navigation framework.
    fragment/spine order and works with an empty outline.
 7. document-map, section, and source-link jumps, restore, preview, and return
    update orientation without claiming reading or completion. keep the existing
-   trusted-input/save fences. ordinary pdf page-turn intent retains its existing
+   trusted-input/save fences. ctrl-wheel zoom and multi-touch movement are not
+   reading. touch adopts reading on a completed prose tap or one-finger scroll,
+   not initial contact, which cannot distinguish a pinch. ordinary pdf page-turn intent retains its existing
    contract; this cut does not redesign those controls.
 
 ## source model, storage, and api
@@ -287,9 +289,13 @@ rows b/d; no section-loading consumer survives by omission.
    spine chapter rows, remove their obsolete `section_id` hints from
    `content_blocks.locator/metadata/selector`, `content_chunks.summary_locator`,
    `evidence_spans.selector`, and matching `passage_anchors.selector` and stored
-   `message_retrievals` locators/links found by the census. preserve exact
+   `message_retrievals` locators/links and `resource_edges.snapshot` citation links
+   found by the census. preserve exact
    fragment addresses, source anchors, quotes, row ids, and provenance; do not
-   regenerate quoted evidence. rewrite owned links to their exact fragment
+   regenerate quoted evidence. citation snapshots retain their original passage
+   range through the cited retrieval or an exact target-owned locator; a whole
+   fragment target does not justify replacing that passage with the file start.
+   rewrite owned links to their exact fragment
    target. repair the same typed navigation copies in tool-call results,
    selected context, and replay events; preserve event identities, sequences,
    timestamps, generated text, and audit facts. immutable reader-selection

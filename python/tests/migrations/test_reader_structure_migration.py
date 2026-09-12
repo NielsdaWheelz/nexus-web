@@ -42,6 +42,10 @@ def test_reader_structure_repair_preserves_fragment_identity_and_cursor(
     anchor_cursor_id = UUID("00000000-0000-0000-0000-000000002296")
     manual_user_id = UUID("00000000-0000-0000-0000-000000002297")
     manual_cursor_id = UUID("00000000-0000-0000-0000-000000002298")
+    citation_edge_id = UUID("00000000-0000-0000-0000-000000002299")
+    chunk_citation_edge_id = UUID("00000000-0000-0000-0000-000000002300")
+    citation_event_id = UUID("00000000-0000-0000-0000-000000002301")
+    chunk_id = UUID("00000000-0000-0000-0000-000000002302")
     created_at = datetime(2026, 9, 11, 12, tzinfo=UTC)
     canonical = "first\none\nsecond\ntwo"
     html = '<h1 id="first-start">first</h1><p>one</p><h1>second</h1><p>two</p>'
@@ -103,8 +107,51 @@ def test_reader_structure_repair_preserves_fragment_identity_and_cursor(
         "start_offset": 10,
         "end_offset": 16,
     }
+    chunk_locator = {
+        "kind": "epub_text",
+        "fragment_id": str(fragment_id),
+        "fragment_idx": 0,
+        "section_id": "spine:0",
+        "start_offset": 10,
+        "end_offset": 16,
+    }
     context_ref = {"type": "fragment", "id": str(fragment_id)}
     old_link = f"/media/{media_id}?loc=spine%3A0"
+    citation_snapshot = {
+        "title": "source sections",
+        "excerpt": "second",
+        "section_label": "book",
+        "result_type": "fragment",
+        "deep_link": old_link,
+    }
+    chunk_snapshot = {**citation_snapshot, "result_type": "content_chunk"}
+    # Fragment CitationOut has no intrinsic finer locator; its replay envelope
+    # identifies the citation edge whose retained retrieval owns that passage.
+    citation = {
+        "ordinal": 1,
+        "role": "context",
+        "target_ref": {"type": "fragment", "id": str(fragment_id)},
+        "activation": {
+            "resource_ref": f"fragment:{fragment_id}",
+            "kind": "route",
+            "href": f"/media/{media_id}#fragment-{fragment_id}",
+            "unresolved_reason": None,
+        },
+        "media_id": str(media_id),
+        "locator": None,
+        "deep_link": old_link,
+        "snapshot": {
+            "title": "source sections",
+            "excerpt": "second",
+            "section_label": "book",
+            "result_type": "fragment",
+            "summary_md": None,
+        },
+    }
+    citation_event_payload = {
+        "assistant_message_id": str(assistant_message_id),
+        "citations": [{"citation_edge_id": str(citation_edge_id), "citation": citation}],
+    }
     result_ref = {
         "type": "fragment",
         "result_type": "fragment",
@@ -211,6 +258,18 @@ def test_reader_structure_repair_preserves_fragment_identity_and_cursor(
             )
             connection.execute(
                 text(
+                    "INSERT INTO chat_run_events (id, run_id, seq, event_type, payload, created_at) "
+                    "VALUES (:id, :run, 2, 'citation_index', CAST(:payload AS jsonb), :created)"
+                ),
+                {
+                    "id": citation_event_id,
+                    "run": run_id,
+                    "payload": json.dumps(citation_event_payload),
+                    "created": created_at,
+                },
+            )
+            connection.execute(
+                text(
                     "INSERT INTO media (id, kind, title, processing_status) "
                     "VALUES (:id, 'epub', 'source sections', 'ready_for_reading')"
                 ),
@@ -239,6 +298,36 @@ def test_reader_structure_repair_preserves_fragment_identity_and_cursor(
                     "result": json.dumps(result_ref),
                     "locator": json.dumps(passage_locator),
                     "link": old_link,
+                },
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO content_chunks (id, owner_kind, owner_id, chunk_idx, source_kind, "
+                    "chunk_text, token_count, heading_path, summary_locator) "
+                    "VALUES (:id, 'media', :media, 0, 'epub', 'second', 1, '[]'::jsonb, "
+                    "CAST(:locator AS jsonb))"
+                ),
+                {"id": chunk_id, "media": media_id, "locator": json.dumps(chunk_locator)},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO resource_edges (id, user_id, kind, origin, source_scheme, source_id, "
+                    "target_scheme, target_id, ordinal, snapshot, created_at) "
+                    "VALUES (:id, :user, 'context', 'citation', 'message', :message, "
+                    "'fragment', :fragment, 1, CAST(:snapshot AS jsonb), :created), "
+                    "(:chunk_edge, :user, 'context', 'citation', 'message', :message, "
+                    "'content_chunk', :chunk, 2, CAST(:chunk_snapshot AS jsonb), :created)"
+                ),
+                {
+                    "id": citation_edge_id,
+                    "user": user_id,
+                    "message": assistant_message_id,
+                    "fragment": fragment_id,
+                    "chunk_edge": chunk_citation_edge_id,
+                    "chunk": chunk_id,
+                    "snapshot": json.dumps(citation_snapshot),
+                    "chunk_snapshot": json.dumps(chunk_snapshot),
+                    "created": created_at,
                 },
             )
             connection.execute(
@@ -429,6 +518,40 @@ def test_reader_structure_repair_preserves_fragment_identity_and_cursor(
                 {"id": anchor_cursor_id, "locator": json.dumps(anchor_locator)},
             )
 
+        # The citation's fragment target alone cannot recover the finer passage
+        # recorded by its old link. A missing retained address must abort the cut.
+        with pytest.raises(RuntimeError, match="cannot resolve stored link"):
+            command.upgrade(config, "head")
+        with engine.begin() as connection:
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0227"
+            assert (
+                connection.scalar(
+                    text("SELECT revision FROM reader_media_state WHERE id = :id"),
+                    {"id": cursor_id},
+                )
+                == 7
+            )
+            assert (
+                connection.scalar(
+                    text("SELECT deep_link FROM message_retrievals WHERE id = :id"),
+                    {"id": retrieval_id},
+                )
+                == old_link
+            )
+            assert (
+                connection.scalar(
+                    text("SELECT snapshot FROM resource_edges WHERE id = :id"),
+                    {"id": citation_edge_id},
+                )
+                == citation_snapshot
+            )
+            # Chat records this pointer when it copies the retrieval snapshot;
+            # the retained locator supplies literal offsets 10..16, not the file.
+            connection.execute(
+                text("UPDATE message_retrievals SET cited_edge_id = :edge WHERE id = :id"),
+                {"id": retrieval_id, "edge": citation_edge_id},
+            )
+
         command.upgrade(config, "head")
 
         with engine.connect() as connection:
@@ -482,6 +605,39 @@ def test_reader_structure_repair_preserves_fragment_identity_and_cursor(
                 key: value for key, value in passage_locator.items() if key != "section_id"
             }
             exact_link = f"/media/{media_id}?fragment={fragment_id}#text-{fragment_id}:10:16"
+            for edge_id, target_scheme, target_id, ordinal, edge_snapshot in (
+                (citation_edge_id, "fragment", fragment_id, 1, citation_snapshot),
+                (chunk_citation_edge_id, "content_chunk", chunk_id, 2, chunk_snapshot),
+            ):
+                assert connection.execute(
+                    text(
+                        "SELECT id, user_id, kind, origin, source_scheme, source_id, target_scheme, "
+                        "target_id, ordinal, snapshot, created_at FROM resource_edges WHERE id = :id"
+                    ),
+                    {"id": edge_id},
+                ).one() == (
+                    edge_id,
+                    user_id,
+                    "context",
+                    "citation",
+                    "message",
+                    assistant_message_id,
+                    target_scheme,
+                    target_id,
+                    ordinal,
+                    {**edge_snapshot, "deep_link": exact_link},
+                    created_at,
+                ), (
+                    "reader structure migration must preserve citation identity and its exact passage link"
+                )
+            assert connection.execute(
+                text("SELECT id, chunk_text, summary_locator FROM content_chunks WHERE id = :id"),
+                {"id": chunk_id},
+            ).one() == (
+                chunk_id,
+                "second",
+                {key: value for key, value in chunk_locator.items() if key != "section_id"},
+            )
             repaired_result = {
                 **result_ref,
                 "locator": repaired_locator,
@@ -510,6 +666,25 @@ def test_reader_structure_repair_preserves_fragment_identity_and_cursor(
                 text("SELECT id, seq, created_at, payload FROM chat_run_events WHERE id = :id"),
                 {"id": event_id},
             ).one() == (event_id, 1, created_at, {**event_payload, "results": [repaired_result]})
+            assert connection.execute(
+                text("SELECT id, seq, created_at, payload FROM chat_run_events WHERE id = :id"),
+                {"id": citation_event_id},
+            ).one() == (
+                citation_event_id,
+                2,
+                created_at,
+                {
+                    **citation_event_payload,
+                    "citations": [
+                        {
+                            "citation_edge_id": str(citation_edge_id),
+                            "citation": {**citation, "deep_link": exact_link},
+                        }
+                    ],
+                },
+            ), (
+                "citation replay must preserve its null locator and recover the exact edge passage link"
+            )
             assert (
                 connection.scalar(
                     text("SELECT generation_spec FROM chat_runs WHERE id = :id"), {"id": run_id}

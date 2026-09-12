@@ -9,6 +9,7 @@ import { cdp, page, userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useLayoutEffect } from "react";
 import "@/app/globals.css";
+import { toTopLevelCdpCoordinate, type TouchCoordinate } from "@/__tests__/helpers/trustedBrowserInput";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount";
@@ -56,34 +57,6 @@ function workspacePane(
     createDefaultWorkspaceState(href, workspacePrimaryMetrics),
   )[0]!;
   return { ...pane, id, visibility };
-}
-
-interface TouchCoordinate {
-  readonly x: number;
-  readonly y: number;
-}
-
-function toTopLevelCdpCoordinate(coordinate: TouchCoordinate): TouchCoordinate {
-  let sourceWindow: Window = window;
-  let x = coordinate.x;
-  let y = coordinate.y;
-
-  while (sourceWindow !== sourceWindow.parent) {
-    const frame = sourceWindow.frameElement;
-    if (
-      !frame ||
-      sourceWindow.innerWidth <= 0 ||
-      sourceWindow.innerHeight <= 0
-    ) {
-      throw new Error("Cannot project trusted input through the Vitest frame");
-    }
-    const frameRect = frame.getBoundingClientRect();
-    x = frameRect.left + x * (frameRect.width / sourceWindow.innerWidth);
-    y = frameRect.top + y * (frameRect.height / sourceWindow.innerHeight);
-    sourceWindow = sourceWindow.parent;
-  }
-
-  return { x, y };
 }
 
 let touchEmulationEnabled = false;
