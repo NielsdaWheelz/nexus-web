@@ -347,3 +347,11 @@ unexpected timeouts. See
 - [open] oi-080 · web ingest · 2026-09-12 source review · generated heading ids replace authored link and container targets: [ticket](tickets/web-ingest-replaces-authored-heading-anchors.md).
 - [open] oi-081 · pdf activity · 2026-09-12 input review · zoom renews reading eligibility through the page-turn control wrapper: [ticket](tickets/pdf-zoom-renews-reading-activity.md).
 - [open] oi-084 · test controller · 2026-09-12 confidence interruption · interruption discards completed capability evidence and reports the wrong owner: [ticket](tickets/test-controller-interrupt-discards-completed-capabilities.md).
+
+### [OPEN] OI-061 — Test subprocesses received unowned SIGTERMs
+testing · opened 2026-09-12 by Codex (production deployment) · P1
+Two canonical kernel runs lost different subprocess boundaries to unexplained
+SIGTERMs; twelve exact traced repetitions of the first case did not reproduce.
+Capture the sender under the full kernel portfolio before changing lifecycle
+behavior. See
+[docs/tickets/oracle-host-replay-received-unowned-sigterm.md](tickets/oracle-host-replay-received-unowned-sigterm.md).

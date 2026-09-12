@@ -908,7 +908,9 @@ Immutable run-context/resource-plan evidence is the complete audit record, not
 the cleanup oracle. The mutable recovery ledger is the cleanup authority.
 
 Process identity uses the persisted run and random owner tokens, process-group
-leader PID, and kernel start token. The planned command remains audit evidence,
+leader PID, and kernel start token. On Linux, each owner token also names one
+transient user scope whose cgroup contains the complete descendant tree across
+sessions and controller restarts. The planned command remains audit evidence,
 not a live identity oracle: runtimes such as Next may legitimately rewrite
 `argv`. Readiness MUST verify that a socket in the exact owned process group
 owns the expected loopback listener; a healthy stale or foreign listener is a

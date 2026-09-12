@@ -4,7 +4,10 @@ status: implemented; pr gate blocked; operator and release acceptance open.
 branch: `codex/reader-document-map`.
 base: `7fa89b88c8342bca9edfb46a6d20053c49555fb2`.
 contract: [hard cutover](reader-document-map-structure-hard-cutover.md).
-receipts live under `test-results/runs/<id>/summary.json` in the worktree named below.
+receipts originated under `test-results/runs/<id>/summary.json` in the worktree named below.
+merge cleanup preserves both worktrees’ receipts and browser attachments under
+`/home/niels/.local/state/nexus/reader-document-map-evidence/`, in directories
+named for their original worktree. private edition inputs remain outside git.
 
 | boundary | behavioral red | current green | review |
 | --- | --- | --- | --- |

@@ -256,12 +256,15 @@ authorizes a resend. There is no
 counter reset, storage clear, compatibility decoder, or legacy runtime lookup.
 
 Migration `0224` refuses every pending, running, or retryable generation job and
-every dead domain-owned generation job. Its only terminal queue exception is a
-dead `synapse_scan` after the separate nonterminal-`llm_calls` and
-`Uncertain`-journal preflights prove that no ambiguous provider effect remains;
-the reset then deletes that headless scan state while retaining its previously
-published edge set. Never update or delete production queue rows manually to
-force migration admission.
+every unclassified dead generation job. A dead `synapse_scan` is reset only
+after the separate nonterminal-`llm_calls` and `Uncertain`-journal preflights
+prove that no ambiguous provider effect remains. A dead `enrich_metadata` job
+is reset only when its finished, unclaimed attempt returned one frozen known
+failure reason in one of the two exact historical terminal result shapes whose
+error matches the queue error. The extended shape also requires exact nonempty
+provider/model attempts and a matching terminal attempt; current Media metadata
+and failure facts remain. Never update or delete production queue rows manually
+to force migration admission.
 
 The command performs the complete protocol:
 
