@@ -6,8 +6,9 @@
 
 ## What is wrong
 
-Canonical run `e39593aa61570b22` passed policy, static Python, and policy
-self-tests, then failed in
+Canonical run `e39593aa61570b22`, from checkout head
+`7fa89b88c8342bca9edfb46a6d20053c49555fb2` plus the uncommitted process-scope
+repair, passed policy, static Python, and policy self-tests, then failed in
 `test_host_oracle_reconcile_converges_after_success_before_phase_write[publish-SupportReconciled]`.
 The first subprocess intentionally stopped after persisting phase
 `SupportReconciled` and one `publish` effect. Its replay began 16 ms after the
@@ -17,8 +18,9 @@ not fail until 15 seconds later.
 
 The journal timestamps were `00:02:21.812819` for the first session closing,
 `00:02:21.828528` for replay launch, and `00:02:21.936200` for replay exit.
-The failed kernel log reported the subprocess failure at lines 437-449. Its
-state file was
+The now-cleaned receipt
+`test-results/runs/e39593aa61570b22/kernel-python-1.log` reported the subprocess
+failure at lines 437-449. Its state file was
 `/tmp/pytest-of-niels/pytest-714/test_host_oracle_reconcile_con2/fake-oracle-host-state.json`:
 phase `SupportReconciled`, `post_effect_interrupts=["publish"]`, one publish
 effect invocation, and no replay commands.
