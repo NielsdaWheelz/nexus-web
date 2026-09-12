@@ -236,3 +236,11 @@ books and temporary proofs remain outside git. no production data was changed.
   [controller defect](../tickets/fault-registry-rejects-literal-route-brackets.md).
   the evidence test remains registered; its owner exists at base and uses
   ordinary base sensitivity instead of an unnecessary injected fault.
+- native `ea0671f6e9e7d495` compiled and executed the host portfolio (186 tests).
+  the injected filename defect failed at `OfflineReadingSharedContractTest.kt:98`,
+  but gradle's short exception format omitted its assertion message. the controller
+  therefore rejected the run as a behavioral witness and did not run green.
+  full exception diagnostics belong in the existing app test-task configuration;
+  the controller's assertion classification remains strict. normal gradle test
+  output now retains full exception messages without stack frames, keeping the
+  assertion and case identity within the controller's bounded output tail.
