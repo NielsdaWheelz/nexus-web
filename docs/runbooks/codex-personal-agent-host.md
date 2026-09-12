@@ -359,10 +359,20 @@ input materialization, and every canary turn. An ordinary Docker or
 authenticated-startup failure without a measured kernel-envelope breach
 remains retryable and writes no false breach.
 
+Before it starts the candidate host, the controller converges every exact
+predecessor's Docker limits and attests the corresponding host cgroup's
+`memory.low`, `memory.max`, `memory.swap.max`, and `pids.max`. Docker metadata
+alone is not proof. If a corrected cgroup still has nonzero
+`memory.swap.current`, qualification writes no candidate evidence and reports
+the exact container ID. Settle that pre-contract state only through the planned
+retained-swap maintenance procedure in `deployment.md`, then rerun the same
+qualification command.
+
 An interrupted run may reclaim only its own labeled canary. A foreign
-same-named container is never name-only deletion authority. Do not stop other
-services, clear caches, add swap, raise the host limit, or lower reserves to
-manufacture a pass.
+same-named container is never name-only deletion authority. Apart from the
+documented retained-swap maintenance transition, do not stop other services,
+clear caches, add swap, raise the host limit, or lower reserves to manufacture
+a pass.
 
 ## Operation smoke boundary
 

@@ -643,3 +643,9 @@ open. production has not been changed.
 - [pr #238](https://github.com/NielsdaWheelz/nexus-web/pull/238) records the final
   native artifact proof, hosted check and merge disposition. the local
   pr-controller and operator/production-release limitations above remain separate.
+- main `604174af324a588961f124b63cf8cc5a38d705e5` is integrated after pr #239.
+  its release enforcement, kernel proof/testkits and deployment docs do not
+  overlap the reader changes; its tree matches independently reviewed `264cdd1`.
+  the background limit remains 448 mib, including the 352 mib parser envelope.
+  run `34710490907` was cancelled when this main change landed; it is not
+  passing evidence for the combined candidate. fresh hosted ci owns that verdict.
