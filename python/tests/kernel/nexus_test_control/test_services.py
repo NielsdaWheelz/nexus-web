@@ -711,6 +711,78 @@ def test_clean_reaps_the_exact_process_tree_when_linux_environment_becomes_unrea
                 pass
 
 
+def test_clean_reaps_an_exact_legacy_process_when_linux_environment_becomes_unreadable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    initialize_runtime(tmp_path, TEST_ENV, _ports())
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    owner_token = "a" * 32
+    resource = Resource(ResourceKind.PROCESS, process_resource_identity(RUN_ID, "api"))
+    command = (sys.executable, "-c", "import signal; signal.pause()")
+    record_planned(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        resource,
+        external_id=owner_token,
+        command=command,
+    )
+    owner_descriptor: int | None = None
+    inherited_descriptors: tuple[int, ...] = ()
+    child_environment = {
+        **os.environ,
+        "NEXUS_ENV": "test",
+        "NEXUS_TEST_PROCESS_OWNER": owner_token,
+        "NEXUS_TEST_RUN_ID": RUN_ID,
+    }
+    if sys.platform == "darwin":
+        marker = services._process_owner_marker(tmp_path, RUN_ID, owner_token)
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        owner_descriptor = os.open(marker, os.O_CREAT | os.O_EXCL | os.O_RDONLY, 0o600)
+        inherited_descriptors = (owner_descriptor,)
+        child_environment["NEXUS_TEST_PROCESS_OWNER_FD"] = str(owner_descriptor)
+    try:
+        process = subprocess.Popen(
+            command,
+            env=child_environment,
+            start_new_session=True,
+            pass_fds=inherited_descriptors,
+        )
+    finally:
+        if owner_descriptor is not None:
+            os.close(owner_descriptor)
+    try:
+        start_token = services._process_start_token(process.pid)
+        record_created(
+            tmp_path,
+            TEST_ENV,
+            RUN_ID,
+            resource,
+            process_group_id=process.pid,
+            process_start_token=start_token,
+        )
+        if sys.platform == "linux":
+            with monkeypatch.context() as inaccessible_environment:
+                inaccessible_environment.setattr(
+                    services,
+                    "_linux_process_environment",
+                    lambda _process_id: (_ for _ in ()).throw(PermissionError()),
+                )
+                clean_run(tmp_path, TEST_ENV, RUN_ID)
+        else:
+            clean_run(tmp_path, TEST_ENV, RUN_ID)
+
+        process.wait(timeout=3)
+        assert read_runtime(tmp_path).owned_run_ids == ()
+    finally:
+        if RUN_ID in read_runtime(tmp_path).owned_run_ids:
+            clean_run(tmp_path, TEST_ENV, RUN_ID)
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+
+
 def test_clean_reaps_an_exact_created_process_that_exits_before_owner_scan(
     tmp_path: Path,
 ) -> None:
