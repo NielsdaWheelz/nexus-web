@@ -1,4 +1,4 @@
-# `pr` sensitivity cannot accept a new or repointed vitest proof owner
+# `pr` sensitivity cannot replay changed non-python hard-cut owners
 
 **Status:** open
 **Origin:** Imports workspace cutover, final gates, 2026-09-11
@@ -57,13 +57,15 @@ None.
 
 ## Proposed fix
 
-Let a fault-owned vitest exact owner opt into coherent-fault the way a Python one
-does: pin the owner file's SHA-256 (vitest has no statement-slice owner, so the
-whole file is the owner) and route the red through the registered fault. Amend
-testing-standards §3 to say so, or state explicitly that `pr` is Python-only for
-sensitivity and that the fault sweep is the vitest witness.
+define coherent-fault admission for fault-owned vitest and native owners whose
+intentional hard-cut contracts cannot reach their assertion at BASE. pin the
+reviewed owner at its actual runner boundary and retain the applicable
+product-only patch, fingerprint and clean candidate proof. amend
+testing-standards §3 with the exact supported contract. preserve fail-closed
+handling of setup failures, absent owners and owner drift; do not waive pr.
 
 ## Acceptance
 
-`pr` on a branch that adds one fault-owned vitest owner passes its sensitivity
-capability through the fault, and the standard names the mechanism.
+`pr` passes sensitivity through the registered fault for both a new/repointed
+vitest owner and a native reader-format hard cut, with assertion reds and clean
+greens. the standard names the mechanism; invalid setup and drift still block.

@@ -314,13 +314,12 @@ hashes the owner test file alone, so strengthening the containment probe module
 produced no owner drift and no review. Extend the digest or narrow the sentence. See
 [docs/tickets/coherent-fault-owner-digest-omits-imported-support.md](tickets/coherent-fault-owner-digest-omits-imported-support.md).
 
-### [OPEN] OI-058 — `pr` sensitivity cannot accept a new or repointed vitest proof owner
+### [OPEN] OI-058 — `pr` sensitivity cannot replay changed non-python hard-cut owners
 testing · opened 2026-09-11 by Claude (imports cutover, final gates) · P2
-BASE replay of a vitest owner that is new or imports a new module fails at
-module resolution, never at a behavioral assertion, and coherent-fault is
-Python-only, so a hard cutover with new vitest owners cannot turn `pr` green
-even when every owner's fault reddens it. Let a fault-owned vitest owner opt into
-coherent-fault, or state that `pr` sensitivity is Python-only. See
+BASE replay can fail before a behavioral assertion for new vitest imports or
+native reader2 fixtures reaching reader1 admission. coherent-fault is
+python-only, so controlled fault passes cannot unblock the hard-cut pr gate.
+define the reviewed non-python routing contract without waiving sensitivity. see
 [docs/tickets/pr-sensitivity-cannot-accept-new-vitest-owners.md](tickets/pr-sensitivity-cannot-accept-new-vitest-owners.md).
 
 ### [OPEN] OI-059 — Three changed Python proof owners on the imports branch lack a coherent-fault witness

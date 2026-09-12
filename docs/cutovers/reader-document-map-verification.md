@@ -422,3 +422,13 @@ records this native instance of the changed-non-python hard-cut limitation.
 controlled fault passes do not waive the mandatory pr gate. independent
 `confidence --base` execution follows for full static/kernel and affected
 service/component evidence.
+
+first confidence run `5f0346622e5d8987` stops at full policy: the changed risk
+ownership registry has a stale frozen digest and the hosted journey still names
+deleted `epubHelpers.ts`. independent mapping review also finds that repointing
+the delivery and source-structure canonical nodes dropped their sibling cases
+from ordinary source-triggered selection. restore both whole-file routes beside
+their single fault-bound exact owners, remove the deleted helper glob (the
+existing `lib/reader/**/*` route covers its replacement), then update the reviewed
+ownership pin. no prior risk source coverage or capability is removed; no policy
+guard or sensitivity rule changes. full confidence rerun remains required.
