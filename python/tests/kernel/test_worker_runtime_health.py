@@ -60,6 +60,43 @@ print(json.dumps(loaded))
     )
 
 
+def test_worker_entrypoint_import_does_not_load_provider_execution_sdks() -> None:
+    """The idle worker retains contracts, not every provider HTTP client."""
+    script = """
+import json
+import sys
+
+import apps.worker.main
+
+blocked_roots = (
+    "anthropic",
+    "google.genai",
+    "openai",
+    "provider_runtime.engines",
+    "provider_runtime.runtime",
+)
+loaded = sorted(
+    name
+    for name in sys.modules
+    if any(name == root or name.startswith(f"{root}.") for root in blocked_roots)
+)
+print(json.dumps(loaded))
+"""
+
+    completed = subprocess.run(
+        [sys.executable, "-B", "-c", script],
+        cwd=REPO_ROOT,
+        env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "python")},
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    loaded = json.loads(completed.stdout)
+    assert loaded == [], f"the idle worker loaded provider execution modules: {loaded!r}"
+
+
 def test_worker_heartbeat_is_atomic_and_binds_runtime_contract(tmp_path: Path) -> None:
     heartbeat_path = tmp_path / "interactive.json"
     publisher = WorkerHeartbeatPublisher(
