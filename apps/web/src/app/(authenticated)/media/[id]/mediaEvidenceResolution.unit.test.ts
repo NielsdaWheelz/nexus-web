@@ -32,6 +32,51 @@ const TRANSCRIPT_RESPONSE = {
 };
 
 describe("media evidence resolution wire", () => {
+  it("decodes EPUB evidence through its exact fragment address", () => {
+    const fragmentId = "cccccccc-1111-4111-8111-111111111111";
+    const response = {
+      data: {
+        ...TRANSCRIPT_RESPONSE.data,
+        resolver: {
+          kind: "epub",
+          route: `/media/${MEDIA_ID}`,
+          params: { fragment: fragmentId },
+          status: "resolved",
+          selector: { kind: "epub_text", fragment_id: fragmentId },
+          highlight: {
+            kind: "epub_text",
+            evidence_span_id: EVIDENCE_ID,
+            fragment_id: fragmentId,
+            start_offset: 7,
+            end_offset: 21,
+            text_quote: { exact: "Exact evidence", prefix: "Before ", suffix: " after" },
+          },
+        },
+      },
+    };
+    expect(
+      () => decodeMediaEvidenceResolutionResponse(response),
+      "EPUB evidence must decode its exact fragment address",
+    ).not.toThrow();
+    expect(decodeMediaEvidenceResolutionResponse(response).data.resolver.highlight).toEqual({
+      kind: "epub_text",
+      evidenceSpanId: EVIDENCE_ID,
+      fragmentId,
+      startOffset: 7,
+      endOffset: 21,
+      textQuote: { exact: "Exact evidence", prefix: "Before ", suffix: " after" },
+    });
+    expect(() => decodeMediaEvidenceResolutionResponse({
+      data: {
+        ...response.data,
+        resolver: {
+          ...response.data.resolver,
+          highlight: { ...response.data.resolver.highlight, section_id: "old-section" },
+        },
+      },
+    })).toThrow("media evidence text highlight must contain exactly");
+  });
+
   it("decodes the complete exact envelope into domain names", () => {
     expect(decodeMediaEvidenceResolutionResponse(TRANSCRIPT_RESPONSE)).toEqual({
       data: {

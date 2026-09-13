@@ -23,7 +23,7 @@ the gate can never select the gate, and `./scripts/test changed` reports green o
 a tree whose Android build cannot start.
 
 That is how the cutover shipped a stale bundle for five phases
-(`docs/tickets/offline-reader-bundle-drifted-for-five-phases.md`, OI-051) with
+(oi-051, now resolved by the [reader native proof](../cutovers/reader-document-map-verification.md#final-focused-acceptance)) with
 every governed run passing — including the seven modules the cutover newly pulled
 into the shelf's module graph, none of which is matched by a glob of that risk
 either.

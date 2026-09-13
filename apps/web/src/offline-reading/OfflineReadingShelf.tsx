@@ -152,13 +152,13 @@ export default function OfflineReadingShelf({
 
   if (opened !== null) {
     return (
-      <main className={styles.shell}>
+      <main className={`${styles.shell} ${styles.readerShell}`}>
         <header className={styles.readerHeader}>
           <button type="button" className={styles.quietAction} onClick={closeReading}>
             Downloads
           </button>
           <div>
-            <h1>{opened.title}</h1>
+            <h1 title={opened.title}>{opened.title}</h1>
             <p>Downloaded copy · saved {formatOfflineReadingDate(opened.lease.installedAt)}</p>
           </div>
         </header>

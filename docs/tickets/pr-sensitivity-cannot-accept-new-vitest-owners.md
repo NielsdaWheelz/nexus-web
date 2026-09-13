@@ -1,4 +1,4 @@
-# `pr` sensitivity cannot accept a new or repointed vitest proof owner
+# `pr` sensitivity cannot replay changed non-python hard-cut owners
 
 **Status:** open
 **Origin:** Imports workspace cutover, final gates, 2026-09-11
@@ -31,19 +31,41 @@ the gap is only visible to whoever runs `pr` by hand.
 - `sensitivity.py:488-540` (`workflow_sensitivity_request`), `:560-575`
   (`_valid_exact_python_owner`), `behavioral_red`.
 
+### reader native hard cut, 2026-09-12
+
+the same changed-non-python BASE restriction also blocks the reader cutover.
+`NEXUS_TEST_BASE_SHA=7fa89b88c8342bca9edfb46a6d20053c49555fb2 ./scripts/test pr`
+at `faba868779` fails in `f5e5b75ff8fbd0cb` before all normal gate capabilities.
+the selected `OfflineReadingSharedContractTest.kt` compiles, then current
+reader2 fixtures reach the base reader1 verifier's
+`UnsupportedOfflineReadingPackageException` at `verifyAssembled:251` before
+the source-path assertion. the host portfolio reports 185 tests, 3 failures;
+the companion store test also hits an unsupported-state cast at line 940.
+these are not behavioral reds and must not be reclassified as assertions.
+retained evidence is the summary's sensitivity capability and its referenced
+`sensitivity/e939e8b941339594/red/1-android-host-1.log/android-host-1.log`.
+
+candidate product-only native faults already demonstrate the actual contracts:
+literal paths `2cb243a45b4aeeb2`; pending-progress preservation on the final
+`1a36e8dbbb` assets `81f5329ef596fbb5`. the owner must also define coherent native hard-cut routing;
+keeping reader1 fixtures/decoders or weakening assertions is not an acceptable
+repair. no native, browser or repository gate waiver is claimed.
+
 ## Prerequisites
 
 None.
 
 ## Proposed fix
 
-Let a fault-owned vitest exact owner opt into coherent-fault the way a Python one
-does: pin the owner file's SHA-256 (vitest has no statement-slice owner, so the
-whole file is the owner) and route the red through the registered fault. Amend
-testing-standards §3 to say so, or state explicitly that `pr` is Python-only for
-sensitivity and that the fault sweep is the vitest witness.
+define coherent-fault admission for fault-owned vitest and native owners whose
+intentional hard-cut contracts cannot reach their assertion at BASE. pin the
+reviewed owner at its actual runner boundary and retain the applicable
+product-only patch, fingerprint and clean candidate proof. amend
+testing-standards §3 with the exact supported contract. preserve fail-closed
+handling of setup failures, absent owners and owner drift; do not waive pr.
 
 ## Acceptance
 
-`pr` on a branch that adds one fault-owned vitest owner passes its sensitivity
-capability through the fault, and the standard names the mechanism.
+`pr` passes sensitivity through the registered fault for both a new/repointed
+vitest owner and a native reader-format hard cut, with assertion reds and clean
+greens. the standard names the mechanism; invalid setup and drift still block.

@@ -1,5 +1,5 @@
 import { apiFetch, decodeApiPayload } from "@/lib/api/client";
-import type { EpubSectionContent } from "@/lib/media/epubFind";
+import { requestEpubFragment, type EpubFragmentContent } from "@/lib/media/epubFragment";
 import {
   decodeMediaNavigationResponse,
   type MediaNavigation,
@@ -19,10 +19,7 @@ export interface ReaderMedia {
 
 export interface ReaderTextDocument {
   readonly fragments: readonly Fragment[];
-  readonly navigation?: readonly {
-    readonly fragment_id: string;
-    readonly label: string;
-  }[];
+
 }
 
 export type ReaderNavigation = MediaNavigation;
@@ -34,7 +31,7 @@ export interface ResolvedPdfDocument {
 
 /** Contract-named identifier aliases from the Cut-1 reader contract. */
 export type MediaId = string;
-export type SectionId = string;
+export type FragmentId = string;
 export type ReaderAssetRef = string;
 export type ReaderAssetUrl = string;
 
@@ -44,15 +41,15 @@ export interface ReaderDocumentSource {
     mediaId: MediaId,
     signal: AbortSignal,
   ): Promise<ReaderTextDocument>;
-  loadEpubNavigation(
+  loadNavigation(
     mediaId: MediaId,
     signal: AbortSignal,
   ): Promise<ReaderNavigation>;
-  loadEpubSection(
+  loadEpubFragment(
     mediaId: MediaId,
-    sectionId: SectionId,
+    fragmentId: FragmentId,
     signal: AbortSignal,
-  ): Promise<EpubSectionContent>;
+  ): Promise<EpubFragmentContent>;
   openPdf(
     mediaId: MediaId,
     signal: AbortSignal,
@@ -66,10 +63,6 @@ interface ReaderDescriptorResponse {
 
 interface ReaderFragmentsResponse {
   readonly data: readonly Fragment[];
-}
-
-interface ReaderSectionResponse {
-  readonly data: EpubSectionContent;
 }
 
 interface PdfFileAccessResponse {
@@ -107,7 +100,7 @@ class HostedReaderSource implements ReaderDocumentSource {
     return { fragments: normalizeFragments(response.data) };
   }
 
-  async loadEpubNavigation(
+  async loadNavigation(
     mediaId: string,
     signal: AbortSignal,
   ): Promise<ReaderNavigation> {
@@ -119,16 +112,8 @@ class HostedReaderSource implements ReaderDocumentSource {
     return response.data;
   }
 
-  async loadEpubSection(
-    mediaId: string,
-    sectionId: string,
-    signal: AbortSignal,
-  ): Promise<EpubSectionContent> {
-    const response = await apiFetch<ReaderSectionResponse>(
-      `/api/media/${mediaId}/sections/${encodeURIComponent(sectionId)}`,
-      { signal },
-    );
-    return response.data;
+  loadEpubFragment(mediaId: string, fragmentId: string, signal: AbortSignal): Promise<EpubFragmentContent> {
+    return requestEpubFragment({ mediaId, fragmentId, signal });
   }
 
   async openPdf(

@@ -1,7 +1,8 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { userEvent } from "vitest/browser";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { page, userEvent } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { decodeOfflineReaderDocument, offlineEpubSection } from "./packageContract";
+import "@/app/globals.css";
+import { decodeOfflineReaderDocument } from "./packageContract";
 import {
   type ReadingCommand,
   type ReadingSnapshot,
@@ -16,6 +17,7 @@ import { createWebKitOfflineReadingTransport } from "./transport";
 import type { OpenedOfflineReading } from "./runtime";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import OfflineReadingShelf from "@/offline-reading/OfflineReadingShelf";
+import type { ReaderResumeState } from "@/lib/reader/types";
 import reviewedContractVector from "../../../../../testdata/offline-reading-contract-v1.json";
 
 const LEASE_READER_URL =
@@ -105,6 +107,7 @@ class NativeReadingBoundary implements OfflineReadingTransport {
   readonly hostedCommands: string[] = [];
   openedMediaKind: "Pdf" | "Epub" | "WebArticle" | null = null;
   rejectNextSave = false;
+  initialLocator: ReaderResumeState | null = null;
   progressMode: "Snapshot" | "Pending" | "Conflict" | "ContentChanged" | "SourceUnavailable" = "Snapshot";
   #snapshot: ReadingSnapshot = {
     binding: {
@@ -132,7 +135,7 @@ class NativeReadingBoundary implements OfflineReadingTransport {
                 baseline: { state: "Empty" as const, revision: 0 },
                 device: {
                   kind: "web" as const,
-                  target: { fragment_id: "intro" },
+                  target: { fragment_id: "018f2e74-5efc-7e2f-8a3a-142857142857" },
                   locations: {
                     text_offset: 0,
                     progression: 0,
@@ -340,14 +343,14 @@ class NativeReadingBoundary implements OfflineReadingTransport {
     if (kind === "Epub") {
       return {
         kind: "epub" as const,
-        target: { section_id: "chapter-1", href_path: "EPUB/chapter-1.xhtml", anchor_id: null },
+        target: { fragment_id: "018f2e74-5efc-7e1e-8a3a-142857142857", href_path: "EPUB/chapter-1.xhtml", anchor_id: { kind: "Absent" as const } },
         locations: { text_offset: offset, progression: 0.5, total_progression: 0.5, position: 1 },
         text: { quote: "Read locally", quote_prefix: null, quote_suffix: null },
       };
     }
     return {
       kind: "web" as const,
-      target: { fragment_id: "intro" },
+      target: { fragment_id: "018f2e74-5efc-7e2f-8a3a-142857142857" },
       locations: { text_offset: offset, progression: 0.5, total_progression: 0.5, position: 1 },
       text: { quote: "local copy", quote_prefix: null, quote_suffix: null },
     };
@@ -358,6 +361,7 @@ class NativeReadingBoundary implements OfflineReadingTransport {
   }
 
   private openProgress(kind: "Pdf" | "Epub" | "WebArticle") {
+    if (this.initialLocator !== null) return { kind: "Canonical" as const, snapshot: { state: "Positioned" as const, revision: 2, locator: this.initialLocator } };
     if (this.progressMode === "Snapshot") {
       return { kind: "Canonical" as const, snapshot: { state: "Empty" as const, revision: 0 } };
     }
@@ -437,62 +441,26 @@ describe("offline-reading package and shell boundary", () => {
   });
 
   it("fails closed on relational and sanitizer mutations around the reviewed vectors", () => {
-    const validWeb = JSON.parse(
-      contractVector().readerDocuments.find((document) => document.id === "web-text-only")!.utf8,
-    ) as Record<string, unknown> & {
-      fragments: Array<Record<string, unknown>>;
-      navigation: Array<Record<string, unknown>>;
-    };
-    const validEpub = JSON.parse(
-      contractVector().readerDocuments.find((document) => document.id === "epub-with-local-asset")!.utf8,
-    ) as Record<string, unknown> & {
-      sections: Array<Record<string, unknown>>;
-      navigation: Array<Record<string, unknown>>;
-    };
-    const mutated = [
+    const validWeb = JSON.parse(contractVector().readerDocuments.find((document) => document.id === "web-text-only")!.utf8);
+    const validEpub = JSON.parse(contractVector().readerDocuments.find((document) => document.id === "epub-with-local-asset")!.utf8);
+    for (const candidate of [
       { ...validWeb, fragments: [] },
-      { ...validWeb, navigation: [{ fragmentId: "missing", label: "Missing" }] },
-      {
-        ...validWeb,
-        fragments: [{ ...validWeb.fragments[0], htmlSanitized: '<img src="assets/local.png">' }],
-      },
-      {
-        ...validWeb,
-        fragments: [validWeb.fragments[0], { ...validWeb.fragments[0], ordinal: 1 }],
-      },
-      { ...validEpub, sections: [] },
-      {
-        ...validEpub,
-        sections: [{ ...validEpub.sections[0], endOffset: 9_999 }],
-      },
-      {
-        ...validEpub,
-        sections: [{ ...validEpub.sections[0], htmlSanitized: "<!-- hidden --><p>Read locally.</p>", assetPaths: [] }],
-      },
-      {
-        ...validEpub,
-        navigation: [{ sectionId: "missing", label: "Missing" }],
-      },
-    ];
-    for (const candidate of mutated) {
-      expect(() => decodeOfflineReaderDocument(JSON.stringify(candidate))).toThrow();
-    }
-
+      { ...validWeb, fragments: [{ ...validWeb.fragments[0], htmlSanitized: '<img src="assets/local.png">' }, validWeb.fragments[1]] },
+      { ...validEpub, fragments: [{ ...validEpub.fragments[0], html_sanitized: "<!-- hidden --><p>Read locally.</p>" }] },
+    ]) expect(() => decodeOfflineReaderDocument(JSON.stringify(candidate))).toThrow();
     const emptyText = decodeOfflineReaderDocument(JSON.stringify({
       ...validEpub,
-      sections: [{
-        ...validEpub.sections[0],
-        htmlSanitized: "",
-        canonicalText: "",
-        assetPaths: [],
-        startOffset: 0,
-        endOffset: 0,
-      }],
+      navigation: {
+        ...validEpub.navigation,
+        fragments: [{ ...validEpub.navigation.fragments[0], char_count: 0 }],
+        sections: validEpub.navigation.sections.map((section: { extent: { value: { start: unknown; end: { fragment_id: string } } } }) => ({
+          ...section, extent: { kind: "Present", value: { ...section.extent.value, end: { ...section.extent.value.end, offset: 0 } } },
+        })),
+      },
+      fragments: [{ ...validEpub.fragments[0], html_sanitized: "", canonical_text: "", char_count: 0, word_count: 0, asset_paths: [] }],
     }));
     expect(emptyText.kind).toBe("Epub");
-    if (emptyText.kind === "Epub") {
-      expect(offlineEpubSection(emptyText, "chapter-1").word_count).toBe(0);
-    }
+    if (emptyText.kind === "Epub") expect(emptyText.fragments[0]!.word_count).toBe(0);
   });
 
   it("closes the active lease before an App Link opens another downloaded copy", async () => {
@@ -600,6 +568,241 @@ describe("offline-reading package and shell boundary", () => {
     view.unmount();
   });
 
+  it("uses exact canonical geometry for map jumps, return, reflow and trusted offline saves", async () => {
+    await page.viewport(640, 800);
+    const boundary = new NativeReadingBoundary();
+    const fragmentId = "018f2e74-5efc-7e1e-8a3a-142857142857";
+    // Independent source arithmetic: 4 + (320 * 6 - 1) + 1 = 1924.
+    // The image adds layout height and zero canonical characters; the wolf is one codepoint.
+    const canonical = `one\n${"alpha ".repeat(320).trim()}\ntwo\nexact 🐺 destination\n${"omega ".repeat(80).trim()}`;
+    expect(Array.from(canonical)).toHaveLength(2427);
+    const source = JSON.parse(contractVector().readerDocuments.find((entry) => entry.id === "epub-with-local-asset")!.utf8);
+    source.fragments[0] = {
+      ...source.fragments[0],
+      html_sanitized: `<h2>one</h2><p>${"alpha ".repeat(320).trim()}</p><img src="assets/cover.svg" width="320" height="400" alt="source image"><h2>two</h2><p>exact 🐺 destination</p><p>${"omega ".repeat(80).trim()}</p>`,
+      canonical_text: canonical, char_count: 2427, word_count: 405,
+    };
+    source.navigation.fragments[0].char_count = 2427;
+    source.navigation.sections = [
+      { section_id: "one", anchor_id: { kind: "Absent" }, label: "chapter one", parent_section_id: { kind: "Absent" }, source: "Publisher", target: { fragment_id: fragmentId, offset: 0 }, extent: { kind: "Present", value: { start: { fragment_id: fragmentId, offset: 0 }, end: { fragment_id: fragmentId, offset: 1924 } } } },
+      { section_id: "two", anchor_id: { kind: "Absent" }, label: "chapter two", parent_section_id: { kind: "Absent" }, source: "Publisher", target: { fragment_id: fragmentId, offset: 1924 }, extent: { kind: "Present", value: { start: { fragment_id: fragmentId, offset: 1924 }, end: { fragment_id: fragmentId, offset: 2427 } } } },
+    ];
+    source.navigation.toc_nodes = [
+      { id: "one", label: "chapter one", section_id: { kind: "Present", value: "one" }, children: [] },
+      { id: "two", label: "chapter two", section_id: { kind: "Present", value: "two" }, children: [] },
+    ];
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(source), { status: 200 })));
+    const controller = new OfflineReadingControllerRuntime(boundary);
+    const view = render(<OfflineReadingShelf controller={controller} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Open Plane Notes EPUB" }));
+    const viewport = await screen.findByTestId("document-viewport");
+    Object.assign(viewport.style, { height: "240px", maxHeight: "240px", width: "380px", overflowY: "auto" });
+    await vi.waitFor(() => expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight));
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const originalTop = viewport.scrollTop;
+    await userEvent.click(screen.getByRole("button", { name: "document map" }));
+    await userEvent.click(screen.getByRole("button", { name: "chapter two" }));
+    const heading = screen.getByRole("heading", { name: "two" });
+    await vi.waitFor(() => {
+      const target = heading.getBoundingClientRect();
+      const window = viewport.getBoundingClientRect();
+      expect(target.top).toBeGreaterThanOrEqual(window.top);
+      expect(target.bottom).toBeLessThan(window.bottom);
+    });
+    expect(boundary.savedLocators).toHaveLength(0);
+    await userEvent.click(await screen.findByRole("button", { name: "return to reading position" }));
+    await vi.waitFor(() => expect(Math.abs(viewport.scrollTop - originalTop)).toBeLessThanOrEqual(1));
+    expect(boundary.savedLocators).toHaveLength(0);
+    await userEvent.click(screen.getByRole("button", { name: "chapter two" }));
+    await screen.findByRole("button", { name: "return to reading position" });
+    // Leave one native arrow step before the known chapter glyph. The oracle
+    // below checks the actual glyph against the browser's reading line.
+    const prepared = new Promise<void>((resolve) => viewport.addEventListener("scrollend", () => resolve(), { once: true }));
+    viewport.scrollTop -= 40;
+    await prepared;
+    viewport.focus();
+    await userEvent.keyboard("{ArrowDown}");
+    await vi.waitFor(() => expect(boundary.savedLocators).toHaveLength(1));
+    expect(boundary.savedLocators[0], "offline reading must persist the exact canonical source offset").toMatchObject({
+      kind: "epub",
+      target: { fragment_id: fragmentId, anchor_id: { kind: "Absent" } },
+      locations: { text_offset: 1924 },
+      text: { quote: expect.stringContaining("exact 🐺 destination") },
+    });
+    const headingText = document.createRange();
+    headingText.selectNodeContents(heading);
+    const readingLine = viewport.getBoundingClientRect().top + Number.parseFloat(getComputedStyle(viewport).scrollPaddingTop);
+    expect(headingText.getBoundingClientRect().bottom).toBeGreaterThan(readingLine);
+    expect(headingText.getBoundingClientRect().top).toBeLessThan(viewport.getBoundingClientRect().bottom);
+    const precedingText = document.createRange();
+    precedingText.selectNodeContents(screen.getByText("alpha ".repeat(320).trim()));
+    expect(precedingText.getBoundingClientRect().bottom).toBeLessThanOrEqual(readingLine);
+    expect(screen.queryByRole("button", { name: "return to reading position" })).not.toBeInTheDocument();
+    const headingTop = heading.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
+    viewport.style.width = "520px";
+    await vi.waitFor(() => expect(Math.abs(heading.getBoundingClientRect().top - viewport.getBoundingClientRect().top - headingTop), "reflow must retain the exact source anchor").toBeLessThanOrEqual(1));
+    fireEvent.scroll(viewport);
+    expect(boundary.savedLocators).toHaveLength(1);
+    await userEvent.keyboard("{End}");
+    await vi.waitFor(() => expect(boundary.savedLocators.at(-1)).toMatchObject({ locations: { text_offset: 2427 } }));
+    expect(screen.getByRole("button", { name: "Current position, 100% through document" })).toBeVisible();
+    const savesAtEnd = boundary.savedLocators.length;
+    viewport.style.width = "420px";
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    fireEvent.scroll(viewport);
+    expect(boundary.savedLocators).toHaveLength(savesAtEnd);
+    expect(screen.getByRole("button", { name: "Current position, 100% through document" })).toBeVisible();
+    await userEvent.keyboard("{PageUp}");
+    await vi.waitFor(() => expect(screen.queryByRole("button", { name: "Current position, 100% through document" })).not.toBeInTheDocument());
+    await userEvent.keyboard("{End}");
+    await vi.waitFor(() => {
+      expect(boundary.savedLocators.length).toBeGreaterThan(savesAtEnd);
+      expect(boundary.savedLocators.at(-1)).toMatchObject({ locations: { text_offset: 2427 } });
+    });
+    boundary.rejectNextSave = true;
+    await userEvent.keyboard("{PageUp}");
+    expect(await screen.findByText(/could not be stored on this device/u)).toBeVisible();
+    const beforeNoScrollEnd = boundary.savedLocators.length;
+    Object.assign(viewport.style, { height: "auto", maxHeight: "none" });
+    await page.viewport(640, 4000);
+    await vi.waitFor(() => expect(viewport.scrollHeight).toBeLessThanOrEqual(viewport.clientHeight));
+    await screen.findByText("document 0%");
+    await userEvent.keyboard("{End}");
+    await vi.waitFor(() => {
+      expect(boundary.savedLocators).toHaveLength(beforeNoScrollEnd + 1);
+      expect(boundary.savedLocators.at(-1)).toMatchObject({ locations: { text_offset: 2427 } });
+    });
+    expect(viewport.scrollTop).toBe(0);
+    controller.dispose();
+    view.unmount();
+  });
+
+  it.each(["", "later text"])("restores distinct image-only source anchors with canonical tail %j", async (tail) => {
+    await page.viewport(390, 720);
+    const boundary = new NativeReadingBoundary();
+    const source = JSON.parse(contractVector().readerDocuments.find((entry) => entry.id === "epub-with-local-asset")!.utf8);
+    const fragment = source.fragments[0];
+    Object.assign(fragment, {
+      html_sanitized: `<figure id="first" role="img" aria-label="first plate">${"<br>".repeat(30)}</figure><figure id="second" role="img" aria-label="second plate">${"<br>".repeat(30)}</figure><p>${tail}</p>`,
+      canonical_text: tail, char_count: tail.length, word_count: tail ? 2 : 0, asset_paths: [],
+    });
+    source.navigation.fragments[0].char_count = tail.length;
+    source.navigation.sections = ["first", "second"].map((id) => ({
+      section_id: id, anchor_id: { kind: "Present", value: id }, label: `${id} illustration`,
+      parent_section_id: { kind: "Absent" }, source: "Publisher",
+      target: { fragment_id: fragment.fragment_id, offset: 0 },
+      extent: { kind: "Present", value: { start: { fragment_id: fragment.fragment_id, offset: 0 }, end: { fragment_id: fragment.fragment_id, offset: 0 } } },
+    }));
+    source.navigation.toc_nodes = ["first", "second"].map((id) => ({ id, label: `${id} illustration`, section_id: { kind: "Present", value: id }, children: [] }));
+    boundary.initialLocator = {
+      kind: "epub", target: { fragment_id: fragment.fragment_id, href_path: fragment.href_path, anchor_id: { kind: "Present", value: "second" } },
+      locations: { text_offset: null, progression: null, total_progression: null, position: null },
+      text: { quote: null, quote_prefix: null, quote_suffix: null },
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(source), { status: 200 })));
+    const controller = new OfflineReadingControllerRuntime(boundary);
+    const view = render(<OfflineReadingShelf controller={controller} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Open Plane Notes EPUB" }));
+    const viewport = await screen.findByTestId("document-viewport");
+    await vi.waitFor(() => {
+      expect(viewport.clientHeight, "offline reading must own a bounded inner viewport").toBeGreaterThan(0);
+      expect(viewport.getBoundingClientRect().bottom).toBeLessThanOrEqual(window.innerHeight);
+      expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight);
+    });
+    const bodyScroll = window.scrollY;
+    await vi.waitFor(() => {
+      const target = screen.getByRole("img", { name: "second plate" }).getBoundingClientRect();
+      const window = viewport.getBoundingClientRect();
+      expect(target.top).toBeGreaterThanOrEqual(window.top - 1);
+      expect(target.top).toBeLessThan(window.bottom);
+    });
+    const originalTop = viewport.scrollTop;
+    await userEvent.click(screen.getByRole("button", { name: "document map" }));
+    expect(screen.getByText(tail ? "position unavailable" : "text position unavailable")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "first illustration" }));
+    await vi.waitFor(() => {
+      const target = screen.getByRole("img", { name: "first plate" }).getBoundingClientRect();
+      const window = viewport.getBoundingClientRect();
+      expect(target.top).toBeGreaterThanOrEqual(window.top - 1);
+      expect(target.top).toBeLessThan(window.bottom);
+    });
+    await userEvent.click(await screen.findByRole("button", { name: "return to reading position" }));
+    await vi.waitFor(() => expect(Math.abs(viewport.scrollTop - originalTop)).toBeLessThanOrEqual(1));
+    expect(window.scrollY, "offline reading must keep the page fixed during source navigation").toBe(bodyScroll);
+    expect(boundary.savedLocators).toHaveLength(0);
+    controller.dispose();
+    view.unmount();
+  });
+
+  it("rejects ambiguous source anchors and preserves departure and excursion when arrival or return fails", async () => {
+    await page.viewport(640, 800);
+    const boundary = new NativeReadingBoundary();
+    const source = JSON.parse(contractVector().readerDocuments.find((entry) => entry.id === "epub-with-local-asset")!.utf8);
+    const ids = ["018f2e74-5efc-7e1e-8a3a-142857142857", "018f2e74-5efc-7e1e-8a3a-142857142858", "018f2e74-5efc-7e1e-8a3a-142857142859"];
+    source.fragments = ids.map((id, index) => ({
+      ...source.fragments[0], fragment_id: id, fragment_idx: index, href_path: `EPUB/plate-${index}.xhtml`,
+      html_sanitized: `${"<br>".repeat(30)}<figure id="plate">${index === 1 ? `<a href="#" data-nexus-fragment-id="${ids[2]}" data-nexus-anchor-id="plate">ambiguous source</a>` : ""}<span role="img" aria-label="plate ${index}">${"<br>".repeat(30)}</span></figure>${index === 2 ? '<a name="plate"></a>' : ""}`,
+      canonical_text: index === 1 ? "ambiguous source" : "", char_count: index === 1 ? 16 : 0, word_count: index === 1 ? 2 : 0, document_word_start: index === 2 ? 2 : 0, asset_paths: [],
+    }));
+    source.navigation.fragments = ids.map((id, index) => ({ fragment_id: id, fragment_idx: index, char_count: index === 1 ? 16 : 0 }));
+    source.navigation.sections = ids.map((id, index) => ({
+      section_id: `plate-${index}`, label: `illustration ${index}`, anchor_id: index === 2 ? { kind: "Absent" } : { kind: "Present", value: "plate" },
+      parent_section_id: { kind: "Absent" }, source: "Publisher", target: { fragment_id: id, offset: 0 },
+      extent: { kind: "Present", value: { start: { fragment_id: id, offset: 0 }, end: { fragment_id: id, offset: index === 1 ? 16 : 0 } } },
+    }));
+    source.navigation.toc_nodes = ids.map((_, index) => ({ id: `plate-${index}`, label: `illustration ${index}`, section_id: { kind: "Present", value: `plate-${index}` }, children: [] }));
+    boundary.initialLocator = {
+      kind: "epub", target: { fragment_id: ids[0]!, href_path: "EPUB/plate-0.xhtml", anchor_id: { kind: "Present", value: "plate" } },
+      locations: { text_offset: null, progression: null, total_progression: null, position: null },
+      text: { quote: null, quote_prefix: null, quote_suffix: null },
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(source), { status: 200 })));
+    const controller = new OfflineReadingControllerRuntime(boundary);
+    const reader = (height: number | null) => <><style>{`[data-testid="document-viewport"] { height: ${height === null ? "auto" : `${height}px`} !important; max-height: ${height === null ? "none" : `${height}px`} !important; width: 380px; overflow-y: auto; }`}</style><OfflineReadingShelf controller={controller} /></>;
+    const view = render(reader(240));
+    await userEvent.click(await screen.findByRole("button", { name: "Open Plane Notes EPUB" }));
+    await vi.waitFor(() => expect(screen.getByTestId("document-viewport").scrollTop).toBeGreaterThan(100));
+    const originalTop = screen.getByTestId("document-viewport").scrollTop;
+    await userEvent.click(screen.getByRole("button", { name: "document map" }));
+    await userEvent.click(screen.getByRole("button", { name: "illustration 1" }));
+    await screen.findByRole("img", { name: "plate 1" });
+    await screen.findByRole("button", { name: "return to reading position" });
+    const previewTop = screen.getByTestId("document-viewport").scrollTop;
+    await userEvent.click(screen.getByRole("link", { name: "ambiguous source" }));
+    await screen.findByText("The exact destination is unavailable in this rendered copy.");
+    await screen.findByRole("img", { name: "plate 1" });
+    await vi.waitFor(() => expect(Math.abs(screen.getByTestId("document-viewport").scrollTop - previewTop)).toBeLessThanOrEqual(1));
+    expect(screen.getByRole("button", { name: "return to reading position" })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "illustration 1" }));
+    await vi.waitFor(() => expect(screen.queryByText("The exact destination is unavailable in this rendered copy.")).not.toBeInTheDocument());
+    view.rerender(reader(null));
+    await page.viewport(640, 4000);
+    await vi.waitFor(() => {
+      const viewport = screen.getByTestId("document-viewport");
+      expect(viewport.clientHeight).toBeGreaterThanOrEqual(viewport.scrollHeight);
+    });
+    await userEvent.click(screen.getByRole("button", { name: "return to reading position" }));
+    await screen.findByText("The exact destination is unavailable in this rendered copy.");
+    await screen.findByRole("img", { name: "plate 1" });
+    expect(screen.getByRole("button", { name: "return to reading position" })).toBeVisible();
+    await page.viewport(640, 800);
+    view.rerender(reader(240));
+    await vi.waitFor(() => {
+      const viewport = screen.getByTestId("document-viewport");
+      expect(viewport.clientHeight).toBe(240);
+      const source = screen.getByRole("link", { name: "ambiguous source" }).getBoundingClientRect();
+      expect(source.top, "passive reflow must keep the same source glyph visible").toBeGreaterThanOrEqual(viewport.getBoundingClientRect().top);
+      expect(source.bottom).toBeLessThanOrEqual(viewport.getBoundingClientRect().bottom);
+    });
+    await userEvent.click(screen.getByRole("button", { name: "return to reading position" }));
+    await screen.findByRole("img", { name: "plate 0" });
+    await vi.waitFor(() => expect(Math.abs(screen.getByTestId("document-viewport").scrollTop - originalTop)).toBeLessThanOrEqual(1));
+    expect(screen.queryByRole("button", { name: "return to reading position" })).not.toBeInTheDocument();
+    expect(boundary.savedLocators).toHaveLength(0);
+    controller.dispose();
+    view.unmount();
+  });
+
   it("cold-connects, discloses local-copy limits, opens, and confirms destructive removal", async () => {
     const requests: string[] = [];
     const boundary = new NativeReadingBoundary();
@@ -620,35 +823,7 @@ describe("offline-reading package and shell boundary", () => {
         if (!url.startsWith("https://appassets.androidplatform.net/nexus-offline/lease/") || !reader) {
           throw new Error(`Unexpected offline request: ${url}`);
         }
-        let readerBody = reader.utf8;
-        if (reader.id === "epub-with-local-asset") {
-          const epub = JSON.parse(readerBody) as {
-            navigation: Array<{ sectionId: string; label: string }>;
-            sections: Array<{
-              sectionId: string;
-              ordinal: number;
-              anchorId: string | null;
-              startOffset: number;
-              endOffset: number;
-              htmlSanitized: string;
-            }>;
-          };
-          epub.sections[0]!.htmlSanitized = epub.sections[0]!.htmlSanitized.replace(
-            "<p>Read locally.</p>",
-            '<a href="#local-end" data-nexus-section-id="chapter-1">Jump within chapter</a><p id="local-end">Read locally.</p>',
-          );
-          epub.navigation.push({ sectionId: "chapter-2", label: "Chapter 2" });
-          epub.sections.push({
-            ...epub.sections[0]!,
-            sectionId: "chapter-2",
-            ordinal: 1,
-            anchorId: "local-end",
-            startOffset: 10,
-            endOffset: 23,
-          });
-          readerBody = JSON.stringify(epub);
-        }
-        return new Response(readerBody, {
+        return new Response(reader.utf8, {
           status: 200,
           headers: { "Content-Type": "application/json" },
         });
@@ -676,100 +851,30 @@ describe("offline-reading package and shell boundary", () => {
       .element(await screen.findByText(/Downloaded copy · saved Aug/))
       .toBeVisible();
     expect(await screen.findByText("A local copy keeps the prose available.")).toBeVisible();
-    await userEvent.click(screen.getByRole("button", { name: "Introduction" }));
-    await vi.waitFor(() => expect(boundary.savedLocators).toHaveLength(1));
-    expect(boundary.savedLocators[0]).toMatchObject({
-      kind: "web",
-      target: { fragment_id: "intro" },
-      locations: { text_offset: 0 },
-    });
+    await userEvent.click(screen.getByRole("button", { name: "document map" }));
+    await userEvent.click(screen.getByRole("button", { name: "Second" }));
+    expect(await screen.findByText("Fragment stays exact.")).toBeVisible();
+    expect(boundary.savedLocators).toHaveLength(0);
     const webMediaId = contractVector().validPackages.find(
       (candidate) => candidate.package.manifest.mediaKind === "WebArticle",
     )!.package.manifest.mediaId;
     boundary.emitConflict(webMediaId, false);
     await new Promise<void>((resolve) => queueMicrotask(resolve));
-    expect(
-      screen.queryByRole("button", { name: "Use saved location from Nexus · Introduction" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Use saved location from Nexus" })).not.toBeInTheDocument();
     boundary.emitConflict(webMediaId, true);
-    // TB-11: both spec-quoted choices, qualified by the chapter each side
-    // points at, and never phrased as latest/furthest.
-    expect(
-      await screen.findByRole("button", { name: "Use saved location from Nexus · Introduction" }),
-    ).toBeVisible();
-    expect(
-      screen.getByRole("button", { name: "Keep this device's location · Introduction" }),
-    ).toBeVisible();
-    boundary.rejectNextSave = true;
-    await userEvent.click(screen.getByRole("button", { name: "Introduction" }));
-    expect(await screen.findByText(/could not be stored on this device/u)).toBeVisible();
-    // Offline search is an explicit non-goal: the shelf reader offers no Find.
+    expect(await screen.findByRole("button", { name: "Use saved location from Nexus" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Keep this device's location" })).toBeVisible();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-    const webViewport = screen.getByTestId("document-viewport");
-    Object.defineProperties(webViewport, {
-      scrollHeight: { configurable: true, value: 500 },
-      clientHeight: { configurable: true, value: 100 },
-      scrollTop: { configurable: true, writable: true, value: 200 },
-    });
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-    fireEvent.scroll(webViewport);
-    await vi.waitFor(() => expect(boundary.savedLocators).toHaveLength(2));
-    expect(boundary.savedLocators[1]).toMatchObject({
-      kind: "web",
-      locations: { text_offset: expect.any(Number) },
-    });
-    expect(
-      (boundary.savedLocators[1] as { locations: { text_offset: number } }).locations.text_offset,
-    ).toBeGreaterThan(0);
     expect(requests).toHaveLength(1);
     expect(requests[0]).toMatch(/^https:\/\/appassets\.androidplatform\.net\/nexus-offline\/lease\//u);
 
     await userEvent.click(screen.getByRole("button", { name: "Downloads" }));
 
     await userEvent.click(screen.getByRole("button", { name: "Open Plane Notes EPUB" }));
-    expect(await screen.findByRole("button", { name: "Chapter 1" })).toBeVisible();
-    await userEvent.click(screen.getByRole("button", { name: "Chapter 2" }));
-    await vi.waitFor(() => expect(boundary.savedLocators).toHaveLength(3));
-    expect(screen.getByTestId("document-viewport")).toHaveAttribute(
-      "data-initial-canonical-offset",
-      "10",
-    );
-    expect(boundary.savedLocators[2]).toMatchObject({
-      kind: "epub",
-      target: { section_id: "chapter-2", anchor_id: "local-end" },
-      locations: { text_offset: 10 },
-    });
-    await userEvent.click(screen.getByRole("button", { name: "Chapter 1" }));
-    await vi.waitFor(() => expect(boundary.savedLocators).toHaveLength(4));
-    const scrollIntoView = vi.fn();
-    const originalScrollIntoView = Element.prototype.scrollIntoView;
-    Element.prototype.scrollIntoView = scrollIntoView;
-    await userEvent.click(screen.getByRole("link", { name: "Jump within chapter" }));
-    expect(scrollIntoView).toHaveBeenCalledOnce();
-    await vi.waitFor(() => expect(boundary.savedLocators).toHaveLength(5));
-    expect(boundary.savedLocators[4]).toMatchObject({
-      kind: "epub",
-      target: { section_id: "chapter-1", anchor_id: "local-end" },
-      locations: { text_offset: 0 },
-    });
-    Element.prototype.scrollIntoView = originalScrollIntoView;
-    const epubViewport = screen.getByTestId("document-viewport");
-    Object.defineProperties(epubViewport, {
-      scrollHeight: { configurable: true, value: 500 },
-      clientHeight: { configurable: true, value: 100 },
-      scrollTop: { configurable: true, writable: true, value: 200 },
-    });
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-    fireEvent.scroll(epubViewport);
-    await vi.waitFor(() => expect(boundary.savedLocators).toHaveLength(6));
-    expect(boundary.savedLocators[5]).toMatchObject({
-      kind: "epub",
-      target: {
-        section_id: "chapter-1",
-        href_path: "EPUB/chapter-1.xhtml",
-        anchor_id: null,
-      },
-    });
+    await userEvent.click(await screen.findByRole("button", { name: "document map" }));
+    expect(within(screen.getByRole("navigation", { name: "Map scope" })).getByRole("button", { name: "Chapter 1" })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Opening" }));
+    expect(boundary.savedLocators).toHaveLength(0);
     expect(requests).toHaveLength(2);
     expect(requests.every((url) => url.startsWith("https://appassets.androidplatform.net/nexus-offline/lease/"))).toBe(true);
 
@@ -781,17 +886,15 @@ describe("offline-reading package and shell boundary", () => {
     view = render(<OfflineReadingShelf controller={controller} />);
     expect(await screen.findByText("Signal on the Train")).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Open Signal on the Train" }));
-    expect(await screen.findByTestId("document-viewport")).toHaveAttribute(
-      "data-initial-canonical-offset",
-      "14",
-    );
+    expect(await screen.findByTestId("document-viewport")).toBeVisible();
+    expect(boundary.savedLocators).toHaveLength(0);
     await userEvent.click(screen.getByRole("button", { name: "Downloads" }));
 
     boundary.progressMode = "Conflict";
     await userEvent.click(screen.getByRole("button", { name: "Open Signal on the Train" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(/different saved locations/u);
     await userEvent.click(
-      screen.getByRole("button", { name: "Keep this device's location · Introduction" }),
+      screen.getByRole("button", { name: "Keep this device's location" }),
     );
     await vi.waitFor(() => expect(boundary.resolvedChoices).toEqual(["Device"]));
     await userEvent.click(screen.getByRole("button", { name: "Downloads" }));

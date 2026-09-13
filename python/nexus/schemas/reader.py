@@ -75,7 +75,6 @@ class WebTextOffsetsTargetOut(ResolvedHighlightTargetModel):
 
 class EpubTextOffsetsTargetOut(ResolvedHighlightTargetModel):
     kind: Literal["EpubTextOffsets"] = "EpubTextOffsets"
-    section_id: Annotated[str, Field(min_length=1, max_length=255)]
     fragment_id: UUID
     start_offset: Annotated[int, Field(ge=0, le=2**31 - 1)]
     end_offset: Annotated[int, Field(ge=0, le=2**31 - 1)]
@@ -273,15 +272,17 @@ class ReaderFragmentTarget(ReaderStateModel):
 class ReaderEpubTarget(ReaderStateModel):
     """EPUB target fields for persisted resume state."""
 
-    section_id: str
+    fragment_id: UUID
     href_path: str
-    anchor_id: str | None
+    anchor_id: Presence[Annotated[str, Field(min_length=1)]]
 
     @model_validator(mode="after")
     def validate_epub_target(self) -> "ReaderEpubTarget":
         """Reject blank EPUB target strings."""
 
-        _reject_blank_string_fields(self, ("section_id", "href_path", "anchor_id"))
+        _reject_blank_string_fields(self, ("href_path",))
+        if self.anchor_id.kind == "Present" and not self.anchor_id.value.strip():
+            raise ValueError("anchor_id cannot be blank")
         return self
 
 

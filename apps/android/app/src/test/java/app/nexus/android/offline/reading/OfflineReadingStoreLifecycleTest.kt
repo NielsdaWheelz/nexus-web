@@ -897,14 +897,37 @@ class OfflineReadingStoreLifecycleTest {
     }
 
     @Test
-    fun `unsupported persisted package version converges to recovery instead of poisoning reads`() {
+    fun `unsupported reader package preserves pending progress and requires recovery`() {
         val database = OfflineReadingDatabase(context, databaseName)
         val store = store(database)
         store.bindAccountAfterExternalPurge(accountId)
         store.enqueue(mediaId, "Verified copy", OfflineReadingMediaKind.WebArticle)
         assertTrue(publishRealPackage(store, store.nextRunnableTransfer()!!))
+        val installed = store.snapshot().items.single() as OfflineReadingItemSnapshot.PackageItem
+        val locator =
+            """{"kind":"web","target":{"fragment_id":"018f2e74-5efc-7e2f-8a3a-142857142857"},"locations":{"text_offset":1,"progression":0.2,"total_progression":0.2,"position":1},"text":{"quote":"eader","quote_prefix":"r","quote_suffix":null}}"""
+        store.saveReaderProgress(mediaId, installed.readerGeneration, installed.readerRevisionKey, locator)
+        store.recordConflict(
+            store.pendingSyncCandidates(mediaId).single(),
+            AttestedRemoteReaderState(
+                accountId,
+                installed.readerGeneration,
+                """{"state":"Positioned","revision":1,"locator":$locator}""",
+            ),
+        )
+        fun progressRows(source: OfflineReadingDatabase): List<List<String>> =
+            listOf("offline_reader_progress_pending", "offline_reader_progress_baselines").map { table ->
+                source.readableDatabase.rawQuery("SELECT * FROM $table", null).use { cursor ->
+                    assertTrue(
+                        "unsupported reader package erased progress row: $table",
+                        cursor.moveToFirst(),
+                    )
+                    List(cursor.columnCount) { cursor.getString(it) }
+                }
+            }
+        val originalProgress = progressRows(database)
         database.writableDatabase.execSQL(
-            "UPDATE offline_reader_packages SET package_schema_version = 2",
+            "UPDATE offline_reader_packages SET reader_contract_version = 1, minimum_bundle_version = 1",
         )
         database.close()
 
@@ -917,7 +940,24 @@ class OfflineReadingStoreLifecycleTest {
             (reopened.snapshot().items.single().availability as
                 OfflineReadingAvailability.Transfer).state,
         )
+        assertEquals(
+            "unsupported reader package changed progress bytes",
+            originalProgress,
+            progressRows(reopenedDatabase),
+        )
         assertThrows(IllegalStateException::class.java) { reopened.open(mediaId) }
+        assertTrue(reopened.pendingSyncCandidates(mediaId).isEmpty())
+        assertThrows(IllegalStateException::class.java) { reopened.retry(mediaId) }
+        assertThrows(IllegalStateException::class.java) {
+            reopened.resolveReaderProgress(mediaId, useCanonical = true)
+        }
+        reopened.cancel(mediaId)
+        reopened.enqueue(mediaId, "Verified copy", OfflineReadingMediaKind.WebArticle)
+        assertEquals(
+            ReadingTransferState.Failed(ReadingFailureReason.RecoveryRequired),
+            (reopened.snapshot().items.single().availability as OfflineReadingAvailability.Transfer).state,
+        )
+        assertEquals(originalProgress, progressRows(reopenedDatabase))
         var packageRows = -1L
         reopenedDatabase.readableDatabase
             .rawQuery("SELECT COUNT(*) FROM offline_reader_packages", null)

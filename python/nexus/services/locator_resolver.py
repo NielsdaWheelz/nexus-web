@@ -68,7 +68,6 @@ def resolve_highlight_reader_target(
                        f.canonical_text AS fragment_text,
                        f.t_start_ms,
                        f.t_end_ms,
-                       nav.location_id AS section_id,
                        hpa.page_number,
                        ppts.page_width,
                        ppts.page_height
@@ -79,14 +78,6 @@ def resolve_highlight_reader_target(
                 LEFT JOIN fragments f
                   ON f.id = hfa.fragment_id
                  AND f.media_id = h.anchor_media_id
-                LEFT JOIN LATERAL (
-                    SELECT location_id
-                    FROM epub_nav_locations
-                    WHERE media_id = f.media_id
-                      AND fragment_idx = f.idx
-                    ORDER BY ordinal ASC
-                    LIMIT 1
-                ) nav ON TRUE
                 LEFT JOIN highlight_pdf_anchors hpa
                   ON hpa.highlight_id = h.id
                  AND hpa.media_id = h.anchor_media_id
@@ -130,7 +121,6 @@ def resolve_highlight_reader_target(
         media_kind=str(row["media_kind"]),
         anchor_kind=str(row["anchor_kind"]),
         fragment_id=UUID(str(fragment_id)) if fragment_id is not None else None,
-        section_id=str(row["section_id"]) if row["section_id"] is not None else None,
         exact=str(row["exact"]),
         fragment_text=str(row["fragment_text"]) if row["fragment_text"] is not None else None,
         start_offset=int(row["start_offset"]) if row["start_offset"] is not None else None,
@@ -639,7 +629,6 @@ def _resolve_epub_selector(
                 "kind": "epub_text",
                 "evidence_span_id": str(evidence_span_id),
                 "fragment_id": fragment_id,
-                "section_id": section_id if isinstance(section_id, str) else None,
                 "start_offset": start_offset,
                 "end_offset": end_offset,
                 "text_quote": text_quote,

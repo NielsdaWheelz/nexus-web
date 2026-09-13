@@ -137,7 +137,7 @@ def publish_epub_source(
         db.flush()
         response: dict[str, object] = {
             "status": "success",
-            "chapter_count": result.chapter_count,
+            "fragment_count": result.fragment_count,
             "toc_node_count": result.toc_node_count,
             "asset_count": result.asset_count,
             "title": result.title,

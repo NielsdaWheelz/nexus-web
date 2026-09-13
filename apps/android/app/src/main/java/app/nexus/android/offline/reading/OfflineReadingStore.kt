@@ -282,7 +282,11 @@ internal class OfflineReadingStore internal constructor(
                     mediaId = mediaId,
                     requestedTitle = requestedTitle,
                     requestedMediaKind = requestedMediaKind,
-                    state = ReadingTransferState.Preparing,
+                    state = if (readPending(binding.bindingId, mediaId) == null) {
+                        ReadingTransferState.Preparing
+                    } else {
+                        ReadingTransferState.Failed(ReadingFailureReason.RecoveryRequired)
+                    },
                     automaticRestartCount = 0,
                     stagingName = ids.next().toString(),
                     requestedAt = clock.instant(),
@@ -319,6 +323,9 @@ internal class OfflineReadingStore internal constructor(
             val transfer = readTransfer(binding.bindingId, mediaId)
                 ?: error("offline reading transfer not found")
             require(transfer.state is ReadingTransferState.Failed)
+            check(readPending(binding.bindingId, mediaId) == null) {
+                "unsynced progress must be drained before replacing its offline package"
+            }
             deleteStaging(transfer)
             val next = transfer.copy(
                 state = ReadingTransferState.Preparing,
@@ -469,6 +476,9 @@ internal class OfflineReadingStore internal constructor(
     fun resolveReaderProgress(mediaId: UUID, useCanonical: Boolean): NativeReaderProgressView {
         val result = synchronized(this) {
             val binding = requireBinding()
+            check(readPackage(binding.bindingId, mediaId) != null) {
+                "offline reading package is required to resolve its progress"
+            }
             val baseline = readBaseline(binding.bindingId, mediaId)
                 ?: error("offline reading baseline is missing")
             val pending = readPending(binding.bindingId, mediaId)
@@ -814,7 +824,9 @@ internal class OfflineReadingStore internal constructor(
                         val valid = directoryValid &&
                             readBaseline(installed.bindingId, installed.mediaId)?.readerGeneration ==
                             installed.readerGeneration
-                        if (valid) {
+                        if (installed.id in preparation.unsupportedPackageIds) {
+                            excludeUnsupportedPackage(installed)
+                        } else if (valid) {
                             verifiedPackages[installed.id] = installed
                         } else {
                             recoverCorruptPackage(installed)
@@ -1062,6 +1074,9 @@ internal class OfflineReadingStore internal constructor(
             val binding = requireBinding()
             require(current.bindingId == binding.bindingId)
             require(baseline.accountId == binding.accountId)
+            check(readPending(binding.bindingId, current.mediaId) == null) {
+                "unsynced progress must be drained before accepting a new offline baseline"
+            }
             require(
                 verified.extractedDirectory ==
                     stagingVerified(binding.bindingId, current.stagingName)
@@ -1085,7 +1100,7 @@ internal class OfflineReadingStore internal constructor(
                         id, binding_id, media_id, media_kind, title, reader_generation,
                         reader_revision_key, package_schema_version, reader_contract_version,
                         minimum_bundle_version, package_sha256, size_bytes, installed_at
-                    ) VALUES(?, ?, ?, ?, ?, ?, ?, 1, 1, 1, ?, ?, ?)
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """.trimIndent(),
                     arrayOf(
                         packageId.toString(),
@@ -1095,26 +1110,39 @@ internal class OfflineReadingStore internal constructor(
                         verified.manifest.title,
                         verified.manifest.readerGeneration,
                         verified.manifest.readerRevisionKey,
+                        OFFLINE_READING_PACKAGE_SCHEMA_VERSION,
+                        OFFLINE_READING_READER_CONTRACT_VERSION,
+                        OFFLINE_READING_READER_BUNDLE_VERSION,
                         verified.packageSha256,
                         verified.compressedBytes,
                         installedAt.toString(),
                     ),
                 )
-                execSQL(
-                    """
-                    INSERT INTO offline_reader_progress_baselines(
-                        id, binding_id, media_id, reader_generation, server_snapshot_json, observed_at
-                    ) VALUES(?, ?, ?, ?, ?, ?)
-                    """.trimIndent(),
-                    arrayOf(
-                        ids.next().toString(),
-                        binding.bindingId.toString(),
-                        transfer.mediaId.toString(),
-                        baseline.readerGeneration,
-                        baseline.snapshotJson,
-                        installedAt.toString(),
-                    ),
-                )
+                if (readBaseline(binding.bindingId, transfer.mediaId) == null) {
+                    execSQL(
+                        """
+                        INSERT INTO offline_reader_progress_baselines(
+                            id, binding_id, media_id, reader_generation, server_snapshot_json, observed_at
+                        ) VALUES(?, ?, ?, ?, ?, ?)
+                        """.trimIndent(),
+                        arrayOf(
+                            ids.next().toString(), binding.bindingId.toString(), transfer.mediaId.toString(),
+                            baseline.readerGeneration, baseline.snapshotJson, installedAt.toString(),
+                        ),
+                    )
+                } else {
+                    execSQL(
+                        """
+                        UPDATE offline_reader_progress_baselines
+                        SET reader_generation = ?, server_snapshot_json = ?, observed_at = ?
+                        WHERE binding_id = ? AND media_id = ?
+                        """.trimIndent(),
+                        arrayOf(
+                            baseline.readerGeneration, baseline.snapshotJson, installedAt.toString(),
+                            binding.bindingId.toString(), transfer.mediaId.toString(),
+                        ),
+                    )
+                }
                 execSQL(
                     "DELETE FROM offline_reader_transfers WHERE id = ? AND binding_id = ?",
                     arrayOf(transfer.id.toString(), binding.bindingId.toString()),
@@ -1374,6 +1402,29 @@ internal class OfflineReadingStore internal constructor(
         }
     }
 
+    private fun excludeUnsupportedPackage(installed: OfflineReadingPackage) {
+        verifiedPackages.remove(installed.id)
+        packageDirectory(installed.bindingId, installed.id).deleteRecursively()
+        database.writableDatabase.transaction {
+            execSQL("DELETE FROM offline_reader_removals WHERE package_id = ?", arrayOf(installed.id.toString()))
+            execSQL("DELETE FROM offline_reader_packages WHERE id = ?", arrayOf(installed.id.toString()))
+            // Preserve progress bytes from the old contract. Pending progress blocks a
+            // fresh baseline, and the excluded package cannot expose either to the reader.
+            if (readTransfer(installed.bindingId, installed.mediaId) == null) {
+                val reason = if (readPending(installed.bindingId, installed.mediaId) == null) {
+                    ReadingFailureReason.UnsupportedPackage
+                } else {
+                    ReadingFailureReason.RecoveryRequired
+                }
+                insertTransferInTransaction(this, OfflineReadingTransfer(
+                    ids.next(), installed.bindingId, installed.mediaId, installed.title,
+                    installed.mediaKind, ReadingTransferState.Failed(reason), 0,
+                    ids.next().toString(), clock.instant(),
+                ))
+            }
+        }
+    }
+
     private fun recoverCorruptPackage(installed: OfflineReadingPackage) {
         verifiedPackages.remove(installed.id)
         packageDirectory(installed.bindingId, installed.id).deleteRecursively()
@@ -1630,8 +1681,8 @@ internal class OfflineReadingStore internal constructor(
         ).use { cursor ->
             while (cursor.moveToNext()) {
                 // Version support is validated per package during reconciliation
-                // (readUnsupportedPackageIds -> recoverCorruptPackage) so one unsupported
-                // persisted row converges to Failed(RecoveryRequired) instead of poisoning
+                // (readUnsupportedPackageIds -> excludeUnsupportedPackage) so one unsupported
+                // persisted row preserves progress and converges to a typed failure instead of poisoning
                 // every read path of the whole store.
                 result += OfflineReadingPackage(
                     cursor.uuid("id"),
@@ -1656,11 +1707,12 @@ internal class OfflineReadingStore internal constructor(
             """
             SELECT id FROM offline_reader_packages
             WHERE binding_id = ?
-              AND (package_schema_version != 1
-                   OR reader_contract_version != 1
-                   OR minimum_bundle_version != 1)
+              AND (package_schema_version != ?
+                   OR reader_contract_version != ?
+                   OR minimum_bundle_version != ?)
             """.trimIndent(),
-            arrayOf(bindingId.toString()),
+            arrayOf(bindingId.toString(), OFFLINE_READING_PACKAGE_SCHEMA_VERSION.toString(),
+                OFFLINE_READING_READER_CONTRACT_VERSION.toString(), OFFLINE_READING_READER_BUNDLE_VERSION.toString()),
         ).use { cursor ->
             while (cursor.moveToNext()) result += cursor.uuid("id")
         }

@@ -45,7 +45,9 @@ jobs:
     # A pull request proves its changed static paths plus the proofs its diff
     # affects. Manual recovery can select the complete `pr` portfolio with
     # same-run sensitivity; `full` on the main push is the release proof.
-    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.proof == 'pr' && 480 || 90 }}
+    # The complete portfolio measured 101m24s on this runner; 120 minutes
+    # permits a broad changed selection with 18m36s of observed headroom.
+    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.proof == 'pr' && 480 || 120 }}
     permissions:
       contents: read
       pull-requests: read

@@ -79,7 +79,7 @@ class ReadingBoundary implements OfflineReadingTransport {
             baseline: { state: "Empty", revision: 0 },
             device: {
               kind: "epub",
-              target: { section_id: "chapter-1", href_path: "EPUB/chapter-1.xhtml", anchor_id: null },
+              target: { fragment_id: "018f2e74-5efc-7d9e-8a3a-142857142858", href_path: "EPUB/chapter-1.xhtml", anchor_id: { kind: "Absent" } },
               locations: { text_offset: 12, progression: 0.5, total_progression: 0.5, position: 1 },
               text: { quote: null, quote_prefix: null, quote_suffix: null },
             },

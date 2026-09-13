@@ -796,7 +796,6 @@ class MediaEvidenceEpubHighlightOut(BaseModel):
     kind: Literal["epub_text"]
     evidence_span_id: UUID
     fragment_id: UUID
-    section_id: str | None = None
     start_offset: int = Field(ge=0)
     end_offset: int = Field(ge=0)
     text_quote: MediaEvidenceTextQuoteOut
@@ -904,8 +903,28 @@ class ReaderNavigationFragmentOut(BaseModel):
     """One unique canonical text unit in document order."""
 
     fragment_id: UUID
-    fragment_idx: int = Field(ge=0)
-    char_count: int = Field(ge=0)
+    fragment_idx: int = Field(ge=0, strict=True)
+    char_count: int = Field(ge=0, strict=True)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class NavigationTextPointOut(BaseModel):
+    """An exact canonical codepoint boundary within one source fragment."""
+
+    fragment_id: UUID
+    offset: int = Field(ge=0, strict=True)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class NavigationTextRangeOut(BaseModel):
+    """A semantic extent, potentially spanning several canonical fragments."""
+
+    start: NavigationTextPointOut
+    end: NavigationTextPointOut
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class ReaderNavigationSectionOut(BaseModel):
@@ -913,16 +932,13 @@ class ReaderNavigationSectionOut(BaseModel):
 
     section_id: str
     label: str
-    ordinal: int = Field(ge=0)
-    fragment_id: UUID
-    fragment_idx: int = Field(ge=0)
-    level: int | None = None
-    depth: int | None = None
-    start_offset: int = Field(ge=0)
-    end_offset: int | None = Field(ge=0)
-    href_path: str | None = None
-    href_fragment: str | None = None
-    anchor_id: str | None = None
+    parent_section_id: Presence[str]
+    target: NavigationTextPointOut
+    anchor_id: Presence[str]
+    extent: Presence[NavigationTextRangeOut]
+    source: Literal["Publisher", "Heading", "Both", "InferredNumberedEntry"]
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class ReaderNavigationTocNodeOut(BaseModel):
@@ -930,13 +946,10 @@ class ReaderNavigationTocNodeOut(BaseModel):
 
     id: str
     label: str
-    ordinal: int
-    href: str | None = None
-    fragment_idx: int | None = None
-    level: int | None = None
-    depth: int | None = None
-    section_id: str | None = None
+    section_id: Presence[str]
     children: list["ReaderNavigationTocNodeOut"]
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class ReaderNavigationLocationOut(BaseModel):
@@ -944,10 +957,9 @@ class ReaderNavigationLocationOut(BaseModel):
 
     id: str
     label: str
-    ordinal: int
-    href: str | None = None
-    fragment_idx: int | None = None
-    section_id: str | None = None
+    target: Presence[NavigationTextPointOut]
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class MediaNavigationOut(BaseModel):
@@ -955,30 +967,28 @@ class MediaNavigationOut(BaseModel):
 
     media_id: UUID
     kind: Literal["epub", "web_article"]
+    generation: int = Field(ge=1, strict=True)
     fragments: list[ReaderNavigationFragmentOut]
     sections: list[ReaderNavigationSectionOut]
     toc_nodes: list[ReaderNavigationTocNodeOut]
     landmarks: list[ReaderNavigationLocationOut]
     page_list: list[ReaderNavigationLocationOut]
 
+    model_config = ConfigDict(extra="forbid")
 
-class EpubSectionOut(BaseModel):
-    """Canonical EPUB section payload backed by a persisted nav location."""
 
-    section_id: str
-    label: str
+class EpubFragmentOut(BaseModel):
+    """One EPUB render unit, independent of the publication's outline."""
+
     fragment_id: UUID
-    fragment_idx: int
-    href_path: str | None
-    anchor_id: str | None
-    source_node_id: str | None
-    source: Literal["toc", "spine"]
-    ordinal: int
-    prev_section_id: str | None
-    next_section_id: str | None
+    fragment_idx: int = Field(ge=0, strict=True)
+    href_path: str = Field(min_length=1)
+    generation: int = Field(ge=1, strict=True)
     html_sanitized: str
     canonical_text: str
-    char_count: int
-    word_count: int
-    document_word_start: int
+    char_count: int = Field(ge=0, strict=True)
+    word_count: int = Field(ge=0, strict=True)
+    document_word_start: int = Field(ge=0, strict=True)
     created_at: datetime
+
+    model_config = ConfigDict(extra="forbid")

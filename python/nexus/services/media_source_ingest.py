@@ -873,6 +873,7 @@ def accept_browser_article_capture(
             attempt_id=attempt.id,
             exc=exc,
             stage="upload",
+            execution_id=absent(),
         )
         db.commit()
         media = db.get(Media, media.id) or media
@@ -1228,6 +1229,7 @@ def accept_browser_file_capture(
                 f"Captured file is not a valid {kind.upper()}.",
             ),
             stage="upload",
+            execution_id=absent(),
         )
         db.commit()
         media = db.get(Media, media.id) or media
@@ -1260,6 +1262,7 @@ def accept_browser_file_capture(
             attempt_id=attempt.id,
             exc=exc,
             stage="upload",
+            execution_id=absent(),
         )
         db.commit()
         media = db.get(Media, media.id) or media
@@ -3304,7 +3307,6 @@ def _run_prepared_html_article(
             embed_source_html=source_html,
             base_url=str(attempt.requested_url or ""),
             fragment_idx=0,
-            media_title=str(payload.get("title") or ""),
             extract_embeds=extract_embeds,
         )
     except ValueError as exc:

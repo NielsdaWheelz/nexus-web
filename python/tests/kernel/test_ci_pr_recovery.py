@@ -473,7 +473,7 @@ def test_ci_routes_dispatch_only_to_exact_pr_recovery_and_keeps_full_on_main_pus
     ), "manual recovery must expose only changed and pr with changed as the default"
     assert (
         "timeout-minutes: ${{ github.event_name == 'workflow_dispatch' "
-        "&& inputs.proof == 'pr' && 480 || 90 }}"
+        "&& inputs.proof == 'pr' && 480 || 120 }}"
     ) in workflow
     assert _step_environment("Run the selected PR proof") == {
         "NEXUS_CI_EVENT_NAME": "${{ github.event_name }}",
