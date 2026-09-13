@@ -1275,6 +1275,10 @@ def test_in_flight_source_progress_serializes_through_the_declared_media_wire(
     assert staged["source_progress"]["value"]["stage"] == "Finalize"
     assert staged["source_progress"]["value"]["run_count"] == 1
 
+    with Session(engine) as db:
+        assert complete_job(db, job_id=job.id, worker_id=worker_id)
+        db.commit()
+
 
 def test_parser_process_rss_stays_inside_the_background_memory_envelope() -> None:
     measured: dict[str, float] = {}
