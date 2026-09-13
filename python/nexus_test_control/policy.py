@@ -152,7 +152,7 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
             "if: github.event_name == 'push'",
             "run: ./scripts/test full",
             "Retire current checkout test runtime",
-            "run: ./scripts/test clean",
+            "            ./scripts/test clean",
             "if: always()",
         ),
         (
