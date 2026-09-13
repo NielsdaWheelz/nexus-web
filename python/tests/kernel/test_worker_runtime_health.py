@@ -38,9 +38,9 @@ blocked_roots = (
     "nexus.runtime_health",
 )
 loaded = sorted(
-    name
-    for name in sys.modules
-    if any(name == root or name.startswith(f"{root}.") for root in blocked_roots)
+    root
+    for root in blocked_roots
+    if any(name == root or name.startswith(f"{root}.") for name in sys.modules)
 )
 print(json.dumps(loaded))
 """
@@ -76,9 +76,9 @@ blocked_roots = (
     "provider_runtime.runtime",
 )
 loaded = sorted(
-    name
-    for name in sys.modules
-    if any(name == root or name.startswith(f"{root}.") for root in blocked_roots)
+    root
+    for root in blocked_roots
+    if any(name == root or name.startswith(f"{root}.") for name in sys.modules)
 )
 print(json.dumps(loaded))
 """
