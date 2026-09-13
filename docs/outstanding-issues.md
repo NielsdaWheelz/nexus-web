@@ -30,4 +30,7 @@ area · opened YYYY-MM-DD by <who> · P2
 
 ## Open
 
-None.
+### [OPEN] OI-001 — backend image proofs retain buildkit cache
+test control · opened 2026-09-13 by codex · P1
+candidate-image proofs can retain gigabytes of shared buildkit cache and exhaust
+the devbox; see `docs/tickets/devbox-buildkit-cache-retention.md`.
