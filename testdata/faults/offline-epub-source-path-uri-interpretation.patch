@@ -1,0 +1,11 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReaderDocumentVerifier.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReaderDocumentVerifier.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReaderDocumentVerifier.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReaderDocumentVerifier.kt
+@@ -253,6 +253,7 @@ internal object OfflineReaderDocumentVerifier {
+     }
+ 
+     private fun requireSafeHrefPath(path: String) {
++        java.net.URI(path)
+         require(path.isNotEmpty() && path.toByteArray().size <= 2048)
+         require(Normalizer.normalize(path, Normalizer.Form.NFC) == path)
+         require(!path.startsWith('/') && !path.startsWith('\\') && '\\' !in path)

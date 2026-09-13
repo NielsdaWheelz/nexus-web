@@ -43,7 +43,7 @@ def test_epub2_public_doctype_and_named_entities_publish_readable_chapters() -> 
     )
 
     assert isinstance(plan, EpubExtractionPlan), f"EPUB 2 book was rejected: {plan!r}"
-    assert plan.result.chapter_count == 1
+    assert plan.result.fragment_count == 1
     fragment = plan.fragment_specs[0][0]
     assert "Call\u00a0me Ishmael\u2014some years ago." in fragment.html_sanitized
     assert "Ishmael\u2014some years ago." in fragment.canonical_text

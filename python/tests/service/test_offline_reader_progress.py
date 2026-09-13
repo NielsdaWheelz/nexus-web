@@ -215,7 +215,7 @@ def _prove_wrong_account_leaves_canonical_cursor_unchanged(
 ) -> None:
     with _committed_published_article(engine) as article:
         accepted = _cursor(article.fragment_id, offset=10)
-        rejected = _cursor(article.fragment_id, offset=80)
+        rejected = _cursor(article.fragment_id, offset=20)
         canonical = consumption.put_reader_cursor(
             article.viewer_id,
             article.media_id,
@@ -250,7 +250,7 @@ def _prove_wrong_generation_leaves_canonical_cursor_unchanged(
 ) -> None:
     with _committed_published_article(engine) as article:
         accepted = _cursor(article.fragment_id, offset=10)
-        rejected = _cursor(article.fragment_id, offset=80)
+        rejected = _cursor(article.fragment_id, offset=20)
         canonical = consumption.put_reader_cursor(
             article.viewer_id,
             article.media_id,
@@ -375,7 +375,7 @@ def test_offline_reader_state_route_fences_account_and_generation_before_any_mut
     """
     with _committed_published_article(engine) as article:
         accepted = _cursor(article.fragment_id, offset=10)
-        rejected = _cursor(article.fragment_id, offset=80)
+        rejected = _cursor(article.fragment_id, offset=20)
         canonical = consumption.put_reader_cursor(
             article.viewer_id,
             article.media_id,

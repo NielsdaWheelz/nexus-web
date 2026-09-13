@@ -14,6 +14,8 @@ from sqlalchemy.orm import Session, sessionmaker
 from nexus.db.models import Media, MediaFile, ProcessingStatus, ReaderPublication
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.ids import new_uuid7
+from nexus.schemas.media import MediaNavigationOut
+from nexus.schemas.presence import Presence, absent, present
 from nexus.storage.client import StorageClientBase, StorageError, get_storage_client
 
 ReaderDocumentKind = Literal["pdf", "epub", "web_article"]
@@ -53,34 +55,12 @@ class ReaderPublicationFragment:
     idx: int
     canonical_text: str
     html_sanitized: str
+    word_count: int
+    created_at: datetime
 
 
 @dataclass(frozen=True)
-class ReaderPublicationEpubNavigation:
-    location_id: str
-    ordinal: int
-    label: str
-    fragment_idx: int
-    href_path: str | None
-    href_fragment: str | None
-    start_offset: int
-    end_offset: int
-
-
-@dataclass(frozen=True)
-class ReaderPublicationEpubTocNode:
-    node_id: str
-    nav_type: str
-    parent_node_id: str | None
-    label: str
-    href: str | None
-    fragment_idx: int | None
-    depth: int
-    order_key: str
-
-
-@dataclass(frozen=True)
-class ReaderPublicationEpubSection:
+class ReaderPublicationEpubFragmentSource:
     fragment_idx: int
     package_href: str
     manifest_item_id: str
@@ -99,10 +79,9 @@ class ReaderPublicationProjection:
     title: str
     page_count: int | None
     plain_text: str | None
+    navigation: Presence[MediaNavigationOut]
     fragments: tuple[ReaderPublicationFragment, ...]
-    epub_toc: tuple[ReaderPublicationEpubTocNode, ...]
-    epub_sections: tuple[ReaderPublicationEpubSection, ...]
-    epub_navigation: tuple[ReaderPublicationEpubNavigation, ...]
+    epub_fragment_sources: tuple[ReaderPublicationEpubFragmentSource, ...]
     object_references: tuple[ReaderPublicationObjectReference, ...]
 
 
@@ -458,6 +437,8 @@ def _read_projection(
     *,
     media_id: UUID,
 ) -> ReaderPublicationProjection:
+    from nexus.services.reader_navigation import read_media_navigation
+
     db = session_factory()
     try:
         db.connection(execution_options={"isolation_level": "REPEATABLE READ"})
@@ -493,11 +474,14 @@ def _read_projection(
                 idx=int(fragment.idx),
                 canonical_text=str(fragment.canonical_text),
                 html_sanitized=str(fragment.html_sanitized),
+                word_count=fragment.canonical_text_word_count,
+                created_at=fragment.created_at,
             )
             for fragment in db.execute(
                 text(
                     """
-                    SELECT id, idx, canonical_text, html_sanitized
+                    SELECT id, idx, canonical_text, html_sanitized,
+                           canonical_text_word_count, created_at
                     FROM fragments
                     WHERE media_id = :media_id
                     ORDER BY idx
@@ -506,58 +490,8 @@ def _read_projection(
                 {"media_id": media_id},
             )
         )
-        navigation = tuple(
-            ReaderPublicationEpubNavigation(
-                location_id=str(nav.location_id),
-                ordinal=int(nav.ordinal),
-                label=str(nav.label),
-                fragment_idx=int(nav.fragment_idx),
-                href_path=str(nav.href_path) if nav.href_path is not None else None,
-                href_fragment=(str(nav.href_fragment) if nav.href_fragment is not None else None),
-                start_offset=int(nav.start_offset),
-                end_offset=int(nav.end_offset),
-            )
-            for nav in db.execute(
-                text(
-                    """
-                    SELECT location_id, ordinal, label, fragment_idx, href_path,
-                           href_fragment, start_offset, end_offset
-                    FROM epub_nav_locations
-                    WHERE media_id = :media_id
-                    ORDER BY ordinal
-                    """
-                ),
-                {"media_id": media_id},
-            )
-        )
-        toc = tuple(
-            ReaderPublicationEpubTocNode(
-                node_id=str(node.node_id),
-                nav_type=str(node.nav_type),
-                parent_node_id=(
-                    str(node.parent_node_id) if node.parent_node_id is not None else None
-                ),
-                label=str(node.label),
-                href=str(node.href) if node.href is not None else None,
-                fragment_idx=int(node.fragment_idx) if node.fragment_idx is not None else None,
-                depth=int(node.depth),
-                order_key=str(node.order_key),
-            )
-            for node in db.execute(
-                text(
-                    """
-                    SELECT node_id, nav_type, parent_node_id, label, href,
-                           fragment_idx, depth, order_key
-                    FROM epub_toc_nodes
-                    WHERE media_id = :media_id
-                    ORDER BY order_key, node_id
-                    """
-                ),
-                {"media_id": media_id},
-            )
-        )
-        sections = tuple(
-            ReaderPublicationEpubSection(
+        fragment_sources = tuple(
+            ReaderPublicationEpubFragmentSource(
                 fragment_idx=int(section.fragment_idx),
                 package_href=str(section.package_href),
                 manifest_item_id=str(section.manifest_item_id),
@@ -619,10 +553,20 @@ def _read_projection(
             title=str(row["title"]),
             page_count=int(row["page_count"]) if row["page_count"] is not None else None,
             plain_text=str(row["plain_text"]) if row["plain_text"] is not None else None,
+            navigation=(
+                present(
+                    read_media_navigation(
+                        db,
+                        media_id=media_id,
+                        kind=row["kind"],
+                        generation=_positive_generation(row["generation"]),
+                    )
+                )
+                if row["kind"] in {"epub", "web_article"}
+                else absent()
+            ),
             fragments=fragments,
-            epub_toc=toc,
-            epub_sections=sections,
-            epub_navigation=navigation,
+            epub_fragment_sources=fragment_sources,
             object_references=references,
         )
         db.commit()

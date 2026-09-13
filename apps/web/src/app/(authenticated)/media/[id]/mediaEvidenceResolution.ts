@@ -32,7 +32,6 @@ interface MediaEvidenceWebHighlight extends MediaEvidenceTextHighlightBase {
 
 interface MediaEvidenceEpubHighlight extends MediaEvidenceTextHighlightBase {
   kind: "epub_text";
-  sectionId: string | null;
 }
 
 interface MediaEvidencePdfQuad {
@@ -210,27 +209,16 @@ function decodeHighlight(raw: unknown): MediaEvidenceHighlight | null {
   const record = expectRecord(raw, "media evidence highlight");
   const kind = expectString(record.kind, "media evidence highlight.kind");
   if (kind === "web_text" || kind === "epub_text") {
-    const hasSectionId = kind === "epub_text";
     const highlight = expectExactRecord(
       raw,
-      hasSectionId
-        ? [
-            "kind",
-            "evidence_span_id",
-            "fragment_id",
-            "section_id",
-            "start_offset",
-            "end_offset",
-            "text_quote",
-          ]
-        : [
-            "kind",
-            "evidence_span_id",
-            "fragment_id",
-            "start_offset",
-            "end_offset",
-            "text_quote",
-          ],
+      [
+        "kind",
+        "evidence_span_id",
+        "fragment_id",
+        "start_offset",
+        "end_offset",
+        "text_quote",
+      ],
       "media evidence text highlight",
     );
     const startOffset = expectNonnegativeInteger(
@@ -246,7 +234,8 @@ function decodeHighlight(raw: unknown): MediaEvidenceHighlight | null {
         "Media evidence text highlight offsets must form a positive range",
       );
     }
-    const textHighlight = {
+    return {
+      kind,
       evidenceSpanId: expectCanonicalUuid(
         highlight.evidence_span_id,
         "media evidence text highlight.evidence_span_id",
@@ -259,16 +248,6 @@ function decodeHighlight(raw: unknown): MediaEvidenceHighlight | null {
       endOffset,
       textQuote: decodeTextQuote(highlight.text_quote),
     };
-    return kind === "epub_text"
-      ? {
-          ...textHighlight,
-          kind,
-          sectionId: expectNullableString(
-            highlight.section_id,
-            "media evidence text highlight.section_id",
-          ),
-        }
-      : { ...textHighlight, kind };
   }
   if (kind === "pdf_text") {
     const highlight = expectExactRecord(

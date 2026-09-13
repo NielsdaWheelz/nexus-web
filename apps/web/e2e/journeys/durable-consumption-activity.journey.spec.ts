@@ -40,8 +40,7 @@ interface ConsumptionStatsPayload {
 interface EpubSection {
   section_id: string;
   label: string;
-  href_path: string | null;
-  start_offset: number;
+  target: { fragment_id: string; offset: number };
 }
 
 async function readJson<T>(response: APIResponse, label: string): Promise<T> {
@@ -120,13 +119,17 @@ test("restored reader input is durably projected as observed time in mounted Sta
     `EPUB navigation for ${mediaId}`,
   );
   const target = navigation.data.sections.find(
-    (section) => section.label === "Second" && section.href_path !== null,
+    (section) => section.label === "Second",
   );
   expect(
     target,
     `EPUB ${mediaId} did not expose the fixture-owned Second section.`,
   ).toBeDefined();
 
+  const fragment = await readJson<{ data: { href_path: string } }>(
+    await api.get(`/api/media/${mediaId}/fragments/${target!.target.fragment_id}`),
+    `EPUB fragment for ${mediaId}`,
+  );
   await readJson(
     await api.put(`/api/media/${mediaId}/reader-state`, {
       headers: { origin: webOrigin },
@@ -134,12 +137,12 @@ test("restored reader input is durably projected as observed time in mounted Sta
         locator: {
           kind: "epub",
           target: {
-            section_id: target!.section_id,
-            href_path: target!.href_path,
-            anchor_id: null,
+            fragment_id: target!.target.fragment_id,
+            href_path: fragment.data.href_path,
+            anchor_id: { kind: "Absent" },
           },
           locations: {
-            text_offset: target!.start_offset,
+            text_offset: target!.target.offset,
             progression: null,
             total_progression: null,
             position: null,

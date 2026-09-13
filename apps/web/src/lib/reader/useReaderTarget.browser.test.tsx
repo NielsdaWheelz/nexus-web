@@ -152,3 +152,37 @@ it("consumes a hash target after a matching live pulse", async () => {
     { modality: "Programmatic" },
   );
 });
+
+it("retains an exact text range in both a link and an unannotated pulse", async () => {
+  const mediaId = "media-exact-text";
+  const fragmentId = "00000000-0000-4000-8000-000000000002";
+  const view = render(<ReaderRuntime mediaId={mediaId} href={`/media/${mediaId}#text-${fragmentId}:10:16`}>
+    <ReaderTargetProbe mediaId={mediaId} />
+  </ReaderRuntime>);
+  await waitFor(() => expect(screen.getByLabelText(`Reader target ${mediaId}`)).toHaveTextContent(`pending:text:${fragmentId}:10:16`));
+  await act(async () => dispatchReaderPulse({
+    mediaId,
+    locator: { type: "epub_fragment_offsets", media_id: mediaId, fragment_id: fragmentId, start_offset: 24, end_offset: 32 },
+    snippet: "exact text",
+    highlightBehavior: "pulse",
+    focusBehavior: "scroll_into_view",
+  }));
+  expect(screen.getByLabelText(`Reader target ${mediaId}`)).toHaveTextContent(`pending:text:${fragmentId}:24:32`);
+  view.unmount();
+});
+
+it("keeps a completed map pulse decorative across the current mount and the next", async () => {
+  const mediaId = "map-decoration";
+  const view = renderReader(mediaId);
+  act(() => dispatchReaderPulse({
+    mediaId,
+    locator: { type: "web_text_offsets", media_id: mediaId, fragment_id: "00000000-0000-4000-8000-000000000010", start_offset: 24, end_offset: 32 },
+    snippet: null,
+    highlightBehavior: "pulse",
+    focusBehavior: "preserve_position",
+  }));
+  expect(screen.getByLabelText(`Reader target ${mediaId}`)).toHaveTextContent("idle:none:none");
+  view.unmount();
+  renderReader(mediaId);
+  expect(screen.getByLabelText(`Reader target ${mediaId}`)).toHaveTextContent("idle:none:none");
+});

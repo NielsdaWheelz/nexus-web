@@ -1,12 +1,12 @@
-"""Strict V1 wire schemas for verified offline-reading packages."""
+"""Archive grammar V1 carrying the strict V2 reader document contract."""
 
 from __future__ import annotations
 
 import json
 import re
 import unicodedata
+from datetime import datetime
 from typing import Annotated, Any, Literal
-from urllib.parse import urlsplit
 from uuid import UUID
 
 from lxml import html
@@ -20,9 +20,11 @@ from pydantic import (
 )
 from pydantic.alias_generators import to_camel
 
+from nexus.schemas.media import EpubFragmentOut, MediaNavigationOut, NavigationTextPointOut
+
 OFFLINE_READING_PACKAGE_SCHEMA_VERSION = 1
-OFFLINE_READING_READER_CONTRACT_VERSION = 1
-OFFLINE_READING_READER_BUNDLE_VERSION = 1
+OFFLINE_READING_READER_CONTRACT_VERSION = 2
+OFFLINE_READING_READER_BUNDLE_VERSION = 2
 
 # V1's single bounds owner. Other language implementations mirror these values.
 OFFLINE_READING_MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
@@ -132,8 +134,7 @@ def validate_safe_epub_href_path(path: str) -> str:
         raise ValueError("hrefPath must be NFC normalized")
     if path.startswith(("/", "\\")) or "\\" in path:
         raise ValueError("hrefPath must be an EPUB-relative forward-slash path")
-    parsed = urlsplit(path)
-    if parsed.scheme or parsed.netloc or parsed.query or parsed.fragment:
+    if "?" in path or "#" in path or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", path):
         raise ValueError("hrefPath must not contain an origin, query, or fragment")
     segments = path.split("/")
     if any(segment in {"", ".", ".."} for segment in segments):
@@ -156,6 +157,14 @@ def _canonical_uuid(value: object) -> UUID:
 def _nonblank(value: str, field_name: str) -> str:
     if not value or value.isspace():
         raise ValueError(f"{field_name} must contain visible text")
+    return value
+
+
+def _source_timestamp(value: object) -> datetime:
+    if isinstance(value, str):
+        value = datetime.fromisoformat(value)
+    if not isinstance(value, datetime) or value.tzinfo is None:
+        raise ValueError("source timestamp must be an ISO timestamp with an offset")
     return value
 
 
@@ -237,8 +246,8 @@ class OfflineReadingEntry(OfflineReadingSchemaModel):
 
 class OfflineReadingManifest(OfflineReadingSchemaModel):
     package_schema_version: Literal[1]
-    reader_contract_version: Literal[1]
-    minimum_reader_bundle_version: Literal[1]
+    reader_contract_version: Literal[2]
+    minimum_reader_bundle_version: Literal[2]
     media_id: UUID
     media_kind: Literal["Pdf", "Epub", "WebArticle"]
     title: str = Field(min_length=1, max_length=OFFLINE_READING_MAX_TITLE_CODEPOINTS)
@@ -281,7 +290,7 @@ class OfflineReadingManifest(OfflineReadingSchemaModel):
 
 
 class OfflineReaderDocumentBase(OfflineReadingSchemaModel):
-    reader_contract_version: Literal[1]
+    reader_contract_version: Literal[2]
     media_id: UUID
     title: str = Field(min_length=1, max_length=OFFLINE_READING_MAX_TITLE_CODEPOINTS)
 
@@ -301,113 +310,92 @@ class PdfOfflineReaderDocument(OfflineReaderDocumentBase):
     document_path: Literal["document.pdf"]
 
 
-class EpubOfflineNavigationItem(OfflineReadingSchemaModel):
-    section_id: str = Field(min_length=1, max_length=256)
-    label: str = Field(min_length=1, max_length=OFFLINE_READING_MAX_TITLE_CODEPOINTS)
+class EpubOfflineFragment(EpubFragmentOut):
+    """The hosted fragment body plus its closed package asset set."""
 
-    @field_validator("section_id", "label")
-    @classmethod
-    def validate_nonblank_fields(cls, value: str, info: Any) -> str:
-        return _nonblank(value, info.field_name)
-
-
-class EpubOfflineSection(OfflineReadingSchemaModel):
-    section_id: str = Field(min_length=1, max_length=256)
-    ordinal: int = Field(ge=0)
-    fragment_id: UUID
-    fragment_idx: int = Field(ge=0)
-    href_path: str
-    anchor_id: str | None = Field(default=None, max_length=256)
-    start_offset: int = Field(ge=0)
-    end_offset: int = Field(ge=0)
-    html_sanitized: str
-    canonical_text: str
     asset_paths: list[str]
 
-    @field_validator("section_id")
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    @field_validator("created_at", mode="before")
     @classmethod
-    def validate_section_id(cls, value: str) -> str:
-        return _nonblank(value, "sectionId")
+    def validate_created_at(cls, value: object) -> datetime:
+        return _source_timestamp(value)
 
     @field_validator("fragment_id", mode="before")
     @classmethod
     def validate_fragment_id(cls, value: object) -> UUID:
-        return _canonical_uuid(value)
+        return value if isinstance(value, UUID) else _canonical_uuid(value)
 
     @field_validator("href_path")
     @classmethod
     def validate_href_path(cls, value: str) -> str:
         return validate_safe_epub_href_path(value)
 
-    @field_validator("anchor_id")
-    @classmethod
-    def validate_anchor_id(cls, value: str | None) -> str | None:
-        return _nonblank(value, "anchorId") if value is not None else None
-
     @field_validator("asset_paths")
     @classmethod
     def validate_assets(cls, value: list[str]) -> list[str]:
-        validated = [validate_safe_package_path(path) for path in value]
-        if len(validated) != len(set(validated)):
-            raise ValueError("assetPaths must be unique")
-        if sorted(validated, key=lambda path: path.encode("utf-8")) != validated:
-            raise ValueError("assetPaths must be sorted by ascending UTF-8 path bytes")
-        if any(not path.startswith("assets/") for path in validated):
-            raise ValueError("EPUB assetPaths must live below assets/")
-        return validated
+        paths = [validate_safe_package_path(path) for path in value]
+        if len(paths) != len(set(paths)):
+            raise ValueError("asset_paths must be unique")
+        if sorted(paths, key=lambda path: path.encode("utf-8")) != paths:
+            raise ValueError("asset_paths must be sorted by ascending UTF-8 path bytes")
+        if any(not path.startswith("assets/") for path in paths):
+            raise ValueError("EPUB asset_paths must live below assets/")
+        return paths
 
     @model_validator(mode="after")
-    def validate_html(self) -> EpubOfflineSection:
-        if self.end_offset < self.start_offset:
-            raise ValueError("EPUB section endOffset must be at or after startOffset")
-        if self.end_offset > len(self.canonical_text):
-            raise ValueError("EPUB section offsets must be within canonicalText")
+    def validate_html(self) -> EpubOfflineFragment:
+        if self.char_count != len(self.canonical_text):
+            raise ValueError("EPUB char_count must equal canonical_text length")
         referenced = _validate_sanitized_html(self.html_sanitized, web_text_only=False)
         if referenced != set(self.asset_paths):
-            raise ValueError("EPUB HTML asset references must exactly match assetPaths")
+            raise ValueError("EPUB HTML assets must exactly match asset_paths")
         return self
 
 
 class EpubOfflineReaderDocument(OfflineReaderDocumentBase):
     media_kind: Literal["Epub"]
-    navigation: list[EpubOfflineNavigationItem]
-    sections: list[EpubOfflineSection] = Field(min_length=1)
+    navigation: MediaNavigationOut
+    fragments: list[EpubOfflineFragment] = Field(min_length=1)
 
     @model_validator(mode="after")
     def validate_order_and_identity(self) -> EpubOfflineReaderDocument:
-        section_ids = [item.section_id for item in self.sections]
-        navigation_ids = [item.section_id for item in self.navigation]
-        if len(section_ids) != len(set(section_ids)) or len(navigation_ids) != len(
-            set(navigation_ids)
-        ):
-            raise ValueError("EPUB section and navigation IDs must be unique")
-        if any(item.ordinal != index for index, item in enumerate(self.sections)):
-            raise ValueError("EPUB section ordinals must be contiguous and match array order")
-        if any(section_id not in set(section_ids) for section_id in navigation_ids):
-            raise ValueError("EPUB navigation must reference a declared section")
+        _validate_navigation_fragments(
+            self.navigation,
+            media_id=self.media_id,
+            kind="epub",
+            fragments=[
+                (item.fragment_id, item.fragment_idx, item.canonical_text)
+                for item in self.fragments
+            ],
+        )
+        word_start = 0
+        for fragment in self.fragments:
+            if fragment.generation != self.navigation.generation:
+                raise ValueError("EPUB fragments and navigation must share one generation")
+            if fragment.document_word_start != word_start:
+                raise ValueError("EPUB fragment word prefixes must follow document order")
+            word_start += fragment.word_count
         return self
 
 
-class WebOfflineNavigationItem(OfflineReadingSchemaModel):
-    fragment_id: str = Field(min_length=1, max_length=256)
-    label: str = Field(min_length=1, max_length=OFFLINE_READING_MAX_TITLE_CODEPOINTS)
-
-    @field_validator("fragment_id", "label")
-    @classmethod
-    def validate_nonblank_fields(cls, value: str, info: Any) -> str:
-        return _nonblank(value, info.field_name)
-
-
 class WebOfflineFragment(OfflineReadingSchemaModel):
-    fragment_id: str = Field(min_length=1, max_length=256)
-    ordinal: int = Field(ge=0)
+    fragment_id: UUID
+    fragment_idx: int = Field(ge=0)
     html_sanitized: str
     canonical_text: str
+    created_at: datetime
 
-    @field_validator("fragment_id")
+    @field_validator("created_at", mode="before")
     @classmethod
-    def validate_fragment_id(cls, value: str) -> str:
-        return _nonblank(value, "fragmentId")
+    def validate_created_at(cls, value: object) -> datetime:
+        return _source_timestamp(value)
+
+    @field_validator("fragment_id", mode="before")
+    @classmethod
+    def validate_fragment_id(cls, value: object) -> UUID:
+        return _canonical_uuid(value)
 
     @field_validator("html_sanitized")
     @classmethod
@@ -418,22 +406,92 @@ class WebOfflineFragment(OfflineReadingSchemaModel):
 
 class WebArticleOfflineReaderDocument(OfflineReaderDocumentBase):
     media_kind: Literal["WebArticle"]
-    navigation: list[WebOfflineNavigationItem]
+    navigation: MediaNavigationOut
     fragments: list[WebOfflineFragment] = Field(min_length=1)
 
     @model_validator(mode="after")
     def validate_order_and_identity(self) -> WebArticleOfflineReaderDocument:
-        fragment_ids = [item.fragment_id for item in self.fragments]
-        navigation_ids = [item.fragment_id for item in self.navigation]
-        if len(fragment_ids) != len(set(fragment_ids)) or len(navigation_ids) != len(
-            set(navigation_ids)
-        ):
-            raise ValueError("web fragment and navigation IDs must be unique")
-        if any(item.ordinal != index for index, item in enumerate(self.fragments)):
-            raise ValueError("web fragment ordinals must be contiguous and match array order")
-        if any(fragment_id not in set(fragment_ids) for fragment_id in navigation_ids):
-            raise ValueError("web navigation must reference a declared fragment")
+        _validate_navigation_fragments(
+            self.navigation,
+            media_id=self.media_id,
+            kind="web_article",
+            fragments=[
+                (item.fragment_id, item.fragment_idx, item.canonical_text)
+                for item in self.fragments
+            ],
+        )
         return self
+
+
+def _validate_navigation_fragments(
+    navigation: MediaNavigationOut,
+    *,
+    media_id: UUID,
+    kind: Literal["epub", "web_article"],
+    fragments: list[tuple[UUID, int, str]],
+) -> None:
+    """Bind untrusted packaged navigation to its unique immutable content."""
+    if navigation.media_id != media_id or navigation.kind != kind:
+        raise ValueError("navigation identity must match its reader document")
+    identifiers = [fragment[0] for fragment in fragments]
+    indexes = [fragment[1] for fragment in fragments]
+    if len(identifiers) != len(set(identifiers)) or indexes != sorted(set(indexes)):
+        raise ValueError("fragments must have unique identities and increasing indexes")
+    if [
+        (item.fragment_id, item.fragment_idx, item.char_count) for item in navigation.fragments
+    ] != [(identifier, index, len(value)) for identifier, index, value in fragments]:
+        raise ValueError("navigation fragment lengths and order must match canonical content")
+    coordinates: dict[UUID, tuple[int, int]] = {}
+    document_offset = 0
+    for identifier, _, value in fragments:
+        coordinates[identifier] = document_offset, len(value)
+        document_offset += len(value)
+
+    def point(value: NavigationTextPointOut) -> int:
+        target = coordinates.get(value.fragment_id)
+        if target is None or value.offset > target[1]:
+            raise ValueError("navigation target must lie within a declared fragment")
+        return target[0] + value.offset
+
+    sections = {item.section_id: item for item in navigation.sections}
+    if len(sections) != len(navigation.sections):
+        raise ValueError("navigation section identities must be unique")
+    starts = [point(item.target) for item in navigation.sections]
+    if starts != sorted(starts):
+        raise ValueError("navigation sections must follow canonical reading order")
+    for section in navigation.sections:
+        if section.extent.kind == "Present":
+            extent = section.extent.value
+            if extent.start != section.target or point(extent.end) < point(extent.start):
+                raise ValueError(
+                    "navigation section extent must start at its target and not run backwards"
+                )
+        seen = {section.section_id}
+        parent = section.parent_section_id
+        while parent.kind == "Present":
+            if parent.value in seen or parent.value not in sections:
+                raise ValueError("navigation parent must form an acyclic declared hierarchy")
+            seen.add(parent.value)
+            ancestor = sections[parent.value]
+            if section.extent.kind == "Present" and ancestor.extent.kind == "Present":
+                if point(section.target) < point(ancestor.target) or point(
+                    section.extent.value.end
+                ) > point(ancestor.extent.value.end):
+                    raise ValueError("navigation child extent must lie within its parent extent")
+            parent = ancestor.parent_section_id
+    toc_ids: set[str] = set()
+    pending = list(navigation.toc_nodes)
+    while pending:
+        node = pending.pop()
+        if node.id in toc_ids:
+            raise ValueError("navigation outline node identities must be unique")
+        toc_ids.add(node.id)
+        if node.section_id.kind == "Present" and node.section_id.value not in sections:
+            raise ValueError("navigation outline must reference declared sections")
+        pending.extend(node.children)
+    for location in [*navigation.landmarks, *navigation.page_list]:
+        if location.target.kind == "Present":
+            point(location.target.value)
 
 
 OfflineReaderDocument = Annotated[
@@ -495,4 +553,9 @@ def parse_offline_reader_document(payload: bytes) -> OfflineReaderDocument:
         maximum_bytes=OFFLINE_READING_MAX_READER_JSON_BYTES,
         name="reader.json",
     )
-    return _READER_DOCUMENT_ADAPTER.validate_python(value, by_alias=True, by_name=False)
+    document = _READER_DOCUMENT_ADAPTER.validate_python(value, by_alias=True, by_name=False)
+    if not isinstance(document, PdfOfflineReaderDocument) and value[
+        "navigation"
+    ] != document.navigation.model_dump(mode="json"):
+        raise ValueError("packaged navigation must use exact canonical wire values")
+    return document

@@ -174,7 +174,7 @@ class OfflineReadingLifecycleTest {
             """{"kind":"web","target":{"fragment_id":"fragment"},"locations":{"text_offset":0,"progression":0.0,"total_progression":0.5,"position":1},"text":{"quote":"visible","quote_prefix":null,"quote_suffix":null}}"""
         )
         OfflineReaderStateValidator.requireLocator(
-            """{"kind":"epub","target":{"section_id":"chapter","href_path":"EPUB/chapter.xhtml","anchor_id":null},"locations":{"text_offset":0,"progression":0.0,"total_progression":0.5,"position":1},"text":{"quote":null,"quote_prefix":null,"quote_suffix":null}}"""
+            """{"kind":"epub","target":{"fragment_id":"018f2e74-5efc-7e2f-8a3a-142857142857","href_path":"EPUB/chapter.xhtml","anchor_id":{"kind":"Absent"}},"locations":{"text_offset":0,"progression":0.0,"total_progression":0.5,"position":1},"text":{"quote":null,"quote_prefix":null,"quote_suffix":null}}"""
         )
         listOf(
             """{"kind":"transcript","target":{"fragment_id":"x"},"locations":{"text_offset":0,"progression":0.0,"total_progression":0.0,"position":1},"text":{"quote":null,"quote_prefix":null,"quote_suffix":null}}""",
@@ -263,7 +263,7 @@ class OfflineReadingLifecycleTest {
         val mediaId = "018f2e74-5efc-7d0d-8a3a-142857142857"
         val oversized = OFFLINE_READING_MAX_SVG_BYTES + 1
         val manifest = """
-            {"packageSchemaVersion":1,"readerContractVersion":1,"minimumReaderBundleVersion":1,"mediaId":"$mediaId","mediaKind":"Epub","title":"Bounded SVG","readerGeneration":7,"readerRevisionKey":"${"0".repeat(64)}","entries":[{"path":"reader.json","mediaType":"application/json","sizeBytes":1,"sha256":"${"1".repeat(64)}"},{"path":"assets/oversize.svg","mediaType":"image/svg+xml","sizeBytes":$oversized,"sha256":"${"2".repeat(64)}"}]}
+            {"packageSchemaVersion":1,"readerContractVersion":2,"minimumReaderBundleVersion":2,"mediaId":"$mediaId","mediaKind":"Epub","title":"Bounded SVG","readerGeneration":7,"readerRevisionKey":"${"0".repeat(64)}","entries":[{"path":"reader.json","mediaType":"application/json","sizeBytes":1,"sha256":"${"1".repeat(64)}"},{"path":"assets/oversize.svg","mediaType":"image/svg+xml","sizeBytes":$oversized,"sha256":"${"2".repeat(64)}"}]}
         """.trimIndent()
 
         assertThrows(IllegalArgumentException::class.java) {
@@ -276,7 +276,7 @@ class OfflineReadingLifecycleTest {
         val mediaId = "018f2e74-5efc-7d0d-8a3a-142857142857"
         val oversized = OFFLINE_READING_MAX_READER_JSON_BYTES + 1
         val manifest = """
-            {"packageSchemaVersion":1,"readerContractVersion":1,"minimumReaderBundleVersion":1,"mediaId":"$mediaId","mediaKind":"Pdf","title":"Bounded reader","readerGeneration":7,"readerRevisionKey":"${"0".repeat(64)}","entries":[{"path":"document.pdf","mediaType":"application/pdf","sizeBytes":1,"sha256":"${"1".repeat(64)}"},{"path":"reader.json","mediaType":"application/json","sizeBytes":$oversized,"sha256":"${"2".repeat(64)}"}]}
+            {"packageSchemaVersion":1,"readerContractVersion":2,"minimumReaderBundleVersion":2,"mediaId":"$mediaId","mediaKind":"Pdf","title":"Bounded reader","readerGeneration":7,"readerRevisionKey":"${"0".repeat(64)}","entries":[{"path":"document.pdf","mediaType":"application/pdf","sizeBytes":1,"sha256":"${"1".repeat(64)}"},{"path":"reader.json","mediaType":"application/json","sizeBytes":$oversized,"sha256":"${"2".repeat(64)}"}]}
         """.trimIndent()
 
         assertThrows(IllegalArgumentException::class.java) {
@@ -365,7 +365,7 @@ class OfflineReadingLifecycleTest {
             listOf(entry),
         )
         val prose = """
-            {"readerContractVersion":1,"mediaId":"$mediaId","mediaKind":"WebArticle","title":"Signal on the Train","navigation":[],"fragments":[{"fragmentId":"intro","ordinal":0,"htmlSanitized":"<article><p>Read https://example.com in prose.</p></article>","canonicalText":"Read https://example.com in prose."}]}
+            {"readerContractVersion":2,"mediaId":"$mediaId","mediaKind":"WebArticle","title":"Signal on the Train","navigation":{"media_id":"$mediaId","kind":"web_article","generation":13,"fragments":[{"fragment_id":"018f2e74-5efc-7e2f-8a3a-142857142857","fragment_idx":0,"char_count":34}],"sections":[],"toc_nodes":[],"landmarks":[],"page_list":[]},"fragments":[{"fragmentId":"018f2e74-5efc-7e2f-8a3a-142857142857","fragmentIdx":0,"htmlSanitized":"<article><p>Read https://example.com in prose.</p></article>","canonicalText":"Read https://example.com in prose.","createdAt":"2026-09-11T00:00:00Z"}]}
         """.trimIndent().toByteArray()
         OfflineReaderDocumentVerifier.verify(prose, manifest)
 

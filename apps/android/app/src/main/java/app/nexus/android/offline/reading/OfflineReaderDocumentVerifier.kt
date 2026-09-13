@@ -1,8 +1,8 @@
 package app.nexus.android.offline.reading
 
 import java.nio.charset.StandardCharsets
-import java.net.URI
 import java.text.Normalizer
+import java.time.OffsetDateTime
 import java.util.UUID
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Comment
@@ -19,7 +19,7 @@ internal object OfflineReaderDocumentVerifier {
     )
     private val SUBRESOURCE_TAGS = setOf("audio", "img", "picture", "source", "track", "video")
     private val URL_ATTRIBUTES = setOf(
-        "action", "background", "cite", "formaction", "href", "poster", "src", "srcset",
+        "action", "background", "cite", "formaction", "href", "ping", "poster", "src", "srcset",
         "xlink:href",
     )
 
@@ -32,11 +32,11 @@ internal object OfflineReaderDocumentVerifier {
         val common = setOf("readerContractVersion", "mediaId", "mediaKind", "title")
         val root = when (manifest.mediaKind) {
             OfflineReadingMediaKind.Pdf -> rootValue.requireObject(common + "documentPath")
-            OfflineReadingMediaKind.Epub -> rootValue.requireObject(common + setOf("navigation", "sections"))
+            OfflineReadingMediaKind.Epub -> rootValue.requireObject(common + setOf("navigation", "fragments"))
             OfflineReadingMediaKind.WebArticle ->
                 rootValue.requireObject(common + setOf("navigation", "fragments"))
         }
-        require(root.getValue("readerContractVersion").requireLong() == 1L)
+        require(root.getValue("readerContractVersion").requireLong() == OFFLINE_READING_READER_CONTRACT_VERSION.toLong())
         require(root.getValue("mediaId").requireString() == manifest.mediaId.toString())
         require(root.getValue("mediaKind").requireString() == manifest.mediaKind.name)
         require(root.getValue("title").requireString() == manifest.title)
@@ -57,85 +57,43 @@ internal object OfflineReaderDocumentVerifier {
         require(manifest.entries.single { it.path == documentPath }.mediaType == "application/pdf")
     }
 
+    private data class FragmentCoordinate(val id: String, val index: Long, val length: Long)
+
     private fun verifyEpub(
         root: Map<String, StrictJson>,
         manifest: OfflineReadingManifest,
     ) {
-        val navigationIds = root.getValue("navigation").requireArray().map { item ->
-            val fields = item.requireObject(setOf("sectionId", "label"))
-            requireBoundedText(fields.getValue("label").requireString(), OFFLINE_READING_MAX_TITLE_CODEPOINTS)
-            requireBoundedText(fields.getValue("sectionId").requireString(), 256)
-        }
-        require(navigationIds.toSet().size == navigationIds.size)
         val declaredPaths = manifest.entries.map { it.path }.toSet()
-        val sectionIds = root.getValue("sections").requireArray().mapIndexed { index, section ->
-            val fields = section.requireObject(
-                setOf(
-                    "sectionId",
-                    "ordinal",
-                    "fragmentId",
-                    "fragmentIdx",
-                    "hrefPath",
-                    "anchorId",
-                    "startOffset",
-                    "endOffset",
-                    "htmlSanitized",
-                    "canonicalText",
-                    "assetPaths",
-                )
-            )
-            val sectionId = requireBoundedText(fields.getValue("sectionId").requireString(), 256)
-            require(fields.getValue("ordinal").requireLong() == index.toLong())
-            val fragmentIdText = fields.getValue("fragmentId").requireString()
-            require(UUID.fromString(fragmentIdText).toString() == fragmentIdText)
-            require(fields.getValue("fragmentIdx").requireLong() >= 0)
-            requireSafeHrefPath(fields.getValue("hrefPath").requireString())
-            val anchor = fields.getValue("anchorId")
-            require(
-                anchor is StrictJson.NullValue ||
-                    (anchor is StrictJson.StringValue &&
-                        anchor.value.isNotBlank() &&
-                        anchor.value.codePointCount(0, anchor.value.length) <= 256)
-            )
-            val startOffset = fields.getValue("startOffset").requireLong()
-            val endOffset = fields.getValue("endOffset").requireLong()
-            require(startOffset >= 0 && endOffset >= startOffset)
-            val canonicalText = fields.getValue("canonicalText").requireString()
-            require(endOffset <= canonicalText.codePointCount(0, canonicalText.length))
-            val assetPaths = fields.getValue("assetPaths").requireArray().map { value ->
+        val referencedAssets = mutableSetOf<String>()
+        var wordStart = 0L
+        val fragments = root.getValue("fragments").requireArray().map { fragment ->
+            val fields = fragment.requireObject(setOf(
+                "fragment_id", "fragment_idx", "href_path", "generation", "html_sanitized",
+                "canonical_text", "char_count", "word_count", "document_word_start", "created_at",
+                "asset_paths",
+            ))
+            val identifier = requireUuid(fields.getValue("fragment_id"))
+            val index = fields.getValue("fragment_idx").requireLong().also { require(it >= 0) }
+            requireSafeHrefPath(fields.getValue("href_path").requireString())
+            require(fields.getValue("generation").requireLong() == manifest.readerGeneration)
+            OffsetDateTime.parse(fields.getValue("created_at").requireString())
+            val canonicalText = fields.getValue("canonical_text").requireString()
+            val length = canonicalText.codePointCount(0, canonicalText.length).toLong()
+            require(fields.getValue("char_count").requireLong() == length)
+            val words = fields.getValue("word_count").requireLong().also { require(it >= 0) }
+            require(fields.getValue("document_word_start").requireLong() == wordStart)
+            wordStart = Math.addExact(wordStart, words)
+            val paths = fields.getValue("asset_paths").requireArray().map { value ->
                 value.requireString().also(::requireSafePackagePath)
             }
-            require(assetPaths == assetPaths.sortedWith(compareByUtf8Path()))
-            require(assetPaths.toSet().size == assetPaths.size)
-            require(assetPaths.all { it.startsWith("assets/") && it in declaredPaths })
-            require(
-                validateSanitizedHtml(
-                    fields.getValue("htmlSanitized").requireString(),
-                    webTextOnly = false,
-                ) == assetPaths.toSet()
-            )
-            sectionId
+            require(paths == paths.sortedWith(compareByUtf8Path()) && paths.size == paths.toSet().size)
+            require(paths.all { it.startsWith("assets/") && it in declaredPaths })
+            require(validateSanitizedHtml(fields.getValue("html_sanitized").requireString(), false) == paths.toSet())
+            referencedAssets += paths
+            FragmentCoordinate(identifier, index, length)
         }
-        require(sectionIds.isNotEmpty() && sectionIds.toSet().size == sectionIds.size)
-        require(navigationIds.all { it in sectionIds })
-        val referencedAssets = root.getValue("sections").requireArray().flatMap { section ->
-            section.requireObject(
-                setOf(
-                    "sectionId",
-                    "ordinal",
-                    "fragmentId",
-                    "fragmentIdx",
-                    "hrefPath",
-                    "anchorId",
-                    "startOffset",
-                    "endOffset",
-                    "htmlSanitized",
-                    "canonicalText",
-                    "assetPaths",
-                )
-            ).getValue("assetPaths").requireArray().map { it.requireString() }
-        }.toSet()
         require(declaredPaths == referencedAssets + "reader.json")
+        verifyNavigation(root.getValue("navigation"), manifest, "epub", fragments)
     }
 
     private fun verifyWeb(
@@ -143,25 +101,122 @@ internal object OfflineReaderDocumentVerifier {
         manifest: OfflineReadingManifest,
     ) {
         require(manifest.entries.map { it.path }.toSet() == setOf("reader.json"))
-        val navigationIds = root.getValue("navigation").requireArray().map { item ->
-            val fields = item.requireObject(setOf("fragmentId", "label"))
-            requireBoundedText(fields.getValue("label").requireString(), OFFLINE_READING_MAX_TITLE_CODEPOINTS)
-            requireBoundedText(fields.getValue("fragmentId").requireString(), 256)
+        val fragments = root.getValue("fragments").requireArray().map { fragment ->
+            val fields = fragment.requireObject(setOf(
+                "fragmentId", "fragmentIdx", "htmlSanitized", "canonicalText", "createdAt",
+            ))
+            val identifier = requireUuid(fields.getValue("fragmentId"))
+            val index = fields.getValue("fragmentIdx").requireLong().also { require(it >= 0) }
+            OffsetDateTime.parse(fields.getValue("createdAt").requireString())
+            val canonicalText = fields.getValue("canonicalText").requireString()
+            require(validateSanitizedHtml(fields.getValue("htmlSanitized").requireString(), true).isEmpty())
+            FragmentCoordinate(identifier, index, canonicalText.codePointCount(0, canonicalText.length).toLong())
         }
-        require(navigationIds.toSet().size == navigationIds.size)
-        val fragmentIds = root.getValue("fragments").requireArray().mapIndexed { index, fragment ->
-            val fields = fragment.requireObject(
-                setOf("fragmentId", "ordinal", "htmlSanitized", "canonicalText")
-            )
-            val fragmentId = requireBoundedText(fields.getValue("fragmentId").requireString(), 256)
-            require(fields.getValue("ordinal").requireLong() == index.toLong())
-            fields.getValue("canonicalText").requireString()
-            val html = fields.getValue("htmlSanitized").requireString()
-            require(validateSanitizedHtml(html, webTextOnly = true).isEmpty())
-            fragmentId
+        verifyNavigation(root.getValue("navigation"), manifest, "web_article", fragments)
+    }
+
+    private fun verifyNavigation(
+        value: StrictJson,
+        manifest: OfflineReadingManifest,
+        kind: String,
+        fragments: List<FragmentCoordinate>,
+    ) {
+        val fields = value.requireObject(setOf(
+            "media_id", "kind", "generation", "fragments", "sections", "toc_nodes", "landmarks", "page_list",
+        ))
+        require(fields.getValue("media_id").requireString() == manifest.mediaId.toString())
+        require(fields.getValue("kind").requireString() == kind)
+        require(fields.getValue("generation").requireLong() == manifest.readerGeneration)
+        require(fragments.isNotEmpty() && fragments.map { it.id }.toSet().size == fragments.size)
+        require(fragments.map { it.index } == fragments.map { it.index }.distinct().sorted())
+        val declaredFragments = fields.getValue("fragments").requireArray().map { fragment ->
+            val item = fragment.requireObject(setOf("fragment_id", "fragment_idx", "char_count"))
+            FragmentCoordinate(requireUuid(item.getValue("fragment_id")), item.getValue("fragment_idx").requireLong(), item.getValue("char_count").requireLong())
         }
-        require(fragmentIds.isNotEmpty() && fragmentIds.toSet().size == fragmentIds.size)
-        require(navigationIds.all { it in fragmentIds })
+        require(declaredFragments == fragments)
+        val byId = fragments.associateBy { it.id }
+        val fragmentStarts = mutableMapOf<String, Long>()
+        var documentOffset = 0L
+        fragments.forEach { fragment ->
+            fragmentStarts[fragment.id] = documentOffset
+            documentOffset = Math.addExact(documentOffset, fragment.length)
+        }
+        fun point(value: StrictJson): Long {
+            val item = value.requireObject(setOf("fragment_id", "offset"))
+            val fragment = byId.getValue(item.getValue("fragment_id").requireString())
+            val offset = item.getValue("offset").requireLong()
+            require(offset in 0..fragment.length)
+            return Math.addExact(fragmentStarts.getValue(fragment.id), offset)
+        }
+        val parents = mutableMapOf<String, String?>()
+        val starts = mutableMapOf<String, Long>()
+        val ends = mutableMapOf<String, Long>()
+        fields.getValue("sections").requireArray().forEach { section ->
+            val item = section.requireObject(setOf("section_id", "label", "parent_section_id", "target", "anchor_id", "extent", "source"))
+            val identifier = item.getValue("section_id").requireString()
+            require(identifier !in parents)
+            item.getValue("label").requireString()
+            require(item.getValue("source").requireString() in setOf("Publisher", "Heading", "Both", "InferredNumberedEntry"))
+            parents[identifier] = presence(item.getValue("parent_section_id"))?.requireString()
+            presence(item.getValue("anchor_id"))?.requireString()
+            val targetFields = item.getValue("target").requireObject(setOf("fragment_id", "offset"))
+            val target = point(item.getValue("target"))
+            starts[identifier] = target
+            presence(item.getValue("extent"))?.let { extent ->
+                val range = extent.requireObject(setOf("start", "end"))
+                val startFields = range.getValue("start").requireObject(setOf("fragment_id", "offset"))
+                val start = point(range.getValue("start"))
+                val end = point(range.getValue("end"))
+                require(startFields.getValue("fragment_id") == targetFields.getValue("fragment_id"))
+                require(start == target && end >= start)
+                ends[identifier] = end
+            }
+        }
+        require(starts.values.zipWithNext().all { (left, right) -> left <= right })
+        parents.keys.forEach { identifier ->
+            val seen = mutableSetOf(identifier)
+            var parent = parents.getValue(identifier)
+            while (parent != null) {
+                require(parent in parents && seen.add(parent))
+                val end = ends[identifier]
+                val parentEnd = ends[parent]
+                if (end != null && parentEnd != null) {
+                    require(starts.getValue(identifier) >= starts.getValue(parent))
+                    require(end <= parentEnd)
+                }
+                parent = parents.getValue(parent)
+            }
+        }
+        val nodeIds = mutableSetOf<String>()
+        fun node(value: StrictJson) {
+            val item = value.requireObject(setOf("id", "label", "section_id", "children"))
+            require(nodeIds.add(item.getValue("id").requireString()))
+            item.getValue("label").requireString()
+            presence(item.getValue("section_id"))?.let { require(it.requireString() in parents) }
+            item.getValue("children").requireArray().forEach(::node)
+        }
+        fields.getValue("toc_nodes").requireArray().forEach(::node)
+        listOf("landmarks", "page_list").forEach { name ->
+            fields.getValue(name).requireArray().forEach { location ->
+                val item = location.requireObject(setOf("id", "label", "target"))
+                item.getValue("id").requireString()
+                item.getValue("label").requireString()
+                presence(item.getValue("target"))?.let(::point)
+            }
+        }
+    }
+
+    private fun presence(value: StrictJson): StrictJson? {
+        val kind = (value as? StrictJson.ObjectValue)?.fields?.get("kind")?.requireString()
+        return when (kind) {
+            "Absent" -> { value.requireObject(setOf("kind")); null }
+            "Present" -> value.requireObject(setOf("kind", "value")).getValue("value")
+            else -> error("navigation presence discriminator is invalid")
+        }
+    }
+
+    private fun requireUuid(value: StrictJson): String = value.requireString().also {
+        require(UUID.fromString(it).toString() == it)
     }
 
     private fun validateSanitizedHtml(html: String, webTextOnly: Boolean): Set<String> {
@@ -197,21 +252,12 @@ internal object OfflineReaderDocumentVerifier {
         return node.childNodes().any(::forbiddenHtmlNode)
     }
 
-    private fun requireBoundedText(value: String, maximumCodePoints: Int): String {
-        require(value.isNotBlank())
-        require(value.codePointCount(0, value.length) <= maximumCodePoints)
-        return value
-    }
-
     private fun requireSafeHrefPath(path: String) {
-        require(path.isNotBlank() && path.toByteArray().size <= 2048)
+        require(path.isNotEmpty() && path.toByteArray().size <= 2048)
         require(Normalizer.normalize(path, Normalizer.Form.NFC) == path)
         require(!path.startsWith('/') && !path.startsWith('\\') && '\\' !in path)
-        val parsed = URI(path)
-        require(
-            parsed.scheme == null && parsed.rawAuthority == null && parsed.rawQuery == null &&
-                parsed.rawFragment == null
-        )
+        require('?' !in path && '#' !in path)
+        require(!Regex("^[A-Za-z][A-Za-z0-9+.-]*:").containsMatchIn(path))
         require(path.split('/').all { it !in setOf("", ".", "..") })
     }
 

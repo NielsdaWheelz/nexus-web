@@ -1,9 +1,8 @@
+import { decodePresence, type Presence } from "@/lib/api/presence";
 import { apiFetch, type ApiPath } from "@/lib/api/client";
 import { requestWithRetry } from "@/lib/api/retryPolicy";
-import type {
-  ReaderNavigationFragment,
-  ReaderNavigationSection,
-} from "@/lib/media/readerNavigation";
+import type { MediaNavigation } from "@/lib/media/readerNavigation";
+import { buildReaderDocumentStructure, type ReaderDocumentStructure } from "@/lib/reader/readerDocumentPosition";
 import {
   createPaneFindSourceKey,
   type PaneFindSourceKey,
@@ -14,7 +13,6 @@ import {
   expectExactRecord,
   expectInteger,
   expectNonnegativeInteger,
-  expectNullableString,
   expectOneOf,
   expectRecord,
   expectString,
@@ -25,15 +23,14 @@ export const EPUB_FIND_MATCH_LIMIT = 2000;
 export interface EpubFindSnapshotFragment {
   readonly fragmentId: string;
   readonly fragmentIdx: number;
-  readonly activationSectionId: string;
-  readonly label: string;
   readonly charCount: number;
-  readonly navigationLocationCount: number;
 }
 
 export interface EpubFindSnapshot {
   readonly mediaId: string;
   readonly sourceKey: PaneFindSourceKey;
+  readonly generation: number;
+  readonly structure: ReaderDocumentStructure;
   readonly sourceWitnessFragmentId: string;
   readonly fragments: readonly EpubFindSnapshotFragment[];
 }
@@ -44,6 +41,7 @@ export type EpubFindScopeIn =
 
 export interface EpubFindRequest {
   readonly source_witness_fragment_id: string;
+  readonly source_generation: number;
   readonly query: string;
   readonly match_case: boolean;
   readonly whole_word: boolean;
@@ -56,8 +54,7 @@ export interface EpubFindSnippetSegment {
 }
 
 export interface EpubFindOccurrenceOut {
-  readonly section_id: string;
-  readonly section_label: string;
+  readonly section: Presence<{ section_id: string; label: string }>;
   readonly fragment_id: string;
   readonly fragment_idx: number;
   readonly start_offset: number;
@@ -69,37 +66,21 @@ export type EpubFindResultOut =
   | {
       readonly kind: "Ready";
       readonly source_witness_fragment_id: string;
+  readonly source_generation: number;
       readonly occurrences: readonly EpubFindOccurrenceOut[];
     }
   | {
       readonly kind: "NoMatches";
       readonly source_witness_fragment_id: string;
+  readonly source_generation: number;
     }
   | {
       readonly kind: "TooManyMatches";
       readonly source_witness_fragment_id: string;
+  readonly source_generation: number;
       readonly threshold: typeof EPUB_FIND_MATCH_LIMIT;
     };
 
-export interface EpubSectionContent {
-  readonly section_id: string;
-  readonly label: string;
-  readonly fragment_id: string;
-  readonly fragment_idx: number;
-  readonly href_path: string | null;
-  readonly anchor_id: string | null;
-  readonly source_node_id: string | null;
-  readonly source: "toc" | "spine";
-  readonly ordinal: number;
-  readonly prev_section_id: string | null;
-  readonly next_section_id: string | null;
-  readonly html_sanitized: string;
-  readonly canonical_text: string;
-  readonly char_count: number;
-  readonly word_count: number;
-  readonly document_word_start: number;
-  readonly created_at: string;
-}
 
 type ApiFetch = (
   path: ApiPath,
@@ -112,139 +93,29 @@ function snapshotDefect(message: string): never {
 
 export function createEpubFindSnapshot({
   mediaId,
-  fragments,
   navigation,
 }: {
   readonly mediaId: string;
-  readonly fragments: readonly ReaderNavigationFragment[];
-  readonly navigation: readonly ReaderNavigationSection[];
+  readonly navigation: MediaNavigation;
 }): EpubFindSnapshot {
-  if (!mediaId) {
-    snapshotDefect("media id is empty");
-  }
+  const { fragments, generation } = navigation;
   if (fragments.length === 0) {
+    // justify-defect: readable epub publication owns at least one fragment.
     snapshotDefect("readable EPUB has no canonical fragments");
   }
-  if (navigation.length === 0) {
-    snapshotDefect("readable EPUB has no navigation targets");
-  }
-
-  const ordered = [...navigation].sort(
-    (left, right) =>
-      left.ordinal - right.ordinal ||
-      left.section_id.localeCompare(right.section_id),
-  );
-  const sectionIds = new Set<string>();
-  const ordinals = new Set<number>();
-  const sectionsByFragmentId = new Map<string, ReaderNavigationSection[]>();
-  for (const section of ordered) {
-    const current = sectionsByFragmentId.get(section.fragment_id) ?? [];
-    current.push(section);
-    sectionsByFragmentId.set(section.fragment_id, current);
-  }
-
-  const fragmentsById = new Map<string, EpubFindSnapshotFragment>();
-  const sectionFragmentIdsByIdx = new Map<number, string>();
-
-  for (const section of ordered) {
-    if (
-      !section.section_id ||
-      sectionIds.has(section.section_id) ||
-      ordinals.has(section.ordinal)
-    ) {
-      snapshotDefect("section ids and ordinals must be non-empty and unique");
-    }
-    sectionIds.add(section.section_id);
-    ordinals.add(section.ordinal);
-    if (
-      section.fragment_idx < 0 ||
-      section.start_offset < 0
-    ) {
-      snapshotDefect(
-        `section ${section.section_id} lacks canonical fragment facts`,
-      );
-    }
-
-    const indexedFragment = sectionFragmentIdsByIdx.get(section.fragment_idx);
-    if (indexedFragment && indexedFragment !== section.fragment_id) {
-      snapshotDefect(`fragment index ${section.fragment_idx} is ambiguous`);
-    }
-    sectionFragmentIdsByIdx.set(section.fragment_idx, section.fragment_id);
-  }
-
-  const fragmentIdsByIdx = new Map<number, string>();
-  for (const fragment of fragments) {
-    if (
-      fragmentsById.has(fragment.fragment_id) ||
-      fragmentIdsByIdx.has(fragment.fragment_idx)
-    ) {
-      snapshotDefect("fragment ids and indexes must be unique");
-    }
-    const sections = sectionsByFragmentId.get(fragment.fragment_id) ?? [];
-    const activation = sections[0];
-    if (!activation) {
-      snapshotDefect(`fragment ${fragment.fragment_id} has no navigation target`);
-    }
-    if (
-      sections.some(
-        (section) => section.fragment_idx !== fragment.fragment_idx,
-      )
-    ) {
-      snapshotDefect(`fragment ${fragment.fragment_id} has contradictory indexes`);
-    }
-    fragmentsById.set(fragment.fragment_id, {
+  const snapshotFragments = fragments.map((fragment) => {
+    return {
       fragmentId: fragment.fragment_id,
       fragmentIdx: fragment.fragment_idx,
-      activationSectionId: activation.section_id,
-      label: activation.label,
       charCount: fragment.char_count,
-      navigationLocationCount: sections.length,
-    });
-    fragmentIdsByIdx.set(fragment.fragment_idx, fragment.fragment_id);
-  }
-  if (
-    ordered.some((section) => !fragmentsById.has(section.fragment_id))
-  ) {
-    snapshotDefect("navigation names a fragment outside the canonical inventory");
-  }
-
-  const snapshotFragments = [...fragmentsById.values()]
-    .sort(
-      (left, right) =>
-        left.fragmentIdx - right.fragmentIdx ||
-        left.fragmentId.localeCompare(right.fragmentId),
-    );
-  for (let index = 1; index < snapshotFragments.length; index += 1) {
-    if (
-      snapshotFragments[index - 1]!.fragmentIdx >=
-      snapshotFragments[index]!.fragmentIdx
-    ) {
-      snapshotDefect("fragment order is not strictly increasing");
-    }
-  }
-
+    };
+  });
   return {
     mediaId,
-    sourceKey: createPaneFindSourceKey({
-      kind: "Epub",
-      mediaId,
-      fragments: snapshotFragments.map(
-        ({
-          fragmentId,
-          fragmentIdx,
-          activationSectionId,
-          charCount,
-          navigationLocationCount,
-        }) => ({
-          fragmentId,
-          fragmentIdx,
-          activationSectionId,
-          charCount,
-          navigationLocationCount,
-        }),
-      ),
-    }),
-    sourceWitnessFragmentId: snapshotFragments[0]!.fragmentId,
+    generation,
+    structure: buildReaderDocumentStructure(navigation),
+    sourceKey: createPaneFindSourceKey({ kind: "Epub", mediaId, generation, fragments: snapshotFragments }),
+    sourceWitnessFragmentId: fragments[0]!.fragment_id,
     fragments: snapshotFragments,
   };
 }
@@ -267,8 +138,7 @@ function decodeOccurrence(
   const value = expectExactRecord(
     raw,
     [
-      "section_id",
-      "section_label",
+      "section",
       "fragment_id",
       "fragment_idx",
       "start_offset",
@@ -303,11 +173,13 @@ function decodeOccurrence(
     );
   }
   return {
-    section_id: expectString(value.section_id, `${name}.section_id`),
-    section_label: expectString(
-      value.section_label,
-      `${name}.section_label`,
-    ),
+    section: decodePresence(value.section, (rawSection) => {
+      const section = expectExactRecord(rawSection, ["section_id", "label"], `${name}.section.value`);
+      return {
+        section_id: expectString(section.section_id, `${name}.section.value.section_id`),
+        label: expectString(section.label, `${name}.section.value.label`),
+      };
+    }),
     fragment_id: expectString(value.fragment_id, `${name}.fragment_id`),
     fragment_idx: expectNonnegativeInteger(
       value.fragment_idx,
@@ -333,16 +205,18 @@ export function decodeEpubFindResult(raw: unknown): EpubFindResultOut {
   const data = expectExactRecord(
     candidate,
     kind === "Ready"
-      ? ["kind", "source_witness_fragment_id", "occurrences"]
+      ? ["kind", "source_generation", "source_witness_fragment_id", "occurrences"]
       : kind === "TooManyMatches"
-        ? ["kind", "source_witness_fragment_id", "threshold"]
-        : ["kind", "source_witness_fragment_id"],
+        ? ["kind", "source_generation", "source_witness_fragment_id", "threshold"]
+        : ["kind", "source_generation", "source_witness_fragment_id"],
     "EpubFindResponse.data",
   );
   const sourceWitnessFragmentId = expectString(
     data.source_witness_fragment_id,
     "EpubFindResponse.data.source_witness_fragment_id",
   );
+  const sourceGeneration = expectInteger(data.source_generation, "EpubFindResponse.data.source_generation");
+  if (sourceGeneration < 1) throw new TypeError("EPUB Find source generation must be positive");
   switch (kind) {
     case "Ready": {
       const occurrences = expectArray(
@@ -365,6 +239,7 @@ export function decodeEpubFindResult(raw: unknown): EpubFindResultOut {
       return {
         kind,
         source_witness_fragment_id: sourceWitnessFragmentId,
+        source_generation: sourceGeneration,
         occurrences,
       };
     }
@@ -372,6 +247,7 @@ export function decodeEpubFindResult(raw: unknown): EpubFindResultOut {
       return {
         kind,
         source_witness_fragment_id: sourceWitnessFragmentId,
+        source_generation: sourceGeneration,
       };
     case "TooManyMatches": {
       const threshold = expectInteger(
@@ -384,106 +260,13 @@ export function decodeEpubFindResult(raw: unknown): EpubFindResultOut {
       return {
         kind,
         source_witness_fragment_id: sourceWitnessFragmentId,
+        source_generation: sourceGeneration,
         threshold,
       };
     }
   }
 }
 
-export function decodeEpubSectionContent(raw: unknown): EpubSectionContent {
-  const envelope = expectExactRecord(raw, ["data"], "EpubSectionResponse");
-  const value = expectExactRecord(
-    envelope.data,
-    [
-      "section_id",
-      "label",
-      "fragment_id",
-      "fragment_idx",
-      "href_path",
-      "anchor_id",
-      "source_node_id",
-      "source",
-      "ordinal",
-      "prev_section_id",
-      "next_section_id",
-      "html_sanitized",
-      "canonical_text",
-      "char_count",
-      "word_count",
-      "document_word_start",
-      "created_at",
-    ],
-    "EpubSectionResponse.data",
-  );
-  return {
-    section_id: expectString(
-      value.section_id,
-      "EpubSectionResponse.data.section_id",
-    ),
-    label: expectString(value.label, "EpubSectionResponse.data.label"),
-    fragment_id: expectString(
-      value.fragment_id,
-      "EpubSectionResponse.data.fragment_id",
-    ),
-    fragment_idx: expectNonnegativeInteger(
-      value.fragment_idx,
-      "EpubSectionResponse.data.fragment_idx",
-    ),
-    href_path: expectNullableString(
-      value.href_path,
-      "EpubSectionResponse.data.href_path",
-    ),
-    anchor_id: expectNullableString(
-      value.anchor_id,
-      "EpubSectionResponse.data.anchor_id",
-    ),
-    source_node_id: expectNullableString(
-      value.source_node_id,
-      "EpubSectionResponse.data.source_node_id",
-    ),
-    source: expectOneOf(
-      value.source,
-      ["toc", "spine"] as const,
-      "EpubSectionResponse.data.source",
-    ),
-    ordinal: expectNonnegativeInteger(
-      value.ordinal,
-      "EpubSectionResponse.data.ordinal",
-    ),
-    prev_section_id: expectNullableString(
-      value.prev_section_id,
-      "EpubSectionResponse.data.prev_section_id",
-    ),
-    next_section_id: expectNullableString(
-      value.next_section_id,
-      "EpubSectionResponse.data.next_section_id",
-    ),
-    html_sanitized: expectString(
-      value.html_sanitized,
-      "EpubSectionResponse.data.html_sanitized",
-    ),
-    canonical_text: expectString(
-      value.canonical_text,
-      "EpubSectionResponse.data.canonical_text",
-    ),
-    char_count: expectNonnegativeInteger(
-      value.char_count,
-      "EpubSectionResponse.data.char_count",
-    ),
-    word_count: expectNonnegativeInteger(
-      value.word_count,
-      "EpubSectionResponse.data.word_count",
-    ),
-    document_word_start: expectNonnegativeInteger(
-      value.document_word_start,
-      "EpubSectionResponse.data.document_word_start",
-    ),
-    created_at: expectString(
-      value.created_at,
-      "EpubSectionResponse.data.created_at",
-    ),
-  };
-}
 
 export async function requestEpubFind({
   mediaId,
@@ -507,24 +290,4 @@ export async function requestEpubFind({
     signal,
   );
   return decodeEpubFindResult(raw);
-}
-
-export async function requestEpubSection({
-  mediaId,
-  sectionId,
-  signal,
-  fetchFn = apiFetch,
-}: {
-  readonly mediaId: string;
-  readonly sectionId: string;
-  readonly signal: AbortSignal;
-  readonly fetchFn?: ApiFetch;
-}): Promise<EpubSectionContent> {
-  const path =
-    `/api/media/${mediaId}/sections/${encodeURIComponent(sectionId)}` as ApiPath;
-  const raw = await requestWithRetry(
-    (attemptSignal) => fetchFn(path, { signal: attemptSignal }),
-    signal,
-  );
-  return decodeEpubSectionContent(raw);
 }

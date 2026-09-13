@@ -43,6 +43,7 @@ from nexus.schemas.presence import absent, present
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.imports import read_import_page, read_import_summary
 from nexus.services.library_entries import ensure_media_in_default_library
+from nexus.services.media_source_ingest import accept_browser_file_capture
 from nexus.services.sealed_handles import seal_upload_session
 from tests.testkit.auth import UserRecord
 from tests.testkit.imports import (
@@ -102,6 +103,40 @@ def _page(client: TestClient, query: str) -> dict:
     assert response.status_code == 200, response.text
     assert response.headers["cache-control"] == "private, no-store"
     return response.json()["data"]
+
+
+def test_rejected_capture_records_terminal_failure_without_a_worker_execution(
+    db_session: Session,
+    test_user: UserRecord,
+    authenticated_client: TestClient,
+) -> None:
+    capture = accept_browser_file_capture(
+        db=db_session,
+        viewer_id=test_user.id,
+        payload=b"This is not a PDF.",
+        filename="invalid.pdf",
+        content_type="application/pdf",
+        library_ids=[],
+    )
+    assert capture.processing_status == "failed"
+    assert capture.source_attempt_status == "failed"
+    assert capture.ingest_enqueued is False
+    attempt = db_session.get(MediaSourceAttempt, capture.source_attempt_id)
+    assert attempt is not None and attempt.job_id is None
+
+    history = authenticated_client.get(f"/imports/{_media_ref(capture.media_id)}/history")
+    assert history.status_code == 200, history.text
+    entries = history.json()["data"]["entries"]
+    assert [entry["facts"]["kind"] for entry in entries] == ["SourceFailed", "SourceAccepted"]
+    assert entries[0]["failure_code"] == {"kind": "Present", "value": "E_INVALID_FILE_TYPE"}
+    assert entries[0]["facts"] == {
+        "kind": "SourceFailed",
+        "source_attempt_id": str(capture.source_attempt_id),
+        "execution_id": {"kind": "Absent"},
+        "origin": "Domain",
+        "terminal": True,
+        "progress": {"kind": "Absent"},
+    }
 
 
 def test_needs_attention_pages_every_import_through_cursors_in_one_stable_order(

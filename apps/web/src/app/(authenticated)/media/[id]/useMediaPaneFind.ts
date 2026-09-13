@@ -15,6 +15,8 @@ import {
 } from "@/lib/highlights/canonicalCursor";
 import type { Fragment } from "@/lib/media/transcriptView";
 import type { ReaderNavigationSection } from "@/lib/media/readerNavigation";
+import { buildReaderDocumentStructure, readerSectionAtPosition, readerTextPointOffset, type ReaderDocumentStructure } from "@/lib/reader/readerDocumentPosition";
+import { canonicalCpLength } from "@/lib/reader/textOffsets";
 import {
   createPaneFindResultKey,
   createPaneFindSourceKey,
@@ -34,7 +36,7 @@ import {
   measureCanonicalTextAnchorViewportDelta,
   restoreCanonicalTextAnchorViewportPosition,
   scrollToExactCanonicalTextAnchor,
-} from "./paneTextAnchor";
+} from "@/lib/reader/canonicalTextAnchor";
 import type { MediaFindPreviewLease } from "./mediaFindPreviewLease";
 import {
   mediaPaneFindErrorMessage,
@@ -55,7 +57,7 @@ export interface WebFindSnapshot {
   readonly mediaId: string;
   readonly sourceKey: PaneFindSourceKey;
   readonly fragments: readonly WebFindFragment[];
-  readonly sections: readonly ReaderNavigationSection[];
+  readonly structure: ReaderDocumentStructure;
 }
 
 export interface WebFindRenderedState {
@@ -81,7 +83,6 @@ interface WebFindOccurrence {
 
 interface PreparedSectionScope {
   readonly id: string;
-  readonly fragmentId: string;
   readonly startCp: number;
   readonly endCp: number;
 }
@@ -100,94 +101,22 @@ export type WebPaneFindSource =
       readonly mediaId: string;
       readonly fragments: readonly Fragment[];
       readonly sections: readonly ReaderNavigationSection[];
+      readonly generation: number;
     };
 
 export type WebPaneFindCapability =
   | { readonly kind: "Unavailable" }
   | { readonly kind: "Available"; readonly adapter: WebFindAdapter };
 
-function sectionBounds(
-  section: ReaderNavigationSection,
-): { startCp: number; endCp: number } | null {
-  const { start_offset: startCp, end_offset: endCp } = section;
-  return Number.isInteger(startCp) &&
-    Number.isInteger(endCp) &&
-    startCp !== null &&
-    endCp !== null &&
-    startCp >= 0 &&
-    endCp > startCp
-    ? { startCp, endCp }
-    : null;
-}
-
-function sectionSpecificity(section: ReaderNavigationSection): number {
-  return section.depth ?? section.level ?? 0;
-}
-
-function containingSection({
-  sections,
-  fragmentId,
-  startCp,
-  endCp,
-}: {
-  readonly sections: readonly ReaderNavigationSection[];
-  readonly fragmentId: string;
-  readonly startCp: number;
-  readonly endCp: number;
-}): ReaderNavigationSection | null {
-  return (
-    sections
-      .filter((section) => {
-        const bounds = sectionBounds(section);
-        return (
-          section.fragment_id === fragmentId &&
-          bounds !== null &&
-          startCp >= bounds.startCp &&
-          (startCp === endCp ? startCp < bounds.endCp : endCp <= bounds.endCp)
-        );
-      })
-      .sort((left, right) => {
-        const leftBounds = sectionBounds(left)!;
-        const rightBounds = sectionBounds(right)!;
-        return (
-          sectionSpecificity(right) - sectionSpecificity(left) ||
-          leftBounds.endCp -
-            leftBounds.startCp -
-            (rightBounds.endCp - rightBounds.startCp) ||
-          left.ordinal - right.ordinal
-        );
-      })[0] ?? null
-  );
-}
-
-export function resolvePreparedWebSectionScope({
-  sections,
-  fragmentId,
-  anchorCp,
-  fragmentLengthCp,
-}: {
-  readonly sections: readonly ReaderNavigationSection[];
+export function resolvePreparedWebSectionScope({ structure, fragmentId, anchorCp }: {
+  readonly structure: ReaderDocumentStructure;
   readonly fragmentId: string;
   readonly anchorCp: number;
-  readonly fragmentLengthCp: number;
 }): PreparedSectionScope | null {
-  const section = containingSection({
-    sections,
-    fragmentId,
-    startCp: anchorCp,
-    endCp: anchorCp,
-  });
-  const bounds = section ? sectionBounds(section) : null;
-  return section &&
-    bounds &&
-    bounds.startCp < fragmentLengthCp &&
-    bounds.endCp <= fragmentLengthCp
-    ? {
-        id: `${CURRENT_SECTION_SCOPE_PREFIX}${section.section_id}`,
-        fragmentId,
-        startCp: bounds.startCp,
-        endCp: bounds.endCp,
-      }
+  const section = readerSectionAtPosition(structure, readerTextPointOffset(structure, { fragment_id: fragmentId, offset: anchorCp }));
+  return section.kind === "Present" && section.value.extent.kind === "Present"
+    ? { id: `${CURRENT_SECTION_SCOPE_PREFIX}${section.value.section.section_id}`,
+        startCp: section.value.extent.value.start, endCp: section.value.extent.value.end }
     : null;
 }
 
@@ -195,10 +124,12 @@ export function createWebFindSnapshot({
   mediaId,
   fragments,
   sections,
+  generation,
 }: {
   readonly mediaId: string;
   readonly fragments: readonly Fragment[];
   readonly sections: readonly ReaderNavigationSection[];
+  readonly generation: number;
 }): WebFindSnapshot {
   const ordered = [...fragments]
     .sort(
@@ -215,6 +146,7 @@ export function createWebFindSnapshot({
     sourceKey: createPaneFindSourceKey({
       kind: "WebArticle",
       mediaId,
+      generation,
       fragments: ordered.map(({ id, idx, createdAt }) => ({
         id,
         idx,
@@ -222,7 +154,10 @@ export function createWebFindSnapshot({
       })),
     }),
     fragments: ordered,
-    sections: [...sections],
+    structure: buildReaderDocumentStructure({
+      fragments: ordered.map((fragment) => ({ fragment_id: fragment.id, fragment_idx: fragment.idx, char_count: canonicalCpLength(fragment.canonicalText) })),
+      sections: [...sections],
+    }),
   };
 }
 
@@ -389,10 +324,9 @@ export function createWebFindAdapter({
         );
         if (anchorCp !== null) {
           preparedScope = resolvePreparedWebSectionScope({
-            sections: snapshot.sections,
+            structure: snapshot.structure,
             fragmentId: rendered.fragmentId,
             anchorCp,
-            fragmentLengthCp: Array.from(rendered.canonicalText).length,
           });
         }
       }
@@ -435,15 +369,18 @@ export function createWebFindAdapter({
         request.scopeId === preparedScope?.id ? preparedScope : null;
       const unitBaseOffsets = new Map<string, number>();
       const units = snapshot.fragments.flatMap((fragment) => {
-        if (scoped && fragment.id !== scoped.fragmentId) return [];
-        const base = scoped?.startCp ?? 0;
+        const fragmentStart = readerTextPointOffset(snapshot.structure, { fragment_id: fragment.id, offset: 0 });
+        const fragmentLength = canonicalCpLength(fragment.canonicalText);
+        const base = scoped ? Math.max(0, scoped.startCp - fragmentStart) : 0;
+        const end = scoped ? Math.min(fragmentLength, scoped.endCp - fragmentStart) : fragmentLength;
+        if (end <= base) return [];
         unitBaseOffsets.set(fragment.id, base);
         return [
           {
             id: fragment.id,
             text: scoped
               ? Array.from(fragment.canonicalText)
-                  .slice(scoped.startCp, scoped.endCp)
+                  .slice(base, end)
                   .join("")
               : fragment.canonicalText,
           },
@@ -500,15 +437,11 @@ export function createWebFindAdapter({
           endCp,
         };
         occurrencesByKey.set(key, occurrence);
-        const section = containingSection({
-          sections: snapshot.sections,
-          fragmentId: match.unitId,
-          startCp,
-          endCp,
-        });
+        const section = readerSectionAtPosition(snapshot.structure,
+          readerTextPointOffset(snapshot.structure, { fragment_id: match.unitId, offset: startCp }));
         return {
           key,
-          context: section?.label ? [section.label] : [],
+          context: section.kind === "Present" ? [section.value.section.label] : [],
           snippet: match.snippet,
         };
       });
@@ -716,18 +649,20 @@ export function useWebPaneFindCapability({
   const sourceMediaId = source.kind === "Available" ? source.mediaId : null;
   const sourceFragments = source.kind === "Available" ? source.fragments : null;
   const sourceSections = source.kind === "Available" ? source.sections : null;
+  const sourceGeneration = source.kind === "Available" ? source.generation : null;
   const snapshot = useMemo(
     () =>
       sourceMediaId !== null &&
       sourceFragments !== null &&
-      sourceSections !== null
+      sourceSections !== null && sourceGeneration !== null
         ? createWebFindSnapshot({
             mediaId: sourceMediaId,
             fragments: sourceFragments,
             sections: sourceSections,
+            generation: sourceGeneration,
           })
         : null,
-    [sourceFragments, sourceMediaId, sourceSections],
+    [sourceFragments, sourceMediaId, sourceSections, sourceGeneration],
   );
   const findSnapshotRef = useRef<WebFindSnapshot | null>(snapshot);
   if (snapshot === null) {

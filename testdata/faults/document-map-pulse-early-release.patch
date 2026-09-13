@@ -1,12 +1,12 @@
 diff --git a/apps/web/src/lib/reader/usePendingDocumentMapPulse.ts b/apps/web/src/lib/reader/usePendingDocumentMapPulse.ts
 --- a/apps/web/src/lib/reader/usePendingDocumentMapPulse.ts
 +++ b/apps/web/src/lib/reader/usePendingDocumentMapPulse.ts
-@@ -59,7 +59,6 @@ export function usePendingDocumentMapPulse({
-     if (pending.target.highlightId) {
-+      pendingRef.current = null;
-       return scrollHighlight(pending.target.highlightId, () => {
--        if (pendingRef.current !== pending) return;
--        pendingRef.current = null;
-         dispatchPulse(pending.target);
-       });
-     }
+@@ -32,7 +32,7 @@
+   const queue = useCallback((next: PendingDocumentMapPulse | null) => setPending(next), []);
+   useEffect(() => {
+     if (!pending || loading || activeFragmentId !== pending.fragmentId ||
+-        !pending.isCurrent() || !isTargetVisible(pending.target)) return;
++        !pending.isCurrent()) return;
+     if (pending.apparatusStableKey) focusApparatus(pending.apparatusStableKey, false);
+     dispatchPulse(pending.target);
+     pending.onArrive();

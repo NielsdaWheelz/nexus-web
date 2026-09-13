@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useState } from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { page, userEvent } from "vitest/browser";
 import { expect, it, vi } from "vitest";
 import "pdfjs-dist/web/pdf_viewer.css";
@@ -17,10 +17,13 @@ import { createHostedReaderProgressPort } from "@/lib/reader/ReaderProgressPort"
 import { createDocumentReaderSession } from "@/lib/reader/DocumentReaderSession";
 import { useDocumentReaderSession } from "@/lib/reader/useDocumentReaderSession";
 import { useReaderScrollPositioner } from "@/lib/reader/paneScroll";
+import { dispatchReaderPulse } from "@/lib/reader/pulseEvent";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import type { PdfHighlightOut } from "@/lib/reader/ReaderDecorations";
 import PdfReader, {
   type PdfReaderResourceState,
+  type PdfHighlightNavigationRequest,
+  type PdfReaderControlActions,
   type PdfReaderVisibleLockReason,
 } from "./PdfReader";
 
@@ -191,7 +194,12 @@ function textNodeContaining(root: HTMLElement, value: string): Text {
  * `useHostedPdfPageHighlights` hook supplies page highlights behind the same
  * render-readiness gate MediaPaneBody uses (`onResourceStateChange` feedback).
  */
-function PdfReaderHarness() {
+function PdfReaderHarness({ navigationProof = false }: { navigationProof?: boolean }) {
+  const [navigation, setNavigation] = useState<PdfHighlightNavigationRequest | null>(null);
+  const [arrival, setArrival] = useState("none");
+  const [resumeArrival, setResumeArrival] = useState("none");
+  const navigationId = useRef(0);
+  const controlsRef = useRef<PdfReaderControlActions | null>(null);
   const [highlightRefresh, setHighlightRefresh] = useState(0);
   const [resourceState, setResourceState] = useState<PdfReaderResourceState>({
     pageNumber: 1,
@@ -225,7 +233,7 @@ function PdfReaderHarness() {
     },
     navigation: { cacheKey: null, expectedKind: null },
     loadCacheKey: `${MEDIA_ID}:reader-session`,
-    initialEpubSectionId: null,
+    initialEpubTarget: null,
     pdf: {
       sourceCacheKey: `${MEDIA_ID}:pdf-source:0`,
       sourceRefreshToken: 0,
@@ -274,7 +282,29 @@ function PdfReaderHarness() {
     () => setHighlightRefresh((value) => value + 1),
     [],
   );
+  const jump = (top: number) => {
+    const requestId = ++navigationId.current;
+    setArrival("pending");
+    setNavigation({ highlightId: "source", pageNumber: 1, requestId,
+      quads: [{ x1: 70, y1: top, x2: 130, y2: top, x3: 130, y3: top + 10, x4: 70, y4: top + 10 }],
+      isCurrent: () => requestId === navigationId.current });
+  };
   return (
+    <>
+      {navigationProof ? <>
+        <button onClick={() => jump(2_000)}>unreachable source</button>
+        <button onClick={() => jump(650)}>lower source</button>
+        <button onClick={() => {
+          const requestId = ++navigationId.current;
+          setNavigation(null);
+          setResumeArrival("pending");
+          void controlsRef.current!.applyResumeState({ kind: "pdf", page: 1, page_progression: 0, zoom: null, position: 1 }, () => requestId === navigationId.current)
+            .then((positioned) => setResumeArrival(positioned ? "visible" : "failed"));
+        }}>return to page beginning</button>
+        <output aria-label="PDF source arrival">{arrival}</output>
+        <output aria-label="PDF resume arrival">{resumeArrival}</output>
+      </> : null}
+      <div style={{ height: navigationProof ? 320 : 640, width: 800 }}>
     <PdfReader
       mediaId={MEDIA_ID}
       resources={{
@@ -291,7 +321,12 @@ function PdfReaderHarness() {
       acquireMobileChromeVisibleLock={acquireMobileChromeVisibleLock}
       scrollPositioner={scrollPositioner}
       handleAuthenticationError={handleAuthenticationError}
+      navigateToHighlight={navigation}
+      onHighlightNavigationComplete={(positioned) => { setArrival(positioned ? "visible" : "failed"); setNavigation(null); }}
+      onControlsReady={(controls) => { controlsRef.current = controls; }}
     />
+      </div>
+    </>
   );
 }
 
@@ -380,6 +415,46 @@ it("keeps a committed PDF highlight visible while BFF reconciliation is pending"
     expect(committedOverlay!).toBeVisible();
   } finally {
     foreignTextLayer?.remove();
+    bff.finishReconciliation();
+    URL.revokeObjectURL(pdfUrl);
+  }
+});
+
+
+it("acknowledges PDF navigation only after the source geometry is visible and returns to its exact page locus", async () => {
+  await page.viewport(1_280, 800);
+  const pdfUrl = URL.createObjectURL(onePagePdf("A known 612 by 792 point source page"));
+  const bff = installPdfBff(pdfUrl);
+  try {
+    render(<MobileViewportProvider><MobileChromeProvider><ShareControllerProvider>
+      <PdfReaderHarness navigationProof />
+    </ShareControllerProvider></MobileChromeProvider></MobileViewportProvider>);
+    await screen.findByTestId("pdf-page-text-layer-1", {}, { timeout: 10_000 });
+    fireEvent.click(screen.getByRole("button", { name: "unreachable source" }));
+    await waitFor(() => expect(screen.getByLabelText("PDF source arrival")).toHaveTextContent("failed"));
+    fireEvent.click(screen.getByRole("button", { name: "lower source" }));
+    await waitFor(() => expect(screen.getByLabelText("PDF source arrival")).toHaveTextContent("visible"));
+    const viewport = screen.getByRole("region", { name: "PDF document" }).getBoundingClientRect();
+    const canvas = screen.getByTestId("pdf-page-canvas-1").getBoundingClientRect();
+    const sourceCenter = canvas.top + canvas.height * 655 / 792;
+    expect(sourceCenter).toBeGreaterThanOrEqual(viewport.top);
+    expect(sourceCenter).toBeLessThanOrEqual(viewport.bottom);
+    const beforeDecoration = screen.getByRole("region", { name: "PDF document" }).scrollTop;
+    act(() => dispatchReaderPulse({
+      mediaId: MEDIA_ID,
+      locator: { ...committedHighlight().anchor, exact: EXACT },
+      snippet: null,
+      highlightBehavior: "pulse",
+      focusBehavior: "preserve_position",
+    }));
+    await screen.findByTestId("pdf-highlight-reader-pulse-1-0");
+    expect(screen.getByRole("region", { name: "PDF document" }).scrollTop).toBe(beforeDecoration);
+    fireEvent.click(screen.getByRole("button", { name: "return to page beginning" }));
+    await waitFor(() => expect(screen.getByLabelText("PDF resume arrival")).toHaveTextContent("visible"));
+    const pageBeginning = screen.getByTestId("pdf-page-canvas-1").getBoundingClientRect().top;
+    expect(pageBeginning).toBeGreaterThanOrEqual(viewport.top - 1);
+    expect(pageBeginning).toBeLessThan(viewport.bottom);
+  } finally {
     bff.finishReconciliation();
     URL.revokeObjectURL(pdfUrl);
   }

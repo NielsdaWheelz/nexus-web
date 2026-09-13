@@ -5,13 +5,13 @@ from __future__ import annotations
 import base64
 import hashlib
 import os
-import posixpath
 import tempfile
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote, urlparse
+from uuid import UUID
 
 import lxml.etree as etree
 from lxml import html
@@ -19,18 +19,18 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.schemas.offline_reading_package import (
     OFFLINE_READING_MAX_EXPANDED_BYTES,
+    OFFLINE_READING_READER_CONTRACT_VERSION,
     OFFLINE_READING_URL_ATTRIBUTES,
-    EpubOfflineNavigationItem,
+    EpubOfflineFragment,
     EpubOfflineReaderDocument,
-    EpubOfflineSection,
     OfflineReadingEntry,
     PdfOfflineReaderDocument,
     WebArticleOfflineReaderDocument,
     WebOfflineFragment,
-    WebOfflineNavigationItem,
-    validate_safe_epub_href_path,
     validate_safe_package_path,
 )
+from nexus.services.canonicalize import generate_canonical_text
+from nexus.services.epub_read import rewrite_epub_fragment_links
 from nexus.services.offline_reading_packages import (
     OFFLINE_READING_ZIP_MEDIA_TYPE,
     assemble_offline_reading_zip_from_files,
@@ -38,7 +38,6 @@ from nexus.services.offline_reading_packages import (
     serialize_offline_reader_document,
 )
 from nexus.services.reader_publication import (
-    ReaderPublicationFragment,
     ReaderPublicationObjectReader,
     ReaderPublicationObjectReference,
     ReaderPublicationProjection,
@@ -74,9 +73,8 @@ _INERT_EXTERNAL_ELEMENTS = frozenset(
 # The package schema owns the closed set of dereferenceable URL attributes; the
 # projection strips exactly what that boundary refuses to accept.
 _URL_ATTRIBUTES = OFFLINE_READING_URL_ATTRIBUTES
-# Inert text an offline reader still needs on a retained image: the accessible
-# name and its tooltip. Neither addresses a resource.
-_RETAINED_IMAGE_ATTRIBUTES = ("alt", "title")
+# Retain source anchors, visibility, and accessible labels without resource URLs.
+_RETAINED_IMAGE_ATTRIBUTES = ("alt", "title", "id", "name", "hidden", "aria-hidden")
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,7 +220,7 @@ def _project_reader(
         source = _one_reference(projection, role="source")
         reader = PdfOfflineReaderDocument.model_validate(
             {
-                "readerContractVersion": 1,
+                "readerContractVersion": OFFLINE_READING_READER_CONTRACT_VERSION,
                 "mediaId": str(projection.media_id),
                 "mediaKind": "Pdf",
                 "title": projection.title,
@@ -237,30 +235,37 @@ def _project_reader(
             ),
         )
 
+    if projection.navigation.kind == "Absent":
+        # justify-defect: document publications capture their complete navigation.
+        raise AssertionError("Text publication has no canonical navigation")
+
     if projection.kind == "web_article":
         fragments = [
-            WebOfflineFragment(
-                fragment_id=str(fragment.fragment_id),
-                ordinal=fragment.idx,
-                html_sanitized=_offline_html(fragment.html_sanitized, text_only=True),
-                canonical_text=fragment.canonical_text,
+            WebOfflineFragment.model_validate(
+                {
+                    "fragmentId": str(fragment.fragment_id),
+                    "fragmentIdx": fragment.idx,
+                    "htmlSanitized": _offline_html(fragment.html_sanitized, text_only=True),
+                    "canonicalText": fragment.canonical_text,
+                    "createdAt": fragment.created_at,
+                }
             )
             for fragment in projection.fragments
         ]
+        if any(
+            generate_canonical_text(fragment.html_sanitized) != fragment.canonical_text
+            for fragment in fragments
+        ):
+            # justify-defect: offline projection must preserve its captured canonical coordinates.
+            raise AssertionError("Offline web projection changed canonical text")
         return (
             WebArticleOfflineReaderDocument.model_validate(
                 {
-                    "readerContractVersion": 1,
+                    "readerContractVersion": OFFLINE_READING_READER_CONTRACT_VERSION,
                     "mediaId": str(projection.media_id),
                     "mediaKind": "WebArticle",
                     "title": projection.title,
-                    "navigation": [
-                        WebOfflineNavigationItem(
-                            fragment_id=str(fragment.fragment_id),
-                            label=_section_label(fragment, projection.title),
-                        ).model_dump(mode="json", by_alias=True)
-                        for fragment in projection.fragments
-                    ],
+                    "navigation": projection.navigation.value.model_dump(mode="json"),
                     "fragments": [
                         fragment.model_dump(mode="json", by_alias=True) for fragment in fragments
                     ],
@@ -277,81 +282,59 @@ def _project_reader(
 def _project_epub_reader(
     projection: ReaderPublicationProjection,
 ):
-    fragment_by_idx = {fragment.idx: fragment for fragment in projection.fragments}
-    section_id_by_target = {
-        (nav.href_path, nav.href_fragment): nav.location_id
-        for nav in projection.epub_navigation
-        if nav.href_path is not None
-    }
-    section_id_by_path: dict[str, str] = {}
-    for nav in projection.epub_navigation:
-        if nav.href_path is not None:
-            section_id_by_path.setdefault(nav.href_path, nav.location_id)
+    if projection.navigation.kind == "Absent":
+        # justify-defect: document publications capture their complete navigation.
+        raise AssertionError("EPUB publication has no canonical navigation")
     asset_by_key = {
         reference.asset_key: reference
         for reference in projection.object_references
         if reference.role == "epub_asset" and reference.asset_key is not None
     }
-    referenced_assets: dict[str, ReaderPublicationObjectReference] = {}
-    section_by_fragment_idx = {
-        section.fragment_idx: section for section in projection.epub_sections
+    source_by_idx = {source.fragment_idx: source for source in projection.epub_fragment_sources}
+    fragment_ids_by_path = {
+        source_by_idx[fragment.idx].package_href: fragment.fragment_id
+        for fragment in projection.fragments
     }
-    rendered_by_fragment_idx: dict[
-        int, tuple[str, str, dict[str, ReaderPublicationObjectReference]]
-    ] = {}
-    sections: list[EpubOfflineSection] = []
-    for ordinal, navigation in enumerate(projection.epub_navigation):
-        fragment = fragment_by_idx.get(navigation.fragment_idx)
-        if fragment is None:
-            raise AssertionError("ready EPUB navigation targets a missing fragment")
-        source_section = section_by_fragment_idx.get(navigation.fragment_idx)
-        if source_section is None:
-            raise AssertionError("ready EPUB navigation targets a missing source section")
-        cached = rendered_by_fragment_idx.get(navigation.fragment_idx)
-        if cached is None:
-            rendered, section_assets = _offline_epub_html(
-                fragment.html_sanitized,
-                media_id=str(projection.media_id),
-                asset_by_key=asset_by_key,
-                source_href_path=source_section.package_href,
-                section_id_by_target=section_id_by_target,
-                section_id_by_path=section_id_by_path,
-            )
-            cached = (rendered, fragment.canonical_text, section_assets)
-            rendered_by_fragment_idx[navigation.fragment_idx] = cached
-        rendered, canonical_text, section_assets = cached
-        referenced_assets.update(section_assets)
-        sections.append(
-            EpubOfflineSection.model_validate(
-                {
-                    "sectionId": navigation.location_id,
-                    "ordinal": ordinal,
-                    "fragmentId": str(fragment.fragment_id),
-                    "fragmentIdx": fragment.idx,
-                    "hrefPath": navigation.href_path or source_section.package_href,
-                    "anchorId": navigation.href_fragment,
-                    "startOffset": navigation.start_offset,
-                    "endOffset": navigation.end_offset,
-                    "htmlSanitized": rendered,
-                    "canonicalText": canonical_text,
-                    "assetPaths": sorted(section_assets, key=lambda path: path.encode("utf-8")),
-                }
+    referenced_assets: dict[str, ReaderPublicationObjectReference] = {}
+    fragments: list[EpubOfflineFragment] = []
+    word_start = 0
+    for fragment in projection.fragments:
+        href_path = source_by_idx[fragment.idx].package_href
+        rendered, assets = _offline_epub_html(
+            fragment.html_sanitized,
+            media_id=str(projection.media_id),
+            asset_by_key=asset_by_key,
+            source_href_path=href_path,
+            fragment_ids_by_path=fragment_ids_by_path,
+        )
+        referenced_assets.update(assets)
+        if generate_canonical_text(rendered) != fragment.canonical_text:
+            # justify-defect: offline projection must preserve its captured canonical coordinates.
+            raise AssertionError("Offline EPUB projection changed canonical text")
+        fragments.append(
+            EpubOfflineFragment(
+                fragment_id=fragment.fragment_id,
+                fragment_idx=fragment.idx,
+                href_path=href_path,
+                generation=projection.generation,
+                char_count=len(fragment.canonical_text),
+                word_count=fragment.word_count,
+                document_word_start=word_start,
+                created_at=fragment.created_at,
+                html_sanitized=rendered,
+                canonical_text=fragment.canonical_text,
+                asset_paths=sorted(assets, key=lambda path: path.encode("utf-8")),
             )
         )
-
+        word_start += fragment.word_count
     reader = EpubOfflineReaderDocument.model_validate(
         {
-            "readerContractVersion": 1,
+            "readerContractVersion": OFFLINE_READING_READER_CONTRACT_VERSION,
             "mediaId": str(projection.media_id),
             "mediaKind": "Epub",
             "title": projection.title,
-            "navigation": [
-                EpubOfflineNavigationItem(section_id=nav.location_id, label=nav.label).model_dump(
-                    mode="json", by_alias=True
-                )
-                for nav in projection.epub_navigation
-            ],
-            "sections": [section.model_dump(mode="json", by_alias=True) for section in sections],
+            "navigation": projection.navigation.value.model_dump(mode="json"),
+            "fragments": [fragment.model_dump(mode="json") for fragment in fragments],
         }
     )
     members = tuple(
@@ -377,18 +360,15 @@ def _offline_html(raw: str, *, text_only: bool) -> str:
         else:
             container.append(root)
     for element in tuple(container.iterdescendants()):
-        tag = element.tag.rsplit("}", 1)[-1].lower() if isinstance(element.tag, str) else ""
+        if not isinstance(element.tag, str):
+            element.drop_tree()
+            continue
+        tag = element.tag.rsplit("}", 1)[-1].lower()
         if tag == "img" and text_only:
-            replacement = html.Element("span")
-            replacement.text = element.get("alt") or ""
-            replacement.tail = element.tail
-            element.getparent().replace(element, replacement)
+            _replace_image_with_placeholder(element)
             continue
         if text_only and tag in _INERT_EXTERNAL_ELEMENTS:
-            replacement = html.Element("span")
-            replacement.text = _inert_element_label(element)
-            replacement.tail = element.tail
-            element.getparent().replace(element, replacement)
+            element.drop_tag()
             continue
         if text_only and tag == "form":
             element.drop_tag()
@@ -407,15 +387,21 @@ def _offline_html(raw: str, *, text_only: bool) -> str:
     return _inner_html(container)
 
 
-def _inert_element_label(element) -> str:
-    visible_text = " ".join(element.text_content().split())
-    return (
-        visible_text
-        or element.get("aria-label")
-        or element.get("title")
-        or element.get("alt")
-        or ""
-    )
+def _replace_image_with_placeholder(element) -> None:
+    """Expose absent image text without adding words to the source coordinate space."""
+    replacement = html.Element("span")
+    for name in ("id", "name", "hidden", "aria-hidden"):
+        if name in element.attrib:
+            replacement.set(name, element.attrib[name])
+    label = element.get("alt") or ""
+    if label:
+        replacement.set("role", "img")
+        replacement.set("aria-label", label)
+        decoration = etree.SubElement(replacement, "span")
+        decoration.set("aria-hidden", "true")
+        decoration.text = label
+    replacement.tail = element.tail
+    element.getparent().replace(element, replacement)
 
 
 def _offline_epub_html(
@@ -424,10 +410,13 @@ def _offline_epub_html(
     media_id: str,
     asset_by_key: dict[str, ReaderPublicationObjectReference],
     source_href_path: str,
-    section_id_by_target: dict[tuple[str, str | None], str],
-    section_id_by_path: dict[str, str],
+    fragment_ids_by_path: dict[str, UUID],
 ) -> tuple[str, dict[str, ReaderPublicationObjectReference]]:
-    roots = html.fragments_fromstring(raw)
+    roots = html.fragments_fromstring(
+        rewrite_epub_fragment_links(
+            raw, href_path=source_href_path, fragment_ids_by_path=fragment_ids_by_path
+        )
+    )
     container = html.Element("div")
     for root in roots:
         if isinstance(root, str):
@@ -436,7 +425,13 @@ def _offline_epub_html(
             container.append(root)
     referenced: dict[str, ReaderPublicationObjectReference] = {}
     for element in tuple(container.iterdescendants()):
-        tag = element.tag.rsplit("}", 1)[-1].lower() if isinstance(element.tag, str) else ""
+        if not isinstance(element.tag, str):
+            element.drop_tree()
+            continue
+        tag = element.tag.rsplit("}", 1)[-1].lower()
+        if tag in _INERT_EXTERNAL_ELEMENTS or tag == "form":
+            element.drop_tag()
+            continue
         if tag in _DROP_ELEMENTS:
             element.drop_tree()
             continue
@@ -445,16 +440,14 @@ def _offline_epub_html(
             asset_key = _asset_key_from_url(source, media_id=media_id)
             reference = asset_by_key.get(asset_key) if asset_key is not None else None
             if reference is None:
-                replacement = html.Element("span")
-                replacement.text = element.get("alt") or ""
-                replacement.tail = element.tail
-                element.getparent().replace(element, replacement)
+                _replace_image_with_placeholder(element)
                 continue
             package_path = f"assets/{reference.asset_key}"
-            # Keep the image's inert accessible text; drop every other attribute
-            # (URL carriers, event handlers, styling) with one clear.
+            # Preserve source anchors and accessible labels; drop executable/URL attributes.
             retained = {
-                name: element.get(name) for name in _RETAINED_IMAGE_ATTRIBUTES if element.get(name)
+                name: element.attrib[name]
+                for name in _RETAINED_IMAGE_ATTRIBUTES
+                if name in element.attrib
             }
             element.attrib.clear()
             element.set("src", package_path)
@@ -470,38 +463,15 @@ def _offline_epub_html(
                 continue
             if name not in _URL_ATTRIBUTES:
                 continue
-            if tag == "a" and name == "href":
-                parsed = urlparse(value)
-                if not parsed.scheme and not value.startswith("//") and not parsed.query:
-                    path = _resolve_epub_internal_path(source_href_path, parsed.path)
-                    section_id = (
-                        section_id_by_target.get((path, parsed.fragment or None))
-                        if path is not None
-                        else None
-                    )
-                    if section_id is None and path is not None:
-                        section_id = section_id_by_path.get(path)
-                    if section_id is not None:
-                        element.set("href", f"#{parsed.fragment}" if parsed.fragment else "#")
-                        element.set("data-nexus-section-id", section_id)
-                    else:
-                        del element.attrib[attribute]
-                    continue
+            if (
+                tag == "a"
+                and name == "href"
+                and value == "#"
+                and element.get("data-nexus-fragment-id")
+            ):
+                continue
             del element.attrib[attribute]
     return _inner_html(container), referenced
-
-
-def _resolve_epub_internal_path(source_href_path: str, target_path: str) -> str | None:
-    decoded = unquote(target_path)
-    candidate = (
-        source_href_path
-        if not decoded
-        else posixpath.normpath(posixpath.join(posixpath.dirname(source_href_path), decoded))
-    )
-    try:
-        return validate_safe_epub_href_path(candidate)
-    except ValueError:
-        return None
 
 
 def _asset_key_from_url(value: str | None, *, media_id: str) -> str | None:
@@ -513,14 +483,6 @@ def _asset_key_from_url(value: str | None, *, media_id: str) -> str | None:
         return None
     key = unquote(parsed.path[len(prefix) :])
     return key or None
-
-
-def _section_label(fragment: ReaderPublicationFragment, fallback: str) -> str:
-    first_line = next(
-        (line.strip() for line in fragment.canonical_text.splitlines() if line.strip()),
-        fallback,
-    )
-    return first_line[:512]
 
 
 def _one_reference(

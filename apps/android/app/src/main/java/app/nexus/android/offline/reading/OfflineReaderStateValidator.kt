@@ -45,10 +45,19 @@ internal object OfflineReaderStateValidator {
         fields.requireExact(setOf("kind", "target", "locations", "text"))
         val target = fields.getValue("target").requireMap()
         if (epub) {
-            target.requireExact(setOf("section_id", "href_path", "anchor_id"))
-            requireVisible(target.getValue("section_id").requireString())
+            target.requireExact(setOf("fragment_id", "href_path", "anchor_id"))
+            val fragmentId = target.getValue("fragment_id").requireString()
+            require(java.util.UUID.fromString(fragmentId).toString() == fragmentId)
             requireVisible(target.getValue("href_path").requireString())
-            target.getValue("anchor_id").requireNullableVisible()
+            val anchor = target.getValue("anchor_id").requireMap()
+            when (anchor["kind"]?.requireString()) {
+                "Absent" -> anchor.requireExact(setOf("kind"))
+                "Present" -> {
+                    anchor.requireExact(setOf("kind", "value"))
+                    requireVisible(anchor.getValue("value").requireString())
+                }
+                else -> error("EPUB anchor presence is invalid")
+            }
         } else {
             target.requireExact(setOf("fragment_id"))
             requireVisible(target.getValue("fragment_id").requireString())
@@ -84,11 +93,6 @@ internal object OfflineReaderStateValidator {
         val value = (this as? StrictJson.NumberValue)?.value?.toDoubleOrNull()
             ?: error("reader field must be a finite number or null")
         require(value.isFinite() && value in minimum..maximum)
-    }
-
-    private fun StrictJson.requireNullableVisible() {
-        if (this is StrictJson.NullValue) return
-        requireVisible(requireString())
     }
 
     private fun StrictJson.requireNullableBoundedText(maximumCodePoints: Int): String? {
