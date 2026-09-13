@@ -94,7 +94,8 @@ print(json.dumps(loaded))
     )
 
     loaded = json.loads(completed.stdout)
-    assert loaded == [], f"the idle worker loaded provider execution modules: {loaded!r}"
+    if loaded:
+        raise AssertionError(f"the idle worker loaded provider execution modules: {loaded!r}")
 
 
 def test_worker_heartbeat_is_atomic_and_binds_runtime_contract(tmp_path: Path) -> None:
