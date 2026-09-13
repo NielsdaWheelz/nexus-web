@@ -746,6 +746,8 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/kernel/test_backend_artifact.py",
                 "pytest:python/tests/kernel/test_codex_host_process_lifecycle.py::"
                 "test_codex_host_separates_bootstrap_server_and_health_memory_lifetimes",
+                "pytest:python/tests/kernel/test_codex_host_provider_import_lifetime.py::"
+                "test_codex_host_import_does_not_load_provider_http_runtime",
                 "pytest:python/tests/kernel/test_codex_projection_import_boundary.py::"
                 "test_codex_projection_does_not_import_the_application_execution_owner",
                 "pytest:python/tests/kernel/test_generation_contract.py",
@@ -939,6 +941,7 @@ def test_capacity_enqueue_and_release_sources_keep_their_priority_owner(
                 "pytest:python/tests/kernel/nexus_test_control/test_provider_runtime_pin.py::test_provider_runtime_is_materialized_from_the_pin_without_retargeting_source",
                 "pytest:python/tests/kernel/nexus_test_control/test_android_device_method_scope.py::test_exact_android_device_proof_uses_one_instrumentation_method",
                 "pytest:python/tests/kernel/test_codex_host_process_lifecycle.py::test_codex_host_separates_bootstrap_server_and_health_memory_lifetimes",
+                "pytest:python/tests/kernel/test_codex_host_provider_import_lifetime.py::test_codex_host_import_does_not_load_provider_http_runtime",
                 "pytest:python/tests/kernel/test_codex_projection_import_boundary.py::test_codex_projection_does_not_import_the_application_execution_owner",
                 "pytest:python/tests/kernel/test_generation_contract.py",
                 "pytest:python/tests/kernel/test_generation_operation_adapters.py",

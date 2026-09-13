@@ -11,6 +11,7 @@ from nexus_test_control.policy import fault_manifest_violations
 from nexus_test_control.sensitivity import workflow_sensitivity_request
 
 _OWNER_DIGEST_DOMAIN = b"nexus-python-exact-proof-source-v1\0"
+_NODE_OWNER_DIGEST_DOMAIN = b"nexus-node-whole-file-proof-source-v1\0"
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 
 
@@ -41,6 +42,14 @@ def _independent_owner_sha256(source: str, selected_node: str) -> str:
         encoded = statement.encode("utf-8")
         digest.update(len(encoded).to_bytes(8, byteorder="big"))
         digest.update(encoded)
+    return digest.hexdigest()
+
+
+def _independent_node_owner_sha256(source: str) -> str:
+    encoded = source.encode("utf-8")
+    digest = hashlib.sha256(_NODE_OWNER_DIGEST_DOMAIN)
+    digest.update(len(encoded).to_bytes(8, byteorder="big"))
+    digest.update(encoded)
     return digest.hexdigest()
 
 
@@ -144,6 +153,77 @@ def test_unrelated_sibling() -> None:
             violation.rule == "fault-coherent-owner-drift"
             for violation in fault_manifest_violations(tmp_path)
         ), "candidate controller retained a coherent-fault exception after owner drift"
+
+    node_proof_path = "node/ingest/test/article_extraction.test.mjs"
+    node_proof = f"node-test:{node_proof_path}"
+    node_owner_source = """\
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+test('semantic main owns extraction', () => {
+    assert.equal(true, true);
+});
+"""
+    node_owner = tmp_path / node_proof_path
+    node_owner.parent.mkdir(parents=True)
+    node_owner.write_text(node_owner_source, encoding="utf-8")
+    node_target_path = "node/ingest/article_extraction.mjs"
+    node_target = tmp_path / node_target_path
+    node_target.write_text("export const USE_MAIN = false;\n", encoding="utf-8")
+    (fault_dir / "contract-fault.patch").unlink()
+    node_patch = (
+        "diff --git a/node/ingest/article_extraction.mjs "
+        "b/node/ingest/article_extraction.mjs\n"
+        "--- a/node/ingest/article_extraction.mjs\n"
+        "+++ b/node/ingest/article_extraction.mjs\n"
+        "@@ -1 +1 @@\n"
+        "-export const USE_MAIN = false;\n"
+        "+export const USE_MAIN = true;\n"
+    )
+    node_patch_path = fault_dir / "node-contract-fault.patch"
+    node_patch_path.write_text(node_patch, encoding="utf-8")
+    node_fault = {
+        "version": 1,
+        "faults": [
+            {
+                "id": "node-contract-fault",
+                "patch": "testdata/faults/node-contract-fault.patch",
+                "sha256": hashlib.sha256(node_patch.encode()).hexdigest(),
+                "proofs": [node_proof],
+                "expected_failure": "semantic main owns extraction",
+                "changed_owner_red": "coherent-fault",
+                "changed_owner_sha256": _independent_node_owner_sha256(node_owner_source),
+            }
+        ],
+    }
+    (fault_dir / "manifest.json").write_text(json.dumps(node_fault), encoding="utf-8")
+    proof_manifest.write_text(
+        json.dumps({"priority_risks": [{"proofs": [node_proof]}]}),
+        encoding="utf-8",
+    )
+
+    assert not fault_manifest_violations(tmp_path), (
+        "candidate controller rejected a bound whole-file Node coherent fault"
+    )
+    node_request = workflow_sensitivity_request(
+        tmp_path,
+        proof=node_proof,
+        changed_paths=(node_proof_path,),
+        base_sha=base_sha,
+    )
+    assert (node_request.method, node_request.against) == (
+        SensitivityMethod.FAULT,
+        "node-contract-fault",
+    ), "candidate controller did not route the admitted whole-file Node fault"
+
+    node_owner.write_text(
+        node_owner_source.replace("assert.equal(true, true)", "assert.equal(true, false)"),
+        encoding="utf-8",
+    )
+    assert any(
+        violation.rule == "fault-coherent-owner-drift"
+        for violation in fault_manifest_violations(tmp_path)
+    ), "candidate controller retained a whole-file Node exception after owner drift"
 
     reviewed_routes = (
         (

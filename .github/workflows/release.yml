@@ -31,6 +31,14 @@ on:
         required: false
         default: 0
         type: number
+      empty_baseline_hard_cut:
+        description: >-
+          Attest the complete legacy offline shelf empty before an incompatible
+          update, then acquire with the candidate. Use only after production
+          activates the candidate contract and the device census is empty.
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: release-${{ inputs.tag }}
@@ -66,6 +74,7 @@ jobs:
       NEXUS_ANDROID_RELEASE_PROMOTION_ARTICLE_MEDIA_ID: ${{ vars.NEXUS_ANDROID_RELEASE_PROMOTION_ARTICLE_MEDIA_ID }}
       NEXUS_ANDROID_VERSION_CODE: ${{ inputs.version_code }}
       NEXUS_ANDROID_RELEASE_BOOTSTRAP_NO_DEVICE: ${{ inputs.bootstrap_no_device }}
+      NEXUS_ANDROID_RELEASE_EMPTY_BASELINE_HARD_CUT: ${{ inputs.empty_baseline_hard_cut }}
       NEXUS_ANDROID_PREVIOUS_VERSION_CODE: ${{ inputs.previous_version_code }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
@@ -153,9 +162,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          notes="Signed Nexus Android APK. Signature verification, staged real-API offline-reading acquisition on the older USB baseline, reboot/airplane-mode cold shelf, in-place V1 reopen/progress/purge, local App Link routing, and native auth handoff passed before this draft was created."
+          notes="Signed Nexus Android APK. Signature verification, staged real-API offline-reading acquisition on the older USB baseline, reboot/airplane-mode cold shelf, in-place package reopen/progress/purge, local App Link routing, and native auth handoff passed before this draft was created."
           if [ "$NEXUS_ANDROID_RELEASE_BOOTSTRAP_NO_DEVICE" = "true" ]; then
             notes="Signed Nexus Android APK. Signature verification, the manifest/player-protocol contract, the pinned API origin, and the Android device suite passed before this draft was created. The signed-physical USB baseline stages were explicitly skipped (bootstrap_no_device): no published release carries offline reading, so no in-the-wild offline state exists for them to protect. The operator device smoke follows the production deploy."
+          elif [ "$NEXUS_ANDROID_RELEASE_EMPTY_BASELINE_HARD_CUT" = "true" ]; then
+            notes="Signed Nexus Android APK. The physical legacy device's complete offline shelf was attested empty by a quiesced, read-only file/database census with airplane mode enabled before the incompatible update. The candidate then acquired every production fixture, retained exact progress across force-stop/reboot/airplane mode, reopened and purged every package, and passed signature, manifest, App Link, lifecycle, and native auth verification."
           fi
           upload_args=()
           if gh release view "$ANDROID_RELEASE_TAG" >/dev/null 2>&1; then

@@ -6,7 +6,7 @@ from uuid import UUID
 
 import sqlalchemy as sa
 from alembic import op
-from sqlalchemy.engine import Connection
+from sqlalchemy.engine import Connection, RowMapping
 from sqlalchemy.orm import Session
 
 from nexus.schemas.presence import Present
@@ -23,6 +23,104 @@ revision = "0228"
 down_revision = "0227"
 branch_labels = None
 depends_on = None
+
+# Frozen reader1 persistence contract; Python and JavaScript both index Unicode code points.
+_READER_QUOTE_EXACT_CODE_POINTS = 48
+_READER_QUOTE_CONTEXT_CODE_POINTS = 24
+
+
+def _repair_web_cursors(
+    connection: Connection, media_id: UUID, fragments: list[RowMapping]
+) -> None:
+    def fail(cursor_id: UUID) -> None:
+        raise RuntimeError(
+            f"Reader structure repair cannot resolve stored web cursor: {cursor_id}"
+        )
+
+    def matches_quote_window(
+        canonical_text: str,
+        offset: int,
+        quote: str,
+        prefix: str | None,
+        suffix: str | None,
+    ) -> bool:
+        if not 0 <= offset <= len(canonical_text) or not canonical_text:
+            return False
+        quote_start = min(
+            min(offset, len(canonical_text) - 1),
+            max(0, len(canonical_text) - _READER_QUOTE_EXACT_CODE_POINTS),
+        )
+        quote_end = min(
+            len(canonical_text), quote_start + _READER_QUOTE_EXACT_CODE_POINTS
+        )
+        prefix_start = max(0, quote_start - _READER_QUOTE_CONTEXT_CODE_POINTS)
+        suffix_end = min(
+            len(canonical_text), quote_end + _READER_QUOTE_CONTEXT_CODE_POINTS
+        )
+        return (
+            canonical_text[quote_start:quote_end] == quote
+            and (canonical_text[prefix_start:quote_start] or None) == prefix
+            and (canonical_text[quote_end:suffix_end] or None) == suffix
+        )
+
+    text_by_fragment = {
+        str(fragment["id"]): fragment["canonical_text"] for fragment in fragments
+    }
+    cursors = connection.execute(
+        sa.text(
+            "SELECT id, locator FROM reader_media_state "
+            "WHERE media_id = :media AND locator IS NOT NULL ORDER BY id"
+        ),
+        {"media": media_id},
+    ).mappings()
+    for cursor in cursors:
+        cursor_id = cursor["id"]
+        locator = cursor["locator"]
+        if not isinstance(locator, dict) or locator.get("kind") != "web":
+            fail(cursor_id)
+        target = locator.get("target")
+        locations = locator.get("locations")
+        if not isinstance(target, dict) or not isinstance(locations, dict):
+            fail(cursor_id)
+        fragment_id = target.get("fragment_id")
+        offset = locations.get("text_offset")
+        if not isinstance(fragment_id, str) or (
+            offset is not None and type(offset) is not int
+        ):
+            fail(cursor_id)
+        canonical_text = text_by_fragment.get(fragment_id)
+        if canonical_text is not None:
+            if offset is not None and not 0 <= offset <= len(canonical_text):
+                fail(cursor_id)
+            continue
+        text_context = locator.get("text")
+        if type(offset) is not int or not isinstance(text_context, dict):
+            fail(cursor_id)
+        quote = text_context.get("quote")
+        prefix = text_context.get("quote_prefix")
+        suffix = text_context.get("quote_suffix")
+        if (
+            not isinstance(quote, str)
+            or not quote
+            or (prefix is not None and not isinstance(prefix, str))
+            or (suffix is not None and not isinstance(suffix, str))
+        ):
+            fail(cursor_id)
+        candidates = [
+            candidate_id
+            for candidate_id, candidate_text in text_by_fragment.items()
+            if matches_quote_window(candidate_text, offset, quote, prefix, suffix)
+        ]
+        if len(candidates) != 1:
+            fail(cursor_id)
+        repaired = {**locator, "target": {**target, "fragment_id": candidates[0]}}
+        connection.execute(
+            sa.text(
+                "UPDATE reader_media_state SET locator = CAST(:locator AS jsonb), "
+                "revision = revision + 1, updated_at = now() WHERE id = :id"
+            ),
+            {"id": cursor_id, "locator": json.dumps(repaired)},
+        )
 
 
 def _repair_references(
@@ -556,21 +654,28 @@ def upgrade() -> None:
         web_media = (
             connection.execute(
                 sa.text(
-                    "SELECT id, title FROM media WHERE kind = 'web_article' AND "
-                    "EXISTS (SELECT 1 FROM fragments WHERE media_id = media.id) ORDER BY id"
+                    "SELECT id, title FROM media WHERE kind = 'web_article' AND ("
+                    "EXISTS (SELECT 1 FROM fragments WHERE media_id = media.id) OR "
+                    "EXISTS (SELECT 1 FROM reader_media_state WHERE media_id = media.id "
+                    "AND locator IS NOT NULL)) ORDER BY id"
                 )
             )
             .mappings()
             .all()
         )
         for media in web_media:
+            fragments = list(
+                connection.execute(
+                    sa.text(
+                        "SELECT id, idx, canonical_text, html_sanitized FROM fragments "
+                        "WHERE media_id = :media ORDER BY idx"
+                    ),
+                    {"media": media["id"]},
+                ).mappings()
+            )
+            _repair_web_cursors(connection, media["id"], fragments)
             specs = {}
-            for fragment in connection.execute(
-                sa.text(
-                    "SELECT id, idx, canonical_text, html_sanitized FROM fragments WHERE media_id = :media ORDER BY idx"
-                ),
-                {"media": media["id"]},
-            ).mappings():
+            for fragment in fragments:
                 for spec in build_web_article_index_blocks(
                     html_sanitized=fragment["html_sanitized"],
                     canonical_text=fragment["canonical_text"],

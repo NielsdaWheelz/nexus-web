@@ -1933,6 +1933,23 @@ def test_host_preflight_blocks_low_parser_temp_disk(
         _set_owner(paths.parser_temp_root, os.getuid(), os.getgid())
 
 
+def test_host_harness_owns_parser_temp_capacity_evidence(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    """Risk: ambient runner disk pressure changes an unrelated release oracle."""
+
+    harness = host_release_harness
+    harness.update_state(parser_temp_free_bytes=512 * 1024 * 1024 - 1)
+
+    failed = harness.run_apply()
+
+    assert failed.returncode != 0
+    assert "parser temporary filesystem has less than 512 MiB free" in failed.stderr
+    state = harness.state()
+    assert state["resource_mutations"] == []
+    assert state["service_mutations"] == []
+
+
 @pytest.mark.parametrize("invalid_metadata", ("mode", "owner", "symlink"))
 def test_host_apply_rejects_unsafe_parser_temp_metadata_before_mutation(
     host_release_harness: HostReleaseHarness,

@@ -137,23 +137,23 @@ selected exact module-level Python test plus its imports and non-test module
 support differs from base. Sibling tests are separate owners: changing only a
 sibling retains the selected owner's declared FAULT.
 
-One exact module-level Python proof MAY opt into
+One exact module-level Python proof or whole-file Node proof MAY opt into
 `changed_owner_red: coherent-fault` on its single registered product fault when
 an intentional hard-cut interface or a behavior-preserving proof-ownership
 refactor prevents BASE from reaching or falsifying the retained behavioral
-contract. Policy MUST require one canonical exact proof, one product-only
-applicable patch, its SHA-256, and its expected assertion fingerprint. The
-manifest MUST also pin the SHA-256 of version-stable source slices for that exact
-test plus its imports and non-test module support; interpreter-specific AST
-serialization is not a durable encoding. Any owner drift is a policy failure
-requiring explicit review and a new digest. The coherent-candidate fault proves
-only that registered contract; every independent new behavior requires a
-separate exact proof and sensitivity witness. The exception mechanism itself
-MUST have a canonical BASE sensitivity owner. The work report MUST name why
-BASE was inapplicable.
-Whole-file owners, class-qualified nodes, non-Python exact nodes, unmarked
-faults, absent owners, duplicate owners, parse failures, digest drift, and Git
-read failures fail closed.
+contract. Policy MUST require one canonical proof, one product-only applicable
+patch, its SHA-256, and its expected assertion fingerprint. The manifest MUST
+also pin the SHA-256 of version-stable source slices for the exact Python test
+plus its imports and non-test module support, or the complete source of the
+whole-file Node owner; interpreter-specific syntax-tree serialization is not a
+durable encoding. Any owner drift is a policy failure requiring explicit review
+and a new digest. The coherent-candidate fault proves only that registered
+contract; every independent new behavior requires a separate proof and
+sensitivity witness. The exception mechanism itself MUST have a canonical BASE
+sensitivity owner. The work report MUST name why BASE was inapplicable.
+Whole-file Python owners, class-qualified Python nodes, node-qualified Node
+owners, other runners, unmarked faults, absent owners, duplicate owners, parse
+failures, digest drift, and Git read failures fail closed.
 
 A Python BASE checkout MUST retain the baseline revision's dependency manifests
 and locks. Candidate Python proof and shared test-support overlays MUST NOT
@@ -872,14 +872,23 @@ direct API origin embedded in the APK. Physical offline-reading promotion must
 compare that origin with the real mint response's `package_base_url` and fail
 closed on drift; native exact-origin enforcement is not relaxed.
 
-The signed physical promotion controller is staged: it must acquire against the
-strictly older installed baseline before candidate installation, own and attest
-force-stop/reboot/first-unlock/airplane before the cold-offline phase, and only
-then install the candidate in place for V1 reopen/progress/purge/update. A
-missing executable staged owner is `not_run`; a controller topology test is not
-physical promotion evidence. Retained release evidence records only facts the
-controller read back from the device — the qemu build properties and each
-phase's `airplane_mode_on` value — never an assumed constant.
+The signed physical promotion controller has two explicit device topologies.
+The default, compatible topology acquires against the strictly older installed
+baseline, owns and attests force-stop/reboot/first-unlock/airplane for its cold
+offline phase, then installs the candidate in place for exact
+reopen/progress/purge validation. An incompatible contract cut may instead use
+`empty_baseline_hard_cut`, but only after production activates the candidate
+contract: the controller first enables airplane mode and proves the complete
+legacy shelf empty through a quiesced read-only file/database census that cannot
+invoke cleanup, installs the candidate, disables airplane mode for
+candidate acquisition, then force-stops/reboots and proves the candidate's
+packages and progress offline before purge. This mode is not compatible with
+`bootstrap_no_device`; it never guesses, migrates, or silently discards legacy
+offline state. A missing executable staged owner is `not_run`; a controller
+topology test is not physical promotion evidence. Retained release evidence
+records the selected topology and only facts the controller read back from the
+device — the qemu build properties and each phase's `airplane_mode_on` value —
+never an assumed constant.
 
 Extension proof covers MV3 runtime, permissions, bearer scope, content capture,
 and handoff boundaries. Reuse the canonical content corpus.

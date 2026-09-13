@@ -19,11 +19,14 @@ by provenance.
   preparation.
 - `content_indexing.py` + `media_content_reindex_job`: durable, revision-fenced
   retrieval indexing after readable source artifacts commit.
-- `node/ingest/ingest.mjs`: generic web fetch and extraction. Mozilla
-  Readability is the default extractor, with a source-shape-specific
-  pre-extraction for Wikisource proofread pages (`.mw-parser-output >
-  .prp-pages-output`) so page-body text wins over reference sections before the
-  normal Python source-normalization path consumes it.
+- `node/ingest/{ingest,article_extraction}.mjs`: generic web fetch and
+  extraction. Mozilla
+  Readability is the default extractor. A unique authored `main` landmark owns
+  its input so longer related-content cards cannot outscore the page body;
+  absent, multiple, or unreadable main landmarks fall back to the whole
+  document. A source-shape-specific pre-extraction for Wikisource proofread
+  pages (`.mw-parser-output > .prp-pages-output`) keeps page-body text ahead of
+  reference sections before the normal Python source-normalization path.
 
 Routes stay transport-only. X URLs fail closed through `x_ingest.py`; they do
 not fall back to generic web article capture or oEmbed. X author-thread media

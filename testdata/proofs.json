@@ -174,7 +174,8 @@
         "pytest:python/tests/migrations/test_podcast_subscription_lifecycle_events.py",
         "pytest:python/tests/migrations/test_reader_publications_migration.py::test_0219_backfills_only_ready_documents_without_database_cascade",
         "pytest:python/tests/migrations/test_chat_admission_recovery_migration.py::test_chat_admission_cutover_requires_empty_history_and_sole_receipt_ownership",
-        "pytest:python/tests/migrations/test_reader_structure_migration.py::test_reader_structure_repair_preserves_fragment_identity_and_cursor"
+        "pytest:python/tests/migrations/test_reader_structure_migration.py::test_reader_structure_repair_preserves_fragment_identity_and_cursor",
+        "pytest:python/tests/migrations/test_web_reader_cursor_migration.py::test_reader_structure_repair_reanchors_only_exact_stale_web_cursors"
       ],
       "capabilities": [
         "migrations"
@@ -431,6 +432,7 @@
         "python/nexus/services/reader_structure.py",
         "python/nexus/services/epub_structure.py",
         "python/nexus/services/web_article_structure.py",
+        "node/ingest/article_extraction.mjs",
         "python/nexus/services/epub_find.py",
         "apps/web/src/lib/media/readerNavigation.ts",
         "apps/web/src/lib/media/epubFragment.ts",
@@ -451,13 +453,15 @@
         "pytest:python/tests/service/test_artifact_revision_generation_provenance.py::test_revision_reads_project_retired_frozen_generation_identity_without_mutation",
         "pytest:python/tests/service/test_machine_authorship.py::test_all_additive_writes_publish_durable_authorship_into_later_model_reads",
         "vitest:apps/web/src/lib/conversations/trustToolCallWire.unit.test.ts",
+        "node-test:node/ingest/test/article_extraction.test.mjs",
         "vitest:apps/web/src/lib/reader/useReaderTarget.browser.test.tsx",
         "vitest:apps/web/src/app/(authenticated)/media/[id]/mediaEvidenceResolution.unit.test.ts"
       ],
       "capabilities": [
         "service",
         "component",
-        "kernel-web"
+        "kernel-web",
+        "ingest-node"
       ]
     },
     {
@@ -644,6 +648,7 @@
         "pytest:python/tests/kernel/nexus_test_control/test_provider_runtime_pin.py::test_provider_runtime_is_materialized_from_the_pin_without_retargeting_source",
         "pytest:python/tests/kernel/nexus_test_control/test_android_device_method_scope.py::test_exact_android_device_proof_uses_one_instrumentation_method",
         "pytest:python/tests/kernel/test_codex_host_process_lifecycle.py::test_codex_host_separates_bootstrap_server_and_health_memory_lifetimes",
+        "pytest:python/tests/kernel/test_codex_host_provider_import_lifetime.py::test_codex_host_import_does_not_load_provider_http_runtime",
         "pytest:python/tests/kernel/test_codex_projection_import_boundary.py::test_codex_projection_does_not_import_the_application_execution_owner",
         "pytest:python/tests/kernel/test_generation_contract.py",
         "pytest:python/tests/kernel/test_generation_operation_adapters.py",

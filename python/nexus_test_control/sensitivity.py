@@ -500,7 +500,7 @@ def workflow_sensitivity_request(
         fault = fault_definition(repo_root, fault_id, proof)
         if (
             fault.changed_owner_red is ChangedOwnerRedStrategy.COHERENT_FAULT
-            and _valid_exact_python_owner(repo_root, proof)
+            and _valid_coherent_owner(repo_root, proof)
         ):
             try:
                 _git_sha(repo_root, base_sha)
@@ -535,9 +535,17 @@ def workflow_sensitivity_request(
     )
 
 
-def _valid_exact_python_owner(repo_root: Path, proof: str) -> bool:
+def _valid_coherent_owner(repo_root: Path, proof: str) -> bool:
     runner, _, identity = proof.partition(":")
     path, separator, node = identity.partition("::")
+    if (
+        runner == "node-test"
+        and path.startswith("node/ingest/test/")
+        and path.endswith(".test.mjs")
+        and not separator
+        and not node
+    ):
+        return (repo_root / path).is_file()
     if runner != "pytest" or not separator or not node:
         return False
     try:

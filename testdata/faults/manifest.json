@@ -880,6 +880,17 @@
       "expected_failure": "private loopback destination crossed accepted URL egress before rejection"
     },
     {
+      "id": "article-semantic-main-bypass",
+      "patch": "testdata/faults/article-semantic-main-bypass.patch",
+      "sha256": "32c4df7c6030d9af9e581d286106976072197fb881e18a26f3cb87d6e155d3eb",
+      "proofs": [
+        "node-test:node/ingest/test/article_extraction.test.mjs"
+      ],
+      "expected_failure": "The input did not match the regular expression",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "2b2d16a84885bddbe330f5c444f88977f730332d9cd66539012a7b1b0d38554a"
+    },
+    {
       "id": "document-media-offline-reading-readiness-gate-bypass",
       "patch": "testdata/faults/document-media-offline-reading-readiness-gate-bypass.patch",
       "sha256": "9fc3c679e7c8e18d2a31b3f0755a40e937aff541566d24458e9817d335277f22",
@@ -1182,6 +1193,17 @@
         "pytest:python/tests/migrations/test_reader_structure_migration.py::test_reader_structure_repair_preserves_fragment_identity_and_cursor"
       ],
       "expected_failure": "reader structure migration changed accepted progress or failed exact fragment conversion"
+    },
+    {
+      "id": "web-reader-cursor-ambiguity-bypass",
+      "patch": "testdata/faults/web-reader-cursor-ambiguity-bypass.patch",
+      "sha256": "158b6a77b015d320eefbad7d8410487d1ae868fccca342eb4e1b2a4901b6afc0",
+      "proofs": [
+        "pytest:python/tests/migrations/test_web_reader_cursor_migration.py::test_reader_structure_repair_reanchors_only_exact_stale_web_cursors"
+      ],
+      "expected_failure": "DID NOT RAISE",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "ccf2e93d15c0d93454acaee4bc261d4aaf99d8cd480dab8068732dbe4de5ddb7"
     },
     {
       "id": "reader-map-detail-scope-follow-bypass",
