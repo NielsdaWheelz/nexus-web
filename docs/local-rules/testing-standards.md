@@ -402,6 +402,15 @@ a conservative host-safety admission floor, not a proof-size or performance
 target. Change it only from recorded memory evidence on the 8 GiB reference
 host.
 
+Under the same lock and immediately before launch, heavy proof also requires
+8,192 MiB free across the checkout filesystem and, when the proof may use the
+local container runtime, Docker's reported data-root filesystem. Unknown or
+insufficient storage is immediately `not_run`; the controller does not start
+the proof or poll a capacity condition that requires operator reclamation. The
+floor retains roughly five percent of the 150 GiB reference host as an operator
+safety reserve. It is not a predicted proof footprint. Change it only from
+recorded disk evidence.
+
 ## 8. Repository capability contract
 
 `./scripts/test` is the sole public test and verification API. `scripts/test`
