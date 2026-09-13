@@ -168,9 +168,15 @@ def _minimal_repository(root: Path) -> None:
         'merge_timestamp="$(git show --no-patch --format=%cI "$EXPECTED_HEAD_SHA")"\n'
         'GIT_COMMITTER_DATE="$merge_timestamp"\n'
         "git rev-list --parents -n 1 HEAD\n"
+        "Retire prior checkout test runtime\n"
+        '"$python" -m nexus_test_control clean\n'
         "run: ./scripts/test pr\n"
         "if: github.event_name == 'push'\n"
         "run: ./scripts/test full\n"
+        "Retire current checkout test runtime\n"
+        "            ./scripts/test clean\n"
+        "Retire current checkout test runtime\n"
+        "            ./scripts/test clean\n"
         "if: always()\n",
     )
     _write(

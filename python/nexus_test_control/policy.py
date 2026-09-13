@@ -233,12 +233,13 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     ),
 }
 
-_CONTROLLER_COMMAND_OWNERS: dict[str, str] = {
-    "confidence": "scripts/agency_verify.sh",
-    "pr": ".github/workflows/ci.yml",
-    "full": ".github/workflows/ci.yml",
-    "nightly": ".github/workflows/nightly.yml",
-    "release": ".github/workflows/release.yml",
+_CONTROLLER_COMMAND_ROUTES: dict[str, tuple[str, int]] = {
+    "confidence": ("scripts/agency_verify.sh", 1),
+    "pr": (".github/workflows/ci.yml", 1),
+    "full": (".github/workflows/ci.yml", 1),
+    "clean": (".github/workflows/ci.yml", 2),
+    "nightly": (".github/workflows/nightly.yml", 1),
+    "release": (".github/workflows/release.yml", 1),
 }
 _INTERNAL_PACKAGE_RUNNERS: dict[tuple[str, str], str] = {
     ("apps/web/package.json", "test:eslint-policy"): "bun scripts/test-eslint-policy.mjs",
@@ -634,8 +635,8 @@ def _executable_route_violations(repo_root: Path) -> tuple[PolicyViolation, ...]
                 controller_counts[(relative, command)] = (
                     controller_counts.get((relative, command), 0) + 1
                 )
-                expected = _CONTROLLER_COMMAND_OWNERS.get(command)
-                if expected != relative:
+                route = _CONTROLLER_COMMAND_ROUTES.get(command)
+                if route is None or route[0] != relative:
                     violations.append(
                         PolicyViolation(
                             "repository-test-route-owner",
@@ -672,11 +673,14 @@ def _executable_route_violations(repo_root: Path) -> tuple[PolicyViolation, ...]
                     )
                 )
 
-    required_routes = {(owner, command): 1 for command, owner in _CONTROLLER_COMMAND_OWNERS.items()}
+    required_routes = {
+        (owner, command): count
+        for command, (owner, count) in _CONTROLLER_COMMAND_ROUTES.items()
+    }
     required_routes[("scripts/test", "control-plane")] = 1
     for owner_command, expected_count in required_routes.items():
         owner, command = owner_command
-        counts = controller_counts if command in _CONTROLLER_COMMAND_OWNERS else direct_counts
+        counts = controller_counts if command in _CONTROLLER_COMMAND_ROUTES else direct_counts
         actual = counts.get(owner_command, 0)
         if actual != expected_count:
             violations.append(
