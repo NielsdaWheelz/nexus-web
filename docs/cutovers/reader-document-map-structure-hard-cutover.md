@@ -280,10 +280,13 @@ rows b/d; no section-loading consumer survives by omission.
 
 1. census affected media, source witnesses, cursor revisions, and old offline
    packages. validate stored web cursor fragment ownership and supplied offset
-   bounds; an unresolved accepted address blocks release, never permits a guessed
-   location or silent reset. synchronize pending browser/native progress with the old deployed
-   system before maintenance; inability to drain is a release blocker, never
-   permission to discard it. stop old writers before changing schema.
+   bounds. when a replaced fragment id is stale, its stored offset and complete
+   quote window must identify exactly one current fragment; replace only the
+   target id and increment the cursor revision once. zero or multiple matches
+   abort the migration. never guess or silently reset an accepted address.
+   synchronize pending browser/native progress with the old deployed system
+   before maintenance; inability to drain is a release blocker, never permission
+   to discard it. stop old writers before changing schema.
 2. rebuild metadata from stored sanitized html, canonical text, source-fragment
    records, and toc. require recomputed canonical text to match exactly. do not
    replace fragment rows, source objects, highlight anchors, or quoted text.

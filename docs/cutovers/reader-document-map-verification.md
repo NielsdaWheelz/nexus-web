@@ -637,8 +637,10 @@ open. production has not been changed.
   `6d097686c00fc014` passes python/web static checks, the feedback kernel,
   complete service and browser-component suites, the production bundle, and
   routed ingestion, resource-action and sharing journeys. independent review
-  covers each changed boundary. stored web addresses remain a release-census
-  prerequisite; they are never guessed or silently reset. the separate observed
+  covers each changed boundary. migration 0228 preserves current web cursors and
+  repairs a stale target only when the stored offset and complete quote window
+  identify one current fragment; any other address aborts atomically. the
+  production census remains a release prerequisite. the separate observed
   telemetry request-branding failure is [oi-086](../tickets/client-defect-telemetry-request-branding-failure.md).
 - [pr #238](https://github.com/NielsdaWheelz/nexus-web/pull/238) records the final
   native artifact proof, hosted check and merge disposition. the local
