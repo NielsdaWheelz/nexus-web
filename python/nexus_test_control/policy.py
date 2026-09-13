@@ -5,21 +5,13 @@ import hashlib
 import importlib.util
 import json
 import re
-import subprocess
 import tomllib
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from nexus_test_control.model import (
-    TEST_ROUTING_SHA256,
-    ChangedOwnerRedStrategy,
-)
-from nexus_test_control.proof_owner import (
-    node_whole_file_proof_owner_sha256,
-    python_exact_proof_owner_sha256,
-)
+from nexus_test_control.model import TEST_ROUTING_SHA256
 
 
 @dataclass(frozen=True)
@@ -31,36 +23,7 @@ class PolicyViolation:
 
 
 _BUILTIN_PYTEST_MARKS = frozenset({"filterwarnings", "parametrize", "usefixtures"})
-# First-party behavior proofs may not monkeypatch. `apps.codex_agent` is listed
-# explicitly: the private host boundary is pinned to real UDS processes, so its
-# constants and helpers must never be patched into a laboratory shape. The one
-# remaining `apps.worker` entrypoint harness (test_runtime_health.py) predates
-# this gate and is the only sanctioned residue outside it.
-_OWNED_MODULE_PREFIXES = ("nexus", "nexus_test_control", "apps.codex_agent")
-
-
-def _owned_module(name: str) -> bool:
-    """Decide ownership on package boundaries, never on a raw string prefix."""
-    return any(name == prefix or name.startswith(prefix + ".") for prefix in _OWNED_MODULE_PREFIXES)
-
-
-def _owned_reach(name: str) -> tuple[str, ...] | None:
-    """Return the attribute chain through which a bound module reaches owned code.
-
-    ``()`` means the binding itself is owned; ``("codex_agent",)`` means a
-    binding of ``apps`` reaches owned code only through that attribute; ``None``
-    means no owned module lies at or under the binding.
-    """
-    if _owned_module(name):
-        return ()
-    chains = [
-        tuple(prefix.removeprefix(name + ".").split("."))
-        for prefix in _OWNED_MODULE_PREFIXES
-        if prefix.startswith(name + ".")
-    ]
-    return min(chains, key=len) if chains else None
-
-
+_OWNED_MODULE_PREFIXES = ("nexus", "nexus_test_control")
 _RAW_SQL_SETUP = re.compile(r"^\s*(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE)\b", re.I)
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
@@ -118,32 +81,14 @@ _RETIRED_RESOURCE_ACTION_PATHS = (
     "apps/web/src/lib/nexus/actions.ts",
     "apps/web/src/app/(authenticated)/podcasts/usePodcastSubscriptionActions.ts",
 )
-_RETIRED_CLEANUP_PATHS = (
-    "apps/web/src/app/(authenticated)/oracle/atlas/page.tsx",
-    "apps/web/src/lib/conversations/indexView.ts",
-    "apps/web/src/lib/conversations/indexView.unit.test.ts",
-    "apps/web/src/lib/notes/pageIndexView.ts",
-    "apps/web/src/lib/notes/pageIndexView.unit.test.ts",
-    "python/nexus/ops/browse_cutover.py",
-    "python/nexus/ops/epub_navigation_offsets_cutover.py",
-    "python/tests/kernel/test_epub_navigation_offsets_cutover.py",
-    "testdata/faults/epub-cutover-failed-attempt-admission.patch",
-)
-_RETIRED_ORACLE_ATLAS_SOURCE_FRAGMENTS = ("/oracle/atlas", "oracleAtlas")
 _PRODUCT_SOURCE_ROOTS: tuple[tuple[str, frozenset[str]], ...] = (
     ("python/nexus", frozenset({".py"})),
     ("apps/api", frozenset({".py"})),
-    ("apps/codex_agent", frozenset({".py"})),
     ("apps/web/src", frozenset({".js", ".jsx", ".ts", ".tsx"})),
     ("apps/extension", frozenset({".js", ".jsx", ".ts", ".tsx"})),
     ("apps/android/app/src/main", frozenset({".java", ".kt", ".kts"})),
-    ("node/ingest", frozenset({".mjs"})),
-    ("migrations/alembic", frozenset({".py"})),
 )
-_PRODUCT_SOURCE_FILES = frozenset({"deploy/hetzner/release.py"})
 _RETIRED_PRODUCT_TEST_SEAMS = (
-    "GENERATION_API_BASE_URLS",
-    "PROVIDER_API_PEER",
     "REAL_MEDIA_PROVIDER_FIXTURES",
     "REAL_MEDIA_FIXTURE_DIR",
     "RealMediaFixtureExecutionRuntime",
@@ -182,30 +127,7 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     ),
     "scripts/agency_setup.sh": (
         ("uv sync --all-extras --locked", "bun install --frozen-lockfile"),
-        (
-            "DATABASE_URL_TEST",
-            "DATABASE_URL_TEST_MIGRATIONS",
-            "nexus_test",
-            "nexus_test_migrations",
-            "tests/test_db.py",
-            "make test",
-        ),
-    ),
-    "scripts/ci-proof-artifact.sh": (
-        (
-            "test-results/.nexus-ignore-contract",
-            "CI evidence staging admits only changed, pr, or full",
-            "nexus-test-run-claim.XXXXXXXX",
-            "NEXUS_TEST_RUN_CLAIM_FD",
-            "test controller did not publish one exact run claim",
-            "test controller claimed a pre-existing run evidence directory",
-            "run evidence contains a symlink, special file, or foreign owner",
-            "terminal run evidence does not match the CI invocation",
-            "nexus-ci-evidence.XXXXXXXX",
-            'cp --archive --reflink=auto -- "$run_directory" "$evidence_workspace/runs/"',
-            'rm --recursive --force --one-file-system -- "$evidence_workspace"',
-        ),
-        ('rm --recursive --force --one-file-system -- "$runs"',),
+        ("DATABASE_URL_TEST", "nexus_test", "tests/test_db.py", "make test"),
     ),
     ".github/workflows/ci.yml": (
         (
@@ -213,10 +135,6 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
             "pull_request_number:",
             "expected_head_sha:",
             "expected_base_sha:",
-            "type: choice",
-            "default: changed",
-            "NEXUS_CI_EVENT_NAME: ${{ github.event_name }}",
-            "NEXUS_CI_PROOF: ${{ inputs.proof }}",
             "permissions: {}",
             "pull-requests: read",
             "refs/pull/{0}/head",
@@ -228,25 +146,13 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
             'merge_timestamp="$(git show --no-patch --format=%cI "$EXPECTED_HEAD_SHA")"',
             'GIT_COMMITTER_DATE="$merge_timestamp"',
             "git rev-list --parents -n 1 HEAD",
-            'scripts/ci-proof-artifact.sh run changed --base "$NEXUS_TEST_BASE_SHA"',
-            "scripts/ci-proof-artifact.sh run pr",
-            "pull_request:*|workflow_dispatch:changed)",
-            "workflow_dispatch:pr)",
-            "unsupported CI proof selection",
+            "run: ./scripts/test pr",
             "if: github.event_name == 'push'",
-            "run: scripts/ci-proof-artifact.sh run full",
-            "if: ${{ always() && steps.proof.outputs.path != '' }}",
-            "path: ${{ steps.proof.outputs.path }}/",
-            "if-no-files-found: error",
-            "include-hidden-files: true",
-            'scripts/ci-proof-artifact.sh cleanup "$NEXUS_CI_EVIDENCE_PATH"',
+            "run: ./scripts/test full",
+            "if: always()",
         ),
         (
             "github.event_name != 'workflow_dispatch'",
-            'run: ./scripts/test changed --base "$NEXUS_TEST_BASE_SHA"',
-            "run: ./scripts/test full",
-            "path: test-results/",
-            "if-no-files-found: ignore",
             "make test",
             "pytest",
             "playwright test",
@@ -254,24 +160,17 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     ),
     ".github/workflows/nightly.yml": (
         (
-            "runs-on: ubuntu-latest",
+            'NEXUS_HOSTED_CANARY: "1"',
             "\n          api-level: 36\n",
             "\n          system-image-api-level: 36-ext19\n",
             "\n          channel: canary\n",
             "script: ./scripts/test nightly",
         ),
-        ("make test", "nexus-android-usb"),
+        ("make test",),
     ),
     ".github/workflows/release.yml": (
-        (
-            # The signed release binds the protected USB lab runner; the
-            # explicit bootstrap_no_device dispatch is the one hosted
-            # exception because no handset exists anywhere yet.
-            "runs-on: ${{ inputs.bootstrap_no_device && 'ubuntu-latest' || "
-            'fromJSON(\'["self-hosted", "linux", "x64", "nexus-android-usb"]\') }}',
-            "run: ./scripts/test release",
-        ),
-        ("make test", "reactivecircus/android-emulator-runner@"),
+        ('NEXUS_PROVIDER_CERTIFICATION: "1"', "script: ./scripts/test release"),
+        ("make test",),
     ),
     "docs/local-rules/index.md": (
         ("testing-standards.md",),
@@ -332,7 +231,6 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
 
 _CONTROLLER_COMMAND_OWNERS: dict[str, str] = {
     "confidence": "scripts/agency_verify.sh",
-    "changed": ".github/workflows/ci.yml",
     "pr": ".github/workflows/ci.yml",
     "full": ".github/workflows/ci.yml",
     "nightly": ".github/workflows/nightly.yml",
@@ -348,7 +246,6 @@ _PACKAGE_RUNNER = re.compile(
     r"\.?/?scripts/test\b|"
     r"pytest(?=[\"']|\s|$)|"
     r"vitest(?=[\"']|\s|$)|"
-    r"node\b[^\n]*\s--test\b|"
     r"playwright\s+test\b|"
     r"(?:\./)?gradlew\b[^\n]*(?::(?:test|connected)[A-Za-z0-9_-]*)|"
     r"bun\s+run\s+(?:test|verify|check)(?::|\s|$)"
@@ -358,7 +255,6 @@ _PACKAGE_RUNNER = re.compile(
 _DIRECT_RUNNERS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("pytest", re.compile(r"(?<![.\w-])pytest(?=[\"']|\s|$)")),
     ("vitest", re.compile(r"(?<![.\w-])vitest(?=[\"']|\s|$)")),
-    ("node-test", re.compile(r"\bnode\b[^\n]*\s--test\b")),
     ("playwright", re.compile(r"\bplaywright\s+test\b")),
     (
         "gradle",
@@ -369,19 +265,22 @@ _DIRECT_RUNNERS: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 _OWNERSHIP_TOKENS: tuple[tuple[str, re.Pattern[str], frozenset[str], dict[str, int]], ...] = (
     (
-        # Nightly keeps the hosted emulator lane it has always had; only the
-        # signed release job may claim the one dedicated USB handset, and it
-        # must never fall back to an emulator.
-        "android-emulator",
-        re.compile(r"reactivecircus/android-emulator-runner@"),
+        "provider-certification",
+        re.compile(r"\bNEXUS_PROVIDER_CERTIFICATION\b"),
+        frozenset({".github/workflows/release.yml"}),
+        {".github/workflows/release.yml": 1},
+    ),
+    (
+        "hosted-canary",
+        re.compile(r"\bNEXUS_HOSTED_CANARY\b"),
         frozenset({".github/workflows/nightly.yml"}),
         {".github/workflows/nightly.yml": 1},
     ),
     (
-        "android-usb-runner",
-        re.compile(r"\bnexus-android-usb\b"),
-        frozenset({".github/workflows/release.yml"}),
-        {".github/workflows/release.yml": 1},
+        "android-emulator",
+        re.compile(r"reactivecircus/android-emulator-runner@"),
+        frozenset({".github/workflows/nightly.yml", ".github/workflows/release.yml"}),
+        {".github/workflows/nightly.yml": 1, ".github/workflows/release.yml": 1},
     ),
     (
         "android-signing-publication",
@@ -404,18 +303,6 @@ def _attribute_parts(node: ast.AST) -> tuple[str, ...]:
     if isinstance(node, ast.Name):
         parts.append(node.id)
     return tuple(reversed(parts))
-
-
-def _resolves_agent_runtime_constructor(
-    expression: ast.AST,
-    *,
-    direct_aliases: set[str],
-    module_aliases: set[tuple[str, ...]],
-) -> bool:
-    parts = _attribute_parts(expression)
-    return (len(parts) == 1 and parts[0] in direct_aliases) or any(
-        parts == (*prefix, "AgentRuntime") for prefix in module_aliases
-    )
 
 
 def _vacuous_assertion(node: ast.AST) -> bool:
@@ -450,8 +337,7 @@ def python_ast_violations(path: str, source: str) -> tuple[PolicyViolation, ...]
         return (PolicyViolation("python-syntax", path, error.msg, error.lineno),)
 
     violations: list[PolicyViolation] = []
-    # Local binding -> attribute chain that reaches owned code from it.
-    owned_aliases: dict[str, tuple[str, ...]] = {}
+    owned_aliases: set[str] = set()
     sleep_modules = {"asyncio", "time", "anyio", "trio"}
     sleep_aliases: set[str] = set()
     skip_aliases: set[str] = set()
@@ -482,17 +368,8 @@ def python_ast_violations(path: str, source: str) -> tuple[PolicyViolation, ...]
                     pytest_aliases.add(alias.asname or alias.name)
                 if alias.name == "unittest":
                     unittest_aliases.add(alias.asname or alias.name)
-                if alias.asname is not None:
-                    reach = _owned_reach(alias.name)
-                    if reach is not None:
-                        owned_aliases[alias.asname] = reach
-                else:
-                    # `import a.b.c` binds only `a`; every owned module at or under
-                    # any imported prefix is reachable through that root binding.
-                    root = alias.name.split(".", 1)[0]
-                    reach = _owned_reach(root)
-                    if reach is not None:
-                        owned_aliases[root] = min((reach, owned_aliases.get(root, reach)), key=len)
+                if alias.name.startswith(_OWNED_MODULE_PREFIXES):
+                    owned_aliases.add(alias.asname or alias.name.split(".", 1)[0])
                 if alias.name in sleep_modules:
                     sleep_modules.add(alias.asname or alias.name)
         elif isinstance(node, ast.ImportFrom):
@@ -505,10 +382,8 @@ def python_ast_violations(path: str, source: str) -> tuple[PolicyViolation, ...]
                         "python-internal-mock", path, "unittest.mock is forbidden", node.lineno
                     )
                 )
-            for alias in node.names:
-                reach = _owned_reach(f"{module}.{alias.name}" if module else alias.name)
-                if reach is not None:
-                    owned_aliases[alias.asname or alias.name] = reach
+            if module.startswith(_OWNED_MODULE_PREFIXES):
+                owned_aliases.update(alias.asname or alias.name for alias in node.names)
             if module in {"asyncio", "time", "anyio", "trio"}:
                 sleep_aliases.update(
                     alias.asname or alias.name for alias in node.names if alias.name == "sleep"
@@ -657,12 +532,9 @@ def python_ast_violations(path: str, source: str) -> tuple[PolicyViolation, ...]
             target = node.args[0]
             target_parts = _attribute_parts(target)
             string_target = target.value if isinstance(target, ast.Constant) else None
-            if (
-                target_parts
-                and target_parts[0] in owned_aliases
-                and tuple(target_parts[1 : 1 + len(owned_aliases[target_parts[0]])])
-                == owned_aliases[target_parts[0]]
-            ) or (isinstance(string_target, str) and _owned_module(string_target)):
+            if (target_parts and target_parts[0] in owned_aliases) or (
+                isinstance(string_target, str) and string_target.startswith(_OWNED_MODULE_PREFIXES)
+            ):
                 violations.append(
                     PolicyViolation(
                         "python-owned-monkeypatch",
@@ -751,20 +623,9 @@ def _executable_route_violations(repo_root: Path) -> tuple[PolicyViolation, ...]
 
     for relative, text in surfaces.items():
         for line_number, line in _executable_lines(text):
-            controller_matches = list(
-                re.finditer(
-                    r"(?:^|[;&|]\s*|\bexec\s+)\./scripts/test\s+([a-z-]+)\b",
-                    line,
-                )
-            )
-            controller_matches.extend(
-                re.finditer(
-                    r"(?:^|[;&|]\s*)(?:\./)?scripts/ci-proof-artifact\.sh\s+run\s+"
-                    r"(changed|pr|full)\b",
-                    line,
-                )
-            )
-            for match in controller_matches:
+            for match in re.finditer(
+                r"(?:^|[;&|]\s*|\bexec\s+)\./scripts/test\s+([a-z-]+)\b", line
+            ):
                 command = match.group(1)
                 controller_counts[(relative, command)] = (
                     controller_counts.get((relative, command), 0) + 1
@@ -892,121 +753,6 @@ def _package_runner_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                 "required internal runner command is absent",
             )
         )
-    return _sorted(violations)
-
-
-def _codex_agent_runtime_construction_violations(
-    repo_root: Path,
-) -> tuple[PolicyViolation, ...]:
-    """Keep the pinned AgentRuntime constructor behind the confinement owner."""
-
-    root = repo_root / "apps/codex_agent"
-    candidates = list(root.rglob("*.py")) if root.is_dir() else []
-    if not candidates:
-        return ()
-    violations: list[PolicyViolation] = []
-    for candidate in sorted(candidates):
-        relative = candidate.relative_to(repo_root).as_posix()
-        if relative == "apps/codex_agent/confined_runtime.py":
-            continue
-        try:
-            tree = ast.parse(candidate.read_text(encoding="utf-8"), filename=relative)
-        except (OSError, UnicodeDecodeError, SyntaxError):
-            continue
-
-        direct_aliases: set[str] = set()
-        module_aliases: set[tuple[str, ...]] = {("provider_runtime", "agent_runtime")}
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    if alias.name in {
-                        "provider_runtime.agent_runtime",
-                        "provider_runtime.agent_runtime.runtime",
-                    }:
-                        module_aliases.add(
-                            (alias.asname,)
-                            if alias.asname is not None
-                            else tuple(alias.name.split("."))
-                        )
-                    elif alias.name == "provider_runtime" and alias.asname is not None:
-                        module_aliases.add((alias.asname, "agent_runtime"))
-            elif isinstance(node, ast.ImportFrom):
-                if node.module is not None and (
-                    node.module == "provider_runtime.agent_runtime"
-                    or node.module.startswith("provider_runtime.agent_runtime.")
-                ):
-                    for alias in node.names:
-                        if alias.name in {"AgentRuntime", "*"}:
-                            direct_aliases.add(alias.asname or "AgentRuntime")
-                        elif (
-                            node.module == "provider_runtime.agent_runtime"
-                            and alias.name == "runtime"
-                        ):
-                            module_aliases.add((alias.asname or alias.name,))
-                elif node.module == "provider_runtime":
-                    for alias in node.names:
-                        if alias.name == "agent_runtime":
-                            module_aliases.add((alias.asname or alias.name,))
-
-        changed = True
-        while changed:
-            changed = False
-            for node in ast.walk(tree):
-                value: ast.AST | None = None
-                targets: tuple[ast.expr, ...] = ()
-                if isinstance(node, ast.Assign):
-                    value = node.value
-                    targets = tuple(node.targets)
-                elif isinstance(node, ast.AnnAssign):
-                    value = node.value
-                    targets = (node.target,)
-                if value is None or not _resolves_agent_runtime_constructor(
-                    value,
-                    direct_aliases=direct_aliases,
-                    module_aliases=module_aliases,
-                ):
-                    continue
-                for target in targets:
-                    if isinstance(target, ast.Name) and target.id not in direct_aliases:
-                        direct_aliases.add(target.id)
-                        changed = True
-
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call) and _resolves_agent_runtime_constructor(
-                node.func,
-                direct_aliases=direct_aliases,
-                module_aliases=module_aliases,
-            ):
-                violations.append(
-                    PolicyViolation(
-                        "codex-agent-runtime-confinement",
-                        relative,
-                        "AgentRuntime construction belongs only to confined_runtime.py",
-                        node.lineno,
-                    )
-                )
-        if relative == "apps/codex_agent/main.py":
-            functions = {
-                node.name: node
-                for node in ast.walk(tree)
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            }
-            for function_name in ("runtime_factory", "_probe_chatgpt_auth"):
-                function = functions.get(function_name)
-                calls_confined_factory = function is not None and any(
-                    isinstance(node, ast.Call)
-                    and _attribute_parts(node.func) == ("create_confined_runtime",)
-                    for node in ast.walk(function)
-                )
-                if not calls_confined_factory:
-                    violations.append(
-                        PolicyViolation(
-                            "codex-agent-runtime-wiring",
-                            relative,
-                            f"{function_name} must construct only the confined runtime",
-                            function.lineno if function is not None else None,
-                        )
-                    )
     return _sorted(violations)
 
 
@@ -1152,24 +898,6 @@ def repository_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                     "(ResourceActionMenu + resourceActionRuntime). It must remain absent.",
                 )
             )
-    for relative in _RETIRED_CLEANUP_PATHS:
-        if (repo_root / relative).exists():
-            violations.append(
-                PolicyViolation(
-                    "repository-retired-cleanup-path",
-                    relative,
-                    "hard-cut duplicate or completed revision-only path must remain absent",
-                )
-            )
-    search_package = repo_root / "python/nexus/services/search/__init__.py"
-    if search_package.is_file() and search_package.read_text(encoding="utf-8").strip():
-        violations.append(
-            PolicyViolation(
-                "repository-search-barrel",
-                "python/nexus/services/search/__init__.py",
-                "search symbols must be imported from their defining modules",
-            )
-        )
     active_docs = [repo_root / relative for relative in _ACTIVE_TEST_DOC_FILES]
     for root in _ACTIVE_TEST_DOC_ROOTS:
         directory = repo_root / root
@@ -1201,23 +929,6 @@ def repository_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
             if _WEB_TEST_LOOKING.search(candidate.name) or "__tests__" in candidate.parts:
                 continue
             text = candidate.read_text(encoding="utf-8")
-            retired_oracle_atlas_fragment = next(
-                (
-                    fragment
-                    for fragment in _RETIRED_ORACLE_ATLAS_SOURCE_FRAGMENTS
-                    if fragment in text
-                ),
-                None,
-            )
-            if retired_oracle_atlas_fragment is not None:
-                violations.append(
-                    PolicyViolation(
-                        "repository-retired-oracle-atlas-source",
-                        relative,
-                        "the Grand Atlas is canonical; the retired Oracle Atlas route and "
-                        f"pane id must stay absent: {retired_oracle_atlas_fragment}",
-                    )
-                )
             retired = tuple(seam for seam in _RETIRED_PRODUCT_TEST_SEAMS if seam in text)
             generic = _PRODUCT_TEST_SEAM.search(text)
             if retired:
@@ -1246,11 +957,7 @@ def repository_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
             continue
         text = path.read_text(encoding="utf-8")
         missing = tuple(fragment for fragment in required if fragment not in text)
-        stale = tuple(
-            fragment
-            for fragment in forbidden
-            if _forbidden_route_fragment_is_present(text, fragment)
-        )
+        stale = tuple(fragment for fragment in forbidden if fragment in text)
         if missing or stale:
             violations.append(
                 PolicyViolation(
@@ -1273,20 +980,7 @@ def repository_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
         )
     violations.extend(_executable_route_violations(repo_root))
     violations.extend(_package_runner_violations(repo_root))
-    violations.extend(_codex_agent_runtime_construction_violations(repo_root))
     return _sorted(violations)
-
-
-def _forbidden_route_fragment_is_present(text: str, fragment: str) -> bool:
-    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", fragment) is None:
-        return fragment in text
-    return (
-        re.search(
-            rf"(?<![A-Za-z0-9_]){re.escape(fragment)}(?![A-Za-z0-9_])",
-            text,
-        )
-        is not None
-    )
 
 
 def _load_json(
@@ -1306,23 +1000,6 @@ def _safe_relative(value: str, *, glob: bool = False) -> bool:
     if str(path) != value:
         return False
     return glob or not any(character in value for character in "*?[]")
-
-
-def _resolved_repository_file(repo_root: Path, relative: str) -> Path | None:
-    if not _safe_relative(relative):
-        return None
-    try:
-        root = repo_root.resolve(strict=True)
-        candidate = root
-        for part in PurePosixPath(relative).parts:
-            candidate /= part
-            if candidate.is_symlink():
-                return None
-        candidate = candidate.resolve(strict=True)
-        candidate.relative_to(root)
-    except (OSError, RuntimeError, ValueError):
-        return None
-    return candidate if candidate.is_file() else None
 
 
 def _string_list(value: Any, *, allow_empty: bool) -> bool:
@@ -1454,8 +1131,7 @@ def proof_contract_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                 "priority risk ownership differs from the independently frozen floor",
             )
         )
-    proof_file_owners: dict[str, str] = {}
-    exact_nodes_by_path: dict[str, str] = {}
+    proof_owners: dict[str, str] = {}
     for risk in data["priority_risks"]:
         location = f"testdata/proofs.json#{risk['id']}"
         if not risk["proofs"]:
@@ -1481,30 +1157,13 @@ def proof_contract_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                         "proof-node", location, f"invalid or missing proof node: {proof}"
                     )
                 )
-            else:
-                proof_file = proof.partition(":")[2].partition("::")[0]
-                previous = proof_file_owners.setdefault(proof_file, risk["id"])
-                if previous != risk["id"]:
-                    violations.append(
-                        PolicyViolation(
-                            "proof-unique-owner",
-                            location,
-                            f"physical proof file is already owned by {previous}: {proof_file}",
-                        )
+            previous = proof_owners.setdefault(proof, risk["id"])
+            if previous != risk["id"]:
+                violations.append(
+                    PolicyViolation(
+                        "proof-unique-owner", location, f"proof is already owned by {previous}"
                     )
-                # A whole-file proof may coexist with one fault-bound exact
-                # node. Sensitivity maps the file route to that node; a second
-                # exact node would make the mapping ambiguous.
-                if "::" in proof.partition(":")[2]:
-                    registered = exact_nodes_by_path.setdefault(proof_file, proof)
-                    if registered != proof:
-                        violations.append(
-                            PolicyViolation(
-                                "proof-sensitivity-owner",
-                                location,
-                                f"proof path has multiple exact priority nodes: {proof_file}",
-                            )
-                        )
+                )
         declared_capabilities = set(risk["capabilities"])
         direct_capabilities = declared_capabilities.intersection(
             capability.value for capability in PRIORITY_RISK_DIRECT_CAPABILITY_OWNERS
@@ -1869,30 +1528,15 @@ def fault_manifest_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
         return (PolicyViolation("fault-schema", relative, "invalid fault manifest shape"),)
     seen_ids: set[str] = set()
     manifested: set[str] = set()
-    proof_owner: dict[str, str] = {}
-    canonical_nodes = _registered_canonical_nodes(repo_root)
     for index, fault in enumerate(data["faults"]):
         location = f"{relative}#faults[{index}]"
-        required_fault_fields = {
+        if not isinstance(fault, dict) or set(fault) != {
             "id",
             "patch",
             "sha256",
             "proofs",
             "expected_failure",
-        }
-        allowed_fault_fields = required_fault_fields | {
-            "changed_owner_red",
-            "changed_owner_sha256",
-        }
-        if (
-            not isinstance(fault, dict)
-            or not required_fault_fields.issubset(fault)
-            or not set(fault).issubset(allowed_fault_fields)
-            or (
-                "changed_owner_red" in fault
-                and fault["changed_owner_red"] != ChangedOwnerRedStrategy.COHERENT_FAULT
-            )
-        ):
+        }:
             violations.append(PolicyViolation("fault-schema", location, "invalid fault shape"))
             continue
         if (
@@ -1907,85 +1551,6 @@ def fault_manifest_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                 PolicyViolation("fault-schema", location, "invalid or duplicate fault identity")
             )
         proofs = fault.get("proofs")
-        coherent_fault = fault.get("changed_owner_red") == ChangedOwnerRedStrategy.COHERENT_FAULT
-        if coherent_fault:
-            coherent_proof = (
-                proofs[0]
-                if isinstance(proofs, list) and len(proofs) == 1 and isinstance(proofs[0], str)
-                else None
-            )
-            coherent_identity = (
-                coherent_proof.partition(":")[2] if coherent_proof is not None else ""
-            )
-            coherent_path, coherent_separator, coherent_node = coherent_identity.partition("::")
-            coherent_owner_path = _resolved_repository_file(repo_root, coherent_path)
-            coherent_python_shape = (
-                coherent_proof is not None
-                and coherent_proof.startswith("pytest:")
-                and coherent_identity.count("::") == 1
-                and bool(coherent_separator)
-                and bool(coherent_node)
-                and coherent_path.endswith(".py")
-                and coherent_owner_path is not None
-            )
-            coherent_node_shape = (
-                coherent_proof is not None
-                and coherent_proof.startswith("node-test:node/ingest/test/")
-                and not coherent_separator
-                and not coherent_node
-                and coherent_path.endswith(".test.mjs")
-                and coherent_owner_path is not None
-            )
-            if not (coherent_python_shape or coherent_node_shape):
-                violations.append(
-                    PolicyViolation(
-                        "fault-coherent-owner",
-                        location,
-                        "changed-owner coherent fault requires one exact module-level pytest proof "
-                        "or one whole-file Node proof",
-                    )
-                )
-            else:
-                assert coherent_proof is not None
-                assert coherent_owner_path is not None
-                if canonical_nodes.get(coherent_path) != coherent_proof:
-                    violations.append(
-                        PolicyViolation(
-                            "fault-coherent-owner",
-                            location,
-                            "changed-owner coherent fault requires its registered canonical proof",
-                        )
-                    )
-                owner_sha256 = fault.get("changed_owner_sha256")
-                try:
-                    owner_source = coherent_owner_path.read_text(encoding="utf-8")
-                    actual_owner_sha256 = (
-                        python_exact_proof_owner_sha256(owner_source, coherent_node)
-                        if coherent_python_shape
-                        else node_whole_file_proof_owner_sha256(owner_source)
-                    )
-                except (OSError, UnicodeError, SyntaxError):
-                    actual_owner_sha256 = None
-                if (
-                    not isinstance(owner_sha256, str)
-                    or _SHA256.fullmatch(owner_sha256) is None
-                    or actual_owner_sha256 != owner_sha256
-                ):
-                    violations.append(
-                        PolicyViolation(
-                            "fault-coherent-owner-drift",
-                            location,
-                            "changed-owner coherent fault must pin its exact proof and module-support SHA-256",
-                        )
-                    )
-        elif "changed_owner_sha256" in fault:
-            violations.append(
-                PolicyViolation(
-                    "fault-schema",
-                    location,
-                    "changed_owner_sha256 requires changed_owner_red=coherent-fault",
-                )
-            )
         if isinstance(proofs, list):
             for proof in proofs:
                 if not isinstance(proof, str):
@@ -1994,41 +1559,15 @@ def fault_manifest_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                 proof_path = node.split("::", 1)[0]
                 if (
                     not separator
-                    or runner
-                    not in {"gradle", "node-test", "playwright", "pytest", "static", "vitest"}
-                    or _resolved_repository_file(repo_root, proof_path) is None
+                    or runner not in {"gradle", "playwright", "pytest", "static", "vitest"}
+                    or not _safe_relative(proof_path)
+                    or not (repo_root / proof_path).is_file()
                 ):
                     violations.append(
                         PolicyViolation(
                             "fault-proof",
                             location,
                             f"invalid or missing fault proof node: {proof}",
-                        )
-                    )
-                    continue
-                # `declared_fault_for_proof` refuses to guess between two faults
-                # for one proof and raises before any workflow can produce
-                # sensitivity evidence. Reject the ambiguity here, where a
-                # policy violation is a readable verdict instead of an abort.
-                owner = proof_owner.setdefault(proof, fault.get("id", ""))
-                if owner != fault.get("id", ""):
-                    violations.append(
-                        PolicyViolation(
-                            "fault-proof-owner",
-                            location,
-                            f"proof is already claimed by fault {owner}: {proof}",
-                        )
-                    )
-                # `canonical_proof` rewrites any request on a registered owner
-                # to that owner's single priority node, so a fault naming a
-                # different node of the same file can never be resolved.
-                canonical = canonical_nodes.get(proof_path)
-                if canonical is not None and canonical != proof:
-                    violations.append(
-                        PolicyViolation(
-                            "fault-canonical-proof",
-                            location,
-                            f"fault proof is not the registered canonical node {canonical}: {proof}",
                         )
                     )
         seen_ids.add(fault.get("id", ""))
@@ -2072,14 +1611,6 @@ def fault_manifest_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                                 f"fault patch may change product code only: {changed_path}",
                             )
                         )
-                if (repo_root / ".git").exists() and not _fault_patch_applies(repo_root, path):
-                    violations.append(
-                        PolicyViolation(
-                            "fault-applicability",
-                            location,
-                            "fault patch does not apply cleanly to the current product tree",
-                        )
-                    )
     faults_root = repo_root / "testdata/faults"
     if faults_root.is_dir():
         for path in faults_root.glob("*.patch"):
@@ -2091,58 +1622,6 @@ def fault_manifest_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                     )
                 )
     return _sorted(violations)
-
-
-def _fault_patch_applies(repo_root: Path, patch: Path) -> bool:
-    """Require every registered mutant to remain executable at the reviewed tree."""
-    try:
-        result = subprocess.run(
-            (
-                "git",
-                "apply",
-                "--check",
-                "--whitespace=error-all",
-                str(patch),
-            ),
-            cwd=repo_root,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return result.returncode == 0
-
-
-def _registered_canonical_nodes(repo_root: Path) -> dict[str, str]:
-    """The single priority node registered for each proof owner path, if any."""
-    manifest = repo_root / "testdata/proofs.json"
-    if not manifest.is_file():
-        return {}
-    try:
-        data = json.loads(manifest.read_text(encoding="utf-8"))
-        risks = data["priority_risks"]
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError):
-        return {}
-    proofs_by_path: dict[str, set[str]] = {}
-    for risk in risks:
-        for proof in risk.get("proofs", []) if isinstance(risk, dict) else []:
-            if not isinstance(proof, str):
-                continue
-            path = proof.partition(":")[2].split("::", 1)[0]
-            proofs_by_path.setdefault(path, set()).add(proof)
-    nodes: dict[str, str] = {}
-    for path, proofs in proofs_by_path.items():
-        exact = {proof for proof in proofs if "::" in proof.partition(":")[2]}
-        candidates = exact or proofs
-        # Competing exact owners are reported by `proof-canonical-node`; do not
-        # compound that ambiguity with a derived fault violation here. A
-        # whole-file route plus one exact node resolves to the exact node, just
-        # as `canonical_proof` does at execution time.
-        if len(candidates) == 1:
-            nodes[path] = next(iter(candidates))
-    return nodes
 
 
 def _fault_changed_paths(patch: str) -> tuple[str, ...]:
@@ -2160,10 +1639,8 @@ def _fault_changed_paths(patch: str) -> tuple[str, ...]:
 
 
 def _is_product_path(path: str) -> bool:
-    product = path in _PRODUCT_SOURCE_FILES or any(
-        (path == source_root or path.startswith(f"{source_root}/"))
-        and Path(path).suffix in suffixes
-        for source_root, suffixes in _PRODUCT_SOURCE_ROOTS
+    product = path.startswith(
+        ("python/nexus/", "apps/web/src/", "apps/android/app/src/", "migrations/alembic/")
     )
     test_runtime_product = path in {
         "python/nexus_test_control/build.py",
@@ -2172,7 +1649,6 @@ def _is_product_path(path: str) -> bool:
         "python/nexus_test_control/runtime.py",
         "python/nexus_test_control/services.py",
     }
-    production_control_product = path == "deploy/hetzner/release.py"
-    return (product or test_runtime_product or production_control_product) and not any(
+    return (product or test_runtime_product) and not any(
         part in Path(path).name for part in (".test.", ".spec.")
     )

@@ -5,6 +5,7 @@ import HtmlRenderer from "@/components/HtmlRenderer";
 import Button from "@/components/ui/Button";
 import { normalizeTrackChapters } from "@/lib/media/transcriptChapters";
 import type { PaneFindResultKey } from "@/lib/panes/paneSearch";
+import type { ReaderScrollPositioner } from "@/lib/reader/paneScroll";
 import {
   formatTranscriptTimestampMs,
   type TranscriptChapter,
@@ -47,6 +48,7 @@ interface TranscriptContentPanelProps {
   renderedHtml: string;
   readerSurfaceClassName: string;
   readerSurfaceStyle: CSSProperties;
+  scrollPositioner: ReaderScrollPositioner;
   evidenceHighlightId?: string | null;
   evidenceExactText?: string | null;
   evidenceStartMs?: number | null;
@@ -166,6 +168,7 @@ export default function TranscriptContentPanel({
   renderedHtml,
   readerSurfaceClassName,
   readerSurfaceStyle,
+  scrollPositioner,
   evidenceHighlightId,
   evidenceExactText,
   evidenceStartMs,
@@ -434,6 +437,7 @@ export default function TranscriptContentPanel({
                 <HtmlRenderer
                   htmlSanitized={renderedHtml}
                   mediaId={mediaId}
+                  scrollPositioner={scrollPositioner}
                   headingLevelOffset={1}
                 />
               </div>

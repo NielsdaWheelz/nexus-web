@@ -286,6 +286,43 @@ def delete_idea_subject_after_head(
         raise AssertionError("Idea subject disappeared during Artifact teardown")
 
 
+def delete_user_learn_rows_before_heads(db: Session, *, user_id: UUID) -> None:
+    request_ids = select(ArtifactLearnRequest.id).where(ArtifactLearnRequest.user_id == user_id)
+    db.execute(delete(ArtifactLearnSuccess).where(ArtifactLearnSuccess.request_id.in_(request_ids)))
+    db.execute(delete(ArtifactLearnFailure).where(ArtifactLearnFailure.request_id.in_(request_ids)))
+    db.execute(delete(ArtifactLearnRequest).where(ArtifactLearnRequest.user_id == user_id))
+
+
+def delete_user_idea_rows_after_heads(db: Session, *, user_id: UUID) -> None:
+    db.execute(
+        delete(ArtifactIdeaSeed).where(
+            ArtifactIdeaSeed.highlight_id.in_(
+                select(ArtifactIdeaResolution.highlight_id).where(
+                    ArtifactIdeaResolution.user_id == user_id
+                )
+            )
+        )
+    )
+    db.execute(delete(ArtifactIdeaResolution).where(ArtifactIdeaResolution.user_id == user_id))
+    remaining_head = db.scalar(
+        select(SynthesisArtifact.id)
+        .join(
+            ArtifactIdeaSubject,
+            ArtifactIdeaSubject.id == SynthesisArtifact.subject_id,
+        )
+        .where(
+            SynthesisArtifact.subject_scheme == "idea",
+            ArtifactIdeaSubject.user_id == user_id,
+        )
+        .limit(1)
+    )
+    if remaining_head is not None:
+        # justify-service-invariant-check: user teardown must remove private Idea
+        # Artifact heads before their owner subjects.
+        raise AssertionError("user still has an Idea Artifact head")
+    db.execute(delete(ArtifactIdeaSubject).where(ArtifactIdeaSubject.user_id == user_id))
+
+
 def _subject_from_row(row: ArtifactIdeaSubject) -> IdeaSubject:
     return IdeaSubject(
         id=row.id,

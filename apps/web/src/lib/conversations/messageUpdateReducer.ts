@@ -27,6 +27,7 @@ import {
 import type { DurableExecution } from "@/lib/api/executionAdvisory";
 import { absent, present } from "@/lib/api/presence";
 import type {
+  ChatToolStatus,
   SSECitationIndexEvent,
   SSEContextRefAddedEvent,
   SSEToolCallDeltaEvent,
@@ -46,7 +47,6 @@ import type {
   MessageRetrieval,
   MessageRetrievalResultRef,
   MessageToolCall,
-  MessageToolStatus,
 } from "@/lib/conversations/types";
 
 type ChatRunData = ChatRunResponse["data"];
@@ -54,7 +54,7 @@ type TerminalRunStatus = "complete" | "error" | "cancelled";
 
 /** A render-time provider tool-call patch from `tool_call_start`/`tool_call_done`. */
 export type RenderToolCallData = SSEToolCallEvent["data"] & {
-  status?: MessageToolStatus;
+  status?: ChatToolStatus;
 };
 
 /**
@@ -150,7 +150,7 @@ function retrievalFromSearchCitation(
   data: {
     tool_call_id?: string | null;
     tool_call_index?: number | null;
-    scope: string;
+    tool_name?: string;
   },
   index: number,
 ): MessageRetrieval {
@@ -163,7 +163,6 @@ function retrievalFromSearchCitation(
     source_id: citation.source_id,
     media_id: citation.media_id,
     evidence_span_id: citation.evidence_span_id ?? null,
-    scope: data.scope,
     context_ref: citation.context_ref,
     result_ref,
     deep_link: citation.deep_link,
@@ -186,7 +185,6 @@ function retrievalFromWebCitation(
   data: {
     tool_call_id?: string | null;
     tool_call_index?: number | null;
-    scope: string;
   },
   index: number,
 ): MessageRetrieval {
@@ -198,7 +196,6 @@ function retrievalFromWebCitation(
     result_type: "web_result",
     source_id: citation.source_id,
     media_id: citation.media_id ?? null,
-    scope: data.scope,
     context_ref: citation.context_ref,
     result_ref,
     deep_link: citation.deep_link,
@@ -248,13 +245,8 @@ function applyToolCall(
     const nextCall: MessageToolCall = {
       ...(previous ?? {}),
       id: data.tool_call_id ?? previous?.id,
-      record_kind: data.record_kind,
-      canonical_tool_id: data.canonical_tool_id,
-      provider_wire_name: data.provider_wire_name,
-      effect: data.effect,
-      result_kind: data.result_kind,
-      activity_label: data.activity_label,
-      error_type: data.error_type,
+      assistant_message_id: data.assistant_message_id,
+      tool_name: data.tool_name,
       tool_call_index: data.tool_call_index,
       status:
         patch.kind === "lifecycle" ? (patch.data.status ?? "running") : "running",
@@ -313,17 +305,13 @@ function applyToolResult(
     const nextCall: MessageToolCall = {
       ...(previous ?? {}),
       id: data.tool_call_id ?? previous?.id,
-      record_kind: data.record_kind,
-      canonical_tool_id: data.canonical_tool_id,
-      provider_wire_name: data.provider_wire_name,
-      effect: data.effect,
-      result_kind: data.result_kind,
-      activity_label: data.activity_label,
-      error_type: data.error_type,
+      assistant_message_id: data.assistant_message_id,
+      tool_name: data.tool_name,
       tool_call_index: data.tool_call_index,
       status: data.status,
       scope: data.scope,
       requested_types: data.types,
+      error_code: data.error_code ?? null,
       latency_ms: data.latency_ms,
       result_count: data.result_count ?? 0,
       selected_count: data.selected_count ?? 0,

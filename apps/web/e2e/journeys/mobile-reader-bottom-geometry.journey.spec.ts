@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Locator, Page } from "playwright/test";
-import { captureReadableArticle } from "../articleFixture";
+import { captureCanonicalArticle } from "../articleFixture";
 import {
   expect,
   gotoWithStrictCsp,
@@ -240,6 +240,36 @@ function expectBottomGeometryInvariants(
 }
 
 /**
+ * The canonical captured article, not the three-line canonical EPUB: mobile
+ * bottom geometry is only observable when reader content actually fills the
+ * pane. The short EPUB leaves the mobile media pane content-sized (measured at
+ * 600px inside an 844px viewport), so nothing below it can obstruct terminal
+ * content and the whole contract goes vacuous.
+ */
+async function captureReadableArticle(page: Page): Promise<string> {
+  const api = pageRequest(page, webOrigin);
+  const mediaId = await captureCanonicalArticle(page, "mobile-reader-geometry");
+  await expect
+    .poll(
+      async () => {
+        const response = await api.get(`/api/media/${mediaId}`);
+        if (!response.ok()) return `http-${response.status()}`;
+        return (
+          (await response.json()) as {
+            data: { retrieval_status: string | null };
+          }
+        ).data.retrieval_status;
+      },
+      {
+        message: `Expected article ${mediaId} to publish its document map before mobile geometry is measured.`,
+        timeout: 25_000,
+      },
+    )
+    .toBe("ready");
+  return mediaId;
+}
+
+/**
  * One mobile pane parked on the reader with the Podcast browse place queued
  * ahead of it, so the journey reaches a real player session and returns to the
  * still-owned reader route through the pane's own history — never through a
@@ -389,10 +419,6 @@ test("mobile reader bottom geometry places the ribbon, counts the flow Player on
   page,
   journeyUser,
 }) => {
-  // The real ingest/index pipeline shares one background worker with preceding
-  // journeys, so this journey owns the same bounded readiness budget as the
-  // other real-ingest journeys rather than assuming an empty queue.
-  test.setTimeout(300_000);
   await page.setViewportSize(SIGN_IN_VIEWPORT);
   await signIn(page, journeyUser);
   await page.setViewportSize(PORTRAIT_VIEWPORT);
@@ -406,7 +432,7 @@ test("mobile reader bottom geometry places the ribbon, counts the flow Player on
       secure: false,
     },
   ]);
-  const mediaId = await captureReadableArticle(page, "mobile-reader-geometry");
+  const mediaId = await captureReadableArticle(page);
   await seedReaderPaneWithQueuedBrowse(page, mediaId);
 
   await gotoWithStrictCsp(page, "/");

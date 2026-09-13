@@ -19,10 +19,10 @@ which press*. Recon found five load-bearing absences no vision doc has named:
    own*. Your annotations live in a parallel sidecar; machine findings live in
    drawer tabs. The one subsystem that knows how to put writing in the margin
    of a text has never been handed your writing.
-2. **The house agent needed hands.** The original four-tool Chat surface was
-   read-only. The current frozen plan now exposes the canonical Nexus reads and
-   five additive, provenance-bearing writes described below; destructive verbs
-   remain outside model authority.
+2. **The house agent has no hands.** Every chat tool is read-only
+   (`app_search`, `web_search`, `read_resource`, `inspect_resource`).
+   Horizons' entire thesis is agents as co-authors under provenance — and the
+   most-used agent in the product cannot write a single edge.
 3. **The night is idle and the meter is already installed.** All five periodic
    jobs are housekeeping, while `llm_calls` carries full USD-micros cost
    accounting per call (mig 0152). Scheduled intelligence isn't blocked on
@@ -77,10 +77,10 @@ the crown jewel — becomes the surface where the argument era lands.
 Write tools for the chat agent, under the origin discipline that was designed
 for exactly this (provenance N9: a new writer is a new origin):
 
-- `nexus.library.add`, `nexus.note.create` (append to a page or daily note),
-  `nexus.highlight.create` (anchored via the existing text-quote selector
-  machinery), `nexus.edge.create` (context / supports / contradicts, origin
-  `assistant`), and `nexus.queue.add` (adds to the Lectern via the consumption owner's trusted-ensure
+- `add_to_library`, `file_note` (append to a page or daily note),
+  `create_highlight` (anchored via the existing text-quote selector machinery),
+  `mint_edge` (context / supports / contradicts, origin `assistant`),
+  `queue_add` (adds to the Lectern via the consumption owner's trusted-ensure
   path, source `Assistant`).
 - Every write origin-marked, surfaced in the turn's trust trail, reversible.
   Sole-writer doctrine holds. The harness's own economics say each tool is
@@ -189,9 +189,9 @@ Sequencing honesty — parked work that predates all dreaming:
    One Press or fold its spec into §V and close it.
 3. **First-paint streaming.** Fully specified, measured baselines, zero lines
    written, user-facing on every load.
-4. **Source provenance.** Uploaded originals carry a required
-   `media_files.source_sha256`; extraction verifies it before parser entry, and
-   schema convergence rejects the removed `file_sha256` residue.
+4. **The `file_sha256` landmine.** `models.py` (~line 1186) still references a
+   column dropped in mig 0138 inside a partial-index text expression — silently
+   wrong on fresh databases. Ten-minute fix.
 
 ## Declined
 

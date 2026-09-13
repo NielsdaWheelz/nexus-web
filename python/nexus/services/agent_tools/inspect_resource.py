@@ -1,21 +1,51 @@
-"""Route-neutral inspect-resource tool: the model's document map.
+"""Provider-neutral inspect-resource tool: the agent's document map.
 
-Navigation, not evidence. Given a ``media:`` URI already admitted to the
-generation, it returns the existing ordered document map. The canonical
-tool-runtime binding owns the bounded model-facing JSON projection.
+Navigation, not evidence. Given a ``media:`` URI already in the conversation's
+references, it returns an ordered section list — each section a label, a short
+deterministic preview, and a ``read_uri`` the model can pass to ``read_resource``
+for that section's exact text. It is a thin adapter over the
+``media_read_map`` core: parse the URI, call the core, render. It owns no
+per-kind SQL, persists no retrievals, and is never cited (no ``n``).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
+from xml.sax.saxutils import escape as xml_escape
 
 from sqlalchemy.orm import Session
 
 from nexus.services.media_read_map import MediaReadMap, get_media_read_map_for_viewer
+from nexus.services.resource_graph.context import admits_resource_for_conversation_read
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 from nexus.services.resource_items.capabilities import resource_inspect_policy
+
+INSPECT_RESOURCE_TOOL_NAME = "inspect_resource"
+
+INSPECT_RESOURCE_TOOL_DEFINITION: dict[str, Any] = {
+    "name": INSPECT_RESOURCE_TOOL_NAME,
+    "description": (
+        "Map a pinned document into its sections before reading it. Accepts a "
+        "'media:UUID' URI that appears in <resources>. Returns an ordered list of "
+        "sections, each with a label, a short preview, and a read_uri you pass to "
+        "read_resource to get that section's exact text. Use this to navigate a long "
+        "article, PDF, or transcript, then read the sections you need."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "uri": {"type": "string", "description": "Media URI to map, e.g. 'media:UUID'."},
+        },
+        "required": ["uri"],
+        "additionalProperties": False,
+    },
+}
+
+
+def _xml_attr(value: object) -> str:
+    return xml_escape(str(value), {'"': "&quot;"})
 
 
 @dataclass(slots=True)
@@ -30,15 +60,55 @@ class InspectResourceResult:
     def is_error(self) -> bool:
         return self.status == "error"
 
+    def tool_output(self) -> str:
+        if self.status == "error" or self.document_map is None:
+            return (
+                f'<resource_error uri="{_xml_attr(self.uri)}" '
+                f'code="{_xml_attr(self.error_code or "")}">'
+                f"{xml_escape(self.body)}</resource_error>"
+            )
+        document_map = self.document_map
+        lines = [
+            f'<document_map uri="{_xml_attr(self.uri)}" title="{_xml_attr(document_map.title)}" '
+            f'kind="document_map" media_kind="{_xml_attr(document_map.kind)}" '
+            f'sections="{document_map.total_sections}">'
+        ]
+        for section in document_map.sections:
+            attrs = [
+                f'ordinal="{section.ordinal}"',
+                f'section_kind="{_xml_attr(section.section_kind)}"',
+                f'read_uri="{_xml_attr(section.read_uri)}"',
+                f'label="{_xml_attr(section.label)}"',
+            ]
+            if section.parent_label:
+                attrs.append(f'chapter="{_xml_attr(section.parent_label)}"')
+            if section.page_start is not None:
+                attrs.append(f'page_start="{section.page_start}"')
+            if section.page_end is not None:
+                attrs.append(f'page_end="{section.page_end}"')
+            if section.t_start_ms is not None:
+                attrs.append(f't_start_ms="{section.t_start_ms}"')
+            if section.t_end_ms is not None:
+                attrs.append(f't_end_ms="{section.t_end_ms}"')
+            lines.append(f"<section {' '.join(attrs)}>{xml_escape(section.preview)}</section>")
+        if len(document_map.sections) < document_map.total_sections:
+            lines.append(
+                f"<note>Showing the first {len(document_map.sections)} of "
+                f"{document_map.total_sections} sections; use app_search to find a specific part."
+                f"</note>"
+            )
+        lines.append("</document_map>")
+        return "\n".join(lines)
+
 
 def execute_inspect_resource(
     db: Session,
     *,
     viewer_id: UUID,
-    admitted_resource_uris: frozenset[str],
+    conversation_id: UUID,
     uri: str,
 ) -> InspectResourceResult:
-    """Return a document map under one operation-frozen admission set."""
+    """Return the document map for a referenced ``media:`` resource."""
 
     parsed = parse_resource_ref(uri)
     if isinstance(parsed, ResourceRefParseFailure):
@@ -53,17 +123,19 @@ def execute_inspect_resource(
     if inspect_policy != "media_document_map":
         return _error(
             uri,
-            f"Resource {uri} has inspect policy '{inspect_policy}', so nexus__resource__inspect "
-            "cannot map it. Pass a media document URI; use nexus__resource__read to read other "
+            f"Resource {uri} has inspect policy '{inspect_policy}', so inspect_resource "
+            "cannot map it. Pass a media document URI; use read_resource to read other "
             "resources.",
             "not_inspectable",
         )
 
-    if uri not in admitted_resource_uris:
+    if not admits_resource_for_conversation_read(
+        db, conversation_id=conversation_id, target=parsed
+    ):
         return _error(
             uri,
-            f"Resource {uri} is not in this operation's admitted scope. "
-            "Use nexus__search to find new sources first.",
+            f"Resource {uri} is not in this conversation's context refs. "
+            "Use app_search to find new sources first.",
             "not_in_context_refs",
         )
 

@@ -1,9 +1,5 @@
 import { apiFetch, decodeApiPayload } from "@/lib/api/client";
-import {
-  expectIsoInstant,
-  isCanonicalUuid,
-  isRecord,
-} from "@/lib/validation";
+import { expectIsoInstant, isRecord } from "@/lib/validation";
 import {
   parseMediaRef,
   type ActivityModality,
@@ -39,6 +35,8 @@ export interface ActivityExclusionResult {
   readonly exclusionHandle: ActivityExclusionHandle;
 }
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const EXCLUSION_HANDLE_RE =
   /^nce1\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{22}$/;
 const DEVICE_HANDLE_RE = /^ncd1\.[A-Za-z0-9_-]{22}$/;
@@ -60,7 +58,7 @@ function object(value: unknown, name: string): Record<string, unknown> {
 }
 
 function clientMutationId(value: unknown): string {
-  if (!isCanonicalUuid(value)) {
+  if (typeof value !== "string" || !UUID_RE.test(value)) {
     throw new Error("clientMutationId must be a canonical UUID");
   }
   return value;

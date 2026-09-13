@@ -6,15 +6,13 @@ machinery that serves documents.
 
 from __future__ import annotations
 
-from typing import Literal, assert_never
+from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import highlight_readability_sql
-from nexus.db.models import NoteBlock
-from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services.resource_graph.highlight_notes import highlight_excerpts_for_note_blocks
 from nexus.services.search.constants import (
@@ -28,7 +26,6 @@ from nexus.services.search.results import (
     _build_search_score,
     _RankedNoteBlockResult,
     _RankedPageResult,
-    _SearchScore,
 )
 from nexus.services.search.scope import ScopeUnsupported, scope_filter_sql
 from nexus.services.search.sql import (
@@ -43,7 +40,6 @@ from nexus.services.semantic_chunks import (
 
 # Page rows search only their own title. Linked content is indexed as note blocks.
 _PAGE_TEXT = "p.title"
-NotesSearchResultType = Literal["page", "note_block"]
 
 
 def _search_pages(
@@ -181,6 +177,12 @@ def _search_note_chunks(
             SELECT
                 cc.id,
                 cc.owner_id AS note_block_id,
+                cc.chunk_text,
+                ts_headline('english', cc.chunk_text,
+                    websearch_to_tsquery('english', :query),
+                    'MaxWords=50, MinWords=10, MaxFragments=1') AS snippet,
+                cc.summary_locator,
+                cc.created_at,
                 cc.chunk_text_tsv,
                 mcis.active_embedding_provider,
                 mcis.active_embedding_model
@@ -194,16 +196,6 @@ def _search_note_chunks(
             {scope_filter}
         )
     """
-    final_projection = """
-            SELECT ranked.note_block_id, cc.chunk_text,
-                ts_headline('english', cc.chunk_text,
-                    websearch_to_tsquery('english', :query),
-                    'MaxWords=50, MinWords=10, MaxFragments=1') AS snippet,
-                cc.summary_locator, ranked.raw_score
-            FROM ranked_candidates ranked
-            JOIN content_chunks cc ON cc.id = ranked.id
-            ORDER BY ranked.raw_score DESC, ranked.note_block_id ASC
-        """
     if semantic_query_embedding is not None:
         embedding_model, query_embedding = semantic_query_embedding
         params["query_embedding"] = to_pgvector_literal(query_embedding)
@@ -215,8 +207,14 @@ def _search_note_chunks(
             leading_ctes=f"""{eligible_chunks},
                 {query_embedding_cte_sql(embedding_dims)}""",
             embedding_dims=embedding_dims,
-            scored_passthrough_columns="ec.note_block_id,",
-            final_projection_sql=final_projection,
+            scored_passthrough_columns="""ec.note_block_id,
+                        ec.chunk_text,
+                        ec.snippet,
+                        ec.summary_locator,""",
+            final_select_columns="""note_block_id,
+                chunk_text,
+                snippet,
+                summary_locator,""",
             order_by_id="note_block_id",
             include_recency_decay=False,
         )
@@ -226,24 +224,24 @@ def _search_note_chunks(
                 {eligible_chunks},
                 lexical_candidates AS (
                     SELECT
-                        ec.id,
                         ec.note_block_id,
+                        ec.chunk_text,
+                        ec.snippet,
+                        ec.summary_locator,
                         ts_rank_cd(ec.chunk_text_tsv, websearch_to_tsquery('english', :query))
                             AS lexical_score
                     FROM eligible_chunks ec
                     WHERE ec.chunk_text_tsv @@ websearch_to_tsquery('english', :query)
                     ORDER BY lexical_score DESC, ec.note_block_id ASC
                     LIMIT :ann_limit
-                ),
-                ranked_candidates AS MATERIALIZED (
-                    SELECT id, note_block_id,
-                        (0.20 * GREATEST(lexical_score, 0.0)) AS raw_score
-                    FROM lexical_candidates
-                    WHERE lexical_score > 0.0
-                    ORDER BY raw_score DESC, note_block_id ASC
-                    LIMIT :limit
                 )
-            {final_projection}
+            SELECT
+                note_block_id, chunk_text, snippet, summary_locator,
+                (0.20 * GREATEST(lexical_score, 0.0)) AS raw_score
+            FROM lexical_candidates
+            WHERE lexical_score > 0.0
+            ORDER BY raw_score DESC, note_block_id ASC
+            LIMIT :limit
         """
     rows = db.execute(text(query), params).mappings().all()
 
@@ -292,73 +290,3 @@ def _highlight_excerpts(db: Session, viewer_id: UUID, note_ids: list[UUID]) -> d
             note_ids=note_ids,
         ).items()
     }
-
-
-def resolve_notes_search_result(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    result_type: NotesSearchResultType,
-    result_id: UUID,
-    score: _SearchScore,
-) -> _RankedPageResult | _RankedNoteBlockResult:
-    """Rematerialize one viewer-owned Notes-domain search row."""
-    if result_type == "page":
-        row = db.execute(
-            text(
-                """
-                SELECT id, title
-                FROM pages
-                WHERE id = :id
-                  AND user_id = :viewer_id
-                """
-            ),
-            {"viewer_id": viewer_id, "id": result_id},
-        ).first()
-        if row is None:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
-        return _RankedPageResult(
-            id=row[0],
-            title=row[1],
-            snippet=_truncate_snippet(str(row[1])),
-            score=score,
-        )
-
-    if result_type == "note_block":
-        block = db.get(NoteBlock, result_id)
-        if block is None or block.user_id != viewer_id:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
-        ready = db.execute(
-            text(
-                """
-                SELECT 1
-                FROM content_index_states
-                WHERE owner_kind = 'note_block'
-                  AND owner_id = :block_id
-                  AND status = 'ready'
-                """
-            ),
-            {"block_id": block.id},
-        ).first()
-        body_text = str(block.body_text or "")
-        if ready is None or not body_text:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
-        highlight_excerpt = _highlight_excerpts(db, viewer_id, [block.id]).get(block.id)
-        return _RankedNoteBlockResult(
-            id=block.id,
-            snippet=_truncate_snippet(body_text),
-            body_text=block.body_text,
-            score=score,
-            highlight_excerpt=highlight_excerpt,
-            note_origin="highlight_note" if highlight_excerpt else "note",
-            locator=retrieval_locator_json(
-                {
-                    "type": "note_block_offsets",
-                    "block_id": str(block.id),
-                    "start_offset": 0,
-                    "end_offset": len(body_text),
-                }
-            ),
-        )
-
-    assert_never(result_type)

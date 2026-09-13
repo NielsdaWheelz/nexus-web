@@ -31,9 +31,6 @@ STREAM_TOKEN_ISSUER = "nexus-stream"
 STREAM_TOKEN_AUDIENCE = "nexus-api"
 STREAM_TOKEN_SCOPE = "stream"
 STREAM_TOKEN_TTL_SECONDS = 60
-OFFLINE_READING_PACKAGE_SCOPE = "offline-reading-package"
-OFFLINE_READING_PACKAGE_TOKEN_TTL_SECONDS = 300
-OFFLINE_READING_PACKAGE_SCHEMA_VERSION = 1
 
 
 @dataclass(frozen=True)
@@ -47,26 +44,6 @@ class StreamTokenResult:
 class VerifiedStreamToken:
     user_id: UUID
     jti: str
-
-
-@dataclass(frozen=True)
-class OfflineReadingPackageTokenResult:
-    token: str
-    package_base_url: str
-    account_id: UUID
-    reader_generation: int
-    package_schema_version: int
-    expires_at: str
-
-
-@dataclass(frozen=True)
-class VerifiedOfflineReadingPackageToken:
-    user_id: UUID
-    jti: str
-    media_id: UUID
-    reader_generation: int
-    package_schema_version: int
-    exp_epoch: int
 
 
 def _get_signing_key_bytes() -> bytes:
@@ -106,135 +83,34 @@ def mint_stream_token(user_id: UUID) -> StreamTokenResult:
     )
 
 
-def mint_offline_reading_package_token(
-    *,
-    user_id: UUID,
-    media_id: UUID,
-    reader_generation: int,
-) -> OfflineReadingPackageTokenResult:
-    if reader_generation < 1:
-        raise ValueError("reader_generation must be positive")
-    settings = get_settings()
-    now = int(time.time())
-    expires = now + OFFLINE_READING_PACKAGE_TOKEN_TTL_SECONDS
-    payload = {
-        "iss": STREAM_TOKEN_ISSUER,
-        "aud": STREAM_TOKEN_AUDIENCE,
-        "sub": str(user_id),
-        "exp": expires,
-        "iat": now,
-        "jti": str(uuid4()),
-        "scope": OFFLINE_READING_PACKAGE_SCOPE,
-        "media_id": str(media_id),
-        "reader_generation": reader_generation,
-        "package_schema_version": OFFLINE_READING_PACKAGE_SCHEMA_VERSION,
-    }
-    return OfflineReadingPackageTokenResult(
-        token=jwt.encode(payload, _get_signing_key_bytes(), algorithm="HS256"),
-        package_base_url=settings.effective_stream_base_url.rstrip("/"),
-        account_id=user_id,
-        reader_generation=reader_generation,
-        package_schema_version=OFFLINE_READING_PACKAGE_SCHEMA_VERSION,
-        expires_at=datetime.fromtimestamp(expires, tz=UTC).isoformat(),
-    )
-
-
 def verify_stream_token(token: str) -> VerifiedStreamToken:
     """Verify a stream token and claim its JTI once. Raises ApiError on failure."""
-    payload = _decode_token(
-        token,
-        required_claims=("exp", "iss", "aud", "sub", "jti", "scope"),
-    )
+    key_bytes = _get_signing_key_bytes()
+    try:
+        payload = jwt.decode(
+            token,
+            key_bytes,
+            algorithms=["HS256"],
+            issuer=STREAM_TOKEN_ISSUER,
+            audience=STREAM_TOKEN_AUDIENCE,
+            options={"require": ["exp", "iss", "aud", "sub", "jti", "scope"]},
+        )
+    except jwt.ExpiredSignatureError as err:
+        raise ApiError(ApiErrorCode.E_STREAM_TOKEN_EXPIRED, "Stream token has expired") from err
+    except jwt.InvalidTokenError as e:
+        logger.warning("stream_token_invalid", error=str(e))
+        raise ApiError(ApiErrorCode.E_STREAM_TOKEN_INVALID, "Invalid stream token") from e
+
     if payload.get("scope") != STREAM_TOKEN_SCOPE:
         raise ApiError(ApiErrorCode.E_STREAM_TOKEN_INVALID, "Invalid stream token scope")
 
     jti = payload["jti"]
-    exp = payload["exp"]
-    if not isinstance(jti, str) or not jti or type(exp) is not int:
-        raise ApiError(ApiErrorCode.E_STREAM_TOKEN_INVALID, "Invalid stream token claims")
     try:
-        user_id = UUID(str(payload["sub"]))
+        user_id = UUID(payload["sub"])
     except (TypeError, ValueError) as exc:
         raise ApiError(ApiErrorCode.E_STREAM_TOKEN_INVALID, "Invalid stream token subject") from exc
-    _claim_jti_once(jti=jti, user_id=user_id, exp_epoch=exp)
+    _claim_jti_once(jti=jti, user_id=user_id, exp_epoch=int(payload["exp"]))
     return VerifiedStreamToken(user_id=user_id, jti=jti)
-
-
-def verify_offline_reading_package_token(
-    token: str,
-    *,
-    expected_media_id: UUID,
-) -> VerifiedOfflineReadingPackageToken:
-    payload = _decode_token(
-        token,
-        required_claims=(
-            "exp",
-            "iat",
-            "iss",
-            "aud",
-            "sub",
-            "jti",
-            "scope",
-            "media_id",
-            "reader_generation",
-            "package_schema_version",
-        ),
-    )
-    if payload.get("scope") != OFFLINE_READING_PACKAGE_SCOPE:
-        raise ApiError(ApiErrorCode.E_STREAM_TOKEN_INVALID, "Invalid package token scope")
-    try:
-        user_id = UUID(str(payload["sub"]))
-        media_id = UUID(str(payload["media_id"]))
-    except (TypeError, ValueError) as exc:
-        raise ApiError(
-            ApiErrorCode.E_STREAM_TOKEN_INVALID, "Invalid package token identity"
-        ) from exc
-    generation = payload["reader_generation"]
-    schema_version = payload["package_schema_version"]
-    jti = payload["jti"]
-    exp = payload["exp"]
-    if (
-        media_id != expected_media_id
-        or type(generation) is not int
-        or generation < 1
-        or type(schema_version) is not int
-        or schema_version != OFFLINE_READING_PACKAGE_SCHEMA_VERSION
-        or not isinstance(jti, str)
-        or not jti
-        or type(exp) is not int
-    ):
-        raise ApiError(ApiErrorCode.E_STREAM_TOKEN_INVALID, "Invalid package token claims")
-    return VerifiedOfflineReadingPackageToken(
-        user_id=user_id,
-        jti=jti,
-        media_id=media_id,
-        reader_generation=generation,
-        package_schema_version=schema_version,
-        exp_epoch=exp,
-    )
-
-
-def claim_offline_reading_package_token(
-    token: VerifiedOfflineReadingPackageToken,
-) -> None:
-    _claim_jti_once(jti=token.jti, user_id=token.user_id, exp_epoch=token.exp_epoch)
-
-
-def _decode_token(token: str, *, required_claims: tuple[str, ...]) -> dict[str, object]:
-    try:
-        return jwt.decode(
-            token,
-            _get_signing_key_bytes(),
-            algorithms=["HS256"],
-            issuer=STREAM_TOKEN_ISSUER,
-            audience=STREAM_TOKEN_AUDIENCE,
-            options={"require": list(required_claims)},
-        )
-    except jwt.ExpiredSignatureError as err:
-        raise ApiError(ApiErrorCode.E_STREAM_TOKEN_EXPIRED, "Stream token has expired") from err
-    except jwt.InvalidTokenError as exc:
-        logger.warning("stream_token_invalid", error=str(exc))
-        raise ApiError(ApiErrorCode.E_STREAM_TOKEN_INVALID, "Invalid stream token") from exc
 
 
 def _claim_jti_once(*, jti: str, user_id: UUID, exp_epoch: int) -> None:

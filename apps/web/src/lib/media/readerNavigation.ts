@@ -1,8 +1,10 @@
-import { decodePresence, type Presence } from "@/lib/api/presence";
 import {
   expectArray,
   expectExactRecord,
+  expectInteger,
   expectNonnegativeInteger,
+  expectNullableInteger,
+  expectNullableString,
   expectOneOf,
   expectString,
 } from "@/lib/validation";
@@ -13,44 +15,46 @@ export interface ReaderNavigationFragment {
   char_count: number;
 }
 
-export interface ReaderNavigationTextPoint {
-  fragment_id: string;
-  offset: number;
-}
-
-export interface ReaderNavigationTextRange {
-  start: ReaderNavigationTextPoint;
-  end: ReaderNavigationTextPoint;
-}
-
 export interface ReaderNavigationSection {
   section_id: string;
-  anchor_id: Presence<string>;
   label: string;
-  parent_section_id: Presence<string>;
-  target: ReaderNavigationTextPoint;
-  extent: Presence<ReaderNavigationTextRange>;
-  source: "Publisher" | "Heading" | "Both" | "InferredNumberedEntry";
+  ordinal: number;
+  fragment_id: string;
+  fragment_idx: number;
+  level: number | null;
+  depth: number | null;
+  start_offset: number;
+  end_offset: number | null;
+  href_path: string | null;
+  href_fragment: string | null;
+  anchor_id: string | null;
 }
 
 export interface ReaderNavigationTocNode {
   id: string;
   label: string;
-  section_id: Presence<string>;
+  ordinal: number;
+  href: string | null;
+  fragment_idx: number | null;
+  level: number | null;
+  depth: number | null;
+  section_id: string | null;
   children: ReaderNavigationTocNode[];
 }
 
 export interface ReaderNavigationLocation {
   id: string;
   label: string;
-  target: Presence<ReaderNavigationTextPoint>;
+  ordinal: number;
+  href: string | null;
+  fragment_idx: number | null;
+  section_id: string | null;
 }
 
 export interface MediaNavigationResponse {
   data: {
     media_id: string;
     kind: "epub" | "web_article";
-    generation: number;
     fragments: ReaderNavigationFragment[];
     sections: ReaderNavigationSection[];
     toc_nodes: ReaderNavigationTocNode[];
@@ -70,7 +74,6 @@ export function decodeMediaNavigation(
     [
       "media_id",
       "kind",
-      "generation",
       "fragments",
       "sections",
       "toc_nodes",
@@ -86,7 +89,6 @@ export function decodeMediaNavigation(
       ["epub", "web_article"] as const,
       `${name}.kind`,
     ),
-    generation: expectNonnegativeInteger(value.generation, `${name}.generation`),
     fragments: expectArray(
       value.fragments,
       (fragment, index) =>
@@ -143,67 +145,64 @@ function assertNavigationRelations(
     fragmentIds.add(fragment.fragment_id);
   }
 
-  const fragmentsById = new Map(navigation.fragments.map((fragment) => [fragment.fragment_id, fragment]));
-  const absoluteStarts = new Map<string, number>();
-  let length = 0;
-  for (const fragment of navigation.fragments) {
-    absoluteStarts.set(fragment.fragment_id, length);
-    length += fragment.char_count;
-  }
-  const pointOffset = (point: ReaderNavigationTextPoint): number => {
-    const fragment = fragmentsById.get(point.fragment_id);
-    const start = absoluteStarts.get(point.fragment_id);
-    if (fragment === undefined || start === undefined || point.offset > fragment.char_count) {
-      throw new TypeError(`${name} point must lie within its canonical fragment`);
-    }
-    return start + point.offset;
-  };
-  if (navigation.generation < 1) throw new TypeError(`${name}.generation must be positive`);
-  const sections = new Map<string, ReaderNavigationSection>();
-  let previousStart = -1;
+  const sectionIds = new Set<string>();
+  const sectionOrdinals = new Set<number>();
+  let previousSectionOrdinal = -1;
   for (const section of navigation.sections) {
-    const start = pointOffset(section.target);
-    if (sections.has(section.section_id) || start < previousStart) {
-      throw new TypeError(`${name}.sections must be unique and in source order`);
+    const fragment = fragmentsByIndex.get(section.fragment_idx);
+    if (
+      sectionIds.has(section.section_id) ||
+      sectionOrdinals.has(section.ordinal) ||
+      section.ordinal <= previousSectionOrdinal
+    ) {
+      throw new TypeError(`${name}.sections must be ordered unique targets`);
     }
-    if (section.extent.kind === "Present") {
-      const range = section.extent.value;
-      if (range.start.fragment_id !== section.target.fragment_id || range.start.offset !== section.target.offset || pointOffset(range.end) < start) {
-        throw new TypeError(`${name}.section extent must start at its target and be ordered`);
-      }
+    if (!fragment || fragment.fragment_id !== section.fragment_id) {
+      throw new TypeError(
+        `${name}.sections must target their declared document fragment`,
+      );
     }
-    sections.set(section.section_id, section);
-    previousStart = start;
+    if (
+      section.start_offset > fragment.char_count ||
+      (section.end_offset !== null && section.end_offset > fragment.char_count)
+    ) {
+      throw new TypeError(
+        `${name}.sections offsets must be bounded by canonical fragment length`,
+      );
+    }
+    sectionIds.add(section.section_id);
+    sectionOrdinals.add(section.ordinal);
+    previousSectionOrdinal = section.ordinal;
   }
-  for (const section of navigation.sections) {
-    const seen = new Set([section.section_id]);
-    let parent = section.parent_section_id;
-    while (parent.kind === "Present") {
-      const ancestor = sections.get(parent.value);
-      if (ancestor === undefined || seen.has(parent.value)) {
-        throw new TypeError(`${name}.section parents must be present and acyclic`);
-      }
-      if (section.extent.kind === "Present" && ancestor.extent.kind === "Present" &&
-          (pointOffset(section.extent.value.start) < pointOffset(ancestor.extent.value.start) ||
-           pointOffset(section.extent.value.end) > pointOffset(ancestor.extent.value.end))) {
-        throw new TypeError(`${name}.section extent must be contained by its ancestors`);
-      }
-      seen.add(parent.value);
-      parent = ancestor.parent_section_id;
+
+  const assertLocation = (
+    location: ReaderNavigationLocation | ReaderNavigationTocNode,
+    locationName: string,
+  ) => {
+    if (
+      location.fragment_idx !== null &&
+      !fragmentsByIndex.has(location.fragment_idx)
+    ) {
+      throw new TypeError(`${locationName} targets an absent fragment`);
     }
-  }
-  const walkToc = (nodes: ReaderNavigationTocNode[]) => {
-    for (const node of nodes) {
-      if (node.section_id.kind === "Present" && !sections.has(node.section_id.value)) {
-        throw new TypeError(`${name}.toc_nodes target an absent section`);
-      }
-      walkToc(node.children);
+    if (location.section_id !== null && !sectionIds.has(location.section_id)) {
+      throw new TypeError(`${locationName} targets an absent section`);
     }
   };
-  walkToc(navigation.toc_nodes);
-  for (const location of [...navigation.landmarks, ...navigation.page_list]) {
-    if (location.target.kind === "Present") pointOffset(location.target.value);
-  }
+  const walkToc = (nodes: ReaderNavigationTocNode[], path: string) => {
+    nodes.forEach((node, index) => {
+      const nodeName = `${path}[${index}]`;
+      assertLocation(node, nodeName);
+      walkToc(node.children, `${nodeName}.children`);
+    });
+  };
+  walkToc(navigation.toc_nodes, `${name}.toc_nodes`);
+  navigation.landmarks.forEach((location, index) =>
+    assertLocation(location, `${name}.landmarks[${index}]`),
+  );
+  navigation.page_list.forEach((location, index) =>
+    assertLocation(location, `${name}.page_list[${index}]`),
+  );
 }
 
 function decodeNavigationFragment(
@@ -237,48 +236,151 @@ export function decodeMediaNavigationResponse(
   };
 }
 
-export function decodeReaderNavigationTextPoint(raw: unknown, name: string): ReaderNavigationTextPoint {
-  const value = expectExactRecord(raw, ["fragment_id", "offset"], name);
-  return {
-    fragment_id: expectString(value.fragment_id, `${name}.fragment_id`),
-    offset: expectNonnegativeInteger(value.offset, `${name}.offset`),
-  };
-}
-
-function decodeNavigationSection(raw: unknown, name: string): ReaderNavigationSection {
-  const value = expectExactRecord(raw, ["section_id", "anchor_id", "label", "parent_section_id", "target", "extent", "source"], name);
+function decodeNavigationSection(
+  raw: unknown,
+  name: string,
+): ReaderNavigationSection {
+  const value = expectExactRecord(
+    raw,
+    [
+      "section_id",
+      "label",
+      "ordinal",
+      "fragment_id",
+      "fragment_idx",
+      "level",
+      "depth",
+      "start_offset",
+      "end_offset",
+      "href_path",
+      "href_fragment",
+      "anchor_id",
+    ],
+    name,
+  );
+  const startOffset = expectNonnegativeInteger(
+    value.start_offset,
+    `${name}.start_offset`,
+  );
+  const endOffset = expectNullableInteger(
+    value.end_offset,
+    `${name}.end_offset`,
+  );
+  if (endOffset !== null && endOffset < startOffset) {
+    throw new TypeError(`${name}.end_offset must not precede start_offset`);
+  }
   return {
     section_id: expectString(value.section_id, `${name}.section_id`),
-    anchor_id: decodePresence(value.anchor_id, (id) => expectString(id, `${name}.anchor_id.value`)),
     label: expectString(value.label, `${name}.label`),
-    parent_section_id: decodePresence(value.parent_section_id, (id) => expectString(id, `${name}.parent_section_id.value`)),
-    target: decodeReaderNavigationTextPoint(value.target, `${name}.target`),
-    extent: decodePresence(value.extent, (rawRange) => {
-      const range = expectExactRecord(rawRange, ["start", "end"], `${name}.extent.value`);
-      return {
-        start: decodeReaderNavigationTextPoint(range.start, `${name}.extent.value.start`),
-        end: decodeReaderNavigationTextPoint(range.end, `${name}.extent.value.end`),
-      };
-    }),
-    source: expectOneOf(value.source, ["Publisher", "Heading", "Both", "InferredNumberedEntry"] as const, `${name}.source`),
+    ordinal: expectNonnegativeInteger(value.ordinal, `${name}.ordinal`),
+    fragment_id: expectString(value.fragment_id, `${name}.fragment_id`),
+    fragment_idx: expectNonnegativeInteger(
+      value.fragment_idx,
+      `${name}.fragment_idx`,
+    ),
+    level: expectNullableInteger(value.level, `${name}.level`),
+    depth: expectNullableInteger(value.depth, `${name}.depth`),
+    start_offset: startOffset,
+    end_offset: endOffset,
+    href_path: expectNullableString(value.href_path, `${name}.href_path`),
+    href_fragment: expectNullableString(
+      value.href_fragment,
+      `${name}.href_fragment`,
+    ),
+    anchor_id: expectNullableString(value.anchor_id, `${name}.anchor_id`),
   };
 }
 
 function decodeTocNode(raw: unknown, name: string): ReaderNavigationTocNode {
-  const value = expectExactRecord(raw, ["id", "label", "section_id", "children"], name);
+  const value = expectExactRecord(
+    raw,
+    [
+      "id",
+      "label",
+      "ordinal",
+      "href",
+      "fragment_idx",
+      "level",
+      "depth",
+      "section_id",
+      "children",
+    ],
+    name,
+  );
   return {
     id: expectString(value.id, `${name}.id`),
     label: expectString(value.label, `${name}.label`),
-    section_id: decodePresence(value.section_id, (id) => expectString(id, `${name}.section_id.value`)),
-    children: expectArray(value.children, (child, index) => decodeTocNode(child, `${name}.children[${index}]`), `${name}.children`),
+    ordinal: expectInteger(value.ordinal, `${name}.ordinal`),
+    href: expectNullableString(value.href, `${name}.href`),
+    fragment_idx: expectNullableInteger(
+      value.fragment_idx,
+      `${name}.fragment_idx`,
+    ),
+    level: expectNullableInteger(value.level, `${name}.level`),
+    depth: expectNullableInteger(value.depth, `${name}.depth`),
+    section_id: expectNullableString(value.section_id, `${name}.section_id`),
+    children: expectArray(
+      value.children,
+      (child, index) => decodeTocNode(child, `${name}.children[${index}]`),
+      `${name}.children`,
+    ),
   };
 }
 
-function decodeNavigationLocation(raw: unknown, name: string): ReaderNavigationLocation {
-  const value = expectExactRecord(raw, ["id", "label", "target"], name);
+function decodeNavigationLocation(
+  raw: unknown,
+  name: string,
+): ReaderNavigationLocation {
+  const value = expectExactRecord(
+    raw,
+    ["id", "label", "ordinal", "href", "fragment_idx", "section_id"],
+    name,
+  );
   return {
     id: expectString(value.id, `${name}.id`),
     label: expectString(value.label, `${name}.label`),
-    target: decodePresence(value.target, (point) => decodeReaderNavigationTextPoint(point, `${name}.target.value`)),
+    ordinal: expectInteger(value.ordinal, `${name}.ordinal`),
+    href: expectNullableString(value.href, `${name}.href`),
+    fragment_idx: expectNullableInteger(
+      value.fragment_idx,
+      `${name}.fragment_idx`,
+    ),
+    section_id: expectNullableString(value.section_id, `${name}.section_id`),
   };
+}
+
+export interface NormalizedNavigationTocNode extends ReaderNavigationTocNode {
+  navigable: boolean;
+  children: NormalizedNavigationTocNode[];
+}
+
+export function normalizeReaderNavigationToc(
+  nodes: ReaderNavigationTocNode[],
+  sectionIdSet: Set<string>,
+): NormalizedNavigationTocNode[] {
+  return nodes.map((node) => ({
+    ...node,
+    navigable: node.section_id !== null && sectionIdSet.has(node.section_id),
+    children: normalizeReaderNavigationToc(node.children, sectionIdSet),
+  }));
+}
+
+export function parseReaderNavigationHrefAnchorId(
+  href: string | null,
+): string | null {
+  if (!href || !href.includes("#")) {
+    return null;
+  }
+  const fragment = href.split("#", 2)[1];
+  if (!fragment) {
+    return null;
+  }
+  try {
+    return decodeURIComponent(fragment);
+  } catch (error) {
+    if (error instanceof URIError) {
+      return fragment;
+    }
+    throw error;
+  }
 }

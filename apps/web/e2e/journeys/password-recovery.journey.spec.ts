@@ -8,7 +8,6 @@ import {
   gotoWithStrictCsp,
   hasSupabaseAuthCookie,
   inbucketOrigin,
-  openPasswordSignIn,
   signOut,
   test,
   webOrigin,
@@ -128,7 +127,6 @@ test("known and unknown recovery look identical while a captured link replaces t
   await expect(page).toHaveURL(/\/lectern$/);
 
   await signOut(page);
-  await openPasswordSignIn(page);
   await page.getByLabel("Email", { exact: true }).fill(journeyUser.email);
   await page.getByLabel("Password", { exact: true }).fill(journeyUser.password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();

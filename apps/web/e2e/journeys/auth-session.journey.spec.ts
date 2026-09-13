@@ -1,6 +1,4 @@
-import type { BrowserContext, Page, Request, Response } from "playwright/test";
-import { ANDROID_PLAYER_PROTOCOL_VERSION } from "@/lib/player/androidPlayerProtocol";
-import { androidPlayerProtocolContractSha256 } from "../../androidPlayerProtocolCorpus";
+import type { BrowserContext, Page } from "playwright/test";
 import {
   expect,
   expectInvalidPasswordFeedback,
@@ -10,7 +8,6 @@ import {
   gotoWithStrictCsp,
   hasSupabaseAuthCookie,
   inbucketOrigin,
-  openPasswordSignIn,
   signIn,
   signOut,
   supabaseAnonKey,
@@ -35,14 +32,6 @@ const FIRST_PASSWORD = "Nexus-invitation-password-01!";
 const REPLACEMENT_PASSWORD = "Nexus-replacement-password-02!";
 const ENDED_SESSION_PASSWORD = "Nexus-ended-session-password-03!";
 const MAX_COOKIE_VALUE_BYTES = 3_800;
-const PLAYER_PROTOCOL_CONTRACT_SHA256 = androidPlayerProtocolContractSha256();
-
-function isSessionResolutionExchange(exchange: Request | Response): boolean {
-  const target = new URL(exchange.url());
-  return (
-    target.origin === webOrigin && target.pathname === "/auth/session/resolve"
-  );
-}
 
 async function savePassword(page: Page, password: string): Promise<void> {
   await page.getByLabel("New password", { exact: true }).fill(password);
@@ -58,7 +47,6 @@ async function expectPasswordSignInFailure(
   password: string,
 ): Promise<void> {
   await gotoWithStrictCsp(page, "/login");
-  await openPasswordSignIn(page);
   await page.getByLabel("Email", { exact: true }).fill(email);
   await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
@@ -158,23 +146,8 @@ test("invited user chooses and replaces a password while scanner-safe acceptance
   expect(version.headers()).not.toHaveProperty("location");
   expect(version.headers()).not.toHaveProperty("set-cookie");
   const versionBody = (await version.json()) as Record<string, unknown>;
-  expect(versionBody).toEqual({
-    source_sha: expect.stringMatching(/^[0-9a-f]{40}$/),
-    player_protocol: {
-      version: ANDROID_PLAYER_PROTOCOL_VERSION,
-      contract_sha256: PLAYER_PROTOCOL_CONTRACT_SHA256,
-    },
-  });
-
-  const anonymousLogin = await gotoWithStrictCsp(page, "/login?next=%2Fbrowse");
-  expect(anonymousLogin.status()).toBe(200);
-  await expect(page).toHaveURL(
-    (url) =>
-      url.pathname === "/login" && url.searchParams.get("next") === "/browse",
-  );
-  await expect(page).toHaveTitle("Sign in · Nexus");
-  await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
-
+  expect(Object.keys(versionBody)).toEqual(["source_sha"]);
+  expect(versionBody.source_sha).toMatch(/^[0-9a-f]{40}$/);
   const supabase = pageRequest(page, supabaseOrigin);
   const deniedSignup = await supabase.post("/auth/v1/signup", {
     data: {
@@ -264,20 +237,6 @@ test("invited user chooses and replaces a password while scanner-safe acceptance
   expect(profile.default_library_id).toMatch(
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
   );
-
-  const directLogin = await app.get("/login?next=%2Fbrowse", {
-    maxRedirects: 0,
-  });
-  expect(directLogin.status()).toBe(307);
-  const directTarget = new URL(
-    directLogin.headers()["location"] ?? "",
-    webOrigin,
-  );
-  expect(directTarget.origin).toBe(webOrigin);
-  expect(directTarget.pathname).toBe("/browse");
-  expect(directTarget.search).toBe("");
-  expect(directTarget.hash).toBe("");
-  expect(directLogin.headers()).not.toHaveProperty("set-cookie");
 
   await signOut(page);
   expect(
@@ -423,7 +382,7 @@ test("invited user chooses and replaces a password while scanner-safe acceptance
   await expireAccessToken(page.context(), rotated);
   const resolveRequests: { method: string; origin?: string; header?: string }[] = [];
   page.on("request", (request) => {
-    if (!isSessionResolutionExchange(request)) {
+    if (new URL(request.url()).pathname !== "/auth/session/resolve") {
       return;
     }
     resolveRequests.push({
@@ -432,12 +391,8 @@ test("invited user chooses and replaces a password while scanner-safe acceptance
       header: request.headers()["x-nexus-session"],
     });
   });
-  const refreshResolutionResponse = page.waitForResponse(
-    isSessionResolutionExchange,
-  );
   await gotoWithStrictCsp(page, "/browse");
-  expect((await refreshResolutionResponse).status()).toBe(204);
-  await page.waitForURL(/\/browse$/, { waitUntil: "load" });
+  await expect(page).toHaveURL(/\/browse$/);
   expect(resolveRequests).toEqual([
     { method: "POST", origin: webOrigin, header: "Resolve" },
   ]);
@@ -450,23 +405,12 @@ test("invited user chooses and replaces a password while scanner-safe acceptance
     refresh_token: "terminal-refresh-token",
   });
   resolveRequests.length = 0;
-  const terminalResolutionResponse = page.waitForResponse(
-    isSessionResolutionExchange,
-  );
   await gotoWithStrictCsp(page, "/browse", { waitUntil: "commit" });
-  expect((await terminalResolutionResponse).status()).toBe(401);
-  await page.waitForURL(
+  await expect(page).toHaveURL(
     (url) =>
       url.pathname === "/login" && url.searchParams.get("next") === "/browse",
-    { waitUntil: "load" },
   );
-  const terminalFeedback = page.getByRole("status");
-  await expect(
-    terminalFeedback.getByText("Your session ended.", { exact: true }),
-  ).toBeVisible();
-  await expect(
-    terminalFeedback.getByText("Please sign in again.", { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByText("Your session ended. Please sign in again.")).toBeVisible();
   expect(resolveRequests).toEqual([
     { method: "POST", origin: webOrigin, header: "Resolve" },
   ]);

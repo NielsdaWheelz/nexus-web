@@ -3,7 +3,6 @@ import {
   type ResolvedPaneRouteModel,
 } from "@/lib/panes/paneRouteModel";
 import {
-  paneResourceLocatorKey,
   resolvePaneResourceLocator,
   type PaneResourceLocator,
 } from "@/lib/panes/paneResourceLocator";
@@ -44,6 +43,20 @@ export function hasSamePaneRoute(leftHref: string, rightHref: string): boolean {
   );
 }
 
+export function paneResourceLocatorKey(locator: PaneResourceLocator | null): string | null {
+  if (!locator) return null;
+  switch (locator.kind) {
+    case "resource_ref":
+      return `resource_ref:${locator.ref}`;
+    case "contributor_handle":
+      return `contributor_handle:${locator.handle}`;
+    default: {
+      const _exhaustive: never = locator;
+      return _exhaustive;
+    }
+  }
+}
+
 export function resolveWorkspaceActivationRouteId(
   href: string,
 ): WorkspaceActivationRouteId {
@@ -51,23 +64,15 @@ export function resolveWorkspaceActivationRouteId(
   const ownerKey = paneResourceLocatorKey(identity.resourceLocator);
   // justify-type-assertion: this owner is the sole constructor for the opaque
   // activation-route identity.
-  return (
-    ownerKey ? `${identity.routeId}:${ownerKey}` : identity.routeKey
-  ) as WorkspaceActivationRouteId;
+  return (ownerKey
+    ? `${identity.routeId}:${ownerKey}`
+    : identity.routeKey) as WorkspaceActivationRouteId;
 }
 
-export function hasSamePaneResource(
-  leftHref: string,
-  rightHref: string,
-): boolean {
-  const leftKey = paneResourceLocatorKey(
-    resolvePaneRouteIdentity(leftHref).resourceLocator,
-  );
+export function hasSamePaneResource(leftHref: string, rightHref: string): boolean {
+  const leftKey = paneResourceLocatorKey(resolvePaneRouteIdentity(leftHref).resourceLocator);
   return (
     leftKey !== null &&
-    leftKey ===
-      paneResourceLocatorKey(
-        resolvePaneRouteIdentity(rightHref).resourceLocator,
-      )
+    leftKey === paneResourceLocatorKey(resolvePaneRouteIdentity(rightHref).resourceLocator)
   );
 }

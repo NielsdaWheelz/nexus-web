@@ -274,7 +274,7 @@ class SearchQuery:
 ### 5.2 `search()` signature (single object param)
 
 ```python
-# services/search/service.py
+# services/search/service.py  (re-exported from __init__)
 def search(db: Session, viewer_id: UUID, query: SearchQuery) -> SearchResponse: ...
 ```
 
@@ -282,7 +282,7 @@ Orchestration: `effective_kinds` → `kinds.result_types_for(...)` → dispatch 
 
 ### 5.3 `get_search_result()` — durable-ref resolver, contract preserved & typed
 
-`get_search_result(db, viewer_id, result_type: str, result_id, evidence_span_ids)` moves to `resolver.py`. The persisted raw discriminant is validated against `SEARCH_RESULT_TYPES`, narrowed to an exhaustive typed dispatcher, and delegated to the owning semantic retriever; the 13-branch positional-row chain (`search.py:861–1540`) is deleted (audit `py-search` fix #5). Used by citation/object-ref resolution; behavior unchanged. `service.py` does not retain a compatibility export.
+`get_search_result(db, viewer_id, result_type: SEARCH_RESULT_TYPES, result_id, evidence_span_ids)` moves to `service.py`; the bare-`str` param becomes the typed discriminant and the 13-branch positional-row chain (`search.py:861–1540`) becomes discriminant dispatch (audit `py-search` fix #5). Used by citation/object-ref resolution; behavior unchanged.
 
 ### 5.4 Kind / format / scope / role owners
 
@@ -472,7 +472,7 @@ One migration: `0140_drop_message_tool_calls_semantic.py`.
 - **P-1 (prerequisite).** Authors-cutover visibility-CTE + canonical-handle + `contributor_taxonomy` slices land first (§0).
 - **S0 — Taxonomy & types.** Add `search/kinds.py` (kind↔types, `MediaFormat`→storage, implied-kind, omitted-vs-empty) and FE `lib/search/{kinds,query}.ts`. Delete `APP_SEARCH_RESULT_TYPES` → import canonical. Rename FE `ALL_SEARCH_TYPES`→`RESULT_TYPE_VALUES`.
 - **S1 — Scope owner + matrix.** Add `search/scope.py` (`scope_filter_sql` + `UNSUPPORTED` + the §4.6 matrix); move `hash_query` to logging; repoint `app_search` imports. Behavior-preserving; matrix tests added.
-- **S2 — Service package split + batch.** Carve `services/search.py` into `services/search/{service,resolver,query,embedding,ranking,projection,cursor}.py` + `retrievers/*` + `batch.py` (`search_scopes`); typed `get_search_result` dispatch. Behavior-preserving relocation guarded by `test_search.py`.
+- **S2 — Service package split + batch.** Carve `services/search.py` into `services/search/{service,query,embedding,ranking,projection,cursor}.py` + `retrievers/*` + `batch.py` (`search_scopes`); typed `get_search_result` dispatch. Behavior-preserving relocation guarded by `test_search.py`.
 - **S2′ — Telemetry/SSE migration.** Migration drops `message_tool_calls.semantic`; SSE `ChatRunToolCallEventPayload` drops `semantic`; producer + TS consumer renamed `filters` keys.
 - **S3 — Hybrid invariant.** Delete `semantic` (service + route + `app_search`) and the `768–779` bypass; embedding built once. Add the "filters never change retrieval mode" test. (Needs P-1 consumed.)
 - **S4 — Contract rename + route-edge rejection.** Service takes `SearchQuery`; route parses `kinds`/`formats`/`authors`/`roles`/`scope`/`q` → `SearchQuery`, **400s** on deleted keys; implied-kind enforced server-side; roles validated against taxonomy.

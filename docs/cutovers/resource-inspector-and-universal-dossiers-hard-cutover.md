@@ -208,8 +208,6 @@ head =
       freshness: Presence<Current | Stale>
       active_build: Presence<DossierBuild {
         execution: Queued | Running | Recovering | Suspended
-        admitted_generation: Presence<selection, disclosure, tool plan, positions>
-        capacity_pause: Presence<CapacityPaused>
       }>
       latest_unsuccessful_build: Presence<Failed | Cancelled>
       history: DossierRevisionSummary[]
@@ -474,8 +472,7 @@ authorize server-side without exposing a private Contributor id.
 - generic build/revision lifecycle;
 - shared read/history/event schemas.
 
-One immutable Dossier registration, keyed by subject scheme, pairs exactly one
-subject policy with exactly one binding. The policy side owns:
+`SubjectPolicyRegistry`, keyed by subject scheme, owns:
 
 - locator resolution and 404-masked read/generate authorization;
 - AudienceScope, collection viewer, requester/billing attribution, and
@@ -484,12 +481,12 @@ subject policy with exactly one binding. The policy side owns:
 - subject/audience deletion integration;
 - canonical resource activation.
 
-The binding side owns:
+`DossierBindingRegistry`, keyed by subject scheme, owns:
 
 - input collection and bounded reduction;
 - prompt, operation/profile, reasoning, token/cost budget, and reduction plan;
 - input-manifest, freshness, and coverage projection;
-- generated schema, citation materialization, and final document compilation;
+- generated schema and citation materialization;
 - typed empty-input behavior.
 
 Exactly eight bindings exist. Seven public Resource bindings retain
@@ -497,7 +494,7 @@ Companion/subject-locator entry; the internal Idea binding is entered only by
 Learn or Artifact ref. The typed engine identity distinguishes Resource from
 Idea without fabricating a `ResourceRef`.
 
-One job kind, `dossier_build`, dispatches through the singular registration.
+One job kind, `dossier_build`, dispatches through the binding registry.
 Binding-owned operation policy is exact:
 
 | Binding | LLM operation | Profile | Reasoning |
@@ -679,11 +676,12 @@ multiple terminal children or multiple revisions for one build is a defect.
   existing citation edges.
 
 Requester, revision creator, and cancellation actor are nullable attribution
-FKs, and the UI renders absent attribution as “Deleted user.”
-`citation_owner_user_id` is non-null because it is graph ownership, not display
-attribution. No product account-deletion composer exists; the non-cascading User
-FKs intentionally block deletion until account lifecycle owns the complete
-cross-subsystem operation.
+FKs. Explicit User teardown nulls them on surviving shared-Library history and
+the UI renders “Deleted user.” `citation_owner_user_id` is non-null because it
+is graph ownership, not display attribution. Before deleting such a user,
+surviving Library history rehomes its citation edges and revision owner to the
+Library’s current owner. A Library owner must transfer or delete the Library
+before that User becomes unobservable.
 
 ### `artifact_build_events`
 
@@ -761,24 +759,21 @@ Rules:
 ### Durable execution and liveness
 
 `DossierBuildFailureCode` is closed: `NoSourceMaterial`, `InputsChanged`,
-`DependencyProjectionFailed`, `ContextTooLarge`, `Auth`, `Quota`, `Timeout`,
-`OutputLimit`, `InvalidOutput`, `PolicyViolation`, `RuntimeUnavailable`,
-`CapacityUnavailable`, `DocumentValidationFailed`, and
-`CitationValidationFailed`. Only these current modeled outcomes become new
-`artifact_build_failures`. Immutable rows using `EntitlementDenied`,
-`BudgetExceeded`, `ProviderRefused`, or `ProviderIncomplete` remain readable
-but are excluded from the write union. Unexpected exceptions, invariant
-violations, and unreconciled uncertain dispatches are defects. No generic
-Internal or migration-only failure code exists.
+`DependencyProjectionFailed`, `EntitlementDenied`, `BudgetExceeded`,
+`ContextTooLarge`, `ProviderRefused`, `ProviderIncomplete`,
+`DocumentValidationFailed`, and `CitationValidationFailed`. Only these modeled
+outcomes become `artifact_build_failures`. Unexpected exceptions, invariant
+violations, persistent infrastructure/provider retry exhaustion, unknown
+provider failures, and unreconciled uncertain dispatches are defects. No
+generic Internal or migration-only failure code exists.
 
 The generic build job:
 
 - receives and retains `JobExecutionContext`;
 - verifies exact job, attempt, unexpired lease, visible subject/audience, and
-  active build before every generation dispatch, checkpoint, event, and terminal
+  active build before every provider dispatch, checkpoint, event, and terminal
   mutation;
-- uses only the fixed central generation policy and never redispatches an
-  accepted ambiguous turn;
+- uses only central retry policies;
 - treats a successfully recorded Failed/Cancelled build as a successful queue
   execution;
 - lets unexpected exceptions escape to queue retry/dead-letter handling.
@@ -787,22 +782,23 @@ The root durable operation uses the build as its stable replay identity.
 Reduction traverses stable ordered node descriptors with managed iteration, so
 the coordination runtime derives structural replay paths; domain code does not
 author explicit step keys. Coordination replay state—not a duplicate Dossier
-table—owns each generation step's replay-stable identity, request fingerprint,
-reconciliation identity, dispatch phase, and normalized terminal result.
+table—owns each provider step’s replay-stable generation identity, request
+fingerprint, provider idempotency/reconciliation key, dispatch phase, and
+normalized terminal result.
 
 - `Prepared` may dispatch.
 - `Completed` reuses its memoized outcome.
-- `Uncertain` reconciles through durable dispatch evidence or an explicit operator
+- `Uncertain` reconciles through a provider guarantee or an explicit operator
   transition that attaches a reconciled terminal outcome or proves
   `NotDispatched`.
-- `Uncertain` never auto-redispatches; it defects for operator reconciliation.
+- Without provider idempotency/reconciliation, `Uncertain` never
+  auto-redispatches; it defects for operator reconciliation.
 
 The operation commits `Prepared`, commits `Uncertain` immediately before the
 network dispatch, and commits `Completed` with the normalized outcome after the
 response. No network call occurs inside a database transaction.
 
-The generation ledger is execution audit and plan provenance, not replay
-memoization or billing.
+The LLM ledger is billing/provenance, not replay memoization.
 
 Lease expiry below the attempt budget yields `Recovering` and reclaims the same
 job/build. Lease expiry alone is not `Suspended`. Retry exhaustion/dead-letter
@@ -863,10 +859,7 @@ The head read returns:
 Revision list/read owns history. Build stream resume uses the existing
 last-event sequence contract against the new strict persisted build-event
 schema; unsequenced execution advisories are fresh coordination projections and
-are not replayed as domain events. The frontend generation adapter accepts only
-exact `{data: ...}` value responses and exact HTTP 204 commands. It registers
-`artifact-builds` with the shared generation-run opener; no compatibility body,
-Dossier-owned token mint, or direct-SSE connection survives.
+are not replayed as domain events.
 
 Expected API errors are a closed union including invalid subject locator,
 not-found/unauthorized masking, generation in progress, invalid instruction,
@@ -889,11 +882,10 @@ variants, and creates the Idea/resolution/seed/Learn replay tables.
 There is no compatibility reader, body backfill, migrated failure, or dual
 event/body contract.
 
-Subject teardown and audience-visibility cleanup remain explicit and
-child-first. They delete affected Learn replay rows, Idea seeds/resolutions,
-graph/view-state children, build children, and heads in the owning service
-order; no cascade or stale worker may recreate state after the head/build lease
-check fails. Artifact exposes no partial User teardown helper.
+Subject and User teardown remains explicit and child-first. It deletes affected
+Learn replay rows, Idea seeds/resolutions, graph/view-state children, build
+children, and heads in the owning service order; no cascade or stale worker may
+recreate state after the head/build lease check fails.
 
 ## Freshness, Coverage, And Reingestion
 
@@ -946,8 +938,7 @@ Generate
   -> collect audience-visible binding inputs
   -> ensure `(media_id, fingerprint)` Media Intelligence dependencies
   -> reduce through binding-owned plan
-  -> materialize citations + compile one publishable document
-  -> attempt document repair once when schema/document acceptance rejects output
+  -> validate schema + nonempty materialized citations
   -> lock head and recheck build/lease/subject/audience/all manifest inputs
   -> atomically create revision + citations + Succeeded + current pointer
 ```
@@ -1118,8 +1109,9 @@ No partial state ships.
       without synthesizing a failure.
 - [x] Arrows are view-only; Make current atomically authorizes/repoints and
       recomputes freshness.
-- [x] Subject teardown and audience-visibility cleanup follow the specified
-      queue, graph, and FK-safe rules; no late worker recreates state.
+- [x] Subject/audience/User teardown follows the specified queue, graph,
+      attribution, citation-owner, and FK-safe rules; no late worker recreates
+      state.
 
 ### Migration and hard cut
 

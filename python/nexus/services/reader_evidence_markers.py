@@ -14,7 +14,7 @@ from nexus.schemas.reader_document_map import (
     ReaderEvidencePassageGroupOut,
     ReaderEvidenceResolvedOut,
 )
-from nexus.services.reader_locations import locator_end_fraction, locator_fraction, locator_json
+from nexus.services.reader_locations import locator_fraction, locator_json
 
 
 def build_markers(
@@ -39,8 +39,8 @@ def build_markers(
                 if media_kind == "web_article"
                 else "epub_fragment_offsets",
                 "media_id": str(media_id),
-                "fragment_id": str(section.target.fragment_id),
-                "start_offset": section.target.offset,
+                "fragment_id": str(section.fragment_id),
+                "start_offset": section.start_offset,
             }
             fraction = locator_fraction(
                 locator,
@@ -55,20 +55,6 @@ def build_markers(
                         kind="Contents",
                         item_id=f"contents:{section.section_id}",
                         position=fraction,
-                        end_position=(
-                            locator_fraction(
-                                {
-                                    "fragment_id": str(section.extent.value.end.fragment_id),
-                                    "start_offset": section.extent.value.end.offset,
-                                },
-                                fragment_ranges,
-                                total_fragment_chars,
-                                page_count,
-                                pdf_page_heights,
-                            )
-                            if section.extent.kind == "Present"
-                            else None
-                        ),
                         tone="Neutral",
                         label=section.label,
                         preview=None,
@@ -90,13 +76,6 @@ def build_markers(
                 kind="Embed",
                 item_id=f"embed:{embed.id}",
                 position=fraction,
-                end_position=locator_end_fraction(
-                    locator,
-                    fragment_ranges,
-                    total_fragment_chars,
-                    page_count,
-                    pdf_page_heights,
-                ),
                 tone="Warning"
                 if embed.resolution_status in ("failed", "unsupported")
                 else "Neutral",
@@ -130,13 +109,6 @@ def build_markers(
                     kind=cast(ReaderDocumentMapMarkerKind, item.kind),
                     item_id=item.id,
                     position=fraction,
-                    end_position=locator_end_fraction(
-                        locator_json(group.resolution.anchor.locator),
-                        fragment_ranges,
-                        total_fragment_chars,
-                        page_count,
-                        pdf_page_heights,
-                    ),
                     tone=tones[item.kind],
                     label=item.label,
                     preview=preview,
@@ -151,7 +123,6 @@ def _marker(
     kind: ReaderDocumentMapMarkerKind,
     item_id: str,
     position: float,
-    end_position: float | None,
     tone: ReaderDocumentMapMarkerTone,
     label: str,
     preview: str | None,
@@ -160,8 +131,7 @@ def _marker(
         id=f"marker:{kind}:{item_id}",
         kind=kind,
         item_id=item_id,
-        position=position,
-        end_position=present(end_position) if end_position is not None else absent(),
+        position=min(1.0, max(0.0, position)),
         tone=tone,
         label=label,
         preview=present(preview) if preview else absent(),
@@ -174,12 +144,9 @@ def _document_embed_locator(
 ) -> dict[str, object] | None:
     if embed.locator.fragment_id is None or embed.locator.canonical_start_offset is None:
         return None
-    locator: dict[str, object] = {
+    return {
         "type": "web_text_offsets",
         "media_id": str(media_id),
         "fragment_id": str(embed.locator.fragment_id),
         "start_offset": embed.locator.canonical_start_offset,
     }
-    if embed.locator.canonical_end_offset is not None:
-        locator["end_offset"] = embed.locator.canonical_end_offset
-    return locator

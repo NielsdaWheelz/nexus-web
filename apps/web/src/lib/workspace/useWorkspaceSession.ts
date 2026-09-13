@@ -26,7 +26,10 @@ export function useWorkspaceSession(state: WorkspaceState, mounted: boolean): vo
     if (workspaceStatesEqual(state, lastSavedRef.current)) {
       return;
     }
-    const timer = setTimeout(() => {
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+    }
+    debounceRef.current = setTimeout(() => {
       debounceRef.current = null;
       const snapshot = stateRef.current;
       lastSavedRef.current = snapshot;
@@ -34,15 +37,6 @@ export function useWorkspaceSession(state: WorkspaceState, mounted: boolean): vo
         handleUnauthenticatedApiError(error);
       });
     }, WORKSPACE_SESSION_SYNC_DEBOUNCE_MS);
-    debounceRef.current = timer;
-    return () => {
-      // An obsolete capture cannot write after its host or state is replaced.
-      // Page hide flushes explicitly while this lifecycle still owns the state.
-      clearTimeout(timer);
-      if (debounceRef.current === timer) {
-        debounceRef.current = null;
-      }
-    };
   }, [mounted, state]);
 
   // FLUSH — keepalive PUT of any pending write on page hide / background.

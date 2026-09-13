@@ -89,28 +89,6 @@ def _container_config(image: str, service: str) -> dict[str, object]:
     }
 
 
-def _write_container_resource_cgroup(
-    root: Path,
-    service: str,
-    container: dict[str, object],
-) -> None:
-    relative = f"system.slice/docker-{container['id']}.scope"
-    proc = root / "proc" / str(container["pid"])
-    proc.mkdir(parents=True, exist_ok=True)
-    (proc / "cgroup").write_text(f"0::/{relative}\n", encoding="ascii")
-    cgroup = root / "sys/fs/cgroup" / relative
-    cgroup.mkdir(parents=True, exist_ok=True)
-    reservation, memory, pids = _RESOURCE_LIMITS[service]
-    for name, value in (
-        ("memory.low", reservation),
-        ("memory.max", memory),
-        ("memory.swap.max", 0),
-        ("memory.swap.current", 0),
-        ("pids.max", pids),
-    ):
-        (cgroup / name).write_text(f"{value}\n", encoding="ascii")
-
-
 @dataclass(frozen=True, slots=True)
 class HostOracleReconcileHarness:
     root: Path
@@ -210,19 +188,15 @@ class HostOracleReconcileHarness:
         caddy_path = root / "etc/nexus/Caddyfile"
         caddy_path.write_text("test-caddy\n", encoding="utf-8")
         caddy_path.chmod(0o444)
-        player_protocol_corpus = (repo_root / "testdata/android/player-protocol.json").read_bytes()
 
         bundle = root / "opt/nexus/releases" / source_sha
         for relative, data in {
             "Caddyfile": b"test-caddy\n",
             "candidate-manifest.json": _canonical_json(candidate),
             "docker-compose.yml": b"name: nexus\n",
-            "nexus-codex-agent-host.apparmor": b"profile nexus-codex-agent-host {}\n",
-            "prove-codex-capacity.sh": b"#!/usr/bin/env bash\n# immutable capacity wrapper\n",
             "release.py": b"# immutable release controller\n",
             "python/nexus/__init__.py": b"",
             "python/nexus/release_artifact.py": b"# immutable artifact decoder\n",
-            "testdata/android/player-protocol.json": player_protocol_corpus,
         }.items():
             path = bundle / relative
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -234,18 +208,11 @@ class HostOracleReconcileHarness:
             "Caddyfile": b"test-repair-caddy\n",
             "candidate-manifest.json": _canonical_json(repair_candidate),
             "docker-compose.yml": b"name: nexus\n",
-            "nexus-codex-agent-host.apparmor": (
-                repo_root / "deploy/hetzner/nexus-codex-agent-host.apparmor"
-            ).read_bytes(),
-            "prove-codex-capacity.sh": (
-                repo_root / "deploy/hetzner/prove-codex-capacity.sh"
-            ).read_bytes(),
             "release.py": (repo_root / "deploy/hetzner/release.py").read_bytes(),
             "python/nexus/__init__.py": (repo_root / "python/nexus/__init__.py").read_bytes(),
             "python/nexus/release_artifact.py": (
                 repo_root / "python/nexus/release_artifact.py"
             ).read_bytes(),
-            "testdata/android/player-protocol.json": player_protocol_corpus,
         }.items():
             path = repair_bundle / relative
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -272,13 +239,10 @@ class HostOracleReconcileHarness:
                 },
                 "id": character * 64,
                 "image_id": image_id,
-                "pid": 4400 + int(character),
                 "running": True,
             }
             for service, character, image_id, image in container_specs
         }
-        for service, container in containers.items():
-            _write_container_resource_cgroup(root, service, container)
         state_path = root / "fake-oracle-host-state.json"
         _save_state(
             state_path,
@@ -583,7 +547,6 @@ def _container_inspect(state: dict[str, Any], container_id: str) -> dict[str, ob
             "Health": health,
             "OOMKilled": False,
             "Paused": False,
-            "Pid": container["pid"] if container["running"] else 0,
             "Restarting": False,
             "Running": container["running"],
         },
@@ -900,10 +863,7 @@ def fake_docker_main() -> int:
     elif arguments[0] == "start":
         container_ids = arguments[1:]
         for container_id in container_ids:
-            container = _container_for_id(state, container_id)
-            container["running"] = True
-            service = next(name for name, item in state["containers"].items() if item is container)
-            _write_container_resource_cgroup(Path(state["root"]), service, container)
+            _container_for_id(state, container_id)["running"] = True
         state["start_calls"].append(container_ids)
     elif arguments[0] == "logs":
         target = arguments[-1]
@@ -1014,19 +974,7 @@ class _FakeOpener:
         state = _load_state(self._state_path)
         url = str(request.full_url)
         if url == "https://web.example.test/version":
-            player_protocol_corpus = (
-                Path(state["root"])
-                / "opt/nexus/releases"
-                / str(state["source_sha"])
-                / "testdata/android/player-protocol.json"
-            ).read_bytes()
-            payload: object = {
-                "source_sha": state["source_sha"],
-                "player_protocol": {
-                    "version": 2,
-                    "contract_sha256": hashlib.sha256(player_protocol_corpus).hexdigest(),
-                },
-            }
+            payload: object = {"source_sha": state["source_sha"]}
         elif url == "https://api.example.test/version":
             payload = {
                 "data": {

@@ -1,7 +1,8 @@
 diff --git a/apps/web/src/components/PdfReader.tsx b/apps/web/src/components/PdfReader.tsx
 --- a/apps/web/src/components/PdfReader.tsx
 +++ b/apps/web/src/components/PdfReader.tsx
-@@ -2539,23 +2539,3 @@ export default function PdfReader({
+@@ -2603,26 +2603,6 @@ export default function PdfReader({
+           createdHighlight = response.data;
          }
  
 -        if (
@@ -24,4 +25,6 @@ diff --git a/apps/web/src/components/PdfReader.tsx b/apps/web/src/components/Pdf
 -            );
 -          });
 -        }
+         setLocalHighlightRefreshToken((value) => value + 1);
          onHighlightsMutated?.();
+         clearSelection();

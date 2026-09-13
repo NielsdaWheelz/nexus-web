@@ -4,7 +4,6 @@ import argparse
 import json
 import os
 import re
-import stat
 import subprocess
 import sys
 import time
@@ -13,6 +12,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import TextIO
 
+from nexus_test_control.android_visual import DEVICE_ALIASES, validate_owned_path
 from nexus_test_control.evidence import (
     EVIDENCE_SCHEMA_VERSION,
     CapabilityEvidence,
@@ -21,7 +21,6 @@ from nexus_test_control.evidence import (
     PeakOwnedMemory,
     ProveEvidence,
     RunEvidence,
-    StandardInvocationInputs,
     diagnostic_evidence_json,
     evidence_json,
     execution_input_fingerprint,
@@ -32,10 +31,8 @@ from nexus_test_control.evidence import (
 )
 from nexus_test_control.memory import OwnedMemorySampler, measure_owned_memory, measured
 from nexus_test_control.model import (
-    ANDROID_VISUAL_DEVICE_ALIASES,
     DEFERRED_CAPABILITY_OWNER,
     WORKFLOW_REGISTRY,
-    AndroidVisualInputs,
     Capability,
     RunStatus,
     Selection,
@@ -68,23 +65,27 @@ from nexus_test_control.sensitivity import (
     canonical_proof,
     declared_fault_for_proof,
     prove_many,
-    workflow_sensitivity_request,
 )
 from nexus_test_control.sensitivity import (
     prove as prove_sensitivity,
 )
 from nexus_test_control.services import clean_owned_runtime, new_run_id, test_environment
 
-_PROOF_RUNNERS = frozenset({"gradle", "node-test", "playwright", "pytest", "static", "vitest"})
+_PROOF_RUNNERS = frozenset({"gradle", "playwright", "pytest", "static", "vitest"})
 _FAULT_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 _RUN_ID = re.compile(r"[0-9a-f]{16}\Z")
-_RUN_CLAIM_DESCRIPTOR = re.compile(r"[1-9][0-9]*\Z")
-_RUN_CLAIM_ENV = "NEXUS_TEST_RUN_CLAIM_FD"
-_RUN_CLAIM_VERSION = 1
+_HEAD_SHA = re.compile(r"[0-9a-f]{40}\Z")
 
 
 class ControlPlaneError(ValueError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class AndroidVisualRequest:
+    sha: str
+    path: str
+    device: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,7 +94,7 @@ class WorkflowCommand:
     base: str | None = None
     focus: tuple[str, ...] = ()
     ui: bool = False
-    android_visual: AndroidVisualInputs | None = None
+    android_visual: AndroidVisualRequest | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,9 +140,7 @@ def parser() -> argparse.ArgumentParser:
     android_visual = workflow_parsers[Workflow.ANDROID_VISUAL]
     android_visual.add_argument("--sha", required=True)
     android_visual.add_argument("--path", required=True)
-    android_visual.add_argument(
-        "--device", default="primary", choices=sorted(ANDROID_VISUAL_DEVICE_ALIASES)
-    )
+    android_visual.add_argument("--device", default="primary", choices=sorted(DEVICE_ALIASES))
 
     prove = commands.add_parser("prove")
     prove.add_argument("--proof", required=True)
@@ -172,13 +171,15 @@ def parse_command(argv: Sequence[str]) -> Command:
         _validate_git_ref(parsed.base, argument_parser)
         return WorkflowCommand(Workflow.CONFIDENCE, parsed.base)
     if command == Workflow.ANDROID_VISUAL.value:
+        if _HEAD_SHA.fullmatch(parsed.sha) is None:
+            argument_parser.error("--sha must be a 40-character lowercase git SHA")
         try:
-            inputs = AndroidVisualInputs(parsed.sha, parsed.path, parsed.device)
+            validate_owned_path(parsed.path)
         except ValueError as error:
             argument_parser.error(str(error))
         return WorkflowCommand(
             Workflow.ANDROID_VISUAL,
-            android_visual=inputs,
+            android_visual=AndroidVisualRequest(parsed.sha, parsed.path, parsed.device),
         )
     if command in {workflow.value for workflow in WORKFLOW_REGISTRY}:
         return WorkflowCommand(Workflow(command))
@@ -291,12 +292,10 @@ def _execute_workflow(
     started = time.monotonic_ns()
     reporter.arm(started)
     run_id, results_directory = _claim_results_directory(repo_root)
-    _publish_run_claim(environment, run_id)
     run_context = RunContextRecorder()
     invocation = InvocationEvidence(
         ui=command.ui,
         input_fingerprint=execution_input_fingerprint(environment),
-        inputs=command.android_visual or StandardInvocationInputs(),
     )
     git_sha: str | None = None
     base_sha: str | None = None
@@ -310,7 +309,6 @@ def _execute_workflow(
         "NEXUS_TEST_RUN_ID": run_id,
         "PARSER_TEMP_ROOT": str(results_directory / "parser-tmp"),
     }
-    owned_environment.pop(_RUN_CLAIM_ENV, None)
     if command.android_visual is not None:
         owned_environment["NEXUS_ANDROID_VISUAL_SHA"] = command.android_visual.sha
         owned_environment["NEXUS_ANDROID_VISUAL_PATH"] = command.android_visual.path
@@ -342,7 +340,6 @@ def _execute_workflow(
                 command.ui,
                 frozenset(item.proof for item in sensitivity),
                 run_context=run_context,
-                candidate_sha=git_sha,
             )
             failure_owner = WORKFLOW_REGISTRY[command.workflow].requirements[0].capability
             workflow_run = run_workflow(
@@ -382,7 +379,9 @@ def _execute_workflow(
     if not peak_owned_mib.measurement_complete and all(
         item.status is RunStatus.PASS for item in capabilities
     ):
-        detail = memory_sampler.failure_detail or ("owned memory could not be measured truthfully")
+        detail = memory_sampler.failure_detail or (
+            "owned container memory could not be measured truthfully"
+        )
         reporter.report(
             output,
             owner="memory",
@@ -414,53 +413,6 @@ def _execute_workflow(
     relative_summary = write_summary(repo_root, evidence, environment_secrets(environment))
     output.write(f"{command.workflow.value}: {evidence.status.value}; summary={relative_summary}\n")
     return 0 if evidence.status is RunStatus.PASS else 1
-
-
-def _publish_run_claim(environment: Mapping[str, str], run_id: str) -> None:
-    """Transfer the top-level run identity through an inherited private file.
-
-    The descriptor is a one-use control-plane channel. It is closed before any
-    capability process starts and removed from the capability environment, so
-    it cannot become an execution input or leak into a child process.
-    """
-    raw_descriptor = environment.get(_RUN_CLAIM_ENV)
-    if raw_descriptor is None:
-        return
-    if _RUN_CLAIM_DESCRIPTOR.fullmatch(raw_descriptor) is None:
-        raise ControlPlaneError("run claim descriptor is not canonical")
-    descriptor = int(raw_descriptor)
-    if descriptor <= 2:
-        raise ControlPlaneError("run claim descriptor must not be a standard stream")
-    try:
-        descriptor_stat = os.fstat(descriptor)
-    except OSError as error:
-        raise ControlPlaneError("run claim descriptor is not open") from error
-    try:
-        if not stat.S_ISREG(descriptor_stat.st_mode):
-            raise ControlPlaneError("run claim descriptor must name a regular file")
-        if descriptor_stat.st_uid != os.getuid():
-            raise ControlPlaneError("run claim descriptor must be owned by the test user")
-        if stat.S_IMODE(descriptor_stat.st_mode) != 0o600:
-            raise ControlPlaneError("run claim descriptor must be private")
-        if descriptor_stat.st_size != 0 or os.lseek(descriptor, 0, os.SEEK_CUR) != 0:
-            raise ControlPlaneError("run claim descriptor must be empty")
-        receipt = {
-            "directory": f"test-results/runs/{run_id}",
-            "run_id": run_id,
-            "version": _RUN_CLAIM_VERSION,
-        }
-        payload = (json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n").encode()
-        with os.fdopen(descriptor, "wb", closefd=False) as target:
-            target.write(payload)
-            target.flush()
-            os.fsync(target.fileno())
-    except OSError as error:
-        raise ControlPlaneError("could not publish the exact run claim") from error
-    finally:
-        try:
-            os.close(descriptor)
-        except OSError:
-            pass
 
 
 def _execute_diagnose(
@@ -517,7 +469,6 @@ def _execute_diagnose(
         original.invocation.ui,
         frozenset(item.proof for item in original.sensitivity),
         run_context=run_context,
-        candidate_sha=git_sha,
     )
     owned_environment = {
         **environment,
@@ -526,10 +477,6 @@ def _execute_diagnose(
         "NEXUS_TEST_RUN_ID": run_id,
         "PARSER_TEMP_ROOT": str(absolute_results_directory / "parser-tmp"),
     }
-    if isinstance(original.invocation.inputs, AndroidVisualInputs):
-        owned_environment["NEXUS_ANDROID_VISUAL_SHA"] = original.invocation.inputs.sha
-        owned_environment["NEXUS_ANDROID_VISUAL_PATH"] = original.invocation.inputs.path
-        owned_environment["NEXUS_ANDROID_VISUAL_DEVICE"] = original.invocation.inputs.device
     try:
         workflow_run = run_workflow(
             context,
@@ -756,25 +703,6 @@ def _execute_prove(
                 detail=detail,
             )
     peak_owned_mib = measured(memory_sampler)
-    if status is RunStatus.PASS and not peak_owned_mib.measurement_complete:
-        detail = memory_sampler.failure_detail or ("owned memory could not be measured truthfully")
-        reporter.report(
-            output,
-            owner="prove",
-            status=RunStatus.FAIL,
-            kind="measurement_failure",
-            detail=detail,
-        )
-        artifacts = tuple(
-            dict.fromkeys(
-                artifact
-                for record in sensitivity
-                for attempt in (record.red, record.green)
-                for artifact in attempt.artifacts
-            )
-        )
-        sensitivity = ()
-        status = RunStatus.FAIL
     run_context_artifact = _write_run_context(repo_root, run_id, run_context)
     evidence = ProveEvidence(
         repo_root=repo_root,
@@ -825,12 +753,13 @@ def _workflow_sensitivity(
             by_proof.setdefault(item.proof, []).append(item.path)
     requests: list[SensitivityRequest] = []
     for proof, paths in sorted(by_proof.items()):
+        fault_id = declared_fault_for_proof(repo_root, proof)
         requests.append(
-            workflow_sensitivity_request(
-                repo_root,
+            SensitivityRequest(
                 proof=proof,
                 changed_paths=tuple(paths),
-                base_sha=base_sha,
+                method=SensitivityMethod.FAULT if fault_id else SensitivityMethod.BASE,
+                against=fault_id or base_sha,
             )
         )
     return prove_many(

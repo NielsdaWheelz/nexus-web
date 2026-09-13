@@ -113,43 +113,6 @@
   font-weight: var(--weight-semibold);
 }
 
-/* The Solar's display face belongs to empty-state headlines only ("No chats
-   yet."): Cormorant 300, never below the 20px its hairline serifs need. A
-   neutral notice outside the pane empty slot (progress lines, inline status)
-   keeps the UI voice, and toasts, HUD signals, and every other tone stay
-   Inter — an alert is not display copy. The notice is flow-laid and wraps, so
-   the taller line costs nothing but height. */
-:global([data-theme="elvish"] [data-pane-empty]) .notice.Neutral .title {
-  font-family: var(--font-display);
-  font-size: var(--text-xl);
-  font-weight: 300;
-  letter-spacing: 0.01em;
-  font-variant-numeric: lining-nums tabular-nums;
-}
-
-/* The Eärendil star, the wayfinder's mark (§8.8): six points, never Fëanor's
-   eight — that is a craft guild's badge and the wrong connotation for a
-   knowledge instrument. This is the single ornament in the app allowed to take
-   flow space; the margin stays inside the notice, so nothing outside the empty
-   slot moves. */
-:global([data-theme="elvish"] [data-pane-empty]) .notice.Neutral .title::before {
-  content: "";
-  display: block;
-  inline-size: 28px;
-  block-size: 28px;
-  margin: 0 auto var(--space-2);
-  background-color: var(--ring);
-  opacity: calc(0.9 * var(--ornament));
-  mask-image: var(--elvish-star);
-  mask-repeat: no-repeat;
-  mask-size: 28px 28px;
-  mask-position: center;
-  -webkit-mask-image: var(--elvish-star);
-  -webkit-mask-repeat: no-repeat;
-  -webkit-mask-size: 28px 28px;
-  -webkit-mask-position: center;
-}
-
 .message,
 .supporting {
   margin-top: 3px;
@@ -235,31 +198,6 @@
 
 .Danger {
   --feedback-tone: var(--danger);
-}
-
-/* The Solar — §8.10, the hearth rim: one brass hairline that draws left to
-   right as the toast enters, and nothing else. A toast is transient, so it
-   takes no card ornament and its geometry, shadow and every other signal role
-   are untouched. `.signal::before` is already the tone edge, so the rim takes
-   `::after`; the signal's `overflow: hidden` clips it to the corner radius. */
-:global([data-theme="elvish"]) .hud::after {
-  content: "";
-  position: absolute;
-  inset: 0 0 auto 0;
-  block-size: 1px;
-  background-color: var(--accent);
-  opacity: calc(1 * var(--ornament));
-  pointer-events: none;
-  transform-origin: left center;
-  /* Token duration only: reduced motion zeroes it and `forwards` lands the rim
-     on its end state instantly rather than dropping it. */
-  animation: hearthRimIn var(--duration-fast) var(--ease-glide) forwards;
-}
-
-@keyframes hearthRimIn {
-  from {
-    transform: scaleX(0);
-  }
 }
 
 @keyframes feedbackIn {

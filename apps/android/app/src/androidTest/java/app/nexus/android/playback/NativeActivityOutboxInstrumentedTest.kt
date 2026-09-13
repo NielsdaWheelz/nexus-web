@@ -17,7 +17,7 @@ import java.util.UUID
 @RunWith(AndroidJUnit4::class)
 class NativeActivityOutboxInstrumentedTest {
     @Test
-    fun committedSpanSurvivesStoreRecreationAndReplaysItsOriginalCaptureKey() {
+    fun `committed span survives store recreation and replays its original capture key`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val databaseName = "activity-outbox-${UUID.randomUUID()}.db"
         val accountId = UUID.randomUUID()
@@ -52,7 +52,7 @@ class NativeActivityOutboxInstrumentedTest {
     }
 
     @Test
-    fun versionOneUpgradePreservesAPendingRowAndBackfillsItsOccurrenceInstant() {
+    fun `version one upgrade preserves a pending row and backfills its occurrence instant`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val databaseName = "activity-outbox-v1-${UUID.randomUUID()}.db"
         val accountId = UUID.randomUUID()

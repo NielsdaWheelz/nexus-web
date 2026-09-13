@@ -141,8 +141,6 @@ function currentTheme(): MachineDocumentTheme {
   if (typeof document === "undefined") return "dark";
   const explicit = document.documentElement.dataset.theme;
   if (explicit === "light" || explicit === "dark") return explicit;
-  // The sealed document knows only day and night; the Solar is a dark room.
-  if (explicit === "elvish") return "dark";
   return window.matchMedia?.("(prefers-color-scheme: light)").matches
     ? "light"
     : "dark";

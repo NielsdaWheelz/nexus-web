@@ -15,7 +15,6 @@ export type ReaderTargetKind =
   | "highlight"
   | "page"
   | "loc"
-  | "text"
   | "t";
 
 export interface ReaderTarget {
@@ -32,7 +31,7 @@ interface TextOffsets {
 
 export type ResolvedHighlightReaderTarget =
   | ({ kind: "WebTextOffsets" } & TextOffsets)
-  | ({ kind: "EpubTextOffsets" } & TextOffsets)
+  | ({ kind: "EpubTextOffsets"; sectionId: string } & TextOffsets)
   | ({
       kind: "TranscriptTextOffsets";
       timeRange: Presence<{ startMs: number; endMs: number }>;
@@ -49,7 +48,6 @@ const KINDS: readonly ReaderTargetKind[] = [
   "highlight",
   "page",
   "loc",
-  "text",
   "t",
 ];
 
@@ -67,19 +65,8 @@ export function parseReaderTargetHash(
     if (!/^[0-9]+$/.test(value) || value === "0") return null;
   } else if (kind === "t") {
     if (!/^[0-9]+$/.test(value)) return null;
-  } else if (kind === "text" && parseReaderTextTarget(value) === null) {
-    return null;
   }
   return { kind: kind as ReaderTargetKind, value };
-}
-
-export function parseReaderTextTarget(value: string): TextOffsets | null {
-  const match = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):(0|[1-9][0-9]*):(0|[1-9][0-9]*)$/.exec(value);
-  if (!match) return null;
-  const startOffset = Number(match[2]);
-  const endOffset = Number(match[3]);
-  if (!Number.isSafeInteger(startOffset) || !Number.isSafeInteger(endOffset) || startOffset > endOffset || endOffset > 2 ** 31 - 1) return null;
-  return { fragmentId: match[1]!, startOffset, endOffset };
 }
 
 function decodeBoundedInteger(
@@ -164,14 +151,25 @@ export function decodeResolvedHighlightReaderTarget(
       value,
       [
         "kind",
+        "section_id",
         "fragment_id",
         "start_offset",
         "end_offset",
       ],
       "highlight reader target",
     );
+    const sectionId = expectString(
+      row.section_id,
+      "highlight reader target.section_id",
+    );
+    if (!sectionId) {
+      throw new TypeError(
+        "highlight reader target.section_id must not be empty",
+      );
+    }
     return {
       kind,
+      sectionId,
       ...decodeTextOffsets(row, "highlight reader target"),
     };
   }

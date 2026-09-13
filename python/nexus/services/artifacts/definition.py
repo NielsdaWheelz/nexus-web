@@ -21,7 +21,7 @@ from nexus.services.artifacts.dossier_types import (
 class DossierDefinition:
     """The subject-invariant dossier contract."""
 
-    # One durable job kind dispatches every subject through the registration owner.
+    # One durable job kind dispatches every subject through the binding registry.
     job_kind: str
     # The durable-op conflict/dedupe key is per-attempt: ``{prefix}:{build_id}``.
     dispatch_dedupe_prefix: str

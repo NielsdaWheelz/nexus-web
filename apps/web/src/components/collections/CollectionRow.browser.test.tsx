@@ -73,15 +73,7 @@ const MEDIA_SNAPSHOT = {
       availability: { kind: "Available" },
       state: "Unread",
     },
-    {
-      kind: "Recovery",
-      availability: { kind: "Available" },
-      offer: {
-        kind: "RetrySource",
-        expectedAttemptId: "44444444-4444-4444-8444-444444444444",
-        input: "RefetchSource",
-      },
-    },
+    { kind: "RetryProcessing", availability: { kind: "Available" } },
     { kind: "Share", availability: { kind: "Available" } },
     {
       kind: "LecternMembership",
@@ -98,7 +90,7 @@ const EXPECTED_MENU_ORDER = [
   "Add to Lectern",
   "Chat about this…",
   "Share…",
-  "Retry source processing",
+  "Retry processing",
   "Remove from Nexus",
 ];
 

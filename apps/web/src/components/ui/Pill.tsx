@@ -10,7 +10,7 @@ export type PillTone =
   | "accent"
   | "subtle";
 type PillShape = "pill" | "square";
-type PillSize = "xs" | "sm" | "md";
+type PillSize = "sm" | "md";
 
 interface PillProps extends HTMLAttributes<HTMLSpanElement> {
   tone?: PillTone;
@@ -35,7 +35,6 @@ const shapeClass: Record<PillShape, string> = {
 };
 
 const sizeClass: Record<PillSize, string> = {
-  xs: styles.sizeXs,
   sm: styles.sizeSm,
   md: styles.sizeMd,
 };

@@ -1,11 +1,5 @@
 # Chat Interface Hard Cutover
 
-> **Generation target amendment (2026-08-31):**
-> [`generation-backends-hard-cutover.md`](generation-backends-hard-cutover.md)
-> supersedes every response-profile, `profile_id`, fixed-model picker, and
-> `/llm-profiles` statement here. Chat submits one exact per-run
-> model/reasoning selection plus per-run tool authority.
-
 > **Finite-list update (2026-07-29):**
 > [`complete-collection-lists-hard-cutover.md`](complete-collection-lists-hard-cutover.md)
 > replaces the conversation-index continuation envelope and automatic
@@ -33,8 +27,7 @@ reader-selection, or pane-routing semantics.
 
 1. Assistant prose uses the normal sans text register in chat. `MachineText`
    remains the owner for dossiers, Synapse, Dawn, and other machine artifacts.
-2. Chat exposes one exact per-run route/model/reasoning picker from the complete
-   configured catalog; write authority remains a separate per-run control.
+2. Provider privacy and retention metadata has no composer chrome.
 3. Conversation-row activation is fixed in shared `ResourceRow`; no
    conversation-only click handler or nested interactive row is added.
 4. Inline citations remain. The repeated source list and run diagnostics become
@@ -50,7 +43,7 @@ reader-selection, or pane-routing semantics.
 - Make chat-list activation work across the row's inert area.
 - Prevent quote or message content from widening the pane.
 - Keep actionable writes, failures, warnings, and active work visible.
-- Replace stringly send state with one exhaustive typed contract.
+- Replace stringly send/privacy state with exhaustive typed contracts.
 - Delete superseded components, CSS, tests, and documentation requirements.
 
 ## 4. Non-goals
@@ -97,9 +90,9 @@ fork strip, only when forks exist
 - Inline citation markers remain active in the answer.
 - `Sources (N)` contains the current numbered source links and is closed by
   default.
-- `Details` contains the exact run selection, billing disclosure, usage,
-  tool/retrieval counts, context references, and integrity notices. Only a
-  warning count may decorate the closed summary.
+- `Details` contains model/profile, reasoning, usage, cost, tool/retrieval
+  counts, context references, and integrity notices. Only a warning count may
+  decorate the closed summary.
 - The existing colophon is deleted; it duplicates `Details`.
 - Fork and Walk move below the answer. On hover-capable devices they appear on
   turn hover/focus; on touch they remain visible.
@@ -116,9 +109,8 @@ fork strip, only when forks exist
 - A blocked Enter/send attempt does not clear the draft or move focus.
 - The blocked reason is available to assistive technology through one polite
   live region; surrounding visible state supplies the sighted explanation.
-- One compact exact-selection trigger opens the complete route/model/reasoning
-  picker. A separate checkbox grants additive writes for this run only and is
-  off by default.
+- Profiles render no privacy or retention copy in the composer.
+- Profile and reasoning selectors remain native `Select` controls.
 
 ### 5.3 Quote
 
@@ -165,12 +157,13 @@ conversation tree/run state
   -> ChatSendCapability
   -> ChatComposer
 
-generation_catalog
-  -> GenerationCatalog
-  -> GET /llm-catalog
-  -> useGenerationCatalog
+LLM profile registry
+  -> LlmProfileOut
+  -> GET /llm-profiles
+  -> useChatProfiles
   -> ChatComposer
-  -> GenerationSelectionPicker
+  -> resolveChatProfileSelection
+  -> ChatProfilePicker
 
 ConversationMessage
   -> MessageRow
@@ -191,8 +184,9 @@ ConversationMessage
 | Consequential writes + Undo | `AssistantWriteTrail` | `AssistantMessage` |
 | Run/tool/source diagnostics | `AssistantDetails` | `AssistantMessage` |
 | Send availability derivation | `useConversation` | `ChatComposer` |
-| Causal inherited exact selection | `useConversation` | `ChatComposer` |
-| Catalog/selection readiness | `useGenerationCatalog` | `ChatComposer` |
+| Causal inherited profile selection | `useConversation` | `ChatComposer` |
+| Ready-catalog selection precedence | `resolveChatProfileSelection` | `ChatComposer` |
+| Profile privacy classification | `llm_profiles.py` registry | profile API/UI |
 | Quote geometry and disclosure | `QuotedPassageCard` | composer, user turn |
 | Collection row hit target | `ResourceRow` | every collection row |
 | Conversation title/count/time copy | `lib/conversations/presentation.ts` | list, destination picker |
@@ -217,14 +211,48 @@ export type ChatSendCapability =
 
 `useConversation` derives exactly one variant. `ChatComposer` exhaustively maps
 it to send gating and accessible copy. Local `sending`, `reconciling`, empty
-draft, missing exact selection, and pending quote hydration remain composer-owned
+draft, missing profile, and pending quote hydration remain composer-owned
 conditions; they are not added to this caller capability.
 
-Exact-selection continuation is governed by
-`generation-backends-hard-cutover.md`: `ChatComposer` owns the decoded catalog
-and resolves explicit draft choice, causal assistant-run selection, then the
-developer seed for a new composer. `GenerationSelectionPicker` owns only the
-compound choice; it never invents a default, fallback, or qualification rule.
+Profile/reasoning continuation is governed by
+`chat-continuation-selection-hard-cutover.md`: `ChatComposer` owns the cached
+catalog and resolves explicit draft choice, causal assistant-run selection, and
+the exact product default in that order. `ChatProfilePicker` is a pure
+controlled renderer and owns no fetching, defaulting, validation, or mount-time
+mutation.
+
+### 7.2 Profile privacy API
+
+Hard-replace `privacy_notice: string` with this nested union on every profile:
+
+```json
+{
+  "privacy": {
+    "kind": "Standard",
+    "notice": "Standard provider retention. ..."
+  }
+}
+```
+
+```json
+{
+  "privacy": {
+    "kind": "ExceptionalRetention",
+    "notice": "Anthropic retains ..."
+  }
+}
+```
+
+Rules:
+
+- Wire discriminator values are exactly `Standard` and
+  `ExceptionalRetention`.
+- The registry owns classification and copy.
+- `LlmProfileOut` projects the union; the route and BFF remain thin.
+- The browser exhaustively switches on `privacy.kind`.
+- Delete `privacy_notice` everywhere. No optional field, decoder fallback,
+  dual payload, version, or compatibility alias remains.
+- No acknowledgement state is persisted.
 
 ## 8. Layout and interaction rules
 
@@ -251,11 +279,8 @@ compound choice; it never invents a default, fallback, or qualification rule.
 - Rename the retained inspector to `AssistantDetails`; delete the old files.
 - Delete `Colophon.tsx`, its CSS, both tests, imports, and helpers.
 - Delete visible role-label markup and orphaned kicker/signature styles.
-- Delete `privacy_notice`, profile privacy variants, fixed reasoning options,
-  `sendDisabledReason`, and `ChatComposer.disabledReason`, including their
-  tests, comments, and fixtures. The surviving selection wire is the strict
-  tagged contract in the
-  [generation backends cutover](generation-backends-hard-cutover.md).
+- Delete `privacy_notice`, `sendDisabledReason`, and
+  `ChatComposer.disabledReason`, including their tests, comments, and fixtures.
 - Remove the machine-hand guard that requires chat Markdown to be inside
   `MachineText`; retain token ownership and non-chat consumer guards.
 - Update superseded requirements in:
@@ -269,10 +294,10 @@ compound choice; it never invents a default, fallback, or qualification rule.
 | --- | --- |
 | Transcript | `components/chat/{MessageRow,UserMessage,AssistantMessage,AssistantAnswer,AssistantWriteTrail,MessageSourcesDisclosure,AssistantDetails}.*`; `components/ui/MarkdownMessage.module.css` |
 | Delete | `components/chat/{AssistantEvidenceDisclosure,MessageFootnotes,AssistantTrustInspector,Colophon}.*` after replacements land in the same change |
-| Composer | `components/chat/{ChatComposer,GenerationSelectionPicker,useGenerationCatalog,useConversation}.*` |
+| Composer | `components/chat/{ChatComposer,ChatProfilePicker,useConversation}.*` |
 | Quote | `components/chat/QuotedPassageCard.*` |
 | List | `components/ui/ResourceRow.*`; `lib/conversations/presentation.ts` (new); `lib/collections/presenters/conversation.ts`; `components/chat/ConversationDestinationOverlay.tsx`; `app/(authenticated)/conversations/ConversationsPaneBody.tsx` |
-| API/schema | `python/nexus/services/{generation_catalog,generation_policy,generation_selection}.py`; `python/nexus/schemas/llm.py`; exact-selection tests; `lib/conversations/types.ts` |
+| API/schema | `python/nexus/services/llm_profiles.py`; `python/nexus/schemas/llm.py`; `python/tests/{test_llm_profiles,test_llm_schemas}.py`; `lib/conversations/types.ts` |
 | Guards/docs | `lib/ui/machineHandCutover.guards.test.ts`; the five documents in §9 |
 | Journey | `e2e/tests/conversations.spec.ts` |
 
@@ -281,7 +306,7 @@ models, reader-selection schemas, or BFF behavior.
 
 ## 11. Implementation order
 
-1. **Contracts:** add red tests; hard-replace the selection catalog and send
+1. **Contracts:** add red tests; hard-replace profile privacy and send
    capability types.
 2. **Transcript:** cut MachineText/labels/colophon; establish hierarchy and
    disclosures; delete old files in the same slice.
@@ -306,12 +331,9 @@ No slice may leave old and new contracts live together.
   remains available, and no red “wait” banner renders.
 - **AC-6:** Real composer errors remain visible and distinct from capability
   state.
-- **AC-7:** The composer renders the complete configured catalog, submits one
-  exact route/model/reasoning selection plus catalog revision, and never invents
-  a default, qualification, or fallback.
-- **AC-8:** `privacy_notice`, profile privacy variants, reasoning-option fields,
-  `sendDisabledReason`, and `ChatComposer.disabledReason` have zero production
-  or test references.
+- **AC-7:** Profiles render no privacy or retention chrome in the composer.
+- **AC-8:** `privacy_notice`, `sendDisabledReason`, and
+  `ChatComposer.disabledReason` have zero production or test references.
 - **AC-9:** A pending or sent quote with a long source name and unbroken content
   causes no pane-level overflow at `320 CSS px`; full quote disclosure works.
 - **AC-10:** Clicking title, metadata, or inert whitespace in a conversation row
@@ -329,8 +351,8 @@ No slice may leave old and new contracts live together.
 
 Write behavior tests first, then run only the focused owners:
 
-- backend catalog/exact-selection policy/schema tests;
-- `ChatComposer`, `GenerationSelectionPicker`, `useConversation`;
+- backend profile registry/schema tests;
+- `ChatComposer`, `ChatProfilePicker`, `useConversation`;
 - `MessageRow`, `AssistantMessage`, quote, and machine-hand guard tests;
 - `ResourceRow` and `ConversationsPaneBody`;
 - horizontal-overflow helper at `320px`, including long URL, identifier, code,

@@ -6,8 +6,14 @@ import {
 import type { ContributorCredit } from "@/lib/contributors/types";
 import { hasLegacyArtifactIdentityKey } from "@/lib/currentArtifactIdentity";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
-import { decodeSnakeCaseResourceActivation } from "@/lib/resources/activation";
+import type { ResourceActivation } from "@/lib/resources/activation";
 import { decodeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import {
+  expectExactRecord,
+  expectNullableString,
+  expectOneOf,
+  expectString,
+} from "@/lib/validation";
 import {
   RESULT_TYPE_VALUES,
   type SearchApiResult,
@@ -149,6 +155,32 @@ function hasExactKeys(
   );
 }
 
+function decodeSearchActivation(raw: unknown): ResourceActivation {
+  // justify-defect: /search is an owned same-system snake_case transport;
+  // alternate casing or malformed activation facts are contract drift.
+  const value = expectExactRecord(
+    raw,
+    ["resource_ref", "kind", "href", "unresolved_reason"],
+    "SearchResult.activation",
+  );
+  return {
+    resourceRef: expectString(
+      value.resource_ref,
+      "SearchResult.activation.resource_ref",
+    ),
+    kind: expectOneOf(
+      value.kind,
+      ["route", "external", "none"] as const,
+      "SearchResult.activation.kind",
+    ),
+    href: expectNullableString(value.href, "SearchResult.activation.href"),
+    unresolvedReason: expectNullableString(
+      value.unresolved_reason,
+      "SearchResult.activation.unresolved_reason",
+    ),
+  };
+}
+
 function normalizeContributorCredit(value: unknown): ContributorCredit | null {
   if (typeof value !== "object" || value === null) {
     return null;
@@ -273,10 +305,7 @@ function normalizeSearchResultOrNull(result: unknown): SearchApiResult | null {
   if (typeof row.actionSubjectRef !== "string") {
     return null;
   }
-  const activation = decodeSnakeCaseResourceActivation(
-    row.activation,
-    "SearchResult.activation",
-  );
+  const activation = decodeSearchActivation(row.activation);
   if (
     activation.resourceRef !== row.resource_ref ||
     activation.kind === "none"

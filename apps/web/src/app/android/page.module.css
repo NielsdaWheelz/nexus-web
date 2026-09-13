@@ -1,184 +1,89 @@
-.page {
-  display: flex;
-  width: 100%;
-  min-width: 0;
-  min-height: 100%;
-  max-width: 32rem;
-  margin-inline: auto;
-  flex-direction: column;
-  justify-content: center;
-  gap: var(--space-10);
-}
+/* /android is the public APK landing. It mirrors /login: one centered column,
+   wordmark up top, a single primary action, tertiary trust links, an escape
+   to sign-in. No editorial, no decorative panel. */
 
-.identity,
-.identityCopy,
-.release,
-.introduction,
-.verification {
+.container {
+  min-height: 100vh;
+  background: var(--surface-canvas);
   display: flex;
-  min-width: 0;
-  flex-direction: column;
-}
-
-.identity,
-.identityCopy {
   align-items: center;
+  justify-content: center;
+  padding: var(--space-10) var(--space-6);
 }
 
-.identity {
-  gap: var(--space-5);
+.frame {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  width: 100%;
+  max-width: 24rem;
 }
 
-.identityCopy {
+.heading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   gap: var(--space-2);
   text-align: center;
 }
 
-.brandMark {
-  width: var(--space-12);
-  height: var(--space-12);
-  flex: 0 0 auto;
+.headingMark {
   color: var(--accent);
-}
-
-.wordmark,
-.descriptor,
-.eyebrow,
-.title,
-.support,
-.accessNote,
-.verificationHeading,
-.verificationCopy,
-.installNote {
-  margin: 0;
+  margin-bottom: var(--space-1);
 }
 
 .wordmark {
+  margin: 0;
   color: var(--ink);
-  font-size: var(--text-3xl);
-  font-weight: var(--weight-semibold);
-  letter-spacing: var(--tracking-tight);
-  line-height: var(--leading-tight);
-}
-
-.descriptor {
-  max-width: 24ch;
-  color: var(--ink-muted);
-  font-family: var(--font-serif);
-  font-size: var(--text-lg);
-  line-height: var(--leading-normal);
-}
-
-.release {
-  gap: var(--space-6);
-}
-
-.introduction {
-  gap: var(--space-3);
-}
-
-.eyebrow {
-  color: var(--accent);
-  font-size: var(--text-sm);
-  letter-spacing: var(--tracking-wide);
-  text-transform: uppercase;
-}
-
-.title {
-  color: var(--ink);
+  font-family: var(--font-sans);
   font-size: var(--text-2xl);
   font-weight: var(--weight-semibold);
   letter-spacing: var(--tracking-tight);
   line-height: var(--leading-tight);
 }
 
-.support,
-.accessNote,
-.verificationCopy,
-.installNote {
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
-  line-height: var(--leading-relaxed);
-}
-
-.accessNote {
-  font-weight: var(--weight-medium);
-}
-
-.download {
-  width: 100%;
-}
-
-.verification {
-  gap: var(--space-3);
-  padding-top: var(--space-6);
-  border-top: 1px solid var(--edge);
-}
-
-.verificationHeading {
-  color: var(--ink);
-  font-size: var(--text-lg);
-  font-weight: var(--weight-semibold);
-  line-height: var(--leading-snug);
-}
-
-.verificationLinks {
+.subhead {
   margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  list-style: none;
-}
-
-.verificationLink,
-.returnAction,
-.footerLink {
-  min-height: var(--size-xl);
-  align-items: center;
-  text-underline-offset: 3px;
-}
-
-.verificationLink {
-  display: flex;
-  color: var(--ink);
-  font-size: var(--text-sm);
-  text-decoration: underline;
-}
-
-.verificationLink:hover,
-.returnAction:hover,
-.footerLink:hover {
-  color: var(--ink);
-}
-
-.returnNavigation,
-.footerNavigation {
-  display: flex;
-  justify-content: center;
-}
-
-.returnAction,
-.footerLink {
-  display: inline-flex;
   color: var(--ink-muted);
   font-size: var(--text-sm);
+  letter-spacing: var(--tracking-wide);
+}
+
+.links {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+
+.link {
+  color: var(--ink-muted);
   text-decoration: underline;
+  text-underline-offset: 2px;
+  transition: color var(--duration-fast) var(--ease-glide);
 }
 
-.footer {
-  padding-top: var(--space-2);
+.link:hover {
+  color: var(--ink);
 }
 
-.footerNavigation {
-  gap: var(--space-4);
+.returnLink {
+  margin: 0;
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+  text-align: center;
 }
 
-.footerLink {
-  padding-inline: var(--space-2);
+.returnLink a {
+  color: var(--ink-muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  transition: color var(--duration-fast) var(--ease-glide);
 }
 
-@media (min-width: 60rem) {
-  .page {
-    gap: var(--space-12);
-  }
+.returnLink a:hover {
+  color: var(--ink);
 }

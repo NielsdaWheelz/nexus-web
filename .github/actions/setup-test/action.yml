@@ -20,7 +20,7 @@ runs:
   steps:
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
-        go-version: "1.25.1"
+        go-version: "1.24"
 
     - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
       with:
@@ -42,44 +42,13 @@ runs:
 
     - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
 
-    # The protected release job runs on a persistent self-hosted host that may
-    # already carry these tools and may not grant passwordless sudo. Install
-    # only what is missing, and never crash setup: a genuinely absent tool is
-    # reported by the control plane as a fail-closed `not_run`, which is a
-    # verdict, whereas a setup crash produces no evidence at all.
     - name: Install platform static tools
       shell: bash
       run: |
-        set -euo pipefail
-        missing=()
-        for tool in cloud-init shellcheck; do
-          command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
-        done
-        if [ "${#missing[@]}" -eq 0 ]; then
-          echo "platform static tools already present"
-          exit 0
-        fi
-        if ! sudo -n true >/dev/null 2>&1; then
-          echo "::warning::missing ${missing[*]} and no passwordless sudo on this runner"
-          exit 0
-        fi
         sudo apt-get update
-        sudo apt-get install --yes --no-install-recommends "${missing[@]}"
-
-    - name: Detect container runtime
-      id: container
-      shell: bash
-      run: |
-        set -euo pipefail
-        if command -v docker >/dev/null 2>&1; then
-          echo "docker=true" >> "$GITHUB_OUTPUT"
-        else
-          echo "docker=false" >> "$GITHUB_OUTPUT"
-          echo "::warning::docker is absent; container-backed proof will be reported as not_run"
-        fi
+        sudo apt-get install --yes --no-install-recommends cloud-init shellcheck
 
     - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
-      if: steps.container.outputs.docker == 'true'
 
     - uses: supabase/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3.0.0
       with:
@@ -99,58 +68,9 @@ runs:
       shell: bash
       run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.8
 
-    - name: Install pinned Caddy process proof owner
-      shell: bash
-      run: |
-        go install github.com/caddyserver/caddy/v2/cmd/caddy@v2.11.4
-        caddy_bin="$(go env GOPATH)/bin/caddy"
-        go version -m "$caddy_bin" \
-          | grep -F $'\tmod\tgithub.com/caddyserver/caddy/v2\tv2.11.4\t'
-        "$caddy_bin" version >/dev/null
-        echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-
     - name: Install locked Python dependencies
       shell: bash
-      # Sensitivity builds fresh offline environments. Reinstalling hydrates
-      # every locked artifact even when a persistent runner's venv is current.
-      run: uv sync --all-extras --locked --reinstall --directory python
-
-    # The background worker's cgroup proofs need a rootless systemd user manager.
-    # The hosted runner must be provisioned; the protected self-hosted host may
-    # already carry one and may not grant passwordless sudo. Provision only what
-    # is missing and never crash setup: `doctor` reports an unusable delegate as
-    # a fail-closed verdict, whereas a setup crash produces no evidence at all.
-    - name: Provision the rootless systemd cgroup delegate
-      shell: bash
-      run: |
-        set -euo pipefail
-        runtime_dir="/run/user/$(id -u)"
-        if [ ! -S "$runtime_dir/bus" ]; then
-          if ! sudo -n true >/dev/null 2>&1; then
-            echo "::warning::no user systemd bus at $runtime_dir/bus and no passwordless sudo on this runner"
-            exit 0
-          fi
-          if ! dpkg-query --show dbus-user-session >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install --yes --no-install-recommends dbus-user-session
-          fi
-          sudo loginctl enable-linger "$(id -un)"
-          attempts=0
-          while [ ! -S "$runtime_dir/bus" ] && [ "$attempts" -lt 100 ]; do
-            sleep 0.2
-            attempts=$((attempts + 1))
-          done
-        fi
-        if [ ! -S "$runtime_dir/bus" ]; then
-          echo "::warning::the user systemd bus did not appear at $runtime_dir/bus"
-          exit 0
-        fi
-        {
-          echo "XDG_RUNTIME_DIR=$runtime_dir"
-          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=$runtime_dir/bus"
-        } >> "$GITHUB_ENV"
-        PYTHONPATH=python python/.venv/bin/python -c \
-          'from nexus_test_control.services import cgroup_delegate_failure; diagnostic = cgroup_delegate_failure(); print(f"::warning::{diagnostic}" if diagnostic else "user-systemd cgroup delegate ready")'
+      run: uv sync --all-extras --locked --directory python
 
     - name: Install locked JavaScript dependencies
       shell: bash
@@ -182,7 +102,6 @@ runs:
         PREPARE_PROVIDER_RUNTIME: ${{ inputs.provider-runtime }}
       run: |
         set -euo pipefail
-        prepared_suites=()
         prepare_pinned_suite() {
           local package="$1"
           local repository="$2"
@@ -190,15 +109,11 @@ runs:
           local revision
           revision="$(sed -n "s/^${package}.*rev = \"\([0-9a-f]*\)\".*/\1/p" python/pyproject.toml)"
           [[ "$revision" =~ ^[0-9a-f]{40}$ ]]
-          case "$(basename "$checkout")" in
-            llm-calling|llm-tools) ;;
-            *) exit 1 ;;
-          esac
-          rm -rf "$checkout"
+          test ! -e "$checkout"
           git clone --filter=blob:none --no-checkout "$repository" "$checkout"
           git -C "$checkout" checkout --detach "$revision"
           test "$(git -C "$checkout" rev-parse HEAD)" = "$revision"
-          prepared_suites+=(--suite "$package")
+          uv sync --all-extras --locked --directory "$checkout"
         }
         if [ "$PREPARE_PROVIDER_RUNTIME" = "true" ]; then
           prepare_pinned_suite \
@@ -212,14 +127,6 @@ runs:
             "https://github.com/NielsdaWheelz/llm-tools.git" \
             "$GITHUB_WORKSPACE/../llm-tools"
         fi
-        # Use the same owner as local setup. It hydrates the exact archived
-        # source shape consumed by the controller and proves that a fresh venv
-        # can subsequently be materialized with networking disabled.
-        PYTHONPATH="$GITHUB_WORKSPACE/python" \
-          "$GITHUB_WORKSPACE/python/.venv/bin/python" \
-          -m nexus_test_control.setup_dependencies \
-          --repo-root "$GITHUB_WORKSPACE" \
-          "${prepared_suites[@]}"
 
     - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
       if: inputs.android == 'true'

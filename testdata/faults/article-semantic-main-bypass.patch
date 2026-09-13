@@ -1,9 +1,0 @@
-diff --git a/node/ingest/article_extraction.mjs b/node/ingest/article_extraction.mjs
---- a/node/ingest/article_extraction.mjs
-+++ b/node/ingest/article_extraction.mjs
-@@ -56,5 +56,4 @@
- export function extractArticle(document) {
-     return extractWikisourceArticle(document)
--        || extractSemanticMainArticle(document)
-         || new Readability(document, { keepClasses: true }).parse();
- }

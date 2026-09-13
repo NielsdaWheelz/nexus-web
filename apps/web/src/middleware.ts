@@ -42,10 +42,10 @@ export function middleware(request: NextRequest) {
     response.headers.set("Pragma", "no-cache");
     response.headers.set("Expires", "0");
     response.headers.set("Vary", "Cookie");
-    response.headers.set("X-Robots-Tag", "noindex, nofollow");
   }
   if (isEmailActionLanding(request.nextUrl.pathname)) {
     response.headers.set("Referrer-Policy", "no-referrer");
+    response.headers.set("X-Robots-Tag", "noindex, nofollow");
     response.headers.set("X-Content-Type-Options", "nosniff");
   }
   if (request.nextUrl.pathname === "/s" || isPublicResourceShareApi) {

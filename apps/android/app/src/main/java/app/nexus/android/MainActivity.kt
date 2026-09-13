@@ -22,7 +22,6 @@ import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceError
-import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
@@ -39,14 +38,6 @@ import androidx.browser.customtabs.CustomTabsIntent
 import androidx.core.content.ContextCompat
 import app.nexus.android.offline.OfflineMediaStore
 import app.nexus.android.offline.OfflineMediaWebCapability
-import app.nexus.android.offline.reading.OfflineReadingStore
-import app.nexus.android.offline.readingweb.OFFLINE_READING_ASSET_HOST
-import app.nexus.android.offline.readingweb.OFFLINE_READING_MAIN_URL
-import app.nexus.android.offline.readingweb.OfflineReadingAccountAttestor
-import app.nexus.android.offline.readingweb.OfflineReadingLeaseRegistry
-import app.nexus.android.offline.readingweb.OfflineReadingRequestRouter
-import app.nexus.android.offline.readingweb.OfflineReadingWebCapability
-import app.nexus.android.offline.readingweb.isOfflineReadingMainFrameUrl
 import androidx.lifecycle.Lifecycle
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
@@ -60,15 +51,11 @@ import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
 import java.net.URI
-import java.net.URISyntaxException
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.nio.charset.StandardCharsets
-import java.util.UUID
-import java.util.concurrent.CancellationException
-import java.util.concurrent.ExecutionException
 
 internal sealed interface RedirectLoopAction {
     data class Recover(val url: String) : RedirectLoopAction
@@ -128,13 +115,7 @@ internal class RedirectLoopCircuit {
     }
 
     private fun parseUri(value: String): URI? =
-        try {
-            URI(value)
-        } catch (_: URISyntaxException) {
-            // justify-ignore-error: a URL the platform will not parse cannot
-            // name a recovery target; the caller falls back to the default one.
-            null
-        }
+        runCatching { URI(value) }.getOrNull()
 
     private fun URI.queryParameter(name: String): String? =
         rawQuery
@@ -151,21 +132,8 @@ internal class RedirectLoopCircuit {
             ?.firstOrNull()
 
     private fun decode(value: String): String? =
-        try {
-            URLDecoder.decode(value, StandardCharsets.UTF_8.name())
-        } catch (_: IllegalArgumentException) {
-            // justify-ignore-error: a malformed percent escape carries no
-            // return target; the caller falls back to the default one.
-            null
-        }
+        runCatching { URLDecoder.decode(value, StandardCharsets.UTF_8.name()) }.getOrNull()
 }
-
-internal fun hostedFailureBelongsToCurrentDocument(
-    requestUrl: String?,
-    currentUrl: String?,
-    offlineReadingShellActive: Boolean,
-): Boolean =
-    !offlineReadingShellActive && requestUrl != null && requestUrl == currentUrl
 
 @OptIn(UnstableApi::class)
 class MainActivity : AppCompatActivity() {
@@ -177,15 +145,9 @@ class MainActivity : AppCompatActivity() {
     internal var pendingHandoffVerifier: String? = null
     private val googleSignInController by lazy { GoogleSignInController(this) }
     private lateinit var offlineMediaCapability: OfflineMediaWebCapability
-    private lateinit var offlineReadingCapability: OfflineReadingWebCapability
-    private lateinit var offlineReadingRouter: OfflineReadingRequestRouter
-    private var offlineReadingShellActive = false
-    private var currentMainFrameUrl: String? = null
     private val redirectLoopCircuit = RedirectLoopCircuit()
     private var redirectLoopTerminal: View? = null
-    private var hostedLoadTerminal: View? = null
     private var redirectLoopRetryUrl: String? = null
-    private var deferredShelfIntent: Intent? = null
 
     private val notificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) {
@@ -229,30 +191,6 @@ class MainActivity : AppCompatActivity() {
             ::requestOfflineDownloadNotificationPermission,
         )
         offlineMediaCapability.install()
-        val offlineReadingStore = OfflineReadingStore.get(this)
-        val offlineReadingLeases = OfflineReadingLeaseRegistry(offlineReadingStore::closeLease)
-        offlineReadingRouter = OfflineReadingRequestRouter(this, offlineReadingLeases)
-        val accountAttestor = OfflineReadingAccountAttestor()
-        offlineReadingCapability = OfflineReadingWebCapability(
-            webView = webView,
-            store = offlineReadingStore,
-            leases = offlineReadingLeases,
-            attestHostedAccount = accountAttestor::attest,
-            audioStore = OfflineMediaStore.get(this),
-            openHosted = { webView.loadUrl(BuildConfig.NEXUS_BASE_URL) },
-            openOffline = { webView.loadUrl(OFFLINE_READING_MAIN_URL) },
-            onLogout = {
-                CookieManager.getInstance().removeAllCookies {
-                    WebStorage.getInstance().deleteAllData()
-                    webView.clearCache(true)
-                    webView.loadUrl(OFFLINE_READING_MAIN_URL)
-                }
-            },
-            onHostedConnectUnavailable = ::showOfflineReadingBindingTerminal,
-        )
-        if (Build.VERSION.SDK_INT >= 34) {
-            offlineReadingCapability.install()
-        }
         playerBridge = NexusPlayerBridge(webView) {
             if (playerController == null) {
                 connectPlayerController()
@@ -268,14 +206,6 @@ class MainActivity : AppCompatActivity() {
                 request: WebResourceRequest?
             ): Boolean {
                 val uri = request?.url ?: return false
-                if (offlineReadingShellActive) {
-                    if (request.isForMainFrame && isOfflineReadingMainFrameUrl(uri)) {
-                        return false
-                    }
-                    if (!request.isForMainFrame) return false
-                    showLeaveOfflineReadingConfirmation(uri) { webView.loadUrl(uri.toString()) }
-                    return true
-                }
                 if (!request.isForMainFrame) {
                     return false
                 }
@@ -293,39 +223,13 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
-                if (url != null && isOwnedUrl(Uri.parse(url))) {
-                    hostedLoadTerminal?.let(root::removeView)
-                    hostedLoadTerminal = null
-                }
                 CookieManager.getInstance().flush()
                 redirectLoopCircuit.onSuccessfulNavigation(url)
-                if (url == OFFLINE_READING_MAIN_URL) {
-                    deferredShelfIntent?.let { pending ->
-                        deferredShelfIntent = null
-                        showLeaveOfflineReadingConfirmation(pending)
-                    }
-                }
             }
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
-                currentMainFrameUrl = url
-                offlineReadingShellActive = url == OFFLINE_READING_MAIN_URL
                 offlineMediaCapability.onPageStarted()
-                offlineReadingCapability.onPageStarted(url)
                 playerBridge.onPageStarted()
-            }
-
-            override fun shouldInterceptRequest(
-                view: WebView?,
-                request: WebResourceRequest?,
-            ): android.webkit.WebResourceResponse? {
-                if (Build.VERSION.SDK_INT < 34) return null
-                val ownedRequest = request ?: return null
-                return if (offlineReadingShellActive) {
-                    offlineReadingRouter.interceptOfflineDocument(ownedRequest)
-                } else {
-                    offlineReadingRouter.intercept(ownedRequest)
-                }
             }
 
             override fun onReceivedError(
@@ -333,20 +237,6 @@ class MainActivity : AppCompatActivity() {
                 request: WebResourceRequest?,
                 error: WebResourceError?,
             ) {
-                if (
-                    request?.isForMainFrame == true &&
-                    Build.VERSION.SDK_INT >= 34 &&
-                    request.url?.let(::isOwnedUrl) == true &&
-                    hostedFailureBelongsToCurrentDocument(
-                        request.url?.toString(),
-                        currentMainFrameUrl,
-                        offlineReadingShellActive,
-                    ) &&
-                    error?.errorCode != WebViewClient.ERROR_REDIRECT_LOOP
-                ) {
-                    showHostedLoadTerminal()
-                    return
-                }
                 if (
                     request?.isForMainFrame != true ||
                     error?.errorCode != WebViewClient.ERROR_REDIRECT_LOOP
@@ -484,52 +374,17 @@ class MainActivity : AppCompatActivity() {
                         webView.goBack()
                         return
                     }
-                    webView.evaluateJavascript(
-                        "(function(){try{var event=new KeyboardEvent('keydown'," +
-                            "{key:'Escape',bubbles:true,cancelable:true});" +
-                            "document.dispatchEvent(event);return event.defaultPrevented;}" +
-                            "catch(error){return false;}})()",
-                    ) { handledByRenderer ->
-                        if (handledByRenderer == "true") {
-                            return@evaluateJavascript
-                        }
-                        if (this@MainActivity.isFinishing || this@MainActivity.isDestroyed) {
-                            return@evaluateJavascript
-                        }
-                        if (webView.canGoBack()) {
-                            webView.goBack()
-                            return@evaluateJavascript
-                        }
-                        isEnabled = false
-                        onBackPressedDispatcher.onBackPressed()
-                    }
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
                 }
             }
         )
 
         val restoredWebViewState =
             savedInstanceState?.let { webView.restoreState(it) } != null
-        if (Build.VERSION.SDK_INT >= 34 && !hasValidatedNetwork()) {
-            startOfflineReadingShell(intent)
-        } else if (!restoredWebViewState) {
+        if (!restoredWebViewState) {
             loadUrlFromIntent(intent)
         }
-    }
-
-    /**
-     * Cold start without a validated network keeps the shelf, and keeps the
-     * launch link: an installed media ID opens locally, anything else is held
-     * and offered explicitly once the shelf is up. The link is never dropped.
-     */
-    private fun startOfflineReadingShell(launchIntent: Intent?) {
-        val held = launchIntent?.takeIf { it.data != null }
-        val mediaId = held?.data?.let(::offlineReadingMediaId)
-        val openedLocally = mediaId != null &&
-            offlineReadingCapability.requestLocalOpen(mediaId) {
-                held?.let(::showLeaveOfflineReadingConfirmation)
-            }
-        deferredShelfIntent = if (openedLocally) null else held
-        webView.loadUrl(OFFLINE_READING_MAIN_URL)
     }
 
     @Suppress("DEPRECATION")
@@ -552,67 +407,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     internal fun routeNewIntent(intent: Intent) {
-        val uri = intent.data ?: return
-        if (offlineReadingShellActive) {
-            val mediaId = offlineReadingMediaId(uri)
-            val openedLocally = mediaId != null &&
-                offlineReadingCapability.requestLocalOpen(mediaId) {
-                    showLeaveOfflineReadingConfirmation(intent)
-                }
-            if (openedLocally) return
-            showLeaveOfflineReadingConfirmation(intent)
+        if (intent.data == null) {
             return
         }
         loadUrlFromIntent(intent)
     }
-
-    private fun offlineReadingMediaId(uri: Uri): UUID? {
-        if (!isOwnedUrl(uri)) return null
-        val segments = uri.pathSegments
-        if (segments.size != 2 || segments[0] != "media") return null
-        return try {
-            UUID.fromString(segments[1]).takeIf { it.toString() == segments[1] }
-        } catch (_: IllegalArgumentException) {
-            // justify-ignore-error: a path segment that is not a canonical UUID
-            // simply is not a local media link.
-            null
-        }
-    }
-
-    /** Asks before leaving the shelf for an owned link the shelf cannot serve. */
-    private fun showLeaveOfflineReadingConfirmation(intent: Intent) {
-        val uri = intent.data ?: return
-        showLeaveOfflineReadingConfirmation(uri) { loadUrlFromIntent(intent) }
-    }
-
-    private fun showLeaveOfflineReadingConfirmation(
-        uri: Uri,
-        openHosted: () -> Unit,
-    ) {
-        if (!isOwnedUrl(uri) && !isNativeAuthUri(uri)) {
-            if (uri.scheme == "http" || uri.scheme == "https") openExternalUrl(uri)
-            return
-        }
-        val online = hasValidatedNetwork()
-        val builder = androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Leave downloaded reading?")
-            .setMessage(
-                when {
-                    !online -> "This link is not downloaded. Reconnect before opening it."
-                    isNativeAuthUri(uri) -> "Finishing sign-in needs Nexus online. Open Nexus?"
-                    else ->
-                        "This link is not available in your downloaded copies. Open Nexus online?"
-                },
-            )
-            .setNegativeButton("Stay offline", null)
-        if (online) {
-            builder.setPositiveButton("Open Nexus") { _, _ -> openHosted() }
-        }
-        builder.show()
-    }
-
-    private fun isNativeAuthUri(uri: Uri): Boolean =
-        uri.scheme == "nexus" && uri.host == "auth"
 
     override fun onPause() {
         OfflineMediaStore.get(this).onAppBackground()
@@ -665,56 +464,6 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    private fun showHostedLoadTerminal() =
-        showDownloadedCopiesTerminal("Nexus could not connect.")
-
-    /**
-     * Hosted Nexus loaded but its account-binding endpoint is unavailable, so the
-     * hosted renderer cannot be trusted with package inventory. Android offers
-     * the shelf itself.
-     */
-    internal fun showOfflineReadingBindingTerminal() =
-        showDownloadedCopiesTerminal("Nexus could not confirm this account for downloads.")
-
-    private fun showDownloadedCopiesTerminal(message: String) {
-        if (hostedLoadTerminal != null) return
-        val terminal = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(48, 48, 48, 48)
-            setBackgroundColor(Color.BLACK)
-            addView(TextView(this@MainActivity).apply {
-                text = message
-                setTextColor(Color.WHITE)
-                textSize = 18f
-            })
-            addView(Button(this@MainActivity).apply {
-                text = "Open downloaded copies"
-                setOnClickListener {
-                    hostedLoadTerminal?.let(root::removeView)
-                    hostedLoadTerminal = null
-                    webView.loadUrl(OFFLINE_READING_MAIN_URL)
-                }
-            })
-            addView(Button(this@MainActivity).apply {
-                text = "Retry"
-                setOnClickListener {
-                    hostedLoadTerminal?.let(root::removeView)
-                    hostedLoadTerminal = null
-                    webView.reload()
-                }
-            })
-        }
-        hostedLoadTerminal = terminal
-        root.addView(
-            terminal,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-            ),
-        )
-    }
-
     private fun removeRedirectLoopTerminal() {
         redirectLoopTerminal?.let(root::removeView)
         redirectLoopTerminal = null
@@ -735,7 +484,6 @@ class MainActivity : AppCompatActivity() {
         fileChooserCallback?.onReceiveValue(null)
         fileChooserCallback = null
         offlineMediaCapability.close()
-        offlineReadingCapability.close()
         webView.stopLoading()
         (webView.parent as? ViewGroup)?.removeView(webView)
         webView.destroy()
@@ -752,13 +500,6 @@ class MainActivity : AppCompatActivity() {
         ) {
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
-    }
-
-    private fun hasValidatedNetwork(): Boolean {
-        val manager = getSystemService(android.net.ConnectivityManager::class.java)
-        val network = manager.activeNetwork ?: return false
-        val capabilities = manager.getNetworkCapabilities(network) ?: return false
-        return capabilities.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }
 
     private fun connectPlayerController() {
@@ -814,21 +555,7 @@ class MainActivity : AppCompatActivity() {
         playerControllerFuture = future
         future.addListener(
             {
-                val connected = try {
-                    future.get()
-                } catch (_: ExecutionException) {
-                    // justify-ignore-error: a media session that will not bind
-                    // leaves the shell without a player; the next command
-                    // reconnects it.
-                    null
-                } catch (_: CancellationException) {
-                    // justify-ignore-error: the shell cancelled this connection
-                    // during teardown.
-                    null
-                } catch (_: InterruptedException) {
-                    Thread.currentThread().interrupt()
-                    null
-                }
+                val connected = runCatching { future.get() }.getOrNull()
                 runOnUiThread {
                     if (playerControllerFuture !== future || isDestroyed) {
                         connected?.release()

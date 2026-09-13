@@ -39,8 +39,6 @@ from nexus.db.models import (
     Media,
     MediaKind,
     Page,
-    Podcast,
-    PodcastSubscription,
     ProcessingStatus,
 )
 from nexus.schemas.library import CreateLibraryRequest
@@ -111,7 +109,6 @@ _ENTRY_CANTO_DATED = UUID("eeeeeeee-0000-4000-8000-000000000003")
 _ENTRY_CANTO_UNDATED = UUID("eeeeeeee-0000-4000-8000-000000000004")
 _ENTRY_MOTIF = UUID("eeeeeeee-0000-4000-8000-000000000005")
 _ENTRY_ZODIAC = UUID("eeeeeeee-0000-4000-8000-000000000006")
-_ENTRY_PODCAST = UUID("eeeeeeee-0000-4000-8000-000000000007")
 
 
 def _seed_chats(db: Session, *, viewer_id: UUID) -> None:
@@ -634,45 +631,11 @@ def test_every_advertised_notes_index_view_orders_the_exhaustive_page(
     for label, (view, order) in advertised.items():
         response = authenticated_client.get("/notes/pages", params=view)
         assert response.status_code == 200, f"GET /notes/pages {view} failed: {response.text}"
-        envelope = response.json()
-        assert set(envelope) == {"data"}, f"Notes index emitted extra envelope keys: {envelope!r}"
-        assert set(envelope["data"]) == {"pages"}, (
-            f"Notes index emitted an unexpected data shape: {envelope['data']!r}"
-        )
-        pages = envelope["data"]["pages"]
-        for page in pages:
-            assert set(page) == {"id", "title", "updatedAt"}, (
-                f"Notes index row is not the exact camel-case summary contract: {page!r}"
-            )
-        served = [page["id"] for page in pages]
+        served = [page["id"] for page in response.json()["data"]["pages"]]
         assert served == [str(page_id) for page_id in order], (
             f"Notes index view {label!r} ({view}) is not the specified total order;"
             f" expected {[str(page_id) for page_id in order]}, got {served}"
         )
-
-
-def test_note_page_detail_uses_presence_for_owned_daily_page_absence(
-    authenticated_client: TestClient,
-) -> None:
-    page_id = uuid4()
-    created = authenticated_client.post(
-        "/notes/pages",
-        json={"page_id": str(page_id), "title": "Strict page contract"},
-    )
-    assert created.status_code == 201, f"POST /notes/pages failed: {created.text}"
-    created_envelope = created.json()
-    assert set(created_envelope) == {"data"}
-    assert set(created_envelope["data"]) == {
-        "id",
-        "title",
-        "updatedAt",
-        "dailyPage",
-    }
-    assert created_envelope["data"]["dailyPage"] == {"kind": "Absent"}
-
-    fetched = authenticated_client.get(f"/notes/pages/{page_id}")
-    assert fetched.status_code == 200, f"GET /notes/pages/{page_id} failed: {fetched.text}"
-    assert fetched.json() == created_envelope
 
 
 def test_library_entry_views_drain_exactly_their_unpaged_snapshot_over_missing_and_tied_keys(
@@ -687,24 +650,6 @@ def test_library_entry_views_drain_exactly_their_unpaged_snapshot_over_missing_a
     keyset predicate, ORDER BY, and cursor must agree for a drain to be lossless.
     """
     _seed_default_library_entries(db_session, viewer_id=test_user.id)
-    db_session.add(
-        Podcast(
-            id=_ENTRY_PODCAST,
-            provider="test",
-            provider_podcast_id=str(_ENTRY_PODCAST),
-            title="harbor signals",
-            feed_url=f"https://feeds.example.invalid/{_ENTRY_PODCAST}.xml",
-        )
-    )
-    db_session.add(
-        PodcastSubscription(
-            id=uuid4(),
-            user_id=test_user.id,
-            podcast_id=_ENTRY_PODCAST,
-            next_sync_at=datetime.now(UTC),
-        )
-    )
-    db_session.flush()
     path = f"/libraries/{test_user.default_library_id}/entries"
     seeded = {
         str(_ENTRY_ALMANAC),
@@ -713,7 +658,6 @@ def test_library_entry_views_drain_exactly_their_unpaged_snapshot_over_missing_a
         str(_ENTRY_CANTO_UNDATED),
         str(_ENTRY_MOTIF),
         str(_ENTRY_ZODIAC),
-        str(_ENTRY_PODCAST),
     }
     proved: dict[str, dict[str, str]] = {
         "Canonical — Default membership newest": {},

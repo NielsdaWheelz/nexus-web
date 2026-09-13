@@ -20,15 +20,10 @@ import {
   stackAnchoredRows,
   type MarginItem,
 } from "@/lib/reader/marginItems";
-// Imported directly by the one surface that draws it (blueprint §3): the
-// registry is data-heavy and must never enter a shared barrel. This module is
-// reached only through the media pane's lazy chunk, so it costs no First Load JS.
-import { elvishInscriptions } from "@/lib/theme/elvishInscriptions";
 import styles from "./MarginRail.module.css";
 
 const ROW_GAP = 6;
 const ROW_HEIGHT = 72;
-const CHAPTER_OPENER = elvishInscriptions.elenSila;
 
 export interface MarginRailProps {
   items: MarginItem[];
@@ -210,28 +205,6 @@ export default function MarginRail({
       data-testid="margin-rail"
     >
       {probe}
-      {/* The chapter opener's plaque (direction §5.2, §8.4): one verified
-          inscription in the margin, never inside the text measure, resting at
-          `--edge-subtle` and silvering when the pane it belongs to holds
-          attention. Baked outlines, never a font; the English never depends on
-          it, so it is `aria-hidden` and unfocusable. It is `display: none`
-          outside the Solar, so the other two rooms render nothing at all.
-          Drawn only for a margin with nothing in it: margin items are
-          transparent, so an item on the plaque's lines would read its strokes
-          through its own text, and the document inventory — not the viewport
-          projection — is the gate, so scrolling never blinks the ornament. */}
-      {items.length === 0 ? (
-        <svg
-          className={styles.plaque}
-          viewBox={CHAPTER_OPENER.viewBox}
-          aria-hidden="true"
-          focusable="false"
-        >
-          {CHAPTER_OPENER.paths.map((path, index) => (
-            <path key={index} d={path} />
-          ))}
-        </svg>
-      ) : null}
       <div ref={containerRef} className={styles.container}>
         {alignedRows.map((alignedRow) => {
           const item = anchorById.get(alignedRow.id);

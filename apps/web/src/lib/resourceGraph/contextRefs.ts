@@ -8,10 +8,8 @@
  */
 
 import { apiFetch } from "@/lib/api/client";
-import {
-  decodeSnakeCaseResourceActivation,
-  type ResourceActivation,
-} from "@/lib/resources/activation";
+import type { ResourceActivation } from "@/lib/resources/activation";
+import { normalizeResourceActivation } from "@/lib/resources/activation";
 import {
   decodeResourceActionSubject,
   type ResourceActionSubject,
@@ -55,10 +53,15 @@ export function decodeContextRef(
   );
   const resourceRef = expectString(value.resource_ref, `${name}.resource_ref`);
   const missing = expectBoolean(value.missing, `${name}.missing`);
-  const activation = decodeSnakeCaseResourceActivation(
+  const activationRecord = expectExactRecord(
     value.activation,
+    ["resource_ref", "kind", "href", "unresolved_reason"],
     `${name}.activation`,
   );
+  const activation = normalizeResourceActivation(activationRecord);
+  if (activation === null) {
+    throw new TypeError(`${name}.activation must be a resource activation`);
+  }
   const actionSubject = decodeResourceActionSubject(
     { ref: resourceRef },
     `${name}.actionSubject`,

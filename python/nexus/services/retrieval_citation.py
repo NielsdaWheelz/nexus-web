@@ -1,6 +1,6 @@
 """Retrieval telemetry: the one validated `message_retrievals` writer.
 
-Turns a ``SearchResultOut`` (from ``search.resolver.get_search_result``) into a
+Turns a ``SearchResultOut`` (from ``search.get_search_result``) into a
 ``RetrievalCitation`` whose ``result_ref``/``locator`` pass the strict retrieval
 validators, and inserts it as a ``message_retrievals`` row.
 
@@ -191,12 +191,6 @@ class RetrievalCitation:
                 "media_kind": None,
                 "score": self.score,
                 "selected": self.selected,
-            }
-        if self.result_type == "artifact":
-            return {
-                **common,
-                "revision_id": self.result_ref["revision_id"],
-                "subject_ref": self.result_ref["subject_ref"],
             }
         if self.result_type == "web_result":
             # The web-search citation already carries the full validated

@@ -98,6 +98,24 @@ function isCitationSnapshot(value: unknown): value is CitationSnapshot {
   );
 }
 
+function decodeCitationActivation(value: unknown): ResourceActivation | null {
+  if (!isRecord(value)) return null;
+  if (
+    !hasOnlyKeys(value, [
+      "resource_ref",
+      "kind",
+      "href",
+      "unresolved_reason",
+    ]) ||
+    typeof value.resource_ref !== "string" ||
+    (value.unresolved_reason !== null &&
+      typeof value.unresolved_reason !== "string")
+  ) {
+    return null;
+  }
+  return normalizeResourceActivation(value);
+}
+
 /**
  * Decode one exact server-built citation into the owned frontend value.
  * Downstream code receives only normalized `ResourceActivation`.
@@ -127,7 +145,7 @@ export function decodeCitationOut(value: unknown): CitationOut | null {
   ) {
     return null;
   }
-  const activation = normalizeResourceActivation(value.activation);
+  const activation = decodeCitationActivation(value.activation);
   if (activation === null) return null;
   return {
     ordinal: value.ordinal,

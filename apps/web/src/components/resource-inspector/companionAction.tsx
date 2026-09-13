@@ -1,10 +1,9 @@
 "use client";
 
 // The ONE shared Companion disclosure action (A12/A14 §152) — the single header
-// control that opens/closes a pane's secondary column across every eligible
-// pane, desktop and mobile alike: the Resource Inspector on subject panes, the
-// selected import's details on the Imports pane. Icon `panel-right-open`; when
-// expanded its `controls` is that column's region id so
+// control that opens/closes the Resource Inspector across every eligible pane,
+// desktop and mobile alike. Icon `panel-right-open`; when expanded its
+// `controls` is the Inspector region id so
 // `PaneShell`/`SurfaceHeader` render the correct pressed/disclosure state and
 // keep the secondary mounted while visibility settles.
 import { PanelRightOpen } from "lucide-react";
@@ -23,7 +22,7 @@ export function companionAction({
   onClose,
 }: {
   expanded: boolean;
-  /** `paneSecondaryRegionId(paneId, <the pane's secondary group>)`. */
+  /** `paneSecondaryRegionId(paneId, "resource-inspector")`. */
   regionId: string;
   onOpen: (trigger: HTMLButtonElement | null) => void;
   onClose: () => void;

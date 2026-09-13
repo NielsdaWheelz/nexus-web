@@ -54,10 +54,25 @@
   white-space: nowrap;
 }
 
+.loading {
+  padding: var(--space-4);
+  text-align: center;
+  color: var(--reader-text-muted, var(--ink-faint));
+}
+
 .errorContainer {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+}
+
+.error {
+  padding: var(--space-3);
+  background-color: var(--reader-bg-secondary, var(--surface-2));
+  border: 1px solid var(--reader-border, var(--edge));
+  border-radius: var(--radius-md);
+  color: var(--reader-text-secondary, var(--ink-muted));
+  font-size: var(--text-sm);
 }
 
 .mismatchBanner {
@@ -93,7 +108,15 @@
 }
 
 .empty {
-  composes: empty from "../../../../components/reader/textDocumentReader.module.css";
+  padding: var(--space-8);
+  text-align: center;
+  color: var(--reader-text-muted, var(--ink-faint));
+}
+
+.fragments {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
 }
 
 .documentEmbedCard {
@@ -224,7 +247,28 @@
 }
 
 .documentViewport {
-  composes: documentViewport from "../../../../components/reader/textDocumentReader.module.css";
+  width: 100%;
+  height: 100%;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-width: thin;
+}
+
+.textDocumentReaderFrame {
+  display: flex;
+  flex-direction: column;
+}
+
+.textDocumentViewport {
+  height: auto;
+}
+
+.documentViewport:focus-visible {
+  outline: 2px solid var(--reader-accent, var(--accent));
+  outline-offset: -2px;
 }
 
 @media (max-width: 640px) {
@@ -238,11 +282,31 @@
 }
 
 .readerContentRoot {
-  composes: readerContentRoot from "../../../../components/reader/textDocumentReader.module.css";
+  font-family: var(--reader-font-family, var(--font-mono));
+  font-size: var(--reader-font-size-px, var(--text-md));
+  line-height: var(--reader-line-height, var(--leading-normal));
+  width: 100%;
+  min-height: 100%;
+  padding: var(--space-4);
+  transition:
+    background-color var(--duration-base) var(--ease-glide),
+    color var(--duration-base) var(--ease-glide);
 }
 
 .readerContentInner {
-  composes: readerContentInner from "../../../../components/reader/textDocumentReader.module.css";
+  max-width: var(--reader-column-width-ch, 65ch);
+  margin: 0 auto;
+}
+
+.readerEndcap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-8);
+  padding: var(--space-5) 0 var(--space-8);
+  border-top: 1px solid var(--reader-border-subtle, var(--edge-subtle));
+  color: var(--reader-text-muted, var(--ink-faint));
+  font-size: var(--text-sm);
 }
 
 .readerEndcapLabel {
@@ -304,6 +368,64 @@
   color-scheme: dark;
   background-color: var(--reader-bg);
   color: var(--reader-text);
+}
+
+/* ===== Focus mode dimming =====
+ * Driven by data-focus-mode on the reader root. While text is selected
+ * (data-selection-active="true"), dimming auto-suspends so annotation flow
+ * is uninterrupted. */
+.readerContentRoot[data-focus-mode="paragraph"]:not(
+    [data-selection-active="true"]
+  )
+  [data-paragraph]:not([data-paragraph-current="true"]) {
+  opacity: 0.4;
+  transition: opacity 180ms var(--ease-glide);
+}
+
+.readerContentRoot[data-focus-mode="sentence"]:not(
+    [data-selection-active="true"]
+  )
+  [data-paragraph]:not([data-paragraph-current="true"]) {
+  opacity: 0.3;
+  transition: opacity 180ms var(--ease-glide);
+}
+
+.readerContentRoot[data-focus-mode="sentence"]:not(
+    [data-selection-active="true"]
+  )
+  [data-paragraph][data-paragraph-current="true"] {
+  opacity: 0.7;
+  transition: opacity 180ms var(--ease-glide);
+}
+
+.readerContentRoot[data-focus-mode="sentence"]:not(
+    [data-selection-active="true"]
+  )
+  [data-paragraph][data-paragraph-current="true"]
+  [data-sentence-current="true"] {
+  opacity: 1;
+  transition: opacity 180ms var(--ease-glide);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .readerContentRoot[data-focus-mode="paragraph"] [data-paragraph],
+  .readerContentRoot[data-focus-mode="sentence"] [data-paragraph],
+  .readerContentRoot[data-focus-mode="sentence"]
+    [data-paragraph]
+    [data-sentence-current] {
+    transition: none;
+  }
+}
+
+/* ===== Hyphenation =====
+ * Auto hyphenation only when opted-in AND viewport is narrow. Set on the
+ * reader root so HtmlRenderer descendants inherit the property. */
+@media (max-width: 600px) {
+  .readerContentRoot[data-hyphenation="auto"] {
+    hyphens: auto;
+    hyphenate-limit-chars: 6 3 3;
+    hyphenate-limit-lines: 2;
+  }
 }
 
 /* ===== Distraction-free chrome reveal =====
@@ -660,6 +782,19 @@
   text-decoration: underline double;
 }
 
+.fragments::highlight(nexus-find-all) {
+  background-color: var(--highlight-yellow);
+  color: inherit;
+}
+
+.fragments::highlight(nexus-find-active) {
+  background-color: rgba(255, 193, 7, 0.65);
+  color: var(--reader-text, var(--ink));
+  text-decoration: underline double currentColor;
+  text-underline-offset: 0.14em;
+  text-shadow: 0 0 0.08em currentColor;
+}
+
 @media (forced-colors: active) {
   .transcriptFindMatch {
     background: Mark;
@@ -670,6 +805,15 @@
     outline-color: Highlight;
   }
 
+  .fragments::highlight(nexus-find-all),
+  .fragments::highlight(nexus-find-active) {
+    background-color: Highlight;
+    color: HighlightText;
+  }
+
+  .fragments::highlight(nexus-find-active) {
+    text-decoration: underline double HighlightText;
+  }
 }
 
 .inlineChapterDivider {
@@ -694,6 +838,13 @@
 
 @media (max-width: 768px),
   (max-width: 900px) and (orientation: landscape) and (pointer: coarse) {
+  .documentViewport {
+    padding-top: var(--mobile-pane-content-offset);
+    padding-bottom: var(--mobile-content-bottom-clearance);
+    scroll-padding-top: var(--mobile-pane-content-offset);
+    scroll-padding-bottom: var(--mobile-content-bottom-clearance);
+  }
+
   .mobileDocumentState {
     margin-top: var(--mobile-pane-content-offset);
   }
@@ -755,7 +906,11 @@
 /* --- Reader frame --- */
 
 .readerFrame {
-  composes: readerFrame from "../../../../components/reader/textDocumentReader.module.css";
+  flex: 1 1 0%;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
 }
 
 /* --- Reader progress continuity (handoff + sync error) --- */

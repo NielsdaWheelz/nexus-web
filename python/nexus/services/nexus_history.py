@@ -262,7 +262,6 @@ def _canonicalize_target_href(href: str) -> str:
             "search",
             "settings",
             "notes",
-            "imports",
             "stats",
             "atlas",
             "oracle",

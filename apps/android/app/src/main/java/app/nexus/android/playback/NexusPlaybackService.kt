@@ -414,11 +414,18 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
             }
             val raw = args.getString(ARG_COMMAND_JSON)
                 ?: return immediateReply(null)
-            val command = when (val parsed = PlayerWire.parseCommand(raw)) {
-                is PlayerCommandParseResult.Accepted -> parsed.command
-                is PlayerCommandParseResult.Rejected -> return immediateReply(parsed.reply)
-                PlayerCommandParseResult.Unreplyable -> return immediateReply(null)
-            }
+            val parsed = PlayerWire.parseCommand(raw)
+            val command = (parsed as? PlayerCommandParseResult.Accepted)?.command
+                ?: return immediateReply(
+                    when (parsed) {
+                        is PlayerCommandParseResult.Rejected ->
+                            PlayerWire.rejected(
+                                parsed.requestId,
+                                PlayerRejectionCode.InvalidRequest,
+                            )
+                        else -> null
+                    }
+                )
             if (actionFor(command) != customCommand.customAction) {
                 return immediateReply(
                     PlayerWire.rejected(

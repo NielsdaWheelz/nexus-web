@@ -1,83 +1,89 @@
-"""The one synchronous worker envelope for route-neutral generation jobs."""
+"""The one worker envelope for LLM provider jobs.
+
+``run_llm_task`` owns the mechanics every LLM task body used to hand-copy: one
+DB session, one fresh event loop, one ``httpx.AsyncClient`` (per-kind timeout
+and pool limits), one production ``ExecutionRuntime`` construction delegating
+to ``provider_runtime.ProviderRuntime`` (platform keys are the only source of provider availability;
+``services/llm_credentials.py`` is the read side) — the worker exception
+boundary, and teardown. The handler owns everything domain-specific: payload
+semantics, the ``llm_execution.execute_generation``/``execute_generation_
+stream`` call, finalization. It receives the shared client so chat can build
+its web-search provider without a second ``httpx.AsyncClient`` (this module is
+the only constructor of loops, clients, and runtimes under ``nexus/tasks/``).
+"""
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
+import httpx
 from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
 from nexus.db.session import get_session_factory
-from nexus.jobs.queue import RescheduleRequested
 from nexus.logging import get_logger
-
-if TYPE_CHECKING:
-    from nexus.services.llm_execution import ExecutionRuntime
+from nexus.services.llm_execution import (
+    ExecutionRuntime,
+    ProviderRetryMode,
+    build_execution_runtime,
+)
 
 logger = get_logger(__name__)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class LlmTaskSpec:
-    """Identity of one worker-owned generation envelope."""
+    """Per-kind envelope policy for one LLM task."""
 
-    label: str
+    label: str  # log-event prefix: "chat_run", "oracle_reading", ...
+    http_timeout_s: float = 60.0  # LI uses 120.0
+    http_limits: tuple[int, int] = (10, 5)  # (max_connections, max_keepalive); chat (100, 20)
+    retry_mode: ProviderRetryMode = ProviderRetryMode.Default
 
 
 def run_llm_task[R](
     spec: LlmTaskSpec,
-    handler: Callable[[Session, ExecutionRuntime], Awaitable[R]],
-) -> R | RescheduleRequested:
-    """Run one async generation task with one session and one owned event loop."""
+    handler: Callable[[Session, ExecutionRuntime, httpx.AsyncClient], Awaitable[R]],
+    *,
+    on_worker_exception: Callable[[Session, Exception], R] | None = None,
+) -> R:
+    """Run one LLM task body inside the shared worker envelope.
 
-    from nexus.services.llm_execution import GenerationCapacityPaused
-
+    On an unexpected exception the boundary logs ``{label}_failed_unexpected``
+    and delegates to ``on_worker_exception`` (which stores a safe terminal
+    failure and returns the task result); without one the exception propagates
+    to the queue's retry policy.
+    """
     db = get_session_factory()()
 
     async def _call() -> R:
-        import httpx
-
-        from nexus.services.generation_catalog import build_generation_catalog_service
-        from nexus.services.generation_runtime import compose_generation_execution_runtime
-        from nexus.services.tool_runtime.composition import (
-            compose_configured_web_search_provider,
-            compose_product_tool_runtime,
-        )
-
-        settings = get_settings()
         async with httpx.AsyncClient(
-            timeout=httpx.Timeout(60.0, connect=10.0),
-            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+            timeout=httpx.Timeout(spec.http_timeout_s, connect=10.0),
+            limits=httpx.Limits(
+                max_connections=spec.http_limits[0],
+                max_keepalive_connections=spec.http_limits[1],
+            ),
             trust_env=False,
-        ) as http_client:
-            tools = compose_product_tool_runtime(
-                compose_configured_web_search_provider(http_client, settings=settings)
+        ) as client:
+            runtime = build_execution_runtime(
+                get_settings(),
+                client,
+                retry_mode=spec.retry_mode,
             )
-            runtime = compose_generation_execution_runtime(
-                settings,
-                http_client=http_client,
-                catalog=build_generation_catalog_service(settings),
-                tools=tools,
-            )
-            return await handler(db, runtime)
+            return await handler(db, runtime, client)
 
     loop = asyncio.new_event_loop()
     try:
         return loop.run_until_complete(_call())
-    # justify-ignore-error: unexpected defects remain owned by the durable
-    # queue retry and dead-letter policy after this boundary records them.
-    except GenerationCapacityPaused as error:
-        db.rollback()
-        return RescheduleRequested(schedule=error.schedule)
-    except Exception:
+    # justify-ignore-error: worker boundary — on_worker_exception stores a safe
+    # terminal failure; without one the queue's retry policy applies.
+    except Exception as exc:
         logger.exception(f"{spec.label}_failed_unexpected")
-        raise
+        if on_worker_exception is None:
+            raise
+        return on_worker_exception(db, exc)
     finally:
         loop.close()
         db.close()
-
-
-__all__ = ["LlmTaskSpec", "run_llm_task"]

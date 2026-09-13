@@ -1,10 +1,5 @@
 # Reader Highlight Quote-To-Chat Hard Cutover
 
-> **Generation target amendment (2026-08-31):**
-> [`generation-backends-hard-cutover.md`](generation-backends-hard-cutover.md)
-> supersedes `profile_id` in quote-to-Chat launch/send payloads. The destination
-> composer resolves and submits its exact per-run selection.
-
 Status: SPECIFICATION
 Author: SME council synthesis
 Type: hard cutover
@@ -127,7 +122,7 @@ Out of scope:
 - The card shows canonical exact text, source label, source action, Expand /
   Collapse, and **Remove quoted passage**.
 - Hydration loading or failure blocks send. Removal converts the draft to an
-  ordinary message and preserves its text and exact generation selection.
+  ordinary message and preserves its text/profile.
 - `LoadFailed` is retryable transport/server failure with Retry;
   `NonSendable` is authoritative forbidden/geometry-only/over-limit state.
   Missing after an accepted launch is a reported invariant defect. These states
@@ -139,7 +134,7 @@ Out of scope:
 
 ### Send and history
 
-- Send requires nonblank user text and an exact selectable generation pair.
+- Send requires nonblank user text and a selected model profile.
 - Success immediately renders the server-returned user message; no client quote
   text is inserted optimistically.
 - The same `QuotedPassageCard` renders above the sent user-message body in
@@ -152,7 +147,7 @@ Out of scope:
   never auto-sends, and replays the same attempt. Reconciliation clears any
   duplicate-looking draft once the original server result is returned.
 - Unknown state renders a locked reconciliation panel, not an ordinary unsent
-  draft; text/selection/quote remain visible but cannot mutate until replay.
+  draft; text/profile/quote remain visible but cannot mutate until replay.
 - Reload, pagination, selected path, path cache, branch switch, and rerun expose
   the identical immutable quote.
 - If the live source is missing or forbidden, the quote remains and the card
@@ -272,10 +267,9 @@ explicit removal or successful run creation.
 hydrated `ReaderHighlight` variant is sendable. A missing just-launched
 Highlight is projection drift: raise/report a route defect, not `NonSendable`.
 
-`useChatDraft` persists text, an explicit `GenerationSelectionSpec`, per-run
-tool authority, and the active send attempt in `sessionStorage` by canonical
-draft key. Causal selection and the developer seed are derived, never stored as
-user preferences. The
+`useChatDraft` persists text, an explicit `ChatProfileSelection`, and the
+active send attempt in `sessionStorage` by canonical draft key. Inherited and
+product-default selections are derived, never stored as draft preferences. The
 attempt stores one idempotency key, payload identity, and exact precondition
 revision. Retries of an unchanged ambiguous failure replay that stored request.
 While status is unknown, answer-determining edits, removal, and new sends are
@@ -306,9 +300,8 @@ ChatRunCreateRequest
             }
       }
   content: nonblank string
-  catalog_definition_revision: SHA256
-  selection: GenerationSelectionSpec
-  tool_authority: ReadOnly | AdditiveWrites
+  profile_id: string
+  reasoning_option_id: string
   reader_selection: Presence<{
     key: ReaderSelectionKey
     revision: ReaderSelectionRevision
@@ -438,9 +431,8 @@ One run-create transaction:
    meta event, active path, and DB-backed job.
 8. Commit once. Any failure rolls back every row and edge.
 
-The idempotency hash uses canonical destination/insertion, content, exact
-generation selection, per-run tool authority, and `ReaderSelectionKey`.
-`ReaderSelectionRevision` is a
+The idempotency hash uses canonical destination/insertion, content, complete
+profile selection, and `ReaderSelectionKey`. `ReaderSelectionRevision` is a
 live compare-on-send precondition and is explicitly excluded. Scalars have
 fixed names; tagged unions use canonical JSON; keys are sorted and UUIDs use
 lowercase hyphenated form before SHA-256. It never hashes client quote text or
@@ -560,8 +552,7 @@ Primary backend modifications:
 - `python/nexus/services/{chat_runs,chat_run_validation,chat_run_idempotency}.py`
 - `python/nexus/services/{chat_run_message_prep,chat_run_response,chat_reruns}.py`
 - `python/nexus/services/{conversations,conversation_branches,context_assembler,chat_prompt}.py`
-- delete `python/nexus/services/resource_items/chat_subjects.py`; the removed
-  request lane leaves the resolver with no callers
+- `python/nexus/services/resource_items/chat_subjects.py`
 
 Primary frontend modifications:
 

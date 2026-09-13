@@ -106,29 +106,13 @@ class DossierBuildFailureCode(StrEnum):
     NoSourceMaterial = "NoSourceMaterial"
     InputsChanged = "InputsChanged"
     DependencyProjectionFailed = "DependencyProjectionFailed"
-    ContextTooLarge = "ContextTooLarge"
-    Auth = "Auth"
-    Quota = "Quota"
-    Timeout = "Timeout"
-    OutputLimit = "OutputLimit"
-    InvalidOutput = "InvalidOutput"
-    PolicyViolation = "PolicyViolation"
-    RuntimeUnavailable = "RuntimeUnavailable"
-    CapacityUnavailable = "CapacityUnavailable"
-    DocumentValidationFailed = "DocumentValidationFailed"
-    CitationValidationFailed = "CitationValidationFailed"
-
-
-class HistoricalDossierBuildFailureCode(StrEnum):
-    """Read-only legacy spellings; new terminal producers cannot accept these."""
-
     EntitlementDenied = "EntitlementDenied"
     BudgetExceeded = "BudgetExceeded"
+    ContextTooLarge = "ContextTooLarge"
     ProviderRefused = "ProviderRefused"
     ProviderIncomplete = "ProviderIncomplete"
-
-
-type ReadDossierBuildFailureCode = DossierBuildFailureCode | HistoricalDossierBuildFailureCode
+    DocumentValidationFailed = "DocumentValidationFailed"
+    CitationValidationFailed = "CitationValidationFailed"
 
 
 class ArtifactBuildEventType(StrEnum):
@@ -139,17 +123,7 @@ class ArtifactBuildEventType(StrEnum):
     Progress = "Progress"
     Succeeded = "Succeeded"
     Failed = "Failed"
-    HistoricalFailed = "HistoricalFailed"
     Cancelled = "Cancelled"
-
-
-type WritableArtifactBuildEventType = Literal[
-    ArtifactBuildEventType.Started,
-    ArtifactBuildEventType.Progress,
-    ArtifactBuildEventType.Succeeded,
-    ArtifactBuildEventType.Failed,
-    ArtifactBuildEventType.Cancelled,
-]
 
 
 # ---------------------------------------------------------------------------
@@ -197,21 +171,6 @@ class FailedEventPayload(_StrictModel):
     failure_code: DossierBuildFailureCode
     detail: Presence[str]
     support: Presence[dict[str, Any]]
-
-
-class HistoricalFailedEventPayload(_StrictModel):
-    """Migration-tagged replay of a terminal written before the hard cut.
-
-    The distinct event type is the provenance proof: current producers cannot
-    emit or accidentally accept retired provider/billing vocabulary.
-    """
-
-    failure_code: HistoricalDossierBuildFailureCode
-    detail: Presence[str]
-    support: Presence[dict[str, Any]]
-
-
-type ReadFailedEventPayload = FailedEventPayload | HistoricalFailedEventPayload
 
 
 class CancelledEventPayload(_StrictModel):
@@ -267,13 +226,6 @@ class DossierIdeaUnresolved(ApiError):
 
     def __init__(self, message: str = "The selected idea could not be resolved") -> None:
         super().__init__(ApiErrorCode.E_DOSSIER_IDEA_UNRESOLVED, message)
-
-
-class WebResearchNotConfigured(ApiError):
-    """Idea Dossier admission requires configured Web research authority."""
-
-    def __init__(self, message: str = "Dossier Web research is not configured") -> None:
-        super().__init__(ApiErrorCode.E_DOSSIER_WEB_RESEARCH_NOT_CONFIGURED, message)
 
 
 class BuildNotActive(ConflictError):

@@ -13,18 +13,11 @@ transcript chunk indexing is owned by `content_indexing`.
 Backend owners live under `python/nexus/services/podcasts/*`, the media-level
 `python/nexus/services/transcripts/*`, the YouTube transcript owner
 `python/nexus/services/youtube_transcripts.py`, and the egress helpers under
-`python/nexus/services/net/*`. Transcript admission, reservation settlement,
-and terminal failure are separate owners in `podcasts/transcription_usage.py`,
-`podcasts/transcription_reservation_settlement.py`, and
-`podcasts/transcription_failure.py`; none imports the provider adapter on the
-background supervisor path. Frontend pane composition lives under
-`apps/web/src/app/(authenticated)/podcasts/*`; reusable Podcast contracts and
-controllers live under `apps/web/src/lib/podcasts/*`, and reusable presentation
-lives under `apps/web/src/components/podcasts/*`. The Nexus Import session
-composes the OPML import boundary from
-`apps/web/src/lib/podcasts/opmlImport.ts`; it owns local file admission, one
-destination set, and aggregate result presentation, while the podcast backend
-remains the sole XML/feed/import policy owner.
+`python/nexus/services/net/*`. Frontend podcast-management owners live under
+`apps/web/src/app/(authenticated)/podcasts/*`. The Nexus Import session composes
+the OPML import boundary from `apps/web/src/lib/podcasts/opmlImport.ts`; it owns
+local file admission, one destination set, and aggregate result presentation,
+while the podcast backend remains the sole XML/feed/import policy owner.
 
 Followed-show and episode pane text filtering is local Pane Search over the
 exhaustively loaded current domain view. It matches title and contributor
@@ -101,15 +94,12 @@ that matter:
   values are never identity. Alias collisions fail closed instead of selecting
   a winner.
 
-- **Current transcript publication — `transcripts.current`.** This is the single,
-  advisory-locked writer of `podcast_transcript_segments`, `fragments`, and
-  `media_transcript_states`. Non-source import uses `write_current_transcript`,
-  which also makes Media readable and admits semantic work. Fenced source ingest
-  uses `publish_source_transcript`, which publishes artifacts only; the common
-  source terminal owns ready-state, one semantic job, and one media-fact revision.
-  Neither caller re-implements the replace → insert sequence. The owner holds
-  `pg_advisory_xact_lock('transcript-current:{media_id}')` for the whole sequence
-  and runs in the caller's transaction (`transaction()` is non-reentrant).
+- **Current transcript writer — `transcripts.current.write_current_transcript`.** This is the
+  single, advisory-locked writer of `podcast_transcript_segments`, `fragments`, and
+  `media_transcript_states`. It is media-kind agnostic: explicit Podcast and
+  Video Transcribe call it; neither re-implements the replace → insert → index
+  sequence. It holds `pg_advisory_xact_lock('transcript-current:{media_id}')` for the
+  whole sequence and runs in the caller's transaction (`transaction()` is non-reentrant).
 
 - **There is no active transcript pointer or version table.** The current transcript is the
   set of `podcast_transcript_segments` and `fragments` for the media. Re-transcription
@@ -138,15 +128,6 @@ that matter:
   `remove_unsubscribed_podcast_placements` to remove viewer-owned unshared
   placements and report retained shared placements. Within a named Library,
   parent Podcast placement subsumes direct episode placement.
-
-- **Subscription-settings UI — `PodcastSubscriptionSettingsOverlay`.** The
-  app-level resource overlay is the only load/draft/save/reconcile lifecycle
-  owner. `PodcastSubscriptionSettingsDialog` is presentation-only, and
-  `lib/podcasts/subscriptionSettings.ts` strictly decodes the complete GET/PATCH
-  envelopes, serializes mutations, and publishes canonical installs. Podcast,
-  Podcast-detail, and Library panes subscribe directly to that install
-  publisher to refresh their local projections; they do not instantiate a
-  second modal controller or persist a hidden settings draft.
 
 - **Feed-controlled fetches — `net.safe_fetch.safe_get`.** Every fetch of a feed-controlled
   URL (RSS feed pages, Podcasting 2.0 chapter JSON, transcript sidecars) goes through one
@@ -202,18 +183,6 @@ retries stamp the current fence Failed and retain the dead job for operator
 repair; the idempotent Retry command replaces only that failed fence. Live sync
 continues while backfill is running, source-limited, or failed.
 
-The active Podcast detail pane converges those independent workers through
-`/stream/podcast-subscriptions/{podcast_id}/events`. PostgreSQL triggers on the
-subscription and backfill publish only the subscription epoch UUID to
-`podcast_subscription_events`; the stream resolves viewer + Podcast to that
-epoch, rechecks the same owner and epoch on every fresh snapshot, and closes
-only when both live sync and backfill are terminal. The web compares the initial
-snapshot to its installed detail, serializes changed-snapshot revalidations, and
-aborts observation on pane deactivation or unmount. Replacing a subscription
-epoch closes the old listener without emitting the replacement and reconnects
-the direct stream against the new epoch. It does not poll, start a manual
-refresh run, or treat a globally reused episode as new ingest.
-
 ## Transcription
 
 Add, Subscribe, live sync, and backfill store RSS sidecar references but never
@@ -221,58 +190,11 @@ fetch or publish transcript content. Only explicit canonical Transcribe enters
 this boundary. Episode Transcribe first tries a valid publisher sidecar through
 `safe_get`; if unavailable it applies entitlement/quota admission and runs
 Deepgram. Both paths normalize segments and call the current transcript writer.
-Transcript chunks flow into the shared `content_chunks` index through
-`podcast_reindex_semantic_job`: it builds the immutable snapshot with
-`content_indexing.build_transcript_indexable_blocks` and publishes it through
-`content_indexing.publish_content_index`. Semantic readiness is keyed by the
+Transcript chunks flow into the shared `content_chunks` index via
+`content_indexing.rebuild_transcript_content_index`; semantic readiness is keyed by the
 current embedding provider/model. `media_transcript_states.transcript_origin`
 records exactly `Publisher`, `Imported`, or `Generated` while transcript state
 is Ready/Partial and is absent otherwise.
-
-The public transcript request service is a media-kind dispatcher; one private
-Podcast Episode owner holds sidecar/readable/inflight/quota/fresh-admission
-precedence. Current transcript lifecycle persistence, artifact publication, and
-semantic-job admission have separate owners under `services/transcripts/`.
-Semantic repair is zero-cost indexing work: it serializes on Media, inventories
-the canonical queue, never invalidates collection rows, and a repeat against a
-live repair job is audit-only idempotency.
-
-Single-Episode and fingerprinted query admission share that private owner but
-have different transaction boundaries: a single quota rejection commits only
-its immutable audit, while a query admits every selected Episode or none. Each
-request locks Media before mutable admission decisions, and source ingest binds
-the accepted attempt plus durable job inside the caller-owned transaction.
-Enqueue defects propagate and roll the transaction back; there is no failed
-enqueue response, fallback state, or `enqueue_failed` audit compatibility path.
-If a publisher sidecar cannot produce segments, generated-fallback admission
-returns `Admitted | RejectedQuota` through the source fence. Rejected quota
-commits the immutable request audit first; the worker then publishes terminal
-source/transcript failure under its next exact fence without charging usage.
-Generated fallback and operator requeue reserve usage and reset the execution
-job without deleting current segments/fragments or downgrading readable
-transcript state. The prior current projection survives until the fenced
-transcript writer replaces it atomically; the requeue publishes one shared
-media-fact revision, not an additional Podcast-only bump.
-`transcripts/request_reason.py` owns the exact internal request discriminant.
-Durable source attempts, transcription ledgers, semantic-job payloads, and
-terminal results must carry one canonical value; missing or unknown values are
-defects, never aliases for `episode_open` or `operator_requeue`. Semantic jobs
-carry only `media_id` and `request_reason`; unused requester/request identities
-do not survive admission into the worker payload.
-Publisher and generated success callbacks are collection-pure and never enqueue
-semantic work. The common source terminal publishes both effects once after the
-artifact fence succeeds. Starting an already-admitted Episode attempt still
-counts its processing attempt, but does not publish a second unchanged
-`extracting` collection revision. Acquisition has one success result,
-`PodcastTranscriptionCompleted`; typed failures raise and never serialize dead
-nullable result fields.
-Terminal Podcast failure settles the source attempt once, then publishes Media,
-transcription-job, quota-release, and transcript-state failure through the one
-Podcast failure owner in `podcasts/transcription_failure.py`. The source
-transaction is owned by `source_attempt_failures.py`, and the queue supervisor
-only dispatches to that typed owner. That same transaction advances the canonical shared
-media-fact collection family set once; it does not layer a second Episode-row
-revision over generic source failure.
 
 `podcasts.deepgram_adapter` is a documented non-LLM provider port, not part of the shared
 generation runtime. It owns Deepgram diarization fallback, fixture normalization, and podcast

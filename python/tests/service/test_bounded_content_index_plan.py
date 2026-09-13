@@ -326,7 +326,6 @@ def test_stale_document_plan_cannot_replace_the_prior_materialization(
             worker_id="stale-plan-proof",
             attempt_no=1,
             resource_class="Heavy",
-            execution_id=uuid4(),
         ),
         lease_seconds=900,
     )

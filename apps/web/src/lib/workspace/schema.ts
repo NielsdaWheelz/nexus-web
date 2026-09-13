@@ -7,7 +7,6 @@ import {
   expectFiniteNumber,
   expectNullableString,
   expectString,
-  isCanonicalUuid,
 } from "@/lib/validation";
 import {
   WORKSPACE_DEFAULT_FALLBACK_HREF,
@@ -87,8 +86,13 @@ export function createSecondaryPaneId(): string {
   return createRandomId("secondary-pane");
 }
 
+const PANE_VISIT_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
 export function parsePaneVisitId(raw: unknown): PaneVisitId | null {
-  return isCanonicalUuid(raw) ? (raw as PaneVisitId) : null;
+  return typeof raw === "string" && PANE_VISIT_ID_PATTERN.test(raw)
+    ? (raw as PaneVisitId)
+    : null;
 }
 
 export function assumePaneVisitId(value: string): PaneVisitId {

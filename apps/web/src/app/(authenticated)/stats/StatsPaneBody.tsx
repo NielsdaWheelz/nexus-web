@@ -8,11 +8,7 @@ import {
   type ApiPath,
 } from "@/lib/api/client";
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
-import {
-  useCursorPagination,
-  type CursorPage,
-} from "@/lib/api/useCursorPagination";
-import { useResource, type AsyncResource } from "@/lib/api/useResource";
+import { useResource } from "@/lib/api/useResource";
 import {
   decodeConsumptionStats,
   decodeActivitySessionPage,
@@ -214,20 +210,6 @@ function movement(stats: ConsumptionStats): string {
 function mediaPath(mediaRef: string): string | null {
   const parsed = parseResourceRef(mediaRef);
   return parsed?.scheme === "media" ? `/media/${parsed.id}` : null;
-}
-
-function statsSessionCursorPage(
-  page: ConsumptionStats["activity"]["sessions"],
-): CursorPage<StatsSession> {
-  const nextCursor =
-    page.nextCursor.kind === "Present" ? page.nextCursor.value : null;
-  return {
-    data: [...page.rows],
-    page: {
-      has_more: nextCursor !== null,
-      next_cursor: nextCursor,
-    },
-  };
 }
 function selectedFilterLabel(
   data: ConsumptionStats | null,
@@ -668,18 +650,14 @@ function SessionRows({
   rows,
   nextCursor,
   loadingMore,
-  loadFailure,
   onLoadMore,
-  onRetry,
   correctingKey,
   onExclude,
 }: {
   rows: StatsSession[];
   nextCursor: string | null;
   loadingMore: boolean;
-  loadFailure: boolean;
   onLoadMore: () => void;
-  onRetry: () => void;
   correctingKey: string | null;
   onExclude: (row: StatsSession) => void;
 }) {
@@ -698,9 +676,7 @@ function SessionRows({
           {rows.map((row) => {
             const href = mediaPath(row.mediaRef);
             return (
-              <tr
-                key={`${row.mediaRef}-${row.device.deviceHandle}-${row.startedAt}`}
-              >
+              <tr key={`${row.mediaRef}-${row.device.deviceHandle}-${row.startedAt}`}>
                 <th scope="row">
                   <div className={styles.sessionCell}>
                     <div>
@@ -763,14 +739,7 @@ function SessionRows({
           })}
         </tbody>
       </table>
-      {loadFailure ? (
-        <div className={styles.sessionLoadFailure} role="alert">
-          <span>Sessions couldn’t load</span>
-          <Button size="sm" variant="secondary" onClick={onRetry}>
-            Retry loading sessions
-          </Button>
-        </div>
-      ) : nextCursor ? (
+      {nextCursor ? (
         <button
           className={styles.loadMore}
           type="button"
@@ -1133,19 +1102,26 @@ export default function StatsPaneBody() {
       };
     },
   });
+  const [extraSessions, setExtraSessions] = useState<StatsSession[]>([]);
+  const [nextSessionCursor, setNextSessionCursor] = useState<string | null>(
+    null,
+  );
+  const [loadingMoreSessions, setLoadingMoreSessions] = useState(false);
+  useEffect(() => {
+    setExtraSessions([]);
+    setNextSessionCursor(null);
+  }, [resourceKey]);
   const previous = useRef<{
-    path: string;
     data: ConsumptionStats;
     state: StatsUrlState;
   } | null>(null);
-  const current =
-    path !== null && resource.status === "ready" && resource.data.path === path
-      ? { path, data: resource.data.data, state }
+  const currentData =
+    resource.status === "ready" && resource.data.path === path
+      ? resource.data.data
       : null;
-  if (current !== null) {
-    previous.current = current;
-  }
-  const committed = current ?? previous.current;
+  if (currentData !== null) previous.current = { data: currentData, state };
+  const committed =
+    currentData !== null ? { data: currentData, state } : previous.current;
   const data = committed?.data ?? null;
   const fetchingCurrent =
     path !== null &&
@@ -1206,35 +1182,28 @@ export default function StatsPaneBody() {
       if (state.anchor !== today) update({ anchor: today });
     }
   }, [hydratedTimeZone, state, update]);
-  const sessionFirstPage = useMemo<AsyncResource<CursorPage<StatsSession>>>(
-    () =>
-      data === null
-        ? { status: "loading" }
-        : {
-            status: "ready",
-            data: statsSessionCursorPage(data.activity.sessions),
-          },
-    [data],
-  );
-  const sessionPagination = useCursorPagination({
-    firstPage: sessionFirstPage,
-    initialMoreError: null,
-    buildMoreHref: (cursor) => {
-      if (committed === null || hydratedTimeZone === null) {
-        throw new Error("Stats session pagination requires a committed view");
-      }
-      return statsSessionsPath(committed.state, hydratedTimeZone, cursor);
-    },
-    loadMorePage: async (href, signal) => {
+  const sessionCursor =
+    nextSessionCursor ??
+    (data?.activity.sessions.nextCursor.kind === "Present"
+      ? data.activity.sessions.nextCursor.value
+      : null);
+  const loadMoreSessions = async () => {
+    if (!hydratedTimeZone || !sessionCursor || loadingMoreSessions) return;
+    setLoadingMoreSessions(true);
+    try {
       const page = decodeActivitySessionPage(
-        await apiFetch<unknown>(href as ApiPath, { signal }),
+        await apiFetch<unknown>(
+          statsSessionsPath(state, hydratedTimeZone, sessionCursor) as ApiPath,
+        ),
       );
-      return statsSessionCursorPage({
-        rows: page.sessions,
-        nextCursor: page.nextCursor,
-      });
-    },
-  });
+      setExtraSessions((rows) => [...rows, ...page.sessions]);
+      setNextSessionCursor(
+        page.nextCursor.kind === "Present" ? page.nextCursor.value : "",
+      );
+    } finally {
+      setLoadingMoreSessions(false);
+    }
+  };
 
   const applyCorrection = async (
     key: string,
@@ -1277,9 +1246,7 @@ export default function StatsPaneBody() {
     }
   };
   const excludeSession = (row: StatsSession) => {
-    if (
-      !window.confirm(`Don’t count this ${duration(row.activeMs)} session?`)
-    ) {
+    if (!window.confirm(`Don’t count this ${duration(row.activeMs)} session?`)) {
       return;
     }
     const key = excludeCorrectionKey(row);
@@ -1298,11 +1265,7 @@ export default function StatsPaneBody() {
     );
   };
   const restoreExclusion = (row: ActiveExclusion) => {
-    if (
-      !window.confirm(
-        `Count this ${duration(row.excludedActiveMs)} session again?`,
-      )
-    ) {
+    if (!window.confirm(`Count this ${duration(row.excludedActiveMs)} session again?`)) {
       return;
     }
     const key = restoreCorrectionKey(row.exclusionHandle);
@@ -1318,12 +1281,6 @@ export default function StatsPaneBody() {
   };
 
   if (correctionDefect !== null) throw correctionDefect;
-  if (
-    sessionPagination.error !== null &&
-    isSameSystemApiDefect(sessionPagination.error)
-  ) {
-    throw sessionPagination.error;
-  }
 
   return (
     <main className={styles.pane} aria-busy={updating || initialLoading}>
@@ -1586,16 +1543,10 @@ export default function StatsPaneBody() {
               scope={data.activity}
             >
               <SessionRows
-                rows={sessionPagination.items}
-                nextCursor={
-                  updating || sessionPagination.error !== null
-                    ? null
-                    : sessionPagination.nextCursor
-                }
-                loadingMore={sessionPagination.loadingMore}
-                loadFailure={sessionPagination.error !== null}
-                onLoadMore={sessionPagination.loadMore}
-                onRetry={sessionPagination.retry}
+                rows={[...data.activity.sessions.rows, ...extraSessions]}
+                nextCursor={sessionCursor}
+                loadingMore={loadingMoreSessions}
+                onLoadMore={() => void loadMoreSessions()}
                 correctingKey={correctingKey}
                 onExclude={excludeSession}
               />

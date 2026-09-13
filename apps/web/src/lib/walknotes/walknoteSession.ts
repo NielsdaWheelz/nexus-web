@@ -4,44 +4,50 @@ import {
   createContext,
   useCallback,
   useContext,
-  useEffect,
   useMemo,
   useRef,
   useState,
   type ReactNode,
 } from "react";
 import { createElement } from "react";
-import {
-  apiFetch,
-  decodeApiPayload,
-  isApiError,
-  isSameSystemApiDefect,
-} from "@/lib/api/client";
+import { apiFetch } from "@/lib/api/client";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { createRandomId } from "@/lib/createRandomId";
 import { resolveActiveTranscriptFragment } from "@/lib/media/transcriptView";
-import { decodeMediaFragmentsResponse } from "@/lib/media/mediaFragment";
 import { createHighlight, saveHighlightNote } from "@/lib/highlights/api";
-import {
-  decodeWalknoteSession,
-  type WalknoteWaypoint,
-  type WaypointVoiceStatus,
-} from "@/lib/walknotes/contract";
 import { pmDocFromText } from "@/lib/walknotes/pmDoc";
 import type { Fragment } from "@/lib/media/transcriptView";
 
 export const E_WALKNOTE_NO_FRAGMENT = "E_WALKNOTE_NO_FRAGMENT";
 
+export type WaypointVoiceStatus = "idle" | "recording" | "transcribing" | "done" | "failed";
+
+export interface WalknoteWaypoint {
+  id: string;
+  media_id: string;
+  position_ms: number;
+  recorded_at: string;
+  voice_text: string | null;
+  voice_status: WaypointVoiceStatus;
+}
+
 export const SESSION_STORAGE_KEY = "nexus.walknotes.session";
 
 export function loadFromSessionStorage(): WalknoteWaypoint[] {
-  const raw = window.sessionStorage.getItem(SESSION_STORAGE_KEY);
-  if (raw === null) return [];
-  return decodeWalknoteSession(JSON.parse(raw) as unknown);
+  try {
+    const raw = sessionStorage.getItem(SESSION_STORAGE_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw) as WalknoteWaypoint[];
+  } catch {
+    return [];
+  }
 }
 
 export function saveToSessionStorage(waypoints: WalknoteWaypoint[]): void {
-  window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(waypoints));
+  try {
+    sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(waypoints));
+  } catch {
+    // sessionStorage may be unavailable (e.g. private mode)
+  }
 }
 
 export interface WalknoteSessionContextValue {
@@ -56,14 +62,12 @@ export interface WalknoteSessionContextValue {
 const WalknoteSessionContext = createContext<WalknoteSessionContextValue | null>(null);
 
 export function WalknoteSessionProvider({ children }: { children: ReactNode }) {
-  const [waypoints, setWaypoints] = useState<WalknoteWaypoint[]>([]);
+  const [waypoints, setWaypoints] = useState<WalknoteWaypoint[]>(() =>
+    loadFromSessionStorage()
+  );
   // Cache fetched fragments per media_id across materialize calls
   const fragmentsCacheRef = useRef<Map<string, Fragment[]>>(new Map());
   const handleUnauthenticated = useUnauthenticatedApiHandler();
-
-  useEffect(() => {
-    setWaypoints(loadFromSessionStorage());
-  }, []);
 
   const updateAndPersist = useCallback((next: WalknoteWaypoint[]) => {
     setWaypoints(next);
@@ -72,7 +76,7 @@ export function WalknoteSessionProvider({ children }: { children: ReactNode }) {
 
   const addWaypoint = useCallback(
     (media_id: string, position_ms: number): string => {
-      const id = createRandomId();
+      const id = crypto.randomUUID();
       setWaypoints((prev) => {
         const next: WalknoteWaypoint[] = [
           ...prev,
@@ -134,15 +138,10 @@ export function WalknoteSessionProvider({ children }: { children: ReactNode }) {
           // Fetch and cache fragments for this media_id
           let fragments = fragmentsCacheRef.current.get(waypoint.media_id);
           if (!fragments) {
-            const response = await apiFetch<unknown>(
+            const resp = await apiFetch<{ data: Fragment[] }>(
               `/api/media/${waypoint.media_id}/fragments`
             );
-            fragments = decodeApiPayload(
-              response,
-              (body) =>
-                decodeMediaFragmentsResponse(body, waypoint.media_id),
-              "Walknote fragments",
-            );
+            fragments = resp.data;
             fragmentsCacheRef.current.set(waypoint.media_id, fragments);
           }
 
@@ -166,19 +165,16 @@ export function WalknoteSessionProvider({ children }: { children: ReactNode }) {
             await saveHighlightNote(
               highlight.id,
               null,
-              createRandomId(),
+              crypto.randomUUID(),
               pmDocFromText(waypoint.voice_text),
-              createRandomId()
+              crypto.randomUUID()
             );
           }
 
           created++;
         } catch (err) {
-          if (handleUnauthenticated(err) || isSameSystemApiDefect(err)) {
-            throw err;
-          }
-          if (!isApiError(err)) throw err;
-          errors.push(err.message);
+          if (handleUnauthenticated(err)) throw err;
+          errors.push(err instanceof Error ? err.message : String(err));
         }
       }
 
@@ -210,10 +206,15 @@ export function WalknoteSessionProvider({ children }: { children: ReactNode }) {
   return createElement(WalknoteSessionContext.Provider, { value }, children);
 }
 
+const NO_OP_SESSION: WalknoteSessionContextValue = {
+  waypoints: [],
+  addWaypoint: () => "",
+  updateWaypointVoice: () => {},
+  removeWaypoint: () => {},
+  materialize: () => Promise.resolve({ created: 0, errors: [] }),
+  clearSession: () => {},
+};
+
 export function useWalknoteSession(): WalknoteSessionContextValue {
-  const session = useContext(WalknoteSessionContext);
-  if (session === null) {
-    throw new Error("useWalknoteSession must be used within WalknoteSessionProvider");
-  }
-  return session;
+  return useContext(WalknoteSessionContext) ?? NO_OP_SESSION;
 }

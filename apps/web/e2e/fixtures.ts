@@ -250,20 +250,11 @@ export async function hasSupabaseAuthCookie(
 
 export async function signIn(page: Page, user: ScenarioUser): Promise<void> {
   await gotoWithStrictCsp(page, "/login");
-  await openPasswordSignIn(page);
   await page.getByLabel("Email", { exact: true }).fill(user.email);
   await page.getByLabel("Password", { exact: true }).fill(user.password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page).toHaveURL(/\/lectern$/);
   await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
-}
-
-export async function openPasswordSignIn(page: Page): Promise<void> {
-  await page
-    .getByRole("button", { name: "Use email and password", exact: true })
-    .click();
-  await expect(page.getByLabel("Email", { exact: true })).toBeVisible();
-  await expect(page.getByLabel("Password", { exact: true })).toBeVisible();
 }
 
 export async function signOut(page: Page): Promise<void> {

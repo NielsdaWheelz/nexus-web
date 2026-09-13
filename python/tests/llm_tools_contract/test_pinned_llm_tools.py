@@ -3,23 +3,13 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
-import re
-import tomllib
 from importlib.metadata import distribution, distributions
-from pathlib import Path
 
 import httpx
 import pytest
 
-LLM_TOOLS_SHA = "9e6d155f3b64f03495911435b7cae8b8d131f9a2"
-
-
-def _provider_runtime_sha() -> str:
-    python_root = Path(__file__).resolve().parents[2]
-    project = tomllib.loads((python_root / "pyproject.toml").read_text(encoding="utf-8"))
-    revision = project["tool"]["uv"]["sources"]["provider-runtime"]["rev"]
-    assert isinstance(revision, str) and re.fullmatch(r"[0-9a-f]{40}", revision)
-    return revision
+LLM_TOOLS_SHA = "667e5121268189d6fe1202c244d5ce64e8b096d1"
+PROVIDER_RUNTIME_SHA = "6ccf36d82eb32099c305e4481cbe4cb7d39b888f"
 
 
 def _vcs_source(name: str) -> tuple[str, dict[str, str]]:
@@ -33,7 +23,6 @@ def _vcs_source(name: str) -> tuple[str, dict[str, str]]:
 def test_exact_pins_round_trip_one_canonical_native_tool(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    provider_runtime_sha = _provider_runtime_sha()
     installed_names = {
         value for item in distributions() if (value := item.metadata.get("Name")) is not None
     }
@@ -52,11 +41,11 @@ def test_exact_pins_round_trip_one_canonical_native_tool(
         },
     )
     assert (provider_url, provider_vcs) == (
-        "https://github.com/NielsdaWheelz/llm-calling.git",
+        "https://github.com/NielsdaWheelz/llm-calling",
         {
             "vcs": "git",
-            "requested_revision": provider_runtime_sha,
-            "commit_id": provider_runtime_sha,
+            "requested_revision": PROVIDER_RUNTIME_SHA,
+            "commit_id": PROVIDER_RUNTIME_SHA,
         },
     )
 
@@ -100,7 +89,6 @@ def test_exact_pins_round_trip_one_canonical_native_tool(
     )
 
     from nexus.config import clear_settings_cache
-    from nexus.schemas.browse import BrowseCandidate
     from nexus.services.browse.models import (
         BrowseKind,
         BrowseQuery,
@@ -115,7 +103,6 @@ def test_exact_pins_round_trip_one_canonical_native_tool(
 
     async def brave_fixture(request: httpx.Request) -> httpx.Response:
         assert request.url.params["q"] == "x"
-        assert request.url.params["count"] == "20"
         return httpx.Response(
             200,
             headers={"x-request-id": "nexus-pin-proof"},
@@ -132,7 +119,7 @@ def test_exact_pins_round_trip_one_canonical_native_tool(
             },
         )
 
-    async def exercise_browse() -> tuple[list[BrowseCandidate], str | None]:
+    async def exercise_browse() -> tuple[list[object], str | None]:
         async with httpx.AsyncClient(transport=httpx.MockTransport(brave_fixture)) as client:
             return await search(
                 BraveSearchProvider(
@@ -145,7 +132,7 @@ def test_exact_pins_round_trip_one_canonical_native_tool(
                     kind=BrowseKind.WebArticle,
                     source=BrowseSource.Brave,
                     sort=None,
-                    limit=20,
+                    limit=1,
                     cursor=None,
                 ),
             )

@@ -16,14 +16,8 @@ import {
 import { decodeSlateEnvelope } from "@/lib/resonance/contract";
 import type { ResourceFetcher } from "@/lib/api/resourceTransport";
 import type { PaneRouteId, RouteParams } from "@/lib/panes/paneRouteModel";
-import { loadNotePages } from "@/lib/notes/pageContract";
+import { normalizePageSummary } from "@/lib/notes/normalize";
 import { shouldLoadInitialMediaFragments } from "@/lib/media/documentReadiness";
-import {
-  decodeMediaDetailResponse,
-  type MediaDetail,
-} from "@/lib/media/mediaDetail";
-import { decodeMediaFragmentsResponse } from "@/lib/media/mediaFragment";
-import type { Fragment } from "@/lib/media/transcriptView";
 import { isAbortError } from "@/lib/errors";
 import { decodeContributorDetail } from "@/lib/contributors/detail";
 import {
@@ -97,11 +91,6 @@ export type PaneMediaFragmentsSeed<T = unknown> =
   | { readonly status: "ready"; readonly data: readonly T[] }
   | { readonly status: "error"; readonly error: PaneSubresourceFailure };
 
-export interface MediaPaneSeed {
-  readonly media: MediaDetail;
-  readonly fragments: PaneMediaFragmentsSeed<Fragment>;
-}
-
 function paneSubresourceFailure(error: unknown): PaneSubresourceFailure {
   if (typeof error !== "object" || error === null) {
     return { status: null, code: null };
@@ -111,44 +100,6 @@ function paneSubresourceFailure(error: unknown): PaneSubresourceFailure {
     status: typeof candidate.status === "number" ? candidate.status : null,
     code: typeof candidate.code === "string" ? candidate.code : null,
   };
-}
-
-export async function loadMediaPane(
-  request: ResourceFetcher,
-  params: { id: string },
-): Promise<MediaPaneSeed> {
-  const media = decodeMediaDetailResponse(
-    await request<{ id: string }, unknown>(mediaResource, params),
-    params.id,
-  );
-  let fragments: PaneMediaFragmentsSeed<Fragment> = {
-    status: "ready",
-    data: [],
-  };
-  if (shouldLoadInitialMediaFragments(media)) {
-    let rawFragmentsResponse: unknown = null;
-    let fragmentsFetchSucceeded = false;
-    try {
-      rawFragmentsResponse = await request<{ id: string }, unknown>(
-        mediaFragmentsResource,
-        params,
-      );
-      fragmentsFetchSucceeded = true;
-    } catch (error) {
-      if (isAbortError(error)) throw error;
-      fragments = {
-        status: "error",
-        error: paneSubresourceFailure(error),
-      };
-    }
-    if (fragmentsFetchSucceeded) {
-      fragments = {
-        status: "ready",
-        data: decodeMediaFragmentsResponse(rawFragmentsResponse, media.id),
-      };
-    }
-  }
-  return { media, fragments };
 }
 
 // Only panes whose primary first-paint resource is FastAPI-backed AND
@@ -209,7 +160,41 @@ export const paneResourceLoaders: Partial<
 
   media: {
     cacheKey: (p) => mediaResource.cacheKey({ id: p.id }),
-    load: (request, p) => loadMediaPane(request, { id: p.id }),
+    load: async (request, p) => {
+      const params = { id: p.id };
+      const media = (
+        await request<
+          { id: string },
+          {
+            data: {
+              kind?: string;
+              capabilities?: { can_read?: boolean } | null;
+            };
+          }
+        >(mediaResource, params)
+      ).data;
+      let fragments: PaneMediaFragmentsSeed = { status: "ready", data: [] };
+      if (shouldLoadInitialMediaFragments(media)) {
+        try {
+          fragments = {
+            status: "ready",
+            data: (
+              await request<{ id: string }, { data: unknown[] }>(
+                mediaFragmentsResource,
+                params,
+              )
+            ).data,
+          };
+        } catch (error) {
+          if (isAbortError(error)) throw error;
+          fragments = {
+            status: "error",
+            error: paneSubresourceFailure(error),
+          };
+        }
+      }
+      return { media, fragments };
+    },
   },
 
   author: {
@@ -237,7 +222,13 @@ export const paneResourceLoaders: Partial<
 
   notes: {
     cacheKey: () => notePagesResource.cacheKey({}),
-    load: (request) => loadNotePages(request, {}),
+    load: async (request) => {
+      const env = await request<
+        Record<string, never>,
+        { data: { pages?: Record<string, unknown>[] } }
+      >(notePagesResource, {});
+      return (env.data.pages ?? []).map(normalizePageSummary);
+    },
   },
 
   conversations: {

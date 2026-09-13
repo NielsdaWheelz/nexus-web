@@ -8,8 +8,6 @@ from types import MappingProxyType
 
 _GIT_SHA = re.compile(r"[0-9a-f]{40}\Z")
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
-_ANDROID_VISUAL_PATH = re.compile(r"/[A-Za-z0-9._~%!$&'()*+,;=:@/-]*\Z")
-ANDROID_VISUAL_DEVICE_ALIASES = frozenset({"primary"})
 
 
 def _repository_relative(value: str) -> bool:
@@ -22,36 +20,6 @@ def _repository_relative(value: str) -> bool:
     )
 
 
-def validate_android_visual_path(path: str) -> str:
-    if (
-        not path
-        or not path.startswith("/")
-        or path.startswith("//")
-        or "?" in path
-        or "#" in path
-        or "\\" in path
-        or "'" in path
-        or _ANDROID_VISUAL_PATH.fullmatch(path) is None
-        or ".." in PurePosixPath(path).parts
-    ):
-        raise ValueError(f"path must be an owned same-origin path: {path!r}")
-    return path
-
-
-@dataclass(frozen=True, slots=True)
-class AndroidVisualInputs:
-    sha: str
-    path: str
-    device: str
-
-    def __post_init__(self) -> None:
-        if _GIT_SHA.fullmatch(self.sha) is None:
-            raise ValueError("--sha must be a 40-character lowercase git SHA")
-        validate_android_visual_path(self.path)
-        if self.device not in ANDROID_VISUAL_DEVICE_ALIASES:
-            raise ValueError(f"unknown device alias: {self.device!r}")
-
-
 class Workflow(StrEnum):
     CHANGED = "changed"
     CONFIDENCE = "confidence"
@@ -61,10 +29,6 @@ class Workflow(StrEnum):
     RELEASE = "release"
     DOCTOR = "doctor"
     ANDROID_VISUAL = "android-visual"
-
-
-class ChangedOwnerRedStrategy(StrEnum):
-    COHERENT_FAULT = "coherent-fault"
 
 
 class Capability(StrEnum):
@@ -86,12 +50,13 @@ class Capability(StrEnum):
     CORPUS = "corpus"
     PROVIDER_RUNTIME = "provider-runtime"
     LLM_TOOLS = "llm-tools"
-    INGEST_NODE = "ingest-node"
     LLM_EVAL = "llm-eval"
     EXTENSION = "extension"
     ANDROID_HOST = "android-host"
     AUDIT = "audit"
+    HOSTED = "hosted"
     ANDROID_DEVICE = "android-device"
+    PROVIDER_CERTIFICATION = "provider-certification"
     ANDROID_RELEASE = "android-release"
     RELEASE_ARTIFACT = "release-artifact"
     DOCTOR = "doctor"
@@ -107,16 +72,11 @@ class PriorityRiskId(StrEnum):
     DESTRUCTIVE_SIDE_EFFECTS = "destructive-side-effects"
     MIGRATION_COMPATIBILITY = "migration-compatibility"
     COSTLY_EFFECTS = "costly-effects"
-    GENERATION_LEDGER_CONTRACT = "generation-ledger-contract"
     READING_PROGRESS = "reading-progress"
     CITATION_PROVENANCE_IDENTITY = "citation-provenance-identity"
     DURABLE_JOB_REPLAY = "durable-job-replay"
-    GENERATION_RECONCILIATION = "generation-reconciliation"
-    CODEX_GENERATION_HOST = "codex-generation-host"
     DATABASE_OBJECT_CONVERGENCE = "database-object-convergence"
-    DOCUMENT_IMPORT_RELIABILITY = "document-import-reliability"
     LLM_TOOL_SAFETY = "llm-tool-safety"
-    ANDROID_PLAYER_PROTOCOL_SKEW = "android-player-protocol-skew"
     IMMUTABLE_PRODUCTION_RELEASE = "immutable-production-release"
     PRODUCTION_RUNTIME_HEALTH = "production-runtime-health"
     ORACLE_PUBLICATION = "oracle-publication"
@@ -127,7 +87,7 @@ class PriorityRiskId(StrEnum):
 
 
 PRIORITY_RISK_FLOOR = frozenset(PriorityRiskId)
-PRIORITY_RISK_OWNERSHIP_SHA256 = "d130cce2123ab998d38967332790b96520e70873c0e3e5868119b618e63d7fd7"
+PRIORITY_RISK_OWNERSHIP_SHA256 = "d87bafa4efa75cf695901b258f0fba24e22fe00ecd1a3f3290b3930e348d7aba"
 
 
 class ResourceKind(StrEnum):
@@ -137,10 +97,8 @@ class ResourceKind(StrEnum):
     MIGRATION_DATABASE = "migration-database"
     BUCKET = "bucket"
     SUPABASE_USER = "supabase-user"
-    EMBEDDING_PEER = "embedding-peer"
-    CODEX_GENERATION_PEER = "codex-generation-peer"
-    PROVIDER_API_PEER = "provider-api-peer"
     PROCESS = "process"
+    PROVIDER_FIXTURE = "provider-fixture"
     EXTENSION_PROFILE = "extension-profile"
     BUILD_ARTIFACT = "build-artifact"
     LOCK = "lock"
@@ -380,7 +338,6 @@ _FULL_NON_BROWSER = (
     Capability.CORPUS,
     Capability.PROVIDER_RUNTIME,
     Capability.LLM_TOOLS,
-    Capability.INGEST_NODE,
     Capability.LLM_EVAL,
     Capability.ANDROID_HOST,
 )
@@ -443,6 +400,7 @@ WORKFLOW_REGISTRY: Mapping[Workflow, WorkflowDefinition] = MappingProxyType(
                 (
                     *_FULL_NON_BROWSER,
                     Capability.AUDIT,
+                    Capability.HOSTED,
                     Capability.ANDROID_DEVICE,
                     Capability.JOURNEYS_ALL,
                     Capability.EXTENSION,
@@ -455,7 +413,7 @@ WORKFLOW_REGISTRY: Mapping[Workflow, WorkflowDefinition] = MappingProxyType(
                 SelectionScope.COMPLETE,
                 (
                     *_FULL_NON_BROWSER,
-                    Capability.ANDROID_DEVICE,
+                    Capability.PROVIDER_CERTIFICATION,
                     Capability.ANDROID_RELEASE,
                     Capability.RELEASE_ARTIFACT,
                     Capability.JOURNEYS_ALL,
@@ -483,12 +441,13 @@ DEFERRED_CAPABILITY_OWNER: Mapping[Capability, Workflow] = MappingProxyType(
         Capability.CORPUS: Workflow.FULL,
         Capability.PROVIDER_RUNTIME: Workflow.FULL,
         Capability.LLM_TOOLS: Workflow.FULL,
-        Capability.INGEST_NODE: Workflow.FULL,
         Capability.LLM_EVAL: Workflow.FULL,
         Capability.EXTENSION: Workflow.FULL,
         Capability.ANDROID_HOST: Workflow.FULL,
         Capability.AUDIT: Workflow.NIGHTLY,
+        Capability.HOSTED: Workflow.NIGHTLY,
         Capability.ANDROID_DEVICE: Workflow.NIGHTLY,
+        Capability.PROVIDER_CERTIFICATION: Workflow.RELEASE,
         Capability.ANDROID_RELEASE: Workflow.RELEASE,
         Capability.RELEASE_ARTIFACT: Workflow.RELEASE,
     }

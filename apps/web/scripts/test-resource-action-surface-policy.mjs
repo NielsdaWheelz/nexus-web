@@ -469,7 +469,8 @@ const directProofs = {
     assertContextualMenu("src/components/appnav/MobilePaneBar.tsx"),
   "secondary-mobile-pane-header": () =>
     assertCanonicalMenu("src/components/workspace/MobileSecondaryPaneHost.tsx"),
-  "import-row": () => assertCanonicalMenu("src/components/imports/ImportRow.tsx"),
+  "media-activity-row": () =>
+    assertCanonicalMenu("src/components/nexus/MediaActivityPage.tsx"),
 };
 
 const canonicalConsumerClassifications = [
@@ -562,15 +563,9 @@ const canonicalConsumerClassifications = [
   },
   {
     kind: "ResourceActionMenu",
-    path: "src/components/imports/ImportRow.tsx",
+    path: "src/components/nexus/MediaActivityPage.tsx",
     occurrences: 1,
-    surfaceIds: ["import-row"],
-  },
-  {
-    kind: "useResourceActionMenuModel",
-    path: "src/components/imports/ImportRow.tsx",
-    occurrences: 1,
-    surfaceIds: ["import-row"],
+    surfaceIds: ["media-activity-row"],
   },
   {
     kind: "useResourceActionMenuModel",
@@ -598,7 +593,14 @@ const canonicalConsumerClassifications = [
     surfaceIds: [],
   },
   {
-    kind: "useOptionalResourceActionMenuModel",
+    kind: "ResourceActionMenu",
+    path: "src/components/resources/ContextualActionMenu.tsx",
+    occurrences: 1,
+    owner: "Canonical ContextualActionMenu renderer",
+    surfaceIds: [],
+  },
+  {
+    kind: "useResourceActionMenuModel",
     path: "src/components/resources/ContextualActionMenu.tsx",
     occurrences: 1,
     owner: "Canonical ContextualActionMenu renderer",
@@ -611,11 +613,6 @@ const directActionMenuClassifications = [
     path: "src/app/(authenticated)/media/[id]/MediaPaneBody.tsx",
     occurrences: 1,
     owners: ["Reader/pane view"],
-  },
-  {
-    path: "src/components/offlineMedia/DownloadsOverlay.tsx",
-    occurrences: 1,
-    owners: ["Offline download row"],
   },
   {
     path: "src/app/(authenticated)/podcasts/[podcastId]/PodcastEpisodeList.tsx",
@@ -689,7 +686,7 @@ const directActionMenuClassifications = [
   },
   {
     path: "src/components/resources/ContextualActionMenu.tsx",
-    occurrences: 1,
+    occurrences: 2,
     owners: ["Collection occurrence", "Reader/pane view"],
   },
 ];
@@ -743,11 +740,6 @@ const RESOURCE_ACTION_MODEL_IMPORT = {
   alias: "@/lib/actions/resourceActionRuntime",
   targetPath: "src/lib/actions/resourceActionRuntime",
   importedName: "useResourceActionMenuModel",
-};
-const OPTIONAL_RESOURCE_ACTION_MODEL_IMPORT = {
-  alias: "@/lib/actions/resourceActionRuntime",
-  targetPath: "src/lib/actions/resourceActionRuntime",
-  importedName: "useOptionalResourceActionMenuModel",
 };
 const ACTION_MENU_IMPORT = {
   alias: "@/components/ui/ActionMenu",
@@ -832,17 +824,6 @@ function discoverCanonicalConsumers(parsedSources) {
         kind: "useResourceActionMenuModel",
         path: parsed.relativePath,
         occurrences: modelOccurrences,
-      });
-    }
-    const optionalModelOccurrences = countImportedHookCalls(
-      parsed,
-      OPTIONAL_RESOURCE_ACTION_MODEL_IMPORT,
-    );
-    if (optionalModelOccurrences !== null) {
-      discovered.push({
-        kind: "useOptionalResourceActionMenuModel",
-        path: parsed.relativePath,
-        occurrences: optionalModelOccurrences,
       });
     }
   }
@@ -983,14 +964,13 @@ function assertDiscoverySensitivity() {
       import * as Runtime from "@/lib/actions/resourceActionRuntime";
       export function Consumer({ subject }) {
         const model = Runtime.useResourceActionMenuModel(subject);
-        const optional = Runtime.useOptionalResourceActionMenuModel(subject);
-        return <MenuAlias actionSubject={subject} data-count={model.descriptors.length + optional.descriptors.length} />;
+        return <MenuAlias actionSubject={subject} data-count={model.descriptors.length} />;
       }
     `,
   );
   const canonical = discoverCanonicalConsumers([canonicalFixture]);
   if (
-    canonical.length !== 3 ||
+    canonical.length !== 2 ||
     canonical.some(({ occurrences }) => occurrences !== 1)
   ) {
     fail(

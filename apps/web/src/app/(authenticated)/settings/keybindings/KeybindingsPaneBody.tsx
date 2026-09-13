@@ -30,7 +30,6 @@ const BINDABLE_DESTINATION_IDS = [
   "podcasts",
   "chats",
   "notes",
-  "imports",
   "stats",
   "atlas",
   "oracle",

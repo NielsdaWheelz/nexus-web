@@ -8,8 +8,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from nexus.schemas.presence import Presence
-
 
 class _EpubFindModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
@@ -21,7 +19,7 @@ class EpubFindEntireResourceScopeIn(_EpubFindModel):
 
 class EpubFindSectionScopeIn(_EpubFindModel):
     kind: Literal["Section"]
-    section_id: Annotated[str, Field(min_length=1)]
+    section_id: Annotated[str, Field(min_length=1, max_length=255)]
 
 
 EpubFindScopeIn = Annotated[
@@ -32,7 +30,6 @@ EpubFindScopeIn = Annotated[
 
 class EpubFindRequest(_EpubFindModel):
     source_witness_fragment_id: UUID
-    source_generation: Annotated[int, Field(ge=1)]
     query: Annotated[str, Field(min_length=1, max_length=256)]
     match_case: bool
     whole_word: bool
@@ -64,13 +61,9 @@ class EpubFindSnippetSegmentOut(_EpubFindModel):
     emphasized: bool
 
 
-class EpubFindSectionOut(_EpubFindModel):
-    section_id: Annotated[str, Field(min_length=1)]
-    label: Annotated[str, Field(min_length=1, max_length=512)]
-
-
 class EpubFindOccurrenceOut(_EpubFindModel):
-    section: Presence[EpubFindSectionOut]
+    section_id: Annotated[str, Field(min_length=1, max_length=255)]
+    section_label: Annotated[str, Field(min_length=1, max_length=512)]
     fragment_id: UUID
     fragment_idx: Annotated[int, Field(ge=0)]
     start_offset: Annotated[int, Field(ge=0)]
@@ -87,20 +80,17 @@ class EpubFindOccurrenceOut(_EpubFindModel):
 class EpubFindReadyOut(_EpubFindModel):
     kind: Literal["Ready"] = "Ready"
     source_witness_fragment_id: UUID
-    source_generation: Annotated[int, Field(ge=1)]
     occurrences: Annotated[list[EpubFindOccurrenceOut], Field(min_length=1, max_length=2000)]
 
 
 class EpubFindNoMatchesOut(_EpubFindModel):
     kind: Literal["NoMatches"] = "NoMatches"
     source_witness_fragment_id: UUID
-    source_generation: Annotated[int, Field(ge=1)]
 
 
 class EpubFindTooManyMatchesOut(_EpubFindModel):
     kind: Literal["TooManyMatches"] = "TooManyMatches"
     source_witness_fragment_id: UUID
-    source_generation: Annotated[int, Field(ge=1)]
     threshold: Literal[2000] = 2000
 
 

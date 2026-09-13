@@ -1,8 +1,4 @@
 import { isRecord } from "@/lib/validation";
-import {
-  RESULT_TYPE_VALUES,
-  type SearchType,
-} from "@/lib/search/types";
 import { hasOnlyKeys, isOptionalString } from "./guards";
 import {
   isMediaRetrievalLocator,
@@ -11,7 +7,20 @@ import {
   type RetrievalLocator,
 } from "./locators";
 
-export type SearchCitationResultType = Exclude<SearchType, "web_result">;
+export type SearchCitationResultType =
+  | "media"
+  | "podcast"
+  | "episode"
+  | "video"
+  | "content_chunk"
+  | "fragment"
+  | "page"
+  | "note_block"
+  | "highlight"
+  | "message"
+  | "contributor"
+  | "evidence_span"
+  | "conversation";
 
 export type RetrievalContextRef =
   | {
@@ -25,13 +34,23 @@ export type RetrievalContextRef =
       evidence_span_ids?: string[];
     };
 
-const SEARCH_CITATION_RESULT_TYPES = new Set<SearchCitationResultType>(
-  RESULT_TYPE_VALUES.filter(
-    (value): value is SearchCitationResultType => value !== "web_result",
-  ),
-);
+const SEARCH_CITATION_RESULT_TYPES = new Set<SearchCitationResultType>([
+  "media",
+  "podcast",
+  "episode",
+  "video",
+  "content_chunk",
+  "fragment",
+  "page",
+  "note_block",
+  "highlight",
+  "message",
+  "contributor",
+  "evidence_span",
+  "conversation",
+]);
 
-export function isRetrievalContextRef(
+function isRetrievalContextRef(
   value: unknown,
 ): value is RetrievalContextRef {
   if (!isRecord(value)) return false;
@@ -190,24 +209,6 @@ type ConversationSearchCitationEventData = SearchCitationBase<
   null
 >;
 
-type ArtifactSearchCitationEventData = SearchCitationBase<
-  "artifact",
-  "artifact",
-  null
-> & {
-  revision_id: string;
-  subject_ref: string;
-};
-
-type ReaderApparatusItemSearchCitationEventData = SearchCitationBase<
-  "reader_apparatus_item",
-  "reader_apparatus_item",
-  RetrievalLocator
-> & {
-  apparatus_kind: string;
-  media_id: string;
-};
-
 export type SearchCitationEventData =
   | MediaSearchCitationEventData
   | PodcastSearchCitationEventData
@@ -221,9 +222,7 @@ export type SearchCitationEventData =
   | MessageSearchCitationEventData
   | ContributorSearchCitationEventData
   | EvidenceSpanSearchCitationEventData
-  | ConversationSearchCitationEventData
-  | ArtifactSearchCitationEventData
-  | ReaderApparatusItemSearchCitationEventData;
+  | ConversationSearchCitationEventData;
 
 export type WebCitationEventData = {
   assistant_message_id?: string;
@@ -373,26 +372,6 @@ export function isSearchCitationEventData(
       );
     case "conversation":
       return isSearchCitationBase(citation, "conversation", "conversation", []);
-    case "artifact":
-      return (
-        isSearchCitationBase(citation, "artifact", "artifact", [
-          "revision_id",
-          "subject_ref",
-        ]) &&
-        typeof citation.revision_id === "string" &&
-        typeof citation.subject_ref === "string"
-      );
-    case "reader_apparatus_item":
-      return (
-        isSearchCitationBase(
-          citation,
-          "reader_apparatus_item",
-          "reader_apparatus_item",
-          ["apparatus_kind"],
-        ) &&
-        typeof citation.apparatus_kind === "string" &&
-        typeof citation.media_id === "string"
-      );
   }
   return false;
 }
@@ -439,11 +418,9 @@ function isSearchCitationLocator(
     case "page":
     case "contributor":
     case "conversation":
-    case "artifact":
       return locator === null;
     case "content_chunk":
     case "evidence_span":
-    case "reader_apparatus_item":
       return (
         isRetrievalLocator(locator) &&
         (isMediaRetrievalLocator(locator) ||

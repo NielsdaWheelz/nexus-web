@@ -4,19 +4,18 @@
 
 The chat module owns durable, branchable, streamed, retrieval-grounded conversation UX.
 It covers full conversation panes, resource-subject chats, branch replies, context refs,
-assistant-answer selection forks, exact per-run generation selection, optimistic run state,
+assistant-answer selection forks, profile/reasoning-option sends, optimistic run state,
 rerun, and the frontend request contract for `/api/chat-runs`.
 
 Backend owners live under `python/nexus/api/routes/chat_runs.py`,
 `python/nexus/services/chat_run_*`, `python/nexus/services/context_assembler.py`, and
 `python/nexus/services/conversation_branches.py`.
 
-`chat_runs.py` is the Chat domain orchestrator. It assembles the prompt, admits
-one immutable `GenerationSpec` through `GenerationService`, folds route-neutral
-events, and finalizes the answer. The cohesive services it composes each have one owner:
+`chat_runs.py` is the run **executor** (provider-stream iteration, the tool loop,
+finalization). The cohesive services it composes each have one owner:
 `chat_run_citations` (candidate numbering, attached/read evidence, final
 canonical publication, `citation_index`), `chat_run_tools` (`message_tool_calls`
-lifecycle + numbered tool-output rendering + Codex tool-event binding), and the
+lifecycle + numbered tool-output rendering + provider tool-event binding), and the
 `ChatRunEventEmitter` in `chat_run_event_store` — the single durable run-event
 append owner (typed streaming methods commit inline for SSE visibility; batch
 tool-result/citation/context events defer to the executor's transaction). The
@@ -40,10 +39,10 @@ Hard-cutover specs that govern chat work. Each owns one axis; they compose.
   run-event emitter, `run_kit.get_run_events` / `is_run_terminal`). IMPLEMENTED.
 - `docs/cutovers/sota-chat-streaming-hard-cutover.md` — streaming transport,
   event grammar, coalescing, cursor replay, cancellation. IMPLEMENTED.
-- `docs/cutovers/resource-chat-subject-hard-cutover.md` — historical
-  surface/subject consolidation. Its per-run `chat_subject` request and
-  uncalled server resolver are deleted; generic resource chats now attach
-  initial context refs and reader quotes use the snapshot cutover below.
+- `docs/cutovers/resource-chat-subject-hard-cutover.md` — surface/subject
+  consolidation (one `ResourceRef` chat subject). IMPLEMENTED; the client
+  `chat_subject` send path is superseded by the reader-selection snapshot cutover
+  below.
 - `docs/cutovers/reader-highlight-quote-chat-hard-cutover.md` — reader Highlight
   quote-to-chat as an immutable per-message reader-selection snapshot; atomic
   new/existing destination send; removes inline reader chat and the request
@@ -56,9 +55,9 @@ Hard-cutover specs that govern chat work. Each owns one axis; they compose.
 - `docs/cutovers/chat-interface-hard-cutover.md` — readable transcript
   hierarchy, progressive disclosure, typed send/privacy state, quote reflow,
   and shared conversation-row activation. IMPLEMENTED.
-- `docs/cutovers/generation-backends-hard-cutover.md` — complete configured
-  catalog, exact per-run selection, route-neutral tools, unified generation
-  ledger, and legacy Chat aggregate reset.
+- `docs/cutovers/chat-continuation-selection-hard-cutover.md` — causal,
+  branch-correct profile/reasoning inheritance with explicit draft precedence.
+  IMPLEMENTED.
 - `docs/cutovers/conversation-find-hard-cutover.md` — exact selected-path
   Conversation Find, committed-DOM projection, reversible preview, and source
   replacement safety. IMPLEMENTED.
@@ -68,33 +67,17 @@ Hard-cutover specs that govern chat work. Each owns one axis; they compose.
 
 ## Durable Execution And Recovery
 
-`chat_runs.py` claims the queued run and executes only its persisted generation
-admission. `llm_execution.py` and `llm_ledger.py` own the parent generation,
-independently accepted child calls, provider continuation, and replay.
-`services/tool_runtime/` and `tool_authority.py` own the immutable declarations,
-grants, binding/replay policy, and one durable tool executor.
+`chat_runs.py` composes one claimed `ChatStepRuntime`; it does not own queue
+payload JSON. `chat_run_steps.py` owns deterministic paths, strict result codecs,
+fingerprints, and tool replay policy. `durable_step_journal.py` owns the shared
+`Prepared -> Uncertain -> Completed` kernel and execution-phase projection.
 
-Chat admission freezes exactly one read plan or its additive-write extension.
-`ChatRead` publishes `web.search`, `nexus.search`, `nexus.resource.read`,
-`nexus.document.search`, `nexus.resource.inspect`, and
-`nexus.relations.list`. `ChatReadAdditiveWrite` adds
-`nexus.library.add`, `nexus.note.create`, `nexus.highlight.create`,
-`nexus.edge.create`, and `nexus.queue.add` only after fresh per-run consent.
-Canonical IDs are the only executable identities.
-
-Codex observes the frozen plan through the authenticated MCP mount; API models
-receive the same plan as provider functions. Both adapters call the same
-`GenerationToolExecutor`, authorization, position ledger, evidence, citations,
-trust, and Undo. The sole position path is
-`generation/{generation_seq}/tool/{n}`; the one-based ordinal never restarts at
-an API child turn.
-
-Completed child calls and tool positions are replay input, never cache hints.
-An accepted ambiguous model call, external read, or write is never blindly
-redispatched. Operator reconciliation or user cancellation acts on the same
-run; neither creates a compatibility run. Code defects emit no `done`.
-Conversation deletion deletes every owned Chat job and post-cutover generation
-row.
+Completed preparation, generation, and tool results are replay input, never
+cache hints. An ambiguous paid call or write remains `Uncertain` and exhausts to
+the same retained dead job. Operator proof/reconciliation or user cancellation
+requeues that job; neither creates a replacement run. Code defects emit no
+`done`. Terminal outcomes clear journal material, and conversation deletion
+deletes every owned chat job.
 
 `ChatRunOut.execution` and trust-run `execution` are required `Presence` values.
 Nonterminal runs project `Queued | Running | Recovering | Suspended`; terminal
@@ -192,8 +175,7 @@ consequential write trail with Undo, closed `Sources (N)`, closed `Details`,
 failure/reconnect, Fork/Walk actions, and a fork strip when forks exist. Inline
 citations remain active. The publication warning is a quiet amber
 `role="status"` notice, never a red failure.
-`AssistantDetails` owns run plan/model/effort, usage, tool/retrieval,
-context-reference, and
+`AssistantDetails` owns run, usage, cost, tool/retrieval, context-reference, and
 integrity diagnostics. The deleted colophon has no compatibility replacement.
 
 Fork deletion is pessimistic. A failed DELETE keeps the fork row, presents the
@@ -242,29 +224,37 @@ to reading position** restores the saved eye-line and pin mode once.
 
 ## Send Path
 
-`ChatComposer` owns user input, catalog loading, exact next-run selection,
-off-by-default additive-write authority, and send action wiring. It does not
-construct API branch semantics directly.
+`ChatComposer` owns user input, the profile catalog, next-turn selection
+resolution, the `ChatProfilePicker` (product-facing Model + Effort controls),
+and send action wiring. It does not construct API branch semantics directly.
 
-`useGenerationCatalog` fetches `GET /api/llm-catalog` and retains the last
-decoded semantic catalog while a readiness refresh is stale. The effective
-selection is the explicit draft choice, otherwise the causal assistant run,
-otherwise the developer Chat seed for a new composer. The seed is not a user
-default or stored preference. An unavailable causal selection remains visible
-and requires an explicit replacement; it is never silently substituted.
+`useChatProfiles` fetches `GET /api/llm-profiles` (module-scope cached across
+mounted composers) and exposes `{ profiles, defaultProfileId, isLoading,
+error }`. Once the catalog is ready, `resolveChatProfileSelection` derives one
+effective `{ profileId, reasoningOptionId }`: an explicit unsent draft choice
+wins, otherwise the causal assistant run wins, otherwise the exact server
+default wins. An unavailable draft or inherited pair is explicitly replaced by
+the current server default and reported beside the picker. A malformed server
+default is a defect; there is no first-profile substitute.
 
-`GenerationSelectionPicker` renders the complete configured catalog as a
-searchable model list with one reasoning choice for the active model. Route,
-model, reasoning, billing class, readiness, and reported capacity stay visible.
-Only a ready `Selectable` pair commits. The browser owns no provider/model/
-reasoning allowlist, default, fallback, or qualification rule — see
+`useConversation` derives the inherited candidate from the exact branch-draft
+parent when branching, otherwise from the selected-path assistant leaf. It
+reads only the run's product `profile_id` and `reasoning_option_id`; it never
+scans backward or infers product intent from provider, model, effort, or
+timestamps. `useChatDraft.profile` stores only an explicit unsent choice.
+Inherited and default selections are derived and never persisted as draft
+preferences.
+
+`ChatProfilePicker` is a pure controlled renderer of the ready catalog and
+effective selection. It renders native `Model` and conditional `Effort` selects;
+their values remain the server-owned profile and reasoning-option ids, and
+visible model copy remains `LlmProfile.label`. User changes write the explicit
+draft choice. Each profile carries a required `privacy` union:
+`{ kind: "Standard"; notice } | { kind: "ExceptionalRetention"; notice }`.
+`ChatProfilePicker` renders no privacy or retention copy for any profile. The
+browser owns no provider/model/reasoning enum, ordering, default, capability,
+key, privacy classification, or availability policy — see
 [modules/llms.md](llms.md).
-
-`useConversation` inherits only the exact selection of the causal assistant
-parent. `useChatDraft` stores an explicit selection, the per-run tool authority,
-and the exact in-flight send command under `nx_chat_draft.v3:`. It discards the
-retired v2 profile-shaped record instead of decoding it. Additive-write
-authority is always reset to `ReadOnly` after a send and never inherited.
 
 `useConversation` is the sole owner of caller-level send availability. It
 derives one `ChatSendCapability`: `Available`, `HistoryLoading`,
@@ -294,9 +284,7 @@ produces the hard-cut request shape:
   `{ kind: "Existing"; conversation_id; insertion }`, where `insertion` is
   `{ kind: "Empty" }` or `{ kind: "Reply"; parent_message_id; branch_anchor }`
 - `content`
-- `catalog_definition_revision`
-- `selection` — exact tagged route/model/reasoning
-- `tool_authority` — `ReadOnly | AdditiveWrites`
+- `profile_id` / `reasoning_option_id`
 - `reader_selection` — `Presence<{ key: ReaderSelectionKey; revision }>`
 
 The branch anchor lives inside `Existing.Reply.branch_anchor`: branch drafts win
@@ -326,7 +314,7 @@ three (`extra="forbid"`).
 
 At most one action ever renders. `ExpectedChatFailure` is the closed,
 discriminated union (`code` as the tag) mirroring
-`python/nexus/schemas/llm.py`; see [modules/llms.md](llms.md) for the six
+`python/nexus/schemas/llm.py`; see [modules/llms.md](llms.md) for the ten
 variants, their valid origins, and the `chat_failure_projection`/
 `rerun_eligibility` policy that produces them.
 
@@ -336,21 +324,18 @@ fresh alternative for an eligible completed answer. Each has its sole BFF route
 (`app/api/messages/[messageId]/{rerun,regenerate}/route.ts`) and both are
 consolidated into one private sibling-candidate constructor
 (`services/chat_run_candidates.py`) with two explicit commands and separate
-eligibility guards. Each request carries an exact selection, the current
-catalog-definition revision, and `tool_authority: ReadOnly`. The primary action
-reuses the source run's selection only while the current catalog still marks it
-rerun-eligible; otherwise `CandidateGenerationPicker` requires an explicit
-replacement. Nothing silently substitutes a model, and write authority never
-inherits. Both commands clone the source user turn (content, parent, branch
+eligibility guards: both clone the source user turn (content, parent, branch
 lineage, reader-selection snapshot, turn context) into a new user sibling with a
 pending assistant child and one queued durable run, then select the new
-assistant as the active leaf. The complete migration reset leaves no
-pre-cutover Chat run or compatibility eligibility branch. The source assistant must map to
+assistant as the active leaf. A retired, uncertified, or changed profile, or any
+prior attempted write-tool call on the source run, makes rerun ineligible
+(`can_rerun=false`) and regeneration ineligible (`can_regenerate=false`, and the
+mutation raises `E_REGENERATION_NOT_ALLOWED`). The source assistant must map to
 exactly one owning `ChatRun`; missing or duplicate ownership is a defect, never a
 latest-run scan. Each command is idempotent under the normal `Idempotency-Key`:
 replaying the same key returns the existing generated run, while the same key
 with another source or operation is `E_IDEMPOTENCY_KEY_REPLAY_MISMATCH`. There is
-no separate retry/resend pair or key mode.
+no separate retry/resend pair, no model picker, and no key mode.
 
 **Run again** (failed turn), **Regenerate** (completed answer), **Reconnect**
 (dropped stream), suspended (operator recovery), and **Fork** (branch) stay
@@ -496,35 +481,17 @@ body). Both modes use the same three-line preview and explicit in-place
 expansion. The semantic figure has zero outer margin and cannot exceed its
 containing pane. `ConversationDestinationOverlay` is the existing-chat picker
 (title search over `GET /conversations?q=`). `useChatDraft` persists text, an
-explicit `GenerationSelectionSpec`, per-run tool authority, and the exact send
-operation — one idempotency key, immutable `ChatRunCreateRequest`, and
-originating view identity/account
-assembled once before dispatch — in `sessionStorage`, keyed by the structured
-`ChatDraftKey`. `chatDraftStore.ts` is the single storage, transition, and
-dispatch-deduplication owner. The operation FSM is
-`Absent | Submitting | ReconcileRequired | Acknowledged`: a persisted
-`Submitting` promotes to `ReconcileRequired` at ingress, so an ambiguous outcome
-locks reconciliation and replays the exact key and request. A modeled Rejected
-receipt consumes only the operation and retains editable text/selection. An
-Accepted receipt is persisted as `Acknowledged` before any presentation work;
-reloads resume `GET /chat-runs/{run_id}` and never POST. Only the exact origin in
-the same account may adopt automatically. Another view in that account exposes
-an explicit **Open response** action, and an account mismatch is a same-system
-ownership defect. The original record is deleted only after an authorized view
-reads matching conversation, run, and assistant identities and adopts
-`?message=<assistant_message_id>`. A deleted target remains acknowledged until
-explicit dismissal.
-
-`POST /chat-runs` is a receipt boundary. Under the viewer/key advisory lock it
-first replays the immutable `ResourceMutation(scope="chat:admission")` decision
-or validates a new admission. Accepted run/messages/event/job and receipt commit
-atomically. A modeled rejection rolls provisional writes back to a savepoint and
-commits only its closed reason. The response is
-`{data:{idempotency_key,outcome:Accepted|Rejected}}`; it contains no run
-projection, prompt, quote, or mutable detail. Accepted presentation always comes
-from the canonical repeatable-read run GET. Rerun and regeneration keep their
-existing rich HTTP responses while sharing the same key/mismatch ledger and
-requiring a fresh exact selection with `ReadOnly` authority.
+explicit `ChatProfileSelection`, and the exact send operation — one idempotency
+key plus the immutable `ChatRunCreateRequest` assembled once before dispatch — in
+`sessionStorage`, keyed by the structured `ChatDraftKey`. The operation FSM is
+`Absent | Submitting | ReconcileRequired`: a persisted `Submitting` promotes to
+`ReconcileRequired` at ingress, so an unknown-status ambiguous outcome (network
+loss or reload) locks reconciliation and replays that exact command — the same
+key and byte-for-byte request — regardless of the current catalog, route, or
+quote. A definite rejection consumes the command (the next explicit send mints a
+new key), and success deletes the record. The picker is hidden behind one locked
+retry status during reconciliation, so current catalog choices cannot
+misrepresent or mutate the replay.
 
 The unmarked `GET /conversations` primary index and its `scope` variants return
 the strict complete-collection page and drain automatically in
@@ -607,18 +574,14 @@ the live Highlight.
 Keep these tests aligned with this module contract:
 
 - `python/tests/service/test_citation_provenance.py`
-- `python/tests/service/test_generation_chat_api.py`
-- `python/tests/service/test_generation_tool_authority.py`
-- `python/tests/service/test_generation_execution.py`
-- `python/tests/service/test_chat_codex_execution.py`
-- `python/tests/service/test_generation_reconciliation.py`
+- `python/tests/service/test_web_search_identity.py`
+- `python/tests/service/test_durable_chat_reconciliation.py`
 - `python/tests/service/test_durable_job_replay.py`
 - `python/tests/service/test_auth_privacy.py`
 - `python/tests/service/test_chat_execution_privacy.py`
 - `python/tests/service/test_llm_tool_safety.py`
 - `python/tests/evals/test_tool_safety_eval.py`
 - `apps/web/src/components/chat/ChatComposer.browser.test.tsx`
-- `apps/web/src/components/chat/GenerationSelection.browser.test.tsx`
 - `apps/web/e2e/journeys/grounded-chat-citation.journey.spec.ts`
 - `testdata/proofs.json` owns the source-to-proof mapping for broader chat
   changes.

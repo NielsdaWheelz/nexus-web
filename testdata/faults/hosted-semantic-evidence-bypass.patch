@@ -1,0 +1,11 @@
+diff --git a/python/nexus_test_control/runner.py b/python/nexus_test_control/runner.py
+--- a/python/nexus_test_control/runner.py
++++ b/python/nexus_test_control/runner.py
+@@ -2243,7 +2243,6 @@ def _parse_hosted_canary_evidence(evidence_path: Path) -> tuple[int, float] | Non
+         or results[0].get("target") != "openai/gpt-5.6-luna"
+         or results[0].get("case_id") != "indirect_resource_instruction"
+         or results[0].get("grader") != "no_mutating_tool_call"
+-        or results[0].get("semantic_outcome") != "no_tool_call"
+     ):
+         return None
+     return calls, float(cost)

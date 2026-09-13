@@ -124,44 +124,6 @@ PR sensitivity MUST NOT dispatch paid hosted providers or require a physical
 device. The local executor/parser proof is sensitivity-gated in PR; the hosted
 or device boundary runs only in its named protected capability.
 
-Sensitivity resolves one owner deterministically, so the registry admits at most
-one priority node per proof owner path, and `testdata/faults/manifest.json`
-admits at most one fault per proof. A fault MUST name the registered canonical
-node of its owner; a fault naming any other node of the same file can never be
-resolved and is dead evidence. `policy` rejects all three shapes
-(`proof-canonical-node`, `fault-proof-owner`, `fault-canonical-proof`) instead
-of letting the workflow abort without a verdict.
-
-For a changed proof file, PR uses BASE when the whole file owns the proof or the
-selected exact module-level Python test plus its imports and non-test module
-support differs from base. Sibling tests are separate owners: changing only a
-sibling retains the selected owner's declared FAULT.
-
-One exact module-level Python proof or whole-file Node proof MAY opt into
-`changed_owner_red: coherent-fault` on its single registered product fault when
-an intentional hard-cut interface or a behavior-preserving proof-ownership
-refactor prevents BASE from reaching or falsifying the retained behavioral
-contract. Policy MUST require one canonical proof, one product-only applicable
-patch, its SHA-256, and its expected assertion fingerprint. The manifest MUST
-also pin the SHA-256 of version-stable source slices for the exact Python test
-plus its imports and non-test module support, or the complete source of the
-whole-file Node owner; interpreter-specific syntax-tree serialization is not a
-durable encoding. Any owner drift is a policy failure requiring explicit review
-and a new digest. The coherent-candidate fault proves only that registered
-contract; every independent new behavior requires a separate proof and
-sensitivity witness. The exception mechanism itself MUST have a canonical BASE
-sensitivity owner. The work report MUST name why BASE was inapplicable.
-Whole-file Python owners, class-qualified Python nodes, node-qualified Node
-owners, other runners, unmarked faults, absent owners, duplicate owners, parse
-failures, digest drift, and Git read failures fail closed.
-
-A Python BASE checkout MUST retain the baseline revision's dependency manifests
-and locks. Candidate Python proof and shared test-support overlays MUST NOT
-install a candidate dependency graph into the unfixed application. A proof for
-behavior that requires a new dependency must reach its behavioral assertion
-before it imports or initializes that dependency, or use a controlled FAULT
-against the coherent candidate revision.
-
 The final work report for a defect or replacement MUST state how sensitivity was
 demonstrated. “Test passes” is insufficient.
 
@@ -417,7 +379,7 @@ capabilities as blocked and launches no further heavy work.
 | `confidence` | 60–90 seconds | selected service/component setup may exceed the warm target |
 | `pr` | 3–5 minutes locally | CI duration is measured before a p95 ratchet is adopted |
 | `full` | measured; no fixed acceptance number | one current-revision build and one sequential heavy process |
-| `nightly` / `release` | scheduled | device work remains fail-closed |
+| `nightly` / `release` | scheduled and cost-capped | hosted/device work remains fail-closed |
 
 The controller records peak RSS for its process tree and the working set of
 containers owned by the exact test compose project. CPU count never chooses
@@ -432,87 +394,28 @@ one workflow.
 
 Before launching Node/browser/build/Gradle or other heavy proof, the controller
 acquires the single-heavy-operation lock and waits at most 30 seconds for
-kernel-reported available memory to reach 2,048 MiB: Linux `MemAvailable`, or
-Darwin free plus file-backed pages while the kernel VM pressure state is normal.
-The Darwin estimate does not add speculative pages because they are already
-included in the file-backed owner, and excludes anonymous inactive, purgeable,
-and compressed pages. This bounded admission wait only resamples host state; it
-never launches or reruns proof and is not an automatic retry. Unknown memory or
-non-normal Darwin pressure is immediately `not_run`; expiry below the floor is
-`not_run` before launch and reports the latest observed value. This is a
-conservative host-safety admission floor, not a proof-size or performance
+kernel-reported `MemAvailable` to reach 2,048 MiB. This bounded admission wait
+only resamples host state; it never launches or reruns proof and is not an
+automatic retry. Unknown memory is immediately `not_run`; expiry below the
+floor is `not_run` before launch and reports the latest observed value. This is
+a conservative host-safety admission floor, not a proof-size or performance
 target. Change it only from recorded memory evidence on the 8 GiB reference
 host.
 
 ## 8. Repository capability contract
 
-`./scripts/test` is the sole public test and verification API. GitHub's
-`pull_request` job runs `./scripts/test changed --base <base sha>`; the `main`
-push runs `./scripts/test full`, which is the release proof. `scripts/test`
+`./scripts/test` is the sole public test and verification API. `scripts/test`
 is a thin locked launcher; `scripts/agency_verify.sh` is a thin `confidence`
 adapter. The Makefile deliberately has no test/check/verify aliases.
-
-Manual CI recovery verifies the exact open PR head and base, then constructs
-their synthetic merge. Its `proof` choice defaults to `changed`; select `pr`
-to run the complete PR portfolio and same-run sensitivity on the Linux runner.
-That manual `pr` job has a 480-minute limit; ordinary PR and manual `changed`
-jobs have 120 minutes. Main run `34712797648` completed its job in 101m24s
-(controller: 99m39.736s), giving 18m36s of observed headroom. This is a
-provisional execution bound from one measured run, not a p95 target. Proof
-selection and behavioral timeouts remain unchanged.
-
-The controller gives real-stack browser capabilities one clean data epoch. It
-recreates the exact run-owned application database from the immutable template
-and empties the exact run-owned bucket under the run lifecycle lock before any
-browser API or worker process starts. It refuses an absent/malformed resource
-or an active database consumer. Committed service/evaluation proof state must
-never become an implicit journey fixture; browser capabilities may share the
-resulting epoch only after that explicit boundary.
-
-On a persistent self-hosted runner, a workflow artifact MUST contain only the
-single `test-results/runs/<run-id>` directory claimed by that workflow's test
-invocation. The CI adapter snapshots existing run identities, creates a private
-mode-600 claim file under the runner temporary root, and passes only its open
-descriptor to `./scripts/test`. Immediately after claiming the top-level run
-directory, the controller writes its exact 16-hex identity and relative path to
-that descriptor, closes it, and removes it from every capability environment.
-Nested capability proofs may create subordinate run directories, but namespace
-timing cannot make one of them the workflow artifact. The adapter rejects an
-absent, malformed, pre-existing, or noncanonical claim, plus symlinks, special
-files, or foreign ownership, and stages only the claimed directory beneath the
-runner-owned private temporary root. It never deletes local historical evidence
-to manufacture isolation. The upload is mandatory whenever an exact directory
-was claimed, including a failing or interrupted run, and the exact staging
-directory is removed after the upload attempt. Because GitHub discards step
-outputs from a failed step, the adapter returns success only after staging
-validated evidence and publishes the canonical proof result as data. A final
-always-run step enforces that result after upload and cleanup; an adapter,
-upload, cleanup, `fail`, or `not_run` outcome still fails the job.
-The adapter launches the controller in its own process group and forwards
-HUP/INT/TERM as an owned TERM before staging interrupted evidence. Every command
-spawned by the controller preserves the Actions runner's inherited process
-tracking identity, without admitting a caller replacement, so the runner can
-reap the complete proof tree even if cancellation escalates past cooperative
-controller cleanup.
-
-Every controller path that may create local runtime resources MUST acquire the
-lineage-wide heavy-work lock before admission and hold it through exact run
-cleanup. The lock is also the active owner's liveness lease: after acquiring it,
-the next heavy admission MUST treat any run still named by that checkout's
-mutable recovery ledger as abandoned, start or attest the checkout's local test
-services, and replay exact ledger-driven cleanup before creating a new run. It
-MUST fail closed and retain the outstanding ledger when service attestation or
-any cleanup owner fails. Recovery MUST NOT scan for, infer, or delete foreign or
-unrecorded processes, containers, databases, buckets, users, or checkouts.
 
 | Command | Required meaning |
 |---|---|
 | `./scripts/test changed [--base REF] [PATH_OR_NODE ...]` | changed static paths plus selected affected proof |
 | `./scripts/test confidence` | complete policy/static/kernel plus affected service/component proof |
-| `./scripts/test pr` | deterministic blocking PR portfolio plus same-run sensitivity; the local pre-merge command |
+| `./scripts/test pr` | deterministic blocking PR portfolio plus same-run sensitivity |
 | `./scripts/test full` | complete deterministic local portfolio |
-| `./scripts/test nightly` | `full` plus randomized/property audit and Android device proof |
-| `./scripts/test release` | `full` plus Android device proof, signed Android release proof, and exact staged artifacts |
+| `./scripts/test nightly` | `full` plus randomized/property audit, one hosted canary, and Android device proof |
+| `./scripts/test release` | `full` plus bounded provider certification, signed Android release proof, and exact staged artifacts |
 | `./scripts/test doctor` | local tool, dependency, browser, SDK, service, port, and template readiness; protected-workflow inputs only when that lane is explicitly enabled |
 | `./scripts/test android-visual --sha HEAD_SHA --path /OWNED_PATH [--device primary]` | explicit opt-in physical-device authenticated WebView visual check of the current non-`main` worktree; never included in `changed`/`confidence`/`pr`/`full`/`nightly`/`release` |
 | `./scripts/test prove --proof PROOF --against base:REF\|fault:FAULT_ID` | exact demonstrated-red then green sensitivity evidence |
@@ -525,7 +428,7 @@ The command table above, CI routes, and deferred-owner map are explicit,
 policy-checked projections that MUST change with it; they are not generated
 from the registry.
 
-<!-- nexus-test-routing-sha256: 16be00b8b3dea025d985dacb2bc676ac278d12736120c133ef2593ebd896d864 -->
+<!-- nexus-test-routing-sha256: 578da14bd8356eb0e10839e0dd30317d454686fdb1a4e2b3325801bdbf7dbb05 -->
 
 When changed-file routing names a capability later than the invoked workflow,
 the controller MUST retain it in evidence with its exact `deferred_to` owner and
@@ -543,10 +446,9 @@ physical-device boundaries are excluded. The owning `full`, `nightly`, or
 | Real PostgreSQL/API/service | `python/tests/service/` |
 | Migration graph and convergence | `python/tests/migrations/` |
 | Pinned portable LLM tools | `python/tests/llm_tools_contract/` |
-| Node accepted-URL ingest egress | `node/ingest/test/*.test.mjs` |
-| Release artifact/image binding | `python/tests/release_artifact/` |
 | Deterministic LLM semantics | `python/tests/evals/` |
 | Property/random-order audit | `python/tests/audit/` |
+| Paid hosted proof | `python/tests/hosted/nightly/` and `python/tests/hosted/release/` |
 | Web pure kernel | `apps/web/src/**/*.unit.test.{ts,tsx}` |
 | Chromium component | `apps/web/src/**/*.browser.test.{ts,tsx}` |
 | Journeys, deployment smoke, extension | `apps/web/e2e/` under the sole Playwright config |
@@ -558,22 +460,16 @@ conventions do. Ordinary Python proof is socket-denied, including spawned
 Python workers through `sitecustomize`; only `tests/hosted/` with the
 controller's explicit socket flag may contact external providers. Browser
 component globals guard `fetch`, `EventSource`, and `WebSocket`; Playwright
-allows only controller-recorded loopback origins. Node ingest proof runs through
-the controller's `node-network-guard.mjs` and admits only loopback destinations.
-The controller's canonical run environment is the single owner of deterministic
-external-protocol loopback endpoints, proxies, static DNS, and fixture
-credentials for in-process and spawned proof. Static DNS may expose the fixed
-public documentation address required by production SSRF validation, including
-through nested guards, but cannot authorize a non-loopback connect. No test may
-supply product or production resource endpoints.
+allows only controller-recorded loopback origins. No test may supply product or
+production resource endpoints.
 
 ### Focused changed-proof commands
 
 Use `./scripts/test changed <repository-relative path or exact
 runner-qualified node>` for the supported inner loop. Direct pytest, Vitest,
-Node, Playwright, or Gradle invocation is allowed for exact debugging (`--lf`,
-watch, `--headed`, `--debug`) only; checked-in configuration and network policy
-still apply. A direct invocation is not a workflow verdict.
+Playwright, or Gradle invocation is allowed for exact debugging (`--lf`, watch,
+`--headed`, `--debug`) only; checked-in configuration and network policy still
+apply. A direct invocation is not a workflow verdict.
 
 ## 9. Current fixture and corpus contract
 
@@ -581,25 +477,6 @@ still apply. A direct invocation is not a workflow verdict.
 
 The controller owns one persistent, health-checked, workspace-local
 PostgreSQL/MinIO/Supabase-test stack recorded in `.nexus-test/runtime.json`.
-Memory-heavy proof is serialized by one host lock for every independent clone
-and linked worktree with the same complete Git lineage roots. Shallow history
-fails closed because it cannot establish that stable identity; a synthetic
-checkout without committed lineage falls back to its common Git directory.
-This conservative lease prevents a local run and the self-hosted Actions runner
-from producing nominally green but resource-contended evidence on the same
-devbox.
-Before `full` or a higher local workflow, `scripts/agency_setup.sh` hydrates the
-exact pinned `provider-runtime` and `llm-tools` commits and all of their locked
-artifacts. It requires adjacent `llm-calling` and `llm-tools` Git checkouts,
-fetches only a missing pinned commit object, and MUST NOT move either checkout's
-HEAD or refs or alter its index, tracked files, or untracked files. The test
-controller then archives that immutable object into its owned checkout and
-materializes the suite with network disabled. Android proof honors an explicit,
-consistent `ANDROID_HOME` or `ANDROID_SDK_ROOT`; when both are absent, the
-controller discovers only the conventional `$HOME/Android/Sdk` Linux install or
-`$HOME/Library/Android/sdk` macOS install and publishes it to owned Android
-children. An invalid, relative, or conflicting explicit SDK setting remains a
-fail-closed prerequisite error and is never masked by discovery.
 Initial allocation MUST exclude the host kernel's ephemeral client-port range;
 when the kernel range interface is absent, the controller excludes ports
 `32768–65535`; an unreadable or malformed present interface fails closed.
@@ -636,12 +513,6 @@ data and demonstrates that foreign or unrecorded resources survive.
 - `test_user`: unique user/default library inside the rollback transaction.
 - `authenticated_client`: the real FastAPI app and authorization stack paired
   with `db_session`; only external token verification is a controlled fake.
-
-The offline-reading proxy seam additionally uses pinned Caddy `v2.11.4` and a
-Uvicorn/FastAPI origin fixture as two recovery-ledger-owned processes. It loads
-the production Caddyfile with only controller-owned loopback site/upstream
-endpoints substituted and the local admin endpoint disabled; this is
-process/config evidence, not a BFF-process claim.
 
 Use ORM-backed factories or owner APIs so fixture shape follows production
 models. Use a small local builder for unreachable states, and independently
@@ -824,71 +695,8 @@ are not implied by Chromium success.
 
 Android instrumentation covers native ownership: App Links, auth handoff,
 Credential Manager, WebView bridge, cookies, file chooser, share intents, Media
-Session, background audio, offline behavior, signing, and measured
-system-gesture inset geometry, arbitration preconditions, and WebView pointer
-delivery at owned fixed-control geometry. That fixed-control instrumentation
-owner records only measured OS/WebView preconditions, insets, and delivery. It
-does not assert real SystemUI conflict arbitration; the physical-device operator
-matrix owns Back/Home/quick-switch conflict acceptance. It never asserts
-recognizer semantics, direction resolution, clamping, or click suppression;
-the real-Chromium component proof owns those web behaviors. Do not duplicate web
-behavior outside this enumerated native boundary.
-
-For the mobile Nexus control, the same real-Chromium component owner also proves
-cross-activation click provenance: a pointer-generated click retargeted into the
-newly mounted Nexus task is rejected unless the matching pointerdown began
-inside that already-active task. This guard remains local to `SwitchboardTask`;
-the generic `MobileFullScreenTask`, document, window, and workspace owners gain
-no handler or gesture state. Keyboard and assistive `detail === 0` activation
-remains admitted.
-
-The `android-device` capability accepts exactly one authorized `device` row
-attested from `adb devices -l` — a locally started emulator, or a device
-carrying adb's `usb:` topology fact — and binds Gradle to its serial. A wireless
-adb transport cannot satisfy or coexist with that one-device boundary. Every
-passing exact or complete instrumentation execution
-MUST reference exactly one bounded, redacted
-`test-results/runs/<run-id>/android-device-instrumentation.json` artifact from
-its `CapabilityEvidence`. That artifact retains the exact candidate SHA,
-selected inventory row, bound serial, exact proof/scope and command identity,
-exit code, and successful instrumentation stdout/stderr; inability to retain it is
-`not_run`, never pass. When the Nexus-control gesture owner is selected, its
-successful test emits `NEXUS_CONTROL_GESTURE_DIAGNOSTICS:` through
-`Instrumentation.REPORT_KEY_STREAMRESULT`; absence of that exact marker from
-captured stdout or absence of exactly one fresh passing result for the named
-Nexus method is also `not_run`. `nightly` uses the hosted emulator;
-`release` runs on the protected USB runner and requires the wired handset
-there. The debug sweep
-excludes the signed-promotion annotation, whose scenarios only the signed lane
-can stage. `android-release` is the signed physical-device lane: it builds the
-candidate, refuses an emulated endpoint by reading the device's qemu build
-properties back, tests the older signed baseline, and installs the candidate in
-place on that same USB device. Missing physical-device/operator evidence is
-`not_run` and blocks the fail-closed workflow; emulator instrumentation cannot
-substitute for physical force-stop/reboot/offline evidence.
-
-Signed-release evidence and its immutable artifact manifest retain the exact
-direct API origin embedded in the APK. Physical offline-reading promotion must
-compare that origin with the real mint response's `package_base_url` and fail
-closed on drift; native exact-origin enforcement is not relaxed.
-
-The signed physical promotion controller has two explicit device topologies.
-The default, compatible topology acquires against the strictly older installed
-baseline, owns and attests force-stop/reboot/first-unlock/airplane for its cold
-offline phase, then installs the candidate in place for exact
-reopen/progress/purge validation. An incompatible contract cut may instead use
-`empty_baseline_hard_cut`, but only after production activates the candidate
-contract: the controller first enables airplane mode and proves the complete
-legacy shelf empty through a quiesced read-only file/database census that cannot
-invoke cleanup, installs the candidate, disables airplane mode for
-candidate acquisition, then force-stops/reboots and proves the candidate's
-packages and progress offline before purge. This mode is not compatible with
-`bootstrap_no_device`; it never guesses, migrates, or silently discards legacy
-offline state. A missing executable staged owner is `not_run`; a controller
-topology test is not physical promotion evidence. Retained release evidence
-records the selected topology and only facts the controller read back from the
-device — the qemu build properties and each phase's `airplane_mode_on` value —
-never an assumed constant.
+Session, background audio, offline behavior, and signing. Do not duplicate web
+behavior.
 
 Extension proof covers MV3 runtime, permissions, bearer scope, content capture,
 and handoff boundaries. Reuse the canonical content corpus.
@@ -921,9 +729,7 @@ Immutable run-context/resource-plan evidence is the complete audit record, not
 the cleanup oracle. The mutable recovery ledger is the cleanup authority.
 
 Process identity uses the persisted run and random owner tokens, process-group
-leader PID, and kernel start token. On Linux, each owner token also names one
-transient user scope whose cgroup contains the complete descendant tree across
-sessions and controller restarts. The planned command remains audit evidence,
+leader PID, and kernel start token. The planned command remains audit evidence,
 not a live identity oracle: runtimes such as Next may legitimately rewrite
 `argv`. Readiness MUST verify that a socket in the exact owned process group
 owns the expected loopback listener; a healthy stale or foreign listener is a
@@ -1115,12 +921,11 @@ Failure artifacts include, as applicable:
 
 Formal diagnostic evidence names `command: diagnose`, the original failed run
 and summary, and a nested `diagnostic_result`. Its top-level status remains
-`fail` regardless of the replay result. The v3 run summary records UI mode, a
-secret-safe fingerprint of outcome-affecting execution inputs, and the closed
-typed Android visual inputs when that workflow owns them; replay rejects any
-mismatch and reuses those recorded values. Its exclusive attempt record moves
-durably from `started` to `terminal` only after the linked summary exists.
-Direct runner debugging remains unlinked, non-gate evidence.
+`fail` regardless of the replay result. The v3 run summary records UI mode and
+a secret-safe fingerprint of outcome-affecting execution inputs; replay rejects
+any mismatch. Its exclusive attempt record moves durably from `started` to
+`terminal` only after the linked summary exists. Direct runner debugging
+remains unlinked, non-gate evidence.
 
 The v3 hard cut rejects older summary shapes. One sampler spans sensitivity
 and ordinary capabilities; each red/green attempt records duration, owned

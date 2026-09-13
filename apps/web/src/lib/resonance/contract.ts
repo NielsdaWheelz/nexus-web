@@ -8,13 +8,19 @@ import {
   type PublicationDate,
 } from "@/lib/dates/publicationDate";
 import { assumeAppHref, type AppHref } from "@/lib/lectern/contract";
-import { MEDIA_KINDS, type MediaKind } from "@/lib/media/kind";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import { expectIsoInstant } from "@/lib/validation";
 
 const SLATE_LIMIT = 10;
+const MEDIA_KINDS = [
+  "web_article",
+  "epub",
+  "pdf",
+  "video",
+  "podcast_episode",
+] as const;
 const RESONANCE_EDGE_ORIGINS = [
   "user",
   "citation",
@@ -24,6 +30,7 @@ const RESONANCE_EDGE_ORIGINS = [
   "synapse",
 ] as const;
 
+export type SlateMediaKind = (typeof MEDIA_KINDS)[number];
 export type ResonanceEdgeOrigin = (typeof RESONANCE_EDGE_ORIGINS)[number];
 export type ResourceRefUri = string & {
   readonly __resourceRefUri: unique symbol;
@@ -44,7 +51,7 @@ interface SlateTargetBase {
 }
 
 export type SlateTarget =
-  | (SlateTargetBase & { kind: "Media"; mediaKind: MediaKind })
+  | (SlateTargetBase & { kind: "Media"; mediaKind: SlateMediaKind })
   | (SlateTargetBase & { kind: "Podcast" });
 
 export type SlateReason =

@@ -4,9 +4,9 @@ import {
   type AuthorWorksView,
 } from "@/lib/contributors/workView";
 import {
-  type UpdatedTitleIndexView,
-  updatedTitleIndexViewQuery,
-} from "@/lib/collections/updatedTitleIndexView";
+  conversationIndexViewQuery,
+  type ConversationIndexView,
+} from "@/lib/conversations/indexView";
 import {
   librariesIndexViewQuery,
   type LibrariesIndexView,
@@ -15,6 +15,10 @@ import {
   buildLibraryEntriesQuery,
   type LibraryEntryView,
 } from "@/lib/libraries/libraryView";
+import {
+  notesIndexViewQuery,
+  type NotesIndexView,
+} from "@/lib/notes/pageIndexView";
 
 export interface ResourceDescriptor<TParams> {
   cacheKey: (params: TParams) => string;
@@ -70,7 +74,7 @@ export interface ContributorWorksResourceParams
 export interface ConversationIndexResourceParams
   extends Omit<CollectionPageParams, "limit"> {
   // The current Chats index view. Canonical emits no sort/direction keys.
-  view?: UpdatedTitleIndexView;
+  view?: ConversationIndexView;
 }
 
 export interface ReadingSlateResourceParams {
@@ -84,7 +88,7 @@ export interface LibrarySlateResourceParams extends ReadingSlateResourceParams {
 // The Notes index is exhaustive: it carries the view alone, with no page keys.
 export interface NotePagesResourceParams {
   // The current Notes index view. Canonical emits no sort/direction keys.
-  view?: UpdatedTitleIndexView;
+  view?: NotesIndexView;
 }
 
 interface NoteBlockResourceParams {
@@ -141,7 +145,7 @@ function conversationIndexPageQuery(
 ): string {
   return collectionPageQuery(
     { ...params, limit: CONVERSATION_INDEX_LIMIT },
-    params.view ? updatedTitleIndexViewQuery(params.view) : "",
+    params.view ? conversationIndexViewQuery(params.view) : "",
   );
 }
 
@@ -220,7 +224,7 @@ export const librarySlateResource: ResourceDescriptor<LibrarySlateResourceParams
   };
 
 function notePagesQuery(params: NotePagesResourceParams): string {
-  return params.view ? updatedTitleIndexViewQuery(params.view) : "";
+  return params.view ? notesIndexViewQuery(params.view) : "";
 }
 
 export const notePagesResource: ResourceDescriptor<NotePagesResourceParams> = {
@@ -239,7 +243,7 @@ export const conversationsInitialResource: ResourceDescriptor<ConversationIndexR
   {
     // View-scoped but cursor-free: every page of one chats view shares an entry.
     cacheKey: (params) =>
-      `conversations:list${params.view ? updatedTitleIndexViewQuery(params.view) : ""}`,
+      `conversations:list${params.view ? conversationIndexViewQuery(params.view) : ""}`,
     serverPath: (params) =>
       `/conversations${conversationIndexPageQuery(params)}`,
     clientPath: (params) =>

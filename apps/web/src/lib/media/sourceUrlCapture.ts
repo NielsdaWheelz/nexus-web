@@ -1,9 +1,5 @@
 import type { FeedbackContent } from "@/components/feedback/Feedback";
-import {
-  isApiError,
-  isSameSystemApiDefect,
-  isUnauthenticatedApiError,
-} from "@/lib/api/client";
+import { isApiError, isUnauthenticatedApiError } from "@/lib/api/client";
 import { isAbortError } from "@/lib/errors";
 import {
   mediaCaptureStatus,
@@ -13,12 +9,13 @@ import {
 import {
   addMediaFromUrl,
   isFailedSourceIngest,
+  isMediaIngestionDefect,
   type SourceIngestResult,
 } from "@/lib/media/ingestionClient";
 
 export function isSourceUrlCaptureDefect(error: unknown): boolean {
   return (
-    isSameSystemApiDefect(error) ||
+    isMediaIngestionDefect(error) ||
     (!isApiError(error) &&
       !(error instanceof TypeError) &&
       !isAbortError(error))
@@ -53,7 +50,7 @@ export async function captureSourceUrl({
   url: string;
   libraryIds: readonly string[];
   idempotencyKey?: string;
-  operation: MediaCaptureOperation;
+  operation: Extract<MediaCaptureOperation, "SaveSource" | "AddAttachment">;
   signal?: AbortSignal;
 }): Promise<SourceUrlCaptureResult> {
   try {

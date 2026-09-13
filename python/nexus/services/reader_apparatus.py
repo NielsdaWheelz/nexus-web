@@ -17,7 +17,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
-from nexus.errors import ApiError, ApiErrorCode, NotFoundError, ResourceFailureDimension
+from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.schemas.reader_apparatus import (
     ReaderApparatusCapabilities,
     ReaderApparatusEdgeOut,
@@ -41,16 +41,7 @@ _PROJECT_GUTENBERG_LINKNOTE_TARGET_RE = re.compile(r"^linknote-(?P<number>[1-9]\
 
 
 class HtmlApparatusTargetLimitExceeded(Exception):
-    """The compact cross-document target index exceeded its parser budget.
-
-    The site that detects the breach names its safe dimension; every current cap
-    bounds the apparatus index this extraction emits rather than the document's
-    own shape, so each declares ``Output``.
-    """
-
-    def __init__(self, message: str, *, dimension: ResourceFailureDimension) -> None:
-        super().__init__(message)
-        self.dimension: ResourceFailureDimension = dimension
+    """The compact cross-document target index exceeded its parser budget."""
 
 
 def visible_reader_apparatus_item_ids(
@@ -352,9 +343,7 @@ def collect_html_apparatus_targets(
         if not body_text:
             continue
         if ordinal >= max_targets:
-            raise HtmlApparatusTargetLimitExceeded(
-                "HTML apparatus target count exceeded", dimension="Output"
-            )
+            raise HtmlApparatusTargetLimitExceeded("HTML apparatus target count exceeded")
         target_ref = f"{document_href}#{target_id}"
         target_kind = _target_kind_for_context(context)
         source_ref_for_target = {
@@ -381,9 +370,7 @@ def collect_html_apparatus_targets(
         }
         retained_utf8_bytes += nested_utf8_byte_length(target)
         if retained_utf8_bytes > max_retained_utf8_bytes:
-            raise HtmlApparatusTargetLimitExceeded(
-                "HTML apparatus target text exceeded", dimension="Output"
-            )
+            raise HtmlApparatusTargetLimitExceeded("HTML apparatus target text exceeded")
         targets[target_ref] = target
         ordinal += 1
     return targets, ordinal, retained_utf8_bytes, backlink_count
@@ -2508,9 +2495,7 @@ def _link_hrefs(element: HtmlElement, *, max_count: int) -> list[str]:
         href = (descendant.get("href") or "").strip()
         if href:
             if len(hrefs) >= max_count:
-                raise HtmlApparatusTargetLimitExceeded(
-                    "HTML apparatus backlink count exceeded", dimension="Output"
-                )
+                raise HtmlApparatusTargetLimitExceeded("HTML apparatus backlink count exceeded")
             hrefs.append(href)
     return hrefs
 

@@ -71,27 +71,16 @@ timeout --foreground 5m gh run download "$publisher_run_id" \
   --repo "$REPOSITORY" \
   --name "$ARTIFACT_NAME" \
   --dir "$BUNDLE"
-bundle_files="$(
-  cd "$BUNDLE"
-  find . -type f -print | while IFS= read -r path; do
-    printf '%s\n' "${path#./}"
-  done | LC_ALL=C sort
-)"
-expected_bundle_files=$'Caddyfile\ncandidate-manifest.json\ndocker-compose.yml\nnexus-codex-agent-host.apparmor\nprove-codex-capacity.sh\npython/nexus/__init__.py\npython/nexus/release_artifact.py\nrelease.py\ntestdata/android/player-protocol.json'
+bundle_files="$(cd "$BUNDLE" && find . -type f -printf '%P\n' | LC_ALL=C sort)"
+expected_bundle_files=$'Caddyfile\ncandidate-manifest.json\ndocker-compose.yml\npython/nexus/__init__.py\npython/nexus/release_artifact.py\nrelease.py'
 [ "$bundle_files" = "$expected_bundle_files" ] || \
   die "release artifact has an unexpected shape"
 cmp "${BUNDLE}/release.py" "${ROOT_DIR}/deploy/hetzner/release.py"
 cmp "${BUNDLE}/docker-compose.yml" "${ROOT_DIR}/deploy/hetzner/docker-compose.yml"
 cmp "${BUNDLE}/Caddyfile" "${ROOT_DIR}/deploy/hetzner/Caddyfile"
-cmp "${BUNDLE}/nexus-codex-agent-host.apparmor" \
-  "${ROOT_DIR}/deploy/hetzner/nexus-codex-agent-host.apparmor"
-cmp "${BUNDLE}/prove-codex-capacity.sh" \
-  "${ROOT_DIR}/deploy/hetzner/prove-codex-capacity.sh"
 cmp "${BUNDLE}/python/nexus/__init__.py" "${ROOT_DIR}/python/nexus/__init__.py"
 cmp "${BUNDLE}/python/nexus/release_artifact.py" \
   "${ROOT_DIR}/python/nexus/release_artifact.py"
-cmp "${BUNDLE}/testdata/android/player-protocol.json" \
-  "${ROOT_DIR}/testdata/android/player-protocol.json"
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="${ROOT_DIR}/python" \
   python3 -B "${ROOT_DIR}/deploy/hetzner/release.py" validate-candidate \
     --manifest "${BUNDLE}/candidate-manifest.json" >/dev/null

@@ -15,50 +15,36 @@
 import type { CitationOut } from "@/lib/conversations/citationOut";
 import type { Presence } from "@/lib/api/presence";
 import type { DurableExecution } from "@/lib/api/executionAdvisory";
-import type {
-  GenerationSelectionSpec,
-  SelectionPresentation,
-} from "@/lib/conversations/generationCatalog";
 import type { ResourceActivation } from "@/lib/resources/activation";
 
 /** A9/A15 head-read freshness label (binding `manifests_equal` summary). */
 export type DossierFreshness = "Current" | "Stale";
 
-/** The current A7 write vocabulary (`DossierBuildFailureCode` on the backend). */
-export const DOSSIER_BUILD_FAILURE_CODES = [
+/** A7 closed failure codes (mirrors `DossierBuildFailureCode` StrEnum). */
+export type DossierBuildFailureCode =
+  | "NoSourceMaterial"
+  | "InputsChanged"
+  | "DependencyProjectionFailed"
+  | "EntitlementDenied"
+  | "BudgetExceeded"
+  | "ContextTooLarge"
+  | "ProviderRefused"
+  | "ProviderIncomplete"
+  | "DocumentValidationFailed"
+  | "CitationValidationFailed";
+
+export const DOSSIER_BUILD_FAILURE_CODES: readonly DossierBuildFailureCode[] = [
   "NoSourceMaterial",
   "InputsChanged",
   "DependencyProjectionFailed",
-  "ContextTooLarge",
-  "Auth",
-  "Quota",
-  "Timeout",
-  "OutputLimit",
-  "InvalidOutput",
-  "PolicyViolation",
-  "RuntimeUnavailable",
-  "CapacityUnavailable",
-  "DocumentValidationFailed",
-  "CitationValidationFailed",
-] as const;
-
-export type DossierBuildFailureCode =
-  (typeof DOSSIER_BUILD_FAILURE_CODES)[number];
-
-/** Retired persisted spellings accepted only by dossier read boundaries. */
-export const HISTORICAL_DOSSIER_BUILD_FAILURE_CODES = [
   "EntitlementDenied",
   "BudgetExceeded",
+  "ContextTooLarge",
   "ProviderRefused",
   "ProviderIncomplete",
-] as const;
-
-export type HistoricalDossierBuildFailureCode =
-  (typeof HISTORICAL_DOSSIER_BUILD_FAILURE_CODES)[number];
-
-export type ReadDossierBuildFailureCode =
-  | DossierBuildFailureCode
-  | HistoricalDossierBuildFailureCode;
+  "DocumentValidationFailed",
+  "CitationValidationFailed",
+];
 
 /** A decoded same-system API/transport error, kept near the screen boundary
  * for `dossierErrorMessage`. `code` is the `ApiError.code`; `message` the
@@ -191,7 +177,7 @@ export interface DossierRevisionSummary {
 /** Failed{code, detail/support} facts, shared by the head snapshot and the SSE
  * `Failed` event (one shape for one fact). */
 export interface DossierFailedFacts {
-  failureCode: ReadDossierBuildFailureCode;
+  failureCode: DossierBuildFailureCode;
   detail: Presence<string>;
   support: Presence<Record<string, unknown>>;
 }
@@ -202,41 +188,9 @@ export interface DossierCancelledFacts {
   at: string;
 }
 
-/** The frozen model-tool authority of one admitted background generation
- * (spec 5.1): either no model-callable tool or exactly one frozen plan. */
-export type DossierBuildToolPlan =
-  | { kind: "NoModelTools" }
-  | {
-      kind: "ExactModelTools";
-      planId: string;
-      planRevision: string;
-      effectMode: "ReadOnly" | "AdditiveWrites";
-    };
-
-/** Read-only facts of the build's latest admitted ledger generation (spec 3.4,
- * AC 15): the exact selection, its dispatch-time disclosure, the tool plan,
- * and the journaled tool-position count. Never a control or a price. */
-export interface DossierAdmittedGeneration {
-  selection: GenerationSelectionSpec;
-  displayAtDispatch: SelectionPresentation;
-  toolPlan: DossierBuildToolPlan;
-  toolPositions: number;
-}
-
-/** The durable pre-admission `CapacityPaused` parked on an active build's job
- * (spec 3.4): the user waits for Codex capacity and may cancel. */
-export interface DossierCapacityPause {
-  explanation: string;
-  resetAt: Presence<string>;
-  nextCheckAt: string;
-  lastChecked: string;
-}
-
 /** One build attempt's identity (DossierBuildSummary). Serves both
  * `active_build` (only `execution` Present) and `latest_unsuccessful_build`
- * (exactly one of `failure`/`cancellation` Present). `admittedGeneration` is
- * the latest ledger generation; `capacityPause` is Present only on an active
- * build parked by Codex quota. */
+ * (exactly one of `failure`/`cancellation` Present). */
 export interface DossierBuildSummary {
   handle: string;
   requesterUserId: Presence<string>;
@@ -245,8 +199,6 @@ export interface DossierBuildSummary {
   execution: Presence<DurableExecution>;
   failure: Presence<DossierFailedFacts>;
   cancellation: Presence<DossierCancelledFacts>;
-  admittedGeneration: Presence<DossierAdmittedGeneration>;
-  capacityPause: Presence<DossierCapacityPause>;
 }
 
 /** A11 Media Abstract (Media Dossier only): compact, read-only, current-only. */

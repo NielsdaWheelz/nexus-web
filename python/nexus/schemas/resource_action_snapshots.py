@@ -24,14 +24,12 @@ from pydantic import (
     ConfigDict,
     Field,
     SerializerFunctionWrapHandler,
-    field_validator,
     model_serializer,
     model_validator,
 )
 from pydantic.alias_generators import to_camel
 
 from nexus.schemas.consumption import PlayerDescriptor
-from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services.resource_mutation_replay import canonical_json_bytes
 
@@ -88,6 +86,7 @@ SimpleResourceActionCapabilityKind = Literal[
     "Chat",
     "PlayNext",
     "DownloadOriginal",
+    "RetryProcessing",
     "RefreshSource",
     "RetryMetadata",
     "EditAuthors",
@@ -125,52 +124,6 @@ class SimpleResourceActionCapabilityOut(BaseModel):
     availability: ServerActionAvailabilityOut
 
     model_config = _OUT_CONFIG
-
-
-class RetrySourceOfferOut(RetrySourceOffer):
-    model_config = _OUT_CONFIG
-
-
-class RepairSourceOfferOut(RepairSourceOffer):
-    model_config = _OUT_CONFIG
-
-
-class RepairSearchOfferOut(RepairSearchOffer):
-    model_config = _OUT_CONFIG
-
-
-MediaRecoveryOfferOut = Annotated[
-    RetrySourceOfferOut | RepairSourceOfferOut | RepairSearchOfferOut,
-    Field(discriminator="kind"),
-]
-"""The Imports owner's media offers, camelCased like every other snapshot field."""
-
-
-class RecoveryResourceActionCapabilityOut(BaseModel):
-    """The one recovery a media menu may plan, carrying the identity the viewer
-    inspected so a stale offer conflicts instead of acting on newer work."""
-
-    kind: Literal["Recovery"] = "Recovery"
-    availability: ServerActionAvailabilityOut
-    offer: MediaRecoveryOfferOut
-
-    model_config = _OUT_CONFIG
-
-
-class OfflineReadingResourceActionCapabilityOut(BaseModel):
-    kind: Literal["OfflineReading"] = "OfflineReading"
-    availability: ServerActionAvailabilityOut
-    media_kind: Literal["web_article", "epub", "pdf"]
-    requested_title: str = Field(min_length=1, max_length=512)
-
-    model_config = _OUT_CONFIG
-
-    @field_validator("requested_title")
-    @classmethod
-    def validate_requested_title(cls, value: str) -> str:
-        if value.isspace():
-            raise ValueError("requestedTitle must contain visible text")
-        return value
 
 
 class OpenSourceResourceActionCapabilityOut(BaseModel):
@@ -293,8 +246,6 @@ class HighlightNoteResourceActionCapabilityOut(BaseModel):
 
 ResourceActionCapabilityOut = Annotated[
     SimpleResourceActionCapabilityOut
-    | RecoveryResourceActionCapabilityOut
-    | OfflineReadingResourceActionCapabilityOut
     | OpenSourceResourceActionCapabilityOut
     | PlaybackResourceActionCapabilityOut
     | ConsumptionResourceActionCapabilityOut

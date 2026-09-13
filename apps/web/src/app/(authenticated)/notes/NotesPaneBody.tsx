@@ -13,8 +13,7 @@ import CollectionView from "@/components/collections/CollectionView";
 import SelectField from "@/components/ui/SelectField";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { notePagesResource } from "@/lib/api/resource";
-import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
+import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
@@ -26,22 +25,19 @@ import {
 import { createNotePage } from "@/lib/notes/api";
 import { useOpenDailyPage } from "@/lib/notes/openDailyPage";
 import {
-  CANONICAL_UPDATED_TITLE_INDEX_VIEW,
-  UPDATED_TITLE_SORT_OPTION_IDS,
-  decodeUpdatedTitleIndexView,
-  encodeUpdatedTitleIndexView,
-  type DecodedUpdatedTitleIndexView,
-  type UpdatedTitleIndexView,
-  type UpdatedTitleSortOptionId,
-  updatedTitleSortOptionLabel,
-  updatedTitleSortOptionOf,
-  updatedTitleViewForSortOption,
-} from "@/lib/collections/updatedTitleIndexView";
+  CANONICAL_NOTES_INDEX_VIEW,
+  NOTES_SORT_OPTION_IDS,
+  decodeNotesIndexView,
+  encodeNotesIndexView,
+  notesSortOptionLabel,
+  notesSortOptionOf,
+  notesViewForSortOption,
+  type DecodedNotesIndexView,
+  type NotesIndexView,
+  type NotesSortOptionId,
+} from "@/lib/notes/pageIndexView";
 import { PROGRAMMATIC_NEXUS_TARGET_ACTIVATION } from "@/lib/nexus/dispatch";
-import {
-  loadNotePages,
-  type NotePageSummary,
-} from "@/lib/notes/pageContract";
+import { normalizePageSummary, type NotePageSummary } from "@/lib/notes/normalize";
 import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
 import { useResource } from "@/lib/api/useResource";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
@@ -55,7 +51,7 @@ const EMPTY_NOTE_PAGES: readonly NotePageSummary[] = [];
 
 /** The index committed as one exact view. The endpoint is exhaustive. */
 interface CommittedPagesView {
-  readonly view: UpdatedTitleIndexView;
+  readonly view: NotesIndexView;
   readonly pages: readonly NotePageSummary[];
 }
 
@@ -169,15 +165,13 @@ export default function NotesPaneBody() {
   const pagesViewCodec = useMemo(
     () => ({
       basePath: "/notes",
-      decode: decodeUpdatedTitleIndexView,
+      decode: decodeNotesIndexView,
       encode: (
-        decoded: DecodedUpdatedTitleIndexView,
+        decoded: DecodedNotesIndexView,
         current: URLSearchParams,
       ): URLSearchParams =>
-        encodeUpdatedTitleIndexView(
-          decoded.kind === "Valid"
-            ? decoded.view
-            : CANONICAL_UPDATED_TITLE_INDEX_VIEW,
+        encodeNotesIndexView(
+          decoded.kind === "Valid" ? decoded.view : CANONICAL_NOTES_INDEX_VIEW,
           current,
         ),
       replaceOptions: {
@@ -210,7 +204,7 @@ export default function NotesPaneBody() {
   // A view replacement only writes the URL: the committed rows stay rendered
   // until the requested/committed mismatch it creates is answered.
   const setView = useCallback(
-    (next: UpdatedTitleIndexView) => {
+    (next: NotesIndexView) => {
       capturePaneScroll();
       setDecodedView({ kind: "Valid", view: next });
     },
@@ -237,7 +231,10 @@ export default function NotesPaneBody() {
         // justify-defect: a non-null request key is built from this exact view.
         throw new Error("Notes index request lost its view identity");
       }
-      return loadNotePages(clientResourceFetcher(signal), { view });
+      const envelope = await apiFetch<{
+        data: { pages?: Record<string, unknown>[] };
+      }>(notePagesResource.clientPath({ view }), { signal });
+      return (envelope.data.pages ?? []).map(normalizePageSummary);
     },
   });
   // Latest-wins atomic commit: the resource reports a result only under the
@@ -288,7 +285,7 @@ export default function NotesPaneBody() {
   const clearDomainFilters = useCallback(() => {
     dismissFilterRowsRef.current();
     pendingCommitFocusRef.current = true;
-    setView(CANONICAL_UPDATED_TITLE_INDEX_VIEW);
+    setView(CANONICAL_NOTES_INDEX_VIEW);
   }, [setView]);
   const domainFilterControls = useMemo(
     () =>
@@ -298,19 +295,19 @@ export default function NotesPaneBody() {
             layout="Stacked"
             label="Sort by"
             ref={sortSelectRef}
-            value={updatedTitleSortOptionOf(view)}
+            value={notesSortOptionOf(view)}
             onChange={(event) => {
               pendingCommitFocusRef.current = true;
               setView(
-                updatedTitleViewForSortOption(
-                  event.target.value as UpdatedTitleSortOptionId,
+                notesViewForSortOption(
+                  event.target.value as NotesSortOptionId,
                 ),
               );
             }}
           >
-            {UPDATED_TITLE_SORT_OPTION_IDS.map((optionId) => (
+            {NOTES_SORT_OPTION_IDS.map((optionId) => (
               <option key={optionId} value={optionId}>
-                {updatedTitleSortOptionLabel(optionId)}
+                {notesSortOptionLabel(optionId)}
               </option>
             ))}
           </SelectField>
@@ -457,7 +454,7 @@ export default function NotesPaneBody() {
               search.onDismiss();
               setDecodedView({
                 kind: "Valid",
-                view: CANONICAL_UPDATED_TITLE_INDEX_VIEW,
+                view: CANONICAL_NOTES_INDEX_VIEW,
               });
             },
           },

@@ -24,16 +24,11 @@ def test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr() -> Non
         "destructive-side-effects",
         "migration-compatibility",
         "costly-effects",
-        "generation-ledger-contract",
         "reading-progress",
         "citation-provenance-identity",
         "durable-job-replay",
-        "generation-reconciliation",
-        "codex-generation-host",
         "database-object-convergence",
-        "document-import-reliability",
         "llm-tool-safety",
-        "android-player-protocol-skew",
         "immutable-production-release",
         "production-runtime-health",
         "oracle-publication",
@@ -45,15 +40,11 @@ def test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr() -> Non
     pr_capabilities = {
         requirement.capability for requirement in WORKFLOW_REGISTRY[Workflow.PR].requirements
     }
+    assert Capability.HOSTED not in pr_capabilities
     assert Capability.ANDROID_DEVICE not in pr_capabilities
+    assert Capability.PROVIDER_CERTIFICATION not in pr_capabilities
     assert Capability.JOURNEYS_CRITICAL in pr_capabilities
     assert Capability.JOURNEYS_ALL not in pr_capabilities
-
-    release_capabilities = {
-        requirement.capability for requirement in WORKFLOW_REGISTRY[Workflow.RELEASE].requirements
-    }
-    assert Capability.ANDROID_DEVICE in release_capabilities
-    assert Capability.ANDROID_RELEASE in release_capabilities
 
 
 def test_confidence_keeps_real_stack_affected_and_skips_build_and_journeys() -> None:

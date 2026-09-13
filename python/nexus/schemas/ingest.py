@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 
 from nexus.schemas.presence import Presence
 
@@ -17,11 +17,6 @@ class IngestReconcileEnqueueOut(BaseModel):
 class IngestRecoveryHealthOut(BaseModel):
     """Operator-facing stale-ingest health snapshot."""
 
-    expired_upload_session_count: int
-    failed_upload_session_count: int
-    active_upload_verification_lease_count: int
-    accepted_jobless_source_attempt_count: int
-    resource_limited_source_job_count: int
     stale_source_attempt_count: int
     oldest_stale_source_attempt_age_seconds: Presence[int]
     fresh_pending_content_index_count: int
@@ -34,8 +29,6 @@ class IngestRecoveryHealthOut(BaseModel):
     latest_reconciler_succeeded: bool
     stale_threshold_seconds: int
     degraded: bool
-
-    model_config = ConfigDict(extra="forbid")
 
 
 class IngestRecoveryJobOut(BaseModel):

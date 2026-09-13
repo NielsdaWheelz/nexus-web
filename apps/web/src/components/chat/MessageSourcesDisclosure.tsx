@@ -15,6 +15,7 @@ import { hrefForResourceActivation, type ResourceActivation } from "@/lib/resour
 import styles from "./MessageSourcesDisclosure.module.css";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { secondaryActivationForResource } from "@/lib/resources/activation";
 
 function SourceLink({
   citation,
@@ -61,6 +62,7 @@ function SourceLink({
             event,
             runtime: paneRuntime,
             href,
+            secondaryActivation: secondaryActivationForResource(activation) ?? undefined,
             sourceAnchor: event.currentTarget,
           });
           if (handled === "unhandled") return;
@@ -86,6 +88,7 @@ function SourceLink({
               runtime: paneRuntime,
               href: targetHref,
               labelHint: activationTarget.label,
+              secondaryActivation: secondaryActivationForResource(activation) ?? undefined,
               sourceAnchor: event.currentTarget,
             });
             if (handled === "unhandled") return;

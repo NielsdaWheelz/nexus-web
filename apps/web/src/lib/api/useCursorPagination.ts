@@ -18,14 +18,6 @@ export interface CursorPage<T> {
   page: { has_more: boolean; next_cursor: string | null };
 }
 
-interface CursorContinuation<T> {
-  readonly owner: CursorPage<T> | null;
-  readonly appended: T[];
-  readonly nextCursor: string | null;
-  readonly loadingMore: boolean;
-  readonly error: ApiError | null;
-}
-
 // One owner for the "page 1 via useResource, then append more pages by cursor"
 // pane pattern (CT-1). page-1 items+cursor derive from `firstPage`; later pages
 // accumulate in local state, reset whenever the page-1 data reference changes.
@@ -33,7 +25,10 @@ export function useCursorPagination<T>(args: {
   firstPage: AsyncResource<CursorPage<T>>;
   initialMoreError: ApiError | null;
   buildMoreHref: (cursor: string) => string;
-  loadMorePage?: (href: string, signal: AbortSignal) => Promise<CursorPage<T>>;
+  loadMorePage?: (
+    href: string,
+    signal: AbortSignal,
+  ) => Promise<CursorPage<T>>;
 }): {
   items: T[];
   status: "loading" | "error" | "ready";
@@ -47,56 +42,40 @@ export function useCursorPagination<T>(args: {
   const { firstPage, initialMoreError, buildMoreHref, loadMorePage } = args;
   const firstData = firstPage.status === "ready" ? firstPage.data : null;
 
-  const [continuation, setContinuation] = useState<CursorContinuation<T>>({
-    owner: null,
-    appended: [],
-    nextCursor: null,
-    loadingMore: false,
-    error: initialMoreError,
-  });
-  const [defect, setDefect] = useState<{
-    readonly owner: CursorPage<T>;
-    readonly error: unknown;
-  } | null>(null);
+  const [appended, setAppended] = useState<T[]>([]);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [moreError, setMoreError] = useState<ApiError | null>(initialMoreError);
 
-  // A new first page projects synchronously from its own cursor. The effect
-  // adopts all continuation fields in one state update so an immediately
-  // clickable control can never observe a new owner with the old cursor.
-  const firstDataIsCurrent =
-    firstData !== null && continuation.owner === firstData;
+  // Reset appended pages when page 1 changes identity (new firstPage.data ref).
+  const seenRef = useRef<CursorPage<T> | null>(null);
+  const firstDataIsCurrent = firstData !== null && seenRef.current === firstData;
   const effectiveCursor =
     firstData === null
       ? null
       : firstDataIsCurrent
-        ? continuation.nextCursor
+        ? cursor
         : firstData.page.next_cursor;
   const items = useMemo(() => {
     if (firstData === null) {
       return [];
     }
-    return [
-      ...firstData.data,
-      ...(firstDataIsCurrent ? continuation.appended : []),
-    ];
-  }, [continuation.appended, firstData, firstDataIsCurrent]);
+    return [...firstData.data, ...(firstDataIsCurrent ? appended : [])];
+  }, [appended, firstData, firstDataIsCurrent]);
 
   useEffect(() => {
-    if (firstData === null || continuation.owner === firstData) {
+    if (firstData === null || seenRef.current === firstData) {
       return;
     }
-    setContinuation({
-      owner: firstData,
-      appended: [],
-      nextCursor: firstData.page.next_cursor,
-      loadingMore: false,
-      error: initialMoreError,
-    });
-  }, [continuation.owner, firstData, initialMoreError]);
+    seenRef.current = firstData;
+    setAppended([]);
+    setCursor(firstData.page.next_cursor);
+    setLoadingMore(false);
+    setMoreError(initialMoreError);
+  }, [firstData, initialMoreError]);
 
   const cursorRef = useRef(effectiveCursor);
   cursorRef.current = effectiveCursor;
-  const firstDataRef = useRef(firstData);
-  firstDataRef.current = firstData;
   const loadingRef = useRef(false);
   const buildRef = useRef(buildMoreHref);
   buildRef.current = buildMoreHref;
@@ -119,11 +98,8 @@ export function useCursorPagination<T>(args: {
     if (next === null || loadingRef.current) return;
     const generation = generationRef.current;
     loadingRef.current = true;
-    setContinuation((current) => ({
-      ...current,
-      loadingMore: true,
-      error: null,
-    }));
+    setLoadingMore(true);
+    setMoreError(null);
     const controller = new AbortController();
     abortRef.current?.abort();
     abortRef.current = controller;
@@ -135,47 +111,31 @@ export function useCursorPagination<T>(args: {
           : await apiFetch<CursorPage<T>>(href as ApiPath, {
               signal: controller.signal,
             });
-        if (controller.signal.aborted || generation !== generationRef.current)
-          return;
-        setContinuation((current) => ({
-          ...current,
-          appended: [...current.appended, ...page.data],
-          nextCursor: page.page.next_cursor,
-        }));
+        if (controller.signal.aborted || generation !== generationRef.current) return;
+        setAppended((prev) => [...prev, ...page.data]);
+        setCursor(page.page.next_cursor);
       } catch (err) {
-        if (
-          isAbortError(err) ||
-          controller.signal.aborted ||
-          generation !== generationRef.current
-        ) {
+        if (isAbortError(err) || controller.signal.aborted || generation !== generationRef.current) {
           return;
         }
         if (handleUnauthenticatedApiError(err)) return;
-        if (!isApiError(err)) {
-          const owner = firstDataRef.current;
-          if (owner !== null) setDefect({ owner, error: err });
-          return;
-        }
-        setContinuation((current) => ({
-          ...current,
-          error: err,
-        }));
+        setMoreError(
+          isApiError(err)
+            ? err
+            : new ApiError(
+                0,
+                "E_NETWORK",
+                err instanceof Error ? err.message : "Request failed",
+              ),
+        );
       } finally {
-        if (
-          !controller.signal.aborted &&
-          generation === generationRef.current
-        ) {
+        if (!controller.signal.aborted && generation === generationRef.current) {
           loadingRef.current = false;
-          setContinuation((current) => ({
-            ...current,
-            loadingMore: false,
-          }));
+          setLoadingMore(false);
         }
       }
     })();
   }, []);
-
-  if (defect !== null && defect.owner === firstData) throw defect.error;
 
   switch (firstPage.status) {
     case "idle":
@@ -205,10 +165,10 @@ export function useCursorPagination<T>(args: {
       return {
         items,
         status: "ready",
-        error: firstDataIsCurrent ? continuation.error : null,
-        hasMore: effectiveCursor !== null,
-        nextCursor: effectiveCursor,
-        loadingMore: firstDataIsCurrent ? continuation.loadingMore : false,
+        error: firstDataIsCurrent ? moreError : null,
+      hasMore: effectiveCursor !== null,
+      nextCursor: effectiveCursor,
+        loadingMore: firstDataIsCurrent ? loadingMore : false,
         loadMore,
         retry: loadMore,
       };

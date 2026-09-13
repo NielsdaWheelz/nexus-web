@@ -1,6 +1,6 @@
 import {
+  ANDROID_PLAYER_PROTOCOL_VERSION,
   NATIVE_PLAYER_COMMAND_DEADLINE_MS,
-  androidPlayerProtocolIdentity,
   decodeAndroidPlayerMessage,
   isAndroidPlayerEvent,
   type AndroidPlayerCommand,
@@ -15,8 +15,9 @@ interface NexusPlayerBridge {
 }
 
 declare global {
-  // Android injects the bridge on the page's global object.
-  var nexusPlayer: NexusPlayerBridge | undefined;
+  interface Window {
+    nexusPlayer?: NexusPlayerBridge;
+  }
 }
 
 type PendingRequest = {
@@ -26,11 +27,8 @@ type PendingRequest = {
 };
 
 export class NativePlayerUnavailableError extends Error {
-  constructor(
-    message = "Native player is unavailable.",
-    options?: ErrorOptions,
-  ) {
-    super(message, options);
+  constructor(message = "Native player is unavailable.") {
+    super(message);
     this.name = "NativePlayerUnavailableError";
   }
 }
@@ -39,18 +37,6 @@ export class NativePlayerTimeoutError extends Error {
   constructor() {
     super("Native player command timed out.");
     this.name = "NativePlayerTimeoutError";
-  }
-}
-
-/**
- * A command timed out or met a stale session, and the reconciling snapshot
- * did not confirm it. The outcome is unknown, which is a transport condition
- * the user may retry, not malformed data.
- */
-export class NativePlayerReconciliationError extends Error {
-  constructor(operation: string) {
-    super(`${operation} timed out and reconciliation did not confirm it.`);
-    this.name = "NativePlayerReconciliationError";
   }
 }
 
@@ -75,37 +61,34 @@ export class AndroidPlayerClient {
   }
 
   private readonly onMessage = (event: { data: unknown }): void => {
-    // Only ingress classification is a protocol failure; what subscribers do
-    // with a valid message is their own outcome.
-    let message: AndroidPlayerReply | AndroidPlayerEvent;
+    let raw: unknown;
     try {
-      const raw: unknown =
+      raw =
         typeof event.data === "string"
           ? (JSON.parse(event.data) as unknown)
           : event.data;
-      message = decodeAndroidPlayerMessage(raw);
+      const message = decodeAndroidPlayerMessage(raw);
+      if (isAndroidPlayerEvent(message)) {
+        for (const listener of this.listeners) listener(message);
+        return;
+      }
+      const pending = this.pending.get(message.requestId);
+      if (!pending) return;
+      this.pending.delete(message.requestId);
+      clearTimeout(pending.timeout);
+      if (message.kind === "Rejected") {
+        pending.reject(new NativePlayerRejectedError(message.code));
+      } else {
+        pending.resolve(message);
+      }
     } catch (error) {
       this.onProtocolFailure(error);
       this.closeWithError(error);
-      return;
-    }
-    if (isAndroidPlayerEvent(message)) {
-      for (const listener of this.listeners) listener(message);
-      return;
-    }
-    const pending = this.pending.get(message.requestId);
-    if (!pending) return;
-    this.pending.delete(message.requestId);
-    clearTimeout(pending.timeout);
-    if (message.kind === "Rejected") {
-      pending.reject(new NativePlayerRejectedError(message.code));
-    } else {
-      pending.resolve(message);
     }
   };
 
   connectChannel(): void {
-    const bridge = globalThis.nexusPlayer;
+    const bridge = window.nexusPlayer;
     if (!bridge || typeof bridge.postMessage !== "function") {
       throw new NativePlayerUnavailableError();
     }
@@ -144,9 +127,8 @@ export class AndroidPlayerClient {
     const wire = {
       ...command,
       requestId,
-      ...androidPlayerProtocolIdentity(),
-    } satisfies AndroidPlayerCommand;
-    const serialized = JSON.stringify(wire);
+      protocolVersion: ANDROID_PLAYER_PROTOCOL_VERSION,
+    } as AndroidPlayerCommand;
     return new Promise<AndroidPlayerReply>((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pending.delete(requestId);
@@ -154,16 +136,11 @@ export class AndroidPlayerClient {
       }, NATIVE_PLAYER_COMMAND_DEADLINE_MS);
       this.pending.set(requestId, { resolve, reject, timeout });
       try {
-        bridge.postMessage(serialized);
+        bridge.postMessage(JSON.stringify(wire));
       } catch (error) {
         clearTimeout(timeout);
         this.pending.delete(requestId);
-        reject(
-          new NativePlayerUnavailableError(
-            "Native player bridge is unavailable.",
-            { cause: error },
-          ),
-        );
+        reject(error);
       }
     });
   }

@@ -22,10 +22,10 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.search import SearchResponse
+from nexus.services.search import search as search_service
 from nexus.services.search.constants import DEFAULT_LIMIT, MAX_LIMIT
 from nexus.services.search.query import build_search_query
 from nexus.services.search.scope import scope_from_uri
-from nexus.services.search.service import search as search_service
 
 router = APIRouter(tags=["search"])
 

@@ -3,19 +3,11 @@ import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { mediaCaptureErrorMessage } from "@/lib/media/captureFeedback";
 import type { AddSeed } from "@/lib/nexus/model";
 import type { LibraryDestinationSelection } from "@/lib/libraries/client";
-import {
-  UploadSessionError,
-  type AcceptedIngestResult,
-  type UploadFileKind,
-  type UploadPhase,
-  type UploadSessionOutcome,
+import type {
+  AcceptedUploadIdentity,
+  SourceIngestResult,
+  UploadFileKind,
 } from "@/lib/media/ingestionClient";
-import {
-  IMPORTS_CONFLICT_MESSAGE,
-  UPLOAD_REJECTED_LABEL,
-  uploadVerificationFailureCopy,
-} from "@/lib/status/imports";
-import { assertNever } from "@/lib/assertNever";
 import {
   projectLibraryPlacement,
   type LibraryPlacementDestination,
@@ -46,28 +38,6 @@ export type FrozenAcceptanceIntent = Readonly<{
   idempotencyKey: string;
 }>;
 
-type FrozenFileAcceptanceIntent = FrozenAcceptanceIntent & {
-  readonly source: Extract<AddSource, { kind: "File" }>;
-};
-
-type FrozenUrlAcceptanceIntent = FrozenAcceptanceIntent & {
-  readonly source: Extract<AddSource, { kind: "Url" }>;
-};
-
-type SubmittingAddItem =
-  | {
-      kind: "Submitting";
-      id: string;
-      intent: FrozenFileAcceptanceIntent;
-      uploadPhase: UploadPhase;
-    }
-  | {
-      kind: "Submitting";
-      id: string;
-      intent: FrozenUrlAcceptanceIntent;
-      uploadPhase: null;
-    };
-
 export type AddItem =
   | {
       kind: "Invalid";
@@ -76,7 +46,7 @@ export type AddItem =
       feedback: FeedbackContent;
     }
   | ({ kind: "Draft"; id: string } & FrozenAcceptanceIntent)
-  | SubmittingAddItem
+  | { kind: "Submitting"; id: string; intent: FrozenAcceptanceIntent }
   | {
       kind: "Rejected";
       id: string;
@@ -87,14 +57,23 @@ export type AddItem =
       kind: "AcceptanceUnresolved";
       id: string;
       intent: FrozenAcceptanceIntent;
-      reason: UnresolvedAcceptanceReason;
+      feedback: FeedbackContent;
+    }
+  | {
+      kind: "AcceptedUncertain";
+      id: string;
+      intent: FrozenAcceptanceIntent & {
+        source: Extract<AddSource, { kind: "File" }>;
+      };
+      mediaId: string;
+      sourceAttemptId: string;
       feedback: FeedbackContent;
     }
   | {
       kind: "Accepted";
       id: string;
       source: SourceSummary;
-      result: AcceptedIngestResult;
+      result: SourceIngestResult;
     };
 
 export type PlacementCommand =
@@ -169,154 +148,34 @@ export type AddSessionState = Readonly<{
 
 export type StagedAddItem = Extract<AddItem, { kind: "Invalid" | "Draft" }>;
 
-/**
- * Why an item is still unresolved. `StatusUnknown` means acceptance itself is
- * ambiguous; `UploadIncomplete` means the server proved the bytes never landed,
- * so the repair is a fresh transfer of the same file rather than a status check.
- */
-export type UnresolvedAcceptanceReason = "StatusUnknown" | "UploadIncomplete";
-
 export type AcceptanceFailure =
   | { kind: "Rejected"; feedback: FeedbackContent }
-  | {
-      kind: "Unresolved";
-      reason: UnresolvedAcceptanceReason;
-      feedback: FeedbackContent;
-    }
-  /** The foreground attempt lost the session; Imports owns it now. */
-  | { kind: "Superseded" }
+  | { kind: "Unresolved"; feedback: FeedbackContent }
   | { kind: "Defect"; error: unknown };
 
-function terminalAcceptance(message: string): AcceptanceFailure {
-  return {
-    kind: "Rejected",
-    feedback: { tone: "Danger", title: "Couldn’t save", message },
-  };
-}
-
-function unresolvedAcceptance(requestId?: string): AcceptanceFailure {
-  return {
-    kind: "Unresolved",
-    reason: "StatusUnknown",
-    feedback: {
-      tone: "Warning",
-      title: "Couldn’t confirm",
-      message:
-        "Nexus could not confirm whether this was saved. Check status to find out.",
-      requestId,
-    },
-  };
-}
-
-function uploadAcceptanceFailure(
-  outcome: UploadSessionOutcome,
-  error: unknown,
-): AcceptanceFailure {
-  switch (outcome.kind) {
-    case "NeedsAttention":
-      return {
-        kind: "Rejected",
-        feedback: {
-          tone: "Warning",
-          title: "Upload needs attention",
-          message:
-            "Use Imports for the available next step, or restage this file as a new import.",
-        },
-      };
-    case "VerificationRejected":
-      return {
-        kind: "Rejected",
-        feedback: {
-          tone: "Danger",
-          title: UPLOAD_REJECTED_LABEL,
-          message: uploadVerificationFailureCopy(outcome.code),
-        },
-      };
-    case "BytesMissing":
-      return {
-        kind: "Unresolved",
-        reason: "UploadIncomplete",
-        feedback: {
-          tone: "Warning",
-          title: "Upload didn’t complete",
-          message:
-            "Nexus never received this file. Retry the upload, or remove it and start a new import.",
-        },
-      };
-    case "Superseded":
-      return { kind: "Superseded" };
-    case "Conflicted":
-      return terminalAcceptance(IMPORTS_CONFLICT_MESSAGE);
-    case "Unresolved":
-      return unresolvedAcceptance();
-    case "UnsupportedFileType":
-      return terminalAcceptance(
-        "This file type isn’t supported. Start a new import with a PDF or EPUB.",
-      );
-    case "FileTooLarge":
-      return terminalAcceptance(
-        "This file exceeds the import limit. Start a new import with a smaller file.",
-      );
-    case "LibraryForbidden":
-      return terminalAcceptance(
-        "You no longer have access to a destination library. Choose different libraries and start a new import.",
-      );
-    case "IntentChanged":
-      return terminalAcceptance("This import changed. Start a new import.");
-    case "FileMismatch":
-      return terminalAcceptance(
-        "That file doesn’t match this import. Choose the same file, or start a new import.",
-      );
-    case "IntentMalformed":
-      return { kind: "Defect", error };
-    default:
-      return assertNever(outcome, "Unreachable upload session outcome");
-  }
-}
-
 export function acceptanceErrorMessage(error: unknown): AcceptanceFailure {
-  if (error instanceof UploadSessionError) {
-    return uploadAcceptanceFailure(error.outcome, error);
-  }
   if (!isApiError(error) || isSameSystemApiDefect(error)) {
     return { kind: "Defect", error };
   }
-  // Ordering matters: an unresolved acceptance is decided by the transport
-  // class first, so a server outage the product-copy adapter does not model
-  // stays an honest "check status" instead of becoming an internal defect.
+
+  let feedback: FeedbackContent;
+  try {
+    feedback = mediaCaptureErrorMessage(error, "SaveSource");
+  } catch (caughtDefect: unknown) {
+    return { kind: "Defect", error: caughtDefect };
+  }
   if (
     error.status >= 500 ||
     error.code === "E_NETWORK" ||
     error.code === "E_UPSTREAM" ||
     error.code === "E_UPSTREAM_TIMEOUT"
   ) {
-    return unresolvedAcceptance(error.requestId);
-  }
-  try {
     return {
-      kind: "Rejected",
-      feedback: mediaCaptureErrorMessage(error, "SaveSource"),
+      kind: "Unresolved",
+      feedback: { ...feedback, tone: "Warning" },
     };
-  } catch (caughtDefect: unknown) {
-    return { kind: "Defect", error: caughtDefect };
   }
-}
-
-/** The one projection of a settled acceptance failure onto its session item. */
-export function acceptanceFailureItem(
-  id: string,
-  intent: FrozenAcceptanceIntent,
-  failure: Extract<AcceptanceFailure, { kind: "Rejected" | "Unresolved" }>,
-): AddItem {
-  return failure.kind === "Rejected"
-    ? { kind: "Rejected", id, intent, feedback: failure.feedback }
-    : {
-        kind: "AcceptanceUnresolved",
-        id,
-        intent,
-        reason: failure.reason,
-        feedback: failure.feedback,
-      };
+  return { kind: "Rejected", feedback };
 }
 
 export type AddSessionAction =
@@ -349,19 +208,20 @@ export type AddSessionAction =
     }
   | { kind: "StartMutation"; operation: SessionMutationOperation }
   | { kind: "StartSubmission"; itemIds: readonly string[] }
-  | { kind: "StartFileReconciliation"; itemId: string }
-  | { kind: "SetUploadPhase"; itemId: string; phase: UploadPhase }
   | { kind: "ResolveItem"; item: AddItem }
   | { kind: "FinishMutation" }
   | {
       kind: "StopMutation";
+      acceptedUploadIdentityByItemId: ReadonlyMap<
+        string,
+        AcceptedUploadIdentity
+      >;
       startedSubmissionItemIds: ReadonlySet<string>;
       placementProgressByMediaId: ReadonlyMap<
         string,
         PlacementMutationProgress
       >;
       acceptanceFeedback: FeedbackContent;
-      uploadFeedback: FeedbackContent;
       operationFeedback: FeedbackContent;
     }
   | {
@@ -506,26 +366,18 @@ export function reduceAddSession(
       return {
         ...state,
         items: state.items.map(
-          (item): AddItem => {
-            if (item.kind !== "Draft" || !itemIds.has(item.id)) return item;
-            const intent = {
-              destinations: [...item.destinations],
-              idempotencyKey: item.idempotencyKey,
-            };
-            return item.source.kind === "File"
+          (item): AddItem =>
+            item.kind === "Draft" && itemIds.has(item.id)
               ? {
                   kind: "Submitting",
                   id: item.id,
-                  intent: { ...intent, source: item.source },
-                  uploadPhase: "Preparing",
+                  intent: {
+                    source: item.source,
+                    destinations: [...item.destinations],
+                    idempotencyKey: item.idempotencyKey,
+                  },
                 }
-              : {
-                  kind: "Submitting",
-                  id: item.id,
-                  intent: { ...intent, source: item.source },
-                  uploadPhase: null,
-                };
-          },
+              : item,
         ),
         mutation: {
           kind: "Running",
@@ -533,56 +385,6 @@ export function reduceAddSession(
         },
       };
     }
-    case "StartFileReconciliation":
-      return {
-        ...state,
-        items: state.items.map((item): AddItem => {
-          if (
-            item.id !== action.itemId ||
-            item.kind !== "AcceptanceUnresolved" ||
-            item.intent.source.kind !== "File"
-          ) {
-            return item;
-          }
-          return {
-            kind: "Submitting",
-            id: item.id,
-            intent: {
-              source: item.intent.source,
-              destinations: item.intent.destinations,
-              idempotencyKey: item.intent.idempotencyKey,
-            },
-            uploadPhase: "Preparing",
-          };
-        }),
-        mutation: {
-          kind: "Running",
-          operation: { kind: "ReconcileAcceptance", itemId: action.itemId },
-        },
-      };
-    case "SetUploadPhase":
-      return {
-        ...state,
-        items: state.items.map((item): AddItem => {
-          if (
-            item.id !== action.itemId ||
-            item.kind !== "Submitting" ||
-            item.intent.source.kind !== "File"
-          ) {
-            return item;
-          }
-          return {
-            kind: "Submitting",
-            id: item.id,
-            intent: {
-              source: item.intent.source,
-              destinations: item.intent.destinations,
-              idempotencyKey: item.intent.idempotencyKey,
-            },
-            uploadPhase: action.phase,
-          };
-        }),
-      };
     case "ResolveItem":
       return {
         ...state,
@@ -606,9 +408,19 @@ export function reduceAddSession(
           ) {
             return item;
           }
+          const identity = action.acceptedUploadIdentityByItemId.get(item.id);
+          if (identity && item.intent.source.kind === "File") {
+            return {
+              kind: "AcceptedUncertain",
+              id: item.id,
+              intent: { ...item.intent, source: item.intent.source },
+              mediaId: identity.mediaId,
+              sourceAttemptId: identity.sourceAttemptId,
+              feedback: action.acceptanceFeedback,
+            };
+          }
           if (
             item.kind === "Submitting" &&
-            !isActiveReconciliation &&
             !action.startedSubmissionItemIds.has(item.id)
           ) {
             return {
@@ -619,20 +431,12 @@ export function reduceAddSession(
               idempotencyKey: item.intent.idempotencyKey,
             };
           }
-          return item.intent.source.kind === "File"
-            ? {
-                kind: "Rejected",
-                id: item.id,
-                intent: item.intent,
-                feedback: action.uploadFeedback,
-              }
-            : {
-                kind: "AcceptanceUnresolved",
-                id: item.id,
-                intent: item.intent,
-                reason: "StatusUnknown",
-                feedback: action.acceptanceFeedback,
-              };
+          return {
+            kind: "AcceptanceUnresolved",
+            id: item.id,
+            intent: item.intent,
+            feedback: action.acceptanceFeedback,
+          };
         }),
         opml:
           state.opml.kind === "Importing"

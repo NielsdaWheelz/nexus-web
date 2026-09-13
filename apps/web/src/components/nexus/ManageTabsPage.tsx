@@ -24,7 +24,6 @@ export default function ManageTabsPage({
   onRetryRetained,
   onCancelRetained,
   feedback,
-  teachAdjacentSwipe,
 }: {
   readonly origin: ManageTabsOrigin;
   readonly panes: readonly NexusManagedPane[];
@@ -36,7 +35,6 @@ export default function ManageTabsPage({
   readonly onRetryRetained: () => void;
   readonly onCancelRetained: () => void;
   readonly feedback: { content: FeedbackContent; paneId: string } | null;
-  readonly teachAdjacentSwipe: boolean;
 }) {
   return (
     <section className={styles.workflowPage}>
@@ -48,12 +46,7 @@ export default function ManageTabsPage({
           <h2 tabIndex={-1} data-switchboard-heading data-switchboard-open-heading>
             Manage tabs
           </h2>
-          <p>
-            Open, close, or restore a workspace tab.
-            {teachAdjacentSwipe
-              ? " Swipe the Nexus button left or right to switch visible tabs."
-              : null}
-          </p>
+          <p>Open, close, or restore a workspace tab.</p>
         </div>
       </header>
 

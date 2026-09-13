@@ -14,6 +14,7 @@ import json
 import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Literal, assert_never, cast
 from uuid import UUID
 
@@ -66,6 +67,7 @@ from nexus.schemas.library import (
     ReadingTimeEstimateOut,
     SavedInNexusLibraryPlacementDestinationOut,
 )
+from nexus.schemas.podcast import PodcastSubscriptionVisibleLibraryOut
 from nexus.schemas.presence import Presence, absent, presence_from_nullable, present
 from nexus.services import library_governance as governance
 from nexus.services.billing_entitlements import get_effective_entitlements
@@ -108,6 +110,7 @@ from nexus.services.signed_keyset_cursor import (
 # Mirrors index ix_library_entries_library_order (library_id, position, created_at DESC,
 # id DESC). The single definition of the entry total order.
 _ENTRY_ORDER = "position ASC, created_at DESC, id DESC"
+_ENTRY_COLUMNS = "id, library_id, media_id, podcast_id, created_at, position"
 _TARGET_COLUMN: dict[LibraryEntryKind, str] = {"media": "media_id", "podcast": "podcast_id"}
 
 _READING_WORDS_PER_MINUTE = 240
@@ -220,6 +223,8 @@ _FACTUAL_SORTS: dict[str, type[Title | Creator | Published | Added]] = {
     "published": Published,
     "added": Added,
 }
+_DEFAULT_LIMIT = 100
+_MAX_LIMIT = 200
 
 
 def parse_entries_query(
@@ -564,23 +569,15 @@ def podcast_target(podcast_id: UUID) -> EntryTarget:
     return EntryTarget("podcast", podcast_id)
 
 
-def entry_id_for_target_in_current_transaction(
-    db: Session,
-    *,
-    library_id: UUID,
-    target: EntryTarget,
-) -> UUID | None:
-    """Resolve one exact filing identity inside its caller-owned transaction."""
+@dataclass(frozen=True, slots=True)
+class LibraryEntryHydrationFact:
+    """Typed owner input for strict cross-service Library entry hydration."""
 
-    column = _TARGET_COLUMN[target.kind]
-    value = db.scalar(
-        text(
-            f"SELECT id FROM library_entries "
-            f"WHERE library_id = :library_id AND {column} = :target_id"
-        ),
-        {"library_id": library_id, "target_id": target.id},
-    )
-    return UUID(str(value)) if value is not None else None
+    id: UUID
+    library_id: UUID
+    target: EntryTarget
+    created_at: datetime
+    position: int
 
 
 @dataclass(frozen=True)
@@ -955,20 +952,48 @@ def admin_non_default_library_ids_for_media(
 # ---------------------------------------------------------------------------
 
 
+def hydrate_entry_page(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    facts: Sequence[LibraryEntryHydrationFact],
+) -> list[LibraryEntryListItemOut]:
+    """Strictly hydrate already-visible facts supplied across an owner boundary."""
+    rows = [
+        {
+            "id": fact.id,
+            "library_id": fact.library_id,
+            "media_id": fact.target.id if fact.target.kind == "media" else None,
+            "podcast_id": fact.target.id if fact.target.kind == "podcast" else None,
+            "created_at": fact.created_at,
+            "position": fact.position,
+            "added_at": fact.created_at,
+            "is_virtual": False,
+        }
+        for fact in facts
+    ]
+    entries = _hydrate_entry_rows(db, viewer_id=viewer_id, rows=rows)
+    expected_targets = [fact.target for fact in facts]
+    actual_targets = [
+        EntryTarget(entry.kind, entry.media.id if entry.kind == "media" else entry.podcast.id)
+        for entry in entries
+    ]
+    if actual_targets != expected_targets:
+        # justify-defect: the composing repeatable-read query already proved every
+        # typed target visible; hydration must preserve its exact cardinality/order.
+        raise AssertionError(
+            f"Library entry hydration drifted: expected {expected_targets}, got {actual_targets}"
+        )
+    return entries
+
+
 def _hydrate_entry_rows(
     db: Session, *, viewer_id: UUID, rows: Sequence[Any]
 ) -> list[LibraryEntryListItemOut]:
     """Hydrate name-keyed entry rows into the compact Library list union, batching
-    the media and podcast lookups. The owning repeatable-read query already proved
-    every target visible, so hydration preserves exact cardinality and order."""
+    the media and podcast lookups. Entries whose target is not viewer-visible drop out."""
     if not rows:
         return []
-
-    for row in rows:
-        if (row["media_id"] is None) == (row["podcast_id"] is None):
-            # justify-defect: physical rows have an exactly-one-target database
-            # check and the Default virtual relation emits one typed target.
-            raise AssertionError("library entry hydration row must carry exactly one target")
 
     media_ids = [UUID(str(row["media_id"])) for row in rows if row["media_id"] is not None]
     podcast_ids = [UUID(str(row["podcast_id"])) for row in rows if row["podcast_id"] is not None]
@@ -1104,11 +1129,7 @@ def _hydrate_entry_rows(
         if media_id is not None:
             media = media_by_id.get(media_id)
             if media is None:
-                # justify-defect: the owning repeatable-read membership query
-                # already admitted this media through the visibility relation.
-                raise AssertionError(
-                    f"visible library media disappeared during hydration: {media_id}"
-                )
+                continue
             hydrated.append(
                 LibraryMediaListItemOut(
                     kind="media",
@@ -1159,13 +1180,10 @@ def _hydrate_entry_rows(
             continue
 
         if podcast_id is None:
-            # justify-defect: the exact-one-target check above excludes this branch.
-            raise AssertionError("library entry hydration lost its typed target")
+            continue
         podcast_row = podcast_rows_by_id.get(podcast_id)
         if podcast_row is None:
-            # justify-defect: physical Podcast entries retain a restrictive FK and
-            # Default virtual rows originate from the same podcasts relation.
-            raise AssertionError(f"library podcast disappeared during hydration: {podcast_id}")
+            continue
 
         subscription: Presence[LibraryEntryPodcastSubscriptionOut] = absent()
         if podcast_row["sub_id"] is not None:
@@ -2226,8 +2244,8 @@ def _finish_entry_page(
     """Shared tail for every keyset family (spec S4.2/AC6): the caller already
     fetched ``limit + 1`` rows in the family's own order with no write anywhere
     on this path. Slice to `limit`, hydrate, and — only when there is a next
-    page — build its cursor from the last raw row (the hydrated output omits
-    cursor-only columns such as entry `created_at`)."""
+    page — build its cursor from the last raw row (hydration can drop the
+    columns a cursor needs, e.g. `MediaOut` carries no `created_at`)."""
     page_rows = list(rows[:limit])
     has_more = len(rows) > limit
     page_entries = _hydrate_entry_rows(db, viewer_id=viewer_id, rows=page_rows)
@@ -2791,6 +2809,18 @@ def _add_media_to_resolved_libraries(
     clear_user_media_deletion(db, viewer_id, media_id)
 
 
+def assign_libraries_for_media(
+    db: Session, viewer_id: UUID, media_id: UUID, library_ids: list[UUID]
+) -> None:
+    """Attach media to the viewer's default library plus selected destinations.
+
+    Standalone assignment owns its transaction. Creation workflows that already
+    own a transaction must call `assign_libraries_for_media_in_current_transaction`.
+    """
+    with transaction(db):
+        assign_libraries_for_media_in_current_transaction(db, viewer_id, media_id, library_ids)
+
+
 def assign_libraries_for_media_in_current_transaction(
     db: Session, viewer_id: UUID, media_id: UUID, library_ids: list[UUID]
 ) -> None:
@@ -2836,6 +2866,42 @@ def ensure_subscription_episode_default_in_current_transaction(
 # ---------------------------------------------------------------------------
 # Catalog-facing reads (podcast subscriptions surfaces)
 # ---------------------------------------------------------------------------
+
+
+def visible_non_default_libraries_for_viewer(
+    db: Session, *, viewer_id: UUID, podcast_ids: Sequence[UUID]
+) -> dict[UUID, list[PodcastSubscriptionVisibleLibraryOut]]:
+    """Map each podcast id to the viewer-visible non-default libraries it belongs to.
+
+    The viewer must be a member of a non-default library for it to surface. Each
+    podcast's libraries are ordered by created_at ASC, id ASC. Podcasts with no visible
+    library are absent. One batched query keyed by the given podcast ids (no N+1).
+    """
+    if not podcast_ids:
+        return {}
+    rows = (
+        db.execute(
+            text("""
+            SELECT le.podcast_id, l.id AS library_id, l.name, l.color
+            FROM library_entries le
+            JOIN libraries l ON l.id = le.library_id AND l.is_default = false
+            JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
+            WHERE le.podcast_id = ANY(:podcast_ids)
+            ORDER BY le.podcast_id, l.created_at ASC, l.id ASC
+        """),
+            {"viewer_id": viewer_id, "podcast_ids": list(podcast_ids)},
+        )
+        .mappings()
+        .all()
+    )
+    result: dict[UUID, list[PodcastSubscriptionVisibleLibraryOut]] = {}
+    for row in rows:
+        result.setdefault(UUID(str(row["podcast_id"])), []).append(
+            PodcastSubscriptionVisibleLibraryOut(
+                id=row["library_id"], name=row["name"], color=row["color"]
+            )
+        )
+    return result
 
 
 def podcast_ids_in_libraries_for_viewer(

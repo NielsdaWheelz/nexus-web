@@ -7,30 +7,14 @@ import {
   resourceSurfaceCommandId,
   updateResourceSurfaceNoteBody,
   updateResourceSurfaceTitle,
+  type ResourceSurfaceCommand,
 } from "@/lib/resourceSurface/api";
 import { isApiError } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import type { ResourceSurface } from "@/lib/resources/resourceItems";
+import type { ResourceItem, ResourceSurface, ResourceSurfaceOccurrence } from "@/lib/resources/resourceItems";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
+import { isRecord } from "@/lib/validation";
 import { appendDailyDraftText, captureDailySurface, createDailyDraft, dailyDraftBodyChanged, draftNoteRef, loadDailySurface, pendingDailyBody, surfaceContainsDailyDraft, type DailySurfaceSessionOptions } from "@/lib/resourceSurface/dailySurfacePersistence";
-import {
-  clearPersistedResourceSurfaceDraft,
-  pendingResourceSurfaceBodies,
-  persistResourceSurfaceDraft,
-  readResourceSurfaceDraft,
-  type ResourceSurfaceDraftIntent as Intent,
-  type ResourceSurfacePendingBody as PendingBody,
-  type ResourceSurfacePendingTitle as PendingTitle,
-} from "@/lib/resourceSurface/draftStore";
-import {
-  createResourceSurfaceIntent,
-  materializeResourceSurfaceIntent,
-  projectResourceSurface,
-  rebindAcknowledgedResourceSurfaceIntents,
-  resourceSurfaceLaneVersion,
-  resourceSurfaceOccurrenceForRef,
-  resourceSurfacePendingOccurrenceId,
-  type ResourceSurfaceCommand,
-} from "@/lib/resourceSurface/model";
 import type { MountedEditorMutationLease } from "@/lib/actions/mountedActionHandoff";
 import { acknowledgeDailyDraftHandoff, clearDailyDraft, readDailyDraft, writeDailyDraft, type DailyDraft, type DailyDraftHandoff } from "@/lib/notes/dailyDraftStore";
 import { noteBodyHasContent } from "@/lib/notes/prosemirror/bodyContent";
@@ -38,8 +22,40 @@ import { copyText } from "@/lib/ui/copyText";
 
 const IDLE_DELAY_MS = 1500;
 const MAX_WAIT_MS = 5000;
+const STORAGE_PREFIX = "nexus.resourceSurface:";
 
 type Status = "clean" | "dirty" | "saving" | "recovered" | "failed";
+type PositionRef = { kind: "start" } | { kind: "after"; targetRef: string };
+type Intent = {
+  clientMutationId: string;
+  command: ResourceSurfaceCommand;
+  occurrenceTargetRef?: string;
+  position?: PositionRef;
+};
+type PendingTitle = {
+  value: string;
+  clientMutationId: string;
+};
+type PendingBody = {
+  bodyPmJson: Record<string, unknown>;
+  bodyText: string;
+  clientMutationId: string;
+};
+type Draft = {
+  version: 1;
+  source_ref: string;
+  acknowledged_surface: ResourceSurface;
+  commands: Intent[];
+  title?: {
+    value: string;
+    client_mutation_id: string;
+  };
+  bodies: Record<string, {
+    body_pm_json: Record<string, unknown>;
+    body_text: string;
+    client_mutation_id: string;
+  }>;
+};
 
 export interface ResourceSurfaceSession {
   surface: ResourceSurface;
@@ -48,7 +64,7 @@ export interface ResourceSurfaceSession {
   updateTitle(title: string): void;
   updateBody(input: { occurrenceId: string; bodyPmJson: Record<string, unknown>; bodyText: string; flush?: boolean }): void;
   updateSourceNoteBody(input: { bodyPmJson: Record<string, unknown>; bodyText: string; flush?: boolean }): void;
-  command(command: ResourceSurfaceCommand): string | null;
+  command(command: ResourceSurfaceCommand): void;
   flush(): void;
   retry(): void;
   reload(): Promise<void>;
@@ -60,6 +76,204 @@ export interface DailyResourceSurfaceSession extends Omit<ResourceSurfaceSession
   provisional: { occurrenceId: string; noteRef: string; bodyPmJson: Record<string, unknown>; bodyText: string } | null;
   inputHandoff: DailyDraftHandoff;
   acknowledgeInputHandoff(handoffId: string): void;
+}
+
+function lane(item: ResourceItem, name: "title" | "body" | "outgoing_edges") {
+  const value = item.versionByLane[name];
+  if (typeof value !== "number") throw new Error(`Resource surface is missing ${name} version for ${item.ref}`);
+  return value;
+}
+
+function occurrenceForRef(surface: ResourceSurface, ref: string) {
+  return surface.orderedItems.find((item) => item.target.item.ref === ref);
+}
+
+function positionFor(surface: ResourceSurface, position: PositionRef) {
+  if (position.kind === "start") return { kind: "start" } as const;
+  const occurrence = occurrenceForRef(surface, position.targetRef);
+  return occurrence ? { kind: "after" as const, occurrenceId: occurrence.occurrenceId } : null;
+}
+
+function insertIndex(items: ResourceSurfaceOccurrence[], position: { kind: "start" } | { kind: "after"; occurrenceId: string }) {
+  if (position.kind === "start") return 0;
+  const index = items.findIndex((item) => item.occurrenceId === position.occurrenceId);
+  return index < 0 ? items.length : index + 1;
+}
+
+function localOccurrence(surface: ResourceSurface, noteId: string, bodyPmJson: Record<string, unknown>): ResourceSurfaceOccurrence {
+  const ref = `note_block:${noteId}`;
+  return {
+    occurrenceId: `local:${noteId}`,
+    target: {
+      item: { ...surface.source.item, ref, scheme: "note_block", id: noteId, label: "", summary: "", route: `/notes/${noteId}`, activation: { resourceRef: ref, kind: "route", href: `/notes/${noteId}`, unresolvedReason: null }, versionByLane: { body: 0, outgoing_edges: 0 } },
+      content: { kind: "note_body", bodyPmJson, bodyText: "" },
+    },
+  };
+}
+
+function optimistic(surface: ResourceSurface, command: ResourceSurfaceCommand): ResourceSurface {
+  if (command.type === "remove_occurrence") return { ...surface, orderedItems: surface.orderedItems.filter((item) => item.occurrenceId !== command.occurrenceId) };
+  if (command.type === "move_occurrence") {
+    const occurrence = surface.orderedItems.find((item) => item.occurrenceId === command.occurrenceId);
+    if (!occurrence) return surface;
+    const orderedItems = surface.orderedItems.filter((item) => item !== occurrence);
+    orderedItems.splice(insertIndex(orderedItems, command.position), 0, occurrence);
+    return { ...surface, orderedItems };
+  }
+  if (command.type === "insert_note") {
+    const orderedItems = [...surface.orderedItems];
+    orderedItems.splice(insertIndex(orderedItems, command.position), 0, localOccurrence(surface, command.noteId, command.bodyPmJson));
+    return { ...surface, orderedItems };
+  }
+  if (command.type === "split_note") {
+    const orderedItems = surface.orderedItems.map((item) => item.occurrenceId === command.occurrenceId && item.target.content.kind === "note_body" ? { ...item, target: { ...item.target, content: { kind: "note_body" as const, bodyPmJson: command.leftBodyPmJson, bodyText: "" } } } : item);
+    const index = orderedItems.findIndex((item) => item.occurrenceId === command.occurrenceId);
+    orderedItems.splice(index < 0 ? orderedItems.length : index + 1, 0, localOccurrence(surface, command.noteId, command.rightBodyPmJson));
+    return { ...surface, orderedItems };
+  }
+  const parsedTarget = parseResourceRef(command.targetRef);
+  if (parsedTarget === null) {
+    throw new TypeError("insert_resource targetRef must be canonical");
+  }
+  const orderedItems = [...surface.orderedItems];
+  orderedItems.splice(insertIndex(orderedItems, command.position), 0, { occurrenceId: `local:${command.targetRef}`, target: { item: { ...surface.source.item, ref: command.targetRef, scheme: parsedTarget.scheme, id: parsedTarget.id, label: "Resource", summary: "", route: null, activation: { resourceRef: command.targetRef, kind: "none", href: null, unresolvedReason: null } }, content: { kind: "resource_summary" } } });
+  return { ...surface, orderedItems };
+}
+
+function intentFor(
+  surface: ResourceSurface,
+  command: ResourceSurfaceCommand,
+): Intent | null {
+  const occurrenceId = command.type === "split_note" || command.type === "move_occurrence" || command.type === "remove_occurrence" ? command.occurrenceId : undefined;
+  const occurrenceTargetRef = occurrenceId ? surface.orderedItems.find((item) => item.occurrenceId === occurrenceId)?.target.item.ref : undefined;
+  const rawPosition = command.type === "insert_note" || command.type === "insert_resource" || command.type === "move_occurrence" ? command.position : undefined;
+  const position: PositionRef | undefined = rawPosition?.kind === "after" ? (() => {
+    const target = surface.orderedItems.find((item) => item.occurrenceId === rawPosition.occurrenceId);
+    return target ? { kind: "after" as const, targetRef: target.target.item.ref } : undefined;
+  })() : rawPosition;
+  if (rawPosition?.kind === "after" && !position) return null;
+  if (occurrenceId && !occurrenceTargetRef) return null;
+  return { clientMutationId: resourceSurfaceCommandId(), command, occurrenceTargetRef, position };
+}
+
+function materialize(surface: ResourceSurface, intent: Intent): ResourceSurfaceCommand | null {
+  const occurrence = intent.occurrenceTargetRef ? occurrenceForRef(surface, intent.occurrenceTargetRef) : undefined;
+  const position = intent.position ? positionFor(surface, intent.position) : undefined;
+  const command = intent.command;
+  if (command.type === "insert_note" && position) return { ...command, position };
+  if (command.type === "insert_resource" && position) return { ...command, position };
+  if (command.type === "move_occurrence" && occurrence && position) return { ...command, occurrenceId: occurrence.occurrenceId, position };
+  if (command.type === "remove_occurrence" && occurrence) return { ...command, occurrenceId: occurrence.occurrenceId };
+  if (command.type === "split_note" && occurrence) return { ...command, occurrenceId: occurrence.occurrenceId };
+  return null;
+}
+
+function readDraft(sourceRef: string): Draft | null {
+  try {
+    const raw = window.localStorage.getItem(`${STORAGE_PREFIX}${sourceRef}`);
+    if (!raw) return null;
+    const draft = JSON.parse(raw) as Partial<Draft>;
+    const validTitle =
+      draft.title === undefined ||
+      (
+        isRecord(draft.title) &&
+        typeof draft.title.value === "string" &&
+        typeof draft.title.client_mutation_id === "string"
+      );
+    const validBodies =
+      isRecord(draft.bodies) &&
+      Object.values(draft.bodies).every(
+        (body) =>
+          isRecord(body) &&
+          isRecord(body.body_pm_json) &&
+          typeof body.body_text === "string" &&
+          typeof body.client_mutation_id === "string",
+      );
+    if (
+      draft.version === 1 &&
+      draft.source_ref === sourceRef &&
+      isRecord(draft.acknowledged_surface) &&
+      Array.isArray(draft.commands) &&
+      validTitle &&
+      validBodies
+    ) {
+      return draft as Draft;
+    }
+    window.localStorage.removeItem(`${STORAGE_PREFIX}${sourceRef}`);
+  } catch {
+    try {
+      window.localStorage.removeItem(`${STORAGE_PREFIX}${sourceRef}`);
+    } catch {
+      // Browser storage is optional recovery state.
+    }
+  }
+  return null;
+}
+
+function pendingBodies(draft: Draft | null): Map<string, PendingBody> {
+  return new Map(
+    Object.entries(draft?.bodies ?? {}).map(([ref, body]) => [
+      ref,
+      {
+        bodyPmJson: body.body_pm_json,
+        bodyText: body.body_text,
+        clientMutationId: body.client_mutation_id,
+      },
+    ]),
+  );
+}
+
+function persistDraft(input: {
+  sourceRef: string;
+  acknowledgedSurface: ResourceSurface;
+  commands: Intent[];
+  title: PendingTitle | undefined;
+  bodies: Map<string, PendingBody>;
+  omittedBodyRef?: string;
+}): boolean {
+  const bodies: Draft["bodies"] = {};
+  for (const [ref, body] of input.bodies) {
+    if (ref === input.omittedBodyRef) continue;
+    bodies[ref] = {
+      body_pm_json: body.bodyPmJson,
+      body_text: body.bodyText,
+      client_mutation_id: body.clientMutationId,
+    };
+  }
+  const hasPending =
+    input.commands.length > 0 ||
+    input.title !== undefined ||
+    Object.keys(bodies).length > 0;
+  try {
+    if (!hasPending) {
+      window.localStorage.removeItem(`${STORAGE_PREFIX}${input.sourceRef}`);
+      return false;
+    }
+    window.localStorage.setItem(`${STORAGE_PREFIX}${input.sourceRef}`, JSON.stringify({
+      version: 1,
+      source_ref: input.sourceRef,
+      acknowledged_surface: input.acknowledgedSurface,
+      commands: input.commands,
+      ...(input.title === undefined ? {} : {
+        title: {
+          value: input.title.value,
+          client_mutation_id: input.title.clientMutationId,
+        },
+      }),
+      bodies,
+    } satisfies Draft));
+  } catch {
+    // Browser storage is a recovery aid; unavailable storage must not block editing.
+  }
+  return hasPending;
+}
+
+function clearPersistedDraft(sourceRef: string): void {
+  try {
+    window.localStorage.removeItem(`${STORAGE_PREFIX}${sourceRef}`);
+  } catch {
+    // Browser storage is optional recovery state.
+  }
 }
 
 type PersistedSessionOptions = {
@@ -126,15 +340,21 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
   }, []);
 
   const derived = useCallback(() => {
-    const acknowledgedSurface = acknowledgedRef.current;
-    return acknowledgedSurface === null
-      ? null
-      : projectResourceSurface({
-          acknowledgedSurface,
-          intents: intentsRef.current,
-          title: titleRef.current,
-          bodies: bodiesRef.current,
-        });
+    let next = acknowledgedRef.current;
+    if (!next) return null;
+    for (const intent of intentsRef.current) {
+      const command = materialize(next, intent);
+      if (command) next = optimistic(next, command);
+    }
+    if (titleRef.current !== undefined && next.source.content.kind === "page_title") next = { ...next, source: { ...next.source, content: { kind: "page_title", title: titleRef.current.value } } };
+    const applyBody = (item: ResourceSurfaceOccurrence) => {
+      const body = bodiesRef.current.get(item.target.item.ref);
+      return body && item.target.content.kind === "note_body" ? { ...item, target: { ...item.target, content: { kind: "note_body" as const, bodyPmJson: body.bodyPmJson, bodyText: body.bodyText } } } : item;
+    };
+    next = { ...next, orderedItems: next.orderedItems.map(applyBody) };
+    const sourceBody = bodiesRef.current.get(next.source.item.ref);
+    if (sourceBody && next.source.content.kind === "note_body") next = { ...next, source: { ...next.source, content: { kind: "note_body", bodyPmJson: sourceBody.bodyPmJson, bodyText: sourceBody.bodyText } } };
+    return next;
   }, []);
 
   const publish = useCallback(() => setSurface(derived()), [derived]);
@@ -143,7 +363,7 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
     ownerSurface: ResourceSurface,
     dailyDraft: DailyDraft | null,
   ) => {
-    const resourceDraft = readResourceSurfaceDraft(sourceRef);
+    const resourceDraft = readDraft(sourceRef);
     const acknowledged = resourceDraft?.acknowledged_surface ?? ownerSurface;
     acknowledgedRef.current = acknowledged;
     sourceRefRef.current = sourceRef;
@@ -154,7 +374,7 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
           clientMutationId: resourceDraft.title.client_mutation_id,
         }
       : undefined;
-    bodiesRef.current = pendingResourceSurfaceBodies(resourceDraft);
+    bodiesRef.current = pendingBodies(resourceDraft);
     if (dailyDraft) {
       const ref = draftNoteRef(dailyDraft.noteId);
       bodiesRef.current.set(
@@ -181,7 +401,7 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
       const sourceRef = sourceRefRef.current;
       const acknowledged = acknowledgedRef.current;
       if (sourceRef && acknowledged) {
-        persistResourceSurfaceDraft({
+        persistDraft({
           sourceRef,
           acknowledgedSurface: acknowledged,
           commands: intentsRef.current,
@@ -198,7 +418,7 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
     }
     const sourceRef = sourceRefRef.current;
     if (!sourceRef || !acknowledgedRef.current) return;
-    const hasPending = persistResourceSurfaceDraft({
+    const hasPending = persistDraft({
       sourceRef,
       acknowledgedSurface: acknowledgedRef.current,
       commands: intentsRef.current,
@@ -248,7 +468,7 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
       void updateResourceSurfaceTitle({
         sourceRef,
         clientMutationId: title.clientMutationId,
-        baseVersion: resourceSurfaceLaneVersion(ack.source.item, "title"),
+        baseVersion: lane(ack.source.item, "title"),
         title: title.value,
       }).then(async (item) => {
         try {
@@ -323,10 +543,7 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
       }
       if (!ack || !sourceRef) continue;
       if (intrinsicActiveRef.current.has(ref)) continue;
-      const sourceItem =
-        ack.source.item.ref === ref
-          ? ack.source.item
-          : resourceSurfaceOccurrenceForRef(ack, ref)?.target.item;
+      const sourceItem = ack.source.item.ref === ref ? ack.source.item : occurrenceForRef(ack, ref)?.target.item;
       if (!sourceItem) continue;
       intrinsicActiveRef.current.add(ref);
       setStatus("saving");
@@ -337,7 +554,7 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
       void updateResourceSurfaceNoteBody({
         noteRef: ref,
         clientMutationId: body.clientMutationId,
-        baseVersion: resourceSurfaceLaneVersion(sourceItem, "body"),
+        baseVersion: lane(sourceItem, "body"),
         bodyPmJson: body.bodyPmJson,
       }).then(async (result) => {
         try {
@@ -421,7 +638,7 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
       return;
     }
     const intent = intentsRef.current[0]!;
-    const command = materializeResourceSurfaceIntent(acknowledged, intent);
+    const command = materialize(acknowledged, intent);
     if (!command) {
       const error = new Error(
         "This edit no longer matches the current resource order.",
@@ -438,20 +655,12 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
     }
     activeRef.current = true; setStatus("saving");
     const generation = generationRef.current;
-    const bases: Array<{ ref: string; lane: "body" | "outgoing_edges"; version: number }> = [{ ref: acknowledged.source.item.ref, lane: "outgoing_edges", version: resourceSurfaceLaneVersion(acknowledged.source.item, "outgoing_edges") }];
-    if (command.type === "split_note") { const row = acknowledged.orderedItems.find((item) => item.occurrenceId === command.occurrenceId); if (!row) { stoppedRef.current = true; activeRef.current = false; setStatus("failed"); return; } bases.push({ ref: row.target.item.ref, lane: "body" as const, version: resourceSurfaceLaneVersion(row.target.item, "body") }); }
+    const bases: Array<{ ref: string; lane: "body" | "outgoing_edges"; version: number }> = [{ ref: acknowledged.source.item.ref, lane: "outgoing_edges", version: lane(acknowledged.source.item, "outgoing_edges") }];
+    if (command.type === "split_note") { const row = acknowledged.orderedItems.find((item) => item.occurrenceId === command.occurrenceId); if (!row) { stoppedRef.current = true; activeRef.current = false; setStatus("failed"); return; } bases.push({ ref: row.target.item.ref, lane: "body" as const, version: lane(row.target.item, "body") }); }
     void commandResourceSurface({ sourceRef, clientMutationId: intent.clientMutationId, baseVersions: bases, command }).then((next) => {
       if (generation !== generationRef.current) return;
-      const remainingIntents = intentsRef.current.filter(
-        (item) => item !== intent,
-      );
-      intentsRef.current = rebindAcknowledgedResourceSurfaceIntents({
-        previousSurface: acknowledged,
-        acknowledgedSurface: next,
-        completedIntent: intent,
-        remainingIntents,
-      });
       acknowledgedRef.current = next;
+      intentsRef.current = intentsRef.current.filter((item) => item !== intent);
       activeRef.current = false;
       publish();
       store();
@@ -563,7 +772,7 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
     generationRef.current += 1;
     const sourceRef = sourceRefRef.current;
     if (!sourceRef || !initialSurface) return clearTimers;
-    const draft = readResourceSurfaceDraft(sourceRef);
+    const draft = readDraft(sourceRef);
     acknowledgedRef.current = draft?.acknowledged_surface ?? initialSurface;
     intentsRef.current = draft?.commands ?? [];
     titleRef.current = draft?.title
@@ -572,7 +781,7 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
           clientMutationId: draft.title.client_mutation_id,
         }
       : undefined;
-    bodiesRef.current = pendingResourceSurfaceBodies(draft);
+    bodiesRef.current = pendingBodies(draft);
     intrinsicActiveRef.current.clear();
     stoppedRef.current = false;
     requiresRebaseRef.current = false;
@@ -662,7 +871,7 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
       acknowledged?.source.item.ref === ref
         ? acknowledged.source.content
         : acknowledged
-          ? resourceSurfaceOccurrenceForRef(acknowledged, ref)?.target.content
+          ? occurrenceForRef(acknowledged, ref)?.target.content
           : undefined;
     if (
       (
@@ -743,23 +952,18 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
   const command = useCallback((next: ResourceSurfaceCommand) => {
     const currentInput = inputRef.current;
     if ("daily" in currentInput && !acknowledgedRef.current && next.type === "insert_note") {
-      if (dailyDraftRef.current) return null;
+      if (dailyDraftRef.current) return;
       dailyDraftRef.current = createDailyDraft(
         currentInput.daily, next.noteId, resourceSurfaceCommandId(), next.bodyPmJson,
       );
       dailyCapturedRef.current = false; captureSnapshotRef.current = null;
       bodiesRef.current.set(draftNoteRef(next.noteId), pendingDailyBody(dailyDraftRef.current, resourceSurfaceCommandId()));
       recoveredPausedRef.current = false; store();
-      return `daily-provisional:${next.noteId}`;
+      return;
     }
     const before = derived();
-    if (!before) return null;
-    const clientMutationId = resourceSurfaceCommandId();
-    const intent = createResourceSurfaceIntent({
-      surface: before,
-      command: next,
-      clientMutationId,
-    });
+    if (!before) return;
+    const intent = intentFor(before, next);
     if (!intent) {
       const error = new Error(
         "This edit no longer matches the current resource order.",
@@ -767,16 +971,10 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
       stoppedRef.current = true;
       setStatus("failed");
       onErrorRef.current?.(error);
-      return null;
+      return;
     }
-    if (next.type === "split_note") {
-      const splitOccurrence = before.orderedItems.find(
-        (item) => item.occurrenceId === next.occurrenceId,
-      );
-      if (splitOccurrence === undefined) {
-        throw new Error("Split note occurrence is not in the projected surface");
-      }
-      bodiesRef.current.delete(splitOccurrence.target.item.ref);
+    if (next.type === "split_note" && intent.occurrenceTargetRef) {
+      bodiesRef.current.delete(intent.occurrenceTargetRef);
     }
     intentsRef.current = [...intentsRef.current, intent];
     publish();
@@ -784,11 +982,6 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
     setStatus("dirty");
     if (next.type !== "split_note") saveIntrinsics();
     pump();
-    return next.type === "insert_note" ||
-      next.type === "split_note" ||
-      next.type === "insert_resource"
-      ? resourceSurfacePendingOccurrenceId(clientMutationId)
-      : null;
   }, [derived, publish, pump, saveIntrinsics, store]);
   const flush = useCallback(() => saveIntrinsics(), [saveIntrinsics]);
   const reload = useCallback(async () => {
@@ -804,7 +997,7 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
       intentsRef.current = []; titleRef.current = undefined; bodiesRef.current.clear();
       clearDailyDraft(currentInput.daily.accountId, currentInput.daily.localDate);
       const sourceRef = sourceRefRef.current;
-      if (sourceRef) clearPersistedResourceSurfaceDraft(sourceRef);
+      if (sourceRef) clearPersistedDraft(sourceRef);
       setHasRecoveredDraft(false);
       await loadDailyOwner();
       return;
@@ -903,7 +1096,7 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
   const copyRecovery = useCallback(async () => {
     const currentInput = inputRef.current;
     const resourceDraft = sourceRefRef.current
-      ? readResourceSurfaceDraft(sourceRefRef.current)
+      ? readDraft(sourceRefRef.current)
       : null;
     const dailyDraft = "daily" in currentInput
       ? readDailyDraft(currentInput.daily.accountId, currentInput.daily.localDate)
@@ -923,9 +1116,7 @@ export function useResourceSurfaceSession(input: PersistedSessionOptions | Daily
   if (daily) {
     const draft = draftSnapshot === undefined ? dailyDraftRef.current : draftSnapshot;
     const ref = draft ? draftNoteRef(draft.noteId) : null;
-    const canonical = ref && surface
-      ? resourceSurfaceOccurrenceForRef(surface, ref)
-      : null;
+    const canonical = ref && surface ? occurrenceForRef(surface, ref) : null;
     const pending = ref ? bodiesRef.current.get(ref) : undefined;
     return {
       surface,

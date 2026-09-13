@@ -25,7 +25,9 @@ class BillingEntitlementsOut(BaseModel):
     entitlement_plan_tier: BillingPlanTier
     entitlement_source: EntitlementSource
     can_share: bool
+    can_use_platform_llm: bool
     can_transcribe: bool
+    platform_token_limit_monthly: int | None = Field(default=None, ge=0)
     transcription_minutes_limit_monthly: int | None = Field(default=None, ge=0)
     usage_period_start: datetime
     usage_period_end: datetime
@@ -57,5 +59,7 @@ class BillingAccountOut(BaseModel):
     entitlement_source: EntitlementSource
     entitlement_expires_at: datetime | None
     can_share: bool
+    can_use_platform_llm: bool
     can_transcribe: bool
+    ai_token_usage: BillingUsageBucketOut
     transcription_usage: BillingUsageBucketOut

@@ -21,6 +21,7 @@ _MAX_AUDIO_BYTES = 10 * 1024 * 1024  # 10 MB
 async def transcribe_walknote_audio(
     audio: Annotated[UploadFile, File()],
     content_type: Annotated[str, Form()],
+    max_duration_seconds: Annotated[float, Form()],
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:

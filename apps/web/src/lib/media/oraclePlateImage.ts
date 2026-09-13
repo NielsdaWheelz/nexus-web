@@ -1,6 +1,5 @@
-import { isCanonicalUuid } from "@/lib/validation";
-
-const ORACLE_PLATE_IMAGE_PREFIX = "/api/oracle/plates/";
+const ORACLE_PLATE_IMAGE_SRC_RE =
+  /^\/api\/oracle\/plates\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 declare const oraclePlateImageSrcBrand: unique symbol;
 
@@ -13,10 +12,7 @@ export function buildOraclePlateImageSrc(id: string): OraclePlateImageSrc {
 }
 
 export function isOraclePlateImageSrc(value: string): value is OraclePlateImageSrc {
-  return (
-    value.startsWith(ORACLE_PLATE_IMAGE_PREFIX) &&
-    isCanonicalUuid(value.slice(ORACLE_PLATE_IMAGE_PREFIX.length))
-  );
+  return ORACLE_PLATE_IMAGE_SRC_RE.test(value);
 }
 
 export function parseOraclePlateImageSrc(value: string): OraclePlateImageSrc | null {

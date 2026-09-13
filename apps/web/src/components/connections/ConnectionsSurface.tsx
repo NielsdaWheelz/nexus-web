@@ -35,6 +35,8 @@ import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoun
 import { createRandomId } from "@/lib/createRandomId";
 import {
   getFileUploadError,
+  isMediaIngestionDefect,
+  projectUploadReference,
   uploadIngestFile,
 } from "@/lib/media/ingestionClient";
 import { mediaCaptureErrorMessage } from "@/lib/media/captureFeedback";
@@ -851,14 +853,49 @@ function ConnectionComposer({
           });
           continue;
         }
+        const accepted: {
+          pending: ConnectionsPendingAttachment | null;
+          edge: Promise<AttachmentEdgeOutcome> | null;
+        } = { pending: null, edge: null };
         let upload;
         try {
           upload = await uploadIngestFile({
             file,
             libraryIds: [],
+            onAcceptedIdentity: ({ mediaId, sourceAttemptId }) => {
+              const pending: ConnectionsPendingAttachment = {
+                clientMutationId: createRandomId("link"),
+                mediaId,
+                sourceAttemptId,
+                label: file.name,
+                warning: null,
+              };
+              accepted.pending = pending;
+              controller.update((current) => ({
+                pendingAttachments: upsertPending(
+                  current.pendingAttachments,
+                  pending,
+                ),
+              }));
+              accepted.edge = createAttachmentLink(selfRef, pending).then(
+                () => ({ kind: "Fulfilled" as const }),
+                (error: unknown) => ({ kind: "Rejected" as const, error }),
+              );
+            },
           });
         } catch (error) {
-          if (isSameSystemApiDefect(error)) {
+          if (accepted.edge && accepted.pending) {
+            const edge = await accepted.edge;
+            if (edge.kind === "Fulfilled") {
+              controller.update((current) => ({
+                pendingAttachments: current.pendingAttachments.filter(
+                  (item) => item.mediaId !== accepted.pending?.mediaId,
+                ),
+              }));
+              changed = true;
+            }
+          }
+          if (isMediaIngestionDefect(error)) {
             setDefect({ error });
             return;
           }
@@ -866,26 +903,29 @@ function ConnectionComposer({
           presentCaptureFailure(error);
           continue;
         }
-        const pending: ConnectionsPendingAttachment = {
-          clientMutationId: createRandomId("link"),
-          mediaId: upload.mediaId,
-          sourceAttemptId: upload.sourceAttemptId,
-          label: file.name,
-          warning: null,
-        };
+        if (!accepted.pending || !accepted.edge) {
+          setDefect({
+            error: new Error(
+              "Accepted attachment did not publish its durable identity.",
+            ),
+          });
+          return;
+        }
+        const { warning } = projectUploadReference({
+          result: upload,
+          processingFailureFeedback: {
+            tone: "Warning",
+            title: "Attachment was added, but source processing failed.",
+          },
+        });
+        const pending = { ...accepted.pending, warning };
         controller.update((current) => ({
           pendingAttachments: upsertPending(
             current.pendingAttachments,
             pending,
           ),
         }));
-        const edge: AttachmentEdgeOutcome = await createAttachmentLink(
-          selfRef,
-          pending,
-        ).then(
-          () => ({ kind: "Fulfilled" as const }),
-          (error: unknown) => ({ kind: "Rejected" as const, error }),
-        );
+        const edge = await accepted.edge;
         if (edge.kind === "Rejected") {
           if (isSameSystemApiDefect(edge.error)) {
             setDefect({ error: edge.error });
@@ -901,6 +941,7 @@ function ConnectionComposer({
           ),
         }));
         changed = true;
+        if (warning) controller.update({ feedback: warning });
       }
     } finally {
       if (changed) onChanged();

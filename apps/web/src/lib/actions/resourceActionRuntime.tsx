@@ -1,6 +1,5 @@
 "use client";
 
-import { assertNever } from "@/lib/assertNever";
 import {
   createElement,
   createContext,
@@ -16,6 +15,7 @@ import {
 import { RefreshCw } from "lucide-react";
 
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { present } from "@/lib/api/presence";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   useFeedback,
@@ -29,7 +29,6 @@ import {
   type ResourceActionEnvironment,
 } from "@/lib/actions/resourceActionEnvironment";
 import {
-  offlineReadingPackageMediaKind,
   resolveResourceActionPlan,
   type PlannedResourceAction,
   type ResourceActionBlockedReason,
@@ -89,10 +88,6 @@ import {
   type OfflineMediaCapability,
 } from "@/lib/offlineMedia/OfflineMediaProvider";
 import type { OfflineMediaInventoryItem } from "@/lib/offlineMedia/clientStore";
-import { useOfflineReadingCapability } from "@/lib/offlineReading/OfflineReadingProvider";
-import type { ReadingAvailability } from "@/lib/offlineReading/contract";
-import { present } from "@/lib/api/presence";
-import { IMPORTS_CONFLICT_NOTICE } from "@/lib/status/imports";
 import { useShareController } from "@/lib/sharing/controller";
 import {
   useLibraryPlacementController,
@@ -100,16 +95,8 @@ import {
 } from "@/lib/libraries/placementController";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
-import {
-  publishImportsInvalidation,
-  repairSearchImport,
-  repairSourceImport,
-  retrySourceImport,
-} from "@/lib/imports/importsClient";
-import {
-  refreshMediaSource,
-  retryMediaMetadata,
-} from "@/lib/media/ingestionClient";
+import { runSourceProcessingAction } from "@/lib/media/sourceActions";
+import { retryMediaMetadata } from "@/lib/media/ingestionClient";
 import { confirmAndDeleteMedia } from "@/lib/media/mediaLibraries";
 import { deleteMemberLibrary } from "@/lib/libraries/client";
 import { deleteConversation } from "@/lib/conversations/indexMutation";
@@ -200,8 +187,6 @@ interface BusyStore {
   readonly delete: (key: string) => void;
   readonly subscribe: (listener: () => void) => () => void;
 }
-
-const EMPTY_BUSY_KEYS: ReadonlySet<string> = new Set();
 
 function createBusyStore(): BusyStore {
   let keys: ReadonlySet<string> = new Set();
@@ -297,7 +282,6 @@ interface RuntimePorts {
   readonly playerCommands: ReturnType<typeof usePlayerCommands>;
   readonly playerSession: ReturnType<typeof usePlayerSession>;
   readonly offlineCapability: OfflineMediaCapability;
-  readonly offlineReadingCapability: ReturnType<typeof useOfflineReadingCapability>;
   readonly feedback: FeedbackContextValue;
   // A user-invoked exact completion (Mark finished / Mark played) offers the
   // canonical 10-second completion Undo HUD.
@@ -322,45 +306,6 @@ function requireOfflineController(ports: RuntimePorts) {
     throw new Error("Offline media controller is unavailable");
   }
   return ports.offlineCapability.controller;
-}
-
-function requireOfflineReadingController(ports: RuntimePorts) {
-  if (ports.offlineReadingCapability.kind !== "Ready") {
-    throw new Error("Offline reading controller is unavailable");
-  }
-  return ports.offlineReadingCapability.controller;
-}
-
-function projectReadingAvailability(value: ReadingAvailability): import("@/lib/actions/resourceActionEnvironment").ResourceActionOfflineReadingAvailability {
-  switch (value.kind) {
-    case "Preparing":
-    case "Authorizing":
-    case "Verifying":
-      return { kind: "Resolving" };
-    case "Queued":
-      return {
-        kind: "Queued",
-        reason: value.reason === "WaitingForUnmetered"
-          ? "WaitingForUnmetered"
-          : value.reason === "Scheduler" ? "SystemLimit" : "Capacity",
-      };
-    case "Downloading":
-      return { kind: "Downloading", bytesDownloaded: value.receivedBytes, totalBytes: present(value.totalBytes) };
-    case "Restarting":
-      return { kind: "Restarting" };
-    case "Ready":
-      return {
-        kind: "Ready",
-        sizeBytes: value.sizeBytes,
-        contentType: "application/x-nexus-offline-reading",
-        updatedAt: value.installedAt,
-        hasDevicePosition: value.progress.kind !== "Canonical",
-      };
-    case "Failed":
-      return { kind: "Failed", code: "DownloadFailed" };
-    case "Removing":
-      return { kind: "Removing" };
-  }
 }
 
 /**
@@ -686,34 +631,19 @@ async function runResourceActionEffect(
       window.location.assign(response.data.url);
       return;
     }
-    case "RetrySource":
-      await retrySourceImport({
+    case "RetryProcessing":
+      await runSourceProcessingAction({
         mediaId: requireRefId(target),
-        expectedAttemptId: intent.expectedAttemptId,
-        clientMutationId: crypto.randomUUID(),
+        action: "retry",
+        successTitle: "Retrying source processing",
       });
-      publishImportsInvalidation();
-      return;
-    case "RepairSource":
-      await repairSourceImport({
-        mediaId: requireRefId(target),
-        expectedAttemptId: intent.expectedAttemptId,
-        expectedJobId: intent.expectedJobId,
-        clientMutationId: crypto.randomUUID(),
-      });
-      publishImportsInvalidation();
-      return;
-    case "RepairSearch":
-      await repairSearchImport({
-        mediaId: requireRefId(target),
-        expectedRevision: intent.expectedRevision,
-        expectedJobId: intent.expectedJobId,
-        clientMutationId: crypto.randomUUID(),
-      });
-      publishImportsInvalidation();
       return;
     case "RefreshSource":
-      await refreshMediaSource(requireRefId(target));
+      await runSourceProcessingAction({
+        mediaId: requireRefId(target),
+        action: "refresh",
+        successTitle: "Refreshing source",
+      });
       return;
     case "RetryMetadata":
       await retryMediaMetadata(requireRefId(target));
@@ -813,26 +743,16 @@ async function runResourceActionEffect(
       await unsubscribeFromPodcast(requireRefId(target));
       return;
     case "OfflineDownload":
-      if (intent.owner === "Reading") {
-        if (intent.requestedTitle === undefined) throw new Error("Offline reading title is unavailable");
-        if (intent.mediaKind === undefined) throw new Error("Offline reading media kind is unavailable");
-        await requireOfflineReadingController(ports).enqueue(
-          requireRefId(target),
-          intent.requestedTitle,
-          offlineReadingPackageMediaKind(intent.mediaKind),
-        );
-      } else {
-        await requireOfflineController(ports).enqueue(requireRefId(target));
-      }
+      await requireOfflineController(ports).enqueue(requireRefId(target));
       return;
     case "OfflineCancel":
-      await (intent.owner === "Reading" ? requireOfflineReadingController(ports) : requireOfflineController(ports)).cancel(requireRefId(target));
+      await requireOfflineController(ports).cancel(requireRefId(target));
       return;
     case "OfflineRetry":
-      await (intent.owner === "Reading" ? requireOfflineReadingController(ports) : requireOfflineController(ports)).retry(requireRefId(target));
+      await requireOfflineController(ports).retry(requireRefId(target));
       return;
     case "OfflineRemove":
-      await (intent.owner === "Reading" ? requireOfflineReadingController(ports) : requireOfflineController(ports)).remove(requireRefId(target));
+      await requireOfflineController(ports).remove(requireRefId(target));
       return;
     case "EditAuthors":
       // Opening a self-loading overlay is not itself a mutation; the overlay
@@ -1186,9 +1106,7 @@ function reconciliationScopeFor(
     case "RetryTranscript":
     case "AddToLectern":
     case "RemoveFromLectern":
-    case "RetrySource":
-    case "RepairSource":
-    case "RepairSearch":
+    case "RetryProcessing":
     case "RefreshSource":
     case "RetryMetadata":
     case "RefreshPodcast":
@@ -1260,24 +1178,9 @@ function confirmResourceAction(
 
 /** The one exhaustive owner mapping an expected dispatch error to HUD copy. */
 function dispatchErrorContent(
-  intent: ResourceActionIntent,
   actionLabel: string,
   error: unknown,
 ): FeedbackContent {
-  // An import recovery that named an identity the server has already moved past
-  // is not a failed action: the reader is looking at work that changed under
-  // them, and the copy owner words that one way for every surface that plans
-  // these three intents (contract §5, D7). No other subject carries an
-  // inspected identity, so no other subject gets import wording.
-  if (
-    (intent.kind === "RetrySource" ||
-      intent.kind === "RepairSource" ||
-      intent.kind === "RepairSearch") &&
-    isApiError(error) &&
-    error.code === "E_RESOURCE_CONFLICT"
-  ) {
-    return { ...IMPORTS_CONFLICT_NOTICE, requestId: error.requestId };
-  }
   const message =
     isApiError(error) || error instanceof Error ? error.message : undefined;
   const requestId = isApiError(error) ? error.requestId : undefined;
@@ -1466,6 +1369,12 @@ function useRuntimeContext(): ResourceActionRuntimeValue {
   return value;
 }
 
+function useResourceActionEnvironment(): ResourceActionEnvironment {
+  const value = useContext(EnvironmentContext);
+  if (!value) throw new Error("ResourceActionRuntimeProvider is missing");
+  return value;
+}
+
 // ---------------------------------------------------------------------------
 // Provider
 // ---------------------------------------------------------------------------
@@ -1529,7 +1438,6 @@ export function ResourceActionRuntimeProvider({
   const playerCommands = usePlayerCommands();
   const playerSession = usePlayerSession();
   const offlineCapability = useOfflineMediaCapability();
-  const offlineReadingCapability = useOfflineReadingCapability();
   const feedback = useFeedback();
   const offerCompletionUndo = useCompletionUndo(cache.reconcile);
   const createOverlayMutationBoundary = useCallback(
@@ -1579,7 +1487,6 @@ export function ResourceActionRuntimeProvider({
     playerCommands,
     playerSession,
     offlineCapability,
-    offlineReadingCapability,
     feedback,
     offerCompletionUndo,
   };
@@ -1620,7 +1527,6 @@ export function ResourceActionRuntimeProvider({
               currentPorts.feedback.publish({
                 kind: "Hud",
                 content: dispatchErrorContent(
-                  input.intent,
                   input.label,
                   settlement.commandError,
                 ),
@@ -1652,7 +1558,7 @@ export function ResourceActionRuntimeProvider({
           if (isApiError(error) && !isSameSystemApiDefect(error)) {
             currentPorts.feedback.publish({
               kind: "Hud",
-              content: dispatchErrorContent(input.intent, input.label, error),
+              content: dispatchErrorContent(input.label, error),
             });
             return;
           }
@@ -1700,21 +1606,6 @@ export function ResourceActionRuntimeProvider({
     getInventory,
     () => EMPTY_INVENTORY,
   );
-  const readingController = offlineReadingCapability.kind === "Ready"
-    ? offlineReadingCapability.controller
-    : null;
-  const readingSnapshot = useSyncExternalStore(
-    readingController?.subscribe ?? (() => () => undefined),
-    readingController?.getSnapshot ?? (() => null),
-    () => null,
-  );
-  const readingByRef = useMemo(() => {
-    const byRef = new Map<CanonicalResourceRef, import("@/lib/actions/resourceActionEnvironment").ResourceActionOfflineReadingAvailability>();
-    for (const item of readingSnapshot?.items ?? []) {
-      byRef.set(`media:${item.mediaId}` as CanonicalResourceRef, projectReadingAvailability(item.availability));
-    }
-    return byRef;
-  }, [readingSnapshot]);
   const playbackByRef = useMemo(() => {
     const byRef = new Map<CanonicalResourceRef, "Idle" | "Paused" | "Ended">();
     const session = canonicalSessionOfGlobalState(playerSession.state);
@@ -1732,15 +1623,12 @@ export function ResourceActionRuntimeProvider({
         }
         break;
       case "Absent":
-      case "UpdateRequired":
       case "RuntimeFailed":
       case "PlaybackFailed":
       case "PreviewAudio":
       case "PreviewAudioFailed":
       case "PreviewAudioAtEnd":
         break;
-      default:
-        assertNever(playerSession.state, "global player state");
     }
     return byRef;
   }, [playerSession.state]);
@@ -1755,12 +1643,6 @@ export function ResourceActionRuntimeProvider({
               byRef: offlineMediaByRefFromInventory(inventory),
             }
           : offlineCapability.kind === "Connecting"
-            ? { kind: "Loading" }
-            : { kind: "Unavailable" },
-      offlineReading:
-        offlineReadingCapability.kind === "Ready"
-          ? { kind: "Ready", byRef: readingByRef }
-          : offlineReadingCapability.kind === "Connecting"
             ? { kind: "Loading" }
             : { kind: "Unavailable" },
       lectern:
@@ -1783,8 +1665,6 @@ export function ResourceActionRuntimeProvider({
       lectern.mutation.kind,
       lectern.resource,
       offlineCapability.kind,
-      offlineReadingCapability.kind,
-      readingByRef,
       playbackByRef,
     ],
   );
@@ -1819,30 +1699,23 @@ export function useResourceActionCompletionUndo(): (
  * trigger stays unavailable until this returns a Ready entry, so opening a
  * menu performs no request.
  */
-function useResourceActionSnapshotFromCache(
-  ref: CanonicalResourceRef | null,
-  cache: ResourceActionSnapshotCache | null,
-): SnapshotCacheEntry | undefined {
-  useEffect(() => {
-    if (ref === null || cache === null) return;
-    return cache.retain(ref);
-  }, [ref, cache]);
-  const subscribe = useCallback(
-    (listener: () => void) =>
-      cache === null ? () => undefined : cache.subscribe(listener),
-    [cache],
-  );
-  const getSnapshot = useCallback(
-    () => (ref === null || cache === null ? undefined : cache.peek(ref)),
-    [ref, cache],
-  );
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-}
-
 export function useResourceActionSnapshot(
   ref: CanonicalResourceRef | null,
 ): SnapshotCacheEntry | undefined {
-  return useResourceActionSnapshotFromCache(ref, useRuntimeContext().cache);
+  const { cache } = useRuntimeContext();
+  useEffect(() => {
+    if (ref === null) return;
+    return cache.retain(ref);
+  }, [ref, cache]);
+  const subscribe = useCallback(
+    (listener: () => void) => cache.subscribe(listener),
+    [cache],
+  );
+  const getSnapshot = useCallback(
+    () => (ref === null ? undefined : cache.peek(ref)),
+    [ref, cache],
+  );
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
 function descriptorsForPlan(
@@ -1866,33 +1739,17 @@ function descriptorsForPlan(
 }
 
 function useCanonicalResourceActionModel(
-  target: ResourceActionSubject | null,
-): ResourceActionMenuModel | null {
-  const runtime = useContext(RuntimeContext);
-  const environment = useContext(EnvironmentContext);
-  const cache = target === null ? null : (runtime?.cache ?? null);
-  const busyStore = target === null ? null : (runtime?.busyStore ?? null);
-  const entry = useResourceActionSnapshotFromCache(target?.ref ?? null, cache);
-  const subscribeBusy = useCallback(
-    (listener: () => void) =>
-      busyStore === null ? () => undefined : busyStore.subscribe(listener),
-    [busyStore],
-  );
-  const getBusyKeys = useCallback(
-    () => busyStore?.getKeys() ?? EMPTY_BUSY_KEYS,
-    [busyStore],
-  );
+  target: ResourceActionSubject,
+): ResourceActionMenuModel {
+  const { busyStore, cache, invoke, raiseDefect } = useRuntimeContext();
+  const environment = useResourceActionEnvironment();
+  const entry = useResourceActionSnapshot(target.ref);
   const busyKeys = useSyncExternalStore(
-    subscribeBusy,
-    getBusyKeys,
-    getBusyKeys,
+    busyStore.subscribe,
+    busyStore.getKeys,
+    busyStore.getKeys,
   );
-  return useMemo<ResourceActionMenuModel | null>(() => {
-    if (target === null) return null;
-    if (runtime === null || environment === null || cache === null) {
-      throw new Error("ResourceActionRuntimeProvider is missing");
-    }
-    const { invoke, raiseDefect } = runtime;
+  return useMemo<ResourceActionMenuModel>(() => {
     if (!entry || entry.status === "Loading") return LOADING_MODEL;
     const snapshot =
       entry.status === "Ready" || entry.status === "Reconciling"
@@ -1954,18 +1811,7 @@ function useCanonicalResourceActionModel(
         ? { triggerDisabledReason: "No actions are available." }
         : {}),
     };
-  }, [busyKeys, cache, entry, environment, runtime, target]);
-}
-
-/**
- * The optional-subject model keeps composite menus mounted while pane chrome
- * publishes its canonical resource identity. A missing subject owns no
- * resource suffix and performs no snapshot read.
- */
-export function useOptionalResourceActionMenuModel(
-  target: ResourceActionSubject | undefined,
-): ResourceActionMenuModel | null {
-  return useCanonicalResourceActionModel(target ?? null);
+  }, [busyKeys, cache, entry, environment, invoke, raiseDefect, target]);
 }
 
 /**
@@ -1976,9 +1822,5 @@ export function useOptionalResourceActionMenuModel(
 export function useResourceActionMenuModel(
   target: ResourceActionSubject,
 ): ResourceActionMenuModel {
-  const model = useOptionalResourceActionMenuModel(target);
-  if (model === null) {
-    throw new Error("A canonical resource action subject is required.");
-  }
-  return model;
+  return useCanonicalResourceActionModel(target);
 }

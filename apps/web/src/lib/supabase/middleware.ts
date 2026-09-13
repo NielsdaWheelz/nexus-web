@@ -21,11 +21,6 @@ const TEMPORARY_REDIRECT = 307;
  * Routes that don't require authentication
  */
 const PUBLIC_ROUTES = new Set([
-  "/robots.txt",
-  "/manifest.webmanifest",
-  "/opengraph-image",
-  "/twitter-image",
-  "/apple-icon",
   "/login",
   "/forgot-password",
   "/android",

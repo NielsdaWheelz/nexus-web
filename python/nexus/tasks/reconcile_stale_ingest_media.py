@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from functools import partial
 from uuid import UUID
 
@@ -12,23 +11,44 @@ from sqlalchemy.orm import Session
 from nexus.config import get_settings
 from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
-from nexus.errors import NotFoundError
+from nexus.jobs.queue import enqueue_job, lock_jobs_for_payload
 from nexus.services.content_indexing import (
     MediaContentReindexIntent,
     ensure_media_content_reindex_job,
 )
+from nexus.services.media_deletion import delete_abandoned_document_media
 from nexus.services.media_source_ingest import ensure_stale_source_attempt_job
-from nexus.services.transcripts.semantic import request_transcript_semantic_repair
 
 _BATCH_LIMIT = 25
 
 
 def reconcile_stale_ingest_media_job(
-    request_id: str | None,
+    request_id: str | None = None,
 ) -> dict[str, int]:
     settings = get_settings()
     discovery = get_session_factory()()
     try:
+        pending_upload_ids = list(
+            discovery.scalars(
+                text(
+                    """
+                    SELECT m.id
+                    FROM media m
+                    JOIN media_file mf ON mf.media_id = m.id
+                    WHERE m.processing_status = 'pending'
+                      AND m.kind IN ('pdf', 'epub')
+                      AND m.created_at
+                          < now() - (CAST(:upload_seconds AS integer) * interval '1 second')
+                    ORDER BY m.created_at ASC, m.id ASC
+                    LIMIT :limit
+                    """
+                ),
+                {
+                    "upload_seconds": int(settings.signed_url_expiry_s),
+                    "limit": _BATCH_LIMIT,
+                },
+            )
+        )
         source_rows = (
             discovery.execute(
                 text(
@@ -128,6 +148,19 @@ def reconcile_stale_ingest_media_job(
     finally:
         discovery.close()
 
+    pending_upload_deleted = 0
+    for media_id in pending_upload_ids:
+        db = get_session_factory()()
+        try:
+            retry_serializable(
+                db,
+                "reconcile_abandoned_upload",
+                partial(_delete_pending_upload, db, UUID(str(media_id))),
+            )
+            pending_upload_deleted += 1
+        finally:
+            db.close()
+
     source_enqueued = 0
     source_deduplicated = 0
     source_suspended = 0
@@ -194,6 +227,7 @@ def reconcile_stale_ingest_media_job(
                     _ensure_semantic,
                     db,
                     media_id=UUID(str(row["media_id"])),
+                    request_id=request_id,
                 ),
             )
         finally:
@@ -204,6 +238,7 @@ def reconcile_stale_ingest_media_job(
             semantic_deduplicated += 1
 
     return {
+        "pending_upload_deleted": pending_upload_deleted,
         "source_scanned": len(source_rows),
         "source_enqueued": source_enqueued,
         "source_deduplicated": source_deduplicated,
@@ -217,6 +252,11 @@ def reconcile_stale_ingest_media_job(
         "semantic_enqueued": semantic_enqueued,
         "semantic_deduplicated": semantic_deduplicated,
     }
+
+
+def _delete_pending_upload(db: Session, media_id: UUID) -> None:
+    delete_abandoned_document_media(db, media_id)
+    db.commit()
 
 
 def _ensure_source(
@@ -256,16 +296,32 @@ def _ensure_semantic(
     db: Session,
     *,
     media_id: UUID,
+    request_id: str | None,
 ) -> bool:
-    try:
-        admission = request_transcript_semantic_repair(
-            db,
-            media_id=media_id,
-            request_reason="operator_requeue",
-            now=datetime.now(UTC),
-        )
-    except NotFoundError:
+    locked = db.execute(
+        text("SELECT id FROM media WHERE id = :media_id FOR UPDATE"),
+        {"media_id": media_id},
+    ).scalar_one_or_none()
+    if locked is None:
         db.commit()
         return False
+    jobs = lock_jobs_for_payload(
+        db,
+        kind="podcast_reindex_semantic_job",
+        expected_payload_match={"media_id": str(media_id)},
+    )
+    if any(job.status in {"pending", "failed", "running", "dead"} for job in jobs):
+        db.commit()
+        return False
+    enqueue_job(
+        db,
+        kind="podcast_reindex_semantic_job",
+        payload={
+            "media_id": str(media_id),
+            "requested_by_user_id": None,
+            "request_reason": "operator_requeue",
+            "request_id": request_id,
+        },
+    )
     db.commit()
-    return admission.outcome == "queued"
+    return True

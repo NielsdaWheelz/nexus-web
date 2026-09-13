@@ -83,39 +83,6 @@
   margin: 6px 0 0;
 }
 
-.generationBillingList {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  margin: var(--space-3) 0;
-}
-
-.generationBillingList > div {
-  display: grid;
-  grid-template-columns: minmax(0, 0.75fr) minmax(0, 1.75fr);
-  gap: var(--space-2);
-}
-
-.generationBillingList dt {
-  color: var(--ink);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-semibold);
-}
-
-.generationBillingList dd {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin: 0;
-  color: var(--ink-faint);
-  font-size: var(--text-sm);
-}
-
-.generationBillingList strong {
-  color: var(--ink);
-  font-weight: var(--weight-medium);
-}
-
 .actionRow {
   display: flex;
   flex-wrap: wrap;
@@ -132,10 +99,5 @@
   .summaryGrid,
   .usageGrid {
     grid-template-columns: 1fr;
-  }
-
-  .generationBillingList > div {
-    grid-template-columns: 1fr;
-    gap: 4px;
   }
 }

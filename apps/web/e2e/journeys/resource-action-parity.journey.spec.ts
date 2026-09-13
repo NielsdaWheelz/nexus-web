@@ -1,5 +1,5 @@
 import type { Locator, Page } from "playwright/test";
-import { ARTICLE_TITLE, captureReadableArticle } from "../articleFixture";
+import { ARTICLE_TITLE, captureCanonicalArticle } from "../articleFixture";
 import {
   expect,
   gotoWithStrictCsp,
@@ -101,13 +101,6 @@ async function openActionMenu(
     menuItems.first(),
     `${surface}: the action menu opened with no menuitems.`,
   ).toBeVisible();
-  await expect(
-    menu.getByRole("menuitem", {
-      name: "Resource actions are loading…",
-      exact: true,
-    }),
-    `${surface}: the canonical resource suffix did not finish loading.`,
-  ).toHaveCount(0);
   return { menu, menuItems };
 }
 
@@ -230,28 +223,6 @@ async function readContextualResourceMenu(
   expectedCanonical?: readonly ResourceMenuSignatureItem[],
 ): Promise<readonly ResourceMenuSignatureItem[]> {
   const { menu, menuItems } = await openActionMenu(page, trigger, surface);
-  await expect
-    .poll(
-      () =>
-        menuItems.evaluateAll((elements, localPrefixLength) => {
-          const ids = elements.map((element) =>
-            element.getAttribute("data-action-id"),
-          );
-          return {
-            prefix: ids.slice(0, localPrefixLength),
-            hasCanonicalSuffix: ids.length > localPrefixLength,
-            incompleteActionCount: ids.filter((id) => id === null).length,
-          };
-        }, expectedLocalPrefix.length),
-      {
-        message: `${surface}: its local prefix and canonical resource suffix did not settle before sampling.`,
-      },
-    )
-    .toEqual({
-      prefix: expectedLocalPrefix,
-      hasCanonicalSuffix: true,
-      incompleteActionCount: 0,
-    });
   const actionIds = await menuItems.evaluateAll((elements) =>
     elements.map((element) => element.getAttribute("data-action-id")),
   );
@@ -277,7 +248,6 @@ test("canonical resources yield identical dropdown semantics across surfaces and
   page,
   journeyUser,
 }) => {
-  test.setTimeout(300_000);
   await page.setViewportSize(DESKTOP_VIEWPORT);
   await signIn(page, journeyUser);
   const api = pageRequest(page, webOrigin);
@@ -295,40 +265,48 @@ test("canonical resources yield identical dropdown semantics across surfaces and
   ).data.default_library_id;
 
   // Seed exactly ONE canonical media resource through the real capture stack.
-  const mediaId = await captureReadableArticle(
-    page,
-    "resource-action-parity",
-  );
-
-  const fragmentsResponse = await api.get(`/api/media/${mediaId}/fragments`);
-  expect(
-    fragmentsResponse.ok(),
-    "The captured article must publish its source fragments.",
-  ).toBeTruthy();
-  const articleFragments = (await fragmentsResponse.json()) as {
-    data: { id: string }[];
-  };
-  expect(
-    articleFragments.data,
-    "The captured article fixture contains one source fragment.",
-  ).toHaveLength(1);
-  const articleFragment = articleFragments.data[0]!;
+  const mediaId = await captureCanonicalArticle(page, "resource-action-parity");
+  await expect
+    .poll(
+      async () => {
+        const response = await api.get(`/api/media/${mediaId}`);
+        if (!response.ok()) return `http-${response.status()}`;
+        const media = (await response.json()) as {
+          data: { processing_status: string; retrieval_status: string | null };
+        };
+        return `${media.data.processing_status}:${media.data.retrieval_status}`;
+      },
+      {
+        message: `Expected seeded media ${mediaId} to become routeable before comparing its dropdown across surfaces.`,
+        timeout: 30_000,
+      },
+    )
+    .toBe("ready_for_reading:ready");
 
   // ---- Pin the CONSUMPTION fact before ANY surface read ---------------------
-  // AC1 parity compares one facts revision. Seed a real source cursor through
-  // reader-state, then wait for its authoritative InProgress action snapshot.
-  // Opening the reader restores that cursor without recording new reading.
+  // AC1 parity holds for one facts revision. Reading a web article records a
+  // reader-engagement row, which the snapshot projects as InProgress and which
+  // also switches on the "Reset progress" resource action. That write is what the
+  // reader UI performs asynchronously on open, so if it landed mid-journey a later
+  // surface would legitimately read a DIFFERENT facts revision than the oracle and
+  // fail parity for a non-regression reason. Do it deterministically up front
+  // through the SAME real endpoint the reader uses (PUT reader-state), keeping
+  // total progression far below the 0.95 finished threshold, then wait for the
+  // AUTHORITATIVE action-snapshot to project InProgress. Every surface below then
+  // reads this one stable fact — only an explicit Mark-as-finished (never invoked
+  // here) could move it on, and the reader opens below only GREATEST() this low
+  // progression, so it cannot drift.
   const mediaRef = `media:${mediaId}`;
   const readerState = await api.put(`/api/media/${mediaId}/reader-state`, {
     headers: { origin: webOrigin },
     data: {
       locator: {
         kind: "web",
-        target: { fragment_id: articleFragment.id },
+        target: { fragment_id: "p0" },
         locations: {
           text_offset: 0,
-          progression: 0,
-          total_progression: 0,
+          progression: 0.02,
+          total_progression: 0.02,
           position: 1,
         },
         text: { quote: null, quote_prefix: null, quote_suffix: null },

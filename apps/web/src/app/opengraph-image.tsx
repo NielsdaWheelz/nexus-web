@@ -5,9 +5,8 @@ import {
   BRAND_BG_DARK,
   BRAND_FG_ON_DARK,
 } from "@/lib/brand";
-import { PRODUCT_DESCRIPTOR, PRODUCT_NAME } from "@/lib/productIdentity";
 
-export const alt = `${PRODUCT_NAME} — ${PRODUCT_DESCRIPTOR}`;
+export const alt = "Nexus — A reading and notes platform";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -46,7 +45,7 @@ export default function OpenGraphImage() {
             color: "#ededef",
           }}
         >
-          {PRODUCT_NAME}
+          Nexus
         </div>
         <div
           style={{
@@ -56,7 +55,7 @@ export default function OpenGraphImage() {
             fontStyle: "italic",
           }}
         >
-          {PRODUCT_DESCRIPTOR}
+          A reading and notes platform
         </div>
       </div>
     ),

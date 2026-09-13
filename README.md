@@ -100,36 +100,24 @@ tables and object storage do not use Supabase Database or Supabase Storage.
 
 ## Android Release Distribution
 
-The private Android companion is distributed from
+End users install Android from
 [`nexus.nielseriknandal.com/android`](https://nexus.nielseriknandal.com/android).
-GitHub access to the private release repository is required to download it.
 
-The `/android` page projects GitHub Releases' stable latest-release targets and
-does not cache mutable release facts in page copy:
+Android self-distribution uses GitHub Releases. The `/android` install page must
+link to the stable latest-release assets:
 
-- `https://github.com/NielsdaWheelz/nexus-web/releases/latest/download/nexus-android.apk`
-- `https://github.com/NielsdaWheelz/nexus-web/releases/latest/download/nexus-android.apk.sha256`
-- `https://github.com/NielsdaWheelz/nexus-web/releases/latest/download/release-manifest.json`
-- `https://github.com/NielsdaWheelz/nexus-web/releases/latest`
+- `https://github.com/<owner>/<repo>/releases/latest/download/nexus-android.apk`
+- `https://github.com/<owner>/<repo>/releases/latest/download/nexus-android.apk.sha256`
 
-The checksum lets the operator compare the downloaded APK's SHA-256. The
-release manifest records the source commit, signing-certificate fingerprint,
-and artifact digests accepted by the release gate.
-
-Create an existing `android-v*` tag and run the Protected release verification
-workflow for that tag only after its protected `nexus-android-usb` runner has
-one USB-backed physical device, an older installed release, and the documented
-operator-unlock checkpoint. The controller builds and tests the signed
-candidate on that same device, requires a strictly increasing version code,
-and verifies the in-place update before draft publication. After a green
-protected run, install the draft APK on the user device, verify App Links and
-login, then rerun with `publish_stable=true`. The workflow uploads stable assets
-for `/android`, including the release manifest, plus versioned assets such as
-`nexus-android-0.1.0.apk` for tag `android-v0.1.0`.
+Create an existing `android-v*` tag, run the Protected release verification workflow for
+that tag, install the APK from the draft release on a physical device, verify
+App Links and login, then rerun the workflow with `publish_stable=true`. The
+workflow uploads stable assets for `/android` plus versioned assets such as
+`nexus-android-v0.1.0.apk` for tag `android-v0.1.0`.
 
 ## Repository Map
 
-- `apps/android/` -> Android shell app. Debug builds default to `http://10.0.2.2:3000`; native auth uses the environment-agnostic `nexus://auth/handoff` flow plus native Google bootstrap. Release APKs require explicit hosted and direct-API origins, version, release keystore, and release certificate fingerprint inputs. `NEXUS_ANDROID_RELEASE_API_ORIGIN` must exactly equal the backend `STREAM_BASE_URL` origin. App links require updating `apps/web/public/.well-known/assetlinks.json` with the release APK signing certificate fingerprint.
+- `apps/android/` -> Android shell app. Debug builds default to `http://10.0.2.2:3000`; native auth uses the environment-agnostic `nexus://auth/handoff` flow plus native Google bootstrap. Release APKs require explicit host, version, release keystore, and release certificate fingerprint inputs. App links require updating `apps/web/public/.well-known/assetlinks.json` with the release APK signing certificate fingerprint.
 - `apps/web/` -> frontend + BFF: see `apps/web/README.md`
 - `apps/extension/` -> browser extension for article, PDF/EPUB, and supported video capture
 - `python/` -> backend package + tests: see `python/README.md`

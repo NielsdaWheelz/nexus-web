@@ -17,23 +17,16 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import AsterismMark from "@/components/AsterismMark";
-import ImportsBadge from "@/components/imports/ImportsBadge";
 import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
 import NavAccount from "./NavAccount";
 import type { AppNavActivationResult } from "@/lib/panes/targetLinkActivation";
-import type {
-  AccountNavigation,
-  NavItem,
-  UtilityNavigation,
-} from "./navModel";
+import type { AccountNavigation, NavItem } from "./navModel";
 import styles from "./AppNav.module.css";
 
 export default function NavRail({
   items,
   home,
-  utilities,
   account,
-  utilityActiveId,
   accountActiveId,
   activeId,
   collapsed,
@@ -46,9 +39,7 @@ export default function NavRail({
 }: {
   items: readonly NavItem[];
   home: NavItem;
-  utilities: UtilityNavigation;
   account: AccountNavigation;
-  utilityActiveId: NavItem["id"] | null;
   accountActiveId: NavItem["id"] | null;
   activeId: NavItem["id"] | null;
   collapsed: boolean;
@@ -62,7 +53,6 @@ export default function NavRail({
     destination: NavItem,
   ) => AppNavActivationResult;
 }) {
-  const ImportsIcon = utilities.imports.icon;
   const listRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Map<string, HTMLElement>>(new Map());
   const [indicator, setIndicator] = useState({ top: 0, height: 0, visible: false });
@@ -185,30 +175,6 @@ export default function NavRail({
       </div>
 
       <div className={styles.footer}>
-        <Link
-          href={utilities.imports.href}
-          className={`${styles.item} ${styles.utilityLink} ${
-            utilityActiveId === utilities.imports.id ? styles.active : ""
-          }`}
-          aria-current={
-            utilityActiveId === utilities.imports.id ? "page" : undefined
-          }
-          onClick={(event) => onNavigate(event, utilities.imports)}
-        >
-          <span className={styles.itemIcon}>
-            <ImportsIcon size={20} strokeWidth={2} aria-hidden="true" />
-          </span>
-          {/* Collapsed hides every rail label, but not the attention count: the
-              badge drops its visible label and paints as a chip in this link's
-              own top-right corner, above its icon, and its accessible text
-              still names the link. */}
-          <span className={collapsed ? styles.utilityChip : styles.utilityLabel}>
-            <ImportsBadge
-              label={utilities.imports.label}
-              labelVisible={!collapsed}
-            />
-          </span>
-        </Link>
         <button
           type="button"
           className={styles.addButton}
@@ -223,9 +189,7 @@ export default function NavRail({
         </button>
         <NavAccount
           account={account}
-          utilities={utilities}
           activeId={accountActiveId}
-          utilityActiveId={utilityActiveId}
           collapsed={collapsed}
           onNavigate={onNavigate}
         />

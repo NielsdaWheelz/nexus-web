@@ -20,16 +20,8 @@
   background: var(--surface-1);
 }
 
-/* Selection outranks hover and focus by weight, not by order: the wash above
-   is a heavier selector than a bare class, so a selected row a reader points
-   at or tabs into would otherwise lose the only mark that it is selected. The
-   left rule is that mark in a form colour cannot take away. */
-.row.selected,
-.row.selected:has(a.primary:hover),
-.row.selected:has(button.primary:hover:not(:disabled)),
-.row.selected:focus-within {
+.selected {
   background: var(--accent-muted);
-  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .titleCell {
@@ -198,10 +190,7 @@ button.primary:disabled {
   }
 
   .supporting {
-    /* Adjacency, not geometry, positions the separator after this cell: a
-       supporting cell that grows leaves its own separator stranded against
-       the state block on the far side of the row. */
-    flex: 0 1 auto;
+    flex: 1 1 auto;
     grid-column: auto;
     grid-row: auto;
   }
@@ -230,85 +219,4 @@ button.primary:disabled {
     grid-column: 3;
     grid-row: 1;
   }
-}
-
-/* The Solar — §8.2: the app's most-used surface is its most restrained one.
-   Both marks are pseudo-elements over the row's existing box and neither has a
-   resting state, so the Bare tier holds: a row at rest paints exactly what it
-   painted before, and `--ornament: 0` silences the pair without moving a
-   pixel. No geometry here changes in this room. */
-:global([data-theme="elvish"]) .row {
-  /* The lamp sits at a negative index so the row's own text stays above it.
-     `container-type` already makes the row a stacking context; declaring the
-     isolation pins that containment to a contract rather than a side effect. */
-  isolation: isolate;
-}
-
-:global([data-theme="elvish"]) .row::before,
-:global([data-theme="elvish"]) .row::after {
-  content: "";
-  position: absolute;
-  opacity: 0;
-  pointer-events: none;
-  /* Out on the instant duration — chrome that lingers on the way out reads as
-     lag. The engaged rule below declares the way in. */
-  transition: opacity var(--duration-instant) var(--ease-glide);
-}
-
-/* The lamp: light with a source and a direction at the leading edge, never a
-   box that uniformly brightens. */
-:global([data-theme="elvish"]) .row::before {
-  inset: 0;
-  z-index: -1;
-  background-image: radial-gradient(
-    120px 40px at 12px 50%,
-    color-mix(in srgb, var(--accent) 9%, transparent),
-    transparent
-  );
-}
-
-/* The leaf terminal, inside the row's own inline padding: the asset's ink stops
-   at 8.6/10 of its box, so it ends where the title's first glyph begins and
-   overdraws nothing. Centred by auto margins rather than a transform. */
-:global([data-theme="elvish"]) .row::after {
-  inset-block: 0;
-  inset-inline-start: 0;
-  margin-block: auto;
-  inline-size: 10px;
-  block-size: 10px;
-  background-color: var(--accent);
-  mask-image: var(--elvish-leaf);
-  mask-repeat: no-repeat;
-  mask-size: 10px 10px;
-  mask-position: center;
-  -webkit-mask-image: var(--elvish-leaf);
-  -webkit-mask-repeat: no-repeat;
-  -webkit-mask-size: 10px 10px;
-  -webkit-mask-position: center;
-}
-
-/* Hover is the lamp, so it rises on the fast duration. The trigger list is the
-   row's existing hover state verbatim — the interactive primary covers the row,
-   so `:has(...:hover)` is row hover. `:where()` keeps the whole list at the
-   weight of the base rule so the selected state below can still win on order. */
-:global([data-theme="elvish"])
-  .row:where(
-    :has(a.primary:hover),
-    :has(button.primary:hover:not(:disabled)),
-    :focus-within
-  )::before,
-:global([data-theme="elvish"])
-  .row:where(
-    :has(a.primary:hover),
-    :has(button.primary:hover:not(:disabled)),
-    :focus-within
-  )::after {
-  opacity: calc(0.9 * var(--ornament));
-  transition: opacity var(--duration-fast) var(--ease-glide);
-}
-
-/* The selected row's brass left rule is the base layer's now; here the leaf at
-   its foot burns at full strength. */
-:global([data-theme="elvish"]) .selected::after {
-  opacity: calc(1 * var(--ornament));
 }

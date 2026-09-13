@@ -18,6 +18,10 @@
 import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 import { useReaderPulseHighlight } from "@/lib/reader/pulseEvent";
 import type { RetrievalLocator } from "@/lib/api/sse/locators";
+import {
+  getPaneScrollContainer,
+} from "@/lib/reader/paneScroll";
+import type { ReaderScrollPositioner } from "@/lib/reader/paneScroll";
 import styles from "./HtmlRenderer.module.css";
 
 interface HtmlRendererProps {
@@ -34,10 +38,12 @@ interface HtmlRendererProps {
   className?: string;
   /**
    * Optional media id used to gate reader-pulse highlight events. When the
-   * pulse target's `mediaId` matches, the renderer pulses the matching
-   * highlight element. the reader owns navigation.
+   * pulse target's `mediaId` matches, the renderer scrolls to and pulses the
+   * matching highlight element.
    */
   mediaId?: string;
+  /** Reader-owned positioning boundary for pulse navigation. */
+  scrollPositioner?: ReaderScrollPositioner;
   /**
    * Projects imported document headings beneath the route-level pane heading.
    * IDs and all other attributes are preserved.
@@ -88,6 +94,7 @@ export default memo(function HtmlRenderer({
   htmlSanitized,
   className,
   mediaId,
+  scrollPositioner,
   headingLevelOffset,
 }: HtmlRendererProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -112,13 +119,19 @@ export default memo(function HtmlRenderer({
           target.highlightId,
         );
         for (const candidate of candidates) {
+          const container = getPaneScrollContainer(candidate);
+          if (container && scrollPositioner) {
+            void scrollPositioner.run(({ reveal }) => {
+              reveal(container, candidate);
+            });
+          }
           candidate.classList.add(styles.pulsing);
           window.setTimeout(() => {
             candidate.classList.remove(styles.pulsing);
           }, PULSE_DURATION_MS);
         }
       },
-      [mediaId],
+      [mediaId, scrollPositioner],
     ),
   );
 

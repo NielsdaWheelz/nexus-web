@@ -1,0 +1,116 @@
+import type { ReaderNavigationSection } from "@/lib/media/readerNavigation";
+
+export interface EpubInternalLinkTarget {
+  sectionId: string;
+  anchorId: string | null;
+}
+
+const EPUB_LINK_ORIGIN = "https://epub.local";
+const URI_SCHEME_RE = /^[a-zA-Z][a-zA-Z\d+.-]*:/;
+
+function decodeEpubHrefPart(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function normalizeEpubHref(
+  href: string,
+  baseHref: string | null
+): { path: string | null; anchorId: string | null } | null {
+  const trimmed = href.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (trimmed.startsWith("#")) {
+    return {
+      path: null,
+      anchorId: decodeEpubHrefPart(trimmed.slice(1)) || null,
+    };
+  }
+
+  if (trimmed.startsWith("/") || trimmed.startsWith("?") || URI_SCHEME_RE.test(trimmed)) {
+    return null;
+  }
+
+  if (!baseHref) {
+    return null;
+  }
+
+  try {
+    const baseUrl = new URL(baseHref, `${EPUB_LINK_ORIGIN}/`);
+    const resolved = new URL(trimmed, baseUrl);
+    return {
+      path: resolved.pathname.replace(/^\/+/, "") || null,
+      anchorId: resolved.hash ? decodeEpubHrefPart(resolved.hash.slice(1)) || null : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function normalizeTocLinkPath(href: string | null): string | null {
+  if (!href) {
+    return null;
+  }
+  const trimmed = href.trim();
+  if (!trimmed || trimmed.startsWith("#")) {
+    return null;
+  }
+  if (trimmed.startsWith("?") || URI_SCHEME_RE.test(trimmed)) {
+    return null;
+  }
+  try {
+    const parsed = new URL(trimmed, `${EPUB_LINK_ORIGIN}/`);
+    return parsed.pathname.replace(/^\/+/, "") || null;
+  } catch {
+    return trimmed.replace(/^\/+/, "") || null;
+  }
+}
+
+export function resolveEpubInternalLinkTarget(
+  href: string | null,
+  currentSectionId: string | null,
+  sections: ReaderNavigationSection[] | null,
+): EpubInternalLinkTarget | null {
+  if (!href || !sections || sections.length === 0) {
+    return null;
+  }
+
+  const currentSection =
+    sections.find((section) => section.section_id === currentSectionId) ?? null;
+  const normalizedHref = normalizeEpubHref(
+    href,
+    currentSection?.href_path ?? null,
+  );
+  if (!normalizedHref) {
+    return null;
+  }
+
+  const targetPath = normalizedHref.path;
+  if (!targetPath) {
+    if (normalizedHref.anchorId) {
+      return {
+        sectionId: currentSection?.section_id ?? sections[0].section_id,
+        anchorId: normalizedHref.anchorId,
+      };
+    }
+    return null;
+  }
+
+  const targetSection = sections.find((section) => {
+    const sectionPath = normalizeTocLinkPath(section.href_path);
+    return sectionPath === targetPath || section.section_id === targetPath;
+  });
+  if (!targetSection) {
+    return null;
+  }
+
+  return {
+    sectionId: targetSection.section_id,
+    anchorId: normalizedHref.anchorId,
+  };
+}

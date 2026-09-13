@@ -25,7 +25,6 @@ from nexus.schemas.reader import (
     ReaderCursorSnapshot,
     ReaderResumeState,
 )
-from nexus.services.canonicalize import canonicalize_structure
 
 READER_MEDIA_STATE_MEDIA_FK = "fk_reader_media_state_media"
 _READER_RESUME_STATE_ADAPTER = TypeAdapter(ReaderResumeState)
@@ -114,77 +113,6 @@ def put_in_txn(
 ) -> ReaderCursorPositioned:
     """CAS-replace a positioned cursor within the caller's transaction."""
     validate_locator_for_media(media_kind, write.locator)
-    if write.locator.kind == "epub":
-        locator = write.locator
-        source = db.execute(
-            text("""
-                SELECT char_length(f.canonical_text) AS char_count, s.package_href
-                FROM fragments f
-                JOIN epub_fragment_sources s
-                  ON s.media_id = f.media_id AND s.fragment_id = f.id
-                WHERE f.media_id = :media_id AND f.id = :fragment_id
-            """),
-            {"media_id": media_id, "fragment_id": locator.target.fragment_id},
-        ).one_or_none()
-        if source is None or source.package_href != locator.target.href_path:
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST, "EPUB cursor must address an owned source fragment"
-            )
-        offset = locator.locations.text_offset
-        if offset is not None:
-            if offset > source.char_count:
-                raise InvalidRequestError(
-                    ApiErrorCode.E_INVALID_REQUEST, "EPUB cursor offset exceeds its source fragment"
-                )
-        else:
-            anchor = locator.target.anchor_id
-            if anchor.kind == "Absent":
-                raise InvalidRequestError(
-                    ApiErrorCode.E_INVALID_REQUEST,
-                    "EPUB cursor requires an exact offset or source anchor",
-                )
-            html_sanitized = db.scalar(
-                text(
-                    "SELECT html_sanitized FROM fragments WHERE media_id = :media_id AND id = :fragment_id"
-                ),
-                {"media_id": media_id, "fragment_id": locator.target.fragment_id},
-            )
-            if html_sanitized is None:
-                # justify-defect: the owning serializable transaction just read this immutable fragment.
-                raise AssertionError("EPUB cursor source disappeared during admission")
-            if anchor.value not in canonicalize_structure(html_sanitized).anchors:
-                raise InvalidRequestError(
-                    ApiErrorCode.E_INVALID_REQUEST,
-                    "EPUB cursor anchor must identify one source element",
-                )
-    elif write.locator.kind == "web":
-        locator = write.locator
-        try:
-            fragment_id = UUID(locator.target.fragment_id)
-        except ValueError as exc:
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST, "Web cursor fragment identity must be canonical"
-            ) from exc
-        if str(fragment_id) != locator.target.fragment_id:
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST, "Web cursor fragment identity must be canonical"
-            )
-        char_count = db.scalar(
-            text("""
-                SELECT char_length(canonical_text) FROM fragments
-                WHERE media_id = :media_id AND id = :fragment_id
-            """),
-            {"media_id": media_id, "fragment_id": fragment_id},
-        )
-        if char_count is None:
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST, "Web cursor must address an owned source fragment"
-            )
-        offset = locator.locations.text_offset
-        if offset is not None and offset > char_count:
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST, "Web cursor offset exceeds its source fragment"
-            )
     row = (
         db.execute(
             _SELECT_CURSOR_SQL,

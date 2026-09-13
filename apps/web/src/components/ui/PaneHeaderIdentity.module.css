@@ -30,28 +30,6 @@
   font-weight: var(--weight-semibold);
 }
 
-/* The Solar gives the app's one title its display face. Cormorant ships at 300
-   only and its hairline serifs disintegrate below 20px, so the size rises with
-   the face: the title stays one ellipsized line and the header bar it sits in is
-   a fixed 60px, so the taller identity block still clears it. The floor above
-   rises with the title, because it is only a floor while it equals the full
-   two-line height — leave it at the base size and a late-arriving support line
-   would grow the block and re-centre it in the bar, which is the shift it was
-   written to prevent. */
-:global([data-theme="elvish"]) .identity {
-  min-block-size: calc(
-    (var(--text-xl) + var(--text-xs)) * var(--leading-tight) + 2px
-  );
-}
-
-:global([data-theme="elvish"]) .title {
-  font-family: var(--font-display);
-  font-size: var(--text-xl);
-  font-weight: 300;
-  letter-spacing: 0.01em;
-  font-variant-numeric: lining-nums tabular-nums;
-}
-
 /* The support line carries interactive credits, so it must not clip them out of
    view — a focused link inside an ellipsized block is a focus target the reader
    cannot see. Every item shrinks and ellipsizes on its own instead. */

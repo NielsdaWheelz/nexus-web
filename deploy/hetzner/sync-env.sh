@@ -42,9 +42,11 @@ PODCASTS_ENABLED
 YOUTUBE_DATA_API_KEY
 X_API_BEARER_TOKEN
 OPENAI_API_KEY
-AGENT_TOOL_GRANT_SIGNING_KEY
-GENERATION_API_PROVIDERS
-GENERATION_CONTINUATION_ENCRYPTION_KEY
+ANTHROPIC_API_KEY
+GEMINI_API_KEY
+MOONSHOT_API_KEY
+DEEPSEEK_API_KEY
+NEXUS_FABLE_RETENTION_ACCEPTED_AT
 POSTGRES_IMAGE
 CADDY_IMAGE
 PARSER_TEMP_ROOT
@@ -248,18 +250,6 @@ if (
 PY
 }
 
-require_agent_tool_grant_signing_key() {
-  local file="$1"
-  local grant_key stream_key
-
-  grant_key="$(normalize_env_value "$(env_value "AGENT_TOOL_GRANT_SIGNING_KEY" "$file" || true)")"
-  stream_key="$(normalize_env_value "$(env_value "STREAM_TOKEN_SIGNING_KEY" "$file" || true)")"
-  [ "${#grant_key}" -ge 32 ] || \
-    die "AGENT_TOOL_GRANT_SIGNING_KEY must contain at least 32 characters"
-  [ "$grant_key" != "$stream_key" ] || \
-    die "AGENT_TOOL_GRANT_SIGNING_KEY must be distinct from STREAM_TOKEN_SIGNING_KEY"
-}
-
 reject_legacy_runtime_keys() {
   local file="$1"
   local key value
@@ -267,25 +257,6 @@ reject_legacy_runtime_keys() {
   for key in R2_ENDPOINT_URL CSP_EXTRA_CONNECT_ORIGINS SUPABASE_DATABASE_URL SUPABASE_AUTH_ADMIN_KEY SUPABASE_SERVICE_KEY SUPABASE_SERVICE_ROLE_KEY SERVICE_ROLE_KEY STORAGE_PROVIDER STORAGE_BUCKET AUTH_ALLOWED_REDIRECT_ORIGINS AUTH_TRUSTED_PROXY_ORIGINS SERVER_ACTION_ALLOWED_ORIGINS NEXUS_EXTENSION_REDIRECT_ORIGINS NEXT_PUBLIC_SUPABASE_URL NEXT_PUBLIC_SUPABASE_ANON_KEY FASTAPI_BASE_URL; do
     if value="$(env_value "$key" "$file")" && ! is_blank "$(normalize_env_value "$value")"; then
       die "${key} must not be present in production runtime env after the R2/Hetzner Postgres cutover"
-    fi
-  done
-}
-
-reject_node_ingest_script() {
-  local file="$1"
-
-  if env_value "NODE_INGEST_SCRIPT" "$file" >/dev/null; then
-    die "NODE_INGEST_SCRIPT is image-owned and must not be present in production runtime env"
-  fi
-}
-
-reject_codex_host_runtime_keys() {
-  local file="$1"
-  local key
-
-  for key in CODEX_HOME NEXUS_CODEX_CREDENTIAL_FILE NEXUS_CODEX_ENROLLMENT_AUTH_FILE NEXUS_CODEX_WORKING_DIRECTORY_ROOT NEXUS_CODEX_AGENT_SOCKET NEXUS_CODEX_STATE_ROOT_BASE NEXUS_CODEX_WORKING_DIRECTORY NEXUS_AGENT_TOOLS_MCP_LISTEN NEXUS_AGENT_TOOLS_MCP_ORIGIN NEXUS_CODEX_MCP_ORIGIN NEXUS_CODEX_MODEL_TOOL_NETWORK_ATTESTED NEXUS_CODEX_EGRESS_PROXY_IP NEXUS_CODEX_EGRESS_MCP_HOST; do
-    if env_value "$key" "$file" >/dev/null; then
-      die "${key} is owned by the isolated Codex agent host and must not be captured in Nexus runtime env"
     fi
   done
 }
@@ -299,91 +270,19 @@ reject_removed_x_env_keys() {
   fi
 }
 
-reject_forbidden_removed_generation_env_keys() {
+reject_removed_llm_env_keys() {
   local file="$1"
-  local key
+  local key value
 
-  for key in NEXUS_KEY_ENCRYPTION_KEY CLOUDFLARE_AI_API_TOKEN CLOUDFLARE_AI_ACCOUNT_ID ANTHROPIC_API_KEY GEMINI_API_KEY MOONSHOT_API_KEY OPENROUTER_API_KEY DEEPSEEK_API_KEY XAI_API_KEY CODEX_API_KEY NEXUS_PROVIDER_CERTIFICATION STREAM_MAX_OUTPUT_TOKENS_DEFAULT; do
-    if env_value "$key" "$file" >/dev/null; then
-      die "${key} is forbidden after the Codex subscription generation hard cut"
+  if value="$(env_value "NEXUS_KEY_ENCRYPTION_KEY" "$file")" && ! is_blank "$(normalize_env_value "$value")"; then
+    die "NEXUS_KEY_ENCRYPTION_KEY was removed by the LLM provider-runtime cutover; BYOK API-key encryption no longer exists, so this key can never be set"
+  fi
+
+  for key in CLOUDFLARE_AI_API_TOKEN CLOUDFLARE_AI_ACCOUNT_ID; do
+    if value="$(env_value "$key" "$file")" && ! is_blank "$(normalize_env_value "$value")"; then
+      die "${key} was removed by the LLM provider-runtime cutover; Cloudflare is no longer an LLM provider"
     fi
   done
-}
-
-require_generation_provider_configuration() {
-  local file="$1"
-  local configured continuation_key fable_accepted provider key value
-
-  configured="$(normalize_env_value "$(env_value "GENERATION_API_PROVIDERS" "$file" || true)")"
-  python3 - "$configured" <<'PY' || die "GENERATION_API_PROVIDERS must be a canonical, duplicate-free nonempty provider subset"
-import sys
-
-allowed = {"openai", "anthropic", "gemini", "moonshot", "openrouter", "deepseek", "xai"}
-providers = sys.argv[1].split(",")
-if not sys.argv[1] or any(provider not in allowed for provider in providers):
-    raise SystemExit(1)
-if len(providers) != len(set(providers)):
-    raise SystemExit(1)
-PY
-
-  for provider in openai anthropic gemini moonshot openrouter deepseek xai; do
-    case "$provider" in
-      openai) key="OPENAI_GENERATION_API_KEY" ;;
-      anthropic) key="ANTHROPIC_GENERATION_API_KEY" ;;
-      gemini) key="GEMINI_GENERATION_API_KEY" ;;
-      moonshot) key="MOONSHOT_GENERATION_API_KEY" ;;
-      openrouter) key="OPENROUTER_GENERATION_API_KEY" ;;
-      deepseek) key="DEEPSEEK_GENERATION_API_KEY" ;;
-      xai) key="XAI_GENERATION_API_KEY" ;;
-    esac
-    value="$(normalize_env_value "$(env_value "$key" "$file" || true)")"
-    case ",$configured," in
-      *",$provider,"*)
-        is_blank "$value" && die "${key} is required for configured provider ${provider}"
-        ;;
-      *)
-        if env_value "$key" "$file" >/dev/null; then
-          die "${key} is forbidden while provider ${provider} is unconfigured"
-        fi
-        ;;
-    esac
-  done
-
-  continuation_key="$(normalize_env_value "$(env_value "GENERATION_CONTINUATION_ENCRYPTION_KEY" "$file" || true)")"
-  python3 - "$continuation_key" <<'PY' || die "GENERATION_CONTINUATION_ENCRYPTION_KEY must be canonical base64 for exactly 32 bytes"
-import base64
-import binascii
-import sys
-
-try:
-    decoded = base64.b64decode(sys.argv[1], validate=True)
-except (binascii.Error, ValueError):
-    raise SystemExit(1)
-if len(decoded) != 32 or base64.b64encode(decoded).decode("ascii") != sys.argv[1]:
-    raise SystemExit(1)
-PY
-
-  fable_accepted="$(normalize_env_value "$(env_value "NEXUS_FABLE_RETENTION_ACCEPTED_AT" "$file" || true)")"
-  case ",$configured," in
-    *,anthropic,*)
-      python3 - "$fable_accepted" <<'PY' || die "NEXUS_FABLE_RETENTION_ACCEPTED_AT must be a timezone-aware ISO-8601 instant when Anthropic is configured"
-import datetime
-import sys
-
-try:
-    value = datetime.datetime.fromisoformat(sys.argv[1].replace("Z", "+00:00"))
-except ValueError:
-    raise SystemExit(1)
-if value.utcoffset() is None:
-    raise SystemExit(1)
-PY
-      ;;
-    *)
-      if env_value "NEXUS_FABLE_RETENTION_ACCEPTED_AT" "$file" >/dev/null; then
-        die "NEXUS_FABLE_RETENTION_ACCEPTED_AT is forbidden while Anthropic is unconfigured"
-      fi
-      ;;
-  esac
 }
 
 reject_removed_podcast_env_keys() {
@@ -428,7 +327,6 @@ require_worker_defaults() {
   [ "$value" = "600" ] || die "INGEST_RECONCILE_SCHEDULE_SECONDS must be 600"
 }
 
-main() {
 [ "$#" = 1 ] || die "usage: deploy/hetzner/sync-env.sh <never-published-source-sha>"
 SOURCE_SHA="$1"
 [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || die "source SHA must be 40 lowercase hex characters"
@@ -484,15 +382,11 @@ require_non_empty_keys "$tmp_file"
 require_prod_env "$tmp_file"
 require_local_database_url "$tmp_file"
 require_cloudflare_r2_s3_api_origin "$tmp_file"
-require_agent_tool_grant_signing_key "$tmp_file"
 require_digest_image POSTGRES_IMAGE "$tmp_file"
 require_digest_image CADDY_IMAGE "$tmp_file"
 reject_legacy_runtime_keys "$tmp_file"
-reject_node_ingest_script "$tmp_file"
-reject_codex_host_runtime_keys "$tmp_file"
 reject_removed_x_env_keys "$tmp_file"
-reject_forbidden_removed_generation_env_keys "$tmp_file"
-require_generation_provider_configuration "$tmp_file"
+reject_removed_llm_env_keys "$tmp_file"
 reject_removed_podcast_env_keys "$tmp_file"
 require_worker_defaults "$tmp_file"
 
@@ -524,8 +418,3 @@ result="$(
 )"
 
 printf '%s\n' "$result"
-}
-
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-  main "$@"
-fi

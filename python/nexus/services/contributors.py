@@ -16,7 +16,7 @@ Composition:
 - reads compose the canonical credit relation owned by ``contributor_credits``
   and the visibility CTEs owned by ``auth/permissions``;
 - the four mutation entry points take NO session: each opens a fresh session
-  (precedent: ``tasks/enrich_metadata._publish_completed``) and terminates
+  (precedent: ``tasks/enrich_metadata.dispatch_enrich_metadata``) and terminates
   in ``retry_serializable`` so SERIALIZABLE + the named-constraint whole-op
   retry is the only race recovery (spec 2.7, D-11/D-22) — no savepoints, no
   locks, no nested runners;

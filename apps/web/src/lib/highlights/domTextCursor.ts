@@ -223,41 +223,51 @@ function normalizeNfcWithProvenance(tokens: Token[]): Token[] {
 
   const decomposedByCodepoint = new Map<
     string,
-    { spans: SourceSpan[][]; nextIndex: number }
+    { tokens: Token[]; nextIndex: number }
   >();
   for (const token of tokens) {
-    for (const ch of token.ch.normalize("NFD")) {
+    for (const ch of Array.from(token.ch.normalize("NFD"))) {
       const queue = decomposedByCodepoint.get(ch);
+      const decomposed = { ch, spans: token.spans };
       if (queue) {
-        queue.spans.push(token.spans);
+        queue.tokens.push(decomposed);
       } else {
         decomposedByCodepoint.set(ch, {
-          spans: [token.spans],
+          tokens: [decomposed],
           nextIndex: 0,
         });
       }
     }
   }
 
+  const reorderedNfd = Array.from(text.normalize("NFD")).map((ch) => {
+    const queue = decomposedByCodepoint.get(ch);
+    const token = queue?.tokens[queue.nextIndex];
+    if (!token) {
+      throw new Error("Canonical NFC provenance decomposition drifted.");
+    }
+    queue.nextIndex += 1;
+    return token;
+  });
+
   const normalized: Token[] = [];
-  for (const ch of text.normalize("NFC")) {
+  let nfdOffset = 0;
+  for (const ch of Array.from(text.normalize("NFC"))) {
+    const decomposition = Array.from(ch.normalize("NFD"));
     const spans: SourceSpan[] = [];
-    for (const decomposed of ch.normalize("NFD")) {
-      const queue = decomposedByCodepoint.get(decomposed);
-      const source = queue?.spans[queue.nextIndex];
-      if (!queue || !source) {
-        throw new Error("Canonical NFC provenance decomposition drifted.");
+    for (const expected of decomposition) {
+      const token = reorderedNfd[nfdOffset];
+      if (!token || token.ch !== expected) {
+        throw new Error("Canonical NFC provenance composition drifted.");
       }
-      spans.push(...source);
-      queue.nextIndex += 1;
+      spans.push(...token.spans);
+      nfdOffset += 1;
     }
     normalized.push({ ch, spans: uniqueSourceSpans(spans) });
   }
 
-  for (const queue of decomposedByCodepoint.values()) {
-    if (queue.nextIndex !== queue.spans.length) {
-      throw new Error("Canonical NFC provenance left unconsumed source text.");
-    }
+  if (nfdOffset !== reorderedNfd.length) {
+    throw new Error("Canonical NFC provenance left unconsumed source text.");
   }
   return normalized;
 }

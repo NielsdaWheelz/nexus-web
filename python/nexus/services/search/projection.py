@@ -165,6 +165,7 @@ def _direct_fragment_locator(
     suffix: str = "",
     t_start_ms: int | None = None,
     t_end_ms: int | None = None,
+    section_id: str | None = None,
 ) -> dict[str, Any] | None:
     if t_start_ms is not None and t_end_ms is not None:
         if t_end_ms <= t_start_ms or not exact:
@@ -183,6 +184,7 @@ def _direct_fragment_locator(
             locator = {
                 "type": "epub_fragment_offsets",
                 "media_id": str(media_id),
+                "section_id": section_id,
                 "fragment_id": str(fragment_id),
                 "start_offset": start_offset,
                 "end_offset": end_offset,

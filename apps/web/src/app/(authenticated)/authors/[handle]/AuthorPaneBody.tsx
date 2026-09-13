@@ -760,7 +760,6 @@ export default function AuthorPaneBody() {
   usePanePrimaryChrome({
     search,
     refresh: {
-      kind: "Refreshable",
       sourceKey: `Author.Works:${handle}`,
       execute: executeRefresh,
     },

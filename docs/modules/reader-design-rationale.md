@@ -222,42 +222,6 @@ sync hook would blur.
 - the shipped contract is discriminated by `kind` and rejects removed flat
   locator bags
 
-### offline reading is a verified local replica, not a second Nexus
-
-Offline reading preserves the document and latest pending position needed to
-read; it does not reproduce the workspace, annotations, search, AI, or server
-authorization database. This keeps the authority split legible:
-
-- the server owns visibility, one document publication generation, canonical
-  package projection, direct-token scope, and the canonical cursor
-- native owns verified bytes, account binding, transfer/removal lifecycle,
-  leases, baseline, and one latest pending locator
-- the shared web reader owns presentation through the same
-  `DocumentReaderSession`; hosted and local sources differ at explicit source
-  and progress ports rather than inside format leaves
-
-Online open chooses the current hosted publication. Local content is selected
-only when connectivity is absent or the user explicitly opens the downloaded
-copy. That prevents a successful download from silently turning into a stale
-online cache policy.
-
-Publication generation is separate from cursor revision. Generation says
-which immutable document projection a package and locator belong to; cursor
-revision arbitrates same-publication progress. A generation mismatch therefore
-never reanchors or writes into the new publication. A same-generation cursor
-conflict keeps both Canonical and Device choices and asks the user; timestamps
-and furthest-wins heuristics cannot decide intent.
-
-Article packages deliberately omit images and embeds and say so before
-download and while reading. EPUBs contain preprocessed canonical sections and
-only declared local assets; device code does not parse raw EPUB. PDFs use the
-packaged PDF.js runtime and native bounded range serving. These format-specific
-package shapes share integrity rules, not a generic offline resource loader.
-
-Audio downloads remain a separate Media3 state machine. Sharing the persisted
-network preference and Downloads presentation does not justify merging package
-identity, cache authority, playback, reading progress, or removal semantics.
-
 ### reader-to-chat quote selection
 
 - quote-to-chat is highlight-first: a durable Highlight must exist before
@@ -273,7 +237,7 @@ identity, cache authority, playback, reading progress, or removal semantics.
   cannot change the displayed or prompted passage
 - the snapshot is not a cited conversation context ref and is never numbered;
   citation chips point at the attached `highlight:` reference or later
-  `nexus.resource.read` evidence
+  `read_resource` evidence
 - new-chat send is atomic — there is no eager blank-conversation create, so a
   failed first send leaves no conversation behind
 
@@ -309,11 +273,13 @@ completion event model, observer framework, or second command.
 
 ### layered epub/web/pdf resume
 
-- epub resolves fresh exact targets, then the saved exact fragment cursor,
-  then an empty-cursor outline query, then the first source fragment.
-- content loads by fragment identity; headings determine semantic context.
-  exact offsets and named anchors are verified after rendering. unavailable
-  targets do not become quote/progression approximations.
+- epub resolves one-shot hash targets such as `#loc-<section_id>` first,
+  then saved exact target snapshots, then coarse fallback, then first section.
+  Pane-local section navigation replaces `?loc={section_id}` as coarse
+  in-visit address state; it adds no Back/Forward entry.
+- once the section is open, epub restores by exact text offset,
+  then quote context, then progression, then coarse publication fallback,
+  then anchor fallback
 - restore is one-shot and abortable; user scroll cancels any pending
   automatic restore
 - web/transcript pick fresh explicit fragment/time targets first. A saved web
@@ -345,8 +311,8 @@ absent rather than becoming a zero or a scrollbar estimate.
 
 Document Map markers use exact owner start locators. EPUB Contents targets are
 exact element starts; missing named anchors reject navigation. Dense rail
-targets retain exact ticks while bounded hit groups expose every destination.
-structure and evidence use separate lanes; aliases do not duplicate content. Preview, Return, and restore can paint the rail but
+targets cluster by median position and expose every destination, rather than
+choosing a first marker. Preview, Return, and restore can paint the rail but
 cannot write progress or activity.
 
 ### addressability versus history
@@ -363,17 +329,19 @@ workspace to guess reader semantics from URL shape; instead the reader
 replaces its own address and the workspace's Back/Forward stays about panes,
 not passages.
 
-document-map excursions retain one exact departure for return, without adding
-pane history or a reader history stack. successful arrival establishes the
-origin; failure preserves the prior position. genuine reading adoption,
-dismissal, source replacement, and successful return clear it.
+the one accepted cost: pane Back/Forward no longer returns to the passage a
+footnote, apparatus entry, highlight, or embed jump was launched from. the
+prototype accepts this loss rather than adding a reader-local return stack or
+a new affordance; Contents, section controls, Document Map/Evidence
+navigation, and canonical resume remain, but none of them restores the exact
+source passage.
 
 ### epub request surface
 
 - epub navigation is sourced from `GET /api/media/{id}/navigation`
-- epub render content is sourced from
-  `GET /api/media/{id}/fragments/{fragment_id}`
-- section identity addresses structure; fragment identity addresses content
+- epub section content is sourced from
+  `GET /api/media/{id}/sections/{section_id}`
+- `section_id` is path-encoded and may contain `/`
 - `#loc-<section_id>` is the one-shot reader target shape; `?loc={section_id}`
   is the pane-local coarse address state that replace writes — not a
   Back/Forward checkpoint

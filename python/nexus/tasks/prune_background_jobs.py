@@ -11,7 +11,7 @@ from nexus.logging import get_logger
 logger = get_logger(__name__)
 
 
-def prune_background_jobs_job(request_id: str) -> dict[str, int]:
+def prune_background_jobs_job(request_id: str | None = None) -> dict[str, int]:
     settings = get_settings()
     excluded_dead_kinds = {
         definition.kind

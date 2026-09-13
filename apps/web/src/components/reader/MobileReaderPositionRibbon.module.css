@@ -15,27 +15,6 @@
   border-radius: 999px;
 }
 
-.mapControl {
-  position: absolute;
-  inset-inline-end: var(--space-2);
-  bottom: var(--space-2);
-  z-index: 2;
-  min-width: 32px;
-  min-height: 32px;
-  padding: var(--space-1) var(--space-2);
-  border: 1px solid var(--edge);
-  border-radius: var(--radius-sm);
-  color: var(--ink-muted);
-  background: var(--surface-2);
-  font-size: var(--text-xs);
-  cursor: pointer;
-}
-
-.mapControl:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-
 @media (forced-colors: active) {
   .ribbon {
     forced-color-adjust: none;

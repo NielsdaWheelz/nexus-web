@@ -5,7 +5,6 @@ connection pooling for all database operations.
 """
 
 from functools import lru_cache
-from types import MappingProxyType
 
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
@@ -30,22 +29,6 @@ def create_db_engine(database_url: str | None = None) -> Engine:
     if database_url is None:
         database_url = settings.database_url
 
-    connect_args = database_connect_args()
-    return create_engine(
-        database_url,
-        pool_size=settings.database_pool_size,
-        max_overflow=settings.database_max_overflow,
-        pool_timeout=settings.database_pool_timeout_seconds,
-        pool_pre_ping=True,
-        echo=False,
-        connect_args=connect_args,
-    ).execution_options(nexus_connect_args=MappingProxyType(connect_args))
-
-
-def database_connect_args() -> dict[str, object]:
-    """The shared psycopg connection policy for synchronous and async sessions."""
-
-    settings = get_settings()
     # Disable psycopg3 server-side prepared statements — they are
     # per-connection state and break under transaction-pooling proxies
     # (Supavisor / PgBouncer) which may route successive transactions
@@ -66,7 +49,15 @@ def database_connect_args() -> dict[str, object]:
     if timeout_opts:
         connect_args["options"] = " ".join(timeout_opts)
 
-    return connect_args
+    return create_engine(
+        database_url,
+        pool_size=settings.database_pool_size,
+        max_overflow=settings.database_max_overflow,
+        pool_timeout=settings.database_pool_timeout_seconds,
+        pool_pre_ping=True,
+        echo=False,
+        connect_args=connect_args,
+    )
 
 
 @lru_cache

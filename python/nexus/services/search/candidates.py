@@ -45,12 +45,7 @@ from nexus.services.contributor_credits import visible_credit_rows_sql
 from nexus.services.contributors import resolve_contributor_ids_by_handles
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.search.constants import CANDIDATES_PER_TYPE
-from nexus.services.search.embedding import (
-    SEMANTIC_RESULT_TYPES,
-    PreparedSearchEmbedding,
-    _query_has_full_text_terms,
-    build_query_embedding,
-)
+from nexus.services.search.embedding import _query_has_full_text_terms, build_query_embedding
 from nexus.services.search.projection import (
     _result_resource_ref,
     _snippet_around_query,
@@ -74,16 +69,18 @@ from nexus.services.search.results import (
     _RankedPageResult,
     _RankedPodcastResult,
 )
-from nexus.services.search.retrievers.content_chunks import _search_content_chunks
 from nexus.services.search.retrievers.contributors import _search_contributors
 from nexus.services.search.retrievers.conversations import (
     _search_conversation_artifacts,
     _search_conversations,
     _search_messages,
 )
-from nexus.services.search.retrievers.evidence_spans import _search_evidence_spans
-from nexus.services.search.retrievers.fragments import _search_fragments
 from nexus.services.search.retrievers.highlights import _search_highlights
+from nexus.services.search.retrievers.library_content import (
+    _search_content_chunks,
+    _search_evidence_spans,
+    _search_fragments,
+)
 from nexus.services.search.retrievers.media import _search_media, _search_podcasts
 from nexus.services.search.retrievers.notes import _search_note_chunks, _search_pages
 from nexus.services.search.retrievers.reader_apparatus import _search_reader_apparatus_items
@@ -111,6 +108,7 @@ TargetCandidate = InternalSearchResult | ResourceMetadataCandidate
 REFERENCE_CANDIDATES_PER_SOURCE = 50
 
 # Result types the semantic query embedding serves (hybrid invariant: built once).
+_SEMANTIC_RESULT_TYPES = ("content_chunk", "page", "note_block")
 
 # The purpose=link hybrid pool: every durable/passage result type of ordinary
 # search. web_result (no durable resource) and artifact (Conversation Dossier
@@ -195,7 +193,6 @@ def discovery_candidates(
     content_kinds: list[str],
     highlight_notes_only: bool,
     transaction_active_at_entry: bool,
-    prepared_embedding: PreparedSearchEmbedding | None = None,
 ) -> list[InternalSearchResult]:
     """Ranked candidates for the ordinary hybrid ``/search`` profile.
 
@@ -211,11 +208,7 @@ def discovery_candidates(
         if highlight_notes_only and "note_block" not in result_types
         else result_types
     )
-    if prepared_embedding is not None:
-        if prepared_embedding.query != q:
-            raise ValueError("prepared search embedding belongs to another query")
-        semantic_query_embedding = prepared_embedding.value
-    elif has_query and any(rt in SEMANTIC_RESULT_TYPES for rt in embedding_result_types):
+    if has_query and any(rt in _SEMANTIC_RESULT_TYPES for rt in embedding_result_types):
         semantic_query_embedding = build_query_embedding(
             db,
             q,
@@ -295,7 +288,7 @@ def link_candidates(
             rt for rt in _LINK_HYBRID_RESULT_TYPES if include(_RESULT_TYPE_TO_SCHEME[rt])
         ]
         semantic_query_embedding: tuple[str, list[float]] | None = None
-        if any(rt in SEMANTIC_RESULT_TYPES for rt in hybrid_types):
+        if any(rt in _SEMANTIC_RESULT_TYPES for rt in hybrid_types):
             semantic_query_embedding = build_query_embedding(
                 db, query, hybrid_types, transaction_active_at_entry=transaction_active_at_entry
             )

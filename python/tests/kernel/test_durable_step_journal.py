@@ -11,12 +11,7 @@ from nexus.schemas.presence import absent, present
 from nexus.services.durable_step_journal import (
     Completed,
     DurableExecutionPhase,
-    ReplayPolicy,
     StepReplayState,
-    ToolExecutionIdentity,
-    ToolExecutionReservation,
-    ToolExecutionSettlement,
-    ToolExecutionState,
     decode_step_result,
     decode_step_states,
     encode_step_result,
@@ -99,71 +94,6 @@ def test_step_identity_codec_and_phase_evidence_fail_closed() -> None:
             )
     with pytest.raises(AssertionError, match="malformed _Result result"):
         decode_step_result('{"answer":"accepted","unexpected":true}', _Result)
-
-
-def test_completed_tool_settlement_equals_terminal_utf8_bytes() -> None:
-    """A replayed terminal cannot under-report its durable output usage."""
-
-    terminal_result = '{"type":"Success","value":{"answer":"café"}}'
-    terminal_bytes = len(terminal_result.encode("utf-8"))
-    assert terminal_bytes > len(terminal_result)
-    identity = ToolExecutionIdentity(
-        tool_id="web.search",
-        tool_contract_revision="a" * 64,
-        policy_revision="b" * 64,
-        plan_revision="c" * 64,
-        input_digest="d" * 64,
-        replay_policy=ReplayPolicy.BilledOnce,
-    )
-    reservation = present(
-        ToolExecutionReservation(
-            calls=1,
-            input_bytes=10,
-            max_attempts=2,
-            max_output_bytes=terminal_bytes,
-            accepted=True,
-        )
-    )
-
-    exact = StepReplayState(
-        generation_id=_GENERATION_ID,
-        dispatch_phase=Completed,
-        request_fingerprint=present(identity.input_digest),
-        terminal_result=present(terminal_result),
-        tool_execution=present(
-            ToolExecutionState(
-                identity=identity,
-                reservation=reservation,
-                settlement=present(
-                    ToolExecutionSettlement(
-                        actual_attempts=1,
-                        actual_output_bytes=terminal_bytes,
-                    )
-                ),
-            )
-        ),
-    )
-    assert exact.tool_execution.value.settlement.value.actual_output_bytes == terminal_bytes
-
-    with pytest.raises(ValidationError, match="terminal UTF-8 length"):
-        StepReplayState(
-            generation_id=_GENERATION_ID,
-            dispatch_phase=Completed,
-            request_fingerprint=present(identity.input_digest),
-            terminal_result=present(terminal_result),
-            tool_execution=present(
-                ToolExecutionState(
-                    identity=identity,
-                    reservation=reservation,
-                    settlement=present(
-                        ToolExecutionSettlement(
-                            actual_attempts=1,
-                            actual_output_bytes=terminal_bytes - 1,
-                        )
-                    ),
-                )
-            ),
-        )
 
 
 @pytest.mark.parametrize(

@@ -76,39 +76,6 @@
   overflow: hidden;
 }
 
-/* The Solar — Whisper tier: one vine stroke along the sheet's crown. It sits in
-   the 8px the grabber's top margin already reserves, so it never crosses the
-   pill and never reaches the content below it; the panel's `overflow: hidden`
-   clips it to the top radius. The tile is scaled uniformly (240×12 → 160×8) so
-   the stroke thins rather than squashes. Pseudo only: `--ornament: 0` leaves
-   the sheet exactly as it is. */
-:global([data-theme="elvish"]) .panel::before {
-  content: "";
-  position: absolute;
-  inset-block-start: 0;
-  inset-inline: 0;
-  block-size: 8px;
-  /* Masking a gradient rather than tiling a coloured image is what fades the
-     stroke out at both ends and recolours it from a token for free. */
-  background-image: linear-gradient(
-    90deg,
-    transparent,
-    var(--edge-strong) 12%,
-    var(--edge-strong) 88%,
-    transparent
-  );
-  opacity: calc(0.5 * var(--ornament));
-  pointer-events: none;
-  mask-image: var(--elvish-vine);
-  mask-repeat: repeat-x;
-  mask-size: 160px 8px;
-  mask-position: left center;
-  -webkit-mask-image: var(--elvish-vine);
-  -webkit-mask-repeat: repeat-x;
-  -webkit-mask-size: 160px 8px;
-  -webkit-mask-position: left center;
-}
-
 @keyframes sheetIn {
   from {
     transform: translateY(100%);

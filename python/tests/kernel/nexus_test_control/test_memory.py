@@ -1,5 +1,4 @@
 import os
-import sys
 import threading
 from pathlib import Path
 
@@ -28,113 +27,6 @@ def test_available_memory_reads_the_kernel_admission_owner(tmp_path: Path) -> No
     meminfo.write_text("MemTotal: 8192000 kB\nMemAvailable: 2097152 kB\n", encoding="utf-8")
 
     assert available_memory_mib(meminfo) == 2048
-
-
-def test_available_memory_floors_partial_mib_for_strict_admission(tmp_path: Path) -> None:
-    meminfo = tmp_path / "meminfo"
-    meminfo.write_text("MemAvailable: 2097151 kB\n", encoding="utf-8")
-
-    assert available_memory_mib(meminfo) == 2047
-
-
-def test_darwin_memory_probes_have_fixed_system_owners() -> None:
-    expected = (
-        Path("/usr/bin/vm_stat"),
-        Path("/usr/sbin/sysctl"),
-        Path("/bin/ps"),
-    )
-
-    assert memory.required_platform_memory_tools() == (expected if sys.platform == "darwin" else ())
-
-
-def test_available_memory_parses_darwin_kernel_vm_statistics() -> None:
-    vm_stat = (
-        "Mach Virtual Memory Statistics: (page size of 4096 bytes)\n"
-        "Pages free: 262144.\n"
-        "Pages active: 1048576.\n"
-        "Pages inactive: 524288.\n"
-        "Pages speculative: 262144.\n"
-        "Pages purgeable: 262144.\n"
-        "File-backed pages: 262144.\n"
-    )
-
-    assert memory._darwin_available_memory_mib(vm_stat, pressure_level=1) == 2048
-
-
-@pytest.mark.parametrize("pressure_level", [2, 4])
-def test_available_memory_rejects_darwin_memory_pressure(pressure_level: int) -> None:
-    vm_stat = (
-        "Mach Virtual Memory Statistics: (page size of 4096 bytes)\n"
-        "Pages free: 262144.\n"
-        "File-backed pages: 262144.\n"
-    )
-
-    assert memory._darwin_available_memory_mib(vm_stat, pressure_level=pressure_level) is None
-
-
-def test_darwin_memory_pressure_parser_is_closed() -> None:
-    assert memory._parse_darwin_pressure_level("1\n") == 1
-    assert memory._parse_darwin_pressure_level("warn\n") is None
-    assert memory._parse_darwin_pressure_level("1\n2\n") is None
-
-
-def test_available_memory_rejects_incomplete_darwin_kernel_statistics() -> None:
-    vm_stat = (
-        "Mach Virtual Memory Statistics: (page size of 4096 bytes)\n"
-        "Pages free: 262144.\n"
-        "Pages inactive: 524288.\n"
-    )
-
-    assert memory._darwin_available_memory_mib(vm_stat, pressure_level=1) is None
-
-
-def test_process_sampler_reads_the_darwin_process_tree() -> None:
-    process_table = "100 1 1024\n101 100 2048\n102 101 4096\n200 1 8192\n"
-
-    assert memory._darwin_process_tree_rss(100, process_table) == 7 * 1024 * 1024
-
-
-def test_process_sampler_rejects_a_missing_darwin_controller() -> None:
-    with pytest.raises(RuntimeContractError, match="controller process"):
-        memory._darwin_process_tree_rss(100, "200 1 8192\n")
-
-
-def test_process_sampler_rejects_malformed_or_duplicate_darwin_rows() -> None:
-    with pytest.raises(RuntimeContractError, match="invalid row"):
-        memory._darwin_process_tree_rss(100, "100 1 1024\nmalformed\n")
-    with pytest.raises(RuntimeContractError, match="duplicate PID"):
-        memory._darwin_process_tree_rss(100, "100 1 1024\n100 1 2048\n")
-
-
-def test_process_probe_failure_invalidates_owned_memory_evidence(tmp_path: Path) -> None:
-    def failed_process_probe(_pid: int) -> int:
-        raise RuntimeContractError("synthetic process probe failure")
-
-    sampler = memory.OwnedMemorySampler(
-        tmp_path,
-        include_containers=False,
-        process_reader=failed_process_probe,
-    )
-
-    sampler.start()
-    evidence = sampler.stop()
-
-    assert evidence.measurement_complete is False
-    assert sampler.failure_detail == "synthetic process probe failure"
-
-
-def test_zero_process_probe_invalidates_owned_memory_evidence(tmp_path: Path) -> None:
-    sampler = memory.OwnedMemorySampler(
-        tmp_path,
-        include_containers=False,
-        process_reader=lambda _pid: 0,
-    )
-
-    sampler.start()
-    evidence = sampler.stop()
-
-    assert evidence.measurement_complete is False
-    assert sampler.failure_detail == "owned process probe returned invalid memory"
 
 
 def test_container_sampling_starts_only_after_heavy_lock_enablement(
@@ -219,7 +111,7 @@ def test_inflight_sample_ignores_only_an_owner_disabled_for_exact_teardown(
     assert (evidence.process_tree_rss, evidence.container_working_set, evidence.total) == (2, 4, 6)
 
 
-def test_active_owner_recovers_one_transient_container_sample_without_losing_evidence(
+def test_active_owner_recovers_one_transient_container_probe_without_losing_evidence(
     tmp_path: Path,
 ) -> None:
     samples = 0
@@ -237,8 +129,6 @@ def test_active_owner_recovers_one_transient_container_sample_without_losing_evi
         process_reader=lambda _pid: 2 * 1024 * 1024,
         container_reader=read_container,
     )
-    sampler._sample(include_containers=True)
-    assert sampler.snapshot().measurement_complete is False
     sampler._sample(include_containers=True)
     evidence = sampler.snapshot()
 
@@ -267,14 +157,11 @@ def test_active_owner_docker_error_remains_a_fail_closed_measurement(
     )
     sampler.start()
     sampler._sample(include_containers=True)
-    assert sampler.snapshot().measurement_complete is True
-    sampler._sample(include_containers=True)
     evidence = sampler.stop()
 
-    assert samples == 3
     assert evidence.measurement_complete is False
     assert sampler.failure_detail == (
-        "owned container probe failed 2 consecutive samples: "
+        "owned container probe failed 2 consecutive reads: "
         "synthetic Docker failure for active owner"
     )
     assert (evidence.process_tree_rss, evidence.container_working_set, evidence.total) == (2, 4, 6)

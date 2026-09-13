@@ -316,14 +316,27 @@ is idempotent and failure retries. Only
 `Retained|Deleted` success is prunable. Thus a crash after a late PUT still has
 a durable final sweep.
 
-Uploaded PDF/EPUB capability, staging, and cleanup ownership belongs to
-[`document-import-reliability-hard-cutover.md`](document-import-reliability-hard-cutover.md).
-Lectern neither creates provisional media nor owns signed-upload expiry,
-confirmation, or uploaded-object cleanup policy.
+Browser direct upload is the exception because the server cannot perform its
+post-write check. Signing locks the media row, rejects an intent, and persists
+the staging path plus `media_source_attempts.signed_upload_expires_at` before
+returning the URL; replayed init may extend that timestamp, but cannot sign after
+claim. Signed upload TTL is capped at 300 seconds; migration conservatively
+backfills every pending upload attempt to DB `now() + 300 seconds`. Preparation
+sets `cleanupNotBefore` to the latest signed expiry plus the
+named 60-second object-store clock-skew grace, or any later Armed writer drain.
+Confirmation also rejects intent/missing media.
 
-Capability expiry and incomplete direct PUT cleanup are entirely owned by the
-upload-session lifecycle. Lectern has no media-upload sweep, readiness, or retry
-contract.
+URL expiry does not terminate a PUT that already began, and a timed-out SDK call
+has an unknown provider outcome. Therefore two durable backstops are load-bearing:
+the existing one-day R2 lifecycle on `uploads/`, and a singleton
+`storage_orphan_sweep` job for canonical media prefixes. The sweep durably pages
+objects, ignores those modified within 24 hours, acquires the same exclusive path
+hold, and deletes only paths with no live DB owner or Armed writer. It atomically
+schedules its six-hour successor on success; dead jobs remain unpruned and use
+`requeue_dead_job`. A write completing after one pass gets a new modified time
+and is caught by a later pass. Deployment verifies the bucket lifecycle, and
+storage listing/timeout config is tested. These durable convergers, not URL
+expiry or a process-local memo, prevent orphans.
 
 On dead-letter, a live media row causes only the exact matching intent to be
 voided. `DeletionCommitted` media jobs and failed path-cleanup jobs are never
@@ -838,7 +851,8 @@ interface GlobalPlayerCapability {
 - `python/nexus/services/resource_mutation_replay.py`
 - `python/nexus/ids.py`
 - `python/nexus/tasks/{media_teardown,storage_object_cleanup,storage_orphan_sweep}.py`
-- one Alembic revision: intent; `auto_queue_watermark_at`; source/state CHECK removal;
+- one Alembic revision: intent; `auto_queue_watermark_at`;
+  `media_source_attempts.signed_upload_expires_at`; source/state CHECK removal;
   `podcast_listening_states.{write_revision,reset_epoch}`; non-cascading
   user/media FKs for `consumption_queue_items`, `consumption_overrides`,
   `podcast_listening_states`, and `reading_sessions`; user deletion remains
@@ -922,9 +936,7 @@ interface GlobalPlayerCapability {
 7. Crash at every teardown/write-cleanup checkpoint recovers. Timed-out direct
    and in-process writes receive a final post-drain sweep; failed cleanup/deletion
    stays named, retryable, requeueable, and unpruned. R2 lifecycle plus recurring
-   orphan sweep catch writes completing after expiry or an earlier delete. The
-   sweep reloads its claimed job row for continuation state and receives only
-   `JobExecutionContext`, not a duplicate raw payload argument.
+   orphan sweep catch writes completing after expiry or an earlier delete.
 8. Initial-load failure has Retry; Play/mutation cannot run while Loading. Pending
    suppresses double Remove; reorder is optimistic; deadline exits in-flight state
    and shows same-ID Retry while the lane remains visibly blocked. Failed active

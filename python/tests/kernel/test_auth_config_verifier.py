@@ -64,8 +64,7 @@ def _run_verifier(
         "done\n"
         '[ -n "$output" ] || exit 2\n'
         'case "$header" in @*) header=${header#@} ;; *) echo "token leaked to curl argv" >&2; exit 4 ;; esac\n'
-        'mode=$(stat -c %a "$header" 2>/dev/null || stat -f %Lp "$header")\n'
-        '[ "$mode" = "600" ] || { echo "header file permissions are not private" >&2; exit 5; }\n'
+        '[ "$(stat -c %a "$header")" = "600" ] || { echo "header file permissions are not private" >&2; exit 5; }\n'
         '[ "$(cat "$header")" = "Authorization: Bearer test-operator-token" ] || exit 6\n'
         'case "$url" in\n'
         '  "https://api.supabase.com/v1/projects/fixture/config/auth") source=$NEXUS_AUTH_CONFIG_FIXTURE ;;\n'

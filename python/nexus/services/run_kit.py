@@ -232,14 +232,8 @@ def get_run_events(
             .all()
         )
         events = [
-            # The strict Oracle event schema narrows both the persisted event
-            # discriminator and its matching payload at the database read edge.
-            OracleReadingEventOut.model_validate(
-                {
-                    "seq": row.seq,
-                    "event_type": row.event_type,
-                    "payload": dict(row.payload) if isinstance(row.payload, dict) else {},
-                }
+            OracleReadingEventOut(
+                seq=row.seq, event_type=row.event_type, payload=dict(row.payload or {})
             )
             for row in oracle_rows
         ]

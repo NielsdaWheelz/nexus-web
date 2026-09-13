@@ -4,7 +4,6 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -21,87 +20,16 @@ from nexus_test_control.runtime import (
 
 _MEMORY = re.compile(r"([0-9]+(?:\.[0-9]+)?)(B|kB|KiB|MB|MiB|GB|GiB)\Z")
 _MIB = 1024 * 1024
-_CONTAINER_FAILURE_LIMIT = 2
-_DARWIN_PRESSURE_NORMAL = 1
-_DARWIN_VM_STAT = Path("/usr/bin/vm_stat")
-_DARWIN_SYSCTL = Path("/usr/sbin/sysctl")
-_DARWIN_PS = Path("/bin/ps")
-
-
-def required_platform_memory_tools() -> tuple[Path, ...]:
-    """Return fixed host tools required by the platform memory owner."""
-    return (_DARWIN_VM_STAT, _DARWIN_SYSCTL, _DARWIN_PS) if sys.platform == "darwin" else ()
+_CONTAINER_READ_ATTEMPTS = 2
 
 
 def available_memory_mib(meminfo: Path = Path("/proc/meminfo")) -> int | None:
     try:
         contents = meminfo.read_text(encoding="utf-8")
     except OSError:
-        if sys.platform != "darwin":
-            return None
-        vm_stat = _read_darwin_vm_stat()
-        pressure_level = _read_darwin_pressure_level()
-        if vm_stat is None or pressure_level is None:
-            return None
-        return _darwin_available_memory_mib(vm_stat, pressure_level=pressure_level)
+        return None
     match = re.search(r"(?m)^MemAvailable:\s+([0-9]+) kB$", contents)
-    return _available_mib(int(match.group(1)) * 1024) if match else None
-
-
-def _read_darwin_vm_stat() -> str | None:
-    try:
-        result = subprocess.run(
-            (_DARWIN_VM_STAT.as_posix(),),
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=1,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if result.returncode != 0:
-        return None
-    return result.stdout
-
-
-def _read_darwin_pressure_level() -> int | None:
-    try:
-        result = subprocess.run(
-            (
-                _DARWIN_SYSCTL.as_posix(),
-                "-n",
-                "kern.memorystatus_vm_pressure_level",
-            ),
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=1,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if result.returncode != 0:
-        return None
-    return _parse_darwin_pressure_level(result.stdout)
-
-
-def _parse_darwin_pressure_level(value: str) -> int | None:
-    stripped = value.strip()
-    return int(stripped) if re.fullmatch(r"[0-9]+", stripped) is not None else None
-
-
-def _darwin_available_memory_mib(vm_stat: str, *, pressure_level: int) -> int | None:
-    if pressure_level != _DARWIN_PRESSURE_NORMAL:
-        return None
-    page_size = re.search(r"page size of ([0-9]+) bytes", vm_stat)
-    free_pages = re.search(r"(?m)^Pages free:\s+([0-9]+)\.$", vm_stat)
-    file_backed_pages = re.search(r"(?m)^File-backed pages:\s+([0-9]+)\.$", vm_stat)
-    if page_size is None or free_pages is None or file_backed_pages is None:
-        return None
-    # File-backed pages are XNU's reclaimable external-page owner and already
-    # include speculative pages. Anonymous inactive, purgeable, and compressed
-    # pages are excluded, and non-normal kernel pressure fails admission above.
-    available_pages = int(free_pages.group(1)) + int(file_backed_pages.group(1))
-    return _available_mib(available_pages * int(page_size.group(1)))
+    return _to_mib(int(match.group(1)) * 1024) if match else None
 
 
 class OwnedMemorySampler:
@@ -119,7 +47,6 @@ class OwnedMemorySampler:
         self._container_roots = {repo_root} if include_containers else set()
         self._required_container_roots = set(self._container_roots)
         self._sampled_container_roots: set[Path] = set()
-        self._container_failure_streaks: dict[Path, int] = {}
         self._stop = threading.Event()
         self._lock = threading.Lock()
         self._peak_process_bytes = 0
@@ -128,8 +55,8 @@ class OwnedMemorySampler:
         self._interval_container_bytes = 0
         self._current_process_bytes = 0
         self._current_container_bytes = 0
-        self._measurement_failed = False
-        self._measurement_failure_detail: str | None = None
+        self._container_sample_failed = False
+        self._container_failure_detail: str | None = None
         self._thread = threading.Thread(target=self._sample_until_stopped, daemon=True)
         self.evidence: PeakOwnedMemory | None = None
 
@@ -151,7 +78,6 @@ class OwnedMemorySampler:
         """Stop sampling an owner before its exact container teardown begins."""
         with self._lock:
             self._container_roots.discard(repo_root)
-            self._container_failure_streaks.pop(repo_root, None)
             if not self._container_roots:
                 self._current_container_bytes = 0
 
@@ -159,8 +85,8 @@ class OwnedMemorySampler:
         self._stop.set()
         self._thread.join(timeout=6)
         if self._thread.is_alive():
-            self._measurement_failed = True
-            self._measurement_failure_detail = "owned-memory sampler did not stop within 6 seconds"
+            self._container_sample_failed = True
+            self._container_failure_detail = "owned-memory sampler did not stop within 6 seconds"
         else:
             self._sample(include_containers=False)
         return self._snapshot(interval=False)
@@ -179,7 +105,7 @@ class OwnedMemorySampler:
     @property
     def failure_detail(self) -> str | None:
         with self._lock:
-            return self._measurement_failure_detail
+            return self._container_failure_detail
 
     def _snapshot(self, *, interval: bool) -> PeakOwnedMemory:
         with self._lock:
@@ -189,9 +115,9 @@ class OwnedMemorySampler:
             )
             measurement_complete = (
                 self._required_container_roots.issubset(self._sampled_container_roots)
-            ) and not self._measurement_failed
-        process = _peak_mib(process_bytes)
-        containers = _peak_mib(container_bytes)
+            ) and not self._container_sample_failed
+        process = _to_mib(process_bytes)
+        containers = _to_mib(container_bytes)
         return PeakOwnedMemory(
             process,
             containers,
@@ -211,69 +137,55 @@ class OwnedMemorySampler:
                 next_container_sample = time.monotonic() + 1
 
     def _sample(self, *, include_containers: bool) -> None:
-        process_bytes: int | None = None
-        process_failure_detail: str | None = None
-        try:
-            measured_process_bytes = self._process_reader(os.getpid())
-            if type(measured_process_bytes) is not int or measured_process_bytes <= 0:
-                raise RuntimeContractError("owned process probe returned invalid memory")
-            process_bytes = measured_process_bytes
-        except (OSError, RuntimeContractError, subprocess.SubprocessError) as error:
-            process_failure_detail = str(error) or type(error).__name__
+        process_bytes = self._process_reader(os.getpid())
         container_bytes: int | None = None
         sampled_roots: set[Path] = set()
-        failed_roots: dict[Path, str] = {}
+        failed_roots: set[Path] = set()
+        failure_detail: str | None = None
         if include_containers:
             with self._lock:
                 container_roots = tuple(self._container_roots)
             container_bytes = 0
             for root in container_roots:
                 try:
-                    container_bytes += self._container_reader(root)
+                    container_bytes += self._read_container(root)
                     sampled_roots.add(root)
                 except (OSError, RuntimeContractError, subprocess.SubprocessError) as error:
-                    failed_roots[root] = str(error) or type(error).__name__
+                    failed_roots.add(root)
+                    failure_detail = str(error) or type(error).__name__
         with self._lock:
-            if process_bytes is None:
-                self._measurement_failed = True
-                if self._measurement_failure_detail is None:
-                    self._measurement_failure_detail = (
-                        process_failure_detail or "owned process probe failed"
-                    )
-            else:
-                self._current_process_bytes = process_bytes
-                self._peak_process_bytes = max(self._peak_process_bytes, process_bytes)
-                self._interval_process_bytes = max(self._interval_process_bytes, process_bytes)
+            self._current_process_bytes = process_bytes
+            self._peak_process_bytes = max(self._peak_process_bytes, process_bytes)
+            self._interval_process_bytes = max(self._interval_process_bytes, process_bytes)
             # Teardown first disables the exact owner. An in-flight Docker stats
             # call may then observe that owner's expected disappearance. Only a
-            # persistent failures for a still-active owner invalidate the
-            # measurement; one lifecycle sample may be transient.
-            active_failed_roots = set(failed_roots).intersection(self._container_roots)
-            for root in sampled_roots:
-                self._container_failure_streaks.pop(root, None)
-            for root in set(failed_roots).difference(active_failed_roots):
-                self._container_failure_streaks.pop(root, None)
-            exhausted_roots: list[Path] = []
-            for root in active_failed_roots:
-                streak = self._container_failure_streaks.get(root, 0) + 1
-                self._container_failure_streaks[root] = streak
-                if streak >= _CONTAINER_FAILURE_LIMIT:
-                    exhausted_roots.append(root)
-            if exhausted_roots:
-                self._measurement_failed = True
-                if self._measurement_failure_detail is None:
-                    first = min(exhausted_roots, key=lambda path: path.as_posix())
-                    self._measurement_failure_detail = (
-                        "owned container probe failed "
-                        f"{_CONTAINER_FAILURE_LIMIT} consecutive samples: {failed_roots[first]}"
-                    )
-            self._sampled_container_roots.update(sampled_roots)
-            if not active_failed_roots and container_bytes is not None:
+            # failure for a still-active owner invalidates the measurement.
+            active_failed_roots = failed_roots.intersection(self._container_roots)
+            if active_failed_roots:
+                self._container_sample_failed = True
+                self._container_failure_detail = failure_detail or "owned container probe failed"
+            elif container_bytes is not None:
+                self._sampled_container_roots.update(sampled_roots)
                 self._current_container_bytes = container_bytes
                 self._peak_container_bytes = max(self._peak_container_bytes, container_bytes)
                 self._interval_container_bytes = max(
                     self._interval_container_bytes, container_bytes
                 )
+
+    def _read_container(self, repo_root: Path) -> int:
+        """Recover one transient Docker probe without rerunning any proof."""
+        last_error: OSError | RuntimeContractError | subprocess.SubprocessError | None = None
+        for _attempt in range(_CONTAINER_READ_ATTEMPTS):
+            try:
+                return self._container_reader(repo_root)
+            except (OSError, RuntimeContractError, subprocess.SubprocessError) as error:
+                last_error = error
+        if last_error is None:
+            raise AssertionError("container measurement made no read attempt")
+        detail = str(last_error) or type(last_error).__name__
+        raise RuntimeContractError(
+            f"owned container probe failed {_CONTAINER_READ_ATTEMPTS} consecutive reads: {detail}"
+        ) from last_error
 
 
 @contextmanager
@@ -296,8 +208,6 @@ def measured(sampler: OwnedMemorySampler) -> PeakOwnedMemory:
 
 
 def _process_tree_rss(root_pid: int) -> int:
-    if sys.platform == "darwin":
-        return _darwin_process_tree_rss(root_pid, _read_darwin_process_table())
     pending = [root_pid]
     seen: set[int] = set()
     total = 0
@@ -312,63 +222,11 @@ def _process_tree_rss(root_pid: int) -> int:
                 encoding="utf-8"
             )
         except OSError:
-            if pid == root_pid:
-                raise RuntimeContractError("controller process is absent from /proc") from None
             continue
         match = re.search(r"(?m)^VmRSS:\s+([0-9]+) kB$", status)
-        if match is None:
-            if pid == root_pid:
-                raise RuntimeContractError("controller process RSS is absent from /proc")
-            continue
-        total += int(match.group(1)) * 1024
+        if match:
+            total += int(match.group(1)) * 1024
         pending.extend(int(value) for value in children.split() if value.isdecimal())
-    return total
-
-
-def _read_darwin_process_table() -> str:
-    try:
-        result = subprocess.run(
-            (_DARWIN_PS.as_posix(), "-axo", "pid=,ppid=,rss="),
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=1,
-        )
-    except (OSError, subprocess.SubprocessError) as error:
-        raise RuntimeContractError("Darwin process-table probe failed") from error
-    if result.returncode != 0:
-        raise RuntimeContractError(f"Darwin process-table probe exited {result.returncode}")
-    return result.stdout
-
-
-def _darwin_process_tree_rss(root_pid: int, process_table: str) -> int:
-    rss_by_pid: dict[int, int] = {}
-    children_by_pid: dict[int, list[int]] = {}
-    for line in process_table.splitlines():
-        if not line.strip():
-            continue
-        fields = line.split()
-        if len(fields) != 3 or not all(field.isdecimal() for field in fields):
-            raise RuntimeContractError("Darwin process table contains an invalid row")
-        pid, parent_pid, rss_kib = (int(field) for field in fields)
-        if pid in rss_by_pid:
-            raise RuntimeContractError("Darwin process table contains a duplicate PID")
-        rss_by_pid[pid] = rss_kib * 1024
-        children_by_pid.setdefault(parent_pid, []).append(pid)
-
-    if rss_by_pid.get(root_pid, 0) <= 0:
-        raise RuntimeContractError("controller process is absent from Darwin process table")
-
-    pending = [root_pid]
-    seen: set[int] = set()
-    total = 0
-    while pending:
-        pid = pending.pop()
-        if pid in seen:
-            continue
-        seen.add(pid)
-        total += rss_by_pid.get(pid, 0)
-        pending.extend(children_by_pid.get(pid, ()))
     return total
 
 
@@ -440,9 +298,5 @@ def _memory_bytes(value: str) -> int:
     return int(amount * multiplier)
 
 
-def _available_mib(value: int) -> int:
-    return value // _MIB
-
-
-def _peak_mib(value: int) -> int:
+def _to_mib(value: int) -> int:
     return (value + _MIB - 1) // _MIB if value else 0

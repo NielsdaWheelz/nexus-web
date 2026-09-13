@@ -243,7 +243,6 @@ export interface ReaderDocumentMapMarker {
   kind: ReaderDocumentMapMarkerKind;
   item_id: string;
   position: number;
-  end_position: Presence<number>;
   tone: "Neutral" | "Highlight" | "Citation" | "Link" | "Synapse" | "Warning";
   label: string;
   preview: Presence<string>;
@@ -251,7 +250,6 @@ export interface ReaderDocumentMapMarker {
 
 export interface ReaderDocumentMap {
   media_id: string;
-  generation: Presence<number>;
   media_kind: string;
   title: string;
   status: "ready" | "empty" | "partial";

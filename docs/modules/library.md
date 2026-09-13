@@ -25,8 +25,7 @@ created_at DESC, id DESC"`), the locked `ensure_entry` append, deletes and
   commands (`list_item_libraries`, `ensure_media_in_library`,
   `add_podcast_to_library`, `remove_podcast_from_library`, `reorder_entries`,
   `ensure_media_in_libraries_for_viewer`,
-  `ensure_media_absent_from_library_for_viewer`,
-  `assign_libraries_for_media_in_current_transaction`,
+  `ensure_media_absent_from_library_for_viewer`, `assign_libraries_for_media`,
   named Podcast placement/compaction, and unsubscribe placement teardown).
   It also composes, for reads only, the factual view lenses (Title/Creator/
   Published/Added, each ascending or descending) and a hide-finished
@@ -169,11 +168,6 @@ episodes immediately resurface with their consumption state intact.
   `collectionRevision`; concurrent membership or ordering changes return
   `409 E_COLLECTION_CHANGED`. A cursor from the wrong viewer, library, view, or
   pre-cutover family is `400 E_INVALID_CURSOR`, never reinterpreted.
-- **Total list hydration.** The repeatable-read membership query is the sole
-  visibility filter and emits one exact Media-or-Podcast target per row. Batched
-  hydration must preserve that cardinality and order; a missing admitted target
-  or malformed target row is an invariant defect, never a silently shortened
-  page with an advanced cursor. No cross-service entry-hydration API exists.
 - **Libraries index views.** `GET /libraries` accepts `sort=created|name` plus
   `direction=asc|desc`. `Created — oldest` is canonical and omits both keys; the
   only valid non-default pairs are `created+desc` and `name+asc|desc`. A partial
@@ -380,12 +374,12 @@ library the viewer can read.
   `validate_writable_library_destinations` or
   `resolve_writable_non_default_library_ids`; default IDs, duplicate IDs,
   inaccessible IDs, and member-only IDs are invalid for destination arrays.
-- **Assignment.** Media intake and canonical-duplicate workflows attach the
-  viewer's default library plus selected destinations by calling
-  `assign_libraries_for_media_in_current_transaction` inside their existing
-  acceptance transaction; there is no standalone transaction wrapper.
-  `ensure_media_in_libraries_for_viewer` adds post-hoc destinations atomically
-  as a bodyless command.
+- **Assignment.** `library_entries.assign_libraries_for_media` is the standalone
+  transaction-owning command for attaching media to the viewer's default library
+  plus selected destinations. Media creation workflows that already own a
+  transaction call `assign_libraries_for_media_in_current_transaction` before
+  committing the created media. `ensure_media_in_libraries_for_viewer` adds
+  post-hoc destinations atomically as a bodyless command.
 
 The canonical HTTP placement surface is:
 

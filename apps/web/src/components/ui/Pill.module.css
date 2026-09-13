@@ -17,33 +17,21 @@
   white-space: nowrap;
 }
 
-/* Shape is the corner only. Padding belongs to the size scale, which is where
-   the two shapes' identical padding now lives. */
 .shapePill {
   border-radius: var(--radius-full);
+  padding: 2px var(--space-2);
 }
 
 .shapeSquare {
   border-radius: var(--radius-sm);
-}
-
-/* The smallest pill: a count in icon-only chrome, where the whole control is
-   the width of a glyph. It drops the wider tracking with the type size, since
-   a two- or three-character count has no word shape to open up. */
-.sizeXs {
-  padding: 1px var(--space-1);
-  font-size: var(--text-2xs);
-  line-height: var(--leading-tight);
-  letter-spacing: var(--tracking-normal);
+  padding: 2px var(--space-2);
 }
 
 .sizeSm {
-  padding: 2px var(--space-2);
   font-size: var(--text-xs);
 }
 
 .sizeMd {
-  padding: 2px var(--space-2);
   font-size: var(--text-sm);
 }
 
@@ -56,24 +44,21 @@
   color: var(--ink-muted);
 }
 
-/* The tinted tones paint their label in the palette's ink step for that tone,
-   never in the tone itself: the fill is an 18% mix of the same token, so the
-   tone-on-tone pair cannot clear AA for text this size (globals.css). */
 .toneInfo {
   background: color-mix(in srgb, var(--info) 18%, transparent);
-  color: var(--info-ink);
+  color: var(--info);
   border-color: color-mix(in srgb, var(--info) 30%, transparent);
 }
 
 .toneSuccess {
   background: color-mix(in srgb, var(--success) 18%, transparent);
-  color: var(--success-ink);
+  color: var(--success);
   border-color: color-mix(in srgb, var(--success) 30%, transparent);
 }
 
 .toneWarning {
   background: color-mix(in srgb, var(--warning) 18%, transparent);
-  color: var(--warning-ink);
+  color: var(--warning);
   border-color: color-mix(in srgb, var(--warning) 30%, transparent);
 }
 

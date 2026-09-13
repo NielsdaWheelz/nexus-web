@@ -10,9 +10,6 @@ PDF source acceptance is owned by `media_source_ingest.py`.
 - `pdf_ingest.py` owns PDF text extraction artifacts, page spans, and plain
   text. Source success atomically requests the revision-fenced
   `media_content_reindex_job`.
-- `media_deletion.py` is the sole production owner for deleting PDF Media. It
-  explicitly removes derived page spans before the parent row; neither the
-  database foreign key nor an ORM relationship cascades that cleanup.
 - `pdf_readiness.py`, `pdf_highlights.py`, and related reader services own PDF
   quote/highlight readiness and locator behavior.
 
@@ -56,23 +53,6 @@ PDF reader apparatus is intentionally conservative.
 - Redistributable scholarly PDFs may be committed as unsupported-adapter
   fixtures to prove this negative behavior. That fixture status is not a claim
   that notes, references, or author-year citations have been extracted.
-- No dormant scholarly adapter implementation is retained. Future scholarly or
-  literary-annotation PDF support must be explicit adapter work with its own
-  diagnostics, confidence contract, wiring, and fixtures.
-
-## Bounded Parse
-
-`pdf_ingest.py` decodes one PyMuPDF `rawdict` per page and derives every page
-view — plain text, blocks, lines, and the text clipped to a native link
-rectangle — from that single representation, releasing it before advancing.
-Marker text for a native citation link is the characters inside the link
-rectangle, which is the geometry persisted beside it; a page whose text
-representation cannot be decoded contributes no text but still records its own
-height, so page-indexed lookups stay aligned.
-
-A breach of a declared budget is terminal `E_RESOURCE_LIMIT` carrying a safe
-dimension: page, block, link, and line counts describe the document's shape
-(`Structure`), while extracted text and the retained apparatus index describe
-produced output (`Output`). A stored object that does not match the media
-source's persisted digest is terminal `E_SOURCE_INTEGRITY`, refused before the
-document is opened.
+- Future scholarly, legal-footnote, or literary-annotation PDF support must be
+  explicit adapter work with its own diagnostics, confidence contract, and
+  fixtures.
