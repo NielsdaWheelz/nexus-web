@@ -1,10 +1,13 @@
 package app.nexus.android.offline.reading
 
+import android.database.DatabaseUtils
+import android.database.sqlite.SQLiteDatabase
 import android.os.Build
 import android.webkit.JavascriptInterface
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import app.nexus.android.BuildConfig
 import app.nexus.android.MainActivity
 import app.nexus.android.offline.readingweb.OFFLINE_READING_MAIN_URL
 import java.util.UUID
@@ -22,19 +25,23 @@ import org.junit.runner.RunWith
  *
  * The protected device must already contain an older signed baseline with a
  * real, pre-authenticated WebView session for the dedicated synthetic account.
+ * Compatible releases acquire before update. An explicitly selected
+ * incompatible hard cut instead proves the complete legacy shelf empty before
+ * installing the candidate, then acquires with the candidate.
  * This test deliberately accepts only fixture UUIDs as instrumentation input:
  * browser credentials never appear in a process argument, test artifact, or
- * source-controlled fixture. Every operation below crosses the production
- * WebView message boundary into the production store/job/direct-package lane.
+ * source-controlled fixture. The hard-cut baseline census reads the frozen V1
+ * storage without starting product recovery. Package operations cross the
+ * production WebView message boundary into the store/job/direct-package lane.
  */
 @RunWith(AndroidJUnit4::class)
 @SignedPromotion
 class OfflineReadingSignedPhysicalPromotionTest {
     @Test
-    fun acquiresAllFormatsAndPersistsPendingProgressOnBaseline() {
+    fun acquiresAllFormatsAndPersistsPendingProgress() {
         requirePromotionPlatform()
         val fixture = PromotionFixture.fromInstrumentation()
-        PromotionBrowser.launch().use { browser ->
+        PromotionBrowser.launchHosted().use { browser ->
             val hosted = browser.connectHosted()
             assertBoundToFixture(hosted, fixture)
             assertNoFixturePackages(hosted, fixture)
@@ -61,6 +68,13 @@ class OfflineReadingSignedPhysicalPromotionTest {
     }
 
     @Test
+    fun attestsEmptyOfflineStateOnIncompatibleBaseline() {
+        requirePromotionPlatform()
+        val fixture = PromotionFixture.fromInstrumentation()
+        attestEmptyLegacyOfflineState(fixture)
+    }
+
+    @Test
     fun opensShelfAfterForceStopRebootAndAirplaneMode() {
         requirePromotionPlatform()
         val fixture = PromotionFixture.fromInstrumentation()
@@ -82,15 +96,15 @@ class OfflineReadingSignedPhysicalPromotionTest {
     }
 
     @Test
-    fun opensV1AfterUpdateThenPurgesOfflineState() {
+    fun reopensPersistedPackagesThenPurgesOfflineState() {
         requirePromotionPlatform()
         val fixture = PromotionFixture.fromInstrumentation()
         PromotionBrowser.launch().use { browser ->
-            assertTrue("candidate must cold-launch the V1 APK shelf while offline", browser.isOfflineShelf())
+            assertTrue("candidate must cold-launch the APK shelf while offline", browser.isOfflineShelf())
             val restored = browser.connectOffline()
             assertBoundToFixture(restored, fixture)
             fixture.media.forEach { media ->
-                assertTrue("candidate must reopen every V1 fixture package", restored.readyWithKind(media))
+                assertTrue("candidate must reopen every fixture package", restored.readyWithKind(media))
                 browser.open(media).also { opened ->
                     browser.assertLocalReaderDescriptor(opened)
                     browser.close(opened)
@@ -109,6 +123,66 @@ class OfflineReadingSignedPhysicalPromotionTest {
             val purged = browser.relaunchOfflineAndConnect()
             assertTrue("account purge must remove the offline-reading binding", purged.bindingAbsent())
             assertTrue("account purge must leave no fixture packages", fixture.media.none { purged.hasItem(it.id) })
+        }
+    }
+}
+
+private fun attestEmptyLegacyOfflineState(fixture: PromotionFixture) {
+    val context = InstrumentationRegistry.getInstrumentation().targetContext
+    val packageFiles = java.io.File(context.filesDir, "offline-reading")
+        .walkTopDown()
+        .drop(1)
+        .filterNot { it.isDirectory }
+        .map { it.absolutePath }
+        .toList()
+    assertTrue(
+        "incompatible baseline contains offline-reading package bytes: $packageFiles",
+        packageFiles.isEmpty(),
+    )
+
+    val databasePath = context.getDatabasePath("offline_reading.db")
+    if (!databasePath.exists()) return
+    SQLiteDatabase.openDatabase(
+        databasePath.absolutePath,
+        null,
+        SQLiteDatabase.OPEN_READONLY,
+    ).use { database ->
+        assertTrue(
+            "incompatible baseline has an unknown offline-reading database version",
+            database.version == 1,
+        )
+        for (table in listOf(
+            "offline_reader_packages",
+            "offline_reader_transfers",
+            "offline_reader_removals",
+            "offline_reader_progress_baselines",
+            "offline_reader_progress_pending",
+            "offline_reader_purges",
+            "offline_reader_account_transitions",
+        )) {
+            assertTrue(
+                "incompatible baseline retains durable offline-reading state in $table",
+                DatabaseUtils.queryNumEntries(database, table) == 0L,
+            )
+        }
+        database.rawQuery(
+            "SELECT account_id, remote_authorization_required FROM offline_reader_binding",
+            null,
+        ).use { cursor ->
+            if (cursor.moveToFirst()) {
+                assertTrue(
+                    "incompatible baseline binding belongs to another account",
+                    cursor.getString(0) == fixture.accountId.toString(),
+                )
+                assertTrue(
+                    "incompatible baseline binding requires reauthorization",
+                    cursor.getInt(1) == 0,
+                )
+                assertTrue(
+                    "incompatible baseline contains more than one account binding",
+                    !cursor.moveToNext(),
+                )
+            }
         }
     }
 }
@@ -313,6 +387,13 @@ private class PromotionBrowser private constructor(
 
         fun launch(): PromotionBrowser = PromotionBrowser(ActivityScenario.launch(MainActivity::class.java))
             .also(PromotionBrowser::installReporter)
+
+        fun launchHosted(): PromotionBrowser =
+            PromotionBrowser(ActivityScenario.launch(MainActivity::class.java)).also { browser ->
+                browser.loadHostedPage()
+                browser.installReporter()
+            }
+
     }
 
     override fun close() {
@@ -375,7 +456,7 @@ private class PromotionBrowser private constructor(
 
     fun open(media: PromotionMedia): OpenedPromotionReading {
         val outcome = command("OpenReading", "mediaId" to media.id.toString())
-        assertTrue("fixture package must reopen through the V1 bridge", outcome.optString("kind") == "OpenedReading")
+        assertTrue("fixture package must reopen through the bridge", outcome.optString("kind") == "OpenedReading")
         return OpenedPromotionReading(
             media = media,
             leaseId = UUID.fromString(outcome.getString("leaseId")),
@@ -388,7 +469,7 @@ private class PromotionBrowser private constructor(
 
     fun close(opened: OpenedPromotionReading) {
         val outcome = command("CloseReading", "leaseId" to opened.leaseId.toString())
-        assertTrue("opened V1 package lease must close", outcome.optString("kind") == "Accepted")
+        assertTrue("opened package lease must close", outcome.optString("kind") == "Accepted")
     }
 
     fun saveProgress(
@@ -435,8 +516,8 @@ private class PromotionBrowser private constructor(
 
     fun assertLocalReaderDescriptor(opened: OpenedPromotionReading) {
         val reader = readLocalReaderDescriptor(opened.readerUrl)
-        assertTrue("local V1 reader descriptor must retain media identity", reader.optString("mediaId") == opened.media.id.toString())
-        assertTrue("local V1 reader descriptor must retain media kind", reader.optString("mediaKind") == opened.media.kind)
+        assertTrue("local reader descriptor must retain media identity", reader.optString("mediaId") == opened.media.id.toString())
+        assertTrue("local reader descriptor must retain media kind", reader.optString("mediaKind") == opened.media.kind)
         when (opened.media.kind) {
             "Pdf" -> {
                 assertTrue("local PDF descriptor must retain document.pdf", reader.optString("documentPath") == "document.pdf")
@@ -472,11 +553,11 @@ private class PromotionBrowser private constructor(
                 )
             }
             "Epub" -> assertTrue(
-                "local EPUB descriptor must retain a V1 section",
+                "local EPUB descriptor must retain a section",
                 reader.optJSONArray("sections")?.length()?.let { it > 0 } == true,
             )
             "WebArticle" -> assertTrue(
-                "local web descriptor must retain a V1 fragment",
+                "local web descriptor must retain a fragment",
                 reader.optJSONArray("fragments")?.length()?.let { it > 0 } == true,
             )
             else -> throw AssertionError("promotion fixture declared an unknown media kind")
@@ -525,7 +606,7 @@ private class PromotionBrowser private constructor(
         """.trimIndent()
         evaluate(script)
         val reader = reporter.nextPayload(BRIDGE_REPLY_TIMEOUT_SECONDS)
-        assertTrue("opened web package must expose a local V1 reader descriptor", !reader.isNullOrBlank())
+        assertTrue("opened web package must expose a local reader descriptor", !reader.isNullOrBlank())
         return JSONObject(requireNotNull(reader))
     }
 
@@ -540,11 +621,31 @@ private class PromotionBrowser private constructor(
     }
 
     fun relaunchOfflineAndConnect(): JSONObject {
-        scenario.onActivity { activity -> activity.webView.loadUrl(OFFLINE_READING_MAIN_URL) }
-        awaitOfflineShelf("account-purge shelf relaunch")
+        loadOfflineShelf("account-purge shelf relaunch")
         installReporter()
-        assertTrue("account-purge verification must remain on the APK shelf", isOfflineShelf())
         return connectOffline()
+    }
+
+    private fun loadOfflineShelf(description: String) {
+        scenario.onActivity { activity -> activity.webView.loadUrl(OFFLINE_READING_MAIN_URL) }
+        awaitOfflineShelf(description)
+        assertTrue("offline verification must remain on the APK shelf", isOfflineShelf())
+    }
+
+    private fun loadHostedPage() {
+        scenario.onActivity { activity -> activity.webView.loadUrl(BuildConfig.NEXUS_BASE_URL) }
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(BRIDGE_REPLY_TIMEOUT_SECONDS)
+        while (System.nanoTime() < deadline) {
+            var url: String? = null
+            scenario.onActivity { url = it.webView.url }
+            val hosted = url == BuildConfig.NEXUS_BASE_URL ||
+                url?.startsWith("${BuildConfig.NEXUS_BASE_URL}/") == true
+            if (hosted) {
+                return
+            }
+            reporter.nextReply(TimeUnit.MILLISECONDS.toNanos(250))
+        }
+        throw AssertionError("timed out waiting for the hosted release origin")
     }
 
     fun awaitSnapshot(description: String, predicate: (JSONObject) -> Boolean): JSONObject {

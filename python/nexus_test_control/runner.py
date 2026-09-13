@@ -317,29 +317,35 @@ _ANDROID_HOST_PREFIX = "apps/android/app/src/test/"
 _INGEST_NODE_TEST_PREFIX = "node/ingest/test/"
 _INGEST_NODE_NETWORK_GUARD = "python/tests/testkit/node-network-guard.mjs"
 _ANDROID_TARGET_SDK = 36
-_ANDROID_RELEASE_BASELINE_ACQUISITION_NODES = (
+_ANDROID_RELEASE_ACQUISITION_NODES = (
     "apps/android/app/src/androidTest/java/app/nexus/android/offline/reading/"
     "OfflineReadingSignedPhysicalPromotionTest.kt::"
-    "acquiresAllFormatsAndPersistsPendingProgressOnBaseline",
+    "acquiresAllFormatsAndPersistsPendingProgress",
+)
+_ANDROID_RELEASE_EMPTY_BASELINE_NODES = (
+    "apps/android/app/src/androidTest/java/app/nexus/android/offline/reading/"
+    "OfflineReadingSignedPhysicalPromotionTest.kt::"
+    "attestsEmptyOfflineStateOnIncompatibleBaseline",
 )
 _ANDROID_RELEASE_COLD_OFFLINE_NODES = (
     "apps/android/app/src/androidTest/java/app/nexus/android/offline/reading/"
     "OfflineReadingSignedPhysicalPromotionTest.kt::"
     "opensShelfAfterForceStopRebootAndAirplaneMode",
 )
-_ANDROID_RELEASE_CANDIDATE_UPDATE_NODES = (
+_ANDROID_RELEASE_CANDIDATE_VALIDATION_NODES = (
     "apps/android/app/src/androidTest/java/app/nexus/android/NativeAuthHandoffTest.kt::"
     "nativeAuthStartCarriesTheExactHandoffContractToTheOwnedOrigin",
     "apps/android/app/src/androidTest/java/app/nexus/android/offline/reading/"
     "OfflineReadingDeviceLifecycleTest.kt::sqliteFilesSealRecreateLeaseRemovalAndAccountPurge",
     "apps/android/app/src/androidTest/java/app/nexus/android/offline/reading/"
     "OfflineReadingSignedPhysicalPromotionTest.kt::"
-    "opensV1AfterUpdateThenPurgesOfflineState",
+    "reopensPersistedPackagesThenPurgesOfflineState",
 )
 _ANDROID_RELEASE_INSTRUMENTATION_NODES = (
-    *_ANDROID_RELEASE_BASELINE_ACQUISITION_NODES,
+    *_ANDROID_RELEASE_ACQUISITION_NODES,
+    *_ANDROID_RELEASE_EMPTY_BASELINE_NODES,
     *_ANDROID_RELEASE_COLD_OFFLINE_NODES,
-    *_ANDROID_RELEASE_CANDIDATE_UPDATE_NODES,
+    *_ANDROID_RELEASE_CANDIDATE_VALIDATION_NODES,
 )
 # The signed promotion scenarios need the staged older baseline, the protected
 # fixture identifiers, and controller-owned force-stop/reboot/airplane steps.
@@ -369,6 +375,11 @@ _ANDROID_RELEASE_PROMOTION_ARGUMENTS = (
         "NEXUS_ANDROID_RELEASE_PROMOTION_ARTICLE_MEDIA_ID",
         "nexus_offline_reading_promotion_article_media_id",
     ),
+)
+_ANDROID_RELEASE_OFFLINE_BASELINE_MODES = (
+    "compatible",
+    "empty_hard_cut",
+    "bootstrap_no_device",
 )
 _DETERMINISTIC_PYTEST = ("-p", "no:randomly")
 _MIN_AVAILABLE_HEAVY_MIB = 2048
@@ -3880,6 +3891,7 @@ class _AndroidReleaseInputs:
 @dataclass(frozen=True, slots=True)
 class _AndroidReleaseDeviceInputs(_AndroidReleaseInputs):
     serial: str
+    empty_baseline_hard_cut: bool = False
     bootstrap: Literal[False] = False
 
 
@@ -4050,9 +4062,13 @@ def _run_android_release(
     )
     child_environment.update({name: environment[name] for name in release_environment_names})
     try:
-        baseline_targets = tuple(
+        acquisition_targets = tuple(
             _android_device_test_target(context.repo_root, node)
-            for node in _ANDROID_RELEASE_BASELINE_ACQUISITION_NODES
+            for node in _ANDROID_RELEASE_ACQUISITION_NODES
+        )
+        empty_baseline_targets = tuple(
+            _android_device_test_target(context.repo_root, node)
+            for node in _ANDROID_RELEASE_EMPTY_BASELINE_NODES
         )
         offline_targets = tuple(
             _android_device_test_target(context.repo_root, node)
@@ -4060,7 +4076,7 @@ def _run_android_release(
         )
         candidate_targets = tuple(
             _android_device_test_target(context.repo_root, node)
-            for node in _ANDROID_RELEASE_CANDIDATE_UPDATE_NODES
+            for node in _ANDROID_RELEASE_CANDIDATE_VALIDATION_NODES
         )
     except (OSError, UnicodeDecodeError, ValueError) as error:
         return _release_failure(
@@ -4068,7 +4084,18 @@ def _run_android_release(
             started,
             f"Android release instrumentation owner is absent or invalid: {error}",
         )
-    instrumentation_targets = (*baseline_targets, *offline_targets, *candidate_targets)
+    empty_baseline_hard_cut = (
+        isinstance(inputs, _AndroidReleaseDeviceInputs)
+        and inputs.empty_baseline_hard_cut
+    )
+    baseline_targets = empty_baseline_targets if empty_baseline_hard_cut else acquisition_targets
+    candidate_acquisition_targets = acquisition_targets if empty_baseline_hard_cut else ()
+    instrumentation_targets = (
+        *baseline_targets,
+        *candidate_acquisition_targets,
+        *offline_targets,
+        *candidate_targets,
+    )
     build_command = (
         "./gradlew",
         "--no-daemon",
@@ -4081,8 +4108,9 @@ def _run_android_release(
     if isinstance(inputs, _AndroidReleaseDeviceInputs):
         child_environment["ANDROID_SERIAL"] = inputs.serial
     with _gradle_lock(context.repo_root):
-        # The candidate is built and authenticated before touching the baseline,
-        # but it is not installed until after the rebooted offline phase.
+        # Build and authenticate the candidate before touching the handset. A
+        # compatible release installs it after the legacy cold-offline proof;
+        # an empty-baseline hard cut installs it before candidate acquisition.
         build = owned.command(build_command, android_root, child_environment)
         if build.returncode != 0:
             return _release_command_failure(capability, started, 1, build, child_environment)
@@ -4153,7 +4181,7 @@ def _run_android_release(
             evidence_path.write_text(
                 json.dumps(
                     {
-                        "version": 2,
+                        "version": 3,
                         "run_id": execution.run_id,
                         "git_sha": inputs.git_sha,
                         "tag": inputs.tag,
@@ -4168,13 +4196,15 @@ def _run_android_release(
                         # The controller measured no device in this mode; the
                         # retained evidence says so instead of implying one.
                         "physical_device": None,
+                        "offline_baseline_mode": "bootstrap_no_device",
                         "bootstrap": {
                             "no_device": True,
                             "previous_version_code_source": ("operator_attested_published_stable"),
                             "skipped_stages": {
-                                "baseline_acquisition": list(baseline_targets),
+                                "baseline": list(baseline_targets),
+                                "candidate_acquisition": list(candidate_acquisition_targets),
                                 "cold_offline": list(offline_targets),
-                                "candidate_update": list(candidate_targets),
+                                "candidate_validation": list(candidate_targets),
                             },
                         },
                         "instrumentation_proofs": [],
@@ -4244,9 +4274,11 @@ def _run_android_release(
             return _release_failure(
                 capability,
                 started,
-                "installed baseline changed before signed physical acquisition",
+                "installed baseline changed before signed physical proof",
             )
-        online = owned.command(
+        baseline_airplane_action = "enable" if empty_baseline_hard_cut else "disable"
+        baseline_airplane_value = "1" if empty_baseline_hard_cut else "0"
+        baseline_network = owned.command(
             (
                 str(inputs.adb),
                 "-s",
@@ -4255,12 +4287,12 @@ def _run_android_release(
                 "cmd",
                 "connectivity",
                 "airplane-mode",
-                "disable",
+                baseline_airplane_action,
             ),
             context.repo_root,
             child_environment,
         )
-        online_state = owned.command(
+        baseline_network_state = owned.command(
             (
                 str(inputs.adb),
                 "-s",
@@ -4275,15 +4307,41 @@ def _run_android_release(
             child_environment,
         )
         if (
-            online.returncode != 0
-            or online_state.returncode != 0
-            or online_state.stdout.strip() != "0"
+            baseline_network.returncode != 0
+            or baseline_network_state.returncode != 0
+            or baseline_network_state.stdout.strip() != baseline_airplane_value
         ):
             return _release_failure(
                 capability,
                 started,
-                "dedicated release device could not be attested online before baseline acquisition",
+                (
+                    "dedicated release device could not be attested offline before the "
+                    "empty baseline proof"
+                    if empty_baseline_hard_cut
+                    else "dedicated release device could not be attested online before "
+                    "baseline acquisition"
+                ),
             )
+        if empty_baseline_hard_cut:
+            quiesced_baseline = owned.command(
+                (
+                    str(inputs.adb),
+                    "-s",
+                    serial,
+                    "shell",
+                    "am",
+                    "force-stop",
+                    "app.nexus.android",
+                ),
+                context.repo_root,
+                child_environment,
+            )
+            if quiesced_baseline.returncode != 0:
+                return _release_failure(
+                    capability,
+                    started,
+                    "incompatible baseline could not be quiesced before its read-only census",
+                )
         test_install = owned.command(
             (
                 str(inputs.adb),
@@ -4309,6 +4367,75 @@ def _run_android_release(
         )
         if baseline is not None:
             return _release_failure(capability, started, baseline)
+        candidate_acquisition_state: subprocess.CompletedProcess[str] | None = None
+        if empty_baseline_hard_cut:
+            candidate_install = owned.command(
+                (str(inputs.adb), "-s", serial, "install", "-r", str(apk)),
+                context.repo_root,
+                child_environment,
+            )
+            if candidate_install.returncode != 0:
+                return _release_command_failure(
+                    capability, started, 3, candidate_install, child_environment
+                )
+            installed_version = owned.installed_version_code(
+                inputs.adb, serial, context.repo_root, child_environment
+            )
+            if installed_version != inputs.version_code:
+                return _release_failure(
+                    capability,
+                    started,
+                    "signed physical update did not install the candidate version in place",
+                )
+            candidate_online = owned.command(
+                (
+                    str(inputs.adb),
+                    "-s",
+                    serial,
+                    "shell",
+                    "cmd",
+                    "connectivity",
+                    "airplane-mode",
+                    "disable",
+                ),
+                context.repo_root,
+                child_environment,
+            )
+            candidate_acquisition_state = owned.command(
+                (
+                    str(inputs.adb),
+                    "-s",
+                    serial,
+                    "shell",
+                    "settings",
+                    "get",
+                    "global",
+                    "airplane_mode_on",
+                ),
+                context.repo_root,
+                child_environment,
+            )
+            if (
+                candidate_online.returncode != 0
+                or candidate_acquisition_state.returncode != 0
+                or candidate_acquisition_state.stdout.strip() != "0"
+            ):
+                return _release_failure(
+                    capability,
+                    started,
+                    "dedicated release device could not be attested online before "
+                    "candidate acquisition",
+                )
+            candidate_acquisition = _run_android_release_instrumentation(
+                inputs,
+                candidate_acquisition_targets,
+                context.repo_root,
+                child_environment,
+                promotion_arguments=promotion_arguments,
+                command=owned.command,
+            )
+            if candidate_acquisition is not None:
+                return _release_failure(capability, started, candidate_acquisition)
         force_stop = owned.command(
             (
                 str(inputs.adb),
@@ -4398,25 +4525,26 @@ def _run_android_release(
         )
         if cold_offline is not None:
             return _release_failure(capability, started, cold_offline)
-        candidate_install = owned.command(
-            (str(inputs.adb), "-s", serial, "install", "-r", str(apk)),
-            context.repo_root,
-            child_environment,
-        )
-        if candidate_install.returncode != 0:
-            return _release_command_failure(
-                capability, started, 3, candidate_install, child_environment
+        if not empty_baseline_hard_cut:
+            candidate_install = owned.command(
+                (str(inputs.adb), "-s", serial, "install", "-r", str(apk)),
+                context.repo_root,
+                child_environment,
             )
-        installed_version = owned.installed_version_code(
-            inputs.adb, serial, context.repo_root, child_environment
-        )
-        if installed_version != inputs.version_code:
-            return _release_failure(
-                capability,
-                started,
-                "signed physical update did not install the candidate version in place",
+            if candidate_install.returncode != 0:
+                return _release_command_failure(
+                    capability, started, 3, candidate_install, child_environment
+                )
+            installed_version = owned.installed_version_code(
+                inputs.adb, serial, context.repo_root, child_environment
             )
-        candidate_update = _run_android_release_instrumentation(
+            if installed_version != inputs.version_code:
+                return _release_failure(
+                    capability,
+                    started,
+                    "signed physical update did not install the candidate version in place",
+                )
+        candidate_validation = _run_android_release_instrumentation(
             inputs,
             candidate_targets,
             context.repo_root,
@@ -4424,8 +4552,8 @@ def _run_android_release(
             promotion_arguments=promotion_arguments,
             command=owned.command,
         )
-        if candidate_update is not None:
-            return _release_failure(capability, started, candidate_update)
+        if candidate_validation is not None:
+            return _release_failure(capability, started, candidate_validation)
         verified_again = owned.command(
             (str(inputs.apksigner), "verify", "--verbose", "--print-certs", str(apk)),
             context.repo_root,
@@ -4478,6 +4606,27 @@ def _run_android_release(
             started,
             "installed release APK does not resolve its owned HTTPS App Link",
         )
+    network_phases = {
+        "baseline": {
+            "phase": (
+                "airplane_attested_empty_offline_state"
+                if empty_baseline_hard_cut
+                else "airplane_disabled_then_real_api_acquisition"
+            ),
+            "airplane_mode_on": baseline_network_state.stdout.strip(),
+        },
+        "cold_offline": {
+            "phase": "airplane_attested_after_reboot",
+            "airplane_mode_on": offline_state.stdout.strip(),
+        },
+    }
+    if empty_baseline_hard_cut:
+        if candidate_acquisition_state is None:
+            raise AssertionError("hard-cut candidate network attestation is absent")
+        network_phases["candidate_acquisition"] = {
+            "phase": "airplane_disabled_then_real_api_acquisition",
+            "airplane_mode_on": candidate_acquisition_state.stdout.strip(),
+        }
     sha256 = _sha256_file(apk)
     evidence_relative = Path("test-results/runs") / execution.run_id / "android-release.json"
     evidence_path = context.repo_root / evidence_relative
@@ -4485,7 +4634,7 @@ def _run_android_release(
     evidence_path.write_text(
         json.dumps(
             {
-                "version": 2,
+                "version": 3,
                 "run_id": execution.run_id,
                 "git_sha": inputs.git_sha,
                 "tag": inputs.tag,
@@ -4502,11 +4651,15 @@ def _run_android_release(
                     "connection": "usb",
                     "qemu_properties": qemu_properties,
                 },
+                "offline_baseline_mode": (
+                    "empty_hard_cut" if empty_baseline_hard_cut else "compatible"
+                ),
                 "instrumentation_proofs": list(instrumentation_targets),
                 "instrumentation_stages": {
-                    "baseline_acquisition": list(baseline_targets),
+                    "baseline": list(baseline_targets),
+                    "candidate_acquisition": list(candidate_acquisition_targets),
                     "cold_offline": list(offline_targets),
-                    "candidate_update": list(candidate_targets),
+                    "candidate_validation": list(candidate_targets),
                 },
                 "app_link_host": inputs.owned_host,
                 "api_origin": embedded_api_origin,
@@ -4516,16 +4669,7 @@ def _run_android_release(
                 # Each phase records the value the controller actually read back
                 # from `settings get global airplane_mode_on`, not a claim about
                 # traffic it never observed.
-                "network_phases": {
-                    "baseline_acquisition": {
-                        "phase": "airplane_disabled_then_real_api_acquisition",
-                        "airplane_mode_on": online_state.stdout.strip(),
-                    },
-                    "cold_offline": {
-                        "phase": "airplane_attested_after_reboot",
-                        "airplane_mode_on": offline_state.stdout.strip(),
-                    },
-                },
+                "network_phases": network_phases,
                 "player_protocol": player_protocol.as_json(),
             },
             indent=2,
@@ -4543,8 +4687,13 @@ def _run_android_release(
             0,
             artifacts=(evidence_relative.as_posix(),),
         ),
-        "signed baseline acquisition, rebooted-airplane offline shelf, and in-place "
-        "candidate update passed on USB physical hardware",
+        (
+            "empty incompatible baseline, candidate acquisition, and rebooted-airplane "
+            "offline shelf passed on USB physical hardware"
+            if empty_baseline_hard_cut
+            else "signed baseline acquisition, rebooted-airplane offline shelf, and "
+            "in-place candidate update passed on USB physical hardware"
+        ),
     )
 
 
@@ -4575,6 +4724,7 @@ def _run_release_artifact(
         previous_version_code = source["previous_version_code"]
         version_name = source["version_name"]
         git_sha = source["git_sha"]
+        offline_baseline_mode = source["offline_baseline_mode"]
         app_link_host = source["app_link_host"]
         api_origin = source["api_origin"]
         target_sdk = source["target_sdk"]
@@ -4590,8 +4740,19 @@ def _run_release_artifact(
         return _release_failure(
             capability, started, "same-run Android release evidence is absent or invalid"
         )
+    bootstrap_value = environment.get("NEXUS_ANDROID_RELEASE_BOOTSTRAP_NO_DEVICE", "false")
+    hard_cut_value = environment.get(
+        "NEXUS_ANDROID_RELEASE_EMPTY_BASELINE_HARD_CUT", "false"
+    )
+    expected_offline_baseline_mode = (
+        "bootstrap_no_device"
+        if bootstrap_value == "true"
+        else "empty_hard_cut"
+        if hard_cut_value == "true"
+        else "compatible"
+    )
     if (
-        evidence_version != 2
+        evidence_version != 3
         or source.get("run_id") != execution.run_id
         or not isinstance(tag, str)
         or ANDROID_RELEASE_TAG.fullmatch(tag) is None
@@ -4612,6 +4773,16 @@ def _run_release_artifact(
         or version_name != tag.removeprefix("android-v")
         or not isinstance(git_sha, str)
         or re.fullmatch(r"[0-9a-f]{40}", git_sha) is None
+        or not isinstance(offline_baseline_mode, str)
+        or offline_baseline_mode not in _ANDROID_RELEASE_OFFLINE_BASELINE_MODES
+        or bootstrap_value not in {"true", "false"}
+        or hard_cut_value not in {"true", "false"}
+        or (bootstrap_value == "true" and hard_cut_value == "true")
+        or offline_baseline_mode != expected_offline_baseline_mode
+        or (
+            (offline_baseline_mode == "bootstrap_no_device")
+            != (source.get("physical_device") is None)
+        )
         or app_link_host != _ANDROID_RELEASE_OWNED_HOST
         or not isinstance(api_origin, str)
         or not _is_exact_https_origin(api_origin)
@@ -4823,7 +4994,30 @@ def _android_release_inputs(
     if tools is None:
         return _not_run(capability, "Android release SDK tools are absent")
     adb, apksigner, apkanalyzer = tools
-    if environment.get("NEXUS_ANDROID_RELEASE_BOOTSTRAP_NO_DEVICE") == "true":
+    bootstrap_value = environment.get(
+        "NEXUS_ANDROID_RELEASE_BOOTSTRAP_NO_DEVICE", "false"
+    )
+    if bootstrap_value not in {"true", "false"}:
+        return _fail(
+            capability,
+            "Android release bootstrap input must be true or false",
+        )
+    empty_baseline_value = environment.get(
+        "NEXUS_ANDROID_RELEASE_EMPTY_BASELINE_HARD_CUT", "false"
+    )
+    if empty_baseline_value not in {"true", "false"}:
+        return _fail(
+            capability,
+            "Android release empty-baseline hard-cut input must be true or false",
+        )
+    empty_baseline_hard_cut = empty_baseline_value == "true"
+    if bootstrap_value == "true":
+        if empty_baseline_hard_cut:
+            return _fail(
+                capability,
+                "Android release bootstrap and empty-baseline hard-cut modes are "
+                "mutually exclusive",
+            )
         # Explicit bootstrap mode: no published release carries offline reading,
         # so no in-the-wild offline state exists for the signed-physical stages
         # to protect. The operator attests the published stable version code
@@ -4893,6 +5087,7 @@ def _android_release_inputs(
         apksigner=apksigner,
         apkanalyzer=apkanalyzer,
         serial=device.serial,
+        empty_baseline_hard_cut=empty_baseline_hard_cut,
     )
 
 

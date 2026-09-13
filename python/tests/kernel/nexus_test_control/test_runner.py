@@ -1359,7 +1359,7 @@ def test_release_artifact_runs_its_python_proofs_before_staging_android_evidence
         repo_root / f"test-results/runs/{run_id}/android-release.json",
         json.dumps(
             {
-                "version": 2,
+                "version": 3,
                 "run_id": run_id,
                 "tag": "android-v1.2.3",
                 "apk_path": apk.relative_to(repo_root).as_posix(),
@@ -1370,6 +1370,8 @@ def test_release_artifact_runs_its_python_proofs_before_staging_android_evidence
                 "previous_version_code": 122,
                 "version_name": "1.2.3",
                 "git_sha": "a" * 40,
+                "offline_baseline_mode": "compatible",
+                "physical_device": {"serial": "R5CT1234"},
                 "app_link_host": "nexus.nielseriknandal.com",
                 "api_origin": "https://api.nielseriknandal.com",
                 "api_origin_source": "signed_apk_build_config",
@@ -1560,7 +1562,10 @@ def test_android_release_control_owns_physical_device_and_exact_signed_methods(
     assert runner._ANDROID_RELEASE_INSTRUMENTATION_NODES == (
         "apps/android/app/src/androidTest/java/app/nexus/android/offline/reading/"
         "OfflineReadingSignedPhysicalPromotionTest.kt::"
-        "acquiresAllFormatsAndPersistsPendingProgressOnBaseline",
+        "acquiresAllFormatsAndPersistsPendingProgress",
+        "apps/android/app/src/androidTest/java/app/nexus/android/offline/reading/"
+        "OfflineReadingSignedPhysicalPromotionTest.kt::"
+        "attestsEmptyOfflineStateOnIncompatibleBaseline",
         "apps/android/app/src/androidTest/java/app/nexus/android/offline/reading/"
         "OfflineReadingSignedPhysicalPromotionTest.kt::"
         "opensShelfAfterForceStopRebootAndAirplaneMode",
@@ -1571,7 +1576,7 @@ def test_android_release_control_owns_physical_device_and_exact_signed_methods(
         "sqliteFilesSealRecreateLeaseRemovalAndAccountPurge",
         "apps/android/app/src/androidTest/java/app/nexus/android/offline/reading/"
         "OfflineReadingSignedPhysicalPromotionTest.kt::"
-        "opensV1AfterUpdateThenPurgesOfflineState",
+        "reopensPersistedPackagesThenPurgesOfflineState",
     )
     _assert_release_artifact_retains_pinned_api_origin(tmp_path, sdk)
 
@@ -1853,9 +1858,10 @@ def test_android_device_sweep_never_selects_the_signed_promotion_methods(
         if node.split("::", 1)[0].endswith("OfflineReadingSignedPhysicalPromotionTest.kt")
     ]
     assert promotion_methods == [
-        "acquiresAllFormatsAndPersistsPendingProgressOnBaseline",
+        "acquiresAllFormatsAndPersistsPendingProgress",
+        "attestsEmptyOfflineStateOnIncompatibleBaseline",
         "opensShelfAfterForceStopRebootAndAirplaneMode",
-        "opensV1AfterUpdateThenPurgesOfflineState",
+        "reopensPersistedPackagesThenPurgesOfflineState",
     ]
     annotation_source = (
         REPO_ROOT / "apps/android/app/src/androidTest/java/app/nexus/android/offline/reading/"
@@ -2019,7 +2025,7 @@ def test_android_release_promotion_fixture_argument_contract(
         assert arguments.evidence.status is status
 
 
-def test_signed_physical_promotion_owner_uses_only_real_webview_and_bridge_paths() -> None:
+def test_signed_physical_promotion_owner_uses_real_storage_webview_and_bridge_paths() -> None:
     source = (
         REPO_ROOT / "apps/android/app/src/androidTest/java/app/nexus/android/offline/reading/"
         "OfflineReadingSignedPhysicalPromotionTest.kt"
@@ -2034,6 +2040,9 @@ def test_signed_physical_promotion_owner_uses_only_real_webview_and_bridge_paths
         'command("LogoutAndPurge")',
         "fetch(${JSONObject.quote(readerUrl)}",
         "PromotionProgressCheckpoint",
+        "SQLiteDatabase.OPEN_READONLY",
+        "offline_reader_progress_pending",
+        "launchHosted()",
         'optJSONObject("state")',
         "headers: {Range: 'bytes=0-4'}",
     ):
@@ -2042,6 +2051,9 @@ def test_signed_physical_promotion_owner_uses_only_real_webview_and_bridge_paths
         "OfflineReadingStore(",
         "OfflineReadingDatabase(",
         "OfflineReadingPackageVerifier",
+        "SQLiteDatabase.OPEN_READWRITE",
+        ".execSQL(",
+        "deleteRecursively(",
         "DeviceFixture",
         "SESSION_COOKIE",
         "CookieManager.setCookie",
@@ -2050,6 +2062,8 @@ def test_signed_physical_promotion_owner_uses_only_real_webview_and_bridge_paths
     workflow = (REPO_ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
     for name in runner._ANDROID_RELEASE_PROMOTION_INPUTS:
         assert name in workflow
+    assert "NEXUS_ANDROID_RELEASE_EMPTY_BASELINE_HARD_CUT" in workflow
+    assert "inputs.empty_baseline_hard_cut" in workflow
     assert "PROMOTION_SESSION" not in workflow
     assert "PROMOTION_COOKIE" not in workflow
 
@@ -2067,6 +2081,9 @@ def _android_release_environment(inputs: runner._AndroidReleaseInputs) -> dict[s
         "NEXUS_ANDROID_VERSION_CODE": str(inputs.version_code),
         "NEXUS_ANDROID_VERSION_NAME": inputs.version_name,
         "NEXUS_GOOGLE_WEB_CLIENT_ID": "test-client",
+        "NEXUS_ANDROID_RELEASE_EMPTY_BASELINE_HARD_CUT": str(
+            getattr(inputs, "empty_baseline_hard_cut", False)
+        ).lower(),
         "NEXUS_ANDROID_RELEASE_PROMOTION_ACCOUNT_ID": "11111111-1111-4111-8111-111111111111",
         "NEXUS_ANDROID_RELEASE_PROMOTION_PDF_MEDIA_ID": "22222222-2222-4222-8222-222222222222",
         "NEXUS_ANDROID_RELEASE_PROMOTION_EPUB_MEDIA_ID": "33333333-3333-4333-8333-333333333333",
@@ -2074,8 +2091,13 @@ def _android_release_environment(inputs: runner._AndroidReleaseInputs) -> dict[s
     }
 
 
-def test_android_release_controller_stages_baseline_before_candidate_install(
-    tmp_path: Path,
+@pytest.mark.parametrize(
+    "empty_hard_cut",
+    (False, True),
+    ids=("compatible-update", "empty-baseline-hard-cut"),
+)
+def test_android_release_controller_stages_physical_promotion_contract(
+    tmp_path: Path, empty_hard_cut: bool,
 ) -> None:
     """The controller's topology is testable without a physical device.
 
@@ -2091,9 +2113,10 @@ def test_android_release_controller_stages_baseline_before_candidate_install(
         promotion,
         "package app.nexus.android.offline.reading\n"
         "class OfflineReadingSignedPhysicalPromotionTest {\n"
-        " fun acquiresAllFormatsAndPersistsPendingProgressOnBaseline() {}\n"
+        " fun acquiresAllFormatsAndPersistsPendingProgress() {}\n"
+        " fun attestsEmptyOfflineStateOnIncompatibleBaseline() {}\n"
         " fun opensShelfAfterForceStopRebootAndAirplaneMode() {}\n"
-        " fun opensV1AfterUpdateThenPurgesOfflineState() {}\n"
+        " fun reopensPersistedPackagesThenPurgesOfflineState() {}\n"
         "}\n",
     )
     _write(
@@ -2128,6 +2151,7 @@ def test_android_release_controller_stages_baseline_before_candidate_install(
         tmp_path / "apksigner",
         tmp_path / "apkanalyzer",
         "R5CT1234",
+        empty_hard_cut,
     )
     commands: list[tuple[str, ...]] = []
     airplane = {"enabled": False}
@@ -2181,7 +2205,10 @@ def test_android_release_controller_stages_baseline_before_candidate_install(
             42 if any("install" in item and str(apk) in item for item in commands) else 41
         ),
     )
-    environment = _android_release_environment(inputs)
+    environment = {
+        **_android_release_environment(inputs),
+        "NEXUS_ANDROID_RELEASE_EMPTY_BASELINE_HARD_CUT": str(empty_hard_cut).lower(),
+    }
     context = CapabilityContext(tmp_path, Workflow.RELEASE, ())
     execution = runner._WorkflowExecution(
         context, {}, include_migration_database=False, run_id="0123456789abcdef"
@@ -2195,9 +2222,13 @@ def test_android_release_controller_stages_baseline_before_candidate_install(
     )
 
     assert result.evidence.status is RunStatus.PASS
-    baseline_target = (
+    acquisition_target = (
         "app.nexus.android.offline.reading.OfflineReadingSignedPhysicalPromotionTest#"
-        "acquiresAllFormatsAndPersistsPendingProgressOnBaseline"
+        "acquiresAllFormatsAndPersistsPendingProgress"
+    )
+    empty_target = (
+        "app.nexus.android.offline.reading.OfflineReadingSignedPhysicalPromotionTest#"
+        "attestsEmptyOfflineStateOnIncompatibleBaseline"
     )
     offline_target = (
         "app.nexus.android.offline.reading.OfflineReadingSignedPhysicalPromotionTest#"
@@ -2205,9 +2236,13 @@ def test_android_release_controller_stages_baseline_before_candidate_install(
     )
     candidate_target = (
         "app.nexus.android.offline.reading.OfflineReadingSignedPhysicalPromotionTest#"
-        "opensV1AfterUpdateThenPurgesOfflineState"
+        "reopensPersistedPackagesThenPurgesOfflineState"
     )
+    baseline_target = empty_target if empty_hard_cut else acquisition_target
     baseline_run = next(index for index, argv in enumerate(commands) if baseline_target in argv)
+    acquisition_run = next(
+        index for index, argv in enumerate(commands) if acquisition_target in argv
+    )
     offline_run = next(index for index, argv in enumerate(commands) if offline_target in argv)
     candidate_run = next(index for index, argv in enumerate(commands) if candidate_target in argv)
     candidate_install = next(
@@ -2220,14 +2255,40 @@ def test_android_release_controller_stages_baseline_before_candidate_install(
         for index, argv in enumerate(commands)
         if argv[-1:] == (str(test_apk),) and "install" in argv
     )
-    assert test_install < baseline_run < offline_run < candidate_install < candidate_run
-    for target in runner._ANDROID_RELEASE_CANDIDATE_UPDATE_NODES:
+    force_stops = [
+        index
+        for index, argv in enumerate(commands)
+        if ("force-stop", "app.nexus.android") == argv[-2:]
+    ]
+    force_stop = force_stops[-1]
+    if empty_hard_cut:
+        assert (
+            force_stops[0]
+            < test_install
+            < baseline_run
+            < candidate_install
+            < acquisition_run
+            < force_stop
+            < offline_run
+            < candidate_run
+        )
+        assert len(force_stops) == 2
+    else:
+        assert (
+            test_install
+            < baseline_run
+            < force_stop
+            < offline_run
+            < candidate_install
+            < candidate_run
+        )
+        assert len(force_stops) == 1
+    for target in runner._ANDROID_RELEASE_CANDIDATE_VALIDATION_NODES:
         assert candidate_install < next(
             index
             for index, argv in enumerate(commands)
             if target.rsplit("::", 1)[1] in " ".join(argv)
         )
-    assert any(("force-stop", "app.nexus.android") == argv[-2:] for argv in commands)
     assert any(argv[-1:] == ("reboot",) for argv in commands)
     assert any(argv[-1:] == ("wait-for-device",) for argv in commands)
     assert any(argv[-1:] == ("sys.user.0.ce_available",) for argv in commands)
@@ -2235,7 +2296,10 @@ def test_android_release_controller_stages_baseline_before_candidate_install(
     online_preflight = next(
         index for index, argv in enumerate(commands) if argv[-2:] == ("airplane-mode", "disable")
     )
-    assert online_preflight < test_install
+    if empty_hard_cut:
+        assert baseline_run < candidate_install < online_preflight < acquisition_run
+    else:
+        assert online_preflight < test_install
     assert any(argv[-1:] == ("airplane_mode_on",) for argv in commands)
     promotion_argv = commands[baseline_run]
     assert promotion_argv.count("-e") == 5
@@ -2251,16 +2315,38 @@ def test_android_release_controller_stages_baseline_before_candidate_install(
         "connection": "usb",
         "qemu_properties": {"ro.kernel.qemu": "", "ro.boot.qemu": ""},
     }, f"release evidence recorded an unmeasured device claim: {evidence['physical_device']!r}"
-    assert evidence["network_phases"] == {
-        "baseline_acquisition": {
-            "phase": "airplane_disabled_then_real_api_acquisition",
-            "airplane_mode_on": "0",
+    expected_network = {
+        "baseline": {
+            "phase": (
+                "airplane_attested_empty_offline_state"
+                if empty_hard_cut
+                else "airplane_disabled_then_real_api_acquisition"
+            ),
+            "airplane_mode_on": "1" if empty_hard_cut else "0",
         },
         "cold_offline": {
             "phase": "airplane_attested_after_reboot",
             "airplane_mode_on": "1",
         },
-    }, f"release evidence recorded an unmeasured network claim: {evidence['network_phases']!r}"
+    }
+    if empty_hard_cut:
+        expected_network["candidate_acquisition"] = {
+            "phase": "airplane_disabled_then_real_api_acquisition",
+            "airplane_mode_on": "0",
+        }
+    assert evidence["network_phases"] == expected_network, (
+        f"release evidence recorded an unmeasured network claim: {evidence['network_phases']!r}"
+    )
+    assert evidence["offline_baseline_mode"] == (
+        "empty_hard_cut" if empty_hard_cut else "compatible"
+    )
+    assert evidence["version"] == 3
+    assert evidence["instrumentation_stages"]["baseline"] == [baseline_target]
+    assert evidence["instrumentation_stages"]["candidate_acquisition"] == (
+        [acquisition_target] if empty_hard_cut else []
+    )
+    assert evidence["instrumentation_stages"]["cold_offline"] == [offline_target]
+    assert evidence["instrumentation_stages"]["candidate_validation"][-1] == candidate_target
     assert "production_network_contact" not in evidence, (
         "release evidence still asserts production network contact the controller never observed"
     )
@@ -2281,9 +2367,10 @@ def test_android_release_refuses_an_emulated_device_that_passes_usb_topology(
         "OfflineReadingSignedPhysicalPromotionTest.kt",
         "package app.nexus.android.offline.reading\n"
         "class OfflineReadingSignedPhysicalPromotionTest {\n"
-        " fun acquiresAllFormatsAndPersistsPendingProgressOnBaseline() {}\n"
+        " fun acquiresAllFormatsAndPersistsPendingProgress() {}\n"
+        " fun attestsEmptyOfflineStateOnIncompatibleBaseline() {}\n"
         " fun opensShelfAfterForceStopRebootAndAirplaneMode() {}\n"
-        " fun opensV1AfterUpdateThenPurgesOfflineState() {}\n"
+        " fun reopensPersistedPackagesThenPurgesOfflineState() {}\n"
         "}\n",
     )
     _write(
@@ -2444,6 +2531,43 @@ def test_android_release_bootstrap_inputs_attest_no_device_and_require_published
         assert inputs.bootstrap is True
         assert inputs.serial is None
         assert inputs.previous_version_code == 16
+        invalid_bootstrap = runner._android_release_inputs(
+            tmp_path,
+            {
+                **environment,
+                "NEXUS_ANDROID_RELEASE_BOOTSTRAP_NO_DEVICE": "yes",
+            },
+        )
+        assert isinstance(invalid_bootstrap, CapabilityResult)
+        assert invalid_bootstrap.evidence.status is RunStatus.FAIL
+        assert invalid_bootstrap.detail == (
+            "Android release bootstrap input must be true or false"
+        )
+        invalid_mode = runner._android_release_inputs(
+            tmp_path,
+            {
+                **environment,
+                "NEXUS_ANDROID_RELEASE_EMPTY_BASELINE_HARD_CUT": "yes",
+            },
+        )
+        assert isinstance(invalid_mode, CapabilityResult)
+        assert invalid_mode.evidence.status is RunStatus.FAIL
+        assert invalid_mode.detail == (
+            "Android release empty-baseline hard-cut input must be true or false"
+        )
+        incompatible_modes = runner._android_release_inputs(
+            tmp_path,
+            {
+                **environment,
+                "NEXUS_ANDROID_RELEASE_EMPTY_BASELINE_HARD_CUT": "true",
+            },
+        )
+        assert isinstance(incompatible_modes, CapabilityResult)
+        assert incompatible_modes.evidence.status is RunStatus.FAIL
+        assert incompatible_modes.detail == (
+            "Android release bootstrap and empty-baseline hard-cut modes are "
+            "mutually exclusive"
+        )
         for variable, value, detail in (
             (
                 "NEXUS_ANDROID_RELEASE_BASE_URL",
@@ -2471,6 +2595,51 @@ def test_android_release_bootstrap_inputs_attest_no_device_and_require_published
     assert adb_calls == [], "bootstrap inputs must not attest or read any device"
 
 
+def test_android_release_inputs_bind_the_empty_baseline_hard_cut_to_the_usb_device(
+    tmp_path: Path,
+) -> None:
+    sdk = tmp_path / "android-sdk"
+    _write_executable(
+        sdk / "platform-tools/adb",
+        stdout_by_subcommand={
+            "devices": (
+                "List of devices attached\n"
+                "R5CT1234 device usb:1-2 product:nexus model:Pixel transport_id:1\n"
+            ),
+            "-s": "  versionCode=41 minSdk=26 targetSdk=36\n",
+        },
+    )
+    _write_executable(sdk / "build-tools/35.0.0/apksigner")
+    _write_executable(sdk / "cmdline-tools/latest/bin/apkanalyzer")
+    keystore = tmp_path / "release.jks"
+    keystore.write_bytes(b"keystore")
+    keystore.chmod(0o600)
+    environment = {
+        **_stub_tools(tmp_path, git_stdout="a" * 40),
+        "ANDROID_HOME": str(sdk),
+        "ANDROID_RELEASE_TAG": "android-v2.1",
+        "NEXUS_ANDROID_RELEASE_BASE_URL": "https://nexus.nielseriknandal.com",
+        "NEXUS_ANDROID_RELEASE_OWNED_HOST": "nexus.nielseriknandal.com",
+        "NEXUS_ANDROID_RELEASE_API_ORIGIN": "https://api.nielseriknandal.com",
+        "NEXUS_ANDROID_RELEASE_CERT_SHA256": "a" * 64,
+        "NEXUS_ANDROID_RELEASE_STORE_FILE": str(keystore),
+        "NEXUS_ANDROID_RELEASE_STORE_PASSWORD": "test-password",
+        "NEXUS_ANDROID_RELEASE_KEY_ALIAS": "test-key",
+        "NEXUS_ANDROID_RELEASE_KEY_PASSWORD": "test-password",
+        "NEXUS_ANDROID_VERSION_CODE": "42",
+        "NEXUS_ANDROID_VERSION_NAME": "2.1",
+        "NEXUS_GOOGLE_WEB_CLIENT_ID": "test-client",
+        "NEXUS_ANDROID_RELEASE_EMPTY_BASELINE_HARD_CUT": "true",
+    }
+
+    inputs = runner._android_release_inputs(tmp_path, environment)
+
+    assert isinstance(inputs, runner._AndroidReleaseDeviceInputs)
+    assert inputs.serial == "R5CT1234"
+    assert inputs.previous_version_code == 41
+    assert inputs.empty_baseline_hard_cut is True
+
+
 def test_android_release_bootstrap_skips_device_stages_and_records_explicit_evidence(
     tmp_path: Path,
 ) -> None:
@@ -2483,9 +2652,10 @@ def test_android_release_bootstrap_skips_device_stages_and_records_explicit_evid
         "OfflineReadingSignedPhysicalPromotionTest.kt",
         "package app.nexus.android.offline.reading\n"
         "class OfflineReadingSignedPhysicalPromotionTest {\n"
-        " fun acquiresAllFormatsAndPersistsPendingProgressOnBaseline() {}\n"
+        " fun acquiresAllFormatsAndPersistsPendingProgress() {}\n"
+        " fun attestsEmptyOfflineStateOnIncompatibleBaseline() {}\n"
         " fun opensShelfAfterForceStopRebootAndAirplaneMode() {}\n"
-        " fun opensV1AfterUpdateThenPurgesOfflineState() {}\n"
+        " fun reopensPersistedPackagesThenPurgesOfflineState() {}\n"
         "}\n",
     )
     _write(
@@ -2596,22 +2766,25 @@ def test_android_release_bootstrap_skips_device_stages_and_records_explicit_evid
         (tmp_path / "test-results/runs/0123456789abcdef/android-release.json").read_text()
     )
     assert evidence["physical_device"] is None
+    assert evidence["offline_baseline_mode"] == "bootstrap_no_device"
+    assert evidence["version"] == 3
     stage_targets = {
-        "baseline_acquisition": [
+        "baseline": [
             "app.nexus.android.offline.reading.OfflineReadingSignedPhysicalPromotionTest#"
-            "acquiresAllFormatsAndPersistsPendingProgressOnBaseline",
+            "acquiresAllFormatsAndPersistsPendingProgress",
         ],
+        "candidate_acquisition": [],
         "cold_offline": [
             "app.nexus.android.offline.reading.OfflineReadingSignedPhysicalPromotionTest#"
             "opensShelfAfterForceStopRebootAndAirplaneMode",
         ],
-        "candidate_update": [
+        "candidate_validation": [
             "app.nexus.android.NativeAuthHandoffTest#"
             "nativeAuthStartCarriesTheExactHandoffContractToTheOwnedOrigin",
             "app.nexus.android.offline.reading.OfflineReadingDeviceLifecycleTest#"
             "sqliteFilesSealRecreateLeaseRemovalAndAccountPurge",
             "app.nexus.android.offline.reading.OfflineReadingSignedPhysicalPromotionTest#"
-            "opensV1AfterUpdateThenPurgesOfflineState",
+            "reopensPersistedPackagesThenPurgesOfflineState",
         ],
     }
     assert evidence["bootstrap"] == {
@@ -2652,7 +2825,7 @@ def _assert_release_artifact_retains_pinned_api_origin(tmp_path: Path, sdk: Path
         evidence,
         json.dumps(
             {
-                "version": 2,
+                "version": 3,
                 "run_id": run_id,
                 "git_sha": git_sha,
                 "tag": tag,
@@ -2664,6 +2837,8 @@ def _assert_release_artifact_retains_pinned_api_origin(tmp_path: Path, sdk: Path
                 "previous_version_code": 41,
                 "version_name": "2.1",
                 "signer_sha256": "b" * 64,
+                "offline_baseline_mode": "compatible",
+                "physical_device": {"serial": "R5CT1234"},
                 "app_link_host": "nexus.nielseriknandal.com",
                 "api_origin": api_origin,
                 "api_origin_source": "signed_apk_build_config",

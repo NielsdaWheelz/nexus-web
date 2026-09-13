@@ -872,14 +872,23 @@ direct API origin embedded in the APK. Physical offline-reading promotion must
 compare that origin with the real mint response's `package_base_url` and fail
 closed on drift; native exact-origin enforcement is not relaxed.
 
-The signed physical promotion controller is staged: it must acquire against the
-strictly older installed baseline before candidate installation, own and attest
-force-stop/reboot/first-unlock/airplane before the cold-offline phase, and only
-then install the candidate in place for V1 reopen/progress/purge/update. A
-missing executable staged owner is `not_run`; a controller topology test is not
-physical promotion evidence. Retained release evidence records only facts the
-controller read back from the device — the qemu build properties and each
-phase's `airplane_mode_on` value — never an assumed constant.
+The signed physical promotion controller has two explicit device topologies.
+The default, compatible topology acquires against the strictly older installed
+baseline, owns and attests force-stop/reboot/first-unlock/airplane for its cold
+offline phase, then installs the candidate in place for exact
+reopen/progress/purge validation. An incompatible contract cut may instead use
+`empty_baseline_hard_cut`, but only after production activates the candidate
+contract: the controller first enables airplane mode and proves the complete
+legacy shelf empty through a quiesced read-only file/database census that cannot
+invoke cleanup, installs the candidate, disables airplane mode for
+candidate acquisition, then force-stops/reboots and proves the candidate's
+packages and progress offline before purge. This mode is not compatible with
+`bootstrap_no_device`; it never guesses, migrates, or silently discards legacy
+offline state. A missing executable staged owner is `not_run`; a controller
+topology test is not physical promotion evidence. Retained release evidence
+records the selected topology and only facts the controller read back from the
+device — the qemu build properties and each phase's `airplane_mode_on` value —
+never an assumed constant.
 
 Extension proof covers MV3 runtime, permissions, bearer scope, content capture,
 and handoff boundaries. Reuse the canonical content corpus.

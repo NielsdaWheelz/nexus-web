@@ -291,6 +291,17 @@ step-5 operator smoke remains mandatory, and every
 later release must run the full signed-physical stages on the protected USB
 runner against the then-real baseline.
 
+For a later incompatible offline-reader contract cut, "full" does not mean
+pretending legacy packages remain readable. After production activates the new
+contract, the release may select `empty_baseline_hard_cut`: the physical old
+app is put offline and force-stopped, then a read-only file/database census must
+attest its complete shelf empty before candidate installation; the candidate
+then acquires the production fixtures online and
+must reopen their exact progress after force-stop, reboot, first unlock, and
+airplane mode before purge. Any legacy item blocks release. This mode and
+`bootstrap_no_device` are mutually exclusive. Its bounded cost is a controlled
+mobile-download outage between backend activation and candidate publication.
+
 ## Implementation boundaries
 
 Lanes are sequential at their declared handoff and otherwise non-overlapping.

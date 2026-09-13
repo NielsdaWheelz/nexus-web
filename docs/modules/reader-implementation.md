@@ -1020,7 +1020,9 @@ lease-delayed removal, and account purge and is included in signed-release
 instrumentation. Promotion still requires protected physical-device evidence
 for force-stop, reboot after unlock, airplane-mode cold launch, real local API
 package acquisition for all three formats, pending-progress restoration, and
-in-place V1 update compatibility. Host or emulator success is not that evidence.
+either compatible in-place update continuity or a complete empty-baseline
+attestation before an incompatible candidate acquisition. Host or emulator
+success is not that evidence.
 
 ## validation commands
 
