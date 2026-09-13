@@ -189,6 +189,7 @@ export default function ChatComposer({
   const isMobileViewport = useIsMobileViewport();
 
   const {
+    restored,
     content,
     setContent,
     profile,
@@ -240,9 +241,9 @@ export default function ChatComposer({
   }
 
   useEffect(() => {
-    if (!autoFocus) return;
+    if (!restored || !autoFocus) return;
     textareaRef.current?.focus({ preventScroll: true });
-  }, [autoFocus, focusKey]);
+  }, [autoFocus, focusKey, restored]);
 
   useEffect(() => {
     setError(null);
@@ -369,6 +370,7 @@ export default function ChatComposer({
     const trimmed = content.trim();
     if (
       !trimmed ||
+      !restored ||
       sending ||
       sendCapability.kind !== "Available" ||
       !effectiveProfileSelection ||
@@ -414,6 +416,7 @@ export default function ChatComposer({
     pendingBlocksSend,
     postCommand,
     readerHighlight,
+    restored,
     sendCapability,
     sending,
   ]);
@@ -490,8 +493,9 @@ export default function ChatComposer({
 
   // While reconciling, the composer is a LOCKED replay panel: text/profile/quote
   // stay visible but immutable, and the only action is "Retry send".
-  const composerDisabled = sending || reconciling;
+  const composerDisabled = !restored || sending || reconciling;
   const sendDisabled =
+    !restored ||
     sending ||
     sendCapability.kind !== "Available" ||
     !effectiveProfileSelection ||

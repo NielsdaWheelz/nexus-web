@@ -23,7 +23,14 @@
 
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   serializeChatDraftKey,
   type ChatDraftKey,
@@ -59,6 +66,18 @@ export const EMPTY_DRAFT_RECORD: ChatDraftRecord = {
 };
 
 const STORAGE_PREFIX = "nx_chat_draft:";
+
+function subscribeBrowserStorage(): () => void {
+  return () => {};
+}
+
+function browserStorageSnapshot(): boolean {
+  return true;
+}
+
+function serverStorageSnapshot(): boolean {
+  return false;
+}
 
 // ---------------------------------------------------------------------------
 // Pure operation transitions (exported for direct unit testing)
@@ -187,6 +206,7 @@ function persistRecord(storageKey: string, record: ChatDraftRecord): void {
 // ---------------------------------------------------------------------------
 
 interface UseChatDraft {
+  restored: boolean;
   content: string;
   setContent: (value: string) => void;
   profile: ChatProfileSelection | null;
@@ -223,16 +243,21 @@ export function useChatDraft({
     () => STORAGE_PREFIX + serializeChatDraftKey(draftKey),
     [draftKey],
   );
+  const restored = useSyncExternalStore(
+    subscribeBrowserStorage,
+    browserStorageSnapshot,
+    serverStorageSnapshot,
+  );
 
-  // Synchronous record selection: switching keys loads the new record during
-  // render (the React "adjust state during render" pattern), so no effect-driven
-  // stale record can render or mutate under another key.
+  // Server markup and the hydration render share the empty, locked snapshot.
+  // Once browser storage exists, switching keys loads the new record during
+  // render so no effect-driven stale record can mutate under another key.
   const [state, setState] = useState<{
-    storageKey: string;
+    storageKey: string | null;
     record: ChatDraftRecord;
-  }>(() => ({ storageKey, record: loadRecord(storageKey) }));
+  }>({ storageKey: null, record: EMPTY_DRAFT_RECORD });
   let record = state.record;
-  if (state.storageKey !== storageKey) {
+  if (restored && state.storageKey !== storageKey) {
     record = loadRecord(storageKey);
     setState({ storageKey, record });
   }
@@ -241,21 +266,25 @@ export function useChatDraft({
 
   const write = useCallback(
     (next: ChatDraftRecord) => {
+      if (!restored) {
+        throw new Error("Chat draft storage is not restored");
+      }
       persistRecord(storageKey, next);
       setState({ storageKey, record: next });
     },
-    [storageKey],
+    [restored, storageKey],
   );
 
   // An explicit `initialContent` change (a user action seeding the composer)
   // overwrites the active draft text. It never overrides a locked reconciliation.
   const initialContentRef = useRef(initialContent);
   useEffect(() => {
+    if (!restored) return;
     if (initialContentRef.current === initialContent) return;
     initialContentRef.current = initialContent;
     if (recordRef.current.operation.kind === "ReconcileRequired") return;
     write({ ...recordRef.current, text: initialContent });
-  }, [initialContent, write]);
+  }, [initialContent, restored, write]);
 
   const setContent = useCallback(
     (value: string) => write({ ...recordRef.current, text: value }),
@@ -301,6 +330,7 @@ export function useChatDraft({
   const resolveSuccess = useCallback(() => write(EMPTY_DRAFT_RECORD), [write]);
 
   return {
+    restored,
     content: record.text,
     setContent,
     profile: record.profile,

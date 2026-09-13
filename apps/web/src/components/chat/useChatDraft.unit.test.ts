@@ -1,3 +1,5 @@
+import { createElement } from "react";
+import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import {
   EMPTY_DRAFT_RECORD,
@@ -7,6 +9,7 @@ import {
   withSubmitting,
   type ChatDraftRecord,
   type ChatSendCommand,
+  useChatDraft,
 } from "@/components/chat/useChatDraft";
 import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
 
@@ -37,6 +40,19 @@ const draft: ChatDraftRecord = {
   profile: { profileId: "fast", reasoningOptionId: "low" },
   operation: { kind: "Absent" },
 };
+
+function DraftProbe() {
+  const draftState = useChatDraft({
+    draftKey: { kind: "Path", targetId: "server-render" },
+  });
+  return createElement("output", null, draftState.content);
+}
+
+describe("chat draft hydration", () => {
+  it("server-renders an unrestored snapshot without browser storage", () => {
+    expect(renderToString(createElement(DraftProbe))).toBe("<output></output>");
+  });
+});
 
 describe("chat send-operation transitions", () => {
   it("withSubmitting persists the exact command and preserves text/profile", () => {
