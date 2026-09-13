@@ -21,6 +21,15 @@
       "expected_failure": "ephemeral client range leaked into allocated test ports"
     },
     {
+      "id": "test-linked-runtime-port-reservation-bypass",
+      "patch": "testdata/faults/test-linked-runtime-port-reservation-bypass.patch",
+      "sha256": "d9fde17e58857124ced3e13256ad9157e992fef03bce639267b8c86d737b0779",
+      "proofs": [
+        "pytest:python/tests/kernel/nexus_test_control/test_linked_runtime_port_reservations.py::test_linked_worktree_runtimes_reserve_every_persisted_port"
+      ],
+      "expected_failure": "a linked worktree's durable port reservation was reused"
+    },
+    {
       "id": "test-control-output-bounds-bypass",
       "patch": "testdata/faults/test-control-output-bounds-bypass.patch",
       "sha256": "e32af9f60e815bd923346b82fd874e369b8db27644cdc5d4f793cfd6a0a0356b",
