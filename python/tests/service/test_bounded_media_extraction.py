@@ -1241,10 +1241,11 @@ def test_in_flight_source_progress_serializes_through_the_declared_media_wire(
         unit="Page",
     )
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
+    with warnings.catch_warnings(record=True) as emitted:
+        warnings.simplefilter("always")
         with Session(engine) as db:
             counted = get_media_for_viewer(db, viewer_id, media_id).model_dump(mode="json")
+    assert not emitted, [str(warning.message) for warning in emitted]
     assert counted["source_progress"] == {
         "kind": "Present",
         "value": {
@@ -1263,11 +1264,12 @@ def test_in_flight_source_progress_serializes_through_the_declared_media_wire(
         fence=fence,
         media_id=media_id,
     )
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
+    with warnings.catch_warnings(record=True) as emitted:
+        warnings.simplefilter("always")
         with Session(engine) as db:
             listed, _cursor = list_visible_media(db, viewer_id)
             staged = next(media for media in listed if media.id == media_id).model_dump(mode="json")
+    assert not emitted, [str(warning.message) for warning in emitted]
     assert staged["source_progress"]["kind"] == "Present"
     assert staged["source_progress"]["value"]["kind"] == "Stage"
     assert staged["source_progress"]["value"]["stage"] == "Finalize"
