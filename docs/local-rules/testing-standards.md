@@ -137,23 +137,23 @@ selected exact module-level Python test plus its imports and non-test module
 support differs from base. Sibling tests are separate owners: changing only a
 sibling retains the selected owner's declared FAULT.
 
-One exact module-level Python proof MAY opt into
+One exact module-level Python proof or whole-file Node proof MAY opt into
 `changed_owner_red: coherent-fault` on its single registered product fault when
 an intentional hard-cut interface or a behavior-preserving proof-ownership
 refactor prevents BASE from reaching or falsifying the retained behavioral
-contract. Policy MUST require one canonical exact proof, one product-only
-applicable patch, its SHA-256, and its expected assertion fingerprint. The
-manifest MUST also pin the SHA-256 of version-stable source slices for that exact
-test plus its imports and non-test module support; interpreter-specific AST
-serialization is not a durable encoding. Any owner drift is a policy failure
-requiring explicit review and a new digest. The coherent-candidate fault proves
-only that registered contract; every independent new behavior requires a
-separate exact proof and sensitivity witness. The exception mechanism itself
-MUST have a canonical BASE sensitivity owner. The work report MUST name why
-BASE was inapplicable.
-Whole-file owners, class-qualified nodes, non-Python exact nodes, unmarked
-faults, absent owners, duplicate owners, parse failures, digest drift, and Git
-read failures fail closed.
+contract. Policy MUST require one canonical proof, one product-only applicable
+patch, its SHA-256, and its expected assertion fingerprint. The manifest MUST
+also pin the SHA-256 of version-stable source slices for the exact Python test
+plus its imports and non-test module support, or the complete source of the
+whole-file Node owner; interpreter-specific syntax-tree serialization is not a
+durable encoding. Any owner drift is a policy failure requiring explicit review
+and a new digest. The coherent-candidate fault proves only that registered
+contract; every independent new behavior requires a separate proof and
+sensitivity witness. The exception mechanism itself MUST have a canonical BASE
+sensitivity owner. The work report MUST name why BASE was inapplicable.
+Whole-file Python owners, class-qualified Python nodes, node-qualified Node
+owners, other runners, unmarked faults, absent owners, duplicate owners, parse
+failures, digest drift, and Git read failures fail closed.
 
 A Python BASE checkout MUST retain the baseline revision's dependency manifests
 and locks. Candidate Python proof and shared test-support overlays MUST NOT

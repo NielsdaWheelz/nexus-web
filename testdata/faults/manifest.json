@@ -886,7 +886,9 @@
       "proofs": [
         "node-test:node/ingest/test/article_extraction.test.mjs"
       ],
-      "expected_failure": "The input did not match the regular expression"
+      "expected_failure": "The input did not match the regular expression",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "2b2d16a84885bddbe330f5c444f88977f730332d9cd66539012a7b1b0d38554a"
     },
     {
       "id": "document-media-offline-reading-readiness-gate-bypass",
@@ -1201,7 +1203,7 @@
       ],
       "expected_failure": "DID NOT RAISE",
       "changed_owner_red": "coherent-fault",
-      "changed_owner_sha256": "eb1af88f2f67b6690946e1cbcd3c39df8fb7eba5e5bd6ed8f8a0f282b94a80f2"
+      "changed_owner_sha256": "ccf2e93d15c0d93454acaee4bc261d4aaf99d8cd480dab8068732dbe4de5ddb7"
     },
     {
       "id": "reader-map-detail-scope-follow-bypass",

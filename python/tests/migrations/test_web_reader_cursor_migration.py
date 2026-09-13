@@ -150,8 +150,7 @@ def test_reader_structure_repair_reanchors_only_exact_stale_web_cursors(
             }
             connection.execute(
                 text(
-                    "UPDATE reader_media_state SET locator = CAST(:locator AS jsonb) "
-                    "WHERE id = :id"
+                    "UPDATE reader_media_state SET locator = CAST(:locator AS jsonb) WHERE id = :id"
                 ),
                 {"id": blocked_cursor_id, "locator": json.dumps(ambiguous_locator)},
             )

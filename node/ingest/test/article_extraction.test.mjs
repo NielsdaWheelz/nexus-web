@@ -15,9 +15,9 @@ test('a unique semantic main landmark owns article extraction', () => {
             <main id="main-content" role="main">
               <article><h1>This Living Hand</h1><p>${intended}</p></article>
             </main>
-            <aside aria-label="Related poems">
+            <div aria-label="Related poems">
               <article><h2>Ode on a Grecian Urn</h2><p>${unrelated}</p></article>
-            </aside>
+            </div>
           </body>
         </html>`, { url: 'https://example.com/poem' });
 

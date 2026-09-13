@@ -4085,8 +4085,7 @@ def _run_android_release(
             f"Android release instrumentation owner is absent or invalid: {error}",
         )
     empty_baseline_hard_cut = (
-        isinstance(inputs, _AndroidReleaseDeviceInputs)
-        and inputs.empty_baseline_hard_cut
+        isinstance(inputs, _AndroidReleaseDeviceInputs) and inputs.empty_baseline_hard_cut
     )
     baseline_targets = empty_baseline_targets if empty_baseline_hard_cut else acquisition_targets
     candidate_acquisition_targets = acquisition_targets if empty_baseline_hard_cut else ()
@@ -4741,9 +4740,7 @@ def _run_release_artifact(
             capability, started, "same-run Android release evidence is absent or invalid"
         )
     bootstrap_value = environment.get("NEXUS_ANDROID_RELEASE_BOOTSTRAP_NO_DEVICE", "false")
-    hard_cut_value = environment.get(
-        "NEXUS_ANDROID_RELEASE_EMPTY_BASELINE_HARD_CUT", "false"
-    )
+    hard_cut_value = environment.get("NEXUS_ANDROID_RELEASE_EMPTY_BASELINE_HARD_CUT", "false")
     expected_offline_baseline_mode = (
         "bootstrap_no_device"
         if bootstrap_value == "true"
@@ -4994,17 +4991,13 @@ def _android_release_inputs(
     if tools is None:
         return _not_run(capability, "Android release SDK tools are absent")
     adb, apksigner, apkanalyzer = tools
-    bootstrap_value = environment.get(
-        "NEXUS_ANDROID_RELEASE_BOOTSTRAP_NO_DEVICE", "false"
-    )
+    bootstrap_value = environment.get("NEXUS_ANDROID_RELEASE_BOOTSTRAP_NO_DEVICE", "false")
     if bootstrap_value not in {"true", "false"}:
         return _fail(
             capability,
             "Android release bootstrap input must be true or false",
         )
-    empty_baseline_value = environment.get(
-        "NEXUS_ANDROID_RELEASE_EMPTY_BASELINE_HARD_CUT", "false"
-    )
+    empty_baseline_value = environment.get("NEXUS_ANDROID_RELEASE_EMPTY_BASELINE_HARD_CUT", "false")
     if empty_baseline_value not in {"true", "false"}:
         return _fail(
             capability,

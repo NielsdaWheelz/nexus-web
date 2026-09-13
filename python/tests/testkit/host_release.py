@@ -340,6 +340,35 @@ def _load_release(path: Path, module_name: str) -> ModuleType:
     return module
 
 
+@dataclass(frozen=True, slots=True)
+class _DiskUsage:
+    total: int
+    used: int
+    free: int
+
+
+def _load_host_release(path: Path, module_name: str, root: Path) -> tuple[ModuleType, Any]:
+    release = _load_release(path, module_name)
+    paths = release.ReleasePaths.under(root)
+    state_path = Path(os.environ["NEXUS_FAKE_DOCKER_STATE"])
+    capacity_fields = {
+        paths.parser_temp_root: "parser_temp_free_bytes",
+        paths.backup_root.parent: "backup_free_bytes",
+    }
+
+    def disk_usage(target: str | os.PathLike[str]) -> _DiskUsage:
+        field = capacity_fields.get(Path(target))
+        if field is None:
+            raise AssertionError(f"unsupported fake disk capacity target: {target!r}")
+        free = _load_state(state_path).get(field)
+        if type(free) is not int or free < 0:
+            raise AssertionError(f"fake disk capacity is malformed: {field}")
+        return _DiskUsage(total=free, used=0, free=free)
+
+    release.shutil.disk_usage = disk_usage
+    return release, release.HostRelease(paths)
+
+
 def _write_bundle(root: Path, source_sha: str, manifest: dict[str, object]) -> tuple[Path, ...]:
     bundle = root / "opt/nexus/releases" / source_sha
     files = {
@@ -938,6 +967,7 @@ class HostReleaseHarness:
                 "apparmor_profile_load_count": 0,
                 "apparmor_profile_preflight_count": 0,
                 "ancestry_proofs": [],
+                "backup_free_bytes": 1024 * 1024 * 1024,
                 "backup_dump_count": 0,
                 "backup_verify_count": 0,
                 "candidate_health_failures_remaining": 0,
@@ -996,6 +1026,7 @@ class HostReleaseHarness:
                 "operation_failures_remaining": {},
                 "oracle_digest": str(candidate["expected_oracle_manifest_digest"]),
                 "current_oracle_digest": str(current_candidate["expected_oracle_manifest_digest"]),
+                "parser_temp_free_bytes": 1024 * 1024 * 1024,
                 "candidate_active": False,
                 "candidate_player_protocol_sha256": hashlib.sha256(
                     _PLAYER_PROTOCOL_CORPUS
@@ -2904,8 +2935,9 @@ def _drop_to_test_group() -> None:
 def apply_main(arguments: list[str]) -> int:
     _drop_to_test_group()
     release_path, root, source_sha, deployment_id, production_host = arguments
-    release = _load_release(Path(release_path), "nexus_host_release_behavior_driver")
-    host = release.HostRelease(release.ReleasePaths.under(Path(root)))
+    release, host = _load_host_release(
+        Path(release_path), "nexus_host_release_behavior_driver", Path(root)
+    )
     attempt = host.apply(
         source_sha=source_sha,
         deployment_id=deployment_id,
@@ -2928,8 +2960,9 @@ def apply_main(arguments: list[str]) -> int:
 def finalize_main(arguments: list[str]) -> int:
     _drop_to_test_group()
     release_path, root, source_sha, deployment_id = arguments
-    release = _load_release(Path(release_path), "nexus_host_release_finalize_driver")
-    host = release.HostRelease(release.ReleasePaths.under(Path(root)))
+    release, host = _load_host_release(
+        Path(release_path), "nexus_host_release_finalize_driver", Path(root)
+    )
     attempt = host.finalize(
         source_sha=source_sha,
         deployment_id=deployment_id,
@@ -2941,8 +2974,9 @@ def finalize_main(arguments: list[str]) -> int:
 def verify_current_main(arguments: list[str]) -> int:
     _drop_to_test_group()
     release_path, root, source_sha = arguments
-    release = _load_release(Path(release_path), "nexus_host_release_verify_current_driver")
-    host = release.HostRelease(release.ReleasePaths.under(Path(root)))
+    release, host = _load_host_release(
+        Path(release_path), "nexus_host_release_verify_current_driver", Path(root)
+    )
     host.verify_current(source_sha)
     sys.stdout.buffer.write(_canonical_json({"source_sha": source_sha, "status": "current"}))
     return 0
@@ -2951,8 +2985,9 @@ def verify_current_main(arguments: list[str]) -> int:
 def qualify_codex_capacity_main(arguments: list[str]) -> int:
     _drop_to_test_group()
     release_path, root, source_sha = arguments
-    release = _load_release(Path(release_path), "nexus_host_release_capacity_driver")
-    host = release.HostRelease(release.ReleasePaths.under(Path(root)))
+    release, host = _load_host_release(
+        Path(release_path), "nexus_host_release_capacity_driver", Path(root)
+    )
     host.qualify_codex_capacity(source_sha)
     sys.stdout.buffer.write(_canonical_json({"source_sha": source_sha, "status": "passed"}))
     return 0
@@ -2961,8 +2996,9 @@ def qualify_codex_capacity_main(arguments: list[str]) -> int:
 def resume_codex_agent_host_main(arguments: list[str]) -> int:
     _drop_to_test_group()
     release_path, root, source_sha = arguments
-    release = _load_release(Path(release_path), "nexus_host_release_resume_codex_driver")
-    host = release.HostRelease(release.ReleasePaths.under(Path(root)))
+    release, host = _load_host_release(
+        Path(release_path), "nexus_host_release_resume_codex_driver", Path(root)
+    )
     receipt = host.resume_codex_agent_host(source_sha)
     sys.stdout.buffer.write(_canonical_json(receipt))
     return 0
@@ -2971,8 +3007,9 @@ def resume_codex_agent_host_main(arguments: list[str]) -> int:
 def install_codex_state_boot_guard_main(arguments: list[str]) -> int:
     _drop_to_test_group()
     release_path, root, source_sha = arguments
-    release = _load_release(Path(release_path), "nexus_host_release_install_codex_guard_driver")
-    host = release.HostRelease(release.ReleasePaths.under(Path(root)))
+    release, host = _load_host_release(
+        Path(release_path), "nexus_host_release_install_codex_guard_driver", Path(root)
+    )
     receipt = host.install_codex_state_boot_guard(source_sha)
     sys.stdout.buffer.write(_canonical_json(receipt))
     return 0
@@ -2981,8 +3018,9 @@ def install_codex_state_boot_guard_main(arguments: list[str]) -> int:
 def activate_caddy_config_main(arguments: list[str]) -> int:
     _drop_to_test_group()
     release_path, root, source_sha = arguments
-    release = _load_release(Path(release_path), "nexus_host_release_activate_caddy_driver")
-    host = release.HostRelease(release.ReleasePaths.under(Path(root)))
+    release, host = _load_host_release(
+        Path(release_path), "nexus_host_release_activate_caddy_driver", Path(root)
+    )
     receipt = host.activate_caddy_config(source_sha)
     sys.stdout.buffer.write(_canonical_json(receipt))
     return 0
@@ -2991,8 +3029,9 @@ def activate_caddy_config_main(arguments: list[str]) -> int:
 def fail_bound_frontend_main(arguments: list[str]) -> int:
     _drop_to_test_group()
     release_path, root, source_sha, deployment_id = arguments
-    release = _load_release(Path(release_path), "nexus_host_release_fail_frontend_driver")
-    host = release.HostRelease(release.ReleasePaths.under(Path(root)))
+    release, host = _load_host_release(
+        Path(release_path), "nexus_host_release_fail_frontend_driver", Path(root)
+    )
     attempt = host.fail_bound_frontend(
         source_sha=source_sha,
         deployment_id=deployment_id,
@@ -3004,8 +3043,9 @@ def fail_bound_frontend_main(arguments: list[str]) -> int:
 def fail_auth_smoke_main(arguments: list[str]) -> int:
     _drop_to_test_group()
     release_path, root, source_sha, deployment_id = arguments
-    release = _load_release(Path(release_path), "nexus_host_release_fail_auth_smoke_driver")
-    host = release.HostRelease(release.ReleasePaths.under(Path(root)))
+    release, host = _load_host_release(
+        Path(release_path), "nexus_host_release_fail_auth_smoke_driver", Path(root)
+    )
     attempt = host.fail_auth_smoke(
         source_sha=source_sha,
         deployment_id=deployment_id,

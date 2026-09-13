@@ -2097,7 +2097,8 @@ def _android_release_environment(inputs: runner._AndroidReleaseInputs) -> dict[s
     ids=("compatible-update", "empty-baseline-hard-cut"),
 )
 def test_android_release_controller_stages_physical_promotion_contract(
-    tmp_path: Path, empty_hard_cut: bool,
+    tmp_path: Path,
+    empty_hard_cut: bool,
 ) -> None:
     """The controller's topology is testable without a physical device.
 
@@ -2540,9 +2541,7 @@ def test_android_release_bootstrap_inputs_attest_no_device_and_require_published
         )
         assert isinstance(invalid_bootstrap, CapabilityResult)
         assert invalid_bootstrap.evidence.status is RunStatus.FAIL
-        assert invalid_bootstrap.detail == (
-            "Android release bootstrap input must be true or false"
-        )
+        assert invalid_bootstrap.detail == ("Android release bootstrap input must be true or false")
         invalid_mode = runner._android_release_inputs(
             tmp_path,
             {
@@ -2565,8 +2564,7 @@ def test_android_release_bootstrap_inputs_attest_no_device_and_require_published
         assert isinstance(incompatible_modes, CapabilityResult)
         assert incompatible_modes.evidence.status is RunStatus.FAIL
         assert incompatible_modes.detail == (
-            "Android release bootstrap and empty-baseline hard-cut modes are "
-            "mutually exclusive"
+            "Android release bootstrap and empty-baseline hard-cut modes are mutually exclusive"
         )
         for variable, value, detail in (
             (

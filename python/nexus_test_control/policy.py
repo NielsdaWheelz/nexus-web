@@ -16,7 +16,10 @@ from nexus_test_control.model import (
     TEST_ROUTING_SHA256,
     ChangedOwnerRedStrategy,
 )
-from nexus_test_control.proof_owner import python_exact_proof_owner_sha256
+from nexus_test_control.proof_owner import (
+    node_whole_file_proof_owner_sha256,
+    python_exact_proof_owner_sha256,
+)
 
 
 @dataclass(frozen=True)
@@ -1916,7 +1919,7 @@ def fault_manifest_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
             )
             coherent_path, coherent_separator, coherent_node = coherent_identity.partition("::")
             coherent_owner_path = _resolved_repository_file(repo_root, coherent_path)
-            coherent_shape = (
+            coherent_python_shape = (
                 coherent_proof is not None
                 and coherent_proof.startswith("pytest:")
                 and coherent_identity.count("::") == 1
@@ -1925,12 +1928,21 @@ def fault_manifest_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                 and coherent_path.endswith(".py")
                 and coherent_owner_path is not None
             )
-            if not coherent_shape:
+            coherent_node_shape = (
+                coherent_proof is not None
+                and coherent_proof.startswith("node-test:node/ingest/test/")
+                and not coherent_separator
+                and not coherent_node
+                and coherent_path.endswith(".test.mjs")
+                and coherent_owner_path is not None
+            )
+            if not (coherent_python_shape or coherent_node_shape):
                 violations.append(
                     PolicyViolation(
                         "fault-coherent-owner",
                         location,
-                        "changed-owner coherent fault requires one exact module-level pytest proof",
+                        "changed-owner coherent fault requires one exact module-level pytest proof "
+                        "or one whole-file Node proof",
                     )
                 )
             else:
@@ -1947,9 +1959,10 @@ def fault_manifest_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                 owner_sha256 = fault.get("changed_owner_sha256")
                 try:
                     owner_source = coherent_owner_path.read_text(encoding="utf-8")
-                    actual_owner_sha256 = python_exact_proof_owner_sha256(
-                        owner_source,
-                        coherent_node,
+                    actual_owner_sha256 = (
+                        python_exact_proof_owner_sha256(owner_source, coherent_node)
+                        if coherent_python_shape
+                        else node_whole_file_proof_owner_sha256(owner_source)
                     )
                 except (OSError, UnicodeError, SyntaxError):
                     actual_owner_sha256 = None
