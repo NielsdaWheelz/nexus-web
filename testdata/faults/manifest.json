@@ -460,6 +460,15 @@
         "pytest:python/tests/service/test_public_resource_sharing.py::test_anonymous_link_matrix_binds_each_token_to_one_postgres_and_minio_subject"
       ],
       "expected_failure": "first Bearer [REDACTED] failed bootstrap"
+    },
+    {
+      "id": "worker-provider-execution-import-bypass",
+      "patch": "testdata/faults/worker-provider-execution-import-bypass.patch",
+      "sha256": "cc8355dbb337466e54dec14325a412c4ac50896276f854d857ebedd4bd484f37",
+      "proofs": [
+        "pytest:python/tests/kernel/test_worker_runtime_health.py"
+      ],
+      "expected_failure": "the idle worker loaded provider execution modules"
     }
   ]
 }
