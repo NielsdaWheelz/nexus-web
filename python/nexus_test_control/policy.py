@@ -146,9 +146,13 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
             'merge_timestamp="$(git show --no-patch --format=%cI "$EXPECTED_HEAD_SHA")"',
             'GIT_COMMITTER_DATE="$merge_timestamp"',
             "git rev-list --parents -n 1 HEAD",
+            "Retire prior checkout test runtime",
+            '"$python" -m nexus_test_control clean',
             "run: ./scripts/test pr",
             "if: github.event_name == 'push'",
             "run: ./scripts/test full",
+            "Retire current checkout test runtime",
+            "run: ./scripts/test clean",
             "if: always()",
         ),
         (

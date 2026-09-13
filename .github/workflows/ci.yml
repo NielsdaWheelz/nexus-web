@@ -66,6 +66,33 @@ jobs:
             exit 1
           fi
 
+      # A persistent runner may retain a runtime after a killed job. Retire it
+      # with the still-checked-out controller that owns its schema, before the
+      # incoming checkout can replace that controller.
+      - name: Retire prior checkout test runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime="$GITHUB_WORKSPACE/.nexus-test/runtime.json"
+          if [ ! -e "$runtime" ] && [ ! -L "$runtime" ]; then
+            exit 0
+          fi
+          checkout="$(realpath -e -- "$GITHUB_WORKSPACE")"
+          test "$checkout" = "$(realpath -e -- "$(git -C "$checkout" rev-parse --show-toplevel)")"
+          test "$(stat -c '%u' -- "$checkout")" = "$(id -u)"
+          test ! -L "$checkout/.nexus-test"
+          test ! -L "$runtime"
+          test "$(stat -c '%u' -- "$runtime")" = "$(id -u)"
+          git -C "$checkout" check-ignore --quiet -- .nexus-test/runtime.json
+          python="$checkout/python/.venv/bin/python"
+          test -x "$python"
+          (
+            cd "$checkout/python"
+            "$python" -m nexus_test_control clean
+          )
+          test ! -e "$runtime"
+          test ! -L "$runtime"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/pull/{0}/head', inputs.pull_request_number) || github.sha }}
@@ -167,6 +194,16 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Retire current checkout test runtime
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime="$GITHUB_WORKSPACE/.nexus-test/runtime.json"
+          if [ -e "$runtime" ] || [ -L "$runtime" ]; then
+            ./scripts/test clean
+          fi
+
   candidate-full:
     name: Candidate full proof
     if: github.event_name == 'push'
@@ -176,6 +213,30 @@ jobs:
       contents: read
 
     steps:
+      - name: Retire prior checkout test runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime="$GITHUB_WORKSPACE/.nexus-test/runtime.json"
+          if [ ! -e "$runtime" ] && [ ! -L "$runtime" ]; then
+            exit 0
+          fi
+          checkout="$(realpath -e -- "$GITHUB_WORKSPACE")"
+          test "$checkout" = "$(realpath -e -- "$(git -C "$checkout" rev-parse --show-toplevel)")"
+          test "$(stat -c '%u' -- "$checkout")" = "$(id -u)"
+          test ! -L "$checkout/.nexus-test"
+          test ! -L "$runtime"
+          test "$(stat -c '%u' -- "$runtime")" = "$(id -u)"
+          git -C "$checkout" check-ignore --quiet -- .nexus-test/runtime.json
+          python="$checkout/python/.venv/bin/python"
+          test -x "$python"
+          (
+            cd "$checkout/python"
+            "$python" -m nexus_test_control clean
+          )
+          test ! -e "$runtime"
+          test ! -L "$runtime"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
@@ -209,3 +270,13 @@ jobs:
           path: test-results/
           if-no-files-found: ignore
           retention-days: 14
+
+      - name: Retire current checkout test runtime
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime="$GITHUB_WORKSPACE/.nexus-test/runtime.json"
+          if [ -e "$runtime" ] || [ -L "$runtime" ]; then
+            ./scripts/test clean
+          fi
