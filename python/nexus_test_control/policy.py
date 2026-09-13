@@ -674,8 +674,7 @@ def _executable_route_violations(repo_root: Path) -> tuple[PolicyViolation, ...]
                 )
 
     required_routes = {
-        (owner, command): count
-        for command, (owner, count) in _CONTROLLER_COMMAND_ROUTES.items()
+        (owner, command): count for command, (owner, count) in _CONTROLLER_COMMAND_ROUTES.items()
     }
     required_routes[("scripts/test", "control-plane")] = 1
     for owner_command, expected_count in required_routes.items():

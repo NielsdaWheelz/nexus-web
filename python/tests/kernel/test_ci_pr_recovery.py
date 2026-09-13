@@ -169,8 +169,8 @@ def test_prior_runtime_is_retired_by_its_own_checkout_before_replacement(
     owner_python.write_text(
         "#!/bin/sh\n"
         "set -eu\n"
-        "printf '%s\\n' \"$PWD\" \"$@\" > \"$CLEAN_INVOCATION\"\n"
-        "rm -- \"$GITHUB_WORKSPACE/.nexus-test/runtime.json\"\n",
+        'printf \'%s\\n\' "$PWD" "$@" > "$CLEAN_INVOCATION"\n'
+        'rm -- "$GITHUB_WORKSPACE/.nexus-test/runtime.json"\n',
         encoding="utf-8",
     )
     owner_python.chmod(0o755)
