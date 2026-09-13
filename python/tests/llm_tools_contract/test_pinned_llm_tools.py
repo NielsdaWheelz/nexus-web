@@ -102,7 +102,9 @@ def test_exact_pins_round_trip_one_canonical_native_tool(
         raise
 
     async def brave_fixture(request: httpx.Request) -> httpx.Response:
-        assert request.url.params["q"] == "x"
+        assert request.url.params["q"] == "x", (
+            "browse changed the canonical query before provider dispatch"
+        )
         return httpx.Response(
             200,
             headers={"x-request-id": "nexus-pin-proof"},

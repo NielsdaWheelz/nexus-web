@@ -255,6 +255,15 @@
       "expected_failure": "llm-tools materialization followed developer HEAD instead of the lock pin"
     },
     {
+      "id": "browse-provider-query-round-trip-bypass",
+      "patch": "testdata/faults/browse-provider-query-round-trip-bypass.patch",
+      "sha256": "ab0e5b8812096c8a4bb41b869d2ea1b7becebdd35fba72fe8d845ee1f32db2ca",
+      "proofs": [
+        "pytest:python/tests/llm_tools_contract/test_pinned_llm_tools.py::test_exact_pins_round_trip_one_canonical_native_tool"
+      ],
+      "expected_failure": "browse changed the canonical query before provider dispatch"
+    },
+    {
       "id": "deepseek-flash-reasoning-alias-bypass",
       "patch": "testdata/faults/deepseek-flash-reasoning-alias-bypass.patch",
       "sha256": "9ace18f4babb140eea22466858aa844ffde485d0af9fa12a7a70dd252b131eb3",
