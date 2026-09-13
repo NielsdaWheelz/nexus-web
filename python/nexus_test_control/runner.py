@@ -306,7 +306,6 @@ _LOCAL_RUNTIME_CAPABILITIES = frozenset(
 _EXTERNAL_PROTOCOL_CAPABILITIES = frozenset(
     {
         Capability.SERVICE,
-        Capability.LLM_EVAL,
     }
 )
 _TEST_GOOGLE_CLIENT_ID = "nexus-test.apps.googleusercontent.com"

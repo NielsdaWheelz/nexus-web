@@ -2111,6 +2111,71 @@ def test_run_proof_executes_only_the_exact_service_node_and_classifies_assertion
     ]
 
 
+def test_exact_deterministic_llm_eval_does_not_start_an_unowned_external_protocol(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "python/.venv").mkdir(parents=True)
+    proof = "python/tests/evals/test_owned.py"
+    _write(tmp_path / proof, "def test_exact(): pass\n")
+    environment = _stub_tools(tmp_path, "docker", "supabase", "uv")
+    process_roles: list[str] = []
+    cleaned: list[str] = []
+
+    class Ports(_ReadyExternalPorts):
+        def prepare_run(
+            self,
+            _root: Path,
+            _environment: Mapping[str, str],
+            *,
+            run_id: str,
+            include_migration_database: bool,
+        ) -> OwnedTestRun:
+            assert not include_migration_database
+            return _test_run(include_migration_database=False)
+
+        def start_python_process(
+            self,
+            repo_root: Path,
+            child_environment: Mapping[str, str],
+            run: OwnedTestRun,
+            role: str,
+        ) -> StartedProcess:
+            process_roles.append(role)
+            return super().start_python_process(repo_root, child_environment, run, role)
+
+        def clean_run(
+            self,
+            _repo_root: Path,
+            _environment: Mapping[str, str],
+            run_id: str,
+            *,
+            supabase: SupabaseCredentials,
+        ) -> None:
+            del supabase
+            cleaned.append(run_id)
+
+        def run_environment(
+            self,
+            repo_root: Path,
+            child_environment: Mapping[str, str],
+            run: OwnedTestRun,
+        ) -> dict[str, str]:
+            return _stub_run_environment(repo_root, dict(child_environment), run)
+
+    result = run_proof(
+        CapabilityContext(tmp_path, Workflow.PR, ()),
+        f"pytest:{proof}::test_exact",
+        environment,
+        _ports=Ports(),
+        _available_memory=lambda: 8192,
+        _available_storage=lambda _root, _docker: 16384,
+    )
+
+    assert result.evidence.status is RunStatus.PASS
+    assert process_roles == [], "a zero-network eval acquired an external listener"
+    assert len(cleaned) == 1
+
+
 def test_run_proof_rejects_missing_or_inexact_browser_nodes_without_preparing_runtime(
     tmp_path: Path,
 ) -> None:
