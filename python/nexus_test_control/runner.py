@@ -200,6 +200,7 @@ _WEB_STATIC_SUFFIXES = (".cjs", ".css", ".js", ".jsx", ".mjs", ".ts", ".tsx")
 _PLATFORM_SHELL_OWNERS = (
     "deploy/cloudflare/apply-r2-cors.sh",
     "deploy/cloudflare/apply-r2-lifecycle.sh",
+    "deploy/hetzner/backend-publisher-workspace.sh",
     "deploy/hetzner/deploy.sh",
     "deploy/hetzner/fetch-release-bundle.sh",
     "deploy/hetzner/provision.sh",

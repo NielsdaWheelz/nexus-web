@@ -551,6 +551,24 @@ def test_changed_static_platform_owns_the_release_bundle_resolver(tmp_path: Path
     ]
 
 
+def test_changed_static_platform_owns_the_backend_publisher_workspace(tmp_path: Path) -> None:
+    owner = "deploy/hetzner/backend-publisher-workspace.sh"
+    _write(tmp_path / owner, "#!/usr/bin/env bash\nset -eu\n")
+    environment = _stub_tools(tmp_path, "bash", "shellcheck")
+    context = _changed_context(
+        tmp_path,
+        Selection(owner, Capability.STATIC_PLATFORM, SelectionReason.PRIORITY_RISK),
+    )
+
+    result = run_capability(context, Capability.STATIC_PLATFORM, environment)
+
+    assert result.evidence.status is RunStatus.PASS
+    assert [command["argv"] for command in _commands(tmp_path)] == [
+        ["-n", f"./{owner}"],
+        [f"./{owner}"],
+    ]
+
+
 def test_changed_static_platform_runs_only_selected_compose_check(tmp_path: Path) -> None:
     _write(tmp_path / "docker/docker-compose.yml", "services: {}\n")
     _write(tmp_path / "docker/docker-compose.worker.yml", "services: {}\n")
@@ -697,6 +715,7 @@ def test_complete_static_platform_runs_every_owned_check(tmp_path: Path) -> None
     shell_paths = (
         "deploy/cloudflare/apply-r2-cors.sh",
         "deploy/cloudflare/apply-r2-lifecycle.sh",
+        "deploy/hetzner/backend-publisher-workspace.sh",
         "deploy/hetzner/deploy.sh",
         "deploy/hetzner/fetch-release-bundle.sh",
         "deploy/hetzner/provision.sh",
@@ -873,6 +892,7 @@ def test_complete_fast_commands_are_fixed_to_their_final_owners(tmp_path: Path) 
     for path in (
         "deploy/cloudflare/apply-r2-cors.sh",
         "deploy/cloudflare/apply-r2-lifecycle.sh",
+        "deploy/hetzner/backend-publisher-workspace.sh",
         "deploy/hetzner/deploy.sh",
         "deploy/hetzner/fetch-release-bundle.sh",
         "deploy/hetzner/provision.sh",

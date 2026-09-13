@@ -8,12 +8,15 @@ from typing import cast
 REPO_ROOT = Path(__file__).parents[3]
 
 
-def test_ci_setup_installs_every_platform_static_tool() -> None:
+def test_ci_setup_provides_every_platform_static_tool_without_requiring_sudo_when_present() -> None:
     setup = (REPO_ROOT / ".github/actions/setup-test/action.yml").read_text(
         encoding="utf-8",
     )
 
-    assert "sudo apt-get install --yes --no-install-recommends cloud-init shellcheck" in setup
+    assert "for tool in cloud-init shellcheck" in setup
+    assert 'command -v "$tool"' in setup
+    assert "sudo -n true" in setup
+    assert 'sudo apt-get install --yes --no-install-recommends "${missing[@]}"' in setup
     assert "docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f" in setup
 
 

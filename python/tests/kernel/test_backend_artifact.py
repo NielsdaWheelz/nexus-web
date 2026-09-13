@@ -8,7 +8,9 @@ identities are the only admitted release inputs.
 from __future__ import annotations
 
 import json
+import os
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -288,6 +290,102 @@ def test_backend_publisher_is_exact_main_source_ci_and_builds_each_target_once()
         "python/nexus/release_artifact.py",
     ):
         assert bundled in workflow
+
+
+def _initialize_publisher_checkout(path: Path) -> None:
+    path.mkdir()
+    (path / ".gitignore").write_text("/.nexus-test/\n", encoding="utf-8")
+    (path / "tracked.txt").write_text("owned source\n", encoding="utf-8")
+    subprocess.run(("git", "init", "--quiet"), cwd=path, check=True)
+    subprocess.run(("git", "add", ".gitignore", "tracked.txt"), cwd=path, check=True)
+    subprocess.run(
+        (
+            "git",
+            "-c",
+            "user.name=Nexus test",
+            "-c",
+            "user.email=nexus-test@example.invalid",
+            "commit",
+            "--quiet",
+            "--message=fixture",
+        ),
+        cwd=path,
+        check=True,
+    )
+
+
+def test_backend_publisher_owns_a_fresh_external_artifact_workspace(tmp_path: Path) -> None:
+    workflow = (REPO_ROOT / ".github/workflows/backend-images.yml").read_text(encoding="utf-8")
+    owner = REPO_ROOT / "deploy/hetzner/backend-publisher-workspace.sh"
+
+    assert "runs-on: [self-hosted, linux, x64]" in workflow
+    assert "clean: ${{ runner.environment == 'github-hosted' }}" in workflow
+    assert "deploy/hetzner/backend-publisher-workspace.sh prepare" in workflow
+    assert (
+        workflow.count('deploy/hetzner/backend-publisher-workspace.sh require "$RELEASE_WORKSPACE"')
+        == 2
+    )
+    assert "path: ${{ steps.release_workspace.outputs.path }}/bundle/" in workflow
+    assert 'deploy/hetzner/backend-publisher-workspace.sh cleanup "$RELEASE_WORKSPACE"' in workflow
+    assert owner.is_file() and os.access(owner, os.X_OK)
+
+    checkout = tmp_path / "checkout"
+    runner_temp = tmp_path / "runner-temp"
+    github_output = runner_temp / "github-output"
+    _initialize_publisher_checkout(checkout)
+    runner_temp.mkdir()
+    github_output.touch()
+    runtime_state = checkout / ".nexus-test"
+    runtime_state.mkdir()
+    (runtime_state / "runtime.json").write_text("owned runtime\n", encoding="utf-8")
+    stale_bundle = checkout / "release-bundle"
+    stale_bundle.mkdir()
+    (stale_bundle / "stale").write_text("unowned\n", encoding="utf-8")
+    environment = {
+        **os.environ,
+        "GITHUB_OUTPUT": str(github_output),
+        "GITHUB_WORKSPACE": str(checkout),
+        "RUNNER_TEMP": str(runner_temp),
+    }
+
+    prepared = subprocess.run(
+        (str(owner), "prepare"),
+        cwd=checkout,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert prepared.returncode == 0, prepared.stderr
+    release_workspace = Path(
+        github_output.read_text(encoding="utf-8").removeprefix("path=").strip()
+    )
+    assert release_workspace.parent == runner_temp
+    assert release_workspace.stat().st_mode & 0o777 == 0o700
+    assert (runtime_state / "runtime.json").read_text(encoding="utf-8") == "owned runtime\n"
+    assert not stale_bundle.exists()
+    rejected = subprocess.run(
+        (str(owner), "cleanup", str(checkout)),
+        cwd=checkout,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+    assert (checkout / "tracked.txt").read_text(encoding="utf-8") == "owned source\n"
+
+    cleaned = subprocess.run(
+        (str(owner), "cleanup", str(release_workspace)),
+        cwd=checkout,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert cleaned.returncode == 0, cleaned.stderr
+    assert not release_workspace.exists()
 
 
 def test_backend_dockerfile_has_only_immutable_upstreams_and_baked_identity() -> None:

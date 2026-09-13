@@ -45,8 +45,21 @@ runs:
     - name: Install platform static tools
       shell: bash
       run: |
+        set -euo pipefail
+        missing=()
+        for tool in cloud-init shellcheck; do
+          command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
+        done
+        if [ "${#missing[@]}" -eq 0 ]; then
+          echo "platform static tools already present"
+          exit 0
+        fi
+        if ! sudo -n true >/dev/null 2>&1; then
+          echo "::warning::missing ${missing[*]} and no passwordless sudo on this runner"
+          exit 0
+        fi
         sudo apt-get update
-        sudo apt-get install --yes --no-install-recommends cloud-init shellcheck
+        sudo apt-get install --yes --no-install-recommends "${missing[@]}"
 
     - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
@@ -70,7 +83,8 @@ runs:
 
     - name: Install locked Python dependencies
       shell: bash
-      run: uv sync --all-extras --locked --directory python
+      # Reinstall the same-version Git dependency when its exact revision moves.
+      run: uv sync --all-extras --locked --reinstall --directory python
 
     - name: Install locked JavaScript dependencies
       shell: bash
@@ -109,7 +123,25 @@ runs:
           local revision
           revision="$(sed -n "s/^${package}.*rev = \"\([0-9a-f]*\)\".*/\1/p" python/pyproject.toml)"
           [[ "$revision" =~ ^[0-9a-f]{40}$ ]]
-          test ! -e "$checkout"
+          checkout="$(realpath -m -- "$checkout")"
+          local checkout_parent
+          checkout_parent="$(realpath -e -- "$GITHUB_WORKSPACE/..")"
+          case "$checkout" in
+            "$checkout_parent/llm-calling"|"$checkout_parent/llm-tools") ;;
+            *)
+              echo "external suite checkout escaped the runner workspace" >&2
+              exit 1
+              ;;
+          esac
+          if [ -e "$checkout" ] || [ -L "$checkout" ]; then
+            if [ -L "$checkout" ] \
+              || [ ! -d "$checkout" ] \
+              || [ "$(stat -c '%u' -- "$checkout")" != "$(id -u)" ]; then
+              echo "external suite checkout is not a runner-owned directory" >&2
+              exit 1
+            fi
+            rm --recursive --force --one-file-system -- "$checkout"
+          fi
           git clone --filter=blob:none --no-checkout "$repository" "$checkout"
           git -C "$checkout" checkout --detach "$revision"
           test "$(git -C "$checkout" rev-parse HEAD)" = "$revision"

@@ -13,6 +13,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).parents[3]
 WORKFLOW = REPO_ROOT / ".github/workflows/ci.yml"
+SETUP_ACTION = REPO_ROOT / ".github/actions/setup-test/action.yml"
 REPOSITORY = "NielsdaWheelz/nexus-web"
 PULL_REQUEST_NUMBER = "17"
 
@@ -200,6 +201,7 @@ def test_manual_recovery_rejects_noncanonical_pull_request_identity_before_merge
 
 def test_ci_routes_dispatch_only_to_exact_pr_recovery_and_keeps_full_on_main_push() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
+    setup = SETUP_ACTION.read_text(encoding="utf-8")
 
     dispatch = re.search(
         r"(?ms)^  workflow_dispatch:\n(?P<body>.*?)(?=^\S|^  [a-z])",
@@ -219,8 +221,19 @@ def test_ci_routes_dispatch_only_to_exact_pr_recovery_and_keeps_full_on_main_pus
 
     assert "permissions: {}" in workflow
     assert "pull-requests: read" in workflow
+    assert "ubuntu-latest" not in workflow
+    assert workflow.count("runs-on: [self-hosted, linux, x64]") == 2
+    assert "cancel-in-progress: false" in workflow
+    assert workflow.count("clean: false") == 2
+    assert workflow.count("- name: Clear prior runner evidence") == 2
+    assert workflow.count("git clean -qffdx -- test-results/") == 2
     assert workflow.count("run: ./scripts/test pr") == 1
     assert workflow.count("run: ./scripts/test full") == 1
+    assert 'command -v "$tool"' in setup
+    assert "sudo -n true" in setup
+    assert "uv sync --all-extras --locked --reinstall --directory python" in setup
+    assert 'checkout="$(realpath -m -- "$checkout")"' in setup
+    assert 'rm --recursive --force --one-file-system -- "$checkout"' in setup
     assert "github.event_name != 'workflow_dispatch'" not in workflow
     assert re.search(
         r"(?ms)^  pr:\n.*?^    if: github\.event_name == 'pull_request' "
