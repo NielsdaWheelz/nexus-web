@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 LLM_TOOLS_SHA = "667e5121268189d6fe1202c244d5ce64e8b096d1"
-PROVIDER_RUNTIME_SHA = "6ccf36d82eb32099c305e4481cbe4cb7d39b888f"
+PROVIDER_RUNTIME_SHA = "b51c55720268c1eb6c99d08447edc2623adf04ab"
 
 
 def _vcs_source(name: str) -> tuple[str, dict[str, str]]:
