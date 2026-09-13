@@ -221,6 +221,29 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+      - name: Remove locally pulled backend images
+        if: ${{ always() && steps.api.outputs.digest != '' && steps.worker.outputs.digest != '' }}
+        shell: bash
+        env:
+          API_IMAGE: ${{ format('{0}@{1}', env.API_REPOSITORY, steps.api.outputs.digest) }}
+          WORKER_IMAGE: ${{ format('{0}@{1}', env.WORKER_REPOSITORY, steps.worker.outputs.digest) }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$API_IMAGE" =~ ^ghcr\.io/nielsdawheelz/nexus-api@sha256:[0-9a-f]{64}$ ]] \
+            || [[ ! "$WORKER_IMAGE" =~ ^ghcr\.io/nielsdawheelz/nexus-worker@sha256:[0-9a-f]{64}$ ]]; then
+            echo "backend image cleanup received a malformed digest reference" >&2
+            exit 1
+          fi
+          local_images=()
+          for image in "$API_IMAGE" "$WORKER_IMAGE"; do
+            if docker image inspect "$image" >/dev/null 2>&1; then
+              local_images+=("$image")
+            fi
+          done
+          if [ "${#local_images[@]}" -gt 0 ]; then
+            docker image rm "${local_images[@]}"
+          fi
+
       - name: Remove the release workspace
         if: ${{ always() && steps.release_workspace.outputs.path != '' }}
         shell: bash

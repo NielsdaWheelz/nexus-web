@@ -275,8 +275,13 @@ def test_backend_publisher_is_exact_main_source_ci_and_builds_each_target_once()
     worker_label_proof = workflow.index('require_revision_label "$WORKER_IMAGE" "worker"')
     manifest_write = workflow.index("write-candidate-manifest")
     artifact_upload = workflow.index("Upload the immutable release bundle")
+    local_image_cleanup = workflow.index("Remove locally pulled backend images")
+    workspace_cleanup = workflow.index("Remove the release workspace")
     assert source_claim < api_pull < api_label_proof < manifest_write < artifact_upload
     assert source_claim < worker_pull < worker_label_proof < manifest_write < artifact_upload
+    assert artifact_upload < local_image_cleanup < workspace_cleanup
+    assert 'docker image rm "${local_images[@]}"' in workflow
+    assert "backend image cleanup received a malformed digest reference" in workflow
     assert "org.opencontainers.image.revision" in workflow
     assert 'if [ "$revision" != "$SOURCE_SHA" ]; then' in workflow
     assert "Prove digest references are public" in workflow
