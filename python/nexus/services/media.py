@@ -47,7 +47,6 @@ from nexus.schemas.presence import (
     Present,
     absent,
     presence_from_nullable,
-    present,
 )
 from nexus.services.capabilities import derive_capabilities, is_text_document_ready
 from nexus.services.consumption import service as consumption_service
