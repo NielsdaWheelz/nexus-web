@@ -949,19 +949,7 @@ def run_workflow(
                 else:
                     with execution.ports.heavy_lock(context.repo_root):
                         result = admitted_run()
-            if capability not in _BROWSER_RUNTIME_CAPABILITIES or execution.run is None:
-                return result
-            try:
-                execution.retire_browser_runtime()
-            except Exception as error:
-                detail = f"owned browser runtime retirement failed: {error}"
-                if result.evidence.status is not RunStatus.PASS:
-                    detail = f"{result.detail}; {detail}"
-                return CapabilityResult(
-                    replace(result.evidence, status=RunStatus.FAIL),
-                    detail,
-                )
-            return result
+            return _retire_browser_runtime_after_capability(capability, result, execution)
 
         try:
             if workflow_admission is not None:
@@ -1064,6 +1052,26 @@ def run_workflow(
             ),
         )
     return WorkflowRun(capabilities, workflow_memory)
+
+
+def _retire_browser_runtime_after_capability(
+    capability: Capability,
+    result: CapabilityResult,
+    execution: _WorkflowExecution,
+) -> CapabilityResult:
+    if capability not in _BROWSER_RUNTIME_CAPABILITIES or execution.run is None:
+        return result
+    try:
+        execution.retire_browser_runtime()
+    except Exception as error:
+        detail = f"owned browser runtime retirement failed: {error}"
+        if result.evidence.status is not RunStatus.PASS:
+            detail = f"{result.detail}; {detail}"
+        return CapabilityResult(
+            replace(result.evidence, status=RunStatus.FAIL),
+            detail,
+        )
+    return result
 
 
 def stream_first_failure(
