@@ -77,11 +77,12 @@ raise SystemExit(bool(loaded))
 
 def test_tool_free_synthesis_import_does_not_load_tool_runtime() -> None:
     python_root = Path(__file__).resolve().parents[2]
+    # Media summaries remain tool-free; metadata enrichment now owns MetadataRead.
     script = """
 import json
 import sys
 
-import nexus.tasks.enrich_metadata
+import nexus.tasks.media_unit_build
 
 loaded = ["llm_tools"] if any(
     name == "llm_tools" or name.startswith("llm_tools.") for name in sys.modules
