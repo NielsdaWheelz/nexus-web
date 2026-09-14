@@ -1038,8 +1038,10 @@ Installed-copy availability is a closed vocabulary: `UpgradeRequired` (a
 schema-1 copy that must be converted), `UpgradeBlockedByStorage` (conversion was
 refused by the storage admission gate, so the remedy is to free space and
 retry), and `UpgradeFailed` (the converter rejected the copy and will not
-re-run without an explicit retry). The storage-refusal set is process-local by
-design and is re-observed on the next reconciliation.
+re-run without an explicit retry). Reconciliation owns storage refusal through
+the existing package readiness result and re-observes available space on the
+next reconciliation. A known conversion limitation persists on the package row
+until explicit retry; the original copy and pending progress remain intact.
 
 The Android shelf serves the committed Vite bundle and package entries only on
 the reserved appassets host. Lease capabilities are memory-only. Remote

@@ -1216,7 +1216,7 @@
     {
       "id": "read-admission-cancellation-unwind",
       "patch": "testdata/faults/read-admission-cancellation-unwind.patch",
-      "sha256": "6b69a19587e01add12664a7c17b2b4d7a3801ede0494c04b1899af757a845a8a",
+      "sha256": "1077d94ce43f57f26a2bd36a3e4ddb42bef9675b620cff6106064b73053e012b",
       "proofs": [
         "pytest:python/tests/service/test_read_admission.py::test_cancelled_sync_read_retains_admission_until_its_response_finishes"
       ],

@@ -403,7 +403,9 @@
         "apps/web/src/app/api/media/*/reader-publications/**/*",
         "apps/web/src/lib/reader/readerScrollInput.ts",
         "apps/web/src/components/HtmlRenderer.tsx",
-        "apps/web/src/lib/reader/pulseEvent.ts"
+        "apps/web/src/lib/reader/pulseEvent.ts",
+        "apps/web/src/lib/api/resourceCache.tsx",
+        "apps/web/src/lib/reader/useRetainedReaderSelection.ts"
       ],
       "proofs": [
         "pytest:python/tests/service/test_reading_progress.py::test_reader_cursor_cas_rejects_stale_progress_without_partial_side_effects",
@@ -442,7 +444,11 @@
         "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingProgressChoiceTest.kt",
         "vitest:apps/web/src/lib/reader/readerWindowNavigation.browser.test.tsx",
         "vitest:apps/web/src/lib/reader/useReaderProgress.browser.test.tsx",
-        "vitest:apps/web/src/lib/offlineReading/OfflineReadingConnection.browser.test.tsx"
+        "vitest:apps/web/src/lib/offlineReading/OfflineReadingConnection.browser.test.tsx",
+        "vitest:apps/web/src/app/(authenticated)/media/[id]/MediaPaneBodyLayerReplacement.browser.test.tsx",
+        "vitest:apps/web/src/app/(authenticated)/media/[id]/MediaPaneBodyPendingWriteRetirement.browser.test.tsx",
+        "vitest:apps/web/src/app/(authenticated)/media/[id]/MediaPaneBodyHighlightSelection.browser.test.tsx",
+        "vitest:apps/web/src/lib/reader/ReaderUnitPayloadRetirement.browser.test.tsx"
       ],
       "capabilities": [
         "service",
@@ -538,7 +544,8 @@
         "apps/web/src/lib/media/readerNavigation.ts",
         "apps/web/src/lib/reader/useReaderTarget.ts",
         "apps/web/src/app/(authenticated)/media/*/mediaEvidenceResolution.ts",
-        "python/nexus/services/search/retrievers/fragments.py"
+        "python/nexus/services/search/retrievers/fragments.py",
+        "apps/web/src/lib/ui/useReturnFocus.ts"
       ],
       "proofs": [
         "pytest:python/tests/service/test_citation_provenance.py::test_published_citation_reconstructs_locator_from_canonical_evidence",
@@ -604,7 +611,9 @@
         "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingLegacyStringTest.kt",
         "node-test:node/ingest/test/article_extraction.test.mjs",
         "vitest:apps/web/src/app/(authenticated)/media/[id]/mediaEvidenceResolution.unit.test.ts",
-        "pytest:python/tests/service/test_epub_structural_anchors.py::test_epub_ingest_repairs_structural_anchors_without_reordering_intervals"
+        "pytest:python/tests/service/test_epub_structural_anchors.py::test_epub_ingest_repairs_structural_anchors_without_reordering_intervals",
+        "vitest:apps/web/src/components/SelectionPopoverShareRetirement.browser.test.tsx",
+        "vitest:apps/web/src/components/PdfReaderPendingWriteRetirement.browser.test.tsx"
       ],
       "capabilities": [
         "service",

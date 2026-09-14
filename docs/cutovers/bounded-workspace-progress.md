@@ -15,13 +15,19 @@ upstream changes into `codex/bounded-workspace`, draft pr #250. no delivery
 source files were lost in the rollback reconciliation. further development
 uses this worktree; old proof worktrees retain historical receipts only.
 
-the first combined linked-port check was stopped while waiting for the shared
-invocation lock, before any test ran. the holder was separate ci run
-`34889769985`; no foreign process or resource was changed. the next reviewed
-batch adds bounded primary pytest evidence, earlier epub archive retirement,
-and explicit reader retry ownership. admission deadline product fixes remain
-unapplied until their exact failure is observable. all combined gates remain
-open; the maximum epub profile last failed in `790372c5d74b0ca6`.
+`318747fb5c` adds bounded primary pytest evidence, earlier epub archive
+retirement and explicit reader retry ownership. independent client, native and
+publication inventories account for the task's proof and reviewer checkpoints;
+no reviewed implementation remains stranded. historical counterfactuals and
+unqualified experiments are not delivery code.
+
+the first combined linked-port check and subsequent reporter check were stopped
+while waiting for the shared invocation lock, before any test ran. the holders
+were separate ci runs `34889769985` and `34892733745`; no foreign process or
+resource was changed. the reviewed admission fix now uses the existing anyio
+cancellation scope; `318747fb5c` retains its exact unfixed source for regression
+replay. reporter, admission and combined gates remain unverified. the maximum
+epub profile last failed in `790372c5d74b0ca6`.
 
 ## reviewed decisions
 
@@ -61,7 +67,7 @@ open; the maximum epub profile last failed in `790372c5d74b0ca6`.
 - indivisible source: choose and qualify a faithful readable representation for accepted graphemes exceeding the proposed unit bound. observed conversion refusal is failed support.
 - resources: sparse/dense/structural EPUB, maximum PDF, archive preparation and evidence/history with worker/API/browser overlap; then commit measured runtime and host budgets together. small examples and admission refusal alone are insufficient.
 - integration/release: coherent final source and exact-owner fault portfolio, full upstream dependency suites, required pr/full/native compilation and available release checks. protected artifact checks remain required; production deployment needs final authorization and exact-sha post-release evidence.
-- candidate identity (added 2026-09-14): `HEAD` is still the base commit and ~740 paths are dirty with nothing committed, so every gate naming "the exact candidate" is unreachable and `prove` refuses (`de076f74f7765a05`, `b44b8008c8fe390d`, `0a0777a4e78a812b`). the tree also moves during review. freezing the branch into the release checkpoints the spec already describes is a prerequisite for the fault portfolio, not a formality: `docs/tickets/bounded-workspace-candidate-is-not-committed.md`.
+- candidate identity: the delivery checkpoints are committed on the single branch. the remaining fault portfolio and capacity qualification must name the final combined sha; old isolated receipts remain historical evidence: `docs/tickets/bounded-workspace-candidate-is-not-committed.md`.
 - receipt reachability (added 2026-09-14): of the 470 distinct receipt ids cited across these four dossiers, 253 have a run directory in this worktree and 217 do not — they were produced in the separate proof checkouts named above, and `.gitignore:49` keeps `test-results/` out of the change. roughly half the cited evidence is therefore an assertion from the candidate's point of view: `docs/tickets/dossier-receipt-index-is-not-auditable.md`.
 
 no ticket is resolved until its complete applicable acceptance has passed.

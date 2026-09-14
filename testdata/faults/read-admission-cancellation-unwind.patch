@@ -7,6 +7,6 @@ diff --git a/python/nexus/api/read_admission.py b/python/nexus/api/read_admissio
                  # synchronous worker or response still uses those resources.
 -                cancelled = True
 +                raise
-         if expired and task.cancelled():
+         if expired:
              # justify-defect: the deadline is a qualified limit this deployment is
              # provisioned to meet, so exceeding it is a capacity or wedged-transfer

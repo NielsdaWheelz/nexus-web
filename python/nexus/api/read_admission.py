@@ -20,6 +20,7 @@ while the pools are full.
 
 import asyncio
 
+from anyio import CancelScope
 from fastapi.routing import APIRoute
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -88,9 +89,12 @@ class ReadAdmission:
                 retry_after_seconds=self._retry_after_seconds,
             )
 
+        cancel_scope = CancelScope()
+
         async def admitted_route() -> None:
             try:
-                await handle(scope, receive, send)
+                with cancel_scope:
+                    await handle(scope, receive, send)
             finally:
                 self._running.remove(task)
 
@@ -107,11 +111,13 @@ class ReadAdmission:
                 )
                 break
             except TimeoutError:
-                # The permit's qualified lifetime is a recorded foreground limit.
-                # Past it the read cannot finish, so stop waiting for it — but keep
-                # holding the slot until the work actually terminates.
-                task.cancel()
+                if task.done():
+                    task.result()
+                # Cancel the route's scope so AnyIO's synchronous-worker shield
+                # retains its transaction and permit until the worker returns.
+                # An asynchronous stalled send remains cancellable.
                 expired = True
+                cancel_scope.cancel()
             except asyncio.CancelledError:
                 if task.cancelled():
                     if expired:
@@ -121,7 +127,7 @@ class ReadAdmission:
                 # Even repeated caller cancellation cannot unwind it while the
                 # synchronous worker or response still uses those resources.
                 cancelled = True
-        if expired and task.cancelled():
+        if expired:
             # justify-defect: the deadline is a qualified limit this deployment is
             # provisioned to meet, so exceeding it is a capacity or wedged-transfer
             # failure of our own, not a condition the client can retry into.

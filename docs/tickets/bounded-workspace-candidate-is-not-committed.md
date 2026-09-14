@@ -6,11 +6,10 @@
 
 ## current state
 
-all integrated implementation and reviewer changes are committed as
-`8c0ab40084` on `codex/bounded-workspace`, delivered through draft pr #250.
-the upstream merge and remaining reviewed fixes are being consolidated into
-that same worktree and branch. earlier isolated receipts remain historical
-evidence; they do not qualify the combined candidate.
+the integrated implementation, reviewer fixes and upstream reconciliation are
+committed through `318747fb5c` on `codex/bounded-workspace`, draft pr #250.
+all continuing work uses that delivery worktree and branch. earlier isolated
+receipts remain historical evidence; they do not qualify the combined candidate.
 
 ## original finding
 
