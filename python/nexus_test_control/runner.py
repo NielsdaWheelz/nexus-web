@@ -1327,9 +1327,7 @@ def _active_root_ownership_capabilities(context: CapabilityContext) -> tuple[Cap
         if requirement.capability not in required:
             continue
         existing_owners = {
-            owner
-            for owner in requirement.proof_owners
-            if (context.repo_root / owner).is_file()
+            owner for owner in requirement.proof_owners if (context.repo_root / owner).is_file()
         }
         if not existing_owners:
             continue
