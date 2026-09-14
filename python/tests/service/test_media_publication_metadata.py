@@ -8,6 +8,8 @@ from uuid import uuid4
 
 import fitz
 import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import Media, MediaKind, ProcessingStatus
@@ -18,6 +20,7 @@ from nexus.services.contributors import (
 )
 from nexus.services.epub_ingest import EpubExtractionResult, extract_epub_metadata
 from nexus.services.epub_metadata import build_epub_author_observation, persist_epub_metadata
+from nexus.services.library_entries import ensure_media_in_default_library
 from nexus.services.metadata_enrichment import (
     MetadataEnrichmentOutput,
     build_enrichment_user_content,
@@ -26,6 +29,7 @@ from nexus.services.metadata_enrichment import (
 )
 from nexus.services.pdf_ingest import PdfExtractionPlan, build_pdf_extraction_plan
 from nexus.services.pdf_metadata import persist_pdf_metadata
+from tests.testkit.auth import UserRecord
 from tests.testkit.epub_fixtures import ChunkedSourceStorage, zip_payload
 
 
@@ -301,3 +305,44 @@ def test_invalid_generated_date_rejects_the_whole_proposal() -> None:
         )
         is None
     )
+
+
+@pytest.mark.parametrize(
+    ("kind", "eligible"),
+    [(MediaKind.video, True), (MediaKind.podcast_episode, True), (MediaKind.epub, False)],
+)
+def test_metadata_retry_and_capability_do_not_require_an_audio_video_transcript(
+    authenticated_client: TestClient,
+    db_session: Session,
+    test_user: UserRecord,
+    kind: MediaKind,
+    eligible: bool,
+) -> None:
+    media = Media(
+        kind=kind,
+        title="Pending source",
+        processing_status=ProcessingStatus.pending,
+        created_by_user_id=test_user.id,
+    )
+    db_session.add(media)
+    db_session.flush()
+    ensure_media_in_default_library(db_session, test_user.id, media.id)
+    db_session.flush()
+
+    detail = authenticated_client.get(f"/media/{media.id}")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["data"]["capabilities"]["can_retry_metadata"] is eligible
+    response = authenticated_client.post(
+        f"/media/{media.id}/retry", json={"from_stage": "metadata"}
+    )
+    assert response.status_code == (202 if eligible else 409), response.text
+    payloads = db_session.scalars(
+        text(
+            "SELECT payload FROM background_jobs WHERE kind = 'enrich_metadata' "
+            "AND payload->>'media_id' = :media_id"
+        ),
+        {"media_id": str(media.id)},
+    ).all()
+    assert len(payloads) == int(eligible)
+    if eligible:
+        assert payloads[0]["requester_user_id"] == str(test_user.id)

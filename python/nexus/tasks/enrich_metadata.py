@@ -89,6 +89,7 @@ from nexus.services.llm_ledger import (
     LlmCallOwner,
     lock_generation_owner_in_current_transaction,
 )
+from nexus.services.media_processing_state import is_metadata_enrichment_eligible
 from nexus.services.metadata_dispatch import METADATA_STEP_PATH
 from nexus.services.metadata_enrichment import (
     MetadataEnrichmentOutput,
@@ -112,12 +113,6 @@ _LEASE_SECONDS = 300
 _PRE_DISPATCH_SOURCE_CHANGED_DETAIL = "metadata request fingerprint changed before dispatch"
 _PRE_DISPATCH_MEDIA_MISSING_DETAIL = "metadata media no longer exists before dispatch"
 _PRE_DISPATCH_NOT_READY_DETAIL = "metadata media is no longer ready before dispatch"
-_READY_STATES = frozenset(
-    {
-        ProcessingStatus.pending,
-        ProcessingStatus.ready_for_reading,
-    }
-)
 _COLLECTION_FAMILIES = (
     CollectionFamily.AuthorWorks,
     CollectionFamily.LibraryEntries,
@@ -288,7 +283,7 @@ def _metadata_generation_intent(*, input: str) -> GenerationIntent:
 def _metadata_user_content(db: Session, media: Media, *, requester_user_id: UUID) -> str:
     """Bind local reads to the same source generation as the initial sample."""
     index = db.execute(
-        select(ContentIndexState.revision, ContentIndexState.status)
+        select(ContentIndexState.revision, ContentIndexState.status, ContentIndexState.updated_at)
         .where(
             ContentIndexState.owner_kind == "media",
             ContentIndexState.owner_id == media.id,
@@ -301,6 +296,7 @@ def _metadata_user_content(db: Session, media: Media, *, requester_user_id: UUID
             "reader_generation": read_publication_generation(db, media_id=media.id),
             "index_revision": index.revision if index is not None else None,
             "index_status": index.status if index is not None else None,
+            "index_updated_at": index.updated_at.isoformat() if index is not None else None,
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -424,7 +420,9 @@ def enrich_metadata(
                     observed_reason="media_not_found",
                 )
             return _job_result(_SkippedPublication(reason="media_not_found"))
-        if media.processing_status not in _READY_STATES:
+        if not is_metadata_enrichment_eligible(
+            kind=media.kind, processing_status=media.processing_status
+        ):
             db.commit()
             if state is not None:
                 if request_fingerprint is None:
@@ -471,7 +469,9 @@ def enrich_metadata(
             raise _UncertainMetadataTurn(f"media {media_uuid} already has an unresolved generation")
         if locked_media is None or not can_read_media(db, requester_user_id, media_uuid):
             raise _PreDispatchMetadataTerminal("media_not_found")
-        if locked_media.processing_status not in _READY_STATES:
+        if not is_metadata_enrichment_eligible(
+            kind=locked_media.kind, processing_status=locked_media.processing_status
+        ):
             raise _PreDispatchMetadataTerminal("not_ready")
         lock_publication_generation(db, media_id=media_uuid)
         locked_content = _metadata_user_content(
@@ -687,7 +687,9 @@ def _stage_pre_dispatch_terminal(
     requester_user_id = UUID(str(job.payload["requester_user_id"]))
     if media is None or not can_read_media(db, requester_user_id, media.id):
         reason = "media_not_found"
-    elif media.processing_status not in _READY_STATES:
+    elif not is_metadata_enrichment_eligible(
+        kind=media.kind, processing_status=media.processing_status
+    ):
         reason = "not_ready"
     else:
         reason = observed_reason
@@ -894,7 +896,9 @@ def _publish_completed_transaction(
             completed=completed,
             result=_SkippedPublication(reason="media_not_found"),
         )
-    if media.processing_status not in _READY_STATES:
+    if not is_metadata_enrichment_eligible(
+        kind=media.kind, processing_status=media.processing_status
+    ):
         return _commit_publication_result(
             db,
             context=context,

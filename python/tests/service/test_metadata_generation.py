@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+from datetime import timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from uuid import uuid4
@@ -226,7 +227,9 @@ def test_metadata_registry_worker_binds_research_accepts_unknown_dates_and_repla
         cleanup_committed_upload_user(engine, user_id=requester)
 
 
-@pytest.mark.parametrize("change", ["none", "reader", "index_revision", "index_status", "access"])
+@pytest.mark.parametrize(
+    "change", ["none", "reader", "index_revision", "index_status", "index_timestamp", "access"]
+)
 def test_metadata_publication_rechecks_source_versions_and_replays_null_dates(
     db_session: Session, change: str
 ) -> None:
@@ -358,6 +361,10 @@ def test_metadata_publication_rechecks_source_versions_and_replays_null_dates(
         index.revision += 1
     elif change == "index_status":
         index.status = "indexing"
+    elif change == "index_timestamp":
+        # Transcript indexing republishes atomically without moving revision/status.
+        index.updated_at += timedelta(microseconds=1)
+        assert (index.revision, index.status) == (1, "ready")
     elif change == "access":
         db.delete(membership)
     db.flush()

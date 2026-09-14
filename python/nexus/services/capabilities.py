@@ -16,6 +16,7 @@ from uuid import UUID
 from nexus.db.models import MediaKind, ProcessingStatus, TranscriptCoverage, TranscriptState
 from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
 from nexus.schemas.media import CapabilitiesOut
+from nexus.services.media_processing_state import is_metadata_enrichment_eligible
 
 SourceRecoveryRestriction = Literal["NotOwner", "SameSourceTerminal", "SourceNotReacquirable"]
 type SourceRecoveryAnswer = RetrySourceOffer | RepairSourceOffer | SourceRecoveryRestriction | None
@@ -246,7 +247,9 @@ def derive_capabilities(
         and not is_same_source_terminal_error(last_error_code)
         and not source_suspended
     )
-    can_retry_metadata = is_creator and processing_status in READABLE_PROCESSING_STATUSES
+    can_retry_metadata = is_creator and is_metadata_enrichment_eligible(
+        kind=kind, processing_status=processing_status
+    )
     # Spec §6 canReadMedia is the ACCESS predicate (auth/permissions.can_read_media
     # — library/provenance membership), not this file's content-readability
     # can_read. Media DTOs are assembled only for media the viewer can access, so

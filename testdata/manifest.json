@@ -155,7 +155,7 @@
     },
     {
       "path": "testdata/search/chat_search_before.sql",
-      "sha256": "8d03ff7b4f931f548bac178ebca06a10fc9cd84646a2a99132987266944f6af4",
+      "sha256": "fd14c6d5d518bedd284fc15f027d4be71124d9a573d0f1c83b412b8b4319aed8",
       "source": "repo-authored: frozen pre-cutover global hybrid document query",
       "license": "Repository-owned test data; retained as the chat search query-plan oracle",
       "purpose": [

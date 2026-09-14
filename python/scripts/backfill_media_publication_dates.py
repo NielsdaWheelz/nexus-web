@@ -8,10 +8,11 @@ from uuid import UUID
 from sqlalchemy import select, text
 
 from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
-from nexus.db.models import Media, MediaFile, MediaKind, ProcessingStatus, User
+from nexus.db.models import Media, MediaFile, MediaKind, User
 from nexus.db.session import create_session_factory
 from nexus.schemas.presence import Present
 from nexus.services.epub_ingest import EpubExtractionError, extract_epub_metadata
+from nexus.services.media_processing_state import is_metadata_enrichment_eligible
 from nexus.services.metadata_dispatch import enqueue_metadata_enrichment
 from nexus.services.parser_temp import (
     StorageObjectIntegrityError,
@@ -42,10 +43,9 @@ def backfill_media_publication_dates(*, viewer_id: UUID) -> int:
 
         for media_id in media_ids:
             with session_factory() as db:
-                source_media = db.scalars(select(Media).where(Media.id == media_id)).one()
-                if source_media.processing_status != ProcessingStatus.ready_for_reading and not (
-                    source_media.processing_status == ProcessingStatus.pending
-                    and source_media.kind in (MediaKind.video, MediaKind.podcast_episode)
+                source_media = db.scalars(select(Media).where(Media.id == media_id)).one_or_none()
+                if source_media is None or not is_metadata_enrichment_eligible(
+                    kind=source_media.kind, processing_status=source_media.processing_status
                 ):
                     skipped += 1
                     continue
@@ -80,9 +80,10 @@ def backfill_media_publication_dates(*, viewer_id: UUID) -> int:
             with session_factory.begin() as db:
                 media = db.scalars(
                     select(Media).where(Media.id == media_id).with_for_update()
-                ).one()
+                ).one_or_none()
                 if (
-                    not can_read_media(db, viewer_id, media_id)
+                    media is None
+                    or not can_read_media(db, viewer_id, media_id)
                     or media.processing_status != source_media.processing_status
                     or media.kind != source_media.kind
                 ):
@@ -91,9 +92,10 @@ def backfill_media_publication_dates(*, viewer_id: UUID) -> int:
                 if media_file is not None:
                     current_file = db.scalars(
                         select(MediaFile).where(MediaFile.media_id == media_id)
-                    ).one()
+                    ).one_or_none()
                     if (
-                        current_file.source_sha256 != media_file.source_sha256
+                        current_file is None
+                        or current_file.source_sha256 != media_file.source_sha256
                         or current_file.storage_path != media_file.storage_path
                     ):
                         skipped += 1

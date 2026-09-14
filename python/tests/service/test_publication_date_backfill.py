@@ -131,3 +131,52 @@ def test_date_backfill_reads_only_opf_and_deduplicates_without_reverting_researc
         cleanup_committed_upload_user(engine, user_id=viewer_id)
         cleanup_committed_upload_user(engine, user_id=other_id)
         storage.delete_object(storage_path)
+
+
+def test_backfill_researches_pending_audio_video_but_waits_for_document_ingestion(
+    engine: Engine,
+) -> None:
+    viewer_id = uuid4()
+    media_ids = {
+        kind: uuid4() for kind in (MediaKind.video, MediaKind.podcast_episode, MediaKind.epub)
+    }
+    try:
+        with Session(engine) as db:
+            ensure_user_and_default_library(db, viewer_id, f"dates-{viewer_id}@example.invalid")
+            for kind, media_id in media_ids.items():
+                db.add(
+                    Media(
+                        id=media_id,
+                        kind=kind,
+                        title="Pending source",
+                        processing_status=ProcessingStatus.pending,
+                        created_by_user_id=viewer_id,
+                    )
+                )
+                db.flush()
+                ensure_media_in_default_library(db, viewer_id, media_id)
+            db.commit()
+        assert backfill_media_publication_dates(viewer_id=viewer_id) == 0
+        assert backfill_media_publication_dates(viewer_id=viewer_id) == 0
+        with Session(engine) as db:
+            payloads = db.scalars(
+                text(
+                    "SELECT payload FROM background_jobs WHERE kind = 'enrich_metadata' "
+                    "AND payload->>'requester_user_id' = :viewer_id"
+                ),
+                {"viewer_id": str(viewer_id)},
+            ).all()
+            assert len(payloads) == 2
+            assert {payload["media_id"] for payload in payloads} == {
+                str(media_ids[MediaKind.video]),
+                str(media_ids[MediaKind.podcast_episode]),
+            }
+    finally:
+        with Session(engine) as db:
+            job_ids = db.scalars(
+                text("SELECT id FROM background_jobs WHERE payload->>'media_id' = ANY(:media_ids)"),
+                {"media_ids": [str(media_id) for media_id in media_ids.values()]},
+            ).all()
+            delete_jobs_by_ids(db, job_ids=job_ids)
+            db.commit()
+        cleanup_committed_upload_user(engine, user_id=viewer_id)

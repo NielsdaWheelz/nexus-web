@@ -6,10 +6,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
-from nexus.db.models import Media, ProcessingStatus
+from nexus.db.models import Media
 from nexus.errors import ApiErrorCode, ConflictError, ForbiddenError, NotFoundError
 from nexus.jobs.queue import lock_jobs_for_payload
 from nexus.services.durable_step_journal import Uncertain, decode_step_states
+from nexus.services.media_processing_state import is_metadata_enrichment_eligible
 from nexus.services.metadata_dispatch import METADATA_STEP_PATH, enqueue_metadata_enrichment
 
 
@@ -34,12 +35,12 @@ def retry_metadata_for_viewer(
             "Only the creator can re-enrich metadata.",
         )
 
-    if media.processing_status not in {
-        ProcessingStatus.ready_for_reading,
-    }:
+    if not is_metadata_enrichment_eligible(
+        kind=media.kind, processing_status=media.processing_status
+    ):
         raise ConflictError(
             ApiErrorCode.E_RETRY_INVALID_STATE,
-            "Media must be readable before metadata can be re-enriched.",
+            "Media must be readable or pending audio/video before metadata can be re-enriched.",
         )
 
     jobs = lock_jobs_for_payload(

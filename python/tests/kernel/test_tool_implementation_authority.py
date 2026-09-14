@@ -4,15 +4,7 @@ import json
 from dataclasses import replace
 
 import pytest
-from llm_tools import (
-    WEB_READ_SPEC,
-    WEB_SEARCH_SPEC,
-    Available,
-    Native,
-    ToolCatalog,
-    Unavailable,
-    web_family,
-)
+from llm_tools import WEB_SEARCH_SPEC, ToolCatalog, Unavailable, web_family
 
 from nexus.services.tool_runtime.bindings import NEXUS_TOOL_BINDINGS
 
@@ -77,6 +69,8 @@ def test_projection_runtime_preserves_exact_authority_without_local_execution() 
 
 
 def test_metadata_has_only_bounded_scoped_reads_and_the_pinned_web_reader() -> None:
+    from llm_tools import WEB_READ_SPEC, Available, Native
+
     from nexus.services.tool_runtime.composition import (
         compose_product_tool_runtime,
         freeze_tool_plan_snapshot,

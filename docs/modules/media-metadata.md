@@ -48,6 +48,9 @@ the command reads only that viewer's authorized media in batches of 100. it
 hydrates epub edition/isbn hints from the stored opf and enqueues ordinary,
 deduplicated metadata jobs. unfinished document imports remain with ingestion.
 it reports queued, skipped, and failed counts; the ordinary job history records
-research outcomes. changed sources or access are skipped at publication; rerun
-the command after they settle. it does not rebuild content or indexes. dates
-remain unknown until research succeeds.
+research outcomes. source/access changes detected before enqueue are command
+skips; rerun after they settle. already queued jobs retain their dedupe key and
+history, so rerunning does not repeat research. failed research follows ordinary
+job handling; explicit metadata retry is available for the viewer's readable
+media and pending videos/episodes, after any uncertain turn is resolved. it does
+not rebuild content or indexes. dates remain unknown until research succeeds.
