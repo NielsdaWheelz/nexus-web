@@ -58,7 +58,11 @@ class SelectionIndex:
     routes: tuple[IndexedRoute, ...] = ()
 
     def for_path(self, path: str) -> tuple[IndexedRoute, ...]:
-        return tuple(route for route in self.routes if _glob_matches(path, route.path_glob))
+        matches: dict[str, bool] = {}
+        for route in self.routes:
+            if route.path_glob not in matches:
+                matches[route.path_glob] = _glob_matches(path, route.path_glob)
+        return tuple(route for route in self.routes if matches[route.path_glob])
 
 
 EMPTY_SELECTION_INDEX = SelectionIndex()

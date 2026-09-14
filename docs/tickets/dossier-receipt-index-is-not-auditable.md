@@ -6,13 +6,18 @@
 
 ## what is wrong
 
-the delivery now retains all 680 cited runs in
-`testdata/evidence/bounded-workspace-receipts.json`: 417 pass, 259 fail and four
+the delivery now retains all 681 cited runs in
+`testdata/evidence/bounded-workspace-receipts.json`: 417 pass, 260 fail and four
 not-run results, with original summary/context hashes and artifact identities.
-all 1,360 metadata files reconstruct byte-for-byte. no historical verdict was
-changed. the index is 3,303,054 bytes; it keeps metadata, not raw artifact bodies.
+all 1,362 metadata files reconstruct byte-for-byte. no historical verdict was
+changed. the index is 3,307,362 bytes; it keeps metadata, not raw artifact bodies.
 the repository policy checks coverage and retained hashes. its ordinary proof
-and missing-reference fault replay remain required before closing this ticket.
+and missing-reference BASE replay remain required before closing this ticket.
+use the existing whole-file public proof against
+`5d687cdc8a9e1a9b2a0106d0e136df4537c281d7`, immediately before the receipt guard
+and retained index, then the current candidate. the new policy-file mutation was
+removed because that file is outside the existing product-fault allowlist; the
+allowlist and source guard remain unchanged.
 
 this makes old evidence inspectable; it cannot supply absent source, image or
 sensitivity attestations. current qualification still uses the strict live
@@ -50,4 +55,10 @@ fingerprint, which is small, diffable and exactly what a later auditor needs.
 ## acceptance
 
 every 16-hex id cited in a dossier resolves to a committed retained summary, and
-the controller fails a dossier reference that does not.
+the controller fails a dossier reference that does not. the actual old-source
+run must reach `missing receipt evidence was accepted`, followed by a current
+green through the same public `repository_violations` proof.
+
+```sh
+./scripts/test prove --proof pytest:python/tests/kernel/nexus_test_control/test_policy.py --against base:5d687cdc8a9e1a9b2a0106d0e136df4537c281d7
+```

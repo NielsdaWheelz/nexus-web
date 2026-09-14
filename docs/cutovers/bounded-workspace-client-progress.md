@@ -462,3 +462,20 @@ follow-up `e2d7393760e94077` was explicitly interrupted before a new claim.
 - an app-route scan found no other empty or comment-only route module and no
   `export {}` route tombstone. no test or build ran during the merge batch. the
   next actual preview must pass type validation; preview success is not claimed.
+
+
+## 2026-09-14 preview selection narrowing failure
+
+- actual Vercel deployment `dpl_8KNUUCCDvdrtTv7LvNs6QsCzbM1F`, from
+  `dd21213bfaca8650e60049d939c7b2195240820e`, failed type validation at
+  21:08:38 UTC: `MediaPaneBody.tsx:3513:47`, `activeSelection` is possibly null.
+  the duplicate-highlight lookup captured the mutable selection borrow, which
+  is deliberately cleared before awaiting the write.
+- move the existing identity/fragment/offset scalar destructuring before that
+  lookup and compare its scalar offsets. retain `activeSelection = null` before
+  the write, exact identity retirement, and the duplicate-row acknowledgment.
+  no selection object is newly captured across the await. adjacent note/link
+  callbacks use synchronous const borrows; they do not share this narrowing flaw.
+- this is a source correction for the actual build failure. no test or build ran
+  during the frozen batch; the next paved type/build check and pending-selection
+  behavior proofs remain required. preview success is not claimed.

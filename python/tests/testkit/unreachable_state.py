@@ -9,9 +9,10 @@ from datetime import datetime
 from typing import Any, Literal, assert_never
 from uuid import UUID
 
-from sqlalchemy import Engine, Row, text
+from sqlalchemy import Engine, Row, func, text, update
 from sqlalchemy.orm import Session
 
+from nexus.db.models import ReaderPublication
 from nexus.ids import new_uuid7
 from nexus.schemas.import_history import (
     HistoryOwner,
@@ -44,6 +45,20 @@ _DOSSIER_WEB_STEP_PATHS = frozenset(
         "research/web-search/2",
     }
 )
+
+
+def lock_reader_publications(db: Session) -> None:
+    """Hold real publication reads at the table boundary until the caller commits."""
+    db.execute(text("LOCK TABLE reader_publications IN ACCESS EXCLUSIVE MODE"))
+
+
+def advance_reader_publication_header(db: Session, *, media_id: UUID) -> None:
+    """Advance only the header for a read-snapshot race, without minting new members."""
+    db.execute(
+        update(ReaderPublication)
+        .where(ReaderPublication.media_id == media_id)
+        .values(generation=ReaderPublication.generation + 1, changed_at=func.now())
+    )
 
 
 def install_deferred_media_insert_failure(

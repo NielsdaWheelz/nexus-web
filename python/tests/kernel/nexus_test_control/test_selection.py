@@ -20,6 +20,34 @@ from nexus_test_control.selection import (
 REPO_ROOT = Path(__file__).parents[4]
 
 
+def test_selection_index_preserves_duplicate_routes_and_matches_each_path() -> None:
+    patterns = (
+        "python/nexus/**/*.py",
+        "apps/web/**/*.tsx",
+        "python/nexus/auth/*",
+        "python/nexus/**/*.py",
+        "apps/web/**/*.tsx",
+    )
+    routes = tuple(
+        IndexedRoute(
+            pattern,
+            SelectionTarget(Capability.SERVICE, f"owner-{index}"),
+            SelectionReason.PRIORITY_RISK,
+        )
+        for index, pattern in enumerate(patterns)
+    )
+    index = SelectionIndex(routes)
+    for path, expected in (
+        ("python/nexus/auth/context.py", (routes[0], routes[2], routes[3])),
+        ("apps/web/src/Reader.tsx", (routes[1], routes[4])),
+        ("python/nexus/auth/nested/context.py", (routes[0], routes[3])),
+        ("python/nexus/auth/context.py", (routes[0], routes[2], routes[3])),
+    ):
+        selected = index.for_path(path)
+        assert selected == expected
+        assert all(actual is original for actual, original in zip(selected, expected, strict=True))
+
+
 def test_pure_rename_routes_new_path_and_deletion_routes_owner_not_missing_test() -> None:
     changes = parse_git_name_status(
         b"R100\0python/tests/kernel/test_old.py\0python/tests/kernel/test_new.py\0"

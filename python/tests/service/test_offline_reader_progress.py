@@ -39,6 +39,10 @@ from tests.testkit.reader_progress import (
 from tests.testkit.reader_progress import (
     reader_write as _write,
 )
+from tests.testkit.unreachable_state import (
+    advance_reader_publication_header,
+    lock_reader_publications,
+)
 
 
 def _reader_media_state_row(article: _PublishedArticle, engine: Engine) -> dict[str, Any]:
@@ -433,23 +437,14 @@ def test_offline_reader_state_get_attests_one_snapshot_of_cursor_and_generation(
         headers = {"X-Nexus-Expected-Account-Id": str(article.viewer_id)}
 
         with ThreadPoolExecutor(max_workers=1) as pool, Session(engine) as publisher:
-            publisher.execute(text("LOCK TABLE reader_publications IN ACCESS EXCLUSIVE MODE"))
+            lock_reader_publications(publisher)
             try:
                 call = pool.submit(client.get, path, headers=headers)
                 _await_blocked_publication_read(engine)
                 # The publisher's own entry mints immutable members from object
                 # storage; the fact this read must not straddle is only the
                 # committed generation advance, so this raises it directly.
-                publisher.execute(
-                    text(
-                        """
-                        UPDATE reader_publications
-                        SET generation = generation + 1, changed_at = now()
-                        WHERE media_id = :media_id
-                        """
-                    ),
-                    {"media_id": article.media_id},
-                )
+                advance_reader_publication_header(publisher, media_id=article.media_id)
                 publisher.commit()
             finally:
                 publisher.rollback()

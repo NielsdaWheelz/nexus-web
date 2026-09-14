@@ -3506,12 +3506,13 @@ function MediaPaneBodyReady({ progressRuntime, documentReaderSession }: {
         return null;
       }
 
+      const { identity, fragmentId, startOffset, endOffset } = activeSelection;
       const duplicate =
         highlights.find(
           (highlight) =>
             highlight.is_owner &&
-            highlight.anchor.start_offset === activeSelection.startOffset &&
-            highlight.anchor.end_offset === activeSelection.endOffset,
+            highlight.anchor.start_offset === startOffset &&
+            highlight.anchor.end_offset === endOffset,
         ) ?? null;
 
       if (duplicate) {
@@ -3529,7 +3530,6 @@ function MediaPaneBodyReady({ progressRuntime, documentReaderSession }: {
         return null;
       }
 
-      const { identity, fragmentId, startOffset, endOffset } = activeSelection;
       activeSelection = null;
       const retireSelection = (highlightId: string) => {
         const selected = readRetainedSelection();

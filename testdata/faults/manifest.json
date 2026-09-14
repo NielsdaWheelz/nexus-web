@@ -235,7 +235,7 @@
       ],
       "expected_failure": "DID NOT RAISE",
       "changed_owner_red": "coherent-fault",
-      "changed_owner_sha256": "28720b6630a87d7014ae0f0f13052c0e0dbc646dd50a0964dc5dfe7e38bde956"
+      "changed_owner_sha256": "3cb828750a36bd07cbcb188832e0023f93a9f7d56088c134ccbe2da8d9ace856"
     },
     {
       "id": "reader-position-fragment-prefix-bypass",
@@ -2211,7 +2211,7 @@
       ],
       "expected_failure": "epub sanitizer discarded the authored table caption",
       "changed_owner_red": "coherent-fault",
-      "changed_owner_sha256": "79df181bebc3335b9ce6b5dbf90fecf258ae8eba46b3a54f9954fe9bac85b463"
+      "changed_owner_sha256": "3a193352cb5f38a85241d1d6e5bb6f297a753326546bc0497fe2cbf1c7a3fbf6"
     },
     {
       "id": "nexus-history-unbounded-frecency",
@@ -2283,31 +2283,13 @@
       "expected_failure": "a linked worktree's durable port reservation was reused"
     },
     {
-      "id": "browse-provider-query-round-trip-bypass",
-      "patch": "testdata/faults/browse-provider-query-round-trip-bypass.patch",
-      "sha256": "ab0e5b8812096c8a4bb41b869d2ea1b7becebdd35fba72fe8d845ee1f32db2ca",
-      "proofs": [
-        "pytest:python/tests/llm_tools_contract/test_pinned_llm_tools.py::test_exact_pins_round_trip_one_canonical_native_tool"
-      ],
-      "expected_failure": "browse changed the canonical query before provider dispatch"
-    },
-    {
       "id": "worker-provider-execution-import-bypass",
       "patch": "testdata/faults/worker-provider-execution-import-bypass.patch",
-      "sha256": "9e4525f3469f89b9413b72cfd91be80bb631bd03b527cad122eb66e8767d9ad3",
+      "sha256": "f55044fa75bf59a11acff2fecf5f5a93bdb5c2f4057d910a791ce565ac9ccdfb",
       "proofs": [
         "pytest:python/tests/kernel/test_worker_runtime_health.py"
       ],
       "expected_failure": "the idle worker loaded provider execution modules"
-    },
-    {
-      "id": "bounded-dossier-receipt-reference-bypass",
-      "patch": "testdata/faults/bounded-dossier-receipt-reference-bypass.patch",
-      "sha256": "bec1602e25dbf58b88bbb4da789a1c3a6a63aa5d1cfde194c3e7ea739acbf2ba",
-      "proofs": [
-        "pytest:python/tests/kernel/nexus_test_control/test_policy.py"
-      ],
-      "expected_failure": "missing receipt evidence was accepted"
     }
   ]
 }

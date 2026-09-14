@@ -513,3 +513,26 @@ the module is removed; current callers use upload sessions and explicit ingest
 operations. the existing negative journey requires the retired endpoint's 404.
 the client dossier records the deployment and route audit. no preview pass is
 claimed before the next build.
+
+combined controller replay `6dded3c49238634a` at `dd21213bfa` stopped on policy
+before any selected test ran. source review accounted for seven findings: raw
+sql in the progress race, stale caption/floor pins, two stale fault targets,
+duplicate ownership of the pinned-tools fault, and the new receipt fault's
+disallowed policy-file target. repairs preserve the actual database race and
+all existing assertions. the reviewed floor adds 14 source entries, 11 proofs
+and one backed capability; it removes none. caption proof changes follow the
+already-reviewed staged-fragment interface. the worker fault now targets its
+actual entrypoint; the original browse canonical remains the sole owner.
+
+receipt sensitivity uses original source `5d687cdc8a`, through the unchanged
+public policy proof. the unnecessary policy mutation is removed; the product
+fault allowlist stays strict. the index retains this failed run too (681 total).
+provider corpus updates change only two dependency identities after exact source
+review; cases, authority facts and refusal oracles are unchanged. actual replay
+is still required for each of these corrections.
+
+the selection owner now computes a glob's result once per path while retaining
+all matching routes in their original order. price: one temporary boolean per
+distinct pattern and a second linear route walk. the existing manifest repeats
+702 patterns across 21,762 proof rows. ci timing remains an observation to
+measure, not a claimed improvement before the replacement run.
