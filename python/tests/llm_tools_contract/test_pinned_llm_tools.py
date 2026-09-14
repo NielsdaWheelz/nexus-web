@@ -114,7 +114,9 @@ def test_exact_pins_round_trip_one_canonical_native_tool(
         raise
 
     async def brave_fixture(request: httpx.Request) -> httpx.Response:
-        assert request.url.params["q"] == "x"
+        assert request.url.params["q"] == "x", (
+            "browse changed the canonical query before provider dispatch"
+        )
         assert request.url.params["count"] == "20"
         return httpx.Response(
             200,

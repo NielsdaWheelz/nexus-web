@@ -108,13 +108,13 @@
     {
       "id": "codex-generation-migration-admission-bypass",
       "patch": "testdata/faults/codex-generation-migration-admission-bypass.patch",
-      "sha256": "94d71aea3f833004420f90eb9eb75e6cc139c787646933abddcba3825c87ce71",
+      "sha256": "4fa6625e1574d12103969e1107512a6048b5ebe6d405c78de9972e14ac7335e5",
       "proofs": [
         "pytest:python/tests/migrations/test_generation_backends_cutover_admission.py::test_0224_refuses_the_only_undrained_generation_job_before_history_reset"
       ],
       "expected_failure": "DID NOT RAISE",
       "changed_owner_red": "coherent-fault",
-      "changed_owner_sha256": "af0c405a919c8113d41ff3db2ad38083d768bb25c9af14063d7b5a5a08aa3449"
+      "changed_owner_sha256": "07013c92f05aa197678f2ba90988507944a7bba6b6a2af5d88ec828c30a6bda8"
     },
     {
       "id": "migration-head-schema-omission",
@@ -528,7 +528,7 @@
     {
       "id": "mobile-highlight-action-lock-bypass",
       "patch": "testdata/faults/mobile-highlight-action-lock-bypass.patch",
-      "sha256": "70633e0ed23bab9ead9b1675215ab4e6e8915055fb10fe012632ab451ca78880",
+      "sha256": "a66d6479628f537af0bf2de61bda0bcd868cffc90194c94cfea0b752363e5949",
       "proofs": [
         "playwright:apps/web/e2e/journeys/highlight-note-provenance.journey.spec.ts"
       ],
@@ -725,7 +725,7 @@
       ],
       "expected_failure": "PDF resource-limit projection lost its typed carrier",
       "changed_owner_red": "coherent-fault",
-      "changed_owner_sha256": "6acce10ff6774d3d026ec438980162b93b59e2921c0f15f7b59956e740e68707"
+      "changed_owner_sha256": "55b240c98613d67828972e182f0db6748e1c7190be23fcba1453fe9d3a12f0bc"
     },
     {
       "id": "document-import-reconciler-readiness-bypass",
@@ -791,7 +791,7 @@
       ],
       "expected_failure": "an old Extract failure and a recent Index event are two events, not one match",
       "changed_owner_red": "coherent-fault",
-      "changed_owner_sha256": "93638c36c9939857013db6258e9e6e97b631f0358f2f2c75c1e3447d6dc2e3f0"
+      "changed_owner_sha256": "9e0f3be75c02e145bb48ecf85899685ba630956146689cdf04c05452ca07737d"
     },
     {
       "id": "imports-pane-return-token-published-early",
@@ -1607,7 +1607,7 @@
     {
       "id": "publication-find-tail-omission",
       "patch": "testdata/faults/publication-find-tail-omission.patch",
-      "sha256": "634127efff9f1628b848594b63a7ee1ef680927e13b52b205cc2479d212014af",
+      "sha256": "a88f1a87e2e4d78160bfac92e3a7dd898766f3f9c633a6fd937e5f7d1cfd8f50",
       "proofs": [
         "vitest:apps/web/src/lib/reader/publicationFind.browser.test.tsx"
       ],
@@ -2261,6 +2261,44 @@
       "expected_failure": "EPUB staged source disappeared during publication",
       "changed_owner_red": "coherent-fault",
       "changed_owner_sha256": "b4ceabff570ab1c463bd907300b2a00095098599039074cb7b86b03dfd38c4fd"
+    },
+    {
+      "id": "article-semantic-main-bypass",
+      "patch": "testdata/faults/article-semantic-main-bypass.patch",
+      "sha256": "32c4df7c6030d9af9e581d286106976072197fb881e18a26f3cb87d6e155d3eb",
+      "proofs": [
+        "node-test:node/ingest/test/article_extraction.test.mjs"
+      ],
+      "expected_failure": "The input did not match the regular expression",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "2b2d16a84885bddbe330f5c444f88977f730332d9cd66539012a7b1b0d38554a"
+    },
+    {
+      "id": "test-linked-runtime-port-reservation-bypass",
+      "patch": "testdata/faults/test-linked-runtime-port-reservation-bypass.patch",
+      "sha256": "d9fde17e58857124ced3e13256ad9157e992fef03bce639267b8c86d737b0779",
+      "proofs": [
+        "pytest:python/tests/kernel/nexus_test_control/test_linked_runtime_port_reservations.py::test_linked_worktree_runtimes_reserve_every_persisted_port"
+      ],
+      "expected_failure": "a linked worktree's durable port reservation was reused"
+    },
+    {
+      "id": "browse-provider-query-round-trip-bypass",
+      "patch": "testdata/faults/browse-provider-query-round-trip-bypass.patch",
+      "sha256": "ab0e5b8812096c8a4bb41b869d2ea1b7becebdd35fba72fe8d845ee1f32db2ca",
+      "proofs": [
+        "pytest:python/tests/llm_tools_contract/test_pinned_llm_tools.py::test_exact_pins_round_trip_one_canonical_native_tool"
+      ],
+      "expected_failure": "browse changed the canonical query before provider dispatch"
+    },
+    {
+      "id": "worker-provider-execution-import-bypass",
+      "patch": "testdata/faults/worker-provider-execution-import-bypass.patch",
+      "sha256": "9e4525f3469f89b9413b72cfd91be80bb631bd03b527cad122eb66e8767d9ad3",
+      "proofs": [
+        "pytest:python/tests/kernel/test_worker_runtime_health.py"
+      ],
+      "expected_failure": "the idle worker loaded provider execution modules"
     }
   ]
 }

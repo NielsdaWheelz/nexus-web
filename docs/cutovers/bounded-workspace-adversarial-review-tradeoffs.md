@@ -374,3 +374,22 @@ every trade-off a fix package took, verbatim, grouped by package. none were abso
 - Grouped the coherent-fault work into one ticket (drifted pins + non-applying patches + never-executed faults) rather than 28 tickets, because it is literally one work item with one prerequisite (a committed candidate) and one method (observe red, then re-pin). The cost is a long ticket; the benefit is that a partial re-pin cannot be mistaken for progress.
 - Did not open a static-gates ticket. Running all three gates showed them green, so a ticket would have tracked nothing. The re-run and its results are recorded in the root dossier instead, with the instruction to re-run rather than trust captured logs in this tree.
 - Left the runtime dossier's older statements in place and appended dated corrections beside them rather than rewriting history. A dossier is a record of what was decided when; silently editing it would destroy the only way to see that the code and the reviewed-decision record had drifted apart.
+
+## 2026-09-14 — delivery consolidation
+
+all retained implementation and reviewer fixes use `codex/bounded-workspace`
+and draft pr #250. checkpoint `8c0ab40084` preserves the combined delivery
+source. upstream `daa92259b4` includes a db0215 rollback incompatible with this
+forward cutover: retain the bounded schema0216–0230 graph, archive2/reader1
+and section-id/nullable-anchor cursor contract; port compatible upstream fixes
+individually. the competing semantic-section migration and map redesign remain
+out of scope. retain upstream invocation cleanup, disk/root prerequisites,
+linked-port ownership and ci cache isolation. combined gates remain open.
+
+reviewed proof changes retain their previous oracles: 0224 now strictly admits
+fully classified dead metadata jobs; source-dimension proof additionally uses
+same-size non-nfc text; structural source proof retains hidden-text semantics
+and exact long identities. their owner digests record these reviewed changes,
+not a new verdict. the direct highlight menu requires its upstream action-menu
+lock fault, with actual replay still owed. worker import fault blank context
+lines were normalized without changing its injected import.

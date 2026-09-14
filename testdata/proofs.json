@@ -19,7 +19,8 @@
         "pytest:python/tests/kernel/nexus_test_control/test_services.py::test_caller_resource_configuration_is_rejected_and_secrets_have_safe_reprs",
         "pytest:python/tests/kernel/testkit/test_network_guard.py",
         "pytest:python/tests/kernel/nexus_test_control/test_capacity_ownership.py::test_capacity_container_recovery_retains_planned_owner_and_rejects_foreign_identity",
-        "pytest:python/tests/capacity/test_capacity_container_cleanup.py::test_container_cleanup_preserves_foreign_owners"
+        "pytest:python/tests/capacity/test_capacity_container_cleanup.py::test_container_cleanup_preserves_foreign_owners",
+        "pytest:python/tests/kernel/nexus_test_control/test_linked_runtime_port_reservations.py::test_linked_worktree_runtimes_reserve_every_persisted_port"
       ],
       "capabilities": [
         "kernel-python",
@@ -399,7 +400,10 @@
         "apps/web/src/components/workspace/WorkspaceHost.tsx",
         "apps/web/src/lib/panes/paneRuntime.tsx",
         "python/nexus/api/routes/reader_publications.py",
-        "apps/web/src/app/api/media/*/reader-publications/**/*"
+        "apps/web/src/app/api/media/*/reader-publications/**/*",
+        "apps/web/src/lib/reader/readerScrollInput.ts",
+        "apps/web/src/components/HtmlRenderer.tsx",
+        "apps/web/src/lib/reader/pulseEvent.ts"
       ],
       "proofs": [
         "pytest:python/tests/service/test_reading_progress.py::test_reader_cursor_cas_rejects_stale_progress_without_partial_side_effects",
@@ -527,14 +531,20 @@
         "apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyString.kt",
         "testdata/pane-find/canonical-text.json",
         "testdata/offline-reading/table-headers.json",
-        "testdata/offline-reading/table-header-geometry.json"
+        "testdata/offline-reading/table-header-geometry.json",
+        "python/nexus/services/web_article_structure.py",
+        "node/ingest/article_extraction.mjs",
+        "python/nexus/services/epub_find.py",
+        "apps/web/src/lib/media/readerNavigation.ts",
+        "apps/web/src/lib/reader/useReaderTarget.ts",
+        "apps/web/src/app/(authenticated)/media/*/mediaEvidenceResolution.ts",
+        "python/nexus/services/search/retrievers/fragments.py"
       ],
       "proofs": [
         "pytest:python/tests/service/test_citation_provenance.py::test_published_citation_reconstructs_locator_from_canonical_evidence",
         "pytest:python/tests/service/test_chat_search_query_budget.py::test_hybrid_search_projects_only_finalists_with_identical_visible_ranking",
         "pytest:python/tests/service/test_notes_search_result_resolution.py::test_note_search_unions_lexical_and_semantic_hits_into_owned_citable_results",
         "pytest:python/tests/service/test_reader_document_positions.py::test_epub_navigation_and_document_map_share_exact_canonical_positions",
-        "pytest:python/tests/service/test_epub_structural_anchors.py::test_epub_ingest_repairs_structural_anchors_without_reordering_intervals",
         "pytest:python/tests/service/test_llm_tools_browse.py::test_browse_preserves_normalized_provider_results_after_rename",
         "vitest:apps/web/src/components/PdfReader.browser.test.tsx",
         "pytest:python/tests/service/test_artifact_revision_generation_provenance.py::test_revision_reads_project_retired_frozen_generation_identity_without_mutation",
@@ -591,14 +601,18 @@
         "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReaderPublicationEpubTest.kt",
         "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReaderPublicationIdentityTest.kt",
         "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingLegacySourceTest.kt",
-        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingLegacyStringTest.kt"
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingLegacyStringTest.kt",
+        "node-test:node/ingest/test/article_extraction.test.mjs",
+        "vitest:apps/web/src/app/(authenticated)/media/[id]/mediaEvidenceResolution.unit.test.ts",
+        "pytest:python/tests/service/test_epub_structural_anchors.py::test_epub_ingest_repairs_structural_anchors_without_reordering_intervals"
       ],
       "capabilities": [
         "service",
         "component",
         "kernel-web",
         "android-host",
-        "kernel-python"
+        "kernel-python",
+        "ingest-node"
       ]
     },
     {
@@ -800,7 +814,8 @@
         "pytest:python/tests/service/test_codex_capacity_canary_contract.py",
         "pytest:python/tests/service/test_codex_capacity_canary_contract.py::test_capacity_canary_rejects_succeeded_terminal_without_bounded_text",
         "pytest:python/tests/evals/test_generation_plan_eval.py::test_reviewed_generation_plan_corpus_replays_the_shipped_policy_without_a_live_model",
-        "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_exact_android_host_proof_selects_only_its_class"
+        "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_exact_android_host_proof_selects_only_its_class",
+        "pytest:python/tests/kernel/test_codex_host_provider_import_lifetime.py::test_codex_host_import_does_not_load_provider_http_runtime"
       ],
       "capabilities": [
         "kernel-python",
@@ -1382,7 +1397,8 @@
         "apps/android/app/src/main/java/app/nexus/android/playback/**/*",
         "python/nexus/api/routes/reader_publications.py",
         "apps/web/src/app/api/media/*/reader-publications/**/*",
-        "apps/web/src/app/api/media/*/offline-reader-state/route.ts"
+        "apps/web/src/app/api/media/*/offline-reader-state/route.ts",
+        "apps/web/src/lib/reader/readerScrollInput.ts"
       ],
       "proofs": [
         "pytest:python/tests/service/test_consumption_activity_ledger.py",

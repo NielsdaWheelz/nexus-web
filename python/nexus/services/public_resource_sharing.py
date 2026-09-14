@@ -962,24 +962,30 @@ def _highlight_shape_supported(
             ).scalar()
             if ordinal is None:
                 return False
-            anchor = PublicTranscriptTextAnchorOut(
-                segment_ordinal=int(ordinal),
-                start_offset=target.start_offset,
-                end_offset=target.end_offset,
-                time_range=target.time_range.model_dump(mode="python"),
+            anchor = PublicTranscriptTextAnchorOut.model_validate(
+                {
+                    "segment_ordinal": int(ordinal),
+                    "start_offset": target.start_offset,
+                    "end_offset": target.end_offset,
+                    "time_range": target.time_range.model_dump(mode="python"),
+                }
             )
         elif isinstance(target, PdfPageGeometryTargetOut):
-            anchor = PublicPdfGeometryAnchorOut(
-                page_number=target.page_number,
-                quads=[quad.model_dump(mode="python") for quad in target.quads],
+            anchor = PublicPdfGeometryAnchorOut.model_validate(
+                {
+                    "page_number": target.page_number,
+                    "quads": [quad.model_dump(mode="python") for quad in target.quads],
+                }
             )
         else:
             return False
         exact = str(metadata["exact"])
-        PublicHighlightOut(
-            quote=presence_from_nullable(exact if exact else None),
-            color=str(metadata["color"]).capitalize(),
-            anchor=anchor,
+        PublicHighlightOut.model_validate(
+            {
+                "quote": presence_from_nullable(exact if exact else None),
+                "color": str(metadata["color"]).capitalize(),
+                "anchor": anchor,
+            }
         )
     except (TypeError, ValueError, ValidationError):
         return False
@@ -1072,24 +1078,30 @@ def _project_highlight(
             ).scalar()
             if ordinal is None:
                 _masked_not_found()
-            anchor = PublicTranscriptTextAnchorOut(
-                segment_ordinal=int(ordinal),
-                start_offset=target.start_offset,
-                end_offset=target.end_offset,
-                time_range=target.time_range.model_dump(mode="python"),
+            anchor = PublicTranscriptTextAnchorOut.model_validate(
+                {
+                    "segment_ordinal": int(ordinal),
+                    "start_offset": target.start_offset,
+                    "end_offset": target.end_offset,
+                    "time_range": target.time_range.model_dump(mode="python"),
+                }
             )
         elif isinstance(target, PdfPageGeometryTargetOut):
-            anchor = PublicPdfGeometryAnchorOut(
-                page_number=target.page_number,
-                quads=[quad.model_dump(mode="python") for quad in target.quads],
+            anchor = PublicPdfGeometryAnchorOut.model_validate(
+                {
+                    "page_number": target.page_number,
+                    "quads": [quad.model_dump(mode="python") for quad in target.quads],
+                }
             )
         else:
             _masked_not_found()
         exact = str(metadata["exact"])
-        return PublicHighlightOut(
-            quote=presence_from_nullable(exact if exact else None),
-            color=str(metadata["color"]).capitalize(),
-            anchor=anchor,
+        return PublicHighlightOut.model_validate(
+            {
+                "quote": presence_from_nullable(exact if exact else None),
+                "color": str(metadata["color"]).capitalize(),
+                "anchor": anchor,
+            }
         )
     except (TypeError, ValueError, ValidationError):
         _masked_not_found()
@@ -1248,8 +1260,8 @@ def _load_bylines_if_supported(
     return bylines
 
 
-def _public_media_kind(kind: str):
-    mapping = {
+def _public_media_kind(kind: str) -> Literal["Article", "Epub", "Pdf", "Video", "PodcastEpisode"]:
+    mapping: dict[str, Literal["Article", "Epub", "Pdf", "Video", "PodcastEpisode"]] = {
         "web_article": "Article",
         "epub": "Epub",
         "pdf": "Pdf",

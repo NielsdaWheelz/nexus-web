@@ -10,7 +10,8 @@ async function focusTheExistingHighlight(view: Awaited<ReturnType<typeof renderM
   const mark = await screen.findByText("line", { exact: true,
     selector: `[data-active-highlight-ids="${view.existingHighlight?.id ?? ""}"]` });
   await act(async () => { mark.click(); });
-  await screen.findByRole("button", { name: "Highlight actions" });
+  await screen.findByRole("menu", { name: "Highlight actions" });
+  await userEvent.keyboard("{Escape}");
 }
 
 it("asks once whether the focused passage already holds this stance, then writes it", async () => {

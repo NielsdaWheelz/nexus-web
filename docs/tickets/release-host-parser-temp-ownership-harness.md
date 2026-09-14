@@ -21,3 +21,13 @@ repair its supported test boundary without changing release ownership policy.
 
 acceptance: the exact predecessor-shape case and its selected release kernel
 portfolio pass through `./scripts/test`; retain the real ownership operation.
+
+merge audit on 2026-09-14: the current execution shell remains uid 1000 with
+`CapEff: 0000000000000000` and `NoNewPrivs: 1` (`id -u` and read-only
+`/proc/self/status`). the merged controller's
+`ROOT_OWNERSHIP_REQUIREMENTS` and `_workflow_root_ownership_admission` now
+check effective root or noninteractive sudo before selected release ownership
+proofs. this makes the unavailable prerequisite explicit; it does not prove the
+release behavior. retain the protected-runner requirement and the real uid/gid
+ownership operation. no new execution or privilege-bypass claim accompanies
+this source inspection.

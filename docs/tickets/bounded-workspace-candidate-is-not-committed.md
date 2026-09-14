@@ -1,10 +1,18 @@
-# no exact candidate exists: every gate naming "the exact candidate" is unreachable
+# final combined candidate still needs qualification
 
-- status: open
+- status: open; delivery checkpoint committed, combined qualification pending
 - origin: 2026-09-14 adversarial review of the bounded-workspace implementation
 - area: release process / evidence identity
 
-## what is wrong
+## current state
+
+all integrated implementation and reviewer changes are committed as
+`8c0ab40084` on `codex/bounded-workspace`, delivered through draft pr #250.
+the upstream merge and remaining reviewed fixes are being consolidated into
+that same worktree and branch. earlier isolated receipts remain historical
+evidence; they do not qualify the combined candidate.
+
+## original finding
 
 `HEAD` on `codex/bounded-workspace` is still the base commit
 `7fa89b88c8342bca9edfb46a6d20053c49555fb2`, and `git status --porcelain | wc -l`

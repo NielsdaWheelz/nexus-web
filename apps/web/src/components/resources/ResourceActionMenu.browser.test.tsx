@@ -1,9 +1,10 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { page, userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
+import HighlightActionPopover from "@/components/highlights/HighlightActionPopover";
 import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount";
 import { ResourceCacheProvider } from "@/lib/api/resourceCache";
 import { READER_CAPACITY } from "@/lib/reader/readerCapacity";
@@ -52,6 +53,9 @@ const LIBRARY_GET_PATH = `/api/libraries/${LIBRARY_ID}`;
 const MEDIA_FACTS_REVISION = "1".repeat(64);
 const LIBRARY_FACTS_REVISION = "2".repeat(64);
 const MISSING_FACTS_REVISION = "0".repeat(64);
+const HIGHLIGHT_ID = "66666666-6666-4666-8666-666666666666";
+const HIGHLIGHT_REF = `highlight:${HIGHLIGHT_ID}`;
+const HIGHLIGHT_HREF = `${MEDIA_HREF}#highlight-${HIGHLIGHT_ID}`;
 
 const workspacePrimaryMetrics: WorkspacePrimaryMetrics = {
   primaryMinWidthPx: 684,
@@ -144,9 +148,51 @@ const LIBRARY_SNAPSHOT = {
   ],
 } as const;
 
+const HIGHLIGHT_SNAPSHOT = {
+  ref: HIGHLIGHT_REF,
+  activation: {
+    resourceRef: HIGHLIGHT_REF,
+    kind: "route",
+    href: HIGHLIGHT_HREF,
+    unresolvedReason: null,
+  },
+  missing: false,
+  factsRevision: "3".repeat(64),
+  capabilities: [
+    { kind: "DeleteHighlight", availability: { kind: "Available" } },
+    { kind: "Share", availability: { kind: "Available" } },
+    { kind: "EditHighlightBounds", availability: { kind: "Available" } },
+    { kind: "LearnHighlight", availability: { kind: "Available" } },
+    { kind: "LinkHighlight", availability: { kind: "Available" } },
+    {
+      kind: "HighlightNote",
+      availability: { kind: "Available" },
+      state: "Absent",
+    },
+    { kind: "EditHighlight", availability: { kind: "Available" } },
+    { kind: "Chat", availability: { kind: "Available" } },
+    { kind: "OpenInNewPane", availability: { kind: "Available" } },
+    { kind: "Open", availability: { kind: "Available" } },
+  ],
+} as const;
+
+const EXPECTED_HIGHLIGHT_MENU_ORDER = [
+  "Open",
+  "Open in new pane",
+  "Chat about this…",
+  "Edit highlight…",
+  "Add note…",
+  "Link…",
+  "Learn from this",
+  "Edit bounds",
+  "Share…",
+  "Delete highlight",
+];
+
 const SNAPSHOTS_BY_REF: Record<string, unknown> = {
   [MEDIA_REF]: MEDIA_SNAPSHOT,
   [LIBRARY_REF]: LIBRARY_SNAPSHOT,
+  [HIGHLIGHT_REF]: HIGHLIGHT_SNAPSHOT,
 };
 
 // getMemberLibrary self-load fixture (strict LibraryOut envelope).
@@ -285,6 +331,24 @@ function installBff(options: BffOptions = {}): Bff {
       if (path === LIBRARY_GET_PATH && method === "GET") {
         return jsonResponse(LIBRARY_OUT);
       }
+      if (
+        path === `/api/resource-items/${encodeURIComponent(HIGHLIGHT_REF)}/shares` &&
+        method === "GET"
+      ) {
+        return jsonResponse({
+          data: {
+            subject: HIGHLIGHT_REF,
+            sharing: "HighlightGrants",
+            authenticatedHref: `${process.env.NEXT_PUBLIC_APP_PUBLIC_ORIGIN}${HIGHLIGHT_HREF}`,
+            creationAvailability: {
+              user: { kind: "Available" },
+              link: { kind: "Available" },
+            },
+            shares: [],
+            receivedAccess: [],
+          },
+        });
+      }
       if (path === LIBRARY_GET_PATH && method === "PATCH") {
         const body =
           typeof init?.body === "string" ? JSON.parse(init.body) : null;
@@ -420,6 +484,29 @@ function menuLabels(menu: HTMLElement): string[] {
     });
 }
 
+function ReaderHighlightHarness() {
+  const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
+  return (
+    <>
+      <button
+        type="button"
+        onClick={(event) =>
+          setAnchorRect(event.currentTarget.getBoundingClientRect())
+        }
+      >
+        <mark>A highlighted passage</mark>
+      </button>
+      {anchorRect ? (
+        <HighlightActionPopover
+          highlight={{ id: HIGHLIGHT_ID }}
+          anchorRect={anchorRect}
+          onDismiss={() => setAnchorRect(null)}
+        />
+      ) : null}
+    </>
+  );
+}
+
 describe("ResourceActionMenu component contract", () => {
   beforeEach(async () => {
     localStorage.clear();
@@ -477,6 +564,58 @@ describe("ResourceActionMenu component contract", () => {
       requestedTitle: "Selected edition", mediaKind: "Pdf",
     });
     expect(await screen.findByRole("button", { name: "More actions" })).toBeEnabled();
+  });
+
+  it("opens the canonical highlight actions on the passage click and dispatches Share directly", async () => {
+    installBff();
+    renderResourceMenu(<ReaderHighlightHarness />);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "A highlighted passage" }),
+    );
+    const menu = await screen.findByRole("menu", { name: "Highlight actions" });
+    await waitFor(() =>
+      expect(menuLabels(menu)).toEqual(EXPECTED_HIGHLIGHT_MENU_ORDER),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Highlight actions" }),
+    ).not.toBeInTheDocument();
+
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "Share…" }));
+    const share = await screen.findByRole("dialog", { name: "Share" });
+    await waitFor(() =>
+      expect(within(share).getByRole("button", { name: "Copy link" })).toBeEnabled(),
+    );
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+
+  it("shows loading then highlight options after one passage click while the snapshot resolves", async () => {
+    let completeResolve!: (response: Response) => void;
+    const pendingResolve = new Promise<Response>((resolve) => {
+      completeResolve = resolve;
+    });
+    const bff = installBff({ resolve: () => pendingResolve });
+    renderResourceMenu(<ReaderHighlightHarness />);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "A highlighted passage" }),
+    );
+    const loading = await screen.findByText("Actions are still loading.");
+    expect(loading).toBeVisible();
+    await waitFor(() => expect(bff.resolveCalls).toHaveLength(1));
+
+    completeResolve(snapshotResponse([HIGHLIGHT_REF]));
+    const menu = await screen.findByRole("menu", { name: "Highlight actions" });
+    await waitFor(() =>
+      expect(menuLabels(menu)).toEqual(EXPECTED_HIGHLIGHT_MENU_ORDER),
+    );
+    await waitFor(() =>
+      expect(
+        within(menu).getByRole("menuitem", { name: "Open" }),
+      ).toHaveFocus(),
+    );
+    expect(loading).not.toBeInTheDocument();
+    expect(bff.resolveCalls).toHaveLength(1);
   });
 
   it("presents the catalog-owned order with danger last and preserves a server-blocked reason", async () => {

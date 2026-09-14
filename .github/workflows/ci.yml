@@ -30,7 +30,9 @@ on:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || inputs.pull_request_number || github.ref }}
-  cancel-in-progress: true
+  # The persistent runner must let the controller retire its owned process
+  # tree and runtime before the next invocation starts.
+  cancel-in-progress: false
 
 permissions: {}
 
@@ -38,14 +40,10 @@ jobs:
   pr:
     name: Deterministic PR proof
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
-    # GitHub-hosted runners are unavailable while the account's Actions
-    # spending limit is exhausted; self-hosted minutes are not billed, so the
-    # gate runs on the lab runner. Restore `ubuntu-latest` when billing allows.
+    # GitHub-hosted minutes are unavailable. The dedicated x64 runner executes
+    # the same repository-owned gate without changing its proof portfolio.
     runs-on: [self-hosted, linux, x64]
-    # A pull request proves its changed static paths plus the proofs its diff
-    # affects. Manual recovery can select the complete `pr` portfolio with
-    # same-run sensitivity; `full` on the main push is the release proof.
-    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.proof == 'pr' && 480 || 90 }}
+    timeout-minutes: 480
     permissions:
       contents: read
       pull-requests: read
@@ -74,6 +72,32 @@ jobs:
             echo "expected_base_sha must be a full lowercase Git SHA" >&2
             exit 1
           fi
+
+      # A persistent runner may retain a runtime after a killed job. Recover
+      # through the still-checked-out controller's public route so teardown owns
+      # the lineage lease before the incoming checkout replaces its schema.
+      - name: Retire prior checkout test runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime="$GITHUB_WORKSPACE/.nexus-test/runtime.json"
+          if [ ! -e "$runtime" ] && [ ! -L "$runtime" ]; then
+            exit 0
+          fi
+          checkout="$(realpath -e -- "$GITHUB_WORKSPACE")"
+          test "$checkout" = "$(realpath -e -- "$(git -C "$checkout" rev-parse --show-toplevel)")"
+          test "$(stat -c '%u' -- "$checkout")" = "$(id -u)"
+          test ! -L "$checkout/.nexus-test"
+          test ! -L "$runtime"
+          test "$(stat -c '%u' -- "$runtime")" = "$(id -u)"
+          git -C "$checkout" check-ignore --quiet -- .nexus-test/runtime.json
+          test -x "$checkout/scripts/test"
+          (
+            cd "$checkout"
+            ./scripts/test clean
+          )
+          test ! -e "$runtime"
+          test ! -L "$runtime"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -156,6 +180,16 @@ jobs:
 
       - uses: ./.github/actions/setup-test
 
+      - name: Clear prior runner evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          checkout="$(realpath -e -- "$GITHUB_WORKSPACE")"
+          test "$checkout" = "$(realpath -e -- "$(git rev-parse --show-toplevel)")"
+          test "$(stat -c '%u' -- "$checkout")" = "$(id -u)"
+          git check-ignore --quiet -- test-results/.nexus-ignore-contract
+          git clean -qffdx -- test-results/
+
       - name: Run the selected PR proof
         id: proof
         shell: bash
@@ -187,6 +221,15 @@ jobs:
           include-hidden-files: true
           retention-days: 14
 
+      - name: Retire current checkout test runtime
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime="$GITHUB_WORKSPACE/.nexus-test/runtime.json"
+          if [ -e "$runtime" ] || [ -L "$runtime" ]; then
+            ./scripts/test clean
+          fi
       - name: Remove run evidence staging
         if: ${{ always() && steps.proof.outputs.path != '' }}
         env:
@@ -203,14 +246,33 @@ jobs:
     name: Candidate full proof
     if: github.event_name == 'push'
     runs-on: [self-hosted, linux, x64]
-    # The complete portfolio on the four-core lab runner exceeds the hosted
-    # 90-minute budget (its kernel lane alone measured 60 minutes there);
-    # self-hosted minutes are unbilled, so the bound is wide.
     timeout-minutes: 480
     permissions:
       contents: read
 
     steps:
+      - name: Retire prior checkout test runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime="$GITHUB_WORKSPACE/.nexus-test/runtime.json"
+          if [ ! -e "$runtime" ] && [ ! -L "$runtime" ]; then
+            exit 0
+          fi
+          checkout="$(realpath -e -- "$GITHUB_WORKSPACE")"
+          test "$checkout" = "$(realpath -e -- "$(git -C "$checkout" rev-parse --show-toplevel)")"
+          test "$(stat -c '%u' -- "$checkout")" = "$(id -u)"
+          test ! -L "$checkout/.nexus-test"
+          test ! -L "$runtime"
+          test "$(stat -c '%u' -- "$runtime")" = "$(id -u)"
+          git -C "$checkout" check-ignore --quiet -- .nexus-test/runtime.json
+          test -x "$checkout/scripts/test"
+          (
+            cd "$checkout"
+            ./scripts/test clean
+          )
+          test ! -e "$runtime"
+          test ! -L "$runtime"
       # The full stack fills the hosted runner's ~14GB to MinIO's minimum
       # free-drive threshold by the journeys phase (XMinioStorageFull refusing
       # captures). Shed preinstalled toolchains the gate never uses — the
@@ -241,6 +303,16 @@ jobs:
           llm-tools: "true"
           provider-runtime: "true"
 
+      - name: Clear prior runner evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          checkout="$(realpath -e -- "$GITHUB_WORKSPACE")"
+          test "$checkout" = "$(realpath -e -- "$(git rev-parse --show-toplevel)")"
+          test "$(stat -c '%u' -- "$checkout")" = "$(id -u)"
+          git check-ignore --quiet -- test-results/.nexus-ignore-contract
+          git clean -qffdx -- test-results/
+
       - name: Run the candidate full gate
         id: proof
         shell: bash
@@ -256,6 +328,15 @@ jobs:
           include-hidden-files: true
           retention-days: 14
 
+      - name: Retire current checkout test runtime
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime="$GITHUB_WORKSPACE/.nexus-test/runtime.json"
+          if [ -e "$runtime" ] || [ -L "$runtime" ]; then
+            ./scripts/test clean
+          fi
       - name: Remove run evidence staging
         if: ${{ always() && steps.proof.outputs.path != '' }}
         env:

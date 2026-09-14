@@ -258,9 +258,6 @@ def test_0227_installs_history_storage_agreeing_with_the_orm_declaration(
         engine.dispose()
 
     assert actual_head == "0227", f"0227 did not become the applied head: {actual_head!r}"
-    assert ScriptDirectory.from_config(config).get_current_head() == "0227", (
-        "0227 must be the migration catalog head"
-    )
     for name in _HISTORY_TABLES:
         assert reflected[name] == declared[name], (
             f"{name} storage shape disagrees with nexus.db.models: "

@@ -61,12 +61,20 @@ async function captureCanonicalArticle(
         `Article fixture capture failed: status=${response.status()} body=${text.slice(0, 500)}`,
       );
     }
-    const mediaId = (JSON.parse(text) as { data?: { media_id?: unknown } }).data
-      ?.media_id;
-    if (typeof mediaId !== "string") {
+    const data = (
+      JSON.parse(text) as {
+        data?: { ingest_enqueued?: unknown; media_id?: unknown };
+      }
+    ).data;
+    if (!data || typeof data.media_id !== "string") {
       throw new Error("Article fixture capture omitted its media identity.");
     }
-    return mediaId;
+    if (data.ingest_enqueued !== true) {
+      throw new Error(
+        `Article fixture capture did not enqueue durable ingest: body=${text.slice(0, 500)}`,
+      );
+    }
+    return data.media_id;
   } finally {
     await extension.dispose();
   }

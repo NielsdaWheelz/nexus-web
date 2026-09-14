@@ -158,6 +158,12 @@ export async function renderMediaPane(options: {
     const fragmentOrdinal = fragments.findIndex((fragmentId) => path === `/api/fragments/${fragmentId}/highlights`);
     if (fragmentOrdinal >= 0 && init?.method === "POST") {
       const request = JSON.parse(String(init.body));
+      const existing = highlightRows.find((row) => row.anchor.fragment_id === fragments[fragmentOrdinal] &&
+        row.anchor.start_offset === request.start_offset && row.anchor.end_offset === request.end_offset);
+      if (existing !== undefined) return new Response(JSON.stringify({ error: {
+        code: "E_HIGHLIGHT_CONFLICT", message: "This selection already exists.",
+        details: { existing_highlight_id: existing.id },
+      } }), { status: 409, headers: { "Content-Type": "application/json" } });
       const source = chapterTexts[fragmentOrdinal].replaceAll("\n", " ");
       const created: Highlight = { id: crypto.randomUUID(), color: request.color,
         exact: source.slice(request.start_offset, request.end_offset), prefix: "", suffix: "",
@@ -203,6 +209,17 @@ export async function renderMediaPane(options: {
         init.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
       });
       return json({ accountId, readerGeneration: 7, cursor: { state: "Empty", revision: 0 } });
+    }
+    if (path.endsWith("/reader-publications/7/find")) {
+      const { query } = JSON.parse(String(init?.body));
+      return json({ occurrences: query === "EXACT SECTION TARGET" ? [{
+        section_id: "chapter-two", section_label: "Exact section", fragment_id: fragments[1], fragment_idx: 1,
+        start_offset: prefix.length, end_offset: prefix.length + "EXACT SECTION TARGET".length,
+        snippet: [{ text: "EXACT SECTION TARGET", emphasized: true }],
+        locator: { kind: "epub", target: targets[1],
+          locations: { text_offset: prefix.length, progression: null, total_progression: null, position: null },
+          text: { quote: null, quote_prefix: null, quote_suffix: null } },
+      }] : [], next_cursor: null });
     }
     if (path.endsWith("/reader-publications/7/resolve")) {
       const { target } = JSON.parse(String(init?.body));
@@ -261,7 +278,7 @@ export async function renderMediaPane(options: {
   });
   const metrics = { primaryMinWidthPx: 684, primaryDefaultWidthPx: 720 };
   const intents = new ReaderIntentStore();
-  function Pane() {
+  function Pane({ readerOpen = true }: { readerOpen?: boolean }) {
     const [href, setHref] = useState(`/media/${mediaId}`);
     const [activatedHref, setActivatedHref] = useState("");
     return <RenderEnvironmentProvider value={{ androidShell: false, platform: "linux", displayLocale: "en-US", displayTimeZone: "UTC",
@@ -287,7 +304,7 @@ export async function renderMediaPane(options: {
                         <PaneShell paneId="reader-pane" routeKey={resolvePaneRouteIdentity(href).routeKey} routeHeader={{ kind: "Resource", pendingLabel: "Media" }} label="Exact reader composition"
                           returnMementoEnabled={false} queryNavigation="in-place" sizing={{ primaryWidthPx: 720, primaryMinWidthPx: 320, primaryMaxWidthPx: 1400,
                             renderedPrimarySlotWidthPx: 720, renderedPrimarySlotMinWidthPx: 320, renderedPrimarySlotMaxWidthPx: 1400, fixedChromeWidthPx: 0,
-                            storedWidthCorrectionPx: null }} bodyMode="document" onResizePrimaryPane={() => {}} isActive><MediaPaneBody /></PaneShell>
+                            storedWidthCorrectionPx: null }} bodyMode="document" onResizePrimaryPane={() => {}} isActive>{readerOpen ? <MediaPaneBody /> : null}</PaneShell>
                         </PaneRouteErrorBoundary>
                       </div>
                     </PaneRuntimeProvider>
@@ -305,6 +322,7 @@ export async function renderMediaPane(options: {
     linkWrites, finishLink() { pendingLinks.shift()?.finish(); }, failLink() { pendingLinks.shift()?.fail(); },
     highlightWrites, existingHighlight, finishHighlight() { pendingHighlights.shift()?.(); },
     stanceWrites, associationRequests,
+    retireReader() { view.rerender(<Pane readerOpen={false} />); },
     pendingIntent: () => intents.next(accountId), secondRequested: () => pendingSecond.length > 0,
     failSecond() {
       for (const finish of pendingSecond.splice(0)) finish(new Response(JSON.stringify({ error: {

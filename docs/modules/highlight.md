@@ -191,6 +191,15 @@ The quick-note composer is a frontend presentation owner. It may create a
 highlight and then attach a note in one gesture, but persistence still flows
 through the canonical highlight and note paths.
 
+the selection Note action focuses the quick-note textbox. enter flushes the
+existing save queue and closes only after the latest body is saved; shift+enter
+inserts a newline. composition and reference selection retain their enter
+handling. editing during submission cancels dismissal, and save failure keeps
+the draft open. an absent pending highlight is a modeled, non-retryable save
+failure with copy-and-reselect guidance; a rejected creation still reaches the
+defect boundary. inline highlight notes retain multiline enter. desktop and
+mobile composers own back dismissal throughout the selection-to-editor handoff.
+
 ## Learn
 
 **Learn** is Highlight-first. A reader selection is created or reused through
@@ -226,7 +235,12 @@ A fresh reader selection has no Highlight yet. Its `SelectionPopover` renders
 the dedicated icon-only `SelectionActionDock`; `buildSelectionActions` owns
 only this pre-resource gesture. Materialized Highlights mount
 `ResourceActionMenu`, whose snapshot, catalog, planner, and runtime own the same
-action list in every representation. The selection actions use the fixed names
+action list in every representation. Clicking a Highlight in reader text or a
+PDF opens that menu directly at the Highlight, with no intermediate overflow
+button. Loading and unavailable states explain themselves in the open surface;
+Escape, outside clicks, and reader scrolling dismiss it. Scrolling within the
+menu keeps its actions reachable. Evidence rows retain their overflow trigger.
+The selection actions use the fixed names
 **Highlight**, **Note**, **Link**, **Ask**, **Learn**,
 **Ask in existing chat…**, and **Share**. `projectSelectionActionPlan` is the sole
 owner of their presentation order: the direct icon row is **Highlight**,

@@ -546,3 +546,7 @@ unexpected timeouts. See
 - [open] oi-215 · foreground admission · 2026-09-14 bounded-workspace review · route-owned timeout can spin the admitted event loop: [ticket](tickets/read-admission-confuses-route-timeout-with-permit-expiry.md).
 
 - [open] oi-216 · test controller · 2026-09-14 bounded-workspace review · bounded service logs discard the primary assertion: [ticket](tickets/controller-service-tail-loses-primary-assertion.md).
+
+- open: buildkit cache needs an owned retention policy; [ticket](tickets/devbox-buildkit-cache-retention.md).
+
+- open: generation eval corpus provider pin differs from delivery dependencies; [ticket](tickets/generation-eval-corpus-provider-pin-drifts-from-delivery.md).

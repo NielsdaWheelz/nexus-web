@@ -360,6 +360,7 @@ export default function ChatComposer({
       consumedFocusRequest.current = null;
       return;
     }
+    if (!restored) return;
     const key = focusKey ?? null;
     const consumed = consumedFocusRequest.current;
     if (consumed?.view === viewToken && consumed.key === key) return;
@@ -367,7 +368,7 @@ export default function ChatComposer({
     // the activity check prevents later activation from replaying stale focus.
     consumedFocusRequest.current = { view: viewToken, key };
     if (isPaneActive) textareaRef.current?.focus({ preventScroll: true });
-  }, [autoFocus, focusKey, isPaneActive, viewToken]);
+  }, [autoFocus, focusKey, isPaneActive, restored, viewToken]);
 
   useEffect(() => {
     setError(null);

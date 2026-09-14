@@ -2239,11 +2239,13 @@ grant settings + generation rate limits, the narrow OpenAI embedding key,
 Brave Browse/chat search, streaming (token signing key + base URL + CORS),
 podcasts, browse providers, worker schedules, and Stripe. Worker lanes are
 Compose-owned rather than stored in the merged production env.
-The test controller owns a persistent workspace-local PostgreSQL/MinIO and
-Supabase Auth stack, per-run database/bucket state, and per-scenario users. It
-passes the Supabase admin key only to controller-owned user lifecycle code;
-Next.js, FastAPI, worker, and migration processes receive only their explicit
-test allowlists. Its canonical run environment also owns the external-protocol
+One lineage-wide test invocation may own one workspace-local PostgreSQL/MinIO
+and Supabase Auth stack, per-run database/bucket state, and per-scenario users.
+The controller clears stale runtime state before work and retires the stack at
+the invocation boundary. It passes the Supabase admin key only to
+controller-owned user lifecycle code; Next.js, FastAPI, worker, and migration
+processes receive only their explicit test allowlists.
+Its canonical run environment also owns the external-protocol
 loopback endpoint, proxy, static DNS fixture, and Podcast fixture credentials
 for both in-process service proof and spawned product processes.
 
@@ -2267,12 +2269,15 @@ component proof; ten thin product journeys; and separately scheduled
 hosted-subscription/device/release proof. Owned Nexus behavior is not mocked. Only an
 external boundary may use a small fake or protocol fixture.
 
-The persistent local services are reused, but every workflow receives a
-template-cloned database, MinIO bucket, run ledger, and scenario-local users.
-All ordinary proof is external-network denied. Playwright has one config under
-`apps/web/e2e/`, one worker, zero retries, strict CSP, fresh contexts, and no
-shared seed/auth state. Priority risks and the canonical cross-language corpus
-are machine-owned by `testdata/proofs.json` and `testdata/manifest.json`.
+Local services are reused only within one serialized invocation, but every
+workflow receives a template-cloned database, MinIO bucket, run ledger, and
+scenario-local users. All ordinary proof is external-network denied.
+Sensitivity retires every isolated red-revision runtime before starting its
+current-revision green phase, so two service stacks never coexist.
+Playwright has one config under `apps/web/e2e/`, one worker, zero retries,
+strict CSP, fresh contexts, and no shared seed/auth state. Priority risks and
+the canonical cross-language corpus are machine-owned by
+`testdata/proofs.json` and `testdata/manifest.json`.
 
 ---
 

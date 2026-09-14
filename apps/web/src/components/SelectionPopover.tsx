@@ -10,7 +10,7 @@
 
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import SelectionActionDock, {
@@ -22,7 +22,7 @@ import {
 } from "@/components/highlights/selectionActions";
 import styles from "./SelectionPopover.module.css";
 import { useShareController } from "@/lib/sharing/controller";
-import { anchoredShareOpenOptions } from "@/lib/sharing/openOptions";
+import { present } from "@/lib/api/presence";
 import { resourceShareTarget } from "@/lib/sharing/targets";
 import { useHistoryDismiss } from "@/lib/ui/useHistoryDismiss";
 import {
@@ -74,6 +74,8 @@ export default function SelectionPopover<H extends { id: string }>({
   const modalToken = useContainingModalLayer();
   const modalIsTopmost = useIsModalLayerTopmost(modalToken);
   const actionLockRef = useRef(false);
+  const shareTriggerRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => () => { shareTriggerRef.current = null; }, []);
   const [pendingActionId, setPendingActionId] =
     useState<SelectionPendingActionId | null>(null);
   const actionBusy = isCreating || pendingActionId !== null;
@@ -134,14 +136,17 @@ export default function SelectionPopover<H extends { id: string }>({
   );
   const shareHighlight = useCallback(
     (triggerEl: HTMLButtonElement | null) => {
+      shareTriggerRef.current = triggerEl;
       runHighlightFirst("share", DEFAULT_COLOR, (highlight) => {
+        const highlightId = highlight.id;
         openShare(
-          resourceShareTarget(`highlight:${highlight.id}`),
-          anchoredShareOpenOptions(triggerEl, () =>
-            document.querySelector<HTMLElement>(
-              `[data-highlight-anchor="${CSS.escape(highlight.id)}"]`,
-            ),
-          ),
+          resourceShareTarget(`highlight:${highlightId}`),
+          {
+            returnFocusTo: () => shareTriggerRef.current,
+            returnFocusFallback: present(() => document.querySelector<HTMLElement>(
+              `[data-highlight-anchor="${CSS.escape(highlightId)}"]`,
+            )),
+          },
         );
       });
     },

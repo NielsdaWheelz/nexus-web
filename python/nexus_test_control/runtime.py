@@ -9,6 +9,7 @@ import re
 import stat
 import subprocess
 import tempfile
+import threading
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -53,6 +54,7 @@ _PROCESS_ROLES = frozenset(
         "worker-background",
     }
 )
+_WORKSPACE_INVOCATION_LOCKS = threading.local()
 
 
 class RuntimeContractError(ValueError):
@@ -670,13 +672,37 @@ def workspace_heavy_lock(repo_root: Path, *, blocking: bool = True) -> Iterator[
     ``BlockingIOError`` when another run already holds it, so a single-active-run
     lane can report ``NOT_RUN`` instead of queueing behind the first run.
     """
+    path = _workspace_lock_path(repo_root)
+    held: set[Path] = getattr(_WORKSPACE_INVOCATION_LOCKS, "paths", set())
+    if path in held:
+        yield path
+        return
+    with _locked_path(path, blocking=blocking):
+        yield path
+
+
+@contextmanager
+def workspace_invocation_lock(repo_root: Path) -> Iterator[Path]:
+    """Own one complete test invocation while preserving nested heavy boundaries."""
+    path = _workspace_lock_path(repo_root)
+    held: set[Path] = getattr(_WORKSPACE_INVOCATION_LOCKS, "paths", set())
+    if path in held:
+        raise RuntimeContractError("workspace invocation lock is already held by this thread")
+    with _locked_path(path):
+        held.add(path)
+        _WORKSPACE_INVOCATION_LOCKS.paths = held
+        try:
+            yield path
+        finally:
+            held.remove(path)
+
+
+def _workspace_lock_path(repo_root: Path) -> Path:
     root = canonical_repo_root(repo_root)
     lineage = _git_lineage_identity(root)
     owner = f"lineage:{lineage}" if lineage is not None else f"git:{_git_common_identity(root)}"
     identity = hashlib.sha256(os.fsencode(owner)).hexdigest()[:16]
-    path = Path("/tmp") / f"nexus-test-heavy-{identity}.lock"
-    with _locked_path(path, blocking=blocking):
-        yield path
+    return Path("/tmp") / f"nexus-test-heavy-{identity}.lock"
 
 
 def _git_lineage_identity(repo_root: Path) -> str | None:

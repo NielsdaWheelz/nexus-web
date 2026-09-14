@@ -3319,6 +3319,10 @@ class HostRelease:
             container_id = containers[service].container_id
             inspected = _inspect_one(container_id, f"{service} resource convergence inspect")
             host_config = _mapping(inspected.get("HostConfig"), f"{service} host config")
+            state = _mapping(inspected.get("State"), f"{service} convergence state")
+            running = state.get("Running")
+            if type(running) is not bool:
+                raise ReleaseDefect(f"{service} convergence running state is malformed")
             expected = _RESOURCE_LIMITS[service]
             observed = (
                 host_config.get("MemoryReservation"),
@@ -3326,12 +3330,19 @@ class HostRelease:
                 host_config.get("MemorySwap"),
                 host_config.get("PidsLimit"),
             )
-            if observed == (expected[0], expected[1], expected[1], expected[2]):
+            kernel_limits = (
+                self._container_kernel_resources(container_id, service)[:4] if running else None
+            )
+            expected_kernel_limits = (
+                str(expected[0]),
+                str(expected[1]),
+                "0",
+                str(expected[2]),
+            )
+            if observed == (expected[0], expected[1], expected[1], expected[2]) and (
+                kernel_limits is None or kernel_limits == expected_kernel_limits
+            ):
                 continue
-            state = _mapping(inspected.get("State"), f"{service} convergence state")
-            running = state.get("Running")
-            if type(running) is not bool:
-                raise ReleaseDefect(f"{service} convergence running state is malformed")
             expected_running = service not in _WRITERS or forward_fix_sha is None
             if running is not expected_running:
                 state_name = "running" if expected_running else "stopped"
@@ -3365,10 +3376,22 @@ class HostRelease:
                     container_id,
                 )
             )
-            self._validate_resource_limits(
-                service,
-                _inspect_one(container_id, f"{service} converged resource inspect"),
+            converged = _inspect_one(container_id, f"{service} converged state inspect")
+            converged_state = _mapping(
+                converged.get("State"),
+                f"{service} converged state",
             )
+            converged_running = converged_state.get("Running")
+            if type(converged_running) is not bool:
+                raise ReleaseDefect(f"{service} converged running state is malformed")
+            if converged_running:
+                self._validate_running_resource_limits(
+                    service,
+                    container_id,
+                    require_empty_swap=False,
+                )
+            else:
+                self._validate_resource_limits(service, converged)
             print(
                 "host-container-resource-converged"
                 f" id={container_id} service={service!r}"
@@ -3376,11 +3399,126 @@ class HostRelease:
                 file=sys.stderr,
             )
 
+        retained_swap: list[str] = []
+        for service, evidence in containers.items():
+            inspected = _inspect_one(
+                evidence.container_id,
+                f"{service} settled resource inspect",
+            )
+            state = _mapping(inspected.get("State"), f"{service} settled state")
+            running = state.get("Running")
+            if type(running) is not bool:
+                raise ReleaseDefect(f"{service} settled running state is malformed")
+            if running:
+                swap_current = self._validate_running_resource_limits(
+                    service,
+                    evidence.container_id,
+                    require_empty_swap=False,
+                )
+                if swap_current:
+                    retained_swap.append(
+                        f"{service} container {evidence.container_id} retains {swap_current} bytes"
+                    )
+            else:
+                self._validate_resource_limits(service, inspected)
+        if retained_swap:
+            raise ReleaseBlocked(
+                "running containers retain forbidden swap: "
+                + ", ".join(retained_swap)
+                + "; restart those exact containers before continuing"
+            )
+
     def _host_text(self, path: Path, label: str) -> str:
         try:
             return path.read_text(encoding="ascii")
         except (OSError, UnicodeDecodeError) as exc:
             raise ReleaseBlocked(f"host {label} evidence is unavailable") from exc
+
+    def _running_container_cgroup(self, container_id: str, service: str) -> Path:
+        """Resolve one running container's host cgroup without entering it."""
+
+        inspected = _inspect_one(container_id, f"{service} cgroup inspect")
+        state = _mapping(inspected.get("State"), f"{service} cgroup state")
+        pid = state.get("Pid")
+        if (
+            state.get("Running") is not True
+            or not isinstance(pid, int)
+            or isinstance(pid, bool)
+            or pid <= 0
+        ):
+            raise ReleaseBlocked(f"{service} has no running cgroup")
+        unified: list[str] = []
+        for line in self._host_text(
+            self.paths.proc_root / str(pid) / "cgroup",
+            f"{service} container cgroup",
+        ).splitlines():
+            if line.startswith("0::"):
+                unified.append(line.removeprefix("0::"))
+        if (
+            len(unified) != 1
+            or not unified[0].startswith("/")
+            or unified[0].startswith("//")
+            or unified[0] == "/"
+            or unified[0] != os.path.normpath(unified[0])
+        ):
+            raise ReleaseDefect(f"{service} container cgroup evidence is malformed")
+        confirmed = _mapping(
+            _inspect_one(container_id, f"{service} cgroup identity recheck").get("State"),
+            f"{service} cgroup identity state",
+        )
+        if confirmed.get("Running") is not True or confirmed.get("Pid") != pid:
+            raise ReleaseBlocked(f"{service} changed while its cgroup was resolved")
+        return self.paths.cgroup_root / unified[0].removeprefix("/")
+
+    def _cgroup_resources(self, cgroup: Path, service: str) -> tuple[str, str, str, str, int]:
+        limits: list[str] = []
+        for name in ("memory.low", "memory.max", "memory.swap.max", "pids.max"):
+            value = self._host_text(cgroup / name, f"{service} {name}").strip()
+            if re.fullmatch(r"[0-9]+|max", value) is None:
+                raise ReleaseDefect(f"{service} cgroup resource evidence is malformed")
+            limits.append(value)
+        swap_current = self._host_text(
+            cgroup / "memory.swap.current",
+            f"{service} memory.swap.current",
+        ).strip()
+        if not swap_current.isdigit():
+            raise ReleaseDefect(f"{service} cgroup resource evidence is malformed")
+        return limits[0], limits[1], limits[2], limits[3], int(swap_current)
+
+    def _container_kernel_resources(
+        self,
+        container_id: str,
+        service: str,
+    ) -> tuple[str, str, str, str, int]:
+        return self._cgroup_resources(
+            self._running_container_cgroup(container_id, service),
+            service,
+        )
+
+    def _validate_running_resource_limits(
+        self,
+        service: str,
+        container_id: str,
+        *,
+        require_empty_swap: bool = True,
+    ) -> int:
+        inspected = _inspect_one(container_id, f"{service} running resource inspect")
+        self._validate_resource_limits(service, inspected)
+        reservation, memory, pids = _RESOURCE_LIMITS[service]
+        observed = self._container_kernel_resources(container_id, service)
+        expected = (str(reservation), str(memory), "0", str(pids))
+        if observed[:4] != expected:
+            raise ReleaseBlocked(
+                f"{service} kernel resource limits differ: "
+                f"observed={observed[:4]!r} expected={expected!r}"
+            )
+        if require_empty_swap and observed[4] != 0:
+            raise ReleaseBlocked(
+                f"{service} container {container_id} retains "
+                f"{observed[4]} bytes of forbidden swap; "
+                "restart the exact container before continuing"
+            )
+        return observed[4]
 
     def _require_codex_agent_host_kernel_boundary(self) -> None:
         if (
@@ -3674,7 +3812,10 @@ class HostRelease:
             elif writers_running is not None and running is not writers_running:
                 expected = "running" if writers_running else "stopped"
                 raise ReleaseBlocked(f"{service} is not {expected} before replay mutation")
-            self._validate_resource_limits(service, inspected)
+            if running:
+                self._validate_running_resource_limits(service, evidence.container_id)
+            else:
+                self._validate_resource_limits(service, inspected)
             if service == "caddy":
                 self._validate_caddy_mount(inspected)
 
@@ -4022,13 +4163,19 @@ class HostRelease:
             writers_running=forward_fix_sha is None,
         )
         for service in _SERVICES:
-            self._validate_resource_limits(
-                service,
-                _inspect_one(
-                    containers[service].container_id,
-                    f"{service} preflight resource inspect",
-                ),
+            container_id = containers[service].container_id
+            inspected = _inspect_one(
+                container_id,
+                f"{service} preflight resource inspect",
             )
+            state = _mapping(inspected.get("State"), f"{service} preflight resource state")
+            running = state.get("Running")
+            if type(running) is not bool:
+                raise ReleaseDefect(f"{service} preflight resource running state is malformed")
+            if running:
+                self._validate_running_resource_limits(service, container_id)
+            else:
+                self._validate_resource_limits(service, inspected)
         if forward_fix_sha is None:
             if (
                 containers["api"].image != current_record.api_image_id
@@ -4514,7 +4661,7 @@ class HostRelease:
             evidence = attempt.containers[service]
             item = _inspect_one(evidence.container_id, f"{service} unchanged inspect")
             config = _mapping(item.get("Config"), f"{service} unchanged config")
-            self._validate_resource_limits(service, item)
+            self._validate_running_resource_limits(service, evidence.container_id)
             if service == "caddy":
                 self._validate_caddy_mount(item)
             if (
@@ -5650,26 +5797,7 @@ class HostRelease:
         proof asserts against a 64 MiB margin.
         """
 
-        inspected = _inspect_one(container_id, "Codex capacity cgroup inspect")
-        state = _mapping(inspected.get("State"), "Codex capacity cgroup state")
-        pid = state.get("Pid")
-        if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
-            raise ReleaseDefect("Codex capacity container has no running process")
-        unified: list[str] = []
-        for line in self._host_text(
-            self.paths.proc_root / str(pid) / "cgroup",
-            "Codex capacity container cgroup",
-        ).splitlines():
-            if line.startswith("0::"):
-                unified.append(line.removeprefix("0::"))
-        if (
-            len(unified) != 1
-            or not unified[0].startswith("/")
-            or unified[0] == "/"
-            or unified[0] != os.path.normpath(unified[0])
-        ):
-            raise ReleaseDefect("Codex capacity container cgroup evidence is malformed")
-        return self.paths.cgroup_root / unified[0].removeprefix("/")
+        return self._running_container_cgroup(container_id, _CODEX_AGENT_HOST)
 
     def _classify_codex_host_cgroup_loss(
         self, container_id: str, cause: ReleaseBlocked
@@ -5699,8 +5827,13 @@ class HostRelease:
         return ExternalCommandFailed("Codex agent host exited during capacity qualification")
 
     def _codex_capacity_cgroup_metrics(self, cgroup: Path) -> tuple[int, int, int, int]:
-        values: dict[str, int] = {}
-        for counter in ("memory.max", "memory.current", "memory.peak"):
+        resources = self._cgroup_resources(cgroup, _CODEX_AGENT_HOST)
+        reservation, memory, pids = _RESOURCE_LIMITS[_CODEX_AGENT_HOST]
+        expected = (str(reservation), str(memory), "0", str(pids))
+        if resources[:4] != expected or resources[4] != 0:
+            raise ReleaseBlocked("Codex capacity host kernel resource contract differs")
+        values: dict[str, int] = {"memory.max": memory}
+        for counter in ("memory.current", "memory.peak"):
             raw = self._host_text(cgroup / counter, f"Codex capacity {counter}").strip()
             if not raw.isdigit():
                 raise ReleaseDefect("Codex capacity cgroup metrics are malformed")
@@ -5756,10 +5889,10 @@ class HostRelease:
             )
             _require_match(f"Codex capacity {service} container id", container_id, _CONTAINER_ID)
             inspected = _inspect_one(container_id, f"Codex capacity {service} inspect")
-            self._validate_resource_limits(service, inspected)
             state = _mapping(inspected.get("State"), f"Codex capacity {service} state")
             if state.get("Running") is not True:
                 refuse_readiness(service)
+            self._validate_running_resource_limits(service, container_id)
             if service == "caddy":
                 self._require_caddy_admin_ready(
                     bundle=bundle,
@@ -6698,6 +6831,11 @@ class HostRelease:
             source_sha=source_sha,
             worker_image_id=worker_image_id,
         )
+        # Capacity is candidate evidence only after the exact predecessor is
+        # inside the kernel-enforced envelope. Docker metadata alone is not an
+        # enforcement fact, and retained pre-contract swap invalidates the
+        # baseline even after memory.swap.max is corrected.
+        self._converge_resource_limits(source_sha)
         initial_host_sample = self._qualification_host_sample()
         self._require_qualification_host_sample(initial_host_sample, initial=True)
         config = self._config_snapshot()
@@ -6891,9 +7029,12 @@ class HostRelease:
             elif sampler.is_alive():
                 startup_error = ExternalCommandFailed("Codex capacity sampler did not stop")
             elif sample_failure:
-                sampling_defect = ReleaseDefect("Codex capacity sampler failed")
-                sampling_defect.__cause__ = sample_failure[0]
-                startup_error = sampling_defect
+                if isinstance(sample_failure[0], ReleaseBlocked):
+                    startup_error = sample_failure[0]
+                else:
+                    sampling_defect = ReleaseDefect("Codex capacity sampler failed")
+                    sampling_defect.__cause__ = sample_failure[0]
+                    startup_error = sampling_defect
             if isinstance(exc, CodexCapacityBreach):
                 startup_error = exc
             if isinstance(startup_error, CodexCapacityBreach):
@@ -7008,6 +7149,7 @@ class HostRelease:
                 image_environment=self._codex_agent_image_environment(candidate.images.worker),
                 expected_input_source=input_path,
             )
+            self._validate_running_resource_limits(_CODEX_AGENT_HOST, canary_id)
             sample_once(require_container=True)
             try:
                 result = _run_observed(
@@ -7133,9 +7275,12 @@ class HostRelease:
             elif sampler.is_alive():
                 proof_error = ExternalCommandFailed("Codex capacity sampler did not stop")
             elif sample_failure:
-                sampling_defect = ReleaseDefect("Codex capacity sampler failed")
-                sampling_defect.__cause__ = sample_failure[0]
-                proof_error = sampling_defect
+                if isinstance(sample_failure[0], ReleaseBlocked):
+                    proof_error = sample_failure[0]
+                else:
+                    sampling_defect = ReleaseDefect("Codex capacity sampler failed")
+                    sampling_defect.__cause__ = sample_failure[0]
+                    proof_error = sampling_defect
             else:
                 proof_error = exc
 
@@ -7198,7 +7343,7 @@ class HostRelease:
         )
         _require_match(f"{service} container id", container_id, _CONTAINER_ID)
         inspected = _inspect_one(container_id, f"{service} activated container inspect")
-        self._validate_resource_limits(service, inspected)
+        self._validate_running_resource_limits(service, container_id)
         image_id = _require_match(f"{service} image id", inspected.get("Image"), _IMAGE_ID)
         return image_id
 
@@ -7250,9 +7395,10 @@ class HostRelease:
         _require_match("production host", production_host, _HOST)
         self.store.assert_candidate_admissible(source_sha)
         existing = self.store.load_attempt(source_sha)
-        # The predecessor has no Codex host.  A first cutover therefore proves
-        # its immutable qualification before resource convergence can mutate a
-        # live container, not merely before the later backend activation.
+        # The predecessor has no Codex host. A first cutover therefore requires
+        # its immutable qualification before the ordinary release path mutates
+        # a live container. Qualification owns its prerequisite resource
+        # convergence so the measured baseline already satisfies the contract.
         self._require_first_codex_capacity_qualification(
             source_sha,
             existing=existing,

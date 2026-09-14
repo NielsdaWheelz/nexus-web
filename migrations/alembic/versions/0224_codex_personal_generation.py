@@ -33,7 +33,17 @@ _GENERATION_JOB_KINDS = (
 )
 _RESET_BLOCKING_JOB_STATUSES = ("pending", "running", "failed", "dead")
 # Preflight still validates calls and journals before any mutation can begin.
-_RESETTABLE_DEAD_JOB_KINDS = ("synapse_scan",)
+_HEADLESS_RESETTABLE_DEAD_JOB_KINDS = ("synapse_scan",)
+_RESETTABLE_ENRICHMENT_FAILURE_REASONS = (
+    "no_provider",
+    "rate_limit_rejected",
+    "llm_rejected",
+    "llm_failed",
+    "parse_failed",
+    "no_fields",
+    "no_applicable_fields",
+    "unexpected_error",
+)
 _HISTORICAL_DOSSIER_FAILURE_CODES = (
     "EntitlementDenied",
     "BudgetExceeded",
@@ -259,17 +269,79 @@ def _preflight(bind: sa.Connection) -> None:
             FROM background_jobs
             WHERE kind = ANY(CAST(:kinds AS text[]))
               AND status = ANY(CAST(:statuses AS text[]))
-              AND NOT (
+              AND NOT ((
                   status = 'dead'
-                  AND kind = ANY(CAST(:resettable_dead_kinds AS text[]))
-              )
+                  AND (
+                      kind = ANY(CAST(:headless_dead_kinds AS text[]))
+                      OR (
+                          kind = 'enrich_metadata'
+                          AND attempts > 0
+                          AND finished_at IS NOT NULL
+                          AND lease_expires_at IS NULL
+                          AND claimed_by IS NULL
+                          AND error_code IS NOT NULL
+                          AND (
+                              result = jsonb_build_object(
+                                  'status', 'failed',
+                                  'reason', result ->> 'reason',
+                                  'error_code', error_code
+                              )
+                              OR (
+                                  result = jsonb_build_object(
+                                      'status', 'failed',
+                                      'reason', result ->> 'reason',
+                                      'error_code', error_code,
+                                      'provider', result ->> 'provider',
+                                      'model', result ->> 'model',
+                                      'attempted_providers', result -> 'attempted_providers'
+                                  )
+                                  AND result ->> 'provider' <> ''
+                                  AND result ->> 'model' <> ''
+                                  AND jsonb_typeof(result -> 'attempted_providers') = 'array'
+                                  AND result -> 'attempted_providers' = (
+                                      SELECT jsonb_agg(
+                                          attempt.value
+                                          ORDER BY attempt.ordinality
+                                      )
+                                      FROM jsonb_array_elements(
+                                          CASE
+                                              WHEN jsonb_typeof(
+                                                  result -> 'attempted_providers'
+                                              ) = 'array'
+                                                  THEN result -> 'attempted_providers'
+                                              ELSE '[]'::jsonb
+                                          END
+                                      ) WITH ORDINALITY AS attempt(value, ordinality)
+                                      WHERE attempt.value = jsonb_build_object(
+                                          'provider', attempt.value ->> 'provider',
+                                          'model', attempt.value ->> 'model'
+                                      )
+                                        AND jsonb_typeof(attempt.value -> 'provider')
+                                            = 'string'
+                                        AND attempt.value ->> 'provider' <> ''
+                                        AND jsonb_typeof(attempt.value -> 'model')
+                                            = 'string'
+                                        AND attempt.value ->> 'model' <> ''
+                                  )
+                                  AND result ->> 'provider'
+                                      = result -> 'attempted_providers' -> -1 ->> 'provider'
+                                  AND result ->> 'model'
+                                      = result -> 'attempted_providers' -> -1 ->> 'model'
+                              )
+                          )
+                          AND result ->> 'reason'
+                              = ANY(CAST(:enrichment_failure_reasons AS text[]))
+                      )
+                  )
+              ) IS TRUE)
             ORDER BY id
             """
         ),
         {
             "kinds": list(_GENERATION_JOB_KINDS),
             "statuses": list(_RESET_BLOCKING_JOB_STATUSES),
-            "resettable_dead_kinds": list(_RESETTABLE_DEAD_JOB_KINDS),
+            "headless_dead_kinds": list(_HEADLESS_RESETTABLE_DEAD_JOB_KINDS),
+            "enrichment_failure_reasons": list(_RESETTABLE_ENRICHMENT_FAILURE_REASONS),
         },
     ).all()
     if active_jobs:
@@ -374,10 +446,16 @@ def _preflight(bind: sa.Connection) -> None:
             ORDER BY id
             """
         ),
-        {"codes": list(_CURRENT_ORACLE_FAILURE_CODES + _HISTORICAL_ORACLE_FAILURE_CODES)},
+        {
+            "codes": list(
+                _CURRENT_ORACLE_FAILURE_CODES + _HISTORICAL_ORACLE_FAILURE_CODES
+            )
+        },
     ).all()
     if unsupported_oracle_failures:
-        _fail(f"Oracle failures use unsupported codes: {_ids(unsupported_oracle_failures)}")
+        _fail(
+            f"Oracle failures use unsupported codes: {_ids(unsupported_oracle_failures)}"
+        )
 
     malformed_oracle_failures = bind.execute(
         sa.text(
@@ -642,7 +720,9 @@ def _preflight_snapshot_closure(bind: sa.Connection) -> None:
 
 
 _PRESERVATION_FILTERS: dict[str, str] = {
-    "artifact_build_cancellations": ("build_id NOT IN (SELECT id FROM nx_0224_build_ids)"),
+    "artifact_build_cancellations": (
+        "build_id NOT IN (SELECT id FROM nx_0224_build_ids)"
+    ),
     "artifact_build_events": "build_id NOT IN (SELECT id FROM nx_0224_build_ids)",
     "artifact_build_failures": "build_id NOT IN (SELECT id FROM nx_0224_build_ids)",
     "artifact_builds": "id NOT IN (SELECT id FROM nx_0224_build_ids)",
@@ -650,19 +730,23 @@ _PRESERVATION_FILTERS: dict[str, str] = {
     "artifact_learn_failures": (
         "request_id NOT IN (SELECT request_id FROM nx_0224_learn_request_ids)"
     ),
-    "artifact_learn_requests": ("id NOT IN (SELECT request_id FROM nx_0224_learn_request_ids)"),
+    "artifact_learn_requests": (
+        "id NOT IN (SELECT request_id FROM nx_0224_learn_request_ids)"
+    ),
     "artifact_learn_successes": (
         "request_id NOT IN (SELECT request_id FROM nx_0224_learn_request_ids)"
     ),
     "artifact_revisions": "id NOT IN (SELECT id FROM nx_0224_revision_ids)",
     "artifacts": "id NOT IN (SELECT id FROM nx_0224_artifact_ids)",
     "background_jobs": "id NOT IN (SELECT id FROM nx_0224_generation_job_ids)",
-    "passage_anchors": "NOT " + _deleted_reference_predicate("owner_scheme", "owner_id"),
+    "passage_anchors": "NOT "
+    + _deleted_reference_predicate("owner_scheme", "owner_id"),
     "resource_edges": "id NOT IN (SELECT id FROM nx_0224_resource_edge_ids)",
     "resource_external_snapshots": (
         "id NOT IN (SELECT id FROM nx_0224_external_snapshot_delete_ids)"
     ),
-    "resource_grants": "NOT " + _deleted_reference_predicate("subject_scheme", "subject_id"),
+    "resource_grants": "NOT "
+    + _deleted_reference_predicate("subject_scheme", "subject_id"),
     "resource_mutations": "NOT ("
     "split_part(mutation_scope, ':', 1) = 'resource' AND ("
     "(split_part(mutation_scope, ':', 2) = 'conversation' AND "
@@ -677,8 +761,11 @@ _PRESERVATION_FILTERS: dict[str, str] = {
     "(split_part(mutation_scope, ':', 2) = 'artifact_revision' AND "
     "split_part(mutation_scope, ':', 3) IN "
     "(SELECT id::text FROM nx_0224_revision_ids))))",
-    "resource_versions": "NOT " + _deleted_reference_predicate("resource_scheme", "resource_id"),
-    "resource_view_states": ("id NOT IN (SELECT id FROM nx_0224_resource_view_state_ids)"),
+    "resource_versions": "NOT "
+    + _deleted_reference_predicate("resource_scheme", "resource_id"),
+    "resource_view_states": (
+        "id NOT IN (SELECT id FROM nx_0224_resource_view_state_ids)"
+    ),
     "synapse_suppressions": "NOT ("
     + _deleted_reference_predicate("source_scheme", "source_id")
     + " OR "
@@ -707,7 +794,9 @@ def _snapshot_external_snapshot_deletions(bind: sa.Connection) -> None:
         )
     )
     surviving_references: list[str] = []
-    for table, scheme_column, identity_column in sorted(_CLASSIFIED_POLYMORPHIC_REFERENCES):
+    for table, scheme_column, identity_column in sorted(
+        _CLASSIFIED_POLYMORPHIC_REFERENCES
+    ):
         if table in _RESET_OR_REPLACED_TABLES:
             continue
         row_filter = _PRESERVATION_FILTERS.get(table)
@@ -757,7 +846,9 @@ def _table_primary_keys(bind: sa.Connection) -> dict[str, tuple[str, ...]]:
             """
         )
     ).all()
-    primary_keys = {str(row[0]): tuple(str(column) for column in row[1]) for row in rows}
+    primary_keys = {
+        str(row[0]): tuple(str(column) for column in row[1]) for row in rows
+    }
     tables = {
         str(row[0])
         for row in bind.execute(
@@ -779,7 +870,9 @@ def _preservation_query(
     primary_key_columns: tuple[str, ...],
     row_filter: str | None,
 ) -> str:
-    json_values = ", ".join(_quoted_identifier(column) for column in primary_key_columns)
+    json_values = ", ".join(
+        _quoted_identifier(column) for column in primary_key_columns
+    )
     where = f" WHERE {row_filter}" if row_filter is not None else ""
     return (
         f"SELECT jsonb_build_array({json_values})::text AS identity "
@@ -854,7 +947,9 @@ def _assert_preservation_manifest(
         )
     }
     current_tables = set(_table_primary_keys(bind))
-    current_preserved_tables = current_tables - _RESET_OR_REPLACED_TABLES - _NEW_GENERATION_TABLES
+    current_preserved_tables = (
+        current_tables - _RESET_OR_REPLACED_TABLES - _NEW_GENERATION_TABLES
+    )
     if current_preserved_tables != set(plan):
         raise RuntimeError(
             "0224 preservation table set changed; "
@@ -872,7 +967,9 @@ def _assert_preservation_manifest(
 
 
 def _tag_historical_failures(bind: sa.Connection) -> None:
-    op.drop_constraint("ck_artifact_build_events_type", "artifact_build_events", type_="check")
+    op.drop_constraint(
+        "ck_artifact_build_events_type", "artifact_build_events", type_="check"
+    )
     bind.execute(
         sa.text(
             """
@@ -892,7 +989,9 @@ def _tag_historical_failures(bind: sa.Connection) -> None:
         ")",
     )
 
-    op.drop_constraint("ck_oracle_reading_events_type", "oracle_reading_events", type_="check")
+    op.drop_constraint(
+        "ck_oracle_reading_events_type", "oracle_reading_events", type_="check"
+    )
     bind.execute(
         sa.text(
             """
@@ -923,7 +1022,9 @@ def _delete_resource_closure(bind: sa.Connection) -> None:
         )
     )
     bind.execute(
-        sa.text("DELETE FROM resource_edges WHERE id IN (SELECT id FROM nx_0224_resource_edge_ids)")
+        sa.text(
+            "DELETE FROM resource_edges WHERE id IN (SELECT id FROM nx_0224_resource_edge_ids)"
+        )
     )
     bind.execute(
         sa.text(
@@ -1019,12 +1120,20 @@ def _delete_conversation_artifacts(bind: sa.Connection) -> None:
         "artifact_build_cancellations",
     ):
         bind.execute(
-            sa.text(f"DELETE FROM {table} WHERE build_id IN (SELECT id FROM nx_0224_build_ids)")
+            sa.text(
+                f"DELETE FROM {table} WHERE build_id IN (SELECT id FROM nx_0224_build_ids)"
+            )
         )
     bind.execute(
-        sa.text("DELETE FROM artifact_builds WHERE id IN (SELECT id FROM nx_0224_build_ids)")
+        sa.text(
+            "DELETE FROM artifact_builds WHERE id IN (SELECT id FROM nx_0224_build_ids)"
+        )
     )
-    bind.execute(sa.text("DELETE FROM artifacts WHERE id IN (SELECT id FROM nx_0224_artifact_ids)"))
+    bind.execute(
+        sa.text(
+            "DELETE FROM artifacts WHERE id IN (SELECT id FROM nx_0224_artifact_ids)"
+        )
+    )
 
 
 def _delete_chat_and_generation_history(bind: sa.Connection) -> None:
@@ -1179,7 +1288,9 @@ def _create_generation_schema() -> None:
             server_default=sa.text("now()"),
             nullable=False,
         ),
-        sa.Column("dispatch_started_at", postgresql.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column(
+            "dispatch_started_at", postgresql.TIMESTAMP(timezone=True), nullable=True
+        ),
         sa.Column("accepted_at", postgresql.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("completed_at", postgresql.TIMESTAMP(timezone=True), nullable=True),
         sa.ForeignKeyConstraint(["generation_id"], ["llm_calls.id"]),
@@ -1199,7 +1310,9 @@ def _create_generation_schema() -> None:
             nullable=False,
         ),
         sa.Column("generation_id", postgresql.UUID(as_uuid=True), nullable=False),
-        sa.Column("source_model_turn_id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column(
+            "source_model_turn_id", postgresql.UUID(as_uuid=True), nullable=False
+        ),
         sa.Column("successor_turn_seq", sa.Integer(), nullable=False),
         sa.Column("target_fingerprint", sa.Text(), nullable=False),
         sa.Column("codec_id", sa.Text(), nullable=False),
@@ -1339,7 +1452,10 @@ def _create_generation_schema() -> None:
 
 def _assert_final_reset(bind: sa.Connection) -> None:
     nonempty = {
-        table: int(bind.scalar(sa.text(f"SELECT count(*) FROM {_quoted_identifier(table)}")) or 0)
+        table: int(
+            bind.scalar(sa.text(f"SELECT count(*) FROM {_quoted_identifier(table)}"))
+            or 0
+        )
         for table in sorted(_EMPTY_AFTER_RESET_TABLES)
     }
     nonempty = {table: count for table, count in nonempty.items() if count != 0}
@@ -1379,19 +1495,24 @@ def _assert_final_reset(bind: sa.Connection) -> None:
         ),
     }
     residuals = {
-        owner: int(bind.scalar(sa.text(query)) or 0) for owner, query in residual_queries.items()
+        owner: int(bind.scalar(sa.text(query)) or 0)
+        for owner, query in residual_queries.items()
     }
     residuals = {owner: count for owner, count in residuals.items() if count != 0}
     if residuals:
         raise RuntimeError(f"0224 reset left closure rows: {residuals!r}")
 
-    for table, scheme_column, identity_column in sorted(_CLASSIFIED_POLYMORPHIC_REFERENCES):
+    for table, scheme_column, identity_column in sorted(
+        _CLASSIFIED_POLYMORPHIC_REFERENCES
+    ):
         predicate = (
             f"{_quoted_identifier(scheme_column)} IN ('conversation', 'message') OR "
             + _deleted_reference_predicate(scheme_column, identity_column)
         )
         dangling = bind.scalar(
-            sa.text(f"SELECT 1 FROM {_quoted_identifier(table)} WHERE {predicate} LIMIT 1")
+            sa.text(
+                f"SELECT 1 FROM {_quoted_identifier(table)} WHERE {predicate} LIMIT 1"
+            )
         )
         if dangling is not None:
             raise RuntimeError(
@@ -1443,7 +1564,9 @@ def _assert_final_reset(bind: sa.Connection) -> None:
         )
     }
     if dropped_tables:
-        raise RuntimeError(f"0224 reset left retired generation tables: {sorted(dropped_tables)!r}")
+        raise RuntimeError(
+            f"0224 reset left retired generation tables: {sorted(dropped_tables)!r}"
+        )
 
     retired_columns = {
         (str(row[0]), str(row[1]))
@@ -1502,4 +1625,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    raise NotImplementedError("0224 is an irreversible generation-backends hard cutover")
+    raise NotImplementedError(
+        "0224 is an irreversible generation-backends hard cutover"
+    )

@@ -592,6 +592,125 @@ def test_changed_python_static_and_kernel_use_only_the_selected_file_and_node(
     )
 
 
+def test_root_owned_kernel_proof_is_not_run_before_workflow_portfolio_without_privilege(
+    tmp_path: Path,
+) -> None:
+    _write(
+        tmp_path / "python/tests/kernel/test_production_release.py",
+        "def test_owned(): pass\n",
+    )
+    environment = _stub_tools(
+        tmp_path,
+        "sudo",
+        exit_status=1,
+        diagnostic='sudo: The "no new privileges" flag is set',
+    )
+    stream = StringIO()
+
+    result = run_workflow(
+        CapabilityContext(tmp_path, Workflow.CONFIDENCE, ()),
+        stream,
+        environment,
+        run_id="0123456789abcdef",
+        _effective_uid=lambda: 1000,
+    )
+
+    kernel = next(item for item in result.capabilities if item.id is Capability.KERNEL_PYTHON)
+    assert all(item.status is RunStatus.NOT_RUN for item in result.capabilities)
+    assert "effective uid 0 or non-interactive sudo" in kernel.detail
+    assert 'sudo: The "no new privileges" flag is set' in kernel.detail
+    assert "owner=kernel-python; status=not_run" in stream.getvalue()
+    commands = _commands(tmp_path)
+    assert [(command["tool"], command["argv"], command["cwd"]) for command in commands] == [
+        ("sudo", ["--non-interactive", "true"], str(tmp_path))
+    ]
+    assert {"HOME", "NEXUS_ENV", "PATH"}.issubset(commands[0]["environment"])
+
+
+def test_qualified_root_owned_kernel_proof_runs_after_privilege_admission(
+    tmp_path: Path,
+) -> None:
+    proof_path = "python/tests/kernel/test_production_release.py"
+    _write(tmp_path / proof_path, "def test_owned(): pass\n")
+    (tmp_path / "python/.venv").mkdir()
+    environment = _stub_tools(tmp_path, "sudo", "uv")
+    context = _changed_context(
+        tmp_path,
+        Selection(
+            proof_path,
+            Capability.KERNEL_PYTHON,
+            SelectionReason.EXPLICIT_FOCUS,
+            f"pytest:{proof_path}::test_owned",
+        ),
+    )
+
+    admission = runner._workflow_root_ownership_admission(
+        context,
+        environment,
+        effective_uid=1000,
+    )
+    result = runner._run_kernel_python(
+        context,
+        environment,
+        root_ownership_admitted=admission is None,
+    )
+
+    assert admission is None
+    assert result.evidence.status is RunStatus.PASS
+    assert [(command["tool"], command["argv"]) for command in _commands(tmp_path)] == [
+        ("sudo", ["--non-interactive", "true"]),
+        (
+            "uv",
+            [
+                "run",
+                "--frozen",
+                "--no-sync",
+                "pytest",
+                "--maxfail=1",
+                "-p",
+                "no:randomly",
+                "--",
+                "./tests/kernel/test_production_release.py::test_owned",
+            ],
+        ),
+    ]
+
+
+def test_doctor_reports_missing_host_proof_privilege_before_dependency_checks(
+    tmp_path: Path,
+) -> None:
+    _write(
+        tmp_path / "python/tests/kernel/test_oracle_host_release.py",
+        "def test_owned(): pass\n",
+    )
+    environment = _stub_tools(
+        tmp_path,
+        "actionlint",
+        "bun",
+        "docker",
+        "git",
+        "java",
+        "sudo",
+        "supabase",
+        "uv",
+    )
+    _write_executable(
+        tmp_path / "bin/sudo",
+        exit_status=1,
+        diagnostic="sudo: a password is required",
+    )
+    result = runner._run_doctor(
+        CapabilityContext(tmp_path, Workflow.DOCTOR, ()),
+        environment,
+        _effective_uid=lambda: 1000,
+    )
+
+    assert result.evidence.status is RunStatus.NOT_RUN
+    assert "effective uid 0 or non-interactive sudo" in result.detail
+    assert "sudo: a password is required" in result.detail
+    assert [command["tool"] for command in _commands(tmp_path)] == ["sudo"]
+
+
 @pytest.mark.parametrize(
     ("owner", "source"),
     (
@@ -663,6 +782,24 @@ def test_changed_static_platform_runs_only_selected_shell_checks(tmp_path: Path)
 
 def test_changed_static_platform_owns_the_release_bundle_resolver(tmp_path: Path) -> None:
     owner = "deploy/hetzner/fetch-release-bundle.sh"
+    _write(tmp_path / owner, "#!/usr/bin/env bash\nset -eu\n")
+    environment = _stub_tools(tmp_path, "bash", "shellcheck")
+    context = _changed_context(
+        tmp_path,
+        Selection(owner, Capability.STATIC_PLATFORM, SelectionReason.PRIORITY_RISK),
+    )
+
+    result = run_capability(context, Capability.STATIC_PLATFORM, environment)
+
+    assert result.evidence.status is RunStatus.PASS
+    assert [command["argv"] for command in _commands(tmp_path)] == [
+        ["-n", f"./{owner}"],
+        [f"./{owner}"],
+    ]
+
+
+def test_changed_static_platform_owns_the_backend_publisher_workspace(tmp_path: Path) -> None:
+    owner = "deploy/hetzner/backend-publisher-workspace.sh"
     _write(tmp_path / owner, "#!/usr/bin/env bash\nset -eu\n")
     environment = _stub_tools(tmp_path, "bash", "shellcheck")
     context = _changed_context(
@@ -1306,6 +1443,7 @@ def test_exact_provider_protocol_proof_runs_only_its_local_contract_node(
         f"pytest:{proof_path}::test_protocol",
         environment,
         _available_memory=lambda: 8192,
+        _available_storage=lambda _root, _docker: 16384,
     )
 
     assert result.evidence.status is RunStatus.FAIL
@@ -1427,7 +1565,7 @@ def test_release_artifact_runs_its_python_proofs_before_staging_android_evidence
         repo_root / f"test-results/runs/{run_id}/android-release.json",
         json.dumps(
             {
-                "version": 2,
+                "version": 3,
                 "run_id": run_id,
                 "tag": "android-v1.2.3",
                 "apk_path": apk.relative_to(repo_root).as_posix(),
@@ -1438,6 +1576,8 @@ def test_release_artifact_runs_its_python_proofs_before_staging_android_evidence
                 "previous_version_code": 122,
                 "version_name": "1.2.3",
                 "git_sha": "a" * 40,
+                "offline_baseline_mode": "compatible",
+                "physical_device": {"serial": "R5CT1234"},
                 "app_link_host": "nexus.nielseriknandal.com",
                 "api_origin": "https://api.nielseriknandal.com",
                 "api_origin_source": "signed_apk_build_config",
@@ -2060,7 +2200,10 @@ def test_android_release_control_owns_physical_device_and_exact_signed_methods(
     assert runner._ANDROID_RELEASE_INSTRUMENTATION_NODES == (
         "apps/android/app/src/androidTest/java/app/nexus/android/offline/reading/"
         "OfflineReadingSignedPhysicalPromotionTest.kt::"
-        "acquiresAllFormatsAndPersistsPendingProgressOnBaseline",
+        "acquiresAllFormatsAndPersistsPendingProgress",
+        "apps/android/app/src/androidTest/java/app/nexus/android/offline/reading/"
+        "OfflineReadingSignedPhysicalPromotionTest.kt::"
+        "attestsEmptyOfflineStateOnIncompatibleBaseline",
         "apps/android/app/src/androidTest/java/app/nexus/android/offline/reading/"
         "OfflineReadingSignedPhysicalPromotionTest.kt::"
         "opensShelfAfterForceStopRebootAndAirplaneMode",
@@ -2071,7 +2214,7 @@ def test_android_release_control_owns_physical_device_and_exact_signed_methods(
         "sqliteFilesSealRecreateLeaseRemovalAndAccountPurge",
         "apps/android/app/src/androidTest/java/app/nexus/android/offline/reading/"
         "OfflineReadingSignedPhysicalPromotionTest.kt::"
-        "opensV1AfterUpdateThenPurgesOfflineState",
+        "reopensPersistedPackagesThenPurgesOfflineState",
     )
     _assert_release_artifact_retains_pinned_api_origin(tmp_path, sdk)
 
@@ -2353,9 +2496,10 @@ def test_android_device_sweep_never_selects_the_signed_promotion_methods(
         if node.split("::", 1)[0].endswith("OfflineReadingSignedPhysicalPromotionTest.kt")
     ]
     assert promotion_methods == [
-        "acquiresAllFormatsAndPersistsPendingProgressOnBaseline",
+        "acquiresAllFormatsAndPersistsPendingProgress",
+        "attestsEmptyOfflineStateOnIncompatibleBaseline",
         "opensShelfAfterForceStopRebootAndAirplaneMode",
-        "opensV1AfterUpdateThenPurgesOfflineState",
+        "reopensPersistedPackagesThenPurgesOfflineState",
     ]
     annotation_source = (
         REPO_ROOT / "apps/android/app/src/androidTest/java/app/nexus/android/offline/reading/"
@@ -2519,7 +2663,7 @@ def test_android_release_promotion_fixture_argument_contract(
         assert arguments.evidence.status is status
 
 
-def test_signed_physical_promotion_owner_uses_only_real_webview_and_bridge_paths() -> None:
+def test_signed_physical_promotion_owner_uses_real_storage_webview_and_bridge_paths() -> None:
     source = (
         REPO_ROOT / "apps/android/app/src/androidTest/java/app/nexus/android/offline/reading/"
         "OfflineReadingSignedPhysicalPromotionTest.kt"
@@ -2534,6 +2678,9 @@ def test_signed_physical_promotion_owner_uses_only_real_webview_and_bridge_paths
         'command("LogoutAndPurge")',
         "fetch(${JSONObject.quote(readerUrl)}",
         "PromotionProgressCheckpoint",
+        "SQLiteDatabase.OPEN_READONLY",
+        "offline_reader_progress_pending",
+        "launchHosted()",
         'optJSONObject("state")',
         "headers: {Range: 'bytes=0-4'}",
     ):
@@ -2542,6 +2689,9 @@ def test_signed_physical_promotion_owner_uses_only_real_webview_and_bridge_paths
         "OfflineReadingStore(",
         "OfflineReadingDatabase(",
         "OfflineReadingPackageVerifier",
+        "SQLiteDatabase.OPEN_READWRITE",
+        ".execSQL(",
+        "deleteRecursively(",
         "DeviceFixture",
         "SESSION_COOKIE",
         "CookieManager.setCookie",
@@ -2550,6 +2700,8 @@ def test_signed_physical_promotion_owner_uses_only_real_webview_and_bridge_paths
     workflow = (REPO_ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
     for name in runner._ANDROID_RELEASE_PROMOTION_INPUTS:
         assert name in workflow
+    assert "NEXUS_ANDROID_RELEASE_EMPTY_BASELINE_HARD_CUT" in workflow
+    assert "inputs.empty_baseline_hard_cut" in workflow
     assert "PROMOTION_SESSION" not in workflow
     assert "PROMOTION_COOKIE" not in workflow
 
@@ -2567,6 +2719,9 @@ def _android_release_environment(inputs: runner._AndroidReleaseInputs) -> dict[s
         "NEXUS_ANDROID_VERSION_CODE": str(inputs.version_code),
         "NEXUS_ANDROID_VERSION_NAME": inputs.version_name,
         "NEXUS_GOOGLE_WEB_CLIENT_ID": "test-client",
+        "NEXUS_ANDROID_RELEASE_EMPTY_BASELINE_HARD_CUT": str(
+            getattr(inputs, "empty_baseline_hard_cut", False)
+        ).lower(),
         "NEXUS_ANDROID_RELEASE_PROMOTION_ACCOUNT_ID": "11111111-1111-4111-8111-111111111111",
         "NEXUS_ANDROID_RELEASE_PROMOTION_PDF_MEDIA_ID": "22222222-2222-4222-8222-222222222222",
         "NEXUS_ANDROID_RELEASE_PROMOTION_EPUB_MEDIA_ID": "33333333-3333-4333-8333-333333333333",
@@ -2574,8 +2729,14 @@ def _android_release_environment(inputs: runner._AndroidReleaseInputs) -> dict[s
     }
 
 
-def test_android_release_controller_stages_baseline_before_candidate_install(
+@pytest.mark.parametrize(
+    "empty_hard_cut",
+    (False, True),
+    ids=("compatible-update", "empty-baseline-hard-cut"),
+)
+def test_android_release_controller_stages_physical_promotion_contract(
     tmp_path: Path,
+    empty_hard_cut: bool,
 ) -> None:
     """The controller's topology is testable without a physical device.
 
@@ -2591,9 +2752,10 @@ def test_android_release_controller_stages_baseline_before_candidate_install(
         promotion,
         "package app.nexus.android.offline.reading\n"
         "class OfflineReadingSignedPhysicalPromotionTest {\n"
-        " fun acquiresAllFormatsAndPersistsPendingProgressOnBaseline() {}\n"
+        " fun acquiresAllFormatsAndPersistsPendingProgress() {}\n"
+        " fun attestsEmptyOfflineStateOnIncompatibleBaseline() {}\n"
         " fun opensShelfAfterForceStopRebootAndAirplaneMode() {}\n"
-        " fun opensV1AfterUpdateThenPurgesOfflineState() {}\n"
+        " fun reopensPersistedPackagesThenPurgesOfflineState() {}\n"
         "}\n",
     )
     _write(
@@ -2628,6 +2790,7 @@ def test_android_release_controller_stages_baseline_before_candidate_install(
         tmp_path / "apksigner",
         tmp_path / "apkanalyzer",
         "R5CT1234",
+        empty_hard_cut,
     )
     commands: list[tuple[str, ...]] = []
     airplane = {"enabled": False}
@@ -2681,7 +2844,10 @@ def test_android_release_controller_stages_baseline_before_candidate_install(
             42 if any("install" in item and str(apk) in item for item in commands) else 41
         ),
     )
-    environment = _android_release_environment(inputs)
+    environment = {
+        **_android_release_environment(inputs),
+        "NEXUS_ANDROID_RELEASE_EMPTY_BASELINE_HARD_CUT": str(empty_hard_cut).lower(),
+    }
     context = CapabilityContext(tmp_path, Workflow.RELEASE, ())
     execution = runner._WorkflowExecution(
         context, {}, include_migration_database=False, run_id="0123456789abcdef"
@@ -2695,9 +2861,13 @@ def test_android_release_controller_stages_baseline_before_candidate_install(
     )
 
     assert result.evidence.status is RunStatus.PASS
-    baseline_target = (
+    acquisition_target = (
         "app.nexus.android.offline.reading.OfflineReadingSignedPhysicalPromotionTest#"
-        "acquiresAllFormatsAndPersistsPendingProgressOnBaseline"
+        "acquiresAllFormatsAndPersistsPendingProgress"
+    )
+    empty_target = (
+        "app.nexus.android.offline.reading.OfflineReadingSignedPhysicalPromotionTest#"
+        "attestsEmptyOfflineStateOnIncompatibleBaseline"
     )
     offline_target = (
         "app.nexus.android.offline.reading.OfflineReadingSignedPhysicalPromotionTest#"
@@ -2705,9 +2875,13 @@ def test_android_release_controller_stages_baseline_before_candidate_install(
     )
     candidate_target = (
         "app.nexus.android.offline.reading.OfflineReadingSignedPhysicalPromotionTest#"
-        "opensV1AfterUpdateThenPurgesOfflineState"
+        "reopensPersistedPackagesThenPurgesOfflineState"
     )
+    baseline_target = empty_target if empty_hard_cut else acquisition_target
     baseline_run = next(index for index, argv in enumerate(commands) if baseline_target in argv)
+    acquisition_run = next(
+        index for index, argv in enumerate(commands) if acquisition_target in argv
+    )
     offline_run = next(index for index, argv in enumerate(commands) if offline_target in argv)
     candidate_run = next(index for index, argv in enumerate(commands) if candidate_target in argv)
     candidate_install = next(
@@ -2720,14 +2894,40 @@ def test_android_release_controller_stages_baseline_before_candidate_install(
         for index, argv in enumerate(commands)
         if argv[-1:] == (str(test_apk),) and "install" in argv
     )
-    assert test_install < baseline_run < offline_run < candidate_install < candidate_run
-    for target in runner._ANDROID_RELEASE_CANDIDATE_UPDATE_NODES:
+    force_stops = [
+        index
+        for index, argv in enumerate(commands)
+        if ("force-stop", "app.nexus.android") == argv[-2:]
+    ]
+    force_stop = force_stops[-1]
+    if empty_hard_cut:
+        assert (
+            force_stops[0]
+            < test_install
+            < baseline_run
+            < candidate_install
+            < acquisition_run
+            < force_stop
+            < offline_run
+            < candidate_run
+        )
+        assert len(force_stops) == 2
+    else:
+        assert (
+            test_install
+            < baseline_run
+            < force_stop
+            < offline_run
+            < candidate_install
+            < candidate_run
+        )
+        assert len(force_stops) == 1
+    for target in runner._ANDROID_RELEASE_CANDIDATE_VALIDATION_NODES:
         assert candidate_install < next(
             index
             for index, argv in enumerate(commands)
             if target.rsplit("::", 1)[1] in " ".join(argv)
         )
-    assert any(("force-stop", "app.nexus.android") == argv[-2:] for argv in commands)
     assert any(argv[-1:] == ("reboot",) for argv in commands)
     assert any(argv[-1:] == ("wait-for-device",) for argv in commands)
     assert any(argv[-1:] == ("sys.user.0.ce_available",) for argv in commands)
@@ -2735,7 +2935,10 @@ def test_android_release_controller_stages_baseline_before_candidate_install(
     online_preflight = next(
         index for index, argv in enumerate(commands) if argv[-2:] == ("airplane-mode", "disable")
     )
-    assert online_preflight < test_install
+    if empty_hard_cut:
+        assert baseline_run < candidate_install < online_preflight < acquisition_run
+    else:
+        assert online_preflight < test_install
     assert any(argv[-1:] == ("airplane_mode_on",) for argv in commands)
     promotion_argv = commands[baseline_run]
     assert promotion_argv.count("-e") == 5
@@ -2751,16 +2954,38 @@ def test_android_release_controller_stages_baseline_before_candidate_install(
         "connection": "usb",
         "qemu_properties": {"ro.kernel.qemu": "", "ro.boot.qemu": ""},
     }, f"release evidence recorded an unmeasured device claim: {evidence['physical_device']!r}"
-    assert evidence["network_phases"] == {
-        "baseline_acquisition": {
-            "phase": "airplane_disabled_then_real_api_acquisition",
-            "airplane_mode_on": "0",
+    expected_network = {
+        "baseline": {
+            "phase": (
+                "airplane_attested_empty_offline_state"
+                if empty_hard_cut
+                else "airplane_disabled_then_real_api_acquisition"
+            ),
+            "airplane_mode_on": "1" if empty_hard_cut else "0",
         },
         "cold_offline": {
             "phase": "airplane_attested_after_reboot",
             "airplane_mode_on": "1",
         },
-    }, f"release evidence recorded an unmeasured network claim: {evidence['network_phases']!r}"
+    }
+    if empty_hard_cut:
+        expected_network["candidate_acquisition"] = {
+            "phase": "airplane_disabled_then_real_api_acquisition",
+            "airplane_mode_on": "0",
+        }
+    assert evidence["network_phases"] == expected_network, (
+        f"release evidence recorded an unmeasured network claim: {evidence['network_phases']!r}"
+    )
+    assert evidence["offline_baseline_mode"] == (
+        "empty_hard_cut" if empty_hard_cut else "compatible"
+    )
+    assert evidence["version"] == 3
+    assert evidence["instrumentation_stages"]["baseline"] == [baseline_target]
+    assert evidence["instrumentation_stages"]["candidate_acquisition"] == (
+        [acquisition_target] if empty_hard_cut else []
+    )
+    assert evidence["instrumentation_stages"]["cold_offline"] == [offline_target]
+    assert evidence["instrumentation_stages"]["candidate_validation"][-1] == candidate_target
     assert "production_network_contact" not in evidence, (
         "release evidence still asserts production network contact the controller never observed"
     )
@@ -2781,9 +3006,10 @@ def test_android_release_refuses_an_emulated_device_that_passes_usb_topology(
         "OfflineReadingSignedPhysicalPromotionTest.kt",
         "package app.nexus.android.offline.reading\n"
         "class OfflineReadingSignedPhysicalPromotionTest {\n"
-        " fun acquiresAllFormatsAndPersistsPendingProgressOnBaseline() {}\n"
+        " fun acquiresAllFormatsAndPersistsPendingProgress() {}\n"
+        " fun attestsEmptyOfflineStateOnIncompatibleBaseline() {}\n"
         " fun opensShelfAfterForceStopRebootAndAirplaneMode() {}\n"
-        " fun opensV1AfterUpdateThenPurgesOfflineState() {}\n"
+        " fun reopensPersistedPackagesThenPurgesOfflineState() {}\n"
         "}\n",
     )
     _write(
@@ -2944,6 +3170,40 @@ def test_android_release_bootstrap_inputs_attest_no_device_and_require_published
         assert inputs.bootstrap is True
         assert inputs.serial is None
         assert inputs.previous_version_code == 16
+        invalid_bootstrap = runner._android_release_inputs(
+            tmp_path,
+            {
+                **environment,
+                "NEXUS_ANDROID_RELEASE_BOOTSTRAP_NO_DEVICE": "yes",
+            },
+        )
+        assert isinstance(invalid_bootstrap, CapabilityResult)
+        assert invalid_bootstrap.evidence.status is RunStatus.FAIL
+        assert invalid_bootstrap.detail == ("Android release bootstrap input must be true or false")
+        invalid_mode = runner._android_release_inputs(
+            tmp_path,
+            {
+                **environment,
+                "NEXUS_ANDROID_RELEASE_EMPTY_BASELINE_HARD_CUT": "yes",
+            },
+        )
+        assert isinstance(invalid_mode, CapabilityResult)
+        assert invalid_mode.evidence.status is RunStatus.FAIL
+        assert invalid_mode.detail == (
+            "Android release empty-baseline hard-cut input must be true or false"
+        )
+        incompatible_modes = runner._android_release_inputs(
+            tmp_path,
+            {
+                **environment,
+                "NEXUS_ANDROID_RELEASE_EMPTY_BASELINE_HARD_CUT": "true",
+            },
+        )
+        assert isinstance(incompatible_modes, CapabilityResult)
+        assert incompatible_modes.evidence.status is RunStatus.FAIL
+        assert incompatible_modes.detail == (
+            "Android release bootstrap and empty-baseline hard-cut modes are mutually exclusive"
+        )
         for variable, value, detail in (
             (
                 "NEXUS_ANDROID_RELEASE_BASE_URL",
@@ -2971,6 +3231,51 @@ def test_android_release_bootstrap_inputs_attest_no_device_and_require_published
     assert adb_calls == [], "bootstrap inputs must not attest or read any device"
 
 
+def test_android_release_inputs_bind_the_empty_baseline_hard_cut_to_the_usb_device(
+    tmp_path: Path,
+) -> None:
+    sdk = tmp_path / "android-sdk"
+    _write_executable(
+        sdk / "platform-tools/adb",
+        stdout_by_subcommand={
+            "devices": (
+                "List of devices attached\n"
+                "R5CT1234 device usb:1-2 product:nexus model:Pixel transport_id:1\n"
+            ),
+            "-s": "  versionCode=41 minSdk=26 targetSdk=36\n",
+        },
+    )
+    _write_executable(sdk / "build-tools/35.0.0/apksigner")
+    _write_executable(sdk / "cmdline-tools/latest/bin/apkanalyzer")
+    keystore = tmp_path / "release.jks"
+    keystore.write_bytes(b"keystore")
+    keystore.chmod(0o600)
+    environment = {
+        **_stub_tools(tmp_path, git_stdout="a" * 40),
+        "ANDROID_HOME": str(sdk),
+        "ANDROID_RELEASE_TAG": "android-v2.1",
+        "NEXUS_ANDROID_RELEASE_BASE_URL": "https://nexus.nielseriknandal.com",
+        "NEXUS_ANDROID_RELEASE_OWNED_HOST": "nexus.nielseriknandal.com",
+        "NEXUS_ANDROID_RELEASE_API_ORIGIN": "https://api.nielseriknandal.com",
+        "NEXUS_ANDROID_RELEASE_CERT_SHA256": "a" * 64,
+        "NEXUS_ANDROID_RELEASE_STORE_FILE": str(keystore),
+        "NEXUS_ANDROID_RELEASE_STORE_PASSWORD": "test-password",
+        "NEXUS_ANDROID_RELEASE_KEY_ALIAS": "test-key",
+        "NEXUS_ANDROID_RELEASE_KEY_PASSWORD": "test-password",
+        "NEXUS_ANDROID_VERSION_CODE": "42",
+        "NEXUS_ANDROID_VERSION_NAME": "2.1",
+        "NEXUS_GOOGLE_WEB_CLIENT_ID": "test-client",
+        "NEXUS_ANDROID_RELEASE_EMPTY_BASELINE_HARD_CUT": "true",
+    }
+
+    inputs = runner._android_release_inputs(tmp_path, environment)
+
+    assert isinstance(inputs, runner._AndroidReleaseDeviceInputs)
+    assert inputs.serial == "R5CT1234"
+    assert inputs.previous_version_code == 41
+    assert inputs.empty_baseline_hard_cut is True
+
+
 def test_android_release_bootstrap_skips_device_stages_and_records_explicit_evidence(
     tmp_path: Path,
 ) -> None:
@@ -2983,9 +3288,10 @@ def test_android_release_bootstrap_skips_device_stages_and_records_explicit_evid
         "OfflineReadingSignedPhysicalPromotionTest.kt",
         "package app.nexus.android.offline.reading\n"
         "class OfflineReadingSignedPhysicalPromotionTest {\n"
-        " fun acquiresAllFormatsAndPersistsPendingProgressOnBaseline() {}\n"
+        " fun acquiresAllFormatsAndPersistsPendingProgress() {}\n"
+        " fun attestsEmptyOfflineStateOnIncompatibleBaseline() {}\n"
         " fun opensShelfAfterForceStopRebootAndAirplaneMode() {}\n"
-        " fun opensV1AfterUpdateThenPurgesOfflineState() {}\n"
+        " fun reopensPersistedPackagesThenPurgesOfflineState() {}\n"
         "}\n",
     )
     _write(
@@ -3096,22 +3402,25 @@ def test_android_release_bootstrap_skips_device_stages_and_records_explicit_evid
         (tmp_path / "test-results/runs/0123456789abcdef/android-release.json").read_text()
     )
     assert evidence["physical_device"] is None
+    assert evidence["offline_baseline_mode"] == "bootstrap_no_device"
+    assert evidence["version"] == 3
     stage_targets = {
-        "baseline_acquisition": [
+        "baseline": [
             "app.nexus.android.offline.reading.OfflineReadingSignedPhysicalPromotionTest#"
-            "acquiresAllFormatsAndPersistsPendingProgressOnBaseline",
+            "acquiresAllFormatsAndPersistsPendingProgress",
         ],
+        "candidate_acquisition": [],
         "cold_offline": [
             "app.nexus.android.offline.reading.OfflineReadingSignedPhysicalPromotionTest#"
             "opensShelfAfterForceStopRebootAndAirplaneMode",
         ],
-        "candidate_update": [
+        "candidate_validation": [
             "app.nexus.android.NativeAuthHandoffTest#"
             "nativeAuthStartCarriesTheExactHandoffContractToTheOwnedOrigin",
             "app.nexus.android.offline.reading.OfflineReadingDeviceLifecycleTest#"
             "sqliteFilesSealRecreateLeaseRemovalAndAccountPurge",
             "app.nexus.android.offline.reading.OfflineReadingSignedPhysicalPromotionTest#"
-            "opensV1AfterUpdateThenPurgesOfflineState",
+            "reopensPersistedPackagesThenPurgesOfflineState",
         ],
     }
     assert evidence["bootstrap"] == {
@@ -3153,7 +3462,7 @@ def _assert_release_artifact_retains_pinned_api_origin(tmp_path: Path, sdk: Path
         evidence,
         json.dumps(
             {
-                "version": 2,
+                "version": 3,
                 "run_id": run_id,
                 "git_sha": git_sha,
                 "tag": tag,
@@ -3165,6 +3474,8 @@ def _assert_release_artifact_retains_pinned_api_origin(tmp_path: Path, sdk: Path
                 "previous_version_code": 41,
                 "version_name": "2.1",
                 "signer_sha256": "b" * 64,
+                "offline_baseline_mode": "compatible",
+                "physical_device": {"serial": "R5CT1234"},
                 "app_link_host": "nexus.nielseriknandal.com",
                 "api_origin": api_origin,
                 "api_origin_source": "signed_apk_build_config",
@@ -3318,8 +3629,10 @@ def test_browser_setup_failure_references_every_owned_process_log(tmp_path: Path
     )
 
 
-def test_heavy_capability_remains_truthfully_not_run() -> None:
-    context = CapabilityContext(REPO_ROOT, Workflow.FULL, ())
+def test_heavy_capability_remains_truthfully_not_run(tmp_path: Path) -> None:
+    (tmp_path / "python/.venv").mkdir(parents=True)
+    _write(tmp_path / "python/tests/service/test_owned.py", "def test_owned(): pass\n")
+    context = CapabilityContext(tmp_path, Workflow.FULL, ())
 
     result = run_capability(context, Capability.SERVICE)
 
@@ -3387,6 +3700,7 @@ def test_workflow_interruption_closes_the_owned_run(tmp_path: Path) -> None:
             run_id="0123456789abcdef",
             _ports=Ports(),
             _available_memory=lambda: 8192,
+            _available_storage=lambda _root, _docker: 16384,
         )
     except runner.WorkflowExecutionError as error:
         assert isinstance(error.__cause__, CommandInterrupted)
@@ -3635,6 +3949,7 @@ def test_web_source_promoted_to_journey_is_memory_admitted_before_static_web(
         run_id="0123456789abcdef",
         _ports=Ports(),
         _available_memory=available_memory,
+        _available_storage=lambda _root, _docker: 16384,
         _monotonic=lambda: now[0],
         _wait=wait,
     )
@@ -3693,6 +4008,55 @@ def test_unknown_available_memory_fails_closed_before_heavy_work(tmp_path: Path)
     assert static_web.status is RunStatus.NOT_RUN
     assert static_web.detail == "heavy memory admission could not determine available memory"
     assert not lock_held[0]
+
+
+def test_insufficient_storage_fails_closed_under_the_heavy_lock(tmp_path: Path) -> None:
+    source = tmp_path / "apps/web/src/risk.ts"
+    _write(source, "export const risk = 1;\n")
+    _write(tmp_path / "python/pyproject.toml", "[project]\nname='fixture'\nversion='1'\n")
+    (tmp_path / "python/.venv").mkdir()
+    _write(tmp_path / "apps/web/package.json", "{}\n")
+    (tmp_path / "apps/web/node_modules").mkdir()
+    selection = Selection(
+        "apps/web/src/risk.ts",
+        Capability.COMPONENT,
+        SelectionReason.FRONTEND_RELATED,
+    )
+    lock_held = [False]
+    observed: list[tuple[Path, bool]] = []
+
+    class Ports(runner._RunnerPorts):
+        @contextmanager
+        def heavy_lock(self, _repo_root: Path) -> Iterator[Path]:
+            lock_held[0] = True
+            try:
+                yield tmp_path / "heavy.lock"
+            finally:
+                lock_held[0] = False
+
+    def available_storage(repo_root: Path, include_docker: bool) -> int:
+        assert lock_held[0], "storage admission sampled outside the controller heavy lock"
+        observed.append((repo_root, include_docker))
+        return 1024
+
+    evidence = run_workflow(
+        CapabilityContext(tmp_path, Workflow.CHANGED, (selection,)),
+        StringIO(),
+        {},
+        run_id="0123456789abcdef",
+        _ports=Ports(),
+        _available_memory=lambda: 8192,
+        _available_storage=available_storage,
+    )
+
+    static_web = next(item for item in evidence.capabilities if item.id is Capability.STATIC_WEB)
+    assert static_web.status is RunStatus.NOT_RUN
+    assert static_web.detail == (
+        "heavy storage admission requires 8192 MiB available; observed 1024 MiB"
+    )
+    assert observed == [(tmp_path, False)]
+    assert not lock_held[0]
+    assert not (tmp_path / "commands.jsonl").exists()
 
 
 def test_affected_heavy_proofs_share_one_workflow_run_and_request_migrations_only_when_selected(
@@ -3800,6 +4164,7 @@ def test_affected_heavy_proofs_share_one_workflow_run_and_request_migrations_onl
         run_id="0123456789abcdef",
         _ports=Ports(),
         _available_memory=lambda: 8192,
+        _available_storage=lambda _root, _docker: 16384,
     )
 
     assert prepared == [True]
@@ -4371,6 +4736,7 @@ def test_run_proof_executes_only_the_exact_service_node_and_classifies_assertion
         environment,
         _ports=Ports(),
         _available_memory=lambda: 8192,
+        _available_storage=lambda _root, _docker: 16384,
     )
 
     assert result.evidence.status is RunStatus.FAIL
@@ -4387,6 +4753,71 @@ def test_run_proof_executes_only_the_exact_service_node_and_classifies_assertion
         "no:randomly",
         "tests/service/test_owned.py::test_exact",
     ]
+
+
+def test_exact_deterministic_llm_eval_does_not_start_an_unowned_external_protocol(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "python/.venv").mkdir(parents=True)
+    proof = "python/tests/evals/test_owned.py"
+    _write(tmp_path / proof, "def test_exact(): pass\n")
+    environment = _stub_tools(tmp_path, "docker", "supabase", "uv")
+    process_roles: list[str] = []
+    cleaned: list[str] = []
+
+    class Ports(_ReadyExternalPorts):
+        def prepare_run(
+            self,
+            _root: Path,
+            _environment: Mapping[str, str],
+            *,
+            run_id: str,
+            include_migration_database: bool,
+        ) -> OwnedTestRun:
+            assert not include_migration_database
+            return _test_run(include_migration_database=False)
+
+        def start_python_process(
+            self,
+            repo_root: Path,
+            child_environment: Mapping[str, str],
+            run: OwnedTestRun,
+            role: str,
+        ) -> StartedProcess:
+            process_roles.append(role)
+            return super().start_python_process(repo_root, child_environment, run, role)
+
+        def clean_run(
+            self,
+            _repo_root: Path,
+            _environment: Mapping[str, str],
+            run_id: str,
+            *,
+            supabase: SupabaseCredentials,
+        ) -> None:
+            del supabase
+            cleaned.append(run_id)
+
+        def run_environment(
+            self,
+            repo_root: Path,
+            child_environment: Mapping[str, str],
+            run: OwnedTestRun,
+        ) -> dict[str, str]:
+            return _stub_run_environment(repo_root, dict(child_environment), run)
+
+    result = run_proof(
+        CapabilityContext(tmp_path, Workflow.PR, ()),
+        f"pytest:{proof}::test_exact",
+        environment,
+        _ports=Ports(),
+        _available_memory=lambda: 8192,
+        _available_storage=lambda _root, _docker: 16384,
+    )
+
+    assert result.evidence.status is RunStatus.PASS
+    assert process_roles == [], "a zero-network eval acquired an external listener"
+    assert len(cleaned) == 1
 
 
 def test_run_proof_rejects_missing_or_inexact_browser_nodes_without_preparing_runtime(
@@ -4456,6 +4887,7 @@ def test_exact_proof_waits_under_heavy_lock_for_memory_recovery_and_launches_onc
         environment,
         _ports=Ports(),
         _available_memory=available_memory,
+        _available_storage=lambda _root, _docker: 16384,
         _monotonic=lambda: now[0],
         _wait=wait,
     )
@@ -4510,6 +4942,7 @@ def test_exact_browser_component_proof_never_prepares_a_local_stack(tmp_path: Pa
         environment,
         _ports=Ports(),
         _available_memory=lambda: 8192,
+        _available_storage=lambda _root, _docker: 16384,
     )
 
     assert result.evidence.status is RunStatus.PASS
@@ -5424,6 +5857,7 @@ def test_changed_stylesheet_reaches_the_css_token_owner_and_never_the_eslint_com
         _tool_environment(tmp_path),
         run_id="0123456789abcdef",
         _available_memory=lambda: 8192,
+        _available_storage=lambda _root, _docker: 16384,
     )
 
     static_web = next(item for item in evidence.capabilities if item.id is Capability.STATIC_WEB)

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import (
     EpubNavLocation,
+    EpubTocNode,
     Fragment,
     Media,
     MediaFile,
@@ -23,6 +24,10 @@ from nexus.db.session import create_session_factory
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.epub_ingest import (
     EpubExtractionPlan,
+    _materialize_toc,
+    _parse_manifest,
+    _parse_xml_entry,
+    _XmlStructuralBudget,
     build_epub_extraction_plan,
     publish_epub_extraction_plan,
 )
@@ -30,6 +35,7 @@ from nexus.services.library_entries import ensure_media_in_default_library
 from nexus.services.parser_temp import parser_attempt_directory
 from nexus.storage.client import get_storage_client
 from nexus.storage.paths import build_storage_path
+from tests.testkit.epub_fixtures import zip_payload
 
 
 def _structural_anchor_epub() -> bytes:
@@ -82,7 +88,9 @@ def _structural_anchor_epub() -> bytes:
   <body id="chapter-start">
     <center id="center-target" class="layout" style="color:red"
             onclick="alert(1)">Centered target.</center>
-    <p id="early">Early.</p>
+    <p id="not-visible" hidden="hidden">Must stay hidden.</p>
+    <p aria-hidden="true">Must stay inaccessible.</p>
+    <section aria-labelledby="early"><p id="early">Early.</p></section>
     <pagebreak id="page-target"></pagebreak>
     <p id="late">Later.</p>
     <p>Tail.</p>
@@ -185,6 +193,9 @@ def test_epub_ingest_repairs_structural_anchors_without_reordering_intervals(
             assert '<span id="chapter-start"></span>' in fragment.html_sanitized
             assert '<span id="center-target">Centered target.</span>' in fragment.html_sanitized
             assert '<span id="page-target"></span>' in fragment.html_sanitized
+            assert "Must stay hidden." not in fragment.canonical_text
+            assert "Must stay inaccessible." not in fragment.canonical_text
+            assert 'aria-labelledby="early"' in fragment.html_sanitized
             assert "<center" not in fragment.html_sanitized
             assert "<pagebreak" not in fragment.html_sanitized
             assert "onclick" not in fragment.html_sanitized
@@ -209,5 +220,149 @@ def test_epub_ingest_repairs_structural_anchors_without_reordering_intervals(
             assert by_label["Later"].end_offset == len(fragment.canonical_text)
             assert by_label["Chapter start"].start_offset == 0
             assert by_label["Centered"].start_offset == 0
+    finally:
+        storage.delete_object(storage_path)
+
+
+def test_epub_long_navigation_ids_preserve_distinct_targets_and_parentage(engine: Engine) -> None:
+    """Long shared prefixes and repeated aliases keep exact source identities."""
+    first_path = "segment/" * 32 + "one.xhtml"
+    second_path = "segment/" * 32 + "two.xhtml"
+    assert first_path[:255] == second_path[:255]
+    nested = f'<li><a href="{second_path}#first">Other</a></li>'
+    for depth in range(7):
+        nested = f'<li><span id="group-{"g" * 60}">Group {depth}</span><ol>{nested}</ol></li>'
+    chapter = (
+        '<html><body><p id="first">First.</p>'
+        '<p hidden="hidden">Hidden.</p><p aria-hidden="true">Also hidden.</p>'
+        '<p id="second">Second.</p></body></html>'
+    )
+    payload = zip_payload(
+        {
+            "mimetype": b"application/epub+zip",
+            "META-INF/container.xml": (
+                '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+                '<rootfiles><rootfile full-path="book.opf"/></rootfiles></container>'
+            ).encode(),
+            "book.opf": (
+                '<package xmlns="http://www.idpf.org/2007/opf" version="3.0">'
+                '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+                "<dc:title>Long navigation</dc:title></metadata><manifest>"
+                f'<item id="one" href="{first_path}" media-type="application/xhtml+xml"/>'
+                f'<item id="two" href="{second_path}" media-type="application/xhtml+xml"/>'
+                '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>'
+                '</manifest><spine><itemref idref="one"/><itemref idref="two"/></spine></package>'
+            ).encode(),
+            "nav.xhtml": (
+                '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">'
+                '<body><nav epub:type="toc"><ol>'
+                f'<li><a href="{first_path}#first">First</a></li>'
+                f'<li><a href="{first_path}#second">Second</a></li>'
+                f'<li><a href="{first_path}#first">Again</a></li>'
+                f"{nested}</ol></nav></body></html>"
+            ).encode(),
+            first_path: chapter.encode(),
+            second_path: chapter.encode(),
+        }
+    )
+    # Read the real archive's navigation before section allocation. Duplicate
+    # persisted node identities are a source defect even if allocation then hangs.
+    with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+        structural_budget = _XmlStructuralBudget()
+        opf = _parse_xml_entry(archive, "book.opf", structural_budget, decoded_bytes_limit=None)
+        assert opf is not None
+        source_nodes = _materialize_toc(
+            archive,
+            opf,
+            _parse_manifest(opf, ""),
+            {first_path: 0, second_path: 1},
+            structural_budget,
+        )
+    assert len(source_nodes) == 11
+    assert len({node.node_id for node in source_nodes}) == 11, (
+        "EPUB navigation aliases distinct source nodes before section allocation"
+    )
+    viewer_id, media_id = uuid4(), uuid4()
+    storage_path = build_storage_path(media_id, "epub")
+    storage = get_storage_client()
+    with Session(engine) as db:
+        ensure_user_and_default_library(
+            db, viewer_id, f"long-navigation-{viewer_id}@example.invalid"
+        )
+        db.add(
+            Media(
+                id=media_id,
+                kind=MediaKind.epub.value,
+                title="Long navigation",
+                processing_status=ProcessingStatus.extracting,
+                created_by_user_id=viewer_id,
+            )
+        )
+        db.commit()
+    storage.put_object(storage_path, payload, "application/epub+zip")
+    previous_ids: tuple[tuple[str, ...], tuple[str, ...]] | None = None
+    try:
+        for _ in range(2):
+            attempt_id = uuid4()
+            with parser_attempt_directory(attempt_id) as attempt_directory:
+                plan = build_epub_extraction_plan(
+                    attempt_directory=attempt_directory,
+                    session_factory=create_session_factory(engine),
+                    media_id=media_id,
+                    attempt_id=attempt_id,
+                    storage_path=storage_path,
+                    source_size_bytes=len(payload),
+                    expected_source_sha256=hashlib.sha256(payload).hexdigest(),
+                    storage_client=storage,
+                    record_progress=lambda _completed, _total, _unit: None,
+                )
+                assert isinstance(plan, EpubExtractionPlan), plan
+                ids = (
+                    tuple(node.node_id for node in plan.toc_nodes),
+                    tuple(location.location_id for location in plan.nav_locations),
+                )
+                assert len(set(ids[0])) == 11 and len(set(ids[1])) == 4
+                assert all(0 < len(value) <= 255 for values in ids for value in values)
+                if previous_ids is not None:
+                    assert ids == previous_ids, (
+                        "navigation identities changed on repeated extraction"
+                    )
+                previous_ids = ids
+                with Session(engine) as db:
+                    publish_epub_extraction_plan(db, media_id=media_id, plan=plan)
+                    db.commit()
+            assert not attempt_directory.exists()
+        with Session(engine) as db:
+            locations = list(
+                db.scalars(
+                    select(EpubNavLocation)
+                    .where(EpubNavLocation.media_id == media_id)
+                    .order_by(EpubNavLocation.ordinal)
+                )
+            )
+            nodes = list(db.scalars(select(EpubTocNode).where(EpubTocNode.media_id == media_id)))
+            fragments = list(
+                db.scalars(
+                    select(Fragment).where(Fragment.media_id == media_id).order_by(Fragment.idx)
+                )
+            )
+        assert [fragment.canonical_text for fragment in fragments] == ["First.\nSecond."] * 2
+        assert [
+            (location.label, location.href_path, location.href_fragment, location.start_offset)
+            for location in locations
+        ] == [
+            ("First", first_path, "first", 0),
+            ("Second", first_path, "second", 7),
+            ("Again", first_path, "first", 0),
+            ("Other", second_path, "first", 0),
+        ]
+        by_id = {node.node_id: node for node in nodes}
+        parent_id = next(node.parent_node_id for node in nodes if node.label == "Other")
+        for depth in range(7):
+            assert parent_id is not None
+            parent = by_id[parent_id]
+            assert parent.label == f"Group {depth}"
+            parent_id = parent.parent_node_id
+        assert parent_id is None
     finally:
         storage.delete_object(storage_path)

@@ -1,0 +1,11 @@
+diff --git a/python/nexus/services/llm_profiles.py b/python/nexus/services/llm_profiles.py
+--- a/python/nexus/services/llm_profiles.py
++++ b/python/nexus/services/llm_profiles.py
+@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
+ from typing import Literal
+
+ from provider_runtime import Present, ProviderTarget, ReasoningLevel
++from provider_runtime.runtime import ProviderRuntime
+ from provider_runtime.registry import resolve_target
+
+ type BackgroundLlmOperation = Literal[

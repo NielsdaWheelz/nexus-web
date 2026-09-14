@@ -98,3 +98,13 @@ fixture observations, not release limits. inspect source-file, current-chapter
 and word-boundary child overlap before selecting another implementation or
 resource profile. the retained receipt is
 `nexus-web-bounded-web-proof/test-results/runs/815aca6a7ea47827/api-capacity-candidate-worker-epub.json`.
+
+word-input lifetime run `790372c5d74b0ca6` at committed `fe6e19db5e` still
+fails headroom: peak 470,482,944 bytes against 469,762,048; 1,026 ceiling
+events and no oom/kill. source child hwm is 247,422,976 bytes; source finishes
+in 112.791 seconds and all 516 units and word slices remain exact. both
+follow-up jobs complete, and overlapping api requests return 200. receipt:
+`nexus-web-bounded-residency-proof/test-results/runs/790372c5d74b0ca6/api-capacity-candidate-worker-epub.json`.
+closing the input tempfile earlier is not evidence that this worker profile
+is qualified. first retained pressure sample has 299,143,168 anonymous and
+148,488,192 file bytes; samples do not establish the remaining allocation owner.

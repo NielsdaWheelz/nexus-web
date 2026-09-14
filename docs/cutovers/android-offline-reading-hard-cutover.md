@@ -41,7 +41,7 @@ contract are present: the controller passes only canonical non-secret synthetic
 account/PDF/EPUB/article fixture UUIDs, while the older physical baseline must
 already carry that account's real WebView session. It stages real-local-API
 acquisition of all three formats, cold shelf/progress checks after controller
-force-stop, reboot-after-first-unlock, and airplane mode, then the in-place V1
+force-stop, reboot-after-first-unlock, and airplane mode, then the in-place
 reopen/progress/purge candidate phase. This checkout has not run that scenario
 on its protected USB device, so its hardware/operator evidence remains
 `not_run` and fails `nightly`/`release`; none of the host, component,
@@ -51,15 +51,30 @@ the real mint response's exact `package_base_url` equals the API origin embedded
 in the APK; the controller reads that constant back from the signed APK's
 `BuildConfig` bytecode, and the release evidence and immutable artifact manifest
 retain the measured origin. Native must never relax this comparison or follow an arbitrary returned
-origin. Its staged controller builds both APKs without installing the
+origin. Its default compatible topology builds both APKs without installing the
 candidate, installs only the release instrumentation APK beside the strictly
 older baseline, and runs
-`OfflineReadingSignedPhysicalPromotionTest#acquiresAllFormatsAndPersistsPendingProgressOnBaseline`
-against the strictly older installed baseline, then controller-owns force-stop,
-reboot, first-unlock and airplane attestations before
-`#opensShelfAfterForceStopRebootAndAirplaneMode`. Only then does it install the
-candidate in place and run `#opensV1AfterUpdateThenPurgesOfflineState` with the
-narrow signed lifecycle/auth checks. Missing protected USB access, the
+`OfflineReadingSignedPhysicalPromotionTest#acquiresAllFormatsAndPersistsPendingProgress`
+against that baseline. It then owns force-stop, reboot, first-unlock and
+airplane attestations before `#opensShelfAfterForceStopRebootAndAirplaneMode`,
+installs the candidate in place, and runs
+`#reopensPersistedPackagesThenPurgesOfflineState` with the narrow signed
+lifecycle/auth checks.
+
+An incompatible reader-contract release cannot honestly replay legacy packages
+through the candidate. Its explicit `empty_baseline_hard_cut` topology is
+admitted only after the candidate backend contract is live. The controller
+enables airplane mode and runs
+`#attestsEmptyOfflineStateOnIncompatibleBaseline`, which requires the complete
+legacy shelf — not merely the three promotion fixtures — to be empty. The old
+app is force-stopped first, and the test reads its package files and durable
+tables without opening the product store; reconciliation cannot erase evidence
+before the assertion. It then
+installs the candidate, disables airplane mode for candidate acquisition, and
+runs the same rebooted cold-offline and purge proofs against candidate-created
+packages. The retained evidence names the topology and measured network state.
+This mode is mutually exclusive with `bootstrap_no_device`; it refuses any
+legacy state rather than guessing, migrating, or deleting it. Missing protected USB access, the
 pre-authenticated baseline, ready real-API fixtures, or their evidence returns
 `not_run`; the narrow signed lifecycle fixture cannot produce a release pass in
 their place.
@@ -1052,7 +1067,7 @@ the oracle.
 | Package/schema/protocol | Shared cross-language vector and property rejection of path/count/size/hash/version/origin faults | Python/web kernel + `android-host` |
 | Native lifecycle | Exact `OfflineReadingDeviceLifecycleTest#sqliteFilesSealRecreateLeaseRemovalAndAccountPurge` covers SQLite/file/binding-seal recreation, lease-delayed removal, and account purge only. | `android-device` + `android-release` |
 | UI/shell | Chromium component consumes the shared vector: enqueue -> Ready -> open -> progress conflict -> Remove; focus/a11y included | `component` |
-| Signed physical final wiring | Executable staged promotion owner: it acquires all three formats with the real local API on the strictly older installed signed baseline, controller force-stops/reboots/waits for first-unlock/attests airplane mode, the cold baseline opens the shelf, then the signed candidate installs in place for V1 reopen/progress/purge/update. The owner and fixture contract are compiled and controller-wired, but the protected USB run and immutable evidence are currently `not_run`. The narrow signed lifecycle method is not a substitute. | `android-release` + `android-device` |
+| Signed physical final wiring | Executable staged promotion owner: the compatible topology acquires on the older signed baseline before rebooted-airplane cold reopen and in-place candidate validation. The incompatible topology first proves the complete legacy shelf empty offline, then installs and acquires with the candidate before the same rebooted-airplane reopen/progress/purge proof. The retained evidence names the topology. The protected USB run remains mandatory; the narrow signed lifecycle method is not a substitute. | `android-release` + `android-device` |
 | Deployment config | Immutable release contains the exact no-encoding Caddy route and current APK asset closure/checksums. The controller reads the API origin from signed `BuildConfig` bytecode and the signed physical scenario compares that measured origin with the real mint response before promotion. | `release-artifact` |
 
 The release workflow minimally adds the existing `ANDROID_DEVICE` capability;

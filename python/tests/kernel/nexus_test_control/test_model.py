@@ -2,6 +2,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
+import nexus_test_control.model as model
 from nexus_test_control.model import (
     DEFERRED_CAPABILITY_OWNER,
     PRIORITY_RISK_FLOOR,
@@ -54,6 +55,24 @@ def test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr() -> Non
     }
     assert Capability.ANDROID_DEVICE in release_capabilities
     assert Capability.ANDROID_RELEASE in release_capabilities
+
+
+def test_host_root_ownership_is_an_explicit_proof_owner_contract() -> None:
+    assert hasattr(model, "ROOT_OWNERSHIP_REQUIREMENTS"), (
+        "the test controller has no explicit root-ownership contract"
+    )
+    assert hasattr(model, "RootOwnershipRequirement"), (
+        "the root-ownership contract has no validated value type"
+    )
+    assert model.ROOT_OWNERSHIP_REQUIREMENTS == (
+        model.RootOwnershipRequirement(
+            Capability.KERNEL_PYTHON,
+            (
+                "python/tests/kernel/test_oracle_host_release.py",
+                "python/tests/kernel/test_production_release.py",
+            ),
+        ),
+    )
 
 
 def test_confidence_keeps_real_stack_affected_and_skips_build_and_journeys() -> None:

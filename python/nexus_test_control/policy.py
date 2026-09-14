@@ -16,7 +16,10 @@ from nexus_test_control.model import (
     TEST_ROUTING_SHA256,
     ChangedOwnerRedStrategy,
 )
-from nexus_test_control.proof_owner import python_exact_proof_owner_sha256
+from nexus_test_control.proof_owner import (
+    node_whole_file_proof_owner_sha256,
+    python_exact_proof_owner_sha256,
+)
 
 
 @dataclass(frozen=True)
@@ -227,12 +230,19 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
             'merge_timestamp="$(git show --no-patch --format=%cI "$EXPECTED_HEAD_SHA")"',
             'GIT_COMMITTER_DATE="$merge_timestamp"',
             "git rev-list --parents -n 1 HEAD",
+            "Retire prior checkout test runtime",
+            'test -x "$checkout/scripts/test"',
+            '            cd "$checkout"',
+            "            ./scripts/test clean",
             'scripts/ci-proof-artifact.sh run changed --base "$NEXUS_TEST_BASE_SHA"',
             "scripts/ci-proof-artifact.sh run pr",
             "pull_request:*|workflow_dispatch:changed)",
             "workflow_dispatch:pr)",
             "unsupported CI proof selection",
             "if: github.event_name == 'push'",
+            "Retire current checkout test runtime",
+            "            ./scripts/test clean",
+            "if: always()",
             "run: scripts/ci-proof-artifact.sh run full",
             "if: ${{ always() && steps.proof.outputs.path != '' }}",
             "path: ${{ steps.proof.outputs.path }}/",
@@ -242,6 +252,10 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         ),
         (
             "github.event_name != 'workflow_dispatch'",
+            "from nexus_test_control.services import clean_owned_runtime, test_environment",
+            "clean_owned_runtime(pathlib.Path(sys.argv[1]), test_environment(os.environ))",
+            '"$python" -c "$cleanup_program" "$checkout"',
+            '"$python" -m nexus_test_control clean',
             'run: ./scripts/test changed --base "$NEXUS_TEST_BASE_SHA"',
             "run: ./scripts/test full",
             "path: test-results/",
@@ -329,13 +343,14 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     ),
 }
 
-_CONTROLLER_COMMAND_OWNERS: dict[str, str] = {
-    "confidence": "scripts/agency_verify.sh",
-    "changed": ".github/workflows/ci.yml",
-    "pr": ".github/workflows/ci.yml",
-    "full": ".github/workflows/ci.yml",
-    "nightly": ".github/workflows/nightly.yml",
-    "release": ".github/workflows/release.yml",
+_CONTROLLER_COMMAND_ROUTES: dict[str, tuple[str, int]] = {
+    "confidence": ("scripts/agency_verify.sh", 1),
+    "changed": (".github/workflows/ci.yml", 1),
+    "pr": (".github/workflows/ci.yml", 1),
+    "full": (".github/workflows/ci.yml", 1),
+    "clean": (".github/workflows/ci.yml", 4),
+    "nightly": (".github/workflows/nightly.yml", 1),
+    "release": (".github/workflows/release.yml", 1),
 }
 _INTERNAL_PACKAGE_RUNNERS: dict[tuple[str, str], str] = {
     ("apps/web/package.json", "test:eslint-policy"): "bun scripts/test-eslint-policy.mjs",
@@ -768,8 +783,8 @@ def _executable_route_violations(repo_root: Path) -> tuple[PolicyViolation, ...]
                 controller_counts[(relative, command)] = (
                     controller_counts.get((relative, command), 0) + 1
                 )
-                expected = _CONTROLLER_COMMAND_OWNERS.get(command)
-                if expected != relative:
+                route = _CONTROLLER_COMMAND_ROUTES.get(command)
+                if route is None or route[0] != relative:
                     violations.append(
                         PolicyViolation(
                             "repository-test-route-owner",
@@ -806,11 +821,13 @@ def _executable_route_violations(repo_root: Path) -> tuple[PolicyViolation, ...]
                     )
                 )
 
-    required_routes = {(owner, command): 1 for command, owner in _CONTROLLER_COMMAND_OWNERS.items()}
+    required_routes = {
+        (owner, command): count for command, (owner, count) in _CONTROLLER_COMMAND_ROUTES.items()
+    }
     required_routes[("scripts/test", "control-plane")] = 1
     for owner_command, expected_count in required_routes.items():
         owner, command = owner_command
-        counts = controller_counts if command in _CONTROLLER_COMMAND_OWNERS else direct_counts
+        counts = controller_counts if command in _CONTROLLER_COMMAND_ROUTES else direct_counts
         actual = counts.get(owner_command, 0)
         if actual != expected_count:
             violations.append(
@@ -1926,8 +1943,8 @@ def fault_manifest_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                 and bool(coherent_node)
                 and coherent_path.endswith(".py")
             )
-            # A coherent fault is replayed by `changed`, so its owner must be
-            # executable there: a host Vitest file, never a device Gradle class.
+            # Coherent owners must be executable by the exact host proof runner;
+            # device Gradle classes cannot provide this evidence.
             file_owner = not coherent_separator and (
                 (
                     coherent_runner == "vitest"
@@ -1945,12 +1962,20 @@ def fault_manifest_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                 and (python_owner or file_owner)
                 and coherent_owner_path is not None
             )
-            if not coherent_shape:
+            coherent_node_shape = (
+                coherent_proof is not None
+                and coherent_proof.startswith("node-test:node/ingest/test/")
+                and not coherent_separator
+                and not coherent_node
+                and coherent_path.endswith(".test.mjs")
+                and coherent_owner_path is not None
+            )
+            if not (coherent_shape or coherent_node_shape):
                 violations.append(
                     PolicyViolation(
                         "fault-coherent-owner",
                         location,
-                        "changed-owner coherent fault requires one exact pytest or whole-file vitest/gradle owner",
+                        "changed-owner coherent fault requires one exact pytest or whole-file vitest/gradle/node owner",
                     )
                 )
             else:
@@ -1971,6 +1996,10 @@ def fault_manifest_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                             coherent_owner_path.read_text(encoding="utf-8"), coherent_node
                         )
                         if python_owner
+                        else node_whole_file_proof_owner_sha256(
+                            coherent_owner_path.read_text(encoding="utf-8")
+                        )
+                        if coherent_node_shape
                         else hashlib.sha256(coherent_owner_path.read_bytes()).hexdigest()
                     )
                 except (OSError, UnicodeError, SyntaxError):

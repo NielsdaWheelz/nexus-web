@@ -1,0 +1,12 @@
+diff --git a/python/nexus/services/browse/brave.py b/python/nexus/services/browse/brave.py
+--- a/python/nexus/services/browse/brave.py
++++ b/python/nexus/services/browse/brave.py
+@@ -89,7 +89,7 @@ async def search(
+             cast(
+                 WebSearchRequest,
+                 _BrowseWebSearchRequest(
+-                    query=query.query,
++                    query=f"{query.query} altered",
+                     result_type=WebSearchResultType.MIXED,
+                     limit=query.limit,
+                 ),

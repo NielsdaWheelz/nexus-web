@@ -27,7 +27,7 @@ it.each([
     await waitFor(() => expect(view.highlightWrites).toHaveLength(1));
     if (retireDetail) {
       await userEvent.click(mark);
-      await screen.findByRole("button", { name: "Highlight actions" });
+      await screen.findByRole("menu", { name: "Highlight actions" });
     }
     await act(async () => view.finishHighlight());
     if (!retireDetail) await screen.findByText("The reader couldn’t load this part.", {}, { timeout: 5000 });
@@ -35,7 +35,7 @@ it.each([
     await waitFor(() => expect(screen.getByLabelText("Activated reader destination"),
       "retired detail discarded the acknowledged highlight's chat action").toHaveTextContent(
       `/conversations/new#mediaId=${view.mediaId}&highlightId=${acknowledgedId}`));
-    if (retireDetail) expect(screen.getByRole("button", { name: "Highlight actions" }), "old acknowledgment replaced the selected highlight actions").toBeVisible();
+    if (retireDetail) expect(screen.getByRole("menu", { name: "Highlight actions" }), "old acknowledgment replaced the selected highlight actions").toBeVisible();
     else expect(screen.getByRole("button", { name: "Retry reader" }), "duplicate detail failure lost its existing recovery action").toBeVisible();
   } finally { view.close(); }
 });

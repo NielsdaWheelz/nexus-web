@@ -10,6 +10,7 @@ import struct
 import tarfile
 import tempfile
 import time
+import warnings
 import zipfile
 from collections.abc import Callable, Iterator
 from dataclasses import fields
@@ -638,7 +639,12 @@ def _run_parser_resource_probe(case: str, output: Connection) -> None:
                     {
                         f"chapter-{index}": (
                             b'<html xmlns="http://www.w3.org/1999/xhtml"><body>'
-                            + paragraph * (base_count + (1 if index < remainder else 0))
+                            + (
+                                paragraph.replace(b"xxx", b"e\xcc\x81", 1)
+                                if index == 1
+                                else paragraph
+                            )
+                            * (base_count + (1 if index < remainder else 0))
                             + b"</body></html>"
                         )
                         for index in range(chapter_count)
@@ -2405,6 +2411,102 @@ def test_in_flight_source_progress_reaches_the_media_wire(engine: Engine) -> Non
             attempt_ids=(attempt_id,),
             media_id=media_id,
         )
+        db.commit()
+
+
+def test_in_flight_source_progress_serializes_through_the_declared_media_wire(
+    engine: Engine,
+) -> None:
+    viewer_id, media_id = _persist_test_media(engine, kind=MediaKind.pdf)
+    attempt_id = uuid4()
+    worker_id = "media-wire-worker"
+    with Session(engine) as db:
+        library_id = ensure_user_and_default_library(db, viewer_id)
+        ensure_entry(db, library_id, media_target(media_id))
+        attempt = MediaSourceAttempt(
+            id=attempt_id,
+            media_id=media_id,
+            created_by_user_id=viewer_id,
+            source_type="uploaded_pdf_file",
+            attempt_no=1,
+            run_count=1,
+            status="running",
+            intent_key=f"media-wire-progress-{attempt_id}",
+            processing_stage="Validate",
+        )
+        db.add(attempt)
+        job = enqueue_job(
+            db,
+            kind="ingest_media_source",
+            payload={"media_id": str(media_id), "attempt_id": str(attempt_id)},
+        )
+        attempt.job_id = job.id
+        db.commit()
+        claimed = claim_job(
+            db,
+            job_id=job.id,
+            worker_id=worker_id,
+            lease_seconds=300,
+            heavy_kinds=("ingest_media_source",),
+        )
+        db.commit()
+        assert claimed is not None and claimed.attempts == 1
+
+    fence = SourcePublicationFence.from_context(
+        attempt_id=attempt_id,
+        context=JobExecutionContext(
+            job_id=job.id,
+            worker_id=worker_id,
+            attempt_no=1,
+            resource_class="Heavy",
+        ),
+    )
+    session_factory = create_session_factory(engine)
+    record_source_extraction_progress(
+        session_factory=session_factory,
+        fence=fence,
+        media_id=media_id,
+        completed=3,
+        total=12,
+        unit="Page",
+    )
+
+    with warnings.catch_warnings(record=True) as emitted:
+        warnings.simplefilter("always")
+        with Session(engine) as db:
+            counted = get_media_for_viewer(db, viewer_id, media_id).model_dump(mode="json")
+    assert not emitted, [str(warning.message) for warning in emitted]
+    assert counted["source_progress"] == {
+        "kind": "Present",
+        "value": {
+            "kind": "Counted",
+            "stage": "Extract",
+            "completed": 3,
+            "total": 12,
+            "unit": "Page",
+            "run_count": 1,
+            "updated_at": counted["source_progress"]["value"]["updated_at"],
+        },
+    }
+
+    record_source_finalizing(
+        session_factory=session_factory,
+        fence=fence,
+        media_id=media_id,
+    )
+    with warnings.catch_warnings(record=True) as emitted:
+        warnings.simplefilter("always")
+        with Session(engine) as db:
+            listed, _cursor = list_visible_media(db, viewer_id)
+            staged = next(media for media in listed if media.id == media_id).model_dump(mode="json")
+    assert not emitted, [str(warning.message) for warning in emitted]
+    assert staged["source_progress"]["kind"] == "Present"
+    assert staged["source_progress"]["value"]["kind"] == "Stage"
+    assert staged["source_progress"]["value"]["stage"] == "Finalize"
+    assert staged["source_progress"]["value"]["run_count"] == 1
+
+    with Session(engine) as db:
+        assert complete_job(db, job_id=job.id, worker_id=worker_id)
         db.commit()
 
 

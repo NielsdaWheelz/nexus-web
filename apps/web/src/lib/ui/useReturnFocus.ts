@@ -65,12 +65,12 @@ export function useReturnFocus(
   fallbackRef.current = options?.returnFocusFallback;
   const skipRef = useRef(options?.skip);
   skipRef.current = options?.skip;
-  const returnRef = useRef<HTMLElement | null>(null);
+  const returnRef = useRef<WeakRef<HTMLElement> | null>(null);
   const restore = useCallback(() => {
     if (skipRef.current?.()) return;
     const liveTarget = returnFocusToRef.current?.() ?? null;
     if (focusTarget(liveTarget)) return;
-    const target = returnRef.current;
+    const target = returnRef.current?.deref() ?? null;
     if (focusTarget(target)) return;
     const fallback = fallbackRef.current?.() ?? null;
     focusTarget(fallback);
@@ -85,7 +85,8 @@ export function useReturnFocus(
       document.activeElement.isConnected
         ? document.activeElement
         : null;
-    returnRef.current = explicitTarget ?? activeElement;
+    const target = explicitTarget ?? activeElement;
+    returnRef.current = target === null ? null : new WeakRef(target);
   }, [active]);
 
   useEffect(() => {

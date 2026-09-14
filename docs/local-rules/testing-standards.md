@@ -137,7 +137,7 @@ selected exact module-level Python test plus its imports and non-test module
 support differs from base. Sibling tests are separate owners: changing only a
 sibling retains the selected owner's declared FAULT.
 
-One exact module-level Python proof or canonical whole-file Vitest/Gradle proof MAY opt into
+One exact module-level Python proof or canonical whole-file Vitest/Gradle/Node proof MAY opt into
 `changed_owner_red: coherent-fault` on its single registered product fault when
 an intentional hard-cut interface or a behavior-preserving proof-ownership
 refactor prevents BASE from reaching or falsifying the retained behavioral
@@ -145,7 +145,7 @@ contract. Policy MUST require one canonical exact proof, one product-only
 applicable patch, its SHA-256, and its expected assertion fingerprint. The
 manifest MUST also pin the SHA-256 of version-stable source slices for the exact
 Python test plus its imports and non-test module support, or the exact file bytes
-for a Vitest/Gradle owner. Interpreter-specific AST serialization is not a durable
+for a Vitest/Gradle/Node owner. Interpreter-specific AST serialization is not a durable
 encoding. Imported testkit and fixtures retain their normal source/input identities;
 the owner digest does not attest their contents. Any owner drift is a policy failure
 requiring explicit review and a new digest. The coherent-candidate fault proves
@@ -163,6 +163,18 @@ install a candidate dependency graph into the unfixed application. A proof for
 behavior that requires a new dependency must reach its behavioral assertion
 before it imports or initializes that dependency, or use a controlled FAULT
 against the coherent candidate revision.
+
+CI MUST bind `UV_CACHE_DIR` to an invocation-owned directory beneath
+`RUNNER_TEMP` and retain downloaded wheels through proof completion. A shared
+runner cache or a cache pruned before an offline sensitivity environment is
+materialized is not a valid dependency boundary.
+
+CI MUST recreate the ignored Python virtual environment from the lockfile for
+each job. The setup path MUST be the validated, runner-owned repository root;
+the deletion target MUST be the exact non-symlink, non-mount `python/.venv`
+confirmed by Git's ignore contract. Privileged Python proof processes MUST
+disable bytecode writes. Reusing a persistent environment across jobs permits a
+root-owned proof descendant to make the next runner-owned sync irreparable.
 
 The final work report for a defect or replacement MUST state how sensitivity was
 demonstrated. “Test passes” is insufficient.
@@ -358,7 +370,8 @@ Never copy a deleted legacy helper or generalize unrelated endpoint shapes.
 
 ### Isolation and fixture shape
 
-- Reuse service processes; never reuse writable test state.
+- Reuse service processes only within one controller invocation; never retain
+  them after that invocation, and never reuse writable test state.
 - Proof MUST NOT depend on execution order or mutations left by another test.
 - Isolate users, libraries, object prefixes, files, ports, queues, and browser
   state wherever writes can escape.
@@ -413,10 +426,10 @@ not targets.
 A red or `not_run` result is decisive. The controller records later
 capabilities as blocked and launches no further heavy work.
 
-| Workflow | Warm target | Cold behavior |
+| Workflow | Cached target | Additional cold behavior |
 |---|---:|---|
-| exact proof / `changed` | under 10 seconds when no heavy boundary is selected | dependency or first template/build cost is recorded, not hidden |
-| `confidence` | 60–90 seconds | selected service/component setup may exceed the warm target |
+| exact proof / `changed` | under 10 seconds when no heavy boundary is selected | dependency, service, or first template/build cost is recorded, not hidden |
+| `confidence` | 60–90 seconds | selected service/component setup may exceed the cached target |
 | `pr` | 3–5 minutes locally | CI duration is measured before a p95 ratchet is adopted |
 | `full` | measured; no fixed acceptance number | one current-revision build and one sequential heavy process |
 | `nightly` / `release` | scheduled | device work remains fail-closed |
@@ -430,11 +443,22 @@ Ordinary workflows therefore build the current revision once. Sensitivity MAY
 build one additional artifact for each distinct faulted or base revision whose
 production browser proof must execute that code; reusing the green artifact
 there would make the red oracle vacuous. Never rebuild the same fingerprint in
-one workflow.
+one workflow. A sensitivity portfolio completes and retires every isolated red
+revision runtime before it starts current-revision green attempts. Red and green
+service stacks MUST NOT coexist; green attempts still reuse one
+current-revision stack and build fingerprint.
 
-Before launching Node/browser/build/Gradle or other heavy proof, the controller
-acquires the single-heavy-operation lock and waits at most 30 seconds for
-kernel-reported available memory to reach 2,048 MiB: Linux `MemAvailable`, or
+Before any workload or recovery command, the controller acquires one
+lineage-wide invocation lock and holds it through terminal runtime teardown.
+Linked worktrees and independent complete-history clones derive the same lock
+from their Git lineage. `list --json` alone bypasses the lock because it starts
+no work or runtime. The historical single-heavy-operation lock path remains the
+same so older controllers cannot overlap a heavy phase; nested heavy,
+sensitivity, and visual boundaries reenter only beneath the explicit invocation
+owner.
+
+Before launching Node/browser/build/Gradle or other heavy proof under that
+lease, the controller waits at most 30 seconds for kernel-reported available memory to reach 2,048 MiB: Linux `MemAvailable`, or
 Darwin free plus file-backed pages while the kernel VM pressure state is normal.
 The Darwin estimate does not add speculative pages because they are already
 included in the file-backed owner, and excludes anonymous inactive, purgeable,
@@ -445,6 +469,23 @@ non-normal Darwin pressure is immediately `not_run`; expiry below the floor is
 conservative host-safety admission floor, not a proof-size or performance
 target. Change it only from recorded memory evidence on the 8 GiB reference
 host.
+
+Under the same lock and immediately before launch, heavy proof also requires
+8,192 MiB free across the checkout filesystem and, when the proof may use the
+local container runtime, Docker's reported data-root filesystem. Unknown or
+insufficient storage is immediately `not_run`; the controller does not start
+the proof or poll a capacity condition that requires operator reclamation. The
+floor retains roughly five percent of the 150 GiB reference host as an operator
+safety reserve. It is not a predicted proof footprint. Change it only from
+recorded disk evidence.
+
+The typed root-ownership contract names the two kernel proof owners that create
+and inspect genuinely root-owned release fixtures. Before any workflow
+capability runs, the controller requires effective uid 0 or verifies
+non-interactive `sudo`; `doctor` checks the same boundary. An unqualified host
+returns `not_run` with captured command diagnostics. CI performs the identical
+qualification before toolchain setup. Never replace the real uid, gid, or mode
+oracle with user-owned fixtures.
 
 ## 8. Repository capability contract
 
@@ -457,7 +498,11 @@ adapter. The Makefile deliberately has no test/check/verify aliases.
 Manual CI recovery verifies the exact open PR head and base, then constructs
 their synthetic merge. Its `proof` choice defaults to `changed`; select `pr`
 to run the complete PR portfolio and same-run sensitivity on the Linux runner.
-Only that manual `pr` job has a 480-minute limit; ordinary PR proof keeps 90.
+That manual `pr` job has a 480-minute limit; ordinary PR and manual `changed`
+jobs have 120 minutes. Main run `34712797648` completed its job in 101m24s
+(controller: 99m39.736s), giving 18m36s of observed headroom. This is a
+provisional execution bound from one measured run, not a p95 target. Proof
+selection and behavioral timeouts remain unchanged.
 
 The controller gives real-stack browser capabilities one clean data epoch. It
 recreates the exact run-owned application database from the immutable template
@@ -515,7 +560,7 @@ unrecorded processes, containers, databases, buckets, users, or checkouts.
 | `./scripts/test android-visual --sha HEAD_SHA --path /OWNED_PATH [--device primary]` | explicit opt-in physical-device authenticated WebView visual check of the current non-`main` worktree; never included in `changed`/`confidence`/`pr`/`full`/`nightly`/`release` |
 | `./scripts/test prove --proof PROOF --against base:REF\|fault:FAULT_ID` | exact demonstrated-red then green sensitivity evidence |
 | `./scripts/test diagnose --of RUN_ID` | one separately recorded replay of the exact failed workflow; never a new verdict |
-| `./scripts/test clean` | delete exact ledger-owned runs, the recorded local workspace stack/volumes, and its runtime state |
+| `./scripts/test clean` | recover from an unhandled interruption by deleting exact ledger-owned runs, the recorded local workspace stack/volumes, and its runtime state |
 | `./scripts/test list --json` | machine-readable registry from the same typed execution source |
 
 The typed registry is the single execution and workflow-composition source.
@@ -552,7 +597,7 @@ when its exact incident-baseline node is explicitly selected through `changed`.
 An imports-only receipt proves no request/worker envelope; the final resource
 qualification must include those workloads before production limits are adopted.
 
-<!-- nexus-test-routing-sha256: faa535199f2c1665e37a2f90aabd77da4461f57425537b5f73feb3393797a903 -->
+<!-- nexus-test-routing-sha256: 2dba3f9357262a22ddeab529ef1a4482a3579deeb1ff6ab17c2ab453afb0d16d -->
 
 When changed-file routing names a capability later than the invoked workflow,
 the controller MUST retain it in evidence with its exact `deferred_to` owner and
@@ -607,8 +652,19 @@ still apply. A direct invocation is not a workflow verdict.
 
 ### Local runtime and ownership
 
-The controller owns one persistent, health-checked, workspace-local
-PostgreSQL/MinIO/Supabase-test stack recorded in `.nexus-test/runtime.json`.
+The controller may own one health-checked, workspace-local
+PostgreSQL/MinIO/Supabase-test stack recorded in `.nexus-test/runtime.json` and
+scoped to exactly one workload invocation. It clears stale recorded runtime
+state before starting work, reuses service processes across capabilities in
+that invocation, and tears down the exact stack, volumes, and runtime state
+after every normal, failing, or handled-interrupt terminal path. Immutable
+evidence under `test-results/` survives. `clean` remains the recovery owner for
+an unhandled process death, and CI repeats cleanup in its always-run finalizer.
+Before replacing a persistent runner checkout, CI invokes the prior controller's
+public `./scripts/test clean` route. Recovery therefore acquires the same
+lineage-wide lease as every workload before it tears down that checkout's exact
+owned runtime. The incoming checkout cannot replace the runtime schema until
+recovery succeeds.
 Memory-heavy proof is serialized by one host lock for every independent clone
 and linked worktree with the same complete Git lineage roots. Shallow history
 fails closed because it cannot establish that stable identity; a synthetic
@@ -905,14 +961,23 @@ direct API origin embedded in the APK. Physical offline-reading promotion must
 compare that origin with the real mint response's `package_base_url` and fail
 closed on drift; native exact-origin enforcement is not relaxed.
 
-The signed physical promotion controller is staged: it must acquire against the
-strictly older installed baseline before candidate installation, own and attest
-force-stop/reboot/first-unlock/airplane before the cold-offline phase, and only
-then install the candidate in place for V1 reopen/progress/purge/update. A
-missing executable staged owner is `not_run`; a controller topology test is not
-physical promotion evidence. Retained release evidence records only facts the
-controller read back from the device — the qemu build properties and each
-phase's `airplane_mode_on` value — never an assumed constant.
+The signed physical promotion controller has two explicit device topologies.
+The default, compatible topology acquires against the strictly older installed
+baseline, owns and attests force-stop/reboot/first-unlock/airplane for its cold
+offline phase, then installs the candidate in place for exact
+reopen/progress/purge validation. An incompatible contract cut may instead use
+`empty_baseline_hard_cut`, but only after production activates the candidate
+contract: the controller first enables airplane mode and proves the complete
+legacy shelf empty through a quiesced read-only file/database census that cannot
+invoke cleanup, installs the candidate, disables airplane mode for
+candidate acquisition, then force-stops/reboots and proves the candidate's
+packages and progress offline before purge. This mode is not compatible with
+`bootstrap_no_device`; it never guesses, migrates, or silently discards legacy
+offline state. A missing executable staged owner is `not_run`; a controller
+topology test is not physical promotion evidence. Retained release evidence
+records the selected topology and only facts the controller read back from the
+device — the qemu build properties and each phase's `airplane_mode_on` value —
+never an assumed constant.
 
 Extension proof covers MV3 runtime, permissions, bearer scope, content capture,
 and handoff boundaries. Reuse the canonical content corpus.
@@ -945,7 +1010,9 @@ Immutable run-context/resource-plan evidence is the complete audit record, not
 the cleanup oracle. The mutable recovery ledger is the cleanup authority.
 
 Process identity uses the persisted run and random owner tokens, process-group
-leader PID, and kernel start token. The planned command remains audit evidence,
+leader PID, and kernel start token. On Linux, each owner token also names one
+transient user scope whose cgroup contains the complete descendant tree across
+sessions and controller restarts. The planned command remains audit evidence,
 not a live identity oracle: runtimes such as Next may legitimately rewrite
 `argv`. Readiness MUST verify that a socket in the exact owned process group
 owns the expected loopback listener; a healthy stale or foreign listener is a
@@ -999,7 +1066,7 @@ The paved road enforces the mechanically decidable part of this contract:
 | Browser network denial | component global guards and controller-recorded loopback Playwright allowlist |
 | Local-resource isolation | pre-contact environment/endpoint/name validators and exact ownership ledger |
 | No test-only product seams | product-source policy scan plus test-owned loopback protocol processes |
-| Deterministic execution | zero automatic retries, one Playwright worker, fixed audit seeds, one heavy-process lock |
+| Deterministic execution | zero automatic retries, one Playwright worker, fixed audit seeds, one lineage-wide invocation lock |
 | Fixture provenance | `testdata/manifest.json` path, provenance, and SHA-256 validation |
 | Priority-risk and journey routing | `testdata/proofs.json` schema, source owners, minimum risk IDs, exact journey selection, and sensitivity records |
 | Falsifiability | `prove` red/green evidence plus PR policy for changed priority-risk and declared-fault proof |
@@ -1081,7 +1148,7 @@ The replacement order is:
 
 1. cap resource use and stop repeated setup/build waste;
 2. define critical risks and approximately ten product-existence journeys;
-3. establish persistent services, per-run state, and the shared corpus;
+3. establish invocation-scoped services, per-run state, and the shared corpus;
 4. build the compact kernel/service/component portfolio without translating old
    tests one-for-one;
 5. replay known regressions and inject representative faults;
@@ -1103,7 +1170,7 @@ Build these in order:
    `release`, and `doctor` interface;
 2. an explicit memory-admission floor, measured ratchets, no `-n auto`, and no
    overlapping heavy local gates;
-3. one persistent Postgres/MinIO/Supabase stack;
+3. one invocation-scoped Postgres/MinIO/Supabase stack;
 4. one migrated seed database cloned per run;
 5. one immutable canonical corpus plus per-run writable state;
 6. default-deny network, owned-mock/sleep lint, E2E lint, and visible flakes;

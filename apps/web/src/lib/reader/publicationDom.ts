@@ -151,9 +151,23 @@ export function prepareReaderUnit({ session, unit, unitKey, highlights, headingL
       if (!lease.extend(cards.additionalNodes)) { root.remove(); lease.release(); return { kind: "Capacity", reason: "Dom" }; }
       cards.apply();
     }
+    let retained: Omit<PreparedReaderUnit, "release"> | null = { root, canonicalText, resources, artwork, cursor };
+    const read = () => {
+      if (retained === null) throw new Error("Prepared reader source has retired");
+      return retained;
+    };
     return { kind: "Ready", value: {
-      root, canonicalText, resources, artwork, cursor,
-      release() { root.remove(); lease.release(); },
+      get root() { return read().root; },
+      get canonicalText() { return read().canonicalText; },
+      get resources() { return read().resources; },
+      get artwork() { return read().artwork; },
+      get cursor() { return read().cursor; },
+      release() {
+        if (retained === null) return;
+        retained.root.remove();
+        retained = null;
+        lease.release();
+      },
     } };
   } catch (error) {
     root.remove();

@@ -188,7 +188,11 @@ export function useRetainedReaderSelection<
     [clear, publish, sameSnapshot, scheduleStabilizedPublication],
   );
 
-  useEffect(() => cancelPendingPublication, [cancelPendingPublication]);
+  useEffect(() => () => {
+    capturedRef.current = null;
+    visibleRef.current = null;
+    cancelPendingPublication();
+  }, [cancelPendingPublication]);
 
   return useMemo(
     () => ({

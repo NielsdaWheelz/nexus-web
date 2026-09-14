@@ -1,5 +1,6 @@
 """Focused PostgreSQL admission proof for the destructive generation reset."""
 
+import json
 import re
 from pathlib import Path
 from uuid import uuid4
@@ -41,6 +42,8 @@ def test_0224_refuses_the_only_undrained_generation_job_before_history_reset(
     command.upgrade(config, "0223")
     engine = create_engine(migration_database_url)
     generation_job_id = uuid4()
+    enrichment_job_id = uuid4()
+    minimal_enrichment_job_id = uuid4()
     llm_call_id = uuid4()
     try:
         with engine.begin() as connection:
@@ -179,17 +182,298 @@ def test_0224_refuses_the_only_undrained_generation_job_before_history_reset(
                 {"job_id": generation_job_id},
             )
 
+            connection.execute(
+                text(
+                    "INSERT INTO background_jobs "
+                    "(id, kind, payload, status, attempts, max_attempts, error_code, "
+                    "result, finished_at) VALUES "
+                    "(:job_id, 'enrich_metadata', "
+                    "jsonb_build_object('media_id', CAST(:media_id AS text)), "
+                    "'dead', 1, 2, 'E_METADATA_PARSE_FAILED', CAST(:result AS jsonb), now())"
+                ),
+                {
+                    "job_id": enrichment_job_id,
+                    "media_id": str(uuid4()),
+                    "result": None,
+                },
+            )
+
+        enrichment_error = (
+            f"0224 preflight: generation jobs must be drained: ['{enrichment_job_id}']"
+        )
+        with pytest.raises(RuntimeError, match=rf"^{re.escape(enrichment_error)}$"):
+            command.upgrade(config, "0224")
+
+        with engine.connect() as connection:
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0223"
+            assert connection.execute(
+                text(
+                    "SELECT status, error_code, result ->> 'error_code' "
+                    "FROM background_jobs WHERE id = :job_id"
+                ),
+                {"job_id": enrichment_job_id},
+            ).one() == ("dead", "E_METADATA_PARSE_FAILED", None), (
+                "0224 mutated a dead enrichment job without a terminal result"
+            )
+
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE background_jobs SET result = CAST(:result AS jsonb) WHERE id = :job_id"
+                ),
+                {
+                    "job_id": enrichment_job_id,
+                    "result": json.dumps(
+                        {
+                            "status": "failed",
+                            "reason": "parse_failed",
+                            "error_code": "E_OTHER",
+                        }
+                    ),
+                },
+            )
+
+        with pytest.raises(RuntimeError, match=rf"^{re.escape(enrichment_error)}$"):
+            command.upgrade(config, "0224")
+
+        with engine.connect() as connection:
+            assert connection.execute(
+                text(
+                    "SELECT status, error_code, result ->> 'error_code' "
+                    "FROM background_jobs WHERE id = :job_id"
+                ),
+                {"job_id": enrichment_job_id},
+            ).one() == ("dead", "E_METADATA_PARSE_FAILED", "E_OTHER"), (
+                "0224 mutated a dead enrichment job whose terminal result was mismatched"
+            )
+
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE background_jobs SET result = CAST(:result AS jsonb) WHERE id = :job_id"
+                ),
+                {
+                    "job_id": enrichment_job_id,
+                    "result": json.dumps(
+                        {
+                            "status": "failed",
+                            "reason": "future_failure",
+                            "error_code": "E_METADATA_PARSE_FAILED",
+                        }
+                    ),
+                },
+            )
+
+        with pytest.raises(RuntimeError, match=rf"^{re.escape(enrichment_error)}$"):
+            command.upgrade(config, "0224")
+
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE background_jobs "
+                    "SET result = jsonb_set(result, '{reason}', "
+                    "to_jsonb(CAST('parse_failed' AS text)), false) "
+                    "|| jsonb_build_object('detail', 'unknown') WHERE id = :job_id"
+                ),
+                {"job_id": enrichment_job_id},
+            )
+
+        with pytest.raises(RuntimeError, match=rf"^{re.escape(enrichment_error)}$"):
+            command.upgrade(config, "0224")
+
+        with engine.connect() as connection:
+            assert connection.scalar(
+                text("SELECT result ? 'detail' FROM background_jobs WHERE id = :job_id"),
+                {"job_id": enrichment_job_id},
+            ), "0224 mutated a dead enrichment job with an unclassified result extension"
+
+        for invalid_attempt in (
+            {"provider": None, "model": "claude-test"},
+            {"provider": "", "model": "claude-test"},
+            {"provider": "anthropic", "model": None},
+            {"provider": "anthropic", "model": ""},
+        ):
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        "UPDATE background_jobs "
+                        "SET result = CAST(:result AS jsonb) WHERE id = :job_id"
+                    ),
+                    {
+                        "job_id": enrichment_job_id,
+                        "result": json.dumps(
+                            {
+                                "status": "failed",
+                                "reason": "parse_failed",
+                                "error_code": "E_METADATA_PARSE_FAILED",
+                                "provider": "openai",
+                                "model": "gpt-test",
+                                "attempted_providers": [
+                                    invalid_attempt,
+                                    {"provider": "openai", "model": "gpt-test"},
+                                ],
+                            }
+                        ),
+                    },
+                )
+
+            with pytest.raises(RuntimeError, match=rf"^{re.escape(enrichment_error)}$"):
+                command.upgrade(config, "0224")
+
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE background_jobs SET result = CAST(:result AS jsonb) WHERE id = :job_id"
+                ),
+                {
+                    "job_id": enrichment_job_id,
+                    "result": json.dumps(
+                        {
+                            "status": "failed",
+                            "reason": "parse_failed",
+                            "error_code": "E_METADATA_PARSE_FAILED",
+                            "provider": "openai",
+                            "model": "gpt-test",
+                            "attempted_providers": [
+                                {"provider": "anthropic", "model": "claude-test"},
+                                {
+                                    "provider": "openai",
+                                    "model": "gpt-test",
+                                    "detail": "unknown",
+                                },
+                            ],
+                        }
+                    ),
+                },
+            )
+
+        with pytest.raises(RuntimeError, match=rf"^{re.escape(enrichment_error)}$"):
+            command.upgrade(config, "0224")
+
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE background_jobs SET result = CAST(:result AS jsonb) WHERE id = :job_id"
+                ),
+                {
+                    "job_id": enrichment_job_id,
+                    "result": json.dumps(
+                        {
+                            "status": "failed",
+                            "reason": "parse_failed",
+                            "error_code": "E_METADATA_PARSE_FAILED",
+                            "provider": "openai",
+                            "model": "gpt-test",
+                            "attempted_providers": [
+                                {"provider": "anthropic", "model": "claude-test"},
+                                {"provider": "openai", "model": "gpt-other"},
+                            ],
+                        }
+                    ),
+                },
+            )
+
+        with pytest.raises(RuntimeError, match=rf"^{re.escape(enrichment_error)}$"):
+            command.upgrade(config, "0224")
+
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE background_jobs "
+                    "SET result = CAST(:result AS jsonb), claimed_by = 'stale-worker' "
+                    "WHERE id = :job_id"
+                ),
+                {
+                    "job_id": enrichment_job_id,
+                    "result": json.dumps(
+                        {
+                            "status": "failed",
+                            "reason": "parse_failed",
+                            "error_code": "E_METADATA_PARSE_FAILED",
+                            "provider": "openai",
+                            "model": "gpt-test",
+                            "attempted_providers": [
+                                {"provider": "anthropic", "model": "claude-test"},
+                                {"provider": "openai", "model": "gpt-test"},
+                            ],
+                        }
+                    ),
+                },
+            )
+
+        with pytest.raises(RuntimeError, match=rf"^{re.escape(enrichment_error)}$"):
+            command.upgrade(config, "0224")
+
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE background_jobs "
+                    "SET claimed_by = NULL, lease_expires_at = now() WHERE id = :job_id"
+                ),
+                {"job_id": enrichment_job_id},
+            )
+
+        with pytest.raises(RuntimeError, match=rf"^{re.escape(enrichment_error)}$"):
+            command.upgrade(config, "0224")
+
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE background_jobs "
+                    "SET lease_expires_at = NULL, finished_at = NULL WHERE id = :job_id"
+                ),
+                {"job_id": enrichment_job_id},
+            )
+
+        with pytest.raises(RuntimeError, match=rf"^{re.escape(enrichment_error)}$"):
+            command.upgrade(config, "0224")
+
+        with engine.begin() as connection:
+            connection.execute(
+                text("UPDATE background_jobs SET finished_at = now() WHERE id = :job_id"),
+                {"job_id": enrichment_job_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO background_jobs "
+                    "(id, kind, payload, status, attempts, max_attempts, error_code, "
+                    "result, finished_at) VALUES "
+                    "(:job_id, 'enrich_metadata', "
+                    "jsonb_build_object('media_id', CAST(:media_id AS text)), "
+                    "'dead', 1, 2, 'E_BILLING_REQUIRED', CAST(:result AS jsonb), now())"
+                ),
+                {
+                    "job_id": minimal_enrichment_job_id,
+                    "media_id": str(uuid4()),
+                    "result": json.dumps(
+                        {
+                            "status": "failed",
+                            "reason": "llm_rejected",
+                            "error_code": "E_BILLING_REQUIRED",
+                        }
+                    ),
+                },
+            )
+
         command.upgrade(config, "0224")
 
         with engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0224"
             assert (
                 connection.scalar(
-                    text("SELECT count(*) FROM background_jobs WHERE id = :job_id"),
-                    {"job_id": generation_job_id},
+                    text(
+                        "SELECT count(*) FROM background_jobs "
+                        "WHERE id = :synapse_job_id OR id = :enrichment_job_id "
+                        "OR id = :minimal_enrichment_job_id"
+                    ),
+                    {
+                        "synapse_job_id": generation_job_id,
+                        "enrichment_job_id": enrichment_job_id,
+                        "minimal_enrichment_job_id": minimal_enrichment_job_id,
+                    },
                 )
                 == 0
-            ), "0224 retained an unambiguous dead Synapse scan outside its generation reset"
+            ), "0224 retained classified terminal queue state outside its generation reset"
             assert (
                 connection.scalar(
                     text("SELECT count(*) FROM llm_calls WHERE id = :call_id"),

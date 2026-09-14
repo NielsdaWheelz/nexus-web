@@ -13,7 +13,7 @@ interface PublicationPositioner {
   readonly signal: AbortSignal;
   readonly commandIsCurrent: () => boolean;
   readonly navigate: DocumentReaderWindow["navigate"];
-  readonly waitForUnit: (item: ReaderWindowUnit, signal: AbortSignal) => Promise<null | ReaderViewCapacity | { readonly kind: "Failed" }>;
+  readonly waitForUnit: (item: ReaderWindowUnit, signal: AbortSignal) => Promise<null | ReaderViewCapacity | { readonly kind: "Failed"; readonly error: unknown }>;
   readonly getRenderedUnit: (lease: ReaderUnitLease) => {
     readonly root: HTMLElement; readonly viewport: HTMLElement;
     readonly cursor: CanonicalCursorResult; readonly unit: ReaderPublicationUnit;
@@ -93,7 +93,8 @@ async function positionPublication({ range: requestedRange, target, stableKey, e
       const prepared = await waitForUnit(completion.item, signal);
       signal.throwIfAborted();
       if (!isCurrent()) return { kind: "Unavailable" };
-      if (prepared !== null) return prepared.kind === "Capacity" ? prepared : { kind: "Unavailable" };
+      if (prepared?.kind === "Failed") throw prepared.error;
+      if (prepared !== null) return prepared;
     }
     let positioned = false;
     await scrollPositioner.run((commands) => {

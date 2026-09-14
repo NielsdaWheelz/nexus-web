@@ -865,6 +865,12 @@ Consumption Activity's bounded historical facts.
   activity scrollport through one format-neutral adapter contract. Restore,
   navigation, preview, and return intents remain ineligible until genuine
   input returns the source to `Reader`.
+- a prose tap may adopt the exact restored viewport before a new `Reader`
+  publication. that permission cannot carry into a later restoration, even in
+  the same fragment. source links and control activation do not adopt reading;
+  actual scrolling over a link does. the text leaf and activity adapter share
+  one keyboard-direction classifier so activating an inline button with space
+  cannot claim a forward reading gesture.
 - The adapter projects the same semantic viewport that drives document-position
   presentation; it
   never remeasures a scrollbar, writes spans itself, sends a raw device id, or

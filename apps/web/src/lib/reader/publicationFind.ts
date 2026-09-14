@@ -27,7 +27,7 @@ export interface PublicationFindPart {
 export type PublicationFindRenderResult =
   | { readonly kind: "Rendered"; readonly part: PublicationFindPart }
   | ReaderViewCapacity
-  | { readonly kind: "Failed" };
+  | { readonly kind: "Failed"; readonly error: unknown };
 interface Origin {
   readonly unitKey: string;
   readonly fragmentIdx: number;
@@ -170,6 +170,7 @@ export function createPublicationFindAdapter({ session, descriptor, window, getR
       const completion = await window.navigate({ kind: "Locator", locator: match.locator });
       assertCurrent(request);
       if (completion.kind === "Superseded") throw new DOMException("Reader Find preview superseded", "AbortError");
+      if (completion.kind === "Failed") return rejected(modeledError(completion.error));
       if (completion.kind !== "Ready") return rejected(completion.kind === "Capacity" ? completion : { kind: "RequestUnavailable" });
       const assertPreview = () => {
         assertCurrent(request);
@@ -177,17 +178,18 @@ export function createPublicationFindAdapter({ session, descriptor, window, getR
       };
       const first = await waitForUnit(completion.item, request.signal);
       assertPreview();
-      if (first.kind !== "Rendered") return rejected(first.kind === "Capacity" ? first : { kind: "RequestUnavailable" });
+      if (first.kind !== "Rendered") return rejected(first.kind === "Capacity" ? first : modeledError(first.error));
       activeKey = request.key;
       while (!publish()) {
         const next = await window.loadNeighbor("Next");
         assertPreview();
         if (next?.kind === "Superseded") throw new DOMException("Reader Find preview superseded", "AbortError");
+        if (next?.kind === "Failed") return rejected(modeledError(next.error));
         if (next?.kind !== "Ready") return rejected(next?.kind === "Capacity" ? next : { kind: "RequestUnavailable" });
         if (next.item.unit.fragment_id !== match.fragmentId) throw new Error("Reader Find range escaped its retained fragment");
         const neighbor = await waitForUnit(next.item, request.signal);
         assertPreview();
-        if (neighbor.kind !== "Rendered") return rejected(neighbor.kind === "Capacity" ? neighbor : { kind: "RequestUnavailable" });
+        if (neighbor.kind !== "Rendered") return rejected(neighbor.kind === "Capacity" ? neighbor : modeledError(neighbor.error));
       }
       const rendered = getRendered();
       const anchor = rendered?.parts.find(({ item }) => item.lease === completion.item.lease);
@@ -208,6 +210,7 @@ export function createPublicationFindAdapter({ session, descriptor, window, getR
       const completion = await window.navigate({ kind: "Unit", unit_key: captured.unitKey });
       assertCurrent(request);
       if (completion.kind === "Superseded") throw new DOMException("Reader Find return superseded", "AbortError");
+      if (completion.kind === "Failed") return { kind: "Failed", error: modeledError(completion.error) };
       if (completion.kind !== "Ready") return { kind: "Failed", error: completion.kind === "Capacity" ? completion : { kind: "RequestUnavailable" } };
       const assertReturn = () => {
         assertCurrent(request);
@@ -215,7 +218,7 @@ export function createPublicationFindAdapter({ session, descriptor, window, getR
       };
       const settled = await waitForUnit(completion.item, request.signal);
       assertReturn();
-      if (settled.kind !== "Rendered") return { kind: "Failed", error: settled.kind === "Capacity" ? settled : { kind: "RequestUnavailable" } };
+      if (settled.kind !== "Rendered") return { kind: "Failed", error: settled.kind === "Capacity" ? settled : modeledError(settled.error) };
       const rendered = getRendered();
       if (rendered === null) throw new Error("Reader Find return lost its viewport");
       await scrollPositioner.run((commands) => {

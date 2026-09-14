@@ -236,12 +236,25 @@ def _minimal_repository(root: Path) -> None:
         'merge_timestamp="$(git show --no-patch --format=%cI "$EXPECTED_HEAD_SHA")"\n'
         'GIT_COMMITTER_DATE="$merge_timestamp"\n'
         "git rev-list --parents -n 1 HEAD\n"
+        "Retire prior checkout test runtime\n"
+        'test -x "$checkout/scripts/test"\n'
+        '            cd "$checkout"\n'
+        "            ./scripts/test clean\n"
+        "Retire current checkout test runtime\n"
+        "            ./scripts/test clean\n"
         'scripts/ci-proof-artifact.sh run changed --base "$NEXUS_TEST_BASE_SHA"\n'
         "scripts/ci-proof-artifact.sh run pr\n"
         "pull_request:*|workflow_dispatch:changed)\n"
         "workflow_dispatch:pr)\n"
         "unsupported CI proof selection\n"
         "if: github.event_name == 'push'\n"
+        "Retire prior checkout test runtime\n"
+        'test -x "$checkout/scripts/test"\n'
+        '            cd "$checkout"\n'
+        "            ./scripts/test clean\n"
+        "Retire current checkout test runtime\n"
+        "            ./scripts/test clean\n"
+        "if: always()\n"
         "run: scripts/ci-proof-artifact.sh run full\n"
         "if: ${{ always() && steps.proof.outputs.path != '' }}\n"
         "path: ${{ steps.proof.outputs.path }}/\n"
@@ -1604,4 +1617,27 @@ def test_resource_capability_guard_flags_missing_projection(tmp_path: Path) -> N
     )
     assert "resource-capability-drift" in _rules(
         resource_capability_projection_violations(tmp_path)
+    )
+
+
+def test_repository_guard_rejects_direct_precheckout_runtime_cleanup(
+    tmp_path: Path,
+) -> None:
+    _minimal_repository(tmp_path)
+    workflow = tmp_path / ".github/workflows/ci.yml"
+    workflow.write_text(
+        workflow.read_text(encoding="utf-8").replace(
+            '            cd "$checkout"',
+            '            cd "$checkout/python"',
+        ),
+        encoding="utf-8",
+    )
+
+    violations = repository_violations(tmp_path)
+
+    assert any(
+        violation.rule == "repository-route-contract"
+        and violation.path == ".github/workflows/ci.yml"
+        and 'cd "$checkout"' in violation.message
+        for violation in violations
     )

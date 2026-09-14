@@ -108,6 +108,12 @@ export function mediaPaneErrorMessage(
         message: "The item changed. Refresh the pane, then retry.",
         requestId,
       };
+    case "E_READER_CONTENT_CHANGED":
+      return {
+        tone: "Warning",
+        title: "Reader content changed. Reload this document.",
+        requestId,
+      };
     case "E_INVALID_REQUEST":
     case "E_BAD_REQUEST":
       return {

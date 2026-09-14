@@ -355,6 +355,7 @@ import styles from "./page.module.css";
 // =============================================================================
 
 interface SelectionState {
+  identity: symbol;
   fragmentId: string;
   startOffset: number;
   endOffset: number;
@@ -960,8 +961,9 @@ function MediaPaneBodyReady({ progressRuntime, documentReaderSession }: {
     ? readerCapacityNotice(documentReader.capacity.reason)
     : publicationDomCapacity ? readerCapacityNotice("Dom") : null;
   const [publicationRenderAttempt, setPublicationRenderAttempt] = useState(0);
+  const publicationNavigationId = documentReader.navigationTarget?.id ?? null;
   const [publicationRenderDefect, setPublicationRenderDefect] = useState<{
-    session: typeof documentReaderSession; attempt: number; error: unknown;
+    session: typeof documentReaderSession; attempt: number; navigationId: number | null; error: unknown;
   } | null>(null);
   const pendingPublicationRenderRef = useRef<{
     item: ReaderWindowUnit; settle: (result: PublicationFindRenderResult) => void; cancel: () => void;
@@ -1292,11 +1294,6 @@ function MediaPaneBodyReady({ progressRuntime, documentReaderSession }: {
     highlightId: string;
     rect: DOMRect;
   } | null>(null);
-  const highlightActionId = highlightActionAnchor?.highlightId ?? null;
-  useEffect(() => {
-    if (!highlightActionId) return;
-    return mobileChromeVisibleLocks.acquire("action-menu");
-  }, [highlightActionId, mobileChromeVisibleLocks]);
   // The quick-note composer session (selection note verb, `n` chord, or the
   // click popover's Add/Edit note action). Null = composer closed.
   const [quickNote, setQuickNote] = useState<QuickNoteSession | null>(null);
@@ -1338,6 +1335,7 @@ function MediaPaneBodyReady({ progressRuntime, documentReaderSession }: {
   const [isCreating, setIsCreating] = useState(false);
   const selectionActionInFlightRef = useRef(false);
   const freshSelectionLinkSessionRef = useRef<{ source: LinkFragmentSelectionSource; range: Range } | null>(null);
+  useEffect(() => () => { freshSelectionLinkSessionRef.current = null; }, []);
   const [isMismatchDisabled, setIsMismatchDisabled] = useState(false);
   const appliedRequestedReaderLocRef = useRef<string | null>(null);
 
@@ -2496,11 +2494,16 @@ function MediaPaneBodyReady({ progressRuntime, documentReaderSession }: {
       return Promise.resolve<ApplyCursorResult>("failed");
     }
     if (locator.kind === "pdf") {
-      return Promise.resolve<ApplyCursorResult>(
-        pdfControlsRef.current?.applyResumeState(locator)
-          ? "applied"
-          : "failed",
-      );
+      const controls = pdfControlsRef.current;
+      if (controls === null) return Promise.resolve<ApplyCursorResult>("failed");
+      beginRestoreSession("restoring_exact", "Command");
+      const application = restoreSessionRef.current;
+      const isCurrent = () => restoreSessionRef.current === application;
+      return controls.applyResumeState(locator, isCurrent).then((positioned): ApplyCursorResult => {
+        if (!isCurrent()) return "cancelled_by_user";
+        updateRestorePhase(application.id, positioned ? "settled" : "cancelled");
+        return positioned ? "applied" : "failed";
+      });
     }
     // The user (or clean-dormant adoption) chose the canonical position; a
     // still-active feature target no longer owns the viewport.
@@ -2567,7 +2570,7 @@ function MediaPaneBodyReady({ progressRuntime, documentReaderSession }: {
       !readerLayoutReady ||
       (!isTranscriptMedia && (selectedPublication === null || selectedPublication.kind === "pdf" ||
         documentReader.activeUnit?.address.unit_ref.key !== selectedPublication.first_unit_ref.key ||
-        !preparedPublication.some((entry) => entry.item.lease === documentReader.activeUnit?.lease && entry.view.root.isConnected)))
+        ![...preparedPublicationRef.current.values()].some((entry) => entry.item.lease === documentReader.activeUnit?.lease && entry.view.root.isConnected)))
     ) {
       return;
     }
@@ -2663,7 +2666,7 @@ function MediaPaneBodyReady({ progressRuntime, documentReaderSession }: {
           request: null, layerStatus: { kind: "Loading" } });
         applyReaderUnitResources(result.value, (member) => documentReaderSession.memberAssetUrl(member));
       } catch (error) {
-        setPublicationRenderDefect({ session: documentReaderSession, attempt: publicationRenderAttempt, error });
+        setPublicationRenderDefect({ session: documentReaderSession, attempt: publicationRenderAttempt, navigationId: publicationNavigationId, error });
         break;
       }
     }
@@ -2672,7 +2675,7 @@ function MediaPaneBodyReady({ progressRuntime, documentReaderSession }: {
       const entry = prepared.get(item.lease);
       return entry === undefined ? [] : [entry];
     }));
-  }, [documentReader.units, documentReaderSession, publicationRenderAttempt]);
+  }, [documentReader.units, documentReaderSession, publicationNavigationId, publicationRenderAttempt]);
 
   useEffect(() => {
     const read = documentReaderSession.overlays;
@@ -2716,27 +2719,18 @@ function MediaPaneBodyReady({ progressRuntime, documentReaderSession }: {
         if (paint.result.kind !== "Highlights" || (embeds !== null && embeds.result.kind !== "Embeds")) {
           throw new Error("Reader layer returned another projection");
         }
-        const source = () => {
-          const value = prepareReaderUnit({ session: documentReaderSession, unit: entry.item.unit,
-            unitKey: entry.item.address.unit_ref.key, highlights: NO_PUBLICATION_HIGHLIGHTS, headingLevelOffset: 1 });
-          if (value.kind !== "Ready") throw new Error("Retired reader source cannot reclaim its own DOM reservation");
-          entry.view = value.value;
-          applyReaderUnitResources(value.value, (member) => documentReaderSession.memberAssetUrl(member));
-        };
-        preservePublicationAnchorRef.current();
+        const result = prepareReaderUnit({ session: documentReaderSession, unit: entry.item.unit,
+          unitKey: entry.item.address.unit_ref.key, highlights: paint.result.items, headingLevelOffset: 1,
+          ...(embeds?.result.kind === "Embeds" ? { embeds: { items: embeds.result.items, classNames: DOCUMENT_EMBED_CLASSES } } : {}) });
+        if (result.kind === "Capacity") { entry.layerStatus = result; return; }
+        try {
+          applyReaderUnitResources(result.value, (member) => documentReaderSession.memberAssetUrl(member));
+          preservePublicationAnchorRef.current();
+        } catch (error) { result.value.release(); throw error; }
         entry.artwork?.release(); entry.artwork = null;
         entry.view.release();
         entry.paint?.release(); entry.embeds?.release();
-        entry.paint = null; entry.embeds = null;
-        let result: ReturnType<typeof prepareReaderUnit>;
-        try {
-          result = prepareReaderUnit({ session: documentReaderSession, unit: entry.item.unit,
-            unitKey: entry.item.address.unit_ref.key, highlights: paint.result.items, headingLevelOffset: 1,
-            ...(embeds?.result.kind === "Embeds" ? { embeds: { items: embeds.result.items, classNames: DOCUMENT_EMBED_CLASSES } } : {}) });
-        } catch (error) { source(); throw error; }
-        if (result.kind === "Capacity") { entry.layerStatus = result; source(); return; }
         entry.view = result.value;
-        applyReaderUnitResources(result.value, (member) => documentReaderSession.memberAssetUrl(member));
         entry.paint = paint; entry.embeds = embeds;
         paint = null; embeds = null;
         entry.layerStatus = { kind: "Ready" };
@@ -2764,7 +2758,7 @@ function MediaPaneBodyReady({ progressRuntime, documentReaderSession }: {
   }, [documentReader.units, documentReaderSession, documentMapVersion, publicationRenderAttempt, media?.capabilities?.can_read_embeds, isTranscriptMedia, isPdf, restorePhase]);
 
   useLayoutEffect(() => {
-    for (const entry of preparedPublication) {
+    for (const entry of preparedPublicationRef.current.values()) {
       if (artworkVisible && entry.artwork?.reader === artworkReader) continue;
       entry.artwork?.release(); entry.artwork = null;
       if (!artworkVisible) continue;
@@ -2787,10 +2781,11 @@ function MediaPaneBodyReady({ progressRuntime, documentReaderSession }: {
       pending.settle({ kind: "Rendered", part: { item: pending.item, root: prepared.view.root, cursor: prepared.view.cursor } });
     } else if (publicationDomCapacity) {
       pending.settle({ kind: "Capacity", reason: "Dom" });
-    } else if (publicationRenderDefect?.session === documentReaderSession && publicationRenderDefect.attempt === publicationRenderAttempt) {
-      pending.settle({ kind: "Failed" });
+    } else if (publicationRenderDefect?.session === documentReaderSession && publicationRenderDefect.attempt === publicationRenderAttempt &&
+        publicationRenderDefect.navigationId === publicationNavigationId) {
+      pending.settle({ kind: "Failed", error: publicationRenderDefect.error });
     }
-  }, [documentReaderSession, preparedPublication, publicationDomCapacity, publicationRenderDefect, publicationRenderAttempt, readerLayoutReady]);
+  }, [documentReaderSession, preparedPublication, publicationDomCapacity, publicationRenderDefect, publicationRenderAttempt, publicationNavigationId, readerLayoutReady]);
 
   // Hosted decoration port: highlights and inert embed projections are a
   // hosted layer applied over the leaf's undecorated canonical HTML. The
@@ -2878,8 +2873,8 @@ function MediaPaneBodyReady({ progressRuntime, documentReaderSession }: {
         commands.adjustTop(viewport, entry.view.root.getBoundingClientRect().top - viewport.getBoundingClientRect().top - anchor.delta);
         viewport.scrollLeft = anchor.scrollLeft;
       }
-    }).catch((error: unknown) => setPublicationRenderDefect({ session: documentReaderSession, attempt: publicationRenderAttempt, error }));
-  }, [documentReaderSession, mediaFindPreviewLease, preparedPublication, publicationRenderAttempt, readerScrollPositioner]);
+    }).catch((error: unknown) => setPublicationRenderDefect({ session: documentReaderSession, attempt: publicationRenderAttempt, navigationId: publicationNavigationId, error }));
+  }, [documentReaderSession, mediaFindPreviewLease, preparedPublication, publicationRenderAttempt, publicationNavigationId, readerScrollPositioner]);
   useLayoutEffect(() => {
     const navigation = documentReader.navigationTarget;
     const viewport = textViewportRef.current;
@@ -2894,7 +2889,8 @@ function MediaPaneBodyReady({ progressRuntime, documentReaderSession }: {
       appliedPublicationNavigationRef.current = { session: documentReaderSession, id: navigation.id };
       return;
     }
-    const prepared = preparedPublication.find((entry) => entry.item.address.unit_ref.key === navigation.target.unit_ref.key);
+    const prepared = [...preparedPublicationRef.current.values()].find((entry) =>
+      entry.item.address.unit_ref.key === navigation.target.unit_ref.key && entry.view.root.isConnected);
     if (prepared === undefined) return;
     const sessionId = restoreSessionRef.current.id;
     const source = prepared.item.unit;
@@ -2914,7 +2910,7 @@ function MediaPaneBodyReady({ progressRuntime, documentReaderSession }: {
       appliedPublicationNavigationRef.current = { session: documentReaderSession, id: navigation.id };
       settleRestoreSession(sessionId);
     }).catch((error: unknown) => {
-      if (live) setPublicationRenderDefect({ session: documentReaderSession, attempt: publicationRenderAttempt, error });
+      if (live) setPublicationRenderDefect({ session: documentReaderSession, attempt: publicationRenderAttempt, navigationId: navigation.id, error });
     });
     return () => { live = false; };
   }, [documentReader.navigationTarget, documentReaderSession, mediaFindPreviewLease, preparedPublication, publicationRenderAttempt, readerScrollPositioner, restorePhase, settleRestoreSession]);
@@ -2959,6 +2955,7 @@ function MediaPaneBodyReady({ progressRuntime, documentReaderSession }: {
         expectedLength: canonicalCpLength(activeContent.canonicalText),
       });
     }
+    return () => { if (cursorRef.current === cursor) cursorRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: rebuild when rendered canonical content changes
   }, [
     activeContent?.fragmentId,
@@ -3407,6 +3404,7 @@ function MediaPaneBodyReady({ progressRuntime, documentReaderSession }: {
       return;
     }
     const nextSelection: SelectionState = {
+      identity: Symbol(),
       fragmentId: selectedFragmentId,
       startOffset: result.startOffset,
       endOffset: result.endOffset,
@@ -3477,10 +3475,10 @@ function MediaPaneBodyReady({ progressRuntime, documentReaderSession }: {
 
   const handleCreateHighlight = useCallback(
     async (color: HighlightColor): Promise<{ id: string } | null> => {
-      const activeSelection = readRetainedSelection();
+      let activeSelection = readRetainedSelection();
       if (
         !activeSelection ||
-        !activeContent ||
+        activeContentId === null ||
         selectionActionInFlightRef.current
       ) {
         return null;
@@ -3491,7 +3489,7 @@ function MediaPaneBodyReady({ progressRuntime, documentReaderSession }: {
         return null;
       }
 
-      if (activeSelection.fragmentId !== activeContent.fragmentId) {
+      if (activeSelection.fragmentId !== activeContentId) {
         feedback.publish({
           kind: "Hud",
           key: `highlight-selection:${id}`,
@@ -3528,24 +3526,27 @@ function MediaPaneBodyReady({ progressRuntime, documentReaderSession }: {
         return null;
       }
 
+      const { identity, fragmentId, startOffset, endOffset } = activeSelection;
+      activeSelection = null;
       const retireSelection = (highlightId: string) => {
-        if (readRetainedSelection()?.range !== activeSelection.range) return;
+        const selected = readRetainedSelection();
+        if (selected?.identity !== identity) return;
         focusHighlight(highlightId);
         clearRetainedSelection();
         const live = window.getSelection();
         if (live === null || live.rangeCount !== 1) return;
         const range = live.getRangeAt(0);
-        if (range.startContainer === activeSelection.range.startContainer &&
-            range.startOffset === activeSelection.range.startOffset &&
-            range.endContainer === activeSelection.range.endContainer &&
-            range.endOffset === activeSelection.range.endOffset) live.removeAllRanges();
+        if (range.startContainer === selected.range.startContainer &&
+            range.startOffset === selected.range.startOffset &&
+            range.endContainer === selected.range.endContainer &&
+            range.endOffset === selected.range.endOffset) live.removeAllRanges();
       };
 
       try {
         const createdHighlight = await createHighlight(
-          activeSelection.fragmentId,
-          activeSelection.startOffset,
-          activeSelection.endOffset,
+          fragmentId,
+          startOffset,
+          endOffset,
           color,
         );
         if (
@@ -3569,9 +3570,9 @@ function MediaPaneBodyReady({ progressRuntime, documentReaderSession }: {
             const existing = await readTextMutationHighlight(mutationSession, existingId);
             if (existing === null) return { id: existingId };
             if (existing.is_owner &&
-                existing.anchor.fragment_id === activeSelection.fragmentId &&
-                existing.anchor.start_offset === activeSelection.startOffset &&
-                existing.anchor.end_offset === activeSelection.endOffset) {
+                existing.anchor.fragment_id === fragmentId &&
+                existing.anchor.start_offset === startOffset &&
+                existing.anchor.end_offset === endOffset) {
               retireSelection(existing.id);
               return { id: existing.id };
             }
@@ -3587,7 +3588,7 @@ function MediaPaneBodyReady({ progressRuntime, documentReaderSession }: {
       }
     },
     [
-      activeContent,
+      activeContentId,
       clearReaderSelection,
       clearRetainedSelection,
       isMismatchDisabled,
@@ -4239,6 +4240,7 @@ function MediaPaneBodyReady({ progressRuntime, documentReaderSession }: {
     };
     return { status: "loading" as const, message: "Loading document…" };
   })();
+  const textDocumentContentReady = publicationTextDocumentContentState.status === "ready";
   const epubTextDocumentContentState = publicationTextDocumentContentState;
   const webTextDocumentContentState = publicationTextDocumentContentState;
   const textMobileChromeScrollportRef =
@@ -4248,9 +4250,7 @@ function MediaPaneBodyReady({ progressRuntime, documentReaderSession }: {
         isMobileViewport &&
         isPaneActive &&
         canRead &&
-        (isEpub
-          ? epubTextDocumentContentState.status === "ready"
-          : webTextDocumentContentState.status === "ready"),
+        textDocumentContentReady,
     });
   const pdfMobileChromeScrollportRef =
     useMobileChromeReaderScrollport<HTMLDivElement>({
@@ -4666,9 +4666,7 @@ function MediaPaneBodyReady({ progressRuntime, documentReaderSession }: {
       textEndRef.current !== null &&
       isFinalTextUnit &&
       activeLength > 0 &&
-      (isEpub
-        ? epubTextDocumentContentState.status === "ready"
-        : webTextDocumentContentState.status === "ready") &&
+      textDocumentContentReady &&
       isTextViewportAtEnd(container, textEndRef.current);
     const canReportTerminal =
       isAtEligibleTextEnd &&
@@ -4757,7 +4755,7 @@ function MediaPaneBodyReady({ progressRuntime, documentReaderSession }: {
   }, [
     activeContent,
     buildTextLocatorAtOffset,
-    epubTextDocumentContentState.status,
+    textDocumentContentReady,
     initialReaderResumeStateLoading,
     isEpub,
     isFinalTextUnit,
@@ -4768,7 +4766,6 @@ function MediaPaneBodyReady({ progressRuntime, documentReaderSession }: {
     reportReaderMovement,
     resetTextProgressGeneration,
     restorePhase,
-    webTextDocumentContentState.status,
   ]);
   const scheduleTextViewportCapture = useCallback(
     (snapshot: ReaderViewportSnapshot, trustedIntent: boolean) => {
@@ -4817,7 +4814,9 @@ function MediaPaneBodyReady({ progressRuntime, documentReaderSession }: {
     if (viewport === null || isTranscriptMedia || isPdf || !textRestoreSettledRef.current || mediaFindPreviewLease.isActive()) return;
     const bounds = viewport.getBoundingClientRect();
     if (bounds.height <= 0) return;
-    const entries = preparedPublication.filter((entry) => entry.view.root.isConnected);
+    const entries = [...preparedPublicationRef.current.values()]
+      .filter((entry) => entry.view.root.isConnected)
+      .sort((left, right) => left.item.address.ordinal - right.item.address.ordinal);
     const visible = entries.filter((entry) => {
       const rect = entry.view.root.getBoundingClientRect();
       return rect.bottom > bounds.top && rect.top < bounds.bottom;
@@ -7146,8 +7145,9 @@ function MediaPaneBodyReady({ progressRuntime, documentReaderSession }: {
               return failed?.layerStatus.kind === "Failed" ? { key: `layer:${id}:${failed.item.address.unit_ref.key}:${failed.request?.version}:${publicationRenderAttempt}`,
                 error: failed.layerStatus.error, retry: retryPublicationLayers } : null;
             })() ?? (
-              publicationRenderDefect?.session === documentReaderSession && publicationRenderDefect.attempt === publicationRenderAttempt
-                ? { key: `render:${id}:${publicationRenderAttempt}`, error: publicationRenderDefect.error, retry: retryPublication }
+              publicationRenderDefect?.session === documentReaderSession && publicationRenderDefect.attempt === publicationRenderAttempt &&
+                publicationRenderDefect.navigationId === publicationNavigationId
+                ? { key: `render:${id}:${publicationNavigationId}:${publicationRenderAttempt}`, error: publicationRenderDefect.error, retry: retryPublication }
                 : null
             )}
           >
@@ -7375,10 +7375,10 @@ function MediaPaneBodyReady({ progressRuntime, documentReaderSession }: {
               onContentBlur={handleContentBlur}
               onInternalLinkClick={(href, anchor) => {
                 if (href === null) return false;
-                const entry = preparedPublication.find((entry) => entry.view.root.contains(anchor));
+                const entry = [...preparedPublicationRef.current.values()].find((entry) => entry.view.root.contains(anchor));
                 const base = entry?.item.unit.epub_target?.href_path;
                 if (base === undefined) {
-                  setPublicationRenderDefect({ session: documentReaderSession, attempt: publicationRenderAttempt,
+                  setPublicationRenderDefect({ session: documentReaderSession, attempt: publicationRenderAttempt, navigationId: publicationNavigationId,
                     error: new Error("EPUB link has no admitted source unit") });
                   return true;
                 }

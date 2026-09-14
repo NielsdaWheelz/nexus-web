@@ -119,7 +119,7 @@ def prove_many(
     memory_sampler: OwnedMemorySampler | None = None,
     run_context: RunContextRecorder | None = None,
 ) -> tuple[Sensitivity, ...]:
-    """Demonstrate several proofs while reusing one isolated checkout per revision."""
+    """Demonstrate isolated reds before current greens without overlapping runtimes."""
     if not requests:
         return ()
     current_proof = requests[0].proof
@@ -172,6 +172,7 @@ def prove_many(
         grouped: dict[tuple[str, SensitivityMethod], list[tuple[int, _PreparedSensitivity]]] = {}
         for index, item in enumerate(prepared):
             grouped.setdefault((item.revision, item.request.method), []).append((index, item))
+        demonstrated_reds: list[tuple[int, _PreparedSensitivity, SensitivityRed]] = []
         for (_revision, _method), group in grouped.items():
             revision = group[0][1].revision
             overlays = tuple(dict.fromkeys(path for _, item in group for path in item.overlays))
@@ -226,64 +227,71 @@ def prove_many(
                         peak_owned_mib=red_memory,
                         artifacts=current_artifacts,
                     )
-
-                    _begin_attempt(memory_sampler)
-                    green_started = time.monotonic_ns()
-                    green_result = run_proof(
-                        CapabilityContext(
-                            root,
-                            Workflow.CHANGED,
-                            (),
-                            proof_id=item.request.proof,
-                            sensitivity_attempt="green",
-                            run_context=run_context,
-                            candidate_sha=current_sha,
-                        ),
-                        item.request.proof,
-                        proof_environment,
-                        _memory_sampler=memory_sampler,
-                    )
-                    green_duration_ms = (time.monotonic_ns() - green_started) // 1_000_000
-                    green_memory = _finish_attempt(memory_sampler)
-                    current_artifacts = _retain_attempt_artifacts(
-                        root,
-                        proof_environment,
-                        item.request.proof,
-                        "green",
-                        green_result.evidence.artifacts,
-                    )
-                    if green_result.evidence.status is not RunStatus.PASS:
-                        raise SensitivityError(
-                            "current proof did not pass at its intended boundary: "
-                            f"{green_result.evidence.status.value}: {green_result.detail}"
-                        )
-                    completed.append(
-                        (
-                            index,
-                            Sensitivity(
-                                proof=item.request.proof,
-                                changed_paths=item.request.changed_paths,
-                                proof_digest=compute_proof_digest(
-                                    root,
-                                    item.request.proof,
-                                    item.request.changed_paths,
-                                ),
-                                method=item.request.method,
-                                against=SensitivityAgainst(
-                                    git_sha=item.against_sha,
-                                    fault_id=item.fault.id if item.fault is not None else None,
-                                ),
-                                red=red,
-                                green=SensitivityGreen(
-                                    current_sha,
-                                    green_duration_ms,
-                                    green_memory,
-                                    artifacts=current_artifacts,
-                                ),
-                            ),
-                        )
-                    )
+                    demonstrated_reds.append((index, item, red))
                     current_artifacts = ()
+
+        for index, item, red in sorted(
+            demonstrated_reds,
+            key=lambda candidate: candidate[0],
+        ):
+            current_proof = item.request.proof
+            _begin_attempt(memory_sampler)
+            green_started = time.monotonic_ns()
+            green_result = run_proof(
+                CapabilityContext(
+                    root,
+                    Workflow.CHANGED,
+                    (),
+                    proof_id=item.request.proof,
+                    sensitivity_attempt="green",
+                    run_context=run_context,
+                    candidate_sha=current_sha,
+                ),
+                item.request.proof,
+                proof_environment,
+                _memory_sampler=memory_sampler,
+            )
+            green_duration_ms = (time.monotonic_ns() - green_started) // 1_000_000
+            green_memory = _finish_attempt(memory_sampler)
+            current_artifacts = _retain_attempt_artifacts(
+                root,
+                proof_environment,
+                item.request.proof,
+                "green",
+                green_result.evidence.artifacts,
+            )
+            if green_result.evidence.status is not RunStatus.PASS:
+                raise SensitivityError(
+                    "current proof did not pass at its intended boundary: "
+                    f"{green_result.evidence.status.value}: {green_result.detail}"
+                )
+            completed.append(
+                (
+                    index,
+                    Sensitivity(
+                        proof=item.request.proof,
+                        changed_paths=item.request.changed_paths,
+                        proof_digest=compute_proof_digest(
+                            root,
+                            item.request.proof,
+                            item.request.changed_paths,
+                        ),
+                        method=item.request.method,
+                        against=SensitivityAgainst(
+                            git_sha=item.against_sha,
+                            fault_id=item.fault.id if item.fault is not None else None,
+                        ),
+                        red=red,
+                        green=SensitivityGreen(
+                            current_sha,
+                            green_duration_ms,
+                            green_memory,
+                            artifacts=current_artifacts,
+                        ),
+                    ),
+                )
+            )
+            current_artifacts = ()
         return tuple(record for _index, record in sorted(completed))
     except SensitivityExecutionError:
         raise
@@ -564,6 +572,9 @@ def canonical_proof(repo_root: Path, proof: str) -> str:
     if "::" in proof.partition(":")[2]:
         return proof
     path = _proof_path(proof)
+    _runner, separator, node = proof.partition(":")
+    if separator and "::" in node:
+        return proof
     manifest_path = repo_root / "testdata/proofs.json"
     if not manifest_path.is_file():
         return proof

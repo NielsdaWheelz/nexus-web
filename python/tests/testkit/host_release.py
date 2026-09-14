@@ -48,6 +48,7 @@ CURRENT_SHA = "a" * 40
 CURRENT_DEPLOYMENT_ID = "dpl_Current123"
 _PUBLIC_HOSTS = frozenset({"api.example.test:443", "web.example.test:443"})
 _CODEX_HOST_PID = 4242
+_CODEX_CAPACITY_CANARY_PID = 4252
 _CODEX_CAPACITY_CANARY_EXIT_CODES = {
     "not_run": 20,
     "subscription_blocked": 21,
@@ -98,6 +99,47 @@ _CODEX_IMAGE_ENVIRONMENT = [
     "PYTHON_VERSION=3.12.13",
 ]
 _PLAYER_PROTOCOL_CORPUS = b'{"fixture":"android-player-protocol"}\n'
+
+
+def _container_cgroup_relative(container_id: str) -> str:
+    return f"system.slice/docker-{container_id}.scope"
+
+
+def _write_container_resource_cgroup(
+    root: Path,
+    service: str,
+    container: dict[str, object],
+    *,
+    docker_limits: tuple[int, int, int, int] | None = None,
+    swap_current: int | None = None,
+) -> None:
+    pid = int(container["pid"])
+    relative = _container_cgroup_relative(str(container["id"]))
+    proc = root / "proc" / str(pid)
+    proc.mkdir(parents=True, exist_ok=True)
+    (proc / "cgroup").write_text(f"0::/{relative}\n", encoding="ascii")
+    cgroup = root / "sys/fs/cgroup" / relative
+    cgroup.mkdir(parents=True, exist_ok=True)
+    if docker_limits is None:
+        reservation, memory, pids = _RESOURCE_LIMITS[service]
+        memory_swap = memory
+    else:
+        reservation, memory, memory_swap, pids = docker_limits
+    if memory_swap < memory:
+        raise AssertionError("fake Docker memory-swap limit is below memory limit")
+    swap_current_path = cgroup / "memory.swap.current"
+    if swap_current is None:
+        swap_current = (
+            int(swap_current_path.read_text(encoding="ascii")) if swap_current_path.exists() else 0
+        )
+    for name, value in (
+        ("memory.low", reservation),
+        ("memory.max", memory),
+        ("memory.swap.max", memory_swap - memory),
+        ("memory.swap.current", swap_current),
+        ("pids.max", pids),
+    ):
+        (cgroup / name).write_text(f"{value}\n", encoding="ascii")
 
 
 def _codex_host_privilege_config() -> dict[str, object]:
@@ -295,6 +337,35 @@ def _load_release(path: Path, module_name: str) -> ModuleType:
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+@dataclass(frozen=True, slots=True)
+class _DiskUsage:
+    total: int
+    used: int
+    free: int
+
+
+def _load_host_release(path: Path, module_name: str, root: Path) -> tuple[ModuleType, Any]:
+    release = _load_release(path, module_name)
+    paths = release.ReleasePaths.under(root)
+    state_path = Path(os.environ["NEXUS_FAKE_DOCKER_STATE"])
+    capacity_fields = {
+        paths.parser_temp_root: "parser_temp_free_bytes",
+        paths.backup_root.parent: "backup_free_bytes",
+    }
+
+    def disk_usage(target: str | os.PathLike[str]) -> _DiskUsage:
+        field = capacity_fields.get(Path(target))
+        if field is None:
+            raise AssertionError(f"unsupported fake disk capacity target: {target!r}")
+        free = _load_state(state_path).get(field)
+        if type(free) is not int or free < 0:
+            raise AssertionError(f"fake disk capacity is malformed: {field}")
+        return _DiskUsage(total=free, used=0, free=free)
+
+    release.shutil.disk_usage = disk_usage
+    return release, release.HostRelease(paths)
 
 
 def _write_bundle(root: Path, source_sha: str, manifest: dict[str, object]) -> tuple[Path, ...]:
@@ -707,21 +778,6 @@ class HostReleaseHarness:
         userns_restriction = root / "proc/sys/kernel/apparmor_restrict_unprivileged_userns"
         userns_restriction.parent.mkdir(parents=True, exist_ok=True)
         userns_restriction.write_text("1\n", encoding="ascii")
-        # The capacity sampler reads the measured container's cgroup from the
-        # host side (never `docker exec` into the measured cgroup): resolve the
-        # fake host process's cgroup exactly the way the controller does.
-        host_proc = root / "proc" / str(_CODEX_HOST_PID)
-        host_proc.mkdir(parents=True)
-        (host_proc / "cgroup").write_text(f"0::/{_CODEX_HOST_CGROUP_RELATIVE}\n", encoding="ascii")
-        host_cgroup = root / "sys/fs/cgroup" / _CODEX_HOST_CGROUP_RELATIVE
-        host_cgroup.mkdir(parents=True)
-        (host_cgroup / "memory.max").write_text("469762048\n", encoding="ascii")
-        (host_cgroup / "memory.current").write_text("33554432\n", encoding="ascii")
-        (host_cgroup / "memory.peak").write_text("67108864\n", encoding="ascii")
-        (host_cgroup / "memory.events").write_text(
-            "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n",
-            encoding="ascii",
-        )
         immutable_inputs = (
             *candidate_bundle,
             *current_bundle,
@@ -770,6 +826,9 @@ class HostReleaseHarness:
         ):
             containers[service] = {
                 "id": character * 64,
+                "pid": _CODEX_HOST_PID
+                if service == "nexus-codex-agent-host"
+                else 4300 + int(character, 16),
                 "image_id": (
                     current_worker_image_id
                     if service.startswith("worker-") or service == "nexus-codex-agent-host"
@@ -869,6 +928,24 @@ class HostReleaseHarness:
                 "running": service != "nexus-codex-agent-host",
             }
 
+        # Every running-container resource proof resolves the kernel cgroup
+        # through its host PID. The Codex sampler adds peak and OOM counters at
+        # that same boundary; the capacity client has its own cgroup identity.
+        for service, container in containers.items():
+            _write_container_resource_cgroup(root, service, container)
+        host_cgroup = root / "sys/fs/cgroup" / _CODEX_HOST_CGROUP_RELATIVE
+        (host_cgroup / "memory.current").write_text("33554432\n", encoding="ascii")
+        (host_cgroup / "memory.peak").write_text("67108864\n", encoding="ascii")
+        (host_cgroup / "memory.events").write_text(
+            "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n",
+            encoding="ascii",
+        )
+        _write_container_resource_cgroup(
+            root,
+            "nexus-codex-agent-host",
+            {"id": "c" * 64, "pid": _CODEX_CAPACITY_CANARY_PID},
+        )
+
         state_path = root / "fake-docker-state.json"
         _save_state(
             state_path,
@@ -889,6 +966,7 @@ class HostReleaseHarness:
                 "apparmor_profile_load_count": 0,
                 "apparmor_profile_preflight_count": 0,
                 "ancestry_proofs": [],
+                "backup_free_bytes": 1024 * 1024 * 1024,
                 "backup_dump_count": 0,
                 "backup_verify_count": 0,
                 "candidate_health_failures_remaining": 0,
@@ -947,6 +1025,7 @@ class HostReleaseHarness:
                 "operation_failures_remaining": {},
                 "oracle_digest": str(candidate["expected_oracle_manifest_digest"]),
                 "current_oracle_digest": str(current_candidate["expected_oracle_manifest_digest"]),
+                "parser_temp_free_bytes": 1024 * 1024 * 1024,
                 "candidate_active": False,
                 "candidate_player_protocol_sha256": hashlib.sha256(
                     _PLAYER_PROTOCOL_CORPUS
@@ -1442,7 +1521,7 @@ def _container_inspect(state: dict[str, Any], container_id: str) -> dict[str, ob
         "Paused": False,
         "Restarting": False,
         "Running": container["running"],
-        "Pid": _CODEX_HOST_PID if service == "nexus-codex-agent-host" else 1,
+        "Pid": container["pid"] if container["running"] else 0,
     }
     if service == "caddy" and state["caddy_docker_health_present"] is False:
         state_value.pop("Health")
@@ -1750,6 +1829,12 @@ def _handle_compose(
                     "MemorySwap": memory,
                     "PidsLimit": pids,
                 }
+            )
+            _write_container_resource_cgroup(
+                Path(os.environ["NEXUS_FAKE_RELEASE_ATTEMPT"]).parents[5],
+                service,
+                container,
+                swap_current=0,
             )
             if service == "nexus-codex-agent-host":
                 container["host_config"].update(_codex_host_privilege_config())
@@ -2348,6 +2433,12 @@ def _fake_docker_main(lease: _FakeDockerStateLease) -> int:
             }
         )
         service = next(name for name, item in state["containers"].items() if item is container)
+        _write_container_resource_cgroup(
+            Path(os.environ["NEXUS_FAKE_RELEASE_ATTEMPT"]).parents[5],
+            service,
+            container,
+            docker_limits=(reservation, memory, memory_swap, pids),
+        )
         state["resource_mutations"].append(
             {
                 "memory": memory,
@@ -2551,7 +2642,11 @@ def _fake_docker_main(lease: _FakeDockerStateLease) -> int:
                                 ),
                                 "Ports": {},
                             },
-                            "State": {"Health": {"Status": "healthy"}, "Running": True},
+                            "State": {
+                                "Health": {"Status": "healthy"},
+                                "Pid": _CODEX_CAPACITY_CANARY_PID,
+                                "Running": True,
+                            },
                         }
                     ]
                 )
@@ -2659,6 +2754,12 @@ def _fake_docker_main(lease: _FakeDockerStateLease) -> int:
         container = _container(state, arguments[1])
         container["running"] = True
         service = next(name for name, item in state["containers"].items() if item is container)
+        _write_container_resource_cgroup(
+            Path(os.environ["NEXUS_FAKE_RELEASE_ATTEMPT"]).parents[5],
+            service,
+            container,
+            swap_current=0,
+        )
         state["service_mutations"].append({"operation": "start", "services": [service]})
     elif arguments[0] == "logs":
         target = arguments[-1]
@@ -2833,8 +2934,9 @@ def _drop_to_test_group() -> None:
 def apply_main(arguments: list[str]) -> int:
     _drop_to_test_group()
     release_path, root, source_sha, deployment_id, production_host = arguments
-    release = _load_release(Path(release_path), "nexus_host_release_behavior_driver")
-    host = release.HostRelease(release.ReleasePaths.under(Path(root)))
+    release, host = _load_host_release(
+        Path(release_path), "nexus_host_release_behavior_driver", Path(root)
+    )
     attempt = host.apply(
         source_sha=source_sha,
         deployment_id=deployment_id,
@@ -2857,8 +2959,9 @@ def apply_main(arguments: list[str]) -> int:
 def finalize_main(arguments: list[str]) -> int:
     _drop_to_test_group()
     release_path, root, source_sha, deployment_id = arguments
-    release = _load_release(Path(release_path), "nexus_host_release_finalize_driver")
-    host = release.HostRelease(release.ReleasePaths.under(Path(root)))
+    release, host = _load_host_release(
+        Path(release_path), "nexus_host_release_finalize_driver", Path(root)
+    )
     attempt = host.finalize(
         source_sha=source_sha,
         deployment_id=deployment_id,
@@ -2870,8 +2973,9 @@ def finalize_main(arguments: list[str]) -> int:
 def verify_current_main(arguments: list[str]) -> int:
     _drop_to_test_group()
     release_path, root, source_sha = arguments
-    release = _load_release(Path(release_path), "nexus_host_release_verify_current_driver")
-    host = release.HostRelease(release.ReleasePaths.under(Path(root)))
+    release, host = _load_host_release(
+        Path(release_path), "nexus_host_release_verify_current_driver", Path(root)
+    )
     host.verify_current(source_sha)
     sys.stdout.buffer.write(_canonical_json({"source_sha": source_sha, "status": "current"}))
     return 0
@@ -2880,8 +2984,9 @@ def verify_current_main(arguments: list[str]) -> int:
 def qualify_codex_capacity_main(arguments: list[str]) -> int:
     _drop_to_test_group()
     release_path, root, source_sha = arguments
-    release = _load_release(Path(release_path), "nexus_host_release_capacity_driver")
-    host = release.HostRelease(release.ReleasePaths.under(Path(root)))
+    release, host = _load_host_release(
+        Path(release_path), "nexus_host_release_capacity_driver", Path(root)
+    )
     host.qualify_codex_capacity(source_sha)
     sys.stdout.buffer.write(_canonical_json({"source_sha": source_sha, "status": "passed"}))
     return 0
@@ -2890,8 +2995,9 @@ def qualify_codex_capacity_main(arguments: list[str]) -> int:
 def resume_codex_agent_host_main(arguments: list[str]) -> int:
     _drop_to_test_group()
     release_path, root, source_sha = arguments
-    release = _load_release(Path(release_path), "nexus_host_release_resume_codex_driver")
-    host = release.HostRelease(release.ReleasePaths.under(Path(root)))
+    release, host = _load_host_release(
+        Path(release_path), "nexus_host_release_resume_codex_driver", Path(root)
+    )
     receipt = host.resume_codex_agent_host(source_sha)
     sys.stdout.buffer.write(_canonical_json(receipt))
     return 0
@@ -2900,8 +3006,9 @@ def resume_codex_agent_host_main(arguments: list[str]) -> int:
 def install_codex_state_boot_guard_main(arguments: list[str]) -> int:
     _drop_to_test_group()
     release_path, root, source_sha = arguments
-    release = _load_release(Path(release_path), "nexus_host_release_install_codex_guard_driver")
-    host = release.HostRelease(release.ReleasePaths.under(Path(root)))
+    release, host = _load_host_release(
+        Path(release_path), "nexus_host_release_install_codex_guard_driver", Path(root)
+    )
     receipt = host.install_codex_state_boot_guard(source_sha)
     sys.stdout.buffer.write(_canonical_json(receipt))
     return 0
@@ -2910,8 +3017,9 @@ def install_codex_state_boot_guard_main(arguments: list[str]) -> int:
 def activate_caddy_config_main(arguments: list[str]) -> int:
     _drop_to_test_group()
     release_path, root, source_sha = arguments
-    release = _load_release(Path(release_path), "nexus_host_release_activate_caddy_driver")
-    host = release.HostRelease(release.ReleasePaths.under(Path(root)))
+    release, host = _load_host_release(
+        Path(release_path), "nexus_host_release_activate_caddy_driver", Path(root)
+    )
     receipt = host.activate_caddy_config(source_sha)
     sys.stdout.buffer.write(_canonical_json(receipt))
     return 0
@@ -2920,8 +3028,9 @@ def activate_caddy_config_main(arguments: list[str]) -> int:
 def fail_bound_frontend_main(arguments: list[str]) -> int:
     _drop_to_test_group()
     release_path, root, source_sha, deployment_id = arguments
-    release = _load_release(Path(release_path), "nexus_host_release_fail_frontend_driver")
-    host = release.HostRelease(release.ReleasePaths.under(Path(root)))
+    release, host = _load_host_release(
+        Path(release_path), "nexus_host_release_fail_frontend_driver", Path(root)
+    )
     attempt = host.fail_bound_frontend(
         source_sha=source_sha,
         deployment_id=deployment_id,
@@ -2933,8 +3042,9 @@ def fail_bound_frontend_main(arguments: list[str]) -> int:
 def fail_auth_smoke_main(arguments: list[str]) -> int:
     _drop_to_test_group()
     release_path, root, source_sha, deployment_id = arguments
-    release = _load_release(Path(release_path), "nexus_host_release_fail_auth_smoke_driver")
-    host = release.HostRelease(release.ReleasePaths.under(Path(root)))
+    release, host = _load_host_release(
+        Path(release_path), "nexus_host_release_fail_auth_smoke_driver", Path(root)
+    )
     attempt = host.fail_auth_smoke(
         source_sha=source_sha,
         deployment_id=deployment_id,

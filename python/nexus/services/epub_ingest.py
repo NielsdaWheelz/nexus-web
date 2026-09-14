@@ -266,6 +266,9 @@ _EPUB_GLOBAL_ATTRS = frozenset(
         "lang",
         "dir",
         "xml:lang",
+        "hidden",
+        "aria-hidden",
+        "aria-labelledby",
         "data-reader-apparatus-item-id",
         "data-reader-apparatus-kind",
         "data-reader-apparatus-confidence",
@@ -2669,24 +2672,18 @@ def _section_location_id(
     seen: set[str],
 ) -> str:
     base = href_path if not href_fragment else f"{href_path}#{href_fragment}"
-    candidate = _truncate_section_id(base)
+    candidate = _enforce_id_length(base)
     if candidate not in seen:
         seen.add(candidate)
         return candidate
 
     suffix = 2
     while True:
-        unique = _truncate_section_id(f"{base}~{suffix}")
+        unique = _enforce_id_length(f"{base}~{suffix}")
         if unique not in seen:
             seen.add(unique)
             return unique
         suffix += 1
-
-
-def _truncate_section_id(value: str) -> str:
-    if len(value) <= 255:
-        return value
-    return value[:255]
 
 
 def _fallback_fragment_label(canonical_text: str, idx: int) -> str:
@@ -2745,7 +2742,9 @@ def _ensure_sibling_unique(raw: str, seen: dict[str, int]) -> str:
 def _enforce_id_length(node_id: str) -> str:
     if len(node_id) <= 255:
         return node_id
-    return node_id[:255]
+    # Hash the complete candidate, including any collision suffix. Prefix
+    # truncation aliases distinct paths and can make suffix allocation loop.
+    return "navigation-" + hashlib.sha256(node_id.encode("utf-8")).hexdigest()
 
 
 def _text_content(el: ET.Element) -> str:

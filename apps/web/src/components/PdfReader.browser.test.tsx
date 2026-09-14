@@ -1,7 +1,7 @@
 import { pdfReaderSession } from "./__tests__/pdfReaderSession";
 import type { DocumentReaderSession } from "@/lib/reader/DocumentReaderSession";
 import { onePagePdf } from "./__tests__/pdfFixtures";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState, type ComponentProps } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import { page, userEvent } from "vitest/browser";
 import { expect, it, vi } from "vitest";
@@ -82,7 +82,8 @@ function committedHighlight(sourceSha256: string): PdfHighlightOut {
   };
 }
 
-function installPdfBff(sourceSha256: string, fixture: Awaited<ReturnType<typeof pdfReaderSession>>) {
+function installPdfBff(sourceSha256: string, fixture: Awaited<ReturnType<typeof pdfReaderSession>>, creation?: Promise<Response>) {
+  const creationStarted = deferred<void>();
   const reconciliationStarted = deferred<void>();
   const reconciliation = deferred<Response>();
   let highlightMutated = false;
@@ -125,7 +126,8 @@ function installPdfBff(sourceSha256: string, fixture: Awaited<ReturnType<typeof 
           : JSON.parse(String(init?.body));
         highlightWrite = body as typeof highlightWrite;
         highlightMutated = true;
-        return json(committedHighlight(sourceSha256));
+        creationStarted.resolve();
+        return creation ?? json(committedHighlight(sourceSha256));
       }
       throw new Error(
         `Unexpected PDF BFF request: ${method} ${url.pathname}${url.search}`,
@@ -134,6 +136,7 @@ function installPdfBff(sourceSha256: string, fixture: Awaited<ReturnType<typeof 
   );
 
   return {
+    creationStarted: creationStarted.promise,
     reconciliationStarted: reconciliationStarted.promise,
     readHighlightWrite: () => highlightWrite,
     finishReconciliation() {
@@ -154,7 +157,13 @@ function textNodeContaining(root: HTMLElement, value: string): Text {
 
 // The actual leaf receives the selected PDF bytes; hosted query/write owners
 // still cross the BFF and reconcile committed highlights against PDF.js geometry.
-function PdfReaderHarness({ pdfUrl, descriptor, session }: { session: DocumentReaderSession; pdfUrl: string; descriptor: Extract<ReaderPublicationDescriptor, { kind: "pdf" }> }) {
+function PdfReaderHarness({ pdfUrl, descriptor, session, onAddNote, onControlsReady }: {
+  session: DocumentReaderSession;
+  pdfUrl: string;
+  descriptor: Extract<ReaderPublicationDescriptor, { kind: "pdf" }>;
+  onAddNote?: ComponentProps<typeof PdfReader>["onAddNote"];
+  onControlsReady?: ComponentProps<typeof PdfReader>["onControlsReady"];
+}) {
   const [highlightRefresh, setHighlightRefresh] = useState(0);
   const [resourceState, setResourceState] = useState<PdfReaderResourceState>({
     pageNumber: 1,
@@ -226,6 +235,8 @@ function PdfReaderHarness({ pdfUrl, descriptor, session }: { session: DocumentRe
       }}
       decorations={decorations}
       onHighlightsMutated={handleHighlightsMutated}
+      onAddNote={onAddNote}
+      onControlsReady={onControlsReady}
       onResourceStateChange={handleResourceStateChange}
       isMobile={isMobile}
       mobileChromeEnabled={false}
@@ -330,6 +341,157 @@ it("keeps a committed PDF highlight visible while BFF reconciliation is pending"
     view.unmount();
   } finally {
     foreignTextLayer?.remove();
+    bff.finishReconciliation();
+    fixture.close();
+    URL.revokeObjectURL(pdfUrl);
+  }
+});
+
+it("preserves the annotation caret when pending PDF highlight creation completes", async () => {
+  await page.viewport(1_280, 800);
+  const pdf = onePagePdf(`Alpha ${EXACT} Omega`);
+  const pdfUrl = URL.createObjectURL(pdf);
+  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", await pdf.arrayBuffer()));
+  const sourceSha256 = Array.from(hash, (value) => value.toString(16).padStart(2, "0")).join("");
+  const descriptor = { kind: "pdf" as const, media_id: MEDIA_ID, reader_generation: 7, title: "Selected PDF",
+    reader_contract_version: 1 as const, page_count: 1, document_asset_ref: { key: "assets/document.pdf", bytes: pdf.size, sha256: sourceSha256 } };
+  const fixture = await pdfReaderSession(descriptor);
+  const response = deferred<Response>();
+  const bff = installPdfBff(sourceSha256, fixture, response.promise);
+  await fixture.load();
+  let creation: Promise<{ id: string } | null> | null = null;
+
+  try {
+    render(
+      <MobileViewportProvider>
+        <MobileChromeProvider>
+          <ShareControllerProvider>
+            <PdfReaderHarness
+              pdfUrl={pdfUrl}
+              descriptor={descriptor}
+              session={fixture.session}
+              onAddNote={(session) => {
+                creation = session.creation;
+              }}
+            />
+            <div
+              role="textbox"
+              aria-label="Highlight note"
+              contentEditable
+              suppressContentEditableWarning
+            >
+              annotation draft
+            </div>
+          </ShareControllerProvider>
+        </MobileChromeProvider>
+      </MobileViewportProvider>,
+    );
+    const textLayer = await screen.findByTestId(
+      "pdf-page-text-layer-1",
+      {},
+      { timeout: 10_000 },
+    );
+    const textNode = textNodeContaining(textLayer, EXACT);
+    const start = textNode.data.indexOf(EXACT);
+    const range = document.createRange();
+    range.setStart(textNode, start);
+    range.setEnd(textNode, start + EXACT.length);
+    const selection = window.getSelection();
+    if (!selection) {
+      throw new Error("Chromium did not expose the document Selection.");
+    }
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+    await userEvent.click(await screen.findByRole("button", { name: "Note" }));
+    await bff.creationStarted;
+
+    const annotation = screen.getByRole("textbox", { name: "Highlight note" });
+    annotation.focus();
+    const caret = document.createRange();
+    caret.selectNodeContents(annotation);
+    caret.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(caret);
+
+    expect(
+      creation,
+      "the PDF note action did not publish its pending highlight",
+    ).not.toBeNull();
+    response.resolve(json(committedHighlight(sourceSha256)));
+    await creation;
+    expect(annotation).toHaveFocus();
+    expect(
+      selection.rangeCount,
+      "completing the PDF highlight erased the annotation's live caret",
+    ).toBe(1);
+    expect(
+      annotation.contains(selection.getRangeAt(0).commonAncestorContainer),
+    ).toBe(true);
+    await userEvent.keyboard(" survives");
+    expect(annotation).toHaveTextContent("annotation draft survives");
+  } finally {
+    response.resolve(json(committedHighlight(sourceSha256)));
+    bff.finishReconciliation();
+    fixture.close();
+    URL.revokeObjectURL(pdfUrl);
+  }
+});
+
+
+it("settles admitted PDF resume zooms at the viewer limit and when the rendered target is unchanged", async () => {
+  await page.viewport(1_280, 800);
+  const pdf = onePagePdf("Resume target");
+  const pdfUrl = URL.createObjectURL(pdf);
+  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", await pdf.arrayBuffer()));
+  const sourceSha256 = Array.from(hash, (value) => value.toString(16).padStart(2, "0")).join("");
+  const descriptor = { kind: "pdf" as const, media_id: MEDIA_ID, reader_generation: 7, title: "Selected PDF",
+    reader_contract_version: 1 as const, page_count: 1, document_asset_ref: { key: "assets/document.pdf", bytes: pdf.size, sha256: sourceSha256 } };
+  const fixture = await pdfReaderSession(descriptor);
+  const bff = installPdfBff(sourceSha256, fixture);
+  await fixture.load();
+  const published: { controls: Parameters<NonNullable<ComponentProps<typeof PdfReader>["onControlsReady"]>>[0] } = { controls: null };
+
+  try {
+    const view = render(
+      <MobileViewportProvider>
+        <MobileChromeProvider>
+          <ShareControllerProvider>
+            <PdfReaderHarness
+              pdfUrl={pdfUrl}
+              descriptor={descriptor}
+              session={fixture.session}
+              onControlsReady={(controls) => { published.controls = controls; }}
+            />
+          </ShareControllerProvider>
+        </MobileChromeProvider>
+      </MobileViewportProvider>,
+    );
+    await screen.findByTestId("pdf-page-text-layer-1", {}, { timeout: 10_000 });
+    await waitFor(() => {
+      if (!published.controls) throw new Error("The ready PDF did not publish its controls.");
+      expect(published.controls.captureResumeState()).not.toBeNull();
+    });
+    const controls = published.controls;
+    if (!controls) throw new Error("The ready PDF did not publish its controls.");
+
+    // The durable cursor admits 0.25..4; this viewer deliberately renders at
+    // 0.5..2. Arrival acknowledges that effective zoom, including a later
+    // request that leaves the already-rendered page and zoom unchanged.
+    const resumes: [number | null, number][] = [[4, 2], [0.25, 0.5], [null, 0.5]];
+    for (const [requestedZoom, expectedZoom] of resumes) {
+      const positioned = await controls.applyResumeState({
+        kind: "pdf", page: 1, page_progression: 0.25, zoom: requestedZoom, position: 1,
+      }, () => true);
+      expect(positioned).toBe(true);
+      expect(controls.captureResumeState()?.zoom).toBe(expectedZoom);
+      const canvas = view.container.querySelector<HTMLCanvasElement>('.page[data-page-number="1"] .canvasWrapper canvas');
+      if (!canvas) throw new Error("The settled PDF target has no rendered canvas.");
+      // The source MediaBox is 612 points wide; PDF.js renders at 96 CSS dpi.
+      expect(Math.abs(canvas.getBoundingClientRect().width - 612 * 96 / 72 * expectedZoom)).toBeLessThanOrEqual(2);
+    }
+    view.unmount();
+  } finally {
     bff.finishReconciliation();
     fixture.close();
     URL.revokeObjectURL(pdfUrl);

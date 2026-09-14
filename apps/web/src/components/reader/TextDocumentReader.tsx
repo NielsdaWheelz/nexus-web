@@ -14,6 +14,7 @@ import { useEffect, useMemo, useRef } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import { composeRefs } from "@/lib/ui/composeRefs";
 import type { ReaderScrollPositioner } from "@/lib/reader/paneScroll";
+import { readerScrollKeyDirection } from "@/lib/reader/readerScrollInput";
 import styles from "./textDocumentReader.module.css";
 
 export type ReaderViewportSnapshot = {
@@ -159,7 +160,6 @@ export default function TextDocumentReader({
       const nextSnapshot = snapshot();
       const delta = nextSnapshot.scrollTop - lastScrollTopRef.current;
       lastScrollTopRef.current = nextSnapshot.scrollTop;
-      onViewportScrollRef.current(nextSnapshot);
       const publishCanonical = canonicalPositionRef.current;
       const activeCanonicalLength = canonicalLengthRef.current;
       if (publishCanonical && activeCanonicalLength !== undefined) {
@@ -173,6 +173,7 @@ export default function TextDocumentReader({
           delta > 0 ? "forward" : "backward",
         );
       }
+      onViewportScrollRef.current(nextSnapshot);
     };
 
     viewport.addEventListener("scroll", publishScroll, { passive: true });
@@ -184,18 +185,24 @@ export default function TextDocumentReader({
   }
 
   function handleWheel(event: WheelEvent<HTMLDivElement>) {
-    if (!event.isTrusted) return;
+    if (!event.isTrusted || event.ctrlKey) return;
     if (event.deltaY === 0) return;
     publishTrustedScrollIntent(event.deltaY > 0 ? "forward" : "backward");
   }
 
   function handleTouchStart(event: TouchEvent<HTMLDivElement>) {
     if (!event.isTrusted) return;
-    lastTouchYRef.current = event.touches[0]?.clientY ?? null;
+    lastTouchYRef.current = event.touches.length === 1
+      ? event.touches[0]?.clientY ?? null
+      : null;
   }
 
   function handleTouchMove(event: TouchEvent<HTMLDivElement>) {
     if (!event.isTrusted) return;
+    if (event.touches.length !== 1) {
+      lastTouchYRef.current = null;
+      return;
+    }
     const touchY = event.touches[0]?.clientY;
     const previousTouchY = lastTouchYRef.current;
     lastTouchYRef.current = touchY ?? null;
@@ -212,30 +219,13 @@ export default function TextDocumentReader({
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (!event.isTrusted) return;
-    if (event.altKey || event.ctrlKey || event.metaKey) return;
-    if (
-      event.key === "ArrowDown" ||
-      event.key === "PageDown" ||
-      event.key === "End" ||
-      ((event.key === " " || event.key === "Spacebar") && !event.shiftKey)
-    ) {
-      publishTrustedScrollIntent("forward");
-      return;
-    }
-    if (
-      event.key === "ArrowUp" ||
-      event.key === "PageUp" ||
-      event.key === "Home" ||
-      ((event.key === " " || event.key === "Spacebar") && event.shiftKey)
-    ) {
-      publishTrustedScrollIntent("backward");
-    }
+    const direction = readerScrollKeyDirection(event.nativeEvent);
+    if (direction !== null) publishTrustedScrollIntent(direction);
   }
 
   function handlePointerDown(event: PointerEvent<HTMLDivElement>) {
     pointerScrollActiveRef.current =
-      event.isTrusted && event.target === event.currentTarget;
+      event.isTrusted && event.pointerType !== "touch" && event.target === event.currentTarget;
   }
 
   function handleRenderedContentClick(event: MouseEvent<HTMLDivElement>) {

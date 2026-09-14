@@ -1,8 +1,9 @@
 import { useRef } from "react";
 import { render, screen } from "@testing-library/react";
-import { userEvent } from "vitest/browser";
+import { cdp, userEvent } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { toTopLevelCdpCoordinate } from "@/__tests__/helpers/trustedBrowserInput";
 import { activityRecorder } from "@/lib/consumption/activityRecorder";
 import { activityRuntime } from "@/lib/consumption/activityRuntime";
 import type {
@@ -14,6 +15,50 @@ import { useReaderActivityAdapter } from "./ReaderActivityAdapter";
 
 const ACCOUNT_ID = "10000000-0000-4000-8000-000000000090";
 
+function proseTouchPoint(): { x: number; y: number; id: number } {
+  const proseRect = screen.getByText("Reader", { exact: true }).getBoundingClientRect();
+  return {
+    ...toTopLevelCdpCoordinate({
+      x: proseRect.left + 20,
+      y: proseRect.top + proseRect.height / 2,
+    }),
+    id: 1,
+  };
+}
+
+async function performReadingGesture(
+  format: "web" | "epub" | "transcript" | "pdf",
+  viewportKind: "desktop" | "mobile",
+): Promise<void> {
+  if (viewportKind === "desktop" && (format === "epub" || format === "web")) {
+    await userEvent.click(screen.getByRole("link", { name: "source link" }));
+    expect(activityRuntime().snapshot().capture.kind).toBe("Idle");
+    await userEvent.keyboard(format === "epub" ? "{ArrowDown}" : " ");
+  } else if (viewportKind === "mobile" && (format === "web" || format === "epub")) {
+    const clicks: { trusted: boolean; pointer: string }[] = [];
+    screen.getByText("Reader", { exact: true }).addEventListener("click", (event) => {
+      clicks.push({ trusted: event.isTrusted, pointer: event instanceof PointerEvent ? event.pointerType : "missing" });
+    });
+    await cdp().send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
+    try {
+      const point = proseTouchPoint();
+      await cdp().send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [point] });
+      expect(activityRuntime().snapshot().capture.kind, "touch contact must wait for a completed tap or single-touch movement").toBe("Idle");
+      if (format === "web") {
+        await cdp().send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+        expect(clicks).toEqual([{ trusted: true, pointer: "touch" }]);
+      } else {
+        await cdp().send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ ...point, y: point.y - 40 }] });
+        await cdp().send("Input.dispatchTouchEvent", { type: "touchCancel", touchPoints: [] });
+      }
+    } finally {
+      await cdp().send("Emulation.setTouchEmulationEnabled", { enabled: false });
+    }
+  } else {
+    await userEvent.click(screen.getByText("Reader", { exact: true }));
+  }
+}
+
 function response404(): Response {
   return new Response(
     JSON.stringify({
@@ -23,9 +68,9 @@ function response404(): Response {
   );
 }
 
-function textLocator(kind: "web" | "transcript" | "epub"): ReaderResumeState {
+function textLocator(kind: "web" | "transcript" | "epub", offset: number): ReaderResumeState {
   const locations = {
-    text_offset: 0,
+    text_offset: offset,
     progression: 0,
     total_progression: 0,
     position: 1,
@@ -34,7 +79,7 @@ function textLocator(kind: "web" | "transcript" | "epub"): ReaderResumeState {
   if (kind === "epub") {
     return {
       kind,
-      target: { section_id: "section", href_path: "chapter.xhtml", anchor_id: null },
+      target: { fragment_id: "fragment", href_path: "chapter.xhtml", anchor_id: { kind: "Absent" } },
       locations,
       text,
     };
@@ -52,11 +97,13 @@ function Harness({
   format,
   viewportKind,
   onGenuineInput,
+  offset = 0,
 }: {
   mediaId: string;
   format: "web" | "epub" | "transcript" | "pdf";
   viewportKind: "desktop" | "mobile";
   onGenuineInput: () => void;
+  offset?: number;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const pdf = format === "pdf";
@@ -65,7 +112,7 @@ function Harness({
     : { kind: "Text", length: 100, fragments: [{ fragmentId: "fragment", start: 0, length: 100 }] };
   const primaryLocator: ReaderResumeState = pdf
     ? { kind: "pdf", page: 1, page_progression: 0, zoom: null, position: 1 }
-    : textLocator(format);
+    : textLocator(format, offset);
   const semanticViewport: ReaderSemanticViewport = pdf
     ? {
         sourceKey: `${mediaId}:pdf:1`,
@@ -81,8 +128,8 @@ function Harness({
         layoutGeneration: 1,
         intent: "Restore",
         primaryLocator,
-        visibleStart: { kind: "Text", fragmentId: "fragment", offset: 0 },
-        visibleEnd: { kind: "Text", fragmentId: "fragment", offset: 50 },
+        visibleStart: { kind: "Text", fragmentId: "fragment", offset },
+        visibleEnd: { kind: "Text", fragmentId: "fragment", offset: offset + 50 },
         atEnd: false,
       };
   useReaderActivityAdapter({
@@ -107,7 +154,11 @@ function Harness({
       subscribe: () => () => undefined,
     },
   });
-  return <div ref={rootRef} data-testid="activity-root" tabIndex={0}>Reader</div>;
+  return <div ref={rootRef} data-testid="activity-root" tabIndex={0}>
+    <p>Reader</p>
+    <a href="#source" onClick={(event) => event.preventDefault()}><span>source link</span></a>
+    <button type="button">reader control</button>
+  </div>;
 }
 
 afterEach(() => vi.unstubAllGlobals());
@@ -138,6 +189,48 @@ describe("format-neutral reader activity", () => {
         onGenuineInput={vi.fn()}
       />,
     );
+    await userEvent.click(screen.getByRole("link", { name: "source link" }));
+    expect(runtime.snapshot().capture.kind, "source navigation must not adopt restored reading").toBe("Idle");
+    await userEvent.click(screen.getByRole("button", { name: "reader control" }));
+    expect(runtime.snapshot().capture.kind, "control activation must not adopt restored reading").toBe("Idle");
+    await userEvent.keyboard(" ");
+    expect(runtime.snapshot().capture.kind, "button Space activation must not adopt restored reading").toBe("Idle");
+
+    const touchEvents: { type: string; trusted: boolean; contacts: number }[] = [];
+    const prose = screen.getByText("Reader", { exact: true });
+    for (const type of ["touchstart", "touchmove"] as const) {
+      prose.addEventListener(type, (event) => {
+        touchEvents.push({ type, trusted: event.isTrusted, contacts: event.touches.length });
+      });
+    }
+    await cdp().send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 2 });
+    try {
+      const point = proseTouchPoint();
+      await cdp().send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [point] });
+      expect(touchEvents).toContainEqual({ type: "touchstart", trusted: true, contacts: 1 });
+      expect(runtime.snapshot().capture.kind, "initial touch contact must not adopt restored reading").toBe("Idle");
+      await cdp().send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [point, { ...point, x: point.x + 40, id: 2 }] });
+      await cdp().send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ ...point, y: point.y - 40 }, { ...point, x: point.x + 40, y: point.y + 40, id: 2 }] });
+      expect(touchEvents).toContainEqual({ type: "touchmove", trusted: true, contacts: 2 });
+      expect(runtime.snapshot().capture.kind, "trusted multi-touch zoom must not adopt restored reading").toBe("Idle");
+    } finally {
+      await cdp().send("Input.dispatchTouchEvent", { type: "touchCancel", touchPoints: [] });
+      await cdp().send("Emulation.setTouchEmulationEnabled", { enabled: false });
+      await cdp().send("Emulation.resetPageScaleFactor");
+    }
+
+    const wheelEvents: { trusted: boolean; control: boolean }[] = [];
+    prose.addEventListener("wheel", (event) => {
+      wheelEvents.push({ trusted: event.isTrusted, control: event.ctrlKey });
+    }, { once: true });
+    await userEvent.keyboard("{Control>}");
+    try {
+      await userEvent.wheel(prose, { delta: { y: 100 } });
+    } finally {
+      await userEvent.keyboard("{/Control}");
+    }
+    expect(wheelEvents).toEqual([{ trusted: true, control: true }]);
+    expect(runtime.snapshot().capture.kind, "trusted ctrl-wheel zoom must not adopt restored reading").toBe("Idle");
     view.unmount();
     expect(requests).toHaveLength(0);
 
@@ -159,7 +252,8 @@ describe("format-neutral reader activity", () => {
           onGenuineInput={onGenuineInput}
         />,
       );
-      await userEvent.click(screen.getByTestId("activity-root"));
+      await performReadingGesture(candidate.format, candidate.viewportKind);
+      expect(runtime.snapshot().capture.kind, "prose taps and scroll keys must still adopt restored reading").toBe("Recording");
       view.unmount();
       await vi.waitFor(() => expect(requests).toHaveLength(index + 1));
       expect(onGenuineInput).toHaveBeenCalled();
@@ -169,6 +263,24 @@ describe("format-neutral reader activity", () => {
         batch: { modality: "Reading" },
       });
     }
+
+    // A prose tap can adopt Restore without scrolling or publishing Reader.
+    // A later restore within the same fragment must require its own input.
+    const sameSource = {
+      mediaId: "20000000-0000-4000-8000-000000000099",
+      format: "web" as const,
+      viewportKind: "desktop" as const,
+      onGenuineInput: vi.fn(),
+    };
+    const { rerender, unmount } = render(<Harness {...sameSource} />);
+    await userEvent.click(screen.getByText("Reader", { exact: true }));
+    expect(runtime.snapshot().capture.kind).toBe("Recording");
+    rerender(<Harness {...sameSource} offset={7} />);
+    expect(runtime.snapshot().capture.kind, "new same-source restore must not inherit reading adoption").toBe("Idle");
+    await userEvent.click(screen.getByText("Reader", { exact: true }));
+    expect(runtime.snapshot().capture.kind).toBe("Recording");
+    unmount();
+    await vi.waitFor(() => expect(requests.some((request) => request.mediaRef === `media:${sameSource.mediaId}`)).toBe(true));
 
     activityRecorder().setCaptureReady(false);
     await runtime.discardFailed();

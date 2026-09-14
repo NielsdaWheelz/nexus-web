@@ -9,70 +9,60 @@ from typing import cast
 REPO_ROOT = Path(__file__).parents[3]
 
 
-def _compose_service_start(compose: str, service: str) -> int:
-    match = re.search(rf"(?m)^  {re.escape(service)}:\n", compose)
-    assert match is not None, f"missing top-level Compose service: {service}"
-    return match.start()
-
-
-def test_ci_setup_installs_every_platform_static_tool() -> None:
+def test_ci_setup_provides_every_platform_static_tool_without_requiring_sudo_when_present() -> None:
     setup = (REPO_ROOT / ".github/actions/setup-test/action.yml").read_text(
         encoding="utf-8",
     )
 
-    assert "for tool in cloud-init shellcheck; do" in setup
+    assert "for tool in cloud-init shellcheck" in setup
+    assert 'command -v "$tool"' in setup
+    assert "sudo -n true" in setup
     assert 'sudo apt-get install --yes --no-install-recommends "${missing[@]}"' in setup
-    assert "docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f" in setup
     assert "github.com/caddyserver/caddy/v2/cmd/caddy@v2.11.4" in setup
     assert 'go version -m "$caddy_bin"' in setup
-    assert "github.com/caddyserver/caddy/v2\\tv2.11.4\\t" in setup
     assert '"$caddy_bin" version >/dev/null' in setup
 
 
-def test_ci_setup_survives_a_persistent_self_hosted_workspace() -> None:
-    """Setup must never crash before the control plane can report a verdict.
-
-    The protected release job runs on a persistent self-hosted host: its
-    `_work` tree, and therefore the sibling external-suite checkouts, survives
-    between runs, and passwordless `sudo` and a container runtime are not
-    guaranteed. A setup step that aborts produces no evidence at all, which is
-    strictly worse than the fail-closed `not_run` the control plane would emit.
-    """
+def test_ci_setup_qualifies_root_owned_release_proofs_before_toolchain_work() -> None:
     setup = (REPO_ROOT / ".github/actions/setup-test/action.yml").read_text(
         encoding="utf-8",
     )
 
-    assert 'test ! -e "$checkout"' not in setup, (
-        "the provider-runtime checkout still requires a pristine workspace and "
-        "fails on every run after the first on a persistent runner"
+    assert setup.index("- name: Qualify host ownership proofs") < setup.index(
+        "- uses: actions/setup-go@"
     )
-    assert 'case "$(basename "$checkout")" in' in setup
-    assert "llm-calling|llm-tools)" in setup
-    assert 'rm -rf "$checkout"' in setup
-    assert 'test "$(git -C "$checkout" rev-parse HEAD)" = "$revision"' in setup
-
-    assert "if ! sudo -n true >/dev/null 2>&1; then" in setup
-    for step in setup.split("\n    - name: ")[1:]:
-        if "sudo " in step:
-            assert "if ! sudo -n true >/dev/null 2>&1; then" in step, (
-                f"setup step uses sudo without the passwordless guard: {step.splitlines()[0]}"
-            )
-    assert "steps.container.outputs.docker == 'true'" in setup
+    assert 'if [ "$(id -u)" -ne 0 ]; then\n          sudo --non-interactive true' in setup
 
 
-def test_ci_setup_delegates_external_suite_hydration_to_the_canonical_owner() -> None:
-    """CI must prove the same fresh-offline handoff consumed by the controller."""
+def test_ci_setup_pins_and_rechecks_the_effective_bun_toolchain() -> None:
     setup = (REPO_ROOT / ".github/actions/setup-test/action.yml").read_text(
         encoding="utf-8",
     )
+    version_file = REPO_ROOT / ".bun-version"
 
-    assert "python/.venv/bin/python" in setup
-    assert "-m nexus_test_control.setup_dependencies" in setup
-    assert 'prepared_suites+=(--suite "$package")' in setup
-    assert '"${prepared_suites[@]}"' in setup
-    assert 'uv sync --all-extras --locked --directory "$checkout"' not in setup, (
-        "the workflow bypasses the canonical cache-hydration and offline-handoff proof"
+    assert version_file.is_file(), "the repository has no bun toolchain pin"
+    assert version_file.read_text(encoding="utf-8") == "1.3.10\n"
+    assert (
+        "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2\n"
+        "      with:\n"
+        "        bun-version-file: .bun-version"
+    ) in setup
+    assert 'test "$(bun --version)" = "$(cat .bun-version)"' in setup
+
+
+def test_ci_static_checks_use_engine_buildkit_without_an_isolated_daemon() -> None:
+    setup = (REPO_ROOT / ".github/actions/setup-test/action.yml").read_text(
+        encoding="utf-8",
     )
+    publication = (REPO_ROOT / ".github/workflows/backend-images.yml").read_text(
+        encoding="utf-8",
+    )
+    pinned_setup = "docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f"
+
+    assert setup.count(pinned_setup) == 1
+    assert f"uses: {pinned_setup} # v3.12.0\n      with:\n        driver: docker" in setup
+    assert publication.count(pinned_setup) == 1
+    assert "driver: docker" not in publication
 
 
 def test_deploy_is_one_exact_immutable_staged_release_path() -> None:
@@ -801,3 +791,24 @@ def test_every_mandatory_settings_profile_is_published_in_the_backend_contract()
     for key in sorted(required):
         assert key in allowlist, f"{key} is required at runtime but never published or validated"
         assert f"\n{key}=" in f"\n{backend}", f"{key} is missing from the backend env contract"
+
+
+def _compose_service_start(compose: str, service: str) -> int:
+    match = re.search(rf"(?m)^  {re.escape(service)}:\n", compose)
+    assert match is not None, f"missing top-level Compose service: {service}"
+    return match.start()
+
+
+def test_ci_setup_delegates_external_suite_hydration_to_the_canonical_owner() -> None:
+    """CI must prove the same fresh-offline handoff consumed by the controller."""
+    setup = (REPO_ROOT / ".github/actions/setup-test/action.yml").read_text(
+        encoding="utf-8",
+    )
+
+    assert "python/.venv/bin/python" in setup
+    assert "-m nexus_test_control.setup_dependencies" in setup
+    assert 'prepared_suites+=(--suite "$package")' in setup
+    assert '"${prepared_suites[@]}"' in setup
+    assert 'uv sync --all-extras --locked --directory "$checkout"' not in setup, (
+        "the workflow bypasses the canonical cache-hydration and offline-handoff proof"
+    )

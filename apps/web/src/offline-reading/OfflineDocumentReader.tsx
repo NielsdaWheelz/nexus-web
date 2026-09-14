@@ -441,7 +441,7 @@ function OfflineDocumentReaderBody({
     const focused = document.activeElement;
     if (
       focused !== null &&
-      preparedViews.some(({ view }) => view.root.contains(focused))
+      [...prepared.current.values()].some(({ view }) => view.root.contains(focused))
     )
       viewportRef.current?.focus({ preventScroll: true });
     setUnresolvedNavigation(false);
@@ -524,7 +524,9 @@ function OfflineDocumentReaderBody({
       return;
     const bounds = viewport.getBoundingClientRect();
     if (bounds.height <= 0) return;
-    const entries = preparedViews.filter(({ view }) => view.root.isConnected);
+    const entries = [...prepared.current.values()]
+      .filter(({ view }) => view.root.isConnected)
+      .sort((left, right) => left.item.address.ordinal - right.item.address.ordinal);
     const visible = entries.filter(({ view }) => {
       const rect = view.root.getBoundingClientRect();
       return rect.bottom > bounds.top && rect.top < bounds.bottom;
@@ -635,8 +637,8 @@ function OfflineDocumentReaderBody({
       appliedNavigation.current === target.id
     )
       return;
-    const entry = preparedViews.find(
-      ({ item }) => item.address.unit_ref.key === target.target.unit_ref.key,
+    const entry = [...prepared.current.values()].find(
+      ({ item, view }) => item.address.unit_ref.key === target.target.unit_ref.key && view.root.isConnected,
     );
     if (entry === undefined) return;
     appliedNavigation.current = target.id;
@@ -929,7 +931,7 @@ function OfflineDocumentReaderBody({
             endContent={null}
             onInternalLinkClick={(href, anchor) => {
               if (descriptor.kind !== "epub" || href === null) return false;
-              const origin = preparedViews.find(({ view }) =>
+              const origin = [...prepared.current.values()].find(({ view }) =>
                 view.root.contains(anchor),
               )?.item.unit.epub_target;
               if (origin === null || origin === undefined) {

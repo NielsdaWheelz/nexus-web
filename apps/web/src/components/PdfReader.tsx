@@ -127,7 +127,7 @@ export interface PdfReaderControlActions {
   zoomIn: () => void;
   zoomOut: () => void;
   /** Later addressable cursor application (page/progression/zoom), no remount. */
-  applyResumeState: (resume: PdfReaderResumeState) => boolean;
+  applyResumeState: (resume: PdfReaderResumeState, isCurrent: () => boolean) => Promise<boolean>;
   /** Completes after positioning, pulse and retirement of borrowed geometry. */
   locate: (
     page: number,
@@ -923,6 +923,11 @@ export default function PdfReader({
   } | null>(null);
   const latestSemanticViewportRef = useRef<ReaderSemanticViewport | null>(null);
   const readerRestoreSettledRef = useRef(false);
+  const pendingResumeApplicationRef = useRef<{
+    resume: PdfReaderResumeState;
+    isCurrent: () => boolean;
+    resolve: (positioned: boolean) => void;
+  } | null>(null);
 
   const signedUrlResource = resources.signedUrl;
   const sourceStatus = signedUrlResource.status;
@@ -1206,7 +1211,20 @@ export default function PdfReader({
     };
     latestSemanticViewportRef.current = semanticViewport;
     onSemanticViewportChangeRef.current?.(semanticViewport);
-  }, []);
+    const pending = pendingResumeApplicationRef.current;
+    if (pending && (!pending.isCurrent() || (
+      readerRestoreSettledRef.current &&
+      pendingStartPageProgressionRef.current === null &&
+      pageHasRenderedAtZoom(pending.resume.page, pending.resume.zoom ?? zoomRef.current)
+    ))) {
+      pendingResumeApplicationRef.current = null;
+      const target = pending.resume.page - 1 + (pending.resume.page_progression ?? 0);
+      const start = captured.visibleStart.page - 1 + captured.visibleStart.pageFraction;
+      const end = captured.visibleEnd.page - 1 + captured.visibleEnd.pageFraction;
+      const zoomMatches = pending.resume.zoom === null || Math.abs(zoomRef.current - pending.resume.zoom) <= PDF_FIND_VIEWPORT_SCALE_EPSILON;
+      pending.resolve(pending.isCurrent() && start <= target + 1e-6 && target <= end + 1e-6 && zoomMatches);
+    }
+  }, [pageHasRenderedAtZoom]);
   const scheduleSemanticViewportCapture = useCallback(() => {
     const sourceKey = semanticSourceKeyRef.current;
     if (sourceKey === null) {
@@ -1235,11 +1253,20 @@ export default function PdfReader({
     if (error === null) {
       return;
     }
+    pendingResumeApplicationRef.current?.resolve(false);
+    pendingResumeApplicationRef.current = null;
     settleReaderPositioning();
     invalidateSemanticViewport();
   }, [error, invalidateSemanticViewport, settleReaderPositioning]);
 
   const applyStartPageProgression = useCallback(() => {
+    const application = pendingResumeApplicationRef.current;
+    if (application && !application.isCurrent()) {
+      pendingResumeApplicationRef.current = null;
+      pendingStartPageProgressionRef.current = null;
+      application.resolve(false);
+      return;
+    }
     const targetProgression = pendingStartPageProgressionRef.current;
     if (targetProgression === null) {
       return;
@@ -1253,6 +1280,7 @@ export default function PdfReader({
       return;
     }
     void readerScrollPositioner.run(({ setTop }) => {
+      if (application && !application.isCurrent()) return;
       setTop(
         container,
         metrics.pageTop + metrics.pageHeight * clamp(targetProgression, 0, 1),
@@ -1798,6 +1826,8 @@ export default function PdfReader({
 
   const teardownViewer = useCallback(
     ({ publishFindUnavailable = true } = {}) => {
+      pendingResumeApplicationRef.current?.resolve(false);
+      pendingResumeApplicationRef.current = null;
       viewportIntentGenerationRef.current += 1;
       viewportIntentRef.current = null;
       semanticSourceKeyRef.current = null;
@@ -3425,8 +3455,8 @@ export default function PdfReader({
   }, [waitForReaderPositioningRender]);
 
   const applyResumeState = useCallback(
-    (resume: PdfReaderResumeState): boolean => {
-      if (!pdfViewerRef.current || numPages <= 0) {
+    async (resume: PdfReaderResumeState, isCurrent: () => boolean): Promise<boolean> => {
+      if (error !== null || !pdfViewerRef.current || numPages <= 0 || !isCurrent() || resume.page < 1 || resume.page > numPages) {
         return false;
       }
       const nextZoom =
@@ -3435,9 +3465,10 @@ export default function PdfReader({
         nextZoom !== null && Math.abs(nextZoom - zoomRef.current) > 0.001;
       const boundedPage = clamp(resume.page, 1, numPages);
       const pageChanged = boundedPage !== pageNumberRef.current;
-      if (!zoomChanged && !pageChanged && resume.page_progression === null) {
-        return true;
-      }
+      pendingResumeApplicationRef.current?.resolve(false);
+      const arrival = new Promise<boolean>((resolve) => {
+        pendingResumeApplicationRef.current = { resume: { ...resume, zoom: nextZoom ?? zoomRef.current }, isCurrent, resolve };
+      });
 
       viewportIntentGenerationRef.current += 1;
       const intentGeneration = viewportIntentGenerationRef.current;
@@ -3463,7 +3494,7 @@ export default function PdfReader({
         beginReaderPositioning();
       }
 
-      pendingStartPageProgressionRef.current = resume.page_progression;
+      pendingStartPageProgressionRef.current = resume.page_progression ?? 0;
       if (zoomChanged) {
         zoomRef.current = nextZoom;
         setZoom(nextZoom);
@@ -3477,6 +3508,8 @@ export default function PdfReader({
           viewportIntentRef.current = null;
           readerRestoreSettledRef.current = true;
           setReaderRestoreSettled(true);
+          pendingResumeApplicationRef.current?.resolve(false);
+          pendingResumeApplicationRef.current = null;
           return false;
         }
         if (!waitsForRender) {
@@ -3501,10 +3534,11 @@ export default function PdfReader({
           }
         });
       }
-      return true;
+      return arrival;
     },
     [
       applyPdfViewportPage,
+      error,
       applyStartPageProgression,
       beginReaderPositioning,
       numPages,

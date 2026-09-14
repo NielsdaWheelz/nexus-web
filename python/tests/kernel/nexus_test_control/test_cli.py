@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+from collections.abc import Mapping
 from io import StringIO
 from pathlib import Path
 
@@ -126,10 +127,22 @@ def test_list_json_is_derived_from_the_typed_registry() -> None:
 def test_workflow_writes_truthful_not_run_summary(tmp_path: Path) -> None:
     _git_repository(tmp_path)
     output = StringIO()
+    cleaned: list[Path] = []
 
-    exit_code = main(["doctor"], repo_root=tmp_path, environment={}, stdout=output)
+    def clean(repo_root: Path, _environment: Mapping[str, str]) -> tuple[str, ...]:
+        cleaned.append(repo_root)
+        return ()
+
+    exit_code = main(
+        ["doctor"],
+        repo_root=tmp_path,
+        environment={},
+        stdout=output,
+        runtime_cleaner=clean,
+    )
 
     assert exit_code == 1
+    assert cleaned == [tmp_path, tmp_path]
     summary_path = tmp_path / output.getvalue().strip().split("summary=", 1)[1]
     summary = json.loads(summary_path.read_text())
     assert summary["workflow"] == "doctor"
