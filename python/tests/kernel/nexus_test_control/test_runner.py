@@ -1447,7 +1447,9 @@ def test_exact_provider_protocol_proof_runs_only_its_local_contract_node(
     )
 
     assert result.evidence.status is RunStatus.FAIL
-    assert result.detail.startswith("proof_result=behavioral_assertion_failure|")
+    # The external uv stub proves routing, not an executed pytest assertion.
+    assert result.detail.startswith("proof_result=setup_or_execution_failure|")
+    assert "pytest failure evidence is missing" in result.detail
     assert _commands(repo_root)[0]["argv"] == [
         "run",
         "--frozen",
@@ -1495,7 +1497,9 @@ def test_exact_release_artifact_proof_materializes_an_owned_worker_image(
 
     assert result.evidence.id is Capability.RELEASE_ARTIFACT
     assert result.evidence.status is RunStatus.FAIL
-    assert result.detail.startswith("proof_result=behavioral_assertion_failure|")
+    # The external uv stub proves routing, not an executed pytest assertion.
+    assert result.detail.startswith("proof_result=setup_or_execution_failure|")
+    assert "pytest failure evidence is missing" in result.detail
     commands = _commands(repo_root)
     assert [command["tool"] for command in commands] == ["git", "docker", "uv", "docker"]
     build = commands[1]
@@ -4678,7 +4682,7 @@ def test_critical_journeys_receive_controller_owned_user_or_invitation_fixtures(
     }.isdisjoint(command["environment"])
 
 
-def test_run_proof_executes_only_the_exact_service_node_and_classifies_assertion_failure(
+def test_run_proof_executes_only_the_exact_service_node_and_refuses_missing_evidence(
     tmp_path: Path,
 ) -> None:
     (tmp_path / "python/.venv").mkdir(parents=True)
@@ -4740,7 +4744,9 @@ def test_run_proof_executes_only_the_exact_service_node_and_classifies_assertion
     )
 
     assert result.evidence.status is RunStatus.FAIL
-    assert result.detail.startswith("proof_result=behavioral_assertion_failure|")
+    # The external uv stub proves routing, not an executed pytest assertion.
+    assert result.detail.startswith("proof_result=setup_or_execution_failure|")
+    assert "pytest failure evidence is missing" in result.detail
     assert prepared == [False]
     assert cleaned == ["run"]
     assert _commands(tmp_path)[0]["argv"] == [

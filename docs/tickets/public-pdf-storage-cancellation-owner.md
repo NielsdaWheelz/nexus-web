@@ -1,21 +1,27 @@
 status: open; source evidence, no executed reproduction
 origin: 2026-09-14 peer review of publication asset streaming proposal
-area: public PDF storage response ownership
+area: public PDF transfer admission and storage response ownership
 
 `python/nexus/api/routes/public_resource_shares.py:18` uses an ordinary router;
-its `/file` response at 181 therefore lacks the admitted route's outer task
-shield. the proposed shared storage response cannot assume that owner exists.
-installed Uvicorn `server.py:289` cancels request tasks directly after its
-shutdown grace expires. AnyIO's synchronous-worker cancel scope does not shield
-raw task cancellation: a pending storage `next()` can still execute after the
-await unwinds, so immediate generator close can race it.
+its `/file` response at 181 has no transfer capacity/deadline owner. the current
+StreamingResponse also does not explicitly close its supplied storage iterator
+on early retirement (see immutable-member-stream-close-ownership.md).
 
-attach the existing package-transfer admission to this one file route if its
-current pool and deadline own this workload. preserve the public error headers,
-access checks and range semantics. keep any source/proof option outside main
-until reviewed. do not add a worker registry or treat an AnyIO shield as
-protection from Task.cancel.
+scope correction: installed Uvicorn advertises ASGI 2.3 (h11_impl.py:205 and
+httptools_impl.py:227). Starlette's response takes an AnyIO child-task-group
+branch there, which drains children during raw parent cancellation. the earlier
+claim that Uvicorn cancellation necessarily abandons a pending storage next was
+too broad. Starlette's ASGI 2.4 direct-stream branch lacks that task-group owner;
+that library branch is not evidence of a deployed failure here.
 
-acceptance: the actual public PDF route, a held SDK read, and caller cancellation
-prove physical next completion precedes exactly-once SDK close. preserve access,
-range, headers and ordinary disconnect behavior. no behavior claim from this audit.
+attach the existing package-transfer admission to this one file route. preserve
+public security/error headers, authorization and ranges. share the existing
+transfer pool and acknowledge that an offline download may make a public file
+return 503. no new limits, registry or lifecycle framework. the source/proof
+option remains outside main until the explicit close owner is reviewed too.
+
+acceptance: the actual public route, current production ASGI 2.3, and a held SDK
+read establish capacity refusal, lightweight-read progress and caller completion
+after physical next; explicit close must occur once. retain exact full/range
+bytes and public headers. test deadline/disconnect close with the shared response
+owner, and qualify transfer throughput separately. no runtime claim from this audit.

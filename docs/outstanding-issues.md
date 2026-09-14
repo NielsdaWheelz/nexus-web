@@ -554,3 +554,5 @@ unexpected timeouts. See
 - [open] oi-217 · client proof · 2026-09-14 consolidation · final canonical sensitivity and combined reader replay remain open: [ticket](tickets/client-proof-final-sensitivity-replay.md).
 
 - [open] oi-218 · public pdf · 2026-09-14 streaming review · file transfer lacks physical storage-read cancellation ownership: [ticket](tickets/public-pdf-storage-cancellation-owner.md).
+
+- [open] oi-219 · test controller · 2026-09-14 reporter integration · pinned external pytest suites do not load primary failure reporting: [ticket](tickets/external-pytest-primary-evidence.md).
