@@ -42,6 +42,27 @@ def _step_script(name: str) -> str:
     return "\n".join(body) + "\n"
 
 
+def _generated_build_cleanup_script() -> str:
+    lines = GENERATED_BUILD_ACTION.read_text(encoding="utf-8").splitlines()
+    step = "    - name: Remove generated web build"
+    try:
+        step_index = lines.index(step)
+        run_index = next(
+            index for index in range(step_index + 1, len(lines)) if lines[index] == "      run: |"
+        )
+    except (ValueError, StopIteration) as error:
+        raise AssertionError("generated-build cleanup action has no owned shell body") from error
+
+    body: list[str] = []
+    for line in lines[run_index + 1 :]:
+        if line and not line.startswith("        "):
+            break
+        body.append(line[8:] if line else "")
+    if not body:
+        raise AssertionError("generated-build cleanup action has an empty shell body")
+    return "\n".join(body) + "\n"
+
+
 def _git(repository: Path, *arguments: str) -> str:
     return subprocess.run(
         ("git", *arguments),
@@ -132,6 +153,20 @@ def _runtime_repository(tmp_path: Path) -> Path:
     (repository / "scripts").mkdir()
     _git(repository, "add", ".gitignore")
     _git(repository, "commit", "--message", "runtime owner")
+    return repository
+
+
+def _generated_build_repository(tmp_path: Path) -> Path:
+    repository = tmp_path / "generated-build-repository"
+    repository.mkdir()
+    _git(repository, "init", "--initial-branch=main")
+    _git(repository, "config", "user.name", "Nexus test")
+    _git(repository, "config", "user.email", "test@nexus.local")
+    (repository / ".gitignore").write_text(".next/\n", encoding="utf-8")
+    (repository / "apps/web").mkdir(parents=True)
+    (repository / "apps/web/source.ts").write_text("export {};\n", encoding="utf-8")
+    _git(repository, "add", ".")
+    _git(repository, "commit", "--message", "source")
     return repository
 
 
@@ -428,7 +463,7 @@ def test_ci_recreates_the_generated_web_build_with_a_safe_exact_target() -> None
         'test "$checkout" = "$repository_root"',
         'test "$(stat -c \'%u\' -- "$checkout")" = "$(id -u)"',
         'test ! -L "$checkout/apps/web"',
-        'git -C "$checkout" check-ignore --quiet -- apps/web/.next',
+        'git -C "$checkout" check-ignore --quiet -- apps/web/.next/',
         'test ! -L "$build"',
         '! mountpoint --quiet -- "$build"',
         'test "$(stat -c \'%u\' -- "$build")" = "$(id -u)"',
@@ -436,6 +471,24 @@ def test_ci_recreates_the_generated_web_build_with_a_safe_exact_target() -> None
         'test ! -e "$build"',
     ):
         assert required_contract in action
+
+
+def test_generated_web_build_cleanup_accepts_an_absent_ignored_directory(
+    tmp_path: Path,
+) -> None:
+    repository = _generated_build_repository(tmp_path)
+
+    completed = subprocess.run(
+        ("bash", "-euo", "pipefail", "-c", _generated_build_cleanup_script()),
+        cwd=repository,
+        env={**os.environ, "GITHUB_WORKSPACE": str(repository)},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert not (repository / "apps/web/.next").exists()
 
 
 def test_ci_retires_generated_web_builds_on_every_terminal_job_path() -> None:

@@ -19,7 +19,7 @@ runs:
         test ! -L "$checkout/apps/web"
         test "$(realpath -e -- "$checkout/apps/web")" = "$checkout/apps/web"
         test "$(stat -c '%u' -- "$checkout/apps/web")" = "$(id -u)"
-        git -C "$checkout" check-ignore --quiet -- apps/web/.next
+        git -C "$checkout" check-ignore --quiet -- apps/web/.next/
 
         if [ -e "$build" ] || [ -L "$build" ]; then
           test -d "$build"
