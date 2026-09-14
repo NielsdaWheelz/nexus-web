@@ -433,6 +433,20 @@ describe("ActionMenu public resource-action contract", () => {
       await userEvent.keyboard("{Enter}");
       await waitFor(() => expect(trigger).toHaveFocus());
       expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+
+      // ArrowUp opens at the last action and must bring it into view.
+      await userEvent.keyboard("{ArrowUp}");
+      const reverseMenu = screen.getByRole("menu");
+      const reverseLast = within(reverseMenu).getByRole("menuitem", {
+        name: "Delete page",
+      });
+      await waitFor(() => {
+        expect(reverseLast).toHaveFocus();
+        const menuBounds = reverseMenu.getBoundingClientRect();
+        const itemBounds = reverseLast.getBoundingClientRect();
+        expect(itemBounds.top).toBeGreaterThanOrEqual(menuBounds.top);
+        expect(itemBounds.bottom).toBeLessThanOrEqual(menuBounds.bottom);
+      });
     },
   );
 });

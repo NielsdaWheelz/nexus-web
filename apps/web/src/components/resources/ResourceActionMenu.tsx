@@ -32,7 +32,7 @@ interface ResourceActionMenuProps {
  * resource-only surfaces render this directly. It owns no policy —
  * membership, current verb, ordering, danger-last, busy/blocked, and dispatch
  * all live in the resource-action runtime and the pure planner. It accepts no
- * actions, groups, capability flags, callbacks, projection, or surface id; only
+ * actions, groups, capability flags, action callbacks, projection, or surface id; only
  * a subject and menu presentation.
  *
  * The runtime prefetches the ref's snapshot when this mounts. Loading explains

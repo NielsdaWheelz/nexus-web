@@ -243,7 +243,7 @@ export default function ActionMenu({
         initialFocus === "last"
           ? focusable[focusable.length - 1]
           : focusable[0];
-      (target ?? menuRef.current)?.focus({ preventScroll: true });
+      (target ?? menuRef.current)?.focus({ preventScroll: directlyAnchored });
     });
     return () => cancelAnimationFrame(frame);
   }, [
@@ -253,6 +253,7 @@ export default function ActionMenu({
     initialFocus,
     menuOpen,
     anchorRect,
+    directlyAnchored,
     hasOptions,
     menuRef,
   ]);
