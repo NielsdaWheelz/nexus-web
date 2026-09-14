@@ -424,12 +424,14 @@ owner.
 
 Before launching Node/browser/build/Gradle or other heavy proof under that
 lease, the controller waits at most 30 seconds for kernel-reported
-`MemAvailable` to reach 2,048 MiB. This bounded admission wait only resamples
+`MemAvailable` to reach 3,584 MiB. This bounded admission wait only resamples
 host state; it never launches or reruns proof and is not an automatic retry.
 Unknown memory is immediately `not_run`; expiry below the floor is `not_run`
 before launch and reports the latest observed value. This is a conservative
-host-safety admission floor, not a proof-size or performance target. Change it
-only from recorded memory evidence on the 8 GiB reference host.
+host-safety admission floor, not a proof-size or performance target. The floor
+retains the recorded 2,293 MiB process-tree peak plus the reference host's
+early-OOM reserve and operating margin. Change it only from recorded memory
+evidence on the 8 GiB reference host.
 
 Under the same lock and immediately before launch, heavy proof also requires
 8,192 MiB free across the checkout filesystem and, when the proof may use the
