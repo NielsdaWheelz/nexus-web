@@ -1798,3 +1798,11 @@ our focused controller invocation after `f1b8ea6bf4` waited on another ci run's
 shared lock and was interrupted before pytest started. it supplies no behavior
 verdict. the earlier preview at `0d3b2164ae` passed compilation; current combined
 controller, storage and native acceptance remain unverified.
+
+combined run `b45be17460a6b9cc` at `2f37025d74` passed policy, selected python
+static checks, every receipt-policy case, and all fourteen reporter cases. the
+original partial-secret failure is now green with unchanged inputs/assertions.
+209 tests passed before a doctor fixture stopped the run: it omitted the now
+required node executable, so privilege refusal was never reached. the actual
+assertion and source frame were retained. no storage-kernel, remaining controller
+or native result is inferred from that partial run.

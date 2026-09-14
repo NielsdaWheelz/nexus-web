@@ -6,13 +6,15 @@
 
 ## what is wrong
 
-the delivery now retains all 684 cited and local verification runs in
-`testdata/evidence/bounded-workspace-receipts.json`: 417 pass, 263 fail and four
+the delivery now retains all 685 cited and local verification runs in
+`testdata/evidence/bounded-workspace-receipts.json`: 417 pass, 264 fail and four
 not-run results, with original summary/context hashes and artifact identities.
-all 1,368 metadata files reconstruct byte-for-byte. no historical verdict was
-changed. the index is 3,325,312 bytes; it keeps metadata, not raw artifact bodies.
+all 1,370 metadata files reconstruct byte-for-byte. no historical verdict was
+changed. the index is 3,333,268 bytes; it keeps metadata, not raw artifact bodies.
 the repository policy checks coverage and retained hashes. its ordinary proof
-and missing-reference BASE replay remain required before closing this ticket.
+passed within `b45be17460a6b9cc`; the missing-reference BASE replay remains
+required before closing this ticket. the enclosing run failed later in another
+controller fixture.
 use the existing whole-file public proof against
 `5d687cdc8a9e1a9b2a0106d0e136df4537c281d7`, immediately before the receipt guard
 and retained index, then the current candidate. the new policy-file mutation was

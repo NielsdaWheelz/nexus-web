@@ -27,8 +27,11 @@ physical scheduler execution is not claimed from host proof.
 
 peer review also requires the actual job-service catch to be exercised: changing
 its forwarded `refusal.retryNotBefore` to null would evade the current separate
-http and store proofs. preserve the real service boundary when adding that
-composition case; its forwarding fault must produce an actual behavioral red.
+http and store proofs. the existing signed-promotion enqueue reaches the real
+job service, but no host harness currently delivers that platform job. this
+composition remains source-reviewed and runtime-unverified under the user's
+physical-handset waiver. preserve the real service boundary when exercising it
+on a device; do not add owned-state injection or a test-only product seam.
 
 what is **not** honoured is the server's `Retry-After`. JobScheduler's backoff is
 configured once in `OfflineReadingScheduler.buildJob` (`setBackoffCriteria`,

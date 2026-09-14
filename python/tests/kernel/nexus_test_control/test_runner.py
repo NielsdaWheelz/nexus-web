@@ -690,6 +690,7 @@ def test_doctor_reports_missing_host_proof_privilege_before_dependency_checks(
         "docker",
         "git",
         "java",
+        "node",
         "sudo",
         "supabase",
         "uv",

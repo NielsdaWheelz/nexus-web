@@ -39,3 +39,9 @@ before parent redaction. the correction discards that truncated duplicate line's
 message and node; the structured record remains authoritative. a node can itself
 contain the summary delimiter, so retaining a guessed node prefix is unsafe.
 the original thirteen cases and a parameter-id case must pass before acceptance.
+
+all fourteen reporter cases pass within `b45be17460a6b9cc` at `2f37025d74`.
+this includes the original privacy regression from `c7f4c2b64f39176f`.
+the combined run retains its actual later doctor-fixture assertion and source
+frame. the original held-thread service case and full reporter BASE witness
+remain pending; the enclosing run is not green.
