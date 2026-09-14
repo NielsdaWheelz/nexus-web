@@ -66,9 +66,11 @@ jobs:
             exit 1
           fi
 
-      # A persistent runner may retain a runtime after a killed job. Retire it
-      # with the still-checked-out controller that owns its schema, before the
-      # incoming checkout can replace that controller.
+      # A persistent runner may retain a runtime after a killed job. The runner
+      # makes its workspace idle before assignment, so invoke the still-checked-
+      # out controller's exact ownership cleaner without joining the lineage
+      # proof convoy. The incoming checkout cannot replace that schema owner
+      # until cleanup succeeds.
       - name: Retire prior checkout test runtime
         shell: bash
         run: |
@@ -86,9 +88,10 @@ jobs:
           git -C "$checkout" check-ignore --quiet -- .nexus-test/runtime.json
           python="$checkout/python/.venv/bin/python"
           test -x "$python"
+          cleanup_program='import os, pathlib, sys; from nexus_test_control.services import clean_owned_runtime, test_environment; cleaned = clean_owned_runtime(pathlib.Path(sys.argv[1]), test_environment(os.environ)); print(f"clean: pass; runs={len(cleaned)}; runtime=removed")'
           (
             cd "$checkout/python"
-            "$python" -m nexus_test_control clean
+            "$python" -c "$cleanup_program" "$checkout"
           )
           test ! -e "$runtime"
           test ! -L "$runtime"
@@ -230,9 +233,10 @@ jobs:
           git -C "$checkout" check-ignore --quiet -- .nexus-test/runtime.json
           python="$checkout/python/.venv/bin/python"
           test -x "$python"
+          cleanup_program='import os, pathlib, sys; from nexus_test_control.services import clean_owned_runtime, test_environment; cleaned = clean_owned_runtime(pathlib.Path(sys.argv[1]), test_environment(os.environ)); print(f"clean: pass; runs={len(cleaned)}; runtime=removed")'
           (
             cd "$checkout/python"
-            "$python" -m nexus_test_control clean
+            "$python" -c "$cleanup_program" "$checkout"
           )
           test ! -e "$runtime"
           test ! -L "$runtime"

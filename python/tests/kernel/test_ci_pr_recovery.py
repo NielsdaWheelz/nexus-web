@@ -179,12 +179,15 @@ def test_prior_runtime_is_retired_by_its_own_checkout_before_replacement(
 
     assert completed.returncode == 0, completed.stderr
     assert not runtime.exists()
-    assert (tmp_path / "clean-invocation").read_text(encoding="utf-8").splitlines() == [
-        str(repository / "python"),
-        "-m",
-        "nexus_test_control",
-        "clean",
-    ]
+    invocation = (
+        (tmp_path / "clean-invocation").read_text(encoding="utf-8").splitlines()
+    )
+    assert invocation[0:2] == [str(repository / "python"), "-c"]
+    assert (
+        "from nexus_test_control.services import clean_owned_runtime" in invocation[2]
+    )
+    assert "test_environment(os.environ)" in invocation[2]
+    assert invocation[3:] == [str(repository)]
 
 
 def test_prior_runtime_retirement_is_a_no_op_for_a_fresh_runner(tmp_path: Path) -> None:
@@ -318,7 +321,8 @@ def test_ci_routes_dispatch_only_to_exact_pr_recovery_and_keeps_full_on_main_pus
     assert "cancel-in-progress: false" in workflow
     assert workflow.count("clean: false") == 2
     assert workflow.count("- name: Retire prior checkout test runtime") == 2
-    assert workflow.count('"$python" -m nexus_test_control clean') == 2
+    assert workflow.count('"$python" -c "$cleanup_program" "$checkout"') == 2
+    assert workflow.count("from nexus_test_control.services import clean_owned_runtime") == 2
     assert workflow.count("- name: Clear prior runner evidence") == 2
     assert workflow.count("git clean -qffdx -- test-results/") == 2
     assert workflow.count("run: ./scripts/test pr") == 1
