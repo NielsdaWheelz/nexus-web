@@ -1,7 +1,6 @@
 "use client";
 
 import HighlightResourceActionMenu from "@/components/highlights/HighlightResourceActionMenu";
-import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import type { AnchoredReaderRow } from "@/components/reader/useAnchoredReaderProjection";
 
 /**
@@ -14,21 +13,14 @@ export default function HighlightActionPopover({
   anchorRect,
   onDismiss,
 }: {
-  highlight: AnchoredReaderRow;
+  highlight: Pick<AnchoredReaderRow, "id">;
   anchorRect: DOMRect;
   onDismiss: () => void;
 }) {
   return (
-    <FloatingActionSurface
-      open
-      anchor={anchorRect}
-      placement="below"
-      align="center"
-      flip
-      scrollBehavior="dismiss"
-      onDismiss={onDismiss}
-    >
-      <HighlightResourceActionMenu highlight={highlight} />
-    </FloatingActionSurface>
+    <HighlightResourceActionMenu
+      highlight={highlight}
+      anchored={{ anchor: anchorRect, onDismiss }}
+    />
   );
 }
